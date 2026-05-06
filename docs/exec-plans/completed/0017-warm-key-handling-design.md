@@ -1,16 +1,58 @@
 ---
 title: Warm-key lifecycle and cold-orchestrator escalation
 plan: 0017
-status: design-doc
+status: completed
 last-reviewed: 2026-05-06
 audience: orchestrator operators, gateway operators, payment-daemon implementers
 ---
 
-# Plan 0017 — warm-key handling (paper design)
+# Plan 0017 — warm-key handling (completed)
 
-Design-only. **No code, no `go.mod` edits.** The shape here is the
-contract plan 0017's implementation will follow once plan 0016's
-chain plumbing is in place.
+Implementation landed standalone (without plan 0016): the V3 keystore
+loader replaces `devkeystore` in production mode; `devbroker`,
+`devclock`, and `devgasprice` stay stubbed pending plan 0016. End
+state: payment-daemon has real signing keys but no chain interaction
+yet — a clean intermediate.
+
+Implementation map (5-commit series on worktree branch
+`worktree-agent-a8fc350329308a523`):
+
+- **C1** — `feat(payment-daemon): V3 keystore loader + password resolution`
+  - `payment-daemon/internal/providers/keystore/jsonfile/`
+  - `payment-daemon/internal/providers/keystore/inmemory/`
+  - `payment-daemon/cmd/livepeer-payment-daemon/password.go`
+  - `go.mod` += `github.com/ethereum/go-ethereum` v1.17.2 (imports
+    restricted to `accounts`, `accounts/keystore`, `crypto`)
+- **C2** — `feat(payment-daemon): wire V3 keystore in production mode + single-wallet WARN`
+  - `cmd/livepeer-payment-daemon/main.go` selects devkeystore vs
+    `inmemory` based on `--chain-rpc` presence; eager decrypt before
+    binding the gRPC socket; specific config errors per §5.2 with
+    exit code 2; identity-split logging per §5.3 (locked decision
+    §11.5 — WARN, do not block); standalone INFO line clarifying
+    broker / clock / gas-price stay dev-mode
+- **C3** — `feat(payment-daemon): rotation safety invariants + runbook §6.5`
+  - `cmd/livepeer-payment-daemon/rotation_test.go` — BoltDB survives
+    keystore swap; gRPC socket is not bound on decrypt failure
+  - `payment-daemon/docs/operator-runbook.md` §5 extended with
+    "Single-wallet vs hot/cold split" + "5.1 Hot-key rotation
+    runbook (5 steps, on-call card)"
+- **C4** — `feat(lint): no-secrets-in-logs check`
+  - `payment-daemon/lint/no-secrets-in-logs/` — analyzer + tests +
+    fixtures; `TestRunPaymentDaemonTreeIsClean` runs as part of
+    `make test` and fails on any deny-list finding in the live
+    daemon tree
+- **C5** — `docs(payment-daemon): close plan 0017` — this file moves
+  to `completed/`; PLANS.md updated to flag 0017 as complete and
+  point at plan 0016 as the next-stage chain integration
+
+The original design body (open questions, threat model, decisions in
+§11) is preserved below verbatim.
+
+---
+
+## Original design (preserved)
+
+Design-only when written; superseded by the implementation map above.
 
 ## 1. Status and scope
 

@@ -26,6 +26,25 @@ free-form `extra` / `constraints` for workload-specific filtering. Signature is
 secp256k1 (Ethereum's curve) — recovers to the orch's `eth_address`, which must
 match the on-chain `ServiceRegistry` entry.
 
+## Two on-chain registries — one well-known URL
+
+This manifest format covers both transcoding (`ServiceRegistry`) and AI
+(`AIServiceRegistry`) workloads in a single unified `capabilities[]` tuple list.
+Each tuple's `interaction_mode` field distinguishes the workload class. An orch
+may register the same well-known URL in either or both contracts; resolvers
+configure which contract address(es) to query for the orch's `serviceURI`.
+
+Livepeer mainnet (Arbitrum One) carries both contracts at distinct addresses:
+the legacy `ServiceRegistry` for transcoding workers and the newer
+`AIServiceRegistry` for AI workers. Before this rewrite, an operator running
+both classes had to publish two different manifests at two different
+`serviceURI`s. The rewrite consolidates that: one orch publishes one manifest
+at `/.well-known/livepeer-registry.json`, mixes transcoding and AI tuples in
+the same `capabilities[]` list, and registers the same URL with whichever
+contract addresses the operator participates in. The resolver / gateway side
+is configured with which contract address(es) to query for a given orch's
+`serviceURI`; the manifest itself is workload-agnostic.
+
 **No `capacity` field** — workers signal saturation via 503 + `Livepeer-Backoff`
 (per the headers spec).
 

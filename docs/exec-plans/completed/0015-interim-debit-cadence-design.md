@@ -1,18 +1,20 @@
 ---
-status: design-doc
+status: completed
 opened: 2026-05-06
+closed: 2026-05-06
 owner: harness
 related: plan 0014 (completed), plan 0011-followup, plan 0012-followup, plan 0016
 audience: broker maintainers, payment-daemon operators
 ---
 
-# Plan 0015 — interim-debit cadence on long-running modes (design)
+# Plan 0015 — interim-debit cadence on long-running modes (completed)
 
-**This is a paper-only design doc.** No Go code, no `go.mod` edits, no
-proto changes ship from this commit. The goal is to land the contract,
-the API surface, the configuration grammar, and the mode-by-mode
-applicability matrix so the implementing commits in plan 0015
-(forthcoming) are mechanical.
+**Status:** completed 2026-05-06 across four commits. The design below
+is preserved verbatim as the rationale record. §11 captures the locked
+decisions; §12 the commit cadence used. Broker smoke remained at 11/11
+through the implementation; conformance compose grew from 11/11 to
+13/13 with two new ws-realtime fixtures (`interim-debit.yaml`,
+`interim-debit-balance-exhausted.yaml`).
 
 ## 1. Status and scope
 

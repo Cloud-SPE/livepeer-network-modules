@@ -21,6 +21,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/envelope"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/fixtures"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/mockbackend"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/report"
@@ -54,8 +55,12 @@ func (d *Driver) Run(ctx context.Context, brokerURL string, fx fixtures.Fixture,
 	}
 
 	// Build upgrade request headers from the fixture.
+	substituted, err := envelope.SubstituteHeaders(fx.Request.Headers)
+	if err != nil {
+		return fail(fx, "build payment envelope: "+err.Error())
+	}
 	headers := http.Header{}
-	for k, v := range fx.Request.Headers {
+	for k, v := range substituted {
 		// gorilla/websocket sets Upgrade/Connection/Sec-WebSocket-* itself;
 		// passing them ourselves causes a duplicate-header rejection.
 		switch http.CanonicalHeaderKey(k) {
@@ -64,7 +69,7 @@ func (d *Driver) Run(ctx context.Context, brokerURL string, fx fixtures.Fixture,
 			"Sec-Websocket-Protocol", "Sec-Websocket-Extensions":
 			continue
 		}
-		headers.Set(k, substitutePlaceholders(v))
+		headers.Set(k, v)
 	}
 
 	conn, resp, err := d.dialer.DialContext(ctx, wsURL, headers)
@@ -159,10 +164,6 @@ func buildWSURL(brokerURL, path string) (string, error) {
 
 func fail(fx fixtures.Fixture, msg string) report.Result {
 	return report.Result{Name: fx.Name, Mode: fx.Mode, Pass: false, Failures: []string{msg}}
-}
-
-func substitutePlaceholders(s string) string {
-	return strings.ReplaceAll(s, "<runner-generated-payment-blob>", "runner-stub-payment")
 }
 
 func hasLivepeerHeaders(h http.Header) bool {

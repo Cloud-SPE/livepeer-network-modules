@@ -34,6 +34,15 @@ type Server struct {
 // New constructs a Server from a validated config and registers routes. It
 // fails-fast if any configured capability references an unregistered mode or
 // extractor, since those would be unservable at runtime.
+//
+// Selection of the payment client follows host-config:
+//   - payment_daemon.mock: true       → in-process payment.Mock (tests only)
+//   - payment_daemon.socket: <path>   → real gRPC client over unix socket
+//   - neither set                     → in-process payment.Mock (legacy default)
+//
+// When the gRPC client is selected, New calls Health on the daemon and
+// fails fast if it is unreachable; the broker should not bind its paid
+// listener with no working payment surface.
 func New(cfg *config.Config) (*Server, error) {
 	mux := http.NewServeMux()
 	srv := &http.Server{
@@ -41,11 +50,17 @@ func New(cfg *config.Config) (*Server, error) {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	paymentClient, err := newPaymentClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("payment client: %w", err)
+	}
+
 	s := &Server{
 		cfg:        cfg,
 		mux:        mux,
 		srv:        srv,
-		payment:    payment.NewMock(),
+		payment:    paymentClient,
 		modes:      defaultModes(),
 		extractors: defaultExtractors(),
 		backend:    backend.NewHTTPClient(),
@@ -59,6 +74,23 @@ func New(cfg *config.Config) (*Server, error) {
 	s.registerRoutes()
 	s.metricsSrv = newMetricsServer(cfg.Listen.Metrics)
 	return s, nil
+}
+
+// newPaymentClient picks the right Client implementation per host-config.
+func newPaymentClient(cfg *config.Config) (payment.Client, error) {
+	switch {
+	case cfg.PaymentDaemon.Mock:
+		log.Printf("payment client: in-process Mock (payment_daemon.mock=true)")
+		return payment.NewMock(), nil
+	case cfg.PaymentDaemon.Socket != "":
+		log.Printf("payment client: gRPC unix socket %s", cfg.PaymentDaemon.Socket)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return payment.NewGRPC(ctx, cfg.PaymentDaemon.Socket)
+	default:
+		log.Printf("payment client: in-process Mock (no payment_daemon configured)")
+		return payment.NewMock(), nil
+	}
 }
 
 // validateAgainstRegistries fails-fast if any configured capability

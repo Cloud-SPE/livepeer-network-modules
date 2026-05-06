@@ -1,29 +1,51 @@
-# Conformance test stack: runner + capability-broker.
+# Conformance test stack: runner + capability-broker + payment-daemon.
 # Runs with: make test-compose
 #
 # Topology:
-#   runner — tztcloud/livepeer-conformance image. Runs the test binary and
-#            an in-process mock backend on :9000 (reachable inside the
-#            compose network as `runner:9000`). Drives the broker via HTTP.
-#   broker — tztcloud/livepeer-capability-broker image. Mounts
-#            test-broker-config.yaml; capability backends point at
-#            `http://runner:9000/...` so the runner controls the response
-#            per-fixture.
+#   runner          — tztcloud/livepeer-conformance image. Runs the test
+#                     binary and an in-process mock backend on :9000
+#                     (reachable inside the compose network as
+#                     `runner:9000`). Drives the broker via HTTP.
+#   broker          — tztcloud/livepeer-capability-broker image. Mounts
+#                     test-broker-config.yaml; capability backends point at
+#                     `http://runner:9000/...` so the runner controls the
+#                     response per-fixture. Talks to payment-daemon via the
+#                     shared `livepeer-payment` named volume's unix socket.
+#   payment-daemon  — tztcloud/livepeer-payment-daemon image. Receives the
+#                     decoded Livepeer-Payment envelope from the broker,
+#                     stamps a session ID, records debits + reconciliations
+#                     in BoltDB.
 #
-# Build prerequisite: both images must exist locally. Run from the repo root:
+# Build prerequisite: all three images must exist locally. Run from the repo
+# root:
 #
-#   make -C livepeer-network-protocol/conformance build         # runner image
-#   make -C capability-broker build                             # broker image
+#   make -C livepeer-network-protocol/conformance build
+#   make -C capability-broker build
+#   make -C payment-daemon build
 #
-# Or use the Makefile's `test-compose` target which builds both first.
+# The Makefile's `test-compose` target builds all three first.
 
 services:
+  payment-daemon:
+    image: tztcloud/livepeer-payment-daemon:dev
+    networks:
+      - conformance
+    volumes:
+      - livepeer-payment:/var/run/livepeer
+      - livepeer-payment-data:/var/lib/livepeer/payment-daemon
+    command:
+      - --socket=/var/run/livepeer/payment-daemon.sock
+      - --db=/var/lib/livepeer/payment-daemon/sessions.db
+
   broker:
     image: tztcloud/livepeer-capability-broker:dev
+    depends_on:
+      - payment-daemon
     networks:
       - conformance
     volumes:
       - ./test-broker-config.yaml:/etc/livepeer/host-config.yaml:ro
+      - livepeer-payment:/var/run/livepeer
     expose:
       - "8080"
       - "9090"
@@ -47,3 +69,11 @@ services:
 networks:
   conformance:
     driver: bridge
+
+volumes:
+  # Shared unix-socket directory so broker can reach payment-daemon. The
+  # socket file (`payment-daemon.sock`) is created by the daemon at startup.
+  livepeer-payment: {}
+  # BoltDB persistence for payment-daemon. Keeps session state across
+  # restarts within a single test run.
+  livepeer-payment-data: {}

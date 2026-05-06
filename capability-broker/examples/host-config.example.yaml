@@ -16,11 +16,16 @@ listen:
   paid: ":8080"
   metrics: ":9090"
 
-# Path to the co-located payment-daemon socket. v0.1 uses an in-process mock
-# client regardless of this field; plan 0005 wires the real gRPC client.
+# Path to the co-located payment-daemon unix socket. The broker dials this
+# at startup and fails fast if the daemon is unreachable.
+#
+# Set `mock: true` to use the in-process Mock client instead — useful for
+# unit tests and the broker's standalone smoke script (no payment-daemon
+# container required). The Mock still requires a well-formed
+# Livepeer-Payment envelope; only the gRPC + BoltDB plumbing is bypassed.
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock
-  mock: true
+  # mock: true
 
 capabilities:
   # ---- v0.1-supported: http-reqresp + response-jsonpath ----

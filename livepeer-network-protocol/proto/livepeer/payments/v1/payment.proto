@@ -13,7 +13,7 @@ syntax = "proto3";
 
 package livepeer.payments.v1;
 
-option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/proto/livepeer/payments/v1;paymentsv1";
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
 
 // Payment is the wire envelope for the Livepeer-Payment HTTP header.
 //

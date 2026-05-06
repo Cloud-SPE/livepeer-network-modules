@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/envelope"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/fixtures"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/mockbackend"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/report"
@@ -56,8 +57,12 @@ func (d *Driver) Run(ctx context.Context, brokerURL string, fx fixtures.Fixture,
 	if err != nil {
 		return fail(fx, fmt.Sprintf("build request: %v", err))
 	}
-	for k, v := range fx.Request.Headers {
-		req.Header.Set(k, substitutePlaceholders(v))
+	hdrs, err := envelope.SubstituteHeaders(fx.Request.Headers)
+	if err != nil {
+		return fail(fx, fmt.Sprintf("build payment envelope: %v", err))
+	}
+	for k, v := range hdrs {
+		req.Header.Set(k, v)
 	}
 
 	// 3. Send.
@@ -137,12 +142,6 @@ func (d *Driver) Run(ctx context.Context, brokerURL string, fx fixtures.Fixture,
 
 func fail(fx fixtures.Fixture, msg string) report.Result {
 	return report.Result{Name: fx.Name, Mode: fx.Mode, Pass: false, Failures: []string{msg}}
-}
-
-func substitutePlaceholders(s string) string {
-	// v0.1: a single placeholder is recognized. Real payment-envelope
-	// generation arrives with plan 0005's payment-daemon integration.
-	return strings.ReplaceAll(s, "<runner-generated-payment-blob>", "runner-stub-payment")
 }
 
 func hasLivepeerHeaders(h http.Header) bool {

@@ -16,7 +16,7 @@ listen:
   metrics: ":9090"
 
 payment_daemon:
-  mock: true
+  socket: /var/run/livepeer/payment-daemon.sock
 
 capabilities:
   # ---- fixtures/http-reqresp/happy-path.yaml ----

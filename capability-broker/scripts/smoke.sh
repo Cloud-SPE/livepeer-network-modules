@@ -57,7 +57,9 @@ assert_ge() {
 }
 
 echo "==> building broker image: $IMAGE"
-docker build --build-arg VERSION=smoke -t "$IMAGE" -f Dockerfile . >/dev/null
+# Build context is the monorepo root; the broker's go.mod has a `replace`
+# directive that references the sibling proto-go module.
+docker build --build-arg VERSION=smoke -t "$IMAGE" -f Dockerfile .. >/dev/null
 
 echo "==> creating private network: $NETWORK"
 docker network create "$NETWORK" >/dev/null
@@ -87,14 +89,30 @@ class H(BaseHTTPRequestHandler):
 HTTPServer(("0.0.0.0", 9000), H).serve_forever()
 ' >/dev/null
 
-# Rewrite the example host-config so backend URLs point at the named container.
+# Rewrite the example host-config so backend URLs point at the named container,
+# and switch `payment_daemon` to mock mode so the smoke test stays self-
+# contained (no payment-daemon sidecar required for the broker smoke). The
+# real-daemon path is exercised end-to-end by the conformance compose stack.
+#
 # chmod 0644 so the distroless `nonroot` user inside the broker container can
 # read the bind-mounted file (mktemp defaults to 0600).
 SMOKE_CFG=$(mktemp)
 sed "s|http://localhost:9000/count|http://${BACKEND}:9000/count|g; \
-     s|http://localhost:9001/echo|http://${BACKEND}:9000/echo|g" \
+     s|http://localhost:9001/echo|http://${BACKEND}:9000/echo|g; \
+     s|^  # mock: true|  mock: true|" \
   examples/host-config.example.yaml > "$SMOKE_CFG"
 chmod 0644 "$SMOKE_CFG"
+
+# Pre-encoded base64 Livepeer-Payment envelopes (livepeer.payments.v1.Payment
+# protobuf bytes). Generated once via `go run` of a tiny encoder; the (cap,
+# offering, max, ticket) tuples never change for this smoke run.
+#
+#   PAY_HAPPY: cap=kibble:doggo-bark-counter:v1, off=default, max=1000,
+#              ticket="smoke-stub" — used for happy-path + mode-mismatch.
+#   PAY_UNKNOWN: cap=nonexistent:cap, off=default, max=1000,
+#              ticket="smoke-stub" — used for the capability_not_served test.
+PAY_HAPPY="ChxraWJibGU6ZG9nZ28tYmFyay1jb3VudGVyOnYxEgdkZWZhdWx0GOgHIgpzbW9rZS1zdHVi"
+PAY_UNKNOWN="Cg9ub25leGlzdGVudDpjYXASB2RlZmF1bHQY6AciCnNtb2tlLXN0dWI="
 
 echo "==> starting broker on :$HOST_PORT_PAID (paid) + :$HOST_PORT_METRICS (metrics)"
 docker run -d --name "$BROKER" --network "$NETWORK" \
@@ -111,7 +129,7 @@ for i in $(seq 1 30); do
   status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:${HOST_PORT_PAID}/v1/cap" \
     -H "Livepeer-Capability: kibble:doggo-bark-counter:v1" \
     -H "Livepeer-Offering: default" \
-    -H "Livepeer-Payment: ready-check" \
+    -H "Livepeer-Payment: ${PAY_HAPPY}" \
     -H "Livepeer-Spec-Version: 0.1" \
     -H "Livepeer-Mode: http-reqresp@v0" \
     -d '{}' 2>/dev/null)
@@ -138,7 +156,7 @@ assert_eq "GET /registry/health returns 200" "200" "$status"
 resp=$(curl -s -i -X POST "http://localhost:${HOST_PORT_PAID}/v1/cap" \
   -H "Livepeer-Capability: kibble:doggo-bark-counter:v1" \
   -H "Livepeer-Offering: default" \
-  -H "Livepeer-Payment: stub-payment" \
+  -H "Livepeer-Payment: ${PAY_HAPPY}" \
   -H "Livepeer-Spec-Version: 0.1" \
   -H "Livepeer-Mode: http-reqresp@v0" \
   -d '{"woof":"hello"}')
@@ -155,7 +173,7 @@ assert_eq "  backend received NO Livepeer-* headers" '"livepeer_seen": []' "$liv
 resp=$(curl -s -i -X POST "http://localhost:${HOST_PORT_PAID}/v1/cap" \
   -H "Livepeer-Capability: nonexistent:cap" \
   -H "Livepeer-Offering: default" \
-  -H "Livepeer-Payment: stub" \
+  -H "Livepeer-Payment: ${PAY_UNKNOWN}" \
   -H "Livepeer-Spec-Version: 0.1" \
   -H "Livepeer-Mode: http-reqresp@v0" -d '{}')
 status=$(echo "$resp" | head -1 | awk '{print $2}')
@@ -167,7 +185,7 @@ assert_eq "  Livepeer-Error == capability_not_served" "capability_not_served" "$
 resp=$(curl -s -i -X POST "http://localhost:${HOST_PORT_PAID}/v1/cap" \
   -H "Livepeer-Capability: kibble:doggo-bark-counter:v1" \
   -H "Livepeer-Offering: default" \
-  -H "Livepeer-Payment: stub" \
+  -H "Livepeer-Payment: ${PAY_HAPPY}" \
   -H "Livepeer-Spec-Version: 0.1" \
   -H "Livepeer-Mode: http-stream@v0" -d '{}')
 status=$(echo "$resp" | head -1 | awk '{print $2}')

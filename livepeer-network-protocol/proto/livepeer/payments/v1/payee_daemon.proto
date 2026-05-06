@@ -14,7 +14,7 @@ package livepeer.payments.v1;
 
 import "livepeer/payments/v1/payment.proto";
 
-option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/proto/livepeer/payments/v1;paymentsv1";
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
 
 // PayeeDaemon is the receiver-side service exposed to the broker.
 service PayeeDaemon {

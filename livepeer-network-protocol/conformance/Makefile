@@ -12,7 +12,7 @@ build: ## Build dev image locally
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \
-		.
+		../..
 
 test: ## Run conformance against $(BROKER_URL); set MODES to filter (comma list)
 	@if [ -z "$(BROKER_URL)" ]; then \
@@ -27,9 +27,11 @@ test: ## Run conformance against $(BROKER_URL); set MODES to filter (comma list)
 		--url $(BROKER_URL) \
 		$(if $(MODES),--modes $(MODES),)
 
-test-compose: build ## Run the full conformance stack (broker + runner) and propagate exit code
+test-compose: build ## Run the full conformance stack (broker + runner + payment-daemon) and propagate exit code
 	@docker image inspect tztcloud/livepeer-capability-broker:dev >/dev/null 2>&1 || \
 		(echo "broker image missing. Build it first: make -C ../../capability-broker build"; exit 1)
+	@docker image inspect tztcloud/livepeer-payment-daemon:dev >/dev/null 2>&1 || \
+		(echo "payment-daemon image missing. Build it first: make -C ../../payment-daemon build"; exit 1)
 	docker compose -f compose.yaml up --abort-on-container-exit --exit-code-from runner
 
 publish: ## Build + push multi-arch image (requires TAG set to a real version)
@@ -43,7 +45,7 @@ publish: ## Build + push multi-arch image (requires TAG set to a real version)
 		--push \
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \
-		.
+		../..
 
 clean: ## Remove dev images
 	docker rmi $(IMAGE):$(TAG) 2>/dev/null || true

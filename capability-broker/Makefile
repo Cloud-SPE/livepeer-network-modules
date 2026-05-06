@@ -13,7 +13,7 @@ build: ## Build dev image locally
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \
-		.
+		..
 
 run: ## Run the broker locally with the example host-config (foreground)
 	docker run --rm \
@@ -39,7 +39,7 @@ publish: ## Build + push multi-arch image (requires TAG set to a real version)
 		--push \
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \
-		.
+		..
 
 clean: ## Remove dev images
 	docker rmi $(IMAGE):$(TAG) 2>/dev/null || true

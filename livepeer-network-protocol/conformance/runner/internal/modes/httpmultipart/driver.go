@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/envelope"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/fixtures"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/mockbackend"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/report"
@@ -50,8 +51,12 @@ func (d *Driver) Run(ctx context.Context, brokerURL string, fx fixtures.Fixture,
 	if err != nil {
 		return fail(fx, "build request: "+err.Error())
 	}
-	for k, v := range fx.Request.Headers {
-		req.Header.Set(k, substitutePlaceholders(v))
+	hdrs, err := envelope.SubstituteHeaders(fx.Request.Headers)
+	if err != nil {
+		return fail(fx, "build payment envelope: "+err.Error())
+	}
+	for k, v := range hdrs {
+		req.Header.Set(k, v)
 	}
 
 	resp, err := d.httpClient.Do(req)
@@ -128,9 +133,6 @@ func fail(fx fixtures.Fixture, msg string) report.Result {
 	return report.Result{Name: fx.Name, Mode: fx.Mode, Pass: false, Failures: []string{msg}}
 }
 
-func substitutePlaceholders(s string) string {
-	return strings.ReplaceAll(s, "<runner-generated-payment-blob>", "runner-stub-payment")
-}
 
 func hasLivepeerHeaders(h http.Header) bool {
 	for k := range h {

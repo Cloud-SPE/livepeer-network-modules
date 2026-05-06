@@ -18,12 +18,12 @@ build: ## Build dev image locally
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE):$(TAG)-builder \
 		-f Dockerfile \
-		. \
+		.. \
 	&& docker build \
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \
-		.
+		..
 
 run: ## Run the daemon locally; sock + db live under ./run/
 	mkdir -p run
@@ -40,7 +40,7 @@ test: ## Run go test ./... inside the test stage
 		--target test \
 		-t $(IMAGE):$(TAG)-test \
 		-f Dockerfile \
-		.
+		..
 
 proto: ## Regenerate Go bindings from the proto sources (requires protoc on host)
 	protoc \
@@ -61,7 +61,7 @@ publish: ## Build + push multi-arch image (requires TAG set to a real version)
 		--push \
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \
-		.
+		..
 
 clean: ## Remove dev images
 	docker rmi $(IMAGE):$(TAG) 2>/dev/null || true

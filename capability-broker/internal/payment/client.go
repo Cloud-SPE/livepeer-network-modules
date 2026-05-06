@@ -6,11 +6,18 @@
 // dependency, and so tests can inspect the lifecycle calls.
 package payment
 
-import "context"
+import (
+	"context"
 
-// Client is the broker's payment-daemon adapter. The Mock implementation in
-// this package is wired by default in v0.1; the real gRPC client comes in
-// plan 0005.
+	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+)
+
+// Client is the broker's payment-daemon adapter. Two implementations:
+//   - GRPC (this package): real client, talks to the payment-daemon over a
+//     unix socket.
+//   - Mock (this package): in-process stub, used only for unit tests.
+//
+// The middleware uses Client without caring which implementation is wired.
 type Client interface {
 	OpenSession(ctx context.Context, req OpenSessionRequest) (*Session, error)
 	Debit(ctx context.Context, sessionID string, units uint64) error
@@ -18,13 +25,18 @@ type Client interface {
 	Close(ctx context.Context, sessionID string) error
 }
 
-// OpenSessionRequest carries the inbound (capability, offering) plus the raw
-// Livepeer-Payment header value. The real client decodes the protobuf
-// envelope and validates the ticket; the mock simply records the blob.
+// OpenSessionRequest carries everything the daemon needs to decide whether
+// to open a session.
+//
+// The middleware decodes the Livepeer-Payment header into DecodedPayment
+// before calling OpenSession. PaymentBlob is the original base64 string
+// retained for diagnostics; CapabilityID / OfferingID are sourced from the
+// inbound HTTP headers (the daemon also re-checks them defensively).
 type OpenSessionRequest struct {
-	CapabilityID string
-	OfferingID   string
-	PaymentBlob  string
+	CapabilityID   string
+	OfferingID     string
+	PaymentBlob    string
+	DecodedPayment *pb.Payment
 }
 
 // Session is the handle returned by OpenSession; pass it to Debit /

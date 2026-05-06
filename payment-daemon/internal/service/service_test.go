@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/proto/livepeer/payments/v1"
+	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
 )

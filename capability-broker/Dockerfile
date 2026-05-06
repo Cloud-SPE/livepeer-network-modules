@@ -6,16 +6,14 @@
 # Per core belief #16, GO_VERSION ARG is bumped to latest stable on each
 # release. Renovate / dependabot tracks this.
 
-ARG GO_VERSION=1.24
+ARG GO_VERSION=1.23
 
 # ---- Builder stage ----
 FROM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /src
 
-COPY go.mod ./
-# go.sum is added when external deps land:
-# COPY go.sum ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . ./

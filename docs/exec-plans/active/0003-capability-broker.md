@@ -63,16 +63,25 @@ reference broker:
 
 ## Outcomes
 
-- [ ] `capability-broker/` scaffold landed (this commit).
-- [ ] `internal/config/` loads + validates `host-config.yaml`.
-- [ ] `internal/server/` exposes the four registry endpoints + the paid
-  `/v1/cap` route.
-- [ ] `internal/server/middleware/` validates the five required `Livepeer-*`
-  request headers per the headers spec.
+- [x] `capability-broker/` scaffold landed.
+- [x] `internal/config/` loads + validates `host-config.yaml` (KnownFields
+  strict; eth-address regex; interaction-mode regex; auth scalar/mapping
+  union via custom UnmarshalYAML).
+- [x] `internal/server/` exposes the four registry endpoints + the paid
+  `/v1/cap` route (POST and GET, the latter for ws-realtime upgrade).
+- [x] `internal/server/middleware/` chain: Recover → RequestID → Headers
+  → Payment, in that order. Headers validates the five required `Livepeer-*`
+  request headers; major-version mismatch on Spec-Version → 505 +
+  `spec_version_unsupported`; malformed Mode → 505 + `mode_unsupported`.
+- [x] `internal/server/registry/` — offerings (manifest payload sans
+  signature), health (currently-available capabilities, JSON header +
+  body), healthz (process liveness).
 - [ ] `internal/modes/httpreqresp/` driver dispatches per the mode spec.
 - [ ] `internal/extractors/responsejsonpath/` computes work units.
 - [ ] `internal/payment/mock.go` validates any `Livepeer-Payment` header,
   records debits/reconciles/closes locally for inspection, returns success.
+- [ ] `internal/backend/` HTTP forwarder + auth injection.
+- [ ] `internal/observability/` metrics (Prometheus) + structured logging.
 - [ ] End-to-end smoke test: `docker run` the broker, send a curl to
   `/v1/cap`, get a forwarded response with `Livepeer-Work-Units` set.
 - [ ] First conformance fixture exists and passes against the running broker

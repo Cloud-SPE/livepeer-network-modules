@@ -2,18 +2,22 @@
 // workload-agnostic capability broker per the spec at
 // livepeer-network-protocol/.
 //
-// v0.1 status: scaffold only. Flag parsing works; HTTP server, mode drivers,
-// extractor library, registry endpoints, and payment client are TODO.
-//
 // See capability-broker/docs/design-docs/architecture.md for the planned
 // package layout and request lifecycle.
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server"
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
@@ -22,8 +26,8 @@ var version = "dev"
 func main() {
 	var (
 		configPath  = flag.String("config", "/etc/livepeer/host-config.yaml", "path to host-config.yaml")
-		listenAddr  = flag.String("listen", ":8080", "HTTP listen address (paid + registry endpoints)")
-		metricsAddr = flag.String("metrics", ":9090", "Prometheus metrics listen address")
+		listenAddr  = flag.String("listen", "", "HTTP listen address (overrides config)")
+		metricsAddr = flag.String("metrics", "", "Prometheus metrics listen address (overrides config)")
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -33,11 +37,29 @@ func main() {
 		return
 	}
 
-	log.Printf("livepeer-capability-broker %s\n", version)
-	log.Printf("config=%s listen=%s metrics=%s\n", *configPath, *listenAddr, *metricsAddr)
-	log.Println("scaffold only — HTTP server, mode drivers, extractors, registry endpoints, and payment client are not yet implemented")
-	log.Println("see capability-broker/docs/design-docs/architecture.md for the planned package layout")
+	log.Printf("livepeer-capability-broker %s", version)
 
-	// Exit non-zero so callers don't mistake the scaffold for a working broker.
-	os.Exit(2)
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("config load failed: %v", err)
+	}
+	log.Printf("config loaded from %s; %d capabilities declared", *configPath, len(cfg.Capabilities))
+
+	if *listenAddr != "" {
+		cfg.Listen.Paid = *listenAddr
+	}
+	if *metricsAddr != "" {
+		cfg.Listen.Metrics = *metricsAddr
+	}
+
+	srv := server.New(cfg)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	if err := srv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		log.Fatalf("server error: %v", err)
+	}
+	log.Println("shutdown complete")
+	_ = os.Stdout.Sync()
 }

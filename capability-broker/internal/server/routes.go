@@ -14,18 +14,16 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /registry/health", registry.HealthHandler(s.cfg))
 	s.mux.HandleFunc("GET /healthz", registry.HealthzHandler())
 
-	// Metrics endpoint — TODO: real Prometheus collector wired in plan 0003 polish commit.
-	s.mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("# TODO: Prometheus metrics not yet wired (plan 0003 polish commit)\n"))
-	})
+	// Metrics live on a separate listener (cfg.Listen.Metrics, default :9090);
+	// see metrics_server.go. This intentionally does NOT register /metrics on
+	// the paid listener — scrapes shouldn't traverse the paid middleware chain.
 
 	// Paid mode-dispatch endpoints share a middleware chain.
 	// Order: outermost first; Recover wraps everything to catch panics.
 	paidChain := middleware.Chain(
 		middleware.Recover,
 		middleware.RequestID,
+		middleware.Metrics,
 		middleware.Headers,
 		middleware.Payment(s.payment),
 	)

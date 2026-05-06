@@ -93,11 +93,20 @@ reference broker:
   mode driver. Distinguishes capability_not_served from offering_not_served.
 - [x] Server fail-fast at startup if any capability references an
   unregistered mode or extractor.
-- [ ] `internal/observability/` metrics (Prometheus) + structured logging.
-- [ ] End-to-end smoke test: `docker run` the broker, send a curl to
-  `/v1/cap`, get a forwarded response with `Livepeer-Work-Units` set.
-- [ ] First conformance fixture exists and passes against the running broker
-  (closes plan 0002).
+- [x] `internal/observability/` metrics (Prometheus collectors:
+  `livepeer_mode_requests_total`, `livepeer_mode_request_duration_seconds`,
+  `livepeer_mode_work_units_total`) + structured logging via `slog` JSON
+  handler (request_id, capability, offering, mode, status, livepeer_error,
+  work_units, duration, outcome).
+- [x] Metrics on a separate listener (`cfg.Listen.Metrics`, default `:9090`).
+- [x] End-to-end Docker smoke test (`scripts/smoke.sh` + `make smoke`).
+  11 assertions all passing against the in-Docker broker + python:3.12-alpine
+  mock backend.
+- [x] First conformance fixture exists at
+  `livepeer-network-protocol/conformance/fixtures/http-reqresp/happy-path.yaml`
+  documenting the canonical happy-path scenario for runner consumption.
+  (Runner does not yet execute fixtures; this fixture is the shape the
+  runner will consume when its mode driver lands in plan 0004.)
 
 ## Done condition
 

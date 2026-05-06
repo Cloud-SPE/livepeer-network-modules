@@ -6,7 +6,7 @@ IMAGE   ?= tztcloud/livepeer-capability-broker
 TAG     ?= dev
 VERSION := $(shell cat ../livepeer-network-protocol/VERSION 2>/dev/null || echo dev)
 
-.PHONY: build run dev publish clean help
+.PHONY: build run dev smoke publish clean help
 
 build: ## Build dev image locally
 	docker build \
@@ -24,6 +24,9 @@ run: ## Run the broker locally with the example host-config (foreground)
 		--config /etc/livepeer/host-config.yaml
 
 dev: build run ## Build + run in one shot
+
+smoke: ## End-to-end Docker smoke test (mock backend + broker + assertions)
+	./scripts/smoke.sh
 
 publish: ## Build + push multi-arch image (requires TAG set to a real version)
 	@if [ "$(TAG)" = "dev" ]; then \

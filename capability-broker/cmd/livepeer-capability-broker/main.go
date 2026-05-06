@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server"
 )
 
@@ -37,6 +38,7 @@ func main() {
 		return
 	}
 
+	observability.SetupLogger()
 	log.Printf("livepeer-capability-broker %s", version)
 
 	cfg, err := config.Load(*configPath)

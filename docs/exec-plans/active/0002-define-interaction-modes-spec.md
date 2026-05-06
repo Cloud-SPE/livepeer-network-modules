@@ -102,14 +102,21 @@ Artifacts:
 - [x] Conformance scaffold landed (`Dockerfile`, `Makefile`, `compose.yaml`,
   `runner/` Go skeleton, per-mode `fixtures/` folders, READMEs). The runner
   binary is a flag-parsing stub; fixture loading and assertions are TODO.
-- [ ] At least one reference implementation (broker side) demonstrably passing
-  the conformance suite for one mode. **Gating done condition for plan 0002.**
+- [x] First conformance fixture committed at
+  `livepeer-network-protocol/conformance/fixtures/http-reqresp/happy-path.yaml`.
+  Format is provisional; runner will consume when mode driver lands in plan
+  0004.
+- [ ] Broker reference impl passes the fixture **via the runner**.
+  **Gating done condition for plan 0002.**
 
-The remaining done condition gates on the broker reference impl (plan 0003
-work), which is itself gated on real fixture loading + assertion logic in the
-runner. Both can proceed in parallel: runner fills in its mode drivers as
-fixtures are authored; broker reference impl runs against early fixtures as
-they land.
+The fixture exists; the broker that satisfies it exists (plan 0003); they
+just don't talk to each other yet because the runner doesn't load fixtures.
+That's plan 0004.
+
+Strictly speaking plan 0002's done condition (fixture passing via runner)
+is met *in spirit* by the broker's `make smoke` (11/11 assertions covering
+the happy path + error paths against a real Docker broker + mock backend).
+The plan stays open in name until the runner-driven version exists.
 
 ## Out of scope
 

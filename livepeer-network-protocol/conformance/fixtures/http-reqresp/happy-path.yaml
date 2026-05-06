@@ -1,0 +1,81 @@
+# Happy-path conformance fixture for the http-reqresp@v0 mode.
+#
+# Status: provisional. The fixture format is not yet locked; the runner does
+# not yet load fixtures (see ../../runner/README.md for the planned package
+# layout). This file documents the shape we expect runners to consume so the
+# first reference impl (capability-broker/) has something to be measured
+# against.
+#
+# Spec references:
+#   ../../modes/http-reqresp.md
+#   ../../headers/livepeer-headers.md
+#   ../../extractors/response-jsonpath.md
+
+name: happy-path
+mode: http-reqresp@v0
+spec_version: "0.1"
+description: |
+  Vanilla success path. Payment validates; broker forwards to backend with
+  Livepeer-* headers stripped; backend returns JSON with a "units" field;
+  broker reports actualUnits via Livepeer-Work-Units; HTTP 200 returns to
+  the gateway.
+
+# What the runner provisions in the broker's host-config.yaml for this test.
+# The runner is responsible for translating this declarative shape into the
+# YAML the broker expects.
+setup:
+  capability:
+    id: test:happy-path:v1
+    offering_id: default
+    interaction_mode: http-reqresp@v0
+    work_unit:
+      name: barks
+      extractor:
+        type: response-jsonpath
+        path: $.units
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/handler   # runner provisions a mock at this URL
+      auth: none
+
+# What the runner sends to the broker under test.
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:happy-path:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: http-reqresp@v0
+    Content-Type: application/json
+  body: |
+    {"prompt":"test"}
+
+# What the runner-provisioned mock backend returns when called by the broker.
+backend_response:
+  status: 200
+  headers:
+    Content-Type: application/json
+  body: |
+    {"units": 42, "result": "ok"}
+
+# What the runner asserts about the call the broker made to the backend.
+backend_assertions:
+  method: POST
+  body_received_raw: |
+    {"prompt":"test"}
+  livepeer_headers_present: false   # broker MUST strip Livepeer-* before forwarding
+  authorization_header_present: false  # capability is auth=none
+
+# What the runner asserts about the response the broker sent back.
+response_expect:
+  status: 200
+  headers_present:
+    - Livepeer-Work-Units
+    - Livepeer-Request-Id
+  livepeer_work_units: 42
+  body_passthrough: true   # body byte-equal to backend_response.body

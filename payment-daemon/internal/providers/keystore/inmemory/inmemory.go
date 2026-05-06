@@ -22,9 +22,11 @@ package inmemory
 import (
 	"crypto/ecdsa"
 	"errors"
+	"math/big"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -89,6 +91,23 @@ func (k *KeyStore) Sign(hash []byte) ([]byte, error) {
 	// crypto.Sign returns V ∈ {0, 1}. Ethereum personal_sign requires V ∈ {27, 28}.
 	sig[64] += 27
 	return sig, nil
+}
+
+// SignTx implements providers.TxSigner. Signs an Ethereum transaction
+// for the given chain ID using EIP-155 (legacy) signing — go-ethereum's
+// `types.LatestSignerForChainID` resolves to the appropriate post-London
+// signer when the tx itself carries dynamic-fee fields.
+func (k *KeyStore) SignTx(tx *ethtypes.Transaction, chainID *big.Int) (*ethtypes.Transaction, error) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	if k.key == nil {
+		return nil, ErrNilKey
+	}
+	if chainID == nil {
+		return nil, errors.New("inmemory keystore: nil chainID")
+	}
+	signer := ethtypes.LatestSignerForChainID(chainID)
+	return ethtypes.SignTx(tx, signer, k.key)
 }
 
 // String redacts the key material so accidental logging does not leak

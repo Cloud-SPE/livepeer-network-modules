@@ -310,17 +310,6 @@ func TestNormalizeAddrHex(t *testing.T) {
 	}
 }
 
-// ─── chain-rpc-standalone INFO ───────────────────────────────────────
-
-func TestLogChainRPCStandalone(t *testing.T) {
-	var buf bytes.Buffer
-	logger := captureLogger(&buf)
-	logChainRPCStandalone(logger)
-	out := buf.String()
-	if !strings.Contains(out, "V3 keystore active") {
-		t.Errorf("missing standalone INFO: %q", out)
-	}
-	if !strings.Contains(out, "plan 0016") {
-		t.Errorf("standalone INFO should reference plan 0016: %q", out)
-	}
-}
+// The old plan-0017-standalone INFO line was removed when plan 0016
+// landed real broker/clock/gas-price providers — the daemon is no
+// longer "partially in production mode" with --chain-rpc set.

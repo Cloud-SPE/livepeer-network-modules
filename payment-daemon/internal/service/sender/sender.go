@@ -268,27 +268,12 @@ func stubTicketParams(recipient []byte, faceValue *big.Int, capability, offering
 	}
 }
 
-// ticketHash is a stub hash. Plan 0016 replaces this with go-livepeer's
-// `pm.Ticket.Hash()` (keccak256 over an EIP-712-like layout).
+// ticketHash returns the contract-defined keccak256 over the ticket's
+// flatten layout (see types.Ticket.Hash). What gets EIP-191-wrapped and
+// signed by the sender, and what `redeemWinningTicket` recomputes
+// on-chain.
 func ticketHash(t *types.Ticket) []byte {
-	h := sha256.New()
-	_, _ = h.Write(t.Recipient)
-	_, _ = h.Write(t.Sender)
-	if t.FaceValue != nil {
-		_, _ = h.Write(t.FaceValue.Bytes())
-	}
-	if t.WinProb != nil {
-		_, _ = h.Write(t.WinProb.Bytes())
-	}
-	var nonce [4]byte
-	nonce[0] = byte(t.SenderNonce >> 24)
-	nonce[1] = byte(t.SenderNonce >> 16)
-	nonce[2] = byte(t.SenderNonce >> 8)
-	nonce[3] = byte(t.SenderNonce)
-	_, _ = h.Write(nonce[:])
-	_, _ = h.Write(t.RecipientRandHash)
-	_, _ = h.Write(t.CreationRoundHash)
-	return h.Sum(nil)
+	return t.Hash()
 }
 
 func evToBytes(ev *big.Rat) []byte {

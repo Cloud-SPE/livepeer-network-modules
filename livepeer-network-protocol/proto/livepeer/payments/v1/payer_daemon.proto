@@ -1,0 +1,101 @@
+// Livepeer Payments v1 — PayerDaemon service.
+//
+// The PayerDaemon runs next to a payer application — a Livepeer gateway
+// or any consumer app paying an orchestrator. It creates and signs
+// tickets, manages per-session sender nonces, and watches the payer's
+// on-chain escrow.
+//
+// Mounted only when the daemon is started with `--mode=sender`. Calls
+// to it in receiver mode return UNIMPLEMENTED.
+//
+// This service is NOT part of the wire-compat contract; it is a
+// daemon↔consumer-app contract that may evolve under v1. See
+// `../docs/wire-compat.md`.
+
+syntax = "proto3";
+
+package livepeer.payments.v1;
+
+import "livepeer/payments/v1/types.proto";
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
+
+service PayerDaemon {
+  // Create a payment blob (a `Payment` carrying one or more tickets)
+  // for a selected payee identity at a target spend.
+  //
+  // On the quote-free sender path, the daemon:
+  //   1. Resolves a worker URL for `recipient` (via the local resolver
+  //      or a configured override).
+  //   2. POSTs `(sender, recipient, face_value, capability, offering)`
+  //      to the worker's `/v1/payment/ticket-params` endpoint.
+  //   3. Receives canonical `TicketParams` back.
+  //   4. Validates against sender escrow / EV caps.
+  //   5. Signs a one-ticket `Payment`.
+  //
+  // The `face_value` argument is interpreted as the caller's TARGET
+  // SPEND (expected value), not a mandatory winning-ticket size. The
+  // receiver may answer with a larger `TicketParams.face_value` plus a
+  // lower `TicketParams.win_prob` when redemption economics require a
+  // redeemable ticket. Senders MUST treat the response `TicketParams`
+  // as the source of truth and not assume the returned `face_value`
+  // equals the requested face_value.
+  rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
+
+  // Inspect the payer's current TicketBroker deposit / reserve state.
+  // Read-only; the daemon does not fund escrow.
+  rpc GetDepositInfo(GetDepositInfoRequest) returns (GetDepositInfoResponse);
+
+  // Health returns "ok" if the daemon is ready to mint payments. The
+  // gateway calls this once at startup.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message CreatePaymentRequest {
+  // Target spend (expected value) for the request, in wei, big-endian
+  // bytes. Quote-free path; see RPC doc for semantics.
+  bytes face_value = 1;
+
+  // Recipient orchestrator identity (the on-chain payee address), 20
+  // raw bytes. The daemon resolves a worker URL for this address.
+  bytes recipient = 2;
+
+  // Capability being purchased, e.g. "openai:/v1/chat/completions".
+  // Forwarded to the payee-side ticket-params endpoint so the worker
+  // can validate the request against its offered routes.
+  string capability = 3;
+
+  // Offering within the capability being purchased, e.g. a model
+  // identifier. Forwarded to the payee-side ticket-params endpoint.
+  string offering = 4;
+}
+
+message CreatePaymentResponse {
+  // Wire-format `livepeer.payments.v1.Payment` bytes. The caller
+  // attaches these to its app-level request to the payee (typically as
+  // the `Livepeer-Payment` HTTP header value, base64-encoded).
+  bytes payment_bytes = 1;
+
+  // Number of tickets this payment carries (for metrics / audit).
+  int32 tickets_created = 2;
+
+  // Aggregate expected value (EV = face_value × win_prob) committed by
+  // this payment, in wei, big-endian bytes.
+  bytes expected_value = 3;
+}
+
+message GetDepositInfoRequest {}
+
+message GetDepositInfoResponse {
+  // Current on-chain deposit (wei, big-endian bytes).
+  bytes deposit = 1;
+
+  // Current on-chain reserve (wei, big-endian bytes).
+  bytes reserve = 2;
+
+  // If the payer has initiated an unlock, the round at which
+  // withdrawal becomes possible. Zero when no unlock is pending.
+  int64 withdraw_round = 3;
+}
+
+// HealthRequest / HealthResponse live in types.proto (shared with PayeeDaemon).

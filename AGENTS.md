@@ -59,6 +59,11 @@ Planned components (none created yet): `livepeer-network-protocol/`,
   the picture changes.
 - **No production code yet.** When code arrives, it goes in a top-level component
   subfolder.
+- **Do not copy code, schemas, or configs from `livepeer-network-suite` or its
+  submodules without explicit user instruction.** This is a clean-slate rewrite (core
+  belief #14). Carryover is allowed only when the user names a specific source repo
+  and grants permission. The commit message that introduces a copy must record what
+  was copied, from where, and the user-given permission.
 
 ## What lives elsewhere
 

@@ -47,6 +47,10 @@ A **workload-agnostic supply-side rearchitecture**:
   customers do.
 - **Not a replacement for orch-coordinator's signing flow.** `secure-orch` remains
   egress-only; operator hand-carries signed manifests. (May change in v2; not now.)
+- **Not a fork or successor of `livepeer-network-suite`.** That repo continues to ship
+  and is not modified by anything done here. The two share no submodules, no pinned
+  SHAs, and no release schedule. This repo's first release is v1.0.0; the suite's
+  release line is independent.
 
 ## Anti-goals
 
@@ -62,6 +66,9 @@ A **workload-agnostic supply-side rearchitecture**:
   old shape is the problem we're solving; we don't preserve it as a "legacy mode."
 - **No new key material for routine operations.** Cold key signs every change, full stop.
   Warm-key is rejected for v1.
+- **No automatic code carryover from the existing suite.** Material from
+  `livepeer-network-suite` or its submodules is copied in only on explicit user
+  instruction. Each copy is a deliberate, commit-recorded decision.
 
 ## Why this matters
 

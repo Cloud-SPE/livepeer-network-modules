@@ -52,6 +52,17 @@ Phases 1–5 are independently shippable; phase 6 is gated on at least one produ
 gateway adopting the new shape. Components can be extracted from this monorepo to
 standalone repos at any phase boundary.
 
+## Versioning
+
+Pre-1.0.0 until the first release is cut. **v1.0.0 = the first release of this
+monorepo.** Components inside the monorepo do not have independent versions yet; when
+a component is extracted to a standalone repo, its versioning becomes its own concern.
+Until extraction, the monorepo's tag is the single coordinated release artifact for
+everything in it.
+
+This repo's release line is **independent of `livepeer-network-suite`**. The two share
+no submodules, no pinned SHAs, and no schedule. See core belief #14.
+
 ## Tracking debt
 
 [`docs/exec-plans/tech-debt-tracker.md`](./docs/exec-plans/tech-debt-tracker.md). Empty

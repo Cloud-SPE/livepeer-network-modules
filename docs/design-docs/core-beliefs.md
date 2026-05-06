@@ -88,3 +88,17 @@ follow-up runs, not indefinite blocks. Corrections are cheap; waiting is expensi
 The three-worker-binary partition is the problem we're solving. We don't preserve it as
 a "legacy mode" or a fallback. The migration story is timed deprecation, not parallel
 support.
+
+## 14. Clean-slate rewrite — the existing suite is untouched
+
+This repo is a **completely new thing**. It does not modify, fork, or replace any
+submodule of `livepeer-network-suite`. The suite stays as it is.
+
+When this repo needs material from somewhere outside it (manifest schemas, proto
+definitions, header conventions, prior implementations), the material is **copied in
+on explicit user instruction** — never automatically, never wholesale. Each copy is a
+deliberate decision recorded in the commit message that introduces it.
+
+The first time this repo cuts a release, it becomes **v1.0.0**. Until then, all SHAs
+are unstable and re-pin-able. Components inside the monorepo do not have independent
+versions until they're extracted to standalone repos.

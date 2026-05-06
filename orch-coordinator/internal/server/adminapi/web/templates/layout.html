@@ -1,0 +1,28 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{.Title}} — orch-coordinator</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<header>
+  <nav>
+    <a href="/" class="brand">orch-coordinator</a>
+    <span class="orch">{{.OrchEthAddress}}</span>
+    <a href="/" class="navlink">Roster</a>
+    <a href="/diff" class="navlink">Diff</a>
+    <a href="/audit" class="navlink">Audit</a>
+    <a href="/candidate.tar.gz" class="navlink">Download candidate</a>
+  </nav>
+</header>
+<main>
+{{block "content" .}}{{end}}
+</main>
+<footer>
+  <span>{{.Version}}</span>
+  <a href="/healthz">healthz</a>
+</footer>
+</body>
+</html>
+{{end}}

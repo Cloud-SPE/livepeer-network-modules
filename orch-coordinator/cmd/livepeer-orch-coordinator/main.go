@@ -206,6 +206,16 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	admin := adminapi.New(cfg.listenAddr, logger.With("component", "adminapi"))
 	admin.CandidateRoutes(builder, candStore)
 	admin.UploadRoutes(receiveSvc)
+	if err := admin.WebRoutes(adminapi.WebDeps{
+		Builder:        builder,
+		Scrape:         scrapeSvc,
+		Published:      publishedStore,
+		Audit:          auditLog,
+		OrchEthAddress: loaded.EthAddress(),
+		Version:        version,
+	}); err != nil {
+		return fmt.Errorf("admin web routes: %w", err)
+	}
 	if _, err := admin.Listen(); err != nil {
 		return fmt.Errorf("admin listen: %w", err)
 	}

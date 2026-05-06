@@ -1,0 +1,37 @@
+{{define "content"}}
+<section class="summary">
+  <h1>Audit log</h1>
+  <p class="muted">Last {{len .Events}} publish + upload events.</p>
+</section>
+
+<section class="audit">
+  <table>
+    <thead>
+      <tr>
+        <th>seq</th>
+        <th>at</th>
+        <th>outcome</th>
+        <th>uploader</th>
+        <th>publication_seq</th>
+        <th>manifest sha256</th>
+        <th>note</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Events}}
+      <tr class="audit-{{.Outcome}}">
+        <td>{{.Seq}}</td>
+        <td>{{.At.Format "2006-01-02T15:04:05Z"}}</td>
+        <td><span class="badge audit-{{.Outcome}}">{{.Outcome}}</span></td>
+        <td>{{.Uploader}}</td>
+        <td>{{.PublicationSeq}}</td>
+        <td class="hash"><code>{{.ManifestSHA256}}</code></td>
+        <td>{{.Note}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7"><em>no audit events yet</em></td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

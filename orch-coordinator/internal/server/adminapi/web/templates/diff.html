@@ -1,0 +1,44 @@
+{{define "content"}}
+<section class="summary">
+  <h1>Diff — candidate vs published</h1>
+  <p class="muted">Advisory diff. The authoritative diff (candidate vs last-signed) lives in <code>secure-orch-console</code>.</p>
+  <div class="badges">
+    {{range $kind, $n := .DriftCounts}}
+      {{if gt $n 0}}<span class="badge drift-{{$kind}}">{{$kind}}: {{$n}}</span>{{end}}
+    {{end}}
+  </div>
+</section>
+
+<section class="diff">
+  <table>
+    <thead>
+      <tr>
+        <th>capability_id / offering_id</th>
+        <th>drift</th>
+        <th>old</th>
+        <th>new</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Rows}}
+      <tr class="drift-{{.Drift}}">
+        <td><strong>{{.CapabilityID}}</strong><br><small>{{.OfferingID}}</small></td>
+        <td><span class="badge drift-{{.Drift}}">{{.Drift}}</span></td>
+        <td>
+          {{if .OldPriceWei}}price={{.OldPriceWei}}<br>{{end}}
+          {{if .OldMode}}mode={{.OldMode}}<br>{{end}}
+          {{if .OldWorkerURL}}worker={{.OldWorkerURL}}{{end}}
+        </td>
+        <td>
+          {{if .NewPriceWei}}price={{.NewPriceWei}}<br>{{end}}
+          {{if .NewMode}}mode={{.NewMode}}<br>{{end}}
+          {{if .NewWorkerURL}}worker={{.NewWorkerURL}}{{end}}
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="4"><em>no drift; the next publish would be a no-op</em></td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

@@ -1,0 +1,75 @@
+{{define "content"}}
+<section class="summary">
+  <h1>Roster</h1>
+  <div class="badges">
+    {{range $kind, $n := .DriftCounts}}
+      {{if gt $n 0}}<span class="badge drift-{{$kind}}">{{$kind}}: {{$n}}</span>{{end}}
+    {{end}}
+  </div>
+  <details class="brokers">
+    <summary>{{len .BrokerStatus}} broker(s)</summary>
+    <ul>
+    {{range .BrokerStatus}}
+      <li class="broker-{{.Freshness}}">
+        <strong>{{.Name}}</strong> — {{.Freshness}} ({{.BaseURL}})
+        {{if .LastError}}<span class="err">{{.LastError}}</span>{{end}}
+      </li>
+    {{end}}
+    </ul>
+  </details>
+  <form method="get" class="filters">
+    <input type="text" name="q" value="{{.Filter.CapabilitySubstring}}" placeholder="capability substring">
+    <input type="text" name="mode" value="{{.Filter.Mode}}" placeholder="interaction_mode">
+    <input type="text" name="broker" value="{{.Filter.BrokerName}}" placeholder="broker name">
+    <select name="drift">
+      <option value="">any drift</option>
+      {{range .DriftKinds}}<option value="{{.}}" {{if eq . $.Filter.DriftKind}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+    <button type="submit">Filter</button>
+  </form>
+</section>
+
+<section class="roster">
+  <table>
+    <thead>
+      <tr>
+        <th>capability_id / offering_id</th>
+        <th>mode</th>
+        <th>price (wei)</th>
+        <th>broker(s)</th>
+        <th>worker_url</th>
+        <th>published?</th>
+        <th>drift</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .Rows}}
+      <tr class="drift-{{.Drift}}">
+        <td><strong>{{.CapabilityID}}</strong><br><small>{{.OfferingID}}</small></td>
+        <td>{{.InteractionMode}}</td>
+        <td>{{.PriceWei}}{{if and (ne .OldPriceWei "") (ne .OldPriceWei .PriceWei)}}<br><small class="was">was {{.OldPriceWei}}</small>{{end}}</td>
+        <td>
+          {{range .Brokers}}
+            <span class="broker-cell broker-{{.Freshness}}">{{.Name}}</span>
+          {{end}}
+        </td>
+        <td class="worker"><code>{{.WorkerURL}}</code></td>
+        <td>{{if .Published}}yes{{else}}no{{end}}</td>
+        <td><span class="badge drift-{{.Drift}}">{{.Drift}}</span></td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7"><em>no rows match</em></td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="upload">
+  <h2>Upload signed manifest</h2>
+  <p>Paste the cold-key-signed <code>manifest.json</code> the operator hand-carried back from secure-orch.</p>
+  <form method="post" action="/admin/signed-manifest" enctype="multipart/form-data">
+    <input type="file" name="manifest" accept="application/json,.json" required>
+    <button type="submit">Verify and publish</button>
+  </form>
+</section>
+{{end}}

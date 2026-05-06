@@ -63,16 +63,27 @@ type Config struct {
 	WorkerURLOverride map[string]string // broker name → worker_url; defaults to base_url
 }
 
+// Observer is a metrics hook the scrape service calls on each cycle.
+// metrics.Registry implements it; tests pass a nil Observer.
+type Observer interface {
+	ObserveScrape(broker, outcome string, dur time.Duration)
+	ObserveBrokerCounts(known, healthy int)
+}
+
 // Service runs the broker-poll loop.
 type Service struct {
-	cfg    Config
-	client brokerclient.Client
-	logger *slog.Logger
+	cfg      Config
+	client   brokerclient.Client
+	logger   *slog.Logger
+	observer Observer
 
 	mu        sync.RWMutex
 	lastFetch time.Time
 	cache     map[string]*BrokerStatus
 }
+
+// SetObserver attaches a metrics observer; safe to call before Run.
+func (s *Service) SetObserver(o Observer) { s.observer = o }
 
 // New builds a Service. Defaults are filled in for missing tunables.
 func New(cfg Config, client brokerclient.Client, logger *slog.Logger) (*Service, error) {
@@ -148,25 +159,44 @@ func (s *Service) ScrapeOnce(ctx context.Context) {
 }
 
 func (s *Service) scrapeOnce(ctx context.Context) {
-	windowStart := time.Now().UTC()
 	for _, b := range s.cfg.Brokers {
+		start := time.Now()
 		bctx, cancel := context.WithTimeout(ctx, s.cfg.ScrapeTimeout)
 		offerings, err := s.client.Fetch(bctx, b.BaseURL)
 		cancel()
-		s.applyResult(b, offerings, err)
+		outcome := s.applyResult(b, offerings, err)
+		if s.observer != nil {
+			s.observer.ObserveScrape(b.Name, outcome, time.Since(start))
+		}
 	}
 	s.mu.Lock()
 	s.lastFetch = time.Now().UTC()
 	s.mu.Unlock()
-	_ = windowStart
+	if s.observer != nil {
+		known, healthy := s.brokerCountsLocked()
+		s.observer.ObserveBrokerCounts(known, healthy)
+	}
 }
 
-func (s *Service) applyResult(b config.Broker, offerings *types.BrokerOfferings, err error) {
+func (s *Service) brokerCountsLocked() (int, int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	known := len(s.cache)
+	healthy := 0
+	for _, b := range s.cache {
+		if b.Freshness == FreshnessOK {
+			healthy++
+		}
+	}
+	return known, healthy
+}
+
+func (s *Service) applyResult(b config.Broker, offerings *types.BrokerOfferings, err error) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st, ok := s.cache[b.Name]
 	if !ok {
-		return
+		return "unknown_broker"
 	}
 	now := time.Now().UTC()
 	st.LastAttemptAt = now
@@ -178,6 +208,7 @@ func (s *Service) applyResult(b config.Broker, offerings *types.BrokerOfferings,
 			st.Offerings = nil
 			s.logger.Warn("broker scrape: schema-invalid; dropping entries",
 				"broker", b.Name, "base_url", b.BaseURL, "err", err)
+			return "schema_error"
 		case errors.Is(err, brokerclient.ErrBrokerUnreachable):
 			if st.LastSuccessAt.IsZero() {
 				st.Freshness = FreshnessNeverSucceeded
@@ -187,12 +218,13 @@ func (s *Service) applyResult(b config.Broker, offerings *types.BrokerOfferings,
 			}
 			s.logger.Warn("broker scrape: soft failure; keeping last-good if any",
 				"broker", b.Name, "base_url", b.BaseURL, "err", err)
+			return "http_error"
 		default:
 			st.Freshness = FreshnessStaleFailing
 			s.logger.Warn("broker scrape: unknown failure",
 				"broker", b.Name, "base_url", b.BaseURL, "err", err)
+			return "timeout"
 		}
-		return
 	}
 
 	if validateErr := offerings.Validate(s.cfg.OrchEthAddress); validateErr != nil {
@@ -201,12 +233,13 @@ func (s *Service) applyResult(b config.Broker, offerings *types.BrokerOfferings,
 		st.Offerings = nil
 		s.logger.Warn("broker scrape: validate failed; dropping entries",
 			"broker", b.Name, "err", validateErr)
-		return
+		return "schema_error"
 	}
 	st.LastError = ""
 	st.LastSuccessAt = now
 	st.Freshness = FreshnessOK
 	st.Offerings = offerings.Capabilities
+	return "ok"
 }
 
 // Snapshot returns a deep-copy view of the cache. The window bounds

@@ -39,6 +39,13 @@ type VerifyError struct {
 
 func (e *VerifyError) Error() string { return fmt.Sprintf("%s: %s", e.Code, e.Msg) }
 
+// Observer is the metrics hook for upload + verify + publish.
+type Observer interface {
+	ObserveUpload(outcome string, dur time.Duration)
+	ObservePublish(outcome string)
+	ObserveVerifyDuration(dur time.Duration)
+}
+
 // Service ties the verifier, publish store, audit log, and the
 // candidate builder (for spec_version drift checks) together.
 type Service struct {
@@ -47,7 +54,11 @@ type Service struct {
 	audit      *audit.Log
 	expectAddr string
 	specVer    string
+	observer   Observer
 }
+
+// SetObserver attaches a metrics observer.
+func (s *Service) SetObserver(o Observer) { s.observer = o }
 
 // New builds a Service.
 func New(store *published.Store, audit *audit.Log, expectAddr, specVer string) *Service {
@@ -72,6 +83,33 @@ type Result struct {
 // Receive runs the five-step verify and (on success) atomic-swap
 // publishes. The caller passes the raw multipart-upload body.
 func (s *Service) Receive(body []byte, uploader string) (*Result, error) {
+	start := time.Now()
+	defer func() {
+		if s.observer != nil {
+			s.observer.ObserveVerifyDuration(time.Since(start))
+		}
+	}()
+	res, err := s.receiveInner(body, uploader)
+	if s.observer != nil {
+		if err != nil {
+			var ve *VerifyError
+			if errors.As(err, &ve) {
+				s.observer.ObserveUpload(string(ve.Code), time.Since(start))
+				if ve.Code == audit.OutcomePublishFailed {
+					s.observer.ObservePublish(string(ve.Code))
+				}
+			} else {
+				s.observer.ObserveUpload("internal_error", time.Since(start))
+			}
+		} else {
+			s.observer.ObserveUpload(string(audit.OutcomeAccepted), time.Since(start))
+			s.observer.ObservePublish(string(audit.OutcomeAccepted))
+		}
+	}
+	return res, err
+}
+
+func (s *Service) receiveInner(body []byte, uploader string) (*Result, error) {
 	sm, err := types.ParseSignedManifest(body)
 	if err != nil {
 		s.recordFailure(audit.OutcomeSchemaInvalid, uploader, "", "", 0, err.Error())

@@ -28,6 +28,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/candidates"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/published"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/server/adminapi"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/server/metrics"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/server/publicapi"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/candidate"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/receive"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/scrape"
@@ -152,6 +154,8 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 		client = brokerclient.New(cfg.scrapeTimeout)
 	}
 
+	mreg := metrics.New()
+
 	scrapeSvc, err := scrape.New(scrape.Config{
 		OrchEthAddress:  loaded.EthAddress(),
 		Brokers:         loaded.Brokers,
@@ -162,6 +166,8 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	if err != nil {
 		return &configError{err: err}
 	}
+	scrapeSvc.SetObserver(mreg)
+	mreg.ObserveBrokerCounts(len(loaded.Brokers), 0)
 
 	candStore, err := candidates.New(filepath.Join(cfg.dataDir, "candidates"), 0)
 	if err != nil {
@@ -176,6 +182,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	if err != nil {
 		return fmt.Errorf("candidate builder: %w", err)
 	}
+	builder.SetObserver(mreg)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -194,6 +201,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	defer auditLog.Close()
 
 	receiveSvc := receive.New(publishedStore, auditLog, loaded.EthAddress(), candidate.SpecVersion)
+	receiveSvc.SetObserver(mreg)
 
 	admin := adminapi.New(cfg.listenAddr, logger.With("component", "adminapi"))
 	admin.CandidateRoutes(builder, candStore)
@@ -208,9 +216,64 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 		}
 	}()
 
+	publicSrv := publicapi.New(cfg.publicListen, publishedStore, logger.With("component", "publicapi"))
+	if _, err := publicSrv.Listen(); err != nil {
+		return fmt.Errorf("public listen: %w", err)
+	}
+	logger.Info("public listener bound", "addr", publicSrv.Addr())
+	go func() {
+		if err := publicSrv.Serve(ctx); err != nil {
+			logger.Error("public serve", "err", err)
+		}
+	}()
+
+	metricsSrv := metrics.NewServer(cfg.metricsListen, mreg, logger.With("component", "metrics"))
+	if _, err := metricsSrv.Listen(); err != nil {
+		return fmt.Errorf("metrics listen: %w", err)
+	}
+	logger.Info("metrics listener bound", "addr", metricsSrv.Addr())
+	go func() {
+		if err := metricsSrv.Serve(ctx); err != nil {
+			logger.Error("metrics serve", "err", err)
+		}
+	}()
+
+	go runManifestStateUpdater(ctx, mreg, publishedStore)
+
 	<-ctx.Done()
 	logger.Info("shutdown signal received")
 	return nil
+}
+
+func runManifestStateUpdater(ctx context.Context, mreg *metrics.Registry, store *published.Store) {
+	t := time.NewTicker(15 * time.Second)
+	defer t.Stop()
+	update := func() {
+		body, mod, err := store.Read()
+		if err != nil {
+			mreg.SetManifestState(-1, 0)
+			return
+		}
+		sm, err := types.ParseSignedManifest(body)
+		if err != nil {
+			mreg.SetManifestState(-1, 0)
+			return
+		}
+		issued := sm.Manifest.IssuedAt
+		if issued.IsZero() {
+			issued = mod
+		}
+		mreg.SetManifestState(time.Since(issued).Seconds(), len(sm.Manifest.Capabilities))
+	}
+	update()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			update()
+		}
+	}
 }
 
 func runBuilder(ctx context.Context, b *candidate.Builder, interval time.Duration, logger *slog.Logger) {

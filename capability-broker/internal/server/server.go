@@ -9,30 +9,72 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
 )
 
-// Server wraps the broker's HTTP server. It owns its paid listener; metrics
+// Server wraps the broker's HTTP server. It owns the paid listener; metrics
 // will be served on a separate listener once observability lands (plan 0003
 // polish commit).
 type Server struct {
-	cfg *config.Config
-	mux *http.ServeMux
-	srv *http.Server
+	cfg        *config.Config
+	mux        *http.ServeMux
+	srv        *http.Server
+	payment    payment.Client
+	modes      *modes.Registry
+	extractors *extractors.Registry
+	backend    backend.Forwarder
+	secrets    backend.SecretResolver
 }
 
-// New constructs a Server from a validated config and registers routes.
-// Call Run to start.
-func New(cfg *config.Config) *Server {
+// New constructs a Server from a validated config and registers routes. It
+// fails-fast if any configured capability references an unregistered mode or
+// extractor, since those would be unservable at runtime.
+func New(cfg *config.Config) (*Server, error) {
 	mux := http.NewServeMux()
 	srv := &http.Server{
 		Addr:              cfg.Listen.Paid,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	s := &Server{cfg: cfg, mux: mux, srv: srv}
+	s := &Server{
+		cfg:        cfg,
+		mux:        mux,
+		srv:        srv,
+		payment:    payment.NewMock(),
+		modes:      defaultModes(),
+		extractors: defaultExtractors(),
+		backend:    backend.NewHTTPClient(),
+		secrets:    backend.NewEnvSecretResolver(),
+	}
+
+	if err := s.validateAgainstRegistries(); err != nil {
+		return nil, err
+	}
+
 	s.registerRoutes()
-	return s
+	return s, nil
+}
+
+// validateAgainstRegistries fails-fast if any configured capability
+// references an unregistered mode or extractor.
+func (s *Server) validateAgainstRegistries() error {
+	for i := range s.cfg.Capabilities {
+		c := &s.cfg.Capabilities[i]
+		if !s.modes.Has(c.InteractionMode) {
+			return fmt.Errorf("capability %s/%s: interaction_mode %q is not implemented by this broker (registered: %v)",
+				c.ID, c.OfferingID, c.InteractionMode, s.modes.Names())
+		}
+		extractorType, _ := c.WorkUnit.Extractor["type"].(string)
+		if !s.extractors.Has(extractorType) {
+			return fmt.Errorf("capability %s/%s: work_unit.extractor.type %q is not implemented by this broker (registered: %v)",
+				c.ID, c.OfferingID, extractorType, s.extractors.Names())
+		}
+	}
+	return nil
 }
 
 // Run starts the server in the foreground. Blocks until ctx is canceled or

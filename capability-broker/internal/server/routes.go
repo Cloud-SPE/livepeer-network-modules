@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Server) registerRoutes() {
-	// Unpaid registry endpoints — no Livepeer-* validation, no payment lifecycle.
+	// Unpaid registry endpoints — no Livepeer-* validation, no payment.
 	s.mux.HandleFunc("GET /registry/offerings", registry.OfferingsHandler(s.cfg))
 	s.mux.HandleFunc("GET /registry/health", registry.HealthHandler(s.cfg))
 	s.mux.HandleFunc("GET /healthz", registry.HealthzHandler())
@@ -22,34 +22,23 @@ func (s *Server) registerRoutes() {
 	})
 
 	// Paid mode-dispatch endpoints share a middleware chain.
-	// Order: outermost first; recover wraps everything to catch panics.
+	// Order: outermost first; Recover wraps everything to catch panics.
 	paidChain := middleware.Chain(
 		middleware.Recover,
 		middleware.RequestID,
 		middleware.Headers,
-		middleware.Payment,
+		middleware.Payment(s.payment),
 	)
 
 	// POST /v1/cap — http-reqresp / http-stream / http-multipart dispatch.
-	s.mux.Handle("POST /v1/cap", paidChain(http.HandlerFunc(s.todoModeDispatch)))
+	s.mux.Handle("POST /v1/cap", paidChain(http.HandlerFunc(s.dispatch)))
 
-	// GET /v1/cap — ws-realtime upgrade.
+	// GET /v1/cap — ws-realtime upgrade (driver lands in plan 0006).
 	s.mux.Handle("GET /v1/cap", paidChain(http.HandlerFunc(s.todoWebSocketUpgrade)))
-}
-
-// todoModeDispatch is a placeholder until internal/modes/* drivers are wired
-// (plan 0003 dispatch commit).
-func (s *Server) todoModeDispatch(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set(livepeerheader.Error, livepeerheader.ErrInternalError)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	_, _ = w.Write([]byte(`{"error":"internal_error","message":"mode dispatch not implemented in v0.1 scaffold; see plan 0003"}` + "\n"))
 }
 
 // todoWebSocketUpgrade is a placeholder until ws-realtime lands (plan 0006).
 func (s *Server) todoWebSocketUpgrade(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set(livepeerheader.Error, livepeerheader.ErrModeUnsupported)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusNotImplemented)
-	_, _ = w.Write([]byte(`{"error":"mode_unsupported","message":"ws-realtime not implemented in v0.1 scaffold; see plan 0006"}` + "\n"))
+	livepeerheader.WriteError(w, http.StatusNotImplemented, livepeerheader.ErrModeUnsupported,
+		"ws-realtime not implemented in v0.1; see plan 0006")
 }

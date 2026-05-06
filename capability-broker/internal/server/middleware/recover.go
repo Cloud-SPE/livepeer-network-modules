@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"runtime/debug"
@@ -18,13 +17,8 @@ func Recover(next http.Handler) http.Handler {
 			if rec := recover(); rec != nil {
 				log.Printf("panic in handler: %v\n%s", rec, debug.Stack())
 				// Best-effort: response may already be partially written.
-				w.Header().Set(livepeerheader.Error, livepeerheader.ErrInternalError)
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
-				_ = json.NewEncoder(w).Encode(map[string]string{
-					"error":   livepeerheader.ErrInternalError,
-					"message": "internal error",
-				})
+				livepeerheader.WriteError(w, http.StatusInternalServerError,
+					livepeerheader.ErrInternalError, "internal error")
 			}
 		}()
 		next.ServeHTTP(w, r)

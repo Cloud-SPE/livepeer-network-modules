@@ -76,11 +76,23 @@ reference broker:
 - [x] `internal/server/registry/` — offerings (manifest payload sans
   signature), health (currently-available capabilities, JSON header +
   body), healthz (process liveness).
-- [ ] `internal/modes/httpreqresp/` driver dispatches per the mode spec.
-- [ ] `internal/extractors/responsejsonpath/` computes work units.
-- [ ] `internal/payment/mock.go` validates any `Livepeer-Payment` header,
-  records debits/reconciles/closes locally for inspection, returns success.
-- [ ] `internal/backend/` HTTP forwarder + auth injection.
+- [x] `internal/modes/httpreqresp/` driver dispatches per the mode spec
+  (forward, extract, set Livepeer-Work-Units, surface backend 5xx as
+  Livepeer-Error: backend_unavailable).
+- [x] `internal/extractors/responsejsonpath/` computes work units. JSONPath
+  evaluator implements the spec's required minimum subset
+  (`$`, `.<key>`, `[<idx>]`, `[<n1>,...]`); falls back to default on
+  missing/non-numeric/negative results.
+- [x] `internal/payment/mock.go` validates any non-empty `Livepeer-Payment`
+  header, records lifecycle calls (OpenSession/Debit/Reconcile/Close) in
+  memory for test inspection.
+- [x] `internal/backend/` HTTP forwarder + Livepeer-* header stripping +
+  auth injection (env:// resolver; vault:// returns "not yet wired" error).
+- [x] Server dispatch (`internal/server/dispatch.go`) routes by
+  `(Livepeer-Capability, Livepeer-Offering)` → capability config →
+  mode driver. Distinguishes capability_not_served from offering_not_served.
+- [x] Server fail-fast at startup if any capability references an
+  unregistered mode or extractor.
 - [ ] `internal/observability/` metrics (Prometheus) + structured logging.
 - [ ] End-to-end smoke test: `docker run` the broker, send a curl to
   `/v1/cap`, get a forwarded response with `Livepeer-Work-Units` set.

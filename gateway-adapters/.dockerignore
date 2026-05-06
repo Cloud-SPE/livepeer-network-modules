@@ -1,0 +1,8 @@
+node_modules/
+dist/
+docs/
+*.md
+.git
+.gitignore
+.dockerignore
+Makefile

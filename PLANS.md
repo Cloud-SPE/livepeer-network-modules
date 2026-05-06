@@ -28,10 +28,13 @@ What does not exist yet:
 ## Active plans
 
 Numbered `docs/exec-plans/active/000N-*.md`. **None active right now** —
-plans 0001–0004, 0006, 0007, 0010, 0011, 0012 all closed. **All six
-spec modes + all six extractors are wired** in both the broker and the
-runner; conformance passes end-to-end via compose for an 11-fixture set
-(6 mode happy-paths + 5 extractor exercises).
+plans 0001–0004, 0006, 0007, 0008, 0010, 0011, 0012 all closed.
+
+**All six spec modes + all six extractors are wired** in both the broker
+and the runner; the TypeScript gateway-side middleware
+(`@tztcloud/livepeer-gateway-middleware`) covers the HTTP family with
+unit tests; conformance passes end-to-end via compose for an 11-fixture
+set (6 mode happy-paths + 5 extractor exercises).
 
 The next sequenced workstreams are queued (open one when ready):
 
@@ -41,7 +44,9 @@ The next sequenced workstreams are queued (open one when ready):
   cadence for the long-running modes (ws-realtime / rtmp / session).
 - ~~**Plan 0007**~~ — completed 2026-05-06. All five extractors
   implemented + one fixture each; 11 fixtures pass end-to-end.
-- **Plan 0008** — `gateway-adapters/` TS reference middleware.
+- ~~**Plan 0008**~~ — completed 2026-05-06. TypeScript reference
+  middleware (`@tztcloud/livepeer-gateway-middleware`) for the HTTP
+  family of modes; zero runtime deps; 10 unit tests passing in Docker.
 - **Plan 0009** — OpenAI-compat gateway migration brief execution.
 - **Plan 0011-followup** — actual RTMP ingest + FFmpeg + HLS pipeline (the
   session-open phase is done in plan 0011; the media pipeline is its own
@@ -70,7 +75,8 @@ Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/complet
 | 5d | `session-control-plus-media` mode driver — session-open phase | `capability-broker/`, `runner/` | ✅ completed (plan 0012) |
 | 5d-followup | `session-control-plus-media` control-WS + media-plane provisioning | `capability-broker/` | not started |
 | 6 | Additional extractors | `capability-broker/` | ✅ completed (plan 0007) |
-| 7 | Gateway-side per-mode adapters | `gateway-adapters/` | not started (plan 0008) |
+| 7 | Gateway-side per-mode adapters (HTTP family) | `gateway-adapters/` | ✅ completed (plan 0008) |
+| 7-followup | gateway-adapters: ws-realtime / rtmp / session-control middleware | `gateway-adapters/` | not started |
 | 8 | OpenAI-compat gateway migration | (root `docs/`) | not started (plan 0009) |
 
 Phases 1–5 are independently shippable; phase 6 is gated on at least one

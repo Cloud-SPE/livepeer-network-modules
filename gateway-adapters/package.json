@@ -1,0 +1,39 @@
+{
+  "name": "@tztcloud/livepeer-gateway-middleware",
+  "version": "0.1.0",
+  "description": "TypeScript reference middleware for the gateway-side wire protocol of the livepeer-network-protocol spec",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "README.md", "DESIGN.md"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./modes/http-reqresp": {
+      "types": "./dist/modes/http-reqresp.d.ts",
+      "import": "./dist/modes/http-reqresp.js"
+    },
+    "./modes/http-stream": {
+      "types": "./dist/modes/http-stream.d.ts",
+      "import": "./dist/modes/http-stream.js"
+    },
+    "./modes/http-multipart": {
+      "types": "./dist/modes/http-multipart.d.ts",
+      "import": "./dist/modes/http-multipart.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "test": "tsc && node --test ./dist/test/"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

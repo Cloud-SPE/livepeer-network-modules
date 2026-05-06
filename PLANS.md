@@ -27,9 +27,10 @@ Code shipping today:
 
 Design-doc batch (plans 0013, 0015–0019, plus `migration-from-suite.md`)
 landed 2026-05-06: ~4,140 lines of paper documenting the next implementation
-layer. Plan 0015 has since shipped end-to-end (4 commits, 13/13 conformance);
-the remaining plans (0013, 0016–0019) still surface 5–8 open questions each
-for the user before code can start.
+layer. Plan 0015 (4-commit interim-debit, 13/13 conformance) and plan 0017
+(5-commit warm-key, standalone without 0016) have since shipped; the
+remaining plans (0013, 0016, 0018, 0019) still surface 5–8 open questions
+each for the user before code can start.
 
 What does not exist yet:
 
@@ -41,7 +42,7 @@ What does not exist yet:
 
 ## Active plans
 
-Five numbered design docs at `docs/exec-plans/active/000N-*.md`. Each is
+Four numbered design docs at `docs/exec-plans/active/000N-*.md`. Each is
 **paper-only** — no committed code. Each surfaces 5–8 open questions the
 user must answer before implementation begins.
 
@@ -59,15 +60,8 @@ user must answer before implementation begins.
   3:1 deposit-to-pending heuristic on the sender. Wire-compat
   fixturegen as a separate Go module so go-livepeer doesn't pollute
   the daemon dep graph. **Mainnet only — no testnet step.**
-  8–10-commit cadence.
-- **Plan 0017** — `0017-warm-key-handling-design.md`. Operator-facing
-  warm-key lifecycle on top of plan 0016's plumbing: hot-wallet /
-  cold-orchestrator split (`--orch-address` semantics already pinned
-  in `payment-daemon/docs/operator-runbook.md`), V3 keystore loading
-  with eager-decrypt + password XOR + zeroing, 5-step rotation
-  runbook, sender-vs-receiver warm-key separation. **No new flags
-  beyond what plan 0014's runbook already pins.** 5-commit cadence
-  paired with plan 0016's.
+  8–10-commit cadence. The V3 keystore half landed standalone as
+  plan 0017; broker / clock / gas-price providers still stubbed.
 - **Plan 0018** — `0018-orch-coordinator-design.md`. Phase 3 from
   the roadmap. New `orch-coordinator/` component scrapes LAN broker
   `/registry/offerings`, builds candidate manifest (JCS-canonical,
@@ -93,11 +87,13 @@ Followups still open from earlier plans:
   media-plane provisioning for `session-control-plus-media`.
 
 Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) —
-plans 0001–0012 plus 0014 and 0015 are all closed; together they shipped
+plans 0001–0012, 0014, 0015, and 0017 are all closed; together they shipped
 the 6-mode broker, 6 extractors, gateway-adapters TS middleware, the
 OpenAI-compat reference gateway, the wire-compat sender + receiver
-daemons, and (plan 0015) the broker-side interim-debit cadence with
-SufficientBalance runway termination on long-running sessions.
+daemons, the broker-side interim-debit cadence with SufficientBalance
+runway termination on long-running sessions (plan 0015), and the warm-key
+lifecycle (V3 keystore loader + production-mode wiring + rotation runbook
++ no-secrets-in-logs lint, plan 0017).
 
 ## Roadmap (rough; subject to change)
 
@@ -111,7 +107,7 @@ SufficientBalance runway termination on long-running sessions.
 | 4 | Real `payment-daemon` integration | `payment-daemon/` | ✅ completed (plan 0005) |
 | 4-followup | Wire-compat envelope + sender daemon | `payment-daemon/` | ✅ completed (plan 0014) |
 | 4-chain | Chain-integrated payment-daemon (Arbitrum One) | `payment-daemon/` | 📄 design landed (plan 0016); implementation pending |
-| 4-warmkey | Warm-key lifecycle + rotation | `payment-daemon/` | 📄 design landed (plan 0017); implementation paired with 4-chain |
+| 4-warmkey | Warm-key lifecycle + rotation | `payment-daemon/` | ✅ completed (plan 0017) — V3 keystore active in production mode; broker / clock / gas-price still dev-mode pending 4-chain |
 | 4-interim | Interim-debit cadence on long-running modes | `capability-broker/` | ✅ completed (plan 0015) |
 | 5a | HTTP-family mode drivers (`http-stream`, `http-multipart`) | `capability-broker/`, `runner/` | ✅ completed (plan 0006) |
 | 5b | `ws-realtime` mode driver | `capability-broker/`, `runner/` | ✅ completed (plan 0010) |

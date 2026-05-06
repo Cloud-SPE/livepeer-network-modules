@@ -261,6 +261,66 @@ Setup checklist:
 4. The hot key's exposure ceiling is now the deposit/reserve
    replenishment cycle, not the entire orchestrator balance.
 
+### Single-wallet vs hot/cold split — what the daemon logs
+
+When the V3 keystore is loaded (production mode, `--chain-rpc` set)
+the daemon logs one of two startup lines:
+
+- `WARN single-wallet config — hot signer is also the on-chain
+  orchestrator identity. OK for dev, dangerous for prod.` — fires when
+  `--orch-address` is empty (recipient defaults to the keystore
+  address) or explicitly equals it. **The daemon does not block
+  startup on this** (locked in plan 0017 §11.5): solo-operator
+  single-wallet setups are legitimate; the WARN exists to make a
+  misconfigured hot/cold split visible.
+- `INFO hot/cold split active signer=0x… orch_address=0x…` — fires
+  when the addresses differ. This is the production-shaped state.
+
+A malformed `--orch-address` (not 40 hex chars) is treated as the
+single-wallet case so the WARN still fires; the daemon does not
+hard-block. Operators should fix the flag so the INFO line appears
+instead.
+
+### 5.1 Hot-key rotation runbook (5 steps, on-call card)
+
+Source: plan 0017 §6.5. The daemon does not orchestrate rotation —
+rotation is off-host, operator-driven; the daemon makes it safe by
+being restart-tolerant. Every record in the BoltDB session ledger and
+(post-0016) the redemption queue is keystore-agnostic, so a rotation
+does not lose state.
+
+1. **Generate a new V3 keystore on the host.** Put the password in
+   the secret store under a new key. Example:
+   `geth account new --keystore /etc/livepeer/keystore.next/`.
+2. **From the cold wallet, call
+   `BondingManager.setSigningAddress(NEW_HOT_ADDRESS)`.** The
+   protocol will now accept redemption txs from the new hot key.
+   `setSigningAddress` replaces the previously-authorized signer; if
+   you want a brief dual-running window, see plan 0017 §6.1.
+3. **Update the password source and `--keystore-path`.** Either set
+   `LIVEPEER_KEYSTORE_PASSWORD` to the new password, or update
+   `--keystore-password-file` to a file containing it. Both set is an
+   error.
+4. **Restart the daemon.** Brief unavailability (seconds) on socket
+   restart; senders see transient `connection refused`; receivers
+   lose nothing — the redemption queue is durable in BoltDB. Verify
+   the startup log shows the new `address_hex` on the
+   `keystore unlocked` and `receiver identity` / `sender identity`
+   lines.
+5. **Wait for `setSigningAddress` confirmations; delete the old
+   keystore file from the host.** Best practice: physically remove
+   the old V3 JSON once revocation lands on chain so a filesystem
+   compromise after rotation can't recover it.
+
+In-flight tickets keep working across the rotation:
+
+- **Sender side:** signed tickets are already in the recipient's
+  hands; they remain valid because the cold-orch identity (the
+  ticket's `Recipient`) hasn't changed.
+- **Receiver side:** queue items were signed by *senders*, not by us.
+  Our hot key signs the redemption tx itself; the new hot key signs
+  new redemption txs after restart.
+
 ---
 
 ## 6. Ticket-params lifecycle

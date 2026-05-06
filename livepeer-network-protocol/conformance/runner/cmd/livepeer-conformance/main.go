@@ -19,6 +19,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/envelope"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpmultipart"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpreqresp"
@@ -48,6 +49,7 @@ func main() {
 		modesFlag    = flag.String("modes", "", "comma-separated mode filter (default: all)")
 		fixturesPath = flag.String("fixtures", "/fixtures", "path to fixtures folder")
 		mockAddr     = flag.String("mock-addr", ":9000", "address the in-process mock backend binds")
+		payerSocket  = flag.String("payer-socket", "/var/run/livepeer/payer-daemon.sock", "unix socket of the payer-daemon (sender mode)")
 		showVersion  = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -80,6 +82,13 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// Dial the payer-daemon. Drivers call envelope.SubstituteHeaders
+	// per fixture, which uses this connection to mint Payment envelopes.
+	if err := envelope.Init(ctx, *payerSocket); err != nil {
+		log.Fatalf("payer-daemon init: %v", err)
+	}
+	defer envelope.Shutdown()
 
 	r, err := runner.Run(ctx, runner.Config{
 		Target:       *target,

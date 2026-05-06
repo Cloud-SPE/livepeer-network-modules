@@ -1,93 +1,145 @@
-// Package envelope produces base64-encoded Livepeer-Payment envelopes for
-// the conformance runner. Each driver calls Build with the fixture's
-// capability/offering before sending the request and uses the returned
-// string as the value of the Livepeer-Payment header.
+// Package envelope mints `Livepeer-Payment` header values for runner
+// fixtures by delegating to the local `payer-daemon` over gRPC.
 //
-// v0.1: ticket bytes are the literal string "conformance-runner-stub".
-// Real probabilistic-micropayment ticket payloads come with the chain-
-// integration follow-up.
+// v0.2 architectural shift: the runner no longer hand-rolls Payment
+// proto bytes. Instead it dials a sender-mode payment-daemon co-located
+// in the conformance compose stack and calls
+// `PayerDaemon.CreatePayment(face_value, recipient, capability,
+// offering)`. The daemon returns the wire-format Payment bytes; this
+// package base64-encodes them for the HTTP header.
+//
+// The daemon dependency makes the runner the FIRST end-to-end
+// integration of the new wire-compat sender path. The OpenAI-compat
+// gateway is the second (plan 0014 C7).
 package envelope
 
 import (
+	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
-	"google.golang.org/protobuf/proto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 )
 
-// stubTicket is the placeholder ticket payload used by the runner. The
-// daemon accepts any non-empty value in v0.1.
-var stubTicket = []byte("conformance-runner-stub")
+const (
+	// DefaultRecipient is the 20-byte recipient address the runner
+	// uses when minting envelopes. Stable across runs so the daemon
+	// can dedupe sessions.
+	defaultRecipientHex = "1234567890abcdef1234567890abcdef12345678"
 
-// DefaultExpectedMaxUnits is the runner's chosen ceiling. Most fixtures
-// debit much less than this; reconciliation handles the difference.
-const DefaultExpectedMaxUnits uint64 = 1_000
+	// defaultFaceValue is the runner's chosen target spend per
+	// request, in wei. The receiver may return a larger
+	// `TicketParams.face_value` plus a lower `win_prob` per the
+	// quote-free flow; the runner doesn't care.
+	defaultFaceValue uint64 = 1000
+)
 
-// Build returns a base64-encoded Payment envelope for the given
-// capability+offering pair, with `expected_max_units` defaulting to
-// DefaultExpectedMaxUnits.
-func Build(capability, offering string) (string, error) {
-	return BuildWithMax(capability, offering, DefaultExpectedMaxUnits)
-}
+// client + setup mutex for the package-level singleton. The runner
+// initializes once at startup via Init.
+var (
+	mu     sync.Mutex
+	client pb.PayerDaemonClient
+	conn   *grpc.ClientConn
+)
 
-// BuildWithMax is Build with an explicit expected_max_units.
-func BuildWithMax(capability, offering string, expectedMaxUnits uint64) (string, error) {
-	if capability == "" {
-		return "", fmt.Errorf("capability is empty")
+// Init dials the payer-daemon at socketPath, Health-probes it, and
+// stores a package-level client used by SubstituteHeaders. Idempotent
+// — calling more than once is fine.
+func Init(ctx context.Context, socketPath string) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if client != nil {
+		return nil
 	}
-	if offering == "" {
-		return "", fmt.Errorf("offering is empty")
-	}
-	if expectedMaxUnits == 0 {
-		return "", fmt.Errorf("expectedMaxUnits must be > 0")
-	}
-	pay := &pb.Payment{
-		CapabilityId:     capability,
-		OfferingId:       offering,
-		ExpectedMaxUnits: expectedMaxUnits,
-		Ticket:           stubTicket,
-	}
-	raw, err := proto.Marshal(pay)
+	c, err := grpc.NewClient("unix://"+socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return "", fmt.Errorf("marshal payment proto: %w", err)
+		return fmt.Errorf("dial payer-daemon at %s: %w", socketPath, err)
 	}
-	return base64.StdEncoding.EncodeToString(raw), nil
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	pc := pb.NewPayerDaemonClient(c)
+	if _, err := pc.Health(probeCtx, &pb.HealthRequest{}); err != nil {
+		_ = c.Close()
+		return fmt.Errorf("payer-daemon health probe at %s: %w", socketPath, err)
+	}
+	conn = c
+	client = pc
+	return nil
 }
 
-// SubstituteHeaders returns a new headers map with `<runner-generated-payment-blob>`
-// replaced by a real base64-encoded Payment envelope built from the
-// `Livepeer-Capability` / `Livepeer-Offering` header values in the same map.
+// Shutdown closes the gRPC connection. Optional; the OS reaps it on
+// process exit.
+func Shutdown() {
+	mu.Lock()
+	defer mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
+		conn = nil
+		client = nil
+	}
+}
+
+// SubstituteHeaders walks the fixture's request headers, replaces the
+// `<runner-generated-payment-blob>` placeholder on `Livepeer-Payment`
+// with a freshly-minted base64 envelope from the payer-daemon, and
+// returns the modified map. Other headers pass through unchanged.
 //
-// If neither header is present (e.g. a fixture exercising rejection paths),
-// a placeholder header value is left as-is and not replaced.
+// If neither `Livepeer-Capability` nor `Livepeer-Offering` is set in
+// the headers map (e.g., a fixture exercising rejection paths), the
+// placeholder is left untouched.
 func SubstituteHeaders(headers map[string]string) (map[string]string, error) {
 	out := make(map[string]string, len(headers))
 	for k, v := range headers {
 		out[k] = v
 	}
 	const placeholder = "<runner-generated-payment-blob>"
-	const livepeerCapability = "Livepeer-Capability"
-	const livepeerOffering = "Livepeer-Offering"
 	const livepeerPayment = "Livepeer-Payment"
 
 	if out[livepeerPayment] != placeholder {
 		return out, nil
 	}
-	cap := lookupCanonical(out, livepeerCapability)
-	off := lookupCanonical(out, livepeerOffering)
+	cap := lookupCanonical(out, "Livepeer-Capability")
+	off := lookupCanonical(out, "Livepeer-Offering")
 	if cap == "" || off == "" {
 		// Leave the placeholder; the fixture is exercising rejection.
 		return out, nil
 	}
-	env, err := Build(cap, off)
+	envelope, err := mintEnvelope(cap, off)
 	if err != nil {
 		return nil, err
 	}
-	out[livepeerPayment] = env
+	out[livepeerPayment] = envelope
 	return out, nil
+}
+
+func mintEnvelope(capability, offering string) (string, error) {
+	mu.Lock()
+	c := client
+	mu.Unlock()
+	if c == nil {
+		return "", errors.New("envelope: payer-daemon client not initialized; call Init() at startup")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := c.CreatePayment(ctx, &pb.CreatePaymentRequest{
+		FaceValue:  uint64Bytes(defaultFaceValue),
+		Recipient:  hexBytes(defaultRecipientHex),
+		Capability: capability,
+		Offering:   offering,
+	})
+	if err != nil {
+		return "", fmt.Errorf("payer-daemon CreatePayment: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(resp.GetPaymentBytes()), nil
 }
 
 func lookupCanonical(m map[string]string, key string) string {
@@ -100,4 +152,38 @@ func lookupCanonical(m map[string]string, key string) string {
 		}
 	}
 	return ""
+}
+
+func uint64Bytes(n uint64) []byte {
+	if n == 0 {
+		return nil
+	}
+	out := make([]byte, 0, 8)
+	for n > 0 {
+		out = append([]byte{byte(n & 0xff)}, out...)
+		n >>= 8
+	}
+	return out
+}
+
+func hexBytes(s string) []byte {
+	out := make([]byte, len(s)/2)
+	for i := 0; i < len(out); i++ {
+		hi := hexNibble(s[2*i])
+		lo := hexNibble(s[2*i+1])
+		out[i] = (hi << 4) | lo
+	}
+	return out
+}
+
+func hexNibble(b byte) byte {
+	switch {
+	case b >= '0' && b <= '9':
+		return b - '0'
+	case b >= 'a' && b <= 'f':
+		return b - 'a' + 10
+	case b >= 'A' && b <= 'F':
+		return b - 'A' + 10
+	}
+	return 0
 }

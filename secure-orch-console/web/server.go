@@ -2,20 +2,21 @@
 // 127.0.0.1 only — never a routable interface. Operators reach it
 // via ssh -L from a LAN laptop.
 //
-// This file stubs the route surface; the candidate-upload form,
-// diff renderer, and tap-to-sign confirm gesture land in the next
-// commit.
+// The server hosts the candidate-upload form, renders the structural
+// diff against last-signed.json, runs the tap-to-sign confirm gesture,
+// and returns the signed envelope as a download attachment. There is
+// no inbox / outbox spool — manifest transport is HTTP-only.
 package web
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/audit"
@@ -28,13 +29,26 @@ import (
 // handlers need. Server only ever binds a loopback address; the
 // constructor enforces this.
 type Server struct {
-	cfg      config.Config
-	signer   signing.Signer
-	audit    *audit.Log
-	logger   *slog.Logger
-	mux      *http.ServeMux
-	listener net.Listener
-	httpSrv  *http.Server
+	cfg          config.Config
+	signer       signing.Signer
+	audit        *audit.Log
+	logger       *slog.Logger
+	mux          *http.ServeMux
+	listener     net.Listener
+	httpSrv      *http.Server
+	maxUpload    int64
+	templates    *templateSet
+	staticAssets http.Handler
+
+	mu        sync.Mutex
+	candidate *stashedCandidate
+}
+
+type stashedCandidate struct {
+	bytes      []byte
+	loadedAt   time.Time
+	canonHash  string
+	sourceName string
 }
 
 // New builds a Server. The listen address is validated against the
@@ -52,12 +66,19 @@ func New(cfg config.Config, signer signing.Signer, log *audit.Log, logger *slog.
 	if logger == nil {
 		logger = slog.Default()
 	}
+	tmpls, err := loadTemplates()
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{
-		cfg:    cfg,
-		signer: signer,
-		audit:  log,
-		logger: logger,
-		mux:    http.NewServeMux(),
+		cfg:          cfg,
+		signer:       signer,
+		audit:        log,
+		logger:       logger,
+		mux:          http.NewServeMux(),
+		maxUpload:    8 << 20,
+		templates:    tmpls,
+		staticAssets: staticHandler(),
 	}
 	s.routes()
 	return s, nil
@@ -115,33 +136,11 @@ func (s *Server) Addr() string {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("POST /candidate", s.handleCandidate)
+	s.mux.HandleFunc("POST /discard", s.handleDiscard)
 	s.mux.HandleFunc("POST /sign", s.handleSign)
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
+	s.mux.Handle("GET /static/", http.StripPrefix("/static/", s.staticAssets))
 	s.mux.HandleFunc("/", http.NotFound)
-}
-
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"signer_address":   s.signer.Address().String(),
-		"last_signed_path": s.cfg.LastSignedPath,
-		"note":             "stub response; web UI lands in the next commit",
-	})
-}
-
-func (s *Server) handleCandidate(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "candidate upload is stubbed; lands in the next commit", http.StatusNotImplemented)
-}
-
-func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
-	if appendErr := s.audit.Append(audit.Event{
-		Kind:       audit.KindAbort,
-		EthAddress: s.signer.Address().String(),
-		Note:       "POST /sign called before web UI ships",
-	}); appendErr != nil {
-		s.logger.Warn("audit append failed", "err", appendErr)
-	}
-	http.Error(w, "sign endpoint is stubbed; lands in the next commit", http.StatusNotImplemented)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

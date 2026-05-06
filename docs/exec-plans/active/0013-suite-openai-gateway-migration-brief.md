@@ -3,6 +3,7 @@
 **Status:** active (paper exercise; design only)
 **Opened:** 2026-05-06
 **Revised:** 2026-05-06 (collapse + rename revision)
+**Revised:** 2026-05-06 (Q1/Q2/Q3/Q4 locked)
 **Owner:** initial author + assistant
 **Type:** option B spinoff from completed plan 0009. Pure design doc; no
 code changes in this monorepo, **no changes to the suite**.
@@ -68,7 +69,7 @@ one component, ~600 LOC (`openai-gateway/src/livepeer/payment.ts:64`,
 migration is the moment to unwind it — moving to the rewrite's wire
 spec and packaging shape together costs little extra. The `-core`
 suffix on the engine makes the shell sound canonical when it's the
-wrapper; both names retire here. §3.5 has two options.
+wrapper; both names retire here. §3.5 locks the chosen shape.
 
 ## 2. Current behavior summary
 
@@ -226,29 +227,26 @@ collapses three suite components — `quoteRefresher`, `quoteCache`,
 `serviceRegistry.listKnown` — and reduces `selectNode` to "use the
 configured broker URL for this orch identity".
 
-### 3.5 Packaging shape: one OSS package, optional separate SaaS repo
+### 3.5 Packaging shape: one OSS package + separate SaaS repo
 
-The target is **one OSS package + (optionally) one separate SaaS
-layer in a separate repo**, NOT two packages in one repo. Two options:
+**DECIDED: Option A — collapse + separate SaaS repo.** One package,
+`openai-gateway/` (OSS, protocol-only — mirrors the rewrite's
+reference impl shape). Cloud-SPE billing / customers / Stripe /
+admin-SPA layers **move to a separate internal repo** with a
+role-descriptive name like `cloudspe-openai-billing/` or
+`tzt-openai-shell/`. Different release cadences, audiences,
+perimeters. Trade-off: stands up a new repo + relocates shell history
+against the extracted `Wallet` / `AuthResolver` / `RateLimiter`
+boundary.
 
-**Option A — Collapse (preferred).** One package, `openai-gateway/`
-(OSS, protocol-only — mirrors the rewrite's reference impl shape).
-Cloud-SPE billing / customers / Stripe / admin-SPA layers **move to
-a separate internal repo** with a role-descriptive name like
-`cloudspe-openai-billing/` or `tzt-openai-shell/`. Different release
-cadences, audiences, perimeters. Trade-off: stands up a new repo +
-relocates shell history against the extracted `Wallet` /
-`AuthResolver` / `RateLimiter` boundary.
+(Historical context: an in-monorepo alternative — engine + shell
+rename to `openai-gateway-engine/` and `openai-gateway-saas/` — was
+considered and rejected because it kept the lockstep / dual-CI /
+npm-publish taxes inherent to a two-package layout.)
 
-**Option B — Engine + shell rename (fallback).** Same monorepo, two
-packages, role-descriptive names: `openai-gateway-engine/` (was
-`-core`) + `openai-gateway-saas/` (was `livepeer-openai-gateway`).
-Smaller revision; doesn't fix the lockstep / dual-CI / npm-publish
-taxes inherent to two-package layout.
-
-Both retire the `-core` suffix and the bare `livepeer-openai-gateway`
-name. Phase-4 acceptance (§6) requires *at minimum* that no `-core`
-survives in package metadata, repo names, or import paths.
+Phase 4 acceptance: no `-core` suffix anywhere; bare
+`livepeer-openai-gateway` name retired; the new SaaS repo's location
+is internally announced.
 
 ## 4. Delta — what would change
 
@@ -333,7 +331,7 @@ identifying headers: `content-type` and `livepeer-payment` (e.g.
 | `service-registry-daemon` URL + auth (`config/serviceRegistry.ts`) | **Removed.** No registry on the gateway. Daemon resolves recipients itself. |
 | `quote_refresh_seconds`, `quote_ttl_seconds` (`config/routing.ts`) | **Removed.** Quote-free flow. |
 | `payerDaemon.socketPath`, `payerDaemon.callTimeoutMs`, `payerDaemon.healthIntervalMs` (`config/payerDaemon.ts`) | **Kept.** Same semantics. Reference uses `LIVEPEER_PAYER_DAEMON_SOCKET` (`openai-gateway/compose.yaml:129`). |
-| `bridgeEthAddress` (gateway-local sender identity passed to `quoteRefresher` and `selectNode`) | **Kept** but moves into the daemon's config (the daemon owns the keystore; the gateway no longer needs to emit a sender address at the application boundary). |
+| `bridgeEthAddress` (gateway-local sender identity passed to `quoteRefresher` and `selectNode`) | **Renamed.** Identity moves into the daemon's keystore config (the daemon owns the keystore; the gateway no longer emits a sender address at the application boundary). Suite-side field name `bridgeEthAddress` is retired by phase 4. |
 | **New:** `LIVEPEER_BROKER_URL` | The orch's broker endpoint. Single value per orch identity. Reference uses this name (`openai-gateway/compose.yaml:128`). |
 | **New:** spec-version + default offering convention | Per-capability defaults; managed by whatever survives of the suite's shell layer (post-collapse: the SaaS repo or the `-saas` package; see §3.5). |
 | `nodeCallTimeoutMs` | **Renamed** to `brokerCallTimeoutMs`. Same numeric value. |
@@ -400,10 +398,11 @@ the customer reply. **Implementation discipline; not a spec blocker.**
 Suite returns `ReadableStream<Uint8Array>` with audio content-type
 (`fetch.ts:151-173`). Wire spec's `http-stream@v0` is SSE-shaped
 (`Accept: text/event-stream`, `http-stream.ts:35`). **Real spec gap.**
-Resolutions: (a) a new `http-binary-stream@v0` mode, or (b) piggyback
-on `http-reqresp@v0` with binary content-type at the cost of
-buffering full audio in the gateway. Both want a separate plan; out
-of scope here.
+**DECIDED:** option (a) — a new `http-binary-stream@v0` mode is the
+right answer; tracked as a separate spec-level plan. **For this
+brief**: until that followup ships, the suite-side gateway returns
+`503 + Livepeer-Error: mode_unsupported` for `/v1/audio/speech`. No
+buffered-via-`http-reqresp@v0` workaround.
 
 ### 5.5 Images endpoint — minor
 
@@ -414,22 +413,20 @@ covers neither. JSON (URLs) and base64-inline both fit
 ### 5.6 `x-livepeer-audio-duration-seconds` is unspecified
 
 Read at `fetch.ts:200`, declared at `types/transcriptions.ts:11`. Not
-in `headers/livepeer-headers.md`. **Recommendation:** fold into
-`Livepeer-Work-Units` (`livepeerheader/headers.go:27`); duration *is*
+in `headers/livepeer-headers.md`. **DECIDED:** fold into
+`Livepeer-Work-Units` (`livepeerheader/headers.go:27`); duration is
 the work unit for transcription. Update the matching extractor in
-`livepeer-network-protocol/extractors/`. Action item, not blocker.
+`livepeer-network-protocol/extractors/`; retire the
+`x-livepeer-audio-duration-seconds` custom header. Action item for
+the spec subfolder, not a phase-gating blocker.
 
 ### 5.7 Public-surface deprecation: `@cloudspe/livepeer-openai-gateway-core@4.0.1`
 
-The engine is published to npm. Even if practical consumer count is
-one (the suite shell), retiring the name warrants a concrete heads-up:
-audit npm download stats and the `cloudspe` org; publish a final
-`4.0.x` tagged `deprecated` with a README pointing at the new name +
-the upstream rewrite; lock down the old name on npm. Option A also
-needs an internal announcement of the SaaS repo's location; option B
-needs both new package names announced and old metadata stubbed.
-Coordination concern, not a technical blocker — but must land before
-phase 4 ships.
+**DECIDED:** package has no known external consumers; will be
+`npm unpublish`-ed (or `npm deprecate`-marked, whichever the registry
+permits at phase 4 time) outright. No final `4.0.x` tagged-deprecated
+release, no migration README, no consumer audit. Coordination concern
+only — not a technical blocker.
 
 ## 6. Sequencing recommendation
 
@@ -476,26 +473,25 @@ re-read. **Diff:** ~800 LOC across ~10 files. **Elapsed:** 2-3 days.
 Dispatchers lose `selectNode` + `quoteCache.get`; `node.url` becomes
 a single config-resolved broker URL.
 
-**Packaging cut.** Per §3.5, pick option A or B before opening this
-phase; choice changes file-move shape, not wire work. For A, the
-`Wallet` / `AuthResolver` / `RateLimiter` boundary at
-`src/interfaces/index.ts` is what the new SaaS repo imports against;
-it gets re-homed, not broken.
+**Packaging cut.** Per §3.5 (option A locked), the `Wallet` /
+`AuthResolver` / `RateLimiter` boundary at `src/interfaces/index.ts`
+is what the new SaaS repo imports against; it gets re-homed, not
+broken.
 
 **Acceptance:** (1) smoke against rewrite's `capability-broker` +
 receiver-mode `payment-daemon` + mock backend (mirror
 `openai-gateway/compose.yaml`); six endpoints, full lifecycle incl.
 refunds. (2) **No `-core` suffix anywhere** — metadata, repo names,
-import paths. Option A: single OSS package, role-descriptive name.
-Option B: two packages, both renamed. (3) §5.7 deprecation
-announcement out before phase-4 PR merges.
+import paths; new role-descriptive single OSS package; SaaS repo
+location announced internally. (3) §5.7: package unpublished (or
+`npm deprecate`-marked) as part of phase 4.
 
 **Risk:** highest. Mitigation: file moves in a separate commit from
 logic changes. **Diff:** -2,200/-2,300 LOC removed, +600 added — more
 negative than originally estimated because cross-package plumbing
 (~200-300 LOC of re-export shims, npm-publish workflow files,
-`package.json` duplication) also goes. **Elapsed:** 4-6 days (A
-upper end, B lower).
+`package.json` duplication) also goes. **Elapsed:** 4-6 days;
+separate-repo logistics drive the upper end.
 
 ### Phase 5 — Pass-through verification + speech plan
 
@@ -516,20 +512,24 @@ caveat) or returns 503 + `Livepeer-Error: mode_unsupported`.
 | 1 | 0 (gateway side) | 0 | (depends on suite daemon repo) | none for gateway |
 | 2 | +200 to +300 | 6-8 | 1 day | very low — header-only, backward-compatible |
 | 3 | +400, -400 (~ ±800) | 10-12 | 2-3 days | moderate — daemon RPC shape; gated by phase 1 |
-| 4 | -2,200/-2,300 (A) or -2,000/-2,100 (B); +600 | 30-40 | 4-6 days | highest — structural cut + packaging collapse |
+| 4 | -2,200/-2,300; +600 | 30-40 | 4-6 days | highest — structural cut + packaging collapse |
 | 5 | +50 to +200 | 2-4 | 1-2 days | low (SSE) / medium (speech) |
-| **Total** | ~ -1,500 to -1,800 net (A) / -1,200 to -1,500 (B) | 45-60 | **8-14 working days** | dominated by phase 4 |
+| **Total** | ~ -1,500 to -1,800 net | 45-60 | **8-14 working days** | dominated by phase 4 |
 
 The headline is phase 4's net negative — the migration **simplifies**
 the gateway because the registry/quote machinery is gone *and* the
 cross-package plumbing between engine and shell goes away. Most work
 is moving billing logic from "gateway computes from quote" to "daemon
 computes; gateway reads back"; the rest is file relocation under the
-chosen packaging option. Phase 4 is the bottleneck; option A's
-separate-repo logistics push the upper end out by ~1-2 days vs B.
+chosen packaging option. Phase 4 is the bottleneck; the
+separate-repo logistics push the upper end out by ~1-2 days vs the
+in-monorepo alternative considered and rejected (§3.5).
 
 ## 8. Out of scope
 
+- **`http-binary-stream@v0` mode definition** — a separate spec-level
+  plan owns this; until it ships, `/v1/audio/speech` returns 503 in
+  the suite-side gateway (Q4 lock, §5.4).
 - **`openai-worker-node`** — the orchestrator-side process the suite
   ships. The migration target is to retire it in favour of
   `capability-broker` + the orch's `host-config.yaml` backend pointers.
@@ -539,10 +539,8 @@ separate-repo logistics push the upper end out by ~1-2 days vs B.
 - **Suite shell internals** — `livepeer-openai-gateway/` (Stripe +
   customers + ledger + admin SPAs) is **relocated, not rewritten**,
   by phase 4. The `Wallet` / `AuthResolver` / `RateLimiter`
-  interfaces hide the wire from the shell whether it ends up in a
-  separate repo (option A) or a renamed sibling package (option B).
-- **`Livepeer-Audio-Duration-Seconds` standardization** — spec-level
-  followup, not this brief.
+  interfaces hide the wire from the shell across the move into the
+  separate SaaS repo (§3.5).
 - **`/v1/audio/speech` mode definition** — needs `http-binary-stream@v0`
   or equivalent; separate spec-level plan.
 - **Image endpoint reference impl** — rewrite's `openai-gateway/`
@@ -553,15 +551,12 @@ separate-repo logistics push the upper end out by ~1-2 days vs B.
   as-is.
 - **Cutover plan + customer comms** — paper exercise. Production
   cutover (parallel-run, draining, etc.) is its own runbook.
-- **Choice between option A and option B (§3.5)** — user's, before
-  phase 4 opens.
 
 ## 9. Notes
 
 Suite paths cited with the `livepeer-openai-gateway-core/` prefix
 reflect **the suite's current layout**. Post-phase-4 those files live
-under the chosen §3.5 name (`openai-gateway/src/...` for option A,
-`openai-gateway-engine/src/...` for option B); citations are not
-retro-rewritten because that would obscure what the migration is
-moving *from*. The reference gateway (`openai-gateway/`) is the
-target shape — single package, protocol-only, ~600 LOC.
+under the new single OSS package name per §3.5 (`openai-gateway/src/...`);
+citations are not retro-rewritten because that would obscure what the
+migration is moving *from*. The reference gateway (`openai-gateway/`)
+is the target shape — single package, protocol-only, ~600 LOC.

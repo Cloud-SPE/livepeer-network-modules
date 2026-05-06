@@ -10,7 +10,7 @@ VERSION := $(shell cat ../livepeer-network-protocol/VERSION 2>/dev/null || echo 
 PROTO_SRC := ../livepeer-network-protocol/proto
 PROTO_OUT := internal/proto
 
-.PHONY: build run dev test proto publish clean help
+.PHONY: build run dev test lint proto publish clean help
 
 build: ## Build dev image locally
 	docker build \
@@ -35,12 +35,19 @@ run: ## Run the daemon locally; sock + db live under ./run/
 
 dev: build run ## Build + run in one shot
 
-test: ## Run go test ./... inside the test stage
+test: ## Run go test ./... inside the test stage (includes the no-secrets-in-logs lint via TestRunPaymentDaemonTreeIsClean)
 	docker build \
 		--target test \
 		-t $(IMAGE):$(TAG)-test \
 		-f Dockerfile \
 		..
+
+lint: ## Run the no-secrets-in-logs lint program against the payment-daemon tree (covered by `make test`; this target is for ad-hoc invocation)
+	docker run --rm \
+		-v $(PWD)/..:/src \
+		-w /src/payment-daemon \
+		golang:1.25-alpine \
+		sh -c 'apk add --no-cache git >/dev/null 2>&1 && go run ./lint/no-secrets-in-logs --root .'
 
 proto: ## Regenerate Go bindings from the proto sources (requires protoc on host)
 	protoc \

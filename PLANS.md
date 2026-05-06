@@ -45,8 +45,11 @@ before code can start.
 
 What does not exist yet:
 
-- `orch-coordinator/` and `secure-orch-console/` components (designs in
-  plans 0018 + 0019; no code).
+- `orch-coordinator/` component (design landed in plan 0018; no code).
+- `secure-orch-console/` is partially shipped — canonical/signing
+  primitives, console binary scaffold (loopback-bound), audit log,
+  keygen helper. **Pending:** web UI handlers, plan close, removal of
+  inbox/outbox/yubihsm-doc carryover from the pre-scope-cut branch.
 - Any change to the existing `livepeer-network-suite`.
 - Live-mainnet smoke gate for the chain-integrated payment-daemon
   (plan 0016 acceptance #3) — funded mainnet wallet + user's preferred
@@ -69,14 +72,22 @@ user must answer before implementation begins.
   `/registry/offerings`, builds candidate manifest (JCS-canonical,
   idempotent), hosts signed manifest at
   `/.well-known/livepeer-registry.json`, exposes capability-as-roster
-  UX (CLI + JSON API for v0.1; SPA deferred). 4–6-commit cadence.
-- **Plan 0019** — `0019-secure-orch-trust-spine-design.md`. The
-  cold-key host + diff-and-sign console + air-gap workflow.
-  YubiHSM 2 recommended (USB, PKCS#11, secp256k1 native); Ledger
-  blocked on app availability; V3 keystore as `--insecure-software-keystore`
-  staging fallback. Tauri + CLI dual UI. New `publication_seq`
-  field added to manifest schema (pre-1.0.0 minor bump) for
-  rollback protection inside the validity window. 7-commit cadence.
+  UX via embedded web UI on the LAN. v0.1 locks (2026-05-06): web UI
+  primary (CLI deferred-or-never); HTTP POST upload only (no
+  filesystem-drop / inotify); two on-chain registries (`ServiceRegistry`
+  + `AIServiceRegistry`) consolidate to one well-known path with
+  unified manifest. 7-commit cadence (commit 0 = manifest README +
+  architecture-overview doc cleanup for the two-registry consolidation).
+- **Plan 0019** — `0019-secure-orch-trust-spine-design.md`.
+  Implementation **in progress** — 4 of 6 commits cherry-picked onto
+  master from a prior in-flight branch (manifest `publication_seq`
+  bump, canonical/signing primitives, `livepeer-network-protocol/verify`
+  package, console binary scaffold with `127.0.0.1`-only loopback gate).
+  v0.1 scope locked 2026-05-06: **V3 keystore only** (no YubiHSM,
+  no Ledger, no PKCS#11), **HTTP-only manifest transport** via the
+  localhost web UI accessed over `ssh -L` (no USB, no filesystem
+  watcher, no inbox/outbox spool). Continuation: web UI handlers +
+  audit-log rotation + plan close.
 
 Each plan's open-question list is the gate to implementation work.
 

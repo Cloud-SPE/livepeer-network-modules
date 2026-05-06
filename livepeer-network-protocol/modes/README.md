@@ -2,14 +2,15 @@
 
 One spec per interaction mode. The initial six (resolution of plan 0002):
 
-- `http-reqresp.md` — one HTTP req → one HTTP resp.
-- `http-stream.md` — request → SSE / chunked-response stream.
-- `http-multipart.md` — multipart upload → JSON or binary response.
-- `ws-realtime.md` — bidirectional WebSocket.
-- `rtmp-ingress-hls-egress.md` — RTMP in → HLS manifest+segments out.
-- `session-control-plus-media.md` — HTTP session-open → long-lived media plane.
+- [`http-reqresp.md`](./http-reqresp.md) — one HTTP req → one HTTP resp. **Drafted 2026-05-06; pending review.**
+- `http-stream.md` — request → SSE / chunked-response stream. *(stub)*
+- `http-multipart.md` — multipart upload → JSON or binary response. *(stub)*
+- `ws-realtime.md` — bidirectional WebSocket. *(stub)*
+- `rtmp-ingress-hls-egress.md` — RTMP in → HLS manifest+segments out. *(stub)*
+- `session-control-plus-media.md` — HTTP session-open → long-lived media plane. *(stub)*
 
-**Status:** specs TBD per [plan 0002](../../docs/exec-plans/active/0002-define-interaction-modes-spec.md).
+**Status:** `http-reqresp` drafted as the template; remaining five modes follow once
+the template shape is approved.
 
 Each mode has its own SemVer (per Q2 hybrid SemVer). Mode files declare their version
 in YAML frontmatter.

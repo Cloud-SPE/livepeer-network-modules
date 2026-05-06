@@ -57,9 +57,11 @@ operator-driven, cold-key-signed manifest publication cycle.
 
 1. Read a single `host-config.yaml`.
 2. Expose `GET /registry/offerings`, `GET /registry/health`, `GET /healthz`,
-   `GET /metrics`.
-3. Route inbound requests by `capability_id` → look up the **backend descriptor** →
-   wrap in the declared **interaction mode** → forward → return the response.
+   `GET /metrics`, plus one canonical path per mode (e.g. `POST /v1/cap` for
+   `http-reqresp` — see [`../../livepeer-network-protocol/modes/`](../../livepeer-network-protocol/modes/)).
+3. Route inbound requests by **`Livepeer-Capability` header** → look up the
+   **backend descriptor** → wrap in the declared **interaction mode** → forward →
+   return the response.
 4. Report `actualUnits` to co-located `payment-daemon` (receiver) over unix socket — same
    socket regardless of capability.
 5. Optionally aggregate `/registry/offerings` from peer brokers on the LAN.

@@ -433,52 +433,46 @@ If operator pressure later demands a `BondingManager.getTranscoder`
 preflight, that is a separate `--orch-preflight` flag in a future
 plan, not 0017. Keep 0017 minimal.
 
-## 11. Risks and open questions for the user
+## 11. Resolved decisions
 
-These need user input before 0017 commits land.
+All six open questions were resolved on 2026-05-06. The implementing
+agent works against these locks; rationale captured for future readers.
 
-1. **Companion CLI for rotation?** Should we ship `livepeer-key-rotate`
-   that automates §6.5 (generate keystore, call `setSigningAddress`,
-   swap files), or keep rotation purely manual? *Recommend: manual.*
-   The five-step runbook is short; an automated rotator would itself
-   need cold-key access, defeating the cold-key isolation that
-   motivates the split.
+1. **Companion CLI for rotation?** **DECIDED: manual only.** No
+   `livepeer-key-rotate` companion CLI in v0.1. The five-step rotation
+   runbook (§6.5) is short; an automated rotator would itself need
+   cold-key access, defeating the cold-key isolation that motivates
+   the hot/cold split.
 
-2. **Cold-key signed manifest in 0017?** §7 documents the cold side;
-   actual manifest signing belongs to `secure-orch-console`. Should
-   0017 stay strictly warm-key, or pull in (a) manifest *signature
-   verification* on receiver startup, or (b) a manifest publication
-   helper for testing? *Recommend: strictly warm-key.* Manifest
-   signing is `secure-orch-console`'s domain; verification is the
-   resolver / gateway's domain; neither is the payment daemon's.
+2. **Cold-key signed manifest in 0017?** **DECIDED: strictly
+   warm-key.** No manifest signature verification in the daemon; no
+   publication helper. Manifest signing is `secure-orch-console`'s
+   domain (plan 0019); manifest verification is the resolver /
+   gateway's domain. Neither belongs to the payment daemon.
 
-3. **Hardware-wallet integration timing.** Out of scope on the hot
-   side (§8.1); useful on the cold side but in
-   `secure-orch-console`, not this daemon. *Recommend: soon, in the
-   secure-orch-console plan; never in 0017.*
+3. **Hardware-wallet integration timing.** **DECIDED: never in
+   0017.** Hot-side rejected (Ledger ~1 ECDSA/sec — too slow for
+   ticket-rate signing). Cold-side belongs to plan 0019
+   (secure-orch-console), not the payment daemon.
 
-4. **Sender-side daemon WITHOUT chain RPC?** Air-gapped operators
-   running pre-issued `TicketParams` from a separate process. The
-   current dev-mode banner says "DEV MODE — redemptions will not
-   hit any chain"; a production-shaped offline-sender mode is net
-   new. *Recommend: defer.* Air-gapped operators are rare; the use
-   case can ride on plan 0016's chain-stub fakes if it ever becomes
-   urgent.
+4. **Sender-side daemon WITHOUT chain RPC?** **DECIDED: defer.** No
+   production-shaped offline-sender mode in 0017. Air-gapped
+   operators are rare; the use case can ride on plan 0016's
+   chain-stub fakes if it becomes urgent.
 
-5. **Single-wallet WARN — block startup or continue?** §5.3
-   recommends WARN-and-continue. An operator running single-wallet
-   in production should arguably fail to start so the
-   misconfiguration is visible. *Recommend: WARN, do not block.*
-   Some single-wallet configs are intentional (small solo operators,
-   low TVL); a hard block is a surprise regression from go-livepeer.
+5. **Single-wallet WARN — block startup or continue?** **DECIDED:
+   WARN at INFO, do not block.** Solo small operators legitimately
+   run single-wallet (low TVL, simpler ops); hard-block would
+   regress go-livepeer behaviour. Daemon logs `WARN single-wallet
+   config — hot signer is also the on-chain orchestrator identity.
+   OK for dev, dangerous for prod.` once at startup per §5.3.
 
-6. **Password scrubbing — opt-in flag or default?** §5.5 says scrub.
-   Secure-memory libraries (`memguard`, etc.) add complexity.
-   *Recommend: simple `[]byte` zeroing immediately after
-   `keystore.DecryptKey` returns; no third-party dep.* The threat
-   we'd defend against (process-memory read access) would also have
-   the decrypted private key, so secure-mem for just the password is
-   mostly cosmetic.
+6. **Password scrubbing — opt-in flag or default?** **DECIDED:
+   simple `[]byte` zeroing post-decrypt.** No third-party
+   secure-memory dep (`memguard` etc.). The threat we'd defend
+   against (process-memory read) would also have the decrypted
+   private key, so secure-mem for just the password is mostly
+   cosmetic. Keep dependency-free.
 
 ## 12. Migration / commit cadence inside plan 0017
 

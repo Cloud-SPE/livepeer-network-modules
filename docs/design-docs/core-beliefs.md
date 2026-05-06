@@ -102,3 +102,45 @@ deliberate decision recorded in the commit message that introduces it.
 The first time this repo cuts a release, it becomes **v1.0.0**. Until then, all SHAs
 are unstable and re-pin-able. Components inside the monorepo do not have independent
 versions until they're extracted to standalone repos.
+
+## 15. Docker-first build and run
+
+Every component in this monorepo ships with a Docker-first build and run story:
+
+- a `Dockerfile`,
+- a `Makefile` wrapping common gestures (`build`, `test`, `shell`, `publish`),
+- a `compose.yaml` when multi-service orchestration is needed.
+
+**Implementers and operators do not install language runtimes** (Go, Node, Python,
+ffmpeg, etc.) on their hosts to use a component. They pull a published image or run
+`make build`.
+
+**Image namespace:** `tztcloud/<image-name>`. Tags follow the monorepo's SemVer (or
+the component's, after extraction).
+
+**Why:** "install Go on your laptop" (or Python, or Node, or matching system ffmpeg)
+is a friction barrier that disproportionately hurts adoption by external developers
+and CI environments. Containers pin the runtime; Make pins the gestures; compose pins
+the multi-service shape.
+
+## 16. Dependencies stay current
+
+Any external dependency — Go module, npm package, Docker base image, Github Action,
+pre-commit hook, system package, anything — defaults to its **latest stable release**.
+Pinning to an older version is a deliberate decision recorded in the commit message
+that creates the pin and added to
+[`tech-debt-tracker.md`](../exec-plans/tech-debt-tracker.md) until resolved.
+
+**Why:** outdated dependencies accumulate known security vulnerabilities and missed
+bug fixes. Drift between components compounds the cost. The existing suite already
+shows the symptom (daemon image versions disagreeing across submodules).
+
+**How to apply:**
+
+- Bumping a dependency includes validation — the build passes, the conformance suite
+  passes (where applicable), and any breaking changes are addressed in the **same PR**.
+- "Latest where possible without breaking everything" — pragmatic. If a major bump
+  requires non-trivial rework, that's a planned exec-plan, not a casual PR.
+- Automated update tooling (Dependabot / Renovate / equivalent) runs per component;
+  CI failures from bumps are **fixed forward**, not left to rot in a perpetual
+  draft PR.

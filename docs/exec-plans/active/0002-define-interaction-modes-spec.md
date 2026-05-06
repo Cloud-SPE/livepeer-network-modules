@@ -30,11 +30,25 @@ The initial six are:
 1. ~~**Repo home.**~~ **Resolved 2026-05-06**: spec lives at
    `<repo-root>/livepeer-network-protocol/` as a top-level subfolder of this monorepo.
    Extractable to standalone later.
-2. **Mode-version semantics.** Each mode gets its own SemVer (`http-stream@v1`)? Or a
-   single repo SemVer covers all modes? Per-mode versioning is more honest but more
-   work to track.
-3. **Conformance test framework.** WireMock-style fixtures? Pact-style contract tests?
-   Custom Go runners? Pick one before the first mode spec is written.
+2. ~~**Mode-version semantics.**~~ **Resolved 2026-05-06**: hybrid SemVer.
+   - **Spec-wide SemVer** for cross-cutting parts — manifest schema, header
+     conventions, payment envelope shape, extractor library envelope.
+   - **Per-mode SemVer** under `modes/` for each mode independently.
+   - Manifest tuples carry both: `spec_version: "1.0"` at the manifest root +
+     `interaction_mode: "http-stream@v1"` per capability.
+   - Gateway/broker can declare support for multiple versions of the same mode in
+     parallel.
+   - SemVer rules apply identically to both axes.
+3. ~~**Conformance test framework.**~~ **Resolved 2026-05-06**: hybrid (declarative
+   YAML fixtures + Go runner) shipped as a **Docker image**, per core belief #15.
+   - Image: `tztcloud/lnp-conformance:<tag>` (working name; revisit at first publish).
+   - Tag matches the spec-wide SemVer.
+   - Image bundles the runner binary + the `fixtures/` folder + mock-backend +
+     mock-payment-daemon helpers.
+   - Layout: `conformance/{fixtures,runner,compose.yaml,Makefile,README.md}`.
+   - Implementers never install Go locally; they pull the image and run `make` or
+     `docker run`. Networking modes for the implementation under test: `host.docker.internal`
+     (host process) or shared docker network (container).
 4. **Reference implementation language.** Go for the broker side; Go or TS for the
    gateway side? Both? Pick to match where the first production implementations will
    live.
@@ -45,7 +59,14 @@ The initial six are:
 
 ## Outcomes (proposed)
 
-- [ ] Decision recorded: spec repo location and SemVer policy.
+Decisions:
+- [x] Spec repo location → `<repo>/livepeer-network-protocol/`.
+- [x] SemVer policy → hybrid (spec-wide SemVer + per-mode SemVer).
+- [x] Conformance test framework → fixtures + Go runner shipped as Docker image
+  (`tztcloud/lnp-conformance`).
+- [ ] Reference implementation language(s).
+
+Artifacts:
 - [ ] `headers/livepeer-headers.md` spec written.
 - [ ] Six mode specs written, each with: wire format, payment cadence (if applicable),
   required `extra`/`constraints` fields, conformance test fixtures.

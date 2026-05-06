@@ -1,0 +1,22 @@
+# Local-only smoke stack for secure-orch-console.
+#
+# The console binary (commit 4) binds 127.0.0.1:<port> on the host
+# inside the container. Exposing it to the host's loopback via
+# `ports: - "127.0.0.1:8080:8080"` preserves the application-layer
+# contract: no listener on a routable interface.
+#
+# This file is a placeholder until the binary lands. Commit 4
+# replaces the stub with a runnable service; commit 5 adds the web
+# UI; commit 7 polishes the air-gap workflow.
+
+services:
+  secure-orch-console:
+    image: tztcloud/livepeer-secure-orch-console:dev
+    # The binary is not yet wired (commit 4). When it is, the
+    # service definition lands here with:
+    #   - 127.0.0.1-only port exposure
+    #   - inbox/outbox volume mounts
+    #   - audit log volume mount
+    #   - V3 keystore mount (commit 4) and / or YubiHSM connector
+    #     URL (commit 6)
+    profiles: ["disabled-until-commit-4"]

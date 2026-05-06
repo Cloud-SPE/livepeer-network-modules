@@ -1,0 +1,99 @@
+# AGENTS.md
+
+This is `secure-orch-console/` — the cold-key host's diff-and-sign UX
+plus the canonicalization, signing, and verification primitives the
+rest of the supply side relies on. Designed against
+[`../docs/exec-plans/completed/0019-secure-orch-trust-spine-design.md`](../docs/exec-plans/completed/0019-secure-orch-trust-spine-design.md).
+
+Component-local agent map. The repo-root [`../AGENTS.md`](../AGENTS.md)
+is the cross-cutting map; this file scopes to console-specific
+guidance.
+
+## Hard rule (non-negotiable)
+
+> **secure-orch never accepts inbound connections.**
+
+The web server binds `127.0.0.1` only. The operator reaches it from a
+LAN laptop via `ssh -L`-tunneled port-forward. Any change that
+introduces a routable bind (`:<port>`, `0.0.0.0:<port>`, named
+interface) is a bug. The startup test in `cmd/secure-orch-console`
+asserts the bound address.
+
+Cite: plan 0019 §6.1.1 + §13 Q6 + core-belief #4.
+
+## Operating principles
+
+Inherited from the repo root, plus:
+
+- **The cold key never crosses a host boundary.** Local file (V3
+  keystore) or local USB device (YubiHSM 2). Never network-attached.
+- **No auto-sign.** The operator-confirm gesture is not skippable.
+  Resolver-side replay protection makes a fresh sign cheap; that is
+  not a license to skip the diff review.
+- **Bytes-identical canonicalization** with the resolver / coordinator
+  / gateway verify path. The `internal/canonical/` package is the
+  single source of truth on both sides of the sign/verify boundary.
+- **Audit log is append-only.** Every console gesture (load candidate,
+  view diff, sign, write outbox) emits a JSONL record. Rotation is
+  size-based; entries are never edited.
+
+## Where to look
+
+| Question | File |
+|---|---|
+| What is this component? | [`README.md`](./README.md) |
+| Architectural overview | [`DESIGN.md`](./DESIGN.md) |
+| Operator-grade runbook (boot, sign, recover, rotation) | [`docs/operator-runbook.md`](./docs/operator-runbook.md) |
+| YubiHSM 2 setup walkthrough (commit 6) | [`docs/hsm-setup-yubihsm.md`](./docs/hsm-setup-yubihsm.md) |
+| Threat model | [`docs/threat-model.md`](./docs/threat-model.md) |
+| Build / run / test gestures | [`Makefile`](./Makefile) |
+
+## Package layout
+
+```
+cmd/
+  secure-orch-console/      — main binary (web-server entrypoint)
+  secure-orch-keygen/       — cold-key generation helper
+internal/
+  canonical/                — JCS-equivalent canonical bytes
+  signing/                  — Signer iface + V3 keystore (+ YubiHSM in commit 6)
+  diff/                     — candidate-vs-last-signed structural diff
+  audit/                    — rolling JSONL audit log
+  inbox/                    — spool-dir watcher
+  outbox/                   — signed-manifest writer
+  config/                   — operator config (keystore path, drop dirs, etc.)
+web/                        — Go HTTP server source + embedded HTML/CSS/JS
+testdata/                   — canonical-bytes fixtures
+```
+
+The verifier lives in
+[`../livepeer-network-protocol/verify/`](../livepeer-network-protocol/verify/)
+because resolvers, coordinators, and gateways all need it.
+
+## Code-of-conduct
+
+- The canonicalizer is zero-dep stdlib only. No third-party JCS lib
+  (plan 0019 §13 Q4 lock).
+- Anything that calls `net.Listen` / `http.Server.Addr` /
+  `ListenAndServe` MUST bind `127.0.0.1` or `localhost`. Never
+  `:<port>` or `0.0.0.0:<port>`.
+- `Signer` is the boundary between V3-keystore and YubiHSM 2 PKCS#11.
+  Don't leak provider-specific types past it.
+- Static web assets live under `web/` and are embedded via `embed.FS`.
+  No frontend build step in the monorepo.
+
+## Attribution — ports from the prior reference impl
+
+Per repo-root [`../AGENTS.md`](../AGENTS.md) lines 62–66, code copied
+in from a named source repo records what was copied, from where, and
+that the user authorized the copy. Plan 0019 §12 commit 2 + §4.1
+authorize the verbatim port of the canonicalizer + signer from
+`livepeer-modules-project/service-registry-daemon/` (a reference
+impl outside `livepeer-network-suite`):
+
+| Local path | Source path | Notes |
+|---|---|---|
+| `internal/canonical/canonical.go` | `service-registry-daemon/internal/types/canonical.go` lines 1–127 | Tree-walker is a verbatim port. The wrapper is type-agnostic for the new manifest shape (the prior impl baked a manifest-specific zeroing pass). |
+| `internal/signing/signer.go` | `service-registry-daemon/internal/providers/signer/signer.go` | V3-keystore `Signer` impl. Address type is local rather than imported from a `types` package. |
+| `../livepeer-network-protocol/verify/verifier.go` | `service-registry-daemon/internal/providers/verifier/verifier.go` | Recover is symmetric with the signer. |
+| `docs/operator-runbook.md` | `service-registry-daemon/docs/operations/running-the-daemon.md` | Adapted to the secure-orch (cold-key) operator surface — publisher mode only, no resolver/discovery flags. |

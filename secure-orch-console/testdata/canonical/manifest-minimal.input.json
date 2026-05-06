@@ -1,0 +1,23 @@
+{
+  "spec_version": "0.2.0",
+  "publication_seq": 1,
+  "issued_at": "2026-05-06T12:34:56Z",
+  "expires_at": "2026-06-05T12:34:56Z",
+  "orch": {
+    "eth_address": "0x1234567890abcdef1234567890abcdef12345678"
+  },
+  "capabilities": [
+    {
+      "capability_id": "openai:chat-completions:llama-3-70b",
+      "offering_id": "vllm-h100-batch4",
+      "interaction_mode": "http-stream@v1",
+      "work_unit": { "name": "tokens" },
+      "price_per_unit_wei": "1500000",
+      "worker_url": "https://broker-a.orch.example.com",
+      "extra": {
+        "region": "us-west-2",
+        "gpu_class": "h100"
+      }
+    }
+  ]
+}

@@ -29,12 +29,16 @@ What does not exist yet:
 
 Numbered `docs/exec-plans/active/000N-*.md`. Currently:
 
-- [`0001-scaffold-and-capture.md`](./docs/exec-plans/active/0001-scaffold-and-capture.md)
-  — establish this repo's structure and lock in the design conversation as a
-  reference.
 - [`0002-define-interaction-modes-spec.md`](./docs/exec-plans/active/0002-define-interaction-modes-spec.md)
-  — define the initial six interaction modes as specifications and decide where the
-  spec repo lives.
+  — interaction-mode specs. **All decisions resolved; all artifacts landed
+  except the gating done condition (broker reference impl passing conformance
+  for one mode, addressed in plan 0003 + plan 0004).**
+- [`0003-capability-broker.md`](./docs/exec-plans/active/0003-capability-broker.md)
+  — Go reference implementation of the workload-agnostic broker. First
+  milestone: end-to-end `http-reqresp` with `response-jsonpath` extractor and
+  a mock payment client.
+
+Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/completed/).
 
 ## Roadmap (rough; subject to change)
 

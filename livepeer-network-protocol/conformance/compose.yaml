@@ -65,6 +65,11 @@ services:
       - --config=/etc/livepeer/host-config.yaml
       - --listen=:8080
       - --metrics=:9090
+      # Plan 0015: short tick cadence for the interim-debit fixtures.
+      # Below 1s the broker logs a WARN; the warning is intentional —
+      # production operators set this >=1s.
+      - --interim-debit-interval=100ms
+      - --interim-debit-min-runway-units=10
 
   runner:
     image: tztcloud/livepeer-conformance:dev
@@ -78,6 +83,9 @@ services:
       - --mock-addr=:9000
       - --fixtures=/fixtures
       - --payer-socket=/var/run/livepeer/payer-daemon.sock
+      # Plan 0015: enable PayeeDaemon.GetBalance assertions for the
+      # interim-debit fixtures.
+      - --payee-socket=/var/run/livepeer/payment-daemon.sock
 
 networks:
   conformance:

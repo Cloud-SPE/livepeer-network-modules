@@ -5,9 +5,12 @@
 // gateway-side connection and a backend WebSocket. Livepeer-* headers are
 // stripped from the outbound upgrade; backend auth (if any) is injected.
 //
-// v0.1 narrowed scope: a single Debit happens up-front in the Payment
-// middleware (with the v0.1-mock fixed estimate); cadence-based interim
-// debits are deferred to plan 0005's payment-daemon integration.
+// Plan 0015: when the configured extractor is `bytes-counted` (or
+// `seconds-elapsed`), the dispatch layer publishes a LiveCounter into
+// `Params.LiveCounter` and into the request context. The pumpFrames
+// loop here increments the bytes-counted variant on every relayed
+// frame; the payment middleware polls the counter on each interim-debit
+// tick and issues per-tick DebitBalance calls.
 package wsrealtime
 
 import (
@@ -21,6 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/bytescounted"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 )
@@ -119,10 +123,20 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 	relayCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Plan 0015: the dispatch layer hands us a *bytescounted.LiveCounter
+	// when the configured extractor is `bytes-counted`. We type-assert
+	// once here and pass the writable counter into the pumps; the
+	// payment middleware reads CurrentUnits via the LiveCounter
+	// interface published into the request context.
+	var byteCtr *bytescounted.LiveCounter
+	if lc, ok := p.LiveCounter.(*bytescounted.LiveCounter); ok {
+		byteCtr = lc
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); pumpFrames(relayCtx, inbound, out, cancel) }()
-	go func() { defer wg.Done(); pumpFrames(relayCtx, out, inbound, cancel) }()
+	go func() { defer wg.Done(); pumpFrames(relayCtx, inbound, out, byteCtr, cancel) }()
+	go func() { defer wg.Done(); pumpFrames(relayCtx, out, inbound, byteCtr, cancel) }()
 	wg.Wait()
 	return nil
 }
@@ -130,7 +144,12 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 // pumpFrames reads frames from src and writes them to dst until either an
 // error occurs or the context is canceled. On exit, cancel is called so the
 // peer pump unblocks.
-func pumpFrames(ctx context.Context, src, dst *websocket.Conn, cancel context.CancelFunc) {
+//
+// When byteCtr is non-nil, the on-wire payload byte count of every
+// successfully-relayed frame is added to the counter (plan 0015). nil
+// means the configured extractor doesn't have a running view; the pump
+// runs frame-relay-only.
+func pumpFrames(ctx context.Context, src, dst *websocket.Conn, byteCtr *bytescounted.LiveCounter, cancel context.CancelFunc) {
 	defer cancel()
 	for {
 		if ctx.Err() != nil {
@@ -142,6 +161,9 @@ func pumpFrames(ctx context.Context, src, dst *websocket.Conn, cancel context.Ca
 		}
 		if err := dst.WriteMessage(mt, data); err != nil {
 			return
+		}
+		if byteCtr != nil {
+			byteCtr.AddBytes(uint64(len(data)))
 		}
 	}
 }

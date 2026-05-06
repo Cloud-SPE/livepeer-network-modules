@@ -1,0 +1,74 @@
+# Balance-exhausted termination fixture for ws-realtime@v0 (plan 0015).
+#
+# Verifies plan 0015 §6.2 termination: when the receiver daemon's
+# SufficientBalance returns false, the broker cancels the in-flight
+# handler context, the ws-realtime relay tears down both sockets, and
+# the runner observes the close from the BROKER side (i.e. its
+# ReadMessage returns an error without the runner having initiated
+# the close).
+#
+# Compose context: `--interim-debit-min-runway-units=10` is set on
+# the broker (compose.yaml). With v0.2 stub credit_ev=0 the balance
+# never rises above zero, so SufficientBalance(min=10) deterministically
+# returns false on the first tick after the LiveCounter publishes, and
+# the broker terminates the session within ~2× tick interval per
+# plan §6.2.
+
+name: interim-debit-balance-exhausted
+mode: ws-realtime@v0
+spec_version: "0.1"
+description: |
+  Plan 0015 §6.2 termination assertion: runner opens a ws-realtime
+  session, sends one frame to publish the LiveCounter, then waits.
+  Asserts the broker terminated the session within ~2 tick intervals
+  and that the close came from the broker side.
+
+setup:
+  capability:
+    id: test:interim-debit-exhausted-ws:v1
+    offering_id: default
+    interaction_mode: ws-realtime@v0
+    work_unit:
+      name: bytes
+      extractor:
+        type: bytes-counted
+        direction: response
+        granularity: 1
+    price:
+      amount_wei: "10"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/ws
+      auth: none
+
+request:
+  method: GET
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:interim-debit-exhausted-ws:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: ws-realtime@v0
+    Livepeer-Request-Id: interim-debit-exhausted-ws-fixture-001
+
+backend_response:
+  status: 0
+  body: ""
+
+backend_assertions:
+  livepeer_headers_present: false
+  authorization_header_present: false
+
+response_expect:
+  status: 101
+  headers_present:
+    - Livepeer-Request-Id
+
+ws_realtime:
+  frame_count: 1
+  frame_interval_ms: 0
+  frame_size_bytes: 64
+  hold_after_frames_ms: 600
+  expect_broker_terminated: true

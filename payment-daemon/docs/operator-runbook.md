@@ -307,7 +307,97 @@ Default is 2 rounds.
 
 ---
 
-## 7. Common failure modes
+## 6.5. Long-running session billing (broker interim-debit cadence)
+
+The receiver daemon owns per-(sender, work_id) balances. The
+**capability-broker** is the component that performs work and tells the
+daemon "I just did N units; debit accordingly". For request/response
+modes (`http-reqresp@v0`, `http-multipart@v0`) the broker calls
+`PayeeDaemon.DebitBalance` exactly once at handler completion. For
+**long-running modes** (`ws-realtime@v0`, `rtmp-ingress-hls-egress@v0`,
+`session-control-plus-media@v0`, streaming `http-stream@v0`) the broker
+runs a per-session ticker and issues a sequence of `DebitBalance` calls
+plus periodic `SufficientBalance` runway checks. Plan 0015.
+
+This section is what the gateway operator and the orchestrator operator
+need to know to reason about long-running session economics together.
+
+### 6.5.1. Broker flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--interim-debit-interval` | `30s` | Tick cadence. Each tick computes the bytes/seconds/etc. consumed since the last tick and issues a `DebitBalance(seq=N+1, work_units=delta)`. Setting to `0` disables the ticker entirely; the broker reverts to single-debit-at-handler-close (the v0.2 behavior). Lower = tighter billing, higher RPC load on the receiver daemon; higher = more credit float on each session. |
+| `--interim-debit-min-runway-units` | `60` | Minimum required runway passed to `PayeeDaemon.SufficientBalance` per tick. With the default `30s` tick on a `seconds-elapsed` workload (1 unit per second), the broker requires the session to have ≥60 seconds of credit at every tick. When `SufficientBalance` returns false, the broker terminates the session (see §6.5.3). Set to `0` to disable the runway check (debits still happen; broker keeps relaying until the handler ends). |
+| `--interim-debit-grace-on-insufficient` | `0` | Grace period between observing `sufficient=false` and terminating. Reserved for the future mid-session top-up flow; the gateway-side middleware would have this much wall-clock to mint a fresh `Payment` and re-credit the daemon. v0.1 default zero (hard terminate immediately). |
+
+### 6.5.2. Cadence + revenue-recognition latency
+
+The interim-debit cadence sits at the front of the same end-to-end
+latency the receiver operator already cares about for redemption. The
+relevant chain (broker → receiver daemon → on-chain) is:
+
+```
+work performed → DebitBalance (per tick)
+              → ProcessPayment credits EV (already done at session open)
+              → ticket queued at receiver
+              → win-prob roll on a winner
+              → redemption queue → on-chain submit
+              → receipt + --redemption-confirmations blocks
+```
+
+Worst-case latency from "work performed" to "revenue recognised
+on-chain" is bounded by:
+
+```
+worst_case ≈ interim-debit-interval
+           + redemption-interval
+           + redemption-confirmations × block-time
+```
+
+On Arbitrum One with the recommended defaults (interval=30s,
+redemption-interval=30s, confirmations=4 × ~250ms block time), that's
+about 61s. Lowering `--interim-debit-interval` does not lower the
+critical path — the redemption-interval still dominates — but it does
+tighten the broker's exposure window when a payer's session balance
+runs out.
+
+### 6.5.3. Termination semantics
+
+When `SufficientBalance` returns `sufficient=false`:
+
+1. The broker logs at WARN: `terminating session work_id=… reason=insufficient_balance`.
+2. The broker cancels the request context. The mode driver (`ws-realtime`,
+   etc.) sees the cancellation, closes both halves of its relay, and
+   returns.
+3. The middleware performs a final `DebitBalance` for any units
+   accumulated between the last tick and the cancellation point (so the
+   daemon's ledger matches the bytes/seconds actually shipped).
+4. `CloseSession` runs.
+5. The connection closes gateway-side. For ws-realtime, the runner sees
+   a server-side close. For other long-running modes, the gateway sees
+   the body terminate; where the protocol allows it, the broker emits
+   `Livepeer-Error: insufficient_balance` as a trailer.
+
+The receiver operator does not see anything they wouldn't see from a
+normal session close: a `CloseSession` on the daemon plus the final
+`DebitBalance` call. The signal that this was a *forced* close lives in
+the broker's logs and metrics, not the daemon's.
+
+### 6.5.4. Idempotency contract
+
+Every `DebitBalance` call is idempotent by `(sender, work_id, debit_seq)`
+per `payee_daemon.proto`. The broker's ticker maintains a monotonic
+counter starting at 1: tick #1 → seq=1, tick #2 → seq=2, …, final
+flush → seq=N+1. **Retries reuse the same seq** until the daemon
+returns success; the daemon's idempotency guard then ensures the same
+delta is never applied twice. This is plan 0015 §5.3 — the broker
+trades retry simplicity for keeping the daemon's `DebitBalance`
+semantics unchanged from v0.2.
+
+If you see `DebitBalance call rate exceeds expected cadence` in
+operator dashboards, that's a sustained-retry signal. See §7.
+
+
 
 | Symptom | Likely cause | What to check |
 |---|---|---|
@@ -319,6 +409,9 @@ Default is 2 rounds.
 | Receiver "params expired" rejections from senders | Daemon's L1 clock is trailing the on-chain round. | `--clock-refresh-interval` (default 30s) may be set too high; also check `eth_blockNumber` latency on the RPC endpoint. |
 | Daemon prints `DEV MODE — --chain-rpc is empty` in production logs | Operator forgot to supply `--chain-rpc`. | Set it. Production must not run in dev mode. |
 | Sender returns `face_value capped by maxFloat` | Pending redemptions are eating into deposit faster than 3× heuristic allows. | Speed up redemption (lower `--redemption-interval`), or have payer top up deposit. |
+| Broker terminated long-running session with `Livepeer-Error: insufficient_balance` | Payer's session balance hit zero before the session ended (plan 0015). Either the gateway sized the initial payment too small for the session length, or no mid-session top-up flow exists yet. | Have the gateway raise the initial `face_value` it asks the sender daemon for; or confirm the planned top-up flow is wired (currently a deferred follow-up plan). On Arbitrum One, look for the broker log line `terminating session work_id=… reason=insufficient_balance`. |
+| `livepeer_payment_interim_debit_total{outcome="retried"}` rate > 0 sustained | Broker's interim-debit tick is failing on the daemon. Could be a daemon RPC error, a network partition, or BoltDB contention. | Check broker logs for the per-tick `interim DebitBalance work_id=… failed: …` warning. The broker reuses the same `debit_seq` across retries (plan 0015 §5.3) so the daemon's idempotency key prevents double-debit; sustained retries still indicate a real problem on the daemon side. |
+| DebitBalance call rate exceeds expected cadence | Broker is retrying tick deltas and the daemon is observing duplicate debit_seq values without successful prior commits. | Check broker logs for `interim DebitBalance work_id=… failed` patterns; if the same work_id repeats with the same `debit_seq`, the daemon is rejecting the ticket (signature, sender mismatch, or session-already-closed). Race with `CloseSession` is the most common — increase the broker's tick-stop wait timeout. |
 
 ---
 
@@ -351,6 +444,19 @@ recorder; plan 0016 wires real counters):
   outcome ∈ {confirmed, failed_gas, failed_revert, expired}.
 - `livepeer_payment_pending_face_value_wei` (gauge) — total face_value
   pending redemption.
+
+**Broker (interim-debit cadence — plan 0015):**
+- `livepeer_payment_interim_debit_total{outcome}` (counter) — interim
+  DebitBalance call results from the broker's per-session ticker;
+  outcome ∈ {success, retried, terminal_failure}. `retried` means the
+  same `debit_seq` was reused after a non-success daemon reply (plan
+  0015 §5.3 retry semantics). High `retried` rate is a leading
+  indicator of daemon RPC distress.
+- `livepeer_payment_session_terminated_total{reason}` (counter) —
+  long-running sessions terminated by the broker; reason ∈
+  {balance_insufficient, handler_complete, ctx_cancelled}.
+  `balance_insufficient` rates trending up indicate gateway
+  operators are sizing initial payments below their session length.
 
 Cardinality is bounded by `--metrics-max-series-per-metric` (default
 10000). New label combinations beyond the cap are dropped silently

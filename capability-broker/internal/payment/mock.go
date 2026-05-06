@@ -117,6 +117,54 @@ func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*big.In
 	return new(big.Int).Set(sess.balance), nil
 }
 
+// SufficientBalance reports whether the session balance covers
+// `min_work_units` of additional work at the session's price. The mock
+// uses the same arithmetic as the real daemon: balance ≥ price ×
+// min_work_units. Closed sessions always report insufficient.
+func (m *Mock) SufficientBalance(_ context.Context, req SufficientBalanceRequest) (*SufficientBalanceResult, error) {
+	if len(req.Sender) == 0 || req.WorkID == "" {
+		return nil, errors.New("sender and work_id are required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[req.WorkID]
+	if !ok {
+		return nil, errors.New("session not found")
+	}
+	if !bytesEqual(sess.sender, req.Sender) {
+		return nil, errors.New("sender mismatch")
+	}
+	if sess.closed {
+		return &SufficientBalanceResult{
+			Sufficient: false,
+			Balance:    new(big.Int).Set(sess.balance),
+		}, nil
+	}
+	required := new(big.Int).Mul(sess.pricePerWorkUnitWei, big.NewInt(req.MinWorkUnits))
+	sufficient := sess.balance.Cmp(required) >= 0
+	return &SufficientBalanceResult{
+		Sufficient: sufficient,
+		Balance:    new(big.Int).Set(sess.balance),
+	}, nil
+}
+
+// GetBalance returns the current balance for a (sender, work_id) pair.
+func (m *Mock) GetBalance(_ context.Context, sender []byte, workID string) (*big.Int, error) {
+	if len(sender) == 0 || workID == "" {
+		return nil, errors.New("sender and work_id are required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[workID]
+	if !ok {
+		return nil, errors.New("session not found")
+	}
+	if !bytesEqual(sess.sender, sender) {
+		return nil, errors.New("sender mismatch")
+	}
+	return new(big.Int).Set(sess.balance), nil
+}
+
 func (m *Mock) CloseSession(_ context.Context, sender []byte, workID string) error {
 	if workID == "" {
 		return errors.New("work_id is empty")
@@ -132,6 +180,20 @@ func (m *Mock) CloseSession(_ context.Context, sender []byte, workID string) err
 	}
 	sess.closed = true
 	sess.closedAt = time.Now()
+	return nil
+}
+
+// CreditBalance is a test helper that adds `wei` to a session's balance.
+// Used by unit tests and the conformance fixture to seed runway without
+// going through ProcessPayment.
+func (m *Mock) CreditBalance(workID string, wei *big.Int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[workID]
+	if !ok {
+		return errors.New("session not found")
+	}
+	sess.balance.Add(sess.balance, wei)
 	return nil
 }
 

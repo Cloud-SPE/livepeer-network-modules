@@ -21,6 +21,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/envelope"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/payee"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpmultipart"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpreqresp"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpstream"
@@ -50,6 +51,7 @@ func main() {
 		fixturesPath = flag.String("fixtures", "/fixtures", "path to fixtures folder")
 		mockAddr     = flag.String("mock-addr", ":9000", "address the in-process mock backend binds")
 		payerSocket  = flag.String("payer-socket", "/var/run/livepeer/payer-daemon.sock", "unix socket of the payer-daemon (sender mode)")
+		payeeSocket  = flag.String("payee-socket", "", "optional unix socket of the payee-daemon (receiver mode); enables plan 0015 interim-debit assertions via PayeeDaemon.GetBalance")
 		showVersion  = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -89,6 +91,17 @@ func main() {
 		log.Fatalf("payer-daemon init: %v", err)
 	}
 	defer envelope.Shutdown()
+
+	// Best-effort dial of the receiver daemon for plan 0015's
+	// interim-debit assertions. Empty --payee-socket leaves the client
+	// uninitialized; fixtures that need GetBalance will report
+	// payee.ErrUnavailable as a fail.
+	if *payeeSocket != "" {
+		if err := payee.Init(ctx, *payeeSocket); err != nil {
+			log.Fatalf("payee-daemon init: %v", err)
+		}
+		defer payee.Shutdown()
+	}
 
 	r, err := runner.Run(ctx, runner.Config{
 		Target:       *target,

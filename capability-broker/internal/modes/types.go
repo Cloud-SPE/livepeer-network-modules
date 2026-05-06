@@ -36,6 +36,16 @@ type Params struct {
 	Request    *http.Request
 	Capability *config.Capability
 	Extractor  extractors.Extractor
-	Backend    backend.Forwarder
-	Auth       *backend.AuthApplier
+	// LiveCounter is the running work-unit counter the payment
+	// middleware polls during long-running sessions (plan 0015). Mode
+	// drivers populate this when (and only when) they support interim
+	// debit cadence — typically when the configured extractor exposes
+	// a LiveCounter sibling (`bytes-counted` or `seconds-elapsed`).
+	//
+	// nil means the driver does not support interim debit; the
+	// middleware falls through to the v0.2 single-debit path. The
+	// HTTP-family modes that buffer-and-extract leave this nil.
+	LiveCounter extractors.LiveCounter
+	Backend     backend.Forwarder
+	Auth        *backend.AuthApplier
 }

@@ -24,9 +24,40 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 )
+
+// Mint mints a fresh Payment envelope for a (capability, offering)
+// pair and returns the base64-encoded wire bytes plus the sender
+// address embedded in the envelope. The sender is needed by the
+// conformance runner's plan-0015 fixtures to call PayeeDaemon.GetBalance
+// against a specific session.
+func Mint(ctx context.Context, capability, offering string) (envelopeBase64 string, sender []byte, err error) {
+	mu.Lock()
+	c := client
+	mu.Unlock()
+	if c == nil {
+		return "", nil, errors.New("envelope: payer-daemon client not initialized; call Init() at startup")
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := c.CreatePayment(cctx, &pb.CreatePaymentRequest{
+		FaceValue:  uint64Bytes(defaultFaceValue),
+		Recipient:  hexBytes(defaultRecipientHex),
+		Capability: capability,
+		Offering:   offering,
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("payer-daemon CreatePayment: %w", err)
+	}
+	var payload pb.Payment
+	if err := proto.Unmarshal(resp.GetPaymentBytes(), &payload); err != nil {
+		return "", nil, fmt.Errorf("decode minted payment: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(resp.GetPaymentBytes()), append([]byte(nil), payload.GetSender()...), nil
+}
 
 const (
 	// DefaultRecipient is the 20-byte recipient address the runner

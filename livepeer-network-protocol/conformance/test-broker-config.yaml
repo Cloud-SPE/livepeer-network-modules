@@ -88,6 +88,45 @@ capabilities:
       url: "http://runner:9000/ws"
       auth: "none"
 
+  # ---- fixtures/ws-realtime/interim-debit.yaml (plan 0015) ----
+  # bytes-counted extractor publishes a LiveCounter; the broker's
+  # interim-debit ticker polls it on every tick and issues per-tick
+  # DebitBalance calls.
+  - id: "test:interim-debit-ws:v1"
+    offering_id: "default"
+    interaction_mode: "ws-realtime@v0"
+    work_unit:
+      name: "bytes"
+      extractor:
+        type: "bytes-counted"
+        direction: "response"
+        granularity: 1
+    price:
+      amount_wei: "10"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://runner:9000/ws"
+      auth: "none"
+
+  # ---- fixtures/ws-realtime/interim-debit-balance-exhausted.yaml (plan 0015) ----
+  - id: "test:interim-debit-exhausted-ws:v1"
+    offering_id: "default"
+    interaction_mode: "ws-realtime@v0"
+    work_unit:
+      name: "bytes"
+      extractor:
+        type: "bytes-counted"
+        direction: "response"
+        granularity: 1
+    price:
+      amount_wei: "10"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://runner:9000/ws"
+      auth: "none"
+
   # ---- fixtures/rtmp-ingress-hls-egress/happy-path.yaml ----
   # v0.1 session-open phase: backend.url is used to derive the public URLs
   # the broker returns in its 202 response. No actual media is ingested.

@@ -1,0 +1,76 @@
+# Interim-debit cadence fixture for ws-realtime@v0 (plan 0015).
+#
+# Runner opens a ws-realtime session, holds it open across at least
+# two broker tick intervals, sends frames continuously so bytes accrue
+# in the bytes-counted LiveCounter, and asserts that the receiver
+# daemon observed at least two DebitBalance calls (inferred via the
+# GetBalance trajectory per plan 0015 §9.1).
+#
+# Compose context: `--interim-debit-interval=100ms` is set on the
+# broker (compose.yaml). With v0.2 stub credit_ev=0, the broker's
+# SufficientBalance check will trigger termination after the first
+# tick at min-runway-units=10 — that is fine: the post-handler final
+# DebitBalance still fires, so total debits (interim tick + final
+# flush) ≥ 2 and the GetBalance trajectory shows two distinct
+# values.
+
+name: interim-debit
+mode: ws-realtime@v0
+spec_version: "0.1"
+description: |
+  Long-running ws-realtime session with broker-driven interim debits.
+  Runner sends 4 frames spaced 80ms apart, holds the connection open
+  for ~400ms total, and asserts the daemon recorded at least 2
+  DebitBalance calls.
+
+setup:
+  capability:
+    id: test:interim-debit-ws:v1
+    offering_id: default
+    interaction_mode: ws-realtime@v0
+    work_unit:
+      name: bytes
+      extractor:
+        type: bytes-counted
+        direction: response
+        granularity: 1
+    price:
+      amount_wei: "10"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/ws
+      auth: none
+
+request:
+  method: GET
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:interim-debit-ws:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: ws-realtime@v0
+    # Plan 0015: pin the broker's work_id so the runner can call
+    # PayeeDaemon.GetBalance against the same session.
+    Livepeer-Request-Id: interim-debit-ws-fixture-001
+
+backend_response:
+  status: 0
+  body: ""
+
+backend_assertions:
+  livepeer_headers_present: false
+  authorization_header_present: false
+
+response_expect:
+  status: 101
+  headers_present:
+    - Livepeer-Request-Id
+
+ws_realtime:
+  frame_count: 4
+  frame_interval_ms: 80
+  frame_size_bytes: 64
+  hold_after_frames_ms: 100
+  expect_min_interim_debits: 2

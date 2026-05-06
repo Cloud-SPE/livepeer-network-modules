@@ -17,6 +17,11 @@ import (
 //
 //	OpenSession → ProcessPayment → handler → DebitBalance → CloseSession
 //
+// Plan 0015 grows the in-handler middle: long-running sessions
+// periodically call DebitBalance with per-tick deltas plus
+// SufficientBalance to confirm runway, terminating the handler when the
+// runway disappears.
+//
 // Implementations may persist state (GRPC) or hold it in memory (Mock).
 type Client interface {
 	// OpenSession idempotently opens a payee-side session for the
@@ -35,6 +40,16 @@ type Client interface {
 	// Retries with the same seq return the prior balance instead of
 	// double-debiting.
 	DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.Int, error)
+
+	// SufficientBalance checks whether the (sender, work_id) balance
+	// covers at least min_work_units of additional priced work, without
+	// debiting. Plan 0015's interim-debit ticker calls this per tick;
+	// false return triggers handler termination.
+	SufficientBalance(ctx context.Context, req SufficientBalanceRequest) (*SufficientBalanceResult, error)
+
+	// GetBalance returns the current balance for a (sender, work_id)
+	// pair. Used for observability and conformance assertions.
+	GetBalance(ctx context.Context, sender []byte, workID string) (*big.Int, error)
 
 	// CloseSession finalizes a session. After this call no further
 	// ProcessPayment or DebitBalance against (sender, work_id) is
@@ -77,4 +92,19 @@ type DebitBalanceRequest struct {
 	WorkID    string
 	WorkUnits int64
 	DebitSeq  uint64
+}
+
+// SufficientBalanceRequest is the input to a runway check.
+type SufficientBalanceRequest struct {
+	Sender       []byte
+	WorkID       string
+	MinWorkUnits int64
+}
+
+// SufficientBalanceResult mirrors the PayeeDaemon proto response: a
+// boolean answering "yes/no" plus the daemon's view of the current
+// balance for diagnostics.
+type SufficientBalanceResult struct {
+	Sufficient bool
+	Balance    *big.Int
 }

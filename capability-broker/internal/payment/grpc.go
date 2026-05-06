@@ -102,6 +102,32 @@ func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.
 	return new(big.Int).SetBytes(resp.GetBalance()), nil
 }
 
+func (g *GRPC) SufficientBalance(ctx context.Context, req SufficientBalanceRequest) (*SufficientBalanceResult, error) {
+	resp, err := g.client.SufficientBalance(ctx, &pb.SufficientBalanceRequest{
+		Sender:       req.Sender,
+		WorkId:       req.WorkID,
+		MinWorkUnits: req.MinWorkUnits,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &SufficientBalanceResult{
+		Sufficient: resp.GetSufficient(),
+		Balance:    new(big.Int).SetBytes(resp.GetBalance()),
+	}, nil
+}
+
+func (g *GRPC) GetBalance(ctx context.Context, sender []byte, workID string) (*big.Int, error) {
+	resp, err := g.client.GetBalance(ctx, &pb.GetBalanceRequest{
+		Sender: sender,
+		WorkId: workID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return new(big.Int).SetBytes(resp.GetBalance()), nil
+}
+
 func (g *GRPC) CloseSession(ctx context.Context, sender []byte, workID string) error {
 	_, err := g.client.CloseSession(ctx, &pb.CloseSessionRequest{
 		Sender: sender,

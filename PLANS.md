@@ -14,18 +14,22 @@ shape" for the planned component list.
 Code shipping today:
 
 - `capability-broker/` — Go reference impl, 6 modes + 6 extractors registered.
+  Plan 0015 added the broker-side interim-debit ticker for long-running
+  sessions (ws-realtime today; `LiveCounter` interface in place for the
+  rtmp / session-control followups).
 - `payment-daemon/` — sender + receiver modes; gRPC over unix socket; BoltDB
   session ledger. Cryptography + chain stubbed under provider interfaces.
 - `gateway-adapters/` — TypeScript per-mode middleware for the HTTP family.
 - `openai-gateway/` — reference OpenAI-compat gateway end-to-end (calls
   `PayerDaemon.CreatePayment` over unix socket).
 - `livepeer-network-protocol/` — spec subfolder (manifest schema + 6 modes +
-  6 extractors + payment proto + conformance runner with 11 fixtures).
+  6 extractors + payment proto + conformance runner with 13 fixtures).
 
 Design-doc batch (plans 0013, 0015–0019, plus `migration-from-suite.md`)
 landed 2026-05-06: ~4,140 lines of paper documenting the next implementation
-layer. None of these plans have committed code yet — each surfaces 5–8 open
-questions for the user before code can start.
+layer. Plan 0015 has since shipped end-to-end (4 commits, 13/13 conformance);
+the remaining plans (0013, 0016–0019) still surface 5–8 open questions each
+for the user before code can start.
 
 What does not exist yet:
 
@@ -33,12 +37,11 @@ What does not exist yet:
   Plan 0016 design queued.
 - `orch-coordinator/` and `secure-orch-console/` components (designs in
   plans 0018 + 0019; no code).
-- Interim-debit cadence on long-running modes (plan 0015 design).
 - Any change to the existing `livepeer-network-suite`.
 
 ## Active plans
 
-Six numbered design docs at `docs/exec-plans/active/000N-*.md`. Each is
+Five numbered design docs at `docs/exec-plans/active/000N-*.md`. Each is
 **paper-only** — no committed code. Each surfaces 5–8 open questions the
 user must answer before implementation begins.
 
@@ -48,13 +51,6 @@ user must answer before implementation begins.
   engine-vs-shell split during the migration and renaming away from
   `-core`. 5-phase migration sequence; -1,500 to -1,800 net LOC.
   Estimate 8–14 working days.
-- **Plan 0015** — `0015-interim-debit-cadence-design.md`. Broker-side
-  per-session ticker + `SufficientBalance` check for long-running
-  modes (ws-realtime today; rtmp / session-control gated on
-  0011/0012-followup). New `LiveCounter` extractor sibling interface;
-  delta-per-tick `DebitBalance(seq)` accounting; new
-  `Livepeer-Error: insufficient_balance` code added to the spec.
-  4-commit cadence.
 - **Plan 0016** — `0016-chain-integrated-payment-design.md`. Replaces
   the v0.2 stub providers with go-ethereum + Arbitrum One: real
   ticket hashing (keccak256-flatten per TicketBroker contract), V3
@@ -97,10 +93,11 @@ Followups still open from earlier plans:
   media-plane provisioning for `session-control-plus-media`.
 
 Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) —
-plans 0001–0012 plus 0014 are all closed; together they shipped the
-6-mode broker, 6 extractors, gateway-adapters TS middleware, the
-OpenAI-compat reference gateway, and the wire-compat sender + receiver
-daemons.
+plans 0001–0012 plus 0014 and 0015 are all closed; together they shipped
+the 6-mode broker, 6 extractors, gateway-adapters TS middleware, the
+OpenAI-compat reference gateway, the wire-compat sender + receiver
+daemons, and (plan 0015) the broker-side interim-debit cadence with
+SufficientBalance runway termination on long-running sessions.
 
 ## Roadmap (rough; subject to change)
 
@@ -115,7 +112,7 @@ daemons.
 | 4-followup | Wire-compat envelope + sender daemon | `payment-daemon/` | ✅ completed (plan 0014) |
 | 4-chain | Chain-integrated payment-daemon (Arbitrum One) | `payment-daemon/` | 📄 design landed (plan 0016); implementation pending |
 | 4-warmkey | Warm-key lifecycle + rotation | `payment-daemon/` | 📄 design landed (plan 0017); implementation paired with 4-chain |
-| 4-interim | Interim-debit cadence on long-running modes | `capability-broker/` | 📄 design landed (plan 0015); implementation pending |
+| 4-interim | Interim-debit cadence on long-running modes | `capability-broker/` | ✅ completed (plan 0015) |
 | 5a | HTTP-family mode drivers (`http-stream`, `http-multipart`) | `capability-broker/`, `runner/` | ✅ completed (plan 0006) |
 | 5b | `ws-realtime` mode driver | `capability-broker/`, `runner/` | ✅ completed (plan 0010) |
 | 5c | `rtmp-ingress-hls-egress` mode driver — session-open phase | `capability-broker/`, `runner/` | ✅ completed (plan 0011) |

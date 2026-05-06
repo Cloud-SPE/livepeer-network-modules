@@ -22,9 +22,41 @@ type Fixture struct {
 	BackendAssertions BackendAssertions `yaml:"backend_assertions,omitempty"`
 	ResponseExpect    ResponseExpect    `yaml:"response_expect"`
 
+	// WSRealtime carries ws-realtime-mode-specific scenario knobs (plan
+	// 0015 conformance fixtures). Empty for fixtures of other modes.
+	WSRealtime WSRealtimeFixture `yaml:"ws_realtime,omitempty"`
+
 	// Path is the file path the fixture was loaded from; used in error
 	// messages, not parsed from YAML.
 	Path string `yaml:"-"`
+}
+
+// WSRealtimeFixture extends Fixture with the ws-realtime-driver knobs
+// plan 0015's interim-debit fixtures need (frame schedule + assertions).
+// Zero values reproduce the v0.1 single-frame happy path.
+type WSRealtimeFixture struct {
+	// FrameCount is the number of frames the runner sends. 0 → 1 frame
+	// (the v0.1 single-message round-trip).
+	FrameCount int `yaml:"frame_count,omitempty"`
+	// FrameIntervalMs is the gap between frames. 0 → send all frames
+	// immediately.
+	FrameIntervalMs int `yaml:"frame_interval_ms,omitempty"`
+	// FrameSizeBytes is the per-frame payload size. 0 → small probe.
+	FrameSizeBytes int `yaml:"frame_size_bytes,omitempty"`
+	// HoldAfterFramesMs is how long the runner holds the connection
+	// open after sending the last frame. Used when the runner expects
+	// the broker to terminate the session (balance-exhausted) so the
+	// runner observes the close from the server side.
+	HoldAfterFramesMs int `yaml:"hold_after_frames_ms,omitempty"`
+
+	// ExpectMinInterimDebits asserts the daemon issued at least this
+	// many DebitBalance calls during the session. Inferred via the
+	// payer-daemon's GetBalance trajectory at the runner side
+	// (indirect inference per plan 0015 §9.1).
+	ExpectMinInterimDebits int `yaml:"expect_min_interim_debits,omitempty"`
+	// ExpectBrokerTerminated asserts the broker closed the WebSocket,
+	// not the runner. Used by the balance-exhausted fixture.
+	ExpectBrokerTerminated bool `yaml:"expect_broker_terminated,omitempty"`
 }
 
 // Setup describes what the runner is expected to provision in the broker

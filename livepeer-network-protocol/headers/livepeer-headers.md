@@ -1,6 +1,6 @@
 ---
 status: accepted (plan 0002 Q5 closed 2026-05-06)
-spec_version: 0.1.0
+spec_version: 0.1.1
 last_updated: 2026-05-06
 ---
 
@@ -169,6 +169,13 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 - **Value:** one of the codes in [Error codes](#error-codes) below.
 - The response body SHOULD also include a JSON object with structured error info
   (see [Error body](#error-body)).
+- For long-running modes (`ws-realtime`, `rtmp-ingress-hls-egress`,
+  `session-control-plus-media`, streaming `http-stream`), the response is
+  in flight when the broker decides to terminate. Broker emits the error
+  code as an HTTP trailer where the wire allows (`Trailer: Livepeer-Error`
+  + the value when the body is complete) or as the WebSocket close
+  reason. `insufficient_balance` is the canonical code for these
+  mid-flight terminations (plan 0015).
 
 ## Error codes
 
@@ -182,6 +189,7 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 | `mode_unsupported` | 505 | Broker does not implement the requested `Livepeer-Mode` for this capability. |
 | `backend_unavailable` | 502 | Backend reachable but returned an error the broker can't recover from. |
 | `capacity_exhausted` | 503 | Broker has no slots; see `Livepeer-Backoff`. |
+| `insufficient_balance` | 402 | Long-running session terminated by the broker because `PayeeDaemon.SufficientBalance` reported the payer's balance no longer covers the configured runway. The header is emitted as a trailer where the protocol allows it (the response body has typically already begun); the connection is closed by the broker. Plan 0015. |
 | `internal_error` | 500 | Anything else. |
 
 ### Error body
@@ -238,3 +246,4 @@ See [`../conformance/`](../conformance/).
 | Spec version | Change |
 |---|---|
 | 0.1.0 | Initial draft. |
+| 0.1.1 | Add `insufficient_balance` error code for long-running sessions terminated by the broker mid-flight (plan 0015). Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |

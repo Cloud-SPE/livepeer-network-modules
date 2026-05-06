@@ -24,6 +24,26 @@ type Extractor interface {
 	Extract(ctx context.Context, req *Request, resp *Response) (uint64, error)
 }
 
+// LiveCounter is implemented by extractors that can be polled mid-flight
+// for the running unit total. Mode drivers register a LiveCounter
+// alongside their handler when they support interim debit (see plan 0015);
+// the payment middleware polls it every tick to compute per-tick deltas.
+//
+// CurrentUnits MUST be safe to call from a goroutine that is not the
+// goroutine producing the count. The trivial implementations in
+// `extractors/bytescounted` and `extractors/secondselapsed` satisfy this
+// via atomic.Uint64.Load and time.Since respectively.
+//
+// LiveCounter is not a replacement for Extractor: the final-flush path
+// still calls Extract after the handler returns to produce the canonical
+// end-of-session count. LiveCounter is the interim view; Extract is the
+// authoritative end view. The two MUST agree at end-of-session.
+type LiveCounter interface {
+	// CurrentUnits returns the running work-unit total. Monotonic;
+	// safe for concurrent reads from any goroutine.
+	CurrentUnits() uint64
+}
+
 // Request carries the parts of the inbound request available to extractors.
 type Request struct {
 	Method  string

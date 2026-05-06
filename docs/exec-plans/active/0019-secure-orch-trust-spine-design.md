@@ -28,8 +28,9 @@ related:
 - The **`secure-orch-console`** — diff-and-sign UX. Localhost-bound
   web UI on secure-orch; operator accesses it from a LAN laptop via
   `ssh -L`-tunneled port-forward (§6.1).
-- The **air-gap workflow** — operator-facing transports for candidate-in
-  and signed-out.
+- The **operator-transport workflow** — the secure-orch web UI handles
+  both candidate-in (multipart upload) and signed-out (HTTP-response
+  download), reached over `ssh -L` (§9).
 - The **verification path** on every receiver of the signed manifest:
   coordinator on upload, resolver on fetch, gateway on resolve.
 - The **cold-key escalation flow** — fresh key provisioning, on-chain
@@ -101,10 +102,10 @@ Six attacker shapes worth designing against. Defenses fold into §4–§9.
   warm-key story on the payment side: plan 0017 + [`payment-daemon/docs/operator-runbook.md`](../../../payment-daemon/docs/operator-runbook.md)
   §5 lines 240–263.
 - **secure-orch network reachability.** Should be impossible by the
-  hard rule. The application contract holds it: console binds
-  `127.0.0.1` only; HSM bus is USB/PCIe, never IP. Host-level posture
-  (firewall, sshd, remote-management agents) is operator deployment
-  choice — see §13 Q6 and §9.3 for non-prescriptive guidance.
+  hard rule. The application contract holds it: console + web UI bind
+  `127.0.0.1` only; no listener on routable interfaces. Host-level
+  posture (firewall, sshd, remote-management agents) is operator
+  deployment choice — see §13 Q6 and §9.3 for non-prescriptive guidance.
 - **Coordinator-host compromise (candidate poisoning).** Attacker
   rewrites the candidate (extra capabilities, silent `price` /
   `worker_url` changes). Console diff is the catch. **This is the
@@ -114,7 +115,7 @@ Six attacker shapes worth designing against. Defenses fold into §4–§9.
 - **Cold-key compromise.** Game over for this orch's identity until
   rotation (§10). Blast radius is bounded to one orch — no shared
   cold-key infrastructure (no federation in v1, §14). Mitigation: §5
-  (HSM-backed, non-extractable) + §10 (rotation).
+  (V3 keystore eager-decrypt + zeroing) + §10 (rotation).
 - **Operator coercion / regulatory action.** Out of architectural scope
   for v1. Operator + secure-orch + cold key are co-located by design;
   physical control of the operator effectively *is* the orch. Documented
@@ -197,14 +198,9 @@ minor bump.
 Out of scope: anchoring the manifest hash on-chain (§14). That's a
 real but expensive defense; v2.
 
-## 5. HSM / cold-key storage
+## 5. Cold-key storage
 
-Three options, in order of v1 status: V3 JSON keystore (primary),
-YubiHSM 2 (optional hardening), Ledger (deferred). None violate the
-hard rule provided any hardware is bus-attached (USB / PCIe), never
-network-attached.
-
-### 5.1 V3 JSON keystore (primary)
+### 5.1 V3 JSON keystore (only path in v0.1)
 
 - **Pro:** zero special hardware. The prior reference impl's
   `signer/signer.go`
@@ -218,79 +214,21 @@ network-attached.
   familiar (it's MetaMask without the browser).
 - **Pro:** recovery is mechanical — the V3 keystore file plus its
   password is the whole story. Backup is a copy.
+- **Password supply.** Operator types the password into the web UI's
+  unlock form at session start; the console eager-decrypts the keystore
+  to an in-memory private key, then zeros the password buffer. The
+  decrypted key is held in a locked memory region for the duration of
+  the session and zeroed on session end (or on idle timeout). No
+  password-prompt per sign — the unlocked session is the gesture.
 - **Con:** software key in process memory during sign. Local-privilege-
-  escalation on secure-orch is a key-extraction risk. The hardening
-  upgrade in §5.2 is the answer for operators who want key-off-RAM.
+  escalation on secure-orch is a key-extraction risk; mitigated by
+  zeroing on session end and by the host's egress-only posture.
 
-Selected via `--keystore=v3:<path>` (default).
+Selected via `--keystore=<path-to-V3-json>`.
 
-### 5.2 YubiHSM 2 (optional hardening upgrade, USB-A, PKCS#11)
-
-- **Pro:** purpose-built secure element. Key generation on-device; key
-  never extractable. Tamper-evident hardware. Vendor-supported PKCS#11.
-- **Pro:** supports secp256k1 natively (Yubico added the curve in
-  firmware 2.2; current stable is 2.5+). Sign-with-secp256k1 is a
-  single PKCS#11 call.
-- **Pro:** USB-only is bus-local. Does **not** require a network
-  presence; plugs into the secure-orch host directly.
-- **Con:** PKCS#11 surface is finicky. Operator must install
-  `yubihsm-shell` + the connector daemon (locally, on secure-orch). The
-  connector is `localhost`-bound by default — verify before deploy.
-- **Con:** ~$650 hardware cost + ~30-min one-time setup (install
-  shell, generate key, set PIN, set audit log). Higher friction for
-  hobbyist orchs.
-- **Con:** Yubico's vendor cloud (YubiCloud) is irrelevant here; we use
-  the device standalone. Operators must understand that distinction.
-
-**The "network-attached HSM" worry is a non-issue for YubiHSM 2 specifically**
-— it is a USB device. The "HSM on a separate machine" framing in the
-brief refers to network-HSM offerings (Thales Luna, AWS CloudHSM,
-Entrust nShield Connect). Those *do* require network reachability and
-*are* incompatible with our hard rule. We do not use them.
-
-Selected via `--keystore=yubihsm:<connector-url>` alongside (replacing)
-the default `--keystore=v3:<path>`. Same `Signer` interface either way.
-
-### 5.3 Ledger Nano S Plus / X + ledger-app-livepeer (deferred to v1.1+)
-
-- **Pro:** cheapest hardware option (~$80). USB-C / Bluetooth (we'd
-  disable Bluetooth). Hardware confirm button is a delightful UX bonus
-  — operator sees the "sign manifest? Y/N" on the device screen.
-- **Pro:** secp256k1 native, used universally for Ethereum signing.
-- **Con:** **no `ledger-app-livepeer` exists today.** Without it, we'd
-  rely on the generic "Sign Personal Message" Ethereum-app flow, which
-  shows the operator a SHA-256 of canonical bytes on the tiny screen —
-  not human-readable. The diff lives in the console; the device confirm
-  is a "I trust the console" tap, not a "I read the manifest" review.
-  Acceptable but slightly weaker.
-- **Con:** building a custom Ledger app is a 1–2 month job in Rust/C
-  with Ledger's review process. Not v1 work.
-- **Con:** signing latency is ~1s per sign (USB transport + on-device
-  ECDSA). Fine for a once-per-edit operator gesture; not fine for
-  batched signing of 100 manifests in a row (we don't do that anyway).
-
-Deferred to v1.1+ contingent on `ledger-app-livepeer` actually existing.
-
-### 5.4 Recommendation
-
-**V3 keystore is the documented default; YubiHSM 2 is an optional
-hardening upgrade.** Reason for V3-as-primary: alignment with
-go-livepeer + livepeer-network-suite — operators already understand
-this storage shape from their bonded transcoder address, and the prior
-reference impl is a verbatim port. YubiHSM 2 is documented for
-operators who want stronger key isolation; it sits behind the same
-`Signer` interface and is selected via `--keystore=yubihsm:<connector-url>`
-in place of the default `--keystore=v3:<path>`.
-
-Operator-friction tradeoff: V3 keystore has a password-prompt per sign
-and zero hardware (the baseline most orchs already understand from
-MetaMask). YubiHSM 2 has a $650 + ~30-min one-time setup (install
-shell, generate key, set PIN, set audit log) and ~zero per-sign
-friction, with stronger key isolation. Ledger has near-zero setup but
-a per-sign tap, deferred until `ledger-app-livepeer` exists.
-
-V3 has no warning flag and no "non-production" framing — it is the
-baseline (Q1 / §13).
+**v0.1 scope.** v0.1 ships V3 keystore only. Hardware wallets
+(YubiHSM 2, Ledger) are deferred to a future plan; see §14
+out-of-scope.
 
 ## 6. Console UI — the diff-and-sign tool
 
@@ -302,7 +240,7 @@ loopback. Secure-orch hosts the web server on `127.0.0.1:<port>` only;
 the operator runs `ssh -L 8080:127.0.0.1:8080 secure-orch` from their
 LAN laptop and points a browser at `http://localhost:8080`. The
 browser, the diff renderer, and any operator-facing input all live on
-the laptop; the cold key, signer, inbox, outbox, and audit log all
+the laptop; the cold key, signer, upload handler, and audit log all
 live on secure-orch.
 
 **No CLI as a parallel surface in v1.** CLI mode is deferred or never
@@ -335,8 +273,7 @@ contract holds with `ssh -L`:
   child to the web UI is loopback-only.
 - The console application contract — "no listener on routable
   interfaces" — holds unconditionally, regardless of whether the
-  operator runs sshd, what posture they run it under, or whether they
-  use USB instead.
+  operator runs sshd or what posture they run it under.
 
 Whether sshd runs at all, on which interface, with what auth posture,
 is a deployment-layer choice (cross-reference §9.3 / Q6). The console
@@ -375,23 +312,18 @@ Hard rules:
 - **No auto-sign.** Ever. Even if "looks identical to last manifest" —
   resolver-side replay protection (§4.4) makes a fresh sign cheap, but
   the operator-confirm gesture is not skippable.
-- **Hardware confirm where available.** YubiHSM 2 has no button;
-  we expose a software "type the orch eth address last 4 hex chars
-  to confirm" gesture (web-form input in the browser-rendered confirm
-  dialog). Ledger has a button; we use it when Ledger ships (§5.3).
+- **Confirm gesture:** web-form input asking for the last 4 hex chars
+  of the orch eth address.
 - **Visible signing identity.** Console shows the signer's eth address
   (lower-cased) at the top of the screen during the entire session. If
   the operator ever sees a different address, they panic-quit.
-- **Visible HSM connection state.** "HSM connected: yes / no, label X,
-  serial Y." If state changes mid-session, the session aborts.
 
-### 6.4 Air-gap workflow inside the console
+### 6.4 Manifest transport inside the console
 
-**The console never opens a network port.** It reads from a local
-inbox dir (`/var/spool/secure-orch/inbox/`) populated by whatever the
-operator chose (USB, `scp`, local download — see §9). It writes
-`signed.json` to a local outbox (`/var/spool/secure-orch/outbox/`),
-updates `last-signed.json` atomically (`rename(2)`), and appends to a
+The web UI handles candidate upload via HTTP form (multipart) and
+`signed.json` download via HTTP response. The console updates
+`last-signed.json` atomically (`rename(2)`) at
+`/var/lib/secure-orch/last-signed.json` (mode `0600`) and appends to a
 rolling audit log (`/var/log/secure-orch/audit.log.jsonl`, mirroring
 the prior impl's `audit/` package shape at
 [`livepeer-modules-project/service-registry-daemon/internal/repo/audit/`](file:///home/mazup/git-repos/livepeer-cloud-spe/livepeer-modules-project/service-registry-daemon/internal/repo/audit/)).
@@ -405,15 +337,14 @@ Time budget per step is bounded by *operator-pace*, not machine-pace.
 | 1 | Edit `host-config.yaml` on broker host(s); restart broker. | Broker host | seconds–minutes (operator's editor) |
 | 2 | Broker re-publishes its `/registry/offerings` locally. | Broker host | seconds (automatic on restart) |
 | 3 | Coordinator scrapes brokers, builds candidate manifest, exposes for download via its operator UI (LAN only). | Coordinator host | seconds–minute |
-| 4 | Operator downloads `candidate.json` to a USB stick / scp-target / portable laptop. | Operator's laptop | seconds |
-| 5 | Operator brings candidate to secure-orch (physical walk, USB plug, or `scp` if secure-orch's ssh is enabled). | Both | minutes (operator-pace) |
+| 4 | Operator opens coordinator web UI in browser; clicks Download Candidate. | Operator's laptop | seconds |
+| 5 | Operator opens secure-orch web UI via `ssh -L` tunnel; uploads candidate via web form. | Both | seconds |
 | 6 | Operator opens console; loads candidate; reads diff. | secure-orch | 1–10 min depending on diff size |
-| 7 | Operator confirms sign (HSM tap or software-confirm gesture). Cold key signs. | secure-orch | seconds |
-| 8 | Console writes `signed.json` to outbox; updates `last-signed.json`; appends audit entry. | secure-orch | seconds |
-| 9 | Operator ferries `signed.json` back to coordinator (USB out, scp from a host that can reach coordinator, etc.). | Both | minutes |
-| 10 | Operator uploads `signed.json` via coordinator's operator UI. | Coordinator | seconds |
-| 11 | Coordinator double-verifies signature, atomic-publishes at `/.well-known/livepeer-registry.json`. | Coordinator | seconds |
-| 12 | Resolvers refetch on next interval (or on push); verify; route. | Resolvers | seconds–minutes |
+| 7 | Operator confirms sign (web-form last-4-hex-chars gesture). Cold key signs. | secure-orch | seconds |
+| 8 | Console returns `signed.json` as a download from the web UI; updates `last-signed.json` atomically; appends audit entry. | secure-orch | seconds |
+| 9 | Operator downloads `signed.json` from the secure-orch web UI; uploads it to coordinator's web UI via HTTP POST. | Both | seconds |
+| 10 | Coordinator double-verifies signature, atomic-publishes at `/.well-known/livepeer-registry.json`. | Coordinator | seconds |
+| 11 | Resolvers refetch on next interval (or on push); verify; route. | Resolvers | seconds–minutes |
 
 Total operator wall time: **~5–20 min** for a routine repricing edit.
 Larger diffs take longer; the bottleneck is operator review, not transport.
@@ -423,8 +354,9 @@ Larger diffs take longer; the bottleneck is operator review, not transport.
 If the operator signed a wrong candidate but caught the mistake before
 upload to coordinator:
 
-- **Discard `signed.json`.** It's just a file; delete it. Nothing has
-  shipped yet. Then redo from step 1 with corrected `host-config.yaml`.
+- **Discard `signed.json`.** Don't upload it to the coordinator.
+  Nothing has shipped yet. Then redo from step 1 with corrected
+  `host-config.yaml`.
 
 If the operator uploaded a wrong signed manifest and it's already live:
 
@@ -502,33 +434,18 @@ This is exactly the prior reference impl's approach
 Reject `/.well-known/orch-key.json` — it adds a fetch with no security
 benefit.
 
-## 9. Air-gap practicalities
+## 9. Operator-transport practicalities
 
-### 9.1 Acceptable transports for candidate → secure-orch
+### 9.1 Candidate → secure-orch
 
-In rough order of operator-friction:
+Operator opens secure-orch's web UI over
+`ssh -L 8080:127.0.0.1:8080 secure-orch`; uploads candidate via the
+web form. The console reads it from the in-process upload handler.
 
-1. **USB drive.** Most paranoid operators' default. Plug in, copy file,
-   plug out. Console auto-detects mount.
-2. **Local LAN download.** Operator's laptop fetches from coordinator's
-   LAN web UI; carries the file to secure-orch via USB or `scp`.
-3. **`scp` from operator's laptop into secure-orch.** Requires the
-   operator to opt in to running an SSH daemon on secure-orch at the
-   OS layer; that's a deployment-posture choice (§9.3 / Q6). The
-   application-layer hard rule is unaffected — console + web UI still
-   bind loopback only.
-4. **QR code over a camera.** Theoretical for tiny manifests. Rejected
-   for v1 — manifests above a handful of capabilities exceed practical
-   QR data density.
+### 9.2 Signed → coordinator
 
-The console doesn't care which the operator chose — it reads from the
-local inbox directory.
-
-### 9.2 Acceptable transports for signed → coordinator
-
-Symmetric. USB out / `scp` from a different host / operator hand-carries
-on a laptop. Same mechanics, opposite direction. Console writes to
-local outbox; operator does the rest.
+Operator downloads `signed.json` from secure-orch's web UI; opens
+coordinator's web UI in their LAN browser; uploads via HTTP POST.
 
 ### 9.3 Operator deployment posture
 
@@ -538,25 +455,29 @@ rule is enforced at the **application layer**: the console + web UI
 bind `127.0.0.1` only, with no listener on a routable interface
 (§6.1.1). That contract holds regardless of OS-daemon posture.
 
-Runbook guidance (non-prescriptive): don't expose secure-orch to
-anything but your LAN; prefer key-only SSH if you enable it. One
-valid posture is LAN-only + SSH key + password. Another valid
-posture is USB-only with sshd off entirely. The console binary
-doesn't care. Decided on 2026-05-06 (Q6 / §13).
+In v0.1, sshd-into-secure-orch is functionally the only operator
+transport (the web UI handles both candidate-in and signed-out, and
+the operator reaches it over `ssh -L`), so most operators will need
+sshd enabled. Runbook guidance (non-prescriptive): LAN-only, key-only
+is the recommended posture. The application-layer contract is
+unchanged. Decided on 2026-05-06 (Q6 / §13).
 
 ### 9.4 Remote operator (no physical access) — not allowed
 
-USB-over-IP RDP forwarding is an inbound RPC and violates the hard
-rule. A traveling HSM worsens §3.6 (operator coercion). **Physical
-presence at secure-orch is required for a sign cycle in v1.** If
-that's not tenable, hire local hands and authorize them on chain (§10)
-so they run their own cold key.
+Any "remote-desktop into secure-orch from arbitrary internet" model
+relies on an inbound RPC and violates the hard rule. A traveling cold
+key worsens §3.6 (operator coercion). **Physical / LAN presence at
+secure-orch is required for a sign cycle in v0.1.** If that's not
+tenable, hire local hands and authorize them on chain (§10) so they
+run their own cold key.
 
 ## 10. Cold-key escalation flow
 
-**Generation.** New key generated on the secure-orch host (preferably
-on-HSM). Key never leaves; public key (eth address) is exported via
-the console (clipboard / file / QR — operator's choice).
+**Generation.** New key generated on the secure-orch host. Key file
+saved as a V3 JSON keystore at
+`/var/lib/secure-orch/keystore/<eth-address>.json`, mode `0600`. Key
+never leaves; public key (eth address) is exported via the console
+(clipboard / file — operator's choice).
 
 **On-chain authorization.** The orch's on-chain identity is the
 BondingManager-bonded transcoder address. To rotate the signing
@@ -569,10 +490,10 @@ plan does not redefine that function — it inherits whatever plan 0017
 + the chain layer settle on. The OLD key authorizing the NEW key is
 "cold key signing its own succession" — irreversible, deliberate.
 
-If the OLD cold key is **lost** (HSM brick, forgotten PIN, hardware
-fault): the orch's on-chain identity is orphaned. Recovery requires
-protocol-governance coordination to migrate to a new orchestrator
-entry. **No automated recovery.**
+If the OLD cold key is **lost** (host disk failure, forgotten
+password, V3 keystore file corruption): the orch's on-chain identity
+is orphaned. Recovery requires protocol-governance coordination to
+migrate to a new orchestrator entry. **No automated recovery.**
 
 **Migration window — hard cutover.** New key signs; old key stops;
 resolvers see the on-chain `setSigningAddress` and update their
@@ -595,17 +516,15 @@ secure-orch-console/
     secure-orch-keygen/                       # cold-key generation helper
   internal/
     canonical/    # JCS canonicalization, ported from prior impl
-    signing/      # Signer iface + V3-keystore (primary) + YubiHSM impl
+    signing/      # V3-keystore Signer iface impl
     diff/         # candidate-vs-last-signed structural diff
     audit/        # rolling JSONL audit log
-    inbox/        # spool-dir watcher
-    outbox/       # signed-manifest writer
-    config/       # operator config (drop dirs, HSM connection, etc.)
+    config/       # operator config
   web/            # Go HTTP server source + embedded static assets
                   # (HTML/CSS/JS for diff + sign forms; localhost-only;
                   # binary embeds it)
   docs/
-    operator-runbook.md, threat-model.md, hsm-setup-yubihsm.md
+    operator-runbook.md, threat-model.md
     design-docs/, exec-plans/
   testdata/       # canonical-bytes fixtures for round-trip tests
 ```
@@ -615,7 +534,7 @@ The runbook ports from
 
 ## 12. Migration sequence — recommended commit cadence
 
-5–7 commits, ordered to land incremental verifiable surface area:
+6 commits in v0.1, ordered to land incremental verifiable surface area:
 
 1. **Commit 1 — manifest packaging spec freeze.** In
    `livepeer-network-protocol/manifest/`: bump schema to add
@@ -628,8 +547,7 @@ The runbook ports from
    and `internal/providers/signer/signer.go` verbatim (with attribution
    in the commit message per
    [`AGENTS.md`](../../../AGENTS.md) lines 62–66). V3-keystore signer
-   only. No HSM yet. No console yet. Round-trip tests vs canonical
-   fixtures.
+   only. No console yet. Round-trip tests vs canonical fixtures.
 3. **Commit 3 — verification primitives.** New
    `secure-orch-console/internal/verify/` (or, more likely, a verifier
    package under `livepeer-network-protocol/` since it's reusable by
@@ -638,19 +556,18 @@ The runbook ports from
    Tests against the same canonical fixtures.
 4. **Commit 4 — console binary scaffold (web server entrypoint).**
    `cmd/secure-orch-console` binary stands up the Go HTTP server bound
-   to `127.0.0.1` only; routes are stubbed. Inbox/outbox/audit
-   packages stand up. V3-keystore signer wired through. No web
-   templates yet.
+   to `127.0.0.1` only; routes are stubbed. Audit package stands up.
+   (No inbox/outbox in v0.1 — manifest transport is HTTP-only via the
+   web UI; see §13 Q1 + §13 Q9.) V3-keystore signer wired through. No
+   web templates yet.
 5. **Commit 5 — web UI (Go HTTP server + embedded HTML/CSS/JS for
    diff + sign).** `web/` package: handler set, templates for diff
    view (§6.2) and tap-to-sign confirm (§6.3). Static assets embedded
-   via `embed.FS`. Same `internal/` packages backing it.
-6. **Commit 6 — HSM integration (YubiHSM 2 PKCS#11).** Adds a YubiHSM
-   2 PKCS#11 signer behind the same `Signer` interface as the V3
-   keystore; both selectable via `--keystore=v3:<path>` (default) or
-   `--keystore=yubihsm:<connector-url>`.
-7. **Commit 7 — air-gap workflow polish.** USB auto-detect, file picker
-   in the web UI, audit-log rotation, deployment doc.
+   via `embed.FS`. Same `internal/` packages backing it. The web UI
+   handles BOTH candidate upload (multipart form) AND `signed.json`
+   download (HTTP response) — it is the manifest transport in v0.1.
+6. **Commit 6 — finalize v0.1.** Audit-log rotation, deployment doc,
+   runbook, plan close.
 
 Each commit lands the smallest verifiable thing. Each can be reverted
 without stranding the others.
@@ -660,19 +577,17 @@ without stranding the others.
 All eight open questions were resolved on 2026-05-06. The implementing
 agent works against these locks; rationale captured for future readers.
 
-### Q1. HSM hardware default
+### Q1. Cold-key storage default
 
-**DECIDED: V3 JSON keystore is the primary signing path; YubiHSM 2 is
-an optional hardening upgrade; Ledger deferred to v1.1+.** Reason for
-V3-as-primary: alignment with go-livepeer + livepeer-network-suite
-operator muscle memory — operators already understand V3 keystores
-from their bonded transcoder address, and the prior reference impl is
-a verbatim port (§5.1). YubiHSM 2 sits behind the same `Signer`
-interface for operators who want stronger key isolation; selected via
-`--keystore=yubihsm:<connector-url>` alongside the default
-`--keystore=v3:<path>` (§5.2). Ledger waits on `ledger-app-livepeer`
-existing (§5.3). V3 is the baseline, not "insecure" — no warning
-flag, no "non-production" framing.
+**DECIDED: V3 JSON keystore is the only signing path in v0.1.**
+YubiHSM 2 and Ledger are deferred to a future plan, listed in §14.
+Reason: aligns with go-livepeer + livepeer-network-suite operator
+muscle memory; the prior reference impl is a verbatim port (§5.1).
+Hardware wallets are not v0.1 scope. Re-evaluate when an operator
+concretely needs hardware key isolation; the `Signer` interface is
+abstract enough that a YubiHSM 2 or Ledger impl is mechanical to slot
+in later. The flag is `--keystore=<path-to-V3-json>`; no
+keystore-type selector flag in v0.1.
 
 ### Q2. Console UI tech
 
@@ -734,8 +649,35 @@ without prescribing one (§9.3).
 [`AGENTS.md`](../../../AGENTS.md) line 46. No shorter alternative on
 offer worth the rename churn.
 
+### Q9. v0.1 manifest transport
+
+**DECIDED: HTTP-only via the web UI. No USB, no filesystem watcher,
+no spool dirs, no inotify, no QR.** Operator opens the secure-orch
+web UI over `ssh -L`; uploads candidate via multipart form;
+downloads `signed.json` via HTTP response. Operator opens the
+coordinator web UI in their LAN browser; uploads `signed.json` via
+HTTP POST. Reason: simplifies the v0.1 surface; HTTP is the only
+path either side; sshd into secure-orch is functionally required for
+the operator (LAN-only, key-only recommended in the runbook).
+Hand-carry workflows (USB, QR) are deferred to a future plan when
+operator demand justifies the surface.
+
 ## 14. Out of scope
 
+- **USB transport for manifests** (candidate-in or signed-out).
+  HTTP-only via the web UI is the v0.1 path. Re-evaluate if operators
+  concretely need a hand-carry workflow that doesn't involve
+  `ssh -L`.
+- **Filesystem-drop / inotify watcher / spool dir** for manifest
+  delivery. v0.1 is HTTP only. The audit log writes are still
+  filesystem-based; that's not a transport question.
+- **Hardware wallets (YubiHSM 2, Ledger, generic PKCS#11).**
+  Deferred to a future plan when an operator concretely asks. Covers
+  the dropped §5.2 / §5.3 paths and any other smartcard-style signer.
+  The `Signer` interface is abstract enough that adding one is
+  mechanical. Note: a custom Ledger app
+  (`ledger-app-livepeer`) is itself a 1–2 month Rust/C project on
+  Ledger's review process — those costs land here too.
 - **Multi-operator federation.** Sharing a cold key, threshold signing
   across operators, multisig manifest publication. v2 or never.
 - **On-chain manifest hashes.** Anchoring `keccak256(canonical)` in a
@@ -745,8 +687,6 @@ offer worth the rename churn.
   proposal to "let secure-orch sign automatically when a candidate
   arrives" violates §2 and is dead.
 - **EIP-712 typed-data signatures.** v2 candidate, see §4.3.
-- **Ledger app development.** Out for v1; revisit when an operator
-  funds the ledger-app-livepeer work.
 - **Protocol-governance recovery for lost cold keys.** §10 names this;
   it's a governance question, not an architecture one.
 - **Per-component metrics aggregation.** Components expose Prometheus;

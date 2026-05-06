@@ -40,17 +40,18 @@ Numbered `docs/exec-plans/active/000N-*.md`. Currently:
 
 | Phase | Outcome | Component subfolder | Status |
 |---|---|---|---|
-| 0 | Docs-and-spec scaffold + conversation provenance | (root) | in flight (plan 0001) |
-| 1 | Interaction-mode specs published as a subfolder | `livepeer-network-protocol/` | planned (plan 0002) |
-| 2 | Capability-broker reference implementation (Go) | `capability-broker/` | not started |
+| 0 | Docs-and-spec scaffold + conversation provenance | (root) | completed (plan 0001) |
+| 1 | Interaction-mode specs published as a subfolder | `livepeer-network-protocol/` | mostly complete (plan 0002) |
+| 2 | Capability-broker reference implementation (Go) | `capability-broker/` | in flight (plan 0003) |
+| 2.5 | Conformance runner mode drivers | `livepeer-network-protocol/conformance/runner/` | queued (plan 0004) |
 | 3 | Coordinator UX rework — capability-as-roster-entry | `orch-coordinator/` | not started |
-| 4 | `payment-daemon` decoupling — opaque capability/work-unit names | `payment-daemon/` | not started |
-| 5 | Gateway-side per-mode adapters | `gateway-adapters/` | not started |
-| 6 | Migration plan from existing suite (deprecation timeline for `*-worker-node` repos) | (root `docs/`) | not started |
+| 4 | `payment-daemon` decoupling — opaque capability/work-unit names | `payment-daemon/` | not started (plan 0005 covers payment-daemon integration) |
+| 5 | Gateway-side per-mode adapters | `gateway-adapters/` | not started (plan 0008) |
+| 6 | Migration plan from existing suite — first adopter is the OpenAI-compat gateway | (root `docs/`) | not started (plan 0009) |
 
-Phases 1–5 are independently shippable; phase 6 is gated on at least one production
-gateway adopting the new shape. Components can be extracted from this monorepo to
-standalone repos at any phase boundary.
+Phases 1–5 are independently shippable; phase 6 is gated on at least one
+production gateway adopting the new shape. Components can be extracted from
+this monorepo to standalone repos at any phase boundary.
 
 ## Versioning
 

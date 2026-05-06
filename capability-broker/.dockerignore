@@ -1,0 +1,7 @@
+# Exclude docs and dev-only files from the build context to keep images lean.
+docs/
+*.md
+.dockerignore
+.gitignore
+Makefile
+.git

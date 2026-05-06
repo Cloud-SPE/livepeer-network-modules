@@ -1,0 +1,99 @@
+# Example host-config.yaml for the capability broker.
+#
+# This file is the operator's entire day-to-day surface. Edit, reload, re-publish
+# the manifest. Per requirement R5, no Go module written, no binary rebuilt.
+#
+# Schema is informally described here; formal validation happens at broker
+# startup. See capability-broker/docs/design-docs/architecture.md for the full
+# config grammar.
+
+identity:
+  # The orch's on-chain identity (Arbitrum One). Signature on the manifest must
+  # recover to this address; this broker is one of N publishers contributing
+  # capability tuples to that manifest.
+  orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
+
+  # Optional: human-readable label for logs and metrics.
+  label: "broker-a"
+
+# Listen addresses; broker binds 127.0.0.1 by default behind operator's
+# reverse proxy (Cloudflare Tunnel / Traefik / Cloudflare LB). HTTPS is the
+# operator's job.
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+# Path to the co-located payment-daemon socket. v0.1 uses a stub client; this
+# field is reserved for the real integration in plan 0005.
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+  mock: true   # v0.1 only — set false when plan 0005 ships
+
+capabilities:
+  # ---- Self-hosted vLLM chat completions ----
+  - id: "openai:chat-completions:llama-3-70b"
+    offering_id: "vllm-h100-batch4"
+    interaction_mode: "http-stream@v0"           # plan 0006 will land this driver
+    work_unit:
+      name: "tokens"
+      extractor: { type: "openai-usage", field: "total_tokens" }
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://10.0.0.5:8000/v1/chat/completions"
+      auth: "none"
+    extra:
+      region: "us-west-2"
+      gpu_class: "h100"
+
+  # ---- Third-party API resale (OpenAI) ----
+  - id: "openai:chat-completions:gpt-4o"
+    offering_id: "openai-resale"
+    interaction_mode: "http-stream@v0"
+    work_unit:
+      name: "tokens"
+      extractor: { type: "openai-usage", field: "total_tokens" }
+    price:
+      amount_wei: "8500000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "https://api.openai.com/v1/chat/completions"
+      auth:
+        method: "bearer"
+        secret_ref: "vault://openai-key"
+    extra:
+      backend_provider: "openai"
+      region: "global"
+
+  # ---- Embeddings (http-reqresp; v0.1 first mode) ----
+  - id: "openai:embeddings:bge-large"
+    offering_id: "vllm-h100"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "tokens"
+      extractor: { type: "openai-usage", field: "total_tokens" }
+    price:
+      amount_wei: "100000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://10.0.0.5:8000/v1/embeddings"
+      auth: "none"
+
+  # ---- Custom capability (illustrates open-world IDs + jsonpath extractor) ----
+  - id: "kibble:doggo-bark-counter:v1"
+    offering_id: "default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "barks"
+      extractor: { type: "response-jsonpath", path: "$.bark_count" }
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://192.168.1.42:8080/count"
+      auth: "none"

@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
@@ -41,6 +42,7 @@ func (d *Driver) Mode() string { return Mode }
 // preserved on the outbound request unchanged; the broker treats the body
 // as opaque bytes.
 func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
+	start := time.Now()
 	body, err := io.ReadAll(p.Request.Body)
 	if err != nil {
 		livepeerheader.WriteError(p.Writer, http.StatusBadRequest, livepeerheader.ErrInternalError,
@@ -82,9 +84,10 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 		Body:    body,
 		Headers: p.Request.Header,
 	}, &extractors.Response{
-		Status:  resp.StatusCode,
-		Body:    respBody,
-		Headers: resp.Header,
+		Status:   resp.StatusCode,
+		Body:     respBody,
+		Headers:  resp.Header,
+		Duration: time.Since(start),
 	})
 	if err != nil {
 		livepeerheader.WriteError(p.Writer, http.StatusInternalServerError, livepeerheader.ErrInternalError,

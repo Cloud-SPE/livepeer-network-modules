@@ -123,3 +123,84 @@ capabilities:
       transport: "http"
       url: "http://broker.example.com/handler"
       auth: "none"
+
+  # ---- fixtures/http-reqresp/openai-usage.yaml ----
+  - id: "test:extractor-openai-usage:v1"
+    offering_id: "default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "tokens"
+      extractor:
+        type: "openai-usage"
+        field: "total_tokens"
+    price: { amount_wei: "1000", per_units: 1 }
+    backend:
+      transport: "http"
+      url: "http://runner:9000/handler"
+      auth: "none"
+
+  # ---- fixtures/http-reqresp/request-formula.yaml ----
+  - id: "test:extractor-request-formula:v1"
+    offering_id: "default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "image_step_megapixel"
+      extractor:
+        type: "request-formula"
+        expression: "(width * height * steps) / 1000000"
+        fields:
+          width: "$.size.width"
+          height: "$.size.height"
+          steps: "$.num_inference_steps"
+    price: { amount_wei: "1000000", per_units: 1 }
+    backend:
+      transport: "http"
+      url: "http://runner:9000/handler"
+      auth: "none"
+
+  # ---- fixtures/http-reqresp/bytes-counted.yaml ----
+  - id: "test:extractor-bytes-counted:v1"
+    offering_id: "default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "bytes"
+      extractor:
+        type: "bytes-counted"
+        direction: "response"
+        granularity: 1
+    price: { amount_wei: "10", per_units: 1 }
+    backend:
+      transport: "http"
+      url: "http://runner:9000/handler"
+      auth: "none"
+
+  # ---- fixtures/http-reqresp/seconds-elapsed.yaml ----
+  - id: "test:extractor-seconds-elapsed:v1"
+    offering_id: "default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "milliseconds"
+      extractor:
+        type: "seconds-elapsed"
+        granularity: 0.001
+        rounding: "ceil"
+    price: { amount_wei: "1", per_units: 1 }
+    backend:
+      transport: "http"
+      url: "http://runner:9000/handler"
+      auth: "none"
+
+  # ---- fixtures/http-reqresp/ffmpeg-progress.yaml ----
+  - id: "test:extractor-ffmpeg-progress:v1"
+    offering_id: "default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "out_time_seconds"
+      extractor:
+        type: "ffmpeg-progress"
+        unit: "out_time_seconds"
+    price: { amount_wei: "100", per_units: 1 }
+    backend:
+      transport: "http"
+      url: "http://runner:9000/handler"
+      auth: "none"

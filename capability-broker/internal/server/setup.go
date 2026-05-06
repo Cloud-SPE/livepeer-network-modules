@@ -2,7 +2,12 @@ package server
 
 import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/bytescounted"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/ffmpegprogress"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/openaiusage"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/requestformula"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/responsejsonpath"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/secondselapsed"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/httpmultipart"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/httpreqresp"
@@ -29,14 +34,14 @@ func defaultModes() *modes.Registry {
 }
 
 // defaultExtractors returns the registry pre-populated with the v0.1
-// extractor set:
-//   - response-jsonpath
-//
-// Other extractors (openai-usage, request-formula, bytes-counted,
-// seconds-elapsed, ffmpeg-progress) are not yet implemented; their
-// factories ship in plan 0007.
+// extractor set. All six spec-defined extractors are registered.
 func defaultExtractors() *extractors.Registry {
 	r := extractors.NewRegistry()
-	r.Register(responsejsonpath.Name, responsejsonpath.New)
+	r.Register(responsejsonpath.Name, responsejsonpath.New) // plan 0003
+	r.Register(openaiusage.Name, openaiusage.New)           // plan 0007
+	r.Register(requestformula.Name, requestformula.New)     // plan 0007
+	r.Register(bytescounted.Name, bytescounted.New)         // plan 0007
+	r.Register(secondselapsed.Name, secondselapsed.New)     // plan 0007
+	r.Register(ffmpegprogress.Name, ffmpegprogress.New)     // plan 0007
 	return r
 }

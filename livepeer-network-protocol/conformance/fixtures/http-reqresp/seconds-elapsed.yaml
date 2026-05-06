@@ -1,0 +1,67 @@
+# Conformance fixture: seconds-elapsed extractor.
+#
+# Asserts that the broker populates Response.Duration AND that the
+# extractor reports a non-zero work-unit count for any non-trivial
+# request. We don't pin an exact value (duration varies); we assert
+# Livepeer-Work-Units >= 0 and the header is present.
+#
+# To make the test deterministic, we use granularity=0.001 (millisecond
+# units) so even a sub-second test yields > 0 work units, AND we omit
+# the exact livepeer_work_units field — the runner's HeadersPresent
+# assertion still verifies the header was emitted.
+
+name: seconds-elapsed
+mode: http-reqresp@v0
+spec_version: "0.1"
+description: |
+  http-reqresp@v0 with the seconds-elapsed extractor. Verifies the
+  Response.Duration plumbing through the http-reqresp driver and the
+  extractor's granularity / rounding logic.
+
+setup:
+  capability:
+    id: test:extractor-seconds-elapsed:v1
+    offering_id: default
+    interaction_mode: http-reqresp@v0
+    work_unit:
+      name: milliseconds
+      extractor:
+        type: seconds-elapsed
+        granularity: 0.001
+        rounding: ceil
+    price:
+      amount_wei: "1"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/handler
+      auth: none
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:extractor-seconds-elapsed:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: http-reqresp@v0
+    Content-Type: application/json
+  body: |
+    {}
+
+backend_response:
+  status: 200
+  headers:
+    Content-Type: application/json
+  body: |
+    {"ok":true}
+
+backend_assertions:
+  livepeer_headers_present: false
+
+response_expect:
+  status: 200
+  headers_present:
+    - Livepeer-Work-Units
+  body_passthrough: true

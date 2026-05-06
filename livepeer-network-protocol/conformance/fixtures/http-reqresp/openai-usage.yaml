@@ -1,0 +1,60 @@
+# Conformance fixture: openai-usage extractor.
+#
+# Backend returns an OpenAI-style response with a usage object; broker's
+# openai-usage extractor reads usage.total_tokens and reports it as
+# Livepeer-Work-Units.
+
+name: openai-usage
+mode: http-reqresp@v0
+spec_version: "0.1"
+description: |
+  http-reqresp@v0 with the openai-usage extractor reading
+  usage.total_tokens.
+
+setup:
+  capability:
+    id: test:extractor-openai-usage:v1
+    offering_id: default
+    interaction_mode: http-reqresp@v0
+    work_unit:
+      name: tokens
+      extractor:
+        type: openai-usage
+        field: total_tokens
+    price:
+      amount_wei: "1000"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/handler
+      auth: none
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:extractor-openai-usage:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: http-reqresp@v0
+    Content-Type: application/json
+  body: |
+    {"prompt":"hello"}
+
+backend_response:
+  status: 200
+  headers:
+    Content-Type: application/json
+  body: |
+    {"id":"e","usage":{"prompt_tokens":12,"completion_tokens":34,"total_tokens":46}}
+
+backend_assertions:
+  livepeer_headers_present: false
+
+response_expect:
+  status: 200
+  headers_present:
+    - Livepeer-Work-Units
+  livepeer_work_units: 46
+  body_passthrough: true

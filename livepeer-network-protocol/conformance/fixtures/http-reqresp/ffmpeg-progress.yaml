@@ -1,0 +1,71 @@
+# Conformance fixture: ffmpeg-progress extractor.
+#
+# Backend returns a literal FFmpeg `-progress pipe:1` block; broker's
+# ffmpeg-progress extractor parses key=value lines and computes units
+# per the configured `unit` field.
+#
+# This fixture uses `unit: out_time_seconds` for simplicity — the
+# parser reads `out_time_us=4500000` and ceils to 5 seconds.
+
+name: ffmpeg-progress
+mode: http-reqresp@v0
+spec_version: "0.1"
+description: |
+  http-reqresp@v0 with the ffmpeg-progress extractor (unit=out_time_seconds).
+  Backend body is a literal FFmpeg progress block; extractor parses
+  out_time_us=4500000 → 5 seconds (ceiled).
+
+setup:
+  capability:
+    id: test:extractor-ffmpeg-progress:v1
+    offering_id: default
+    interaction_mode: http-reqresp@v0
+    work_unit:
+      name: out_time_seconds
+      extractor:
+        type: ffmpeg-progress
+        unit: out_time_seconds
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/handler
+      auth: none
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:extractor-ffmpeg-progress:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: http-reqresp@v0
+    Content-Type: application/json
+  body: |
+    {}
+
+backend_response:
+  status: 200
+  headers:
+    Content-Type: text/plain
+  body: |
+    frame=120
+    fps=29.97
+    bitrate=1500.0kbits/s
+    total_size=234567
+    out_time_us=4500000
+    out_time=00:00:04.500000
+    speed=1.00x
+    progress=end
+
+backend_assertions:
+  livepeer_headers_present: false
+
+response_expect:
+  status: 200
+  headers_present:
+    - Livepeer-Work-Units
+  livepeer_work_units: 5
+  body_passthrough: true

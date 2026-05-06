@@ -28,9 +28,10 @@ What does not exist yet:
 ## Active plans
 
 Numbered `docs/exec-plans/active/000N-*.md`. **None active right now** —
-plans 0001–0004, 0006, 0010, 0011, 0012 all closed. **All six spec modes
-are wired** in both the broker and the runner; conformance passes
-end-to-end via compose for the full 6-fixture set.
+plans 0001–0004, 0006, 0007, 0010, 0011, 0012 all closed. **All six
+spec modes + all six extractors are wired** in both the broker and the
+runner; conformance passes end-to-end via compose for an 11-fixture set
+(6 mode happy-paths + 5 extractor exercises).
 
 The next sequenced workstreams are queued (open one when ready):
 
@@ -38,8 +39,8 @@ The next sequenced workstreams are queued (open one when ready):
   mock with the real gRPC client; adds `Livepeer-Payment` envelope
   protobuf decoding (`expected_max_units` extraction); wires interim-debit
   cadence for the long-running modes (ws-realtime / rtmp / session).
-- **Plan 0007** — additional extractors (`openai-usage`, `request-formula`,
-  `bytes-counted`, `seconds-elapsed`, `ffmpeg-progress`).
+- ~~**Plan 0007**~~ — completed 2026-05-06. All five extractors
+  implemented + one fixture each; 11 fixtures pass end-to-end.
 - **Plan 0008** — `gateway-adapters/` TS reference middleware.
 - **Plan 0009** — OpenAI-compat gateway migration brief execution.
 - **Plan 0011-followup** — actual RTMP ingest + FFmpeg + HLS pipeline (the
@@ -68,7 +69,7 @@ Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/complet
 | 5c-followup | `rtmp-ingress-hls-egress` media pipeline (RTMP listener + FFmpeg + HLS sink) | `capability-broker/` | not started |
 | 5d | `session-control-plus-media` mode driver — session-open phase | `capability-broker/`, `runner/` | ✅ completed (plan 0012) |
 | 5d-followup | `session-control-plus-media` control-WS + media-plane provisioning | `capability-broker/` | not started |
-| 6 | Additional extractors | `capability-broker/` | not started (plan 0007) |
+| 6 | Additional extractors | `capability-broker/` | ✅ completed (plan 0007) |
 | 7 | Gateway-side per-mode adapters | `gateway-adapters/` | not started (plan 0008) |
 | 8 | OpenAI-compat gateway migration | (root `docs/`) | not started (plan 0009) |
 

@@ -9,6 +9,7 @@ package extractors
 import (
 	"context"
 	"net/http"
+	"time"
 )
 
 // Extractor computes work units from a request/response pair.
@@ -32,9 +33,14 @@ type Request struct {
 
 // Response carries the parts of the backend response available to extractors.
 type Response struct {
-	Status  int
-	Body    []byte
-	Headers http.Header
+	Status   int
+	Body     []byte
+	Headers  http.Header
+	// Duration is wall-clock time the broker spent on this request,
+	// from start of mode dispatch to extractor invocation. Mode drivers
+	// populate this for any mode where a meaningful per-request elapsed
+	// time exists. Used by `seconds-elapsed`.
+	Duration time.Duration
 }
 
 // Factory builds an Extractor from an extractor config map (the extractor

@@ -1,0 +1,66 @@
+# Conformance fixture: request-formula extractor.
+#
+# Image-generation-style: units = (width * height * steps) / 1_000_000
+# computed from the request body BEFORE the backend responds.
+# Verifies the safe-arithmetic expression evaluator.
+
+name: request-formula
+mode: http-reqresp@v0
+spec_version: "0.1"
+description: |
+  http-reqresp@v0 with the request-formula extractor. Computes units
+  from request fields (width, height, steps) per the formula
+  (width * height * steps) / 1000000.
+
+setup:
+  capability:
+    id: test:extractor-request-formula:v1
+    offering_id: default
+    interaction_mode: http-reqresp@v0
+    work_unit:
+      name: image_step_megapixel
+      extractor:
+        type: request-formula
+        expression: "(width * height * steps) / 1000000"
+        fields:
+          width: $.size.width
+          height: $.size.height
+          steps: $.num_inference_steps
+    price:
+      amount_wei: "1000000"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/handler
+      auth: none
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:extractor-request-formula:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: http-reqresp@v0
+    Content-Type: application/json
+  # 1024 * 1024 * 50 / 1_000_000 = 52.4288 → floor → 52
+  body: |
+    {"prompt":"a cat","size":{"width":1024,"height":1024},"num_inference_steps":50}
+
+backend_response:
+  status: 200
+  headers:
+    Content-Type: application/json
+  body: |
+    {"image_url":"https://example.com/x.png"}
+
+backend_assertions:
+  livepeer_headers_present: false
+
+response_expect:
+  status: 200
+  headers_present:
+    - Livepeer-Work-Units
+  livepeer_work_units: 52
+  body_passthrough: true

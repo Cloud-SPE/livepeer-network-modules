@@ -4,6 +4,7 @@ export interface Config {
   brokerUrl: string;
   listenPort: number;
   defaultOffering: string;
+  payerDaemonSocket: string;
 }
 
 export function loadConfig(): Config {
@@ -19,5 +20,6 @@ export function loadConfig(): Config {
     brokerUrl,
     listenPort,
     defaultOffering: process.env["LIVEPEER_DEFAULT_OFFERING"] ?? "default",
+    payerDaemonSocket: process.env["LIVEPEER_PAYER_DAEMON_SOCKET"] ?? "/var/run/livepeer/payer-daemon.sock",
   };
 }

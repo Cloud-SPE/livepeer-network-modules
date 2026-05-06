@@ -31,7 +31,7 @@ export function registerChatCompletions(app: FastifyInstance, cfg: Config): void
           brokerUrl: cfg.brokerUrl,
           capability,
           offering,
-          paymentBlob: buildPayment({ capabilityId: capability, offeringId: offering }),
+          paymentBlob: await buildPayment({ capabilityId: capability, offeringId: offering }),
           body: bodyStr,
           contentType: "application/json",
         });
@@ -49,7 +49,7 @@ export function registerChatCompletions(app: FastifyInstance, cfg: Config): void
         brokerUrl: cfg.brokerUrl,
         capability,
         offering,
-        paymentBlob: buildPayment({ capabilityId: capability, offeringId: offering }),
+        paymentBlob: await buildPayment({ capabilityId: capability, offeringId: offering }),
         body: bodyStr,
         contentType: "application/json",
       });

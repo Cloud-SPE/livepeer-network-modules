@@ -48,7 +48,7 @@ export function registerAudioTranscriptions(app: FastifyInstance, cfg: Config): 
           brokerUrl: cfg.brokerUrl,
           capability,
           offering: cfg.defaultOffering,
-          paymentBlob: buildPayment({ capabilityId: capability, offeringId: cfg.defaultOffering }),
+          paymentBlob: await buildPayment({ capabilityId: capability, offeringId: cfg.defaultOffering }),
           body,
           contentType,
         });

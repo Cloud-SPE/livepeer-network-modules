@@ -23,7 +23,7 @@ export function registerEmbeddings(app: FastifyInstance, cfg: Config): void {
         brokerUrl: cfg.brokerUrl,
         capability,
         offering: cfg.defaultOffering,
-        paymentBlob: buildPayment({ capabilityId: capability, offeringId: cfg.defaultOffering }),
+        paymentBlob: await buildPayment({ capabilityId: capability, offeringId: cfg.defaultOffering }),
         body: JSON.stringify(body),
         contentType: "application/json",
       });

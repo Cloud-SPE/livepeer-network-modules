@@ -89,8 +89,18 @@ services:
       - livepeer-payment:/var/run/livepeer
       - livepeer-payment-data:/var/lib/livepeer/payment-daemon
     command:
+      - --mode=receiver
       - --socket=/var/run/livepeer/payment-daemon.sock
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
+
+  payer-daemon:
+    image: tztcloud/livepeer-payment-daemon:dev
+    networks: [openai-gateway]
+    volumes:
+      - livepeer-payment:/var/run/livepeer
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
 
   broker:
     image: tztcloud/livepeer-capability-broker:dev
@@ -108,12 +118,15 @@ services:
 
   gateway:
     image: tztcloud/livepeer-openai-gateway-reference:dev
-    depends_on: [broker]
+    depends_on: [broker, payer-daemon]
     networks: [openai-gateway]
+    volumes:
+      - livepeer-payment:/var/run/livepeer
     ports:
       - "3000:3000"
     environment:
       LIVEPEER_BROKER_URL: "http://broker:8080"
+      LIVEPEER_PAYER_DAEMON_SOCKET: "/var/run/livepeer/payer-daemon.sock"
       PORT: "3000"
 
 networks:

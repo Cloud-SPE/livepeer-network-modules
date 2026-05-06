@@ -28,15 +28,27 @@ What does not exist yet:
 ## Active plans
 
 Numbered `docs/exec-plans/active/000N-*.md`. **None active right now** —
-plans 0001–0012 all closed.
+plans 0001–0014 all closed.
 
-**The full payment surface now runs end-to-end.** The broker decodes
-the `Livepeer-Payment` envelope, cross-checks `capability_id` /
-`offering_id` against the request headers, and talks to a real
-`payment-daemon` sidecar over gRPC on a unix socket. The conformance
-runner mints real envelopes via the generated Go bindings; the
-openai-gateway mints them via a small hand-rolled TS encoder. Both
-compose stacks include the daemon as a sidecar.
+**Wire-compat sender + receiver daemons run end-to-end.** As of plan
+0014, the `Payment` envelope is byte-compatible with go-livepeer's
+`net.Payment` (5 wire-locked messages: Payment, TicketParams,
+TicketSenderParams, TicketExpirationParams, PriceInfo). The broker
+talks to a receiver-mode daemon (`PayeeDaemon` — OpenSession,
+ProcessPayment, idempotent DebitBalance, CloseSession) over a unix
+socket. The conformance runner and OpenAI-compat gateway both call a
+sender-mode daemon (`PayerDaemon.CreatePayment`) over a unix socket
+to mint envelopes — neither hand-rolls Payment bytes anymore.
+
+Cryptography and chain integration remain stubbed; the daemon ships
+provider interfaces (Broker, KeyStore, Clock, GasPrice) with dev-mode
+fakes. Plan 0016 swaps in real Arbitrum-backed providers behind those
+interfaces. The operator runbook at
+`payment-daemon/docs/operator-runbook.md` documents the full
+production flow (probabilistic-micropayment economics, escrow/reserve
+mechanics, gas-price multiplier, redemption-confirmations,
+hot-wallet/cold-orchestrator split, common failure modes) so plan
+0016 lands as code, not as new operator surface.
 
 **All six spec modes + all six extractors are wired** in both the broker
 and the runner; the TypeScript gateway-side middleware
@@ -55,6 +67,15 @@ The next sequenced workstreams are queued (open one when ready):
   per-request `expected_max_units` debit estimate. Out of scope (each
   is its own follow-up): chain integration, sender-side gRPC,
   interim-debit cadence, warm-key handling.
+- ~~**Plan 0014**~~ — completed 2026-05-06. Wire-compat envelope +
+  sender-side `payment-daemon`. Migrates Payment to the
+  go-livepeer-compatible 5-message wire format (drawing on the prior
+  reference impl at `livepeer-cloud-spe/livepeer-modules-project/`).
+  Daemon is now two-mode (`--mode=sender|receiver`), both modes
+  shipping. Operator runbook ports gas/escrow/redemption/identity
+  detail forward. Cryptography + chain stay stubbed under provider
+  interfaces; plan 0016 swaps providers without changing the operator
+  surface.
 - ~~**Plan 0007**~~ — completed 2026-05-06. All five extractors
   implemented + one fixture each; 11 fixtures pass end-to-end.
 - ~~**Plan 0008**~~ — completed 2026-05-06. TypeScript reference

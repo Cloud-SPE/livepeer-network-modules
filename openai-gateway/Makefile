@@ -2,22 +2,14 @@ IMAGE   ?= tztcloud/livepeer-openai-gateway-reference
 TAG     ?= dev
 VERSION := $(shell cat ../livepeer-network-protocol/VERSION 2>/dev/null || echo dev)
 
-.PHONY: build test run smoke clean help
+.PHONY: build run smoke clean help
 
 build: ## Build the gateway image
 	docker build \
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \
-		.
-
-test: ## Compile + run unit tests inside Docker
-	docker build \
-		--target test \
-		-t $(IMAGE):$(TAG)-test \
-		-f Dockerfile \
-		.
-	docker run --rm $(IMAGE):$(TAG)-test
+		..
 
 run: build ## Run the gateway alone (for hand-curl testing). Set LIVEPEER_BROKER_URL.
 	@if [ -z "$(LIVEPEER_BROKER_URL)" ]; then \
@@ -29,7 +21,7 @@ run: build ## Run the gateway alone (for hand-curl testing). Set LIVEPEER_BROKER
 		--add-host=host.docker.internal:host-gateway \
 		$(IMAGE):$(TAG)
 
-smoke: build ## End-to-end Docker smoke test (gateway + broker + payment-daemon + mock-backend)
+smoke: build ## End-to-end Docker smoke test (gateway + broker + payment-daemon + payer-daemon + mock-backend)
 	@docker image inspect tztcloud/livepeer-capability-broker:dev >/dev/null 2>&1 || \
 		(echo "broker image missing. Build it first: make -C ../capability-broker build"; exit 1)
 	@docker image inspect tztcloud/livepeer-payment-daemon:dev >/dev/null 2>&1 || \

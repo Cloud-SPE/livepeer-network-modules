@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://livepeer-network-protocol.example/manifest/schema.json",
+  "title": "Livepeer registry manifest",
+  "description": "Top-level wrapper plus signed manifest content. Published at /.well-known/livepeer-registry.json by the orch-coordinator. Signature is computed by the cold key on secure-orch over the canonical (RFC 8785 JCS) form of the manifest payload.",
+
+  "type": "object",
+  "required": ["manifest", "signature"],
+  "additionalProperties": false,
+  "properties": {
+    "manifest": { "$ref": "#/$defs/manifest" },
+    "signature": { "$ref": "#/$defs/signature" }
+  },
+
+  "$defs": {
+    "manifest": {
+      "type": "object",
+      "title": "Manifest content (signed payload)",
+      "required": ["spec_version", "issued_at", "expires_at", "orch", "capabilities"],
+      "additionalProperties": false,
+      "properties": {
+        "spec_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$",
+          "description": "Spec-wide SemVer (major.minor or major.minor.patch). Consumers MUST validate the major version; minor and patch are non-breaking by definition. See livepeer-network-protocol/VERSION."
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 UTC timestamp at which the orch's cold key signed this manifest."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 UTC timestamp after which consumers MUST refetch. Resolvers MUST NOT route on expired manifests."
+        },
+        "orch": { "$ref": "#/$defs/orch" },
+        "capabilities": {
+          "type": "array",
+          "minItems": 0,
+          "items": { "$ref": "#/$defs/capability" },
+          "description": "Flat list of capability tuples. Host is not a registration unit; multi-binary or multi-broker hosts contribute multiple entries here."
+        }
+      }
+    },
+
+    "orch": {
+      "type": "object",
+      "title": "Orchestrator identity",
+      "required": ["eth_address"],
+      "additionalProperties": false,
+      "properties": {
+        "eth_address": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{40}$",
+          "description": "The orch's on-chain identity (Arbitrum One). Signature MUST recover to this address."
+        },
+        "service_uri": {
+          "type": "string",
+          "format": "uri",
+          "description": "Optional. Diagnostic URL where this manifest is hosted. SHOULD match the on-chain ServiceRegistry entry but is not authoritative; the on-chain entry is the trust anchor."
+        }
+      }
+    },
+
+    "capability": {
+      "type": "object",
+      "title": "Capability tuple",
+      "required": [
+        "capability_id",
+        "offering_id",
+        "interaction_mode",
+        "work_unit",
+        "price_per_unit_wei",
+        "worker_url"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "capability_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque UTF-8 identifier. No closed enum; orchs and gateways may invent new ones (see core belief #1, #7)."
+        },
+        "offering_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque UTF-8 identifier disambiguating priced tiers under the capability (e.g. different models, hardware classes, SLAs)."
+        },
+        "interaction_mode": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*@v[0-9]+$",
+          "description": "Mode name + major version (per Q2 hybrid SemVer), e.g. 'http-stream@v1'. Mode names live in modes/<mode>.md."
+        },
+        "work_unit": { "$ref": "#/$defs/work_unit" },
+        "price_per_unit_wei": {
+          "type": "string",
+          "pattern": "^[0-9]+$",
+          "description": "Wei per work-unit, expressed as a non-negative decimal string. String form preserves precision beyond JSON's safe-integer range."
+        },
+        "worker_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "description": "Public TLS endpoint of the broker (or any operator-chosen public-facing proxy that fronts it). MUST be HTTPS. NAT traversal / tunneling is the orch's concern (cloudflared, Traefik, etc.)."
+        },
+        "extra": {
+          "type": "object",
+          "description": "Orch-declared metadata. Free-form key-value pairs. Gateways use these for workload-specific filtering (region, GPU class, latency tier, etc.). The protocol itself does not interpret extra.",
+          "additionalProperties": true
+        },
+        "constraints": {
+          "type": "object",
+          "description": "Gateway-side filter hints. Same shape as extra; semantics are gateway-defined.",
+          "additionalProperties": true
+        }
+      }
+    },
+
+    "work_unit": {
+      "type": "object",
+      "title": "Work-unit declaration",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The metering dimension's name, e.g. 'tokens', 'video-frame-megapixel', 'barks'. Opaque to the protocol; consumed by gateways for billing display. The extractor (which counts the units) is host-config concern, not advertised here."
+        }
+      }
+    },
+
+    "signature": {
+      "type": "object",
+      "title": "Cold-key signature",
+      "description": "Signature is computed over the JCS-canonicalized (RFC 8785) form of the manifest payload. Signers: the orch's cold key on secure-orch.",
+      "required": ["algorithm", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": ["secp256k1"],
+          "description": "Signing algorithm. Currently only secp256k1 (Ethereum's curve) is permitted, matching the orch's on-chain identity."
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]+$",
+          "description": "Hex-encoded signature bytes. For secp256k1: 65 bytes (r || s || v) where v is 27 or 28."
+        },
+        "canonicalization": {
+          "type": "string",
+          "enum": ["JCS"],
+          "default": "JCS",
+          "description": "JSON canonicalization scheme used before hashing. JCS = RFC 8785."
+        }
+      }
+    }
+  }
+}

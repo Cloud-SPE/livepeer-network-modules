@@ -1,0 +1,62 @@
+{
+  "manifest": {
+    "spec_version": "0.1.0",
+    "issued_at": "2026-05-06T12:34:56Z",
+    "expires_at": "2026-06-05T12:34:56Z",
+    "orch": {
+      "eth_address": "0x1234567890abcdef1234567890abcdef12345678",
+      "service_uri": "https://orch.example.com/.well-known/livepeer-registry.json"
+    },
+    "capabilities": [
+      {
+        "capability_id": "openai:chat-completions:llama-3-70b",
+        "offering_id": "vllm-h100-batch4",
+        "interaction_mode": "http-stream@v1",
+        "work_unit": { "name": "tokens" },
+        "price_per_unit_wei": "1500000",
+        "worker_url": "https://broker-a.orch.example.com",
+        "extra": {
+          "region": "us-west-2",
+          "gpu_class": "h100"
+        }
+      },
+      {
+        "capability_id": "openai:chat-completions:gpt-4o",
+        "offering_id": "openai-resale",
+        "interaction_mode": "http-stream@v1",
+        "work_unit": { "name": "tokens" },
+        "price_per_unit_wei": "8500000",
+        "worker_url": "https://broker-a.orch.example.com",
+        "extra": {
+          "backend_provider": "openai",
+          "region": "global"
+        }
+      },
+      {
+        "capability_id": "video:transcode.live.rtmp",
+        "offering_id": "h264-1080p30",
+        "interaction_mode": "rtmp-ingress-hls-egress@v1",
+        "work_unit": { "name": "video-frame-megapixel" },
+        "price_per_unit_wei": "200000",
+        "worker_url": "https://broker-b.orch.example.com",
+        "extra": {
+          "region": "us-east-1",
+          "gpu_class": "intel-arc"
+        }
+      },
+      {
+        "capability_id": "kibble:doggo-bark-counter:v1",
+        "offering_id": "default",
+        "interaction_mode": "http-reqresp@v1",
+        "work_unit": { "name": "barks" },
+        "price_per_unit_wei": "100",
+        "worker_url": "https://broker-a.orch.example.com"
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "secp256k1",
+    "value": "0xexample-signature-truncated-for-readability-this-is-not-a-valid-signature-real-signatures-are-65-bytes-of-hex-encoded-r-s-v",
+    "canonicalization": "JCS"
+  }
+}

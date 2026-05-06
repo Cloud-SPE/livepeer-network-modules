@@ -67,10 +67,11 @@ func TestParseKeystore(t *testing.T) {
 
 func TestConfigValidate(t *testing.T) {
 	c := Config{
-		Keystore:       Keystore{Path: "x"},
-		LastSignedPath: "/var/lib/last.json",
-		AuditLogPath:   "/var/log/audit.jsonl",
-		Listen:         "127.0.0.1:8080",
+		Keystore:        Keystore{Path: "x"},
+		LastSignedPath:  "/var/lib/last.json",
+		AuditLogPath:    "/var/log/audit.jsonl",
+		AuditRotateSize: 100 << 20,
+		Listen:          "127.0.0.1:8080",
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("expected valid, got %v", err)
@@ -79,5 +80,11 @@ func TestConfigValidate(t *testing.T) {
 	c.Listen = "0.0.0.0:8080"
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected loopback rejection")
+	}
+
+	c.Listen = "127.0.0.1:8080"
+	c.AuditRotateSize = -1
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected negative rotate-size rejection")
 	}
 }

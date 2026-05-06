@@ -24,7 +24,7 @@ func newHarness(t *testing.T, listen string) (*Server, string, func()) {
 	root := t.TempDir()
 	lastSigned := filepath.Join(root, "lib", "last-signed.json")
 	auditPath := filepath.Join(root, "log", "audit.jsonl")
-	log, err := audit.Open(auditPath)
+	log, err := audit.Open(auditPath, audit.DefaultRotateSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,9 +34,10 @@ func newHarness(t *testing.T, listen string) (*Server, string, func()) {
 		t.Fatal(err)
 	}
 	cfg := config.Config{
-		LastSignedPath: lastSigned,
-		AuditLogPath:   auditPath,
-		Listen:         listen,
+		LastSignedPath:  lastSigned,
+		AuditLogPath:    auditPath,
+		AuditRotateSize: audit.DefaultRotateSize,
+		Listen:          listen,
 	}
 	srv, err := New(cfg, signer, log, nil)
 	if err != nil {
@@ -67,7 +68,7 @@ func TestServer_RejectsRoutableBind(t *testing.T) {
 func newHarnessIfPossible(t *testing.T, listen string) (*Server, func()) {
 	t.Helper()
 	root := t.TempDir()
-	log, err := audit.Open(filepath.Join(root, "log", "audit.jsonl"))
+	log, err := audit.Open(filepath.Join(root, "log", "audit.jsonl"), audit.DefaultRotateSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,9 +78,10 @@ func newHarnessIfPossible(t *testing.T, listen string) (*Server, func()) {
 		t.Fatal(err)
 	}
 	cfg := config.Config{
-		LastSignedPath: filepath.Join(root, "lib", "last-signed.json"),
-		AuditLogPath:   filepath.Join(root, "log", "audit.jsonl"),
-		Listen:         listen,
+		LastSignedPath:  filepath.Join(root, "lib", "last-signed.json"),
+		AuditLogPath:    filepath.Join(root, "log", "audit.jsonl"),
+		AuditRotateSize: audit.DefaultRotateSize,
+		Listen:          listen,
 	}
 	srv, err := New(cfg, signer, log, nil)
 	if err != nil {

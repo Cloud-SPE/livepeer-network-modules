@@ -38,6 +38,7 @@ func run(args []string) error {
 		keystorePasswordFile = fs.String("keystore-password-file", "", "File containing the V3 keystore password (or LIVEPEER_KEYSTORE_PASSWORD env)")
 		lastSignedPath       = fs.String("last-signed", "/var/lib/secure-orch/last-signed.json", "Path to the canonical last-signed envelope used by the diff renderer")
 		auditLogPath         = fs.String("audit-log", "/var/log/secure-orch/audit.log.jsonl", "Append-only JSONL audit log")
+		auditRotateSize      = fs.Int64("audit-rotate-size", audit.DefaultRotateSize, "Audit log size threshold for rotation, in bytes (0 disables)")
 		listen               = fs.String("listen", "127.0.0.1:8080", "Loopback bind address (must be 127.0.0.1, ::1, or localhost)")
 		showVer              = fs.Bool("version", false, "Print version and exit")
 	)
@@ -56,10 +57,11 @@ func run(args []string) error {
 		return err
 	}
 	cfg := config.Config{
-		Keystore:       ks,
-		LastSignedPath: *lastSignedPath,
-		AuditLogPath:   *auditLogPath,
-		Listen:         *listen,
+		Keystore:        ks,
+		LastSignedPath:  *lastSignedPath,
+		AuditLogPath:    *auditLogPath,
+		AuditRotateSize: *auditRotateSize,
+		Listen:          *listen,
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -72,7 +74,7 @@ func run(args []string) error {
 	defer signer.Close()
 	logger.Info("signer loaded", "address", signer.Address())
 
-	auditLog, err := audit.Open(cfg.AuditLogPath)
+	auditLog, err := audit.Open(cfg.AuditLogPath, cfg.AuditRotateSize)
 	if err != nil {
 		return err
 	}

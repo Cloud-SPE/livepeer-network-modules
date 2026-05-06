@@ -14,10 +14,11 @@ import (
 // Config carries everything the console needs to boot. Fields are
 // validated by Validate.
 type Config struct {
-	Keystore       Keystore
-	LastSignedPath string
-	AuditLogPath   string
-	Listen         string
+	Keystore        Keystore
+	LastSignedPath  string
+	AuditLogPath    string
+	AuditRotateSize int64
+	Listen          string
 }
 
 // Keystore selects the V3 JSON keystore backing the signer.
@@ -56,6 +57,9 @@ func (c Config) Validate() error {
 	}
 	if c.AuditLogPath == "" {
 		return errors.New("config: --audit-log is required")
+	}
+	if c.AuditRotateSize < 0 {
+		return errors.New("config: --audit-rotate-size must not be negative")
 	}
 	if err := ValidateLoopbackAddr(c.Listen); err != nil {
 		return err

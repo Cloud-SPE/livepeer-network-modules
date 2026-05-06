@@ -1,6 +1,7 @@
 {
   "manifest": {
-    "spec_version": "0.1.0",
+    "spec_version": "0.2.0",
+    "publication_seq": 1,
     "issued_at": "2026-05-06T12:34:56Z",
     "expires_at": "2026-06-05T12:34:56Z",
     "orch": {

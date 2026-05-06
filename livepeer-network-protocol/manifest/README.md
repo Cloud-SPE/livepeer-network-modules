@@ -37,4 +37,7 @@ match the on-chain `ServiceRegistry` entry.
 4. Confirm signer == `manifest.orch.eth_address`.
 5. Confirm `eth_address` matches the orch's on-chain `ServiceRegistry` entry.
 6. Confirm `now < expires_at`.
-7. Index capability tuples for `Resolver.Select(capability_id, offering_id, ...)`.
+7. Confirm `publication_seq > last_seen[eth_address]` (anti-rollback within
+   the validity window — resolver caches the last-seen value per
+   `eth_address` and rejects equal-or-lower).
+8. Index capability tuples for `Resolver.Select(capability_id, offering_id, ...)`.

@@ -108,6 +108,11 @@ type Clock interface {
 	// LastSeenL1Block returns the most recent L1 block number observed
 	// by the daemon.
 	LastSeenL1Block() *big.Int
+
+	// GetTranscoderPoolSize returns the current size of the
+	// BondingManager transcoder pool. Used by escrow.reserveAlloc to
+	// divide a sender's total reserve across active recipients.
+	GetTranscoderPoolSize() *big.Int
 }
 
 // GasPrice returns the current chain `eth_gasPrice` value. v0.2's dev

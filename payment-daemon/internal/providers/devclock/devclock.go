@@ -47,6 +47,12 @@ func (c *DevClock) LastSeenL1Block() *big.Int {
 	return new(big.Int).Set(c.l1Block)
 }
 
+// GetTranscoderPoolSize returns a fixed dev-mode pool size of 100 so
+// reserveAlloc math has a non-zero divisor without any chain integration.
+func (c *DevClock) GetTranscoderPoolSize() *big.Int {
+	return big.NewInt(100)
+}
+
 // Tick advances the dev clock's L1 block by `n` and rolls the round
 // forward by 1 every 100 blocks (matching production's ~100-block
 // rounds on Arbitrum). Test-only hook.

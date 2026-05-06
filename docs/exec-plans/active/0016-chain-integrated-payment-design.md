@@ -668,74 +668,100 @@ green throughout the migration.
 
 ---
 
-## 11. Risks + open questions for the user
+## 11. Resolved decisions
+
+All eight open questions were resolved on 2026-05-06. The implementing
+agent works against these locks; rationale captured for future readers.
 
 ### Q1. `chain-commons` extraction — adopt or skip?
 
-Prior impl factored chain interaction into a shared
-`livepeer-modules/chain-commons` Go module (RPC, gas-oracle, txintent,
-timesource, store). Adopting it = reuse a lot of tested code at the
-cost of a second extracted-module surface to maintain. Skipping = we
-build minimal in-tree provider impls.
+**DECIDED: skip — build minimal in-tree provider impls.** No
+sibling `livepeer-modules/chain-commons` Go module dependency. The
+v0.2 provider interfaces are right-sized; ~700 LOC of in-tree
+plumbing (RPC dial, gas oracle, redemption tx submit, clock poller)
+is shaped exactly to those interfaces. Revisit if a second chain-
+talking component ever appears in the monorepo.
 
-**Recommendation:** skip. The v0.2 provider interfaces are
-right-sized; revisit if a second chain-talking component appears.
-**Decision needed:** confirm skip, or pull in chain-commons.
+### Q2. Canonical Arbitrum RPC provider
 
-### Q2. Which Arbitrum RPC provider is canonical?
+**DECIDED: provider-agnostic code; documented recommendations in
+the runbook.** `--chain-rpc` accepts any HTTP(S)/WS(S) endpoint.
 
-Options: Alchemy, Infura, QuickNode, Ankr, self-hosted Nitro full
-node. Affects `--chain-rpc-dial-timeout` defaults, retry policy, and
-(if self-hosted) deployment topology. **Decision needed:** pick a
-primary + fallback, or declare provider-agnostic.
+For the **livepeer community specifically**, the recommended defaults are:
+
+- **Non-archive (primary):** `https://liveinfraspe.com` — community-
+  funded, free, no signup. Sufficient for the daemon's normal flow
+  (receiver-side `eth_call` reads + redemption tx submission;
+  sender-side `eth_call` only — no archive depth required).
+- **Archive (forensics / chain-state spelunking / queue backfill):**
+  Chainstack. Used only when operators need historical state beyond
+  the live RPC's window.
+- **Alternatives:** Alchemy, Infura, QuickNode, Ankr — any work; pick
+  per operator preference + budget. Document the trade-offs in the
+  operator runbook.
+
+The daemon does **not** ship a default `--chain-rpc` value;
+operators must specify. The runbook lists the above as the
+recommended defaults.
 
 ### Q3. go-livepeer pin for fixturegen
 
-The fixturegen tool (§8) imports `github.com/livepeer/go-livepeer/net`.
-Options: latest tagged release (e.g. `v0.8.x`); `main` at a specific
-commit; local-checkout `replace` (prior impl's pick — not
-CI-reproducible). **Decision needed:** which tag/commit, and whether
-the nightly drift check tracks `main` or the pinned tag.
+**DECIDED: latest tagged release; nightly drift check tracks
+`main`.** The fixturegen tool's go.mod pins
+`github.com/livepeer/go-livepeer` at the latest stable v0.8.x tag at
+plan-0016-implementation time. CI is reproducible; the committed
+fixture bytes are stable. A nightly drift check re-runs fixturegen
+against `main` (separate go.sum) and alarms if upstream wire format
+diverges from the pinned tag — manual escalation, not auto-update.
 
 ### Q4. KeyStore — extend or sibling for tx signing?
 
-The chain-backed key needs to sign **both** EIP-191 ticket-hashes
-(`KeyStore.Sign`) and Ethereum txs (`types.SignTx` path). Options:
-(a) extend `KeyStore` with `SignTx`; (b) new sibling `TxSigner`
-provider interface; (c) expose `SignTx` only on the concrete impl.
-Prior impl is closest to (b).
+**DECIDED: option (b) — new sibling `TxSigner` interface.** New
+`TxSigner` interface in `payment-daemon/internal/providers/providers.go`,
+alongside the existing `KeyStore`. Both consume the same loaded
+`*ecdsa.PrivateKey`, but the interfaces stay focused:
 
-**Recommendation:** (b) — new `TxSigner` interface in
-`providers.go`. Both signing modes share the loaded ECDSA key but
-the interfaces stay focused. **Decision needed:** confirm (b), or
-pick another.
+- `KeyStore.Sign(hash)` — EIP-191 personal_sign for ticket hashes.
+- `TxSigner.SignTx(tx, chainID)` — Ethereum transaction signing for
+  redemption submissions.
 
-### Q5. WebSocket subscriptions for round/block tracking?
+Sender mode wires `KeyStore` only (no on-chain tx). Receiver mode
+wires both. Splitting the interfaces lets sender-mode skip wiring
+`TxSigner`; cleaner separation; matches the prior impl pattern.
 
-Prior impl polls (clock 30s, gas 5s). Subscriptions
-(`eth_subscribe`) reduce stale-clock windows but need WSS uptime.
-**Recommendation:** stay polling for 0016. **Decision needed:**
-confirm, or insist on WSS from day 1.
+### Q5. WebSocket subscriptions for round/block tracking
+
+**DECIDED: polling.** Clock poller at `--clock-refresh-interval`
+(default 30s); gas-price poller at `--gasprice-refresh-interval`
+(default 5s). No `eth_subscribe`, no WSS reconnect logic. Bounded
+staleness; simpler; robust to flaky RPC. WSS subscriptions are a
+future optimization if profiling shows the staleness window matters.
 
 ### Q6. Sender-funder CLI — in scope?
 
-A `livepeer-payment-funder` calling `TicketBroker.fundDeposit` /
-`fundReserve` would be operator-friendly but adds a binary.
-**Recommendation:** out-of-band for 0016 (operators use Foundry /
-cast). **Decision needed:** confirm, or queue separately.
+**DECIDED: out-of-band — no `livepeer-payment-funder` CLI in plan
+0016.** Operators top up `TicketBroker.fundDeposit` /
+`fundReserve` via Foundry / cast / Etherscan / MetaMask. Yet-another-
+binary tax for a once-per-deposit op is unjustified. Defer to a
+future plan if operator demand surfaces.
 
-### Q7. Offline sender mode (`--no-chain-sender`)?
+### Q7. Offline sender mode (`--no-chain-sender`)
 
-**Strong recommendation: do not ship.** It bypasses the escrow check
-documented in `operator-runbook.md:148-160`. **Decision needed:**
-confirm, or specify constraints under which it'd be acceptable.
+**DECIDED: do NOT ship.** Bypassing the escrow check documented in
+`operator-runbook.md:148-160` is a footgun — the sender's
+`validateSenderInfo` is the protection against compromised receivers.
+Bypass = unbounded loss for the gateway operator. Hard no in v0.1.
+Air-gapped operators (rare) can ride on plan 0016's chain-stub fakes
+in dev mode if it becomes urgent; production-shaped offline mode is
+its own future plan with explicit threat-model justification.
 
-### Q8. Hardware wallet (Ledger / AWS KMS) for hot key?
+### Q8. Hardware wallet (Ledger / AWS KMS) for hot key
 
-The `KeyStore` interface is abstract enough to swap in a remote
-signer later. **Recommendation:** out of scope for 0016 — implement
-when an operator concretely needs it. **Decision needed:** confirm,
-or specify a HW backend to design for now.
+**DECIDED: out of scope for 0016.** The `KeyStore` + `TxSigner`
+interfaces are abstract enough; swap-in is mechanical when an
+operator concretely needs it. Premature without a real customer
+asking. Cold-side hardware wallet is plan 0019's domain
+(`secure-orch-console`).
 
 ---
 

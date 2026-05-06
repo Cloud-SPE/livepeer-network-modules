@@ -30,6 +30,17 @@ Code shipping today:
   sender-side, redemption queue + loop with gas pre-checks. All under
   `--chain-rpc`; the dev-mode flow (no flag) keeps the daemon testable
   without any RPC.
+- `orch-coordinator/` — Go reference impl (plan 0018). Scrapes
+  capability-broker `/registry/offerings` on the operator's LAN,
+  builds JCS-canonical idempotent candidate manifests, packages as
+  tar.gz (manifest.json signed bytes + metadata.json operator-only
+  sidecar), receives cold-key-signed manifests via HTTP POST, runs
+  the five-step verify pipeline (schema / signature / identity /
+  spec-version drift / publication-seq rollback), atomic-swap
+  publishes at `/.well-known/livepeer-registry.json` on a separate
+  locked-down public listener. Web UI on the LAN listener with
+  roster (per §8), diff, audit views. BoltDB audit log; Prometheus
+  surface.
 - `gateway-adapters/` — TypeScript per-mode middleware for the HTTP family.
 - `openai-gateway/` — reference OpenAI-compat gateway end-to-end (calls
   `PayerDaemon.CreatePayment` over unix socket).
@@ -39,13 +50,12 @@ Code shipping today:
 Design-doc batch (plans 0013, 0015–0019, plus `migration-from-suite.md`)
 landed 2026-05-06: ~4,140 lines of paper documenting the next implementation
 layer. Plans 0015 (interim-debit, 13/13 conformance), 0016 (chain
-integration), and 0017 (warm-key) have since shipped; the remaining plans
-(0013, 0018, 0019) still surface 5–8 open questions each for the user
-before code can start.
+integration), 0017 (warm-key), and 0018 (orch-coordinator) have since
+shipped; the remaining plans (0013, 0019) still surface open questions for
+the user before code can start.
 
 What does not exist yet:
 
-- `orch-coordinator/` component (design landed in plan 0018; no code).
 - `secure-orch-console/` is partially shipped — canonical/signing
   primitives, console binary scaffold (loopback-bound), audit log,
   keygen helper. **Pending:** web UI handlers, plan close, removal of
@@ -57,9 +67,7 @@ What does not exist yet:
 
 ## Active plans
 
-Three numbered design docs at `docs/exec-plans/active/000N-*.md`. Each is
-**paper-only** — no committed code. Each surfaces 5–8 open questions the
-user must answer before implementation begins.
+Two numbered design docs at `docs/exec-plans/active/000N-*.md`.
 
 - **Plan 0013** — `0013-suite-openai-gateway-migration-brief.md`.
   Migration brief for the suite's existing `livepeer-openai-gateway`
@@ -67,17 +75,6 @@ user must answer before implementation begins.
   engine-vs-shell split during the migration and renaming away from
   `-core`. 5-phase migration sequence; -1,500 to -1,800 net LOC.
   Estimate 8–14 working days.
-- **Plan 0018** — `0018-orch-coordinator-design.md`. Phase 3 from
-  the roadmap. New `orch-coordinator/` component scrapes LAN broker
-  `/registry/offerings`, builds candidate manifest (JCS-canonical,
-  idempotent), hosts signed manifest at
-  `/.well-known/livepeer-registry.json`, exposes capability-as-roster
-  UX via embedded web UI on the LAN. v0.1 locks (2026-05-06): web UI
-  primary (CLI deferred-or-never); HTTP POST upload only (no
-  filesystem-drop / inotify); two on-chain registries (`ServiceRegistry`
-  + `AIServiceRegistry`) consolidate to one well-known path with
-  unified manifest. 7-commit cadence (commit 0 = manifest README +
-  architecture-overview doc cleanup for the two-registry consolidation).
 - **Plan 0019** — `0019-secure-orch-trust-spine-design.md`.
   Implementation **in progress** — 4 of 6 commits cherry-picked onto
   master from a prior in-flight branch (manifest `publication_seq`
@@ -100,16 +97,19 @@ Followups still open from earlier plans:
   media-plane provisioning for `session-control-plus-media`.
 
 Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) —
-plans 0001–0012, 0014, 0015, 0016, and 0017 are all closed; together they
-shipped the 6-mode broker, 6 extractors, gateway-adapters TS middleware,
-the OpenAI-compat reference gateway, the wire-compat sender + receiver
-daemons, the broker-side interim-debit cadence with SufficientBalance
-runway termination on long-running sessions (plan 0015), the warm-key
-lifecycle (V3 keystore loader + production-mode wiring + rotation runbook
-+ no-secrets-in-logs lint, plan 0017), and chain-integrated payment
-(real keccak256-flatten ticket hashing + on-chain TicketBroker /
-RoundsManager / BondingManager providers + ECDSA recovery + nonce ledger
-+ redemption queue with gas pre-checks, plan 0016).
+plans 0001–0012, 0014, 0015, 0016, 0017, and 0018 are all closed;
+together they shipped the 6-mode broker, 6 extractors, gateway-adapters
+TS middleware, the OpenAI-compat reference gateway, the wire-compat
+sender + receiver daemons, the broker-side interim-debit cadence with
+SufficientBalance runway termination on long-running sessions (plan
+0015), the warm-key lifecycle (V3 keystore loader + production-mode
+wiring + rotation runbook + no-secrets-in-logs lint, plan 0017),
+chain-integrated payment (real keccak256-flatten ticket hashing +
+on-chain TicketBroker / RoundsManager / BondingManager providers +
+ECDSA recovery + nonce ledger + redemption queue with gas pre-checks,
+plan 0016), and the orch-coordinator's LAN-side scrape + idempotent
+candidate build + signed-manifest receive + locked-down resolver
+endpoint + roster/diff/audit web UI (plan 0018).
 
 ## Roadmap (rough; subject to change)
 
@@ -119,7 +119,7 @@ RoundsManager / BondingManager providers + ECDSA recovery + nonce ledger
 | 1 | Interaction-mode specs published as a subfolder | `livepeer-network-protocol/` | ✅ completed (plan 0002) |
 | 2 | Capability-broker reference implementation (Go) | `capability-broker/` | ✅ completed (plan 0003) |
 | 2.5 | Conformance runner mode drivers | `livepeer-network-protocol/conformance/runner/` | ✅ completed (plan 0004) |
-| 3 | Coordinator UX rework — capability-as-roster-entry | `orch-coordinator/` | 📄 design landed (plan 0018); implementation pending |
+| 3 | Coordinator UX rework — capability-as-roster-entry | `orch-coordinator/` | ✅ completed (plan 0018) |
 | 4 | Real `payment-daemon` integration | `payment-daemon/` | ✅ completed (plan 0005) |
 | 4-followup | Wire-compat envelope + sender daemon | `payment-daemon/` | ✅ completed (plan 0014) |
 | 4-chain | Chain-integrated payment-daemon (Arbitrum One) | `payment-daemon/` | ✅ completed (plan 0016) — code shipped; live-mainnet smoke is a user-driven post-merge gate |

@@ -462,58 +462,45 @@ operators read it for the system as a whole. Plan 0015 adds:
 These are documentation deltas only; the metric wiring lands in plan
 0015's implementation commits.
 
-## 11. Risks and open questions
+## 11. Resolved decisions
 
-1. **Default `--interim-debit-interval`.** Recommend 30s. Is the
-   operator's preference 10s (tighter billing, more daemon RPC) or 60s
-   (looser billing, less RPC)? The recommendation aligns with the
-   existing `--redemption-interval` default at
-   `payment-daemon/docs/operator-runbook.md:186`; consistency is the
-   primary argument.
+All six open questions were resolved on 2026-05-06. The implementing
+agent works against these locks; rationale captured for future readers.
 
-2. **Per-mode tick rates.** The default proposal is one global
-   `--interim-debit-interval`. RTMP ingest with frame-grain billing may
-   want 5s; chat-style ws-realtime is fine at 30s. Do we ship a single
-   global knob in v0.1 and add per-mode overrides if operators ask, or
-   do we land per-mode from the start? Recommend single global v0.1.
+1. **Default `--interim-debit-interval`.** **DECIDED: 30s.** Matches
+   the existing `--redemption-interval` default at
+   `payment-daemon/docs/operator-runbook.md:186`. Worst-case overrun
+   = one tick of credit (~30s); RPC load is trivial (1 call/30s
+   /session). Operators can tune for tighter billing.
 
-3. **Grace period on `SufficientBalance` failure.** In v0.1, a
-   `sufficient=false` reply terminates the connection within the next
-   tick. A future "mid-session ticket top-up" plan would benefit from a
-   grace period (the gateway sends a top-up `Payment` while the broker
-   waits). The flag `--interim-debit-grace-on-insufficient` is
-   reserved (default `0`); the top-up flow itself is a separate plan.
-   Should v0.1 ship the flag wired-but-defaulted-off, or omit it
-   entirely until the top-up flow lands? Recommend wiring it off-by-
-   default; preserving the flag now keeps operator config stable.
+2. **Per-mode tick rates.** **DECIDED: single global flag for v0.1.**
+   `--interim-debit-interval` applies to all modes that spawn the
+   ticker. Per-mode overrides land as a follow-up plan if operators
+   ask; over-engineering today.
 
-4. **Goroutine count at scale.** One goroutine per active session is
-   fine up to ~10k concurrent sessions. Above that, a worker pool
-   (e.g., a single goroutine doing a min-heap of next-tick deadlines)
-   is more efficient. v0.1 ships per-session goroutines; the
-   threshold for switching is ~10k concurrent paid sessions per
-   broker instance, which is well above what plan 0015 needs to
-   exercise. Open question: do we ship a flag to switch between the
-   two strategies, or hard-code per-session goroutines and revisit?
-   Recommend hard-coded; a flag adds operator surface no one needs
-   yet.
+3. **Grace period on `SufficientBalance` failure.** **DECIDED: wire
+   `--interim-debit-grace-on-insufficient` flag with default `0`.**
+   v0.1 behavior is unchanged (terminate on insufficient); the flag
+   is reserved for the future mid-session ticket top-up plan.
+   Preserves operator config stability when that plan lands.
 
-5. **Race conditions in `LiveCounter` reads.** For `bytes-counted` and
-   `seconds-elapsed` the answer is `atomic.Uint64` /
-   `time.Since(start)` and the reads are trivially safe. For
-   `ffmpeg-progress`, the parser goroutine writes `frame=` and
-   `out_time_us=` fields concurrently with `CurrentUnits()` reads.
-   Recommend `atomic.Uint64` universally on both fields; the
-   `LiveCounter` interface does the multiplication in `CurrentUnits()`
-   under a single read each. (`frame_megapixel` reads only `frame`; the
-   width/height are immutable from boot.)
+4. **Goroutine count at scale.** **DECIDED: hard-coded per-session
+   goroutines.** Goroutines are cheap (~2 KB stack) up to ~10k
+   concurrent sessions, well above what plan 0015 needs. No flag —
+   would be operator surface nobody needs yet. Worker-pool
+   optimization revisits when 10k threshold is approached.
 
-6. **`--interim-debit-interval=0` semantics.** Document explicitly:
-   `0` disables the ticker entirely and the middleware reverts to
-   v0.2 single-debit behaviour. This gives operators a kill-switch if
-   the ticker introduces a regression. Recommend yes; it's a small
-   amount of code (a guard in the middleware) and zero ongoing
-   maintenance.
+5. **Race conditions in `LiveCounter` reads.** **DECIDED: `atomic.Uint64`
+   universally.** For `bytes-counted` and `seconds-elapsed` it's
+   trivially correct; for `ffmpeg-progress`, the parser goroutine
+   writes `frame=` and `out_time_us=` atomic fields and
+   `CurrentUnits()` does the multiplication under a single load each.
+   No alternative is safe for cross-goroutine reads.
+
+6. **`--interim-debit-interval=0` semantics.** **DECIDED: yes,
+   `0` disables the ticker entirely.** Middleware reverts to v0.2
+   single-debit behaviour when the flag is zero. ~3-LOC guard;
+   operator escape hatch if the ticker introduces a regression.
 
 ## 12. Migration sequence
 

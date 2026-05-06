@@ -22,6 +22,9 @@ resolution and [core belief #14](../docs/design-docs/core-beliefs.md).
 | [`modes/`](./modes/) | One spec per interaction mode (`http-reqresp`, `http-stream`, …) |
 | [`extractors/`](./extractors/) | One spec per work-unit extractor (`openai-usage`, `response-jsonpath`, …) |
 | [`headers/`](./headers/) | `Livepeer-*` header conventions, payment envelope structure |
+| [`proto/`](./proto/) | Canonical `.proto` source for the payment wire format and the daemon gRPC services |
+| [`proto-go/`](./proto-go/) | Generated Go bindings for `proto/`; importable as a Go module |
+| [`docs/`](./docs/) | Cross-cutting design docs ([`wire-compat.md`](./docs/wire-compat.md) — byte-for-byte contract with go-livepeer's `pm/`) |
 | [`conformance/`](./conformance/) | Test fixtures + Go runner + Dockerfile + Makefile + compose.yaml |
 
 ## Versioning

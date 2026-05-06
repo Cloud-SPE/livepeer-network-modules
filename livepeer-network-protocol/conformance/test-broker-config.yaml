@@ -35,3 +35,37 @@ capabilities:
       transport: "http"
       url: "http://runner:9000/handler"
       auth: "none"
+
+  # ---- fixtures/http-stream/happy-path.yaml ----
+  - id: "test:happy-path-stream:v1"
+    offering_id: "default"
+    interaction_mode: "http-stream@v0"
+    work_unit:
+      name: "tokens"
+      extractor:
+        type: "response-jsonpath"
+        path: "$.usage.total_tokens"
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://runner:9000/handler"
+      auth: "none"
+
+  # ---- fixtures/http-multipart/happy-path.yaml ----
+  - id: "test:happy-path-multipart:v1"
+    offering_id: "default"
+    interaction_mode: "http-multipart@v0"
+    work_unit:
+      name: "characters"
+      extractor:
+        type: "response-jsonpath"
+        path: "$.usage.characters"
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://runner:9000/handler"
+      auth: "none"

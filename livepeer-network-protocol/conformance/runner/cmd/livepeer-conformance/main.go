@@ -20,7 +20,9 @@ import (
 	"syscall"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpmultipart"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpreqresp"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpstream"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/runner"
 )
 
@@ -31,6 +33,8 @@ func main() {
 	// Register drivers. Each Driver is added to the modes.Registry; the
 	// runner dispatches by fixture.Mode.
 	modes.Register(httpreqresp.New())
+	modes.Register(httpstream.New())
+	modes.Register(httpmultipart.New())
 
 	var (
 		target       = flag.String("target", "", "broker | gateway")

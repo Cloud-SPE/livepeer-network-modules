@@ -3,6 +3,7 @@ package middleware
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
@@ -37,7 +38,19 @@ func Metrics(next http.Handler) http.Handler {
 
 		outcome := outcomeFor(status, errCode)
 
-		observability.RecordRequest(capID, offID, outcome, duration.Seconds(), rec.workUnits)
+		// Read units from the recorder snapshot (set at WriteHeader time);
+		// fall back to the response-header map for trailer-based modes
+		// like http-stream@v0 where the value lands after the body.
+		workUnits := rec.workUnits
+		if workUnits == 0 {
+			if h := rec.Header().Get(livepeerheader.WorkUnits); h != "" {
+				if n, err := strconv.ParseUint(h, 10, 64); err == nil {
+					workUnits = n
+				}
+			}
+		}
+
+		observability.RecordRequest(capID, offID, outcome, duration.Seconds(), workUnits)
 
 		slog.Info("paid request",
 			"request_id", RequestIDFromContext(r.Context()),
@@ -46,7 +59,7 @@ func Metrics(next http.Handler) http.Handler {
 			"mode", r.Header.Get(livepeerheader.Mode),
 			"status", status,
 			"livepeer_error", errCode,
-			"work_units", rec.workUnits,
+			"work_units", workUnits,
 			"duration", duration,
 			"outcome", outcome,
 		)

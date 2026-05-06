@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
@@ -56,8 +57,19 @@ func Payment(client payment.Client) Middleware {
 			rec := &responseRecorder{ResponseWriter: w}
 			next.ServeHTTP(rec, r)
 
-			// Reconcile if the actual work units differ from the upfront estimate.
+			// Read actual work units. The recorder snaps the value at
+			// WriteHeader for non-streaming modes; for http-stream@v0 (and
+			// future trailer-based modes) the value is set on the response
+			// header map AFTER the body and only ends up there post-handler,
+			// so we re-read as a fallback.
 			actual := rec.workUnits
+			if actual == 0 {
+				if h := rec.Header().Get(livepeerheader.WorkUnits); h != "" {
+					if n, err := strconv.ParseUint(h, 10, 64); err == nil {
+						actual = n
+					}
+				}
+			}
 			if actual != estimatedUnitsV0 {
 				_ = client.Reconcile(ctx, session.ID, actual)
 			}

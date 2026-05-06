@@ -1,0 +1,49 @@
+# Self-test stack for the conformance runner.
+# Run with: make test-compose
+#
+# This compose file documents the three-service shape the runner expects:
+#
+#   1. mock-backend         — HTTP / WebSocket / RTMP server the implementation
+#                             under test dispatches to. Lets the runner assert
+#                             side-effects (e.g., did the broker forward to the
+#                             backend with the right body and auth headers?).
+#   2. broker-under-test    — the implementation under test (broker or gateway).
+#                             For v0.1 this slot is COMMENTED OUT — the broker
+#                             reference impl (capability-broker/) is plan 0003
+#                             work. Until it ships, test-compose does not pass.
+#   3. runner               — the conformance image; runs against the impl,
+#                             asserts fixtures pass.
+
+services:
+  mock-backend:
+    image: traefik/whoami:latest  # placeholder; replace with a richer mock when needed
+    networks:
+      - conformance
+    expose:
+      - "80"
+
+  # TODO: uncomment once tztcloud/livepeer-capability-broker:dev exists
+  #       (tracked in plan 0003).
+  # broker-under-test:
+  #   image: tztcloud/livepeer-capability-broker:dev
+  #   networks: [conformance]
+  #   environment:
+  #     BACKEND_URL: http://mock-backend
+  #     # Other broker config goes here (host-config.yaml mount, payment-daemon
+  #     # socket, etc.). See capability-broker/docs/ when it ships.
+  #   expose: ["8080"]
+
+  runner:
+    image: tztcloud/livepeer-conformance:dev
+    depends_on:
+      - mock-backend
+    networks:
+      - conformance
+    command:
+      - --target=broker
+      - --url=http://broker-under-test:8080
+      - --modes=http-reqresp
+
+networks:
+  conformance:
+    driver: bridge

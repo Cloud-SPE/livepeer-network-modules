@@ -1,7 +1,7 @@
 ---
 extractor_name: openai-usage
 version: 0.1.0
-status: draft (proposed)
+status: accepted
 spec_version: 0.1.0
 last_updated: 2026-05-06
 ---

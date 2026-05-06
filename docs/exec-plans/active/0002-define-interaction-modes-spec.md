@@ -96,15 +96,20 @@ Artifacts:
 - [x] Six mode specs written and accepted (`http-reqresp`, `http-stream`,
   `http-multipart`, `ws-realtime`, `rtmp-ingress-hls-egress`,
   `session-control-plus-media`).
-- [x] `extractors/*.md` for the initial six extractors drafted (`openai-usage`,
-  `response-jsonpath`, `request-formula`, `bytes-counted`, `seconds-elapsed`,
-  `ffmpeg-progress`).
-- [ ] Conformance runner + fixtures + Dockerfile + Makefile + compose.yaml.
-- [ ] At least one reference implementation (broker side) demonstrably passing the
-  conformance suite for one mode.
+- [x] `extractors/*.md` for the initial six extractors written and accepted
+  (`openai-usage`, `response-jsonpath`, `request-formula`, `bytes-counted`,
+  `seconds-elapsed`, `ffmpeg-progress`).
+- [x] Conformance scaffold landed (`Dockerfile`, `Makefile`, `compose.yaml`,
+  `runner/` Go skeleton, per-mode `fixtures/` folders, READMEs). The runner
+  binary is a flag-parsing stub; fixture loading and assertions are TODO.
+- [ ] At least one reference implementation (broker side) demonstrably passing
+  the conformance suite for one mode. **Gating done condition for plan 0002.**
 
-All decisions are now resolved; remaining work is the conformance scaffold and the
-first reference impl. Mode specs and extractor specs are present and reviewable.
+The remaining done condition gates on the broker reference impl (plan 0003
+work), which is itself gated on real fixture loading + assertion logic in the
+runner. Both can proceed in parallel: runner fills in its mode drivers as
+fixtures are authored; broker reference impl runs against early fixtures as
+they land.
 
 ## Out of scope
 

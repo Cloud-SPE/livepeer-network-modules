@@ -6,14 +6,14 @@ host-config; the broker runs the recipe against the request/response to compute
 
 The initial six (per plan 0002):
 
-- [`openai-usage.md`](./openai-usage.md) — read `usage.{prompt|completion|total}_tokens` from OpenAI-shaped response JSON. **Drafted 2026-05-06.**
-- [`response-jsonpath.md`](./response-jsonpath.md) — extract a count from a JSONPath in the response body. **Drafted 2026-05-06.**
-- [`request-formula.md`](./request-formula.md) — safe arithmetic expression over request fields (e.g., `width × height × steps`). **Drafted 2026-05-06.**
-- [`bytes-counted.md`](./bytes-counted.md) — tally bytes in/out (request, response, or both). **Drafted 2026-05-06.**
-- [`seconds-elapsed.md`](./seconds-elapsed.md) — wall-clock duration with mode-aware start/end anchors. **Drafted 2026-05-06.**
-- [`ffmpeg-progress.md`](./ffmpeg-progress.md) — parse FFmpeg's `-progress` output (frame, frame-megapixel, out-time). **Drafted 2026-05-06.**
+- [`openai-usage.md`](./openai-usage.md) — read `usage.{prompt|completion|total}_tokens` from OpenAI-shaped response JSON. **Accepted 2026-05-06.**
+- [`response-jsonpath.md`](./response-jsonpath.md) — extract a count from a JSONPath in the response body. **Accepted 2026-05-06.**
+- [`request-formula.md`](./request-formula.md) — safe arithmetic expression over request fields (e.g., `width × height × steps`). **Accepted 2026-05-06.**
+- [`bytes-counted.md`](./bytes-counted.md) — tally bytes in/out (request, response, or both). **Accepted 2026-05-06.**
+- [`seconds-elapsed.md`](./seconds-elapsed.md) — wall-clock duration with mode-aware start/end anchors. **Accepted 2026-05-06.**
+- [`ffmpeg-progress.md`](./ffmpeg-progress.md) — parse FFmpeg's `-progress` output (frame, frame-megapixel, out-time). **Accepted 2026-05-06.**
 
-**Status:** all six initial extractors drafted; pending review.
+**Status:** all six initial extractors accepted.
 
 Each extractor has its own SemVer (frontmatter `version`). Spec-wide SemVer covers
 the extractor envelope shape (`{ type, ... }`) but not individual extractor

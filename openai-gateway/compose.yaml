@@ -1,0 +1,108 @@
+# End-to-end smoke stack for the openai-gateway reference impl.
+# Run with: make smoke
+#
+# Topology:
+#   mock-backend  — python:3.12-alpine HTTP server returning OpenAI-shaped
+#                   responses on different paths (one per capability).
+#   broker        — capability-broker forwards from /v1/cap to mock-backend.
+#   gateway       — openai-gateway translates OpenAI-shaped requests to the
+#                   Livepeer wire spec and forwards via broker.
+
+services:
+  mock-backend:
+    image: python:3.12-alpine
+    networks: [openai-gateway]
+    expose:
+      - "9000"
+    command:
+      - python3
+      - -u
+      - -c
+      - |
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        import json
+        class H(BaseHTTPRequestHandler):
+          def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            _ = self.rfile.read(n) if n else b""
+            if self.path == "/chat":
+              body = json.dumps({
+                "id": "chatcmpl-mock",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "mocked"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20}
+              }).encode()
+              self.send_response(200)
+              self.send_header("Content-Type", "application/json")
+              self.send_header("Content-Length", str(len(body)))
+              self.end_headers()
+              self.wfile.write(body)
+            elif self.path == "/chat-stream":
+              # SSE-style body. Final event carries usage so the broker's
+              # openai-usage extractor sees usage.total_tokens.
+              chunks = [
+                'data: {"id":"x","choices":[{"delta":{"content":"hello"}}]}\n\n',
+                'data: {"id":"x","choices":[{"delta":{"content":" world"}}]}\n\n',
+                'data: {"id":"x","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}\n\n',
+                'data: [DONE]\n\n',
+              ]
+              body = "".join(chunks).encode()
+              self.send_response(200)
+              self.send_header("Content-Type", "text/event-stream")
+              self.send_header("Content-Length", str(len(body)))
+              self.end_headers()
+              self.wfile.write(body)
+            elif self.path == "/embeddings":
+              body = json.dumps({
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3]}],
+                "model": "bge-test",
+                "usage": {"prompt_tokens": 5, "total_tokens": 5}
+              }).encode()
+              self.send_response(200)
+              self.send_header("Content-Type", "application/json")
+              self.send_header("Content-Length", str(len(body)))
+              self.end_headers()
+              self.wfile.write(body)
+            elif self.path == "/transcribe":
+              body = json.dumps({
+                "text": "transcribed audio",
+                "usage": {"characters": 17}
+              }).encode()
+              self.send_response(200)
+              self.send_header("Content-Type", "application/json")
+              self.send_header("Content-Length", str(len(body)))
+              self.end_headers()
+              self.wfile.write(body)
+            else:
+              self.send_response(404)
+              self.end_headers()
+              self.wfile.write(b'{"error":"unknown path"}')
+          def log_message(self, *a, **k): pass
+        HTTPServer(("0.0.0.0", 9000), H).serve_forever()
+
+  broker:
+    image: tztcloud/livepeer-capability-broker:dev
+    depends_on: [mock-backend]
+    networks: [openai-gateway]
+    volumes:
+      - ./test-broker-config.yaml:/etc/livepeer/host-config.yaml:ro
+    expose:
+      - "8080"
+    command:
+      - --config=/etc/livepeer/host-config.yaml
+      - --listen=:8080
+      - --metrics=:9090
+
+  gateway:
+    image: tztcloud/livepeer-openai-gateway-reference:dev
+    depends_on: [broker]
+    networks: [openai-gateway]
+    ports:
+      - "3000:3000"
+    environment:
+      LIVEPEER_BROKER_URL: "http://broker:8080"
+      PORT: "3000"
+
+networks:
+  openai-gateway:
+    driver: bridge

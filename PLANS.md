@@ -28,13 +28,16 @@ What does not exist yet:
 ## Active plans
 
 Numbered `docs/exec-plans/active/000N-*.md`. **None active right now** —
-plans 0001–0004, 0006, 0007, 0008, 0010, 0011, 0012 all closed.
+plans 0001–0004, 0006, 0007, 0008, 0009, 0010, 0011, 0012 all closed.
 
 **All six spec modes + all six extractors are wired** in both the broker
 and the runner; the TypeScript gateway-side middleware
 (`@tztcloud/livepeer-gateway-middleware`) covers the HTTP family with
 unit tests; conformance passes end-to-end via compose for an 11-fixture
-set (6 mode happy-paths + 5 extractor exercises).
+set (6 mode happy-paths + 5 extractor exercises). The reference
+OpenAI-compatible gateway (option A of plan 0009) ships in
+`openai-gateway/`; its smoke test passes 10 assertions against a live
+gateway → broker → mock-backend stack via Docker compose.
 
 The next sequenced workstreams are queued (open one when ready):
 
@@ -47,7 +50,12 @@ The next sequenced workstreams are queued (open one when ready):
 - ~~**Plan 0008**~~ — completed 2026-05-06. TypeScript reference
   middleware (`@tztcloud/livepeer-gateway-middleware`) for the HTTP
   family of modes; zero runtime deps; 10 unit tests passing in Docker.
-- **Plan 0009** — OpenAI-compat gateway migration brief execution.
+- ~~**Plan 0009 (option A)**~~ — completed 2026-05-06. Reference
+  OpenAI-compat gateway in `openai-gateway/`; 10 smoke-test assertions
+  passing.
+- **Plan 0013** — Migration brief for the suite's existing
+  `livepeer-openai-gateway` (option B from plan 0009 framing). Paper
+  exercise; doesn't touch suite code; produces a delta document.
 - **Plan 0011-followup** — actual RTMP ingest + FFmpeg + HLS pipeline (the
   session-open phase is done in plan 0011; the media pipeline is its own
   workstream).

@@ -1,0 +1,74 @@
+# Broker host-config used by the openai-gateway smoke test stack.
+#
+# Each capability points at a different path on the mock-backend so the
+# mock can return shape-appropriate responses without inspecting bodies.
+
+identity:
+  orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
+  label: "openai-gateway-smoke-broker"
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+payment_daemon:
+  mock: true
+
+capabilities:
+  # Non-streaming chat completions.
+  - id: "openai:chat-completions:gpt-4-test"
+    offering_id: "default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "tokens"
+      extractor:
+        type: "openai-usage"
+        field: "total_tokens"
+    price: { amount_wei: "1000", per_units: 1 }
+    backend:
+      transport: "http"
+      url: "http://mock-backend:9000/chat"
+      auth: "none"
+
+  # Streaming chat completions (same capability id, different offering + mode).
+  - id: "openai:chat-completions:gpt-4-test"
+    offering_id: "stream"
+    interaction_mode: "http-stream@v0"
+    work_unit:
+      name: "tokens"
+      extractor:
+        type: "openai-usage"
+        field: "total_tokens"
+    price: { amount_wei: "1000", per_units: 1 }
+    backend:
+      transport: "http"
+      url: "http://mock-backend:9000/chat-stream"
+      auth: "none"
+
+  - id: "openai:embeddings:bge-test"
+    offering_id: "default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "tokens"
+      extractor:
+        type: "openai-usage"
+        field: "total_tokens"
+    price: { amount_wei: "100", per_units: 1 }
+    backend:
+      transport: "http"
+      url: "http://mock-backend:9000/embeddings"
+      auth: "none"
+
+  - id: "openai:audio-transcriptions:whisper-test"
+    offering_id: "default"
+    interaction_mode: "http-multipart@v0"
+    work_unit:
+      name: "characters"
+      extractor:
+        type: "response-jsonpath"
+        path: "$.usage.characters"
+    price: { amount_wei: "100", per_units: 1 }
+    backend:
+      transport: "http"
+      url: "http://mock-backend:9000/transcribe"
+      auth: "none"

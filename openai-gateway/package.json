@@ -1,0 +1,23 @@
+{
+  "name": "@tztcloud/openai-gateway",
+  "version": "0.1.0",
+  "description": "Reference OpenAI-compatible gateway demonstrating the new Livepeer wire spec end-to-end",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "start": "node ./dist/index.js"
+  },
+  "dependencies": {
+    "fastify": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -101,10 +101,10 @@ Six attacker shapes worth designing against. Defenses fold into §4–§9.
   warm-key story on the payment side: plan 0017 + [`payment-daemon/docs/operator-runbook.md`](../../../payment-daemon/docs/operator-runbook.md)
   §5 lines 240–263.
 - **secure-orch network reachability.** Should be impossible by the
-  hard rule. Defense in depth: default-deny inbound at the host firewall
-  (nftables/pf), no listening sockets except `127.0.0.1`, no SSH daemon
-  by default, no remote-management agent. Console binds loopback only;
-  HSM bus is USB/PCIe, never IP.
+  hard rule. The application contract holds it: console binds
+  `127.0.0.1` only; HSM bus is USB/PCIe, never IP. Host-level posture
+  (firewall, sshd, remote-management agents) is operator deployment
+  choice — see §13 Q6 and §9.3 for non-prescriptive guidance.
 - **Coordinator-host compromise (candidate poisoning).** Attacker
   rewrites the candidate (extra capabilities, silent `price` /
   `worker_url` changes). Console diff is the catch. **This is the

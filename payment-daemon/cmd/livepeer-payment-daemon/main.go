@@ -3,10 +3,11 @@
 // unix socket. Mode is chosen at boot via `--mode`; it does not change
 // at runtime.
 //
-// Plan 0017 lights up V3 JSON keystore loading in production mode (when
-// `--chain-rpc` is set). The broker / clock / gas-price providers stay
-// dev-stubbed in this dispatch — plan 0016 wires those against the real
-// chain.
+// In production mode (--chain-rpc set), the daemon dials an Arbitrum
+// One RPC, resolves the Livepeer Controller addresses, and runs against
+// real on-chain state (TicketBroker, RoundsManager, BondingManager).
+// The dev-mode path (no --chain-rpc) keeps the daemon compileable and
+// testable without any chain integration.
 //
 // See ../../docs/operator-runbook.md for what each flag actually does
 // and what each failure mode means in production.
@@ -19,43 +20,65 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
+
+	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/ethclient"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/broker/ticketbroker"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/chain"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devbroker"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devclock"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devkeystore"
+	clockonchain "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/clock/onchain"
+	gasprice "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/gasprice/onchain"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/keystore/inmemory"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/keystore/jsonfile"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/server"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/escrow"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/receiver"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/sender"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/settlement"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
 )
 
 var version = "dev"
 
-// configErrExitCode is the exit status the daemon uses for any
-// startup configuration failure (bad flags, missing keystore, wrong
-// password, …) per plan 0017 §5.2. The exit code is observable; the
-// error text is operator-actionable.
 const configErrExitCode = 2
 
 func main() {
 	var (
-		mode               = flag.String("mode", "", "required: 'sender' or 'receiver'")
-		socketPath         = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
-		dbPath             = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB session ledger path (receiver only)")
-		chainRPC           = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers and signing key are fakes.")
-		devKeyHex          = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
-		keystorePath       = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc is set.")
-		keystorePwFile     = flag.String("keystore-password-file", "", "Path to a file containing the keystore unlock password. Mutually exclusive with LIVEPEER_KEYSTORE_PASSWORD.")
-		orchAddressHex     = flag.String("orch-address", "", "Hex (0x-prefixed) on-chain orchestrator identity. Empty = the keystore's address is used as the recipient.")
-		showVer            = flag.Bool("version", false, "print version and exit")
+		mode           = flag.String("mode", "", "required: 'sender' or 'receiver'")
+		socketPath     = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
+		dbPath         = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB session ledger path (receiver only)")
+		chainRPC       = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers and signing key are fakes.")
+		devKeyHex      = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
+		keystorePath   = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc is set.")
+		keystorePwFile = flag.String("keystore-password-file", "", "Path to a file containing the keystore unlock password. Mutually exclusive with LIVEPEER_KEYSTORE_PASSWORD.")
+		orchAddressHex = flag.String("orch-address", "", "Hex (0x-prefixed) on-chain orchestrator identity. Empty = the keystore's address is used as the recipient.")
+
+		controllerAddrHex     = flag.String("chain-controller-address", chain.ArbitrumOneController.Hex(), "Livepeer Controller address. Default = Arbitrum One.")
+		ticketBrokerAddrHex   = flag.String("ticketbroker-address", "", "Override TicketBroker address. Empty = resolve via Controller.")
+		roundsManagerAddrHex  = flag.String("rounds-manager-address", "", "Override RoundsManager address. Empty = resolve via Controller.")
+		bondingManagerAddrHex = flag.String("bonding-manager-address", "", "Override BondingManager address. Empty = resolve via Controller.")
+		expectedChainID       = flag.Int64("expected-chain-id", chain.ArbitrumOneChainID, "Expected eth_chainId. 0 = disable check (escape hatch for forks; production must keep the default).")
+
+		gasPriceMultPct           = flag.Uint64("gas-price-multiplier-pct", 200, "Multiplier applied to eth_gasPrice (200 = 2× headroom).")
+		redeemGas                 = flag.Uint64("redeem-gas", 500_000, "Gas limit used for redeemWinningTicket (Arbitrum L2 empirical cost).")
+		redemptionConfirmations   = flag.Uint64("redemption-confirmations", 4, "Blocks to wait past tx-receipt before declaring confirmed.")
+		redemptionIntervalDuration = flag.Duration("redemption-interval", 30*time.Second, "Cadence of the redemption-loop tick (receiver only).")
+		validityWindowRounds      = flag.Int64("validity-window", 2, "Drop tickets whose CreationRound is more than this many rounds behind LastInitializedRound.")
+		clockRefreshInterval      = flag.Duration("clock-refresh-interval", 30*time.Second, "Cadence of RoundsManager + BondingManager polling.")
+		gasPriceRefreshInterval   = flag.Duration("gasprice-refresh-interval", 5*time.Second, "Cadence of eth_gasPrice polling.")
+
+		showVer = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
 
@@ -102,10 +125,22 @@ func main() {
 		keystorePath:   *keystorePath,
 		keystorePwFile: *keystorePwFile,
 		orchAddressHex: *orchAddressHex,
+
+		controllerAddrHex:     *controllerAddrHex,
+		ticketBrokerAddrHex:   *ticketBrokerAddrHex,
+		roundsManagerAddrHex:  *roundsManagerAddrHex,
+		bondingManagerAddrHex: *bondingManagerAddrHex,
+		expectedChainID:       *expectedChainID,
+
+		gasPriceMultPct:          *gasPriceMultPct,
+		redeemGas:                *redeemGas,
+		redemptionConfirmations:  *redemptionConfirmations,
+		redemptionInterval:       *redemptionIntervalDuration,
+		validityWindowRounds:     *validityWindowRounds,
+		clockRefreshInterval:     *clockRefreshInterval,
+		gasPriceRefreshInterval:  *gasPriceRefreshInterval,
 	}
 	if err := run(logger, cfg); err != nil {
-		// Configuration errors exit with code 2 per plan §5.2; runtime
-		// failures exit with code 1.
 		var cfgErr *configError
 		if errors.As(err, &cfgErr) {
 			logger.Error("config error", "err", cfgErr.Unwrap())
@@ -116,9 +151,6 @@ func main() {
 	}
 }
 
-// bootConfig captures the parsed flags + env that govern daemon boot.
-// Threaded through run() so subroutines can be exercised in tests
-// without invoking the flag parser.
 type bootConfig struct {
 	mode           string
 	socketPath     string
@@ -128,12 +160,22 @@ type bootConfig struct {
 	keystorePath   string
 	keystorePwFile string
 	orchAddressHex string
+
+	controllerAddrHex     string
+	ticketBrokerAddrHex   string
+	roundsManagerAddrHex  string
+	bondingManagerAddrHex string
+	expectedChainID       int64
+
+	gasPriceMultPct         uint64
+	redeemGas               uint64
+	redemptionConfirmations uint64
+	redemptionInterval      time.Duration
+	validityWindowRounds    int64
+	clockRefreshInterval    time.Duration
+	gasPriceRefreshInterval time.Duration
 }
 
-// configError marks errors that should produce exit code 2 (config
-// problem) rather than exit code 1 (runtime fatal). Used by the
-// keystore-load path so an unreadable / wrong-password keystore aborts
-// before the gRPC socket is bound, per plan §5.2.
 type configError struct{ err error }
 
 func (e *configError) Error() string { return e.err.Error() }
@@ -154,9 +196,9 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	}
 }
 
-// runSender boots a sender-mode daemon. Selects between the dev
-// keystore (chain-rpc empty) and the V3 keystore (chain-rpc set) per
-// plan 0017 §5.4 — eager decrypt before binding the gRPC socket.
+// runSender boots a sender-mode daemon. Sender uses the broker
+// read-only (GetSenderInfo only) and never submits transactions, so
+// TxSigner / GasPrice can stay nil for that path.
 func runSender(logger *slog.Logger, cfg bootConfig) error {
 	keystore, err := buildKeyStore(logger, cfg)
 	if err != nil {
@@ -164,23 +206,51 @@ func runSender(logger *slog.Logger, cfg bootConfig) error {
 	}
 	logger.Info("sender identity", "address_hex", fmt.Sprintf("%x", keystore.Address()))
 	logIdentitySplit(logger, keystore.Address(), cfg.orchAddressHex)
-	if cfg.chainRPC != "" {
-		logChainRPCStandalone(logger)
-	}
 
-	broker := devbroker.New()
-	clock := devclock.New()
-	_ = providers.NewDevGasPrice() // wired in plan 0015's interim-debit cadence
+	var broker providers.Broker
+	var clock providers.Clock
+	var gp providers.GasPrice
+
+	if cfg.chainRPC == "" {
+		broker = devbroker.New()
+		clock = devclock.New()
+		gp = providers.NewDevGasPrice()
+	} else {
+		ctx := context.Background()
+		client, addrs, err := dialAndResolve(ctx, logger, cfg)
+		if err != nil {
+			return err
+		}
+		_ = gp // sender doesn't need a gas-price provider
+		broker, err = ticketbroker.New(ticketbroker.Config{
+			Address: addrs.TicketBroker,
+			ChainID: big.NewInt(cfg.expectedChainID),
+			Logger:  logger,
+		}, client, nil, nil)
+		if err != nil {
+			return fmt.Errorf("build broker: %w", err)
+		}
+		oc, err := clockonchain.New(ctx, clockonchain.Config{
+			RoundsManager:   addrs.RoundsManager,
+			BondingManager:  addrs.BondingManager,
+			RefreshInterval: cfg.clockRefreshInterval,
+			Logger:          logger,
+		}, client)
+		if err != nil {
+			return fmt.Errorf("build clock: %w", err)
+		}
+		oc.Start(ctx)
+		clock = oc
+	}
 
 	svc := sender.New(keystore, broker, clock, logger.With("component", "sender"))
 	srv := server.NewSender(svc, cfg.socketPath, logger.With("component", "grpc"))
 	return runServer(logger, srv)
 }
 
-// runReceiver boots a receiver-mode daemon. Loading + eager-decrypting
-// the V3 keystore happens before BoltDB open and before the gRPC
-// listener binds, so a bad password fails fast without ever exposing
-// the socket.
+// runReceiver boots a receiver-mode daemon and lights up the full
+// settlement pipeline (broker + escrow + settlement) when --chain-rpc
+// is set.
 func runReceiver(logger *slog.Logger, cfg bootConfig) error {
 	keystore, err := buildKeyStore(logger, cfg)
 	if err != nil {
@@ -188,9 +258,6 @@ func runReceiver(logger *slog.Logger, cfg bootConfig) error {
 	}
 	logger.Info("receiver identity", "address_hex", fmt.Sprintf("%x", keystore.Address()))
 	logIdentitySplit(logger, keystore.Address(), cfg.orchAddressHex)
-	if cfg.chainRPC != "" {
-		logChainRPCStandalone(logger)
-	}
 
 	if err := ensureParentDir(cfg.dbPath); err != nil {
 		return fmt.Errorf("prepare db dir: %w", err)
@@ -201,9 +268,6 @@ func runReceiver(logger *slog.Logger, cfg bootConfig) error {
 	}
 	defer st.Close()
 
-	// Recipient defaults to the keystore signer when --orch-address is
-	// empty; the hot/cold split log line above already warned the
-	// operator if that's not the desired posture.
 	recipient := keystore.Address()
 	if orch := normalizeAddrHex(cfg.orchAddressHex); orch != "" {
 		raw, _ := decodeHex40(orch)
@@ -211,9 +275,122 @@ func runReceiver(logger *slog.Logger, cfg bootConfig) error {
 			recipient = raw
 		}
 	}
+
 	svc := receiver.New(st, receiver.Config{Recipient: recipient}, logger.With("component", "receiver"))
 	srv := server.NewReceiver(svc, cfg.socketPath, logger.With("component", "grpc"))
-	return runServer(logger, srv)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if cfg.chainRPC != "" {
+		client, addrs, err := dialAndResolve(ctx, logger, cfg)
+		if err != nil {
+			return err
+		}
+
+		txSigner, ok := keystore.(providers.TxSigner)
+		if !ok {
+			return errors.New("keystore does not implement TxSigner; production receiver requires inmemory keystore")
+		}
+
+		gp, err := gasprice.New(ctx, gasprice.Config{
+			MultiplierPct:   cfg.gasPriceMultPct,
+			RefreshInterval: cfg.gasPriceRefreshInterval,
+			Logger:          logger,
+		}, client)
+		if err != nil {
+			return fmt.Errorf("build gasprice: %w", err)
+		}
+		gp.Start(ctx)
+		defer gp.Stop()
+
+		oc, err := clockonchain.New(ctx, clockonchain.Config{
+			RoundsManager:   addrs.RoundsManager,
+			BondingManager:  addrs.BondingManager,
+			RefreshInterval: cfg.clockRefreshInterval,
+			Logger:          logger,
+		}, client)
+		if err != nil {
+			return fmt.Errorf("build clock: %w", err)
+		}
+		oc.Start(ctx)
+		defer oc.Stop()
+
+		broker, err := ticketbroker.New(ticketbroker.Config{
+			Address:       addrs.TicketBroker,
+			Claimant:      ethcommon.BytesToAddress(recipient),
+			From:          ethcommon.BytesToAddress(keystore.Address()),
+			ChainID:       big.NewInt(cfg.expectedChainID),
+			RedeemGas:     cfg.redeemGas,
+			Confirmations: cfg.redemptionConfirmations,
+			Logger:        logger,
+		}, client, gp, txSigner)
+		if err != nil {
+			return fmt.Errorf("build broker: %w", err)
+		}
+
+		// Preflight: fail fast if signing wallet has no ETH for gas.
+		bal, err := client.BalanceAt(ctx, ethcommon.BytesToAddress(keystore.Address()), nil)
+		if err != nil {
+			logger.Warn("preflight balance check failed (continuing)", "err", err)
+		} else if bal.Sign() == 0 {
+			logger.Warn("signing wallet has zero ETH balance — redemptions will fail at gas check until the wallet is funded",
+				"address", "0x"+strings.ToLower(fmt.Sprintf("%x", keystore.Address())))
+		} else {
+			logger.Info("signing wallet ETH balance", "wei", bal.String())
+		}
+
+		esc := escrow.New(broker, oc, escrow.Config{Claimant: recipient})
+		if err := esc.Rebuild(st); err != nil {
+			return fmt.Errorf("escrow rebuild: %w", err)
+		}
+
+		set := settlement.New(st, broker, gp, oc, esc, settlement.Config{
+			RedeemGas:      cfg.redeemGas,
+			ValidityWindow: cfg.validityWindowRounds,
+			Logger:         logger,
+		})
+		go set.Run(ctx, cfg.redemptionInterval)
+		defer set.Stop()
+
+		logger.Info("chain integration active",
+			"controller", cfg.controllerAddrHex,
+			"ticketbroker", addrs.TicketBroker.Hex(),
+			"rounds_manager", addrs.RoundsManager.Hex(),
+			"bonding_manager", addrs.BondingManager.Hex(),
+		)
+	}
+
+	return runServerWithCtx(ctx, logger, srv)
+}
+
+// dialAndResolve dials the JSON-RPC endpoint, checks the chain ID
+// matches `cfg.expectedChainID`, and resolves the contract addresses
+// via the Controller (honoring per-contract overrides).
+func dialAndResolve(ctx context.Context, logger *slog.Logger, cfg bootConfig) (*ethclient.Client, chain.Addresses, error) {
+	client, err := ethclient.DialContext(ctx, cfg.chainRPC)
+	if err != nil {
+		return nil, chain.Addresses{}, fmt.Errorf("dial %s: %w", cfg.chainRPC, err)
+	}
+	if err := chain.CheckChainID(ctx, client, cfg.expectedChainID); err != nil {
+		client.Close()
+		return nil, chain.Addresses{}, &configError{err: err}
+	}
+	logger.Info("chain id verified", "chain_id", cfg.expectedChainID)
+
+	controllerAddr := ethcommon.HexToAddress(cfg.controllerAddrHex)
+	r := chain.NewResolver(client, controllerAddr)
+	overrides := chain.Overrides{
+		TicketBroker:   ethcommon.HexToAddress(cfg.ticketBrokerAddrHex),
+		RoundsManager:  ethcommon.HexToAddress(cfg.roundsManagerAddrHex),
+		BondingManager: ethcommon.HexToAddress(cfg.bondingManagerAddrHex),
+	}
+	addrs, err := r.Resolve(ctx, overrides)
+	if err != nil {
+		client.Close()
+		return nil, chain.Addresses{}, fmt.Errorf("resolve contracts: %w", err)
+	}
+	return client, addrs, nil
 }
 
 // buildKeyStore returns the providers.KeyStore for the given boot
@@ -240,18 +417,11 @@ func buildKeyStore(logger *slog.Logger, cfg bootConfig) (providers.KeyStore, err
 		return nil, &configError{err: err}
 	}
 	priv, err := jsonfile.Load(cfg.keystorePath, password)
-	// Drop the password reference; the GC will reclaim the string
-	// allocation. Plan §5.5 / §11.6: minimal scrub, no third-party
-	// secure-memory dep. The file-read buffer behind the password was
-	// already zeroed inside loadPassword.
-	password = "" //nolint:ineffassign,wastedassign // explicit drop; see plan §5.5
+	password = "" //nolint:ineffassign,wastedassign // explicit drop
 	_ = password
 	if err != nil {
 		return nil, &configError{err: err}
 	}
-	// Defense in depth — make sure jsonfile didn't return nil even on
-	// the no-error path. If the loader's contract ever drifts, we'd
-	// rather panic at boot than feed a nil key into the signer.
 	if priv == nil {
 		return nil, &configError{err: errors.New("decrypt keystore: nil key returned")}
 	}
@@ -261,23 +431,11 @@ func buildKeyStore(logger *slog.Logger, cfg bootConfig) (providers.KeyStore, err
 		return nil, &configError{err: fmt.Errorf("build keystore: %w", err)}
 	}
 	logger.Info("keystore unlocked", "addr_hex", fmt.Sprintf("%x", ks.Address()))
-	// Don't keep a reference to the raw key pointer here — inmemory.New
-	// holds it, and it never escapes the KeyStore.
 	priv = (*ecdsa.PrivateKey)(nil) //nolint:ineffassign,wastedassign // explicit drop
 	_ = priv
 	return ks, nil
 }
 
-// logIdentitySplit emits one of two startup lines per plan 0017 §5.3:
-//
-//   - WARN single-wallet config: hot signer == on-chain orch identity.
-//     Triggered when --orch-address is empty (recipient defaults to the
-//     signer) OR --orch-address explicitly equals the keystore address.
-//   - INFO hot/cold split active: addresses differ.
-//
-// The orch-address is parsed best-effort; a malformed value causes the
-// WARN to fire so the operator sees something is wrong without
-// hard-blocking startup (locked decision §11.5).
 func logIdentitySplit(logger *slog.Logger, signer []byte, orchAddressHex string) {
 	signerHex := strings.ToLower(fmt.Sprintf("%x", signer))
 	orchHex := normalizeAddrHex(orchAddressHex)
@@ -292,9 +450,6 @@ func logIdentitySplit(logger *slog.Logger, signer []byte, orchAddressHex string)
 		"orch_address", "0x"+orchHex)
 }
 
-// normalizeAddrHex strips any "0x" prefix and lower-cases. Returns ""
-// for an unparseable input so the single-wallet WARN fires (per plan
-// §5.3 — we don't hard-block on misconfig; we make it loud).
 func normalizeAddrHex(s string) string {
 	if s == "" {
 		return ""
@@ -332,17 +487,13 @@ func orchHexOrEmpty(orchHex string) string {
 	return "0x" + orchHex
 }
 
-// logChainRPCStandalone is the plan-0017-standalone landing pad: when
-// --chain-rpc is set the V3 keystore is active, but plan 0016 has not
-// yet wired the real broker/clock/gas-price providers. Operators need
-// to know the daemon is *partially* in production mode.
-func logChainRPCStandalone(logger *slog.Logger) {
-	logger.Info("chain-rpc set: V3 keystore active, but broker/clock/gas-price providers remain dev-mode (plan 0016 wires real chain providers)")
-}
-
 func runServer(logger *slog.Logger, srv *server.Server) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	return runServerWithCtx(ctx, logger, srv)
+}
+
+func runServerWithCtx(ctx context.Context, logger *slog.Logger, srv *server.Server) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve() }()
 	select {
@@ -370,9 +521,6 @@ func chainStatus(chainRPC string) string {
 	return "production (" + chainRPC + ")"
 }
 
-// decodeHex40 decodes a 40-character hex string (no 0x prefix) into 20
-// raw bytes. Returns nil on any malformed input — callers fall back to
-// their default.
 func decodeHex40(hex40 string) ([]byte, error) {
 	if len(hex40) != 40 {
 		return nil, errors.New("not 40 hex chars")

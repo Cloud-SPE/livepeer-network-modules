@@ -1,14 +1,22 @@
 ---
 plan: 0016
 title: Chain-integrated payment-daemon — design choices
-status: design-doc
-phase: plan-only
+status: completed
+phase: implementation-shipped
 opened: 2026-05-06
+closed: 2026-05-06
 owner: harness
 related:
   - "completed plan 0014 — wire-compat envelope + sender daemon"
+  - "completed plan 0017 — warm-key handling (landed standalone before 0016)"
   - "payment-daemon/docs/operator-runbook.md (operator-grade flow plan 0016 implements)"
-  - "livepeer-cloud-spe/livepeer-modules-project/payment-daemon (prior reference impl)"
+  - "livepeer-cloud-spe/livepeer-modules-project/payment-daemon (prior reference impl, retired)"
+note: |
+  Implementation shipped via 9 commits on the agent worktree. Live-
+  mainnet smoke (acceptance §13 #3 — redeem a real winning ticket on
+  Arbitrum One) is a user-driven post-merge gate; the agent cannot
+  run that step without a funded mainnet wallet and the user's
+  preferred RPC. See PLANS.md "What does not exist yet".
 ---
 
 # Plan 0016 — chain-integrated payment-daemon — design choices

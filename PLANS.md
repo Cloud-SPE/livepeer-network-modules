@@ -4,8 +4,13 @@ Current state of work in this repo, plus pointers to active plans.
 
 ## Current state
 
-**Phase 4+** — wire-compat sender + receiver daemons run end-to-end; six
-active design-doc plans queued for next-stage implementation work.
+**Phase 4-chain shipping** — chain-integrated payment-daemon
+implementation landed (plan 0016); receiver-side ECDSA validation,
+on-chain TicketBroker / RoundsManager / BondingManager providers, gas-
+price polling, redemption queue + loop with Arbitrum-One pre-checks
+all wired behind `--chain-rpc`. Live-mainnet smoke (acceptance #3) is
+a user-driven post-merge gate — requires a funded mainnet wallet and
+the user's preferred RPC, and cannot run from agent worktrees.
 
 **Repo shape: monorepo for now.** All components live as top-level subfolders here;
 extraction to standalone repos is a v2 concern. See [`README.md`](./README.md) §"Repo
@@ -18,7 +23,13 @@ Code shipping today:
   sessions (ws-realtime today; `LiveCounter` interface in place for the
   rtmp / session-control followups).
 - `payment-daemon/` — sender + receiver modes; gRPC over unix socket; BoltDB
-  session ledger. Cryptography + chain stubbed under provider interfaces.
+  session ledger. Plan 0016 lit up real chain integration: keccak256-flatten
+  ticket hashing, V3 keystore signing, on-chain TicketBroker /
+  RoundsManager / BondingManager providers, eth_gasPrice polling, ECDSA
+  recovery + 600-nonce ledger receiver-side, MaxFloat with 3:1 heuristic
+  sender-side, redemption queue + loop with gas pre-checks. All under
+  `--chain-rpc`; the dev-mode flow (no flag) keeps the daemon testable
+  without any RPC.
 - `gateway-adapters/` — TypeScript per-mode middleware for the HTTP family.
 - `openai-gateway/` — reference OpenAI-compat gateway end-to-end (calls
   `PayerDaemon.CreatePayment` over unix socket).
@@ -27,22 +38,23 @@ Code shipping today:
 
 Design-doc batch (plans 0013, 0015–0019, plus `migration-from-suite.md`)
 landed 2026-05-06: ~4,140 lines of paper documenting the next implementation
-layer. Plan 0015 (4-commit interim-debit, 13/13 conformance) and plan 0017
-(5-commit warm-key, standalone without 0016) have since shipped; the
-remaining plans (0013, 0016, 0018, 0019) still surface 5–8 open questions
-each for the user before code can start.
+layer. Plans 0015 (interim-debit, 13/13 conformance), 0016 (chain
+integration), and 0017 (warm-key) have since shipped; the remaining plans
+(0013, 0018, 0019) still surface 5–8 open questions each for the user
+before code can start.
 
 What does not exist yet:
 
-- Real chain integration (Arbitrum signing, ticket validation, redemption).
-  Plan 0016 design queued.
 - `orch-coordinator/` and `secure-orch-console/` components (designs in
   plans 0018 + 0019; no code).
 - Any change to the existing `livepeer-network-suite`.
+- Live-mainnet smoke gate for the chain-integrated payment-daemon
+  (plan 0016 acceptance #3) — funded mainnet wallet + user's preferred
+  RPC; runs as a user-driven post-merge gate.
 
 ## Active plans
 
-Four numbered design docs at `docs/exec-plans/active/000N-*.md`. Each is
+Three numbered design docs at `docs/exec-plans/active/000N-*.md`. Each is
 **paper-only** — no committed code. Each surfaces 5–8 open questions the
 user must answer before implementation begins.
 
@@ -52,16 +64,6 @@ user must answer before implementation begins.
   engine-vs-shell split during the migration and renaming away from
   `-core`. 5-phase migration sequence; -1,500 to -1,800 net LOC.
   Estimate 8–14 working days.
-- **Plan 0016** — `0016-chain-integrated-payment-design.md`. Replaces
-  the v0.2 stub providers with go-ethereum + Arbitrum One: real
-  ticket hashing (keccak256-flatten per TicketBroker contract), V3
-  keystore, redemption queue + gas pre-checks, signature recovery +
-  win-prob + 600-nonce ledger on the receiver side, MaxFloat with
-  3:1 deposit-to-pending heuristic on the sender. Wire-compat
-  fixturegen as a separate Go module so go-livepeer doesn't pollute
-  the daemon dep graph. **Mainnet only — no testnet step.**
-  8–10-commit cadence. The V3 keystore half landed standalone as
-  plan 0017; broker / clock / gas-price providers still stubbed.
 - **Plan 0018** — `0018-orch-coordinator-design.md`. Phase 3 from
   the roadmap. New `orch-coordinator/` component scrapes LAN broker
   `/registry/offerings`, builds candidate manifest (JCS-canonical,
@@ -87,13 +89,16 @@ Followups still open from earlier plans:
   media-plane provisioning for `session-control-plus-media`.
 
 Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) —
-plans 0001–0012, 0014, 0015, and 0017 are all closed; together they shipped
-the 6-mode broker, 6 extractors, gateway-adapters TS middleware, the
-OpenAI-compat reference gateway, the wire-compat sender + receiver
+plans 0001–0012, 0014, 0015, 0016, and 0017 are all closed; together they
+shipped the 6-mode broker, 6 extractors, gateway-adapters TS middleware,
+the OpenAI-compat reference gateway, the wire-compat sender + receiver
 daemons, the broker-side interim-debit cadence with SufficientBalance
-runway termination on long-running sessions (plan 0015), and the warm-key
+runway termination on long-running sessions (plan 0015), the warm-key
 lifecycle (V3 keystore loader + production-mode wiring + rotation runbook
-+ no-secrets-in-logs lint, plan 0017).
++ no-secrets-in-logs lint, plan 0017), and chain-integrated payment
+(real keccak256-flatten ticket hashing + on-chain TicketBroker /
+RoundsManager / BondingManager providers + ECDSA recovery + nonce ledger
++ redemption queue with gas pre-checks, plan 0016).
 
 ## Roadmap (rough; subject to change)
 
@@ -106,8 +111,8 @@ lifecycle (V3 keystore loader + production-mode wiring + rotation runbook
 | 3 | Coordinator UX rework — capability-as-roster-entry | `orch-coordinator/` | 📄 design landed (plan 0018); implementation pending |
 | 4 | Real `payment-daemon` integration | `payment-daemon/` | ✅ completed (plan 0005) |
 | 4-followup | Wire-compat envelope + sender daemon | `payment-daemon/` | ✅ completed (plan 0014) |
-| 4-chain | Chain-integrated payment-daemon (Arbitrum One) | `payment-daemon/` | 📄 design landed (plan 0016); implementation pending |
-| 4-warmkey | Warm-key lifecycle + rotation | `payment-daemon/` | ✅ completed (plan 0017) — V3 keystore active in production mode; broker / clock / gas-price still dev-mode pending 4-chain |
+| 4-chain | Chain-integrated payment-daemon (Arbitrum One) | `payment-daemon/` | ✅ completed (plan 0016) — code shipped; live-mainnet smoke is a user-driven post-merge gate |
+| 4-warmkey | Warm-key lifecycle + rotation | `payment-daemon/` | ✅ completed (plan 0017) |
 | 4-interim | Interim-debit cadence on long-running modes | `capability-broker/` | ✅ completed (plan 0015) |
 | 5a | HTTP-family mode drivers (`http-stream`, `http-multipart`) | `capability-broker/`, `runner/` | ✅ completed (plan 0006) |
 | 5b | `ws-realtime` mode driver | `capability-broker/`, `runner/` | ✅ completed (plan 0010) |

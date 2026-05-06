@@ -188,27 +188,43 @@ as offline for that scrape cycle.
 (default `5 × scrape-interval` = 150s) are dropped from the candidate.
 Operator override via `--freshness-window`.
 
-**Aggregation rules — deduplication.** Two brokers may advertise the
-same `(capability_id, offering_id)`. Three options for v0.1; **see
-open question Q2 in §14**:
+**Aggregation rules — deduplication.** **Locked (Q2, §13).** The
+uniqueness key for tuple identity is the canonicalized
+`(capability_id, offering_id, extra, constraints)` quadruple.
+`worker_url` is **not** part of the uniqueness key — it is the
+endpoint, not an identity. Hardware-tier or fleet-perf differentiation
+that an operator wants the gateway to select on goes in the `extra` /
+`constraints` fields of the tuple, never in the URL.
 
-1. **Reject ambiguous candidates** — coordinator refuses to build,
-   surfaces a config error to the operator.
-2. **First-wins by lexicographic broker name** — deterministic, but
-   silently masks duplicate-with-different-prices bugs.
-3. **Emit both as separate tuples** — the manifest has no uniqueness
-   constraint on `(capability_id, offering_id)`; downstream resolvers
-   tolerate it as load-balancing across hosts.
+Three cases the coordinator must handle when scraping multiple
+brokers:
 
-Recommend (3) — fits "host is not a registration unit"
-(architecture-overview.md line 127); duplicate-tuples-with-different-`worker_url`
-is **the intended encoding** for multi-broker hosts.
+1. **Identical key, different prices** — operator error. Coordinator
+   **hard-fails loudly**: refuses to build the candidate and surfaces
+   a structured roster error citing both broker sources and the
+   conflicting prices. No silent precedence rule. Two brokers
+   advertising the same identity at different prices is a
+   misconfiguration the cold key must not paper over.
+2. **Identical key, identical price, different `worker_url`** —
+   legitimate HA pair. Coordinator emits a **single tuple** whose
+   `worker_url` is one of the two endpoints (chosen by lexicographic
+   order over `worker_url` for determinism); the second endpoint is
+   recorded in the metadata sidecar for operator visibility but does
+   not enter the signed bytes. (Rule documented consistently across
+   roster + audit; no per-call coin-flip.)
+3. **Different `extra` or `constraints`** — distinct identities. Both
+   are emitted as separate tuples; the gateway uses those fields for
+   selection.
+
+Fits "host is not a registration unit" (architecture-overview.md line
+127): a tuple is a capability binding, not a host record. See §13 Q2
+lock for the resolution context.
 
 ## 6. Candidate-build pipeline
 
 What the coordinator hands the secure-orch operator.
 
-**Binary format.** Recommend **tarball** with two members:
+**Binary format. Locked (Q3, §13): tarball** with two members:
 
 - `manifest.json` — JCS-canonicalized manifest payload (no signature
   yet). Byte-identical to what `secure-orch` will sign. This is the
@@ -216,22 +232,31 @@ What the coordinator hands the secure-orch operator.
   built, byte-for-byte, so the diff the operator sees in
   `secure-orch-console` is a diff of the same bytes that hash and
   sign.
-- `metadata.json` — non-signed sidecar with: candidate timestamp,
-  scrape window (start+end), source broker URLs and their per-broker
-  scrape success status, coordinator git commit, schema version.
+- `metadata.json` — operator-only sidecar (NOT signed) with: candidate
+  timestamp, scrape window (start+end), source broker URLs and per-
+  broker scrape-success status, coordinator git commit, schema version.
 
-(Open question Q3 in §14: tarball vs single-file JSON+sig. Recommend
-tarball because metadata is operator-useful but must not enter the
-signed bytes.)
+The split is load-bearing: the signed file is what the cold key
+endorses; the sidecar is operator-useful provenance that must not
+enter the signed bytes.
 
-**Diffing surface.** Coordinator MUST show the operator a diff against
-the currently-published manifest **before** they hand-carry to
-secure-orch. Reason: short-circuit no-op trips (operator updates
-`host-config.yaml`, restarts broker, nothing materially changed →
-operator sees "no diff" and skips the cold-key trip). This is a UX
-primitive in the coordinator, distinct from (and a precursor to) the
-authoritative diff that `secure-orch-console` shows on the air-gapped
-side.
+**Diffing surface.** Two diffs run in the publication cycle, on the
+two sides of the air gap:
+
+- **Coordinator UI diff** — candidate vs **currently-published**
+  manifest. Shown to the operator on the LAN laptop **before** the
+  hand-carry trip. Purpose: short-circuit no-op trips (operator
+  updates `host-config.yaml`, restarts broker, nothing materially
+  changed → operator sees "no diff" and skips the cold-key trip).
+  Advisory UX hint, not authoritative.
+- **Secure-orch-console diff** — candidate vs **last-signed** manifest
+  (the bytes the cold key most recently endorsed). Authoritative diff
+  for signing. Lives in the `secure-orch-console` plan; mentioned here
+  only because the coordinator-side diff is its precursor.
+
+The two diffs can disagree briefly (e.g. an old signed manifest is
+still live but a newer one was signed and is in flight). Both surfaces
+remain useful; the secure-orch one is what the cold key acts on.
 
 **Idempotent builds.** Same inputs (same broker offerings, same
 freshness window, same schema version) MUST produce the same bytes.
@@ -249,15 +274,12 @@ operators see noise diffs and start ignoring real changes). Concretely:
 
 ## 7. Signed-manifest hosting (receive-and-republish)
 
-**Upload surface.** Operator uploads the signed manifest back. Two
-recommended channels:
-
-- HTTP `POST /admin/signed-manifest` (multipart upload, mTLS or shared
-  secret). Suitable for headless / scripted operators.
-- Filesystem drop at `/var/lib/livepeer/orch-coordinator/inbox/`,
-  picked up by an inotify watcher. Suitable for SCP / USB delivery.
-
-Recommend **both**; they share the same verify+publish pipeline.
+**Upload surface.** **Single channel (Q6, §13): HTTP POST
+`/admin/signed-manifest`** (multipart upload, mTLS or shared secret),
+driven by the coordinator's web UI upload form. One verify+publish
+path; no secondary surface to harden, no inotify watcher to maintain.
+Operators with SCP / USB workflows `scp` the signed file to their LAN
+laptop and click upload in the web UI from there.
 
 **Verification before publishing.** The coordinator MUST verify:
 
@@ -282,31 +304,43 @@ Implementation pattern: write to a tempfile in the same filesystem,
 enforced by `flock(2)` over the publish directory; second uploader
 waits or fails-fast (config).
 
-**Resolver-facing endpoint.** The coordinator exposes
-`GET /.well-known/livepeer-registry.json` (the URL pattern the spec
-pins, `livepeer-network-protocol/manifest/README.md` lines 4 + 34).
-Open question Q4 in §14: same path semantics as the prior impl, or a
-new path? Recommend same path so existing resolvers point at the new
-coordinator with no consumer-side change.
+**Resolver-facing endpoint.** **Locked (Q4, §13): same
+`GET /.well-known/livepeer-registry.json` path** the prior
+`service-registry-daemon` resolver expects
+(`livepeer-network-protocol/manifest/README.md` lines 4 + 34).
+Existing resolvers re-target with zero consumer-side change.
+
+> **Two on-chain registries.** Livepeer mainnet has both
+> `ServiceRegistry` (transcoding, legacy) and `AIServiceRegistry`
+> (AI workers, newer). Each is a different contract address on
+> Arbitrum One. An orch may be registered in either or both. The
+> rewrite **consolidates** to one well-known URL and one unified
+> manifest format whose `capabilities[]` list mixes transcoding and
+> AI tuples. The resolver/gateway side is configured with which
+> contract address(es) to query for the orch's `serviceURI`; the orch
+> may register the same URL in both contracts. See §13 commit #0 for
+> the doc-cleanup that bakes this consolidation into
+> `livepeer-network-protocol/manifest/README.md` and
+> `docs/design-docs/architecture-overview.md` before any coordinator
+> code reads on-chain pointers.
 
 ## 8. UX surface — capability-as-roster-entry
 
 The operator-facing UI. The roadmap row's outcome statement
 (`PLANS.md` line 108) names this work.
 
-**Tech choice.** Three options; **see open question Q1 in §14**:
-
-1. JSON HTTP API + a thin CLI (`orch-coordinator-cli`). Mirrors the
-   payment-daemon pattern (cmd-line + sockets + slog;
-   `payment-daemon/cmd/livepeer-payment-daemon/main.go` lines 37–86).
-2. JSON HTTP API + a small embedded web app (single static SPA, no
-   external server).
-3. Both.
-
-Recommend **(1) for v0.1** — ships fast, no JS toolchain in the build,
-no auth-surface design needed beyond the existing socket / mTLS gating.
-The web app lands in a follow-up plan (open question: required for
-plan 0018 v0.1?).
+**Tech choice. Locked (Q1, §13): web UI is the primary surface for
+v0.1.** The coordinator runs on the operator's LAN — the operator-UI
+listener binds the LAN interface (`--listen=:8080`) and the operator
+hits it from a browser on the same LAN. No `ssh -L` tunnel needed
+(unlike `secure-orch`, the coordinator is LAN-reachable by design;
+that's the whole point of the LAN-side build/host split). The web UI
+is served by the coordinator's own Go HTTP server with HTML/CSS/JS
+embedded via `embed.FS`, mirroring the pattern locked in plan 0019
+§6.1. The JSON HTTP API the web UI calls is the same surface a
+scripted operator could use directly. **CLI is deferred or never** —
+it doesn't add value over `curl` against the JSON API and would be a
+second surface to maintain.
 
 **The roster view (rows = capability tuples).**
 
@@ -332,6 +366,12 @@ plan 0018 v0.1?).
 - Drift indicator: would the candidate change this row?
   (none / price / mode / extra / new / removed)
 - Per-broker freshness/health badge.
+
+**Row identity.** Roster row identity uses the §5 / Q2 uniqueness key
+`(capability_id, offering_id, extra, constraints)`. Drift detection
+groups rows by that key (not by `worker_url`); a tuple whose only
+change is a swapped HA endpoint shows as "no drift" rather than
+"removed + added."
 
 **Filtering / search.** By `capability_id` substring, by mode, by
 broker, by drift status (e.g. "show me only rows the next publish would
@@ -411,8 +451,8 @@ Mirror the payment-daemon pattern
 |---|---|
 | `--config=/etc/livepeer/orch-coordinator.yaml` | structured config (broker list, identity, tunables) |
 | `--dev` | dev mode: in-memory store, fake brokers, loud `=== DEV MODE ===` banner |
-| `--listen=:8080` | operator UX HTTP API |
-| `--public-listen=:8081` | resolver-facing `/.well-known/...` |
+| `--listen=:8080` | operator UX HTTP API + embedded web UI (LAN-bound) |
+| `--public-listen=:8081` | resolver-facing `/.well-known/livepeer-registry.json` only |
 | `--metrics-listen=:9091` | Prometheus |
 | `--data-dir=/var/lib/livepeer/orch-coordinator` | history + audit + currently-published manifest |
 | `--log-level={debug,info,warn,error}` | slog |
@@ -422,6 +462,11 @@ Mirror the payment-daemon pattern
 | `--freshness-window=150s` | drop-stale-tuples threshold |
 | `--manifest-ttl=24h` | `expires_at = issued_at + ttl` |
 | `--version` | print version and exit |
+
+`--public-listen` exposes **only** `GET /.well-known/livepeer-registry.json`;
+all other paths return 404. Defense-in-depth: a routing bug elsewhere
+in the codebase cannot accidentally expose admin or operator-UX routes
+via the public listener.
 
 Config file shape (YAML):
 
@@ -435,7 +480,6 @@ brokers:
     base_url: http://10.0.0.6:8080
 publish:
   manifest_ttl: 24h
-  signed_inbox_dir: /var/lib/livepeer/orch-coordinator/inbox
 ```
 
 ## 12. Component layout
@@ -476,7 +520,8 @@ orch-coordinator/
       roster/                         # roster view materialization for UX
     server/
       adminapi/                       # operator-facing HTTP+JSON
-      publicapi/                      # resolver-facing /.well-known/...
+        web/                          # embedded HTML/CSS/JS via embed.FS
+      publicapi/                      # resolver-facing /.well-known/... (only)
       metrics/                        # Prometheus
   docs/
     design-docs/
@@ -497,64 +542,134 @@ via `depguard` (same pattern as
 
 ## 13. Migration sequence
 
-Recommend 4–6 commits, each independently shippable as a milestone:
+Seven commits, each independently shippable as a milestone:
 
+0. **Manifest spec doc cleanup (two-registry consolidation).**
+   Pure-doc commit, no code. Update
+   `livepeer-network-protocol/manifest/README.md` to explicitly note
+   that this manifest format covers **both** transcoding capabilities
+   (`ServiceRegistry`) and AI capabilities (`AIServiceRegistry`) in
+   one unified `capabilities[]` list. Update
+   `docs/design-docs/architecture-overview.md` to clarify that an orch
+   may register the same well-known URL in either or both contracts
+   (different addresses on Arbitrum One) and the resolver/gateway side
+   is configured with which contract address(es) to query. **Lands
+   first** so the rest of the coordinator code reads on-chain pointers
+   against documented two-registry semantics rather than backfilling
+   the explanation later.
 1. **Scaffold + scrape only.** Component skeleton, config parser,
    broker HTTP client, scrape loop, in-memory candidate cache.
    `--dev` mode boots and scrapes a fake broker. **No candidate output
    yet.** Lands the directory layout (§12) and the config surface
    (§11) early so other plans can pin against them.
 2. **Candidate build.** JCS canonicalization, idempotent build,
-   filesystem snapshot, history pruning. CLI command to dump the
-   current candidate to stdout.
+   filesystem snapshot tarball (`manifest.json` + `metadata.json`),
+   history pruning. JSON HTTP endpoint to dump the current candidate.
 3. **Diff surface + roster materialization.** Candidate-vs-published
-   diff computation, roster view assembly. Still no inbound from
-   secure-orch.
-4. **Signed-manifest hosting.** Receive-and-verify pipeline (HTTP
-   upload + filesystem drop), signature recovery, schema-drift check,
-   atomic swap to live, audit log.
-5. **Resolver-facing endpoint + Prometheus.** `/.well-known/...`
-   served from the live store, full metrics surface, structured
-   logging, runbook draft.
-6. **(Optional) Web roster UI.** Embedded SPA. May be deferred to a
-   follow-up plan — see open question Q5.
+   diff computation (the coordinator-UI advisory diff per §6),
+   roster view assembly using the §5 / Q2 uniqueness key. Still no
+   inbound from secure-orch.
+4. **Signed-manifest hosting.** Receive-and-verify pipeline —
+   **HTTP POST `/admin/signed-manifest` only**. No inbox / inotify /
+   filesystem-watcher code path. Signature recovery, schema-drift
+   check, atomic swap to live, audit log.
+5. **Resolver-facing endpoint + Prometheus.** `/.well-known/livepeer-registry.json`
+   served from the live store on `--public-listen` (404 elsewhere on
+   that listener), full metrics surface, structured logging, runbook
+   draft.
+6. **Web UI.** Embedded HTML/CSS/JS via `embed.FS`, served by the same
+   Go HTTP server backing the JSON API on `--listen`. Roster view,
+   diff view, signed-manifest upload form. **Required for v0.1**
+   (Q1 + Q5 lock — web UI is the primary operator surface).
 
-Commits 1–5 are the v0.1 closing definition. Commit 6 may slip.
+Commits 0–6 are the v0.1 closing definition.
 
-## 14. Risks + open questions for the user
+**Implementation flags carried by the commits above:**
 
-Numbered for reference back from §3, §5, §6, §7, §8, §13:
+- The two-diff pattern (coordinator-UI advisory diff vs
+  secure-orch-console authoritative diff) is realized in commit 3 on
+  this side; the secure-orch counterpart lives in plan 0019.
+- Roster row identity uses the §5 / Q2 uniqueness key in commit 3.
+- The `--public-listen` lockdown (§11) is enforced in commit 5: only
+  `/.well-known/livepeer-registry.json` is routed; everything else 404.
 
-- **Q1 — UI tech choice.** CLI + JSON API only for v0.1, or also embed
-  a SPA? Recommend CLI-only; SPA in a follow-up plan. (§8)
-- **Q2 — Duplicate-tuple precedence.** When two LAN brokers advertise
-  the same `(capability_id, offering_id)` with **different** prices,
-  what wins? Reject ambiguous candidate (loud); first-wins by broker
-  name (silent, deterministic); or emit both tuples (load-balance,
-  matches "host is not a registration unit"). Recommend (3) but
-  surface a roster-UX warning. (§5)
-- **Q3 — Candidate packaging.** Tarball (`manifest.json` +
-  `metadata.json`) or single-file JSON-with-sidecar? Recommend
-  tarball — keeps signed bytes cleanly separated from operator-only
-  metadata. (§6)
-- **Q4 — Resolver-facing URL stability.** Same `/.well-known/livepeer-registry.json`
-  path the prior `service-registry-daemon` resolver expects, or a new
-  path? Recommend same path; existing resolvers re-target with no
-  consumer-side change. (§7)
-- **Q5 — Operator UI required for v0.1?** Or can a JSON-API + CLI
-  first cut ship and leave UI to a follow-up? Recommend ship without
-  UI; it's the most reasonable cut line. (§8, §13)
-- **Q6 — Signed-manifest upload channel.** HTTP POST and filesystem
-  drop both, or pick one? Recommend both; they share the same
-  verify+publish pipeline so the cost is small. (§7)
-- **Q7 — Where does the coordinator learn its broker hosts?** Static
-  YAML for v0.1 (recommend); service discovery (Consul / DNS-SD /
-  Kubernetes Service) is a follow-up. Confirm OK to defer? (§5)
+## 14. Resolved decisions
+
+All seven open questions were resolved on 2026-05-06 in a user
+walk-through. Numbered for reference back from §3, §5, §6, §7, §8,
+§13.
+
+- **Q1 — UI tech.** **DECIDED: web UI is the primary operator
+  surface for v0.1.** The coordinator runs on the operator's LAN, so
+  the operator-UI listener binds the LAN interface and the operator
+  hits it from a browser on the same LAN — no `ssh -L` tunnel needed
+  (the LAN reachability is the whole reason the coordinator exists as
+  a separate component from secure-orch). Same Go-HTTP-server +
+  `embed.FS` static-asset pattern as plan 0019 §6.1. CLI is deferred
+  or never; the JSON HTTP API is the scriptable surface and `curl`
+  is sufficient. (§8, §13 commit 6)
+- **Q2 — Duplicate-tuple precedence.** **DECIDED: uniqueness key is
+  the canonicalized `(capability_id, offering_id, extra, constraints)`
+  quadruple; `worker_url` is not part of identity.** Three cases.
+  Identical key with different prices → operator error, hard-fail
+  loudly with a roster error citing both broker sources. Identical
+  key + identical price + different `worker_url` → legitimate HA
+  pair, emit one tuple (lex-ordered `worker_url` for determinism;
+  the second endpoint goes in the metadata sidecar). Different
+  `extra` or `constraints` → distinct identities, emit both tuples;
+  the gateway uses those fields for selection. (§5)
+- **Q3 — Candidate packaging.** **DECIDED: tarball with
+  `manifest.json` (JCS-canonical, signed bytes) plus `metadata.json`
+  (operator-only sidecar — candidate timestamp, scrape window, source
+  broker URLs and per-broker scrape-success status, coordinator git
+  commit, schema version).** Cleanly separates signed bytes from
+  operator-useful provenance. (§6)
+- **Q4 — Resolver-facing URL stability.** **DECIDED: same
+  `/.well-known/livepeer-registry.json` path** as the prior
+  `service-registry-daemon`; existing resolvers re-target with zero
+  consumer-side change. **And** the rewrite consolidates the two
+  on-chain registries (`ServiceRegistry` for transcoding,
+  `AIServiceRegistry` for AI workers — different contract addresses
+  on Arbitrum One) onto one well-known URL with one unified
+  manifest whose `capabilities[]` list mixes transcoding and AI
+  tuples. The resolver/gateway side is configured with which
+  contract address(es) to query; the orch may register the same URL
+  in either or both. §13 commit #0 bakes this into
+  `livepeer-network-protocol/manifest/README.md` and
+  `docs/design-docs/architecture-overview.md` before any coordinator
+  code reads on-chain pointers. (§7)
+- **Q5 — Operator UI required for v0.1?** **DECIDED: yes — web UI
+  ships with v0.1.** With Q1's reframing (web UI is the primary
+  surface, not an alternative to a CLI), §13 commit 6 is required for
+  the v0.1 close, not optional. (§8, §13)
+- **Q6 — Signed-manifest upload channel.** **DECIDED: HTTP POST
+  only — `/admin/signed-manifest` (multipart, mTLS or shared
+  secret), driven by the web UI's upload form.** Filesystem-drop /
+  inotify / spool-dir alternative is dropped entirely. Cleaner upload
+  pipeline, single verify+publish path, no inotify watcher to
+  maintain, no secondary admin surface to harden. Operators with SCP
+  / USB workflows `scp` to the LAN laptop and click upload. (§7)
+- **Q7 — Broker discovery.** **DECIDED: static YAML for v0.1.**
+  Operator lists each broker by name + `base_url` in
+  `coordinator-config.yaml`; coordinator polls each every
+  `--scrape-interval` (default 30s). Most operators have ≤5 brokers;
+  service discovery (DNS-SD / Consul / Kubernetes Service) is a
+  follow-up plan. (§5)
 
 ## 15. Out of scope
 
 These belong to follow-up plans, not plan 0018:
 
+- **Filesystem drop / inotify / spool-dir watcher** for signed-manifest
+  upload. v0.1 is HTTP POST only (Q6). Operators with SCP / USB
+  workflows `scp` the file to their LAN laptop and click upload in the
+  web UI.
+- **CLI surface for the coordinator.** Web UI is the primary operator
+  surface (Q1). CLI is deferred to a future plan if operator demand
+  justifies a separate maintenance surface; the JSON HTTP API + `curl`
+  covers the scriptable cases until then.
+- **Service discovery for brokers.** Static YAML in v0.1 (Q7).
+  DNS-SD / Consul / Kubernetes Service discovery is a future plan.
 - **Automated rotation / push-style sign cycle.** R11 explicitly keeps
   hand-carry; revisit in v2 (core-beliefs.md line 35).
 - **Multi-operator coordinator federation.** One orch operator per
@@ -566,7 +681,6 @@ These belong to follow-up plans, not plan 0018:
   lines 78–80).
 - **Capability authoring UI / `host-config.yaml` editor.** Operator
   edits on the broker host; v0.1 coordinator is read-only. (§8)
-- **Service discovery for brokers.** Static config in v0.1. (§5)
 - **Capacity advertisements.** Killed by core belief #8 / R8;
   saturation is `503 + Livepeer-Backoff`, not a manifest field.
 - **Warm-key signing on the coordinator host.** Cold key on

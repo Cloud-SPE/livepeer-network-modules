@@ -5,10 +5,10 @@
 The headers spec is the **first artifact** plan 0002 produces — every mode spec depends
 on it.
 
-**Status:** [`livepeer-headers.md`](./livepeer-headers.md) — **draft proposed**
-(plan 0002 Q5), pending user review.
+**Status:** [`livepeer-headers.md`](./livepeer-headers.md) — **accepted** (plan 0002 Q5
+closed 2026-05-06).
 
-The draft introduces:
+The spec defines:
 
 - 5 required request headers: `Livepeer-Capability`, `Livepeer-Offering`,
   `Livepeer-Payment`, `Livepeer-Spec-Version`, `Livepeer-Mode`.

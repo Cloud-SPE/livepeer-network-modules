@@ -62,10 +62,20 @@ The initial six are:
      belief #15 applies to services, not libraries.
    - Second-language reference impls (Rust broker, Python gateway adapter, etc.)
      welcome later as community contributions; not v1 critical path.
-5. **Headers + payment envelope.** The conversation specified
-   `Livepeer-Capability`, `Livepeer-Offering`, `Livepeer-Payment`, plus
-   `Livepeer-Backoff` for the 503 path. Need a `headers/livepeer-headers.md` spec
-   before any mode spec lands.
+5. ~~**Headers + payment envelope.**~~ **Resolved 2026-05-06** —
+   `livepeer-network-protocol/headers/livepeer-headers.md` accepted. Defines:
+   - 5 required request headers: `Livepeer-Capability`, `Livepeer-Offering`,
+     `Livepeer-Payment`, `Livepeer-Spec-Version`, `Livepeer-Mode`.
+   - 1 optional request header: `Livepeer-Request-Id`.
+   - 4 response headers: `Livepeer-Backoff`, `Livepeer-Work-Units`,
+     `Livepeer-Health-Status`, `Livepeer-Error`.
+   - 9 machine-readable error codes.
+   - Broker forwarding behavior (strip `Livepeer-*` before backend; inject
+     backend-specific auth from `host-config.yaml`).
+   - `Livepeer-Payment` envelope adds `(capability_id, offering_id,
+     expected_max_units)` to the existing payment-daemon protobuf shape — a
+     payment-daemon decoupling change that lands when phase 4 of the roadmap
+     activates.
 
 ## Outcomes (proposed)
 
@@ -81,15 +91,18 @@ Decisions:
   `extractors/`, `headers/`, `conformance/`.
 
 Artifacts:
-- [ ] `headers/livepeer-headers.md` spec written.
+- [x] `headers/livepeer-headers.md` spec written and accepted.
+- [ ] Manifest JSON Schema published.
 - [ ] Six mode specs written, each with: wire format, payment cadence (if applicable),
   required `extra`/`constraints` fields, conformance test fixtures.
 - [ ] `extractors/*.md` for the initial six extractors (`openai-usage`,
   `response-jsonpath`, `request-formula`, `bytes-counted`, `seconds-elapsed`,
   `ffmpeg-progress`).
-- [ ] Manifest JSON Schema published.
+- [ ] Conformance runner + fixtures + Dockerfile + Makefile + compose.yaml.
 - [ ] At least one reference implementation (broker side) demonstrably passing the
   conformance suite for one mode.
+
+All decisions are now resolved; remaining work is artifact production.
 
 ## Out of scope
 

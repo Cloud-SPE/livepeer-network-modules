@@ -1,5 +1,5 @@
 ---
-status: draft (proposed; pending plan 0002 Q5 review)
+status: accepted (plan 0002 Q5 closed 2026-05-06)
 spec_version: 0.1.0
 last_updated: 2026-05-06
 ---

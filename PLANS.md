@@ -4,13 +4,25 @@ Current state of work in this repo, plus pointers to active plans.
 
 ## Current state
 
-**Phase 4-chain shipping** — chain-integrated payment-daemon
-implementation landed (plan 0016); receiver-side ECDSA validation,
-on-chain TicketBroker / RoundsManager / BondingManager providers, gas-
-price polling, redemption queue + loop with Arbitrum-One pre-checks
-all wired behind `--chain-rpc`. Live-mainnet smoke (acceptance #3) is
-a user-driven post-merge gate — requires a funded mainnet wallet and
-the user's preferred RPC, and cannot run from agent worktrees.
+**Phases 4-chain + 9 shipping** — chain-integrated payment-daemon
+(plan 0016) and secure-orch-console v0.1 (plan 0019) both landed.
+Phase 4-chain wired receiver-side ECDSA validation, on-chain
+TicketBroker / RoundsManager / BondingManager providers, gas-price
+polling, and the redemption queue with Arbitrum-One pre-checks
+behind `--chain-rpc`. Phase 9 shipped the cold-key host's
+diff-and-sign console — V3 keystore signer, JCS canonicalization,
+secp256k1 + EIP-191 personal-sign, structural diff against
+last-signed.json keyed on `(capability_id, offering_id)`,
+tap-to-sign confirm gesture (last-4-hex-chars input), audit log
+with size-based rotation, and a localhost-bound web UI reached over
+`ssh -L`.
+
+Live-deployment smoke for both phases is operator-driven and
+post-merge: the secure-orch host's deployment posture (sshd, LAN +
+key + password is one valid example per plan 0019 §13 Q6), the
+funded mainnet wallet for ticket redemption, and the operator's
+preferred RPC are all chosen at deploy time and cannot run from
+agent worktrees.
 
 **Repo shape: monorepo for now.** All components live as top-level subfolders here;
 extraction to standalone repos is a v2 concern. See [`README.md`](./README.md) §"Repo
@@ -35,31 +47,42 @@ Code shipping today:
   `PayerDaemon.CreatePayment` over unix socket).
 - `livepeer-network-protocol/` — spec subfolder (manifest schema + 6 modes +
   6 extractors + payment proto + conformance runner with 13 fixtures).
+  The `verify/` package recovers signers from manifest envelopes and is
+  the cross-cutting verifier consumed by coordinator / resolver / gateway
+  (landed under plan 0019).
+- `secure-orch-console/` — cold-key host's diff-and-sign UX. V3 keystore
+  signer, JCS canonical bytes, secp256k1 + EIP-191 personal-sign,
+  structural diff against last-signed.json, tap-to-sign confirm gesture,
+  audit log with size-based rotation. Localhost-bound web UI; operator
+  reaches it over `ssh -L`. Manifest transport is HTTP-only via the web
+  UI (no inbox / outbox spool, no USB, no filesystem watcher). v0.1
+  scope locked 2026-05-06 (plan 0019).
 
 Design-doc batch (plans 0013, 0015–0019, plus `migration-from-suite.md`)
 landed 2026-05-06: ~4,140 lines of paper documenting the next implementation
 layer. Plans 0015 (interim-debit, 13/13 conformance), 0016 (chain
-integration), and 0017 (warm-key) have since shipped; the remaining plans
-(0013, 0018, 0019) still surface 5–8 open questions each for the user
-before code can start.
+integration), 0017 (warm-key), and 0019 (secure-orch-console v0.1) have
+all since shipped; plan 0018 (orch-coordinator) is the remaining unstarted
+implementation, and plan 0013 (suite-openai-gateway migration) is gated on
+chain v1.0.0.
 
 What does not exist yet:
 
 - `orch-coordinator/` component (design landed in plan 0018; no code).
-- `secure-orch-console/` is partially shipped — canonical/signing
-  primitives, console binary scaffold (loopback-bound), audit log,
-  keygen helper. **Pending:** web UI handlers, plan close, removal of
-  inbox/outbox/yubihsm-doc carryover from the pre-scope-cut branch.
 - Any change to the existing `livepeer-network-suite`.
 - Live-mainnet smoke gate for the chain-integrated payment-daemon
   (plan 0016 acceptance #3) — funded mainnet wallet + user's preferred
   RPC; runs as a user-driven post-merge gate.
+- Live-deployment smoke for secure-orch-console v0.1 (plan 0019) —
+  operator-driven and post-merge; deployment posture (e.g. LAN-only
+  sshd with key + password) is the operator's choice per plan 0019
+  §13 Q6.
 
 ## Active plans
 
-Three numbered design docs at `docs/exec-plans/active/000N-*.md`. Each is
-**paper-only** — no committed code. Each surfaces 5–8 open questions the
-user must answer before implementation begins.
+Two numbered design docs at `docs/exec-plans/active/000N-*.md`. Each
+is **paper-only** — no committed code. Each surfaces 5–8 open
+questions the user must answer before implementation begins.
 
 - **Plan 0013** — `0013-suite-openai-gateway-migration-brief.md`.
   Migration brief for the suite's existing `livepeer-openai-gateway`
@@ -78,16 +101,6 @@ user must answer before implementation begins.
   + `AIServiceRegistry`) consolidate to one well-known path with
   unified manifest. 7-commit cadence (commit 0 = manifest README +
   architecture-overview doc cleanup for the two-registry consolidation).
-- **Plan 0019** — `0019-secure-orch-trust-spine-design.md`.
-  Implementation **in progress** — 4 of 6 commits cherry-picked onto
-  master from a prior in-flight branch (manifest `publication_seq`
-  bump, canonical/signing primitives, `livepeer-network-protocol/verify`
-  package, console binary scaffold with `127.0.0.1`-only loopback gate).
-  v0.1 scope locked 2026-05-06: **V3 keystore only** (no YubiHSM,
-  no Ledger, no PKCS#11), **HTTP-only manifest transport** via the
-  localhost web UI accessed over `ssh -L` (no USB, no filesystem
-  watcher, no inbox/outbox spool). Continuation: web UI handlers +
-  audit-log rotation + plan close.
 
 Each plan's open-question list is the gate to implementation work.
 
@@ -100,16 +113,20 @@ Followups still open from earlier plans:
   media-plane provisioning for `session-control-plus-media`.
 
 Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) —
-plans 0001–0012, 0014, 0015, 0016, and 0017 are all closed; together they
-shipped the 6-mode broker, 6 extractors, gateway-adapters TS middleware,
-the OpenAI-compat reference gateway, the wire-compat sender + receiver
-daemons, the broker-side interim-debit cadence with SufficientBalance
-runway termination on long-running sessions (plan 0015), the warm-key
-lifecycle (V3 keystore loader + production-mode wiring + rotation runbook
-+ no-secrets-in-logs lint, plan 0017), and chain-integrated payment
-(real keccak256-flatten ticket hashing + on-chain TicketBroker /
-RoundsManager / BondingManager providers + ECDSA recovery + nonce ledger
-+ redemption queue with gas pre-checks, plan 0016).
+plans 0001–0012, 0014, 0015, 0016, 0017, and 0019 are all closed;
+together they shipped the 6-mode broker, 6 extractors, gateway-adapters
+TS middleware, the OpenAI-compat reference gateway, the wire-compat
+sender + receiver daemons, the broker-side interim-debit cadence with
+SufficientBalance runway termination on long-running sessions (plan
+0015), the warm-key lifecycle (V3 keystore loader + production-mode
+wiring + rotation runbook + no-secrets-in-logs lint, plan 0017),
+chain-integrated payment (real keccak256-flatten ticket hashing +
+on-chain TicketBroker / RoundsManager / BondingManager providers +
+ECDSA recovery + nonce ledger + redemption queue with gas pre-checks,
+plan 0016), and the secure-orch-console v0.1 cold-key trust spine
+(V3 keystore signer, JCS canonicalization, secp256k1 + EIP-191
+personal-sign, structural diff + tap-to-sign UX, audit log with
+size-based rotation, localhost-bound web UI; plan 0019).
 
 ## Roadmap (rough; subject to change)
 
@@ -136,7 +153,7 @@ RoundsManager / BondingManager providers + ECDSA recovery + nonce ledger
 | 7-followup | gateway-adapters: ws-realtime / rtmp / session-control middleware | `gateway-adapters/` | not started |
 | 8 | OpenAI-compat gateway reference (option A) | `openai-gateway/` | ✅ completed (plan 0009) |
 | 8-suite-migration | Suite OpenAI-gateway migration brief (option B) | (paper) | 📄 design landed (plan 0013); per-gateway plans gated on chain v1.0.0 |
-| 9 | Cold-key signed manifest + secure-orch-console | `secure-orch-console/` | 📄 design landed (plan 0019); implementation pending |
+| 9 | Cold-key signed manifest + secure-orch-console | `secure-orch-console/` | ✅ completed (plan 0019) — code shipped v0.1 (V3 keystore, web UI, audit rotation); live-deployment smoke is a user-driven post-merge gate per §13 Q6 |
 
 Phases 1–5 are independently shippable; phase 6 is gated on at least one
 production gateway adopting the new shape. Phase 4-chain (Arbitrum One)

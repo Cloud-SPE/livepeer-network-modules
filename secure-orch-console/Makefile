@@ -22,8 +22,8 @@ test: ## Run go test ./... inside the test stage
 		-f Dockerfile \
 		..
 
-run: ## Foreground the binary against ./run/{inbox,outbox,...} (requires a V3 keystore at ./run/keystore.json + ./run/password)
-	mkdir -p run/inbox run/outbox run/lib run/log
+run: ## Foreground the binary against ./run/ (requires a V3 keystore at ./run/keystore.json + ./run/password)
+	mkdir -p run/lib run/log
 	docker run --rm \
 		-p 127.0.0.1:8080:8080 \
 		-v $(PWD)/run:/srv \
@@ -31,8 +31,6 @@ run: ## Foreground the binary against ./run/{inbox,outbox,...} (requires a V3 ke
 		secure-orch-console \
 			--keystore=v3:/srv/keystore.json \
 			--keystore-password-file=/srv/password \
-			--inbox=/srv/inbox \
-			--outbox=/srv/outbox \
 			--last-signed=/srv/lib/last-signed.json \
 			--audit-log=/srv/log/audit.log.jsonl \
 			--listen=127.0.0.1:8080

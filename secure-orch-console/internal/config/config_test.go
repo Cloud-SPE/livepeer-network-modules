@@ -32,7 +32,7 @@ func TestValidateLoopbackAddr_Rejects(t *testing.T) {
 		{"192.168.1.1:8080", "loopback"},
 		{"example.com:8080", "not a literal IP"},
 		{"127.0.0.1:", "empty port"},
-		{"::1", "address"}, // missing port
+		{"::1", "address"},
 	}
 	for _, c := range cases {
 		t.Run(c.addr, func(t *testing.T) {
@@ -52,19 +52,11 @@ func TestParseKeystore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if k.Kind != KeystoreV3 || k.Path != "/path/to/ks.json" || k.PasswordFile != "/etc/pw" {
+	if k.Path != "/path/to/ks.json" || k.PasswordFile != "/etc/pw" {
 		t.Fatalf("got %+v", k)
 	}
 
-	k, err = ParseKeystore("yubihsm:tcp://127.0.0.1:12345", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if k.Kind != KeystoreYubiHSM || k.ConnectorURL != "tcp://127.0.0.1:12345" {
-		t.Fatalf("got %+v", k)
-	}
-
-	for _, bad := range []string{"", "v3:", "v3", "unknown:path", "yubihsm:"} {
+	for _, bad := range []string{"", "v3:", "v3", "unknown:path", "yubihsm:tcp://127.0.0.1:12345"} {
 		t.Run(bad, func(t *testing.T) {
 			if _, err := ParseKeystore(bad, ""); err == nil {
 				t.Fatal("expected error")
@@ -75,12 +67,11 @@ func TestParseKeystore(t *testing.T) {
 
 func TestConfigValidate(t *testing.T) {
 	c := Config{
-		Keystore:       Keystore{Kind: KeystoreV3, Path: "x"},
-		InboxDir:       "/var/spool/inbox",
-		OutboxDir:      "/var/spool/outbox",
-		LastSignedPath: "/var/lib/last.json",
-		AuditLogPath:   "/var/log/audit.jsonl",
-		Listen:         "127.0.0.1:8080",
+		Keystore:        Keystore{Path: "x"},
+		LastSignedPath:  "/var/lib/last.json",
+		AuditLogPath:    "/var/log/audit.jsonl",
+		AuditRotateSize: 100 << 20,
+		Listen:          "127.0.0.1:8080",
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("expected valid, got %v", err)
@@ -89,5 +80,11 @@ func TestConfigValidate(t *testing.T) {
 	c.Listen = "0.0.0.0:8080"
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected loopback rejection")
+	}
+
+	c.Listen = "127.0.0.1:8080"
+	c.AuditRotateSize = -1
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected negative rotate-size rejection")
 	}
 }

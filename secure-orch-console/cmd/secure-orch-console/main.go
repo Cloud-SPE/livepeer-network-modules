@@ -1,9 +1,6 @@
 // Command secure-orch-console runs the cold-key host's diff-and-sign
 // HTTP server. The server binds 127.0.0.1 only — never a routable
 // interface. Operators reach it via `ssh -L` from a LAN laptop.
-//
-// See secure-orch-console/docs/operator-runbook.md for the operator
-// surface.
 package main
 
 import (
@@ -19,8 +16,6 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/audit"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/inbox"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/outbox"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/signing"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/web"
 )
@@ -39,14 +34,13 @@ func main() {
 func run(args []string) error {
 	fs := flag.NewFlagSet("secure-orch-console", flag.ContinueOnError)
 	var (
-		keystoreFlag       = fs.String("keystore", "", "Keystore selector: v3:<path> (default) or yubihsm:<connector-url>")
+		keystoreFlag         = fs.String("keystore", "", "Keystore selector: v3:<path>")
 		keystorePasswordFile = fs.String("keystore-password-file", "", "File containing the V3 keystore password (or LIVEPEER_KEYSTORE_PASSWORD env)")
-		inboxDir           = fs.String("inbox", "/var/spool/secure-orch/inbox", "Spool directory the operator drops candidate manifests into")
-		outboxDir          = fs.String("outbox", "/var/spool/secure-orch/outbox", "Spool directory signed envelopes are written to")
-		lastSignedPath     = fs.String("last-signed", "/var/lib/secure-orch/last-signed.json", "Path to the canonical last-signed envelope used by the diff renderer")
-		auditLogPath       = fs.String("audit-log", "/var/log/secure-orch/audit.log.jsonl", "Append-only JSONL audit log")
-		listen             = fs.String("listen", "127.0.0.1:8080", "Loopback bind address (must be 127.0.0.1, ::1, or localhost)")
-		showVer            = fs.Bool("version", false, "Print version and exit")
+		lastSignedPath       = fs.String("last-signed", "/var/lib/secure-orch/last-signed.json", "Path to the canonical last-signed envelope used by the diff renderer")
+		auditLogPath         = fs.String("audit-log", "/var/log/secure-orch/audit.log.jsonl", "Append-only JSONL audit log")
+		auditRotateSize      = fs.Int64("audit-rotate-size", audit.DefaultRotateSize, "Audit log size threshold for rotation, in bytes (0 disables)")
+		listen               = fs.String("listen", "127.0.0.1:8080", "Loopback bind address (must be 127.0.0.1, ::1, or localhost)")
+		showVer              = fs.Bool("version", false, "Print version and exit")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -63,12 +57,11 @@ func run(args []string) error {
 		return err
 	}
 	cfg := config.Config{
-		Keystore:       ks,
-		InboxDir:       *inboxDir,
-		OutboxDir:      *outboxDir,
-		LastSignedPath: *lastSignedPath,
-		AuditLogPath:   *auditLogPath,
-		Listen:         *listen,
+		Keystore:        ks,
+		LastSignedPath:  *lastSignedPath,
+		AuditLogPath:    *auditLogPath,
+		AuditRotateSize: *auditRotateSize,
+		Listen:          *listen,
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -78,18 +71,10 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer closeSigner(signer)
-	logger.Info("signer loaded", "address", signer.Address(), "kind", cfg.Keystore.Kind)
+	defer signer.Close()
+	logger.Info("signer loaded", "address", signer.Address())
 
-	in, err := inbox.New(cfg.InboxDir)
-	if err != nil {
-		return err
-	}
-	out, err := outbox.New(cfg.OutboxDir, cfg.LastSignedPath)
-	if err != nil {
-		return err
-	}
-	auditLog, err := audit.Open(cfg.AuditLogPath)
+	auditLog, err := audit.Open(cfg.AuditLogPath, cfg.AuditRotateSize)
 	if err != nil {
 		return err
 	}
@@ -103,7 +88,7 @@ func run(args []string) error {
 		logger.Warn("audit boot append failed", "err", err)
 	}
 
-	srv, err := web.New(cfg, signer, in, out, auditLog, logger)
+	srv, err := web.New(cfg, signer, auditLog, logger)
 	if err != nil {
 		return err
 	}
@@ -129,26 +114,12 @@ func run(args []string) error {
 	return nil
 }
 
-func closeSigner(s signing.Signer) {
-	if c, ok := s.(interface{ Close() }); ok {
-		c.Close()
+func loadSigner(ks config.Keystore) (*signing.Keystore, error) {
+	password, err := readPassword(ks.PasswordFile)
+	if err != nil {
+		return nil, err
 	}
-}
-
-func loadSigner(ks config.Keystore) (signing.Signer, error) {
-	switch ks.Kind {
-	case config.KeystoreV3:
-		password, err := readPassword(ks.PasswordFile)
-		if err != nil {
-			return nil, err
-		}
-		return signing.LoadKeystore(ks.Path, password)
-	case config.KeystoreYubiHSM:
-		// YubiHSM 2 PKCS#11 signer lights up in commit 6.
-		return nil, fmt.Errorf("yubihsm signer not yet implemented (lands in plan 0019 commit 6)")
-	default:
-		return nil, fmt.Errorf("unknown keystore kind %q", ks.Kind)
-	}
+	return signing.LoadKeystore(ks.Path, password)
 }
 
 func readPassword(path string) (string, error) {

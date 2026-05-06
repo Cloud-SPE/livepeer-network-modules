@@ -4,7 +4,7 @@
 
 `secure-orch` is the cold-key host. The console is the only software
 the operator runs there directly. Co-locating the diff renderer, the
-signer, the audit log, and the spool-dir watchers in one binary keeps
+signer, the audit log, and the web upload handler in one binary keeps
 the trust boundary minimal: one process, one binary, one running user.
 
 The verifier is split out into
@@ -18,28 +18,33 @@ only secure-orch produces signatures.
 - **Inbound:** none on a routable interface, ever. The HTTP server
   binds `127.0.0.1` only and is reached over `ssh -L` (plan 0019
   §6.1.1).
-- **Outbound:** none. The console reads the inbox spool directory and
-  writes the outbox spool directory; operators move bytes in and out
-  by their own transport (USB, scp, …).
-- **Storage:** a single `last-signed.json` (`0600`) plus a rolling
-  JSONL audit log under `/var/log/secure-orch/audit.log.jsonl`.
-- **Cold key:** held by the configured `Signer`. V3 keystore decrypts
-  into process memory at boot; YubiHSM 2 (commit 6) keeps the key on
-  the secure element, addressed via PKCS#11.
+- **Outbound:** none. The console only reads / writes its own local
+  filesystem.
+- **Manifest transport:** HTTP-only via the web UI. Operator uploads
+  candidate manifests through a multipart form; signed envelopes are
+  returned as download attachments and mirrored to
+  `/var/lib/secure-orch/last-signed.json` (`0600`) atomically via
+  `rename(2)`.
+- **Storage:** a single `last-signed.json` plus a rolling JSONL audit
+  log under `/var/log/secure-orch/audit.log.jsonl` with size-based
+  rotation.
+- **Cold key:** held by the configured `Signer`. v0.1 ships V3
+  keystore only (decrypted into process memory at boot, zeroed on
+  shutdown).
 
 ## Sign cycle
 
-The operator-driven 6-step cycle (plan 0019 §7) is the only path that
-emits a signature:
+The operator-driven cycle (plan 0019 §7) is the only path that emits
+a signature:
 
-1. Operator copies a candidate manifest into the inbox.
+1. Operator uploads a candidate manifest via the web form.
 2. Console renders the structural diff against `last-signed.json`.
-3. Operator confirms via the tap-to-sign gesture (`Sign` button + a
-   challenge: type the orch eth address's last four hex chars).
+3. Operator confirms by typing the last 4 hex chars of the signer
+   eth address.
 4. The configured `Signer` produces a 65-byte secp256k1 signature.
-5. Console writes the signed envelope to the outbox and atomically
-   updates `last-signed.json`.
-6. Operator ferries the outbox file out to the coordinator.
+5. Console writes the envelope to `last-signed.json` atomically and
+   returns it to the operator as a download.
+6. Operator uploads the signed envelope to the coordinator.
 
 No automation. No daemon. The console has no scheduler.
 
@@ -60,8 +65,10 @@ canonical manifest bytes; `v` normalized to `{27, 28}` (plan 0019
 
 ## Audit log
 
-`/var/log/secure-orch/audit.log.jsonl`, append-only, rolled by size.
-Schema: one JSON object per line with `at` (RFC3339Nano UTC), `kind`
-(load_candidate / view_diff / sign / write_outbox / abort), and
-event-specific fields. Storage shape mirrors the prior impl's
-`audit/` package (operator muscle memory, simple format).
+`/var/log/secure-orch/audit.log.jsonl`, append-only, rolled by size
+(default 100 MiB; configurable via `--audit-rotate-size`). Schema:
+one JSON object per line with `at` (RFC3339Nano UTC), `kind`
+(`load_candidate` / `view_diff` / `sign` / `write_signed` / `abort` /
+`boot` / `shutdown` / `rotate`), and event-specific fields. Rotation
+renames the active file with a timestamp suffix and writes a
+`rotate` marker into the new file.

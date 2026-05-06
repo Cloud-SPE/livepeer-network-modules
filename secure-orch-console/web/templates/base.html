@@ -1,0 +1,25 @@
+{{define "base"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>secure-orch console</title>
+  <link rel="stylesheet" href="/static/console.css">
+</head>
+<body>
+<header class="banner">
+  <h1>secure-orch console</h1>
+  <div class="signer">
+    <span class="label">signer:</span>
+    <code class="signer-address">{{.SignerAddress | lower}}</code>
+  </div>
+</header>
+<main>
+{{template "content" .}}
+</main>
+<footer class="footnote">
+  <p>Hard rule: secure-orch never accepts inbound connections. This UI binds 127.0.0.1 only and is reached over <code>ssh -L</code>.</p>
+</footer>
+</body>
+</html>
+{{end}}

@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/config"
 )
 
 func TestRun_RejectsRoutableBind(t *testing.T) {
@@ -22,8 +20,6 @@ func TestRun_RejectsRoutableBind(t *testing.T) {
 				"--keystore=v3:" + keystore,
 				"--keystore-password-file=" + password,
 				"--listen=" + addr,
-				"--inbox=" + dir,
-				"--outbox=" + dir,
 				"--last-signed=" + filepath.Join(dir, "last.json"),
 				"--audit-log=" + filepath.Join(dir, "audit.jsonl"),
 			})
@@ -38,7 +34,7 @@ func TestRun_RejectsRoutableBind(t *testing.T) {
 }
 
 func TestRun_RejectsBadKeystoreSelector(t *testing.T) {
-	cases := []string{"", "v3", "unknown:foo"}
+	cases := []string{"", "v3", "unknown:foo", "yubihsm:tcp://127.0.0.1:12345"}
 	for _, k := range cases {
 		t.Run(k, func(t *testing.T) {
 			err := run([]string{
@@ -49,15 +45,5 @@ func TestRun_RejectsBadKeystoreSelector(t *testing.T) {
 				t.Fatal("expected error")
 			}
 		})
-	}
-}
-
-func TestParseKeystoreYubiHSMPath(t *testing.T) {
-	k, err := config.ParseKeystore("yubihsm:tcp://127.0.0.1:12345", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if k.ConnectorURL != "tcp://127.0.0.1:12345" {
-		t.Fatalf("got %+v", k)
 	}
 }

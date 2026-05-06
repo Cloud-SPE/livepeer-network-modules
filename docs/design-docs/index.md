@@ -14,7 +14,6 @@ Stubs (to be written as we drill in):
 | Doc | Status | What it will cover |
 |---|---|---|
 | `interaction-modes.md` | stub | Detailed wire-contract specs for the initial 6 modes |
-| `trust-model.md` | stub | Cold-key + operator-driven sign cycle, threat model |
 | `backend-health.md` | stub | Three-layer health model (manifest / live / failure-rate) |
 | `spec-repo-relationship.md` | stub | Boundary between this repo and `livepeer-network-protocol` |
 | `payment-decoupling.md` | stub | What changes in `payment-daemon` to support opaque names |

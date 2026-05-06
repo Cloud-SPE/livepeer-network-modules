@@ -24,6 +24,7 @@ resolution and [core belief #14](../docs/design-docs/core-beliefs.md).
 | [`headers/`](./headers/) | `Livepeer-*` header conventions, payment envelope structure |
 | [`proto/`](./proto/) | Canonical `.proto` source for the payment wire format and the daemon gRPC services |
 | [`proto-go/`](./proto-go/) | Generated Go bindings for `proto/`; importable as a Go module |
+| [`verify/`](./verify/) | Cross-cutting Go module that recovers the Ethereum address from a manifest signature (resolver / coordinator / gateway double-verify) |
 | [`docs/`](./docs/) | Cross-cutting design docs ([`wire-compat.md`](./docs/wire-compat.md) — byte-for-byte contract with go-livepeer's `pm/`) |
 | [`conformance/`](./conformance/) | Test fixtures + Go runner + Dockerfile + Makefile + compose.yaml |
 

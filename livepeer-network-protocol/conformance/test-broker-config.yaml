@@ -69,3 +69,57 @@ capabilities:
       transport: "http"
       url: "http://runner:9000/handler"
       auth: "none"
+
+  # ---- fixtures/ws-realtime/happy-path.yaml ----
+  # backend.url path /ws is matched by the runner mock backend's WS handler.
+  - id: "test:happy-path-ws:v1"
+    offering_id: "default"
+    interaction_mode: "ws-realtime@v0"
+    work_unit:
+      name: "bytes"
+      extractor:
+        type: "response-jsonpath"
+        path: "$.bytes"
+    price:
+      amount_wei: "10"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://runner:9000/ws"
+      auth: "none"
+
+  # ---- fixtures/rtmp-ingress-hls-egress/happy-path.yaml ----
+  # v0.1 session-open phase: backend.url is used to derive the public URLs
+  # the broker returns in its 202 response. No actual media is ingested.
+  - id: "test:happy-path-rtmp:v1"
+    offering_id: "default"
+    interaction_mode: "rtmp-ingress-hls-egress@v0"
+    work_unit:
+      name: "video-frame-megapixel"
+      extractor:
+        type: "response-jsonpath"
+        path: "$.units"
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://broker.example.com/handler"
+      auth: "none"
+
+  # ---- fixtures/session-control-plus-media/happy-path.yaml ----
+  - id: "test:happy-path-session:v1"
+    offering_id: "default"
+    interaction_mode: "session-control-plus-media@v0"
+    work_unit:
+      name: "seconds"
+      extractor:
+        type: "response-jsonpath"
+        path: "$.units"
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://broker.example.com/handler"
+      auth: "none"

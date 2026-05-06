@@ -1,0 +1,62 @@
+# Happy-path conformance fixture for the session-control-plus-media@v0
+# mode (session-open phase only — see plan 0012).
+#
+# Runner sends the session-open POST; broker returns 202 with session_id,
+# control_url, media descriptor, expires_at. The control-plane WebSocket
+# lifecycle and capability-defined media plane integration are deferred
+# to a follow-up plan.
+
+name: happy-path
+mode: session-control-plus-media@v0
+spec_version: "0.1"
+description: |
+  Session-open phase happy-path for session-control-plus-media@v0.
+  Asserts the broker returns 202 with session_id, control_url, an opaque
+  capability-defined media descriptor (publish_url + publish_auth in the
+  test capability), and expires_at.
+
+setup:
+  capability:
+    id: test:happy-path-session:v1
+    offering_id: default
+    interaction_mode: session-control-plus-media@v0
+    work_unit:
+      name: seconds
+      extractor:
+        type: response-jsonpath
+        path: $.units
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/handler
+      auth: none
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:happy-path-session:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: session-control-plus-media@v0
+    Content-Type: application/json
+  body: |
+    {"persona":"test","constraints":{}}
+
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 202
+  headers_present:
+    - Livepeer-Request-Id
+  body_fields_present:
+    - session_id
+    - control_url
+    - media.publish_url
+    - media.publish_auth
+    - expires_at

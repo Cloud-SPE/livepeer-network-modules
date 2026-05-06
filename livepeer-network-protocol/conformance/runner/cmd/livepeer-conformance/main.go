@@ -23,6 +23,9 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpmultipart"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpreqresp"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpstream"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/rtmpingresshlsegress"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/sessioncontrolplusmedia"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/wsrealtime"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/runner"
 )
 
@@ -35,6 +38,9 @@ func main() {
 	modes.Register(httpreqresp.New())
 	modes.Register(httpstream.New())
 	modes.Register(httpmultipart.New())
+	modes.Register(wsrealtime.New())
+	modes.Register(rtmpingresshlsegress.New())
+	modes.Register(sessioncontrolplusmedia.New())
 
 	var (
 		target       = flag.String("target", "", "broker | gateway")

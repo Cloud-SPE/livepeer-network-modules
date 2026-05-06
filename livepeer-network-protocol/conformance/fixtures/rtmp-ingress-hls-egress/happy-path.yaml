@@ -1,0 +1,63 @@
+# Happy-path conformance fixture for the rtmp-ingress-hls-egress@v0 mode
+# (session-open phase only — see plan 0011).
+#
+# Runner sends the session-open POST; broker returns 202 with the four
+# required URL fields. The actual RTMP push and HLS retrieval are NOT
+# tested in v0.1 — the wire shape of the session-open response is.
+
+name: happy-path
+mode: rtmp-ingress-hls-egress@v0
+spec_version: "0.1"
+description: |
+  Session-open phase happy-path for rtmp-ingress-hls-egress@v0. Asserts
+  the broker returns 202 with session_id, rtmp_ingest_url,
+  hls_playback_url, control_url, expires_at. Media-plane integration
+  (RTMP listener, FFmpeg, HLS sink) is deferred to a follow-up plan.
+
+setup:
+  capability:
+    id: test:happy-path-rtmp:v1
+    offering_id: default
+    interaction_mode: rtmp-ingress-hls-egress@v0
+    work_unit:
+      name: video-frame-megapixel
+      extractor:
+        type: response-jsonpath
+        path: $.units
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/handler
+      auth: none
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:happy-path-rtmp:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: rtmp-ingress-hls-egress@v0
+    Content-Type: application/json
+  body: |
+    {"session_params":{"abr_ladder":[],"preset":"h264-streaming"}}
+
+# v0.1 session-open phase doesn't dispatch to a backend; broker generates
+# URLs locally and returns them. backend_response is unused.
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 202
+  headers_present:
+    - Livepeer-Request-Id
+  body_fields_present:
+    - session_id
+    - rtmp_ingest_url
+    - hls_playback_url
+    - control_url
+    - expires_at

@@ -96,4 +96,11 @@ type ResponseExpect struct {
 	HeadersPresent    []string `yaml:"headers_present,omitempty"`
 	LivepeerWorkUnits *uint64  `yaml:"livepeer_work_units,omitempty"`
 	BodyPassthrough   bool     `yaml:"body_passthrough,omitempty"`
+
+	// BodyFieldsPresent is a list of JSONPath-ish dotted paths that MUST
+	// resolve to non-empty values in the response body (which MUST be
+	// JSON). Used by session-open fixtures (rtmp-ingress-hls-egress and
+	// session-control-plus-media) to assert dynamic URL fields without
+	// pinning their exact values.
+	BodyFieldsPresent []string `yaml:"body_fields_present,omitempty"`
 }

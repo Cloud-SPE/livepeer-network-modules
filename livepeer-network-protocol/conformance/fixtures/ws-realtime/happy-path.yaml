@@ -1,0 +1,60 @@
+# Happy-path conformance fixture for the ws-realtime@v0 mode.
+#
+# Runner dials the broker via WS upgrade, sends a single text frame,
+# expects it back via the broker's bidirectional relay (mock backend
+# echoes), closes cleanly. Asserts the mock backend received the upgrade
+# with no Livepeer-* headers and no Authorization header (auth=none).
+
+name: happy-path
+mode: ws-realtime@v0
+spec_version: "0.1"
+description: |
+  Vanilla success path for ws-realtime@v0. Single message round-trip
+  through the broker's WebSocket relay; verifies upgrade succeeds, frame
+  delivery is bidirectional, and Livepeer-* headers are stripped on the
+  outbound upgrade to the backend.
+
+setup:
+  capability:
+    id: test:happy-path-ws:v1
+    offering_id: default
+    interaction_mode: ws-realtime@v0
+    work_unit:
+      name: bytes
+      extractor:
+        type: response-jsonpath
+        path: $.bytes
+    price:
+      amount_wei: "10"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/ws
+      auth: none
+
+request:
+  method: GET
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:happy-path-ws:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: ws-realtime@v0
+
+# ws-realtime fixtures don't program the mock backend's HTTP response
+# body; the mock's /ws handler is hard-coded to echo. Leaving these
+# fields empty keeps the fixture-format consistent across modes.
+backend_response:
+  status: 0
+  body: ""
+
+backend_assertions:
+  livepeer_headers_present: false
+  authorization_header_present: false
+
+response_expect:
+  # The HTTP upgrade response code (101 Switching Protocols).
+  status: 101
+  headers_present:
+    - Livepeer-Request-Id

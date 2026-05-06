@@ -3,7 +3,6 @@ package server
 import (
 	"net/http"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/registry"
 )
@@ -28,15 +27,13 @@ func (s *Server) registerRoutes() {
 		middleware.Payment(s.payment),
 	)
 
-	// POST /v1/cap — http-reqresp / http-stream / http-multipart dispatch.
+	// POST /v1/cap — http-reqresp / http-stream / http-multipart /
+	//                rtmp-ingress-hls-egress / session-control-plus-media
+	//                (the latter two are session-open phase in v0.1).
 	s.mux.Handle("POST /v1/cap", paidChain(http.HandlerFunc(s.dispatch)))
 
-	// GET /v1/cap — ws-realtime upgrade (driver lands in plan 0006).
-	s.mux.Handle("GET /v1/cap", paidChain(http.HandlerFunc(s.todoWebSocketUpgrade)))
-}
-
-// todoWebSocketUpgrade is a placeholder until ws-realtime lands (plan 0006).
-func (s *Server) todoWebSocketUpgrade(w http.ResponseWriter, r *http.Request) {
-	livepeerheader.WriteError(w, http.StatusNotImplemented, livepeerheader.ErrModeUnsupported,
-		"ws-realtime not implemented in v0.1; see plan 0006")
+	// GET /v1/cap — ws-realtime upgrade. Same dispatcher handles the
+	// (method, mode) selection; the ws-realtime driver upgrades the
+	// connection in its Serve method.
+	s.mux.Handle("GET /v1/cap", paidChain(http.HandlerFunc(s.dispatch)))
 }

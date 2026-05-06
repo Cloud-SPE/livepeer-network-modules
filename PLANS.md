@@ -27,29 +27,28 @@ What does not exist yet:
 
 ## Active plans
 
-Numbered `docs/exec-plans/active/000N-*.md`. **None active right now** — plans
-0001–0004 + 0006 all closed. The broker now serves three of the six modes
-(`http-reqresp`, `http-stream`, `http-multipart`); the conformance runner
-exercises all three end-to-end via compose.
+Numbered `docs/exec-plans/active/000N-*.md`. **None active right now** —
+plans 0001–0004, 0006, 0010, 0011, 0012 all closed. **All six spec modes
+are wired** in both the broker and the runner; conformance passes
+end-to-end via compose for the full 6-fixture set.
 
 The next sequenced workstreams are queued (open one when ready):
 
-- **Plan 0005** — real `payment-daemon` integration (replaces the broker's
-  mock; introduces protobuf decoding + `expected_max_units` from the
-  envelope).
-- ~~**Plan 0006**~~ — completed 2026-05-06. Narrowed scope to
-  `http-stream` + `http-multipart`. Three remaining modes split into
-  0010 / 0011 / 0012.
+- **Plan 0005** — real `payment-daemon` integration. Replaces the broker's
+  mock with the real gRPC client; adds `Livepeer-Payment` envelope
+  protobuf decoding (`expected_max_units` extraction); wires interim-debit
+  cadence for the long-running modes (ws-realtime / rtmp / session).
 - **Plan 0007** — additional extractors (`openai-usage`, `request-formula`,
   `bytes-counted`, `seconds-elapsed`, `ffmpeg-progress`).
 - **Plan 0008** — `gateway-adapters/` TS reference middleware.
 - **Plan 0009** — OpenAI-compat gateway migration brief execution.
-- **Plan 0010** — `ws-realtime@v0` driver pair (broker + runner). Adds
-  WebSocket lifecycle and the interim-debit payment cadence pattern.
-- **Plan 0011** — `rtmp-ingress-hls-egress@v0` driver pair. Requires RTMP
-  listener + FFmpeg subprocess + HLS sink.
-- **Plan 0012** — `session-control-plus-media@v0` driver pair (the vtuber
-  shape: session-open + control-plane WS + capability-defined media plane).
+- **Plan 0011-followup** — actual RTMP ingest + FFmpeg + HLS pipeline (the
+  session-open phase is done in plan 0011; the media pipeline is its own
+  workstream).
+- **Plan 0012-followup** — control-plane WebSocket lifecycle + media-plane
+  provisioning for `session-control-plus-media` (the session-open phase is
+  done in plan 0012; control-WS lifetime / cadence-debit / persona →
+  session-runner integration are their own workstream).
 
 Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/completed/).
 
@@ -64,9 +63,11 @@ Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/complet
 | 3 | Coordinator UX rework — capability-as-roster-entry | `orch-coordinator/` | not started |
 | 4 | Real `payment-daemon` integration | `payment-daemon/` | not started (plan 0005) |
 | 5a | HTTP-family mode drivers (`http-stream`, `http-multipart`) | `capability-broker/`, `runner/` | ✅ completed (plan 0006) |
-| 5b | `ws-realtime` mode driver | `capability-broker/`, `runner/` | not started (plan 0010) |
-| 5c | `rtmp-ingress-hls-egress` mode driver | `capability-broker/`, `runner/` | not started (plan 0011) |
-| 5d | `session-control-plus-media` mode driver | `capability-broker/`, `runner/` | not started (plan 0012) |
+| 5b | `ws-realtime` mode driver | `capability-broker/`, `runner/` | ✅ completed (plan 0010) |
+| 5c | `rtmp-ingress-hls-egress` mode driver — session-open phase | `capability-broker/`, `runner/` | ✅ completed (plan 0011) |
+| 5c-followup | `rtmp-ingress-hls-egress` media pipeline (RTMP listener + FFmpeg + HLS sink) | `capability-broker/` | not started |
+| 5d | `session-control-plus-media` mode driver — session-open phase | `capability-broker/`, `runner/` | ✅ completed (plan 0012) |
+| 5d-followup | `session-control-plus-media` control-WS + media-plane provisioning | `capability-broker/` | not started |
 | 6 | Additional extractors | `capability-broker/` | not started (plan 0007) |
 | 7 | Gateway-side per-mode adapters | `gateway-adapters/` | not started (plan 0008) |
 | 8 | OpenAI-compat gateway migration | (root `docs/`) | not started (plan 0009) |

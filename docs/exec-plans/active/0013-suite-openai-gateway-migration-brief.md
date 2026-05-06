@@ -69,7 +69,7 @@ one component, ~600 LOC (`openai-gateway/src/livepeer/payment.ts:64`,
 migration is the moment to unwind it — moving to the rewrite's wire
 spec and packaging shape together costs little extra. The `-core`
 suffix on the engine makes the shell sound canonical when it's the
-wrapper; both names retire here. §3.5 has two options.
+wrapper; both names retire here. §3.5 locks the chosen shape.
 
 ## 2. Current behavior summary
 
@@ -541,8 +541,6 @@ in-monorepo alternative considered and rejected (§3.5).
   by phase 4. The `Wallet` / `AuthResolver` / `RateLimiter`
   interfaces hide the wire from the shell across the move into the
   separate SaaS repo (§3.5).
-- **`Livepeer-Audio-Duration-Seconds` standardization** — spec-level
-  followup, not this brief.
 - **`/v1/audio/speech` mode definition** — needs `http-binary-stream@v0`
   or equivalent; separate spec-level plan.
 - **Image endpoint reference impl** — rewrite's `openai-gateway/`
@@ -558,8 +556,7 @@ in-monorepo alternative considered and rejected (§3.5).
 
 Suite paths cited with the `livepeer-openai-gateway-core/` prefix
 reflect **the suite's current layout**. Post-phase-4 those files live
-under the chosen §3.5 name (`openai-gateway/src/...` for option A,
-`openai-gateway-engine/src/...` for option B); citations are not
-retro-rewritten because that would obscure what the migration is
-moving *from*. The reference gateway (`openai-gateway/`) is the
-target shape — single package, protocol-only, ~600 LOC.
+under the new single OSS package name per §3.5 (`openai-gateway/src/...`);
+citations are not retro-rewritten because that would obscure what the
+migration is moving *from*. The reference gateway (`openai-gateway/`)
+is the target shape — single package, protocol-only, ~600 LOC.

@@ -1,46 +1,80 @@
-// Package payment defines the broker's interface to the co-located
-// payment-daemon and provides a v0.1 mock implementation.
+// Package payment defines the broker's interface to the receiver-side
+// payment-daemon (`PayeeDaemon`) and provides Mock + GRPC
+// implementations.
 //
-// The real gRPC client (over unix socket) lands in plan 0005. The mock
-// exists so the broker can serve real traffic end-to-end without the chain
-// dependency, and so tests can inspect the lifecycle calls.
+// The middleware uses Client without caring which is wired:
+//   - GRPC: real client, talks to the daemon over a unix socket.
+//   - Mock: in-process stub, used only for unit tests.
 package payment
 
 import (
 	"context"
-
-	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"math/big"
 )
 
-// Client is the broker's payment-daemon adapter. Two implementations:
-//   - GRPC (this package): real client, talks to the payment-daemon over a
-//     unix socket.
-//   - Mock (this package): in-process stub, used only for unit tests.
+// Client is the broker's PayeeDaemon adapter. The middleware drives a
+// session lifecycle:
 //
-// The middleware uses Client without caring which implementation is wired.
+//	OpenSession → ProcessPayment → handler → DebitBalance → CloseSession
+//
+// Implementations may persist state (GRPC) or hold it in memory (Mock).
 type Client interface {
-	OpenSession(ctx context.Context, req OpenSessionRequest) (*Session, error)
-	Debit(ctx context.Context, sessionID string, units uint64) error
-	Reconcile(ctx context.Context, sessionID string, actualUnits uint64) error
-	Close(ctx context.Context, sessionID string) error
+	// OpenSession idempotently opens a payee-side session for the
+	// given work_id with the supplied pricing metadata. Returns the
+	// daemon's outcome (opened vs already-open).
+	OpenSession(ctx context.Context, req OpenSessionRequest) (*OpenSessionResult, error)
+
+	// ProcessPayment hands the daemon the raw `Payment` wire bytes
+	// from the inbound `Livepeer-Payment` header (already
+	// base64-decoded). The daemon validates and seals the session's
+	// sender on the first call. Returns the sender (extracted from
+	// the validated payment) plus the resulting balance.
+	ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (*ProcessPaymentResult, error)
+
+	// DebitBalance is idempotent by (sender, work_id, debit_seq).
+	// Retries with the same seq return the prior balance instead of
+	// double-debiting.
+	DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.Int, error)
+
+	// CloseSession finalizes a session. After this call no further
+	// ProcessPayment or DebitBalance against (sender, work_id) is
+	// accepted.
+	CloseSession(ctx context.Context, sender []byte, workID string) error
 }
 
-// OpenSessionRequest carries everything the daemon needs to decide whether
-// to open a session.
-//
-// The middleware decodes the Livepeer-Payment header into DecodedPayment
-// before calling OpenSession. PaymentBlob is the original base64 string
-// retained for diagnostics; CapabilityID / OfferingID are sourced from the
-// inbound HTTP headers (the daemon also re-checks them defensively).
+// OpenSessionRequest carries the (capability, offering, price,
+// work_unit) tuple the daemon binds to the work_id.
 type OpenSessionRequest struct {
-	CapabilityID   string
-	OfferingID     string
-	PaymentBlob    string
-	DecodedPayment *pb.Payment
+	WorkID              string
+	Capability          string
+	Offering            string
+	PricePerWorkUnitWei *big.Int
+	WorkUnit            string
 }
 
-// Session is the handle returned by OpenSession; pass it to Debit /
-// Reconcile / Close.
-type Session struct {
-	ID string
+// OpenSessionResult is the daemon's outcome enum, simplified to a bool.
+type OpenSessionResult struct {
+	AlreadyOpen bool
+}
+
+// ProcessPaymentRequest is the inbound payment for a session.
+type ProcessPaymentRequest struct {
+	WorkID       string
+	PaymentBytes []byte // base64-decoded Livepeer-Payment header value
+}
+
+// ProcessPaymentResult is what the daemon returns after sealing the
+// sender.
+type ProcessPaymentResult struct {
+	Sender         []byte
+	Balance        *big.Int
+	WinnersQueued  int32
+}
+
+// DebitBalanceRequest captures one post-handler debit.
+type DebitBalanceRequest struct {
+	Sender    []byte
+	WorkID    string
+	WorkUnits int64
+	DebitSeq  uint64
 }

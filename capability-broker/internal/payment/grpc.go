@@ -3,6 +3,7 @@ package payment
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"time"
 
 	"google.golang.org/grpc"
@@ -11,22 +12,17 @@ import (
 	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 )
 
-// GRPC is the broker's real payment-daemon adapter, talking to a
-// PayeeDaemon over a unix-socket gRPC connection.
-//
-// The connection is opened eagerly in NewGRPC and held for the broker's
-// lifetime; gRPC handles reconnection internally. The constructor calls
-// Health() once before returning so the broker fails-fast if the daemon
-// is missing.
+// GRPC is the broker's real PayeeDaemon adapter, talking over a unix
+// socket. NewGRPC dials eagerly + Health-probes; gRPC handles
+// reconnection internally for the daemon's lifetime.
 type GRPC struct {
 	conn   *grpc.ClientConn
 	client pb.PayeeDaemonClient
 	socket string
 }
 
-// NewGRPC dials the unix socket, calls Health once to confirm the daemon
-// is reachable, and returns a ready client. Returns an error if the socket
-// is unreachable or Health fails.
+// NewGRPC dials the unix socket and Health-probes the daemon. Fails
+// fast if the daemon is unreachable.
 func NewGRPC(ctx context.Context, socketPath string) (*GRPC, error) {
 	conn, err := grpc.NewClient(
 		"unix://"+socketPath,
@@ -50,7 +46,7 @@ func NewGRPC(ctx context.Context, socketPath string) (*GRPC, error) {
 }
 
 // Shutdown closes the underlying gRPC connection. Called once at broker
-// shutdown; not part of the Client interface.
+// shutdown.
 func (g *GRPC) Shutdown() error {
 	if g.conn == nil {
 		return nil
@@ -58,38 +54,59 @@ func (g *GRPC) Shutdown() error {
 	return g.conn.Close()
 }
 
-// OpenSession sends the decoded envelope and the cross-check fields to the
-// daemon and returns the assigned session ID.
-func (g *GRPC) OpenSession(ctx context.Context, req OpenSessionRequest) (*Session, error) {
-	if req.DecodedPayment == nil {
-		return nil, fmt.Errorf("OpenSessionRequest.DecodedPayment is nil")
+func (g *GRPC) OpenSession(ctx context.Context, req OpenSessionRequest) (*OpenSessionResult, error) {
+	priceBytes := []byte(nil)
+	if req.PricePerWorkUnitWei != nil {
+		priceBytes = req.PricePerWorkUnitWei.Bytes()
 	}
 	resp, err := g.client.OpenSession(ctx, &pb.OpenSessionRequest{
-		Payment:      req.DecodedPayment,
-		CapabilityId: req.CapabilityID,
-		OfferingId:   req.OfferingID,
+		WorkId:              req.WorkID,
+		Capability:          req.Capability,
+		Offering:            req.Offering,
+		PricePerWorkUnitWei: priceBytes,
+		WorkUnit:            req.WorkUnit,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Session{ID: resp.GetSessionId()}, nil
+	return &OpenSessionResult{
+		AlreadyOpen: resp.GetOutcome() == pb.OpenSessionResponse_OUTCOME_ALREADY_OPEN,
+	}, nil
 }
 
-// Debit forwards a debit RPC.
-func (g *GRPC) Debit(ctx context.Context, sessionID string, units uint64) error {
-	_, err := g.client.Debit(ctx, &pb.DebitRequest{SessionId: sessionID, Units: units})
-	return err
+func (g *GRPC) ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (*ProcessPaymentResult, error) {
+	resp, err := g.client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		PaymentBytes: req.PaymentBytes,
+		WorkId:       req.WorkID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &ProcessPaymentResult{
+		Sender:        resp.GetSender(),
+		Balance:       new(big.Int).SetBytes(resp.GetBalance()),
+		WinnersQueued: resp.GetWinnersQueued(),
+	}, nil
 }
 
-// Reconcile forwards a reconcile RPC.
-func (g *GRPC) Reconcile(ctx context.Context, sessionID string, actualUnits uint64) error {
-	_, err := g.client.Reconcile(ctx, &pb.ReconcileRequest{SessionId: sessionID, ActualUnits: actualUnits})
-	return err
+func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.Int, error) {
+	resp, err := g.client.DebitBalance(ctx, &pb.DebitBalanceRequest{
+		Sender:    req.Sender,
+		WorkId:    req.WorkID,
+		WorkUnits: req.WorkUnits,
+		DebitSeq:  req.DebitSeq,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return new(big.Int).SetBytes(resp.GetBalance()), nil
 }
 
-// Close ends the session on the daemon side. Implements Client.Close.
-func (g *GRPC) Close(ctx context.Context, sessionID string) error {
-	_, err := g.client.CloseSession(ctx, &pb.CloseSessionRequest{SessionId: sessionID})
+func (g *GRPC) CloseSession(ctx context.Context, sender []byte, workID string) error {
+	_, err := g.client.CloseSession(ctx, &pb.CloseSessionRequest{
+		Sender: sender,
+		WorkId: workID,
+	})
 	return err
 }
 

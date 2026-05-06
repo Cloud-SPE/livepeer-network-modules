@@ -1,6 +1,7 @@
 package server
 
 import (
+	"math/big"
 	"net/http"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
@@ -24,7 +25,7 @@ func (s *Server) registerRoutes() {
 		middleware.RequestID,
 		middleware.Metrics,
 		middleware.Headers,
-		middleware.Payment(s.payment),
+		middleware.Payment(s.payment, s.capabilityLookup()),
 	)
 
 	// POST /v1/cap — http-reqresp / http-stream / http-multipart /
@@ -36,4 +37,37 @@ func (s *Server) registerRoutes() {
 	// (method, mode) selection; the ws-realtime driver upgrades the
 	// connection in its Serve method.
 	s.mux.Handle("GET /v1/cap", paidChain(http.HandlerFunc(s.dispatch)))
+}
+
+// capabilityLookup returns a CapabilityLookup function the payment
+// middleware uses to translate (capability, offering) into the
+// (work_unit, price_per_work_unit_wei) tuple the daemon needs at
+// OpenSession time.
+//
+// Maps the broker's host-config Price (`amount_wei` per `per_units`)
+// into a per-work-unit wei value. Both fields are validated upstream;
+// price_per_work_unit_wei is `amount_wei / per_units`.
+func (s *Server) capabilityLookup() middleware.CapabilityLookup {
+	return func(capability, offering string) (middleware.CapabilitySpec, bool) {
+		cap, ok := s.lookup(capability, offering)
+		if !ok || cap == nil {
+			return middleware.CapabilitySpec{}, false
+		}
+		amount, ok := new(big.Int).SetString(cap.Price.AmountWei, 10)
+		if !ok {
+			return middleware.CapabilitySpec{}, false
+		}
+		perUnits := big.NewInt(int64(cap.Price.PerUnits))
+		if perUnits.Sign() == 0 {
+			return middleware.CapabilitySpec{}, false
+		}
+		// Wei per work unit = amount_wei / per_units. Integer division
+		// is fine — config validates per_units > 0 and amount_wei is a
+		// non-negative decimal string.
+		pricePerUnit := new(big.Int).Quo(amount, perUnits)
+		return middleware.CapabilitySpec{
+			WorkUnit:            cap.WorkUnit.Name,
+			PricePerWorkUnitWei: pricePerUnit,
+		}, true
+	}
 }

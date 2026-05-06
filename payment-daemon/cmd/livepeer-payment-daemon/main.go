@@ -1,10 +1,14 @@
-// Command livepeer-payment-daemon serves the receiver-side
-// PayeeDaemon gRPC service over a unix socket. The capability-broker is
-// the only caller in v0.1.
+// Command livepeer-payment-daemon serves the Livepeer-Network payment
+// surface — sender (`PayerDaemon`) or receiver (`PayeeDaemon`) — over a
+// unix socket. Mode is chosen at boot via `--mode`; it does not change
+// at runtime.
 //
-// In v0.1 every RPC is a stub: any non-empty Livepeer-Payment ticket is
-// accepted, sessions are recorded in BoltDB, and no chain interaction
-// happens. See ../DESIGN.md for the boundaries.
+// v0.2 ships with chain providers stubbed (dev-mode broker / clock /
+// keystore). Plan 0016 wires real Arbitrum-One integration behind the
+// same provider interfaces.
+//
+// See ../../docs/operator-runbook.md for what each flag actually does
+// and what each failure mode means in production.
 package main
 
 import (
@@ -18,17 +22,24 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devbroker"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devclock"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devkeystore"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/server"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/receiver"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/sender"
 )
 
 var version = "dev"
 
 func main() {
 	var (
-		socketPath = flag.String("socket", "/var/run/livepeer/payment-daemon.sock", "unix socket the gRPC server listens on")
-		dbPath     = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB session ledger path")
+		mode       = flag.String("mode", "", "required: 'sender' or 'receiver'")
+		socketPath = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
+		dbPath     = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB session ledger path (receiver only)")
+		chainRPC   = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers are fakes.")
+		devKeyHex  = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
 		showVer    = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -39,42 +50,97 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	logger.Info("payment-daemon starting", "version", version, "socket", *socketPath, "db", *dbPath)
 
-	if err := run(logger, *socketPath, *dbPath); err != nil {
+	if *mode == "" {
+		fmt.Fprintln(os.Stderr, "--mode is required (sender|receiver)")
+		flag.Usage()
+		os.Exit(2)
+	}
+	if *socketPath == "" {
+		switch *mode {
+		case "sender":
+			*socketPath = "/var/run/livepeer/payer-daemon.sock"
+		case "receiver":
+			*socketPath = "/var/run/livepeer/payment-daemon.sock"
+		}
+	}
+	if *chainRPC != "" && *devKeyHex != "" {
+		fmt.Fprintln(os.Stderr, "--dev-signing-key-hex is rejected when --chain-rpc is set")
+		os.Exit(2)
+	}
+	if *chainRPC == "" {
+		fmt.Fprintln(os.Stderr, "livepeer-payment-daemon: DEV MODE — --chain-rpc is empty; using fake chain providers (redemptions will not hit any chain)")
+	}
+
+	logger.Info("payment-daemon starting",
+		"version", version,
+		"mode", *mode,
+		"socket", *socketPath,
+		"chain", chainStatus(*chainRPC))
+
+	if err := run(logger, *mode, *socketPath, *dbPath, *chainRPC, *devKeyHex); err != nil {
 		logger.Error("fatal", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run(logger *slog.Logger, socketPath, dbPath string) error {
+func run(logger *slog.Logger, mode, socketPath, dbPath, chainRPC, devKeyHex string) error {
 	if err := ensureParentDir(socketPath); err != nil {
 		return fmt.Errorf("prepare socket dir: %w", err)
+	}
+
+	switch mode {
+	case "sender":
+		return runSender(logger, socketPath, chainRPC, devKeyHex)
+	case "receiver":
+		return runReceiver(logger, socketPath, dbPath, chainRPC)
+	default:
+		return fmt.Errorf("unknown --mode %q (expected 'sender' or 'receiver')", mode)
+	}
+}
+
+func runSender(logger *slog.Logger, socketPath, chainRPC, devKeyHex string) error {
+	if chainRPC != "" {
+		return errors.New("chain integration is plan 0016; --chain-rpc is not yet supported")
+	}
+	keystore, err := devkeystore.New(devKeyHex)
+	if err != nil {
+		return fmt.Errorf("dev keystore: %w", err)
+	}
+	logger.Info("sender identity", "address_hex", fmt.Sprintf("%x", keystore.Address()))
+
+	broker := devbroker.New()
+	clock := devclock.New()
+	_ = providers.NewDevGasPrice() // wired in plan 0015's interim-debit cadence
+
+	svc := sender.New(keystore, broker, clock, logger.With("component", "sender"))
+	srv := server.NewSender(svc, socketPath, logger.With("component", "grpc"))
+	return runServer(logger, srv)
+}
+
+func runReceiver(logger *slog.Logger, socketPath, dbPath, chainRPC string) error {
+	if chainRPC != "" {
+		return errors.New("chain integration is plan 0016; --chain-rpc is not yet supported")
 	}
 	if err := ensureParentDir(dbPath); err != nil {
 		return fmt.Errorf("prepare db dir: %w", err)
 	}
+	// v0.2 receiver scaffold returns Unimplemented; plan 0014 C4 wires
+	// the real surface. Intentionally NOT opening the BoltDB store yet.
+	svc := receiver.New(logger.With("component", "receiver"))
+	srv := server.NewReceiver(svc, socketPath, logger.With("component", "grpc"))
+	return runServer(logger, srv)
+}
 
-	st, err := store.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("open store: %w", err)
-	}
-	defer st.Close()
-
-	svc := service.New(st, logger.With("component", "service"))
-	srv := server.New(svc, socketPath, logger.With("component", "grpc"))
-
+func runServer(logger *slog.Logger, srv *server.Server) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve() }()
-
 	select {
 	case <-ctx.Done():
 		logger.Info("shutdown signal received")
 		srv.GracefulStop()
-		// Drain Serve's return so we surface the real error if any.
 		if err := <-errCh; err != nil && !errors.Is(err, server.ErrStopped) {
 			return err
 		}
@@ -87,4 +153,11 @@ func run(logger *slog.Logger, socketPath, dbPath string) error {
 func ensureParentDir(p string) error {
 	dir := filepath.Dir(p)
 	return os.MkdirAll(dir, 0o755)
+}
+
+func chainStatus(chainRPC string) string {
+	if chainRPC == "" {
+		return "dev (fakes)"
+	}
+	return "production (" + chainRPC + ")"
 }

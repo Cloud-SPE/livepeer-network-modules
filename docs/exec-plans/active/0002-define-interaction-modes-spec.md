@@ -92,17 +92,19 @@ Decisions:
 
 Artifacts:
 - [x] `headers/livepeer-headers.md` spec written and accepted.
-- [ ] Manifest JSON Schema published.
-- [ ] Six mode specs written, each with: wire format, payment cadence (if applicable),
-  required `extra`/`constraints` fields, conformance test fixtures.
-- [ ] `extractors/*.md` for the initial six extractors (`openai-usage`,
+- [x] Manifest JSON Schema published (`manifest/schema.json` + example + changelog).
+- [x] Six mode specs written and accepted (`http-reqresp`, `http-stream`,
+  `http-multipart`, `ws-realtime`, `rtmp-ingress-hls-egress`,
+  `session-control-plus-media`).
+- [x] `extractors/*.md` for the initial six extractors drafted (`openai-usage`,
   `response-jsonpath`, `request-formula`, `bytes-counted`, `seconds-elapsed`,
   `ffmpeg-progress`).
 - [ ] Conformance runner + fixtures + Dockerfile + Makefile + compose.yaml.
 - [ ] At least one reference implementation (broker side) demonstrably passing the
   conformance suite for one mode.
 
-All decisions are now resolved; remaining work is artifact production.
+All decisions are now resolved; remaining work is the conformance scaffold and the
+first reference impl. Mode specs and extractor specs are present and reviewable.
 
 ## Out of scope
 

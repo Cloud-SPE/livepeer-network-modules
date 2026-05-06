@@ -41,7 +41,7 @@ The initial six are:
    - SemVer rules apply identically to both axes.
 3. ~~**Conformance test framework.**~~ **Resolved 2026-05-06**: hybrid (declarative
    YAML fixtures + Go runner) shipped as a **Docker image**, per core belief #15.
-   - Image: `tztcloud/lnp-conformance:<tag>` (working name; revisit at first publish).
+   - Image: `tztcloud/livepeer-conformance:<tag>` (working name; revisit at first publish).
    - Tag matches the spec-wide SemVer.
    - Image bundles the runner binary + the `fixtures/` folder + mock-backend +
      mock-payment-daemon helpers.
@@ -73,9 +73,12 @@ Decisions:
 - [x] Spec repo location → `<repo>/livepeer-network-protocol/`.
 - [x] SemVer policy → hybrid (spec-wide SemVer + per-mode SemVer).
 - [x] Conformance test framework → fixtures + Go runner shipped as Docker image
-  (`tztcloud/lnp-conformance`).
+  (`tztcloud/livepeer-conformance`).
 - [x] Reference implementation languages → Go for broker (`capability-broker/`),
   TypeScript for gateway middleware (`gateway-adapters/`).
+- [x] Subfolder scaffolded — `livepeer-network-protocol/` with README, VERSION
+  (`0.1.0`), PROCESS, plus placeholder READMEs in `manifest/`, `modes/`,
+  `extractors/`, `headers/`, `conformance/`.
 
 Artifacts:
 - [ ] `headers/livepeer-headers.md` spec written.

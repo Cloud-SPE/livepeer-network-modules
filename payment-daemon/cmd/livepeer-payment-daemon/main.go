@@ -201,7 +201,17 @@ func runReceiver(logger *slog.Logger, cfg bootConfig) error {
 	}
 	defer st.Close()
 
-	svc := receiver.New(st, logger.With("component", "receiver"))
+	// Recipient defaults to the keystore signer when --orch-address is
+	// empty; the hot/cold split log line above already warned the
+	// operator if that's not the desired posture.
+	recipient := keystore.Address()
+	if orch := normalizeAddrHex(cfg.orchAddressHex); orch != "" {
+		raw, _ := decodeHex40(orch)
+		if len(raw) == 20 {
+			recipient = raw
+		}
+	}
+	svc := receiver.New(st, receiver.Config{Recipient: recipient}, logger.With("component", "receiver"))
 	srv := server.NewReceiver(svc, cfg.socketPath, logger.With("component", "grpc"))
 	return runServer(logger, srv)
 }
@@ -358,4 +368,38 @@ func chainStatus(chainRPC string) string {
 		return "dev (fakes)"
 	}
 	return "production (" + chainRPC + ")"
+}
+
+// decodeHex40 decodes a 40-character hex string (no 0x prefix) into 20
+// raw bytes. Returns nil on any malformed input — callers fall back to
+// their default.
+func decodeHex40(hex40 string) ([]byte, error) {
+	if len(hex40) != 40 {
+		return nil, errors.New("not 40 hex chars")
+	}
+	out := make([]byte, 20)
+	for i := 0; i < 20; i++ {
+		hi, err := hexNibble(hex40[2*i])
+		if err != nil {
+			return nil, err
+		}
+		lo, err := hexNibble(hex40[2*i+1])
+		if err != nil {
+			return nil, err
+		}
+		out[i] = (hi << 4) | lo
+	}
+	return out, nil
+}
+
+func hexNibble(c byte) (byte, error) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', nil
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, nil
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, nil
+	}
+	return 0, errors.New("non-hex digit")
 }

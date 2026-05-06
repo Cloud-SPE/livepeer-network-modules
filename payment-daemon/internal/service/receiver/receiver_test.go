@@ -19,6 +19,14 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
 )
 
+func bytes20(b byte) []byte {
+	out := make([]byte, 20)
+	for i := range out {
+		out[i] = b
+	}
+	return out
+}
+
 // stand spins up an in-process receiver Service over a unix socket.
 func stand(t *testing.T) (pb.PayeeDaemonClient, *store.Store, func()) {
 	t.Helper()
@@ -31,7 +39,7 @@ func stand(t *testing.T) (pb.PayeeDaemonClient, *store.Store, func()) {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	svc := receiver.New(st, nil)
+	svc := receiver.New(st, receiver.Config{Recipient: bytes20(0xaa)}, nil)
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -283,8 +291,9 @@ func TestStubsReturnEmpty(t *testing.T) {
 	if _, err := client.GetQuote(ctx, &pb.GetQuoteRequest{}); status.Code(err) != codes.Unimplemented {
 		t.Errorf("GetQuote: want Unimplemented, got %v", err)
 	}
-	if _, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{}); status.Code(err) != codes.Unimplemented {
-		t.Errorf("GetTicketParams: want Unimplemented, got %v", err)
+	// Empty fields → InvalidArgument (sender, capability, offering all required).
+	if _, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("GetTicketParams empty: want InvalidArgument, got %v", err)
 	}
 	caps, err := client.ListCapabilities(ctx, &pb.ListCapabilitiesRequest{})
 	if err != nil {

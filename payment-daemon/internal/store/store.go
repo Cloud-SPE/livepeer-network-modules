@@ -29,23 +29,45 @@ import (
 )
 
 const (
-	sessionsBucket   = "sessions"
-	debitSeqsBucket  = "debit_seqs"
-	capIndexBucket   = "capability_index"
+	sessionsBucket = "sessions"
+	debitSeqsBucket = "debit_seqs"
+	capIndexBucket  = "capability_index"
+
+	// Plan 0016 buckets — owned by store, consumed by receiver +
+	// settlement via the helper methods further down this file.
+	noncesBucket           = "nonces"
+	redemptionsPending     = "redemptions_pending"
+	redemptionsByHash      = "redemptions_by_hash"
+	redemptionsRedeemed    = "redemptions_redeemed"
+	redemptionsMeta        = "redemptions_meta"
 )
+
+const metaNextSeq = "next_seq"
 
 // Session is the on-disk receiver session record.
 type Session struct {
-	WorkID                string    `json:"work_id"`
-	Sender                []byte    `json:"sender,omitempty"` // nil until first ProcessPayment seals it
-	Capability            string    `json:"capability"`
-	Offering              string    `json:"offering"`
-	PricePerWorkUnitWei   string    `json:"price_per_work_unit_wei"` // big.Int decimal string
-	WorkUnit              string    `json:"work_unit"`
-	BalanceWei            string    `json:"balance_wei"` // big.Int decimal string; may be negative (overdraft)
-	Closed                bool      `json:"closed"`
-	OpenedAt              time.Time `json:"opened_at"`
-	ClosedAt              time.Time `json:"closed_at,omitempty"`
+	WorkID              string    `json:"work_id"`
+	Sender              []byte    `json:"sender,omitempty"` // nil until first ProcessPayment seals it
+	Capability          string    `json:"capability"`
+	Offering            string    `json:"offering"`
+	PricePerWorkUnitWei string    `json:"price_per_work_unit_wei"` // big.Int decimal string
+	WorkUnit            string    `json:"work_unit"`
+	BalanceWei          string    `json:"balance_wei"` // big.Int decimal string; may be negative (overdraft)
+	Closed              bool      `json:"closed"`
+	OpenedAt            time.Time `json:"opened_at"`
+	ClosedAt            time.Time `json:"closed_at,omitempty"`
+
+	// Authoritative ticket params issued by the receiver at session
+	// open. RecipientRand is the receiver-only secret; the daemon
+	// reveals it as the preimage when redeeming a winning ticket.
+	// FaceValueWei + WinProb / CreationRound bind the wire ticket the
+	// sender signs; the ticket's hash recomputed by the contract must
+	// match the (sender, fields) tuple. Empty-string / nil indicates
+	// the session was opened by the v0.2 stub flow before plan 0016
+	// landed; ProcessPayment treats those as "skip chain validation".
+	RecipientRand string `json:"recipient_rand,omitempty"` // big.Int decimal string
+	FaceValueWei  string `json:"face_value_wei,omitempty"`
+	WinProb       string `json:"win_prob,omitempty"`
 }
 
 // ErrNotFound is returned when a (sender, work_id) tuple has no
@@ -73,7 +95,11 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("bolt open %s: %w", path, err)
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
-		for _, name := range []string{sessionsBucket, debitSeqsBucket, capIndexBucket} {
+		for _, name := range []string{
+			sessionsBucket, debitSeqsBucket, capIndexBucket,
+			noncesBucket,
+			redemptionsPending, redemptionsByHash, redemptionsRedeemed, redemptionsMeta,
+		} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
 				return err
 			}
@@ -303,6 +329,42 @@ func (s *Store) CloseSession(sender []byte, workID string) (alreadyClosed bool, 
 		return nil
 	})
 	return alreadyClosed, err
+}
+
+// GetByWorkID returns the session matching this work_id, regardless
+// of whether it has been sealed to a sender. Used by GetTicketParams
+// (called before a sender is sealed) and by ProcessPayment to read the
+// session's recipient-rand secret.
+func (s *Store) GetByWorkID(workID string) (*Session, error) {
+	var out *Session
+	err := s.db.View(func(tx *bolt.Tx) error {
+		idx := tx.Bucket([]byte(capIndexBucket))
+		key := []byte(workID)
+		v := idx.Get(key)
+		if v == nil {
+			return ErrNotFound
+		}
+		var sender []byte
+		if !isUnsealedSentinel(v) {
+			sender = v
+		}
+		bucket := tx.Bucket([]byte(sessionsBucket))
+		raw := bucket.Get(compositeKey(sender, workID))
+		if raw == nil {
+			// Sealed-but-stored-under-nil-prefix recovery.
+			raw, _ = scanByWorkID(bucket, workID)
+		}
+		if raw == nil {
+			return ErrNotFound
+		}
+		var sess Session
+		if err := json.Unmarshal(raw, &sess); err != nil {
+			return fmt.Errorf("unmarshal: %w", err)
+		}
+		out = &sess
+		return nil
+	})
+	return out, err
 }
 
 // Get returns a copy of the session for (sender, work_id).

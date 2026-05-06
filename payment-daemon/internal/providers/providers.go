@@ -10,6 +10,8 @@ package providers
 import (
 	"context"
 	"math/big"
+
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 )
 
 // SenderInfo is the on-chain TicketBroker view of a single sender.
@@ -56,6 +58,17 @@ type KeyStore interface {
 	// `accounts.TextHash(hash)` — i.e., the input wrapped in EIP-191
 	// `personal_sign`. V ∈ {27, 28}.
 	Sign(hash []byte) ([]byte, error)
+}
+
+// TxSigner signs Ethereum transactions for on-chain submission. Receiver
+// mode wires both KeyStore (EIP-191 ticket signing) and TxSigner
+// (transaction signing for `redeemWinningTicket`); sender mode wires only
+// KeyStore. Both interfaces consume the same loaded *ecdsa.PrivateKey.
+type TxSigner interface {
+	// SignTx signs `tx` for the given chain ID, returning the signed
+	// transaction. Implementations must use EIP-155 (or later, e.g.
+	// EIP-1559) signing — the legacy unprotected form is rejected.
+	SignTx(tx *ethtypes.Transaction, chainID *big.Int) (*ethtypes.Transaction, error)
 }
 
 // Clock exposes Livepeer round and L1 block state. v0.2's dev fake

@@ -14,13 +14,26 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
 )
+
+// Options aggregates non-host-config knobs the server takes at
+// construction time. Per-request behavior knobs (e.g. plan 0015's
+// interim-debit cadence) live here so they don't pollute the
+// host-config.yaml grammar — operators set them via CLI flags.
+type Options struct {
+	// InterimDebit governs the long-running session ticker per plan
+	// 0015. Zero values are a safe disabled state (v0.2 single-debit
+	// fall-through).
+	InterimDebit middleware.InterimDebitConfig
+}
 
 // Server wraps the broker's HTTP server. It owns two listeners: the paid
 // listener (cfg.Listen.Paid) for /v1/cap and /registry/*, and a metrics
 // listener (cfg.Listen.Metrics) for Prometheus scraping.
 type Server struct {
 	cfg        *config.Config
+	opts       Options
 	mux        *http.ServeMux
 	srv        *http.Server
 	metricsSrv *http.Server
@@ -43,7 +56,7 @@ type Server struct {
 // When the gRPC client is selected, New calls Health on the daemon and
 // fails fast if it is unreachable; the broker should not bind its paid
 // listener with no working payment surface.
-func New(cfg *config.Config) (*Server, error) {
+func New(cfg *config.Config, opts Options) (*Server, error) {
 	mux := http.NewServeMux()
 	srv := &http.Server{
 		Addr:              cfg.Listen.Paid,
@@ -58,6 +71,7 @@ func New(cfg *config.Config) (*Server, error) {
 
 	s := &Server{
 		cfg:        cfg,
+		opts:       opts,
 		mux:        mux,
 		srv:        srv,
 		payment:    paymentClient,

@@ -41,6 +41,13 @@ const (
 	ErrBackendUnavailable      = "backend_unavailable"
 	ErrCapacityExhausted       = "capacity_exhausted"
 	ErrInternalError           = "internal_error"
+	// ErrInsufficientBalance signals the broker terminated a long-running
+	// session because PayeeDaemon.SufficientBalance returned false (plan
+	// 0015). Emitted as a Livepeer-Error response or trailer; HTTP status
+	// 402 (Payment Required) where the response is still in the
+	// pre-handler phase, otherwise carried as a trailer where the
+	// protocol allows it.
+	ErrInsufficientBalance = "insufficient_balance"
 )
 
 // ImplementedSpecVersion is the spec-wide major.minor this broker speaks.

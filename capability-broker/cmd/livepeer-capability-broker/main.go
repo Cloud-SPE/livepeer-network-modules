@@ -15,10 +15,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
@@ -30,6 +32,24 @@ func main() {
 		listenAddr  = flag.String("listen", "", "HTTP listen address (overrides config)")
 		metricsAddr = flag.String("metrics", "", "Prometheus metrics listen address (overrides config)")
 		showVersion = flag.Bool("version", false, "print version and exit")
+
+		// Plan 0015 — interim-debit cadence flags.
+		interimDebitInterval = flag.Duration(
+			"interim-debit-interval",
+			30*time.Second,
+			"interim-debit tick cadence for long-running sessions; 0 disables the ticker entirely (plan 0015)",
+		)
+		interimDebitMinRunwayUnits = flag.Uint64(
+			"interim-debit-min-runway-units",
+			60,
+			"minimum required runway in work-units passed to PayeeDaemon.SufficientBalance per tick (plan 0015)",
+		)
+		interimDebitGraceOnInsufficient = flag.Duration(
+			"interim-debit-grace-on-insufficient",
+			0,
+			"grace period before terminating a handler after SufficientBalance returns false; "+
+				"reserved for the future mid-session top-up flow (plan 0015)",
+		)
 	)
 	flag.Parse()
 
@@ -54,7 +74,13 @@ func main() {
 		cfg.Listen.Metrics = *metricsAddr
 	}
 
-	srv, err := server.New(cfg)
+	srv, err := server.New(cfg, server.Options{
+		InterimDebit: middleware.InterimDebitConfig{
+			Interval:            *interimDebitInterval,
+			MinRunwayUnits:      *interimDebitMinRunwayUnits,
+			GraceOnInsufficient: *interimDebitGraceOnInsufficient,
+		},
+	})
 	if err != nil {
 		log.Fatalf("server init failed: %v", err)
 	}

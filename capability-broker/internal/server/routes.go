@@ -25,7 +25,7 @@ func (s *Server) registerRoutes() {
 		middleware.RequestID,
 		middleware.Metrics,
 		middleware.Headers,
-		middleware.Payment(s.payment, s.capabilityLookup()),
+		middleware.Payment(s.payment, s.capabilityLookup(), s.opts.InterimDebit),
 	)
 
 	// POST /v1/cap — http-reqresp / http-stream / http-multipart /

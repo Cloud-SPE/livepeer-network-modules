@@ -2,11 +2,13 @@
 # Run with: make smoke
 #
 # Topology:
-#   mock-backend  — python:3.12-alpine HTTP server returning OpenAI-shaped
-#                   responses on different paths (one per capability).
-#   broker        — capability-broker forwards from /v1/cap to mock-backend.
-#   gateway       — openai-gateway translates OpenAI-shaped requests to the
-#                   Livepeer wire spec and forwards via broker.
+#   mock-backend    — python:3.12-alpine HTTP server returning OpenAI-shaped
+#                     responses on different paths (one per capability).
+#   payment-daemon  — receiver-side gRPC sidecar; broker dials it via the
+#                     shared `livepeer-payment` unix-socket volume.
+#   broker          — capability-broker forwards from /v1/cap to mock-backend.
+#   gateway         — openai-gateway translates OpenAI-shaped requests to
+#                     the Livepeer wire spec and forwards via broker.
 
 services:
   mock-backend:
@@ -80,12 +82,23 @@ services:
           def log_message(self, *a, **k): pass
         HTTPServer(("0.0.0.0", 9000), H).serve_forever()
 
+  payment-daemon:
+    image: tztcloud/livepeer-payment-daemon:dev
+    networks: [openai-gateway]
+    volumes:
+      - livepeer-payment:/var/run/livepeer
+      - livepeer-payment-data:/var/lib/livepeer/payment-daemon
+    command:
+      - --socket=/var/run/livepeer/payment-daemon.sock
+      - --db=/var/lib/livepeer/payment-daemon/sessions.db
+
   broker:
     image: tztcloud/livepeer-capability-broker:dev
-    depends_on: [mock-backend]
+    depends_on: [mock-backend, payment-daemon]
     networks: [openai-gateway]
     volumes:
       - ./test-broker-config.yaml:/etc/livepeer/host-config.yaml:ro
+      - livepeer-payment:/var/run/livepeer
     expose:
       - "8080"
     command:
@@ -106,3 +119,10 @@ services:
 networks:
   openai-gateway:
     driver: bridge
+
+volumes:
+  # Shared unix-socket directory so broker can reach payment-daemon. The
+  # socket file is created by the daemon at startup.
+  livepeer-payment: {}
+  # BoltDB persistence for payment-daemon. Wiped on `make smoke` runs.
+  livepeer-payment-data: {}

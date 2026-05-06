@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import * as httpReqresp from "../livepeer/http-reqresp.js";
 import { LivepeerBrokerError } from "../livepeer/errors.js";
+import { buildPayment } from "../livepeer/payment.js";
 import type { Config } from "../config.js";
 
 interface EmbeddingsBody {
@@ -22,7 +23,7 @@ export function registerEmbeddings(app: FastifyInstance, cfg: Config): void {
         brokerUrl: cfg.brokerUrl,
         capability,
         offering: cfg.defaultOffering,
-        paymentBlob: cfg.paymentBlob,
+        paymentBlob: buildPayment({ capabilityId: capability, offeringId: cfg.defaultOffering }),
         body: JSON.stringify(body),
         contentType: "application/json",
       });

@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import * as httpReqresp from "../livepeer/http-reqresp.js";
 import * as httpStream from "../livepeer/http-stream.js";
 import { LivepeerBrokerError } from "../livepeer/errors.js";
+import { buildPayment } from "../livepeer/payment.js";
 import type { Config } from "../config.js";
 
 interface ChatCompletionsBody {
@@ -30,7 +31,7 @@ export function registerChatCompletions(app: FastifyInstance, cfg: Config): void
           brokerUrl: cfg.brokerUrl,
           capability,
           offering,
-          paymentBlob: cfg.paymentBlob,
+          paymentBlob: buildPayment({ capabilityId: capability, offeringId: offering }),
           body: bodyStr,
           contentType: "application/json",
         });
@@ -48,7 +49,7 @@ export function registerChatCompletions(app: FastifyInstance, cfg: Config): void
         brokerUrl: cfg.brokerUrl,
         capability,
         offering,
-        paymentBlob: cfg.paymentBlob,
+        paymentBlob: buildPayment({ capabilityId: capability, offeringId: offering }),
         body: bodyStr,
         contentType: "application/json",
       });

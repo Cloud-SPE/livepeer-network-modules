@@ -3,7 +3,6 @@
 export interface Config {
   brokerUrl: string;
   listenPort: number;
-  paymentBlob: string;
   defaultOffering: string;
 }
 
@@ -19,8 +18,6 @@ export function loadConfig(): Config {
   return {
     brokerUrl,
     listenPort,
-    // v0.1 stub. Real Livepeer-Payment envelope minting is plan 0005.
-    paymentBlob: process.env["LIVEPEER_PAYMENT_BLOB"] ?? "stub-payment",
     defaultOffering: process.env["LIVEPEER_DEFAULT_OFFERING"] ?? "default",
   };
 }

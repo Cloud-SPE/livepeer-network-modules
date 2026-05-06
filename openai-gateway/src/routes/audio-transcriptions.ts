@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import * as httpMultipart from "../livepeer/http-multipart.js";
 import { LivepeerBrokerError } from "../livepeer/errors.js";
+import { buildPayment } from "../livepeer/payment.js";
 import type { Config } from "../config.js";
 
 /**
@@ -47,7 +48,7 @@ export function registerAudioTranscriptions(app: FastifyInstance, cfg: Config): 
           brokerUrl: cfg.brokerUrl,
           capability,
           offering: cfg.defaultOffering,
-          paymentBlob: cfg.paymentBlob,
+          paymentBlob: buildPayment({ capabilityId: capability, offeringId: cfg.defaultOffering }),
           body,
           contentType,
         });

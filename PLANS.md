@@ -28,23 +28,33 @@ What does not exist yet:
 ## Active plans
 
 Numbered `docs/exec-plans/active/000N-*.md`. **None active right now** —
-plans 0001–0004, 0006, 0007, 0008, 0009, 0010, 0011, 0012 all closed.
+plans 0001–0012 all closed.
+
+**The full payment surface now runs end-to-end.** The broker decodes
+the `Livepeer-Payment` envelope, cross-checks `capability_id` /
+`offering_id` against the request headers, and talks to a real
+`payment-daemon` sidecar over gRPC on a unix socket. The conformance
+runner mints real envelopes via the generated Go bindings; the
+openai-gateway mints them via a small hand-rolled TS encoder. Both
+compose stacks include the daemon as a sidecar.
 
 **All six spec modes + all six extractors are wired** in both the broker
 and the runner; the TypeScript gateway-side middleware
 (`@tztcloud/livepeer-gateway-middleware`) covers the HTTP family with
 unit tests; conformance passes end-to-end via compose for an 11-fixture
-set (6 mode happy-paths + 5 extractor exercises). The reference
-OpenAI-compatible gateway (option A of plan 0009) ships in
-`openai-gateway/`; its smoke test passes 10 assertions against a live
-gateway → broker → mock-backend stack via Docker compose.
+set against the real daemon. The reference OpenAI-compatible gateway
+ships in `openai-gateway/`; its smoke test passes 10 assertions against
+a live gateway → broker → payment-daemon → mock-backend stack via Docker
+compose.
 
 The next sequenced workstreams are queued (open one when ready):
 
-- **Plan 0005** — real `payment-daemon` integration. Replaces the broker's
-  mock with the real gRPC client; adds `Livepeer-Payment` envelope
-  protobuf decoding (`expected_max_units` extraction); wires interim-debit
-  cadence for the long-running modes (ws-realtime / rtmp / session).
+- ~~**Plan 0005**~~ — completed 2026-05-06. Real `payment-daemon`
+  integration: dedicated component, gRPC over unix socket, BoltDB
+  session ledger, broker-side envelope decode + cross-check,
+  per-request `expected_max_units` debit estimate. Out of scope (each
+  is its own follow-up): chain integration, sender-side gRPC,
+  interim-debit cadence, warm-key handling.
 - ~~**Plan 0007**~~ — completed 2026-05-06. All five extractors
   implemented + one fixture each; 11 fixtures pass end-to-end.
 - ~~**Plan 0008**~~ — completed 2026-05-06. TypeScript reference
@@ -75,7 +85,7 @@ Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/complet
 | 2 | Capability-broker reference implementation (Go) | `capability-broker/` | ✅ completed (plan 0003) |
 | 2.5 | Conformance runner mode drivers | `livepeer-network-protocol/conformance/runner/` | ✅ completed (plan 0004) |
 | 3 | Coordinator UX rework — capability-as-roster-entry | `orch-coordinator/` | not started |
-| 4 | Real `payment-daemon` integration | `payment-daemon/` | not started (plan 0005) |
+| 4 | Real `payment-daemon` integration | `payment-daemon/` | ✅ completed (plan 0005) |
 | 5a | HTTP-family mode drivers (`http-stream`, `http-multipart`) | `capability-broker/`, `runner/` | ✅ completed (plan 0006) |
 | 5b | `ws-realtime` mode driver | `capability-broker/`, `runner/` | ✅ completed (plan 0010) |
 | 5c | `rtmp-ingress-hls-egress` mode driver — session-open phase | `capability-broker/`, `runner/` | ✅ completed (plan 0011) |

@@ -24,6 +24,9 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/providers/brokerclient"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/candidates"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/server/adminapi"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/candidate"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/scrape"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
 )
@@ -138,7 +141,6 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	if ttl <= 0 {
 		ttl = cfg.manifestTTL
 	}
-	_ = ttl // surfaced in subsequent commits when candidate-build lands
 
 	var client brokerclient.Client
 	if cfg.dev {
@@ -158,14 +160,70 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 		return &configError{err: err}
 	}
 
+	candStore, err := candidates.New(filepath.Join(cfg.dataDir, "candidates"), 0)
+	if err != nil {
+		return fmt.Errorf("candidate store: %w", err)
+	}
+
+	builder, err := candidate.NewBuilder(scrapeSvc, candStore, candidate.BuildOptions{
+		OrchEthAddress:    loaded.EthAddress(),
+		ManifestTTL:       ttl,
+		CoordinatorCommit: version,
+	}, logger.With("component", "candidate"))
+	if err != nil {
+		return fmt.Errorf("candidate builder: %w", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	go scrapeSvc.Run(ctx)
+	go runBuilder(ctx, builder, cfg.scrapeInterval, logger.With("component", "candidate"))
+
+	admin := adminapi.New(cfg.listenAddr, logger.With("component", "adminapi"))
+	admin.CandidateRoutes(builder, candStore)
+	if _, err := admin.Listen(); err != nil {
+		return fmt.Errorf("admin listen: %w", err)
+	}
+	logger.Info("admin listener bound", "addr", admin.Addr())
+	go func() {
+		if err := admin.Serve(ctx); err != nil {
+			logger.Error("admin serve", "err", err)
+		}
+	}()
 
 	<-ctx.Done()
 	logger.Info("shutdown signal received")
 	return nil
+}
+
+func runBuilder(ctx context.Context, b *candidate.Builder, interval time.Duration, logger *slog.Logger) {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	// Wait one scrape cycle before the first build so the cache is warm.
+	first := time.NewTimer(interval)
+	defer first.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-first.C:
+	}
+	if _, err := b.Rebuild(); err != nil {
+		logger.Warn("initial candidate build", "err", err)
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if _, err := b.Rebuild(); err != nil {
+				logger.Warn("rebuild", "err", err)
+			}
+		}
+	}
 }
 
 // loadCoordinatorConfig loads from disk in production mode. In dev

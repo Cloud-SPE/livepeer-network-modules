@@ -31,6 +31,21 @@ type Reserve struct {
 	Claimed        map[string]*big.Int // hex-encoded recipient -> claimed wei
 }
 
+// Ticket is the in-process ticket shape the broker packs for on-chain
+// submission. Mirrors internal/types.Ticket — duplicated here as a
+// minimal struct so the providers package stays free of import cycles
+// against internal/types (which itself imports proto-go bindings).
+type Ticket struct {
+	Recipient         []byte
+	Sender            []byte
+	FaceValue         *big.Int
+	WinProb           *big.Int
+	SenderNonce       uint32
+	RecipientRandHash []byte
+	CreationRound     int64
+	CreationRoundHash []byte
+}
+
 // Broker is the on-chain TicketBroker provider. v0.2's dev fake returns
 // canned values; plan 0016 implements this against the real
 // TicketBroker contract on Arbitrum.
@@ -40,10 +55,17 @@ type Broker interface {
 	// senders mapping.
 	GetSenderInfo(ctx context.Context, sender []byte) (*SenderInfo, error)
 
-	// RedeemWinningTicket submits a winning-ticket redemption tx. v0.2's
-	// fake records the call and returns nil; plan 0016 actually submits
-	// the tx and waits for confirmations.
-	RedeemWinningTicket(ctx context.Context, ticketHash, sig, recipientRand []byte) error
+	// IsUsedTicket reports whether the on-chain TicketBroker has already
+	// accepted this ticket-hash. Used as a redemption pre-check to
+	// drain locally-queued duplicates without spending gas.
+	IsUsedTicket(ctx context.Context, ticketHash []byte) (bool, error)
+
+	// RedeemWinningTicket submits a winning-ticket redemption tx and
+	// waits for it to confirm. The full Ticket is needed because the
+	// contract recomputes the hash from the raw fields. Returns the
+	// confirmed transaction hash on success; sentinel errors on
+	// terminal failure (see settlement.IsNonRetryable).
+	RedeemWinningTicket(ctx context.Context, ticket *Ticket, sig []byte, recipientRand *big.Int) (txHash []byte, err error)
 }
 
 // KeyStore signs ticket hashes. v0.2's dev fake uses a deterministic

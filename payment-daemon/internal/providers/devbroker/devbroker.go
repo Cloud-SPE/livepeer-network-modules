@@ -55,12 +55,19 @@ func (b *DevBroker) GetSenderInfo(_ context.Context, _ []byte) (*providers.Sende
 	}, nil
 }
 
-// RedeemWinningTicket records the call and returns nil.
-func (b *DevBroker) RedeemWinningTicket(_ context.Context, _, _, _ []byte) error {
+// IsUsedTicket always reports false in dev mode.
+func (b *DevBroker) IsUsedTicket(_ context.Context, _ []byte) (bool, error) {
+	return false, nil
+}
+
+// RedeemWinningTicket records the call and returns a synthetic tx hash.
+func (b *DevBroker) RedeemWinningTicket(_ context.Context, _ *providers.Ticket, _ []byte, _ *big.Int) ([]byte, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.redemptionsCount++
-	return nil
+	out := make([]byte, 32)
+	out[31] = byte(b.redemptionsCount)
+	return out, nil
 }
 
 // RedemptionsCount returns the number of RedeemWinningTicket calls

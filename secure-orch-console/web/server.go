@@ -2,9 +2,9 @@
 // 127.0.0.1 only — never a routable interface. Operators reach it
 // via ssh -L from a LAN laptop.
 //
-// Today the server stubs the route surface (/, /diff, /sign, /audit)
-// with placeholder JSON responses. Commit 5 lands the web UI
-// (HTML/CSS/JS embedded via embed.FS) on top of these handlers.
+// This file stubs the route surface; the candidate-upload form,
+// diff renderer, and tap-to-sign confirm gesture land in the next
+// commit.
 package web
 
 import (
@@ -21,9 +21,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/audit"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/canonical"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/diff"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/inbox"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/outbox"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/signing"
 )
 
@@ -33,8 +30,6 @@ import (
 type Server struct {
 	cfg      config.Config
 	signer   signing.Signer
-	inbox    *inbox.Inbox
-	outbox   *outbox.Outbox
 	audit    *audit.Log
 	logger   *slog.Logger
 	mux      *http.ServeMux
@@ -44,15 +39,15 @@ type Server struct {
 
 // New builds a Server. The listen address is validated against the
 // loopback gate — non-loopback binds are rejected.
-func New(cfg config.Config, signer signing.Signer, in *inbox.Inbox, out *outbox.Outbox, log *audit.Log, logger *slog.Logger) (*Server, error) {
+func New(cfg config.Config, signer signing.Signer, log *audit.Log, logger *slog.Logger) (*Server, error) {
 	if err := config.ValidateLoopbackAddr(cfg.Listen); err != nil {
 		return nil, err
 	}
 	if signer == nil {
 		return nil, errors.New("web: signer is required")
 	}
-	if in == nil || out == nil || log == nil {
-		return nil, errors.New("web: inbox/outbox/audit are required")
+	if log == nil {
+		return nil, errors.New("web: audit log is required")
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -60,8 +55,6 @@ func New(cfg config.Config, signer signing.Signer, in *inbox.Inbox, out *outbox.
 	s := &Server{
 		cfg:    cfg,
 		signer: signer,
-		inbox:  in,
-		outbox: out,
 		audit:  log,
 		logger: logger,
 		mux:    http.NewServeMux(),
@@ -70,9 +63,7 @@ func New(cfg config.Config, signer signing.Signer, in *inbox.Inbox, out *outbox.
 	return s, nil
 }
 
-// Listen binds the server's TCP listener. ListenAndServe is split into
-// Listen + Serve so a startup test can verify the bound address
-// before the server starts accepting requests.
+// Listen binds the server's TCP listener.
 func (s *Server) Listen() (net.Addr, error) {
 	if s.listener != nil {
 		return s.listener.Addr(), nil
@@ -122,88 +113,39 @@ func (s *Server) Addr() string {
 }
 
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET /", s.handleIndex)
-	s.mux.HandleFunc("GET /diff", s.handleDiff)
+	s.mux.HandleFunc("GET /{$}", s.handleIndex)
+	s.mux.HandleFunc("POST /candidate", s.handleCandidate)
 	s.mux.HandleFunc("POST /sign", s.handleSign)
-	s.mux.HandleFunc("GET /audit", s.handleAudit)
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
+	s.mux.HandleFunc("/", http.NotFound)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	candidates, err := s.inbox.List()
-	if err != nil {
-		s.fail(w, r, http.StatusInternalServerError, "list inbox", err)
-		return
-	}
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"signer_address": s.signer.Address().String(),
-		"inbox_dir":      s.inbox.Dir(),
-		"outbox_dir":     s.outbox.Dir(),
-		"candidates":     candidates,
-		"note":           "stub response; web UI lands in commit 5",
+		"signer_address":   s.signer.Address().String(),
+		"last_signed_path": s.cfg.LastSignedPath,
+		"note":             "stub response; web UI lands in the next commit",
 	})
 }
 
-func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
-	if path == "" {
-		http.Error(w, "missing ?path=", http.StatusBadRequest)
-		return
-	}
-	cand, err := s.inbox.Load(path)
-	if err != nil {
-		s.fail(w, r, http.StatusBadRequest, "load candidate", err)
-		return
-	}
-	last, err := s.outbox.LoadLastSigned()
-	if err != nil {
-		s.fail(w, r, http.StatusInternalServerError, "load last-signed", err)
-		return
-	}
-	res, err := diff.Compute(last, cand.Bytes)
-	if err != nil {
-		s.fail(w, r, http.StatusBadRequest, "compute diff", err)
-		return
-	}
-	if appendErr := s.audit.Append(audit.Event{
-		Kind:       audit.KindViewDiff,
-		EthAddress: s.signer.Address().String(),
-		Note:       cand.Path,
-	}); appendErr != nil {
-		s.logger.Warn("audit append failed", "err", appendErr)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(res)
+func (s *Server) handleCandidate(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "candidate upload is stubbed; lands in the next commit", http.StatusNotImplemented)
 }
 
 func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
-	// Sign happens here in commit 5 once the confirm gesture lands.
-	// This stub returns 501 so any premature client integration fails
-	// loud rather than silent.
 	if appendErr := s.audit.Append(audit.Event{
 		Kind:       audit.KindAbort,
 		EthAddress: s.signer.Address().String(),
-		Note:       "POST /sign called before commit 5 wiring",
+		Note:       "POST /sign called before web UI ships",
 	}); appendErr != nil {
 		s.logger.Warn("audit append failed", "err", appendErr)
 	}
-	http.Error(w, "sign endpoint is stubbed; lands in commit 5", http.StatusNotImplemented)
-}
-
-func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]any{
-		"audit_log_path": s.audit.Path(),
-		"note":           "tail the file directly; web reader lands in commit 5",
-	})
+	http.Error(w, "sign endpoint is stubbed; lands in the next commit", http.StatusNotImplemented)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok\n"))
-}
-
-func (s *Server) fail(w http.ResponseWriter, r *http.Request, code int, what string, err error) {
-	s.logger.Warn("handler failed", "what", what, "method", r.Method, "path", r.URL.Path, "err", err)
-	http.Error(w, fmt.Sprintf("%s: %s", what, err), code)
 }
 
 // CanonicalSHA256 is exposed so cmd/secure-orch-console can hash
@@ -211,9 +153,6 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, code int, what str
 // package directly.
 func CanonicalSHA256(b []byte) string { return canonical.SHA256Hex(b) }
 
-// assertLoopback is a defense-in-depth check after net.Listen returns:
-// even if config.ValidateLoopbackAddr accepted the input, confirm the
-// kernel-reported bound address is loopback.
 func assertLoopback(addr net.Addr) error {
 	tcp, ok := addr.(*net.TCPAddr)
 	if !ok {

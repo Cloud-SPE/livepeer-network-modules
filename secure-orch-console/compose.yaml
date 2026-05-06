@@ -7,8 +7,7 @@
 # interface).
 #
 # Run with `make run` once you've populated ./run/keystore.json and
-# ./run/password. The web UI (commit 5) extends this stack; the air-gap
-# polish (commit 7) adds USB-mount monitoring.
+# ./run/password.
 
 services:
   secure-orch-console:
@@ -20,8 +19,6 @@ services:
     command:
       - --keystore=v3:/srv/keystore.json
       - --keystore-password-file=/srv/password
-      - --inbox=/srv/inbox
-      - --outbox=/srv/outbox
       - --last-signed=/srv/lib/last-signed.json
       - --audit-log=/srv/log/audit.log.jsonl
       - --listen=127.0.0.1:8080

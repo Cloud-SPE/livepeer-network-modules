@@ -1,30 +1,26 @@
 // Package audit holds the rolling JSONL audit log. Every console
-// gesture (load_candidate, view_diff, sign, write_outbox, abort)
-// emits one record. Storage shape mirrors the prior reference impl's
-// audit/ package; the file is append-only, with size-based rotation
-// landing in commit 7.
+// gesture emits one record. Storage shape mirrors the prior reference
+// impl's audit/ package; the file is append-only.
 package audit
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 )
 
-// Kind enumerates the audit-event categories. Keep this list small and
-// stable; new kinds bump no version, but breaking renames do.
+// Kind enumerates the audit-event categories.
 type Kind string
 
 const (
 	KindLoadCandidate Kind = "load_candidate"
 	KindViewDiff      Kind = "view_diff"
 	KindSign          Kind = "sign"
-	KindWriteOutbox   Kind = "write_outbox"
+	KindWriteSigned   Kind = "write_signed"
 	KindAbort         Kind = "abort"
 	KindBoot          Kind = "boot"
 	KindShutdown      Kind = "shutdown"
@@ -49,7 +45,7 @@ var ErrLogClosed = errors.New("audit: log closed")
 // serialized with a mutex; only one writer per file.
 type Log struct {
 	mu     sync.Mutex
-	w      io.WriteCloser
+	w      *os.File
 	path   string
 	closed bool
 }
@@ -88,10 +84,8 @@ func (l *Log) Append(e Event) error {
 	if _, err := l.w.Write(b); err != nil {
 		return fmt.Errorf("audit: write: %w", err)
 	}
-	if f, ok := l.w.(*os.File); ok {
-		if err := f.Sync(); err != nil {
-			return fmt.Errorf("audit: sync: %w", err)
-		}
+	if err := l.w.Sync(); err != nil {
+		return fmt.Errorf("audit: sync: %w", err)
 	}
 	return nil
 }

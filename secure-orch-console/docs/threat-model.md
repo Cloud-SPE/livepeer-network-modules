@@ -21,9 +21,10 @@ Component-local, abbreviated. The full discussion lives in plan 0019
    renderer surfaces extra capabilities, silent `price` /
    `worker_url` changes, eth_address swaps. Auto-sign is forbidden.
 5. **Cold-key compromise.** Game over for this orch's identity until
-   rotation. Defense in depth: V3 keystore (password-protected) or
-   YubiHSM 2 (key never leaves the secure element). Rotation flow in
-   plan 0019 §10.
+   rotation. Defense in depth: V3 keystore (password-protected,
+   eager-decrypt + zero on shutdown). Hardware-backed signers are
+   deferred to a future plan (plan 0019 §13 Q1 + §14). Rotation flow
+   in plan 0019 §10.
 6. **Operator coercion / regulatory action.** Out of architectural
    scope; physical control of the operator effectively *is* the orch.
 
@@ -33,6 +34,6 @@ Component-local, abbreviated. The full discussion lives in plan 0019
   bound address.
 - The `Signer` interface is the only path that emits a signature.
 - Every console gesture (load_candidate, view_diff, sign,
-  write_outbox, abort) emits a JSONL audit entry.
+  write_signed, abort) emits a JSONL audit entry.
 - `last-signed.json` is updated atomically (`rename(2)`) only after
-  the outbox file is fully written.
+  the signed envelope is fully written.

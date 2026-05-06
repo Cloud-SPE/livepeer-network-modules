@@ -25,8 +25,9 @@ Cite: plan 0019 §6.1.1 + §13 Q6 + core-belief #4.
 
 Inherited from the repo root, plus:
 
-- **The cold key never crosses a host boundary.** Local file (V3
-  keystore) or local USB device (YubiHSM 2). Never network-attached.
+- **The cold key never crosses a host boundary.** v0.1 holds it as a
+  V3 JSON keystore on the secure-orch host. Hardware-backed signers
+  are out of scope for v0.1 (plan 0019 §13 Q1 + §14).
 - **No auto-sign.** The operator-confirm gesture is not skippable.
   Resolver-side replay protection makes a fresh sign cheap; that is
   not a license to skip the diff review.
@@ -44,7 +45,6 @@ Inherited from the repo root, plus:
 | What is this component? | [`README.md`](./README.md) |
 | Architectural overview | [`DESIGN.md`](./DESIGN.md) |
 | Operator-grade runbook (boot, sign, recover, rotation) | [`docs/operator-runbook.md`](./docs/operator-runbook.md) |
-| YubiHSM 2 setup walkthrough (commit 6) | [`docs/hsm-setup-yubihsm.md`](./docs/hsm-setup-yubihsm.md) |
 | Threat model | [`docs/threat-model.md`](./docs/threat-model.md) |
 | Build / run / test gestures | [`Makefile`](./Makefile) |
 
@@ -56,15 +56,19 @@ cmd/
   secure-orch-keygen/       — cold-key generation helper
 internal/
   canonical/                — JCS-equivalent canonical bytes
-  signing/                  — Signer iface + V3 keystore (+ YubiHSM in commit 6)
+  signing/                  — Signer iface + V3 keystore
   diff/                     — candidate-vs-last-signed structural diff
-  audit/                    — rolling JSONL audit log
-  inbox/                    — spool-dir watcher
-  outbox/                   — signed-manifest writer
-  config/                   — operator config (keystore path, drop dirs, etc.)
-web/                        — Go HTTP server source + embedded HTML/CSS/JS
+  audit/                    — rolling JSONL audit log with size-based rotation
+  config/                   — operator config (keystore path, last-signed path, listen, audit log)
+web/                        — Go HTTP server + embedded HTML/CSS templates
+                              (handles candidate upload, diff render, sign confirm)
 testdata/                   — canonical-bytes fixtures
 ```
+
+Manifest transport is HTTP-only via the web UI; there is no inbox or
+outbox spool dir. Operators upload candidates as a multipart form;
+the signed envelope is returned as a download attachment and
+mirrored atomically to `last-signed.json`.
 
 The verifier lives in
 [`../livepeer-network-protocol/verify/`](../livepeer-network-protocol/verify/)
@@ -77,8 +81,10 @@ because resolvers, coordinators, and gateways all need it.
 - Anything that calls `net.Listen` / `http.Server.Addr` /
   `ListenAndServe` MUST bind `127.0.0.1` or `localhost`. Never
   `:<port>` or `0.0.0.0:<port>`.
-- `Signer` is the boundary between V3-keystore and YubiHSM 2 PKCS#11.
-  Don't leak provider-specific types past it.
+- `Signer` is the abstraction in front of the cold-key holder. v0.1
+  wires V3 keystore only; the interface is small and abstract enough
+  that a hardware-backed signer can land later without changing call
+  sites.
 - Static web assets live under `web/` and are embedded via `embed.FS`.
   No frontend build step in the monorepo.
 

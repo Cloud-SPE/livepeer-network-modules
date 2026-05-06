@@ -49,9 +49,19 @@ The initial six are:
    - Implementers never install Go locally; they pull the image and run `make` or
      `docker run`. Networking modes for the implementation under test: `host.docker.internal`
      (host process) or shared docker network (container).
-4. **Reference implementation language.** Go for the broker side; Go or TS for the
-   gateway side? Both? Pick to match where the first production implementations will
-   live.
+4. ~~**Reference implementation language.**~~ **Resolved 2026-05-06**: split per side.
+   - **Broker reference: Go.** Image `tztcloud/livepeer-capability-broker:<tag>` +
+     Go module under `capability-broker/`. Justified by streaming/RTMP ecosystem
+     fit, conformance-runner co-location, and continuity with the existing suite's
+     worker pattern.
+   - **Gateway middleware reference: TypeScript.** npm package
+     `@tztcloud/livepeer-gateway-middleware` under `gateway-adapters/`. Justified by
+     the first adopter (OpenAI-compatible gateway) being TS and Fastify-shaped.
+   - Asymmetric distribution is correct: broker is a service (ships as image);
+     middleware is library code embedded in a gateway service (ships as npm). Core
+     belief #15 applies to services, not libraries.
+   - Second-language reference impls (Rust broker, Python gateway adapter, etc.)
+     welcome later as community contributions; not v1 critical path.
 5. **Headers + payment envelope.** The conversation specified
    `Livepeer-Capability`, `Livepeer-Offering`, `Livepeer-Payment`, plus
    `Livepeer-Backoff` for the 503 path. Need a `headers/livepeer-headers.md` spec
@@ -64,7 +74,8 @@ Decisions:
 - [x] SemVer policy → hybrid (spec-wide SemVer + per-mode SemVer).
 - [x] Conformance test framework → fixtures + Go runner shipped as Docker image
   (`tztcloud/lnp-conformance`).
-- [ ] Reference implementation language(s).
+- [x] Reference implementation languages → Go for broker (`capability-broker/`),
+  TypeScript for gateway middleware (`gateway-adapters/`).
 
 Artifacts:
 - [ ] `headers/livepeer-headers.md` spec written.

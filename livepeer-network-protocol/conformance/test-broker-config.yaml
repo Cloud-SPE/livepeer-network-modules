@@ -1,0 +1,37 @@
+# Broker host-config used by the conformance compose stack.
+#
+# Each entry must satisfy a fixture under fixtures/<mode>/. Backend URLs point
+# at the runner container's in-process mock backend (`runner:9000`); the
+# runner programs the mock per-fixture before sending each test request.
+#
+# Add an entry here when you add a fixture that exercises a new
+# (capability_id, offering_id) pair.
+
+identity:
+  orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
+  label: "conformance-broker"
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+payment_daemon:
+  mock: true
+
+capabilities:
+  # ---- fixtures/http-reqresp/happy-path.yaml ----
+  - id: "test:happy-path:v1"
+    offering_id: "default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "barks"
+      extractor:
+        type: "response-jsonpath"
+        path: "$.units"
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://runner:9000/handler"
+      auth: "none"

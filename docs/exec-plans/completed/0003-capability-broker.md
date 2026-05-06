@@ -1,8 +1,9 @@
 # Plan 0003 — Capability broker reference implementation (Go, http-reqresp first)
 
-**Status:** active
+**Status:** completed (2026-05-06)
 **Opened:** 2026-05-06
-**Owner:** TBD
+**Closed:** 2026-05-06
+**Owner:** initial author + assistant
 
 ## Goal
 

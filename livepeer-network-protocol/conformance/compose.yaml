@@ -1,48 +1,48 @@
-# Self-test stack for the conformance runner.
-# Run with: make test-compose
+# Conformance test stack: runner + capability-broker.
+# Runs with: make test-compose
 #
-# This compose file documents the three-service shape the runner expects:
+# Topology:
+#   runner — tztcloud/livepeer-conformance image. Runs the test binary and
+#            an in-process mock backend on :9000 (reachable inside the
+#            compose network as `runner:9000`). Drives the broker via HTTP.
+#   broker — tztcloud/livepeer-capability-broker image. Mounts
+#            test-broker-config.yaml; capability backends point at
+#            `http://runner:9000/...` so the runner controls the response
+#            per-fixture.
 #
-#   1. mock-backend         — HTTP / WebSocket / RTMP server the implementation
-#                             under test dispatches to. Lets the runner assert
-#                             side-effects (e.g., did the broker forward to the
-#                             backend with the right body and auth headers?).
-#   2. broker-under-test    — the implementation under test (broker or gateway).
-#                             For v0.1 this slot is COMMENTED OUT — the broker
-#                             reference impl (capability-broker/) is plan 0003
-#                             work. Until it ships, test-compose does not pass.
-#   3. runner               — the conformance image; runs against the impl,
-#                             asserts fixtures pass.
+# Build prerequisite: both images must exist locally. Run from the repo root:
+#
+#   make -C livepeer-network-protocol/conformance build         # runner image
+#   make -C capability-broker build                             # broker image
+#
+# Or use the Makefile's `test-compose` target which builds both first.
 
 services:
-  mock-backend:
-    image: traefik/whoami:latest  # placeholder; replace with a richer mock when needed
+  broker:
+    image: tztcloud/livepeer-capability-broker:dev
     networks:
       - conformance
+    volumes:
+      - ./test-broker-config.yaml:/etc/livepeer/host-config.yaml:ro
     expose:
-      - "80"
-
-  # TODO: uncomment once tztcloud/livepeer-capability-broker:dev exists
-  #       (tracked in plan 0003).
-  # broker-under-test:
-  #   image: tztcloud/livepeer-capability-broker:dev
-  #   networks: [conformance]
-  #   environment:
-  #     BACKEND_URL: http://mock-backend
-  #     # Other broker config goes here (host-config.yaml mount, payment-daemon
-  #     # socket, etc.). See capability-broker/docs/ when it ships.
-  #   expose: ["8080"]
+      - "8080"
+      - "9090"
+    command:
+      - --config=/etc/livepeer/host-config.yaml
+      - --listen=:8080
+      - --metrics=:9090
 
   runner:
     image: tztcloud/livepeer-conformance:dev
     depends_on:
-      - mock-backend
+      - broker
     networks:
       - conformance
     command:
       - --target=broker
-      - --url=http://broker-under-test:8080
-      - --modes=http-reqresp
+      - --url=http://broker:8080
+      - --mock-addr=:9000
+      - --fixtures=/fixtures
 
 networks:
   conformance:

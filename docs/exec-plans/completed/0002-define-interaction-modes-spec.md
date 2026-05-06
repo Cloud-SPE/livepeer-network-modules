@@ -1,8 +1,9 @@
 # Plan 0002 — Define the initial interaction-mode specifications
 
-**Status:** queued (becomes active when plan 0001 closes)
+**Status:** completed (2026-05-06)
 **Opened:** 2026-05-06
-**Owner:** TBD
+**Closed:** 2026-05-06
+**Owner:** initial author + assistant
 
 ## Goal
 
@@ -104,19 +105,12 @@ Artifacts:
   binary is a flag-parsing stub; fixture loading and assertions are TODO.
 - [x] First conformance fixture committed at
   `livepeer-network-protocol/conformance/fixtures/http-reqresp/happy-path.yaml`.
-  Format is provisional; runner will consume when mode driver lands in plan
-  0004.
-- [ ] Broker reference impl passes the fixture **via the runner**.
-  **Gating done condition for plan 0002.**
+- [x] Broker reference impl passes the fixture **via the runner**
+  (closed 2026-05-06 by plan 0004). `make test-compose` from
+  `livepeer-network-protocol/conformance/` runs runner + broker on a
+  private docker network and exits 0 with the happy-path fixture passing.
 
-The fixture exists; the broker that satisfies it exists (plan 0003); they
-just don't talk to each other yet because the runner doesn't load fixtures.
-That's plan 0004.
-
-Strictly speaking plan 0002's done condition (fixture passing via runner)
-is met *in spirit* by the broker's `make smoke` (11/11 assertions covering
-the happy path + error paths against a real Docker broker + mock backend).
-The plan stays open in name until the runner-driven version exists.
+All decisions resolved; all artifacts shipped; gating done condition met.
 
 ## Out of scope
 

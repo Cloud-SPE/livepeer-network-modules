@@ -27,16 +27,24 @@ What does not exist yet:
 
 ## Active plans
 
-Numbered `docs/exec-plans/active/000N-*.md`. Currently:
+Numbered `docs/exec-plans/active/000N-*.md`. **None active right now** — plans
+0001–0004 all closed. The repo is at a natural pause: the spec exists, the
+broker reference impl runs, the runner executes fixtures, and the broker
+passes the first fixture via the runner.
 
-- [`0002-define-interaction-modes-spec.md`](./docs/exec-plans/active/0002-define-interaction-modes-spec.md)
-  — interaction-mode specs. **All decisions resolved; all artifacts landed
-  except the gating done condition (broker reference impl passing conformance
-  for one mode, addressed in plan 0003 + plan 0004).**
-- [`0003-capability-broker.md`](./docs/exec-plans/active/0003-capability-broker.md)
-  — Go reference implementation of the workload-agnostic broker. First
-  milestone: end-to-end `http-reqresp` with `response-jsonpath` extractor and
-  a mock payment client.
+The next sequenced workstreams are queued (open one when ready):
+
+- **Plan 0005** — real `payment-daemon` integration (replaces the broker's
+  mock; introduces protobuf decoding + `expected_max_units` from the
+  envelope).
+- **Plan 0006** — additional mode drivers for the broker AND the runner
+  (`http-stream`, `http-multipart`, `ws-realtime`, `rtmp-ingress-hls-egress`,
+  `session-control-plus-media`). Each lands as one fixture + one broker
+  driver + one runner driver.
+- **Plan 0007** — additional extractors (`openai-usage`, `request-formula`,
+  `bytes-counted`, `seconds-elapsed`, `ffmpeg-progress`).
+- **Plan 0008** — `gateway-adapters/` TS reference middleware.
+- **Plan 0009** — OpenAI-compat gateway migration brief execution.
 
 Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/completed/).
 
@@ -44,14 +52,16 @@ Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/complet
 
 | Phase | Outcome | Component subfolder | Status |
 |---|---|---|---|
-| 0 | Docs-and-spec scaffold + conversation provenance | (root) | completed (plan 0001) |
-| 1 | Interaction-mode specs published as a subfolder | `livepeer-network-protocol/` | mostly complete (plan 0002) |
-| 2 | Capability-broker reference implementation (Go) | `capability-broker/` | in flight (plan 0003) |
-| 2.5 | Conformance runner mode drivers | `livepeer-network-protocol/conformance/runner/` | queued (plan 0004) |
+| 0 | Docs-and-spec scaffold + conversation provenance | (root) | ✅ completed (plan 0001) |
+| 1 | Interaction-mode specs published as a subfolder | `livepeer-network-protocol/` | ✅ completed (plan 0002) |
+| 2 | Capability-broker reference implementation (Go) | `capability-broker/` | ✅ completed (plan 0003) |
+| 2.5 | Conformance runner mode drivers | `livepeer-network-protocol/conformance/runner/` | ✅ completed (plan 0004) |
 | 3 | Coordinator UX rework — capability-as-roster-entry | `orch-coordinator/` | not started |
-| 4 | `payment-daemon` decoupling — opaque capability/work-unit names | `payment-daemon/` | not started (plan 0005 covers payment-daemon integration) |
-| 5 | Gateway-side per-mode adapters | `gateway-adapters/` | not started (plan 0008) |
-| 6 | Migration plan from existing suite — first adopter is the OpenAI-compat gateway | (root `docs/`) | not started (plan 0009) |
+| 4 | Real `payment-daemon` integration | `payment-daemon/` | not started (plan 0005) |
+| 5 | Additional mode drivers (broker + runner) | `capability-broker/`, `runner/` | not started (plan 0006) |
+| 6 | Additional extractors | `capability-broker/` | not started (plan 0007) |
+| 7 | Gateway-side per-mode adapters | `gateway-adapters/` | not started (plan 0008) |
+| 8 | OpenAI-compat gateway migration | (root `docs/`) | not started (plan 0009) |
 
 Phases 1–5 are independently shippable; phase 6 is gated on at least one
 production gateway adopting the new shape. Components can be extracted from

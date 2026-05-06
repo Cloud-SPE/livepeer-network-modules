@@ -14,9 +14,7 @@ FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /src
 
 # Copy module files first for layer caching.
-COPY runner/go.mod ./
-# go.sum is added when external deps land:
-# COPY runner/go.sum ./
+COPY runner/go.mod runner/go.sum ./
 RUN go mod download
 
 # Copy source and build.

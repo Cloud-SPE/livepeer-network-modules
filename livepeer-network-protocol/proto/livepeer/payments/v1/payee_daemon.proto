@@ -1,0 +1,88 @@
+// Receiver-side gRPC interface for the Livepeer payment-daemon.
+//
+// The broker runs this gRPC client over a unix socket co-located on the
+// orchestrator host. The daemon is the long-lived owner of session state
+// (BoltDB-backed in v0.1) and, in future, of the warm signing key and the
+// chain-integrated redemption pipeline.
+//
+// In v0.1 every RPC is a stub: requests are recorded, no chain calls are
+// made, and any non-empty ticket bytes are accepted.
+
+syntax = "proto3";
+
+package livepeer.payments.v1;
+
+import "livepeer/payments/v1/payment.proto";
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/proto/livepeer/payments/v1;paymentsv1";
+
+// PayeeDaemon is the receiver-side service exposed to the broker.
+service PayeeDaemon {
+  // OpenSession decodes the inbound Livepeer-Payment envelope, verifies
+  // the cross-check fields, and returns a session ID the broker uses for
+  // subsequent debits. v0.1: any non-empty ticket is accepted.
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+
+  // Debit subtracts work units from the session's running balance.
+  // Multiple Debit calls per session are allowed (used by interim-debit
+  // cadence on long-running modes; v0.1 issues exactly one per session).
+  rpc Debit(DebitRequest) returns (DebitResponse);
+
+  // Reconcile records the post-handler actual work units. If actual is
+  // lower than the sum of prior debits, the difference is credited back
+  // (v0.1: bookkeeping only).
+  rpc Reconcile(ReconcileRequest) returns (ReconcileResponse);
+
+  // CloseSession finalizes the session. After this call, no Debit or
+  // Reconcile is accepted for the same session_id.
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+
+  // Health returns "ok" if the daemon is ready to accept sessions.
+  // The broker calls this at startup before binding its paid listener.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message OpenSessionRequest {
+  // The decoded Payment envelope from the inbound Livepeer-Payment header.
+  Payment payment = 1;
+
+  // Capability ID from the Livepeer-Capability header. The daemon
+  // re-checks payment.capability_id == capability_id and rejects on
+  // mismatch (defense-in-depth; the broker also checks).
+  string capability_id = 2;
+
+  // Offering ID from the Livepeer-Offering header. Same defense-in-depth.
+  string offering_id = 3;
+}
+
+message OpenSessionResponse {
+  // Opaque session identifier; passed back on Debit / Reconcile / Close.
+  string session_id = 1;
+}
+
+message DebitRequest {
+  string session_id = 1;
+  uint64 units = 2;
+}
+
+message DebitResponse {}
+
+message ReconcileRequest {
+  string session_id = 1;
+  uint64 actual_units = 2;
+}
+
+message ReconcileResponse {}
+
+message CloseSessionRequest {
+  string session_id = 1;
+}
+
+message CloseSessionResponse {}
+
+message HealthRequest {}
+
+message HealthResponse {
+  // Liveness signal. v0.1 returns the literal string "ok" when ready.
+  string status = 1;
+}

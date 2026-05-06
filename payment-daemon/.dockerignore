@@ -1,0 +1,11 @@
+.git
+.gitignore
+.dockerignore
+docs/
+examples/
+README.md
+DESIGN.md
+AGENTS.md
+CLAUDE.md
+run/
+dist/

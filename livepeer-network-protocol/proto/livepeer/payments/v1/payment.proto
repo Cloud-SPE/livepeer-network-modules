@@ -1,0 +1,45 @@
+// Livepeer-Payment HTTP-header envelope.
+//
+// Every paid request to a Livepeer-Network broker carries a
+// `Livepeer-Payment` header whose value is the base64-encoded protobuf
+// bytes of this `Payment` message.
+//
+// In v0.1 the `ticket` field is opaque: the receiver-side payment-daemon
+// accepts any non-empty value and records it. Real probabilistic-
+// micropayment ticket validation (signatures, redemption, chain integration)
+// is a follow-up workstream.
+
+syntax = "proto3";
+
+package livepeer.payments.v1;
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/proto/livepeer/payments/v1;paymentsv1";
+
+// Payment is the wire envelope for the Livepeer-Payment HTTP header.
+//
+// Encoding: deterministic protobuf-3 wire format, base64-encoded
+// (RFC 4648 §4 — standard, not URL-safe; padding REQUIRED).
+//
+// The broker MUST cross-check `capability_id` and `offering_id` against the
+// inbound `Livepeer-Capability` and `Livepeer-Offering` headers and reject
+// with `payment_envelope_mismatch` (HTTP 401) on disagreement.
+message Payment {
+  // The capability the gateway is paying for.
+  // MUST equal the `Livepeer-Capability` header on the same request.
+  string capability_id = 1;
+
+  // The offering under `capability_id` the gateway selected.
+  // MUST equal the `Livepeer-Offering` header on the same request.
+  string offering_id = 2;
+
+  // Gateway's upper-bound estimate of work units this request will consume.
+  // The broker debits this amount before invoking the backend; the
+  // post-handler reconcile step refunds any difference if the actual unit
+  // count is lower. MUST be > 0.
+  uint64 expected_max_units = 3;
+
+  // Opaque ticket bytes. v0.1: any non-empty value is accepted by the
+  // receiver-side payment-daemon. Future: probabilistic-micropayment
+  // ticket payload (signature, ticket-params binding, etc.).
+  bytes ticket = 4;
+}

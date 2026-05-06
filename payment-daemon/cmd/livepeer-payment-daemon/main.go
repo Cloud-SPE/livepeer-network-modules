@@ -29,6 +29,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/server"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/receiver"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/sender"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
 )
 
 var version = "dev"
@@ -125,9 +126,13 @@ func runReceiver(logger *slog.Logger, socketPath, dbPath, chainRPC string) error
 	if err := ensureParentDir(dbPath); err != nil {
 		return fmt.Errorf("prepare db dir: %w", err)
 	}
-	// v0.2 receiver scaffold returns Unimplemented; plan 0014 C4 wires
-	// the real surface. Intentionally NOT opening the BoltDB store yet.
-	svc := receiver.New(logger.With("component", "receiver"))
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer st.Close()
+
+	svc := receiver.New(st, logger.With("component", "receiver"))
 	srv := server.NewReceiver(svc, socketPath, logger.With("component", "grpc"))
 	return runServer(logger, srv)
 }

@@ -3,9 +3,9 @@
 # secure-orch-console image.
 # Image: tztcloud/livepeer-secure-orch-console:<tag>
 #
-# Build context is the monorepo root. The console module's go.mod is
-# self-contained today; the runtime stage stays distroless-static and
-# binds 127.0.0.1 only.
+# Build context is the monorepo root. The runtime stage stays
+# distroless-static; the binary binds 127.0.0.1 only — confirmed by a
+# unit test on the loopback gate (cmd/secure-orch-console/main_test.go).
 #
 # Per core belief #16, the GO_VERSION ARG is bumped to latest stable
 # on each release.
@@ -23,9 +23,20 @@ RUN cd secure-orch-console && go mod download
 COPY secure-orch-console/ ./secure-orch-console/
 
 ARG VERSION=dev
-# The console binary lands in commit 4 (plan 0019 §12). Until then
-# the builder stage proves the module compiles.
-RUN cd secure-orch-console && go build ./...
+RUN cd secure-orch-console && CGO_ENABLED=0 GOOS=linux \
+    go build \
+        -trimpath \
+        -ldflags="-s -w -X main.version=${VERSION}" \
+        -o /out/secure-orch-console \
+        ./cmd/secure-orch-console \
+    && CGO_ENABLED=0 GOOS=linux \
+    go build \
+        -trimpath \
+        -ldflags="-s -w" \
+        -o /out/secure-orch-keygen \
+        ./cmd/secure-orch-keygen
+
+RUN install -d -m 0700 -o 65532 -g 65532 /out/srv
 
 # ---- Test stage ----
 FROM golang:${GO_VERSION}-alpine AS test
@@ -39,10 +50,12 @@ RUN cd secure-orch-console && go test -race ./...
 # ---- Runtime stage ----
 FROM gcr.io/distroless/static-debian12:nonroot
 
-# The binary entrypoint lands in commit 4. Keep the runtime stage in
-# place so the build target succeeds and the image shape is locked
-# from day one.
-COPY --from=builder /src/secure-orch-console/go.mod /app/
+COPY --from=builder /out/secure-orch-console /usr/local/bin/secure-orch-console
+COPY --from=builder /out/secure-orch-keygen  /usr/local/bin/secure-orch-keygen
+
+# Default mount point for the operator's spool / state / log dirs.
+COPY --from=builder --chown=nonroot:nonroot /out/srv /srv
 
 USER nonroot:nonroot
-ENTRYPOINT ["/bin/sh"]
+ENTRYPOINT ["/usr/local/bin/secure-orch-console"]
+CMD ["--help"]

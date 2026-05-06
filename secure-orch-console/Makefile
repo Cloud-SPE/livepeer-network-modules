@@ -6,7 +6,7 @@ IMAGE   ?= tztcloud/livepeer-secure-orch-console
 TAG     ?= dev
 VERSION := $(shell cat ../livepeer-network-protocol/VERSION 2>/dev/null || echo dev)
 
-.PHONY: build test publish clean help
+.PHONY: build run test smoke publish clean help
 
 build: ## Build dev image locally
 	docker build \
@@ -19,6 +19,28 @@ test: ## Run go test ./... inside the test stage
 	docker build \
 		--target test \
 		-t $(IMAGE):$(TAG)-test \
+		-f Dockerfile \
+		..
+
+run: ## Foreground the binary against ./run/{inbox,outbox,...} (requires a V3 keystore at ./run/keystore.json + ./run/password)
+	mkdir -p run/inbox run/outbox run/lib run/log
+	docker run --rm \
+		-p 127.0.0.1:8080:8080 \
+		-v $(PWD)/run:/srv \
+		$(IMAGE):$(TAG) \
+		secure-orch-console \
+			--keystore=v3:/srv/keystore.json \
+			--keystore-password-file=/srv/password \
+			--inbox=/srv/inbox \
+			--outbox=/srv/outbox \
+			--last-signed=/srv/lib/last-signed.json \
+			--audit-log=/srv/log/audit.log.jsonl \
+			--listen=127.0.0.1:8080
+
+smoke: ## In-container go test (-race, full surface)
+	docker build \
+		--target test \
+		-t $(IMAGE):$(TAG)-smoke \
 		-f Dockerfile \
 		..
 

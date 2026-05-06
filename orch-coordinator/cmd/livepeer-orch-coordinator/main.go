@@ -24,9 +24,12 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/providers/brokerclient"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/candidates"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/published"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/server/adminapi"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/candidate"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/receive"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/scrape"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
 )
@@ -180,8 +183,21 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	go scrapeSvc.Run(ctx)
 	go runBuilder(ctx, builder, cfg.scrapeInterval, logger.With("component", "candidate"))
 
+	publishedStore, err := published.New(filepath.Join(cfg.dataDir, "published"))
+	if err != nil {
+		return fmt.Errorf("published store: %w", err)
+	}
+	auditLog, err := audit.Open(filepath.Join(cfg.dataDir, "audit.db"))
+	if err != nil {
+		return fmt.Errorf("audit log: %w", err)
+	}
+	defer auditLog.Close()
+
+	receiveSvc := receive.New(publishedStore, auditLog, loaded.EthAddress(), candidate.SpecVersion)
+
 	admin := adminapi.New(cfg.listenAddr, logger.With("component", "adminapi"))
 	admin.CandidateRoutes(builder, candStore)
+	admin.UploadRoutes(receiveSvc)
 	if _, err := admin.Listen(); err != nil {
 		return fmt.Errorf("admin listen: %w", err)
 	}

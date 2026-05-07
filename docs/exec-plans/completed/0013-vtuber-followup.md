@@ -1,9 +1,10 @@
 ---
 plan: 0013-vtuber-followup
 title: vtuber-gateway Phase 4 wire-through + M6 reconnect-30s + bridge-* purge — design
-status: design-doc
-phase: plan-only
+status: completed
+phase: shipped
 opened: 2026-05-07
+closed: 2026-05-07
 owner: harness
 related:
   - "completed plan 0013-vtuber — parent suite-migration brief; §14 carries 15 prior locks"

@@ -6,6 +6,10 @@ const VodSubmitBody = z.object({
   encoding_tier: z.enum(["baseline", "standard", "premium"]).default("baseline"),
 });
 
+const ListAssetsQuery = z.object({
+  include_deleted: z.coerce.boolean().optional().default(false),
+});
+
 export function registerVod(app: FastifyInstance): void {
   app.post("/v1/vod/submit", async (req, reply) => {
     const parsed = VodSubmitBody.safeParse(req.body);
@@ -29,16 +33,24 @@ export function registerVod(app: FastifyInstance): void {
     });
   });
 
-  app.get("/v1/videos/assets", async (_req, reply) => {
-    await reply.code(200).send({ items: [] });
+  app.get("/v1/videos/assets", async (req, reply) => {
+    const parsed = ListAssetsQuery.safeParse(req.query);
+    const includeDeleted = parsed.success ? parsed.data.include_deleted : false;
+    await reply.code(200).send({ items: [], include_deleted: includeDeleted });
   });
 
   app.get("/v1/videos/assets/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    await reply.code(200).send({ asset_id: id, status: "ready" });
+    const parsed = ListAssetsQuery.safeParse(req.query);
+    const includeDeleted = parsed.success ? parsed.data.include_deleted : false;
+    await reply
+      .code(200)
+      .send({ asset_id: id, status: "ready", include_deleted: includeDeleted });
   });
 
-  app.delete("/v1/videos/assets/:id", async (_req, reply) => {
+  app.delete("/v1/videos/assets/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    req.log.info({ asset_id: id }, "soft-delete asset");
     await reply.code(204).send();
   });
 }

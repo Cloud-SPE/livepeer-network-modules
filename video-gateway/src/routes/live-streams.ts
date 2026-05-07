@@ -3,12 +3,17 @@ import { z } from "zod";
 
 import type { Config } from "../config.js";
 import { openRtmpSession } from "../livepeer/rtmp-adapter.js";
+import {
+  selectAbrLadder,
+  type CustomerTier,
+} from "../service/abrSelector.js";
 
 const CreateLiveStreamBody = z.object({
   project_id: z.string().min(1),
   recording_enabled: z.boolean().optional(),
   record_to_vod: z.boolean().optional(),
   offering: z.string().optional(),
+  customer_tier: z.enum(["free", "prepaid", "enterprise"]).optional(),
 });
 
 export interface LiveStreamsDeps {
@@ -25,6 +30,12 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
     const streamId = `live_${randomHex16()}`;
     const streamKey = randomHex16();
     const recordToVod = parsed.data.record_to_vod ?? false;
+    const customerTier: CustomerTier = parsed.data.customer_tier ?? "free";
+
+    const ladder = selectAbrLadder({
+      customerTier,
+      policy: deps.cfg.abrPolicy,
+    });
 
     const session = await openRtmpSession({
       cfg: deps.cfg,
@@ -40,6 +51,12 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       stream_key: streamKey,
       hls_playback_url: session.hlsUrl,
       record_to_vod: recordToVod,
+      customer_tier: customerTier,
+      abr_ladder: ladder.map((r) => ({
+        resolution: r.resolution,
+        codec: r.codec,
+        bitrate_kbps: r.bitrateKbps,
+      })),
       expires_at: session.expiresAt,
       request_id: session.requestId,
     });

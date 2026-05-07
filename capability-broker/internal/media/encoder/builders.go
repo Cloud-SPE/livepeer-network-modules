@@ -65,19 +65,48 @@ func buildLadderArgs(h HLSOptions, c Codec, rungs []Rung) []string {
 	return args
 }
 
-// codecQualityArgs returns the per-encoder quality knobs.
+// codecQualityArgs returns the per-encoder quality knobs. Each
+// builder lives in its own helper so individual codec changes don't
+// ripple across the others.
 func codecQualityArgs(c Codec) []string {
 	switch c {
 	case CodecNVENC:
-		return []string{"-preset", "p3", "-tune", "ll", "-rc", "cbr"}
+		return nvencQualityArgs()
 	case CodecQSV:
-		return []string{"-preset", "veryfast", "-look_ahead", "0"}
+		return qsvQualityArgs()
 	case CodecVAAPI:
-		return []string{"-rc_mode", "CBR"}
+		return vaapiQualityArgs()
 	case CodecLibx264:
-		return []string{"-preset", "veryfast", "-tune", "zerolatency"}
+		return libx264QualityArgs()
 	}
 	return nil
+}
+
+// nvencQualityArgs returns the low-latency NVENC tuning the broker
+// uses for live ABR. p3 is FFmpeg's "medium" NVENC speed/quality
+// tradeoff; `ll` is the low-latency tune; CBR matches the
+// `-b:v == -maxrate` shape upstream of this call.
+func nvencQualityArgs() []string {
+	return []string{"-preset", "p3", "-tune", "ll", "-rc", "cbr"}
+}
+
+// qsvQualityArgs returns the QSV tuning. Disabling lookahead drops
+// glass-to-glass latency by ~1s on Skylake-and-newer iGPUs.
+func qsvQualityArgs() []string {
+	return []string{"-preset", "veryfast", "-look_ahead", "0"}
+}
+
+// vaapiQualityArgs returns the VAAPI tuning. Constant-bitrate
+// matches the `-b:v == -maxrate` shape upstream of this call.
+func vaapiQualityArgs() []string {
+	return []string{"-rc_mode", "CBR"}
+}
+
+// libx264QualityArgs returns the libx264 tuning. veryfast +
+// zerolatency keep CPU envelopes within reach of small operator
+// hosts; production deployments should still prefer a GPU profile.
+func libx264QualityArgs() []string {
+	return []string{"-preset", "veryfast", "-tune", "zerolatency"}
 }
 
 // hlsMuxerArgs assembles the per-rung muxer arguments. rungName is

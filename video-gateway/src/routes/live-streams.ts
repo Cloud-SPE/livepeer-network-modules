@@ -2,11 +2,13 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import type { Config } from "../config.js";
+import { openRtmpSession } from "../livepeer/rtmp-adapter.js";
 
 const CreateLiveStreamBody = z.object({
   project_id: z.string().min(1),
   recording_enabled: z.boolean().optional(),
   record_to_vod: z.boolean().optional(),
+  offering: z.string().optional(),
 });
 
 export interface LiveStreamsDeps {
@@ -24,13 +26,22 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
     const streamKey = randomHex16();
     const recordToVod = parsed.data.record_to_vod ?? false;
 
+    const session = await openRtmpSession({
+      cfg: deps.cfg,
+      callerId: parsed.data.project_id,
+      offering: parsed.data.offering ?? "default",
+      streamId,
+    });
+
     await reply.code(201).send({
       stream_id: streamId,
-      rtmp_push_url: `rtmp://${deps.cfg.brokerRtmpHost}/live`,
+      session_id: session.sessionId,
+      rtmp_push_url: `${session.brokerRtmpUrl}/${streamKey}`,
       stream_key: streamKey,
-      hls_playback_url: `${deps.cfg.hlsBaseUrl}/${streamId}/master.m3u8`,
+      hls_playback_url: session.hlsUrl,
       record_to_vod: recordToVod,
-      expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+      expires_at: session.expiresAt,
+      request_id: session.requestId,
     });
   });
 

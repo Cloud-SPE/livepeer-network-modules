@@ -100,6 +100,32 @@ func main() {
 			false,
 			"permit libx264 fallback when --encoder=auto finds no GPU (production deployments should use a GPU)",
 		)
+
+		hlsLegacy = flag.Bool(
+			"hls-legacy",
+			false,
+			"emit HLS v3 + mpegts segments instead of LL-HLS fmp4 (~12-24s glass-to-glass; use only for older Android players)",
+		)
+		hlsPartDuration = flag.Duration(
+			"hls-part-duration",
+			333*time.Millisecond,
+			"LL-HLS #EXT-X-PART duration; ignored when --hls-legacy=true",
+		)
+		hlsSegmentDuration = flag.Duration(
+			"hls-segment-duration",
+			2*time.Second,
+			"FFmpeg -hls_time (LL-HLS default 2s; legacy uses 6s)",
+		)
+		hlsPlaylistWindow = flag.Uint(
+			"hls-playlist-window",
+			4,
+			"FFmpeg -hls_list_size (LL-HLS default 4; legacy uses 5)",
+		)
+		hlsScratchDir = flag.String(
+			"hls-scratch-dir",
+			"/var/lib/livepeer/rtmp-hls",
+			"per-session HLS scratch root (operator should mount a tmpfs)",
+		)
 	)
 	flag.Parse()
 
@@ -165,6 +191,13 @@ func main() {
 			Binary:      *ffmpegBinary,
 			CancelGrace: *ffmpegCancelGrace,
 			Codec:       probe.Selected,
+		},
+		HLS: server.HLSOptions{
+			Legacy:          *hlsLegacy,
+			PartDuration:    *hlsPartDuration,
+			SegmentDuration: *hlsSegmentDuration,
+			PlaylistWindow:  int(*hlsPlaylistWindow),
+			ScratchDir:      *hlsScratchDir,
 		},
 	})
 	if err != nil {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
 )
 
 // SessionRecord is the in-memory state the broker keeps per open session.
@@ -15,23 +17,33 @@ type SessionRecord struct {
 	SessionID string
 	StreamKey string
 
+	// Profile is the resolved encoder profile from the capability's
+	// host-config entry (e.g. "h264-live-1080p-libx264").
+	Profile string
+
+	// CapabilityID + OfferingID label the session for log lines.
+	CapabilityID string
+	OfferingID   string
+
 	ExpiresAt time.Time
 	OpenedAt  time.Time
 
-	// Cancel terminates the active media-plane goroutines for this
-	// session: the FFmpeg subprocess wrapper, the RTMP connection
-	// handler, and the LL-HLS scratch cleanup. nil before the first
-	// successful publish handshake.
+	// Cancel terminates the per-session media goroutines: the
+	// FFmpeg subprocess wrapper, the RTMP connection handler, and
+	// the LL-HLS scratch cleanup. nil before the first successful
+	// publish handshake.
 	Cancel func()
 
-	// Publishing is true after a successful publish handshake. The
-	// expires-at watchdog keys off the false→true transition; the
-	// idle-timeout watchdog activates only once true.
+	// LiveCounter is the running work-unit view the interim-debit
+	// ticker polls. The mode driver populates this when the RTMP
+	// publish handshake completes and the encoder is running.
+	LiveCounter extractors.LiveCounter
+
+	// Publishing is true after a successful publish handshake.
 	Publishing bool
 
 	// LastPacketAt is updated by the RTMP handler on every audio /
-	// video tag. Read by the idle-timeout watchdog. Zero before the
-	// first publish.
+	// video tag. Read by the idle-timeout watchdog.
 	LastPacketAt time.Time
 }
 
@@ -104,6 +116,33 @@ func (s *Store) MarkPublishing(id string, now time.Time) (alreadyPublishing bool
 	rec.Publishing = true
 	rec.LastPacketAt = now
 	return prior, true
+}
+
+// AttachMedia binds the per-session encoder/cancel handles. Called by
+// the listener-side wire-up (server package) after a successful
+// publish handshake. Returns false when the session is unknown.
+func (s *Store) AttachMedia(id string, lc extractors.LiveCounter, cancel func()) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.sessions[id]
+	if !ok {
+		return false
+	}
+	rec.LiveCounter = lc
+	rec.Cancel = cancel
+	return true
+}
+
+// LiveCounter returns the running counter for a session, or nil if
+// none. The dispatch layer reads this to publish the LiveCounter to
+// the interim-debit ticker.
+func (s *Store) LiveCounter(id string) extractors.LiveCounter {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rec, ok := s.sessions[id]; ok {
+		return rec.LiveCounter
+	}
+	return nil
 }
 
 // Touch updates the last-packet timestamp. Called from the RTMP

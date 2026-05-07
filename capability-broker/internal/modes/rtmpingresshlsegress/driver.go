@@ -107,10 +107,13 @@ func (d *Driver) Serve(_ context.Context, p modes.Params) error {
 
 	now := time.Now().UTC()
 	rec := &SessionRecord{
-		SessionID: sessID,
-		StreamKey: streamKey,
-		ExpiresAt: now.Add(d.cfg.ExpiresIn),
-		OpenedAt:  now,
+		SessionID:    sessID,
+		StreamKey:    streamKey,
+		Profile:      p.Capability.Backend.Profile,
+		CapabilityID: p.Capability.ID,
+		OfferingID:   p.Capability.OfferingID,
+		ExpiresAt:    now.Add(d.cfg.ExpiresIn),
+		OpenedAt:     now,
 	}
 	if err := d.store.Add(rec); err != nil {
 		livepeerheader.WriteError(p.Writer, http.StatusInternalServerError, livepeerheader.ErrInternalError,

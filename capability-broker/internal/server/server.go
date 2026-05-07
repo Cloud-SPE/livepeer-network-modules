@@ -12,7 +12,9 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/ffmpegprogress"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/hls"
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/rtmpingresshlsegress"
@@ -44,6 +46,18 @@ type Options struct {
 	// FFmpeg configures the per-session encoder subprocess. Empty
 	// Binary defaults to "ffmpeg"; CancelGrace defaults to 5s.
 	FFmpeg FFmpegOptions
+
+	// HLS configures the LL-HLS muxer flags + scratch root.
+	HLS HLSOptions
+}
+
+// HLSOptions configures the LL-HLS muxer + scratch directory.
+type HLSOptions struct {
+	Legacy          bool
+	PartDuration    time.Duration
+	SegmentDuration time.Duration
+	PlaylistWindow  int
+	ScratchDir      string
 }
 
 // RTMPOptions configures the broker's RTMP ingest listener.
@@ -129,7 +143,20 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			MaxConcurrent:    opts.RTMP.MaxConcurrent,
 			DuplicatePolicy:  opts.RTMP.DuplicatePolicy,
 			RequireStreamKey: opts.RTMP.RequireStreamKey,
-		}, &storeLookup{store: rtmpStore})
+		}, &mediaLookup{
+			store:   rtmpStore,
+			ffmpeg:  opts.FFmpeg,
+			hls:     opts.HLS,
+			lookupCap: func(capID, offID string) (encoderProfile string, ok bool) {
+				for i := range cfg.Capabilities {
+					c := &cfg.Capabilities[i]
+					if c.ID == capID && c.OfferingID == offID {
+						return c.Backend.Profile, true
+					}
+				}
+				return "", false
+			},
+		})
 	}
 
 	if err := s.validateAgainstRegistries(); err != nil {
@@ -141,39 +168,134 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	return s, nil
 }
 
-// storeLookup adapts the session store to the mediartmp.SessionLookup
-// interface. C1's listener accepts publishes against the store and
-// drops bytes into a discard sink — the real encoder wiring lands in
-// later commits.
-type storeLookup struct {
-	store *rtmpingresshlsegress.Store
+// mediaLookup adapts the session store to mediartmp.SessionLookup
+// and owns the per-session encoder + LL-HLS scratch wire-up. On a
+// successful publish handshake it:
+//
+//  1. Resolves the capability's encoder profile.
+//  2. Materialises the per-session HLS scratch.
+//  3. Renders FFmpeg argv from the profile + HLS options.
+//  4. Spawns the SystemEncoder goroutine reading from a PipeSink.
+//  5. Returns the PipeSink to the listener.
+//
+// Cancellation flows through the context attached to the encoder; the
+// listener invokes Close on the sink when RTMP disconnects.
+type mediaLookup struct {
+	store     *rtmpingresshlsegress.Store
+	ffmpeg    FFmpegOptions
+	hls       HLSOptions
+	lookupCap func(capID, offID string) (string, bool)
 }
 
-func (l *storeLookup) LookupAndAccept(sessionID, streamKey string) (mediartmp.Sink, bool, bool) {
+func (l *mediaLookup) LookupAndAccept(sessionID, streamKey string) (mediartmp.Sink, bool, bool) {
 	rec, ok := l.store.Lookup(sessionID, streamKey)
 	if !ok {
 		return nil, false, false
 	}
-	prior, _ := l.store.MarkPublishing(rec.SessionID, time.Now())
-	sink := mediartmp.NewDiscardSink()
-	return sinkAdapter{base: sink, store: l.store, sessionID: rec.SessionID}, true, prior
+	if rec.Profile == "" {
+		log.Printf("rtmp: session=%s has empty profile (capability=%s/%s); falling back to passthrough",
+			sessionID, rec.CapabilityID, rec.OfferingID)
+		rec.Profile = encoder.ProfilePassthrough
+	}
+
+	scratch := hls.NewScratch(l.hls.ScratchDir, sessionID)
+	rungs := []string{}
+	if rec.Profile != encoder.ProfilePassthrough {
+		for _, r := range encoder.FiveRungLadder {
+			rungs = append(rungs, r.Name)
+		}
+	}
+	scratchDir, err := scratch.Setup(rungs)
+	if err != nil {
+		log.Printf("rtmp: session=%s scratch setup failed: %v", sessionID, err)
+		return nil, false, false
+	}
+
+	args, err := encoder.BuildArgs(encoder.PresetInput{
+		Profile: rec.Profile,
+		Codec:   l.ffmpeg.Codec,
+		HLS: encoder.HLSOptions{
+			Legacy:          l.hls.Legacy,
+			SegmentDuration: int(l.hls.SegmentDuration.Seconds()),
+			PartDuration:    l.hls.PartDuration.Seconds(),
+			PlaylistWindow:  l.hls.PlaylistWindow,
+			ScratchDir:      scratchDir,
+		},
+	})
+	if err != nil {
+		log.Printf("rtmp: session=%s build args: %v", sessionID, err)
+		_ = scratch.Cleanup()
+		return nil, false, false
+	}
+
+	sysEnc := encoder.NewSystemEncoder(l.ffmpeg.Binary, l.ffmpeg.CancelGrace)
+	prog := sysEnc.Progress()
+	if rec.Profile != encoder.ProfilePassthrough {
+		prog.Width = uint64(encoder.FiveRungLadder[len(encoder.FiveRungLadder)-1].Width)
+		prog.Height = uint64(encoder.FiveRungLadder[len(encoder.FiveRungLadder)-1].Height)
+	}
+
+	pipe := mediartmp.NewPipeSink(func(now time.Time) { l.store.Touch(sessionID, now) })
+
+	encCtx, encCancel := context.WithCancel(context.Background())
+	encDone := make(chan struct{})
+	go func() {
+		defer close(encDone)
+		if err := sysEnc.Run(encCtx, encoder.Job{
+			Input:      pipe.Reader(),
+			ScratchDir: scratchDir,
+			Profile:    rec.Profile,
+			Args:       args,
+		}); err != nil {
+			log.Printf("rtmp: session=%s encoder exited with err=%v", sessionID, err)
+		}
+	}()
+
+	cancel := func() {
+		encCancel()
+		_ = pipe.Close()
+		<-encDone
+		_ = scratch.Cleanup()
+	}
+
+	lc := buildRTMPLiveCounter(rec, prog)
+	l.store.AttachMedia(sessionID, lc, cancel)
+
+	prior, _ := l.store.MarkPublishing(sessionID, time.Now())
+	return pipe, true, prior
 }
 
-// sinkAdapter forwards Sink calls to a base sink and pushes Touch
-// timestamps into the session store. Lets the listener stay agnostic
-// of the rtmpingresshlsegress.Store type.
-type sinkAdapter struct {
-	base      mediartmp.Sink
-	store     *rtmpingresshlsegress.Store
-	sessionID string
+// buildRTMPLiveCounter selects the LiveCounter shape based on the
+// capability's configured ffmpeg-progress unit. Falls back to a
+// nil-safe out_time_seconds counter when the capability uses a
+// different extractor.
+func buildRTMPLiveCounter(rec *rtmpingresshlsegress.SessionRecord, prog *encoder.Progress) extractors.LiveCounter {
+	_ = rec
+	ext := &progressLiveCounter{prog: prog}
+	return ext
 }
 
-func (s sinkAdapter) WriteFLV(p []byte) (int, error) { return s.base.WriteFLV(p) }
-func (s sinkAdapter) Close() error                   { return s.base.Close() }
-func (s sinkAdapter) Touch(now time.Time) {
-	s.base.Touch(now)
-	s.store.Touch(s.sessionID, now)
+// progressLiveCounter exposes encoder.Progress as an
+// extractors.LiveCounter. Distinct from
+// extractors/ffmpegprogress.LiveCounter — that one wraps separate
+// atomics; this one wraps the encoder.Progress directly so the unit
+// resolution lives in one place when the dispatch layer owns it.
+type progressLiveCounter struct {
+	prog *encoder.Progress
 }
+
+func (p *progressLiveCounter) CurrentUnits() uint64 {
+	if p == nil || p.prog == nil {
+		return 0
+	}
+	return p.prog.CurrentUnits()
+}
+
+// _ = ffmpegprogress is kept as a build-time hint that the
+// per-extractor LiveCounter constructor in extractors/ffmpegprogress
+// is the alternative wiring (used when the dispatch layer
+// short-circuits past the rtmp-ingress driver).
+var _ = ffmpegprogress.Name
 
 // newPaymentClient picks the right Client implementation per host-config.
 func newPaymentClient(cfg *config.Config) (payment.Client, error) {

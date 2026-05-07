@@ -99,61 +99,63 @@ ledger, Stripe). The two layers compose via Fastify pre-handlers.
 
 ## 3. Reference architecture
 
+`customer-portal/` is a **library** each per-product gateway embeds —
+NOT a deployed service (OQ3 lock). Each per-product gateway is a
+standalone business with its own Postgres (FQ1), its own Stripe
+account/credentials (FQ3), its own API-key pepper (OQ3), its own
+customer DB, and its own signup flow. There is no cross-product
+customer linkage; a customer signed up to the openai-gateway has a
+distinct identity at the vtuber-gateway. The shell is a code-reuse
+library + UI-widget library, NOT a shared customer service.
+
 ```
-                    ┌───────────────────────────────────────────────┐
-                    │  per-product gateway component                │
-                    │  (openai-gateway / vtuber-gateway / video-gw) │
-                    │                                               │
-                    │   product-specific routes (chat, sessions,    │
-                    │   live-streams, …)                            │
-                    │           │                                   │
-                    │           │  Fastify pre-handlers             │
-                    │           ▼                                   │
-                    │  ┌──────────────────┐                         │
-                    │  │ customer-portal/ │   ← THIS BRIEF          │
-                    │  │  - apiKeyAuth    │                         │
-                    │  │  - rateLimiter   │                         │
-                    │  │  - wallet        │                         │
-                    │  │  - billing       │                         │
-                    │  │  - portal/admin  │                         │
-                    │  │  - stripe webhk  │                         │
-                    │  │  - drizzle schema│                         │
-                    │  │  - lit SPA libs  │                         │
-                    │  └──────────────────┘                         │
-                    │           │                                   │
-                    │           │  composed with                    │
-                    │           ▼                                   │
-                    │  ┌──────────────────┐                         │
-                    │  │ gateway-adapters │   ← plan 0008 / 0008-fu │
-                    │  │  - mode driver   │                         │
-                    │  │  - Livepeer-*    │                         │
-                    │  │    headers       │                         │
-                    │  └──────────────────┘                         │
-                    │           │                                   │
-                    └───────────┼───────────────────────────────────┘
-                                │
-                                ▼
-                    ┌───────────────────────────────────────────────┐
-                    │  capability-broker  (orch host)               │
-                    └───────────────────────────────────────────────┘
-                                ▲
-                                │
-                    ┌───────────────────────────────────────────────┐
-                    │  payment-daemon (sender, gateway-side)        │
-                    └───────────────────────────────────────────────┘
+       ┌─────────────────────────────────┐  ┌─────────────────────────────────┐  ┌─────────────────────────────────┐
+       │ openai-gateway (deployed)       │  │ vtuber-gateway (deployed)       │  │ video-gateway (deployed)        │
+       │                                 │  │                                 │  │                                 │
+       │  product routes (chat, …)       │  │  product routes (sessions, …)   │  │  product routes (streams, …)    │
+       │            │ Fastify pre-hdlrs  │  │            │ Fastify pre-hdlrs  │  │            │ Fastify pre-hdlrs  │
+       │            ▼                    │  │            ▼                    │  │            ▼                    │
+       │   ┌─────────────────────┐       │  │   ┌─────────────────────┐       │  │   ┌─────────────────────┐       │
+       │   │ customer-portal lib │       │  │   │ customer-portal lib │       │  │   │ customer-portal lib │       │
+       │   │ (embedded library)  │       │  │   │ (embedded library)  │       │  │   │ (embedded library)  │       │
+       │   └─────────────────────┘       │  │   └─────────────────────┘       │  │   └─────────────────────┘       │
+       │            │                    │  │            │                    │  │            │                    │
+       │            ▼                    │  │            ▼                    │  │            ▼                    │
+       │   ┌─────────────────────┐       │  │   ┌─────────────────────┐       │  │   ┌─────────────────────┐       │
+       │   │ gateway-adapters    │       │  │   │ gateway-adapters    │       │  │   │ gateway-adapters    │       │
+       │   └─────────────────────┘       │  │   └─────────────────────┘       │  │   └─────────────────────┘       │
+       │                                 │  │                                 │  │                                 │
+       │  ─── isolated config ───        │  │  ─── isolated config ───        │  │  ─── isolated config ───        │
+       │  PG: own Postgres               │  │  PG: own Postgres               │  │  PG: own Postgres               │
+       │  REDIS: own Redis               │  │  REDIS: own Redis               │  │  REDIS: own Redis               │
+       │  PEPPER: own (OQ3)              │  │  PEPPER: own (OQ3)              │  │  PEPPER: own (OQ3)              │
+       │  STRIPE_*: own creds (FQ3)      │  │  STRIPE_*: own creds (FQ3)      │  │  STRIPE_*: own creds (FQ3)      │
+       └─────────────────────────────────┘  └─────────────────────────────────┘  └─────────────────────────────────┘
+                  │                                       │                                       │
+                  └───────────────┬───────────────────────┴───────────────────────┬───────────────┘
+                                  ▼                                               ▼
+                    ┌───────────────────────────────────────────────┐  ┌──────────────────────────────────┐
+                    │  capability-broker (orch host; shared)        │  │ payment-daemon (per-gateway)     │
+                    └───────────────────────────────────────────────┘  └──────────────────────────────────┘
 ```
 
 Two adjacent foundations (`customer-portal/` and `gateway-adapters/`)
 sit under each per-product gateway. `customer-portal/` owns the
-**customer-side** lifecycle (USD-denominated, Stripe-funded). 
+**customer-side** lifecycle (USD-denominated, Stripe-funded).
 `gateway-adapters/` owns the **wire** lifecycle (wei-denominated,
 chain-funded via `payment-daemon`). Per-product gateways stitch them
-into one Fastify app.
+into one Fastify app — each with its own DB, Redis, pepper, and
+Stripe account/keys; no shared state between gateways.
 
 ## 4. Component layout
 
-`customer-portal/` is a single workspace package with multiple entry
-points so consumers tree-shake unused subsystems.
+`customer-portal/` is a **TypeScript library package** (NOT a deployed
+service — OQ3 lock). It is consumed by per-product gateways as a pnpm
+workspace dependency. `customer-portal/frontend/` is its **own pnpm
+sub-workspace** (OQ1 lock) with its own `package.json`, mirroring the
+suite's `frontend/{portal,admin,shared}` workspace shape. The Node lib
+and the frontend sub-workspace publish independent entry points so
+consumers tree-shake unused subsystems.
 
 ```
 customer-portal/
@@ -341,7 +343,10 @@ consistently.
   workspaces (`livepeer-openai-gateway/package.json`); the rewrite
   retires that in favour of pnpm via a clean-slate copy.
 - Postgres 16+ runtime; same as suite (`compose.yaml:image:
-  postgres:16-alpine`).
+  postgres:16-alpine`). **Each per-product gateway runs its own
+  Postgres deployment + its own Redis deployment** (FQ1 lock).
+  Independent ops, independent backups, independent failure blast
+  radius. The shell never assumes a shared DB or Redis.
 - Stripe SDK pin: same major as suite (`stripe@14`); confirmed
   compatible with Stripe API version `2024-06-20`. No bump as part of
   this migration.
@@ -354,12 +359,20 @@ strictly Node + browser TS.
 
 ## 7. DB schema
 
-`customer-portal/` owns the `app.*` Postgres schema. drizzle migration
-files emit to `customer-portal/migrations/`. Per-product gateways
-declare their own `media.*` (video) / `vtuber.*` (vtuber) /
-`openai.*` (openai usage rollups) namespaces and run **their own**
-migrations against the same database via the shell's `migrate.ts`
-helper.
+The schema lives in **per-product Postgres deployments** (FQ1 lock) —
+each per-product gateway runs its own Postgres, its own migrations,
+and its own customer DB. The shell ships `customer-portal/migrations/`
+as a **starter set** of drizzle-emitted SQL plus a **CLI tool** that
+each per-product gateway invokes at boot to apply shell migrations
+against its own DB.
+
+`customer-portal/` owns the `app.*` Postgres schema namespace inside
+each per-product gateway's database. drizzle migration files emit to
+`customer-portal/migrations/`. Per-product gateways declare their own
+`media.*` (video) / `vtuber.*` (vtuber) / `openai.*` (openai usage
+rollups) namespaces alongside the shell's `app.*` and run **their
+own** product-specific migrations via the shell's `migrate.ts` helper
+on the same per-product database.
 
 | Table | Purpose | Source |
 |---|---|---|
@@ -389,6 +402,12 @@ generate`. Filename convention: `0000_app_init.sql`,
 concurrent boots safe.
 
 ## 8. Customer-facing surfaces
+
+**Customer scope is per-product** (OQ3 lock). A customer signs up at
+each gateway separately; signup at openai-gateway does not create an
+identity at vtuber-gateway. Each row in §8.1 / §8.2 below is a
+per-product surface — every per-product gateway exposes the same
+shape against its own DB / pepper / Stripe account.
 
 ### 8.1 UI flows
 
@@ -447,6 +466,27 @@ customer-side lifecycle only.
 
 ## 9. Cross-component dependencies
 
+Per-product gateways **import `customer-portal/` as an npm dependency**
+(in the monorepo, via pnpm workspace `workspace:*` path-resolution).
+The shell is a LIBRARY, not a deployed service. Each per-product
+gateway:
+
+- Configures its **own Stripe credentials** (FQ3) — `STRIPE_SECRET_KEY`,
+  `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUBLISHABLE_KEY`, product/price IDs;
+  shell never hardcodes them.
+- Owns its **own Postgres connection string** (FQ1) — `DATABASE_URL`.
+- Owns its **own pepper** (OQ3) — `API_KEY_PEPPER` is per-gateway; a
+  key minted at one gateway does not authenticate at another.
+- Wires its **own `RateCardResolver` impl** (OQ2) — the shell ships no
+  default; rate-card semantics vary per product.
+- Uses the **shared frontend widget catalog** (FQ4) — `customer-portal/
+  frontend/shared/` ships signup, login, API-key UI, balance display,
+  Stripe checkout-button wrapper, layout, error states, and form
+  primitives.
+- Adds **product-specific routes + metering** on top — chat completions,
+  session-open, live-stream-start, OAuth flows (vtuber Twitch +
+  YouTube), usage charts, etc.
+
 The shell exposes five **interfaces** that per-product gateways
 consume + occasionally extend:
 
@@ -476,6 +516,28 @@ import { registerChatCompletionsRoute } from './routes/chatCompletions.js';
 ```
 
 ## 10. Configuration surface
+
+Each per-product gateway provides the following config keys to the
+embedded shell library (FQ1 / FQ2 / FQ3 / OQ3 locks):
+
+| Key | Source | Purpose |
+|---|---|---|
+| `DATABASE_URL` | FQ1 | Per-product Postgres connection string. |
+| `REDIS_URL` | FQ1 | Per-product Redis connection string. |
+| `API_KEY_PEPPER` | OQ3 | Per-product pepper (HMAC secret for at-rest API-key hashes). |
+| `API_KEY_ENV_PREFIX` | FQ2 | `live` or `test` — feeds the `sk-{env}-{rand}` prefix; product is implicit in which gateway accepts the key. |
+| `STRIPE_SECRET_KEY` | FQ3 | Per-gateway Stripe secret key. |
+| `STRIPE_PUBLISHABLE_KEY` | FQ3 | Per-gateway Stripe publishable key (plumbed to the frontend Stripe checkout-button widget). |
+| `STRIPE_WEBHOOK_SECRET` | FQ3 | Per-gateway Stripe webhook signing secret. |
+| `STRIPE_PRODUCT_ID` | FQ3 | Stripe Product ID for top-up checkout. |
+| `STRIPE_PRICE_ID` | FQ3 | Stripe Price ID for top-up checkout. |
+| `ADMIN_USERNAME` | — | Operator basic-auth username for the admin SPA gate. |
+| `ADMIN_PASSWORD_HASH` | — | Operator basic-auth password hash for the admin SPA gate. |
+
+A single operator running multiple gateways MAY share one Stripe
+account across them (each gateway is a distinct Stripe Product within
+that account); a third-party operator wires their own Stripe account
+per gateway. The shell never hardcodes Stripe creds.
 
 Shell-owned env vars (Zod-validated at boot via `customer-portal/src/config/env.ts`):
 
@@ -563,6 +625,12 @@ contributes the following **deltas** to consumer runbooks:
    `customers.quota_tokens_remaining` to
    `customers.quota_monthly_allowance` if `quota_reset_at` < now.
    Shell ships the SQL; operator schedules the cron.
+7. **Multi-gateway DB topology (FQ1).** Operators running multiple
+   per-product gateways provision either separate Postgres instances
+   per gateway OR (operator's call) one Postgres host with separate
+   roles + databases per gateway. The shell does not enforce a
+   topology beyond "isolated per gateway" — schemas, migrations,
+   peppers, and customer scopes never cross gateway boundaries.
 
 ## 13. Migration sequence
 
@@ -701,34 +769,106 @@ Multi-tenant operator views / RBAC are `secure-orch-console/`
 territory (plan 0019). Shell ships only basic-auth; one operator
 identity per deployment.
 
-### Open questions surfaced for the user walk
+### OQ1. Frontend packaging
 
-- **OQ1.** Should `customer-portal/src/frontend/` ship as a separate
-  workspace package (sibling to the Node lib) so the SPA bundle
-  resolution is cleaner? The suite uses a sibling
-  `frontend/{portal,admin,shared}` workspace under
-  `livepeer-openai-gateway/`. Recommendation: same shape — one
-  pnpm sub-workspace under `customer-portal/frontend/` with its own
-  `package.json`. **Surface for user lock.**
-- **OQ2.** Should the shell ship a default `RateCardResolver` impl
-  that reads from a YAML file (no DB), so very-small operators can
-  skip Postgres rate-card tables? Suite does not. Recommendation: no;
-  per-product gateway always wires its own. **Surface for user lock.**
-- **OQ3.** API-key pepper: shell-only or per-product? If a customer
-  is shared across products, a single pepper is required. If each
-  product has its own customer set, each product can have its own
-  pepper. Recommendation: shared pepper (one customer scope across
-  products); document per-product customer scoping as a future flag.
-  **Surface for user lock.**
-- **OQ4.** Frontend bundling: tsc + bundler (Vite) at consumer side,
-  or pre-bundled rollup output ships with the shell? Suite pre-bundles
-  via the shell's Dockerfile build stage. Recommendation: ship .ts
-  sources + a `shared/dist/` pre-bundled artifact for the frontend
-  shared library; per-product Vite bundles its own portal/admin SPA
-  with the shared dist as an ESM dep. **Surface for user lock.**
+**DECIDED: pnpm sub-workspace at `customer-portal/frontend/`** with
+its own `package.json`, mirroring the suite's
+`frontend/{portal,admin,shared}` workspace shape under
+`livepeer-openai-gateway/`. Clean SPA bundle resolution + standard
+pnpm pattern.
+
+### OQ2. Default `RateCardResolver` in the shell
+
+**DECIDED: no.** Per-product gateway always wires its own. Rate-card
+logic varies per product (OpenAI rate-card-by-model is different from
+vtuber session-seconds); the shell stays focused on auth + ledger +
+billing primitives. The shell exposes the `RateCardResolver`
+interface only.
+
+### OQ3. API-key pepper scope
+
+**DECIDED: per-product.** Each gateway is a separate business with
+its own pepper, customer DB, Stripe account, API-key namespace, and
+signup flow. No cross-product customer linkage; a customer signed up
+to openai-gateway has a separate identity at vtuber-gateway. The
+"shared shell" is a code-reuse library + UI-widget library, NOT a
+shared customer service. This reframe ripples through §3 (per-gateway
+isolation), §6 (per-product DB + Redis), §7 (schema lives in
+per-product Postgres), §9 (shell is a LIBRARY each per-product
+gateway embeds, not a deployed service), and §10 (each gateway takes
+Stripe creds + pepper + DB connection string as config).
+
+### OQ4. Frontend bundling
+
+**DECIDED: mixed.** Ship `.ts` sources + a `shared/dist/`
+pre-bundled artifact for the shared frontend library; per-product
+Vite bundles its own portal+admin SPA with the shared dist as an ESM
+dep. Best of both — consumers get a built shared lib (no rebuild
+needed for common pieces), but each product can override styling /
+add product-specific routes via its own Vite config.
+
+### FQ1. DB topology
+
+**DECIDED: own Postgres per gateway.** Each per-product gateway runs
+its own Postgres deployment + its own migrations. Independent ops,
+independent backups, independent failure blast radius. Schema
+namespace stays `app.*` per gateway (Q6 lock).
+
+### FQ2. API-key prefix convention
+
+**DECIDED: suite shape — `sk-{env}-{rand}`** (env = `live` / `test`).
+Product is implicit in which gateway accepts the key (each gateway
+has its own pepper; key minted by one gateway won't authenticate at
+another). No product slug in the prefix string — adding one is
+cosmetic noise.
+
+### FQ3. Stripe account topology
+
+**DECIDED: each gateway takes Stripe credentials as config; not
+hardcoded.** A single operator running multiple gateways may use one
+Stripe account across them (each gateway becomes a distinct Stripe
+Product within the same account); a third-party operator can wire
+their own Stripe account per gateway. The shell never hardcodes
+Stripe creds — `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` +
+product/price IDs are all gateway-side config.
+
+### FQ4. Shared frontend widget catalog
+
+**DECIDED:** the `customer-portal/frontend/shared/` workspace ships:
+
+- Signup form + login form
+- API-key issuance UI (mint / revoke / list)
+- Balance/credits display
+- Stripe checkout-button wrapper (operator-side
+  `STRIPE_PUBLISHABLE_KEY` plumbed in)
+- Common layout (header / footer / nav) with re-skinnable design
+  tokens (CSS custom-properties)
+- Common error states + toast components
+- Common form primitives (input / button / card / modal)
+
+Per-product portals add their own routes on top — account dashboard
+customizations, usage charts, OAuth flows (vtuber's Twitch +
+YouTube), product-specific features.
+
+### FQ5. Cross-product customer SSO / federation
+
+**DECIDED: explicitly out of v0.1, NOT future-flagged.** Each gateway
+is a standalone business. If federation demand surfaces later, a
+separate `cloudspe-saas-portal/` (or similarly-named) component lands
+ABOVE the per-product gateways and does identity federation. The
+shell + per-product gateways do NOT design for it now.
 
 ## 15. Out of scope (forwarding addresses)
 
+- **Cross-product customer SSO / federation** — out of v0.1, NOT
+  future-flagged (FQ5 lock). Each gateway is a standalone business; if
+  federation demand surfaces later, a separate `cloudspe-saas-portal/`
+  (or similarly-named) component lands ABOVE the per-product gateways.
+- **Cross-product analytics / unified customer dashboard** — out of
+  v0.1. Each gateway's admin SPA covers only its own customer scope.
+- **Multi-tenant operator console (one console managing N gateway
+  products)** — out. Each per-product gateway has its own admin SPA
+  behind its own basic-auth gate.
 - **Per-product workload routing, payment minting, mode dispatch** —
   forwarded to `gateway-adapters/` (plans 0008, 0008-followup) and
   per-product briefs (`0013-openai`, `0013-vtuber`, `0013-video`).

@@ -228,6 +228,7 @@ openai-gateway/
   test/
     integration/                     ← Postgres + Redis-backed, no live workers
     smoke/                           ← compose-stack smoke
+    mock-runner/                     ← FastAPI shim Docker image; canned vLLM-shaped chat / embeddings / transcriptions / speech / images responses for offline `make smoke`
 ```
 
 `gateway-adapters/` and `customer-portal/` enter via `package.json`
@@ -305,6 +306,12 @@ adjustments). Done as part of the port, not a separate plan.
 
 The suite uses npm workspaces; the rewrite uses pnpm. Lockfile is
 fresh; no `package-lock.json` retained.
+
+`test/mock-runner/` (per §14 OQ1 lock) is the lone Python surface in
+`openai-gateway/`'s deployment artefacts: a separate Docker image
+(sibling to the gateway image, tag tracks the gateway's tag) shipping
+a minimal FastAPI shim. Mirrors the conformance runner's
+fixtures+ffmpeg pattern. The gateway runtime itself stays Node-only.
 
 ## 7. DB schema
 
@@ -392,7 +399,12 @@ Per `livepeer-network-protocol/headers/livepeer-headers.md`:
 - `Livepeer-Spec-Version` — `0.1`.
 - `Livepeer-Mode` — `http-reqresp@v0` / `http-stream@v0` /
   `http-multipart@v0`.
-- `Livepeer-Request-Id` — optional uuid.
+- `Livepeer-Request-Id` — uuid; always emitted (per §14 OQ4 lock). The
+  gateway synthesises a fresh `crypto.randomUUID()` (or callerId-derived
+  uuid) per request when the customer doesn't supply one; if the
+  customer supplies a `Livepeer-Request-Id` header, the gateway respects
+  the customer-supplied value verbatim. Helps operator debugging across
+  the broker hop.
 
 The suite's lowercase `livepeer-payment` is renamed to canonical case;
 the other five headers are NEW. Six call sites in `nodeClient/fetch.ts`
@@ -458,15 +470,19 @@ imports `openai-gateway/`. It depends on three foundations
 | `LIVEPEER_PAYER_DEFAULT_FACE_VALUE_WEI` | yes | Default `face_value` for `payerDaemon.createPayment`. Reference uses `1000n` (`openai-gateway/src/livepeer/payment.ts:64`); operator tunes per traffic profile. |
 | `LIVEPEER_SPEC_VERSION` | no (default `0.1`) | Header value emitted in `Livepeer-Spec-Version`. |
 | `BROKER_CALL_TIMEOUT_MS` | no (default `30000`) | Per-broker-URL HTTP timeout. Renamed from suite's `nodeCallTimeoutMs`. |
-| `OPENAI_DEFAULT_OFFERING_PER_CAPABILITY` | no (YAML or JSON) | Optional default offering name per capability; consult per-request rate-card if unset. |
+| `OPENAI_DEFAULT_OFFERING_PER_CAPABILITY` | no | YAML on disk at `/etc/openai-gateway/offerings.yaml` (per §14 OQ2 lock). Operator mounts read-only; capability-id → default offering id mapping. Falls back to per-request rate-card if unset. Schema in `openai-gateway/docs/operator-runbook.md` §"Per-capability default offering". |
 | `OPENAI_AUDIO_SPEECH_ENABLED` | no (default `false`) | When false, route returns 503 + `Livepeer-Error: mode_unsupported`. Flips to `true` once `http-binary-stream@v0` ships. |
 
 ### 10.2 YAML config (optional)
 
-Operator may supply a YAML overlay for default-offering-per-capability:
+Per §14 OQ2 lock: operator supplies a YAML file mounted read-only at
+`/etc/openai-gateway/offerings.yaml`. Operator-friendly (multi-line,
+comments, version-control diffable); env-var JSON was rejected as
+harder to maintain when the offering catalog grows. Sample shape
+(capability-id → default offering id mapping):
 
 ```yaml
-# openai-gateway/config/offerings.example.yaml
+# /etc/openai-gateway/offerings.yaml — operator mount (read-only)
 defaults:
   "openai:/v1/chat/completions":
     streaming: vllm-h100-stream
@@ -481,7 +497,9 @@ defaults:
 
 This is **per-deployment operator config**, not customer-tunable. The
 gateway falls back to the rate-card default if a request omits the
-offering and the YAML has no entry.
+offering and the YAML has no entry. Full schema documented in
+`openai-gateway/docs/operator-runbook.md` §"Per-capability default
+offering".
 
 ### 10.3 Config loader
 
@@ -604,7 +622,11 @@ clean. Diff: ~+200 LOC (compose + scaffolding).
 Port `pricing/`, `repo/rateCard*.ts`, `repo/retailPrice*.ts`. Land
 `migrations/0000_openai_init.sql` + `0001_retail_pricing.sql` +
 `0002_usage_records.sql`. Wire `RateCardResolver` impl; per-route
-handlers consult the resolver for cost-quote.
+handlers consult the resolver for cost-quote. Per §14 OQ3 lock, the
+images rate-card metadata (`app.rate_card_images`) lands here for the
+catalog, but the OpenAI `/v1/images/*` routes and broker dispatch are
+deferred to phase 4 — phase 2 is pricing-only, no new customer
+endpoints lit.
 
 **Acceptance:** rate-card tests green; admin pricing pages render
 against fresh DB. Diff: ~+1,000 LOC ported from suite shell pricing.
@@ -632,6 +654,12 @@ mode. Drop `serviceRegistry`, `quoteCache`, `quoteRefresher`,
 to `{ face_value, recipient, capability, offering }` per
 `payer_daemon.proto:54-71`. Drop `StartSession` + sender-side
 `SessionCache`. Re-gen suite gRPC stubs against rewrite proto.
+
+Per §14 OQ3 lock, `images-generations` (and `images-edits`) ships in
+this phase: `routes/images-generations.ts` + `routes/images-edits.ts`
+land alongside the wire cut, wired through the same `gateway-adapters/`
+send and the rate-card scaffolding seeded in phase 2. Customer-facing
+image-generation lights up in one cut.
 
 Wire compat: byte-for-byte `Payment` envelope round-trip test against
 ≥10 fixtures from rewrite's wire-compat corpus.
@@ -740,27 +768,41 @@ superseded brief §5.7 lock). Choose `npm deprecate` if the registry
 permits; `npm unpublish` only if within the 72h window. Coordination
 concern, not a technical blocker.
 
-### Open questions surfaced for the user walk
+### OQ1. Default `mock-runner` Docker image
 
-- **OQ1.** Should `openai-gateway/` ship a default `mock-runner`
-  Docker image (FastAPI shim returning canned chat/embeddings/
-  transcriptions responses) for offline smokes, or leave smoke
-  agent-set-up? Recommendation: ship `mock-runner` so `make smoke`
-  works without external deps. Suite has nothing equivalent. **Surface
-  for user lock.**
-- **OQ2.** Should `OPENAI_DEFAULT_OFFERING_PER_CAPABILITY` ship as
-  YAML on disk (per §10.2) or as env-var JSON blob? YAML is operator-
-  friendly; env-var-JSON keeps the surface small. Recommendation:
-  YAML. **Surface for user lock.**
-- **OQ3.** `images-generations` first adopter — does it ship in
-  phase 2 (with pricing port) or phase 4 (with the wire cut)? It
-  needs both rate-card tables (phase 2) and `http-reqresp@v0` send
-  (phase 4). Recommendation: phase 4. **Surface for user lock.**
-- **OQ4.** Should the gateway emit `Livepeer-Request-Id` always, or
-  only when the customer supplies one? Suite emits a uuid per
-  request always (callerId derived). Reference omits when absent.
-  Recommendation: always emit (helps operator debugging across the
-  broker hop). **Surface for user lock.**
+**DECIDED: ship `mock-runner` as a sibling Docker image** at
+`openai-gateway/test/mock-runner/`. FastAPI shim returning canned
+vLLM-shaped responses for chat / embeddings / transcriptions / speech
+/ images; lets `make smoke` work without external Ollama / vLLM / GPU
+dependencies. Mirrors how the conformance runner already bakes in
+fixtures + ffmpeg for offline use. Image tag tracks the gateway's tag
+(no separate version axis).
+
+### OQ2. `OPENAI_DEFAULT_OFFERING_PER_CAPABILITY` shape
+
+**DECIDED: YAML on disk** at `/etc/openai-gateway/offerings.yaml`
+(operator mounts read-only). Operator-friendly: multi-line, comments,
+version-control diffable. Env-var JSON is tighter but harder to
+maintain when the offering catalog grows. Schema documented in
+`openai-gateway/docs/operator-runbook.md` §"Per-capability default
+offering". See §10.2 for the sample shape.
+
+### OQ3. `images-generations` adoption phase
+
+**DECIDED: phase 4 (with the wire cut).** Cleaner sequencing — the
+rate-card scaffolding lands in phase 2 generically; images-specific
+routes wire alongside the broker-cut. Phase 2 (pricing port) leaves
+images metadata for the catalog but does NOT add the OpenAI route or
+the broker dispatch; phase 4 ships both together so customer-facing
+image-generation lights up in one cut.
+
+### OQ4. `Livepeer-Request-Id` emission policy
+
+**DECIDED: always emit.** Suite shape — gateway always synthesises a
+UUID per request (callerId-derived, or fresh `crypto.randomUUID()`).
+Helps operator debugging across the broker hop. Customers who want to
+trace can override by supplying their own `Livepeer-Request-Id` header
+(gateway respects the customer-supplied value when present).
 
 ## 15. Out of scope (forwarding addresses)
 

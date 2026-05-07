@@ -33,7 +33,7 @@ export function registerChatCompletions(app: FastifyInstance, cfg: Config): void
 
     try {
       if (isStream) {
-        const result = await httpStream.send({
+        const handle = await httpStream.sendStreaming({
           brokerUrl: cfg.brokerUrl,
           capability,
           offering,
@@ -42,11 +42,14 @@ export function registerChatCompletions(app: FastifyInstance, cfg: Config): void
           contentType: "application/json",
           requestId,
         });
-        await reply
-          .code(result.status)
-          .header("Content-Type", "text/event-stream")
-          .header(HEADER.REQUEST_ID, requestId)
-          .send(result.body);
+        reply.raw.statusCode = handle.status;
+        reply.raw.setHeader("Content-Type", "text/event-stream");
+        reply.raw.setHeader("Cache-Control", "no-cache");
+        reply.raw.setHeader("Connection", "keep-alive");
+        reply.raw.setHeader(HEADER.REQUEST_ID, requestId);
+        reply.hijack();
+        handle.stream.pipe(reply.raw);
+        await handle.done();
         return;
       }
 

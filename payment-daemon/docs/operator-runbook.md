@@ -457,6 +457,16 @@ semantics unchanged from v0.2.
 If you see `DebitBalance call rate exceeds expected cadence` in
 operator dashboards, that's a sustained-retry signal. See §7.
 
+**`rtmp-ingress-hls-egress@v0` work-units.** RTMP sessions emit
+work-units via the FFmpeg progress extractor (see
+`capability-broker/docs/operator-runbook.md` §"GPU encoder hardware"
++ §"RTMP pipeline observability"). The broker's interim-debit ticker
+reads `LiveCounter.CurrentUnits()` from the encoder's progress atomic
+and debits at the same cadence as ws-realtime. Termination triggers
+(no_push_timeout / idle_timeout / insufficient_balance / customer
+CloseSession) are all surfaced through the broker's existing
+`Livepeer-Error` channel.
+
 
 
 | Symptom | Likely cause | What to check |

@@ -1,9 +1,10 @@
 ---
 plan: 0013-video-followup
 title: video-gateway adapter impls + retry policy + payment activation + dual SPAs — design
-status: design-doc
-phase: plan-only
+status: completed
+phase: closed
 opened: 2026-05-07
+closed: 2026-05-07
 owner: harness
 related:
   - "completed plan 0013-video — video-gateway suite-collapse (parent)"

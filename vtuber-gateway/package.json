@@ -1,0 +1,36 @@
+{
+  "name": "@livepeer-rewrite/vtuber-gateway",
+  "version": "0.1.0",
+  "description": "Customer-facing vtuber gateway — per-session payment-daemon flow, control-WS relay, Stripe checkout, portal SPA. Imports customer-portal/ for shared SaaS shell primitives.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "start": "node ./dist/index.js",
+    "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.2.0",
+    "@grpc/grpc-js": "^1.12.2",
+    "@grpc/proto-loader": "^0.7.13",
+    "@livepeer-rewrite/customer-portal": "workspace:*",
+    "drizzle-orm": "^0.36.0",
+    "fastify": "^5.0.0",
+    "pg": "^8.13.0",
+    "stripe": "^14.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.10",
+    "@types/ws": "^8.5.12",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,68 @@
+# End-to-end conformance fixture for the rtmp-ingress-hls-egress@v0 mode
+# (plan 0011-followup §11.1). Pushes a 5s synthetic RTMP stream and
+# fetches the LL-HLS playlist + first segment to verify the full pipeline
+# is live.
+#
+# Uses the `passthrough` profile so the runner image's bundled ffmpeg
+# (no GPU) suffices. Production deployments use the GPU profiles
+# (h264-live-1080p-nvenc / -qsv / -vaapi) which require operator-driven
+# smoke against real hardware.
+
+name: end-to-end
+mode: rtmp-ingress-hls-egress@v0
+spec_version: "0.1"
+description: |
+  Full RTMP push → LL-HLS pull pipeline. Runner sends session-open POST,
+  publishes 5s of synthetic video via ffmpeg, polls the LL-HLS playlist
+  for #EXTM3U + ≥1 segment ref, fetches the first segment.
+
+setup:
+  capability:
+    id: test:end-to-end-rtmp:v1
+    offering_id: default
+    interaction_mode: rtmp-ingress-hls-egress@v0
+    work_unit:
+      name: out_time_seconds
+      extractor:
+        type: ffmpeg-progress
+        unit: out_time_seconds
+    price:
+      amount_wei: "1000000"
+      per_units: 1
+    backend:
+      transport: ffmpeg-subprocess
+      profile: passthrough
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:end-to-end-rtmp:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: rtmp-ingress-hls-egress@v0
+    Content-Type: application/json
+  body: |
+    {"session_params":{"abr_ladder":[],"preset":"passthrough"}}
+
+# Backend response is unused — backend.transport=ffmpeg-subprocess routes
+# the broker through its in-process media pipeline rather than HTTP.
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 202
+  headers_present:
+    - Livepeer-Request-Id
+  body_fields_present:
+    - session_id
+    - stream_key
+    - rtmp_ingest_url
+    - hls_playback_url
+
+rtmp:
+  end_to_end: true
+  push_duration_seconds: 5
+  hls_wait_seconds: 8

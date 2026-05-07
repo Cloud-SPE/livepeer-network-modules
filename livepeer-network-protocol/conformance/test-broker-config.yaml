@@ -146,6 +146,24 @@ capabilities:
       url: "http://broker.example.com/handler"
       auth: "none"
 
+  # ---- fixtures/rtmp-ingress-hls-egress/end-to-end.yaml (plan 0011-followup) ----
+  # Full RTMP push → LL-HLS pull pipeline. backend.transport is
+  # ffmpeg-subprocess, profile is passthrough so CI works without GPU.
+  - id: "test:end-to-end-rtmp:v1"
+    offering_id: "default"
+    interaction_mode: "rtmp-ingress-hls-egress@v0"
+    work_unit:
+      name: "out_time_seconds"
+      extractor:
+        type: "ffmpeg-progress"
+        unit: "out_time_seconds"
+    price:
+      amount_wei: "1000000"
+      per_units: 1
+    backend:
+      transport: "ffmpeg-subprocess"
+      profile: "passthrough"
+
   # ---- fixtures/session-control-plus-media/happy-path.yaml ----
   - id: "test:happy-path-session:v1"
     offering_id: "default"

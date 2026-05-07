@@ -138,6 +138,11 @@ func parseLastSeq(r *http.Request) uint64 {
 // pump, heartbeat ticker, replay-on-reconnect, and graceful close.
 func (d *Driver) runControlWS(parent context.Context, conn *websocket.Conn, rec *SessionRecord, lastSeq uint64) {
 	defer conn.Close()
+	defer func() {
+		if !rec.Closing() && d.backend != nil {
+			d.backend.DetachControl(rec.SessionID, websocket.CloseAbnormalClosure, "")
+		}
+	}()
 
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -384,7 +389,7 @@ func (d *Driver) tearDown(rec *SessionRecord, reason string) {
 		return
 	}
 	if d.backend != nil {
-		d.backend.DetachControl(rec.SessionID, websocket.CloseNormalClosure, reason)
+		d.backend.Shutdown(rec.SessionID)
 	}
 	if rec.Cancel != nil {
 		rec.Cancel()

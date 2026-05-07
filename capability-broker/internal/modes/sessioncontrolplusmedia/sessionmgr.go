@@ -11,14 +11,13 @@ import (
 
 // Backend abstracts the session-runner subprocess + media-relay
 // machinery the control-WS relays against. The session-open driver
-// owns construction; later commits in plan 0012-followup wire the real
-// session-runner subprocess and pion/webrtc relay through this
-// interface.
+// owns construction; the runner-backed implementation in
+// runnerbackend.go wires the real session-runner subprocess.
 //
 // The control-WS path stays driver-state-only when no Backend is
 // registered (Backend==nil): workload envelopes are silently dropped
 // and the protocol-reserved short-circuits still fire. This is the
-// loopback shape used by C1's standalone tests.
+// loopback shape used by the unit tests.
 type Backend interface {
 	// AttachControl is invoked when a control-WS comes up for a
 	// session. Implementations return their own Inbound/Outbound
@@ -34,6 +33,11 @@ type Backend interface {
 	// ReattachControl notifies the runner that the customer
 	// reconnected within the window.
 	ReattachControl(sessionID string)
+
+	// Shutdown tears down the runner subprocess + IPC streams.
+	// Invoked at full session teardown (clean session.end, runner
+	// crash, reconnect-window expiry).
+	Shutdown(sessionID string)
 }
 
 // BackendControl is the per-session handle the relay consumes.

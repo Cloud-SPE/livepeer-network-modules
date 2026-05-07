@@ -67,4 +67,40 @@ type Backend struct {
 	// h264-live-1080p-qsv | h264-live-1080p-vaapi |
 	// h264-live-1080p-libx264.
 	Profile string `yaml:"profile,omitempty"`
+	// SessionRunner declares the per-session subprocess for
+	// transport=session-runner (session-control-plus-media mode).
+	SessionRunner *SessionRunnerBackend `yaml:"session_runner,omitempty"`
+}
+
+// SessionRunnerBackend captures the operator-supplied launch spec for
+// the per-session container the broker stands up under
+// transport=session-runner.
+type SessionRunnerBackend struct {
+	Image          string                  `yaml:"image"`
+	Command        []string                `yaml:"command,omitempty"`
+	Env            map[string]string       `yaml:"env,omitempty"`
+	Resources      SessionRunnerResources  `yaml:"resources,omitempty"`
+	StartupTimeout string                  `yaml:"startup_timeout,omitempty"`
+	NetworkMode    string                  `yaml:"network_mode,omitempty"`
+	Media          SessionRunnerMediaSpec  `yaml:"media,omitempty"`
+}
+
+// SessionRunnerResources expresses the memory / CPU / GPU envelope for
+// the per-session container. Keys mirror docker run flags.
+type SessionRunnerResources struct {
+	Memory string `yaml:"memory,omitempty"`
+	CPU    string `yaml:"cpu,omitempty"`
+	GPUs   int    `yaml:"gpus,omitempty"`
+}
+
+// SessionRunnerMediaSpec declares the media-plane transports the
+// runner expects on each leg.
+type SessionRunnerMediaSpec struct {
+	Publish SessionRunnerLeg `yaml:"publish,omitempty"`
+	Egress  SessionRunnerLeg `yaml:"egress,omitempty"`
+}
+
+// SessionRunnerLeg is the per-direction transport label.
+type SessionRunnerLeg struct {
+	Transport string `yaml:"transport"`
 }

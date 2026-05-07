@@ -171,6 +171,10 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("session-runner supervisor: %w", err)
 	}
 
+	resolver := sessionRunnerResolver(cfg, sessStore)
+	runnerBackend := sessioncontrolplusmedia.NewRunnerBackend(runnerSup, resolver)
+	sessDriver.SetBackend(runnerBackend)
+
 	s := &Server{
 		cfg:           cfg,
 		opts:          opts,

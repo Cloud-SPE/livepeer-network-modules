@@ -1,55 +1,60 @@
-# DESIGN
+# DESIGN — cross-language
 
-Component-local design summary. Cross-cutting design lives at the repo root in
-[`../docs/design-docs/`](../docs/design-docs/).
+Cross-language design notes for `gateway-adapters/`. Per-half design
+detail lives at [`ts/DESIGN.md`](./ts/DESIGN.md) and
+[`go/DESIGN.md`](./go/DESIGN.md). Cross-cutting design lives at the repo
+root in [`../docs/design-docs/`](../docs/design-docs/).
 
-## What this component is
+## Why two halves
 
-A TypeScript library that any gateway can import to:
+The HTTP-family adapters in
+[`ts/src/modes/`](./ts/src/modes/) are TypeScript-only with near-zero
+runtime dependencies. The non-HTTP modes do not all fit that mould:
 
-1. Build the five required `Livepeer-*` request headers + the optional
-   `Livepeer-Request-Id` correlation header.
-2. Send a paid request to a capability-broker via the appropriate mode
-   driver.
-3. Read response headers (`Livepeer-Work-Units`, `Livepeer-Backoff`, etc.)
-   and surface broker errors via `LivepeerBrokerError`.
+- `ws-realtime@v0` — Node has the `ws` library and the OpenAI Realtime
+  API path is already TS-on-the-gateway.
+- `session-control-plus-media@v0` — splits along its own seam. The
+  control-plane WebSocket is fine in TS, but the media plane (WebRTC
+  SFU pass-through) needs `pion/webrtc` which is Go-native.
+- `rtmp-ingress-hls-egress@v0` — the broker-side listener already uses
+  `github.com/yutopp/go-rtmp`. A Go gateway-side adapter on the same
+  library reuses ~80% of the implementor's mental model and exercises
+  the same handshake edge cases on both sides of the wire.
 
-## What it is not
-
-- **Not a runtime service.** It's a library imported into a gateway
-  service. Per core belief #15, services ship as Docker images;
-  libraries ship as packages.
-- **Not the resolver.** The caller resolves a route (capability, offering,
-  worker_url) before invoking the middleware.
-- **Not the payment-daemon.** The caller mints the `Livepeer-Payment`
-  envelope (base64 protobuf) before invoking the middleware.
+So `gateway-adapters/` ships two halves: a TS package
+(`@tztcloud/livepeer-gateway-middleware`) for HTTP and WebSocket
+surfaces, and a Go module for RTMP and WebRTC. Each adopter writes in
+their own language; no IPC tax between gateway code and adapter code.
 
 ## Wire-spec compliance
 
-Implements the protocol at
-[`../livepeer-network-protocol/`](../livepeer-network-protocol/):
+Both halves implement the protocol at
+[`../livepeer-network-protocol/`](../livepeer-network-protocol/).
+The five required `Livepeer-*` request headers are mirrored across both
+halves (TS: `ts/src/headers.ts`; Go: `go/headers/headers.go`); change
+the spec, change both.
 
-- [`headers/livepeer-headers.md`](../livepeer-network-protocol/headers/livepeer-headers.md)
-  defines what request headers we set and what response headers / trailers we
-  read.
-- Per-mode shapes:
-  - [`modes/http-reqresp.md`](../livepeer-network-protocol/modes/http-reqresp.md)
-    — implemented in `src/modes/http-reqresp.ts`.
-  - [`modes/http-stream.md`](../livepeer-network-protocol/modes/http-stream.md)
-    — implemented in `src/modes/http-stream.ts`. Uses Node's built-in
-    `undici.request` for trailer access (the standard `fetch` API does not
-    expose response trailers).
-  - [`modes/http-multipart.md`](../livepeer-network-protocol/modes/http-multipart.md)
-    — implemented in `src/modes/http-multipart.ts`.
+## Payment integration
 
-## Internal architecture
+Both halves are agnostic to the payment-mint path:
 
-See [`docs/design-docs/architecture.md`](./docs/design-docs/architecture.md)
-for the planned package layout and request lifecycle.
+- The gateway calls `PayerDaemon.CreatePayment` itself (over the
+  payer-daemon's unix socket) before invoking the adapter.
+- The adapter receives the base64-encoded payment envelope as an
+  opaque string and attaches it to the `Livepeer-Payment` header (or
+  the equivalent capability-defined slot for non-HTTP modes).
 
-## Dependencies
+For long-lived sessions (`ws-realtime`,
+`session-control-plus-media`), the broker accrues interim debits via
+`PayeeDaemon.DebitBalance` calls (broker-side, see
+[`../capability-broker/`](../capability-broker/)). On clean session
+close the adapter consults the payer-daemon's session ledger via
+`PayerDaemon.GetSessionDebits` to surface a final work-units count to
+the gateway caller. Plan 0014 added the RPC surface; plan 0015 wires
+the broker-side ticker that populates the ledger.
 
-**Runtime: zero external deps.** Only Node built-ins (`fetch`, `undici`,
-`node:http`).
+## Operator concerns
 
-**Dev only:** `typescript`, `@types/node`. Tests use `node:test`.
+See [`docs/operator-runbook.md`](./docs/operator-runbook.md) for
+per-mode ports, sizing, and NAT/firewall guidance for the WebRTC media
+plane.

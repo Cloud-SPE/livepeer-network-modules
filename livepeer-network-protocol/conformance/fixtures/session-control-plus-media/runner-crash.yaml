@@ -1,0 +1,68 @@
+# Runner-crash conformance fixture for session-control-plus-media@v0.
+# Plan 0012-followup §11: stub runner panics 2s after startup; broker
+# observes the IPC drop, emits session.error with cause=runner_crashed,
+# closes WS with code 1011, tears down session.
+
+name: runner-crash
+mode: session-control-plus-media@v0
+spec_version: "0.1"
+description: |
+  Stub session-runner panics 2s after startup. Broker watchdog observes
+  the IPC drop, emits session.error{code=runner_crashed} on the
+  control-WS, closes with code 1011, tears down media relay + session
+  record, calls Reconcile + CloseSession on the payment-daemon.
+
+setup:
+  capability:
+    id: test:runner-crash-session:v1
+    offering_id: default
+    interaction_mode: session-control-plus-media@v0
+    work_unit:
+      name: seconds
+      extractor:
+        type: seconds-elapsed
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: session-runner
+      session_runner:
+        image: "tztcloud/livepeer-conformance-session-runner:v0"
+        command: ["/bin/session-runner-stub"]
+        env:
+          LIVEPEER_STUB_BEHAVIOR: "crash-after-startup"
+          LIVEPEER_STUB_CRASH_DELAY_MS: "2000"
+        startup_timeout: "10s"
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:runner-crash-session:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: session-control-plus-media@v0
+    Content-Type: application/json
+  body: |
+    {}
+
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 202
+  body_fields_present:
+    - session_id
+    - control_url
+
+session_control:
+  upgrade: true
+  expect_envelopes:
+    - type: session.started
+  expect_envelopes_within_seconds: 5
+  expect_session_error:
+    code: runner_crashed
+  expect_close_code: 1011

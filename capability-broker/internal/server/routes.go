@@ -48,6 +48,13 @@ func (s *Server) registerRoutes() {
 	// (method, mode) selection; the ws-realtime driver upgrades the
 	// connection in its Serve method.
 	s.mux.Handle("GET /v1/cap", paidChain(http.HandlerFunc(s.dispatch)))
+
+	// POST /v1/cap/{session_id}/end — gateway-initiated session close
+	// for rtmp-ingress-hls-egress per the mode spec §"Session-end".
+	// Unpaid: the session was already paid for at session-open, and
+	// the URL path is a per-session bearer secret. 404 on unknown
+	// session id; 204 on a successful tear-down.
+	s.mux.HandleFunc("POST /v1/cap/{session_id}/end", s.rtmpCloseSession)
 }
 
 // capabilityLookup returns a CapabilityLookup function the payment

@@ -360,6 +360,10 @@ func (s *Server) Run(ctx context.Context) error {
 			}
 			errCh <- nil
 		}()
+		go s.rtmpStore.RunWatchdog(ctx, rtmpingresshlsegress.LifetimeOptions{
+			IdleTimeout:   s.opts.RTMP.IdleTimeout,
+			CheckInterval: time.Second,
+		})
 	}
 
 	select {

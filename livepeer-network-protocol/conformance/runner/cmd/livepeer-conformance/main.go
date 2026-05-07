@@ -22,6 +22,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/envelope"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/payee"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/gatewaytarget"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpmultipart"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpreqresp"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/modes/httpstream"
@@ -36,13 +37,22 @@ var version = "dev"
 
 func main() {
 	// Register drivers. Each Driver is added to the modes.Registry; the
-	// runner dispatches by fixture.Mode.
+	// runner dispatches by `(target, fixture.Mode)`.
 	modes.Register(httpreqresp.New())
 	modes.Register(httpstream.New())
 	modes.Register(httpmultipart.New())
 	modes.Register(wsrealtime.New())
 	modes.Register(rtmpingresshlsegress.New())
 	modes.Register(sessioncontrolplusmedia.New())
+
+	// Gateway-target drivers exercise gateway-adapters middleware
+	// directly. The non-HTTP modes shipped under plan 0008-followup; the
+	// HTTP family is unchanged from plan 0008 (no gateway-target driver
+	// needed because the gateway forwards to the broker which is
+	// already verified by the broker-target drivers above).
+	modes.RegisterFor(modes.TargetGateway, gatewaytarget.NewWSRealtime())
+	modes.RegisterFor(modes.TargetGateway, gatewaytarget.NewRTMPIngressHLSEgress())
+	modes.RegisterFor(modes.TargetGateway, gatewaytarget.NewSessionControlPlusMedia())
 
 	var (
 		target       = flag.String("target", "", "broker | gateway")
@@ -69,9 +79,6 @@ func main() {
 	if *target != "broker" && *target != "gateway" {
 		log.Fatalf("--target must be 'broker' or 'gateway' (got %q)", *target)
 	}
-	if *target == "gateway" {
-		log.Fatalf("--target=gateway is not yet implemented (plan 0008/0009)")
-	}
 
 	var modeFilter []string
 	if *modesFlag != "" {
@@ -80,17 +87,25 @@ func main() {
 
 	log.Printf("livepeer-conformance %s", version)
 	log.Printf("target=%s url=%s fixtures=%s mock=%s registered=%v",
-		*target, *url, *fixturesPath, *mockAddr, modes.Names())
+		*target, *url, *fixturesPath, *mockAddr, modes.NamesFor(modes.Target(*target)))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// Dial the payer-daemon. Drivers call envelope.SubstituteHeaders
-	// per fixture, which uses this connection to mint Payment envelopes.
+	// Dial the payer-daemon. Broker-target drivers call
+	// envelope.SubstituteHeaders per fixture, which uses this connection
+	// to mint Payment envelopes. Gateway-target drivers don't mint
+	// payments (the gateway under test does), so the dial is best-effort
+	// in that case — we log a warning instead of dying.
 	if err := envelope.Init(ctx, *payerSocket); err != nil {
-		log.Fatalf("payer-daemon init: %v", err)
+		if *target == "gateway" {
+			log.Printf("payer-daemon dial failed (target=gateway, continuing): %v", err)
+		} else {
+			log.Fatalf("payer-daemon init: %v", err)
+		}
+	} else {
+		defer envelope.Shutdown()
 	}
-	defer envelope.Shutdown()
 
 	// Best-effort dial of the receiver daemon for plan 0015's
 	// interim-debit assertions. Empty --payee-socket leaves the client

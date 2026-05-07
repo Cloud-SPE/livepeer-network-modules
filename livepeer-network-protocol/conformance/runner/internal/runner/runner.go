@@ -46,6 +46,11 @@ func Run(ctx context.Context, cfg Config) (report.Report, error) {
 		log.Printf("after --modes filter: %d fixtures", len(fxs))
 	}
 
+	// 2b. Filter by target. Fixtures whose Name starts with `gateway-`
+	// are gateway-target only; everything else is broker-target.
+	fxs = filterByTarget(fxs, modes.Target(cfg.Target))
+	log.Printf("after --target filter: %d fixtures", len(fxs))
+
 	// 3. Start mock backend.
 	mock := mockbackend.New(cfg.MockAddr)
 	go func() {
@@ -64,15 +69,24 @@ func Run(ctx context.Context, cfg Config) (report.Report, error) {
 	}
 	log.Printf("target ready at %s", cfg.URL)
 
-	// 6. Run each fixture through its mode driver.
+	// 6. Run each fixture through its mode driver. The driver registry
+	// is keyed by target — broker-target drivers send paid requests to
+	// the target as if they were a gateway; gateway-target drivers send
+	// unpaid customer requests to the target and let the mockbackend
+	// (acting as a stand-in upstream broker) verify the gateway-adapter
+	// middleware completes the wire shape correctly.
+	target := modes.Target(cfg.Target)
+	if target == "" {
+		target = modes.TargetBroker
+	}
 	results := make([]report.Result, 0, len(fxs))
 	for _, fx := range fxs {
-		driver, ok := modes.Get(fx.Mode)
+		driver, ok := modes.GetFor(target, fx.Mode)
 		if !ok {
 			results = append(results, report.Result{
 				Name: fx.Name, Mode: fx.Mode, Pass: false,
-				Failures: []string{fmt.Sprintf("no driver registered for mode %q (registered: %v)",
-					fx.Mode, modes.Names())},
+				Failures: []string{fmt.Sprintf("no driver registered for target=%s mode=%q (registered: %v)",
+					target, fx.Mode, modes.NamesFor(target))},
 			})
 			continue
 		}
@@ -80,6 +94,27 @@ func Run(ctx context.Context, cfg Config) (report.Report, error) {
 	}
 
 	return report.New(results), nil
+}
+
+// filterByTarget partitions fixtures by target, using the fixture
+// Name's `gateway-` prefix as the role marker. Broker-target ignores
+// fixtures with that prefix; gateway-target keeps only fixtures with
+// it.
+func filterByTarget(fxs []fixtures.Fixture, target modes.Target) []fixtures.Fixture {
+	out := make([]fixtures.Fixture, 0, len(fxs))
+	for _, fx := range fxs {
+		isGateway := strings.HasPrefix(fx.Name, "gateway-")
+		if target == modes.TargetGateway {
+			if isGateway {
+				out = append(out, fx)
+			}
+			continue
+		}
+		if !isGateway {
+			out = append(out, fx)
+		}
+	}
+	return out
 }
 
 // filterModes returns the subset of fxs whose Mode matches any entry in

@@ -1,0 +1,51 @@
+# Gateway-target happy-path fixture for ws-realtime@v0.
+#
+# Runner acts as a customer hitting the gateway under test on
+# /v1/realtime; the gateway's adapter middleware should upgrade to the
+# broker (the runner's mockbackend, configured out-of-band on the
+# gateway's --livepeer-broker-url flag) and relay the customer leg's
+# probe frame back. The runner verifies the customer leg upgrade
+# completes, the frame round-trips, and the close is clean.
+#
+# This fixture only runs when the runner is started with
+# --target=gateway. Operators configure the gateway under test to point
+# its upstream broker URL at the runner's mockbackend (default
+# `http://localhost:9000`).
+
+name: gateway-happy-path
+mode: ws-realtime@v0
+spec_version: "0.1"
+description: |
+  Customer-side happy path against a gateway under test. Verifies the
+  gateway's ws-realtime adapter completes the upgrade, relays bytes,
+  and closes cleanly.
+
+setup:
+  capability:
+    id: test:happy-path-ws:v1
+    offering_id: default
+    interaction_mode: ws-realtime@v0
+    work_unit:
+      name: bytes
+      extractor:
+        type: response-jsonpath
+        path: $.bytes
+    price:
+      amount_wei: "10"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/ws
+      auth: none
+
+request:
+  method: GET
+  path: /v1/realtime
+  headers: {}
+
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 101

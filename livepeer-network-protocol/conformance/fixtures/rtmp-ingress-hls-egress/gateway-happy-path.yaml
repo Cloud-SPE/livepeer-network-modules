@@ -1,0 +1,53 @@
+# Gateway-target happy-path fixture for rtmp-ingress-hls-egress@v0.
+#
+# v0.1: session-open POST only. Customer hits the gateway's session-open
+# route; the gateway's adapter middleware mints payment, calls the
+# upstream broker, and returns the four URL fields to the customer.
+
+name: gateway-happy-path
+mode: rtmp-ingress-hls-egress@v0
+spec_version: "0.1"
+description: |
+  Customer-side session-open against a gateway under test. Asserts the
+  gateway returns 202 with session_id, rtmp_ingest_url, hls_playback_url,
+  control_url, expires_at. RTMP push + HLS playback verification rides
+  along once the gateway-side RTMP listener is in place.
+
+setup:
+  capability:
+    id: test:happy-path-rtmp:v1
+    offering_id: default
+    interaction_mode: rtmp-ingress-hls-egress@v0
+    work_unit:
+      name: video-frame-megapixel
+      extractor:
+        type: response-jsonpath
+        path: $.units
+    price:
+      amount_wei: "100"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/handler
+      auth: none
+
+request:
+  method: POST
+  path: /v1/sessions
+  headers:
+    Content-Type: application/json
+  body: |
+    {"capability":"test:happy-path-rtmp:v1","offering":"default","session_params":{"abr_ladder":[],"preset":"h264-streaming"}}
+
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 202
+  body_fields_present:
+    - session_id
+    - rtmp_ingest_url
+    - hls_playback_url
+    - control_url
+    - expires_at

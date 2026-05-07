@@ -154,7 +154,9 @@ openai-runners/
   compose.ollama.yaml               ← ollama upstream overlay
   compose.vllm.chat.yaml            ← vllm chat upstream overlay
   compose.vllm.embeddings.yaml      ← vllm embeddings upstream overlay
-  openai-runner/                    ← Go; two cmd binaries
+  python-runner-base/               ← shared Python base image (OQ2); FROM python:3.12-slim + fastapi/pydantic/pydantic-settings/structlog/uvicorn/prometheus-client
+    Dockerfile                      ← single base layer; cached once across audio/tts/image/rerank runners
+  openai-runner/                    ← Go; two cmd binaries; does NOT use python-runner-base (separate Go runtime per OQ2)
     Dockerfile                      ← multi-stage; chat + embed targets
     go.mod                          ← module openai-runner
     go.sum
@@ -170,7 +172,7 @@ openai-runners/
         models.go                   ← upstream /models discovery
         progress.go                 ← optional usage-event extraction
   openai-audio-runner/              ← Python (FastAPI + faster-whisper)
-    Dockerfile
+    Dockerfile                      ← `FROM python-runner-base:<tag>`; adds faster-whisper + entrypoint
     pyproject.toml                  ← package: openai_audio_runner
     uv.lock
     src/
@@ -183,7 +185,7 @@ openai-runners/
     tests/
     test.sh
   openai-tts-runner/                ← Python (FastAPI + Kokoro)
-    Dockerfile
+    Dockerfile                      ← `FROM python-runner-base:<tag>`; adds transformers + kokoro-tts
     pyproject.toml
     uv.lock
     src/
@@ -193,7 +195,7 @@ openai-runners/
     tests/
     test.sh
   openai-image-generation-runner/   ← Python (FastAPI + diffusers)
-    Dockerfile
+    Dockerfile                      ← `FROM python-runner-base:<tag>`; adds diffusers + accelerate
     pyproject.toml
     uv.lock
     src/
@@ -227,7 +229,7 @@ rerank-runner/
   build.sh
   test.sh
   compose.yaml
-  Dockerfile
+  Dockerfile                        ← `FROM python-runner-base:<tag>` (sibling component; reuses openai-runners/python-runner-base/ output image); adds sentence-transformers
   pyproject.toml                    ← package: rerank_runner
   uv.lock
   src/
@@ -297,6 +299,7 @@ live-transcode helpers; if unreferenced post-port, deleted.
 
 | Source | Target |
 |---|---|
+| **NEW (no source)** | `openai-runners/python-runner-base/Dockerfile` — net-new shared Python base image per OQ2; `FROM python:3.12-slim` + fastapi/pydantic/pydantic-settings/structlog/uvicorn/prometheus-client. Not present in byoc tree. |
 | `livepeer-byoc/openai-runners/build.sh` | `openai-runners/build.sh` |
 | `livepeer-byoc/openai-runners/setup-models.sh` | `openai-runners/setup-models.sh` |
 | `livepeer-byoc/openai-runners/docker-compose.yml` | `openai-runners/compose.yaml` (renamed; standardized on `compose.*` per rewrite convention) |
@@ -426,6 +429,17 @@ HTTP server is hand-rolled per existing byoc impl.
 **MIT.** Per user lock + repo-root LICENSE. The byoc tree's
 per-component LICENSE files retire; rewrite root LICENSE applies.
 
+### 6.7 Python runners share `python-runner-base/` (OQ2)
+
+All Python runners — `openai-audio-runner`, `openai-tts-runner`,
+`openai-image-generation-runner`, `rerank-runner` — `FROM` the
+shared `python-runner-base` image. The base bakes in Python 3.12-slim
++ the canonical Python pins (fastapi, pydantic, pydantic-settings,
+structlog, uvicorn, prometheus-client per OQ5). Per-runner Dockerfiles
+add only model-specific deps + entrypoints; common layer is cached
+once across builds. The Go-based `openai-runner/` (chat + embeddings
+proxy) does **not** use this base — it's a separate Go runtime.
+
 ## 7. DB schema
 
 **None.** Workload runners are stateless (per-job in-memory state +
@@ -528,6 +542,11 @@ The runners depend on:
 - **`livepeer-network-protocol/`** — runners read `Livepeer-Capability`
   + `Livepeer-Offering` headers (informational); no proto stub
   imports needed (the runner doesn't decode `Livepeer-Payment`).
+- **`openai-runners/python-runner-base/`** — every Python runner
+  (`openai-audio-runner`, `openai-tts-runner`,
+  `openai-image-generation-runner`, `rerank-runner`) inherits this
+  shared base image per OQ2. The Go-based `openai-runner/` proxy is
+  independent; it has no Python-base dependency.
 
 The runners do **not** depend on:
 - `customer-portal/` (no auth / billing).
@@ -535,6 +554,23 @@ The runners do **not** depend on:
 - `payment-daemon/` (broker handles payment validation upstream).
 
 ## 10. Configuration surface
+
+### 10.0 Common keys (every runner)
+
+Per OQ1 + OQ3 + OQ5, every runner exposes the same three control
+knobs in addition to its per-runner-specific keys:
+
+| Env var | Required | Purpose |
+|---|---|---|
+| `CAPABILITY_NAME` | yes | Capability identity per OQ1; image-tag-pinned canonical name. Allowed values include `openai-chat-completions`, `openai-embeddings`, `whisper-transcriptions`, `kokoro-tts`, `image-generation`, `rerank`, `transcode-vod`, `abr-ladder`. Operator-friendly; one value per runner image. |
+| `DEVICE` | no (default `cuda` for ML runners, `cpu` for the Go proxy) | torch device. ML runners fail-fast at startup if `cuda` is set and no GPU is detected (OQ3); operator falls back via `DEVICE=cpu`. |
+| `METRICS_ENABLED` | no (default `false`) | When `true`, exposes `/metrics` (Prometheus exposition format) per OQ5. Cardinality-capped: labels are `model` and `offering` only. Default metrics: `runner_inference_total{outcome,model,offering}`, `runner_inference_duration_seconds{model,offering}`, `runner_active_concurrent_inferences`, `runner_gpu_utilization_pct{gpu_index}`. Zero overhead when unset. |
+
+Offering details (presets, resolutions, model variants, rate-card
+hints) live in an embedded YAML manifest at `/etc/runner/offering.yaml`
+inside each runner image, mounted read-only with operator overrides
+as needed (OQ1). Schema is documented per runner. The `CAPABILITY_NAME`
+env names the capability; `offering.yaml` describes the offerings.
 
 ### 10.1 openai-runner (chat / embeddings)
 
@@ -572,7 +608,6 @@ The runners do **not** depend on:
 |---|---|---|
 | `MODEL_ID` | yes | HuggingFace diffusers model id. |
 | `MODEL_DIR` | no (default `/models`) | Local model cache. |
-| `CAPABILITY_NAME` | no (default `openai-image-generation`) | Capability registration label. |
 | `RUNNER_PORT` | no (default `8080`) | HTTP bind. |
 | `DEVICE` | no (default `cuda`) | torch device. |
 | `DTYPE` | no (default `float16`) | torch dtype. |
@@ -608,8 +643,15 @@ The runners do **not** depend on:
 
 Runners that need preset declarations embed YAML via `go:embed`
 (`transcode-runner/main.go:25-26`); runtime override via
-`PRESETS_YAML_PATH` env (existing pattern). No new YAML surface
-introduced by the migration.
+`PRESETS_YAML_PATH` env (existing pattern).
+
+Per OQ1, every runner additionally embeds an offering manifest at
+`/etc/runner/offering.yaml` inside the image — declares the offerings
+presented to the broker (presets, resolutions, model variants,
+rate-card hints) for the capability named by `CAPABILITY_NAME`.
+Mounted read-only; operators may bind-mount an override file at the
+same path. Schema documented per runner in
+`<runner>/docs/offering-schema.md`.
 
 ## 11. Conformance / smoke tests
 
@@ -688,10 +730,32 @@ coordinator expects. Each runner's smoke includes this assertion.
     byoc tree's live-transcode-runner stop using it; per plan
     0011-followup, the broker's RTMP listener + FFmpeg pipeline + LL-HLS
     server replaces it.
+11. **GPU-probe fail-fast (OQ3)** — at startup ML runners call
+    `torch.cuda.is_available()` (or framework equivalent); when
+    `DEVICE=cuda` (or unset, defaulting to `cuda`) and no GPU is
+    detected, the runner exits non-zero with the message `cuda device
+    requested but no GPU detected; set DEVICE=cpu to fall back to CPU
+    runtime`. No 503 graceful-degradation path — silent degraded mode
+    hides operator misconfig and customers expect GPU-class
+    performance. Operator-side fallback: set `DEVICE=cpu` explicitly.
+12. **Multi-arch policy (OQ4)** — ML runners
+    (`openai-image-generation-runner`, `openai-audio-runner`,
+    `openai-tts-runner`, `rerank-runner`, transcode runners) ship
+    **amd64-only** for v0.1; NVIDIA arm64 GPU support exists (Jetson,
+    GH200) but isn't the default deployment shape. The Go-based
+    `openai-runner/` proxy (chat + embeddings; pure-Go, no GPU need)
+    ships **multi-arch (linux/amd64 + linux/arm64)** so operators may
+    run it on Apple Silicon dev machines or Graviton instances.
+13. **Prometheus integration (OQ5)** — set `METRICS_ENABLED=true` to
+    expose `/metrics` (Prometheus exposition format). Default-off; zero
+    overhead when unset. Cardinality-capped to `model` + `offering`
+    labels (no per-request labels, no `customer_id`, no `request_id`).
+    Operators wire the scrape endpoint into their existing Prometheus
+    stack; non-prometheus deployments leave the flag unset.
 
 ## 13. Migration sequence
 
-5 phases. None chain-gated; all pre-1.0.0-shippable.
+6 phases. None chain-gated; all pre-1.0.0-shippable.
 
 ### Phase 1 — Component scaffold
 
@@ -702,6 +766,20 @@ as components.
 
 **Acceptance:** repo `make smoke` skips the new components without
 error; AGENTS.md lints clean.
+
+### Phase 1b — python-runner-base/ shared image (OQ2)
+
+Land `openai-runners/python-runner-base/Dockerfile` first, before the
+per-runner Python ports rebase on it. The base inherits from
+`python:3.12-slim` and bakes in the canonical Python pins (fastapi,
+pydantic, pydantic-settings, structlog, uvicorn, prometheus-client).
+Each subsequent Python-runner port commit (Phase 3, plus rerank-runner
+under §4.2) updates its own Dockerfile to `FROM python-runner-base:<tag>`
+and adds only model-specific deps + entrypoint. The Go-based
+`openai-runner/` proxy is untouched by this phase.
+
+**Acceptance:** `python-runner-base` image builds in CI; downstream
+Python runners' Dockerfiles successfully reference it as their base.
 
 ### Phase 2 — openai-runner (Go) port
 
@@ -714,11 +792,12 @@ expected JSON; `/healthz` responds.
 
 ### Phase 3 — Python runners port (audio / tts / images / rerank)
 
-Copy the four Python runners into their target dirs. Refactor `app.py`
-into a small `src/<runner_name>/` Python package; `pyproject.toml`
-+ `uv.lock` replace `requirements.txt`. Add per-runner `__main__.py`
-+ console-script entry. Compose overlay to test against fixture audio
-/ image / docs.
+Copy the four Python runners into their target dirs. Each per-runner
+Dockerfile inherits from `python-runner-base` (landed in Phase 1b).
+Refactor `app.py` into a small `src/<runner_name>/` Python package;
+`pyproject.toml` + `uv.lock` replace `requirements.txt`. Add per-runner
+`__main__.py` + console-script entry. Compose overlay to test against
+fixture audio / image / docs.
 
 **Acceptance:** all four runners respond to canned smoke requests;
 `/options` returns canonical offerings; image is buildable in CI
@@ -756,7 +835,8 @@ per plan 0011-followup.
 
 ## 14. Resolved decisions
 
-User walks 2026-05-06; recorded as `DECIDED:` blocks.
+User walks 2026-05-06 (Q1-Q12) + 2026-05-07 (OQ1-OQ5); recorded as
+`DECIDED:` blocks.
 
 ### Q1. Three runner components vs one mega-component
 
@@ -826,31 +906,70 @@ paths.
 **DECIDED: keep.** Useful for cross-runner smoke; preserved at
 `openai-runners/openai-tester/`.
 
-### Open questions surfaced for the user walk
+### OQ1. Capability identity declaration — env, YAML, or hybrid?
 
-- **OQ1.** Should each runner declare its capability identity via
-  env (`CAPABILITY_NAME`) or via a YAML manifest in the runner
-  image? Existing impl mixes (image runner uses env; transcode
-  runner uses embedded YAML). Recommendation: standardize on env
-  for the capability name + YAML for offering details (presets,
-  resolutions). **Surface for user lock.**
-- **OQ2.** Should the Python runners share a common base image
-  (FastAPI + Pydantic + structlog) to cut per-image build time?
-  Recommendation: yes; introduce `python-runner-base/` shared
-  Dockerfile inheriting from `python:3.12-slim` + the common deps.
-  **Surface for user lock.**
-- **OQ3.** GPU availability check at startup — `nvidia-smi` probe
-  + 503 if absent? Or fail-fast? Existing impls vary. Recommendation:
-  fail-fast on `cuda` device set + no GPU; document operator-side
-  fallback to `DEVICE=cpu`. **Surface for user lock.**
-- **OQ4.** Multi-arch images (linux/amd64 + linux/arm64)? GPU is
-  amd64-only effectively; arm64 only for the openai-runner-go (proxy;
-  no GPU need). Recommendation: amd64 only for ML runners; multi-arch
-  for openai-runner-go. **Surface for user lock.**
-- **OQ5.** Should the runners ship a Prometheus `/metrics` endpoint?
-  Existing impls don't. Recommendation: yes, behind
-  `METRICS_ENABLED=true` flag; cardinality-capped to model + offering
-  labels. **Surface for user lock.**
+**DECIDED: env var for capability NAME + YAML manifest for offering
+DETAILS.** Each runner exposes a `CAPABILITY_NAME` env var
+(image-tag-pinned canonical name, e.g. `openai-chat-completions`,
+`openai-embeddings`, `whisper-transcriptions`, `kokoro-tts`,
+`image-generation`, `rerank`, `transcode-vod`, `abr-ladder`) — simple,
+operator-friendly. Offering details (presets, resolutions, model
+variants, rate-card hints) live in an embedded YAML manifest at
+`/etc/runner/offering.yaml` per runner image, mounted read-only with
+operator overrides as needed. Existing impls mixed env-only and
+YAML-only; this lock standardizes the hybrid.
+
+### OQ2. Shared Python base image
+
+**DECIDED: ship `openai-runners/python-runner-base/`.** Single
+Dockerfile inheriting from `python:3.12-slim` plus the common deps
+(`fastapi`, `pydantic`, `pydantic-settings`, `structlog`, `uvicorn`,
+`prometheus-client` per OQ5). Per-runner Dockerfiles
+`FROM python-runner-base:<tag>` and add only their model-specific deps
++ entrypoints. Cuts per-image build time (common layer cached once);
+standardizes versioning across `openai-image-generation-runner`,
+`openai-audio-runner`, `openai-tts-runner`, plus `rerank-runner/`
+(sibling component). The Go-based `openai-runner` (chat + embeddings
+proxy) doesn't use this base — it's a separate Go runtime.
+
+### OQ3. GPU probe at startup
+
+**DECIDED: fail-fast on `DEVICE=cuda` + no GPU detected.** Runner
+calls `torch.cuda.is_available()` (or framework equivalent) at
+startup; if `false` and `DEVICE` is set to `cuda` (or unset and
+defaulting to `cuda`), the runner exits with non-zero code and a
+clear error message: `cuda device requested but no GPU detected;
+set DEVICE=cpu to fall back to CPU runtime`. No 503 graceful-
+degradation path — silent degraded mode hides operator misconfig and
+customers consuming the runner expect GPU-class performance. Operator-
+side fallback documented in the runbook (§12).
+
+### OQ4. Multi-arch images
+
+**DECIDED: amd64-only for ML runners
+(`openai-image-generation-runner`, `openai-audio-runner`,
+`openai-tts-runner`, `rerank-runner`, transcode runners); multi-arch
+(linux/amd64 + linux/arm64) for the Go-based `openai-runner` (chat +
+embeddings proxy).** Rationale: NVIDIA arm64 GPU support exists
+(Jetson, GH200) but isn't the default operator deployment shape; ML
+runners stay amd64-only for v0.1. The Go-based proxy is pure-Go with
+no GPU need — multi-arch builds are cheap and let operators run the
+proxy on Apple Silicon dev machines or cost-efficient Graviton
+instances.
+
+### OQ5. Prometheus `/metrics` endpoint
+
+**DECIDED: yes, opt-in behind `METRICS_ENABLED=true` flag.** Each
+runner exposes `/metrics` (Prometheus exposition format) when the
+flag is set. Cardinality-capped: labels are `model` and `offering`
+only; no per-request labels (no `customer_id`, no `request_id`, no
+full URI). Default metrics:
+`runner_inference_total{outcome=ok|error,model,offering}` (counter),
+`runner_inference_duration_seconds{model,offering}` (histogram),
+`runner_active_concurrent_inferences` (gauge),
+`runner_gpu_utilization_pct{gpu_index}` (gauge). Operators wire into
+their existing Prometheus stack; non-prometheus deployments leave the
+flag unset (zero overhead).
 
 ## 15. Out of scope (forwarding addresses)
 

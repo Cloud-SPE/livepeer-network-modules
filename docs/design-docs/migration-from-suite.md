@@ -1,18 +1,19 @@
 ---
 status: active
-last-reviewed: 2026-05-06
+last-reviewed: 2026-05-07
 audience: rewrite contributors, suite operators planning a cutover
 ---
 
 # Migration from the suite
 
-This doc maps every component of the existing `livepeer-network-suite` (and its
-prior reference implementation, `livepeer-modules-project/`) to its replacement
-in this rewrite, sequences the deprecation in phases gated by the rewrite's
-v1.0.0, and identifies what the suite still owns long-term (operational state,
-secrets, on-chain identity). Per-component code-level deltas live in
-component-specific plans (notably plan 0013 for the suite's
-`livepeer-openai-gateway`); this doc is the cross-cutting digest.
+This doc maps every component of the existing `livepeer-network-suite`, the
+in-scope subset of `livepeer-cloud-spe/livepeer-byoc/` (the workload-runner
+tree), the canonical top-level `livepeer-vtuber-project/`, and the prior Go
+reference implementation `livepeer-modules-project/` to its replacement in
+this rewrite. Phases are gated by the rewrite's v1.0.0; this doc identifies
+what stays preserved long-term (operational state, secrets, on-chain identity).
+Per-component code-level deltas live in five paper-only migration briefs
+(see §2 below); this doc is the cross-cutting digest.
 
 ## 1. The suite as it stands today
 
@@ -93,11 +94,52 @@ Replaced by the spec subfolder `livepeer-network-protocol/` in this rewrite.
 
 ## 2. Replacement map
 
-| Suite component | Replacement in rewrite | Status | Plan reference |
+The rewrite's target layout after the five 0013 migration briefs land
+is a 13-component monorepo:
+
+1. `livepeer-network-protocol/` — language-neutral wire spec.
+2. `payment-daemon/` — sender + receiver ticket envelope handling.
+3. `capability-broker/` — workload-agnostic broker on the orch host.
+4. `gateway-adapters/` — TS middleware per wire-protocol mode.
+5. `customer-portal/` — shared SaaS-shell library (auth / billing /
+   Stripe / portal+admin SPA / drizzle schema).
+6. `openai-gateway/` — OpenAI gateway (suite's openai-core + openai-shell
+   collapsed; consumes shell + adapters).
+7. `vtuber-gateway/` — VTuber gateway (suite's vtuber-shell collapsed;
+   consumes shell + adapters).
+8. `vtuber-pipeline/` — VTuber product pipeline (Python; lifted from
+   top-level `livepeer-vtuber-project/pipeline-app/`).
+9. `vtuber-runner/` — VTuber session runtime + avatar-renderer (Python +
+   browser TS; lifted from `livepeer-vtuber-project/{session-runner,avatar-renderer}/`).
+10. `video-gateway/` — Video gateway (suite's video-shell + video-core
+    collapsed; consumes shell + adapters; ships customer-side RTMP listener).
+11. `openai-runners/` — Workload runners for OpenAI capabilities
+    (chat / embeddings / audio / images; from byoc tree).
+12. `rerank-runner/` — Workload runner for `/v1/rerank` (from byoc tree).
+13. `video-runners/` — Workload runners for VOD transcode + ABR (from
+    byoc tree; live-transcode replaced by capability-broker).
+
+Plus existing rewrite components: `secure-orch-console/`, `orch-coordinator/`.
+
+Five paper-only migration briefs in `docs/exec-plans/active/` (the
+"0013 family") sequence the absorption:
+
+| Brief | New components | Sources collapsed | Chain-gated? |
 |---|---|---|---|
-| `openai-worker-node` | `capability-broker/` (one host process; OpenAI is config, not code) | deprecated | plans 0003, 0006 (broker + HTTP modes) — completed |
-| `vtuber-worker-node` | `capability-broker/` + `session-control-plus-media` mode driver | deprecated | plan 0012 (session-open phase) — completed; 0012-followup for media plane |
-| `video-worker-node` | `capability-broker/` + `rtmp-ingress-hls-egress` mode driver | deprecated | plan 0011 (session-open phase) — completed; 0011-followup for RTMP/FFmpeg/HLS pipeline |
+| `0013-shell` | `customer-portal/` (new shared library) | Pattern-extracted from `livepeer-openai-gateway-core/` + `livepeer-openai-gateway/` shell + `livepeer-vtuber-gateway/` SaaS layer | No — foundation for the others |
+| `0013-openai` | `openai-gateway/` (existing reference; absorbs SaaS) | `livepeer-openai-gateway-core/` + `livepeer-openai-gateway/` | Yes (emits payments) |
+| `0013-vtuber` | `vtuber-gateway/` + `vtuber-pipeline/` + `vtuber-runner/` (3 new) | `livepeer-vtuber-gateway/` + `livepeer-vtuber-project/{pipeline-app,session-runner,avatar-renderer}/` | Mixed — gateway gates on chain v1.0.0; pipeline + runner can pre-ship |
+| `0013-video` | `video-gateway/` (new) | `livepeer-video-gateway/` + `livepeer-video-core/` | Yes (emits payments) |
+| `0013-runners` | `openai-runners/` + `rerank-runner/` + `video-runners/` (3 new) | `livepeer-byoc/{openai-runners,rerank-runner,transcode-runners}/` (skip `live-transcode-runner`, `gateway-proxy`, `video-generation`, `register-capabilities`, `deployment-examples`) | No — workload only |
+
+The pre-collapse plan 0013 (separate-SaaS-repo proposal) is preserved at
+`docs/exec-plans/superseded/0013-openai-pre-collapse.md` for history.
+
+| Suite / byoc / vtuber-project component | Replacement in rewrite | Status | Plan reference |
+|---|---|---|---|
+| `livepeer-network-suite/openai-worker-node` | `capability-broker/` (one host process; OpenAI is config, not code) | deprecated | plans 0003, 0006 — completed |
+| `livepeer-network-suite/vtuber-worker-node` | `capability-broker/` + `session-control-plus-media` mode driver | deprecated | plan 0012 — completed; 0012-followup for media plane |
+| `livepeer-network-suite/video-worker-node` | `capability-broker/` + `rtmp-ingress-hls-egress` mode driver | deprecated | plan 0011 — completed; 0011-followup for RTMP/FFmpeg/HLS pipeline |
 | `worker-runtime/` (Go lib) | None — workload-agnostic broker has no per-capability Go to share | deprecated | architecture-overview.md L200 |
 | `livepeer-modules-conventions` (reference) | `livepeer-network-protocol/` (modes + extractors + conformance, language-neutral spec) | deprecated | plan 0002 — completed |
 | `livepeer-modules-project/payment-daemon` | `payment-daemon/` (this monorepo; sender + receiver, opaque capability/work-unit names, wire-compat envelope) | partially ported | plans 0005, 0014 — completed; 0016 for chain providers |
@@ -106,16 +148,37 @@ Replaced by the spec subfolder `livepeer-network-protocol/` in this rewrite.
 | `livepeer-modules-project/protocol-daemon` | None displacing it — the rewrite's `secure-orch-console/` mounts the suite daemon's socket as-is | preserved | (no rewrite plan; runs the suite image) |
 | `livepeer-modules-project/chain-commons` | Provider interfaces in `payment-daemon/providers/` (Broker, KeyStore, Clock, GasPrice) backed by Arbitrum One; deliberate code copies, not a Go-module import | partially ported | plan 0016 (chain integration) |
 | `livepeer-modules-project/proto-contracts` | `livepeer-network-protocol/modes/` (spec); plus the wire-locked 5-message Payment family copied into `payment-daemon/` per plan 0014 | partially ported | plans 0002, 0014 — completed |
-| `livepeer-openai-gateway-core` | `gateway-adapters/` per-mode middleware (HTTP family done in plan 0008); per-mode and per-capability code separates cleanly | partially ported | plan 0008 — completed; 0013 for the migration brief |
-| `livepeer-openai-gateway` | `openai-gateway/` (this monorepo, reference impl); the suite shell migrates per plan 0013 | partially ported | plans 0009 — completed; 0013 (suite shell migration) |
-| `livepeer-vtuber-gateway` | Per-mode `session-control-plus-media` adapter in `gateway-adapters/`; the vtuber-specific SaaS gateway re-skins onto it | partially ported | plan 0012-followup; gateway-adapters 7-followup |
-| `livepeer-video-gateway` + `livepeer-video-core` | Per-mode `rtmp-ingress-hls-egress` adapter in `gateway-adapters/`; the video gateway re-skins onto it | partially ported | plan 0011-followup; gateway-adapters 7-followup |
+| `livepeer-openai-gateway-core` (suite engine) | Folded into `openai-gateway/` per plan 0013-openai; SaaS pieces extract into `customer-portal/` per plan 0013-shell. Two-package split unwound. | being collapsed | plans 0008 — completed; 0013-openai + 0013-shell (paper) |
+| `livepeer-openai-gateway` (suite shell) | Folded into `openai-gateway/` per plan 0013-openai. Stripe/auth/portal/admin extract to `customer-portal/`. | being collapsed | plan 0013-openai (paper); plan 0013-shell (foundation) |
+| `livepeer-vtuber-gateway` | `vtuber-gateway/` per plan 0013-vtuber; SaaS surfaces consume `customer-portal/`. | being collapsed | plan 0013-vtuber (paper); plan 0012-followup (broker side); plan 0008-followup |
+| `livepeer-video-gateway` + `livepeer-video-core` | `video-gateway/` per plan 0013-video; SaaS consumes `customer-portal/`; engine merges in. | being collapsed | plan 0013-video (paper); plan 0011-followup (broker side); plan 0008-followup |
+| `livepeer-vtuber-project/pipeline-app` (top-level canonical) | `vtuber-pipeline/` per plan 0013-vtuber. Python + uv preserved. | being lifted | plan 0013-vtuber |
+| `livepeer-vtuber-project/session-runner` + `livepeer-vtuber-project/avatar-renderer` | `vtuber-runner/` per plan 0013-vtuber (renderer as sub-workspace). | being lifted | plan 0013-vtuber |
+| `livepeer-byoc/openai-runners/openai-runner` (Go) | `openai-runners/openai-runner/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/openai-runners/openai-audio-runner` (Python) | `openai-runners/openai-audio-runner/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/openai-runners/openai-tts-runner` (Python) | `openai-runners/openai-tts-runner/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/openai-runners/openai-image-generation-runner` (Python) | `openai-runners/openai-image-generation-runner/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/openai-runners/image-model-downloader` | `openai-runners/image-model-downloader/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/openai-runners/openai-tester` | `openai-runners/openai-tester/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/rerank-runner` | `rerank-runner/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/transcode-runners/transcode-runner` (Go) | `video-runners/transcode-runner/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/transcode-runners/abr-runner` (Go) | `video-runners/abr-runner/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/transcode-runners/transcode-core` (Go module) | `video-runners/transcode-core/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/transcode-runners/codecs-builder` | `video-runners/codecs-builder/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/transcode-runners/transcode-tester` | `video-runners/transcode-tester/` per plan 0013-runners. | being lifted | plan 0013-runners |
+| `livepeer-byoc/transcode-runners/live-transcode-runner` | DROPPED. Capability-broker's mode driver (plan 0011-followup) replaces it. | retired | plan 0011-followup |
+| `livepeer-byoc/gateway-proxy` | DROPPED. Was for go-livepeer; not needed in rewrite. | retired | plan 0013-runners §15 |
+| `livepeer-byoc/video-generation` | DROPPED per user lock; not needed for v1.0.0. | retired | plan 0013-runners §15 |
+| `livepeer-byoc/register-capabilities` | DROPPED. Replaced by orch-coordinator scrape per plan 0018; runners' `GET /options` preserved. | retired | plan 0018; plan 0013-runners |
+| `livepeer-byoc/deployment-examples` | DROPPED per user lock; rewrite ships its own runbooks. | retired | plan 0013-runners §15 |
 | `livepeer-secure-orch-console` | `secure-orch-console/` in this monorepo (diff + one-click sign UX) | partially ported | plan 0019 (planned) |
 | `livepeer-orch-coordinator` | `orch-coordinator/` in this monorepo (capability-as-roster-entry UX) | partially ported | plan 0018 (planned) |
-| `livepeer-gateway-console` | Gateway-side console, planned but not in any active plan; survives in suite form during cutover | TBD | (no plan yet) |
+| `livepeer-gateway-console` | Gateway-side console; survives in suite form during cutover; product-gateway admin SPAs (per plan 0013-openai / -vtuber / -video) absorb most of its surface. | TBD | (no plan yet) |
 | `livepeer-up-installer` | Operator installer for the rewrite's `host-config.yaml` shape; planned subfolder | partially ported | (no plan yet) |
-| `livepeer-vtuber-project` (Pipeline SaaS) | None — this is consumer product code, not infrastructure | preserved | (out of scope for this rewrite) |
-| Suite meta-repo (`livepeer-network-suite`) | Long-term: archived or converted to a thin bookkeeping shell once every submodule has a successor | deprecated (timeline-gated) | this doc, phase N |
+| `livepeer-vtuber-project` (top-level repo lifecycle) | Code lifted into `vtuber-{gateway,pipeline,runner}/` per plan 0013-vtuber; the top-level repo retires manually after migration. | being lifted | plan 0013-vtuber |
+| `livepeer-modules-project` (Go monorepo lifecycle) | Untouched by this work; user retires manually post-port. | preserved | (out of scope) |
+| Suite meta-repo (`livepeer-network-suite`) | Long-term: archived or converted to a thin bookkeeping shell once every submodule has a successor | deprecated (timeline-gated) | this doc, phase 5 |
+| `livepeer-byoc/` tree lifecycle | Long-term: archived once every component is lifted into the rewrite per plan 0013-runners. User retires manually. | deprecated | plan 0013-runners |
 
 ## 3. Deprecation timeline
 
@@ -137,25 +200,40 @@ gateway running rewrite images against Arbitrum One.
 Suite stays unchanged in this phase. No suite repos archived. No operator
 asked to migrate yet.
 
-### Phase 2 — Per-gateway migrations (per plan 0013 for the OpenAI adapter)
+### Phase 2 — Per-product migrations (the 0013 brief family)
 
-Acceptance: the suite's `livepeer-openai-gateway` repo cuts a release that
-consumes the rewrite's `gateway-adapters/` (HTTP-family middleware) and the
-new resolver tuple shape; equivalent per-gateway plans land for the video and
-vtuber gateways using their respective mode adapters. This phase is
-fan-out — the three gateway shells migrate in parallel, each on its own
-schedule, each behind its own plan.
+Acceptance: each product family — OpenAI, vtuber, video — is absorbed
+into the rewrite per its 0013 brief. The shared `customer-portal/` library
+lands first per plan 0013-shell (foundation; not chain-gated). The three
+product gateways then collapse per plans 0013-openai, 0013-vtuber, and
+0013-video (each chain-gated on plan 0016 for production cutover). The
+vtuber pipeline + runner can pre-ship; the workload-runner family lifts
+per plan 0013-runners (no chain gate).
 
-Acceptance per gateway: the migrated shell passes a byte-for-byte fixture
-round-trip against the previous wire (the same harness plan 0014 used to lock
-the Payment envelope), the customer-facing API surface is unchanged, and
-the gateway is running the rewrite's resolver in production for at least
-seven days at dust-traffic volumes before flipping the rest of its fleet.
+Acceptance per product family:
 
-Observable signal: the gateway repo's release tag references the rewrite's
-plan number (e.g. plan 0013 for OpenAI); the gateway's
-`livepeer_routes_total` Prometheus counter reports nonzero traffic against a
-manifest with the new flat-tuple schema.
+- **`customer-portal/`** (plan 0013-shell, foundation): drizzle migrations
+  apply cleanly; integration smokes (auth + wallet + Stripe webhook +
+  rate-limit + idempotency) green; portal/admin SPA bundles build.
+- **`openai-gateway/`** (plan 0013-openai): byte-for-byte Payment envelope
+  round-trip against the rewrite's wire-compat corpus; six paid endpoints
+  (chat / chat-stream / embeddings / transcriptions / images-generations /
+  speech-503) full-lifecycle including refunds; SaaS surfaces (auth, top-up,
+  rate-card admin) functional; suite shell repo flagged deprecated.
+- **`vtuber-{gateway,pipeline,runner}/`** (plan 0013-vtuber): full session
+  lifecycle including session-open + control-WS + per-second metering +
+  topup-mid-session; `livepeer-vtuber-project/` code absorbed into rewrite.
+- **`video-gateway/`** (plan 0013-video): live-stream + VOD lifecycles;
+  customer-facing RTMP listener proxies to broker:1935; webhook delivery
+  signed correctly.
+- **`{openai,rerank,video}-runners/`** (plan 0013-runners): broker-side
+  smoke against each runner; orch-coordinator's `/options` scrape returns
+  expected offerings; legacy `live-transcode-runner` retired.
+
+Observable signal: each product gateway's release tag references the
+rewrite's plan number (e.g. plan 0013-openai); the gateway's
+`livepeer_routes_total` Prometheus counter reports nonzero traffic
+against a manifest with the new flat-tuple schema.
 
 ### Phase 3 — Worker-node repos archived
 
@@ -352,9 +430,9 @@ Operators do nothing. The suite repo's archival is a publisher-side action.
 This doc deliberately does not cover:
 
 - **Per-component code-level diffs.** Those live in component-specific
-  migration plans — plan 0013 for the OpenAI shell is the worked example;
-  per-gateway plans for video and vtuber will follow the same template
-  when their gateway-adapters 7-followup work is sequenced.
+  migration plans — the five 0013 briefs (`0013-shell`, `0013-openai`,
+  `0013-vtuber`, `0013-video`, `0013-runners`) under
+  `docs/exec-plans/active/`.
 - **Operator support process, contracts, pricing, SLA.** Those are
   operations concerns, not architecture concerns. Suite operators who have
   paid support arrangements continue under those arrangements; the
@@ -365,10 +443,17 @@ This doc deliberately does not cover:
   `architecture-overview.md` Layer 3; new recipes are a separate plan
   scoped at `capability-broker/`.
 - **Image tag ownership during the cutover window.** Per core-belief #14
-  (clean-slate rewrite — the suite is untouched), the rewrite does not
-  bump or republish suite image tags. Each side maintains its own
-  release line; phase 5 archives the suite line.
-- **Versioning of the `livepeer-vtuber-project` consumer SaaS.** That repo
-  is preserved across the migration and consumes the new
-  `livepeer:vtuber-session` capability the same way it consumed the suite
-  shape.
+  (clean-slate rewrite — the suite is untouched) and per user-memory
+  `feedback_no_image_version_bumps.md`, the rewrite does not bump or
+  republish suite image tags. Current pin is `v0.8.10` across the rewrite's
+  Cloud-SPE images; the migration does not bump as part of the move.
+  Each side maintains its own release line; phase 5 archives the suite
+  line.
+- **Lifecycle of the `livepeer-vtuber-project/` repository.** Plan
+  0013-vtuber lifts the code into the rewrite; the user retires the
+  top-level vtuber-project repo manually after the migration lands. The
+  repository's cutover runbook is operator territory.
+- **Lifecycle of the `livepeer-byoc/` tree.** Plan 0013-runners lifts the
+  in-scope subset; user retires the byoc tree manually after the lift.
+- **Lifecycle of `livepeer-modules-project/`.** Out of scope for this
+  rewrite; user retires manually.

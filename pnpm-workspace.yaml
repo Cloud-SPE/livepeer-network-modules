@@ -4,3 +4,4 @@ packages:
   - "customer-portal/frontend/shared"
   - "customer-portal/frontend/portal"
   - "customer-portal/frontend/admin"
+  - "openai-gateway"

@@ -61,3 +61,27 @@ func TestHLSMuxerArgs_LLHLS_PartDuration(t *testing.T) {
 		t.Errorf("LL-HLS missing fmp4: %v", args)
 	}
 }
+
+func TestCodecPerRungScaleArgs_VAAPI(t *testing.T) {
+	r := Rung{Name: "720p", Width: 1280, Height: 720}
+	got := codecPerRungScaleArgs(CodecVAAPI, r)
+	if !argsContain(got, "-vf", "format=nv12,hwupload,scale_vaapi=w=1280:h=720") {
+		t.Errorf("vaapi scale chain missing: %v", got)
+	}
+}
+
+func TestCodecPerRungScaleArgs_QSV(t *testing.T) {
+	r := Rung{Name: "720p", Width: 1280, Height: 720}
+	got := codecPerRungScaleArgs(CodecQSV, r)
+	if !argsContain(got, "-vf", "scale_qsv=w=1280:h=720") {
+		t.Errorf("qsv scale chain missing: %v", got)
+	}
+}
+
+func TestCodecPerRungScaleArgs_NVENC(t *testing.T) {
+	r := Rung{Name: "720p", Width: 1280, Height: 720}
+	got := codecPerRungScaleArgs(CodecNVENC, r)
+	if !argsContain(got, "-s", "1280x720") {
+		t.Errorf("nvenc -s shape missing: %v", got)
+	}
+}

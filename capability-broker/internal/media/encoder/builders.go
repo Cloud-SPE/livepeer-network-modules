@@ -35,21 +35,16 @@ func buildLadderArgs(h HLSOptions, c Codec, rungs []Rung) []string {
 		"-loglevel", "info",
 		"-progress", "pipe:2",
 	}
-	if c == CodecVAAPI {
-		args = append(args, "-vaapi_device", "/dev/dri/renderD128")
-	}
+	args = append(args, codecGlobalArgs(c)...)
 	args = append(args, "-f", "flv", "-i", "pipe:0")
 
 	gop := strconv.Itoa(h.SegmentDuration * 30)
 	for _, r := range rungs {
-		args = append(args,
-			"-map", "0:v:0",
-			"-map", "0:a:0",
-			"-c:v", c.FFmpegEncoder(),
-		)
+		args = append(args, "-map", "0:v:0", "-map", "0:a:0")
+		args = append(args, codecPerRungScaleArgs(c, r)...)
+		args = append(args, "-c:v", c.FFmpegEncoder())
 		args = append(args, codecQualityArgs(c)...)
 		args = append(args,
-			"-s", fmt.Sprintf("%dx%d", r.Width, r.Height),
 			"-b:v", fmt.Sprintf("%dk", r.BitrateKbps),
 			"-maxrate", fmt.Sprintf("%dk", r.BitrateKbps),
 			"-bufsize", fmt.Sprintf("%dk", r.BitrateKbps*2),
@@ -63,6 +58,30 @@ func buildLadderArgs(h HLSOptions, c Codec, rungs []Rung) []string {
 		args = append(args, hlsMuxerArgs(h, r.Name)...)
 	}
 	return args
+}
+
+// codecGlobalArgs returns args that apply once before -i (input).
+func codecGlobalArgs(c Codec) []string {
+	switch c {
+	case CodecVAAPI:
+		return []string{"-vaapi_device", "/dev/dri/renderD128"}
+	}
+	return nil
+}
+
+// codecPerRungScaleArgs returns the per-rung scaler+upload args.
+// VAAPI needs `-vf format=nv12,hwupload,scale_vaapi=...`; the others
+// use the simpler `-s WxH` shape.
+func codecPerRungScaleArgs(c Codec, r Rung) []string {
+	switch c {
+	case CodecVAAPI:
+		vf := fmt.Sprintf("format=nv12,hwupload,scale_vaapi=w=%d:h=%d", r.Width, r.Height)
+		return []string{"-vf", vf}
+	case CodecQSV:
+		vf := fmt.Sprintf("scale_qsv=w=%d:h=%d", r.Width, r.Height)
+		return []string{"-vf", vf}
+	}
+	return []string{"-s", fmt.Sprintf("%dx%d", r.Width, r.Height)}
 }
 
 // codecQualityArgs returns the per-encoder quality knobs. Each

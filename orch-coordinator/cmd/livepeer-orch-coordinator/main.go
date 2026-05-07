@@ -339,13 +339,14 @@ func synthDevConfig() *config.Config {
 
 func newDevFake(orchAddr string, brokers []config.Broker) brokerclient.Client {
 	f := brokerclient.NewFake()
-	for i, b := range brokers {
+	for _, b := range brokers {
 		caps := []types.BrokerOffering{{
 			CapabilityID:    "demo:echo:v1",
 			OfferingID:      "default",
 			InteractionMode: "http-reqresp@v0",
 			WorkUnit:        types.WorkUnit{Name: "echoes"},
-			PricePerUnitWei: fmt.Sprintf("%d", 100+i*10),
+			PricePerUnitWei: "100",
+			Extra:           map[string]any{"broker": b.Name},
 		}}
 		f.Set(b.BaseURL, &types.BrokerOfferings{
 			OrchEthAddress: orchAddr,

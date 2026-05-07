@@ -12,7 +12,9 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/rtmpingresshlsegress"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
 )
@@ -26,22 +28,44 @@ type Options struct {
 	// 0015. Zero values are a safe disabled state (v0.2 single-debit
 	// fall-through).
 	InterimDebit middleware.InterimDebitConfig
+
+	// RTMP configures the broker's RTMP ingest listener. Empty Addr
+	// keeps the listener disabled; the broker still serves the
+	// session-open POST so configurations without RTMP capabilities
+	// keep working.
+	RTMP RTMPOptions
+
+	// RTMPDriver carries the URL-derivation knobs for the
+	// rtmp-ingress-hls-egress driver. Empty values fall back to
+	// host-of-backend.url.
+	RTMPDriver rtmpingresshlsegress.Config
+}
+
+// RTMPOptions configures the broker's RTMP ingest listener.
+type RTMPOptions struct {
+	Addr             string
+	MaxConcurrent    int
+	IdleTimeout      time.Duration
+	DuplicatePolicy  mediartmp.DuplicatePolicy
+	RequireStreamKey bool
 }
 
 // Server wraps the broker's HTTP server. It owns two listeners: the paid
 // listener (cfg.Listen.Paid) for /v1/cap and /registry/*, and a metrics
 // listener (cfg.Listen.Metrics) for Prometheus scraping.
 type Server struct {
-	cfg        *config.Config
-	opts       Options
-	mux        *http.ServeMux
-	srv        *http.Server
-	metricsSrv *http.Server
-	payment    payment.Client
-	modes      *modes.Registry
-	extractors *extractors.Registry
-	backend    backend.Forwarder
-	secrets    backend.SecretResolver
+	cfg          *config.Config
+	opts         Options
+	mux          *http.ServeMux
+	srv          *http.Server
+	metricsSrv   *http.Server
+	payment      payment.Client
+	modes        *modes.Registry
+	extractors   *extractors.Registry
+	backend      backend.Forwarder
+	secrets      backend.SecretResolver
+	rtmpStore    *rtmpingresshlsegress.Store
+	rtmpListener *mediartmp.Listener
 }
 
 // New constructs a Server from a validated config and registers routes. It
@@ -69,16 +93,29 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("payment client: %w", err)
 	}
 
+	rtmpStore := rtmpingresshlsegress.NewStore()
+	rtmpDriver := rtmpingresshlsegress.New(rtmpStore, opts.RTMPDriver)
+
 	s := &Server{
 		cfg:        cfg,
 		opts:       opts,
 		mux:        mux,
 		srv:        srv,
 		payment:    paymentClient,
-		modes:      defaultModes(),
+		modes:      defaultModes(rtmpDriver),
 		extractors: defaultExtractors(),
 		backend:    backend.NewHTTPClient(),
 		secrets:    backend.NewEnvSecretResolver(),
+		rtmpStore:  rtmpStore,
+	}
+
+	if opts.RTMP.Addr != "" {
+		s.rtmpListener = mediartmp.New(mediartmp.Config{
+			Addr:             opts.RTMP.Addr,
+			MaxConcurrent:    opts.RTMP.MaxConcurrent,
+			DuplicatePolicy:  opts.RTMP.DuplicatePolicy,
+			RequireStreamKey: opts.RTMP.RequireStreamKey,
+		}, &storeLookup{store: rtmpStore})
 	}
 
 	if err := s.validateAgainstRegistries(); err != nil {
@@ -88,6 +125,40 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	s.registerRoutes()
 	s.metricsSrv = newMetricsServer(cfg.Listen.Metrics)
 	return s, nil
+}
+
+// storeLookup adapts the session store to the mediartmp.SessionLookup
+// interface. C1's listener accepts publishes against the store and
+// drops bytes into a discard sink — the real encoder wiring lands in
+// later commits.
+type storeLookup struct {
+	store *rtmpingresshlsegress.Store
+}
+
+func (l *storeLookup) LookupAndAccept(sessionID, streamKey string) (mediartmp.Sink, bool, bool) {
+	rec, ok := l.store.Lookup(sessionID, streamKey)
+	if !ok {
+		return nil, false, false
+	}
+	prior, _ := l.store.MarkPublishing(rec.SessionID, time.Now())
+	sink := mediartmp.NewDiscardSink()
+	return sinkAdapter{base: sink, store: l.store, sessionID: rec.SessionID}, true, prior
+}
+
+// sinkAdapter forwards Sink calls to a base sink and pushes Touch
+// timestamps into the session store. Lets the listener stay agnostic
+// of the rtmpingresshlsegress.Store type.
+type sinkAdapter struct {
+	base      mediartmp.Sink
+	store     *rtmpingresshlsegress.Store
+	sessionID string
+}
+
+func (s sinkAdapter) WriteFLV(p []byte) (int, error) { return s.base.WriteFLV(p) }
+func (s sinkAdapter) Close() error                   { return s.base.Close() }
+func (s sinkAdapter) Touch(now time.Time) {
+	s.base.Touch(now)
+	s.store.Touch(s.sessionID, now)
 }
 
 // newPaymentClient picks the right Client implementation per host-config.
@@ -126,9 +197,9 @@ func (s *Server) validateAgainstRegistries() error {
 }
 
 // Run starts the server in the foreground. Blocks until ctx is canceled or
-// either listener errors; performs graceful shutdown on cancellation.
+// any listener errors; performs graceful shutdown on cancellation.
 func (s *Server) Run(ctx context.Context) error {
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() {
 		log.Printf("listening on %s (paid)", s.cfg.Listen.Paid)
 		if err := s.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -145,6 +216,15 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
+	if s.rtmpListener != nil {
+		go func() {
+			if err := s.rtmpListener.Run(ctx); err != nil {
+				errCh <- fmt.Errorf("listen rtmp: %w", err)
+				return
+			}
+			errCh <- nil
+		}()
+	}
 
 	select {
 	case <-ctx.Done():

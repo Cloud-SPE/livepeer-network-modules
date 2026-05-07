@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
@@ -50,6 +51,32 @@ func main() {
 			"grace period before terminating a handler after SufficientBalance returns false; "+
 				"reserved for the future mid-session top-up flow (plan 0015)",
 		)
+
+		rtmpListenAddr = flag.String(
+			"rtmp-listen-addr",
+			"",
+			"RTMP ingest bind (e.g. :1935); empty disables the RTMP listener",
+		)
+		rtmpMaxConcurrent = flag.Uint(
+			"rtmp-max-concurrent-streams",
+			100,
+			"per-broker cap on concurrent RTMP publish sessions",
+		)
+		rtmpIdleTimeout = flag.Duration(
+			"rtmp-idle-timeout",
+			10*time.Second,
+			"per-stream idle timeout once a publish handshake has completed",
+		)
+		rtmpOnDuplicateKey = flag.String(
+			"rtmp-on-duplicate-key",
+			"reject",
+			"policy on duplicate stream-key publishes: reject | replace",
+		)
+		rtmpRequireStreamKey = flag.Bool(
+			"rtmp-require-stream-key",
+			true,
+			"reject RTMP publishes without a stream-key suffix; off for fixture / dev only",
+		)
 	)
 	flag.Parse()
 
@@ -74,11 +101,25 @@ func main() {
 		cfg.Listen.Metrics = *metricsAddr
 	}
 
+	dupPolicy := mediartmp.DuplicatePolicy(*rtmpOnDuplicateKey)
+	switch dupPolicy {
+	case mediartmp.DuplicateReject, mediartmp.DuplicateReplace:
+	default:
+		log.Fatalf("--rtmp-on-duplicate-key=%q must be 'reject' or 'replace'", *rtmpOnDuplicateKey)
+	}
+
 	srv, err := server.New(cfg, server.Options{
 		InterimDebit: middleware.InterimDebitConfig{
 			Interval:            *interimDebitInterval,
 			MinRunwayUnits:      *interimDebitMinRunwayUnits,
 			GraceOnInsufficient: *interimDebitGraceOnInsufficient,
+		},
+		RTMP: server.RTMPOptions{
+			Addr:             *rtmpListenAddr,
+			MaxConcurrent:    int(*rtmpMaxConcurrent),
+			IdleTimeout:      *rtmpIdleTimeout,
+			DuplicatePolicy:  dupPolicy,
+			RequireStreamKey: *rtmpRequireStreamKey,
 		},
 	})
 	if err != nil {

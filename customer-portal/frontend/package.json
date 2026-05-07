@@ -1,0 +1,13 @@
+{
+  "name": "customer-portal-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "pnpm sub-workspace for shared widgets + portal/admin SPA scaffolds",
+  "license": "MIT",
+  "scripts": {
+    "build": "pnpm -r --filter ./shared --filter ./portal --filter ./admin build"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

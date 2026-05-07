@@ -39,7 +39,9 @@ test('verifyApiKey true for matching hashes, false for mismatch', () => {
   const k = generateApiKey('live');
   const h = hashApiKey('p', k);
   assert.equal(verifyApiKey(h, h), true);
-  assert.equal(verifyApiKey(h, h.replace(/.$/, '0')), false);
+  const lastChar = h[h.length - 1]!;
+  const flipped = lastChar === '0' ? h.slice(0, -1) + '1' : h.slice(0, -1) + '0';
+  assert.equal(verifyApiKey(h, flipped), false);
 });
 
 test('verifyApiKey rejects different lengths without timing leak', () => {

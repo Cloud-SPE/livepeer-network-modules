@@ -44,3 +44,4 @@ export type {
   Wallet,
   RateCardResolver,
 } from './types.js';
+export * as stripe from './stripe/index.js';

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server"
@@ -88,6 +89,17 @@ func main() {
 			5*time.Second,
 			"SIGTERM-to-SIGKILL grace window for the per-session FFmpeg subprocess",
 		)
+
+		encoderFlag = flag.String(
+			"encoder",
+			"auto",
+			"encoder selection: auto | nvenc | qsv | vaapi | libx264",
+		)
+		encoderAllowCPU = flag.Bool(
+			"encoder-allow-cpu",
+			false,
+			"permit libx264 fallback when --encoder=auto finds no GPU (production deployments should use a GPU)",
+		)
 	)
 	flag.Parse()
 
@@ -119,6 +131,23 @@ func main() {
 		log.Fatalf("--rtmp-on-duplicate-key=%q must be 'reject' or 'replace'", *rtmpOnDuplicateKey)
 	}
 
+	var probe encoder.ProbeResult
+	if *rtmpListenAddr != "" {
+		want, err := encoder.ParseCodec(*encoderFlag)
+		if err != nil {
+			log.Fatalf("--encoder: %v", err)
+		}
+		probe, err = encoder.Probe(encoder.ProbeOptions{
+			Want:     want,
+			AllowCPU: *encoderAllowCPU,
+			Bin:      *ffmpegBinary,
+		})
+		if err != nil {
+			log.Fatalf("encoder probe: %v", err)
+		}
+		log.Printf("encoder: selected=%s available=%v", probe.Selected, probe.Available)
+	}
+
 	srv, err := server.New(cfg, server.Options{
 		InterimDebit: middleware.InterimDebitConfig{
 			Interval:            *interimDebitInterval,
@@ -135,6 +164,7 @@ func main() {
 		FFmpeg: server.FFmpegOptions{
 			Binary:      *ffmpegBinary,
 			CancelGrace: *ffmpegCancelGrace,
+			Codec:       probe.Selected,
 		},
 	})
 	if err != nil {

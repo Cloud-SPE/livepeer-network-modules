@@ -12,6 +12,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/rtmpingresshlsegress"
@@ -58,6 +59,9 @@ type RTMPOptions struct {
 type FFmpegOptions struct {
 	Binary      string
 	CancelGrace time.Duration
+	// Codec is the encoder selected at startup by media/encoder.Probe.
+	// Empty when the RTMP listener is disabled.
+	Codec encoder.Codec
 }
 
 // Server wraps the broker's HTTP server. It owns two listeners: the paid

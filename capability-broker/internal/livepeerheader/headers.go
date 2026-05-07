@@ -48,6 +48,12 @@ const (
 	// pre-handler phase, otherwise carried as a trailer where the
 	// protocol allows it.
 	ErrInsufficientBalance = "insufficient_balance"
+
+	// rtmp-ingress-hls-egress error codes (plan 0011-followup). Added
+	// at the end so concurrent additions from sibling plans append
+	// cleanly above this comment block.
+	ErrFFmpegSubprocessFailed = "ffmpeg_subprocess_failed"
+	ErrRTMPIngestIdleTimeout  = "rtmp_ingest_idle_timeout"
 )
 
 // ImplementedSpecVersion is the spec-wide major.minor this broker speaks.

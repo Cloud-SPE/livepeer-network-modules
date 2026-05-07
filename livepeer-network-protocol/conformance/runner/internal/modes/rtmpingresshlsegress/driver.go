@@ -36,6 +36,9 @@ func New() *Driver {
 func (d *Driver) Mode() string { return Mode }
 
 func (d *Driver) Run(ctx context.Context, brokerURL string, fx fixtures.Fixture, mock *mockbackend.Server) report.Result {
+	if fx.RTMP.EndToEnd {
+		return runEndToEnd(ctx, d.httpClient, brokerURL, fx, mock)
+	}
 	return runSessionOpen(ctx, d.httpClient, brokerURL, fx, mock)
 }
 

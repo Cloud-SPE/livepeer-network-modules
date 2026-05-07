@@ -4,6 +4,7 @@ import (
 	"math/big"
 	"net/http"
 
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/hls"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/registry"
 )
@@ -13,6 +14,16 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /registry/offerings", registry.OfferingsHandler(s.cfg))
 	s.mux.HandleFunc("GET /registry/health", registry.HealthHandler(s.cfg))
 	s.mux.HandleFunc("GET /healthz", registry.HealthzHandler())
+
+	// LL-HLS playback served from the per-session scratch. The URL is
+	// itself a per-session bearer secret (12 random bytes hex) so
+	// playback isn't gated by the payment middleware — that ran at
+	// session-open. Registered only when the scratch dir is set.
+	if s.opts.HLS.ScratchDir != "" {
+		s.mux.Handle("/_hls/", hls.Handler(s.opts.HLS.ScratchDir, func(id string) bool {
+			return s.rtmpStore != nil && s.rtmpStore.Get(id) != nil
+		}))
+	}
 
 	// Metrics live on a separate listener (cfg.Listen.Metrics, default :9090);
 	// see metrics_server.go. This intentionally does NOT register /metrics on
@@ -37,6 +48,13 @@ func (s *Server) registerRoutes() {
 	// (method, mode) selection; the ws-realtime driver upgrades the
 	// connection in its Serve method.
 	s.mux.Handle("GET /v1/cap", paidChain(http.HandlerFunc(s.dispatch)))
+
+	// POST /v1/cap/{session_id}/end — gateway-initiated session close
+	// for rtmp-ingress-hls-egress per the mode spec §"Session-end".
+	// Unpaid: the session was already paid for at session-open, and
+	// the URL path is a per-session bearer secret. 404 on unknown
+	// session id; 204 on a successful tear-down.
+	s.mux.HandleFunc("POST /v1/cap/{session_id}/end", s.rtmpCloseSession)
 }
 
 // capabilityLookup returns a CapabilityLookup function the payment

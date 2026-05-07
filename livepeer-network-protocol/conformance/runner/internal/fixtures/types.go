@@ -26,6 +26,11 @@ type Fixture struct {
 	// 0015 conformance fixtures). Empty for fixtures of other modes.
 	WSRealtime WSRealtimeFixture `yaml:"ws_realtime,omitempty"`
 
+	// RTMP carries rtmp-ingress-hls-egress-mode-specific scenario knobs
+	// for the end-to-end fixture (plan 0011-followup §11.1). Zero values
+	// reproduce the v0.1 session-open-only happy path.
+	RTMP RTMPFixture `yaml:"rtmp,omitempty"`
+
 	// Path is the file path the fixture was loaded from; used in error
 	// messages, not parsed from YAML.
 	Path string `yaml:"-"`
@@ -57,6 +62,22 @@ type WSRealtimeFixture struct {
 	// ExpectBrokerTerminated asserts the broker closed the WebSocket,
 	// not the runner. Used by the balance-exhausted fixture.
 	ExpectBrokerTerminated bool `yaml:"expect_broker_terminated,omitempty"`
+}
+
+// RTMPFixture extends Fixture with the rtmp-ingress-hls-egress driver's
+// end-to-end knobs (plan 0011-followup §11.1). When EndToEnd is true the
+// driver pushes a synthetic RTMP stream to the broker's listener and
+// fetches the LL-HLS playlist + first segment to verify the pipeline is
+// live. Zero values reproduce the v0.1 session-open-only happy path.
+type RTMPFixture struct {
+	// EndToEnd enables the RTMP push + HLS fetch flow. When false the
+	// driver only exercises the session-open POST.
+	EndToEnd bool `yaml:"end_to_end,omitempty"`
+	// PushDurationSeconds is how long to push synthetic RTMP. Default 5s.
+	PushDurationSeconds int `yaml:"push_duration_seconds,omitempty"`
+	// HLSWaitSeconds is the deadline for the HLS playlist to materialise
+	// after the push starts. Default 8s.
+	HLSWaitSeconds int `yaml:"hls_wait_seconds,omitempty"`
 }
 
 // Setup describes what the runner is expected to provision in the broker

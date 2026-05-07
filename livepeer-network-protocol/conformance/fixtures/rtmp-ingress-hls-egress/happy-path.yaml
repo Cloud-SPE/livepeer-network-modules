@@ -57,6 +57,7 @@ response_expect:
     - Livepeer-Request-Id
   body_fields_present:
     - session_id
+    - stream_key
     - rtmp_ingest_url
     - hls_playback_url
     - control_url

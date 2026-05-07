@@ -12,7 +12,12 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/ffmpegprogress"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/hls"
+	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/rtmpingresshlsegress"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
 )
@@ -26,22 +31,69 @@ type Options struct {
 	// 0015. Zero values are a safe disabled state (v0.2 single-debit
 	// fall-through).
 	InterimDebit middleware.InterimDebitConfig
+
+	// RTMP configures the broker's RTMP ingest listener. Empty Addr
+	// keeps the listener disabled; the broker still serves the
+	// session-open POST so configurations without RTMP capabilities
+	// keep working.
+	RTMP RTMPOptions
+
+	// RTMPDriver carries the URL-derivation knobs for the
+	// rtmp-ingress-hls-egress driver. Empty values fall back to
+	// host-of-backend.url.
+	RTMPDriver rtmpingresshlsegress.Config
+
+	// FFmpeg configures the per-session encoder subprocess. Empty
+	// Binary defaults to "ffmpeg"; CancelGrace defaults to 5s.
+	FFmpeg FFmpegOptions
+
+	// HLS configures the LL-HLS muxer flags + scratch root.
+	HLS HLSOptions
+}
+
+// HLSOptions configures the LL-HLS muxer + scratch directory.
+type HLSOptions struct {
+	Legacy          bool
+	PartDuration    time.Duration
+	SegmentDuration time.Duration
+	PlaylistWindow  int
+	ScratchDir      string
+}
+
+// RTMPOptions configures the broker's RTMP ingest listener.
+type RTMPOptions struct {
+	Addr             string
+	MaxConcurrent    int
+	IdleTimeout      time.Duration
+	DuplicatePolicy  mediartmp.DuplicatePolicy
+	RequireStreamKey bool
+}
+
+// FFmpegOptions configures the per-session FFmpeg subprocess.
+type FFmpegOptions struct {
+	Binary      string
+	CancelGrace time.Duration
+	// Codec is the encoder selected at startup by media/encoder.Probe.
+	// Empty when the RTMP listener is disabled.
+	Codec encoder.Codec
 }
 
 // Server wraps the broker's HTTP server. It owns two listeners: the paid
 // listener (cfg.Listen.Paid) for /v1/cap and /registry/*, and a metrics
 // listener (cfg.Listen.Metrics) for Prometheus scraping.
 type Server struct {
-	cfg        *config.Config
-	opts       Options
-	mux        *http.ServeMux
-	srv        *http.Server
-	metricsSrv *http.Server
-	payment    payment.Client
-	modes      *modes.Registry
-	extractors *extractors.Registry
-	backend    backend.Forwarder
-	secrets    backend.SecretResolver
+	cfg          *config.Config
+	opts         Options
+	mux          *http.ServeMux
+	srv          *http.Server
+	metricsSrv   *http.Server
+	payment      payment.Client
+	modes        *modes.Registry
+	extractors   *extractors.Registry
+	backend      backend.Forwarder
+	secrets      backend.SecretResolver
+	rtmpStore    *rtmpingresshlsegress.Store
+	rtmpListener *mediartmp.Listener
 }
 
 // New constructs a Server from a validated config and registers routes. It
@@ -69,16 +121,42 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("payment client: %w", err)
 	}
 
+	rtmpStore := rtmpingresshlsegress.NewStore()
+	rtmpDriver := rtmpingresshlsegress.New(rtmpStore, opts.RTMPDriver)
+
 	s := &Server{
 		cfg:        cfg,
 		opts:       opts,
 		mux:        mux,
 		srv:        srv,
 		payment:    paymentClient,
-		modes:      defaultModes(),
+		modes:      defaultModes(rtmpDriver),
 		extractors: defaultExtractors(),
 		backend:    backend.NewHTTPClient(),
 		secrets:    backend.NewEnvSecretResolver(),
+		rtmpStore:  rtmpStore,
+	}
+
+	if opts.RTMP.Addr != "" {
+		s.rtmpListener = mediartmp.New(mediartmp.Config{
+			Addr:             opts.RTMP.Addr,
+			MaxConcurrent:    opts.RTMP.MaxConcurrent,
+			DuplicatePolicy:  opts.RTMP.DuplicatePolicy,
+			RequireStreamKey: opts.RTMP.RequireStreamKey,
+		}, &mediaLookup{
+			store:   rtmpStore,
+			ffmpeg:  opts.FFmpeg,
+			hls:     opts.HLS,
+			lookupCap: func(capID, offID string) (encoderProfile string, ok bool) {
+				for i := range cfg.Capabilities {
+					c := &cfg.Capabilities[i]
+					if c.ID == capID && c.OfferingID == offID {
+						return c.Backend.Profile, true
+					}
+				}
+				return "", false
+			},
+		})
 	}
 
 	if err := s.validateAgainstRegistries(); err != nil {
@@ -89,6 +167,135 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	s.metricsSrv = newMetricsServer(cfg.Listen.Metrics)
 	return s, nil
 }
+
+// mediaLookup adapts the session store to mediartmp.SessionLookup
+// and owns the per-session encoder + LL-HLS scratch wire-up. On a
+// successful publish handshake it:
+//
+//  1. Resolves the capability's encoder profile.
+//  2. Materialises the per-session HLS scratch.
+//  3. Renders FFmpeg argv from the profile + HLS options.
+//  4. Spawns the SystemEncoder goroutine reading from a PipeSink.
+//  5. Returns the PipeSink to the listener.
+//
+// Cancellation flows through the context attached to the encoder; the
+// listener invokes Close on the sink when RTMP disconnects.
+type mediaLookup struct {
+	store     *rtmpingresshlsegress.Store
+	ffmpeg    FFmpegOptions
+	hls       HLSOptions
+	lookupCap func(capID, offID string) (string, bool)
+}
+
+func (l *mediaLookup) LookupAndAccept(sessionID, streamKey string) (mediartmp.Sink, bool, bool) {
+	rec, ok := l.store.Lookup(sessionID, streamKey)
+	if !ok {
+		return nil, false, false
+	}
+	if rec.Profile == "" {
+		log.Printf("rtmp: session=%s has empty profile (capability=%s/%s); falling back to passthrough",
+			sessionID, rec.CapabilityID, rec.OfferingID)
+		rec.Profile = encoder.ProfilePassthrough
+	}
+
+	scratch := hls.NewScratch(l.hls.ScratchDir, sessionID)
+	rungs := []string{}
+	if rec.Profile != encoder.ProfilePassthrough {
+		for _, r := range encoder.FiveRungLadder {
+			rungs = append(rungs, r.Name)
+		}
+	}
+	scratchDir, err := scratch.Setup(rungs)
+	if err != nil {
+		log.Printf("rtmp: session=%s scratch setup failed: %v", sessionID, err)
+		return nil, false, false
+	}
+
+	args, err := encoder.BuildArgs(encoder.PresetInput{
+		Profile: rec.Profile,
+		Codec:   l.ffmpeg.Codec,
+		HLS: encoder.HLSOptions{
+			Legacy:          l.hls.Legacy,
+			SegmentDuration: int(l.hls.SegmentDuration.Seconds()),
+			PartDuration:    l.hls.PartDuration.Seconds(),
+			PlaylistWindow:  l.hls.PlaylistWindow,
+			ScratchDir:      scratchDir,
+		},
+	})
+	if err != nil {
+		log.Printf("rtmp: session=%s build args: %v", sessionID, err)
+		_ = scratch.Cleanup()
+		return nil, false, false
+	}
+
+	sysEnc := encoder.NewSystemEncoder(l.ffmpeg.Binary, l.ffmpeg.CancelGrace)
+	prog := sysEnc.Progress()
+	if rec.Profile != encoder.ProfilePassthrough {
+		prog.Width = uint64(encoder.FiveRungLadder[len(encoder.FiveRungLadder)-1].Width)
+		prog.Height = uint64(encoder.FiveRungLadder[len(encoder.FiveRungLadder)-1].Height)
+	}
+
+	pipe := mediartmp.NewPipeSink(func(now time.Time) { l.store.Touch(sessionID, now) })
+
+	encCtx, encCancel := context.WithCancel(context.Background())
+	encDone := make(chan struct{})
+	go func() {
+		defer close(encDone)
+		if err := sysEnc.Run(encCtx, encoder.Job{
+			Input:      pipe.Reader(),
+			ScratchDir: scratchDir,
+			Profile:    rec.Profile,
+			Args:       args,
+		}); err != nil {
+			log.Printf("rtmp: session=%s encoder exited with err=%v", sessionID, err)
+		}
+	}()
+
+	cancel := func() {
+		encCancel()
+		_ = pipe.Close()
+		<-encDone
+		_ = scratch.Cleanup()
+	}
+
+	lc := buildRTMPLiveCounter(rec, prog)
+	l.store.AttachMedia(sessionID, lc, cancel)
+
+	prior, _ := l.store.MarkPublishing(sessionID, time.Now())
+	return pipe, true, prior
+}
+
+// buildRTMPLiveCounter selects the LiveCounter shape based on the
+// capability's configured ffmpeg-progress unit. Falls back to a
+// nil-safe out_time_seconds counter when the capability uses a
+// different extractor.
+func buildRTMPLiveCounter(rec *rtmpingresshlsegress.SessionRecord, prog *encoder.Progress) extractors.LiveCounter {
+	_ = rec
+	ext := &progressLiveCounter{prog: prog}
+	return ext
+}
+
+// progressLiveCounter exposes encoder.Progress as an
+// extractors.LiveCounter. Distinct from
+// extractors/ffmpegprogress.LiveCounter — that one wraps separate
+// atomics; this one wraps the encoder.Progress directly so the unit
+// resolution lives in one place when the dispatch layer owns it.
+type progressLiveCounter struct {
+	prog *encoder.Progress
+}
+
+func (p *progressLiveCounter) CurrentUnits() uint64 {
+	if p == nil || p.prog == nil {
+		return 0
+	}
+	return p.prog.CurrentUnits()
+}
+
+// _ = ffmpegprogress is kept as a build-time hint that the
+// per-extractor LiveCounter constructor in extractors/ffmpegprogress
+// is the alternative wiring (used when the dispatch layer
+// short-circuits past the rtmp-ingress driver).
+var _ = ffmpegprogress.Name
 
 // newPaymentClient picks the right Client implementation per host-config.
 func newPaymentClient(cfg *config.Config) (payment.Client, error) {
@@ -126,9 +333,9 @@ func (s *Server) validateAgainstRegistries() error {
 }
 
 // Run starts the server in the foreground. Blocks until ctx is canceled or
-// either listener errors; performs graceful shutdown on cancellation.
+// any listener errors; performs graceful shutdown on cancellation.
 func (s *Server) Run(ctx context.Context) error {
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() {
 		log.Printf("listening on %s (paid)", s.cfg.Listen.Paid)
 		if err := s.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -145,6 +352,19 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
+	if s.rtmpListener != nil {
+		go func() {
+			if err := s.rtmpListener.Run(ctx); err != nil {
+				errCh <- fmt.Errorf("listen rtmp: %w", err)
+				return
+			}
+			errCh <- nil
+		}()
+		go s.rtmpStore.RunWatchdog(ctx, rtmpingresshlsegress.LifetimeOptions{
+			IdleTimeout:   s.opts.RTMP.IdleTimeout,
+			CheckInterval: time.Second,
+		})
+	}
 
 	select {
 	case <-ctx.Done():

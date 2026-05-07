@@ -35,7 +35,15 @@ RUN cd livepeer-network-protocol/conformance/runner && CGO_ENABLED=0 GOOS=linux 
         ./cmd/livepeer-conformance
 
 # ---- Runtime stage ----
-FROM gcr.io/distroless/static-debian12:nonroot
+# debian-slim (not distroless) because the rtmp-ingress-hls-egress
+# end-to-end fixture (plan 0011-followup §11.1) needs `ffmpeg` for
+# synthetic RTMP push. LGPL build (no --enable-gpl).
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r nonroot && useradd -r -g nonroot nonroot
 
 COPY --from=builder /out/livepeer-conformance /usr/local/bin/livepeer-conformance
 COPY livepeer-network-protocol/conformance/fixtures/ /fixtures/

@@ -62,4 +62,9 @@ type Backend struct {
 	Transport string     `yaml:"transport"`
 	URL       string     `yaml:"url,omitempty"`
 	Auth      AuthConfig `yaml:"auth,omitempty"`
+	// Profile names the encoder preset for transport=ffmpeg-subprocess.
+	// One of: passthrough | h264-live-1080p-nvenc |
+	// h264-live-1080p-qsv | h264-live-1080p-vaapi |
+	// h264-live-1080p-libx264.
+	Profile string `yaml:"profile,omitempty"`
 }

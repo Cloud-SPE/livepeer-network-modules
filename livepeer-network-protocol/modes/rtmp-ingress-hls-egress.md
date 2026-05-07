@@ -64,18 +64,24 @@ Content-Type: application/json
 
 {
   "session_id": "sess_abc123",
-  "rtmp_ingest_url": "rtmp://broker-a.orch.example.com:1935/sess_abc123",
-  "hls_playback_url": "https://broker-a.orch.example.com/hls/sess_abc123/manifest.m3u8",
+  "stream_key": "PtKqv9rT6Y4nB5wXyZmA1c8FdGhJlNoP",
+  "rtmp_ingest_url": "rtmp://broker-a.orch.example.com:1935/sess_abc123/PtKqv9rT6Y4nB5wXyZmA1c8FdGhJlNoP",
+  "hls_playback_url": "https://broker-a.orch.example.com/_hls/sess_abc123/playlist.m3u8",
   "control_url": "wss://broker-a.orch.example.com/v1/cap/sess_abc123/control",
   "expires_at": "2026-05-06T13:34:56Z"
 }
 ```
 
-- Broker assigns a `session_id` and returns:
-  - `rtmp_ingest_url` — where to push RTMP (typically the broker's own
-    `:1935` listener).
-  - `hls_playback_url` — where the broker (or its CDN sink) will serve the HLS
-    playlist + segments.
+- Broker assigns a `session_id`, generates a `stream_key`, and returns:
+  - `session_id` — opaque identifier the broker uses to look up session state.
+  - `stream_key` — 32-byte URL-safe random bearer token. Surfaced at the top
+    of the response body so the gateway adapter can read it without URL
+    parsing. Treat as a secret; never log raw.
+  - `rtmp_ingest_url` — where to push RTMP. Path-based shape
+    `rtmp://host:1935/<session_id>/<stream_key>` (mirrors mux / twitch /
+    youtube). Query-string variants (`?key=<...>`) are rejected.
+  - `hls_playback_url` — where the broker serves the LL-HLS playlist + fmp4
+    segments. The URL path is itself a per-session unguessable bearer secret.
   - `control_url` — optional WebSocket endpoint for control-plane events
     (`session.balance.low`, `session.error`, `session.ended`).
   - `expires_at` — wall-clock deadline; if no RTMP push by then, session is
@@ -86,13 +92,17 @@ Content-Type: application/json
 
 ### Media plane
 
-- **Ingest**: customer (or gateway) pushes RTMP to `rtmp_ingest_url`. Stream
-  key is the `session_id`. Authentication is implicit — the URL is
-  bearer-secret, scoped to one session (treat as a secret; never log).
-- **Egress**: broker writes HLS playlist + segments under `hls_playback_url`.
-  Could be served from local fs, an S3-compatible sink, or a CDN per the
-  broker's configuration (see `livecdn` patterns from the existing
-  video-worker-node).
+- **Ingest**: customer (or gateway) pushes RTMP to `rtmp_ingest_url`. The URL
+  carries `<session_id>/<stream_key>` in its path; the broker parses RTMP's
+  `PublishingName` on `OnPublish`, splits, and constant-time compares
+  `stream_key` against its open-session record. Mismatch yields RTMP
+  `_error`. Customer-facing auth (API keys, mTLS, AuthWebhookURL-style
+  integration) lives gateway-side; the broker's check is defense-in-depth.
+- **Egress**: broker writes the LL-HLS playlist + fmp4 segments + parts under
+  `hls_playback_url`. The default LL-HLS layout is fmp4 segments + `.m4s`
+  parts at 333ms part duration with a 4-segment rolling window
+  (`#EXT-X-VERSION:6`); operators flip to legacy mpegts HLS v3 with
+  6s segments via `--hls-legacy=true`.
 
 ### Control plane (optional WebSocket)
 
@@ -186,7 +196,7 @@ Per-mode SemVer. Currently `0.1.0`.
 Tests, at minimum:
 
 - Session-open: returns 202 + valid `rtmp_ingest_url` + `hls_playback_url` +
-  `session_id` + `expires_at` after payment validation.
+  `session_id` + `stream_key` + `expires_at` after payment validation.
 - RTMP push connects to advertised URL; first HLS segment appears within N
   seconds.
 - Cadence ticks happen at `cadence_seconds`; debit values match
@@ -205,3 +215,4 @@ Fixtures: `conformance/fixtures/rtmp-ingress-hls-egress/*.yaml`.
 | Mode version | Date | Change |
 |---|---|---|
 | 0.1.0 | 2026-05-06 | Initial draft. |
+| 0.1.1 | 2026-05-06 | Add `stream_key` field to the session-open response (32-byte URL-safe random bearer). URL shape moves to path-based `rtmp://host:1935/<session_id>/<stream_key>`; query-string variants rejected. Session-end and idle-disconnect text refined for the LL-HLS layout. Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |

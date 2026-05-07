@@ -1,23 +1,15 @@
 // Package rtmpingresshlsegress implements the rtmp-ingress-hls-egress@v0
 // interaction-mode driver per
 // livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md.
-//
-// v0.1 NARROW SCOPE: session-open phase only. The broker accepts the
-// session-open POST, validates payment + headers via the standard
-// middleware, and returns 202 with the required URL set
-// (rtmp_ingest_url / hls_playback_url / control_url / expires_at). The
-// actual RTMP listener, FFmpeg transcoding, and HLS sink are deferred
-// to a follow-up plan once the gateway side has integration tests
-// against this wire shape.
-//
-// See plan 0011 for the explicit out-of-scope list.
 package rtmpingresshlsegress
 
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"time"
@@ -29,25 +21,58 @@ import (
 // Mode is the canonical mode-name@vN string for this driver.
 const Mode = "rtmp-ingress-hls-egress@v0"
 
-// Driver implements modes.Driver.
-type Driver struct{}
+// DefaultExpiresIn is the no-push deadline window. Spec
+// recommendation: ~1 hour.
+const DefaultExpiresIn = 1 * time.Hour
 
-// Compile-time interface check.
+// Driver implements modes.Driver.
+type Driver struct {
+	store *Store
+	cfg   Config
+}
+
 var _ modes.Driver = (*Driver)(nil)
 
-// New returns a stateless rtmp-ingress-hls-egress driver.
-func New() *Driver { return &Driver{} }
+// Config holds the broker-wide settings the driver needs at request
+// time. Listener-side knobs (port, max concurrent, idle timeout,
+// duplicate policy) live on internal/media/rtmp.Config.
+type Config struct {
+	// PublicHost is the host:port the broker advertises to customers
+	// for the LL-HLS playback URL. Falls back to backend.url when
+	// empty.
+	PublicHost string
+	// RTMPHost is the host:port the broker advertises for the RTMP
+	// ingest URL. Falls back to <hostname-of-backend.url>:1935.
+	RTMPHost string
+	// HLSScheme is the scheme of the playback URL ("https" by
+	// default; "http" for local fixtures).
+	HLSScheme string
+	// ExpiresIn overrides DefaultExpiresIn.
+	ExpiresIn time.Duration
+}
+
+// New returns a stateful driver bound to a session store. The store is
+// shared with the RTMP listener (defense-in-depth stream-key check)
+// and any watchdog goroutines.
+func New(store *Store, cfg Config) *Driver {
+	if cfg.ExpiresIn == 0 {
+		cfg.ExpiresIn = DefaultExpiresIn
+	}
+	if cfg.HLSScheme == "" {
+		cfg.HLSScheme = "https"
+	}
+	return &Driver{store: store, cfg: cfg}
+}
 
 // Mode returns the mode identifier.
 func (d *Driver) Mode() string { return Mode }
 
-// Serve responds to the session-open POST with the required URL set.
-//
-// v0.1: URLs are derived from the configured backend.url (treated as the
-// base of the broker's external advertised host). The actual media plane
-// is not stood up — runners that test the session-open wire shape see a
-// well-formed 202 response.
-func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
+// Store returns the driver's session store. Exposed for the
+// composition root (the listener and watchdogs read it).
+func (d *Driver) Store() *Store { return d.store }
+
+// Serve responds to the session-open POST.
+func (d *Driver) Serve(_ context.Context, p modes.Params) error {
 	if p.Request.Method != http.MethodPost {
 		livepeerheader.WriteError(p.Writer, http.StatusMethodNotAllowed, livepeerheader.ErrModeUnsupported,
 			"rtmp-ingress-hls-egress@v0 session-open is POST")
@@ -60,47 +85,104 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 			"session id: "+err.Error())
 		return nil
 	}
+	streamKey, err := generateStreamKey()
+	if err != nil {
+		livepeerheader.WriteError(p.Writer, http.StatusInternalServerError, livepeerheader.ErrInternalError,
+			"stream key: "+err.Error())
+		return nil
+	}
 
-	base := p.Capability.Backend.URL
-	rtmpURL, err := deriveRTMPIngestURL(base, sessID)
+	rtmpHost, err := d.resolveRTMPHost(p.Capability.Backend.URL)
 	if err != nil {
 		livepeerheader.WriteError(p.Writer, http.StatusInternalServerError, livepeerheader.ErrInternalError,
 			"rtmp_ingest_url: "+err.Error())
 		return nil
 	}
-	hlsURL, err := deriveHLSPlaybackURL(base, sessID)
+	publicHost, scheme, err := d.resolvePublicHost(p.Capability.Backend.URL)
 	if err != nil {
 		livepeerheader.WriteError(p.Writer, http.StatusInternalServerError, livepeerheader.ErrInternalError,
 			"hls_playback_url: "+err.Error())
 		return nil
 	}
-	ctrlURL, err := deriveControlURL(base, sessID)
-	if err != nil {
+
+	now := time.Now().UTC()
+	rec := &SessionRecord{
+		SessionID:    sessID,
+		StreamKey:    streamKey,
+		Profile:      p.Capability.Backend.Profile,
+		CapabilityID: p.Capability.ID,
+		OfferingID:   p.Capability.OfferingID,
+		ExpiresAt:    now.Add(d.cfg.ExpiresIn),
+		OpenedAt:     now,
+	}
+	if err := d.store.Add(rec); err != nil {
 		livepeerheader.WriteError(p.Writer, http.StatusInternalServerError, livepeerheader.ErrInternalError,
-			"control_url: "+err.Error())
+			"session store: "+err.Error())
 		return nil
 	}
 
 	body := sessionOpenResponse{
-		SessionID:       sessID,
-		RTMPIngestURL:   rtmpURL,
-		HLSPlaybackURL:  hlsURL,
-		ControlURL:      ctrlURL,
-		ExpiresAt:       time.Now().UTC().Add(1 * time.Hour).Format(time.RFC3339),
+		SessionID:      sessID,
+		StreamKey:      streamKey,
+		RTMPIngestURL:  "rtmp://" + rtmpHost + "/" + sessID + "/" + streamKey,
+		HLSPlaybackURL: scheme + "://" + publicHost + "/_hls/" + sessID + "/playlist.m3u8",
+		ControlURL:     controlURL(scheme, publicHost, sessID),
+		ExpiresAt:      rec.ExpiresAt.Format(time.RFC3339),
 	}
 	encoded, _ := json.Marshal(body)
 
 	p.Writer.Header().Set("Content-Type", "application/json")
-	// v0.1 narrowed scope: no work units consumed at session-open. Set
-	// explicitly so Payment middleware reconciles to zero.
 	p.Writer.Header().Set(livepeerheader.WorkUnits, "0")
 	p.Writer.WriteHeader(http.StatusAccepted)
 	_, _ = p.Writer.Write(encoded)
 	return nil
 }
 
+func (d *Driver) resolveRTMPHost(backendURL string) (string, error) {
+	if d.cfg.RTMPHost != "" {
+		return d.cfg.RTMPHost, nil
+	}
+	u, err := url.Parse(backendURL)
+	if err != nil {
+		return "", err
+	}
+	host := u.Hostname()
+	if host == "" {
+		return "", errInvalidBackend
+	}
+	return host + ":1935", nil
+}
+
+func (d *Driver) resolvePublicHost(backendURL string) (string, string, error) {
+	if d.cfg.PublicHost != "" {
+		return d.cfg.PublicHost, d.cfg.HLSScheme, nil
+	}
+	u, err := url.Parse(backendURL)
+	if err != nil {
+		return "", "", err
+	}
+	host := u.Host
+	if host == "" {
+		return "", "", errInvalidBackend
+	}
+	scheme := u.Scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	return host, scheme, nil
+}
+
+func controlURL(scheme, host, sessID string) string {
+	wsScheme := "wss"
+	if scheme == "http" {
+		wsScheme = "ws"
+	}
+	return wsScheme + "://" + host + "/v1/cap/" + sessID + "/control"
+}
+
 type sessionOpenResponse struct {
 	SessionID      string `json:"session_id"`
+	StreamKey      string `json:"stream_key"`
 	RTMPIngestURL  string `json:"rtmp_ingest_url"`
 	HLSPlaybackURL string `json:"hls_playback_url"`
 	ControlURL     string `json:"control_url"`
@@ -115,55 +197,12 @@ func generateSessionID() (string, error) {
 	return "sess_" + hex.EncodeToString(b), nil
 }
 
-func deriveRTMPIngestURL(backendURL, sessID string) (string, error) {
-	u, err := url.Parse(backendURL)
-	if err != nil {
+func generateStreamKey() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	host := u.Hostname()
-	if host == "" {
-		return "", errInvalidBackend
-	}
-	// Default RTMP port. v0.1 doesn't actually listen here.
-	return "rtmp://" + host + ":1935/" + sessID, nil
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-func deriveHLSPlaybackURL(backendURL, sessID string) (string, error) {
-	u, err := url.Parse(backendURL)
-	if err != nil {
-		return "", err
-	}
-	host := u.Host
-	if host == "" {
-		return "", errInvalidBackend
-	}
-	scheme := u.Scheme
-	if scheme == "" {
-		scheme = "https"
-	}
-	return scheme + "://" + host + "/hls/" + sessID + "/manifest.m3u8", nil
-}
-
-func deriveControlURL(backendURL, sessID string) (string, error) {
-	u, err := url.Parse(backendURL)
-	if err != nil {
-		return "", err
-	}
-	host := u.Host
-	if host == "" {
-		return "", errInvalidBackend
-	}
-	scheme := "wss"
-	if u.Scheme == "http" {
-		scheme = "ws"
-	}
-	return scheme + "://" + host + "/v1/cap/" + sessID + "/control", nil
-}
-
-var errInvalidBackend = errInvalidBackendURL{}
-
-type errInvalidBackendURL struct{}
-
-func (errInvalidBackendURL) Error() string {
-	return "backend.url has empty host; cannot derive session URLs"
-}
+var errInvalidBackend = errors.New("backend.url has empty host; cannot derive session URLs")

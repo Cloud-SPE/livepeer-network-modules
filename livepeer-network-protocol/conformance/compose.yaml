@@ -61,6 +61,7 @@ services:
     expose:
       - "8080"
       - "9090"
+      - "1935"
     command:
       - --config=/etc/livepeer/host-config.yaml
       - --listen=:8080
@@ -70,6 +71,14 @@ services:
       # production operators set this >=1s.
       - --interim-debit-interval=100ms
       - --interim-debit-min-runway-units=10
+      # Plan 0011-followup: RTMP listener + LL-HLS pipeline for the
+      # end-to-end fixture. Passthrough profile (no GPU); idle timeout
+      # generous so a 5s synthetic push doesn't get reaped mid-flight.
+      - --rtmp-listen-addr=:1935
+      - --rtmp-idle-timeout=15s
+      - --encoder=libx264
+      - --encoder-allow-cpu=true
+      - --hls-scratch-dir=/var/lib/livepeer/rtmp-hls
 
   runner:
     image: tztcloud/livepeer-conformance:dev

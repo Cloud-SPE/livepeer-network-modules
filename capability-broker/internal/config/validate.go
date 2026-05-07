@@ -13,6 +13,22 @@ var (
 	priceWeiRE        = regexp.MustCompile(`^[0-9]+$`)
 )
 
+var validEncoderProfiles = map[string]bool{
+	"passthrough":             true,
+	"h264-live-1080p-libx264": true,
+	"h264-live-1080p-nvenc":   true,
+	"h264-live-1080p-qsv":     true,
+	"h264-live-1080p-vaapi":   true,
+}
+
+func encoderProfileList() []string {
+	out := make([]string, 0, len(validEncoderProfiles))
+	for k := range validEncoderProfiles {
+		out = append(out, k)
+	}
+	return out
+}
+
 // Validate runs cross-field validation against a parsed Config. Defaults are
 // filled in for omitted-but-optional fields (e.g., Listen addresses).
 func (c *Config) Validate() error {
@@ -87,8 +103,15 @@ func (c *Config) Validate() error {
 			if u.Scheme != "http" && u.Scheme != "https" {
 				return fmt.Errorf("%s: backend.url scheme must be http or https (got %q)", ctx, u.Scheme)
 			}
+		case "ffmpeg-subprocess":
+			if cap.Backend.Profile == "" {
+				return fmt.Errorf("%s: backend.profile is required for transport=ffmpeg-subprocess", ctx)
+			}
+			if !validEncoderProfiles[cap.Backend.Profile] {
+				return fmt.Errorf("%s: backend.profile %q is not one of %v", ctx, cap.Backend.Profile, encoderProfileList())
+			}
 		default:
-			return fmt.Errorf("%s: backend.transport %q is not yet supported (only 'http' in v0.1)", ctx, cap.Backend.Transport)
+			return fmt.Errorf("%s: backend.transport %q is not yet supported (only 'http' or 'ffmpeg-subprocess' in v0.1)", ctx, cap.Backend.Transport)
 		}
 
 		switch cap.Backend.Auth.Method {

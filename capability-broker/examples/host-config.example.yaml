@@ -58,6 +58,26 @@ capabilities:
       url: "http://localhost:9001/echo"
       auth: "none"
 
+  # ---- Live RTMP transcode (rtmp-ingress-hls-egress + ffmpeg-progress) ----
+  # Stream the resulting LL-HLS playlist from the broker's /_hls/<sess>/...
+  # path. The broker's --rtmp-listen-addr must be set for the listener to
+  # bind. backend.url is the broker's externally-advertised host so the
+  # session-open response can derive the RTMP and HLS URLs.
+  #
+  # - id: "video:transcode.live.rtmp:1080p"
+  #   offering_id: "h264-live-1080p-nvenc"
+  #   interaction_mode: "rtmp-ingress-hls-egress@v0"
+  #   work_unit:
+  #     name: "out_time_seconds"
+  #     extractor: { type: "ffmpeg-progress", unit: "out_time_seconds" }
+  #   price:
+  #     amount_wei: "1000000"
+  #     per_units: 1
+  #   backend:
+  #     transport: "ffmpeg-subprocess"
+  #     profile: "h264-live-1080p-nvenc"
+  #     url: "https://broker.example.com"
+
   # ---- Aspirational entries (uncomment as drivers/extractors land) ----
   #
   # - id: "openai:chat-completions:llama-3-70b"

@@ -1,13 +1,7 @@
-// POST /v1/billing/topup — Stripe checkout session for a customer
-// balance top-up. Delegates to `customer-portal/`'s shared shell.
-//
-// Source: `livepeer-network-suite/livepeer-vtuber-gateway/src/runtime/
-// http/billing/topup.ts`.
-
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
-import type { Config } from "../config.js";
+import type { VtuberGatewayDeps } from "../runtime/deps.js";
 
 export const BillingTopupRequestSchema = z.object({
   cents: z.number().int().positive(),
@@ -16,13 +10,12 @@ export const BillingTopupRequestSchema = z.object({
 });
 
 export interface BillingTopupRouteDeps {
-  cfg: Config;
+  deps: VtuberGatewayDeps;
 }
 
 export const registerBillingTopupRoutes: FastifyPluginAsync<
   BillingTopupRouteDeps
-> = async (app: FastifyInstance, deps: BillingTopupRouteDeps) => {
-  void deps;
+> = async (app: FastifyInstance, { deps }: BillingTopupRouteDeps) => {
   app.post("/v1/billing/topup", async (req, reply) => {
     const parsed = BillingTopupRequestSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -31,6 +24,11 @@ export const registerBillingTopupRoutes: FastifyPluginAsync<
         .send({ error: "invalid_request", details: parsed.error.issues });
       return;
     }
+    if (deps.stripe === undefined) {
+      await reply.code(503).send({ error: "stripe_not_configured" });
+      return;
+    }
+    void req;
     await reply.code(503).send({ error: "billing_topup_unimplemented" });
   });
 };

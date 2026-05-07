@@ -14,8 +14,14 @@ export interface NodeDescriptor {
   capabilities: readonly string[];
 }
 
+export interface SelectNodeRequest {
+  capability: string;
+  offering: string;
+}
+
 export interface ServiceRegistryClient {
   listVtuberNodes(): Promise<readonly NodeDescriptor[]>;
   getNode(nodeId: string): Promise<NodeDescriptor | null>;
+  select(req: SelectNodeRequest): Promise<NodeDescriptor | null>;
   close(): Promise<void>;
 }

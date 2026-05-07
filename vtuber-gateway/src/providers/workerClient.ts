@@ -21,10 +21,21 @@ export interface WorkerSessionStartResponse {
   started_at: string;
 }
 
+export interface WorkerSessionTopupRequest {
+  sessionId: string;
+  paymentHeader: string;
+}
+
+export interface WorkerStartSessionInput {
+  request: WorkerSessionStartRequest;
+  paymentHeader: string;
+}
+
 export interface WorkerClient {
   startSession(
     nodeUrl: string,
-    req: WorkerSessionStartRequest,
+    input: WorkerStartSessionInput,
   ): Promise<WorkerSessionStartResponse>;
   stopSession(nodeUrl: string, sessionId: string): Promise<void>;
+  topupSession(nodeUrl: string, req: WorkerSessionTopupRequest): Promise<void>;
 }

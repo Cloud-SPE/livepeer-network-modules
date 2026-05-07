@@ -1,16 +1,18 @@
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
 
-import type { Config } from "./config.js";
+import type { VtuberGatewayDeps } from "./runtime/deps.js";
 import { registerBillingTopupRoutes } from "./routes/billingTopup.js";
 import { registerSessionControlWsRoutes } from "./routes/sessionControlWs.js";
 import { registerSessionsRoutes } from "./routes/sessions.js";
 import { registerStripeWebhookRoutes } from "./routes/stripeWebhook.js";
 import { createSessionRelay } from "./service/relay/sessionRelay.js";
 
-export async function buildServer(cfg: Config): Promise<FastifyInstance> {
+export async function buildServer(
+  deps: VtuberGatewayDeps,
+): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: { level: cfg.logLevel },
+    logger: { level: deps.cfg.logLevel },
     bodyLimit: 16 * 1024 * 1024,
   });
 
@@ -20,10 +22,10 @@ export async function buildServer(cfg: Config): Promise<FastifyInstance> {
 
   const relay = createSessionRelay();
 
-  await app.register(registerSessionsRoutes, { cfg });
-  await app.register(registerSessionControlWsRoutes, { cfg, relay });
-  await app.register(registerBillingTopupRoutes, { cfg });
-  await app.register(registerStripeWebhookRoutes, { cfg });
+  await app.register(registerSessionsRoutes, { deps });
+  await app.register(registerSessionControlWsRoutes, { cfg: deps.cfg, relay });
+  await app.register(registerBillingTopupRoutes, { deps });
+  await app.register(registerStripeWebhookRoutes, { deps });
 
   return app;
 }

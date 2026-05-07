@@ -4,178 +4,175 @@ Current state of work in this repo, plus pointers to active plans.
 
 ## Current state
 
-**Infrastructure layer complete; suite + byoc collapse in design-doc batch.** All
-protocol-level components are shipping: spec subfolder + capability-broker (6 modes
-including the full RTMP→FFmpeg→LL-HLS pipeline + session-control-plus-media with
-reconnect-window + pion/webrtc relay + session-runner subprocess) + payment-daemon
-(chain-integrated against Arbitrum One + warm-key lifecycle) + gateway-adapters
-(TS + Go halves for HTTP family + ws-realtime + rtmp + session-control + WebRTC
-SFU pass-through) + reference openai-gateway + orch-coordinator + secure-orch-console.
+**Suite + byoc collapse complete.** All 15 monorepo components shipping.
+The protocol layer (broker + payment-daemon + gateway-adapters + spec +
+secure-orch-console + orch-coordinator) and the product layer (the new
+`customer-portal/` shared SaaS shell + three product-family gateways +
+three workload-runner families) are all on master. Suite and byoc trees
+are now retire-ready — paper plans 0013-* lock the per-component
+absorption; user retires the source repos manually per
+`docs/design-docs/migration-from-suite.md`.
 
-**Repo shape: monorepo for now.** All components live as top-level subfolders here;
-extraction to standalone repos is a v2 concern. See [`README.md`](./README.md) §"Repo
-shape" for the planned component list.
+**Repo shape: monorepo for now.** All components live as top-level subfolders;
+extraction to standalone repos is a v2 concern.
 
-Code shipping today:
+Code shipping today (15 components):
 
-- `livepeer-network-protocol/` — spec subfolder. Manifest schema + 6 interaction-modes +
-  6 extractors + payment proto + sessionrunner proto. Conformance runner with
-  fixtures across all modes (happy-path + end-to-end + backpressure +
-  reconnect-window + runner-crash + interim-debit + balance-exhausted +
-  per-mode gateway-target fixtures). The `verify/` package recovers signers from
-  manifest envelopes — cross-cutting verifier consumed by coordinator / resolver /
-  gateway (plan 0019).
-- `capability-broker/` — Go reference impl. 6 modes registered:
-  `http-reqresp@v0` / `http-stream@v0` / `http-multipart@v0` / `ws-realtime@v0` /
-  `rtmp-ingress-hls-egress@v0` / `session-control-plus-media@v0`. 7 extractors
-  registered (`response-jsonpath` / `request-formula` / `bytes-counted` /
-  `seconds-elapsed` / `ffmpeg-progress` / `openai-usage` / `runner-reported`).
-  Plan 0011-followup added the production RTMP listener (yutopp/go-rtmp) +
-  FFmpeg subprocess wrapper (4 named profiles: passthrough / nvenc / qsv /
-  vaapi / libx264) + LL-HLS muxer (default fmp4 + 333ms parts; legacy mpegts
-  fallback via `--hls-legacy=true`) + 4-trigger lifetime watchdog
-  (expires_at / idle / SufficientBalance / customer CloseSession).
-  Plan 0012-followup added control-WS + reconnect-within-30s window + replay
-  buffer + pion/webrtc media relay + session-runner subprocess lifecycle (Docker
-  launcher + watchdog + graceful Shutdown + drop-all caps default).
-  Plan 0015 wired the broker-side interim-debit ticker for long-running sessions.
-- `payment-daemon/` — sender + receiver modes; gRPC over unix socket; BoltDB
-  session ledger. Plan 0016 lit up real chain integration: keccak256-flatten
-  ticket hashing, V3 keystore signing, on-chain TicketBroker / RoundsManager /
-  BondingManager providers, eth_gasPrice polling, ECDSA recovery + 600-nonce
-  ledger receiver-side, MaxFloat with 3:1 heuristic sender-side, redemption
-  queue + loop with gas pre-checks. All under `--chain-rpc`; the dev-mode flow
-  (no flag) keeps the daemon testable without any RPC.
-- `gateway-adapters/` — split into `ts/` (TypeScript) + `go/` (Go) halves
-  per plan 0008-followup. TS half ships per-mode middleware for the HTTP family
-  (`http-reqresp`, `http-stream`, `http-multipart`) + the new `ws-realtime` and
-  `session-control-plus-media` (control-WS) adapters. Go half ships the
-  `rtmp-ingress-hls-egress` listener (yutopp/go-rtmp; aligned with broker-side)
-  + `session-control-plus-media` WebRTC SFU pass-through (pion/webrtc).
-  Conformance runner now supports `--target=gateway` dispatch (plan 0008-followup
-  C4) so per-mode adapter wire-compat is verified end-to-end against a
-  mock-broker.
-- `openai-gateway/` — reference OpenAI-compat gateway end-to-end (calls
-  `PayerDaemon.CreatePayment` over unix socket). Six paid endpoints across
-  http-reqresp + http-stream + http-multipart modes.
-- `orch-coordinator/` — orch-side coordinator (plan 0018). Scrapes
-  capability-broker `/registry/offerings` on the operator's LAN every 30s,
-  builds JCS-canonical idempotent candidate manifests, packages as tar.gz
-  (`manifest.json` signed bytes + `metadata.json` operator-only sidecar),
-  receives cold-key-signed manifests via HTTP POST, runs the five-step verify
-  pipeline (schema / signature / identity / spec-version drift /
-  publication-seq rollback), atomic-swap publishes at
-  `/.well-known/livepeer-registry.json` on a separate locked-down public
-  listener (only that path serves; all others return 404). Web UI on the LAN
-  listener with roster + diff + audit views. Uniqueness key for tuple
-  collision is `(capability_id, offering_id, extra, constraints)` (locked
-  per plan 0018 §14 Q2). BoltDB audit log; Prometheus surface.
+### Protocol + infrastructure layer
+
+- `livepeer-network-protocol/` — spec subfolder. 6 interaction-modes + 7
+  extractors + payment proto + sessionrunner proto + manifest schema with
+  `publication_seq` + JCS verifier package + conformance runner with
+  fixtures across all modes (happy-path / end-to-end / backpressure /
+  reconnect-window / runner-crash / interim-debit / balance-exhausted /
+  per-mode gateway-target).
+- `capability-broker/` — Go reference impl. 6 modes registered; 7
+  extractors. Plan 0011-followup added the production RTMP pipeline
+  (yutopp/go-rtmp + 4 encoder profiles passthrough/nvenc/qsv/vaapi/libx264
+  + LL-HLS muxer + 4-trigger lifetime watchdog). Plan 0012-followup added
+  control-WS + reconnect-30s + pion/webrtc relay + session-runner
+  subprocess. Plan 0015 wired the broker-side interim-debit ticker.
+- `payment-daemon/` — sender + receiver modes; gRPC over unix socket;
+  BoltDB session ledger. Plan 0016 lit up Arbitrum One chain integration
+  (keccak256-flatten ticket hashing, V3 keystore signing, on-chain
+  TicketBroker + RoundsManager + BondingManager providers, eth_gasPrice
+  polling, ECDSA recovery + 600-nonce ledger, MaxFloat with 3:1
+  heuristic, redemption queue + loop with gas pre-checks). Plan 0017
+  warm-key lifecycle.
+- `gateway-adapters/` — split into `ts/` + `go/` halves per plan
+  0008-followup. TS half: HTTP family (`http-reqresp` / `http-stream` /
+  `http-multipart`) + `ws-realtime` + `session-control-plus-media`
+  (control-WS) adapters. Go half: `rtmp-ingress-hls-egress` listener
+  (yutopp/go-rtmp) + `session-control-plus-media` WebRTC SFU
+  pass-through (pion/webrtc).
+- `orch-coordinator/` — orch-side coordinator (plan 0018). LAN scrape +
+  JCS-canonical idempotent candidate manifest + tar.gz packaging +
+  HTTP-POST signed-manifest receive + 5-step verify + atomic-swap publish
+  at `/.well-known/livepeer-registry.json` on a separate locked-down
+  public listener. Web UI on the LAN listener.
 - `secure-orch-console/` — cold-key host's diff-and-sign UX (plan 0019).
-  V3 keystore signer, JCS canonical bytes, secp256k1 + EIP-191 personal-sign,
-  structural diff against `last-signed.json`, tap-to-sign confirm gesture
-  (last-4-hex-chars input), audit log with size-based rotation. Localhost-bound
-  web UI; operator reaches it over `ssh -L`. Manifest transport is HTTP-only
-  via the web UI (no inbox / outbox spool, no USB, no filesystem watcher).
-  v0.1 scope locked 2026-05-06.
+  V3 keystore signer, JCS canonical bytes, secp256k1 + EIP-191
+  personal-sign, structural diff vs `last-signed.json`, tap-to-sign
+  confirm gesture, audit log with size-based rotation. Localhost-bound
+  web UI; operator reaches it over `ssh -L`.
+
+### SaaS shell + product gateways
+
+- `customer-portal/` — shared TypeScript library (plan 0013-shell).
+  Auth (`sk-{env}-{rand}` + HMAC-SHA-256 with pepper) + customer ledger
+  (`balance_usd_cents` + `reserved_usd_cents` reservations table keyed on
+  `work_id`) + Stripe integration (Checkout sessions + idempotent webhook
+  handler) + Lit + RxJS shared widget catalog (signup / login / API-key
+  UI / balance display / Stripe checkout / layout / form primitives) +
+  Fastify pre-handler middleware composition + drizzle migrations for
+  `app.customers / app.api_keys / app.reservations / app.topups /
+  app.stripe_webhook_events / app.admin_audit_events`. Each product
+  gateway imports it as a workspace dependency. Per-product separate
+  businesses (own Postgres, own pepper, own Stripe creds, own customer
+  scope; cross-product SSO out of v0.1).
+- `openai-gateway/` — collapsed engine + SaaS shell into single
+  component (plan 0013-openai). 6 paid endpoints (chat, embeddings,
+  images-generations, transcriptions, translations, audio-speech-503)
+  across `http-reqresp@v0` + `http-stream@v0` + `http-multipart@v0`
+  modes. Per-product `RateCardResolver` reads from `app.rate_card_*`
+  tables. `OPENAI_DEFAULT_OFFERING_PER_CAPABILITY` reads YAML at
+  `/etc/openai-gateway/offerings.yaml`. Always emits
+  `Livepeer-Request-Id`. `mock-runner` Docker image at
+  `test/mock-runner/` for offline smoke. `/v1/audio/speech` returns 503
+  + `Livepeer-Error: mode_unsupported` until `http-binary-stream@v0`
+  lands. True SSE pass-through verified.
+- `vtuber-gateway/` — protocol gateway (plan 0013-vtuber). Replaces the
+  suite's "vtuber-livepeer-bridge" with the bridge term retired.
+  Fastify 5 + drizzle. Pipeline-streams ↔ vtuber-gateway is
+  shared-per-deployment API key (pipeline acts as meta-customer); direct
+  B2B integrators get per-customer keys via the gateway portal. Bearer
+  auth (sessionBearer + workerControlBearer HMAC-SHA-256). WebSocket
+  relay with M6 baseline; reconnect-30s replay buffer is a follow-up.
+- `vtuber-pipeline/` — Python + FastAPI SaaS product (plan 0013-vtuber).
+  Browser REST + WebSocket API, customer billing, OAuth-token vault
+  (Twitch + YouTube), egress workers (chunked-POST → ffmpeg → RTMP),
+  chat-source workers (Twitch IRC + YouTube Live Chat), Stripe billing.
+  Acts as a meta-customer of vtuber-gateway.
+- `vtuber-runner/` — Python + Playwright + Chromium + three.js
+  avatar-renderer (plan 0013-vtuber). OLV vendored at `third_party/olv/`
+  (upstream commit pin in `UPSTREAM.md`). Three-stage Dockerfile:
+  Vite renderer build → Python deps via uv → runtime with
+  chromium-headless-shell. Reports work-units to broker via
+  `SessionRunnerControl.ReportWorkUnits` gRPC stream.
+- `video-gateway/` — collapsed `livepeer-video-gateway` +
+  `livepeer-video-core` into single component (plan 0013-video).
+  TypeScript + Fastify; pure-TS RTMP session-open + LL-HLS strict-proxy
+  + tus VOD upload + customer-tier ABR + soft-delete VOD + HMAC webhook
+  signing + opt-in live→VOD recording. nginx playback-origin dropped
+  (broker handles LL-HLS).
+
+### Workload runners
+
+- `openai-runners/` — chat + embeddings + image-generation + audio
+  (Whisper STT) + TTS (Kokoro) + image-model-downloader + openai-tester
+  (plan 0013-runners). Shared `python-runner-base/` Docker base for
+  Python runners. Capability NAME via env + offering DETAILS via YAML
+  at `/etc/runner/offering.yaml`. Fail-fast on `DEVICE=cuda` + no GPU.
+  `/metrics` opt-in behind `METRICS_ENABLED=true`.
+- `rerank-runner/` — zerank-2 Cohere-compat (plan 0013-runners). Same
+  shape as openai Python runners + model-downloader sidecar.
+- `video-runners/` — VOD `transcode-runner` + `abr-runner` + shared
+  `transcode-core` Go library + `codecs-builder` multi-stage Docker base
+  (x264 + SVT-AV1 + libopus + libvpx + libzimg compiled from source).
+  amd64-only ML runners; `openai-runner-go` is multi-arch.
+  `live-transcode-runner` skipped (capability-broker covers it).
 
 What does not exist yet:
 
-- **Five new components** designed in the migration-brief batch (see Active
-  plans below): `customer-portal/`, `openai-runners/`, `rerank-runner/`,
-  `vtuber-gateway/`, `vtuber-pipeline/`, `vtuber-runner/`, `video-gateway/`,
-  `video-runners/`. All paper-only; implementation gated on per-brief
-  walks completing.
-- Any change to the existing `livepeer-network-suite/`, `livepeer-byoc/`, or
-  `livepeer-vtuber-project/` source trees. They retire manually after the
-  monorepo absorbs everything per `docs/design-docs/migration-from-suite.md`.
-- Live-mainnet smoke gate for the chain-integrated payment-daemon (plan 0016
-  acceptance #3) — funded mainnet wallet + user's preferred RPC; runs as a
+- **Live-mainnet smoke gate for chain-integrated payment-daemon** (plan
+  0016 acceptance #3) — funded mainnet wallet + user's preferred RPC;
   user-driven post-merge gate.
-- Live-deployment smoke for secure-orch-console v0.1 (plan 0019) —
+- **Live-deployment smoke for secure-orch-console v0.1** (plan 0019) —
   operator-driven and post-merge; deployment posture is the operator's
   choice per plan 0019 §13 Q6.
-- Reference `openai-gateway/` adoption of the new `ws-realtime` TS adapter
-  (plan 0008-followup C8 deferred — mechanical follow-up; the adapter is
-  unit-tested and ready, just needs wiring alongside the existing http-*
-  imports in `openai-gateway/src/livepeer/`).
-- `images-generations` endpoint port on the OpenAI gateway (deferred to plan
-  0013-openai phase 4 with the wire-cut).
+- **Suite + byoc + livepeer-vtuber-project source-repo retirement** —
+  user retires manually after audit (per `migration-from-suite.md` §4).
+  This monorepo's components are the canonical replacement.
+- **Plan-flagged follow-ups** (deferred during 0013-* implementation —
+  not blocking, sequenced as future plan dispatches):
+  - **0013-vtuber-followup** — wire vtuber-gateway Phase 4's 503 stubs
+    to real payerDaemon + serviceRegistry + customer-portal Stripe +
+    drizzle pool; M6 control-WS reconnect-30s replay buffer; bridge-
+    symbol cleanup in inherited `gateway.py` (HTTPBridgeClient et al).
+  - **0013-video-followup** — concrete shell-side adapter impls
+    (`assetRepo` / `liveStreamRepo` / `webhookSink` /
+    `s3StorageProvider`); frontend SPA fill-in; wire-layer payment
+    activation post-chain-live.
+  - **0008-followup C8** — reference `openai-gateway/` adopting the
+    `ws-realtime` TS adapter (mechanical follow-up; plan 0008-followup
+    §12 explicitly permitted slipping).
+  - **`http-binary-stream@v0` mode definition** — needed to unblock
+    `/v1/audio/speech` (currently 503 + `Livepeer-Error:
+    mode_unsupported`); separate spec-level plan.
+  - **Hardware-wallet keystore support** (YubiHSM 2 / Ledger / generic
+    PKCS#11) — deferred per plan 0019 Q1 lock; revisit when operator
+    demand surfaces.
+  - **VOD hard-delete janitor** — separate future plan; v0.1 is
+    soft-delete only per plan 0013-video OQ2 lock.
 
 ## Active plans
 
-Five paper-only migration briefs at `docs/exec-plans/active/0013-*.md`. All
-locks landed in November 2026 walks; implementation is per-brief dispatch.
+**None.** All 5 migration briefs (0013-shell + 0013-openai + 0013-vtuber +
+0013-video + 0013-runners) shipped. Implementation backlog is empty.
 
-- **Plan 0013-shell** — `0013-shell-customer-portal-extraction.md`.
-  Foundation for the four product-family briefs. Extracts the shared SaaS
-  shell (customer auth + ledger + Stripe + Lit/RxJS portal/admin SPA shell +
-  Fastify middleware + drizzle migrations) into a new `customer-portal/`
-  TypeScript library that per-product gateways import as a workspace
-  dependency. **Per-product separate businesses** (own Postgres, own pepper,
-  own Stripe creds, own customer scope; cross-product SSO out of v0.1).
-  18 DECIDED. **Not chain-gated** — the shell is foundation infrastructure;
-  it can ship before chain v1.0.0.
-- **Plan 0013-openai** — `0013-openai-gateway-collapse.md`. Collapses the
-  suite's `livepeer-openai-gateway-core` (engine) + `livepeer-openai-gateway`
-  (SaaS shell) into a single `openai-gateway/` component in this monorepo
-  (replacing the existing reference impl), using `customer-portal/` for
-  the shared shell pieces. Adds image-generation in phase 4 (with the wire
-  cut). 14 DECIDED. **Chain-gated v1.0.0** — emits payments.
-- **Plan 0013-vtuber** — `0013-vtuber-suite-migration.md`. Three new
-  components: `vtuber-gateway/` (the protocol gateway, suite called it
-  vtuber-livepeer-bridge), `vtuber-pipeline/` (the SaaS product;
-  Python+FastAPI; OAuth Twitch+YouTube; chunked-POST egress workers; chat
-  workers), `vtuber-runner/` (operator-pulled image; Python session-runner +
-  three.js avatar-renderer + vendored OLV in `third_party/`). Pipeline-app
-  acts as a meta-customer of vtuber-gateway (shared-per-deployment API
-  key); direct B2B integrators get per-customer keys via the gateway portal.
-  15 DECIDED. **Chain-gated v1.0.0** for the gateway; pipeline + runner
-  can pre-ship.
-- **Plan 0013-video** — `0013-video-gateway-migration.md`. New `video-gateway/`
-  component absorbing `livepeer-video-gateway` + `livepeer-video-core` from
-  the suite. TypeScript + Fastify; pure-TS RTMP listener; nginx playback-
-  origin dropped (broker handles LL-HLS); strict-proxy gateway with no
-  cache/CORS rewrite layer (CDN is the operator's add-on); soft-delete VOD;
-  customer-tier ABR ladder; opt-in live→VOD handoff. 14 DECIDED.
-  **Chain-gated v1.0.0**.
-- **Plan 0013-runners** — `0013-runners-byoc-migration.md`. Three new
-  workload-runner components: `openai-runners/` (chat + embeddings +
-  image-gen + audio + TTS + image-model-downloader + tester),
-  `rerank-runner/` (zerank-2 Cohere-compat), `video-runners/` (transcode +
-  abr; live-transcode skipped per plan 0011-followup). Shared
-  `python-runner-base/` Docker image; capability identity via env +
-  YAML manifest; fail-fast GPU probe; amd64-only ML runners + multi-arch
-  proxy; opt-in `/metrics` behind flag. 17 DECIDED. **Not chain-gated** —
-  workload runners only consume broker dispatch.
-
-The previous `0013-suite-openai-gateway-migration-brief.md` was superseded
-when the user locked the single-component-per-product collapse model on
-2026-05-06; it lives at `docs/exec-plans/superseded/0013-openai-pre-collapse.md`
-for history.
-
-Implementation dispatch order (recommended):
-1. **0013-shell first** — foundation; the four product briefs depend on
-   `customer-portal/` existing.
-2. **0013-runners parallel-safe with shell** — workload runners are
-   independent (no chain dep, no shell dep beyond Docker discipline).
-3. **0013-openai / 0013-vtuber / 0013-video after shell lands** — each
-   depends on `customer-portal/` being importable as a workspace
-   dependency.
+The `docs/exec-plans/active/` directory is empty; future plans land here.
+The follow-up items listed above are candidates for the next plan-batch
+when the user picks them up.
 
 Completed plans live in [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) —
-plans 0001–0012 + 0014 + 0015 + 0016 + 0017 + 0018 + 0019 + 0011-followup +
-0012-followup + 0008-followup are all closed. Together they shipped:
+plans 0001–0012, 0014, 0015, 0016, 0017, 0018, 0019, 0011-followup,
+0012-followup, 0008-followup, 0013-shell, 0013-openai, 0013-vtuber,
+0013-video, 0013-runners are all closed (26 completed plans).
 
-- The 6-mode + 7-extractor capability-broker (plans 0003 + 0006 + 0007 + 0010 +
-  0011 + 0012 + 0011-followup + 0012-followup).
-- The wire-compat sender + receiver payment daemons + chain integration +
-  warm-key lifecycle (plans 0005 + 0014 + 0016 + 0017).
-- The gateway-adapters TS half (HTTP family) + TS+Go middleware for non-HTTP
-  modes (plans 0008 + 0008-followup).
-- The reference OpenAI-compat gateway (plan 0009).
-- The broker-side interim-debit cadence (plan 0015).
-- The orch-coordinator (plan 0018).
-- The secure-orch-console v0.1 cold-key trust spine (plan 0019).
+The pre-collapse plan 0013 lives at
+[`docs/exec-plans/superseded/0013-openai-pre-collapse.md`](./docs/exec-plans/superseded/0013-openai-pre-collapse.md)
+(superseded when the user locked the single-component-per-product
+collapse model on 2026-05-06).
 
 ## Roadmap (rough; subject to change)
 
@@ -202,17 +199,15 @@ plans 0001–0012 + 0014 + 0015 + 0016 + 0017 + 0018 + 0019 + 0011-followup +
 | 7-followup | Gateway-adapters: ws-realtime + rtmp + session-control middleware | `gateway-adapters/` | ✅ completed (plan 0008-followup) |
 | 8 | OpenAI-compat gateway reference | `openai-gateway/` | ✅ completed (plan 0009) |
 | 9 | Cold-key signed manifest + secure-orch-console | `secure-orch-console/` | ✅ completed (plan 0019) — code shipped; live-deployment smoke is a user-driven post-merge gate |
-| 10-shell | Shared SaaS shell extraction | `customer-portal/` | 📄 design landed (plan 0013-shell); implementation pending |
-| 10-openai | OpenAI gateway suite collapse + UI/billing/admin | `openai-gateway/` | 📄 design landed (plan 0013-openai); chain-gated on v1.0.0 |
-| 10-vtuber | Vtuber suite migration (gateway + pipeline + runner) | `vtuber-gateway/`, `vtuber-pipeline/`, `vtuber-runner/` | 📄 design landed (plan 0013-vtuber); gateway chain-gated; pipeline+runner can pre-ship |
-| 10-video | Video gateway + video-core collapse | `video-gateway/` | 📄 design landed (plan 0013-video); chain-gated on v1.0.0 |
-| 10-runners | Workload runners migration (openai + rerank + video) | `openai-runners/`, `rerank-runner/`, `video-runners/` | 📄 design landed (plan 0013-runners); not chain-gated |
+| 10-shell | Shared SaaS shell extraction | `customer-portal/` | ✅ completed (plan 0013-shell) |
+| 10-openai | OpenAI gateway suite collapse + UI/billing/admin | `openai-gateway/` | ✅ completed (plan 0013-openai) |
+| 10-vtuber | Vtuber suite migration (gateway + pipeline + runner) | `vtuber-gateway/`, `vtuber-pipeline/`, `vtuber-runner/` | ✅ completed (plan 0013-vtuber) |
+| 10-video | Video gateway + video-core collapse | `video-gateway/` | ✅ completed (plan 0013-video) |
+| 10-runners | Workload runners migration | `openai-runners/`, `rerank-runner/`, `video-runners/` | ✅ completed (plan 0013-runners) |
 
-Phases 1–9 are independently shippable. Phase 4-chain (Arbitrum One) gates the
-rewrite's v1.0.0 cut, which in turn gates the chain-emitting product gateways
-(10-openai, 10-vtuber gateway, 10-video). Phase 10-shell is the foundation for
-the per-product collapses; 10-runners is independent. Components can be
-extracted from this monorepo to standalone repos at any phase boundary.
+Every roadmap row is ✅ shipped. Follow-up items are tracked under "What
+does not exist yet" above; user picks them up as discrete plan dispatches
+when ready.
 
 ## Versioning
 
@@ -222,11 +217,11 @@ a component is extracted to a standalone repo, its versioning becomes its own co
 Until extraction, the monorepo's tag is the single coordinated release artifact for
 everything in it.
 
-This repo's release line is **independent of `livepeer-network-suite`**. The two share
-no submodules, no pinned SHAs, and no schedule. See core belief #14.
+This repo's release line is **independent of `livepeer-network-suite`**, `livepeer-byoc/`,
+and `livepeer-vtuber-project/`. The three sources are now retire-ready; user
+retires manually post-audit.
 
 ## Tracking debt
 
-[`docs/exec-plans/tech-debt-tracker.md`](./docs/exec-plans/tech-debt-tracker.md). Empty
-at scaffold time; append as debt accumulates.
+[`docs/exec-plans/tech-debt-tracker.md`](./docs/exec-plans/tech-debt-tracker.md). Append as debt accumulates.
 </content>

@@ -1,0 +1,36 @@
+import { LitElement, css, html, type TemplateResult } from 'lit';
+import { customElement, property } from 'lit/decorators.js';
+
+@customElement('portal-card')
+export class PortalCard extends LitElement {
+  @property({ type: String }) heading = '';
+
+  static styles = css`
+    :host {
+      display: block;
+      background: var(--surface-1);
+      border: 1px solid var(--border-1);
+      border-radius: var(--radius-lg);
+      padding: var(--space-5);
+    }
+    .heading {
+      font-size: var(--font-size-lg);
+      font-weight: 600;
+      color: var(--text-1);
+      margin-bottom: var(--space-3);
+    }
+  `;
+
+  render(): TemplateResult {
+    return html`
+      ${this.heading ? html`<div class="heading">${this.heading}</div>` : ''}
+      <slot></slot>
+    `;
+  }
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'portal-card': PortalCard;
+  }
+}

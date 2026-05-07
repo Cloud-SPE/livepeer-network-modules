@@ -1,0 +1,64 @@
+{
+  "name": "@livepeer-rewrite/customer-portal",
+  "version": "0.1.0",
+  "description": "Shared SaaS-shell library for per-product Livepeer rewrite gateways (auth, ledger, Stripe, admin engine)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "migrations", "README.md", "DESIGN.md"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./auth": {
+      "types": "./dist/auth/index.d.ts",
+      "import": "./dist/auth/index.js"
+    },
+    "./billing": {
+      "types": "./dist/billing/index.d.ts",
+      "import": "./dist/billing/index.js"
+    },
+    "./payment": {
+      "types": "./dist/payment/index.d.ts",
+      "import": "./dist/payment/index.js"
+    },
+    "./registry": {
+      "types": "./dist/registry/index.d.ts",
+      "import": "./dist/registry/index.js"
+    },
+    "./middleware": {
+      "types": "./dist/middleware/index.d.ts",
+      "import": "./dist/middleware/index.js"
+    },
+    "./db": {
+      "types": "./dist/db/index.d.ts",
+      "import": "./dist/db/index.js"
+    },
+    "./admin": {
+      "types": "./dist/admin/index.d.ts",
+      "import": "./dist/admin/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.36.0",
+    "fastify": "^5.0.0",
+    "pg": "^8.13.0",
+    "stripe": "^14.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

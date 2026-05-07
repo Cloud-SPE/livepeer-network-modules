@@ -21,6 +21,15 @@ Thumbs.db
 /out/
 /bin/
 
+# Node / pnpm
+node_modules/
+**/node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
 # Generated docs (keep checked-in artifacts as sources of truth; output is regen-able)
 /docs/generated/*
 !/docs/generated/.gitkeep

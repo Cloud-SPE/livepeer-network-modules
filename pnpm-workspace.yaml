@@ -1,0 +1,6 @@
+packages:
+  - "customer-portal"
+  - "customer-portal/frontend"
+  - "customer-portal/frontend/shared"
+  - "customer-portal/frontend/portal"
+  - "customer-portal/frontend/admin"

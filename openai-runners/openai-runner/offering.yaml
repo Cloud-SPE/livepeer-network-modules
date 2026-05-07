@@ -1,0 +1,22 @@
+capability: openai-chat-completions
+description: |
+  OpenAI-compatible chat completions proxy. Forwards POST /v1/chat/completions
+  requests to an upstream OpenAI-compatible server (Ollama or vLLM) and streams
+  the response back. Models are discovered at startup via upstream /v1/models.
+
+  This runner image ships two binaries: chat (CAPABILITY_NAME=openai-chat-completions)
+  and embeddings (CAPABILITY_NAME=openai-text-embeddings). Build target selects
+  which binary becomes the image's ENTRYPOINT.
+
+offerings:
+  - name: chat-completions
+    description: Streaming + non-streaming chat completions
+    methods:
+      - POST /v1/chat/completions
+    upstream:
+      examples:
+        - http://ollama:11434/v1/chat/completions
+        - http://vllm:8000/v1/chat/completions
+    rate_card_hints:
+      unit: tokens
+      cost_basis: combined input+output tokens reported in OpenAI usage object

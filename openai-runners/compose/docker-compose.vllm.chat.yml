@@ -1,0 +1,24 @@
+services:
+  vllm_chat:
+    image: vllm/vllm-openai:latest
+    container_name: vllm_chat
+    runtime: nvidia
+    command:
+      - --model=meta-llama/Meta-Llama-3.1-8B-Instruct
+      - --host=0.0.0.0
+      - --port=8000
+    environment:
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    ports:
+      - "8000:8000"
+
+  openai_chat_completion_runner:
+    depends_on:
+      - vllm_chat
+    environment:
+      - UPSTREAM_URL=http://vllm_chat:8000/v1/chat/completions
+
+volumes:
+  hf-cache: {}

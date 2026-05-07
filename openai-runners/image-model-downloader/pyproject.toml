@@ -1,0 +1,15 @@
+[project]
+name = "image_model_downloader"
+version = "0.1.0"
+description = "One-shot HuggingFace model downloader for the openai-runners workload binaries."
+requires-python = ">=3.12"
+dependencies = [
+    "huggingface_hub>=0.23.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["src/download.py", "pyproject.toml"]

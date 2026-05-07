@@ -1,0 +1,25 @@
+[project]
+name = "openai_image_generation_runner"
+version = "0.1.0"
+description = "Diffusers-based image generation runner — OpenAI-compatible /v1/images/generations."
+requires-python = ">=3.12"
+dependencies = [
+    "diffusers>=0.30.0",
+    "transformers>=4.40.0",
+    "accelerate>=0.30.0",
+    "safetensors>=0.4.0",
+    "xformers>=0.0.25",
+    "sentencepiece>=0.2.0",
+    "protobuf>=4.25.0",
+    "Pillow>=10.0.0",
+]
+
+[project.scripts]
+openai-image-generation-runner = "openai_image_generation_runner.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openai_image_generation_runner"]

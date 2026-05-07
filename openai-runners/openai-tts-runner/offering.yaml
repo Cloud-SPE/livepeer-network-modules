@@ -1,0 +1,33 @@
+capability: openai-audio-speech
+description: |
+  Kokoro-based text-to-speech runner. Serves the OpenAI-compatible
+  /v1/audio/speech endpoint with format negotiation (mp3, opus, aac,
+  flac, wav, pcm) and OpenAI-compatible voice aliases (alloy, echo,
+  fable, ...).
+
+offerings:
+  - name: kokoro-tts
+    description: Text-to-speech synthesis
+    methods:
+      - POST /v1/audio/speech
+    response_formats: [mp3, opus, aac, flac, wav, pcm]
+    rate_card_hints:
+      unit: input_chars
+
+models:
+  - id: kokoro
+    huggingface_id: hexgrad/Kokoro-82M
+    sample_rate_hz: 24000
+    voices: [af_bella, am_michael, bm_george, am_adam, af_sarah, bf_emma, bf_isabella, bm_lewis]
+    openai_voice_aliases:
+      alloy: af_bella
+      echo: am_michael
+      fable: bm_george
+      onyx: am_adam
+      nova: af_sarah
+      shimmer: af_bella
+      ash: am_adam
+      sage: bf_emma
+      verse: am_michael
+      coral: bf_isabella
+      ballad: bm_lewis

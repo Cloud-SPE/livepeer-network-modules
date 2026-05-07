@@ -1,0 +1,60 @@
+services:
+  openai_chat_completion_runner:
+    image: ${REGISTRY:-tztcloud}/openai-runner-chat:${TAG:-v0.8.10}
+    build:
+      context: ../openai-runner
+      target: chat
+    environment:
+      - CAPABILITY_NAME=openai-chat-completions
+      - RUNNER_ADDR=:8080
+      - UPSTREAM_URL=http://ollama:11434/v1/chat/completions
+      - METRICS_ENABLED=false
+    ports:
+      - "8090:8080"
+
+  openai_embeddings_runner:
+    image: ${REGISTRY:-tztcloud}/openai-runner-embeddings:${TAG:-v0.8.10}
+    build:
+      context: ../openai-runner
+      target: embeddings
+    environment:
+      - CAPABILITY_NAME=openai-text-embeddings
+      - RUNNER_ADDR=:8080
+      - UPSTREAM_URL=http://ollama:11434/v1/embeddings
+      - METRICS_ENABLED=false
+    ports:
+      - "8091:8080"
+
+  openai_image_runner:
+    image: ${REGISTRY:-tztcloud}/openai-image-generation-runner:${TAG:-v0.8.10}
+    build: ../openai-image-generation-runner
+    runtime: nvidia
+    environment:
+      - CAPABILITY_NAME=image-generation
+      - MODEL_ID=SG161222/RealVisXL_V4.0_Lightning
+      - MODEL_DIR=/models
+      - RUNNER_PORT=8080
+      - DEVICE=cuda
+      - DTYPE=float16
+      - MAX_QUEUE_SIZE=5
+      - USE_TORCH_COMPILE=false
+      - METRICS_ENABLED=false
+    volumes:
+      - ai-image-models:/models
+      - ai-image-kernel-cache:/cache
+    ports:
+      - "8092:8080"
+
+  image_model_downloader:
+    image: ${REGISTRY:-tztcloud}/image-model-downloader:${TAG:-v0.8.10}
+    build: ../image-model-downloader
+    profiles: [downloader]
+    environment:
+      - MODEL_IDS=SG161222/RealVisXL_V4.0_Lightning
+      - MODEL_DIR=/models
+    volumes:
+      - ai-image-models:/models
+
+volumes:
+  ai-image-models: {}
+  ai-image-kernel-cache: {}

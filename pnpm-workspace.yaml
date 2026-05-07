@@ -4,6 +4,7 @@ packages:
   - "customer-portal/frontend/shared"
   - "customer-portal/frontend/portal"
   - "customer-portal/frontend/admin"
+  - "gateway-adapters/ts"
   - "openai-gateway"
   - "vtuber-gateway"
   - "vtuber-gateway/src/frontend/portal"

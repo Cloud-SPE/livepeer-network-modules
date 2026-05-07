@@ -14,12 +14,14 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
 	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolplusmedia"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
@@ -298,15 +300,17 @@ func main() {
 			UDPPortMin: uint16(*webrtcUDPPortMin),
 			UDPPortMax: uint16(*webrtcUDPPortMax),
 		},
+		SessionRunner: sessionrunner.Config{
+			ContainerRuntime: *containerRuntime,
+			SocketDir:        *sessionRunnerSocketDir,
+			StartupTimeout:   *sessionRunnerStartupTimeout,
+			StallTimeout:     *sessionRunnerStallTimeout,
+			ShutdownGrace:    *sessionRunnerShutdownGrace,
+			ExtraCaps:        splitCSV(*sessionRunnerExtraCap),
+		},
 	})
 
 	_ = *sessionControlMaxConcurrent
-	_ = *containerRuntime
-	_ = *sessionRunnerStartupTimeout
-	_ = *sessionRunnerStallTimeout
-	_ = *sessionRunnerShutdownGrace
-	_ = *sessionRunnerSocketDir
-	_ = *sessionRunnerExtraCap
 	if err != nil {
 		log.Fatalf("server init failed: %v", err)
 	}
@@ -319,4 +323,18 @@ func main() {
 	}
 	log.Println("shutdown complete")
 	_ = os.Stdout.Sync()
+}
+
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	out := []string{}
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

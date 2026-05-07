@@ -16,6 +16,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/hls"
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
 	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/rtmpingresshlsegress"
@@ -59,6 +60,10 @@ type Options struct {
 	// WebRTC governs the per-broker pion settings used by the
 	// session-control-plus-media media-plane relay.
 	WebRTC mediawebrtc.Config
+
+	// SessionRunner governs the per-broker session-runner subprocess
+	// supervisor consumed by the session-control-plus-media driver.
+	SessionRunner sessionrunner.Config
 }
 
 // HLSOptions configures the LL-HLS muxer + scratch directory.
@@ -104,9 +109,10 @@ type Server struct {
 	secrets      backend.SecretResolver
 	rtmpStore    *rtmpingresshlsegress.Store
 	rtmpListener *mediartmp.Listener
-	sessStore    *sessioncontrolplusmedia.Store
-	sessDriver   *sessioncontrolplusmedia.Driver
-	webrtcEngine *mediawebrtc.Engine
+	sessStore     *sessioncontrolplusmedia.Store
+	sessDriver    *sessioncontrolplusmedia.Driver
+	webrtcEngine  *mediawebrtc.Engine
+	sessRunnerSup *sessionrunner.Supervisor
 }
 
 // New constructs a Server from a validated config and registers routes. It
@@ -156,20 +162,30 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("webrtc engine: %w", err)
 	}
 
+	runnerCfg := opts.SessionRunner
+	if runnerCfg.ContainerRuntime == "" {
+		runnerCfg = sessionrunner.DefaultConfig()
+	}
+	runnerSup, err := sessionrunner.NewSupervisor(runnerCfg)
+	if err != nil {
+		return nil, fmt.Errorf("session-runner supervisor: %w", err)
+	}
+
 	s := &Server{
-		cfg:          cfg,
-		opts:         opts,
-		mux:          mux,
-		srv:          srv,
-		payment:      paymentClient,
-		modes:        defaultModes(rtmpDriver, sessDriver),
-		extractors:   defaultExtractors(),
-		backend:      backend.NewHTTPClient(),
-		secrets:      backend.NewEnvSecretResolver(),
-		rtmpStore:    rtmpStore,
-		sessStore:    sessStore,
-		sessDriver:   sessDriver,
-		webrtcEngine: rtcEngine,
+		cfg:           cfg,
+		opts:          opts,
+		mux:           mux,
+		srv:           srv,
+		payment:       paymentClient,
+		modes:         defaultModes(rtmpDriver, sessDriver),
+		extractors:    defaultExtractors(),
+		backend:       backend.NewHTTPClient(),
+		secrets:       backend.NewEnvSecretResolver(),
+		rtmpStore:     rtmpStore,
+		sessStore:     sessStore,
+		sessDriver:    sessDriver,
+		webrtcEngine:  rtcEngine,
+		sessRunnerSup: runnerSup,
 	}
 
 	if opts.RTMP.Addr != "" {

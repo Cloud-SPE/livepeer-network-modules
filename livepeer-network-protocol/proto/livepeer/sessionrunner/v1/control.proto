@@ -1,0 +1,89 @@
+// Livepeer SessionRunner v1 — control-plane IPC.
+//
+// Spoken between the capability-broker and a per-session
+// workload-specific subprocess (the "session-runner") over a unix
+// socket whose path is passed in via env LIVEPEER_SESSION_RUNNER_SOCK.
+//
+// The broker is opaque to workload semantics: ControlEnvelope.body is
+// the capability-defined payload the runner cares about; the broker
+// relays it verbatim. Protocol-reserved envelopes (`session.*`,
+// `runner.*`) are short-circuited at the broker per plan
+// 0012-followup §4.3.
+//
+// This service is NOT part of the wire-compat contract; it is a
+// broker↔runner contract that may evolve under v1.
+
+syntax = "proto3";
+
+package livepeer.sessionrunner.v1;
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1;sessionrunnerv1";
+
+service SessionRunnerControl {
+  // Health gates broker-side session-open: the broker waits for a
+  // successful Health() before returning the session-open 202.
+  // Drains within --session-runner-startup-timeout.
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Envelopes is the bidirectional control envelope stream. Each
+  // direction carries verbatim-relayed workload envelopes plus
+  // broker-emitted protocol envelopes (`runner.control_disconnected`,
+  // `runner.control_reconnected`).
+  rpc Envelopes(stream ControlEnvelope) returns (stream ControlEnvelope);
+
+  // ReportWorkUnits is the runner's monotonic-delta reporting
+  // channel for the work-unit-counter shape covered by the
+  // `runnerreport` extractor (plan 0012-followup §8).
+  // The broker accumulates deltas into a per-session atomic.Uint64
+  // that the interim-debit ticker polls.
+  rpc ReportWorkUnits(stream WorkUnitReport) returns (WorkUnitAck);
+
+  // Shutdown asks the runner to drain gracefully. The broker waits
+  // up to --session-runner-shutdown-grace before SIGKILL.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+message HealthRequest {}
+message HealthResponse {
+  // Status is one of "ready" | "starting" | "draining". The broker
+  // gates session-open on "ready".
+  string status = 1;
+}
+
+// ControlEnvelope is the per-frame wrapper. Mirror of the broker's
+// JSON ControlEnvelope; carried inline as bytes so the runner doesn't
+// need a workload-aware proto schema.
+message ControlEnvelope {
+  // Type is the envelope type. Reserved prefixes:
+  //   - "session.*" — broker-emitted lifecycle envelopes
+  //   - "runner.*"  — broker→runner notifications (control_disconnected,
+  //                   control_reconnected)
+  //   - "media.*"   — SDP/ICE plumbing for the WebRTC relay
+  //
+  // Anything else is workload-defined and relayed verbatim.
+  string type = 1;
+
+  // Seq is the sender-monotonic sequence number.
+  uint64 seq = 2;
+
+  // Body is the capability-defined payload, JSON-encoded. Opaque to
+  // the broker.
+  bytes body = 3;
+}
+
+message WorkUnitReport {
+  // Delta is the monotonic-positive number of new work units the
+  // runner emitted since the previous report. Negative or zero
+  // values are protocol errors; the broker discards the report.
+  uint64 delta = 1;
+}
+
+message WorkUnitAck {}
+
+message ShutdownRequest {
+  // Graceful indicates whether the runner should drain in-flight
+  // work or abort immediately.
+  bool graceful = 1;
+}
+
+message ShutdownResponse {}

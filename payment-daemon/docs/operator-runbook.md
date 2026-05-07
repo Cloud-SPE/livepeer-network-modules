@@ -13,7 +13,7 @@ This runbook is for two audiences:
   validate payments, track per-sender balances, and (post chain
   integration) redeem winning tickets on-chain.
 - **Gateway operators** running the daemon in `--mode sender` next to a
-  paying app — an OpenAI-compat gateway, a transcoding bridge, anything
+  paying app — an OpenAI-compat gateway, a transcoding gateway, anything
   that needs to mint Livepeer payment envelopes per request.
 
 If you are a developer hacking on the daemon code, start with

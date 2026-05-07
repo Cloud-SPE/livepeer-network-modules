@@ -12,7 +12,7 @@ broker (see
 
 Component-local agent map. Repo-root [`../AGENTS.md`](../AGENTS.md) is
 the cross-cutting map. The migration brief is plan
-[0013-vtuber](../docs/exec-plans/active/0013-vtuber-suite-migration.md).
+[0013-vtuber](../docs/exec-plans/completed/0013-vtuber-suite-migration.md).
 
 ## Operating principles
 
@@ -44,7 +44,7 @@ Inherited from the repo root. Plus:
 | Question | File |
 |---|---|
 | What is this component? | [`README.md`](./README.md) |
-| Migration brief | [`../docs/exec-plans/active/0013-vtuber-suite-migration.md`](../docs/exec-plans/active/0013-vtuber-suite-migration.md) §4.3, §5.3 |
+| Migration brief | [`../docs/exec-plans/completed/0013-vtuber-suite-migration.md`](../docs/exec-plans/completed/0013-vtuber-suite-migration.md) §4.3, §5.3 |
 | Avatar renderer | [`avatar-renderer/`](./avatar-renderer/) |
 | Vendored OLV | [`third_party/olv/`](./third_party/olv/) + [`third_party/olv/UPSTREAM.md`](./third_party/olv/UPSTREAM.md) |
 

@@ -34,7 +34,7 @@ pnpm --filter @livepeer-rewrite/vtuber-gateway test
 ## Layout
 
 See [`AGENTS.md`](./AGENTS.md). The migration brief is
-[`docs/exec-plans/active/0013-vtuber-suite-migration.md`](../docs/exec-plans/active/0013-vtuber-suite-migration.md).
+[`docs/exec-plans/completed/0013-vtuber-suite-migration.md`](../docs/exec-plans/completed/0013-vtuber-suite-migration.md).
 
 ## License
 

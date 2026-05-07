@@ -25,7 +25,6 @@ load-bearing decisions.
 | What invariants must any change uphold? | [`docs/design-docs/core-beliefs.md`](./docs/design-docs/core-beliefs.md) |
 | What are the supply-side requirements we're designing against? | [`docs/design-docs/requirements.md`](./docs/design-docs/requirements.md) |
 | What's the proposed architecture at a glance? | [`docs/design-docs/architecture-overview.md`](./docs/design-docs/architecture-overview.md) |
-| What design work is in flight? | [`docs/exec-plans/active/`](./docs/exec-plans/active/) |
 | What design work has shipped? | [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) |
 | What known tech debt are we tracking? | [`docs/exec-plans/tech-debt-tracker.md`](./docs/exec-plans/tech-debt-tracker.md) |
 | What's the source-of-truth for the design conversation? | [`docs/references/2026-05-06-architecture-conversation.md`](./docs/references/2026-05-06-architecture-conversation.md) |

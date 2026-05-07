@@ -29,7 +29,6 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 | Wire-format spec the daemon implements | [`../livepeer-network-protocol/proto/livepeer/payments/v1/`](../livepeer-network-protocol/proto/livepeer/payments/v1/) |
 | Wire-compat byte-for-byte contract with go-livepeer | [`../livepeer-network-protocol/docs/wire-compat.md`](../livepeer-network-protocol/docs/wire-compat.md) |
 | Architectural overview | [`DESIGN.md`](./DESIGN.md) |
-| Active work | [`docs/exec-plans/active/`](./docs/exec-plans/active/) |
 | Build / run / test gestures | [`Makefile`](./Makefile) |
 | Tech debt | [`docs/exec-plans/tech-debt-tracker.md`](./docs/exec-plans/tech-debt-tracker.md) |
 

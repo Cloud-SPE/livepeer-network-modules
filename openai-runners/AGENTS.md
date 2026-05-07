@@ -48,7 +48,7 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 | Build / run / smoke gestures | [`Makefile`](./Makefile) |
 | Per-backend compose overlays | [`compose/`](./compose/) |
 | Multi-image build orchestrator | [`build.sh`](./build.sh) |
-| Plan brief (active) | [`../docs/exec-plans/active/0013-runners-byoc-migration.md`](../docs/exec-plans/active/0013-runners-byoc-migration.md) |
+| Plan brief | [`../docs/exec-plans/completed/0013-runners-byoc-migration.md`](../docs/exec-plans/completed/0013-runners-byoc-migration.md) |
 
 ## Doing work in this component
 

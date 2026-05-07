@@ -31,7 +31,7 @@ Each runner exposes:
 
 ## Status
 
-**v0.1 scaffold.** Per-runner ports land per [`docs/exec-plans/active/0013-runners-byoc-migration.md`](../docs/exec-plans/active/0013-runners-byoc-migration.md).
+**v0.1 scaffold.** Per-runner ports landed per [`docs/exec-plans/completed/0013-runners-byoc-migration.md`](../docs/exec-plans/completed/0013-runners-byoc-migration.md).
 
 ## Build
 

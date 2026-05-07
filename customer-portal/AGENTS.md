@@ -6,7 +6,7 @@ gateways in the rewrite (`openai-gateway/`, `vtuber-gateway/`,
 the pnpm workspace; consumers import factories from subpath exports.
 
 The plan brief is
-[`../docs/exec-plans/active/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/active/0013-shell-customer-portal-extraction.md).
+[`../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md).
 Read §4, §5, §7, §13, §14 before making structural changes.
 
 ## Operating principles
@@ -32,7 +32,7 @@ Inherited from the repo root. Plus:
 |---|---|
 | What is this library? | [`README.md`](./README.md) |
 | Library design | [`DESIGN.md`](./DESIGN.md) |
-| Plan brief | [`../docs/exec-plans/active/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/active/0013-shell-customer-portal-extraction.md) |
+| Plan brief | [`../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md) |
 | Build / test gestures | [`Makefile`](./Makefile) |
 | DB schema source | [`src/db/schema.ts`](./src/db/schema.ts) |
 | Migration files | [`migrations/`](./migrations/) |

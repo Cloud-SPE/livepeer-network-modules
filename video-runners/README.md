@@ -30,7 +30,7 @@ listener + FFmpeg pipeline + LL-HLS server.
 
 ## Status
 
-**v0.1 scaffold.** Code lands per [`docs/exec-plans/active/0013-runners-byoc-migration.md`](../docs/exec-plans/active/0013-runners-byoc-migration.md).
+**v0.1 scaffold.** Code landed per [`docs/exec-plans/completed/0013-runners-byoc-migration.md`](../docs/exec-plans/completed/0013-runners-byoc-migration.md).
 
 ## Build
 

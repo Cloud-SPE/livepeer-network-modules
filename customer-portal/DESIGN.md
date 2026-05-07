@@ -1,7 +1,7 @@
 # customer-portal — design
 
 The full design lives in the plan brief:
-[`../docs/exec-plans/active/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/active/0013-shell-customer-portal-extraction.md).
+[`../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md).
 
 This file pins the per-component invariants the implementing agent must
 preserve when extending the shell.

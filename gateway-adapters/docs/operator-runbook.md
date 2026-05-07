@@ -135,14 +135,11 @@ the gateway-adapter consults the payer-daemon's session ledger via
 `PayerDaemon.GetSessionDebits` to surface a final `Livepeer-Work-Units`
 count to the gateway caller.
 
-The actual debit-pushdown from the broker-side ticker is plan-0015
-territory; until then the daemon's embedded
-`UnimplementedPayerDaemonServer` returns `UNIMPLEMENTED` and the
-adapter falls back to a `0`-valued result so the gateway remains
-usable today.
-
-When plan 0015 lands, the gateway gets accurate per-session totals
-without any code change on the gateway side.
+The debit-pushdown from the broker-side interim-debit ticker is plan-0015
+territory and shipped: the broker accumulates work-unit deltas into
+`atomic.Uint64` and the payer-daemon's `GetSessionDebits` RPC returns
+the live total. The gateway gets accurate per-session totals through
+the existing adapter call.
 
 ---
 
@@ -187,7 +184,7 @@ gateway provides a `debitsClient` for `PayerDaemon.GetSessionDebits`.
 | `LivepeerBrokerError: capability_not_served` | Broker's host-config doesn't include the capability the gateway requests | Confirm broker host-config matches the gateway's capability/offering. |
 | RTMP listener bind fails with "address already in use" | Another process owns `:1935` | Set `LIVEPEER_RTMP_LISTEN_ADDR` to a free port; update customer-facing URLs accordingly. |
 | WebRTC signalling 503 | Broker's WebRTC media plane unreachable from the gateway | Confirm `media.webrtc_signal_url` from the broker's session-open response is reachable. |
-| `closed.workUnits` always 0 | Payer-daemon `GetSessionDebits` returns UNIMPLEMENTED | Expected today (plan 0015 wires the debit-pushdown). Gateway can ignore until then. |
+| `closed.workUnits` always 0 | Broker's interim-debit ticker hasn't emitted any debits for the session (no work units accrued, or session closed before the first tick) | Confirm the broker's mode driver is calling `LiveCounter.Add` and that the session ran long enough for the ticker to fire. |
 
 ---
 

@@ -25,7 +25,6 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 | What is this component? | [`README.md`](./README.md) |
 | Architectural overview | [`DESIGN.md`](./DESIGN.md) |
 | Planned package layout + dispatch flow | [`docs/design-docs/architecture.md`](./docs/design-docs/architecture.md) |
-| What design work is in flight here | [`docs/exec-plans/active/`](./docs/exec-plans/active/) |
 | Build / run / test gestures | [`Makefile`](./Makefile) |
 | Example operator config | [`examples/host-config.example.yaml`](./examples/host-config.example.yaml) |
 | The wire spec this implements | [`../livepeer-network-protocol/`](../livepeer-network-protocol/) |

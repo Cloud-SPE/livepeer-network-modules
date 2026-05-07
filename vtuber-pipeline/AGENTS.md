@@ -9,7 +9,7 @@ own customers internally.
 
 Component-local agent map. Repo-root [`../AGENTS.md`](../AGENTS.md) is
 the cross-cutting map. The migration brief is plan
-[0013-vtuber](../docs/exec-plans/active/0013-vtuber-suite-migration.md).
+[0013-vtuber](../docs/exec-plans/completed/0013-vtuber-suite-migration.md).
 
 ## Operating principles
 
@@ -33,7 +33,7 @@ Inherited from the repo root. Plus:
 |---|---|
 | What is this component? | [`README.md`](./README.md) |
 | What's the design? | [`DESIGN.md`](./DESIGN.md) |
-| Migration brief | [`../docs/exec-plans/active/0013-vtuber-suite-migration.md`](../docs/exec-plans/active/0013-vtuber-suite-migration.md) §4.2, §5.2 |
+| Migration brief | [`../docs/exec-plans/completed/0013-vtuber-suite-migration.md`](../docs/exec-plans/completed/0013-vtuber-suite-migration.md) §4.2, §5.2 |
 
 ## Layout
 

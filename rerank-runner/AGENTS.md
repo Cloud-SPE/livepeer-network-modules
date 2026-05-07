@@ -38,7 +38,7 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 | Architectural overview | [`DESIGN.md`](./DESIGN.md) |
 | Build / run / smoke gestures | [`Makefile`](./Makefile) |
 | Compose overlay | [`compose/`](./compose/) |
-| Plan brief (active) | [`../docs/exec-plans/active/0013-runners-byoc-migration.md`](../docs/exec-plans/active/0013-runners-byoc-migration.md) |
+| Plan brief | [`../docs/exec-plans/completed/0013-runners-byoc-migration.md`](../docs/exec-plans/completed/0013-runners-byoc-migration.md) |
 
 ## Doing work in this component
 

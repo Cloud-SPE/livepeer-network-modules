@@ -11,7 +11,7 @@ Pre-1.0 (spec-wide). Current version: see [`VERSION`](./VERSION).
 
 Per-mode versions are tracked in each `modes/<mode>.md` frontmatter. Hybrid SemVer is
 the authoritative versioning policy — see
-[plan 0002](../docs/exec-plans/active/0002-define-interaction-modes-spec.md) Q2
+[plan 0002](../docs/exec-plans/completed/0002-define-interaction-modes-spec.md) Q2
 resolution and [core belief #14](../docs/design-docs/core-beliefs.md).
 
 ## Layout
@@ -46,9 +46,9 @@ no required Livepeer library; the contract is the wire spec here.
 The reference implementations live in:
 
 - [`../capability-broker/`](../capability-broker/) — Go broker (resolution of plan 0002
-  Q4). *Not yet present.*
+  Q4).
 - [`../gateway-adapters/`](../gateway-adapters/) — TypeScript gateway middleware
-  (resolution of plan 0002 Q4). *Not yet present.*
+  (resolution of plan 0002 Q4).
 
 ## Verifying your implementation
 

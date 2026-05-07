@@ -27,12 +27,11 @@ spec.
 
 ## Status
 
-**v0.1 scaffold** — flag parsing, Docker build, Makefile gestures all work. The
-HTTP server, `host-config.yaml` parser, mode drivers, extractors, and payment
-client are TODO. The binary exits with code 2 ("not implemented") to make the
-state unambiguous.
-
-Tracked in [`../docs/exec-plans/active/0003-capability-broker.md`](../docs/exec-plans/active/0003-capability-broker.md).
+**Shipped.** 6 mode drivers registered, 7 extractors, RTMP-ingress + LL-HLS
+egress pipeline, session-control + WebRTC SFU pass-through, and broker-side
+interim-debit ticker are all in. See PLANS.md "Code shipping today" §`capability-broker/`
+for the canonical summary, and the design brief at
+[`../docs/exec-plans/completed/0003-capability-broker.md`](../docs/exec-plans/completed/0003-capability-broker.md).
 
 ## Build
 
@@ -53,10 +52,10 @@ A single declarative YAML file: [`examples/host-config.example.yaml`](./examples
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).
 
-## Layout (planned)
+## Layout
 
 See [`docs/design-docs/architecture.md`](./docs/design-docs/architecture.md)
-for the full planned package tree and dispatch flow.
+for the full package tree and dispatch flow.
 
 ```
 capability-broker/
@@ -74,5 +73,4 @@ capability-broker/
 └── Dockerfile / Makefile / go.mod
 ```
 
-`internal/` packages are added as code lands; the v0.1 scaffold creates only
-the entry point.
+`internal/` packages reflect what's shipped.

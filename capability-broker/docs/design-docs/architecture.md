@@ -3,7 +3,7 @@
 Planned package layout, request lifecycle, and dispatch flow for the broker.
 
 > Status: skeleton (v0.1). Code lands incrementally per
-> [`../../../docs/exec-plans/active/0003-capability-broker.md`](../../../docs/exec-plans/active/0003-capability-broker.md).
+> [`../../../docs/exec-plans/completed/0003-capability-broker.md`](../../../docs/exec-plans/completed/0003-capability-broker.md).
 
 ## Planned package layout
 

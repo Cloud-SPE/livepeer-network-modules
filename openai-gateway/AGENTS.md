@@ -5,7 +5,7 @@ network rewrite. Real OpenAI client SDKs hit this gateway → customer-portal
 SaaS shell → wire-spec headers → capability-broker → workload runners. The
 collapse of the suite's two-package shape (`livepeer-openai-gateway-core` +
 `livepeer-openai-gateway`) into a single rewrite component is plan
-[0013-openai](../docs/exec-plans/active/0013-openai-gateway-collapse.md).
+[0013-openai](../docs/exec-plans/completed/0013-openai-gateway-collapse.md).
 
 Component-local agent map. Repo-root [`../AGENTS.md`](../AGENTS.md) is the
 cross-cutting map.
@@ -47,7 +47,7 @@ Inherited from the repo root. Plus:
 | The shell library this consumes | [`../customer-portal/`](../customer-portal/) |
 | The broker it talks to | [`../capability-broker/`](../capability-broker/) |
 | The wire spec | [`../livepeer-network-protocol/`](../livepeer-network-protocol/) |
-| The collapse plan | [`../docs/exec-plans/active/0013-openai-gateway-collapse.md`](../docs/exec-plans/active/0013-openai-gateway-collapse.md) |
+| The collapse plan | [`../docs/exec-plans/completed/0013-openai-gateway-collapse.md`](../docs/exec-plans/completed/0013-openai-gateway-collapse.md) |
 
 ## Integration pattern with customer-portal
 

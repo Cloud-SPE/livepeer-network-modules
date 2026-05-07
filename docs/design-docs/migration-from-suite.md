@@ -1,5 +1,5 @@
 ---
-status: active
+status: reference
 last-reviewed: 2026-05-07
 audience: rewrite contributors, suite operators planning a cutover
 ---
@@ -121,8 +121,8 @@ is a 13-component monorepo:
 
 Plus existing rewrite components: `secure-orch-console/`, `orch-coordinator/`.
 
-Five paper-only migration briefs in `docs/exec-plans/active/` (the
-"0013 family") sequence the absorption:
+Five migration briefs (the "0013 family") shipped via
+`docs/exec-plans/completed/`; they sequenced the absorption:
 
 | Brief | New components | Sources collapsed | Chain-gated? |
 |---|---|---|---|
@@ -432,7 +432,7 @@ This doc deliberately does not cover:
 - **Per-component code-level diffs.** Those live in component-specific
   migration plans — the five 0013 briefs (`0013-shell`, `0013-openai`,
   `0013-vtuber`, `0013-video`, `0013-runners`) under
-  `docs/exec-plans/active/`.
+  `docs/exec-plans/completed/`.
 - **Operator support process, contracts, pricing, SLA.** Those are
   operations concerns, not architecture concerns. Suite operators who have
   paid support arrangements continue under those arrangements; the

@@ -7,7 +7,7 @@ emission + Stripe checkout (delegated to `customer-portal/`) + a
 vtuber-specific portal SPA.
 
 The plan brief is
-[`../docs/exec-plans/active/0013-vtuber-suite-migration.md`](../docs/exec-plans/active/0013-vtuber-suite-migration.md);
+[`../docs/exec-plans/completed/0013-vtuber-suite-migration.md`](../docs/exec-plans/completed/0013-vtuber-suite-migration.md);
 read §4.1 (component layout), §5.1 (source-to-destination map),
 §7.1 (DB schema), §8.1 (routes), §9.1 (deps), §10.1 (env vars), and
 §14 + OQ1-OQ5 (locked decisions) before structural changes.
@@ -46,7 +46,7 @@ Inherited from the repo root + `customer-portal/`. Plus:
 | Question | File |
 |---|---|
 | What is this component? | [`README.md`](./README.md) |
-| Plan brief | [`../docs/exec-plans/active/0013-vtuber-suite-migration.md`](../docs/exec-plans/active/0013-vtuber-suite-migration.md) |
+| Plan brief | [`../docs/exec-plans/completed/0013-vtuber-suite-migration.md`](../docs/exec-plans/completed/0013-vtuber-suite-migration.md) |
 | DB schema source | [`src/repo/schema.ts`](./src/repo/schema.ts) |
 | Migrations | [`migrations/`](./migrations/) |
 | Vtuber portal SPA | [`src/frontend/portal/`](./src/frontend/portal/) |

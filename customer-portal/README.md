@@ -9,7 +9,7 @@ Redis, Stripe credentials, and API-key pepper.
 
 This is a **library**, not a deployed service. See
 [`AGENTS.md`](./AGENTS.md) and the plan brief at
-[`../docs/exec-plans/active/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/active/0013-shell-customer-portal-extraction.md).
+[`../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md).
 
 ## Subpath exports
 

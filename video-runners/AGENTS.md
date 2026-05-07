@@ -52,7 +52,7 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 | Compose overlay | [`compose/`](./compose/) |
 | Shared Go library | [`transcode-core/`](./transcode-core/) |
 | Multi-stage codec base image | [`codecs-builder/`](./codecs-builder/) |
-| Plan brief (active) | [`../docs/exec-plans/active/0013-runners-byoc-migration.md`](../docs/exec-plans/active/0013-runners-byoc-migration.md) |
+| Plan brief | [`../docs/exec-plans/completed/0013-runners-byoc-migration.md`](../docs/exec-plans/completed/0013-runners-byoc-migration.md) |
 
 ## Doing work in this component
 

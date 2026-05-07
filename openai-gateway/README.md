@@ -34,7 +34,7 @@ Each endpoint:
 
 **v0.1** — three endpoints implemented; smoke test runs the full
 stack via Docker compose. Tracked in
-[plan 0009](../docs/exec-plans/active/0009-openai-gateway-reference.md).
+[plan 0009](../docs/exec-plans/completed/0009-openai-gateway-reference.md).
 
 ## Build + smoke
 

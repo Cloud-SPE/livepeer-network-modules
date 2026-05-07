@@ -31,7 +31,7 @@ The full architectural rationale lives in
 Pre-implementation. The repo is a docs-and-spec scaffold; no production code yet.
 
 - [`docs/design-docs/`](./docs/design-docs/) — what we believe and why
-- [`docs/exec-plans/active/`](./docs/exec-plans/active/) — what's in flight
+- [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) — what has shipped
 - [`docs/references/`](./docs/references/) — source material (conversation transcripts, the
   OpenAI Harness PDF)
 

@@ -4,6 +4,7 @@
 IMAGE   ?= tztcloud/livepeer-conformance
 TAG     ?= dev
 VERSION := $(shell cat ../VERSION 2>/dev/null || echo dev)
+TARGET  ?= broker
 
 .PHONY: build test test-compose publish clean help
 
@@ -14,17 +15,17 @@ build: ## Build dev image locally
 		-f Dockerfile \
 		../..
 
-test: ## Run conformance against $(BROKER_URL); set MODES to filter (comma list)
-	@if [ -z "$(BROKER_URL)" ]; then \
-		echo "BROKER_URL is required"; \
-		echo "  example: make test BROKER_URL=http://host.docker.internal:8080"; \
+test: ## Run conformance against $(URL); set TARGET=broker|gateway, MODES to filter (comma list)
+	@if [ -z "$(URL)$(BROKER_URL)" ]; then \
+		echo "URL is required (TARGET=$(TARGET))"; \
+		echo "  example: make test URL=http://host.docker.internal:8080 TARGET=broker"; \
 		exit 1; \
 	fi
 	docker run --rm \
 		--add-host=host.docker.internal:host-gateway \
 		$(IMAGE):$(TAG) \
-		--target broker \
-		--url $(BROKER_URL) \
+		--target $(TARGET) \
+		--url $(if $(URL),$(URL),$(BROKER_URL)) \
 		$(if $(MODES),--modes $(MODES),)
 
 test-compose: build ## Run the full conformance stack (broker + runner + payment-daemon) and propagate exit code

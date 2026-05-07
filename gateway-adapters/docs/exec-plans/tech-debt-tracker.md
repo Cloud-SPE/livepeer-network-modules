@@ -5,5 +5,6 @@ the debt is paid down in the same PR.
 
 | Item | Opened | Notes |
 |---|---|---|
-| ws-realtime / rtmp-ingress / session-control middleware not implemented | 2026-05-06 | v0.1 narrowed scope per plan 0008. Each requires a follow-up plan. ws-realtime needs a WebSocket client (node `WebSocket` global is Node 22+, otherwise `ws` package); rtmp/session are session-open-shape helpers (similar to the broker side). |
-| `NODE_VERSION` Dockerfile ARG pinned to 22 | 2026-05-06 | Tracks repo core belief #16. Bump to current LTS when convenient. |
+| `NODE_VERSION` Dockerfile ARG pinned to 22 (TS half) | 2026-05-06 | Tracks repo core belief #16. Bump to current LTS when convenient. |
+| `GO_VERSION` Dockerfile ARG pinned to 1.25 (Go half) | 2026-05-07 | Tracks repo core belief #16. Bump to current stable when convenient. |
+| `PayerDaemon.GetSessionDebits` returns UNIMPLEMENTED on the daemon side | 2026-05-07 | Plan 0008-followup added the RPC surface so the gateway-adapter can ask for a final work-units count on session close. The daemon's actual debit-tracking ledger is plan-0015 territory; until then the server returns UNIMPLEMENTED and the adapter falls back to 0. |

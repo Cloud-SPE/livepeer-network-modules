@@ -1,6 +1,6 @@
 {
   "name": "@tztcloud/livepeer-gateway-middleware",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript reference middleware for the gateway-side wire protocol of the livepeer-network-protocol spec",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,15 +22,45 @@
     "./modes/http-multipart": {
       "types": "./dist/modes/http-multipart.d.ts",
       "import": "./dist/modes/http-multipart.js"
+    },
+    "./modes/ws-realtime": {
+      "types": "./dist/modes/ws-realtime.d.ts",
+      "import": "./dist/modes/ws-realtime.js"
+    },
+    "./modes/session-control-plus-media": {
+      "types": "./dist/modes/session-control-plus-media.d.ts",
+      "import": "./dist/modes/session-control-plus-media.js"
+    },
+    "./payer-daemon": {
+      "types": "./dist/payer-daemon.d.ts",
+      "import": "./dist/payer-daemon.js"
     }
   },
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
-    "test": "tsc && node --test ./dist/test/"
+    "test": "tsc && node --test ./dist/test/*.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "peerDependencies": {
+    "@grpc/grpc-js": "^1.12.0",
+    "@grpc/proto-loader": "^0.7.13"
+  },
+  "peerDependenciesMeta": {
+    "@grpc/grpc-js": {
+      "optional": true
+    },
+    "@grpc/proto-loader": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@grpc/grpc-js": "^1.12.0",
+    "@grpc/proto-loader": "^0.7.13",
     "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.13",
     "typescript": "^5.6.0"
   },
   "engines": {

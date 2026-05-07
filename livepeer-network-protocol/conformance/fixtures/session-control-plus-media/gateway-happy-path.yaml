@@ -1,0 +1,52 @@
+# Gateway-target happy-path fixture for session-control-plus-media@v0.
+#
+# v0.1: session-open POST only. Customer hits the gateway's session-open
+# route; the gateway's adapter middleware mints payment, calls the
+# upstream broker, and returns control_url + media descriptor to the
+# customer. Control-WS lifecycle and WebRTC media-plane verification
+# ride along when fixtures assert them.
+
+name: gateway-happy-path
+mode: session-control-plus-media@v0
+spec_version: "0.1"
+description: |
+  Customer-side session-open against a gateway under test. Asserts the
+  gateway returns 202 with session_id, control_url, media descriptor,
+  expires_at.
+
+setup:
+  capability:
+    id: test:happy-path-session:v1
+    offering_id: default
+    interaction_mode: session-control-plus-media@v0
+    work_unit:
+      name: seconds
+      extractor:
+        type: seconds-elapsed
+    price:
+      amount_wei: "10"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-backend/handler
+      auth: none
+
+request:
+  method: POST
+  path: /v1/sessions
+  headers:
+    Content-Type: application/json
+  body: |
+    {"capability":"test:happy-path-session:v1","offering":"default","persona":"frieren"}
+
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 202
+  body_fields_present:
+    - session_id
+    - control_url
+    - media
+    - expires_at

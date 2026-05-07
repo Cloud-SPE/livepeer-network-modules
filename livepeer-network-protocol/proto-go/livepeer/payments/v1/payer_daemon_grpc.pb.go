@@ -33,9 +33,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PayerDaemon_CreatePayment_FullMethodName  = "/livepeer.payments.v1.PayerDaemon/CreatePayment"
-	PayerDaemon_GetDepositInfo_FullMethodName = "/livepeer.payments.v1.PayerDaemon/GetDepositInfo"
-	PayerDaemon_Health_FullMethodName         = "/livepeer.payments.v1.PayerDaemon/Health"
+	PayerDaemon_CreatePayment_FullMethodName    = "/livepeer.payments.v1.PayerDaemon/CreatePayment"
+	PayerDaemon_GetDepositInfo_FullMethodName   = "/livepeer.payments.v1.PayerDaemon/GetDepositInfo"
+	PayerDaemon_GetSessionDebits_FullMethodName = "/livepeer.payments.v1.PayerDaemon/GetSessionDebits"
+	PayerDaemon_Health_FullMethodName           = "/livepeer.payments.v1.PayerDaemon/Health"
 )
 
 // PayerDaemonClient is the client API for PayerDaemon service.
@@ -65,6 +66,16 @@ type PayerDaemonClient interface {
 	// Inspect the payer's current TicketBroker deposit / reserve state.
 	// Read-only; the daemon does not fund escrow.
 	GetDepositInfo(ctx context.Context, in *GetDepositInfoRequest, opts ...grpc.CallOption) (*GetDepositInfoResponse, error)
+	// Read the per-session debit ledger for a long-lived session
+	// (`ws-realtime@v0`, `session-control-plus-media@v0`, etc.). Used by
+	// gateway adapters at session-close time to surface a final
+	// `Livepeer-Work-Units` count to the gateway caller without adding a
+	// close-frame extension or a control-plane event. The daemon may
+	// return UNIMPLEMENTED when long-lived debit tracking is not wired
+	// (the gateway-side adapter treats UNIMPLEMENTED as "0 work units,
+	// best effort"). The actual debit-pushdown from the broker-side
+	// ticker lands with plan 0015.
+	GetSessionDebits(ctx context.Context, in *GetSessionDebitsRequest, opts ...grpc.CallOption) (*GetSessionDebitsResponse, error)
 	// Health returns "ok" if the daemon is ready to mint payments. The
 	// gateway calls this once at startup.
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
@@ -92,6 +103,16 @@ func (c *payerDaemonClient) GetDepositInfo(ctx context.Context, in *GetDepositIn
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetDepositInfoResponse)
 	err := c.cc.Invoke(ctx, PayerDaemon_GetDepositInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payerDaemonClient) GetSessionDebits(ctx context.Context, in *GetSessionDebitsRequest, opts ...grpc.CallOption) (*GetSessionDebitsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetSessionDebitsResponse)
+	err := c.cc.Invoke(ctx, PayerDaemon_GetSessionDebits_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +156,16 @@ type PayerDaemonServer interface {
 	// Inspect the payer's current TicketBroker deposit / reserve state.
 	// Read-only; the daemon does not fund escrow.
 	GetDepositInfo(context.Context, *GetDepositInfoRequest) (*GetDepositInfoResponse, error)
+	// Read the per-session debit ledger for a long-lived session
+	// (`ws-realtime@v0`, `session-control-plus-media@v0`, etc.). Used by
+	// gateway adapters at session-close time to surface a final
+	// `Livepeer-Work-Units` count to the gateway caller without adding a
+	// close-frame extension or a control-plane event. The daemon may
+	// return UNIMPLEMENTED when long-lived debit tracking is not wired
+	// (the gateway-side adapter treats UNIMPLEMENTED as "0 work units,
+	// best effort"). The actual debit-pushdown from the broker-side
+	// ticker lands with plan 0015.
+	GetSessionDebits(context.Context, *GetSessionDebitsRequest) (*GetSessionDebitsResponse, error)
 	// Health returns "ok" if the daemon is ready to mint payments. The
 	// gateway calls this once at startup.
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
@@ -153,6 +184,9 @@ func (UnimplementedPayerDaemonServer) CreatePayment(context.Context, *CreatePaym
 }
 func (UnimplementedPayerDaemonServer) GetDepositInfo(context.Context, *GetDepositInfoRequest) (*GetDepositInfoResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetDepositInfo not implemented")
+}
+func (UnimplementedPayerDaemonServer) GetSessionDebits(context.Context, *GetSessionDebitsRequest) (*GetSessionDebitsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetSessionDebits not implemented")
 }
 func (UnimplementedPayerDaemonServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Health not implemented")
@@ -214,6 +248,24 @@ func _PayerDaemon_GetDepositInfo_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PayerDaemon_GetSessionDebits_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSessionDebitsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayerDaemonServer).GetSessionDebits(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayerDaemon_GetSessionDebits_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayerDaemonServer).GetSessionDebits(ctx, req.(*GetSessionDebitsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PayerDaemon_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HealthRequest)
 	if err := dec(in); err != nil {
@@ -246,6 +298,10 @@ var PayerDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetDepositInfo",
 			Handler:    _PayerDaemon_GetDepositInfo_Handler,
+		},
+		{
+			MethodName: "GetSessionDebits",
+			Handler:    _PayerDaemon_GetSessionDebits_Handler,
 		},
 		{
 			MethodName: "Health",

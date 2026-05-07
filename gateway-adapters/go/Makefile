@@ -1,25 +1,24 @@
-# gateway-adapters build + test.
+# gateway-adapters/go build + test.
 # Per core belief #15: every gesture is a docker invocation; no host
-# toolchain (no npm, no node) required.
+# go install required.
 
-IMAGE   ?= tztcloud/livepeer-gateway-middleware-test
+IMAGE   ?= tztcloud/livepeer-gateway-adapters-go-test
 TAG     ?= dev
-VERSION := $(shell cat ../livepeer-network-protocol/VERSION 2>/dev/null || echo dev)
+VERSION := $(shell cat ../../livepeer-network-protocol/VERSION 2>/dev/null || echo dev)
 
 .PHONY: build test shell clean help
 
-build: ## Build the test image (compiles + bundles tests; no test execution)
+build: ## Build the test image (compiles go module; no test execution)
 	docker build \
 		--build-arg VERSION=$(VERSION) \
-		--target test \
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \
-		.
+		../..
 
-test: build ## Run unit tests in Docker
+test: build ## Run go test ./... in Docker (race detector + count=1)
 	docker run --rm $(IMAGE):$(TAG)
 
-shell: build ## Open a shell in the test image (uses node:alpine entrypoint)
+shell: build ## Open a shell in the test image
 	docker run --rm -it --entrypoint sh $(IMAGE):$(TAG)
 
 clean: ## Remove dev image

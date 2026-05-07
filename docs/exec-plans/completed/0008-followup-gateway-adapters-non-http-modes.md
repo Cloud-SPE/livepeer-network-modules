@@ -1,10 +1,16 @@
 ---
-status: design-doc
+status: completed
 opened: 2026-05-06
+closed: 2026-05-07
 owner: harness
 related: plan 0008 (completed), plan 0009 (completed), plan 0010 (completed), plan 0011 (completed) + 0011-followup, plan 0012 (completed) + 0012-followup, plan 0014 (completed), plan 0015 (design)
 audience: gateway-adapters maintainers, gateway operators (`openai-gateway/`, suite gateways), broker-side mode-driver maintainers
 ---
+
+> **Closed 2026-05-07.** All §13 locks honoured. C8 (reference
+> `openai-gateway/` adopts `ws-realtime`) deferred per the plan's own
+> "may slip to a future commit" carve-out — not gating the plan close.
+> See the closing commit message for the full deviation log.
 
 # Plan 0008-followup — gateway-adapters for non-HTTP modes (design)
 

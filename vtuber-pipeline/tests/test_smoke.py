@@ -7,5 +7,5 @@ import vtuber_pipeline
 
 
 def test_package_version_exposed() -> None:
-    assert isinstance(pipeline.__version__, str)
-    assert pipeline.__version__ != ""
+    assert isinstance(vtuber_pipeline.__version__, str)
+    assert vtuber_pipeline.__version__ != ""

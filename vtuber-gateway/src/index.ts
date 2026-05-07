@@ -15,11 +15,13 @@ async function main(): Promise<void> {
       bufferBytes: cfg.vtuberControlReconnectBufferBytes,
     },
     onWindowExpiry: (sessionId) => {
+      // Best-effort teardown: marks the session ended in the store. Full
+      // worker.stopSession() + payerDaemon session-finalize is deferred
+      // until a SessionTeardown service lands in a future followup
+      // (gated on payerDaemon exposing a session-finalize gRPC).
       void sessionStore
         .updateSession(sessionId, { status: "ended", endedAt: new Date() })
-        .catch(() => {
-          // best-effort teardown
-        });
+        .catch(() => {});
     },
   });
 

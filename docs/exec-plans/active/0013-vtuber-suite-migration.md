@@ -21,8 +21,8 @@ audience: vtuber-product maintainers planning the suite + vtuber-project absorpt
 
 > **Paper-only design brief.** No code, no `package.json`, no
 > `pyproject.toml`, no `pnpm-workspace.yaml` edits ship from this
-> commit. Locks recorded in §14 as `DECIDED:` blocks; user walks
-> remaining open questions before implementation.
+> commit. Locks recorded in §14 as `DECIDED:` blocks (Q1-Q10 +
+> OQ1-OQ5).
 
 ## 1. Status and scope
 
@@ -97,13 +97,29 @@ describes.
 ## 3. Reference architecture
 
 ```
-    customer browser                  Pipeline UI (mock-youtube /streams /egress)
+  pipeline-app's customers              direct B2B integrators
         │ HTTPS                              │  HTTPS
-        ▼                                    ▼
+        ▼                                    │
+  ┌──────────────────────────┐                │
+  │  vtuber-pipeline/  (Py)  │                │
+  │   pipeline-streams /     │                │
+  │   pipeline-egress /      │                │
+  │   pipeline-mock-youtube  │                │
+  │   - holds ONE shared     │                │
+  │     LIVEPEER_VTUBER_     │                │
+  │     GATEWAY_API_KEY      │                │
+  │     (meta-customer)      │                │
+  │   - bills its own        │                │
+  │     customers internally │                │
+  └──────────────────────────┘                │
+                │ HTTPS (shared key)          │ HTTPS (per-customer key)
+                ▼                             ▼
   ┌──────────────────────────────────────────────────────────┐
   │  vtuber-gateway/  (Node 20 + TS + Fastify 5)             │
   │   - SaaS surfaces: customer auth + billing + Stripe +    │
   │     admin (delegates to customer-portal/)                │
+  │   - sees ONE high-volume customer = pipeline-app, plus   │
+  │     direct integrators (per-customer keys via portal SPA)│
   │   - product routes:                                      │
   │       POST   /v1/vtuber/sessions          (session-open) │
   │       GET    /v1/vtuber/sessions/:id                     │
@@ -118,6 +134,10 @@ describes.
   ┌──────────────────────────────────────────────────────────┐
   │  capability-broker (orch host)                           │
   │   session-control-plus-media@v0 driver                   │
+  │   - SessionRunnerControl.ReportWorkUnits(stream) gRPC    │
+  │     bidi-stream from runner; broker accumulates into     │
+  │     atomic.Uint64 (LiveCounter); interim-debit ticker    │
+  │     reads via CurrentUnits() — see plan 0012-followup §8 │
   └──────────────────────────────────────────────────────────┘
          │
          ▼
@@ -127,6 +147,8 @@ describes.
   │   - encodes H.264 over WebCodecs in the browser          │
   │   - mux audio + video → trickle publish                  │
   │   - control-WS bidirectional fan-out                     │
+  │   - reports per-second monotonic-delta work-units back   │
+  │     to broker over the runner-IPC gRPC bidi-stream       │
   └──────────────────────────────────────────────────────────┘
                       │ WebSocket
                       ▼
@@ -136,12 +158,6 @@ describes.
                  - idle anims (breathing / blink / sway)
                  - WS encoded-frame stream
                  - control-WS (set_expression / set_lookat / speak / clear_speaking)
-
-
-    pipeline-app/  (Python; not on the request path)
-      - mock_youtube/   chat source (mock; replaced by real youtube provider later)
-      - streams/        streams orchestrator (calls vtuber-gateway sessions API)
-      - egress/         RTMP push to youtube-live (wraps ffmpeg)
 ```
 
 `vtuber-gateway/` is the *gateway* (payer-side). The suite's name
@@ -151,13 +167,25 @@ strings.
 
 `vtuber-pipeline/` is **product code** that sits *above* the gateway
 (it consumes the gateway's sessions API). It's not infrastructure;
-it's the product the customer logs into.
+it's the product the customer logs into. Per OQ4 lock, pipeline-app
+acts as a **meta-customer** of `vtuber-gateway` (B2B SaaS-on-SaaS):
+it holds **one** shared `LIVEPEER_VTUBER_GATEWAY_API_KEY` per
+deployment, bills its own customers internally, and the gateway
+sees pipeline as a single high-volume customer. Pipeline-app's
+customers do **not** sign up to vtuber-gateway directly.
+
+**Direct B2B integrators** (non-pipeline customers integrating
+vtuber-gateway directly) sign up via the gateway's own portal SPA
+and receive **per-customer** API keys — same flow as openai-gateway
+/ video-gateway. Both modes coexist.
 
 `vtuber-runner/` is the **workload binary** running on orch hosts.
 It pairs with the broker's `session-control-plus-media@v0` mode driver
 (plan 0012). The avatar-renderer is the runner's child Chromium
 process; both ship as one logical workload artifact (same Docker
-image, two payloads).
+image, two payloads). The runner reports per-second work-units to
+the broker over the `SessionRunnerControl.ReportWorkUnits(stream)`
+gRPC bidi-stream (control-IPC channel; plan 0012-followup §8).
 
 ## 4. Component layout
 
@@ -297,7 +325,7 @@ vtuber-runner/
   DESIGN.md
   README.md
   Makefile
-  Dockerfile                  ← bakes Chromium + ffmpeg + avatar-renderer dist
+  Dockerfile                  ← three-stage: (1) Vite renderer build, (2) Python deps via uv, (3) runtime with Playwright + chromium-headless-shell + ffmpeg + renderer dist
   compose.yaml                ← dev compose (single runner + a fake gateway)
   pyproject.toml              ← package name `session_runner` (Python)
   uv.lock
@@ -358,7 +386,8 @@ vtuber-runner/
         encoders/
       tests/
   third_party/
-    open-llm-vtuber/           ← vendored OLV upstream (canonical place)
+    olv/                       ← vendored OLV upstream (canonical place; vendor lift, not submodule)
+      UPSTREAM.md              ← upstream commit hash + rebase procedure
   tests/
     unit/
     integration/
@@ -366,8 +395,23 @@ vtuber-runner/
 
 The avatar-renderer is a **sub-workspace** of `vtuber-runner/`,
 sharing the runner's Docker image build but with its own
-`package.json` and Vite config. The runner's Dockerfile copies the
-built `avatar_renderer/dist/` into the runtime image.
+`package.json` and Vite config. Per OQ1 lock, the renderer is
+**always rebuilt from source** in stage 1 of the runner's three-stage
+Dockerfile (Vite renderer build → Python deps via uv → runtime with
+Playwright + chromium-headless-shell). No pre-built bundle artifact
+is published — one source of truth, no version-drift between a
+published artifact and the runner image. Bundle size is small enough
+the rebuild cost is negligible. Stage 1 emits `avatar_renderer/dist/`,
+stage 3 copies it into the runtime image.
+
+Per OQ2 lock, OLV (Open-LLM-VTuber) upstream is **vendored** at
+`third_party/olv/` (not a git submodule). Submodule complexity
+(init/update, recursive clone, CI gotchas) isn't worth it for OLV's
+slow upstream release cadence. A `third_party/olv/UPSTREAM.md`
+documents the upstream commit hash + rebase procedure for pulling
+new versions. Matches user-memory `feedback_submodule_url_protocol.md`
+(HTTPS-only) preference + the rewrite's clean-slate philosophy +
+the suite's existing vendored layout.
 
 ## 5. Source-to-destination file map
 
@@ -427,7 +471,8 @@ mirror).
 | `livepeer-vtuber-project/session-runner/pyproject.toml` | `vtuber-runner/pyproject.toml` |
 | `livepeer-vtuber-project/session-runner/Dockerfile` | `vtuber-runner/Dockerfile` |
 | `livepeer-vtuber-project/session-runner/src/session_runner/**` | `vtuber-runner/src/session_runner/**` (~30 .py files; 2-level deep service tree per §4.3) |
-| `livepeer-vtuber-project/session-runner/third_party/open-llm-vtuber/` | `vtuber-runner/third_party/open-llm-vtuber/` |
+| `livepeer-vtuber-project/session-runner/third_party/open-llm-vtuber/` | `vtuber-runner/third_party/olv/` (vendor lift per OQ2; not a git submodule) |
+| (new) | `vtuber-runner/third_party/olv/UPSTREAM.md` (new file: upstream commit hash + rebase procedure) |
 | `livepeer-vtuber-project/session-runner/tests/**` | `vtuber-runner/tests/**` |
 | `livepeer-vtuber-project/avatar-renderer/package.json` | `vtuber-runner/src/avatar_renderer/package.json` |
 | `livepeer-vtuber-project/avatar-renderer/tsconfig.json` + `vite.config.ts` + `vitest.config.ts` | `vtuber-runner/src/avatar_renderer/{tsconfig.json,vite.config.ts,vitest.config.ts}` |
@@ -492,6 +537,10 @@ Pinned versions (matching session-runner today):
 - structlog ≥24.4
 - pydantic ≥2.9
 
+OLV (Open-LLM-VTuber) is **vendored** at `vtuber-runner/third_party/olv/`
+per OQ2 lock — vendor lift, not a git submodule. `UPSTREAM.md` in
+that directory documents the upstream commit hash + rebase procedure.
+
 ### 6.4 Variance: avatar-renderer (browser TS)
 
 Justification: the renderer **is** a browser app — three.js +
@@ -509,6 +558,10 @@ Vite is the bundler (matches vtuber-project); does not affect the
 rest of the monorepo's pnpm workspace.
 
 The renderer is `private: true` in package.json; never published.
+Per OQ1 lock, the renderer is **rebuilt from source** in stage 1 of
+the runner's three-stage Dockerfile (Vite renderer → Python deps via
+uv → runtime). No pre-built bundle artifact is published — one
+source of truth, no version-drift between artifact and runner image.
 
 ### 6.5 Variance: openai/customer-portal share `app.*` schema; vtuber owns `vtuber.*`
 
@@ -550,6 +603,14 @@ state. No migrations.
 
 ### 8.1 vtuber-gateway routes
 
+Two API-key flows coexist per OQ4 lock: (a) **shared-per-deployment
+default** — pipeline-app holds one `LIVEPEER_VTUBER_GATEWAY_API_KEY`
+and acts as a meta-customer (single high-volume customer; pipeline-app
+billing is internal to pipeline-app); (b) **per-customer opt-in** —
+direct B2B integrators sign up via the gateway's portal SPA and
+receive per-customer keys (same flow as openai-gateway / video-gateway).
+Both routes serve both modes; the auth middleware doesn't distinguish.
+
 | Method + path | Mode | Capability | Notes |
 |---|---|---|---|
 | `POST /v1/vtuber/sessions` | `session-control-plus-media@v0` | `livepeer:vtuber-session` | Session-open. Body: persona, vrm_url, llm_provider, tts_provider, target_youtube_broadcast. Returns `{session_id, control_url, expires_at, session_child_bearer}`. Per-second metering kicks in on first frame. |
@@ -560,6 +621,12 @@ state. No migrations.
 
 ### 8.2 vtuber-pipeline routes (customer-product side, NOT the gateway)
 
+The customer-facing API surface lives at the **pipeline**; pipeline
+calls `vtuber-gateway` as the **meta-customer** using the shared
+`LIVEPEER_VTUBER_GATEWAY_API_KEY` (per OQ4 lock). Pipeline-app's
+own customers never see vtuber-gateway directly; pipeline-app
+handles its own per-customer billing internally.
+
 `pipeline-mock-youtube` — chat source (mock; replaced by real YouTube
 provider in production).
 - `POST /chat/messages` — emit a chat message into the live pool.
@@ -567,8 +634,9 @@ provider in production).
 
 `pipeline-streams` — streams orchestrator.
 - `POST /streams` — start a youtube broadcast + open a vtuber session
-  via the gateway.
-- `GET /streams` — list customer's streams.
+  via the gateway (using the shared meta-customer API key).
+- `GET /streams` — list customer's streams (pipeline-app's customer,
+  not vtuber-gateway's).
 - `POST /streams/:id/end` — terminate.
 
 `pipeline-egress` — RTMP push worker.
@@ -615,9 +683,22 @@ Imports same shell + adapters surface as `openai-gateway/`. Adds:
 
 ### 9.2 vtuber-pipeline
 
-Pure Python; depends on `vtuber-gateway/` only via HTTP (the
-`gateway.py` provider — formerly `bridge.py`). Not in the same pnpm
-workspace; lives as a uv workspace member.
+Pure Python; not in the same pnpm workspace; lives as a uv workspace
+member.
+
+- **Imports `customer-portal/`** for its own SaaS shell needs —
+  signup/login/billing/portal-SPA primitives for **pipeline-app's**
+  customers (pipeline-app is itself a SaaS product). Per plan
+  0013-shell's per-product separate-businesses framing.
+- **Dials `vtuber-gateway/` over HTTPS** using
+  `LIVEPEER_VTUBER_GATEWAY_API_KEY` (shared-per-deployment, single
+  meta-customer key — OQ4 lock). The HTTP client lives at
+  `vtuber-pipeline/src/vtuber_pipeline/streams/providers/gateway.py`
+  (formerly `bridge.py`).
+- **Does not** issue or manage per-pipeline-customer API keys on
+  vtuber-gateway. Pipeline-app's per-customer billing is its own
+  concern; vtuber-gateway sees pipeline as a single high-volume
+  customer.
 
 ### 9.3 vtuber-runner
 
@@ -661,8 +742,11 @@ Each binary has its own:
 - `MOCK_YOUTUBE_PORT`, `MOCK_YOUTUBE_LOG_LEVEL`.
 
 `pipeline-streams`:
-- `VTUBER_GATEWAY_URL`, `VTUBER_GATEWAY_API_KEY`, `YOUTUBE_API_*`,
-  `EGRESS_ADMIN_URL`.
+- `LIVEPEER_VTUBER_GATEWAY_URL` — HTTPS URL of vtuber-gateway.
+- `LIVEPEER_VTUBER_GATEWAY_API_KEY` — **single shared meta-customer
+  key per deployment** (OQ4 lock). Pipeline-app holds one key on
+  vtuber-gateway; pipeline-app's customers never see this key.
+- `YOUTUBE_API_*`, `EGRESS_ADMIN_URL`.
 
 `pipeline-egress`:
 - `EGRESS_PORT`, `FFMPEG_BINARY`, `MAX_CONCURRENT_STREAMS`.
@@ -768,9 +852,16 @@ fixtures into smoke harnesses.
    credentials.
 3. **Egress ffmpeg sizing** — per-stream ~1.5 cores + ~250 MB RAM;
    document per-host concurrency limits.
-4. **streams ↔ vtuber-gateway pairing** — each streams orchestrator
-   binds to one gateway URL + API key; multi-tenant deployments run
-   one streams binary per customer namespace.
+4. **Provisioning the meta-customer API key on vtuber-gateway** —
+   one-time setup per OQ4 lock. On the vtuber-gateway side, admin SPA
+   → Customers → New → tier=enterprise / metered / etc → mint key
+   (record `LIVEPEER_VTUBER_GATEWAY_API_KEY`); paste into pipeline-app's
+   env. Pipeline-app's per-customer billing is its own concern;
+   vtuber-gateway sees one customer = pipeline-app.
+5. **streams ↔ vtuber-gateway pairing** — each pipeline-streams
+   deployment binds to one gateway URL + one shared meta-customer
+   API key. Multi-tenant pipeline-app deployments do **not** mint
+   per-customer keys on the gateway; they bill internally.
 
 ### 12.3 vtuber-runner/docs/operator-runbook.md (NEW)
 
@@ -780,8 +871,9 @@ fixtures into smoke harnesses.
    non-Docker installs need `playwright install chromium`.
 3. **VRM hosting** — VRMs are customer-uploaded; the runner fetches
    from a URL the gateway hands over. Document URL allowlist policy.
-4. **OLV upgrade** — vendored at `third_party/open-llm-vtuber/`;
-   upgrade is a deliberate copy + commit.
+4. **OLV upgrade** — vendored at `third_party/olv/` (per OQ2 lock —
+   vendor lift, not git submodule); follow the rebase procedure in
+   `third_party/olv/UPSTREAM.md`. Upgrade is a deliberate copy + commit.
 5. **Trickle publish endpoint** — broker-issued; runner fails fast if
    `TRICKLE_PUBLISH_URL` unreachable at session-open.
 
@@ -850,7 +942,8 @@ true pass-through (no buffering on the relay).
 
 ## 14. Resolved decisions
 
-User walks 2026-05-06; recorded as `DECIDED:` blocks.
+User walks 2026-05-06 (Q1-Q10) + 2026-05-07 (OQ1-OQ5); recorded as
+`DECIDED:` blocks.
 
 ### Q1. Three components vs one mega-component
 
@@ -934,30 +1027,76 @@ Operators run it as a local YouTube replacement during development
 provider via config flag. Suite ships it as
 `pipeline-mock-youtube` console script; carry forward.
 
-### Open questions surfaced for the user walk
+### OQ1. avatar-renderer build strategy
 
-- **OQ1.** Should `vtuber-runner/` ship pre-built avatar-renderer
-  bundles in a published artifact, or always rebuild from source in
-  the runner Dockerfile? Recommendation: rebuild in Dockerfile —
-  simpler invariant; bundle size is small. **Surface for user lock.**
-- **OQ2.** OLV upstream — vendor in `third_party/`, or pull as a git
-  submodule? Suite has it vendored. Recommendation: vendor (matches
-  user-memory `feedback_submodule_url_protocol.md` HTTPS-only
-  guidance + general clean-slate philosophy). **Surface for user
-  lock.**
-- **OQ3.** vtuber-gateway portal SPA — extend `customer-portal/`
-  portal with a `portal-vtuber-sessions` component, or ship the
-  vtuber-specific page in `vtuber-gateway/src/frontend/portal/`?
-  Recommendation: ship in vtuber-gateway frontend (product-specific
-  pages don't belong in the shell, same pattern as
-  openai-gateway/admin-rate-card-*). **Surface for user lock.**
-- **OQ4.** `pipeline-streams` ↔ `vtuber-gateway` API key —
-  per-customer or shared per-deployment? Recommendation: per-customer
-  (matches multi-tenancy). **Surface for user lock.**
-- **OQ5.** Does the runner expose `Livepeer-Work-Units` per-second
-  via the response trailer (active extractor) OR via control-WS
-  events (every second)? Plan 0012-followup decides; this brief notes
-  the open question. **Surface for user lock.**
+**DECIDED: rebuild from source in the runner Dockerfile.** No
+pre-built bundle artifact published. Simpler invariant — one source
+of truth, no version-drift between a published artifact and the
+runner image. Bundle size is small enough the rebuild cost is
+negligible. The runner Dockerfile's three-stage build (Vite renderer
+→ Python deps via uv → runtime with Playwright + chromium-headless-shell)
+does the renderer rebuild as stage 1. See §4.3 + §6.4.
+
+### OQ2. OLV (Open-LLM-VTuber) upstream
+
+**DECIDED: vendor in `third_party/olv/`** (no git submodule). Matches
+user-memory `feedback_submodule_url_protocol.md` (HTTPS-only)
+preference + the rewrite's clean-slate philosophy. Suite has it
+vendored. Submodule complexity (init/update, recursive clone, CI
+gotchas) isn't worth it for OLV's slow upstream release cadence. The
+vendor lift includes a `third_party/olv/UPSTREAM.md` documenting the
+upstream commit hash + rebase procedure for pulling new versions.
+See §4.3 + §5.3 + §6.3 + §12.3.
+
+### OQ3. vtuber-gateway portal SPA placement
+
+**DECIDED: ship vtuber-specific pages in
+`vtuber-gateway/src/frontend/portal/`.** NOT in `customer-portal/portal/`.
+Product-specific pages don't belong in the shared shell. Matches the
+per-product separate-businesses framing from plan 0013-shell's OQ3
+lock. The shared `customer-portal/frontend/shared/` library provides
+common widgets (auth forms, API-key UI, balance display, Stripe
+checkout, layout, design tokens); each per-product portal composes
+those primitives + adds product-specific routes (vtuber-session list,
+persona authoring, scene history).
+
+### OQ4. `pipeline-streams` ↔ `vtuber-gateway` API key shape
+
+**DECIDED: shared-per-deployment (default), with per-customer as
+opt-in for direct B2B integrators.** Pipeline-app is a SaaS product
+with its own customer-facing surface; pipeline-app's customers do
+**not** sign up to vtuber-gateway directly. Pipeline-app holds **one**
+API key on vtuber-gateway and acts as a **meta-customer** (B2B
+SaaS-on-SaaS relationship). Pipeline-app's per-customer billing is its
+own concern; vtuber-gateway sees pipeline as a single high-volume
+customer.
+
+For direct B2B integrators of vtuber-gateway (non-pipeline customers
+integrating the gateway directly), the standard customer-portal flow
+issues per-customer API keys via the gateway's own portal SPA — same
+as openai-gateway / video-gateway. Both modes coexist; pipeline-app
+integration uses shared-per-deployment, direct integrators use
+per-customer.
+
+This **corrects the brief's prior "per-customer (matches
+multi-tenancy)" recommendation** in this plan's first version — that
+framing forced pipeline-app to manage N vtuber-gateway keys per
+pipeline customer, which is operationally awkward for marginal
+multi-tenancy benefit. Shared-per-deployment is the cleaner default.
+See §3 + §8.1 + §8.2 + §9.2 + §10.2 + §12.2.
+
+### OQ5. Runner work-unit transport mechanism
+
+**DECIDED: `SessionRunnerControl.ReportWorkUnits(stream)` gRPC
+bidi-stream** (control-IPC channel between broker and runner,
+established in plan 0012-followup §8 + Q8 lock). Runner reports
+monotonic deltas; broker accumulates into `atomic.Uint64`; broker's
+interim-debit ticker (plan 0015) reads via
+`LiveCounter.CurrentUnits()`. **NOT** response trailer (no HTTP
+trailer surface for the session-driven mode). **NOT** control-WS
+events to the customer (control-WS is broker↔customer; runner-reported
+metrics ride the runner-IPC channel that's broker↔runner). Cite plan
+0012-followup §8 + plan 0012-followup's resolved Q8.
 
 ## 15. Out of scope (forwarding addresses)
 

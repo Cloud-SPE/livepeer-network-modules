@@ -119,7 +119,9 @@ published externally. The collapse retires the package outright.
    │       <session_id>/<stream_key> path injection per     │
    │       plan 0011-followup §4.2                         │
    │   - playback origin (HLS playlist+segment proxy):     │
-   │       /_hls/<session>/...  (proxies broker /_hls/...) │
+   │       /_hls/<session>/...  (strict pass-through to    │
+   │       broker /_hls/...; no rewrite layer — see §14    │
+   │       OQ1 lock; CDN concerns are operator add-on)     │
    └───────────────────────────────────────────────────────┘
        │                                          ▲
        │ HTTPS to capability-broker for VOD jobs  │ HLS playback
@@ -386,7 +388,7 @@ idempotency_requests.
 
 | Table | Purpose | Source |
 |---|---|---|
-| `media.assets` | One row per VOD asset; status, source url, duration, codecs, ffprobe metadata. | suite migration `0000_initial_schema.sql:5-25` |
+| `media.assets` | One row per VOD asset; status, source url, duration, codecs, ffprobe metadata. Includes `deleted_at TIMESTAMP NULL` for soft-delete (§14 OQ2 lock). | suite migration `0000_initial_schema.sql:5-25` |
 | `media.encoding_jobs` | One row per transcode/abr job; FK asset_id; worker_url, attempt_count, input/output urls. | suite migration `0000_initial_schema.sql:27-40` + `0001_encoding_job_routes.sql` |
 | `media.live_streams` | Live-stream sessions; FK project_id; selected_capability, selected_offering, payment_work_id, terminal_reason. | suite migration `0000_initial_schema.sql` + `0003_live_stream_pattern_b_fields.sql:1-26` |
 | `media.playback_ids` | Per-asset/per-stream playback tokens. | suite migration `0000_initial_schema.sql` |
@@ -449,6 +451,10 @@ nodes / reservations.
 | `POST /v1/vod/submit` | `http-reqresp@v0` | `livepeer:vod-transcode` | Submit asset_id for transcode; broker dispatches to transcode-runner / abr-runner. |
 | `GET /v1/vod/:asset_id` | (REST or `http-stream@v0` long-poll) | n/a | Job status + rendition URLs. |
 | `GET /v1/playback/:id` | (REST) | n/a | Resolves playback_id to playable URL (HLS for live, MP4/HLS for VOD). |
+| `GET /_hls/<session>/...` | (HLS pass-through) | n/a | Strict proxy to broker `/_hls/...` per §14 OQ1; no header rewriting / no cache-control / no CORS injection at gateway. CDN is operator add-on. |
+| `GET /v1/videos/assets` | (REST) | n/a | List VOD assets; soft-deleted rows hidden unless `?include_deleted=true`. |
+| `GET /v1/videos/assets/{id}` | (REST) | n/a | Returns 404 on soft-deleted asset unless `?include_deleted=true`. |
+| `DELETE /v1/videos/assets/{id}` | (REST) | n/a | Soft-delete: sets `media.assets.deleted_at = now()`; returns 204. Hard-delete deferred to retention janitor (§14 OQ2). |
 | `POST /v1/projects` + `GET /v1/projects` + `POST /v1/projects/:id/...` | (REST) | n/a | Project CRUD. |
 | `POST /v1/webhooks` + `GET /v1/webhooks` | (REST) | n/a | Customer-side webhook URL configuration. |
 | `RTMP rtmp://gateway:1935/<stream_key>` | (RTMP wire) | n/a | Customer encoder push; gateway authn-and-proxy to broker per plan 0011-followup §4.2. |
@@ -472,8 +478,12 @@ Chat workers: not applicable.
 Egress workers: the gateway's `playback-origin` proxy is the egress
 surface for customer playback. The broker's LL-HLS server is what's
 actually serving segments; the gateway's `/_hls/<session>/...`
-proxies it (for hostname uniformity with the customer's stream-create
-response).
+**strictly passes through** to it (for hostname uniformity with the
+customer's stream-create response). Per §14 OQ1 lock the gateway has
+**no** cache-control / CORS / playlist-rewrite logic; broker's LL-HLS
+handler (plan 0011-followup §6.3) is the canonical source. Operators
+front the gateway with CloudFront / Fastly / Cloudflare for caching,
+edge replication, geographic routing — gateway doesn't reinvent CDN.
 
 ## 9. Cross-component dependencies
 
@@ -509,6 +519,11 @@ per-`gateway-adapters/` modes:
 | `VIDEO_LIVE_DEFAULT_OFFERING_PER_TIER` | no (YAML) | Map customer-tier → default live offering. |
 | `VIDEO_WEBHOOK_HMAC_PEPPER` | yes | HMAC secret for outbound webhook signing. |
 | `VIDEO_STALE_STREAM_SWEEP_INTERVAL_SECONDS` | no (default `60`) | staleStreamSweeper run cadence. |
+| `VIDEO_GATEWAY_ABR_POLICY` | no (default `customer-tier`) | ABR ladder selection policy at session-open per §14 OQ3. v0.1 ships `customer-tier` only; future minor adds `operator-flat`. |
+
+Note: live-stream → VOD handoff (§14 OQ4) is **not** a deployment
+config — it's an **opt-in `record_to_vod: true` flag in session-open
+params** (per-stream, customer-controlled, default off).
 
 YAML config at `/etc/video-gateway/offerings.yaml` (optional):
 
@@ -585,8 +600,13 @@ per plan 0011-followup §11.4.
 5. **Customer webhooks** — outbound HTTP POST signed with HMAC-SHA-256
    using `VIDEO_WEBHOOK_HMAC_PEPPER`. Customers verify via the
    `X-Livepeer-Webhook-Signature` header. Document signature scheme.
-6. **VOD asset retention** — assets persist until customer deletes.
-   Operator may add a per-project TTL via SQL UPDATE (no UI in v0.1).
+6. **VOD asset retention + soft-delete** — customer `DELETE
+   /v1/videos/assets/{id}` flips `media.assets.deleted_at` and returns
+   204 (per §14 OQ2). Hard-delete (broker scratch + S3 + DB row removal)
+   is **forwarded to a separate janitor-job plan** — v0.1 ships
+   soft-delete only. Interim manual hard-delete: operator runs
+   `DELETE FROM media.assets WHERE deleted_at < NOW() - INTERVAL '30 days'`
+   plus matching S3-side cleanup as their retention policy demands.
 7. **HLS proxy hostname** — the gateway returns `VIDEO_LIVE_HLS_BASE_URL/_hls/<session>/...`.
    The reverse proxy must rewrite that path to broker's
    `/_hls/<session>/...`. Provide nginx + caddy snippets.
@@ -739,24 +759,49 @@ every N seconds; cancels live streams with no recent RTMP packets.
 
 **DECIDED: discard.** §5.2 maps it to `dropped`.
 
-### Open questions surfaced for the user walk
+### OQ1. LL-HLS rewrite layer in gateway
 
-- **OQ1.** Should the gateway carry its own LL-HLS rewrite layer
-  (e.g. cache-control headers, CORS), or strictly proxy the broker?
-  Recommendation: strictly proxy; broker's LL-HLS handler at plan
-  0011-followup §6.3 is the canonical source. Operator add-on
-  (cdn) handles caching. **Surface for user lock.**
-- **OQ2.** VOD asset deletion — soft-delete (DB only) or hard-delete
-  (broker-side scratch + S3-side delete)? Recommendation: soft-delete
-  in v0.1; hard-delete via separate ops job. **Surface for user lock.**
-- **OQ3.** Gateway-side ABR ladder choice — operator-policy or
-  customer-tier? Suite uses customer-tier (free vs prepaid).
-  Recommendation: customer-tier. **Surface for user lock.**
-- **OQ4.** Live-stream → recorded-VOD handoff: at session-end, does
-  the gateway auto-create a VOD asset from the recording bridge's
-  output? Suite stops at egress; rewrite could auto-handoff.
-  Recommendation: opt-in flag per stream; default off. **Surface for
-  user lock.**
+**DECIDED: strictly proxy the broker.** No gateway-side cache-control
+/ CORS / playlist-rewrite logic. Broker's LL-HLS handler (plan
+0011-followup §6.3) is the canonical source. CDN concerns (caching,
+edge replication, geographic routing) are the operator's call —
+they put CloudFront / Fastly / Cloudflare in front of the gateway as
+needed. Gateway doesn't reinvent CDN. §3 + §8.4 narrative reflects.
+
+### OQ2. VOD asset deletion semantics
+
+**DECIDED: soft-delete in v0.1, hard-delete via separate ops job.**
+Customer `DELETE /v1/videos/assets/{id}` flips a `deleted_at`
+timestamp on `media.assets`; the row stays for retention period.
+Hard-delete (broker scratch + S3 + DB row removal) runs as a
+separate retention-driven janitor job per operator policy, forwarded
+to a future plan. v0.1 ships only the soft-delete path. §7.2 column
+note + §8.2 endpoint rows + §12 runbook item 6 + §15 forwarding
+address reflect.
+
+### OQ3. ABR ladder selection policy
+
+**DECIDED: customer-tier.** The customer's billing tier (free /
+prepaid / enterprise) determines the ABR ladder served at
+session-open. Suite shape — revenue-tier-driven service quality is
+standard SaaS. `VIDEO_GATEWAY_ABR_POLICY=customer-tier` is the
+default; operators wanting flat-rate (all customers same ladder
+regardless of tier) can flip to `operator-flat` via env config in a
+future minor. v0.1 ships `customer-tier` only. §10 env var + §15
+forwarding address reflect.
+
+### OQ4. Live-stream → VOD handoff at session-end
+
+**DECIDED: opt-in flag per stream, default off.** Customer
+explicitly requests the handoff via session-open params
+(`record_to_vod: true`). Default-off prevents surprise VOD storage
+costs for customers who only want live streaming. Suite stops at
+egress (no VOD); rewrite extends to optional auto-create. The
+handoff orchestration: at session-end, if the flag was set, the
+gateway creates a VOD asset row pointing at the recording-egress
+output; the customer can fetch / delete it via the same VOD API
+surface as direct-uploaded VOD assets. Per-stream flag, **not** a
+deployment env var (see §10 note).
 
 ## 15. Out of scope (forwarding addresses)
 
@@ -778,6 +823,10 @@ every N seconds; cancels live streams with no recent RTMP packets.
 - **`livepeer-byoc/video-generation/`** — not migrated per user lock.
 - **`live-transcode-runner/`** — not migrated per plan 0011-followup
   (capability-broker's mode driver replaces it).
+- **VOD hard-delete janitor job** — separate future plan; v0.1 is
+  soft-delete only (§14 OQ2).
+- **Operator-flat-rate ABR policy** — future minor expansion of
+  `VIDEO_GATEWAY_ABR_POLICY` (§14 OQ3).
 
 ---
 

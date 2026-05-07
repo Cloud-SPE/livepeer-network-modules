@@ -1,11 +1,11 @@
 {
-  "name": "@livepeer-rewrite/video-gateway-web-ui",
+  "name": "@livepeer-rewrite/video-gateway-portal",
   "version": "0.1.0",
   "private": true,
-  "description": "Operator admin SPA for the video-gateway. Composes customer-portal/frontend/shared widgets and adds video-specific admin pages (assets / streams / webhooks / recordings).",
+  "description": "Customer-facing portal SPA for the video-gateway. Composes customer-portal/frontend/shared widgets + adds video-specific routes (assets / streams / webhooks / recordings).",
   "license": "MIT",
   "type": "module",
-  "files": ["web-ui", "README.md"],
+  "files": ["src", "README.md"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"

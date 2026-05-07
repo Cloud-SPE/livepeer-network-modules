@@ -2,16 +2,14 @@ import { LitElement, css, html, type TemplateResult } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { HashRouter } from "@livepeer-rewrite/customer-portal-shared";
 
-export const VIDEO_GATEWAY_ADMIN_APP_TAG = "video-gateway-admin";
-
 interface RouteState {
   view: string;
   params: Record<string, string>;
 }
 
-@customElement("video-gateway-admin")
-export class VideoGatewayAdmin extends LitElement {
-  @state() private route: RouteState = { view: "customers", params: {} };
+@customElement("video-gateway-portal")
+export class VideoGatewayPortal extends LitElement {
+  @state() private route: RouteState = { view: "assets", params: {} };
 
   static styles = css`
     :host {
@@ -24,6 +22,7 @@ export class VideoGatewayAdmin extends LitElement {
       padding: 0.75rem 1rem;
       border-bottom: 1px solid var(--border-1, #d4d4d8);
       background: var(--surface-1, #fafafa);
+      flex-wrap: wrap;
     }
     nav a {
       color: var(--text-1, #18181b);
@@ -43,17 +42,20 @@ export class VideoGatewayAdmin extends LitElement {
     super.connectedCallback();
     const router = new HashRouter();
     router
-      .add("/customers", () => {
-        this.route = { view: "customers", params: {} };
+      .add("/signup", () => {
+        this.route = { view: "signup", params: {} };
       })
-      .add("/customers/:id", (_p, params) => {
-        this.route = { view: "customer-detail", params };
+      .add("/login", () => {
+        this.route = { view: "login", params: {} };
       })
-      .add("/customers/:id/adjust", (_p, params) => {
-        this.route = { view: "customer-adjust", params };
+      .add("/account", () => {
+        this.route = { view: "account", params: {} };
       })
-      .add("/customers/:id/refund", (_p, params) => {
-        this.route = { view: "customer-refund", params };
+      .add("/api-keys", () => {
+        this.route = { view: "api-keys", params: {} };
+      })
+      .add("/billing", () => {
+        this.route = { view: "billing", params: {} };
       })
       .add("/assets", () => {
         this.route = { view: "assets", params: {} };
@@ -71,24 +73,26 @@ export class VideoGatewayAdmin extends LitElement {
   }
 
   private renderView(): TemplateResult {
-    const { view, params } = this.route;
+    const { view } = this.route;
     switch (view) {
-      case "customers":
-        return html`<admin-customers></admin-customers>`;
-      case "customer-detail":
-        return html`<admin-customer-detail customerId=${params["id"] ?? ""}></admin-customer-detail>`;
-      case "customer-adjust":
-        return html`<admin-customer-adjust customerId=${params["id"] ?? ""}></admin-customer-adjust>`;
-      case "customer-refund":
-        return html`<admin-customer-refund customerId=${params["id"] ?? ""}></admin-customer-refund>`;
+      case "signup":
+        return html`<portal-card heading="Create account"><portal-signup></portal-signup></portal-card>`;
+      case "login":
+        return html`<portal-card heading="Sign in"><portal-login></portal-login></portal-card>`;
+      case "account":
+        return html`<portal-card heading="Account"><portal-balance balanceCents="0" reservedCents="0"></portal-balance></portal-card>`;
+      case "api-keys":
+        return html`<portal-card heading="API keys"><portal-api-keys></portal-api-keys></portal-card>`;
+      case "billing":
+        return html`<portal-card heading="Billing"><portal-checkout-button amountCents="1000">Top up $10</portal-checkout-button></portal-card>`;
       case "assets":
-        return html`<admin-assets></admin-assets>`;
+        return html`<portal-assets></portal-assets>`;
       case "streams":
-        return html`<admin-streams></admin-streams>`;
+        return html`<portal-streams></portal-streams>`;
       case "webhooks":
-        return html`<admin-webhooks></admin-webhooks>`;
+        return html`<portal-webhooks></portal-webhooks>`;
       case "recordings":
-        return html`<admin-recordings></admin-recordings>`;
+        return html`<portal-recordings></portal-recordings>`;
       default:
         return html`<p>not found</p>`;
     }
@@ -100,11 +104,13 @@ export class VideoGatewayAdmin extends LitElement {
       html`<a class=${view === key ? "active" : ""} href="#${to}">${label}</a>`;
     return html`
       <nav>
-        ${link("/customers", "Customers", "customers")}
         ${link("/assets", "Assets", "assets")}
         ${link("/streams", "Streams", "streams")}
-        ${link("/webhooks", "Webhooks", "webhooks")}
         ${link("/recordings", "Recordings", "recordings")}
+        ${link("/webhooks", "Webhooks", "webhooks")}
+        ${link("/api-keys", "API keys", "api-keys")}
+        ${link("/billing", "Billing", "billing")}
+        ${link("/account", "Account", "account")}
       </nav>
       <main>${this.renderView()}</main>
     `;
@@ -113,6 +119,6 @@ export class VideoGatewayAdmin extends LitElement {
 
 declare global {
   interface HTMLElementTagNameMap {
-    "video-gateway-admin": VideoGatewayAdmin;
+    "video-gateway-portal": VideoGatewayPortal;
   }
 }

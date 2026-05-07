@@ -46,6 +46,17 @@ service PayerDaemon {
   // Read-only; the daemon does not fund escrow.
   rpc GetDepositInfo(GetDepositInfoRequest) returns (GetDepositInfoResponse);
 
+  // Read the per-session debit ledger for a long-lived session
+  // (`ws-realtime@v0`, `session-control-plus-media@v0`, etc.). Used by
+  // gateway adapters at session-close time to surface a final
+  // `Livepeer-Work-Units` count to the gateway caller without adding a
+  // close-frame extension or a control-plane event. The daemon may
+  // return UNIMPLEMENTED when long-lived debit tracking is not wired
+  // (the gateway-side adapter treats UNIMPLEMENTED as "0 work units,
+  // best effort"). The actual debit-pushdown from the broker-side
+  // ticker lands with plan 0015.
+  rpc GetSessionDebits(GetSessionDebitsRequest) returns (GetSessionDebitsResponse);
+
   // Health returns "ok" if the daemon is ready to mint payments. The
   // gateway calls this once at startup.
   rpc Health(HealthRequest) returns (HealthResponse);
@@ -82,6 +93,31 @@ message CreatePaymentResponse {
   // Aggregate expected value (EV = face_value × win_prob) committed by
   // this payment, in wei, big-endian bytes.
   bytes expected_value = 3;
+}
+
+message GetSessionDebitsRequest {
+  // Sender ETH address (20 raw bytes), echoed from the payment envelope.
+  bytes sender = 1;
+
+  // Work-id of the long-lived session. Hex-encoded
+  // recipient_rand_hash, identical to the value the broker echoes in
+  // `Livepeer-Request-Id` when the session opens.
+  string work_id = 2;
+}
+
+message GetSessionDebitsResponse {
+  // Total work units accrued across all interim debits for this
+  // session. Zero when the daemon has no record of the session (or
+  // when long-lived debit tracking is not wired and the daemon
+  // returns the empty default).
+  uint64 total_work_units = 1;
+
+  // Number of interim debits the daemon recorded for this session.
+  // Useful for diagnostics; the gateway-adapter does not act on it.
+  uint64 debit_count = 2;
+
+  // True when the session is closed (CloseSession was issued).
+  bool closed = 3;
 }
 
 message GetDepositInfoRequest {}

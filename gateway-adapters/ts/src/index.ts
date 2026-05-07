@@ -9,3 +9,4 @@ export * from "./errors.js";
 export * from "./types.js";
 
 export * as modes from "./modes/index.js";
+export * as payerDaemon from "./payer-daemon.js";

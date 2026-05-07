@@ -8,7 +8,7 @@ TAG     ?= dev
 VERSION := $(shell cat ../livepeer-network-protocol/VERSION 2>/dev/null || echo dev)
 
 PROTO_SRC := ../livepeer-network-protocol/proto
-PROTO_OUT := internal/proto
+PROTO_OUT := ../livepeer-network-protocol/proto-go
 
 .PHONY: build run dev test lint proto publish clean help
 
@@ -54,8 +54,9 @@ proto: ## Regenerate Go bindings from the proto sources (requires protoc on host
 		-I=$(PROTO_SRC) \
 		--go_out=paths=source_relative:$(PROTO_OUT) \
 		--go-grpc_out=paths=source_relative:$(PROTO_OUT) \
-		$(PROTO_SRC)/livepeer/payments/v1/payment.proto \
-		$(PROTO_SRC)/livepeer/payments/v1/payee_daemon.proto
+		$(PROTO_SRC)/livepeer/payments/v1/types.proto \
+		$(PROTO_SRC)/livepeer/payments/v1/payee_daemon.proto \
+		$(PROTO_SRC)/livepeer/payments/v1/payer_daemon.proto
 
 publish: ## Build + push multi-arch image (requires TAG set to a real version)
 	@if [ "$(TAG)" = "dev" ]; then \

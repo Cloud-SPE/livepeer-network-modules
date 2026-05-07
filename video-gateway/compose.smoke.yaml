@@ -1,5 +1,5 @@
 # Smoke overlay for the video-gateway compose stack. Adds postgres,
-# redis, an S3-compatible object store (RustFS or MinIO), and the
+# redis, an S3-compatible object store (RustFS), and the
 # capability-broker + payment-daemon-sender services that the gateway
 # dials at runtime. Per plan 0013-video §14 Q2 + Q10 locks the
 # broker hosts the LL-HLS server directly; no separate playback-origin

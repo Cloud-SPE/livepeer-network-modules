@@ -11,8 +11,8 @@ const S3_TEST_CONFIG = {
   endpoint: "http://localhost:9000",
   region: "us-east-1",
   bucket: "video-test",
-  accessKeyId: "minio",
-  secretAccessKey: "minio12345",
+  accessKeyId: "rustfs",
+  secretAccessKey: "rustfs1234",
   forcePathStyle: true,
 };
 
@@ -43,11 +43,11 @@ test("loadS3ConfigFromEnv: reads vars + applies forcePathStyle default true", ()
     S3_BUCKET: "b",
     S3_ACCESS_KEY_ID: "k",
     S3_SECRET_ACCESS_KEY: "s",
-    S3_ENDPOINT: "http://minio:9000",
+    S3_ENDPOINT: "http://rustfs:9000",
   };
   const cfg = loadS3ConfigFromEnv(env);
   assert.equal(cfg.region, "us-west-2");
-  assert.equal(cfg.endpoint, "http://minio:9000");
+  assert.equal(cfg.endpoint, "http://rustfs:9000");
   assert.equal(cfg.forcePathStyle, true);
 });
 

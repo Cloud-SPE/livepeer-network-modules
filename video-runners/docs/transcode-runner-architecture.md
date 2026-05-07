@@ -429,7 +429,7 @@ For small outputs (thumbnails, sprites, audio clips), return data in HTTP respon
 2. **Output:** Pre-signed PUT URLs. The client controls where results go:
    - AWS S3 pre-signed PUT
    - GCP Cloud Storage signed URL
-   - MinIO pre-signed PUT
+   - RustFS pre-signed PUT
    - Cloudflare R2 pre-signed PUT
    - Any S3-compatible storage
 
@@ -798,7 +798,7 @@ Credentials scoped via IAM policy to `s3:PutObject` on `my-bucket/videos/job-123
 | Most flexible approach — supports any packaging format | Client must implement STS AssumeRole flow |
 | Industry standard for delegated cloud access | STS is AWS-specific; other providers have equivalents but not identical |
 | Supports DASH (`.mpd` + `.m4s` segments — also hundreds of files) | More trust than pre-signed URLs |
-| Runner can create directory structure dynamically | Not all S3-compatible providers support STS (MinIO does, R2 does, some don't) |
+| Runner can create directory structure dynamically | Not all S3-compatible providers support STS (RustFS does, R2 does, some don't) |
 
 #### Option C: Single Archive Upload (tar.gz) (Rejected as Primary)
 

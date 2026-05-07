@@ -7,7 +7,7 @@ Operator helpers that don't belong inside any single component.
 ```
 infra/
 ├── compose/
-│   ├── docker-compose.yml     # shared services (postgres, redis, minio) — profile-gated
+│   ├── docker-compose.yml     # shared services (postgres, redis, rustfs) — profile-gated
 │   └── .env.example           # copy to .env, edit, then --env-file in compose
 └── scripts/
     └── build-images.sh        # builds every image in dependency order
@@ -38,7 +38,7 @@ Defaults: `REGISTRY=tztcloud`, `TAG=v1.0.0`, `PUSH=0`.
 
 ## Shared services
 
-`infra/compose/docker-compose.yml` runs Postgres / Redis / MinIO behind
+`infra/compose/docker-compose.yml` runs Postgres / Redis / RustFS behind
 profiles. Per-component compose files (e.g. `video-gateway/compose/`)
 expect these reachable via `${DATABASE_URL}` / `${REDIS_URL}` env vars
 and do **not** include them inline.
@@ -47,13 +47,16 @@ and do **not** include them inline.
 # Postgres only
 docker compose -f infra/compose/docker-compose.yml --profile pg up -d
 
-# Postgres + Redis + MinIO (full stack)
+# Postgres + Redis + RustFS (full stack)
 docker compose -f infra/compose/docker-compose.yml \
-  --profile pg --profile redis --profile minio up -d
+  --profile pg --profile redis --profile rustfs up -d
 ```
 
+The `rustfs` profile also brings up a one-shot `rustfs-init` container
+that creates the default bucket (`transcoded`) via the S3 API.
+
 Tear down with `down -v` to delete the volumes; without `-v` the data
-volumes (`pg-data`, `redis-data`, `minio-data`) persist.
+volumes (`pg-data`, `redis-data`, `rustfs-data`) persist.
 
 ## Per-component compose files
 

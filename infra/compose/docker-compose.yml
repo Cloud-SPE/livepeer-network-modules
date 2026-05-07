@@ -1,4 +1,4 @@
-# Shared infrastructure services (Postgres, Redis, MinIO).
+# Shared infrastructure services (Postgres, Redis, RustFS).
 #
 # Each service is gated behind a profile so nothing starts implicitly.
 # Bring up only what you need, e.g.:
@@ -41,38 +41,44 @@ services:
       timeout: 5s
       retries: 5
 
-  minio:
-    image: minio/minio:latest
-    profiles: [minio]
-    command: server /data --console-address ":9001"
+  rustfs:
+    image: rustfs/rustfs:latest
+    profiles: [rustfs]
+    command:
+      - serve
+      - /data
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio4dmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio4dmin}
+      RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-rustfsadmin}
+      RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-rustfsadmin}
     ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${RUSTFS_API_PORT:-9000}:9000"
+      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - minio-data:/data
+      - rustfs-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-fs", "http://localhost:9000/"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  minio-init:
-    image: minio/mc:latest
-    profiles: [minio]
+  rustfs-init:
+    image: amazon/aws-cli:latest
+    profiles: [rustfs]
     depends_on:
-      minio:
+      rustfs:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minio4dmin} ${MINIO_ROOT_PASSWORD:-minio4dmin} &&
-      mc mb --ignore-existing local/${MINIO_DEFAULT_BUCKET:-transcoded} &&
-      mc anonymous set public local/${MINIO_DEFAULT_BUCKET:-transcoded}
-      "
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ROOT_USER:-rustfsadmin}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_ROOT_PASSWORD:-rustfsadmin}
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        aws --endpoint-url http://rustfs:9000 s3api create-bucket
+        --bucket ${RUSTFS_DEFAULT_BUCKET:-transcoded} 2>/dev/null || true
 
 volumes:
   pg-data: {}
   redis-data: {}
-  minio-data: {}
+  rustfs-data: {}

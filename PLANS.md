@@ -117,7 +117,7 @@ Code shipping today (15 components):
   nginx playback-origin dropped (broker handles LL-HLS). Followup
   shipped: concrete drizzle adapters (`assetRepo` / `liveStreamRepo` /
   `webhookSink` / `recordingRepo`); `s3StorageProvider` via
-  `@aws-sdk/client-s3` (works with AWS S3 / MinIO / RustFS / R2 /
+  `@aws-sdk/client-s3` (works with AWS S3 / RustFS / R2 /
   any S3-compat); webhook retry policy (3 retries with exponential
   backoff 1s/5s/30s + dead-letter to `app.video_webhook_failures` +
   operator replay endpoint); wire-layer payment activation (real

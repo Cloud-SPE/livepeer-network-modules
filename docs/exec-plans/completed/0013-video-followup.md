@@ -120,7 +120,7 @@ What landed as **stubs** rather than impls:
    │   │     drizzle-orm CRUD on media.*                    │
    │   ├─ src/storage/s3.ts                                 │
    │   │     @aws-sdk/client-s3 — endpoint config knob      │
-   │   │     for AWS S3 / MinIO / RustFS / R2               │
+   │   │     for AWS S3 / RustFS / R2                       │
    │   ├─ src/service/webhookDispatcher.ts                  │
    │   │     3-retry backoff (1s/5s/30s) → dead-letter      │
    │   └─ src/livepeer/payment.ts                           │
@@ -220,8 +220,7 @@ rejected (Q2 lock).
 
 Provider config (env): `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`,
 `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`. Endpoint config knob makes
-AWS / MinIO / RustFS / Cloudflare R2 / any S3-compatible backend
-work.
+AWS / RustFS / Cloudflare R2 / any S3-compatible backend work.
 
 Surface (matches `engine/interfaces/storageProvider.ts`):
 
@@ -237,7 +236,7 @@ Surface (matches `engine/interfaces/storageProvider.ts`):
 
 Multi-part uploads handled by AWS SDK's `Upload` from
 `@aws-sdk/lib-storage` for parts >5MB (tus chunks). Tests use a local
-MinIO compose service.
+RustFS compose service.
 
 ## 7. Webhook retry + dead-letter (Phase 4)
 
@@ -336,7 +335,7 @@ Update root `pnpm-workspace.yaml` to add
 | `S3_BUCKET` | yes | Bucket name. |
 | `S3_ACCESS_KEY_ID` | yes | Static creds (or IAM role on AWS). |
 | `S3_SECRET_ACCESS_KEY` | yes | Static creds. |
-| `S3_FORCE_PATH_STYLE` | no (default true) | MinIO/RustFS need path-style; AWS uses virtual-host. |
+| `S3_FORCE_PATH_STYLE` | no (default true) | RustFS needs path-style; AWS uses virtual-host. |
 | `WEBHOOK_RETRY_BACKOFFS_SECONDS` | no (default `1,5,30`) | Comma-separated backoff schedule. |
 
 `LIVEPEER_PAYER_DAEMON_SOCKET` already documented in parent §10.
@@ -348,7 +347,7 @@ Update root `pnpm-workspace.yaml` to add
 | Phase | Test file | Coverage |
 |---|---|---|
 | 2 | `test/repo/{assets,liveStreams,webhooks,recordings}.test.ts` | CRUD + soft-delete + filter |
-| 3 | `test/storage/s3.test.ts` | presigned URL shape; round-trip via local MinIO |
+| 3 | `test/storage/s3.test.ts` | presigned URL shape; round-trip via local RustFS |
 | 4 | `test/service/webhookDispatcher.retry.test.ts` | retry-then-success / retry-then-dead-letter / 4xx-immediate / replay |
 | 5 | `test/livepeer/payment.test.ts` | mock payer-daemon returns canned `paymentHeader`; gateway forwards |
 | 6 | (smoke widget render via jsdom) | admin-app routes resolve |
@@ -357,7 +356,7 @@ Update root `pnpm-workspace.yaml` to add
 ### 12.2 Compose smoke
 
 `compose.smoke.yaml` adds:
-- `minio:RELEASE.2024-...` service (S3-compatible)
+- `rustfs/rustfs:latest` service (S3-compatible)
 - `mock-payer-daemon` (canned `createPayment` response)
 
 Existing parent compose entries keep `tztcloud/livepeer-*:v0.8.10` pin.
@@ -400,7 +399,7 @@ the rewrite.
 
 **DECIDED: `@aws-sdk/client-s3`** (AWS SDK v3, modular tree-shakeable
 bundles) + `@aws-sdk/s3-request-presigner` for presigned URLs.
-Compatible with AWS S3 / MinIO / RustFS / Cloudflare R2 / any
+Compatible with AWS S3 / RustFS / Cloudflare R2 / any
 S3-compatible operator-chosen backend via the `S3_ENDPOINT` config
 knob. Hand-rolled HTTP-S3 client rejected — reinvents auth/signing
 (SigV4) for marginal savings; SDK is small enough at ~140 KB modular.

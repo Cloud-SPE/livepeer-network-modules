@@ -8,7 +8,7 @@
 # CUDA hosts (requires `runtime: nvidia` and the nvidia container
 # toolkit) or `--profile intel` for QSV/VAAPI Intel hosts.
 #
-# `--profile storage` brings up MinIO for VOD output staging.
+# `--profile storage` brings up RustFS for VOD output staging.
 
 services:
   # ---- AMD VAAPI (default profile — works on most Linux hosts) ----
@@ -108,34 +108,45 @@ services:
     volumes:
       - abr-temp:/tmp/abr
 
-  # ---- Optional MinIO for VOD output (profile: storage) ----
-  minio:
-    image: minio/minio:latest
+  # ---- Optional RustFS for VOD output (profile: storage) ----
+  rustfs:
+    image: rustfs/rustfs:latest
     profiles: [storage]
-    command: server /data --console-address ":9001"
+    command:
+      - serve
+      - /data
     environment:
-      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minio4dmin}
-      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minio4dmin}
+      RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-rustfsadmin}
+      RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-rustfsadmin}
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio-data:/data
+      - rustfs-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:9000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  minio_init:
-    image: minio/mc:latest
+  rustfs_init:
+    image: amazon/aws-cli:latest
     profiles: [storage]
     depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c "
-      sleep 3 &&
-      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minio4dmin} ${MINIO_ROOT_PASSWORD:-minio4dmin} &&
-      mc mb --ignore-existing local/transcoded &&
-      mc anonymous set public local/transcoded
-      "
+      rustfs:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ROOT_USER:-rustfsadmin}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_ROOT_PASSWORD:-rustfsadmin}
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        aws --endpoint-url http://rustfs:9000 s3api create-bucket
+        --bucket transcoded 2>/dev/null || true
 
 volumes:
   transcode-temp: {}
   abr-temp: {}
-  minio-data: {}
+  rustfs-data: {}

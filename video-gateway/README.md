@@ -24,7 +24,7 @@ A TypeScript Fastify service that:
 - A live transcoder. The broker + workload runners do the encoding.
 - A CDN. Operators front the gateway with CloudFront / Fastly /
   Cloudflare for caching + edge replication + geographic routing.
-- A storage origin. S3-compat (RustFS / MinIO / AWS S3) holds asset
+- A storage origin. S3-compat (RustFS / AWS S3) holds asset
   bytes; the gateway only orchestrates.
 
 ## Status

@@ -133,6 +133,20 @@ This is the operator's entire day-to-day surface.
 The current `service-registry-daemon` resolver/publisher split keeps working; what
 changes is the manifest schema and the coordinator UX.
 
+**Two on-chain registries point at the same well-known URL.** Livepeer mainnet
+(Arbitrum One) has two distinct contracts that name a `serviceURI` per orch:
+the legacy `ServiceRegistry` for transcoding workers and the newer
+`AIServiceRegistry` for AI workers. The rewrite consolidates the manifest:
+one orch publishes one signed manifest at `/.well-known/livepeer-registry.json`,
+mixes transcoding and AI tuples in the same `capabilities[]` list, and
+registers the same URL with whichever contract address(es) the operator
+participates in. The resolver / gateway side is configured with which contract
+address(es) to query for a given orch's `serviceURI`; the orch may register
+the same URL in both. The on-chain pointer fetch is per-contract, but the
+manifest URL it points at is unified. See
+[`../../livepeer-network-protocol/manifest/README.md`](../../livepeer-network-protocol/manifest/README.md)
+for the manifest-side write-up.
+
 ## Layer 5 — Trust spine: operator-driven sign cycle
 
 **Hard rule:** secure-orch never accepts inbound connections.

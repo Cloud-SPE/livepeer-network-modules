@@ -1,0 +1,28 @@
+# Local-dev compose: coordinator + a fake broker (broker fake stubbed inline
+# for now via the coordinator's --dev mode). Swap in a real
+# capability-broker image once the multi-process smoke is in scope.
+services:
+  coordinator:
+    image: tztcloud/livepeer-orch-coordinator:dev
+    build:
+      context: ..
+      dockerfile: orch-coordinator/Dockerfile
+      args:
+        VERSION: dev
+    command:
+      - --config=/etc/livepeer/orch-coordinator.yaml
+      - --data-dir=/srv/data
+      - --listen=0.0.0.0:8080
+      - --public-listen=0.0.0.0:8081
+      - --metrics-listen=0.0.0.0:9091
+      - --dev
+    volumes:
+      - ./examples/coordinator-config.yaml:/etc/livepeer/orch-coordinator.yaml:ro
+      - coordinator-data:/srv/data
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
+      - "127.0.0.1:9091:9091"
+
+volumes:
+  coordinator-data:

@@ -1,0 +1,22 @@
+# Example coordinator-config.yaml.
+#
+# Mount this file at /etc/livepeer/orch-coordinator.yaml (the default
+# --config location). Edit the broker list, the orch eth_address, and
+# any tunables; restart to pick up changes.
+#
+# Brokers are LAN-private. The coordinator polls each every
+# --scrape-interval (default 30s) with --scrape-timeout (default 5s).
+# Per-broker base_url should be the broker's HTTP base path (the
+# coordinator appends /registry/offerings).
+
+identity:
+  orch_eth_address: "0x1234567890abcdef1234567890abcdef12345678"
+
+brokers:
+  - name: broker-a
+    base_url: http://10.0.0.5:8080
+  - name: broker-b
+    base_url: http://10.0.0.6:8080
+
+publish:
+  manifest_ttl: 24h

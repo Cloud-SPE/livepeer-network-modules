@@ -34,10 +34,22 @@ export interface AudioTranscriptEntry {
   sortOrder: number;
 }
 
+export type ImageQuality = 'standard' | 'hd';
+
+export interface ImagesEntry {
+  modelOrPattern: string;
+  isPattern: boolean;
+  size: string;
+  quality: ImageQuality;
+  usdPerImage: number;
+  sortOrder: number;
+}
+
 export interface RateCardSnapshot {
   chatTiers: ChatTierEntry[];
   chatModels: ChatModelEntry[];
   embeddings: EmbeddingsEntry[];
   audioSpeech: AudioSpeechEntry[];
   audioTranscripts: AudioTranscriptEntry[];
+  images: ImagesEntry[];
 }

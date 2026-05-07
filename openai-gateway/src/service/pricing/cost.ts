@@ -4,8 +4,9 @@ import {
   resolveAudioTranscriptRate,
   resolveChatTier,
   resolveEmbeddingsRate,
+  resolveImagesRate,
 } from './lookup.js';
-import type { PricingTier, RateCardSnapshot } from './types.js';
+import type { ImageQuality, PricingTier, RateCardSnapshot } from './types.js';
 
 const MILLION = 1_000_000n;
 
@@ -184,5 +185,44 @@ export function computeAudioTranscriptActualCost(
 function computePerSecondCents(seconds: number, usdPerMinute: number): bigint {
   const microCentsPerSecond = BigInt(Math.round((usdPerMinute * 100 * 10_000) / 60));
   const micro = BigInt(Math.max(0, seconds)) * microCentsPerSecond;
+  return (micro + 9999n) / 10_000n;
+}
+
+export interface ImagesReservationEstimate {
+  estCents: bigint;
+  perImageCents: bigint;
+  n: number;
+}
+
+export function estimateImagesReservation(
+  n: number,
+  model: string,
+  size: string,
+  quality: ImageQuality,
+  snapshot: RateCardSnapshot,
+): ImagesReservationEstimate {
+  const rate = resolveImagesRate(snapshot, model, size, quality);
+  if (!rate) throw new ModelNotFoundError(model);
+  const perImageCents = computePerImageCents(rate.usdPerImage);
+  const estCents = perImageCents * BigInt(Math.max(0, n));
+  return { estCents, perImageCents, n };
+}
+
+export function computeImagesActualCost(
+  returnedCount: number,
+  model: string,
+  size: string,
+  quality: ImageQuality,
+  snapshot: RateCardSnapshot,
+): { actualCents: bigint; perImageCents: bigint } {
+  const rate = resolveImagesRate(snapshot, model, size, quality);
+  if (!rate) throw new ModelNotFoundError(model);
+  const perImageCents = computePerImageCents(rate.usdPerImage);
+  const actualCents = perImageCents * BigInt(Math.max(0, returnedCount));
+  return { actualCents, perImageCents };
+}
+
+function computePerImageCents(usdPerImage: number): bigint {
+  const micro = BigInt(Math.round(usdPerImage * 100 * 10_000));
   return (micro + 9999n) / 10_000n;
 }

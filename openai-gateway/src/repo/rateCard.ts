@@ -1,6 +1,6 @@
 import type pg from 'pg';
 
-import type { PricingTier, RateCardSnapshot } from '../service/pricing/types.js';
+import type { ImageQuality, PricingTier, RateCardSnapshot } from '../service/pricing/types.js';
 
 export type Queryable = Pick<pg.Pool, 'query'>;
 
@@ -33,6 +33,19 @@ interface AudioTranscriptRow {
   usd_per_minute: string;
   sort_order: number;
 }
+interface ImagesRow {
+  model_or_pattern: string;
+  is_pattern: boolean;
+  size: string;
+  quality: string;
+  usd_per_image: string;
+  sort_order: number;
+}
+
+function asImageQuality(s: string): ImageQuality {
+  if (s === 'standard' || s === 'hd') return s;
+  throw new Error(`unexpected image quality in DB: ${s}`);
+}
 
 function asPricingTier(s: string): PricingTier {
   if (s === 'starter' || s === 'standard' || s === 'pro' || s === 'premium') return s;
@@ -54,6 +67,9 @@ export async function loadRateCardSnapshot(pool: Queryable): Promise<RateCardSna
   );
   const transcriptRes = await pool.query<AudioTranscriptRow>(
     'SELECT model_or_pattern, is_pattern, usd_per_minute::text, sort_order FROM app.rate_card_audio_transcripts',
+  );
+  const imageRes = await pool.query<ImagesRow>(
+    'SELECT model_or_pattern, is_pattern, size, quality, usd_per_image::text, sort_order FROM app.rate_card_images',
   );
 
   return {
@@ -84,6 +100,14 @@ export async function loadRateCardSnapshot(pool: Queryable): Promise<RateCardSna
       modelOrPattern: r.model_or_pattern,
       isPattern: r.is_pattern,
       usdPerMinute: Number(r.usd_per_minute),
+      sortOrder: r.sort_order,
+    })),
+    images: imageRes.rows.map((r) => ({
+      modelOrPattern: r.model_or_pattern,
+      isPattern: r.is_pattern,
+      size: r.size,
+      quality: asImageQuality(r.quality),
+      usdPerImage: Number(r.usd_per_image),
       sortOrder: r.sort_order,
     })),
   };

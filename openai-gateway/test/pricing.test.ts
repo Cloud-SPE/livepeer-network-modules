@@ -7,12 +7,14 @@ import {
   resolveAudioTranscriptRate,
   resolveChatTier,
   resolveEmbeddingsRate,
+  resolveImagesRate,
   rateForTier,
   estimateChatReservation,
   computeChatActualCost,
   estimateEmbeddingsReservation,
   estimateAudioSpeechReservation,
   estimateAudioTranscriptReservation,
+  estimateImagesReservation,
   ModelNotFoundError,
   createRateCardResolver,
 } from '../src/service/pricing/index.js';
@@ -41,6 +43,11 @@ const fixture: RateCardSnapshot = {
   ],
   audioTranscripts: [
     { modelOrPattern: 'whisper-1', isPattern: false, usdPerMinute: 0.003, sortOrder: 100 },
+  ],
+  images: [
+    { modelOrPattern: 'sdxl', isPattern: false, size: '1024x1024', quality: 'standard', usdPerImage: 0.002, sortOrder: 100 },
+    { modelOrPattern: 'sdxl', isPattern: false, size: '1024x1024', quality: 'hd', usdPerImage: 0.005, sortOrder: 100 },
+    { modelOrPattern: 'realvis-*', isPattern: true, size: '1024x1024', quality: 'standard', usdPerImage: 0.001, sortOrder: 100 },
   ],
 };
 
@@ -130,6 +137,20 @@ test('estimateAudioTranscriptReservation rounds up to at least one second', () =
   assert.equal(r.estimatedSeconds, 1);
 });
 
+test('resolveImagesRate hits exact + glob and respects size/quality', () => {
+  assert.equal(resolveImagesRate(fixture, 'sdxl', '1024x1024', 'standard')?.usdPerImage, 0.002);
+  assert.equal(resolveImagesRate(fixture, 'sdxl', '1024x1024', 'hd')?.usdPerImage, 0.005);
+  assert.equal(resolveImagesRate(fixture, 'realvis-xl', '1024x1024', 'standard')?.usdPerImage, 0.001);
+  assert.equal(resolveImagesRate(fixture, 'realvis-xl', '1024x1024', 'hd'), null);
+  assert.equal(resolveImagesRate(fixture, 'sdxl', '512x512', 'standard'), null);
+});
+
+test('estimateImagesReservation multiplies per-image cost by n', () => {
+  const r = estimateImagesReservation(3, 'sdxl', '1024x1024', 'standard', fixture);
+  assert.equal(r.n, 3);
+  assert.equal(r.estCents, r.perImageCents * 3n);
+});
+
 test('createRateCardResolver routes capability + offering through the lookup tables', async () => {
   const calls: string[] = [];
   const fakePool: Queryable = {
@@ -169,6 +190,15 @@ test('createRateCardResolver routes capability + offering through the lookup tab
           usd_per_minute: String(t.usdPerMinute),
           sort_order: t.sortOrder,
         })) };
+      if (text.includes('rate_card_images'))
+        return { rows: fixture.images.map((i) => ({
+          model_or_pattern: i.modelOrPattern,
+          is_pattern: i.isPattern,
+          size: i.size,
+          quality: i.quality,
+          usd_per_image: String(i.usdPerImage),
+          sort_order: i.sortOrder,
+        })) };
       return { rows: [] };
     }) as unknown as Queryable['query'],
   };
@@ -187,6 +217,9 @@ test('createRateCardResolver routes capability + offering through the lookup tab
 
   const txn = await resolver.resolve({ capability: 'openai:/v1/audio/transcriptions', offering: 'whisper-1' });
   assert.equal(txn?.unit, 'minute');
+
+  const img = await resolver.resolve({ capability: 'openai:/v1/images/generations', offering: 'sdxl' });
+  assert.equal(img?.unit, 'image');
 
   const miss = await resolver.resolve({ capability: 'openai:/v1/embeddings', offering: 'no-such' });
   assert.equal(miss, null);

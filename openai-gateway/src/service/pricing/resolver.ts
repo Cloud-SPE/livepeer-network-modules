@@ -6,9 +6,10 @@ import {
   resolveAudioTranscriptRate,
   resolveChatTier,
   resolveEmbeddingsRate,
+  resolveImagesRate,
   rateForTier,
 } from './lookup.js';
-import type { RateCardSnapshot } from './types.js';
+import type { ImageQuality, RateCardSnapshot } from './types.js';
 
 type RateCardResolver = billing.RateCardResolver;
 type ResolveResult = Awaited<ReturnType<RateCardResolver['resolve']>>;
@@ -80,6 +81,17 @@ function resolveCapability(
       return {
         usdPerUnit: usdToMicroCents(rate.usdPerMinute),
         unit: 'minute',
+      };
+    }
+    case 'openai:/v1/images/generations': {
+      // Default: 1024x1024 standard. Routes that know the size + quality
+      // bypass the generic resolver and call estimateImagesReservation
+      // directly.
+      const rate = resolveImagesRate(snapshot, model, '1024x1024', 'standard' satisfies ImageQuality);
+      if (!rate) return null;
+      return {
+        usdPerUnit: usdToMicroCents(rate.usdPerImage),
+        unit: 'image',
       };
     }
     default:

@@ -5,17 +5,15 @@ import type { Config } from "./config.js";
 import { registerChatCompletions } from "./routes/chat-completions.js";
 import { registerEmbeddings } from "./routes/embeddings.js";
 import { registerAudioTranscriptions } from "./routes/audio-transcriptions.js";
+import { registerAudioSpeech } from "./routes/audio-speech.js";
+import { registerImagesGenerations } from "./routes/images-generations.js";
 
 export function buildServer(cfg: Config): FastifyInstance {
   const app = Fastify({
     logger: { level: process.env["LOG_LEVEL"] ?? "info" },
-    // Accept large bodies for image/audio uploads.
     bodyLimit: 100 * 1024 * 1024,
   });
 
-  // Accept multipart/form-data bodies as raw buffers (we forward them
-  // verbatim to the broker; Fastify's default body-parser registry
-  // rejects unknown content-types with 415).
   app.addContentTypeParser(
     /^multipart\/form-data/,
     { parseAs: "buffer" },
@@ -31,6 +29,8 @@ export function buildServer(cfg: Config): FastifyInstance {
   registerChatCompletions(app, cfg);
   registerEmbeddings(app, cfg);
   registerAudioTranscriptions(app, cfg);
+  registerAudioSpeech(app, cfg);
+  registerImagesGenerations(app, cfg);
 
   return app;
 }

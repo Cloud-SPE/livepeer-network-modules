@@ -9,16 +9,19 @@ import { HEADER } from "../livepeer/headers.js";
 import { resolveDefaultOffering } from "../service/offerings.js";
 import type { Config } from "../config.js";
 
-interface EmbeddingsBody {
+interface ImagesGenerationsBody {
   model?: string;
-  input?: unknown;
+  prompt?: string;
+  size?: string;
+  quality?: string;
+  n?: number;
   [k: string]: unknown;
 }
 
-export function registerEmbeddings(app: FastifyInstance, cfg: Config): void {
-  app.post("/v1/embeddings", async (req: FastifyRequest, reply: FastifyReply) => {
-    const body = (req.body ?? {}) as EmbeddingsBody;
-    const capability = Capability.Embeddings;
+export function registerImagesGenerations(app: FastifyInstance, cfg: Config): void {
+  app.post("/v1/images/generations", async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = (req.body ?? {}) as ImagesGenerationsBody;
+    const capability = Capability.ImagesGenerations;
     const offering =
       (typeof body.model === "string" && body.model.length > 0 ? body.model : null) ??
       resolveDefaultOffering(cfg.offerings, { capability }) ??

@@ -4,6 +4,8 @@ import type {
   AudioTranscriptEntry,
   ChatTierEntry,
   EmbeddingsEntry,
+  ImageQuality,
+  ImagesEntry,
   PricingTier,
   RateCardSnapshot,
 } from './types.js';
@@ -66,6 +68,26 @@ export function resolveAudioTranscriptRate(
     .filter((e) => e.isPattern)
     .sort((a, b) => a.sortOrder - b.sortOrder);
   for (const p of patterns) {
+    if (globMatch(p.modelOrPattern, model)) return p;
+  }
+  return null;
+}
+
+export function resolveImagesRate(
+  snapshot: RateCardSnapshot,
+  model: string,
+  size: string,
+  quality: ImageQuality,
+): ImagesEntry | null {
+  const exact = snapshot.images.find(
+    (e) => !e.isPattern && e.modelOrPattern === model && e.size === size && e.quality === quality,
+  );
+  if (exact) return exact;
+  const patterns = snapshot.images
+    .filter((e) => e.isPattern)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  for (const p of patterns) {
+    if (p.size !== size || p.quality !== quality) continue;
     if (globMatch(p.modelOrPattern, model)) return p;
   }
   return null;

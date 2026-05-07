@@ -1,10 +1,10 @@
 """External clients used by the streams subapp."""
 
 from vtuber_pipeline.streams.providers.gateway import (
-    BridgeClient,
-    BridgeError,
-    BridgeSessionOpenResult,
-    HTTPBridgeClient,
+    GatewayClient,
+    GatewayError,
+    GatewaySessionOpenResult,
+    HTTPGatewayClient,
 )
 from vtuber_pipeline.streams.providers.egress_admin import (
     EgressAdminClient,
@@ -20,14 +20,14 @@ from vtuber_pipeline.streams.providers.youtube import (
 )
 
 __all__ = [
-    "BridgeClient",
-    "BridgeError",
-    "BridgeSessionOpenResult",
     "EgressAdminClient",
     "EgressAdminError",
     "EgressRegistration",
-    "HTTPBridgeClient",
+    "GatewayClient",
+    "GatewayError",
+    "GatewaySessionOpenResult",
     "HTTPEgressAdminClient",
+    "HTTPGatewayClient",
     "MockYouTubeBinder",
     "NoneYouTubeBinder",
     "YouTubeBinder",

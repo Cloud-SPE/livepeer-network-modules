@@ -8,12 +8,12 @@ Sequence on create():
      the operator's default_rtmp_url and the generated stream_key.
   3. Call EgressAdminClient.register(session_id=stream_id,
      rtmp_url, stream_key) → returns the egress_url + signed bearer.
-  4. Call BridgeClient.open_session with persona/avatar/voice/llm/
+  4. Call GatewayClient.open_session with persona/avatar/voice/llm/
      render + the egress block.
   5. Persist StreamRecord to the repo.
   6. Return StreamCreateResponse.
 
-stop() reverses: bridge close → egress revoke → youtube complete →
+stop() reverses: gateway close → egress revoke → youtube complete →
 mark ended.
 """
 
@@ -25,8 +25,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from vtuber_pipeline.streams.providers import (
-    BridgeClient,
     EgressAdminClient,
+    GatewayClient,
     YouTubeBinder,
 )
 from vtuber_pipeline.streams.repo import StreamRepository
@@ -51,24 +51,24 @@ class StreamLifecycle:
         self,
         *,
         repo: StreamRepository,
-        bridge: BridgeClient,
+        gateway: GatewayClient,
         egress: EgressAdminClient,
         youtube: YouTubeBinder,
-        bridge_customer_bearer: str,
-        bridge_public_url: str,
+        gateway_customer_bearer: str,
+        gateway_public_url: str,
         public_base_url: str,
         default_rtmp_url: str,
         hls_preview_template: str | None = None,
         session_ttl: timedelta = timedelta(hours=3),
     ) -> None:
-        if not bridge_customer_bearer:
-            raise ValueError("bridge_customer_bearer required")
+        if not gateway_customer_bearer:
+            raise ValueError("gateway_customer_bearer required")
         self._repo = repo
-        self._bridge = bridge
+        self._gateway = gateway
         self._egress = egress
         self._youtube = youtube
-        self._bridge_customer_bearer = bridge_customer_bearer
-        self._bridge_public_url = bridge_public_url.rstrip("/")
+        self._gateway_customer_bearer = gateway_customer_bearer
+        self._gateway_public_url = gateway_public_url.rstrip("/")
         self._public_base_url = public_base_url.rstrip("/")
         self._default_rtmp_url = default_rtmp_url
         self._hls_preview_template = hls_preview_template
@@ -96,14 +96,14 @@ class StreamLifecycle:
             stream_key=yt.stream_key,
         )
 
-        # 3. Open the vtuber session via the bridge.
-        params = self._build_bridge_params(
+        # 3. Open the vtuber session via the gateway.
+        params = self._build_gateway_params(
             req=req,
             egress_url=registration.egress_url,
             egress_auth=registration.auth,
         )
-        bridge_result = await self._bridge.open_session(
-            customer_bearer=self._bridge_customer_bearer,
+        gateway_result = await self._gateway.open_session(
+            customer_bearer=self._gateway_customer_bearer,
             params=params,
         )
 
@@ -113,8 +113,8 @@ class StreamLifecycle:
             stream_id=stream_id,
             state=StreamState.STARTING,
             started_at=now,
-            bridge_session_id=bridge_result.bridge_session_id,
-            bridge_session_child_bearer=bridge_result.session_child_bearer,
+            gateway_session_id=gateway_result.gateway_session_id,
+            gateway_session_child_bearer=gateway_result.session_child_bearer,
             egress_session_id=stream_id,
             rtmp_url=yt.rtmp_url,
             stream_key=yt.stream_key,
@@ -153,7 +153,7 @@ class StreamLifecycle:
         rec.state = StreamState.STOPPING
         await self._repo.update(rec)
 
-        # 1. Revoke the egress session (best-effort; the bridge's session
+        # 1. Revoke the egress session (best-effort; the gateway's session
         # close above will tear down the chunked-POST anyway).
         with contextlib.suppress(Exception):
             await self._egress.revoke(session_id=rec.egress_session_id)
@@ -162,21 +162,21 @@ class StreamLifecycle:
         with contextlib.suppress(Exception):
             await self._youtube.complete_broadcast(rec.youtube_broadcast_id)
 
-        # 3. Mark ended. (The bridge doesn't have a session-close
+        # 3. Mark ended. (The gateway doesn't have a session-close
         # endpoint yet; the session will tear down when the WS closes
         # or the worker times out — separate plan.)
         rec.state = StreamState.ENDED
         await self._repo.update(rec)
         return rec
 
-    def _build_bridge_params(
+    def _build_gateway_params(
         self,
         *,
         req: StreamCreateRequest,
         egress_url: str,
         egress_auth: str,
     ) -> dict[str, Any]:
-        """Map the customer's StreamCreateRequest to the bridge's
+        """Map the customer's StreamCreateRequest to the gateway's
         session-open body shape."""
         return {
             "persona": {
@@ -197,6 +197,6 @@ class StreamLifecycle:
 
     async def aclose(self) -> None:
         # Best-effort cleanup of provider clients.
-        for closeable in (self._bridge, self._egress, self._youtube):
+        for closeable in (self._gateway, self._egress, self._youtube):
             with contextlib.suppress(Exception):
                 await closeable.close()

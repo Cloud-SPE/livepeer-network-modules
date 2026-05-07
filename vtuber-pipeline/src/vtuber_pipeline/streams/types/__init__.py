@@ -127,8 +127,8 @@ class StreamRecord:
     stream_id: str
     state: StreamState
     started_at: datetime
-    bridge_session_id: str
-    bridge_session_child_bearer: str
+    gateway_session_id: str
+    gateway_session_child_bearer: str
     egress_session_id: str  # = stream_id by convention
     rtmp_url: str
     stream_key: str

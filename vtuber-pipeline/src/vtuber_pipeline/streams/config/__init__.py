@@ -16,16 +16,16 @@ class Settings:
     # Public base URL the customer hits (used to mint events_url back to them).
     public_base_url: str = "http://localhost:8092"
 
-    # Bridge: where to open vtuber sessions. In-cluster URL.
-    bridge_url: str = "http://vtuber-bridge:8080"
-    # Customer-facing bridge URL — what customers use to subscribe to
-    # the bridge's customer-control WS. Falls back to bridge_url.
-    bridge_public_url: str = ""
+    # Gateway: where to open vtuber sessions. In-cluster URL.
+    gateway_url: str = "http://vtuber-gateway:8080"
+    # Customer-facing gateway URL — what customers use to subscribe to
+    # the gateway's customer-control WS. Falls back to gateway_url.
+    gateway_public_url: str = ""
 
-    # The bridge customer Bearer key Pipeline uses on behalf of streams.
+    # The gateway customer Bearer key Pipeline uses on behalf of streams.
     # In production each stream may run under its own customer key; in
     # dev a single shared key is fine.
-    bridge_customer_bearer: str = ""
+    gateway_customer_bearer: str = ""
 
     # Egress admin: where to register/revoke egress sessions.
     egress_admin_url: str = "http://egress:8091"
@@ -49,11 +49,12 @@ class Settings:
             log_level=os.getenv("STREAMS_LOG_LEVEL", cls.log_level),
             log_format=os.getenv("STREAMS_LOG_FORMAT", cls.log_format),
             public_base_url=os.getenv("STREAMS_PUBLIC_BASE_URL", cls.public_base_url),
-            bridge_url=os.getenv("STREAMS_BRIDGE_URL", cls.bridge_url),
-            bridge_public_url=os.getenv(
-                "STREAMS_BRIDGE_PUBLIC_URL", os.getenv("STREAMS_BRIDGE_URL", cls.bridge_url)
+            gateway_url=os.getenv("STREAMS_GATEWAY_URL", cls.gateway_url),
+            gateway_public_url=os.getenv(
+                "STREAMS_GATEWAY_PUBLIC_URL",
+                os.getenv("STREAMS_GATEWAY_URL", cls.gateway_url),
             ),
-            bridge_customer_bearer=os.getenv("STREAMS_BRIDGE_CUSTOMER_BEARER", ""),
+            gateway_customer_bearer=os.getenv("STREAMS_GATEWAY_CUSTOMER_BEARER", ""),
             egress_admin_url=os.getenv("STREAMS_EGRESS_ADMIN_URL", cls.egress_admin_url),
             egress_admin_bearer=os.getenv("STREAMS_EGRESS_ADMIN_BEARER", ""),
             default_rtmp_url=os.getenv("STREAMS_DEFAULT_RTMP_URL", cls.default_rtmp_url),

@@ -29,18 +29,18 @@ from vtuber_pipeline.streams.types import (
 _log = structlog.get_logger("streams.ui")
 
 
-def build_app(*, lifecycle: StreamLifecycle | None, bridge_public_url: str) -> FastAPI:
+def build_app(*, lifecycle: StreamLifecycle | None, gateway_public_url: str) -> FastAPI:
     app = FastAPI(title="pipeline-streams", version="0.0.0")
     app.state.lifecycle = lifecycle
-    app.state.bridge_public_url = bridge_public_url.rstrip("/")
-    app.include_router(_streams_router(lifecycle, bridge_public_url))
+    app.state.gateway_public_url = gateway_public_url.rstrip("/")
+    app.include_router(_streams_router(lifecycle, gateway_public_url))
     app.include_router(_health_router())
     return app
 
 
-def _streams_router(lifecycle: StreamLifecycle | None, bridge_public_url: str) -> APIRouter:
+def _streams_router(lifecycle: StreamLifecycle | None, gateway_public_url: str) -> APIRouter:
     r = APIRouter(prefix="/api/streams", tags=["streams"])
-    bridge_ws_url = bridge_public_url.replace("https://", "wss://").replace("http://", "ws://")
+    gateway_ws_url = gateway_public_url.replace("https://", "wss://").replace("http://", "ws://")
 
     @r.post("", response_model=StreamCreateResponse, status_code=201)
     async def create_stream(req: StreamCreateRequest) -> StreamCreateResponse:
@@ -50,7 +50,7 @@ def _streams_router(lifecycle: StreamLifecycle | None, bridge_public_url: str) -
                 detail={
                     "error": "not_configured",
                     "message": (
-                        "STREAMS_BRIDGE_CUSTOMER_BEARER not set; recreate "
+                        "STREAMS_GATEWAY_CUSTOMER_BEARER not set; recreate "
                         "this service with the bearer in env "
                         "(or run `make demo`)."
                     ),
@@ -95,11 +95,11 @@ def _streams_router(lifecycle: StreamLifecycle | None, bridge_public_url: str) -
 
         # One-shot: open WS, send chat, close. Events flow over the
         # /events WS (separate, persistent connection).
-        ws_url = f"{bridge_ws_url}/v1/vtuber/sessions/{rec.bridge_session_id}/control"
+        ws_url = f"{gateway_ws_url}/v1/vtuber/sessions/{rec.gateway_session_id}/control"
         try:
             async with ws_connect(
                 ws_url,
-                additional_headers={"Authorization": f"Bearer {rec.bridge_session_child_bearer}"},
+                additional_headers={"Authorization": f"Bearer {rec.gateway_session_child_bearer}"},
             ) as ws:
                 await ws.send(json.dumps({"type": "user.chat.send", "data": {"text": body.text}}))
         except Exception as exc:
@@ -136,15 +136,15 @@ def _streams_router(lifecycle: StreamLifecycle | None, bridge_public_url: str) -
             await websocket.close(code=1008, reason="stream not found")
             return
 
-        bridge_ws = f"{bridge_ws_url}/v1/vtuber/sessions/{rec.bridge_session_id}/control"
+        gateway_ws = f"{gateway_ws_url}/v1/vtuber/sessions/{rec.gateway_session_id}/control"
         try:
             async with ws_connect(
-                bridge_ws,
-                additional_headers={"Authorization": f"Bearer {rec.bridge_session_child_bearer}"},
+                gateway_ws,
+                additional_headers={"Authorization": f"Bearer {rec.gateway_session_child_bearer}"},
             ) as upstream:
                 # Pump bidirectionally until either side closes.
-                fwd_up = asyncio.create_task(_pump_ws_to_bridge(websocket, upstream))
-                fwd_down = asyncio.create_task(_pump_bridge_to_ws(upstream, websocket))
+                fwd_up = asyncio.create_task(_pump_ws_to_gateway(websocket, upstream))
+                fwd_down = asyncio.create_task(_pump_gateway_to_ws(upstream, websocket))
                 _done, pending = await asyncio.wait(
                     [fwd_up, fwd_down], return_when=asyncio.FIRST_COMPLETED
                 )
@@ -154,11 +154,11 @@ def _streams_router(lifecycle: StreamLifecycle | None, bridge_public_url: str) -
                         await t
         except websockets.exceptions.InvalidStatus as exc:
             _log.warning(
-                "bridge_ws_rejected",
+                "gateway_ws_rejected",
                 stream_id=stream_id,
                 status=exc.response.status_code,
             )
-            await websocket.close(code=1011, reason="bridge ws unauthorized")
+            await websocket.close(code=1011, reason="gateway ws unauthorized")
         except WebSocketDisconnect:
             pass
         except Exception:
@@ -169,18 +169,18 @@ def _streams_router(lifecycle: StreamLifecycle | None, bridge_public_url: str) -
     return r
 
 
-async def _pump_ws_to_bridge(customer: WebSocket, bridge: object) -> None:
-    """Forward customer → bridge frames. `bridge` is a websockets
+async def _pump_ws_to_gateway(customer: WebSocket, gateway: object) -> None:
+    """Forward customer → gateway frames. `gateway` is a websockets
     ClientConnection; typed as object to avoid pulling websockets'
     internal types into our public surface."""
     while True:
         msg = await customer.receive_text()
-        await bridge.send(msg)  # type: ignore[attr-defined]
+        await gateway.send(msg)  # type: ignore[attr-defined]
 
 
-async def _pump_bridge_to_ws(bridge: object, customer: WebSocket) -> None:
-    """Forward bridge → customer frames."""
-    async for msg in bridge:  # type: ignore[attr-defined]
+async def _pump_gateway_to_ws(gateway: object, customer: WebSocket) -> None:
+    """Forward gateway → customer frames."""
+    async for msg in gateway:  # type: ignore[attr-defined]
         await customer.send_text(msg)
 
 

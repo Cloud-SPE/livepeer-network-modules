@@ -34,7 +34,7 @@ _BEARER_PREFIX = "pl_egress_"
 
 def mint_bearer(session_id: SessionId, secret: bytes) -> str:
     """Build a `pl_egress_<sid>_<hmac>` bearer. Pipeline-side helper —
-    in real deployments the bridge calls this on Pipeline's behalf and
+    in real deployments the gateway calls this on Pipeline's behalf and
     forwards the result to the worker."""
     digest = hmac.new(secret, session_id.encode(), hashlib.sha256).hexdigest()
     return f"{_BEARER_PREFIX}{session_id}_{digest}"

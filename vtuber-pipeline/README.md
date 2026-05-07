@@ -40,4 +40,5 @@ MIT.
 Ported from
 `livepeer-vtuber-project/pipeline-app/src/pipeline/` (see plan
 0013-vtuber §5.2). Python package renamed `pipeline` → `vtuber_pipeline`;
-streams provider `bridge.py` renamed to `gateway.py`.
+streams provider `bridge.py` renamed to `gateway.py`; `Bridge*` symbols
+renamed to `Gateway*`.

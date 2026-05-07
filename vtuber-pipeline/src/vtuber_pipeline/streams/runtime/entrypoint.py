@@ -10,8 +10,8 @@ from fastapi import FastAPI
 
 from vtuber_pipeline.streams.config import Settings
 from vtuber_pipeline.streams.providers import (
-    HTTPBridgeClient,
     HTTPEgressAdminClient,
+    HTTPGatewayClient,
     MockYouTubeBinder,
     NoneYouTubeBinder,
     YouTubeBinder,
@@ -42,7 +42,7 @@ def build(settings: Settings | None = None) -> FastAPI:
     _configure_logging(settings)
 
     repo = StreamRepository()
-    bridge = HTTPBridgeClient(base_url=settings.bridge_url)
+    gateway = HTTPGatewayClient(base_url=settings.gateway_url)
     egress = HTTPEgressAdminClient(
         base_url=settings.egress_admin_url,
         admin_bearer=settings.egress_admin_bearer,
@@ -56,30 +56,25 @@ def build(settings: Settings | None = None) -> FastAPI:
     if "nginx-rtmp" in settings.default_rtmp_url:
         hls_template = "http://localhost:8085/hls/{stream_key}.m3u8"
 
-    # Boot tolerates an empty STREAMS_BRIDGE_CUSTOMER_BEARER so
-    # `make dev-up` succeeds before a key is minted. The lifecycle
-    # short-circuits at create-time with a clear error until set —
-    # `make demo` provisions a key + recreates this service with
-    # the bearer in env.
-    if not settings.bridge_customer_bearer:
+    if not settings.gateway_customer_bearer:
         import structlog
 
         structlog.get_logger("streams.entrypoint").warning(
-            "STREAMS_BRIDGE_CUSTOMER_BEARER unset",
+            "STREAMS_GATEWAY_CUSTOMER_BEARER unset",
             hint="POST /api/streams will 503 until set; mint a key via "
-            "vtuber-bridge's issueDevKey + recreate this service with the "
-            "bearer in env (or run `make demo`).",
+            "vtuber-gateway's issueDevKey + recreate this service with "
+            "the bearer in env (or run `make demo`).",
         )
 
     lifecycle: StreamLifecycle | None = None
-    if settings.bridge_customer_bearer:
+    if settings.gateway_customer_bearer:
         lifecycle = StreamLifecycle(
             repo=repo,
-            bridge=bridge,
+            gateway=gateway,
             egress=egress,
             youtube=youtube,
-            bridge_customer_bearer=settings.bridge_customer_bearer,
-            bridge_public_url=settings.bridge_public_url or settings.bridge_url,
+            gateway_customer_bearer=settings.gateway_customer_bearer,
+            gateway_public_url=settings.gateway_public_url or settings.gateway_url,
             public_base_url=settings.public_base_url,
             default_rtmp_url=settings.default_rtmp_url,
             hls_preview_template=hls_template,
@@ -87,7 +82,7 @@ def build(settings: Settings | None = None) -> FastAPI:
 
     return build_app(
         lifecycle=lifecycle,
-        bridge_public_url=settings.bridge_public_url or settings.bridge_url,
+        gateway_public_url=settings.gateway_public_url or settings.gateway_url,
     )
 
 

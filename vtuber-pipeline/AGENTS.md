@@ -22,12 +22,10 @@ Inherited from the repo root. Plus:
 - **Pipeline is a meta-customer of `vtuber-gateway/`.** Per OQ4 lock:
   one shared `LIVEPEER_VTUBER_GATEWAY_API_KEY` per deployment;
   pipeline-app's customers never see vtuber-gateway directly.
-- **No "bridge" terminology in narrative text.** The historical name
-  survives only in suite-citation paths. The HTTP client lives at
-  `src/vtuber_pipeline/streams/providers/gateway.py`; class-name
-  `HTTPBridgeClient` and DTO field `bridge_session_id` are
-  API-shape carriers preserved verbatim from the suite contract for
-  parity (renaming them is tracked as a follow-up).
+- **No "bridge" terminology anywhere.** Symbols are `HTTPGatewayClient`,
+  `GatewayClient`, `GatewayError`, `GatewaySessionOpenResult`,
+  `gateway_session_id`. Env-var names are `STREAMS_GATEWAY_*`. The
+  historical "bridge" name survives only in suite-citation paths.
 
 ## Where to look
 
@@ -60,4 +58,5 @@ Code in this component is ported from
 plan 0013-vtuber §5.2 for the source-to-destination map. The Python
 package was renamed `pipeline` → `vtuber_pipeline` for namespace
 clarity in the monorepo. The streams provider file `bridge.py` was
-renamed to `gateway.py` per the no-"bridge" convention.
+renamed to `gateway.py` and all `Bridge*` symbols were renamed to
+`Gateway*` per the no-"bridge" convention.

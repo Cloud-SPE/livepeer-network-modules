@@ -1,0 +1,94 @@
+# Smoke overlay for the video-gateway compose stack. Adds postgres,
+# redis, an S3-compatible object store (RustFS or MinIO), and the
+# capability-broker + payment-daemon-sender services that the gateway
+# dials at runtime. Per plan 0013-video §14 Q2 + Q10 locks the
+# broker hosts the LL-HLS server directly; no separate playback-origin
+# service.
+#
+# Use: docker compose -f compose.yaml -f compose.smoke.yaml up
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    networks: [video-gateway]
+    environment:
+      POSTGRES_USER: video
+      POSTGRES_PASSWORD: video
+      POSTGRES_DB: video
+    expose:
+      - "5432"
+
+  redis:
+    image: redis:7-alpine
+    networks: [video-gateway]
+    expose:
+      - "6379"
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    networks: [video-gateway]
+    environment:
+      RUSTFS_ROOT_USER: rustfs
+      RUSTFS_ROOT_PASSWORD: rustfs1234
+    expose:
+      - "9000"
+      - "9001"
+    command:
+      - serve
+      - /data
+
+  payer-daemon:
+    image: tztcloud/livepeer-payment-daemon:v0.8.10
+    networks: [video-gateway]
+    volumes:
+      - livepeer-payment:/var/run/livepeer
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+
+  payment-daemon:
+    image: tztcloud/livepeer-payment-daemon:v0.8.10
+    networks: [video-gateway]
+    volumes:
+      - livepeer-payment:/var/run/livepeer
+      - livepeer-payment-data:/var/lib/livepeer/payment-daemon
+    command:
+      - --mode=receiver
+      - --socket=/var/run/livepeer/payment-daemon.sock
+      - --db=/var/lib/livepeer/payment-daemon/sessions.db
+
+  broker:
+    image: tztcloud/livepeer-capability-broker:v0.8.10
+    depends_on: [payment-daemon]
+    networks: [video-gateway]
+    volumes:
+      - livepeer-payment:/var/run/livepeer
+    expose:
+      - "8080"
+      - "1935"
+    command:
+      - --listen=:8080
+      - --rtmp-listen=:1935
+
+  video-gateway:
+    depends_on: [postgres, redis, rustfs, broker, payer-daemon]
+    volumes:
+      - livepeer-payment:/var/run/livepeer
+    environment:
+      DATABASE_URL: "postgres://video:video@postgres:5432/video"
+      REDIS_URL: "redis://redis:6379"
+      LIVEPEER_BROKER_URL: "http://broker:8080"
+      LIVEPEER_BROKER_RTMP_HOST: "broker:1935"
+      LIVEPEER_PAYER_DAEMON_SOCKET: "/var/run/livepeer/payer-daemon.sock"
+      VIDEO_LIVE_HLS_BASE_URL: "http://localhost:3000/_hls"
+      VIDEO_LIVE_RTMP_LISTEN_ADDR: ":1935"
+      VIDEO_VOD_TUS_PATH: "/v1/uploads"
+      VIDEO_GATEWAY_ABR_POLICY: "customer-tier"
+      VIDEO_STALE_STREAM_SWEEP_INTERVAL_SECONDS: "60"
+      VIDEO_WEBHOOK_HMAC_PEPPER: "smoke-pepper"
+      CUSTOMER_PORTAL_PEPPER: "smoke-pepper"
+      PORT: "3000"
+
+volumes:
+  livepeer-payment: {}
+  livepeer-payment-data: {}

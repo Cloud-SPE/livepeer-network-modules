@@ -1,0 +1,15 @@
+[project]
+name = "rerank_model_downloader"
+version = "0.1.0"
+description = "One-shot HuggingFace model downloader for the rerank-runner workload binary."
+requires-python = ">=3.12"
+dependencies = [
+    "huggingface_hub>=0.20.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["src/download.py", "pyproject.toml"]

@@ -5,3 +5,6 @@ packages:
   - "customer-portal/frontend/portal"
   - "customer-portal/frontend/admin"
   - "openai-gateway"
+  - "vtuber-gateway"
+  - "vtuber-gateway/src/frontend/portal"
+  - "vtuber-runner/avatar-renderer"

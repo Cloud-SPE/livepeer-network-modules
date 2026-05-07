@@ -1,0 +1,47 @@
+[project]
+name = "session-runner"
+version = "0.1.0"
+description = "Livepeer vtuber session-runtime workload binary — drives headless Chromium + avatar-renderer, mux's audio/video via PyAV, trickle-publishes upstream, reports per-second work-units to the broker."
+license = { text = "MIT" }
+requires-python = ">=3.12"
+
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "structlog>=24.4",
+    "av>=14.0",
+    "numpy>=2.0",
+    "aiohttp>=3.10",
+    "msgpack>=1.1",
+    "httpx>=0.27",
+    "websockets>=13",
+    "playwright>=1.48",
+    "grpcio>=1.66",
+    "protobuf>=5.28",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+conversation = [
+    "loguru>=0.7",
+    "openai>=1.50",
+    "pydub>=0.25",
+]
+
+[project.scripts]
+session-runner = "session_runner.runtime.entrypoint:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/session_runner"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

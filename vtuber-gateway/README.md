@@ -1,0 +1,50 @@
+# vtuber-gateway
+
+Customer-facing gateway for the Livepeer vtuber product. TypeScript +
+Fastify 5 + Zod + drizzle-orm + ESM. Owns:
+
+- `POST /v1/vtuber/sessions` — session-open (per-session `payerDaemon.
+  createPayment(...)` flow per Q7 lock).
+- `GET /v1/vtuber/sessions/:id` — status.
+- `POST /v1/vtuber/sessions/:id/end` — customer kill switch.
+- `POST /v1/vtuber/sessions/:id/topup` — extend the session's
+  face-value mid-stream.
+- `WS /v1/vtuber/sessions/:id/control` — live worker↔customer relay
+  (no buffer in M6 per Q9 lock).
+- `POST /v1/billing/topup` + `POST /v1/stripe/webhook` — Stripe
+  flows delegated to `customer-portal/`.
+
+A vtuber-specific portal SPA lives in `src/frontend/portal/` (per OQ3
+lock); it composes the shared shell's auth / API-key / balance / Stripe
+widgets and adds vtuber-specific pages (session list, persona
+authoring, scene history).
+
+Pipeline-app integrates as a **shared-per-deployment meta-customer**
+(per OQ4 lock); direct B2B integrators receive **per-customer** API
+keys via the portal SPA. Both modes coexist on the same auth surface.
+
+## Quick start
+
+```sh
+pnpm install
+pnpm --filter @livepeer-rewrite/vtuber-gateway build
+pnpm --filter @livepeer-rewrite/vtuber-gateway test
+```
+
+## Layout
+
+See [`AGENTS.md`](./AGENTS.md). The migration brief is
+[`docs/exec-plans/active/0013-vtuber-suite-migration.md`](../docs/exec-plans/active/0013-vtuber-suite-migration.md).
+
+## License
+
+MIT.
+
+## Source attribution
+
+Ported from `livepeer-network-suite/livepeer-vtuber-gateway/src/` per
+plan 0013-vtuber §5.1. Schema is renumbered + namespaced to `vtuber.*`
+(per Q5 lock). Quote-related code is dropped (quote-free flow);
+broker URL is the only resolver. The historical "vtuber-livepeer-bridge"
+name is retired (per Q6 lock); citations preserve it verbatim where
+they reference suite paths.

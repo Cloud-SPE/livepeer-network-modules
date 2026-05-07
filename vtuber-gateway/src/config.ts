@@ -14,6 +14,9 @@ export const ConfigSchema = z.object({
   vtuberRelayMaxPerSession: z.number().int().positive().default(8),
   vtuberSessionBearerPepper: z.string().min(16),
   vtuberWorkerControlBearerPepper: z.string().min(16),
+  vtuberControlReconnectWindowMs: z.number().int().nonnegative().default(30_000),
+  vtuberControlReconnectBufferMessages: z.number().int().positive().default(64),
+  vtuberControlReconnectBufferBytes: z.number().int().positive().default(1 << 20),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -72,5 +75,39 @@ export function loadConfig(): Config {
     ),
     vtuberSessionBearerPepper: sessionPepper,
     vtuberWorkerControlBearerPepper: workerPepper,
+    vtuberControlReconnectWindowMs: parseDurationMs(
+      process.env["VTUBER_CONTROL_RECONNECT_WINDOW"] ?? "30s",
+    ),
+    vtuberControlReconnectBufferMessages: parseInt(
+      process.env["VTUBER_CONTROL_RECONNECT_BUFFER_MESSAGES"] ?? "64",
+      10,
+    ),
+    vtuberControlReconnectBufferBytes: parseInt(
+      process.env["VTUBER_CONTROL_RECONNECT_BUFFER_BYTES"] ?? "1048576",
+      10,
+    ),
   });
+}
+
+export function parseDurationMs(value: string): number {
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    return 0;
+  }
+  const m = trimmed.match(/^(\d+)(ms|s|m)?$/);
+  if (m === null) {
+    throw new Error(`invalid duration: ${value}`);
+  }
+  const n = parseInt(m[1]!, 10);
+  switch (m[2]) {
+    case "ms":
+      return n;
+    case "m":
+      return n * 60_000;
+    case "s":
+    case undefined:
+      return n * 1000;
+    default:
+      throw new Error(`invalid duration unit: ${m[2]}`);
+  }
 }

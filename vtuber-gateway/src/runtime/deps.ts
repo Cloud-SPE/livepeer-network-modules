@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import type { PayerDaemonClient } from "../providers/payerDaemon.js";
 import type { ServiceRegistryClient } from "../providers/serviceRegistry.js";
 import type { WorkerClient } from "../providers/workerClient.js";
+import type { ReconnectWindow } from "../service/relay/reconnectWindow.js";
 import type { SessionStore } from "../service/sessions/sessionStore.js";
 
 export interface VtuberStripeClient {
@@ -39,4 +40,5 @@ export interface VtuberGatewayDeps {
   stripe?: VtuberStripeClient;
   webhookEventStore?: VtuberWebhookEventStore;
   topupConfig?: { priceMinCents: number; priceMaxCents: number };
+  reconnectWindow?: ReconnectWindow;
 }

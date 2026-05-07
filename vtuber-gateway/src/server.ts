@@ -23,7 +23,13 @@ export async function buildServer(
   const relay = createSessionRelay();
 
   await app.register(registerSessionsRoutes, { deps });
-  await app.register(registerSessionControlWsRoutes, { cfg: deps.cfg, relay });
+  await app.register(registerSessionControlWsRoutes, {
+    cfg: deps.cfg,
+    relay,
+    ...(deps.reconnectWindow !== undefined
+      ? { reconnectWindow: deps.reconnectWindow }
+      : {}),
+  });
   await app.register(registerBillingTopupRoutes, { deps });
   await app.register(registerStripeWebhookRoutes, { deps });
 

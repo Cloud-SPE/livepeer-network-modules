@@ -1,0 +1,20 @@
+{
+  "name": "@livepeer-rewrite/vtuber-gateway-portal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vtuber-specific portal SPA. Composes customer-portal/frontend/shared widgets + vtuber-specific pages (session list, persona authoring, scene history) per plan 0013-vtuber OQ3 lock.",
+  "license": "MIT",
+  "type": "module",
+  "files": ["src", "README.md"],
+  "scripts": {
+    "build": "echo 'scaffold; vtuber portal Vite build lands in a follow-up commit'"
+  },
+  "dependencies": {
+    "@livepeer-rewrite/customer-portal-shared": "workspace:*",
+    "lit": "^3.2.0",
+    "rxjs": "^7.8.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

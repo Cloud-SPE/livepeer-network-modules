@@ -7,5 +7,5 @@
     "noUnusedParameters": false
   },
   "include": ["src/**/*", "test/**/*"],
-  "exclude": ["dist", "dist-test", "node_modules"]
+  "exclude": ["dist", "dist-test", "node_modules", "src/frontend"]
 }

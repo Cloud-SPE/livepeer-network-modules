@@ -3,7 +3,7 @@ import { buildServer } from "./server.js";
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
-  const app = buildServer(cfg);
+  const app = await buildServer(cfg);
   try {
     await app.listen({ host: "0.0.0.0", port: cfg.listenPort });
   } catch (err) {

@@ -18,10 +18,11 @@ audience: broker maintainers, video-pipeline operators
 # Plan 0011-followup — rtmp-ingress-hls-egress media pipeline (design)
 
 > **This is a paper-only design doc.** No Go code, no `go.mod` edits, no
-> proto changes ship from this commit. Output: pinned decisions + open
-> questions the user must answer before implementation begins. Treat the
-> prior impl in `livepeer-network-suite/video-worker-node/` as reference,
-> not as code to copy wholesale.
+> proto changes ship from this commit. Output: pinned decisions for the
+> implementing agent. All eight open questions were resolved on
+> 2026-05-06; see §14. Treat the prior impl in
+> `livepeer-network-suite/video-worker-node/` as reference, not as code
+> to copy wholesale.
 
 ## 1. Status and scope
 
@@ -38,14 +39,14 @@ Out of scope:
 - Interim-debit cadence machinery (plan 0015 — this plan provides the
   `LiveCounter` impl that plugs into 0015's ticker; the ticker itself
   is 0015's deliverable).
-- Gateway-side RTMP adapter (plan 0008-followup, parallel — auth
-  enforcement on the customer-facing side lives there).
-- ABR transcoding (passthrough only for v0.1).
-- LL-HLS / WebRTC egress / DRM / recording / VOD.
+- Gateway-side RTMP adapter (plan 0008-followup, parallel — customer-
+  facing auth layers — API keys, mTLS, optional AuthWebhookURL-style
+  integration — live there).
+- WebRTC egress / DASH egress / DRM / recording / VOD.
 
 The wire shape is locked at
 `livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md` and does
-not change here, except for the small `publish_auth` addition in §4.2.
+not change here, except for the `stream_key` field addition in §4.2.
 
 ## 2. What plan 0011 left unfinished
 
@@ -62,33 +63,39 @@ live.
 
 ```
 customer RTMP encoder
-  │ rtmp://gateway:1935/<session>?key=<publish_auth>
+  │ rtmp://gateway:1935/<session_id>/<stream_key>
   ▼
 gateway RTMP adapter (plan 0008-followup, parallel)
-  │ — strips publish_auth, validates, proxies plaintext RTMP
+  │ — terminates customer auth (API keys, mTLS), proxies plaintext RTMP
   ▼
 broker RTMP listener (this plan, §4)
-  │ — re-validates session_id + publish_auth
+  │ — constant-time compares <session_id>/<stream_key> against
+  │   the open-session record (defense-in-depth)
   │ — io.Pipe FLV bytes into FFmpeg subprocess
   ▼
 FFmpeg subprocess per session (this plan, §5)
   │ — reads FLV from -i pipe:0; emits frame= / out_time_us= on stderr
-  │ — writes HLS segments + playlist to scratch dir
+  │ — encodes 5-rung H.264 ABR ladder (NVENC default; QSV/VAAPI/libx264 fallbacks)
+  │ — writes LL-HLS playlist + fmp4 segments + parts to scratch dir
   ▼
 HLS scratch on tmpfs (this plan, §6)
-  │ /var/lib/livepeer/rtmp-hls/<session>/playlist.m3u8
+  │ /var/lib/livepeer/rtmp-hls/<session>/{master.m3u8, <rung>/...}
   ▼
 broker HTTP file server (this plan, §6)
-  │ https://broker/hls/<session>/playlist.m3u8
+  │ https://broker/_hls/<session>/playlist.m3u8
   ▼
-customer HLS player
+customer LL-HLS player (hls.js, Safari native)
 ```
 
-Auth enforcement lives **gateway-side** (plan 0008-followup); the
-broker re-validates as defense-in-depth but treats the gateway as
-trusted-on-its-side-of-the-wire. Work units are counted **broker-side**
-— RTMP packets crossing the broker's listener and FFmpeg's progress
-output are the canonical sources for plan 0015's ticker.
+Stream-key validation is **broker-side defense-in-depth**: the broker
+constant-time compares the URL's `<session_id>/<stream_key>` against
+its open-session record. Customer-side auth (API keys, mTLS,
+AuthWebhookURL-style integration) lives **gateway-side** per plan
+0008-followup. v0.1 deployments may expose the broker's `:1935`
+directly to customers (smoke-grade); production wraps with the gateway
+adapter. Work units are counted **broker-side** — RTMP packets crossing
+the broker's listener and FFmpeg's progress output are the canonical
+sources for plan 0015's ticker.
 
 ## 4. RTMP listener
 
@@ -98,46 +105,73 @@ audio/video into a single FLV byte stream, pipes to FFmpeg.
 **4.1. Port.** Default `:1935` (IANA-reserved). Configurable via
 `--rtmp-listen-addr`.
 
-**4.2. Stream-key validation.** This plan adds **one optional new
-field** to the session-open response: `publish_auth`, a 32-byte
-URL-safe random bearer token. It's embedded in `rtmp_ingest_url` as a
-query string (`?key=<publish_auth>`) and surfaced at the top level so
-the gateway can read it without URL parsing. The broker's listener
-parses RTMP's `PublishingName` (yutopp/go-rtmp's `OnPublish` callback
-— see suite at
-`livepeer-network-suite/video-worker-node/internal/providers/ingest/rtmp/rtmp.go:162-192`),
-splits into `session_id` + token, looks up the open-session record,
-constant-time compares. Mismatch → RTMP `_error`.
+**4.2. Stream-key validation.** Q7 LOCKED 2026-05-06. The session-open
+response gains a new field, **`stream_key`** (renamed from the
+pre-rewrite shape's `publish_auth` — naming aligns with go-livepeer +
+mux + twitch + youtube vocabulary). It's a 32-byte URL-safe random
+bearer token (more entropy than go-livepeer's 6-byte `StreamKeyBytes`
+— `mediaserver.go:61` — for cheap defense-in-depth) surfaced at the
+top of the 202 response body so the gateway can read it without URL
+parsing.
 
-Spec change: `publish_auth` field added to
-`livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md`.
-Backward-compatible: when `--rtmp-require-publish-auth=false`, broker
-accepts pushes without a token (dev / fixture mode). Open question 1.
+URL shape is **path-based**, exactly mux/twitch/youtube's pattern
+(and matches go-livepeer's `mediaserver.go:61` `StreamKeyBytes`
+model):
+
+```
+rtmp://broker:1935/<session_id>/<stream_key>
+```
+
+Query-string variants (`?key=<...>`) are explicitly rejected.
+
+The broker's listener parses RTMP's `PublishingName` via yutopp/go-rtmp's
+`OnPublish` callback (suite reference at
+`livepeer-network-suite/video-worker-node/internal/providers/ingest/rtmp/rtmp.go:162-192`),
+splits into `session_id` / `stream_key`, looks up the open-session
+record, **constant-time compares** the key. Mismatch → RTMP `_error`.
+
+v0.1 model: broker accepts the stream-key directly with no external
+webhook. go-livepeer's `AuthWebhookURL` pattern
+(`mediaserver.go:70-290`) is the production-equivalent — we do a
+local constant-time compare against the open-session record instead,
+which is simpler and removes an external-webhook dependency.
+Production deployments wanting an external webhook live in plan
+0008-followup's gateway-side adapter (mTLS gateway↔broker,
+customer-side API keys, optional AuthWebhookURL integration if
+operators want it).
+
+Spec change: `stream_key` field added to
+`livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md`; old
+`publish_auth` field name retired. Backward-compatible
+`--rtmp-require-stream-key=true` (default) flag; when `false`, broker
+accepts pushes without a stream key (dev / fixture mode only).
 
 **4.3. Concurrency.** One goroutine per RTMP connection (yutopp/go-rtmp
 owns the read loop) + one per FFmpeg subprocess + one per progress
 parser. Per-broker cap via `--rtmp-max-concurrent-streams` (default
 100). Above the cap, accept TCP, reject in `OnPublish`.
 
-**4.4. RTMPS (TLS).** **Recommend defer for v0.1.** Gateway terminates
-TLS for the customer-facing path; broker's `:1935` is a private
-interface reachable only from the gateway. If we want broker-side
-RTMPS later, add `--rtmps-listen-addr` + cert plumbing as a followup.
-Open question 1.
+**4.4. RTMPS (TLS).** Q1 LOCKED 2026-05-06: **plaintext only at the
+broker boundary.** Gateway terminates customer-facing TLS; broker's
+`:1935` is a private interface reachable only from the gateway in
+production. v0.1 deployments may expose `:1935` directly to customers
+(smoke-grade only). RTMPS at the broker boundary is a future plan if
+operators concretely ask.
 
-**4.5. Library.** **Recommend `github.com/yutopp/go-rtmp`** — pure-Go
-(matches the broker's no-cgo invariant), suite-validated. Tradeoffs:
+**4.5. Library.** Q2 LOCKED 2026-05-06: **`github.com/yutopp/go-rtmp`**
+— pure Go (matches the broker's no-cgo invariant), MIT-licensed,
+suite-validated. Tradeoffs (rejected alternatives kept for the record):
 
 | Library | Pro | Con |
 |---|---|---|
-| `yutopp/go-rtmp` | No cgo, suite-tested, MIT. | Sparse maintenance. |
+| `yutopp/go-rtmp` ✓ | No cgo, suite-tested, MIT. | Sparse maintenance. |
 | Hand-rolled handshake | Zero deps; can be RTMPS-native. | ~2-3 weeks to reinvent. |
 | Upstream-extract suite's `internal/providers/ingest/rtmp` | Direct reuse. | Touches the suite. |
 
-**4.6. Duplicate stream keys.** Default **reject** the second push
-(safer when URLs leak). Operators can opt-in to `replace` (kick the
-first, accept the new — friendlier for auto-reconnect encoders) via
-`--rtmp-on-duplicate-key=replace`. Open question 6.
+**4.6. Duplicate stream keys.** Q6 LOCKED 2026-05-06: default
+**reject** the second push (safer when URLs leak). Operators opt-in
+to `replace` (kick the first, accept the new — friendlier for
+auto-reconnect encoders) via `--rtmp-on-duplicate-key=replace`.
 
 **4.7. RTMP→FLV pump.** `OnAudio` / `OnVideo` callbacks deliver
 per-tag payloads; the broker reassembles into FLV bytes via `io.Pipe`
@@ -154,32 +188,88 @@ One `ffmpeg` subprocess per session; pattern lifted from
 `cmd.Wait()` wrapped in another goroutine. On `ctx.Done()`: SIGTERM,
 wait `--ffmpeg-cancel-grace` (default 5s), SIGKILL.
 
-**5.2. Container image / FFmpeg distribution.** **Recommend baking
-FFmpeg into the broker's Docker image.** Pin to **latest stable FFmpeg
-release** (currently 7.x). LGPL build (no `--enable-gpl`). Sidecar
+**5.2. Container image / FFmpeg distribution.** Bake FFmpeg into the
+broker's Docker image. Pin to **FFmpeg 7.x** (LL-HLS muxer flags need
+4.4+; we go modern). LGPL build (no `--enable-gpl`). Sidecar
 container per stream rejected — adds container-hop, complicates
 resource accounting.
 
-**5.3. Transcode profile.** **Recommend passthrough for v0.1** (no
-ABR, no codec change):
+**5.3. Transcode profile.** Q3 LOCKED 2026-05-06: **GPU-default,
+5-rung H.264 ABR ladder.** Passthrough is **CI-smoke-only**, not the
+production default.
+
+Four named profiles ship in `media/encoder/presets.go` and are
+referenced from `host-config.yaml` `backend.profile`:
+
+| Profile | Use | Encoder | Output |
+|---|---|---|---|
+| `passthrough` | CI smoke / dev | `-c:v copy -c:a copy` | Single-rung re-mux. **Not production.** |
+| `h264-live-1080p-nvenc` | Production default | NVENC (NVIDIA Pascal+) | 5-rung ladder + AAC. |
+| `h264-live-1080p-qsv` | First-class fallback | Intel QuickSync (Skylake+) | Same 5-rung ladder. |
+| `h264-live-1080p-vaapi` | First-class fallback | AMD/Intel-iGPU VAAPI (RX 5700+ / VCN+) | Same 5-rung ladder. |
+| `h264-live-1080p-libx264` | Software fallback | libx264 | Same 5-rung ladder; CPU. |
+
+The 5-rung H.264 + AAC ladder follows the **Apple HLS Authoring Spec**
++ **Mux published encoder recommendations**:
+
+| Rung | Resolution | H.264 profile | Bitrate (kbps) |
+|---|---|---|---|
+| 1 | 240p | baseline | 400 |
+| 2 | 360p | baseline | 800 |
+| 3 | 480p | main | 1400 |
+| 4 | 720p | main | 2800 |
+| 5 | 1080p | high | 5000 |
+
+AAC stereo audio shared across rungs. 4s GOP. Source citations for
+each rung's bitrate/profile/GOP: go-livepeer's
+`core/playlistmanager.go:34` `VideoProfile` interface +
+`core/playlistmanager_test.go:197` `P240p30fps16x9` constant + Apple
+HLS Authoring Spec + Mux docs.
+
+Profiles are **defined fresh** in
+`capability-broker/internal/media/encoder/presets.go`. The suite's
+`presets/h264-live.yaml:8-43` is a sanity-check **template** — do
+**not** port it verbatim.
+
+The passthrough fallback args (CI smoke / dev only):
 
 ```
 ffmpeg -hide_banner -loglevel info \
   -f flv -i pipe:0 \
   -c:v copy -c:a copy \
   -progress pipe:2 \
-  -f hls \
-  -hls_time 6 -hls_list_size 5 \
+  -f hls -hls_time 2 -hls_list_size 4 \
+  -hls_segment_type fmp4 \
   -hls_flags delete_segments+append_list+omit_endlist+independent_segments \
-  -hls_segment_type mpegts \
-  -hls_segment_filename /var/lib/livepeer/rtmp-hls/<session>/segment_%05d.ts \
+  -hls_segment_filename /var/lib/livepeer/rtmp-hls/<session>/segment_%05d.m4s \
   /var/lib/livepeer/rtmp-hls/<session>/playlist.m3u8
 ```
 
-The suite's full ABR ladder shape (`BuildLiveArgs` at
-`livepeer-network-suite/video-worker-node/internal/providers/ffmpeg/live.go:60-111`)
-is the v0.2 target. Passthrough exercises the entire pipeline without
-GPU dependencies. Open question 3.
+**5.3.1. Encoder selection / auto-probe.** Q3 LOCKED 2026-05-06.
+
+Default encoder priority (auto-probe at broker startup):
+**NVENC → QSV → VAAPI → libx264.** NVENC is primary because Livepeer's
+transcoder fleet skews toward NVIDIA Pascal-and-newer consumer cards
+(GTX 1060/1070/1080 historically; Turing/Ampere/Ada modern). QSV
+(Skylake+) and VAAPI (RX 5700+ / VCN-capable) are first-class
+fallbacks. **libx264 is software fallback — explicit opt-in only,
+never auto-selected when a GPU encoder is available.**
+
+Flag surface:
+
+- `--encoder=auto|nvenc|qsv|vaapi|libx264` (default `auto`). Probe
+  walks `ffmpeg -hide_banner -encoders` + `-init_hw_device` at
+  startup; the first matching codec wins.
+- `--encoder-allow-cpu=false` (default false). When `--encoder=auto`
+  finds no GPU encoder AND this flag is false, the broker **refuses
+  to start** with a clear error: *"no GPU encoder detected; install
+  NVIDIA driver + cuda-toolkit, OR set `--encoder-allow-cpu=true` to
+  use libx264 (production deployments should use a GPU)."* Operators
+  consciously running CPU-only flip the flag.
+
+Reference for the auto-probe pattern: video-worker-node's `codecFlag`
+selection at
+`livepeer-network-suite/video-worker-node/internal/providers/ffmpeg/ffmpeg.go:112,120,129`.
 
 **5.4. Progress parsing.** FFmpeg invoked with `-progress pipe:2`
 emits `frame=N`, `out_time_us=N`, `progress=continue|end` lines on
@@ -202,41 +292,75 @@ place. Spec change: `ffmpeg_subprocess_failed` and
 constants at
 `capability-broker/internal/livepeerheader/headers.go:35-43`.
 
-**5.6. Resource isolation.** **Recommend cgroups for v0.1**, not
-container-per-stream. Each FFmpeg subprocess runs in a transient
-cgroup with CPU+memory caps from the capability config (new
-`backend.resources` block — see §10.2). Container-per-stream adds
-~500ms cold start + ~50MB RAM each — overkill for v0.1. Open
-question 4.
+**5.6. Resource isolation.** Q4 LOCKED 2026-05-06: **bare `exec.Command`
+per FFmpeg subprocess; no broker-side cgroups, no
+container-per-stream.** Matches video-worker-node's bare-exec model
+documented at
+`livepeer-network-suite/video-worker-node/docs/subprocess-vs-embed.md:22,34`.
+SIGTERM-grace-SIGKILL is the only cancellation primitive (§5.5).
+Container-level Docker / K8s limits enforce per-host fairness at the
+operator deployment layer. `prlimit(2)` per-subprocess wrappers are
+flagged as a future-plan item if real fairness issues surface in
+production. The `backend.resources` cgroup config block is dropped
+from §10.2.
 
 ## 6. HLS output and serving
 
 **6.1. Segment storage.** Per-session scratch under `--hls-scratch-dir`
 (default `/var/lib/livepeer/rtmp-hls`). Layout:
-`<scratch>/<session_id>/{playlist.m3u8, segment_NNNNN.ts}`.
-**Recommend tmpfs.** Sizing: passthrough at 6 Mbps with 5×6s window
-≈ 22 MB/session; 100 concurrent ≈ 2.2 GB tmpfs. FFmpeg's
-`-hls_flags delete_segments` auto-prunes; broker's session-teardown
-path deletes the whole dir.
+`<scratch>/<session_id>/{master.m3u8, <rung>/playlist.m3u8,
+<rung>/segment_NNNNN.m4s, <rung>/init.mp4}`. **tmpfs.**
 
-**6.2. Playlist shape.** **HLS v3** (`#EXT-X-VERSION:3`, mpegts
-segments — broad compatibility), 6s segments, 5-segment rolling
-window, `#EXT-X-TARGETDURATION:6`. Glass-to-glass latency ~6-12s
-(typical for HLS v3). For ABR (deferred) the suite uses fMP4
-byte-range HLS at v0.2 — see
-`livepeer-network-suite/video-worker-node/internal/providers/hls/hls.go:48-58`.
-Open question 5.
+Sizing under the 5-rung 1080p ladder + 2s LL-HLS segments + 4-segment
+rolling window: ≈80 MB/session for the 1080p rung alone; ≈150 MB total
+across all rungs. 100 concurrent ≈ 15 GB tmpfs. (Markedly larger than
+the prior passthrough estimate; size operator scratch accordingly.)
 
-**6.3. HTTP server.** **Recommend serving from the broker's existing
-paid listener** at `/hls/<session_id>/...`. The URL is already a
-per-session unguessable path (12 random bytes hex —
+FFmpeg's `-hls_flags delete_segments` auto-prunes; broker's
+session-teardown path deletes the whole dir.
+
+**6.2. Playlist shape.** Q5 LOCKED 2026-05-06: **LL-HLS default,
+legacy HLS v3 fallback.**
+
+**Default LL-HLS** (`#EXT-X-VERSION:6`, fmp4 segments, 2s segment
+duration, 333ms `#EXT-X-PART` duration, 4-segment rolling window —
+~1-3s glass-to-glass). FFmpeg flags:
+`-hls_segment_type fmp4 -hls_part_duration 0.33 -hls_flags
++iframe_only_partial`. Cite Apple's LL-HLS spec; player compatibility
+covered by hls.js + Safari native. The broker pins FFmpeg 7.x (LL-HLS
+muxer needs 4.4+).
+
+**Legacy fallback** via `--hls-legacy=true`: flips to
+`#EXT-X-VERSION:3`, mpegts segments, 6s segment duration, 5-segment
+rolling window, ~12-24s glass-to-glass. For player-compat with rare
+older players (older Android stacks); documented in §12.
+
+The suite's HLS-v7 master manifest writer at
+`livepeer-network-suite/video-worker-node/internal/providers/hls/hls.go:49`
+is a non-LL precedent — v0.1 broker goes further than the suite by
+shipping LL-HLS.
+
+WebRTC egress and DASH stay out-of-scope for v0.1 (§15).
+
+**6.3. HTTP server.** Serve from the broker's existing paid listener
+under `/_hls/<session_id>/...`. The URL is already a per-session
+unguessable path (12 random bytes hex —
 `rtmpingresshlsegress/driver.go:110-116`); the spec at
 `livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md:88-95`
-treats the URL itself as the bearer secret. The HTTP handler is a
-thin wrapper: parse `<session_id>`, look up the session record (404
-if missing), `http.ServeFile` from the scratch dir. Payment
-middleware does **not** wrap this handler — playback is "free" once
-session-open is paid for. Per-segment metering is not in scope.
+treats the URL itself as the bearer secret.
+
+LL-HLS adds these endpoints (note `.m4s` for fmp4 + part files):
+
+- `/_hls/<session>/playlist.m3u8` — master / variant manifest.
+- `/_hls/<session>/<rung>/segment_NNNNN.m4s` — fmp4 segments.
+- `/_hls/<session>/<rung>/init.mp4` — fmp4 init segment.
+- `/_hls/<session>/<rung>/part_NNNNN_KK.m4s` — LL-HLS partial segments.
+
+The HTTP handler is a thin wrapper: parse `<session_id>`, look up the
+session record (404 if missing), `http.ServeFile` from the scratch
+dir. Payment middleware does **not** wrap this handler — playback is
+"free" once session-open is paid for. Per-segment metering is not in
+scope.
 
 **6.4. Cleanup.** On any of §7's termination triggers: SIGTERM ffmpeg
 → wait grace → SIGKILL → wait `cmd.Wait()` → `os.RemoveAll(scratch)`.
@@ -244,7 +368,10 @@ RemoveAll failure is a soft fail (log + metric).
 
 ## 7. Lifetime management
 
-Five termination triggers, evaluated at the broker:
+Q8 LOCKED 2026-05-06: **four termination triggers**, evaluated at the
+broker. The previously-proposed operator-kill admin endpoint is cut
+from v0.1; plan 0018's roster UX is the long-term home if real ops
+surfaces stuck-session cases.
 
 1. **`expires_at` reached without an RTMP push.** The session-open
    response sets `expires_at` (today: now + 1 hour —
@@ -269,12 +396,12 @@ Five termination triggers, evaluated at the broker:
    (`rtmp-ingress-hls-egress.md:111-114`). This plan adds the
    handler.
 
-5. **Operator kill (admin).** `POST /admin/sessions/{session_id}/kill`
-   gated behind `--admin-listen-addr` (default disabled). Plan 0018's
-   roster UX is the long-term home; flag-gated raw HTTP is the v0.1
-   interim. Open question 8.
-
 ## 8. LiveCounter + interim-debit integration (plan 0015 handshake)
+
+The 5-rung ABR ladder does not change `LiveCounter` semantics — the
+work-unit is still per-encoded-second or per-frame on the **source
+RTMP push**, summed across rungs at most. The broker counts the
+ingress-side, not the rendered ladder.
 
 This plan implements `LiveCounter` (defined by plan 0015 §4.1):
 
@@ -340,15 +467,20 @@ capability-broker/internal/
   media/encoder/         — NEW
     encoder.go           — Encoder interface + LiveCounter glue
     ffmpeg.go            — SystemEncoder (real subprocess)
-    args.go              — BuildArgs (passthrough v0.1)
+    presets.go           — 4 named profiles (passthrough + h264-live-1080p-{nvenc,qsv,vaapi,libx264})
+    probe.go             — runtime auto-probe (NVENC → QSV → VAAPI → libx264)
     progress.go          — stderr parser → atomic fields
+    nvenc/builder.go     — NEW per-vendor args builder
+    qsv/builder.go       — NEW
+    vaapi/builder.go     — NEW
+    libx264/builder.go   — NEW
   media/hls/             — NEW
-    server.go            — http.Handler for /hls/<sess>/...
+    server.go            — http.Handler for /_hls/<sess>/...
     scratch.go           — per-session dir lifecycle
 ```
 
 The session-record store (`sessions.go`) is an in-memory `sync.Map`
-keyed by `session_id` → `{publish_auth, expires_at, cancel func(),
+keyed by `session_id` → `{stream_key, expires_at, cancel func(),
 liveCounter}`. **Not persisted across broker restarts** — restart
 terminates all in-flight RTMP sessions, matching the daemon's BoltDB
 behaviour for in-flight tickets.
@@ -367,13 +499,16 @@ composition root.
 | `--rtmp-max-concurrent-streams` | uint | `100` | Hard cap. |
 | `--rtmp-idle-timeout` | duration | `10s` | Per-stream idle. |
 | `--rtmp-on-duplicate-key` | enum | `reject` | `reject` \| `replace`. §4.6 / Q6. |
-| `--rtmp-require-publish-auth` | bool | `true` | Dev override. §4.2. |
+| `--rtmp-require-stream-key` | bool | `true` | Dev override. §4.2 / Q7. |
+| `--encoder` | enum | `auto` | `auto` \| `nvenc` \| `qsv` \| `vaapi` \| `libx264`. §5.3.1 / Q3. |
+| `--encoder-allow-cpu` | bool | `false` | Permit libx264 fallback when probe finds no GPU. §5.3.1 / Q3. |
 | `--ffmpeg-binary` | string | `ffmpeg` | Path override. |
 | `--ffmpeg-cancel-grace` | duration | `5s` | SIGTERM-to-SIGKILL window. |
-| `--hls-segment-duration` | duration | `6s` | `-hls_time`. |
-| `--hls-playlist-window` | uint | `5` | `-hls_list_size`. |
+| `--hls-legacy` | bool | `false` | Flips to mpegts HLS v3 (~12-24s glass-to-glass). §6.2 / Q5. |
+| `--hls-part-duration` | duration | `333ms` | LL-HLS `#EXT-X-PART` duration. §6.2 / Q5. |
+| `--hls-segment-duration` | duration | `2s` | `-hls_time` (LL-HLS default; legacy uses 6s). |
+| `--hls-playlist-window` | uint | `4` | `-hls_list_size` (LL-HLS default; legacy uses 5). |
 | `--hls-scratch-dir` | string | `/var/lib/livepeer/rtmp-hls` | Per-session scratch root. |
-| `--admin-listen-addr` | string | `""` (disabled) | Operator-kill endpoint. §7 #5. |
 
 ### 10.2. Per-capability YAML
 
@@ -381,8 +516,8 @@ composition root.
 `interaction_mode` is `rtmp-ingress-hls-egress@v0`:
 
 ```yaml
-- id: "video:transcode.live.rtmp:passthrough"
-  offering_id: "passthrough-1080p"
+- id: "video:transcode.live.rtmp:1080p-nvenc"
+  offering_id: "h264-live-1080p-nvenc"
   interaction_mode: "rtmp-ingress-hls-egress@v0"
   work_unit:
     name: "out_time_seconds"
@@ -393,44 +528,59 @@ composition root.
     amount_wei: "1000000"
     per_units: 1
   backend:
-    transport: "ffmpeg-subprocess"   # NEW transport type
-    profile: "passthrough"            # passthrough | (v0.2) ladder names
-    resources:                         # NEW optional cgroup block
-      cpu_quota: "1.0"
-      mem_max: "1Gi"
+    transport: "ffmpeg-subprocess"     # NEW transport type
+    profile: "h264-live-1080p-nvenc"   # one of the 4 named profiles in §5.3
 ```
 
-`backend.transport: ffmpeg-subprocess` signals the composition root to
-wire a FFmpeg-backed pipeline rather than an HTTP forwarder. The
-existing `backend.url` continues to hold the broker's external host
-(so the URL-derivation in `rtmpingresshlsegress/driver.go:64-82`
+`backend.transport: ffmpeg-subprocess` signals the composition root
+to wire a FFmpeg-backed pipeline rather than an HTTP forwarder.
+`backend.profile` references one of the 4 named profiles in §5.3
+(`passthrough` | `h264-live-1080p-nvenc` | `h264-live-1080p-qsv` |
+`h264-live-1080p-vaapi` | `h264-live-1080p-libx264`). The existing
+`backend.url` continues to hold the broker's external host (so the
+URL-derivation in `rtmpingresshlsegress/driver.go:64-82` is
 unchanged).
+
+Per Q4, no `backend.resources` cgroup block — container-level Docker
+/ K8s limits enforce per-host fairness in v0.1 (§5.6).
 
 ## 11. Conformance fixture
 
 **11.1. `end-to-end.yaml`** at
-`livepeer-network-protocol/conformance/fixtures/rtmp-ingress-hls-egress/end-to-end.yaml`:
+`livepeer-network-protocol/conformance/fixtures/rtmp-ingress-hls-egress/end-to-end.yaml`.
+The fixture explicitly sets `backend.profile: passthrough` to skip
+the encoder — CI hosts have no GPU, and the goal here is to validate
+the wire-shape + RTMP listener + HLS server end-to-end without
+exercising the GPU encoder. A separate operator-driven smoke
+(post-merge, hardware-required) validates the 5-rung NVENC profile
+on real hardware (see §13 C5).
 
 1. Runner sends `POST /v1/cap` (matches existing `happy-path.yaml`
    shape).
-2. Reads `rtmp_ingest_url`, `hls_playback_url`, `publish_auth`.
+2. Reads `rtmp_ingest_url`, `hls_playback_url`, `stream_key`.
 3. Publishes a 5s synthetic RTMP stream (`ffmpeg -re -f lavfi -i
-   testsrc=duration=5:size=320x240:rate=30 -f flv rtmp://...`) with
-   `publish_auth` in PublishingName.
+   testsrc=duration=5:size=320x240:rate=30 -f flv
+   rtmp://broker:1935/<session_id>/<stream_key>`).
 4. Waits ≤8s, GETs `hls_playback_url`. Asserts: 200, body starts with
-   `#EXTM3U`, contains ≥1 `segment_*.ts` reference.
-5. GETs first segment. Asserts: 200, MPEG-TS sync byte (`0x47` at
-   offset 0 + 188).
+   `#EXTM3U`, contains ≥1 `segment_*.m4s` reference (LL-HLS default;
+   legacy mode would assert `.ts`).
+5. GETs first segment. Asserts: 200, fmp4 box header (`ftyp` /
+   `moof`) at offset 0.
 6. Closes RTMP. Asserts: daemon ledger received ≥1 `DebitBalance`
    with `work_units > 0`; session closed status `closed_clean`.
 
-**11.2. Test infrastructure.** **Recommend baking real `ffmpeg` into
-the runner image** for the synthetic RTMP source (the suite's runner
-already has FFmpeg in its CI image). Pure-Go RTMP publisher rejected —
-adds dep when a one-line FFmpeg invocation suffices.
+**11.2. Test infrastructure.** Bake real `ffmpeg` into the runner
+image for the synthetic RTMP source (the suite's runner already has
+FFmpeg in its CI image). Pure-Go RTMP publisher rejected — adds dep
+when a one-line FFmpeg invocation suffices.
 
 **11.3. Smoke time budget.** ~10s wall (5s publish + ~3s playlist
 materialization + 2s checks); compose-up overhead dominates.
+
+**11.4. Hardware-required GPU smoke.** Operator-driven, post-merge.
+A separate runbook entry (§12) documents how to run the 5-rung
+`h264-live-1080p-nvenc` profile against a real NVIDIA host and
+verify the variant playlists materialize.
 
 ## 12. Operator runbook updates
 
@@ -442,137 +592,246 @@ extractor per this plan's §8.
 **12.2. New `capability-broker/docs/operator-runbook.md`** (does not
 exist today). Sections:
 
-1. **RTMP port exposure.** Default `:1935` reachable from the gateway
-   only; cloud security group rules. Don't expose directly to public
-   internet — gateway terminates TLS and enforces auth.
-2. **FFmpeg licensing.** Broker ships LGPL FFmpeg by default (no
+1. **RTMP port exposure.** Default `:1935`. Production: reachable
+   from the gateway only; cloud security group rules. v0.1
+   smoke-grade deployments may expose directly to customers
+   (plaintext only — Q1). Don't expose plaintext RTMP across the
+   public internet at scale; the gateway adapter terminates customer
+   TLS in production.
+2. **GPU encoder hardware.** Production deployments **should use
+   NVIDIA NVENC**; libx264 is operator-opt-in for hardware-less
+   environments (Q3). NVIDIA Pascal+ is the Livepeer transcoder norm
+   (GTX 1060/1070/1080 historically; Turing/Ampere/Ada modern). QSV
+   (Skylake+) and VAAPI (RX 5700+ / VCN-capable) are first-class but
+   less common. Driver / runtime install:
+   - **NVENC:** NVIDIA driver matching the broker image's CUDA
+     toolkit; `nvidia-container-toolkit` for Docker / K8s.
+   - **QSV:** `intel-media-driver` + `libmfx` runtime; iGPU device
+     passed through (`/dev/dri/renderD128`).
+   - **VAAPI:** `mesa-va-drivers` (or vendor-specific equivalent);
+     `/dev/dri/renderD128` passed through.
+   Auto-probe detection mirrors video-worker-node's `codecFlag`
+   pattern at
+   `livepeer-network-suite/video-worker-node/internal/providers/ffmpeg/ffmpeg.go:112,120,129`.
+3. **FFmpeg licensing.** Broker ships LGPL FFmpeg by default (no
    `--enable-gpl`). Operators wanting GPL libs (x264 / x265 default
    encoders) supply their own via `--ffmpeg-binary`; relicensing
    implication is theirs.
-3. **Resource sizing per concurrent stream.** Passthrough ≈ 0.1-0.3
-   cores + ~50 MB RAM + ~25 MB tmpfs scratch per stream. ABR (future)
-   multiplies by ladder cardinality + adds GPU.
-4. **Common failure modes.** Stream-key auth fail → encoder gets RTMP
-   `_error`; broker logs `rtmp.publish_rejected` with redacted key
-   prefix (suite's `redactKey` pattern at
+4. **Resource sizing per concurrent stream.** 5-rung
+   `h264-live-1080p-nvenc` ladder ≈ 0.5-1.5 cores + ~250 MB RAM +
+   ~150 MB tmpfs scratch per stream + ~1 NVENC engine slot.
+   `passthrough` (CI smoke) ≈ 0.1-0.3 cores + ~50 MB RAM + ~25 MB
+   tmpfs. Container-level Docker / K8s limits cap per-stream
+   resources (Q4).
+5. **LL-HLS player compatibility.** hls.js + Safari native both
+   support LL-HLS. Older Android players may need
+   `--hls-legacy=true` (Q5).
+6. **Common failure modes.** Stream-key auth fail → encoder gets
+   RTMP `_error`; broker logs `rtmp.publish_rejected` with redacted
+   key prefix (suite's `redactKey` pattern at
    `livepeer-network-suite/video-worker-node/internal/providers/ingest/rtmp/rtmp.go:194-201`).
    FFmpeg crash → `Livepeer-Error: ffmpeg_subprocess_failed`; inspect
-   captured stderr (128KB ring buffer). Disk-full on segment write →
-   tmpfs sized too small.
-5. **Observability metrics.** `livepeer_rtmp_active_sessions` (gauge);
-   `livepeer_rtmp_bytes_in_total{capability,offering}`,
-   `livepeer_hls_segments_written_total{capability,offering}`,
+   captured stderr (128KB ring buffer). Broker refuses to start with
+   `--encoder=auto` on a hardware-less host (set
+   `--encoder-allow-cpu=true`). Disk-full on segment write → tmpfs
+   sized too small (15GB for 100 concurrent at the 5-rung ladder).
+7. **Observability metrics.** `livepeer_rtmp_active_sessions`
+   (gauge); `livepeer_rtmp_bytes_in_total{capability,offering}`,
+   `livepeer_hls_segments_written_total{capability,offering,rung}`,
    `livepeer_ffmpeg_subprocess_failures_total{capability,reason}`,
    `livepeer_rtmp_idle_timeouts_total`,
    `livepeer_mode_hls_cleanup_failed_total` (counters).
 
 ## 13. Migration sequence
 
-Estimated 6 commits, each independently reviewable:
+Estimated 8-10 commits. The 5-rung ABR ladder + LL-HLS + 4 encoder
+profiles + auto-probe make the cadence longer than the original
+passthrough plan. Each commit is independently reviewable.
 
-1. **`feat(media/rtmp): RTMP listener scaffolding (no FFmpeg yet)
-   (C1)`** — `internal/media/rtmp/` package wraps yutopp/go-rtmp;
-   flags `--rtmp-listen-addr`, `--rtmp-max-concurrent-streams`,
+1. **`feat(media/rtmp): RTMP listener scaffolding (C1)`** —
+   `internal/media/rtmp/` package wraps yutopp/go-rtmp; flags
+   `--rtmp-listen-addr`, `--rtmp-max-concurrent-streams`,
    `--rtmp-idle-timeout`, `--rtmp-on-duplicate-key`,
-   `--rtmp-require-publish-auth`. Session record store. Spec change:
-   `publish_auth` field added to the mode spec. Smoke: RTMP push lands,
-   FLV bytes reach `io.Discard`.
+   `--rtmp-require-stream-key`. Session record store. Spec change:
+   `stream_key` field added to the mode spec. **No FFmpeg yet.**
+   Smoke: RTMP push lands, FLV bytes reach `io.Discard`.
 
 2. **`feat(media/encoder): FFmpeg subprocess wrapper + LiveCounter
-   (C2)`** — `internal/media/encoder/` package; `BuildArgs` (passthrough);
-   `progress.go` parses stderr into atomic fields; `LiveCounter` impl
-   on `ffmpeg-progress`. Flags `--ffmpeg-binary`,
-   `--ffmpeg-cancel-grace`. New `Livepeer-Error` codes
-   `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout` added to
-   spec + Go constants.
+   (C2)`** — `internal/media/encoder/` package; bare `exec.Command`
+   subprocess plumbing; `progress.go` parses stderr into atomic
+   fields; `LiveCounter` impl on `ffmpeg-progress`. Flags
+   `--ffmpeg-binary`, `--ffmpeg-cancel-grace`. New `Livepeer-Error`
+   codes `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout`
+   added to spec + Go constants. **No encoder profile yet.** Smoke:
+   subprocess starts, exits cleanly under cancellation.
 
-3. **`feat(media/hls): HLS scratch + HTTP server (C3)`** — `internal/media/hls/`
-   package; HTTP handler at `/hls/<sess>/...` on the existing paid
-   listener. Flags `--hls-segment-duration`, `--hls-playlist-window`,
-   `--hls-scratch-dir`. Mode driver wires RTMP → encoder → HLS scratch
-   end-to-end. First end-to-end smoke: push RTMP, GET HLS, see
-   `#EXTM3U`.
+3. **`feat(media/encoder): probe + selection (C3)`** —
+   `internal/media/encoder/probe.go`; flags `--encoder=auto|nvenc|qsv|vaapi|libx264`,
+   `--encoder-allow-cpu`. Refuse-to-start when probe finds no GPU
+   AND `--encoder-allow-cpu=false`. Smoke: probe correctly identifies
+   the encoder available on test hosts.
 
-4. **`feat(modes/rtmpingresshlsegress): lifetime management (C4)`** —
-   `expires_at` no-push timer, idle-timeout watchdog, `CloseSession`
-   handler at `/v1/cap/{session_id}/end`, optional admin-kill behind
-   `--admin-listen-addr`, scratch cleanup.
+4. **`feat(media/encoder): passthrough + libx264 profiles (C4)`** —
+   `presets.go` defines `passthrough` (`-c:v copy -c:a copy`) and
+   `h264-live-1080p-libx264` (5-rung CPU ladder); `libx264/builder.go`.
+   Smoke: passthrough RTMP→HLS works without GPU; libx264 5-rung
+   ladder works on CI runners.
 
-5. **`test(conformance): end-to-end fixture (C5)`** — fixture file +
+5. **`feat(media/encoder): NVENC profile (C5)`** —
+   `nvenc/builder.go` + `h264-live-1080p-nvenc` preset (5-rung NVENC).
+   **Operator-driven smoke** on real GPU hardware (post-merge); CI
+   exercises only the passthrough profile (§11).
+
+6. **`feat(media/encoder): QSV + VAAPI profiles (C6)`** —
+   `qsv/builder.go` + `vaapi/builder.go` + `h264-live-1080p-{qsv,vaapi}`
+   presets. Operator-driven smoke. C5 + C6 may be split or merged
+   depending on hardware availability for testing.
+
+7. **`feat(media/hls): LL-HLS muxer + legacy fallback (C7)`** —
+   `internal/media/hls/` package; HTTP handler at `/_hls/<sess>/...`
+   on the existing paid listener. Flags `--hls-legacy`,
+   `--hls-part-duration`, `--hls-segment-duration`,
+   `--hls-playlist-window`, `--hls-scratch-dir`. Mode driver wires
+   RTMP → encoder → HLS scratch end-to-end. End-to-end smoke: push
+   RTMP, GET LL-HLS playlist, see `#EXT-X-VERSION:6`.
+
+8. **`feat(modes/rtmpingresshlsegress): lifetime management (C8)`**
+   — `expires_at` no-push timer, idle-timeout watchdog,
+   `CloseSession` handler at `/v1/cap/{session_id}/end`, scratch
+   cleanup. **No operator-kill admin endpoint** (Q8).
+
+9. **`test(conformance): end-to-end fixture (C9)`** — fixture file +
    runner image gets `ffmpeg` baked in. `make test-compose` includes
-   the new fixture.
+   the new fixture; `backend.profile: passthrough` for CI.
 
-6. **`docs: runbook + close 0011-followup (C6)`** — new
-   `capability-broker/docs/operator-runbook.md` per §12.2;
-   cross-reference in `payment-daemon/docs/operator-runbook.md` per
-   §12.1; PLANS.md refreshed; plan moved to `completed/`.
+10. **`docs: runbook + close 0011-followup (C10)`** — new
+    `capability-broker/docs/operator-runbook.md` per §12.2;
+    cross-reference in `payment-daemon/docs/operator-runbook.md` per
+    §12.1; PLANS.md refreshed; plan moved to `completed/`.
 
-C1+C2+C3 can collapse into one commit if each diff is small (~150-300
-lines). The split is for review-tractability.
+## 14. Resolved decisions
 
-## 14. Risks and open questions
+All eight open questions were resolved on 2026-05-06. The implementing
+agent works against these locks; rationale captured for future readers.
 
-1. **RTMPS at the broker boundary.** Recommend plaintext-only between
-   gateway and broker (gateway terminates TLS for the customer). Adds
-   a deployment constraint: broker's `:1935` reachable only from
-   gateway. Ship plaintext-only v0.1, add RTMPS in a followup if
-   operators ask?
+### Q1. RTMPS at the broker boundary
 
-2. **RTMP library choice.** Recommend `yutopp/go-rtmp` (the suite's
-   choice). Add as a direct broker dep, hand-roll, or block on
-   suite-extraction of its `internal/providers/ingest/rtmp` to a
-   public module?
+**DECIDED: plaintext only.** The broker's `:1935` is a private
+interface reachable only from the gateway in production; v0.1
+deployments may expose `:1935` directly to customers (smoke-grade
+only). Gateway terminates customer-facing TLS in production. RTMPS
+at the broker boundary is a future plan if operators concretely ask
+(§4.4).
 
-3. **Transcode profile in v0.1.** Recommend passthrough only —
-   exercises the entire pipeline without GPU dependencies. Confirm:
-   passthrough only, or do we need at least one single-output
-   transcode (e.g. 720p reduction) to exercise FFmpeg-bound
-   work-units?
+### Q2. RTMP library
 
-4. **Resource isolation.** Recommend cgroups for v0.1, not
-   container-per-stream. Cgroups ≈ zero overhead vs ~500ms cold start
-   + ~50MB RAM each per-stream container. Confirm: cgroups now,
-   container isolation as a future plan?
+**DECIDED: `github.com/yutopp/go-rtmp`.** Pure Go (no cgo),
+MIT-licensed, suite-validated. Hand-rolled handshake (~2-3 weeks to
+reinvent) and suite-extraction (touches the suite) both rejected
+(§4.5).
 
-5. **HLS variant.** Recommend HLS v3 mpegts only (broad
-   compatibility). The suite's v2 target is fMP4 byte-range HLS;
-   DASH is its own world. Confirm.
+### Q3. Encoder selection — GPU-default, 5-rung ABR
 
-6. **Stream-key collision policy.** Recommend `reject` second push
-   (safer if URL leaks). Operators opt-in to `replace` via
-   `--rtmp-on-duplicate-key=replace` for auto-reconnect-friendly
-   behaviour. Confirm default.
+**DECIDED: GPU-default, 5-rung H.264 ABR ladder; passthrough is
+CI-smoke-only, not the production default.** Auto-probe priority
+**NVENC → QSV → VAAPI → libx264**; libx264 is opt-in only
+(`--encoder-allow-cpu=true`) and never auto-selected when a GPU
+encoder is available. Four named profiles: `passthrough`,
+`h264-live-1080p-nvenc` (production default),
+`h264-live-1080p-qsv`, `h264-live-1080p-vaapi`,
+`h264-live-1080p-libx264`. NVIDIA Pascal+ is the Livepeer transcoder
+norm. Source for ladder rungs: go-livepeer's `VideoProfile`
+constants + Apple HLS Authoring Spec + Mux published encoder
+recommendations. The suite's `presets/h264-live.yaml:8-43` is a
+sanity-check template — not ported verbatim. Reference for the
+auto-probe pattern: video-worker-node's `codecFlag` selection at
+`internal/providers/ffmpeg/ffmpeg.go:112,120,129` (§5.3, §5.3.1).
 
-7. **Sequencing with plan 0008-followup (gateway-side RTMP adapter).**
-   This plan can land independently — broker's RTMP listener is
-   directly reachable via the URL it returns, with the gateway
-   doing pure passthrough. But the auth model assumes the gateway
-   strips `publish_auth` and validates against the open-session
-   record. Does plan 0008-followup need to land first, or is direct-
-   to-broker acceptable for the v0.1 cut?
+### Q4. Resource isolation
 
-8. **Operator kill admin endpoint.** Recommend yes, behind
-   `--admin-listen-addr` (default disabled). Plan 0018's roster UX
-   is the long-term home; flag-gated raw HTTP is the interim. Ship
-   in v0.1, or wait for 0018?
+**DECIDED: bare `exec.Command` per FFmpeg subprocess; no broker-side
+cgroups, no container-per-stream.** Matches video-worker-node's
+bare-exec model documented at
+`livepeer-network-suite/video-worker-node/docs/subprocess-vs-embed.md:22,34`.
+Container-level Docker / K8s limits enforce per-host fairness at the
+operator deployment layer. `prlimit(2)` per-subprocess wrappers are
+flagged as a future-plan item if real fairness issues surface in
+production. The previously-proposed `backend.resources` cgroup
+config block is dropped (§5.6, §10.2).
+
+### Q5. HLS variant — LL-HLS default
+
+**DECIDED: LL-HLS default, legacy HLS v3 fallback.** LL-HLS:
+`#EXT-X-VERSION:6`, fmp4 segments, 2s segment duration, 333ms
+`#EXT-X-PART` duration, 4-segment rolling window (~1-3s
+glass-to-glass). FFmpeg 7.x. Legacy fallback via `--hls-legacy=true`:
+mpegts + HLS v3 + 6s segments + 5-segment rolling (~12-24s
+glass-to-glass) for older Android players. hls.js + Safari native
+both support LL-HLS (§6.2).
+
+### Q6. Stream-key collision policy
+
+**DECIDED: `reject` default; `replace` opt-in.** Reject is safer
+when URLs leak. Operators with auto-reconnect encoders flip to
+`replace` via `--rtmp-on-duplicate-key=replace` (§4.6).
+
+### Q7. Stream-key naming + URL shape
+
+**DECIDED: rename `publish_auth` → `stream_key`; URL is path-based,
+not query-string.** New name aligns with go-livepeer + mux + twitch
++ youtube vocabulary. URL shape:
+`rtmp://broker:1935/<session_id>/<stream_key>` — exactly mux /
+twitch / youtube's pattern, and matches go-livepeer's
+`mediaserver.go:61` `StreamKeyBytes` model. Length is 32 bytes
+URL-safe random (more entropy than go-livepeer's 6-byte; cheap).
+Broker parses RTMP `PublishingName`, splits, constant-time compares
+against the open-session record. v0.1 model: broker accepts the
+stream-key directly with no external webhook; go-livepeer's
+`AuthWebhookURL` pattern (`mediaserver.go:70-290`) is the
+production-equivalent — local constant-time compare is simpler.
+External webhook integration lives in plan 0008-followup's
+gateway-side adapter. Spec change: `stream_key` field added to
+`livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md`; old
+`publish_auth` field name retired. Backward-compatible
+`--rtmp-require-stream-key=true` (default) flag (§4.2).
+
+### Q8. Operator-kill admin endpoint
+
+**DECIDED: drop from v0.1 entirely.** Rely on the existing four
+termination triggers (§7): `expires_at` (1h hard cap),
+`--rtmp-idle-timeout` (10s no-packet), `SufficientBalance` ticker
+(plan 0015), customer `CloseSession` HTTP. Plan 0018's roster UX is
+the long-term home for operator session controls if real ops
+surfaces stuck-session cases. No operator-kill admin endpoint or
+flag ships in v0.1.
 
 ## 15. Out of scope (deferred)
 
-- Gateway-side RTMP adapter (plan 0008-followup, parallel).
-- ABR ladder transcoding — single passthrough output for v0.1; ABR
-  follows the suite's `Preset` / `Ladder` shape at
-  `livepeer-network-suite/video-worker-node/internal/providers/ffmpeg/live.go:60-111`.
-- Verifiable-receipt extractor (chain-anchored proof-of-work; future
-  plan post-0016).
-- Per-stream chain-anchored billing (lands when 0016 closes).
-- LL-HLS / WebRTC egress — HLS v3 only for v0.1.
-- DRM / token-gated playback — operator concern, not broker
+- **Gateway-side RTMP adapter** — plan 0008-followup, parallel.
+  Customer-facing auth (API keys, mTLS, optional AuthWebhookURL-style
+  integration) lives there.
+- **WebRTC egress** — separate plan; HLS-only for v0.1.
+- **DASH egress** — separate plan; HLS-only for v0.1.
+- **Operator-kill admin endpoint** — Q8 lock; defer to plan 0018's
+  roster UX.
+- **`prlimit(2)` per-subprocess fairness** — Q4 lock; rely on
+  container-level limits in v0.1; revisit if real fairness issues
+  surface.
+- **RTMPS at the broker boundary** — Q1 lock; followup if operators
+  ask. Plaintext between gateway and broker; gateway terminates
+  customer TLS in production.
+- **External `AuthWebhookURL` integration** — Q7 lock; broker uses
+  constant-time compare against open-session record locally.
+  External webhook is plan 0008-followup gateway-adapter territory
+  or a future enhancement.
+- **Verifiable-receipt extractor** — chain-anchored proof-of-work;
+  future plan post-0016.
+- **Per-stream chain-anchored billing** — lands when 0016 closes.
+- **DRM / token-gated playback** — operator concern, not broker
   architecture.
-- Recording / VOD sink — live-only for v0.1.
-- RTMPS at the broker boundary — plaintext between gateway and
-  broker; gateway terminates customer TLS.
-- Per-session FFmpeg version selection — single `--ffmpeg-binary`
-  per broker.
+- **Recording / VOD sink** — live-only for v0.1.
+- **Per-session FFmpeg version selection** — single
+  `--ffmpeg-binary` per broker.
 
 ---
 
@@ -600,7 +859,7 @@ This monorepo:
   code list; extended).
 - `capability-broker/examples/host-config.example.yaml` (config
   schema; this plan extends with `backend.transport: ffmpeg-subprocess`
-  + `resources` block).
+  + `backend.profile`).
 
 Prior reference impl
 (`livepeer-cloud-spe/livepeer-network-suite/video-worker-node/`):
@@ -611,12 +870,19 @@ Prior reference impl
 - `internal/providers/ffmpeg/ffmpeg.go:142-229` (single-shot
   `SystemRunner` cmd/cancellation reference), `:329-376`
   (`ParseProgressStream`).
+- `internal/providers/ffmpeg/ffmpeg.go:112,120,129` (`codecFlag`
+  selection — auto-probe pattern reference per §5.3.1).
 - `internal/providers/ffmpeg/live.go:60-111` (`BuildLiveArgs` ABR
-  shape — v0.2 target), `:131-134` (`atomic.Int64` for `processed`
-  — `LiveCounter` substrate), `:139-227` (`LiveSystemEncoder`),
+  shape — sanity-check template, not a verbatim port),
+  `:131-134` (`atomic.Int64` for `processed` — `LiveCounter`
+  substrate), `:139-227` (`LiveSystemEncoder`),
   `:235-272` (`parseLiveProgress` monotonic-CAS).
-- `internal/providers/hls/hls.go:13-58` (master manifest builder;
-  v0.2 reference).
+- `internal/providers/hls/hls.go:13-58` (HLS-v7 master manifest
+  builder — non-LL precedent; v0.1 broker goes further with LL-HLS).
+- `presets/h264-live.yaml:8-43` (sanity-check template for the
+  5-rung ladder — not ported verbatim).
+- `docs/subprocess-vs-embed.md:22,34` (bare-exec model rationale —
+  no cgroups in v0.1 per §5.6).
 - `internal/service/liverunner/encoder.go:14-39` (`Encoder`
   interface + `EncoderInput`; mirrors here).
 - `internal/service/liverunner/ffmpeg_adapter.go:14-69` (factory
@@ -634,4 +900,4 @@ Cross-plan references in this monorepo:
 - `docs/exec-plans/active/0016-chain-integrated-payment-design.md`
   (parallel; chain integration lands behind it).
 - `docs/exec-plans/active/0018-orch-coordinator-design.md` (roster
-  UX; long-term home for operator session controls per §7 #5).
+  UX; long-term home for operator session controls per Q8).

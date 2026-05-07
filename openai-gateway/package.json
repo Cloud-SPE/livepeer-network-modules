@@ -1,25 +1,33 @@
 {
-  "name": "@tztcloud/openai-gateway",
+  "name": "@livepeer-rewrite/openai-gateway",
   "version": "0.2.0",
-  "description": "Reference OpenAI-compatible gateway demonstrating the new Livepeer wire spec end-to-end",
+  "description": "OpenAI-compatible gateway for the Livepeer network rewrite (paid HTTP adapter)",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
-    "start": "node ./dist/index.js"
+    "start": "node ./dist/index.js",
+    "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.12.2",
     "@grpc/proto-loader": "^0.7.13",
-    "fastify": "^5.1.0"
+    "@livepeer-rewrite/customer-portal": "workspace:*",
+    "drizzle-orm": "^0.36.0",
+    "fastify": "^5.0.0",
+    "js-yaml": "^4.1.0",
+    "pg": "^8.13.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.10",
     "typescript": "^5.6.0"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=20"
   }
 }

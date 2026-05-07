@@ -1,0 +1,26 @@
+# Smoke overlay for the openai-gateway compose stack. Replaces the inline
+# Python mock-backend with a build of the test/mock-runner/ FastAPI image
+# so all five paid OpenAI endpoints (chat / embeddings / transcriptions /
+# speech / images-generations) return canned vLLM-shaped responses for
+# `make smoke` runs that don't have a GPU / live runner.
+#
+# Use: docker compose -f compose.yaml -f compose.smoke.yaml up
+
+services:
+  mock-runner:
+    build:
+      context: ./test/mock-runner
+    networks: [openai-gateway]
+    expose:
+      - "8081"
+
+  broker:
+    depends_on: [mock-runner, payment-daemon]
+
+  gateway:
+    environment:
+      LIVEPEER_BROKER_URL: "http://broker:8080"
+      LIVEPEER_PAYER_DAEMON_SOCKET: "/var/run/livepeer/payer-daemon.sock"
+      PORT: "3000"
+      OPENAI_AUDIO_SPEECH_ENABLED: "false"
+      OPENAI_DEFAULT_OFFERING_PER_CAPABILITY: "/etc/openai-gateway/offerings.yaml"

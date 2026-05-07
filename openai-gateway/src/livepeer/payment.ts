@@ -15,9 +15,6 @@ import * as protoLoader from "@grpc/proto-loader";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Path to the .proto root inside the runtime image. `../../proto` is
-// the layout the Dockerfile uses (proto files copied next to dist/ at
-// /app/proto/livepeer/payments/v1/).
 const PROTO_ROOT = resolve(__dirname, "..", "..", "proto");
 
 const PROTO_FILES = [
@@ -67,6 +64,7 @@ let cachedClient: PayerDaemonClient | null = null;
 
 interface InitOptions {
   socketPath: string;
+  protoRoot?: string;
 }
 
 /**
@@ -82,7 +80,7 @@ export async function init(opts: InitOptions): Promise<void> {
     enums: String,
     defaults: true,
     oneofs: true,
-    includeDirs: [PROTO_ROOT],
+    includeDirs: [opts.protoRoot ?? PROTO_ROOT],
   });
   const proto = grpc.loadPackageDefinition(def) as unknown as {
     livepeer: { payments: { v1: { PayerDaemon: grpc.ServiceClientConstructor } } };

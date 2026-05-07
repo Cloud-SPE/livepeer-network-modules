@@ -1,45 +1,44 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import * as httpMultipart from "../livepeer/http-multipart.js";
+import { Capability } from "../livepeer/capabilityMap.js";
 import { LivepeerBrokerError } from "../livepeer/errors.js";
 import { buildPayment } from "../livepeer/payment.js";
+import { readOrSynthRequestId } from "../livepeer/requestId.js";
+import { HEADER } from "../livepeer/headers.js";
+import { resolveDefaultOffering } from "../service/offerings.js";
 import type { Config } from "../config.js";
 
-/**
- * /v1/audio/transcriptions accepts multipart/form-data with `file` + `model`.
- *
- * v0.1: this route forwards the raw multipart body verbatim to the broker
- * with the original Content-Type (preserving the boundary). The model is
- * extracted from a Livepeer-Model header that the caller passes through —
- * a pragmatic shortcut so we don't have to multipart-parse the body just
- * to read the form-field. A real production gateway would parse the
- * multipart stream, extract `model`, and rebuild on the way out.
- */
 export function registerAudioTranscriptions(app: FastifyInstance, cfg: Config): void {
   app.post(
     "/v1/audio/transcriptions",
     {
-      // Accept any content type; we forward bytes verbatim.
-      bodyLimit: 100 * 1024 * 1024, // 100 MiB
+      bodyLimit: 100 * 1024 * 1024,
     },
     async (req: FastifyRequest, reply: FastifyReply) => {
       const contentType = req.headers["content-type"];
+      const requestId = readOrSynthRequestId(req);
       if (!contentType || !contentType.startsWith("multipart/form-data")) {
         await reply
           .code(400)
+          .header(HEADER.REQUEST_ID, requestId)
           .send({ error: "bad_request", message: "Content-Type must be multipart/form-data" });
         return;
       }
 
-      // Pragmatic v0.1: model from a Livepeer-Model header (caller-provided).
-      const model = (req.headers["livepeer-model"] as string | undefined) ?? "default";
-      const capability = `openai:audio-transcriptions:${model}`;
+      const capability = Capability.AudioTranscriptions;
+      const modelHeader = req.headers["livepeer-model"] as string | undefined;
+      const offering =
+        (modelHeader && modelHeader.length > 0 ? modelHeader : null) ??
+        resolveDefaultOffering(cfg.offerings, { capability }) ??
+        cfg.defaultOffering;
 
-      // The multipart content-type parser registered in server.ts gives
-      // us the raw body as a Buffer.
       const body = req.body as Buffer | undefined;
       if (!body || !Buffer.isBuffer(body)) {
-        await reply.code(400).send({ error: "bad_request", message: "empty multipart body" });
+        await reply
+          .code(400)
+          .header(HEADER.REQUEST_ID, requestId)
+          .send({ error: "bad_request", message: "empty multipart body" });
         return;
       }
 
@@ -47,23 +46,29 @@ export function registerAudioTranscriptions(app: FastifyInstance, cfg: Config): 
         const result = await httpMultipart.send({
           brokerUrl: cfg.brokerUrl,
           capability,
-          offering: cfg.defaultOffering,
-          paymentBlob: await buildPayment({ capabilityId: capability, offeringId: cfg.defaultOffering }),
+          offering,
+          paymentBlob: await buildPayment({ capabilityId: capability, offeringId: offering }),
           body,
           contentType,
+          requestId,
         });
         await reply
           .code(result.status)
           .header("Content-Type", result.headers.get("Content-Type") ?? "application/json")
+          .header(HEADER.REQUEST_ID, requestId)
           .send(Buffer.from(result.body));
       } catch (err) {
         if (err instanceof LivepeerBrokerError) {
           await reply
             .code(err.status >= 500 ? 502 : err.status)
+            .header(HEADER.REQUEST_ID, requestId)
             .send({ error: err.code, message: err.message });
           return;
         }
-        await reply.code(500).send({ error: "internal_error", message: (err as Error).message });
+        await reply
+          .code(500)
+          .header(HEADER.REQUEST_ID, requestId)
+          .send({ error: "internal_error", message: (err as Error).message });
       }
     },
   );

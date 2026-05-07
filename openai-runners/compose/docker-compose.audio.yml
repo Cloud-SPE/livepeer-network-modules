@@ -1,0 +1,45 @@
+services:
+  openai_audio_runner:
+    image: ${REGISTRY:-tztcloud}/openai-audio-runner:${TAG:-v0.8.10}
+    build: ../openai-audio-runner
+    runtime: nvidia
+    environment:
+      - CAPABILITY_NAME=openai-audio-transcriptions
+      - MODEL_ID=openai/whisper-large-v3
+      - MODEL_DIR=/models
+      - RUNNER_PORT=8080
+      - DEVICE=cuda
+      - DTYPE=bfloat16
+      - MAX_QUEUE_SIZE=5
+      - MAX_AUDIO_MB=50
+      - CHUNK_LENGTH_S=30
+      - INFERENCE_BATCH_SIZE=16
+      - METRICS_ENABLED=false
+    volumes:
+      - ai-whisper-models:/models
+    ports:
+      - "8084:8080"
+
+  openai_tts_runner:
+    image: ${REGISTRY:-tztcloud}/openai-tts-runner:${TAG:-v0.8.10}
+    build: ../openai-tts-runner
+    runtime: nvidia
+    environment:
+      - CAPABILITY_NAME=openai-audio-speech
+      - MODEL_ID=hexgrad/Kokoro-82M
+      - MODEL_DIR=/models
+      - RUNNER_PORT=8080
+      - DEVICE=cuda
+      - MAX_QUEUE_SIZE=5
+      - LANG_CODE=a
+      - MAX_INPUT_CHARS=4000
+      - DEFAULT_VOICE=af_bella
+      - METRICS_ENABLED=false
+    volumes:
+      - ai-kokoro-models:/models
+    ports:
+      - "8085:8080"
+
+volumes:
+  ai-whisper-models: {}
+  ai-kokoro-models: {}

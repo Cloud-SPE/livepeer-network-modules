@@ -1,0 +1,300 @@
+presets:
+  # ── Standard 4-rung H.264 ABR Ladder ──
+  - name: abr-standard
+    description: "Standard 4-rung HLS ABR ladder (1080p/720p/480p/360p)"
+    type: abr
+    format: hls
+    hls_mode: fmp4_single_file
+    segment_duration: 6
+    renditions:
+      - name: "1080p"
+        video:
+          codec: h264
+          width: 1920
+          height: 1080
+          bitrate: "5M"
+          max_bitrate: "7.5M"
+          profile: high
+          level: "4.1"
+        audio:
+          codec: aac
+          bitrate: "128k"
+          channels: 2
+      - name: "720p"
+        video:
+          codec: h264
+          width: 1280
+          height: 720
+          bitrate: "2.5M"
+          max_bitrate: "3.75M"
+          profile: high
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "96k"
+          channels: 2
+      - name: "480p"
+        video:
+          codec: h264
+          width: 854
+          height: 480
+          bitrate: "1M"
+          max_bitrate: "1.5M"
+          profile: main
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "96k"
+          channels: 2
+      - name: "360p"
+        video:
+          codec: h264
+          width: 640
+          height: 360
+          bitrate: "600k"
+          max_bitrate: "900k"
+          profile: main
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "64k"
+          channels: 2
+
+  # ── Premium 5+1 rung with audio-only ──
+  - name: abr-premium
+    description: "Premium 5+1 rung ABR ladder (4K/1080p/720p/480p/360p + audio-only)"
+    type: abr
+    format: hls
+    hls_mode: fmp4_single_file
+    segment_duration: 6
+    renditions:
+      - name: "2160p"
+        video:
+          codec: h264
+          width: 3840
+          height: 2160
+          bitrate: "15M"
+          max_bitrate: "20M"
+          profile: high
+          level: "5.1"
+        audio:
+          codec: aac
+          bitrate: "192k"
+          channels: 2
+      - name: "1080p"
+        video:
+          codec: h264
+          width: 1920
+          height: 1080
+          bitrate: "5M"
+          max_bitrate: "7.5M"
+          profile: high
+          level: "4.1"
+        audio:
+          codec: aac
+          bitrate: "128k"
+          channels: 2
+      - name: "720p"
+        video:
+          codec: h264
+          width: 1280
+          height: 720
+          bitrate: "2.5M"
+          max_bitrate: "3.75M"
+          profile: high
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "96k"
+          channels: 2
+      - name: "480p"
+        video:
+          codec: h264
+          width: 854
+          height: 480
+          bitrate: "1M"
+          max_bitrate: "1.5M"
+          profile: main
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "96k"
+          channels: 2
+      - name: "360p"
+        video:
+          codec: h264
+          width: 640
+          height: 360
+          bitrate: "600k"
+          max_bitrate: "900k"
+          profile: main
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "64k"
+          channels: 2
+      - name: "audio-only"
+        audio:
+          codec: aac
+          bitrate: "64k"
+          channels: 2
+
+  # ── Mobile / bandwidth-constrained ──
+  - name: abr-mobile
+    description: "Mobile-optimized 3-rung ABR ladder (720p/480p/360p)"
+    type: abr
+    format: hls
+    hls_mode: fmp4_single_file
+    segment_duration: 6
+    renditions:
+      - name: "720p"
+        video:
+          codec: h264
+          width: 1280
+          height: 720
+          bitrate: "2.5M"
+          max_bitrate: "3.75M"
+          profile: high
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "96k"
+          channels: 2
+      - name: "480p"
+        video:
+          codec: h264
+          width: 854
+          height: 480
+          bitrate: "1M"
+          max_bitrate: "1.5M"
+          profile: main
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "96k"
+          channels: 2
+      - name: "360p"
+        video:
+          codec: h264
+          width: 640
+          height: 360
+          bitrate: "600k"
+          max_bitrate: "900k"
+          profile: main
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "64k"
+          channels: 2
+
+  # ── HEVC top rungs + H.264 fallback ──
+  - name: abr-hevc
+    description: "HEVC top rungs with H.264 lower rungs (4K-HEVC/1080p-HEVC/720p/480p)"
+    type: abr
+    format: hls
+    hls_mode: fmp4_single_file
+    segment_duration: 6
+    renditions:
+      - name: "2160p-hevc"
+        video:
+          codec: hevc
+          width: 3840
+          height: 2160
+          bitrate: "10M"
+          max_bitrate: "14M"
+        audio:
+          codec: aac
+          bitrate: "192k"
+          channels: 2
+      - name: "1080p-hevc"
+        video:
+          codec: hevc
+          width: 1920
+          height: 1080
+          bitrate: "3.5M"
+          max_bitrate: "5M"
+        audio:
+          codec: aac
+          bitrate: "128k"
+          channels: 2
+      - name: "720p"
+        video:
+          codec: h264
+          width: 1280
+          height: 720
+          bitrate: "2.5M"
+          max_bitrate: "3.75M"
+          profile: high
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "96k"
+          channels: 2
+      - name: "480p"
+        video:
+          codec: h264
+          width: 854
+          height: 480
+          bitrate: "1M"
+          max_bitrate: "1.5M"
+          profile: main
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "96k"
+          channels: 2
+
+  # ── AV1 top rungs + H.264 fallback ──
+  - name: abr-av1
+    description: "AV1 top rungs with H.264 lower rungs (4K-AV1/1080p-AV1/720p-AV1/480p)"
+    type: abr
+    format: hls
+    hls_mode: fmp4_single_file
+    segment_duration: 6
+    renditions:
+      - name: "2160p-av1"
+        video:
+          codec: av1
+          width: 3840
+          height: 2160
+          bitrate: "8M"
+          max_bitrate: "12M"
+        audio:
+          codec: aac
+          bitrate: "192k"
+          channels: 2
+      - name: "1080p-av1"
+        video:
+          codec: av1
+          width: 1920
+          height: 1080
+          bitrate: "2.5M"
+          max_bitrate: "3.75M"
+        audio:
+          codec: aac
+          bitrate: "128k"
+          channels: 2
+      - name: "720p-av1"
+        video:
+          codec: av1
+          width: 1280
+          height: 720
+          bitrate: "1.5M"
+          max_bitrate: "2.25M"
+        audio:
+          codec: aac
+          bitrate: "96k"
+          channels: 2
+      - name: "480p"
+        video:
+          codec: h264
+          width: 854
+          height: 480
+          bitrate: "1M"
+          max_bitrate: "1.5M"
+          profile: main
+          level: "3.1"
+        audio:
+          codec: aac
+          bitrate: "96k"
+          channels: 2

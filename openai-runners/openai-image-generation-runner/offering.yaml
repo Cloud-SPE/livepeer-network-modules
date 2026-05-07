@@ -1,0 +1,29 @@
+capability: image-generation
+description: |
+  Diffusers-based text-to-image runner. Supports SDXL, RealVisXL, and
+  FLUX model families. Single-process / single-GPU; warmup pass runs at
+  startup so first real request hits a hot pipeline.
+
+offerings:
+  - name: text-to-image
+    description: OpenAI-compatible image generation
+    methods:
+      - POST /v1/images/generations
+    response_formats: [b64_json]
+    rate_card_hints:
+      unit: images
+      quality_modifier: hd  # 2x steps when quality=hd
+
+models:
+  - id: SG161222/RealVisXL_V4.0_Lightning
+    family: RealVisXL
+    default_steps: 6
+    default_guidance: 1.5
+  - id: black-forest-labs/FLUX.1-dev
+    family: FLUX
+    default_steps: 28
+    default_guidance: 3.5
+    notes: |
+      Loads with model_cpu_offload — keeps peak VRAM at ~12-16 GB on
+      24-GB-class GPUs. Do not enable xformers on FLUX (built-in flash
+      attention; xformers + offload causes OOM).

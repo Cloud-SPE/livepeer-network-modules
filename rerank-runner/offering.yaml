@@ -1,0 +1,24 @@
+capability: rerank
+description: |
+  Cohere-compatible reranking runner. Loads a sentence-transformers
+  CrossEncoder (default zerank-2, a 4-billion-parameter Qwen3-based
+  model) and scores documents against a query. Sorted descending by
+  relevance score; supports top_n + return_documents.
+
+offerings:
+  - name: cross-encoder-rerank
+    description: Cohere-compatible /v1/rerank
+    methods:
+      - POST /v1/rerank
+    rate_card_hints:
+      unit: documents
+      max_documents_per_request: 1000
+
+models:
+  - id: zerank-2
+    huggingface_id: zeroentropy/zerank-2
+    parameters: 4B
+    family: Qwen3
+    notes: |
+      Tokenizer has no native pad_token; runner sets pad_token = eos_token
+      at startup so batched inference works.

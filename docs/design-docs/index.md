@@ -8,6 +8,8 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [requirements.md](./requirements.md) | active | The 11 supply-side requirements with rationale |
 | [architecture-overview.md](./architecture-overview.md) | active | The 8-layer proposed architecture at a glance |
 | [migration-from-suite.md](./migration-from-suite.md) | active | Suite-to-rewrite component map, phased deprecation timeline (gated by v1.0.0), and what the suite preserves long-term (cold key, on-chain identity, chain state) |
+| [gpu-requirements.md](./gpu-requirements.md) | active | NVIDIA Pascal+ floor + per-vendor (Intel QSV, AMD VAAPI) matrix for the workload runners; CUDA toolkit alignment + multi-arch policy per OQ4 |
+| [build-system.md](./build-system.md) | active | Canonical base images (python:3.12-slim, golang:1.22-alpine, ubuntu:24.04, nvidia/cuda:12.9.1-devel-ubuntu24.04) + image-tag pinning + buildx orchestration for the workload runners |
 
 Stubs (to be written as we drill in):
 

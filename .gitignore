@@ -21,6 +21,10 @@ Thumbs.db
 /out/
 /bin/
 
+# Compiled Go binaries (built into runner Docker images, not checked in)
+/video-runners/transcode-runner/transcode-runner
+/video-runners/abr-runner/abr-runner
+
 # Node / pnpm
 node_modules/
 **/node_modules/

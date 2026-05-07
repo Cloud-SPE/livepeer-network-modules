@@ -1,0 +1,163 @@
+services:
+  transcode_runner:
+    image: ${REGISTRY:-tztcloud}/transcode-runner:${TAG:-v0.8.10}
+    build:
+      context: ..
+      dockerfile: transcode-runner/Dockerfile
+      target: runtime-nvidia
+      args:
+        REGISTRY: ${REGISTRY:-tztcloud}
+        TAG: ${TAG:-v0.8.10}
+    runtime: nvidia
+    environment:
+      - CAPABILITY_NAME=transcode-vod
+      - RUNNER_ADDR=:8080
+      - MAX_QUEUE_SIZE=5
+      - TEMP_DIR=/tmp/transcode
+      - JOB_TTL_SECONDS=3600
+      - METRICS_ENABLED=false
+    volumes:
+      - transcode-temp:/tmp/transcode
+    ports:
+      - "8086:8080"
+
+  abr_runner:
+    image: ${REGISTRY:-tztcloud}/abr-runner:${TAG:-v0.8.10}
+    build:
+      context: ..
+      dockerfile: abr-runner/Dockerfile
+      target: runtime-nvidia
+      args:
+        REGISTRY: ${REGISTRY:-tztcloud}
+        TAG: ${TAG:-v0.8.10}
+    runtime: nvidia
+    environment:
+      - CAPABILITY_NAME=abr-ladder
+      - RUNNER_ADDR=:8080
+      - MAX_QUEUE_SIZE=2
+      - TEMP_DIR=/tmp/abr
+      - JOB_TTL_SECONDS=3600
+      - METRICS_ENABLED=false
+    volumes:
+      - abr-temp:/tmp/abr
+    ports:
+      - "8087:8080"
+
+  transcode_runner_intel:
+    image: ${REGISTRY:-tztcloud}/transcode-runner-intel:${TAG:-v0.8.10}
+    profiles: [intel]
+    build:
+      context: ..
+      dockerfile: transcode-runner/Dockerfile
+      target: runtime-intel
+      args:
+        REGISTRY: ${REGISTRY:-tztcloud}
+        TAG: ${TAG:-v0.8.10}
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - CAPABILITY_NAME=transcode-vod
+      - RUNNER_ADDR=:8080
+      - MAX_QUEUE_SIZE=5
+      - TEMP_DIR=/tmp/transcode
+      - JOB_TTL_SECONDS=3600
+      - METRICS_ENABLED=false
+    volumes:
+      - transcode-temp:/tmp/transcode
+
+  abr_runner_intel:
+    image: ${REGISTRY:-tztcloud}/abr-runner-intel:${TAG:-v0.8.10}
+    profiles: [intel]
+    build:
+      context: ..
+      dockerfile: abr-runner/Dockerfile
+      target: runtime-intel
+      args:
+        REGISTRY: ${REGISTRY:-tztcloud}
+        TAG: ${TAG:-v0.8.10}
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - CAPABILITY_NAME=abr-ladder
+      - RUNNER_ADDR=:8080
+      - MAX_QUEUE_SIZE=2
+      - TEMP_DIR=/tmp/abr
+      - JOB_TTL_SECONDS=3600
+      - METRICS_ENABLED=false
+    volumes:
+      - abr-temp:/tmp/abr
+
+  transcode_runner_amd:
+    image: ${REGISTRY:-tztcloud}/transcode-runner-amd:${TAG:-v0.8.10}
+    profiles: [amd]
+    build:
+      context: ..
+      dockerfile: transcode-runner/Dockerfile
+      target: runtime-amd
+      args:
+        REGISTRY: ${REGISTRY:-tztcloud}
+        TAG: ${TAG:-v0.8.10}
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - CAPABILITY_NAME=transcode-vod
+      - RUNNER_ADDR=:8080
+      - MAX_QUEUE_SIZE=5
+      - TEMP_DIR=/tmp/transcode
+      - JOB_TTL_SECONDS=3600
+      - METRICS_ENABLED=false
+    volumes:
+      - transcode-temp:/tmp/transcode
+
+  abr_runner_amd:
+    image: ${REGISTRY:-tztcloud}/abr-runner-amd:${TAG:-v0.8.10}
+    profiles: [amd]
+    build:
+      context: ..
+      dockerfile: abr-runner/Dockerfile
+      target: runtime-amd
+      args:
+        REGISTRY: ${REGISTRY:-tztcloud}
+        TAG: ${TAG:-v0.8.10}
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - CAPABILITY_NAME=abr-ladder
+      - RUNNER_ADDR=:8080
+      - MAX_QUEUE_SIZE=2
+      - TEMP_DIR=/tmp/abr
+      - JOB_TTL_SECONDS=3600
+      - METRICS_ENABLED=false
+    volumes:
+      - abr-temp:/tmp/abr
+
+  minio:
+    image: minio/minio:latest
+    profiles: [storage]
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minio4dmin
+      - MINIO_ROOT_PASSWORD=minio4dmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  minio_init:
+    image: minio/mc:latest
+    profiles: [storage]
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3 &&
+      mc alias set local http://minio:9000 minio4dmin minio4dmin &&
+      mc mb --ignore-existing local/transcoded &&
+      mc anonymous set public local/transcoded
+      "
+
+volumes:
+  transcode-temp: {}
+  abr-temp: {}
+  minio-data: {}

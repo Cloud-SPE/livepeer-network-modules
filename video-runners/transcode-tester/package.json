@@ -1,0 +1,14 @@
+{
+  "name": "transcode-tester",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+  },
+  "scripts": {
+    "test:transcode": "node test-transcode.mjs quick",
+    "test:transcode:presets": "node test-transcode.mjs presets",
+    "test:abr": "node test-abr.mjs quick",
+    "test:abr:presets": "node test-abr.mjs presets"
+  }
+}
+

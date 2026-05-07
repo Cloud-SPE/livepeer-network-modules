@@ -1,0 +1,25 @@
+{
+  "input_url": "http://minio:9000/transcoded/bbb.mp4",
+  "preset": "abr-standard",
+  "output_urls": {
+    "manifest": "http://172.31.0.2:9000/transcoded/output/master.m3u8",
+    "renditions": {
+      "1080p": {
+        "playlist": "http://172.31.0.2:9000/transcoded/output/1080p/playlist.m3u8",
+        "stream": "http://172.31.0.2:9000/transcoded/output/1080p/stream.mp4"
+      },
+      "720p": {
+        "playlist": "http://172.31.0.2:9000/transcoded/output/720p/playlist.m3u8",
+        "stream": "http://172.31.0.2:9000/transcoded/output/720p/stream.mp4"
+      },
+      "480p": {
+        "playlist": "http://172.31.0.2:9000/transcoded/output/480p/playlist.m3u8",
+        "stream": "http://172.31.0.2:9000/transcoded/output/480p/stream.mp4"
+      },
+      "360p": {
+        "playlist": "http://172.31.0.2:9000/transcoded/output/360p/playlist.m3u8",
+        "stream": "http://172.31.0.2:9000/transcoded/output/360p/stream.mp4"
+      }
+    }
+  }
+}

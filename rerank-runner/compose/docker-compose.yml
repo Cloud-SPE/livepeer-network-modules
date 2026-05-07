@@ -1,0 +1,33 @@
+services:
+  rerank_runner:
+    image: ${REGISTRY:-tztcloud}/rerank-runner:${TAG:-v0.8.10}
+    build: ..
+    runtime: nvidia
+    environment:
+      - CAPABILITY_NAME=rerank
+      - MODEL_ID=zeroentropy/zerank-2
+      - MODEL_DIR=/models
+      - RUNNER_PORT=8080
+      - DEVICE=cuda
+      - DTYPE=bfloat16
+      - MAX_QUEUE_SIZE=5
+      - MAX_BATCH_SIZE=1000
+      - INFERENCE_BATCH_SIZE=64
+      - METRICS_ENABLED=false
+    volumes:
+      - ai-rerank-models:/models
+    ports:
+      - "8081:8080"
+
+  rerank_model_downloader:
+    image: ${REGISTRY:-tztcloud}/rerank-model-downloader:${TAG:-v0.8.10}
+    build: ../model-downloader
+    profiles: [downloader]
+    environment:
+      - MODEL_ID=zeroentropy/zerank-2
+      - MODEL_DIR=/models
+    volumes:
+      - ai-rerank-models:/models
+
+volumes:
+  ai-rerank-models: {}

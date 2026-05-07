@@ -1,0 +1,21 @@
+[project]
+name = "openai_tts_runner"
+version = "0.1.0"
+description = "Kokoro TTS runner — OpenAI-compatible /v1/audio/speech."
+requires-python = ">=3.12"
+dependencies = [
+    "kokoro>=0.9.4",
+    "misaki[en]>=0.9.4",
+    "soundfile>=0.12.1",
+    "numpy>=1.26.0",
+]
+
+[project.scripts]
+openai-tts-runner = "openai_tts_runner.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openai_tts_runner"]

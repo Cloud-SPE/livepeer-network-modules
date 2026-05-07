@@ -1,0 +1,27 @@
+capability: openai-audio-transcriptions
+description: |
+  Whisper-based speech-to-text runner. Serves both OpenAI-compatible
+  /v1/audio/transcriptions and /v1/audio/translations endpoints. Default
+  model is openai/whisper-large-v3.
+
+offerings:
+  - name: whisper-transcribe
+    description: Speech-to-text transcription
+    methods:
+      - POST /v1/audio/transcriptions
+    response_formats: [json, text, srt, vtt, verbose_json]
+    rate_card_hints:
+      unit: audio_seconds
+  - name: whisper-translate
+    description: Translate speech audio to English text
+    methods:
+      - POST /v1/audio/translations
+    response_formats: [json, text, srt, vtt, verbose_json]
+    rate_card_hints:
+      unit: audio_seconds
+
+models:
+  - id: whisper-large-v3
+    huggingface_id: openai/whisper-large-v3
+    sample_rate_hz: 16000
+    chunk_length_s: 30

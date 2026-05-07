@@ -1,0 +1,246 @@
+presets:
+  # ── H.264 Ladder ──
+  - name: h264-4k
+    description: "H.264 4K UHD at 15Mbps"
+    video_codec: h264
+    audio_codec: aac
+    width: 3840
+    height: 2160
+    bitrate: "15M"
+    max_rate: "20M"
+    buf_size: "40M"
+    pix_fmt: yuv420p
+    profile: high
+    gpu_required: true
+    audio_bitrate: "192k"
+    audio_channels: 2
+
+  - name: h264-1080p
+    description: "H.264 1080p Full HD at 5Mbps"
+    video_codec: h264
+    audio_codec: aac
+    width: 1920
+    height: 1080
+    bitrate: "5M"
+    max_rate: "7M"
+    buf_size: "14M"
+    pix_fmt: yuv420p
+    profile: high
+    gpu_required: true
+    audio_bitrate: "128k"
+    audio_channels: 2
+
+  - name: h264-720p
+    description: "H.264 720p HD at 3Mbps"
+    video_codec: h264
+    audio_codec: aac
+    width: 1280
+    height: 720
+    bitrate: "3M"
+    max_rate: "4.5M"
+    buf_size: "9M"
+    pix_fmt: yuv420p
+    profile: high
+    gpu_required: true
+    audio_bitrate: "128k"
+    audio_channels: 2
+
+  - name: h264-480p
+    description: "H.264 480p SD at 1.5Mbps"
+    video_codec: h264
+    audio_codec: aac
+    width: 854
+    height: 480
+    bitrate: "1500k"
+    max_rate: "2M"
+    buf_size: "4M"
+    pix_fmt: yuv420p
+    profile: main
+    gpu_required: true
+    audio_bitrate: "96k"
+    audio_channels: 2
+
+  - name: h264-360p
+    description: "H.264 360p at 800kbps"
+    video_codec: h264
+    audio_codec: aac
+    width: 640
+    height: 360
+    bitrate: "800k"
+    max_rate: "1200k"
+    buf_size: "2400k"
+    pix_fmt: yuv420p
+    profile: main
+    gpu_required: true
+    audio_bitrate: "64k"
+    audio_channels: 2
+
+  # ── HEVC / H.265 Ladder ──
+  - name: hevc-4k
+    description: "HEVC 4K UHD at 10Mbps"
+    video_codec: hevc
+    audio_codec: aac
+    width: 3840
+    height: 2160
+    bitrate: "10M"
+    max_rate: "14M"
+    buf_size: "28M"
+    pix_fmt: yuv420p
+    profile: main
+    tier: main
+    gpu_required: true
+    audio_bitrate: "192k"
+    audio_channels: 2
+
+  - name: hevc-1080p
+    description: "HEVC 1080p Full HD at 3.5Mbps"
+    video_codec: hevc
+    audio_codec: aac
+    width: 1920
+    height: 1080
+    bitrate: "3500k"
+    max_rate: "5M"
+    buf_size: "10M"
+    pix_fmt: yuv420p
+    profile: main
+    gpu_required: true
+    audio_bitrate: "128k"
+    audio_channels: 2
+
+  - name: hevc-720p
+    description: "HEVC 720p HD at 2Mbps"
+    video_codec: hevc
+    audio_codec: aac
+    width: 1280
+    height: 720
+    bitrate: "2M"
+    max_rate: "3M"
+    buf_size: "6M"
+    pix_fmt: yuv420p
+    profile: main
+    gpu_required: true
+    audio_bitrate: "128k"
+    audio_channels: 2
+
+  # ── AV1 Ladder ──
+  - name: av1-1080p
+    description: "AV1 1080p at 3Mbps (requires Ada Lovelace+)"
+    video_codec: av1
+    audio_codec: aac
+    width: 1920
+    height: 1080
+    bitrate: "3M"
+    max_rate: "4.5M"
+    buf_size: "9M"
+    pix_fmt: yuv420p
+    gpu_required: true
+    audio_bitrate: "128k"
+    audio_channels: 2
+
+  - name: av1-720p
+    description: "AV1 720p at 1.8Mbps (requires Ada Lovelace+)"
+    video_codec: av1
+    audio_codec: aac
+    width: 1280
+    height: 720
+    bitrate: "1800k"
+    max_rate: "2700k"
+    buf_size: "5400k"
+    pix_fmt: yuv420p
+    gpu_required: true
+    audio_bitrate: "128k"
+    audio_channels: 2
+
+  # ── Social Media Presets ──
+  - name: social-landscape
+    description: "Social media landscape 1080p at 8Mbps"
+    video_codec: h264
+    audio_codec: aac
+    width: 1920
+    height: 1080
+    bitrate: "8M"
+    max_rate: "10M"
+    buf_size: "20M"
+    pix_fmt: yuv420p
+    profile: high
+    gpu_required: true
+    audio_bitrate: "128k"
+    audio_channels: 2
+
+  - name: social-vertical
+    description: "Social media vertical 9:16 at 6Mbps"
+    video_codec: h264
+    audio_codec: aac
+    width: 1080
+    height: 1920
+    bitrate: "6M"
+    max_rate: "8M"
+    buf_size: "16M"
+    pix_fmt: yuv420p
+    profile: high
+    gpu_required: true
+    audio_bitrate: "128k"
+    audio_channels: 2
+
+  - name: social-square
+    description: "Social media square 1:1 at 5Mbps"
+    video_codec: h264
+    audio_codec: aac
+    width: 1080
+    height: 1080
+    bitrate: "5M"
+    max_rate: "7M"
+    buf_size: "14M"
+    pix_fmt: yuv420p
+    profile: high
+    gpu_required: true
+    audio_bitrate: "128k"
+    audio_channels: 2
+
+  # ── Archive Presets ──
+  - name: archive-hevc
+    description: "HEVC archive quality 1080p at 6Mbps"
+    video_codec: hevc
+    audio_codec: aac
+    width: 1920
+    height: 1080
+    bitrate: "6M"
+    max_rate: "8M"
+    buf_size: "16M"
+    pix_fmt: yuv420p
+    profile: main
+    gpu_required: true
+    audio_bitrate: "192k"
+    audio_channels: 2
+    audio_sample_rate: 48000
+
+  - name: archive-av1
+    description: "AV1 archive quality 1080p at 4Mbps (requires Ada Lovelace+)"
+    video_codec: av1
+    audio_codec: aac
+    width: 1920
+    height: 1080
+    bitrate: "4M"
+    max_rate: "6M"
+    buf_size: "12M"
+    pix_fmt: yuv420p
+    gpu_required: true
+    audio_bitrate: "192k"
+    audio_channels: 2
+    audio_sample_rate: 48000
+
+  # ── Utility Presets ──
+  - name: proxy-edit
+    description: "Low-res proxy for editing at 2Mbps"
+    video_codec: h264
+    audio_codec: aac
+    width: 960
+    height: 540
+    bitrate: "2M"
+    max_rate: "3M"
+    buf_size: "6M"
+    pix_fmt: yuv420p
+    profile: main
+    gpu_required: true
+    audio_bitrate: "96k"
+    audio_channels: 2

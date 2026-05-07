@@ -2,12 +2,15 @@
 // session-control-plus-media@v0 interaction-mode driver per
 // livepeer-network-protocol/modes/session-control-plus-media.md.
 //
-// v0.1 NARROW SCOPE: session-open phase only. Returns 202 with
-// session_id / control_url / media.{publish_url, publish_auth} /
-// expires_at. The control-plane WebSocket lifecycle and media-plane
-// provisioning are deferred to a follow-up plan.
+// This package owns three planes:
 //
-// See plan 0012 for the explicit out-of-scope list.
+//   - control-WS lifecycle (this file + controlws*.go): session-open POST,
+//     WebSocket upgrade at /v1/cap/{session_id}/control, frame envelope,
+//     heartbeat, reconnect-window state machine.
+//   - media-plane provisioning: pion/webrtc relay (internal/media/webrtc/)
+//     with SDP offer/answer + ICE trickle over the control-WS.
+//   - session-runner subprocess (internal/media/sessionrunner/): per-session
+//     workload-specific container; gRPC unix-socket IPC.
 package sessioncontrolplusmedia
 
 import (
@@ -15,9 +18,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
@@ -26,20 +32,65 @@ import (
 // Mode is the canonical mode-name@vN string for this driver.
 const Mode = "session-control-plus-media@v0"
 
-// Driver implements modes.Driver.
-type Driver struct{}
+// DefaultExpiresIn is the no-attach deadline window. Spec
+// recommendation: ~1 hour.
+const DefaultExpiresIn = 1 * time.Hour
+
+// Driver implements modes.Driver and owns the control-WS upgrade
+// handler.
+type Driver struct {
+	store    *Store
+	cfg      ControlWSConfig
+	upgrader websocket.Upgrader
+	backend  Backend
+}
 
 // Compile-time interface check.
 var _ modes.Driver = (*Driver)(nil)
 
-// New returns a stateless session-control-plus-media driver.
-func New() *Driver { return &Driver{} }
+// New returns a driver bound to a session store + control-WS config.
+// The store is shared with the broker's mux (the upgrade handler) and
+// any watchdog goroutines.
+func New(store *Store, cfg ControlWSConfig) *Driver {
+	if cfg.HandshakeTimeout <= 0 {
+		cfg.HandshakeTimeout = 10 * time.Second
+	}
+	return &Driver{
+		store: store,
+		cfg:   cfg,
+		upgrader: websocket.Upgrader{
+			HandshakeTimeout: cfg.HandshakeTimeout,
+			CheckOrigin:      func(r *http.Request) bool { return true },
+		},
+	}
+}
+
+// SetBackend wires the runner / media backend the control-WS relays
+// against. Optional: when nil, workload envelopes are dropped silently
+// (loopback mode used by the C1 standalone tests).
+func (d *Driver) SetBackend(b Backend) { d.backend = b }
+
+// Store returns the driver's session store. Exposed for the
+// composition root (the mux registers a handler that reads it; the
+// reconnect-window watchdog goroutine consumes it).
+func (d *Driver) Store() *Store { return d.store }
+
+// Config returns the driver's control-WS config (test helper).
+func (d *Driver) Config() ControlWSConfig { return d.cfg }
+
+// RunReconnectWatchdog starts the per-store reconnect-window expiry
+// loop. Returns when ctx is canceled. Callers run it on its own
+// goroutine.
+func (d *Driver) RunReconnectWatchdog(ctx context.Context) {
+	d.store.reconnectWatchdog(ctx, d, d.cfg.ReconnectWindow)
+}
 
 // Mode returns the mode identifier.
 func (d *Driver) Mode() string { return Mode }
 
-// Serve responds to the session-open POST with the required body fields.
-func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
+// Serve responds to the session-open POST with the required body
+// fields and registers the session in the store.
+func (d *Driver) Serve(_ context.Context, p modes.Params) error {
 	if p.Request.Method != http.MethodPost {
 		livepeerheader.WriteError(p.Writer, http.StatusMethodNotAllowed, livepeerheader.ErrModeUnsupported,
 			"session-control-plus-media@v0 session-open is POST")
@@ -67,14 +118,43 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 		return nil
 	}
 
+	now := time.Now().UTC()
+	rec := &SessionRecord{
+		SessionID:    sessID,
+		CapabilityID: p.Capability.ID,
+		OfferingID:   p.Capability.OfferingID,
+		OpenedAt:     now,
+		ExpiresAt:    now.Add(DefaultExpiresIn),
+		LiveCounter:  p.LiveCounter,
+	}
+	if err := d.store.Add(rec); err != nil {
+		livepeerheader.WriteError(p.Writer, http.StatusInternalServerError, livepeerheader.ErrInternalError,
+			"session store: "+err.Error())
+		return nil
+	}
+
+	if d.backend != nil {
+		ctx, cancel := context.WithCancel(context.Background())
+		ctrl, err := d.backend.AttachControl(ctx, sessID)
+		if err != nil {
+			cancel()
+			d.store.Remove(sessID)
+			livepeerheader.WriteError(p.Writer, http.StatusInternalServerError, livepeerheader.ErrInternalError,
+				"backend attach: "+err.Error())
+			return nil
+		}
+		rec.control = &ctrl
+		rec.Cancel = cancel
+	}
+
 	body := sessionOpenResponse{
 		SessionID:  sessID,
 		ControlURL: ctrlURL,
 		Media: mediaDescriptor{
 			PublishURL:  pubURL,
-			PublishAuth: "stub-publish-auth-" + sessID, // placeholder for v0.1
+			PublishAuth: "webrtc:negotiate-on-control-ws",
 		},
-		ExpiresAt: time.Now().UTC().Add(1 * time.Hour).Format(time.RFC3339),
+		ExpiresAt: rec.ExpiresAt.Format(time.RFC3339),
 	}
 	encoded, _ := json.Marshal(body)
 
@@ -137,10 +217,4 @@ func derivePublishURL(backendURL, sessID string) (string, error) {
 	return scheme + "://" + host + "/media/" + sessID, nil
 }
 
-var errInvalidBackend = errInvalidBackendURL{}
-
-type errInvalidBackendURL struct{}
-
-func (errInvalidBackendURL) Error() string {
-	return "backend.url has empty host; cannot derive session URLs"
-}
+var errInvalidBackend = errors.New("backend.url has empty host; cannot derive session URLs")

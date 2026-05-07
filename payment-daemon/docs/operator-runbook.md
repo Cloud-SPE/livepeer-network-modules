@@ -605,3 +605,84 @@ the code.
 A misconfigured production daemon that starts up clean and silent is
 worse than one that fails fast. The startup sequence is deliberately
 load-bearing — read the logs.
+
+---
+
+## 11. Session-control-plus-media operations
+
+Cross-cutting deltas for the broker's `session-control-plus-media@v0`
+mode. The mode driver itself ships with the broker; this section
+captures the operator-facing knobs and failure modes.
+
+### 11.1. Container-runtime prereq
+
+Docker daemon must be running on the broker host with image registry
+credentials configured for the operator's runner image. The broker's
+`--container-runtime` flag defaults to `docker`; the alternative
+`process` runtime is debug-only and bypasses the runtime entirely.
+
+### 11.2. Image management
+
+Operator pulls the runner image; the broker does not vendor it. Pin to
+a digest in production. Rotation = push new image + update
+`host-config.yaml`'s `capabilities[].backend.session_runner.image` +
+SIGHUP the broker. The `--session-control-max-concurrent-sessions` cap
+governs how many runners can run simultaneously per broker host.
+
+### 11.3. WebRTC firewall
+
+The pion media-plane binds UDP ports `--webrtc-udp-port-min` through
+`--webrtc-udp-port-max` (default `40000-49999`). The full range must be
+reachable from customer clients. STUN config for NAT traversal is
+operator-provisioned via the customer-side player; TURN is not bundled
+by the broker.
+
+If `--webrtc-public-ip` is unset, pion auto-detects the host's
+outbound IP. In multi-homed deployments (private + public NICs), pin
+the flag explicitly to avoid advertising the wrong interface in ICE
+candidates.
+
+### 11.4. Resource sizing
+
+Per-session sizing depends on the runner image. The reference vtuber
+session-runner needs ~ 2 GiB RAM + 2 CPU per session; capacity formula
+is `--session-control-max-concurrent-sessions x per-session sizing`.
+Set `capabilities[].backend.session_runner.resources` to enforce per
+session.
+
+### 11.5. Common failure modes
+
+- **Runner crashed.** Check the broker logs for `runner_crashed` /
+  `runner_oom`. OOM means raising `resources.memory`; missing env or
+  pull failure means registry credentials.
+- **Control-WS keeps disconnecting.** Most often NAT or firewall on the
+  customer side. Pong RTT vs `--session-control-heartbeat-interval`
+  matters: a 10s ping with three missed pongs gives a 30s detection
+  window. Reconnect-window default is 30s; raise both for high-latency
+  customer paths.
+- **SDP failure.** Verify `--webrtc-public-ip`; UDP range open;
+  customer's STUN reachable. The broker emits `media.failed` on the
+  control-WS when negotiation fails.
+- **Session starvation.** `--session-control-max-concurrent-sessions`
+  cap hit. The broker rejects new sessions at the dispatcher with
+  `capacity_exhausted`; pre-existing sessions continue.
+- **Backpressure drop.** The broker dropped a control-WS because the
+  customer stopped reading; the WS close-frame reason is
+  `backpressure_drop`. Customer-side bug; broker is healthy.
+
+### 11.6. Observability
+
+New broker-side metrics for the mode:
+
+- `livepeer_mode_session_runner_subprocess_total{outcome}` — counter;
+  outcome ∈ {started, exited_clean, crashed, oom_killed,
+  watchdog_killed}.
+- `livepeer_mode_session_control_ws_active{capability}` — gauge; per-
+  capability count of currently-attached control-WS connections.
+- `livepeer_mode_session_media_pc_state{state}` — counter; state
+  transitions of the per-session pion PeerConnection.
+
+Reconnect-window expiry shows up on the broker as a
+`control_disconnect_window_expired` close cause and propagates to
+`livepeer_payment_session_terminated_total` via the existing
+interim-debit ticker.

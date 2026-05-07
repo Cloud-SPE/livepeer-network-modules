@@ -181,6 +181,97 @@ capabilities:
       url: "http://broker.example.com/handler"
       auth: "none"
 
+  # ---- fixtures/session-control-plus-media/end-to-end.yaml (plan 0012-followup) ----
+  - id: "test:end-to-end-session:v1"
+    offering_id: "default"
+    interaction_mode: "session-control-plus-media@v0"
+    work_unit:
+      name: "seconds"
+      extractor:
+        type: "seconds-elapsed"
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: "session-runner"
+      url: "http://broker.example.com/handler"
+      session_runner:
+        image: "tztcloud/livepeer-conformance-session-runner:v0"
+        command: ["/bin/session-runner-stub"]
+        env:
+          LIVEPEER_STUB_BEHAVIOR: "echo"
+        startup_timeout: "10s"
+
+  # ---- fixtures/session-control-plus-media/backpressure.yaml (plan 0012-followup) ----
+  - id: "test:backpressure-session:v1"
+    offering_id: "default"
+    interaction_mode: "session-control-plus-media@v0"
+    work_unit:
+      name: "seconds"
+      extractor:
+        type: "seconds-elapsed"
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: "session-runner"
+      url: "http://broker.example.com/handler"
+      session_runner:
+        image: "tztcloud/livepeer-conformance-session-runner:v0"
+        command: ["/bin/session-runner-stub"]
+        env:
+          LIVEPEER_STUB_BEHAVIOR: "burst"
+          LIVEPEER_STUB_BURST_RATE_HZ: "1000"
+        startup_timeout: "10s"
+
+  # ---- fixtures/session-control-plus-media/reconnect-window.yaml (plan 0012-followup) ----
+  - id: "test:reconnect-session:v1"
+    offering_id: "default"
+    interaction_mode: "session-control-plus-media@v0"
+    work_unit:
+      name: "seconds"
+      extractor:
+        type: "seconds-elapsed"
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: "session-runner"
+      url: "http://broker.example.com/handler"
+      session_runner:
+        image: "tztcloud/livepeer-conformance-session-runner:v0"
+        command: ["/bin/session-runner-stub"]
+        env:
+          LIVEPEER_STUB_BEHAVIOR: "tick"
+          LIVEPEER_STUB_TICK_INTERVAL_MS: "100"
+        startup_timeout: "10s"
+
+  # ---- fixtures/session-control-plus-media/runner-crash.yaml (plan 0012-followup) ----
+  - id: "test:runner-crash-session:v1"
+    offering_id: "default"
+    interaction_mode: "session-control-plus-media@v0"
+    work_unit:
+      name: "seconds"
+      extractor:
+        type: "seconds-elapsed"
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: "session-runner"
+      url: "http://broker.example.com/handler"
+      session_runner:
+        image: "tztcloud/livepeer-conformance-session-runner:v0"
+        command: ["/bin/session-runner-stub"]
+        env:
+          LIVEPEER_STUB_BEHAVIOR: "crash-after-startup"
+          LIVEPEER_STUB_CRASH_DELAY_MS: "2000"
+        startup_timeout: "10s"
+
   # ---- fixtures/http-reqresp/openai-usage.yaml ----
   - id: "test:extractor-openai-usage:v1"
     offering_id: "default"

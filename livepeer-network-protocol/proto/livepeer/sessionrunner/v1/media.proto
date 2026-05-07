@@ -1,0 +1,38 @@
+// Livepeer SessionRunner v1 — media-plane IPC.
+//
+// Raw RTP packets flow between broker and runner over a bidirectional
+// gRPC stream. The broker stays codec-opaque — workloads that prefer
+// decoded frames decode in the runner.
+
+syntax = "proto3";
+
+package livepeer.sessionrunner.v1;
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1;sessionrunnerv1";
+
+service SessionRunnerMedia {
+  // Frames is the bidirectional raw-RTP stream. Customer→broker→runner
+  // ingress and runner→broker→customer egress are multiplexed by
+  // MediaFrame.direction.
+  rpc Frames(stream MediaFrame) returns (stream MediaFrame);
+}
+
+message MediaFrame {
+  // Direction labels which leg this frame belongs to.
+  Direction direction = 1;
+
+  // TrackId disambiguates within a leg (e.g., one audio + one video).
+  string track_id = 2;
+
+  // PayloadType is the RTP payload type the relay observed.
+  uint32 payload_type = 3;
+
+  // Rtp is the raw RTP packet bytes.
+  bytes rtp = 4;
+}
+
+enum Direction {
+  DIRECTION_UNSPECIFIED = 0;
+  DIRECTION_INGRESS = 1;
+  DIRECTION_EGRESS = 2;
+}

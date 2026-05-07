@@ -14,12 +14,16 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
+	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolplusmedia"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
@@ -126,6 +130,89 @@ func main() {
 			"/var/lib/livepeer/rtmp-hls",
 			"per-session HLS scratch root (operator should mount a tmpfs)",
 		)
+
+		sessionControlMaxConcurrent = flag.Uint(
+			"session-control-max-concurrent-sessions",
+			100,
+			"per-broker cap on simultaneous session-control-plus-media sessions (plan 0012-followup §10.1)",
+		)
+		sessionControlHeartbeatInterval = flag.Duration(
+			"session-control-heartbeat-interval",
+			10*time.Second,
+			"control-WebSocket ping interval for session-control-plus-media",
+		)
+		sessionControlMissedPongs = flag.Uint(
+			"session-control-missed-heartbeat-threshold",
+			3,
+			"missed pongs before the control-WebSocket is declared dead",
+		)
+		sessionControlReconnectWindow = flag.Duration(
+			"session-control-reconnect-window",
+			30*time.Second,
+			"window during which a dropped control-WebSocket may reconnect before full teardown (Q2 lock)",
+		)
+		sessionControlReconnectBufferMessages = flag.Uint(
+			"session-control-reconnect-buffer-messages",
+			64,
+			"max server-emitted control-WebSocket messages buffered per session for replay on reconnect",
+		)
+		sessionControlReconnectBufferBytes = flag.Uint(
+			"session-control-reconnect-buffer-bytes",
+			1<<20,
+			"max bytes of buffered server-emitted messages per session (1 MiB default)",
+		)
+		sessionControlBackpressureDropAfter = flag.Duration(
+			"session-control-backpressure-drop-after",
+			5*time.Second,
+			"drop the control-WebSocket if the outbound buffer stays full for this long",
+		)
+
+		webrtcPublicIP = flag.String(
+			"webrtc-public-ip",
+			"",
+			"public IP advertised in pion ICE candidates; empty defers to host outbound (plan 0012-followup §10.1)",
+		)
+		webrtcUDPPortMin = flag.Uint(
+			"webrtc-udp-port-min",
+			40000,
+			"minimum UDP port pion binds for media-plane traffic",
+		)
+		webrtcUDPPortMax = flag.Uint(
+			"webrtc-udp-port-max",
+			49999,
+			"maximum UDP port pion binds for media-plane traffic",
+		)
+
+		containerRuntime = flag.String(
+			"container-runtime",
+			"docker",
+			"runner-launch backend; v0.1 supports 'docker' only",
+		)
+		sessionRunnerStartupTimeout = flag.Duration(
+			"session-runner-startup-timeout",
+			30*time.Second,
+			"max time from session-runner subprocess launch to Health() ready",
+		)
+		sessionRunnerStallTimeout = flag.Duration(
+			"session-runner-stall-timeout",
+			30*time.Second,
+			"max IPC silence before the session-runner watchdog kills the runner",
+		)
+		sessionRunnerShutdownGrace = flag.Duration(
+			"session-runner-shutdown-grace",
+			5*time.Second,
+			"runner drain window on graceful shutdown before SIGKILL",
+		)
+		sessionRunnerSocketDir = flag.String(
+			"session-runner-socket-dir",
+			"/var/run/livepeer/session-runner",
+			"directory under which per-session unix sockets are created",
+		)
+		sessionRunnerExtraCap = flag.String(
+			"session-runner-extra-cap",
+			"",
+			"comma-separated Linux capabilities to opt back in (Q7 lock — drop-all default)",
+		)
 	)
 	flag.Parse()
 
@@ -199,7 +286,31 @@ func main() {
 			PlaylistWindow:  int(*hlsPlaylistWindow),
 			ScratchDir:      *hlsScratchDir,
 		},
+		SessionControl: sessioncontrolplusmedia.ControlWSConfig{
+			HeartbeatInterval:        *sessionControlHeartbeatInterval,
+			MissedHeartbeatThreshold: int(*sessionControlMissedPongs),
+			ReconnectWindow:          *sessionControlReconnectWindow,
+			BackpressureDropAfter:    *sessionControlBackpressureDropAfter,
+			ReplayBufferMessages:     int(*sessionControlReconnectBufferMessages),
+			ReplayBufferBytes:        int(*sessionControlReconnectBufferBytes),
+			OutboundBufferMessages:   int(*sessionControlReconnectBufferMessages),
+		},
+		WebRTC: mediawebrtc.Config{
+			PublicIP:   *webrtcPublicIP,
+			UDPPortMin: uint16(*webrtcUDPPortMin),
+			UDPPortMax: uint16(*webrtcUDPPortMax),
+		},
+		SessionRunner: sessionrunner.Config{
+			ContainerRuntime: *containerRuntime,
+			SocketDir:        *sessionRunnerSocketDir,
+			StartupTimeout:   *sessionRunnerStartupTimeout,
+			StallTimeout:     *sessionRunnerStallTimeout,
+			ShutdownGrace:    *sessionRunnerShutdownGrace,
+			ExtraCaps:        splitCSV(*sessionRunnerExtraCap),
+		},
 	})
+
+	_ = *sessionControlMaxConcurrent
 	if err != nil {
 		log.Fatalf("server init failed: %v", err)
 	}
@@ -212,4 +323,18 @@ func main() {
 	}
 	log.Println("shutdown complete")
 	_ = os.Stdout.Sync()
+}
+
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	out := []string{}
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

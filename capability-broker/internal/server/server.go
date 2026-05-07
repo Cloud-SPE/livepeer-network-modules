@@ -16,8 +16,11 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/hls"
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
+	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/rtmpingresshlsegress"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolplusmedia"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
 )
@@ -49,6 +52,18 @@ type Options struct {
 
 	// HLS configures the LL-HLS muxer flags + scratch root.
 	HLS HLSOptions
+
+	// SessionControl configures the session-control-plus-media
+	// driver's control-WS lifecycle.
+	SessionControl sessioncontrolplusmedia.ControlWSConfig
+
+	// WebRTC governs the per-broker pion settings used by the
+	// session-control-plus-media media-plane relay.
+	WebRTC mediawebrtc.Config
+
+	// SessionRunner governs the per-broker session-runner subprocess
+	// supervisor consumed by the session-control-plus-media driver.
+	SessionRunner sessionrunner.Config
 }
 
 // HLSOptions configures the LL-HLS muxer + scratch directory.
@@ -94,6 +109,10 @@ type Server struct {
 	secrets      backend.SecretResolver
 	rtmpStore    *rtmpingresshlsegress.Store
 	rtmpListener *mediartmp.Listener
+	sessStore     *sessioncontrolplusmedia.Store
+	sessDriver    *sessioncontrolplusmedia.Driver
+	webrtcEngine  *mediawebrtc.Engine
+	sessRunnerSup *sessionrunner.Supervisor
 }
 
 // New constructs a Server from a validated config and registers routes. It
@@ -124,17 +143,53 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	rtmpStore := rtmpingresshlsegress.NewStore()
 	rtmpDriver := rtmpingresshlsegress.New(rtmpStore, opts.RTMPDriver)
 
+	sessCfg := opts.SessionControl
+	if sessCfg.HeartbeatInterval == 0 && sessCfg.ReconnectWindow == 0 {
+		sessCfg = sessioncontrolplusmedia.DefaultControlWSConfig()
+	}
+	sessStore := sessioncontrolplusmedia.NewStore(sessioncontrolplusmedia.StoreConfig{
+		ReplayBufferMessages: sessCfg.ReplayBufferMessages,
+		ReplayBufferBytes:    sessCfg.ReplayBufferBytes,
+	})
+	sessDriver := sessioncontrolplusmedia.New(sessStore, sessCfg)
+
+	rtcCfg := opts.WebRTC
+	if rtcCfg.UDPPortMin == 0 {
+		rtcCfg = mediawebrtc.DefaultConfig()
+	}
+	rtcEngine, err := mediawebrtc.NewEngine(rtcCfg)
+	if err != nil {
+		return nil, fmt.Errorf("webrtc engine: %w", err)
+	}
+
+	runnerCfg := opts.SessionRunner
+	if runnerCfg.ContainerRuntime == "" {
+		runnerCfg = sessionrunner.DefaultConfig()
+	}
+	runnerSup, err := sessionrunner.NewSupervisor(runnerCfg)
+	if err != nil {
+		return nil, fmt.Errorf("session-runner supervisor: %w", err)
+	}
+
+	resolver := sessionRunnerResolver(cfg, sessStore)
+	runnerBackend := sessioncontrolplusmedia.NewRunnerBackend(runnerSup, resolver, rtcEngine, sessStore)
+	sessDriver.SetBackend(runnerBackend)
+
 	s := &Server{
-		cfg:        cfg,
-		opts:       opts,
-		mux:        mux,
-		srv:        srv,
-		payment:    paymentClient,
-		modes:      defaultModes(rtmpDriver),
-		extractors: defaultExtractors(),
-		backend:    backend.NewHTTPClient(),
-		secrets:    backend.NewEnvSecretResolver(),
-		rtmpStore:  rtmpStore,
+		cfg:           cfg,
+		opts:          opts,
+		mux:           mux,
+		srv:           srv,
+		payment:       paymentClient,
+		modes:         defaultModes(rtmpDriver, sessDriver),
+		extractors:    defaultExtractors(),
+		backend:       backend.NewHTTPClient(),
+		secrets:       backend.NewEnvSecretResolver(),
+		rtmpStore:     rtmpStore,
+		sessStore:     sessStore,
+		sessDriver:    sessDriver,
+		webrtcEngine:  rtcEngine,
+		sessRunnerSup: runnerSup,
 	}
 
 	if opts.RTMP.Addr != "" {
@@ -364,6 +419,10 @@ func (s *Server) Run(ctx context.Context) error {
 			IdleTimeout:   s.opts.RTMP.IdleTimeout,
 			CheckInterval: time.Second,
 		})
+	}
+
+	if s.sessDriver != nil {
+		go s.sessDriver.RunReconnectWatchdog(ctx)
 	}
 
 	select {

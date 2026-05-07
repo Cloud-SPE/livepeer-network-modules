@@ -1,7 +1,7 @@
 ---
 status: accepted (plan 0002 Q5 closed 2026-05-06)
-spec_version: 0.1.2
-last_updated: 2026-05-06
+spec_version: 0.1.3
+last_updated: 2026-05-07
 ---
 
 # Livepeer wire headers
@@ -192,6 +192,7 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 | `insufficient_balance` | 402 | Long-running session terminated by the broker because `PayeeDaemon.SufficientBalance` reported the payer's balance no longer covers the configured runway. The header is emitted as a trailer where the protocol allows it (the response body has typically already begun); the connection is closed by the broker. Plan 0015. |
 | `ffmpeg_subprocess_failed` | 500 | The broker's per-session FFmpeg subprocess exited non-zero before the customer-driven RTMP push finished. Emitted on the `rtmp-ingress-hls-egress` control-WebSocket close reason and recorded in metrics. Plan 0011-followup. |
 | `rtmp_ingest_idle_timeout` | 408 | A `rtmp-ingress-hls-egress` session received no RTMP packets for `--rtmp-idle-timeout` after the publish handshake completed; the broker tore down the session. Emitted on the control-WebSocket close reason. Plan 0011-followup. |
+| `backpressure_drop` | n/a | The `session-control-plus-media` broker dropped the control-WebSocket because a per-direction send buffer stayed full beyond `--session-control-backpressure-drop-after`. Emitted as the WebSocket close-frame reason; no HTTP status because the connection is already upgraded. Plan 0012-followup. |
 | `internal_error` | 500 | Anything else. |
 
 ### Error body
@@ -250,3 +251,4 @@ See [`../conformance/`](../conformance/).
 | 0.1.0 | Initial draft. |
 | 0.1.1 | Add `insufficient_balance` error code for long-running sessions terminated by the broker mid-flight (plan 0015). Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |
 | 0.1.2 | Add `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout` error codes for `rtmp-ingress-hls-egress` (plan 0011-followup). Pre-1.0 minor additions are non-breaking. |
+| 0.1.3 | Add `backpressure_drop` error code for the `session-control-plus-media` control-WebSocket (plan 0012-followup). Pre-1.0 minor additions are non-breaking. |

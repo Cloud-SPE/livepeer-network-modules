@@ -54,6 +54,11 @@ const (
 	// cleanly above this comment block.
 	ErrFFmpegSubprocessFailed = "ffmpeg_subprocess_failed"
 	ErrRTMPIngestIdleTimeout  = "rtmp_ingest_idle_timeout"
+
+	// session-control-plus-media error code: control-WS send buffer
+	// stayed full beyond the configured drop window. Emitted as the
+	// WebSocket close-frame reason and recorded in metrics.
+	ErrBackpressureDrop = "backpressure_drop"
 )
 
 // ImplementedSpecVersion is the spec-wide major.minor this broker speaks.

@@ -72,54 +72,20 @@ The HTTP-family adapters in `gateway-adapters/` are TypeScript-only with
 zero runtime dependencies (`gateway-adapters/AGENTS.md:13-25`). The non-
 HTTP modes do not all fit that mould.
 
-### 3.1. The three options
+### 3.1. DECIDED: Path B (TS + Go split).
 
-**Path A — TS-only library + standalone sidecar binary for RTMP/WebRTC.**
-`gateway-adapters/` stays pure TypeScript. Add `ws-realtime` and the
-control-plane half of `session-control-plus-media` as new TS modules.
-A separate Go binary (`gateway-adapters-sidecar/`, name TBD) ships
-containerized; the TS adapter co-deploys it for the customer-facing
-RTMP socket.
-
-- **Pro.** Each component uses native libs (`pion/webrtc`,
-  production-grade Go RTMP). TS package stays alpine-thin.
-- **Pro.** The same Go sidecar binary can reuse broker-side RTMP code
-  from plan 0011-followup.
-- **Con.** Gateway operators run two processes per RTMP-capable
-  deployment. Compose / k8s manifests get longer.
-- **Con.** A sidecar implies an IPC channel (unix socket or localhost
-  TCP) we have to spec. More wire surface.
-
-**Path B — TS + Go split inside `gateway-adapters/`.**
+**DECIDED 2026-05-06: Path B — TS + Go split inside `gateway-adapters/`.**
 Two language subdirs: `gateway-adapters/ts/` (current TS package,
 renamed home) and `gateway-adapters/go/` (new Go module with native
-adapters for RTMP and WebRTC media plane). Each ships as its own
-artifact; gateway operators pick the language matching their codebase.
+adapters for RTMP and WebRTC media plane). Each adopter writes in
+their own language; no IPC tax. Path A (TS-only library + standalone
+Go sidecar binary) and Path C (Go sidecar dialled by a TS-flavoured
+IPC even from Go gateways) were both rejected — A adds an extra
+container plus an IPC channel we'd have to spec; C makes Go gateways
+pay an IPC tax for no benefit. Full rationale in §3.2 below; the
+resolved-decision block lives at §13 Q1.
 
-- **Pro.** Each adopter writes code in their own language. No IPC,
-  no extra container. The reference `openai-gateway/` (TS) keeps its
-  shape with new TS modules added for the modes where TS is viable.
-- **Pro.** Production-quality libs available natively: `ws` for TS;
-  `gorilla/websocket` (already used at
-  `capability-broker/internal/modes/wsrealtime/driver.go:21`) for Go.
-- **Con.** Two ecosystems to maintain. Wire compatibility is verified
-  by conformance fixtures, not shared code.
-- **Con.** TS gateways needing RTMP must run a Go process anyway,
-  effectively becoming Path C for that one path.
-
-**Path C — Sidecar protocol for all heavy media planes.**
-TS package owns the public adapter API. RTMP + WebRTC ship as a Go
-sidecar binary the TS adapter dials over a local socket. Operators
-always run `gateway + sidecar(s)` per protocol.
-
-- **Pro.** Single API surface (TS). Sidecar is an implementation
-  detail; drop-in replaceable.
-- **Con.** Hardest dev experience — every gateway, even a Go one,
-  talks TS-flavoured IPC. Go gateways pay an IPC tax for no benefit.
-- **Con.** Reuses none of the broker-side RTMP code from plan
-  0011-followup; the sidecar is its own codebase.
-
-### 3.2. Recommendation: **Path B (TS + Go split)**.
+### 3.2. DECIDED rationale (kept for future readers).
 
 1. **Reference `openai-gateway/` is TS** and uses
    `gateway-adapters` today
@@ -146,8 +112,8 @@ always run `gateway + sidecar(s)` per protocol.
    `livepeer-network-protocol/conformance/runner/cmd/livepeer-conformance/main.go:71`);
    one fixture set verifies both language halves against the broker.
 
-Rest of this plan assumes Path B. §13 keeps A and C alive as
-overridable alternatives.
+Rest of this plan is written against the Path B lock. The Path A / C
+rejection rationale is preserved at §13 Q1.
 
 ## 4. `ws-realtime@v0` adapter design
 
@@ -252,8 +218,9 @@ the broker hosts the HLS playlist + segments. The gateway-side adapter
 - **No transcoding at the gateway.** The broker's pipeline (plan
   0011-followup) does the FFmpeg work
   (`livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md:144-156`).
-- Library: `livego/livego` or `notedit/rtmp` (Go); pin to whichever
-  pion-adjacent project ships the cleanest server API. See §13.7.
+- Library: `github.com/yutopp/go-rtmp` — pinned to align with plan
+  0011-followup's broker-side choice. Pure-Go, MIT, suite-validated.
+  See §13 Q8 for the alignment rationale.
 
 ### 5.4. Customer disconnect / failure
 
@@ -360,9 +327,16 @@ Any leg disconnect terminates the session:
   `extra.idle_timeout_seconds`.
 - WebRTC media leg uses ICE keepalive per pion defaults.
 
-## 7. Component layout (Path B)
+## 7. Component layout (Path B — locked)
 
-Reorganize `gateway-adapters/` to host both halves:
+The directory tree below is the canonical shape under the Path B lock
+(§3.1, §13 Q1). `gateway-adapters/ts/` + `gateway-adapters/go/` are
+the two halves; the Go module path is
+`github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go`
+(§13 Q3 lock — sub-module of the monorepo, matching the
+`payment-daemon/`, `capability-broker/`, `orch-coordinator/`,
+`secure-orch-console/` precedents). Reorganize `gateway-adapters/` to
+host both halves:
 
 ```
 gateway-adapters/
@@ -486,11 +460,10 @@ No new flags; the existing gateway-target flag is wired, not added.
 
 `payment-daemon/docs/operator-runbook.md` is gateway-operator-facing
 in its "sender mode" sections (lines 14-20, 41-52). This plan adds
-gateway-adapters-specific operator concerns; depending on whether the
-adapter docs live next to the daemon or get their own runbook, the
-addendum could land under
-`gateway-adapters/docs/operator-runbook.md` (new file) — see §13.4
-open question. Concrete content to add:
+gateway-adapters-specific operator concerns. **Lands at
+`gateway-adapters/docs/operator-runbook.md` (component-local; matches
+the per-component runbook pattern across the monorepo).** Concrete
+content to add:
 
 - **Per-mode port exposure:** RTMP TCP `:1935`, WebRTC signalling
   `:8443`, WebRTC media UDP `40000-40099`. Operator must open these
@@ -506,33 +479,30 @@ open question. Concrete content to add:
   is the WebRTC publisher (per plan 0012-followup); the adapter does
   not pull session-runner images itself but the operator must
   understand the dependency.
-- **Sidecar process management** (only relevant if the user picks
-  Path A or C): supervise the sidecar with the same systemd / k8s
-  liveness pattern as the payer-daemon (see
-  `payment-daemon/docs/operator-runbook.md:83-120` for the pattern).
-
 ## 12. Migration sequence
 
-Estimated 6–9 commits, depending on Path A/B/C and whether the
-WebRTC half ships in the same plan or splits to a follow-up:
+Estimated 6–9 commits under the Path B lock, depending on whether
+the WebRTC half ships in the same plan or splits to a follow-up:
 
 1. **Reorg `gateway-adapters/` to two halves** (`ts/` + `go/`).
-   Mechanical move; no behaviour change. ~1 commit.
-2. **`ws-realtime` TS adapter.** Most analogous to existing HTTP
-   family; lowest risk; lights up the OpenAI Realtime API path on
-   the reference gateway. ~1 commit.
-3. **Session-control TS adapter (control-WS only, no media plane).**
-   The control-WS half mirrors `ws-realtime` plus session-open.
-   ~1 commit.
+   Mechanical move; no behaviour change. Lands the new Go module at
+   `gateway-adapters/go/`. ~1 commit.
+2. **`ws-realtime` TS adapter** (`ts/`). Most analogous to existing
+   HTTP family; lowest risk; lights up the OpenAI Realtime API path
+   on the reference gateway. ~1 commit.
+3. **Session-control TS adapter** (`ts/`, control-WS only, no media
+   plane). The control-WS half mirrors `ws-realtime` plus
+   session-open. ~1 commit.
 4. **Conformance runner gateway-target wiring.** Removes the
    "not yet implemented" guard; per-mode driver inversion for the
    three non-HTTP modes. ~1 commit.
-5. **`rtmp-ingress-hls-egress` Go adapter.** New Go module, RTMP
-   listener, broker relay. ~2 commits (listener + relay separate).
-6. **WebRTC media plane Go adapter.** SFU pass-through using
+5. **`rtmp-ingress-hls-egress` Go adapter** (`go/`). RTMP listener
+   on `yutopp/go-rtmp`, broker relay. ~2 commits (listener + relay
+   separate).
+6. **WebRTC media plane Go adapter** (`go/`). SFU pass-through using
    `pion/webrtc`. ~1 commit.
-7. **Operator runbook addendum.** Per-mode ports, resource sizing.
-   ~1 commit.
+7. **Operator runbook addendum** at `gateway-adapters/docs/operator-runbook.md`.
+   Per-mode ports, resource sizing. ~1 commit.
 8. **Reference `openai-gateway/` adopts `ws-realtime` adapter.**
    Demonstrates end-to-end. Lands as a separate commit (or even a
    separate plan) once plan 0008-followup's TS half is published.
@@ -543,67 +513,95 @@ and plan 0012-followup (broker-side control-WS + media-plane
 provisioning) ship in parallel; this plan does not block on them
 because the conformance fixtures use a mock-broker.
 
-## 13. Risks and open questions
+## 13. Resolved decisions
 
-1. **Path A vs B vs C** (§3). The recommendation is Path B; the user
-   can override. If Path A: who maintains the language-mismatched
-   sidecar — same monorepo (`gateway-adapters-sidecar/`) or a
-   standalone repo? If Path C: do we ship a Rust sidecar instead of
-   Go (closer to Cloudflare's RTMP shop) or stay Go for code-reuse
-   with the broker side?
-2. **Package naming.** Three options:
-   - One TS package with subpath imports for all six modes
-     (`@tztcloud/livepeer-gateway-middleware/modes/ws-realtime`,
-     `.../rtmp`, `.../session-control`). Matches today's shape at
-     `gateway-adapters/package.json:8-26`.
-   - Three new TS packages
-     (`@tztcloud/livepeer-gateway-middleware-ws`,
-     `-rtmp`, `-session-control`). Independent versioning.
-   - Hybrid (HTTP family in one package; non-HTTP modes in another).
-   Recommendation: stay with the single-package + subpath shape;
-   independent versioning is gated on extraction (per
-   `PLANS.md:139-146`).
-3. **Go module naming.** If Path B: should the Go module be
-   `github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go`
-   (sub-module of the monorepo) or its own root path
-   (`github.com/Cloud-SPE/livepeer-gateway-adapters`)? Sub-module
-   matches the existing payment-daemon pattern; root-path makes
-   future extraction cleaner.
-4. **Operator-facing docs location.** Does the gateway-adapters
-   runbook live at `gateway-adapters/docs/operator-runbook.md`
-   (component-local) or get folded into
-   `payment-daemon/docs/operator-runbook.md` (which is already
-   gateway-operator-facing for sender mode)? Component-local is
-   cleaner; folded reduces operator-doc count.
-5. **Whether plan 0011-followup ships first.** If the broker-side
-   RTMP pipeline isn't real, there's nothing for the gateway adapter
-   to talk to except a mock-broker. Two choices:
-   - Land both in parallel; conformance fixtures use mock-broker
-     until 0011-followup closes.
-   - Gate 0008-followup on 0011-followup. Slower, less risk.
-   Recommendation: parallel, with the fixture set as the wire-compat
-   contract.
-6. **Final-debit reporting on `ws-realtime` close.** The spec
-   (`livepeer-network-protocol/modes/ws-realtime.md:108-120`) says
-   the broker calls `Reconcile` + `CloseSession` on close. The
-   adapter doesn't currently have a way to read the *final* total
-   work-units from the close event itself; today's HTTP adapters
-   read it from the response trailer
-   (`gateway-adapters/src/modes/http-stream.ts`). Options:
-   - Carry a `Livepeer-Work-Units-Final` close-frame extension.
-   - Read from the payer-daemon's session ledger after close.
-   - Emit a control-plane event before close.
-   Recommendation: payer-daemon ledger read; matches plan 0014's
-   ledger ownership.
-7. **WebRTC library choice.** `pion/webrtc` (Go) is the only
-   production-grade option. `werift` (TS) and `node-webrtc` (TS,
-   abandoned) exist but are not production-quality for an SFU.
-   Recommendation: pin `pion/webrtc`; this is what forces Path B
-   over Path A's TS-only shape.
-8. **RTMP library choice.** `livego/livego` is full-featured but
-   heavy; `notedit/rtmp` is leaner but less actively maintained.
-   Recommendation: prototype with `notedit/rtmp` for the v0.1
-   listener; revisit if production-scale issues surface.
+All eight open questions resolved on 2026-05-06. The implementing
+agent works against these locks; rationale captured for future
+readers.
+
+### Q1. Language strategy
+
+**DECIDED: Path B — TS + Go split inside `gateway-adapters/`.**
+TS half (`gateway-adapters/ts/`) hosts the existing TS package plus
+new `ws-realtime.ts` and `session-control-plus-media.ts` (control-WS)
+modules. Go half (`gateway-adapters/go/`) hosts the new RTMP listener
+and the WebRTC SFU pass-through. Each adopter writes in their own
+language; no IPC tax. **Rejected:** Path A (TS-only library + Go
+sidecar binary) — adds an extra container plus an IPC channel we'd
+have to spec; **Path C** (TS-flavoured IPC even for Go gateways) —
+pure tax for Go adopters and reuses none of the broker-side code.
+Production libs available natively on each side: `ws` for TS;
+`gorilla/websocket` (already used at
+`capability-broker/internal/modes/wsrealtime/driver.go:21`) and
+`pion/webrtc` for Go (§3.1, §3.2).
+
+### Q2. Package naming
+
+**DECIDED: single TS package `@tztcloud/livepeer-gateway-middleware`
++ subpath imports** for all six modes
+(`./modes/http-reqresp`, `./modes/http-stream`,
+`./modes/http-multipart`, `./modes/ws-realtime`,
+`./modes/session-control-plus-media`, etc.). Matches the existing
+shape at `gateway-adapters/package.json:8-26`. Independent
+versioning per mode is gated on extraction (per `PLANS.md` §"Repo
+shape"). Three-package and hybrid shapes both rejected — premature
+split for the small number of in-tree consumers (§7).
+
+### Q3. Go module naming
+
+**DECIDED: `github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go`**
+— sub-module of the monorepo. Matches the existing
+`payment-daemon/`, `capability-broker/`, `orch-coordinator/`,
+`secure-orch-console/` Go-module precedents. Future extraction is a
+mechanical move; sub-module first reduces deployment-time decisions
+(§7).
+
+### Q4. Operator-facing docs location
+
+**DECIDED: component-local at `gateway-adapters/docs/operator-runbook.md`**
+(new file). Matches the per-component runbook pattern across the
+monorepo (capability-broker, payment-daemon, orch-coordinator,
+secure-orch-console each have their own). Folding into
+`payment-daemon/docs/operator-runbook.md` would couple deployment
+surfaces unnecessarily (§11).
+
+### Q5. Sequencing with plan 0011-followup
+
+**DECIDED: parallel.** Conformance fixtures use the mock-broker
+already in the runner (`livepeer-network-protocol/conformance/runner/internal/`);
+0008-followup does not gate on 0011-followup landing. Wire-compat is
+enforced by the fixture set, not by code-sharing (§9, §12).
+
+### Q6. Final-debit reporting on `ws-realtime` close
+
+**DECIDED: payer-daemon ledger read.** Adapter calls
+`PayerDaemon.GetSessionDebits` (or equivalent gRPC method) after the
+close event to surface the final `Livepeer-Work-Units` to the
+gateway caller. Matches plan 0014's ledger ownership; no close-frame
+extension; no control-plane event added. The
+`Livepeer-Work-Units-Final` close-frame extension and the pre-close
+control-plane event were both rejected — neither is needed once the
+ledger is the source of truth (§4.3).
+
+### Q7. WebRTC library
+
+**DECIDED: pin `github.com/pion/webrtc`** — the only
+production-grade option, and the same choice plan 0012-followup
+locked at its Q4 plus the broker-side framing pinned in plan
+0011-followup. `werift` (TS) and `node-webrtc` (TS, abandoned) both
+rejected — not production-quality for an SFU (§6.4).
+
+### Q8. RTMP library — REFRAMED
+
+**DECIDED: `github.com/yutopp/go-rtmp`.** Plan recommended
+`notedit/rtmp` prototype with `livego/livego` as fallback; locked
+instead to `yutopp/go-rtmp` to align with plan 0011-followup's
+broker-side library choice (its Q2 lock). Same library on both
+sides of the wire ensures identical handshake handling, identical
+edge-case behaviour, and code reuse / mental-model overlap with the
+broker-side RTMP listener at `capability-broker/internal/media/rtmp/`.
+`yutopp/go-rtmp` is pure-Go (no cgo), MIT-licensed, suite-validated.
+The notedit/livego prototype phase is dropped entirely (§5.3).
 
 ## 14. Out of scope (defer list)
 

@@ -5,7 +5,7 @@
   "description": "pnpm sub-workspace for shared widgets + portal/admin SPA scaffolds",
   "license": "MIT",
   "scripts": {
-    "build": "pnpm -r --filter ./shared --filter ./portal --filter ./admin build"
+    "build": "pnpm -r build"
   },
   "engines": {
     "node": ">=20"

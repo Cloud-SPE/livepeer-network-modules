@@ -22,3 +22,16 @@ services:
       interval: 1s
       timeout: 5s
       retries: 30
+
+  smoke:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://customer_portal:customer_portal@postgres:5432/customer_portal
+      REDIS_URL: redis://redis:6379
+      API_KEY_PEPPER: smoke-pepper
+    command: ["node", "--test", "dist-test/test/**/*.test.js"]

@@ -55,6 +55,14 @@ func (s *Server) registerRoutes() {
 	// the URL path is a per-session bearer secret. 404 on unknown
 	// session id; 204 on a successful tear-down.
 	s.mux.HandleFunc("POST /v1/cap/{session_id}/end", s.rtmpCloseSession)
+
+	// GET /v1/cap/{session_id}/control — session-control-plus-media
+	// control-WebSocket upgrade. Unpaid: the URL path is the
+	// per-session bearer (Q1 lock — path-id-only auth). The driver's
+	// upgrade handler validates the session id against its store.
+	if s.sessDriver != nil {
+		s.mux.HandleFunc("GET /v1/cap/{session_id}/control", s.sessDriver.ServeControlWS)
+	}
 }
 
 // capabilityLookup returns a CapabilityLookup function the payment

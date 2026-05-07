@@ -18,6 +18,7 @@ import (
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/rtmpingresshlsegress"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolplusmedia"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
 )
@@ -49,6 +50,10 @@ type Options struct {
 
 	// HLS configures the LL-HLS muxer flags + scratch root.
 	HLS HLSOptions
+
+	// SessionControl configures the session-control-plus-media
+	// driver's control-WS lifecycle.
+	SessionControl sessioncontrolplusmedia.ControlWSConfig
 }
 
 // HLSOptions configures the LL-HLS muxer + scratch directory.
@@ -94,6 +99,8 @@ type Server struct {
 	secrets      backend.SecretResolver
 	rtmpStore    *rtmpingresshlsegress.Store
 	rtmpListener *mediartmp.Listener
+	sessStore    *sessioncontrolplusmedia.Store
+	sessDriver   *sessioncontrolplusmedia.Driver
 }
 
 // New constructs a Server from a validated config and registers routes. It
@@ -124,17 +131,29 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	rtmpStore := rtmpingresshlsegress.NewStore()
 	rtmpDriver := rtmpingresshlsegress.New(rtmpStore, opts.RTMPDriver)
 
+	sessCfg := opts.SessionControl
+	if sessCfg.HeartbeatInterval == 0 && sessCfg.ReconnectWindow == 0 {
+		sessCfg = sessioncontrolplusmedia.DefaultControlWSConfig()
+	}
+	sessStore := sessioncontrolplusmedia.NewStore(sessioncontrolplusmedia.StoreConfig{
+		ReplayBufferMessages: sessCfg.ReplayBufferMessages,
+		ReplayBufferBytes:    sessCfg.ReplayBufferBytes,
+	})
+	sessDriver := sessioncontrolplusmedia.New(sessStore, sessCfg)
+
 	s := &Server{
 		cfg:        cfg,
 		opts:       opts,
 		mux:        mux,
 		srv:        srv,
 		payment:    paymentClient,
-		modes:      defaultModes(rtmpDriver),
+		modes:      defaultModes(rtmpDriver, sessDriver),
 		extractors: defaultExtractors(),
 		backend:    backend.NewHTTPClient(),
 		secrets:    backend.NewEnvSecretResolver(),
 		rtmpStore:  rtmpStore,
+		sessStore:  sessStore,
+		sessDriver: sessDriver,
 	}
 
 	if opts.RTMP.Addr != "" {
@@ -364,6 +383,10 @@ func (s *Server) Run(ctx context.Context) error {
 			IdleTimeout:   s.opts.RTMP.IdleTimeout,
 			CheckInterval: time.Second,
 		})
+	}
+
+	if s.sessDriver != nil {
+		go s.sessDriver.RunReconnectWatchdog(ctx)
 	}
 
 	select {

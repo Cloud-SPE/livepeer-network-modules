@@ -39,6 +39,10 @@ type Options struct {
 	// rtmp-ingress-hls-egress driver. Empty values fall back to
 	// host-of-backend.url.
 	RTMPDriver rtmpingresshlsegress.Config
+
+	// FFmpeg configures the per-session encoder subprocess. Empty
+	// Binary defaults to "ffmpeg"; CancelGrace defaults to 5s.
+	FFmpeg FFmpegOptions
 }
 
 // RTMPOptions configures the broker's RTMP ingest listener.
@@ -48,6 +52,12 @@ type RTMPOptions struct {
 	IdleTimeout      time.Duration
 	DuplicatePolicy  mediartmp.DuplicatePolicy
 	RequireStreamKey bool
+}
+
+// FFmpegOptions configures the per-session FFmpeg subprocess.
+type FFmpegOptions struct {
+	Binary      string
+	CancelGrace time.Duration
 }
 
 // Server wraps the broker's HTTP server. It owns two listeners: the paid

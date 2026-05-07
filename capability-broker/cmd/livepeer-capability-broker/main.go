@@ -77,6 +77,17 @@ func main() {
 			true,
 			"reject RTMP publishes without a stream-key suffix; off for fixture / dev only",
 		)
+
+		ffmpegBinary = flag.String(
+			"ffmpeg-binary",
+			"ffmpeg",
+			"path to the ffmpeg binary",
+		)
+		ffmpegCancelGrace = flag.Duration(
+			"ffmpeg-cancel-grace",
+			5*time.Second,
+			"SIGTERM-to-SIGKILL grace window for the per-session FFmpeg subprocess",
+		)
 	)
 	flag.Parse()
 
@@ -120,6 +131,10 @@ func main() {
 			IdleTimeout:      *rtmpIdleTimeout,
 			DuplicatePolicy:  dupPolicy,
 			RequireStreamKey: *rtmpRequireStreamKey,
+		},
+		FFmpeg: server.FFmpegOptions{
+			Binary:      *ffmpegBinary,
+			CancelGrace: *ffmpegCancelGrace,
 		},
 	})
 	if err != nil {

@@ -8,10 +8,9 @@
 //   - "frame_megapixel"   — frame × width × height / 1_000_000 (floored)
 //   - "out_time_seconds"  — out_time_us / 1_000_000, ceiled
 //
-// In v0.1 the broker doesn't yet drive an FFmpeg subprocess (rtmp-ingress
-// session-open phase only — see plan 0011). This extractor is exercised
-// in conformance via fixtures that put a literal progress block in the
-// backend response body.
+// The mode driver wires a LiveCounter sibling that reads the same
+// counters mid-flight so the interim-debit ticker in plan 0015 sees a
+// running view of the encoded media seconds / frames.
 package ffmpegprogress
 
 import (
@@ -20,6 +19,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
 )
@@ -106,6 +106,74 @@ func parseProgress(s string) progressData {
 		}
 	}
 	return p
+}
+
+// Unit returns the configured unit name. Used by the mode driver to
+// decide which LiveCounter shape to wire.
+func (e *Extractor) Unit() string { return e.unit }
+
+// Width returns the configured frame width (zero unless
+// unit=frame_megapixel).
+func (e *Extractor) Width() uint64 { return e.width }
+
+// Height returns the configured frame height (zero unless
+// unit=frame_megapixel).
+func (e *Extractor) Height() uint64 { return e.height }
+
+// LiveCounter is the running view exposed to the interim-debit
+// ticker. The mode driver registers a LiveCounter that wraps the
+// encoder's per-session FrameCount / OutTimeUs atomics; this package
+// provides the conversion to the configured unit.
+type LiveCounter struct {
+	frame     *atomic.Uint64
+	outTimeUs *atomic.Uint64
+	unit      string
+	width     uint64
+	height    uint64
+}
+
+var _ extractors.LiveCounter = (*LiveCounter)(nil)
+
+// NewLiveCounter wires the running counter to the encoder's atomics.
+// frame and outTimeUs MUST point to the same atomics the encoder's
+// stderr parser writes; nil values yield a counter that returns 0.
+func (e *Extractor) NewLiveCounter(frame, outTimeUs *atomic.Uint64) *LiveCounter {
+	return &LiveCounter{
+		frame:     frame,
+		outTimeUs: outTimeUs,
+		unit:      e.unit,
+		width:     e.width,
+		height:    e.height,
+	}
+}
+
+// CurrentUnits implements extractors.LiveCounter.
+func (lc *LiveCounter) CurrentUnits() uint64 {
+	if lc == nil {
+		return 0
+	}
+	switch lc.unit {
+	case "frame":
+		if lc.frame == nil {
+			return 0
+		}
+		return lc.frame.Load()
+	case "frame_megapixel":
+		if lc.frame == nil {
+			return 0
+		}
+		return (lc.frame.Load() * lc.width * lc.height) / 1_000_000
+	case "out_time_seconds":
+		if lc.outTimeUs == nil {
+			return 0
+		}
+		us := lc.outTimeUs.Load()
+		if us == 0 {
+			return 0
+		}
+		return (us + 999_999) / 1_000_000
+	}
+	return 0
 }
 
 func readPositiveUint(cfg map[string]any, key string) (uint64, error) {

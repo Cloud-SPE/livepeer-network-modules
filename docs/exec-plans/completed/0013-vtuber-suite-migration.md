@@ -1,9 +1,10 @@
 ---
 plan: 0013-vtuber
 title: vtuber-gateway + vtuber-pipeline + vtuber-runner — design
-status: design-doc
-phase: plan-only
+status: completed
+phase: shipped
 opened: 2026-05-07
+closed: 2026-05-07
 owner: harness
 related:
   - "active plan 0013-shell — customer-portal/ shared SaaS shell library (foundation)"

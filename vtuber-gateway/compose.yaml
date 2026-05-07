@@ -1,0 +1,42 @@
+# Minimal local-dev compose for vtuber-gateway.
+#
+# Brings up only the gateway + a Postgres stub. The full smoke stack
+# (broker + payment-daemon + vtuber-runner mock) lives in
+# `compose.smoke.yaml` (per phase 5 brief).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    networks: [vtuber-gateway]
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: vtuber
+      POSTGRES_PASSWORD: vtuber
+      POSTGRES_DB: vtuber_gateway
+    volumes:
+      - vtuber-gateway-pg:/var/lib/postgresql/data
+
+  gateway:
+    image: tztcloud/livepeer-vtuber-gateway:dev
+    depends_on: [postgres]
+    networks: [vtuber-gateway]
+    ports:
+      - "3001:3001"
+    environment:
+      LIVEPEER_BROKER_URL: "http://broker:8080"
+      LIVEPEER_PAYER_DAEMON_SOCKET: "/var/run/livepeer/payer-daemon.sock"
+      LIVEPEER_PAYER_DEFAULT_FACE_VALUE_WEI: "1000000000000000"
+      VTUBER_DEFAULT_OFFERING: "default"
+      VTUBER_RATE_CARD_USD_PER_SECOND: "0.01"
+      VTUBER_SESSION_BEARER_PEPPER: "${VTUBER_SESSION_BEARER_PEPPER:-please-override-pepper-min-16-chars}"
+      VTUBER_WORKER_CONTROL_BEARER_PEPPER: "${VTUBER_WORKER_CONTROL_BEARER_PEPPER:-please-override-pepper-min-16-chars}"
+      DATABASE_URL: "postgres://vtuber:vtuber@postgres:5432/vtuber_gateway"
+      PORT: "3001"
+
+networks:
+  vtuber-gateway:
+    driver: bridge
+
+volumes:
+  vtuber-gateway-pg: {}

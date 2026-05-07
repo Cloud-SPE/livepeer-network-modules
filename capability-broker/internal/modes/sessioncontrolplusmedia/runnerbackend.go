@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
+	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
 	srpb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1"
 )
 
@@ -31,27 +32,34 @@ type CapabilityResolver func(sessionID string) (sessionrunner.CapabilityBackend,
 type RunnerBackend struct {
 	supervisor *sessionrunner.Supervisor
 	resolver   CapabilityResolver
+	rtcEngine  *mediawebrtc.Engine
+	store      *Store
 
 	mu       sync.Mutex
 	sessions map[string]*runnerSession
 }
 
 type runnerSession struct {
-	runner   *sessionrunner.Runner
-	ipc      *sessionrunner.IPC
-	relay    *sessionrunner.EnvelopeRelay
-	inbound  chan ControlEnvelope
-	outbound chan ControlEnvelope
-	done     chan struct{}
-	cancel   context.CancelFunc
+	runner    *sessionrunner.Runner
+	ipc       *sessionrunner.IPC
+	relay     *sessionrunner.EnvelopeRelay
+	mediaRel  *MediaRelay
+	mediaPC   *mediawebrtc.Relay
+	mediaIPC  *sessionrunner.MediaRelay
+	inbound   chan ControlEnvelope
+	outbound  chan ControlEnvelope
+	done      chan struct{}
+	cancel    context.CancelFunc
 }
 
 // NewRunnerBackend wraps the per-broker supervisor in a Backend the
 // session-control-plus-media driver consumes.
-func NewRunnerBackend(sup *sessionrunner.Supervisor, resolver CapabilityResolver) *RunnerBackend {
+func NewRunnerBackend(sup *sessionrunner.Supervisor, resolver CapabilityResolver, rtcEngine *mediawebrtc.Engine, store *Store) *RunnerBackend {
 	return &RunnerBackend{
 		supervisor: sup,
 		resolver:   resolver,
+		rtcEngine:  rtcEngine,
+		store:      store,
 		sessions:   make(map[string]*runnerSession),
 	}
 }
@@ -98,10 +106,43 @@ func (b *RunnerBackend) AttachControl(ctx context.Context, sessionID string) (Ba
 		return BackendControl{}, err
 	}
 
+	var pcRelay *mediawebrtc.Relay
+	var mediaIPC *sessionrunner.MediaRelay
+	var mediaRel *MediaRelay
+	if b.rtcEngine != nil {
+		pcRelay, err = b.rtcEngine.NewRelay()
+		if err != nil {
+			_ = relay.Close()
+			_ = ipc.Close()
+			_ = runner.Kill()
+			cancel()
+			return BackendControl{}, err
+		}
+		mediaIPC, err = ipc.OpenMediaRelay(runCtx)
+		if err != nil {
+			_ = pcRelay.Close()
+			_ = relay.Close()
+			_ = ipc.Close()
+			_ = runner.Kill()
+			cancel()
+			return BackendControl{}, err
+		}
+		mediaRel = NewMediaRelay(sessionID, pcRelay, mediaIPC)
+		go mediaRel.Run(runCtx)
+		if rec := b.store.Get(sessionID); rec != nil {
+			rec.mu.Lock()
+			rec.media = mediaRel
+			rec.mu.Unlock()
+		}
+	}
+
 	sess := &runnerSession{
 		runner:   runner,
 		ipc:      ipc,
 		relay:    relay,
+		mediaRel: mediaRel,
+		mediaPC:  pcRelay,
+		mediaIPC: mediaIPC,
 		inbound:  make(chan ControlEnvelope, 64),
 		outbound: make(chan ControlEnvelope, 64),
 		done:     make(chan struct{}),
@@ -161,6 +202,12 @@ func (b *RunnerBackend) Shutdown(sessionID string) {
 	b.mu.Unlock()
 	if sess == nil {
 		return
+	}
+	if sess.mediaIPC != nil {
+		_ = sess.mediaIPC.Close()
+	}
+	if sess.mediaPC != nil {
+		_ = sess.mediaPC.Close()
 	}
 	if sess.relay != nil {
 		_ = sess.relay.Close()

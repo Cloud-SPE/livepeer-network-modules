@@ -60,6 +60,13 @@ const (
 	TypeSessionUsageTick   = "session.usage.tick"
 	TypeSessionBalanceLow  = "session.balance.low"
 	TypeSessionReconnected = "session.reconnected"
+
+	TypeMediaNegotiateStart = "media.negotiate.start"
+	TypeMediaSDPOffer       = "media.sdp.offer"
+	TypeMediaSDPAnswer      = "media.sdp.answer"
+	TypeMediaICECandidate   = "media.ice.candidate"
+	TypeMediaReady          = "media.ready"
+	TypeMediaFailed         = "media.failed"
 )
 
 // IsReserved reports whether the envelope type is broker-handled.
@@ -67,7 +74,9 @@ func IsReserved(t string) bool {
 	switch t {
 	case TypeSessionStarted, TypeSessionEnd, TypeSessionEnded,
 		TypeSessionError, TypeSessionUsageTick,
-		TypeSessionBalanceLow, TypeSessionReconnected:
+		TypeSessionBalanceLow, TypeSessionReconnected,
+		TypeMediaNegotiateStart, TypeMediaSDPOffer, TypeMediaSDPAnswer,
+		TypeMediaICECandidate, TypeMediaReady, TypeMediaFailed:
 		return true
 	}
 	return false
@@ -148,6 +157,14 @@ func (d *Driver) runControlWS(parent context.Context, conn *websocket.Conn, rec 
 	defer cancel()
 
 	out := make(chan ControlEnvelope, d.cfg.OutboundBufferMessages)
+	rec.mu.Lock()
+	rec.outboundForRelay = out
+	rec.mu.Unlock()
+	defer func() {
+		rec.mu.Lock()
+		rec.outboundForRelay = nil
+		rec.mu.Unlock()
+	}()
 	closeReason := newCloseReasonHolder()
 
 	var wg sync.WaitGroup
@@ -173,6 +190,13 @@ func (d *Driver) runControlWS(parent context.Context, conn *websocket.Conn, rec 
 			Type: TypeSessionStarted,
 			Seq:  rec.NextSeq(),
 		})
+		if rec.media != nil {
+			emitDirect(out, ControlEnvelope{
+				Type: TypeMediaNegotiateStart,
+				Seq:  rec.NextSeq(),
+			})
+			go rec.media.emitLocalCandidates(ctx, out)
+		}
 	}
 
 	if rec.control != nil {
@@ -227,6 +251,26 @@ func (d *Driver) runReader(ctx context.Context, conn *websocket.Conn, rec *Sessi
 			d.tearDown(rec, "session.end")
 			cancel()
 			return
+		}
+		if rec.media != nil && (env.Type == TypeMediaSDPOffer || env.Type == TypeMediaICECandidate) {
+			reply, hasReply, err := rec.media.HandleControlEnvelope(env)
+			if err != nil {
+				log.Printf("session-control-plus-media: session=%s media envelope: %v", rec.SessionID, err)
+				continue
+			}
+			if hasReply {
+				if reply.Seq == 0 {
+					reply.Seq = rec.NextSeq()
+				}
+				if rec.outboundForRelay != nil {
+					select {
+					case rec.outboundForRelay <- reply:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+			continue
 		}
 		if rec.control != nil {
 			select {

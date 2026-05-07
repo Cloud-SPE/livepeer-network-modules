@@ -82,6 +82,17 @@ type SessionRecord struct {
 	// no WS is currently attached.
 	control *BackendControl
 
+	// media is the per-session pion + IPC bridge. Populated by the
+	// runner-backed Backend implementation when the runner exposes
+	// a media plane.
+	media *MediaRelay
+
+	// outboundForRelay is the active control-WS writer's outbound
+	// channel. Populated when the WS upgrade completes; cleared on
+	// disconnect. The media relay reads it to inject SDP / ICE
+	// envelopes back to the customer.
+	outboundForRelay chan<- ControlEnvelope
+
 	// LiveCounter exposes the running unit total to the
 	// interim-debit ticker. Populated by the mode driver at
 	// session-open from the configured extractor.

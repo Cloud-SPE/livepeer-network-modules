@@ -31,8 +31,10 @@ func TestEnvelopeReservedTypes(t *testing.T) {
 		{"usage_tick", TypeSessionUsageTick, true},
 		{"balance_low", TypeSessionBalanceLow, true},
 		{"reconnected", TypeSessionReconnected, true},
+		{"media_offer", TypeMediaSDPOffer, true},
+		{"media_ice", TypeMediaICECandidate, true},
 		{"workload", "set_persona", false},
-		{"workload_dotted", "media.sdp.offer", false},
+		{"workload_dotted_unknown", "audio.frame", false},
 		{"empty", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

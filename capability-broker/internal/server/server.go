@@ -172,7 +172,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	}
 
 	resolver := sessionRunnerResolver(cfg, sessStore)
-	runnerBackend := sessioncontrolplusmedia.NewRunnerBackend(runnerSup, resolver)
+	runnerBackend := sessioncontrolplusmedia.NewRunnerBackend(runnerSup, resolver, rtcEngine, sessStore)
 	sessDriver.SetBackend(runnerBackend)
 
 	s := &Server{

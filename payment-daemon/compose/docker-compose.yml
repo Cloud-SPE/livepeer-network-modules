@@ -1,0 +1,71 @@
+# Run-only compose for payment-daemon. Build via
+# `./infra/scripts/build-images.sh payment-daemon`.
+#
+# Two services, one image, one --mode flag. Pick the one that fits the
+# host:
+#   payment-daemon-receiver — orchestrator-side (validates + redeems
+#                              winning tickets)
+#   payment-daemon-sender   — gateway-side (signs tickets per request)
+#
+# Bring up exactly one of the two via profiles. Both expose a UDS at
+# /var/run/livepeer/<sender|receiver>.sock; co-located processes
+# (broker on the orch host; gateway on the gateway host) consume that
+# socket.
+#
+# Production requires --chain-rpc set. Dev mode (no --chain-rpc) is
+# chain-stubbed and will not redeem on-chain.
+
+services:
+  payment-daemon-receiver:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    profiles: [receiver]
+    command:
+      - --mode=receiver
+      - --socket=/var/run/livepeer/payment-daemon.sock
+      - --db=/var/lib/livepeer/payment-daemon/sessions.db
+      - --chain-rpc=${CHAIN_RPC:-}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
+      - --redeem-gas=${REDEEM_GAS:-500000}
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-./run/keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - payment-daemon-db:/var/lib/livepeer/payment-daemon
+    restart: unless-stopped
+
+  payment-daemon-sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    profiles: [sender]
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --chain-rpc=${CHAIN_RPC:-}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-./run/keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+    restart: unless-stopped
+
+  # Dev-mode receiver — chain-stubbed; for smoke usage only. Do not
+  # accept real funds against this profile.
+  payment-daemon-dev:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    profiles: [dev]
+    command:
+      - --mode=receiver
+      - --socket=/var/run/livepeer/payment-daemon.sock
+      - --db=/var/lib/livepeer/payment-daemon/sessions.db
+    volumes:
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - payment-daemon-db:/var/lib/livepeer/payment-daemon
+
+volumes:
+  payment-daemon-db: {}

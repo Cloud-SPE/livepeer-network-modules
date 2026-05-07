@@ -1,0 +1,33 @@
+# Run-only compose for video-gateway. Build via
+# `./infra/scripts/build-images.sh video-gateway`.
+#
+# Live RTMP ingest on :1935 + LL-HLS playback + tus VOD upload + Stripe
+# webhook on :3000. Reaches a co-located capability-broker via
+# LIVEPEER_BROKER_URL and a co-located payment-daemon (sender) via UDS.
+# Postgres + Redis expected externally — bring them up via
+# `infra/compose/docker-compose.yml --profile pg --profile redis`.
+
+services:
+  video-gateway:
+    image: ${REGISTRY:-tztcloud}/livepeer-video-gateway:${TAG:-v1.0.0}
+    environment:
+      PORT: "3000"
+      LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL:-http://capability-broker:8080}
+      LIVEPEER_BROKER_RTMP_HOST: ${LIVEPEER_BROKER_RTMP_HOST:-capability-broker}
+      LIVEPEER_PAYER_DAEMON_SOCKET: ${LIVEPEER_PAYER_DAEMON_SOCKET:-/var/run/livepeer/payer-daemon.sock}
+      VIDEO_LIVE_RTMP_LISTEN_ADDR: ${VIDEO_LIVE_RTMP_LISTEN_ADDR:-:1935}
+      VIDEO_LIVE_HLS_BASE_URL: ${VIDEO_LIVE_HLS_BASE_URL:-http://capability-broker:8080}
+      VIDEO_VOD_TUS_PATH: ${VIDEO_VOD_TUS_PATH:-/v1/uploads}
+      VIDEO_WEBHOOK_HMAC_PEPPER: ${VIDEO_WEBHOOK_HMAC_PEPPER:-dev-pepper}
+      VIDEO_GATEWAY_ABR_POLICY: ${VIDEO_GATEWAY_ABR_POLICY:-customer-tier}
+      DATABASE_URL: ${DATABASE_URL:-postgres://livepeer:livepeer@postgres:5432/video_gateway}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CUSTOMER_PORTAL_PEPPER: ${CUSTOMER_PORTAL_PEPPER:-dev-pepper}
+      BROKER_CALL_TIMEOUT_MS: ${BROKER_CALL_TIMEOUT_MS:-30000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${VIDEO_GATEWAY_PORT:-3000}:3000"
+      - "${VIDEO_RTMP_PORT:-1935}:1935"
+    volumes:
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+    restart: unless-stopped

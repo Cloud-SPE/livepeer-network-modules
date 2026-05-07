@@ -1,13 +1,53 @@
+# Run-only compose for video-runners. Build via
+# `./infra/scripts/build-images.sh transcode-runner abr-runner
+#                                  transcode-runner-nvidia abr-runner-nvidia
+#                                  transcode-runner-intel abr-runner-intel`.
+#
+# The default profile (no `--profile`) runs the AMD-target runners since
+# they don't need vendor-specific drivers. Use `--profile nvidia` for
+# CUDA hosts (requires `runtime: nvidia` and the nvidia container
+# toolkit) or `--profile intel` for QSV/VAAPI Intel hosts.
+#
+# `--profile storage` brings up MinIO for VOD output staging.
+
 services:
+  # ---- AMD VAAPI (default profile — works on most Linux hosts) ----
   transcode_runner:
-    image: ${REGISTRY:-tztcloud}/transcode-runner:${TAG:-v0.8.10}
-    build:
-      context: ..
-      dockerfile: transcode-runner/Dockerfile
-      target: runtime-nvidia
-      args:
-        REGISTRY: ${REGISTRY:-tztcloud}
-        TAG: ${TAG:-v0.8.10}
+    image: ${REGISTRY:-tztcloud}/transcode-runner:${TAG:-v1.0.0}
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - CAPABILITY_NAME=transcode-vod
+      - RUNNER_ADDR=:8080
+      - MAX_QUEUE_SIZE=5
+      - TEMP_DIR=/tmp/transcode
+      - JOB_TTL_SECONDS=3600
+      - METRICS_ENABLED=false
+    volumes:
+      - transcode-temp:/tmp/transcode
+    ports:
+      - "${TRANSCODE_RUNNER_PORT:-8086}:8080"
+
+  abr_runner:
+    image: ${REGISTRY:-tztcloud}/abr-runner:${TAG:-v1.0.0}
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - CAPABILITY_NAME=abr-ladder
+      - RUNNER_ADDR=:8080
+      - MAX_QUEUE_SIZE=2
+      - TEMP_DIR=/tmp/abr
+      - JOB_TTL_SECONDS=3600
+      - METRICS_ENABLED=false
+    volumes:
+      - abr-temp:/tmp/abr
+    ports:
+      - "${ABR_RUNNER_PORT:-8087}:8080"
+
+  # ---- NVIDIA NVENC/NVDEC (profile: nvidia) ----
+  transcode_runner_nvidia:
+    image: ${REGISTRY:-tztcloud}/transcode-runner-nvidia:${TAG:-v1.0.0}
+    profiles: [nvidia]
     runtime: nvidia
     environment:
       - CAPABILITY_NAME=transcode-vod
@@ -19,17 +59,11 @@ services:
     volumes:
       - transcode-temp:/tmp/transcode
     ports:
-      - "8086:8080"
+      - "${TRANSCODE_RUNNER_PORT:-8086}:8080"
 
-  abr_runner:
-    image: ${REGISTRY:-tztcloud}/abr-runner:${TAG:-v0.8.10}
-    build:
-      context: ..
-      dockerfile: abr-runner/Dockerfile
-      target: runtime-nvidia
-      args:
-        REGISTRY: ${REGISTRY:-tztcloud}
-        TAG: ${TAG:-v0.8.10}
+  abr_runner_nvidia:
+    image: ${REGISTRY:-tztcloud}/abr-runner-nvidia:${TAG:-v1.0.0}
+    profiles: [nvidia]
     runtime: nvidia
     environment:
       - CAPABILITY_NAME=abr-ladder
@@ -41,18 +75,12 @@ services:
     volumes:
       - abr-temp:/tmp/abr
     ports:
-      - "8087:8080"
+      - "${ABR_RUNNER_PORT:-8087}:8080"
 
+  # ---- Intel QSV / VAAPI (profile: intel) ----
   transcode_runner_intel:
-    image: ${REGISTRY:-tztcloud}/transcode-runner-intel:${TAG:-v0.8.10}
+    image: ${REGISTRY:-tztcloud}/transcode-runner-intel:${TAG:-v1.0.0}
     profiles: [intel]
-    build:
-      context: ..
-      dockerfile: transcode-runner/Dockerfile
-      target: runtime-intel
-      args:
-        REGISTRY: ${REGISTRY:-tztcloud}
-        TAG: ${TAG:-v0.8.10}
     devices:
       - /dev/dri:/dev/dri
     environment:
@@ -66,15 +94,8 @@ services:
       - transcode-temp:/tmp/transcode
 
   abr_runner_intel:
-    image: ${REGISTRY:-tztcloud}/abr-runner-intel:${TAG:-v0.8.10}
+    image: ${REGISTRY:-tztcloud}/abr-runner-intel:${TAG:-v1.0.0}
     profiles: [intel]
-    build:
-      context: ..
-      dockerfile: abr-runner/Dockerfile
-      target: runtime-intel
-      args:
-        REGISTRY: ${REGISTRY:-tztcloud}
-        TAG: ${TAG:-v0.8.10}
     devices:
       - /dev/dri:/dev/dri
     environment:
@@ -87,57 +108,14 @@ services:
     volumes:
       - abr-temp:/tmp/abr
 
-  transcode_runner_amd:
-    image: ${REGISTRY:-tztcloud}/transcode-runner-amd:${TAG:-v0.8.10}
-    profiles: [amd]
-    build:
-      context: ..
-      dockerfile: transcode-runner/Dockerfile
-      target: runtime-amd
-      args:
-        REGISTRY: ${REGISTRY:-tztcloud}
-        TAG: ${TAG:-v0.8.10}
-    devices:
-      - /dev/dri:/dev/dri
-    environment:
-      - CAPABILITY_NAME=transcode-vod
-      - RUNNER_ADDR=:8080
-      - MAX_QUEUE_SIZE=5
-      - TEMP_DIR=/tmp/transcode
-      - JOB_TTL_SECONDS=3600
-      - METRICS_ENABLED=false
-    volumes:
-      - transcode-temp:/tmp/transcode
-
-  abr_runner_amd:
-    image: ${REGISTRY:-tztcloud}/abr-runner-amd:${TAG:-v0.8.10}
-    profiles: [amd]
-    build:
-      context: ..
-      dockerfile: abr-runner/Dockerfile
-      target: runtime-amd
-      args:
-        REGISTRY: ${REGISTRY:-tztcloud}
-        TAG: ${TAG:-v0.8.10}
-    devices:
-      - /dev/dri:/dev/dri
-    environment:
-      - CAPABILITY_NAME=abr-ladder
-      - RUNNER_ADDR=:8080
-      - MAX_QUEUE_SIZE=2
-      - TEMP_DIR=/tmp/abr
-      - JOB_TTL_SECONDS=3600
-      - METRICS_ENABLED=false
-    volumes:
-      - abr-temp:/tmp/abr
-
+  # ---- Optional MinIO for VOD output (profile: storage) ----
   minio:
     image: minio/minio:latest
     profiles: [storage]
     command: server /data --console-address ":9001"
     environment:
-      - MINIO_ROOT_USER=minio4dmin
-      - MINIO_ROOT_PASSWORD=minio4dmin
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minio4dmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minio4dmin}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -152,7 +130,7 @@ services:
     entrypoint: >
       /bin/sh -c "
       sleep 3 &&
-      mc alias set local http://minio:9000 minio4dmin minio4dmin &&
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minio4dmin} ${MINIO_ROOT_PASSWORD:-minio4dmin} &&
       mc mb --ignore-existing local/transcoded &&
       mc anonymous set public local/transcoded
       "

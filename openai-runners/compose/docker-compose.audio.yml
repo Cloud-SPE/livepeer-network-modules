@@ -1,11 +1,15 @@
+# Audio overlay — adds openai-audio-runner (whisper STT) and
+# openai-tts-runner (kokoro TTS) alongside the base compose.
+#
+# Build via `./infra/scripts/build-images.sh openai-audio-runner openai-tts-runner`.
+
 services:
   openai_audio_runner:
-    image: ${REGISTRY:-tztcloud}/openai-audio-runner:${TAG:-v0.8.10}
-    build: ../openai-audio-runner
+    image: ${REGISTRY:-tztcloud}/openai-audio-runner:${TAG:-v1.0.0}
     runtime: nvidia
     environment:
       - CAPABILITY_NAME=openai-audio-transcriptions
-      - MODEL_ID=openai/whisper-large-v3
+      - MODEL_ID=${AUDIO_MODEL_ID:-openai/whisper-large-v3}
       - MODEL_DIR=/models
       - RUNNER_PORT=8080
       - DEVICE=cuda
@@ -18,15 +22,14 @@ services:
     volumes:
       - ai-whisper-models:/models
     ports:
-      - "8084:8080"
+      - "${AUDIO_RUNNER_PORT:-8084}:8080"
 
   openai_tts_runner:
-    image: ${REGISTRY:-tztcloud}/openai-tts-runner:${TAG:-v0.8.10}
-    build: ../openai-tts-runner
+    image: ${REGISTRY:-tztcloud}/openai-tts-runner:${TAG:-v1.0.0}
     runtime: nvidia
     environment:
       - CAPABILITY_NAME=openai-audio-speech
-      - MODEL_ID=hexgrad/Kokoro-82M
+      - MODEL_ID=${TTS_MODEL_ID:-hexgrad/Kokoro-82M}
       - MODEL_DIR=/models
       - RUNNER_PORT=8080
       - DEVICE=cuda
@@ -38,7 +41,7 @@ services:
     volumes:
       - ai-kokoro-models:/models
     ports:
-      - "8085:8080"
+      - "${TTS_RUNNER_PORT:-8085}:8080"
 
 volumes:
   ai-whisper-models: {}

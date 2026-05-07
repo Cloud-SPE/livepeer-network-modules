@@ -1,11 +1,13 @@
+# Run-only compose for rerank-runner. Build via
+# `./infra/scripts/build-images.sh rerank-runner rerank-model-downloader`.
+
 services:
   rerank_runner:
-    image: ${REGISTRY:-tztcloud}/rerank-runner:${TAG:-v0.8.10}
-    build: ..
+    image: ${REGISTRY:-tztcloud}/rerank-runner:${TAG:-v1.0.0}
     runtime: nvidia
     environment:
       - CAPABILITY_NAME=rerank
-      - MODEL_ID=zeroentropy/zerank-2
+      - MODEL_ID=${RERANK_MODEL_ID:-zeroentropy/zerank-2}
       - MODEL_DIR=/models
       - RUNNER_PORT=8080
       - DEVICE=cuda
@@ -17,14 +19,13 @@ services:
     volumes:
       - ai-rerank-models:/models
     ports:
-      - "8081:8080"
+      - "${RERANK_RUNNER_PORT:-8081}:8080"
 
   rerank_model_downloader:
-    image: ${REGISTRY:-tztcloud}/rerank-model-downloader:${TAG:-v0.8.10}
-    build: ../model-downloader
+    image: ${REGISTRY:-tztcloud}/rerank-model-downloader:${TAG:-v1.0.0}
     profiles: [downloader]
     environment:
-      - MODEL_ID=zeroentropy/zerank-2
+      - MODEL_ID=${RERANK_MODEL_ID:-zeroentropy/zerank-2}
       - MODEL_DIR=/models
     volumes:
       - ai-rerank-models:/models

@@ -1,0 +1,35 @@
+# Run-only compose for vtuber-gateway. Build via
+# `./infra/scripts/build-images.sh vtuber-gateway`.
+#
+# WebSocket control plane + session orchestration. Reaches a co-located
+# capability-broker via LIVEPEER_BROKER_URL and a co-located
+# payment-daemon (sender) via the UDS socket. Postgres expected
+# externally — bring it up via
+# `infra/compose/docker-compose.yml --profile pg`.
+
+services:
+  vtuber-gateway:
+    image: ${REGISTRY:-tztcloud}/livepeer-vtuber-gateway:${TAG:-v1.0.0}
+    environment:
+      PORT: "3001"
+      LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL:-http://capability-broker:8080}
+      LIVEPEER_PAYER_DAEMON_SOCKET: ${LIVEPEER_PAYER_DAEMON_SOCKET:-/var/run/livepeer/payer-daemon.sock}
+      LIVEPEER_PAYER_DEFAULT_FACE_VALUE_WEI: ${LIVEPEER_PAYER_DEFAULT_FACE_VALUE_WEI:-5000000000000000000}
+      VTUBER_DEFAULT_OFFERING: ${VTUBER_DEFAULT_OFFERING:-default}
+      VTUBER_SESSION_BEARER_PEPPER: ${VTUBER_SESSION_BEARER_PEPPER:-dev-pepper}
+      VTUBER_WORKER_CONTROL_BEARER_PEPPER: ${VTUBER_WORKER_CONTROL_BEARER_PEPPER:-dev-pepper}
+      VTUBER_SESSION_DEFAULT_TTL_SECONDS: ${VTUBER_SESSION_DEFAULT_TTL_SECONDS:-3600}
+      VTUBER_SESSION_BEARER_TTL_SECONDS: ${VTUBER_SESSION_BEARER_TTL_SECONDS:-7200}
+      VTUBER_RATE_CARD_USD_PER_SECOND: ${VTUBER_RATE_CARD_USD_PER_SECOND:-0.01}
+      VTUBER_WORKER_CALL_TIMEOUT_MS: ${VTUBER_WORKER_CALL_TIMEOUT_MS:-15000}
+      VTUBER_RELAY_MAX_PER_SESSION: ${VTUBER_RELAY_MAX_PER_SESSION:-8}
+      VTUBER_CONTROL_RECONNECT_WINDOW: ${VTUBER_CONTROL_RECONNECT_WINDOW:-30s}
+      VTUBER_CONTROL_RECONNECT_BUFFER_MESSAGES: ${VTUBER_CONTROL_RECONNECT_BUFFER_MESSAGES:-64}
+      VTUBER_CONTROL_RECONNECT_BUFFER_BYTES: ${VTUBER_CONTROL_RECONNECT_BUFFER_BYTES:-1048576}
+      DATABASE_URL: ${DATABASE_URL:-postgres://livepeer:livepeer@postgres:5432/vtuber_gateway}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${VTUBER_GATEWAY_PORT:-3001}:3001"
+    volumes:
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+    restart: unless-stopped

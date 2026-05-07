@@ -1,0 +1,40 @@
+# Run-only compose for secure-orch-console. Build via
+# `./infra/scripts/build-images.sh secure-orch-console`.
+#
+# The console is loopback-only by design — it refuses to bind anything
+# other than 127.0.0.1 / ::1 / localhost. Operators reach the UI via
+# `ssh -L 8080:127.0.0.1:8080 secure-orch` from a LAN laptop.
+#
+# Required mounts (host-side files the operator owns):
+#   ./run/keystore.json           — V3 JSON keystore
+#   ./run/password                — keystore password file (or use the
+#                                   LIVEPEER_KEYSTORE_PASSWORD env)
+#   ./run/last-signed.json        — canonical last-signed envelope
+#                                   (created on first sign cycle)
+#
+# Audit log + state persist in the secure-orch-data volume.
+
+services:
+  secure-orch-console:
+    image: ${REGISTRY:-tztcloud}/livepeer-secure-orch-console:${TAG:-v1.0.0}
+    command:
+      - --keystore=v3:/var/lib/secure-orch/keystore.json
+      - --keystore-password-file=/etc/secure-orch/password
+      - --last-signed=/var/lib/secure-orch/last-signed.json
+      - --audit-log=/var/log/secure-orch/audit.log.jsonl
+      - --audit-rotate-size=${AUDIT_ROTATE_SIZE:-104857600}
+      - --listen=127.0.0.1:8080
+    ports:
+      # Bind ONLY to host loopback. Do not expose this on a LAN
+      # interface, ever. SSH-tunnel from operator laptops.
+      - "127.0.0.1:${SECURE_ORCH_PORT:-8080}:8080"
+    volumes:
+      - ${SECURE_ORCH_KEYSTORE:-./run/keystore.json}:/var/lib/secure-orch/keystore.json:ro
+      - ${SECURE_ORCH_PASSWORD_FILE:-./run/password}:/etc/secure-orch/password:ro
+      - secure-orch-data:/var/lib/secure-orch
+      - secure-orch-audit:/var/log/secure-orch
+    restart: unless-stopped
+
+volumes:
+  secure-orch-data: {}
+  secure-orch-audit: {}

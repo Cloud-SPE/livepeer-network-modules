@@ -1,0 +1,54 @@
+# Run-only compose for orch-coordinator. Build via
+# `./infra/scripts/build-images.sh orch-coordinator`.
+#
+# Three listeners on intentionally separate ports:
+#   8080 — admin UX (LAN-bound)
+#   8081 — public resolver-facing /.well-known/livepeer-registry.json
+#   9091 — Prometheus + healthz
+#
+# `--dev` boots with synthetic broker fixtures; for real use, mount a
+# coordinator-config.yaml that lists your broker endpoint(s).
+
+services:
+  orch-coordinator:
+    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.0.0}
+    command:
+      - --config=/etc/livepeer/orch-coordinator.yaml
+      - --data-dir=/var/lib/livepeer/orch-coordinator
+      - --listen=:8080
+      - --public-listen=:8081
+      - --metrics-listen=:9091
+      - --log-level=${COORDINATOR_LOG_LEVEL:-info}
+      - --log-format=${COORDINATOR_LOG_FORMAT:-text}
+    ports:
+      - "${COORDINATOR_LISTEN_PORT:-8080}:8080"
+      - "${COORDINATOR_PUBLIC_PORT:-8081}:8081"
+      - "${COORDINATOR_METRICS_PORT:-9091}:9091"
+    volumes:
+      - ${COORDINATOR_CONFIG:-./orch-coordinator.yaml}:/etc/livepeer/orch-coordinator.yaml:ro
+      - coordinator-data:/var/lib/livepeer/orch-coordinator
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Synthetic-fixture mode for smoke tests. No config file required.
+  # Enable with `--profile dev`.
+  orch-coordinator-dev:
+    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.0.0}
+    profiles: [dev]
+    command:
+      - --dev
+      - --listen=:8080
+      - --public-listen=:8081
+      - --metrics-listen=:9091
+      - --log-level=debug
+    ports:
+      - "${COORDINATOR_LISTEN_PORT:-8080}:8080"
+      - "${COORDINATOR_PUBLIC_PORT:-8081}:8081"
+      - "${COORDINATOR_METRICS_PORT:-9091}:9091"
+
+volumes:
+  coordinator-data: {}

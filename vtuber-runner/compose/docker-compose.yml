@@ -1,0 +1,37 @@
+# Run-only compose for vtuber-runner. Build via
+# `./infra/scripts/build-images.sh vtuber-runner`.
+#
+# Headless chromium renderer + Python session-runner FastAPI service.
+# Worker side of the vtuber pipeline — vtuber-gateway dispatches
+# session-start RPCs to this on :8080. Each session calls back to a
+# customer-supplied OpenAI-compat gateway for LLM + TTS.
+
+services:
+  vtuber-runner:
+    image: ${REGISTRY:-tztcloud}/vtuber-runner:${TAG:-v1.0.0}
+    environment:
+      SESSION_RUNNER_HTTP_HOST: 0.0.0.0
+      SESSION_RUNNER_HTTP_PORT: "8080"
+      SESSION_RUNNER_LOG_LEVEL: ${SESSION_RUNNER_LOG_LEVEL:-INFO}
+      SESSION_RUNNER_LOG_FORMAT: ${SESSION_RUNNER_LOG_FORMAT:-console}
+      SESSION_RUNNER_RENDERER: ${SESSION_RUNNER_RENDERER:-chromium}
+      SESSION_RUNNER_RENDERER_DIST: /app/avatar-renderer/dist
+      LIVEPEER_OPENAI_GATEWAY_URL: ${LIVEPEER_OPENAI_GATEWAY_URL:-}
+      LIVEPEER_OPENAI_GATEWAY_API_KEY: ${LIVEPEER_OPENAI_GATEWAY_API_KEY:-}
+      OLV_MODEL_DIR: ${OLV_MODEL_DIR:-/models}
+      TRICKLE_PUBLISH_URL: ${TRICKLE_PUBLISH_URL:-}
+      WORKER_CONTROL_BEARER_PUBKEY: ${WORKER_CONTROL_BEARER_PUBKEY:-}
+    ports:
+      - "${VTUBER_RUNNER_PORT:-8088}:8080"
+    volumes:
+      - vtuber-models:/models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  vtuber-models: {}

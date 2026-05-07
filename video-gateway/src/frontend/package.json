@@ -1,11 +1,25 @@
 {
-  "name": "video-gateway-frontend",
+  "name": "@livepeer-rewrite/video-gateway-web-ui",
   "version": "0.1.0",
   "private": true,
-  "description": "pnpm sub-workspace for video-gateway operator admin SPA",
+  "description": "Operator admin SPA for the video-gateway. Composes customer-portal/frontend/shared widgets and adds video-specific admin pages (assets / streams / webhooks / recordings).",
   "license": "MIT",
+  "type": "module",
+  "files": ["web-ui", "README.md"],
   "scripts": {
-    "build": "echo 'frontend build scaffolded; SPA assets land in phase 2'"
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"
+  },
+  "dependencies": {
+    "@livepeer-rewrite/customer-portal-shared": "workspace:*",
+    "lit": "^3.2.0",
+    "rxjs": "^7.8.0"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^22.0.0",
+    "jsdom": "^25.0.0",
+    "typescript": "^5.6.0"
   },
   "engines": {
     "node": ">=20"

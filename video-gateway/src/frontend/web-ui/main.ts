@@ -1,8 +1,10 @@
-// Operator admin SPA entry point. Ported from
-// livepeer-network-suite/livepeer-video-gateway/web-ui/src/main.ts and
-// composed against the customer-portal/ shared SPA shell. Build via the
-// `video-gateway-frontend` sub-workspace once Vite is wired in phase 5.
-
+import "@livepeer-rewrite/customer-portal-shared";
 import "./components/admin-app.js";
-
-window.console.info("video-gateway admin SPA scaffold loaded");
+import "./components/admin-customers.js";
+import "./components/admin-customer-detail.js";
+import "./components/admin-customer-adjust.js";
+import "./components/admin-customer-refund.js";
+import "./components/admin-assets.js";
+import "./components/admin-streams.js";
+import "./components/admin-webhooks.js";
+import "./components/admin-recordings.js";

@@ -34,9 +34,11 @@ service SessionRunnerControl {
   // ReportWorkUnits is the runner's monotonic-delta reporting
   // channel for the work-unit-counter shape covered by the
   // `runnerreport` extractor (plan 0012-followup §8).
-  // The broker accumulates deltas into a per-session atomic.Uint64
-  // that the interim-debit ticker polls.
-  rpc ReportWorkUnits(stream WorkUnitReport) returns (WorkUnitAck);
+  // The runner is the gRPC server; the broker initiates the call
+  // and reads the server-stream of monotonic deltas. Each delta
+  // accumulates into a per-session atomic.Uint64 the interim-debit
+  // ticker polls.
+  rpc ReportWorkUnits(WorkUnitReportRequest) returns (stream WorkUnitReport);
 
   // Shutdown asks the runner to drain gracefully. The broker waits
   // up to --session-runner-shutdown-grace before SIGKILL.
@@ -71,14 +73,14 @@ message ControlEnvelope {
   bytes body = 3;
 }
 
+message WorkUnitReportRequest {}
+
 message WorkUnitReport {
   // Delta is the monotonic-positive number of new work units the
   // runner emitted since the previous report. Negative or zero
   // values are protocol errors; the broker discards the report.
   uint64 delta = 1;
 }
-
-message WorkUnitAck {}
 
 message ShutdownRequest {
   // Graceful indicates whether the runner should drain in-flight

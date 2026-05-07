@@ -8,6 +8,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/bytescounted"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/runnerreport"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/secondselapsed"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
@@ -105,6 +106,8 @@ func buildLiveCounter(ext extractors.Extractor, mode string) extractors.LiveCoun
 		return e.NewLiveCounter()
 	case *secondselapsed.Extractor:
 		return e.NewLiveCounter(time.Now())
+	case *runnerreport.Extractor:
+		return e.NewLiveCounter()
 	}
 	return nil
 }
@@ -123,6 +126,10 @@ func buildLiveCounter(ext extractors.Extractor, mode string) extractors.LiveCoun
 func modeSupportsInterimDebit(mode string) bool {
 	switch mode {
 	case "ws-realtime@v0":
+		return true
+	case "session-control-plus-media@v0":
+		return true
+	case "rtmp-ingress-hls-egress@v0":
 		return true
 	default:
 		return false

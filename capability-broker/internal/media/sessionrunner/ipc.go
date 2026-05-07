@@ -85,6 +85,56 @@ func (i *IPC) Shutdown(ctx context.Context, graceful bool) error {
 	return err
 }
 
+// WorkUnitReports opens the runner-side ReportWorkUnits server-stream
+// client. The runner sends monotonic deltas; the broker accumulates
+// them into the runnerreport extractor's LiveCounter via the caller
+// supplied accumulate closure.
+type WorkUnitReports struct {
+	stream srpb.SessionRunnerControl_ReportWorkUnitsClient
+	cancel context.CancelFunc
+}
+
+// OpenWorkUnitReports opens the runner→broker work-unit report
+// stream. The broker initiates the call and the runner answers with
+// a server-stream of monotonic deltas.
+func (i *IPC) OpenWorkUnitReports(ctx context.Context) (*WorkUnitReports, error) {
+	if i == nil || i.control == nil {
+		return nil, errors.New("session-runner: ipc not initialized")
+	}
+	streamCtx, cancel := context.WithCancel(ctx)
+	stream, err := i.control.ReportWorkUnits(streamCtx, &srpb.WorkUnitReportRequest{})
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("session-runner: report work units: %w", err)
+	}
+	return &WorkUnitReports{stream: stream, cancel: cancel}, nil
+}
+
+// Recv blocks for one report. Returns io.EOF at end-of-stream.
+func (w *WorkUnitReports) Recv() (uint64, error) {
+	if w == nil || w.stream == nil {
+		return 0, errors.New("session-runner: report stream closed")
+	}
+	rep, err := w.stream.Recv()
+	if err != nil {
+		return 0, err
+	}
+	return rep.GetDelta(), nil
+}
+
+// Close tears down the stream. Idempotent.
+func (w *WorkUnitReports) Close() error {
+	if w == nil {
+		return nil
+	}
+	if w.cancel != nil {
+		w.cancel()
+		w.cancel = nil
+	}
+	w.stream = nil
+	return nil
+}
+
 // EnvelopeRelay is the bidirectional control-envelope stream between
 // broker and runner. The session-control-plus-media driver wires its
 // per-session inbound/outbound channels into this struct's hooks in

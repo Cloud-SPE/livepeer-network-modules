@@ -3,9 +3,11 @@ package sessioncontrolplusmedia
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"sync"
 
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/runnerreport"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
 	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
 	srpb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1"
@@ -46,6 +48,7 @@ type runnerSession struct {
 	mediaRel  *MediaRelay
 	mediaPC   *mediawebrtc.Relay
 	mediaIPC  *sessionrunner.MediaRelay
+	reports   *sessionrunner.WorkUnitReports
 	inbound   chan ControlEnvelope
 	outbound  chan ControlEnvelope
 	done      chan struct{}
@@ -136,6 +139,17 @@ func (b *RunnerBackend) AttachControl(ctx context.Context, sessionID string) (Ba
 		}
 	}
 
+	var reports *sessionrunner.WorkUnitReports
+	if rec := b.store.Get(sessionID); rec != nil {
+		if _, ok := rec.LiveCounter.(*runnerreport.LiveCounter); ok {
+			reports, err = ipc.OpenWorkUnitReports(runCtx)
+			if err != nil {
+				log.Printf("session-runner: session=%s open report stream: %v", sessionID, err)
+				reports = nil
+			}
+		}
+	}
+
 	sess := &runnerSession{
 		runner:   runner,
 		ipc:      ipc,
@@ -143,6 +157,7 @@ func (b *RunnerBackend) AttachControl(ctx context.Context, sessionID string) (Ba
 		mediaRel: mediaRel,
 		mediaPC:  pcRelay,
 		mediaIPC: mediaIPC,
+		reports:  reports,
 		inbound:  make(chan ControlEnvelope, 64),
 		outbound: make(chan ControlEnvelope, 64),
 		done:     make(chan struct{}),
@@ -155,6 +170,9 @@ func (b *RunnerBackend) AttachControl(ctx context.Context, sessionID string) (Ba
 
 	go b.pumpInbound(runCtx, sessionID, sess)
 	go b.pumpOutbound(runCtx, sessionID, sess)
+	if reports != nil {
+		go b.pumpReports(runCtx, sessionID, sess)
+	}
 
 	return BackendControl{
 		Inbound:  sess.inbound,
@@ -203,6 +221,9 @@ func (b *RunnerBackend) Shutdown(sessionID string) {
 	if sess == nil {
 		return
 	}
+	if sess.reports != nil {
+		_ = sess.reports.Close()
+	}
 	if sess.mediaIPC != nil {
 		_ = sess.mediaIPC.Close()
 	}
@@ -242,6 +263,37 @@ func (b *RunnerBackend) pumpInbound(ctx context.Context, sessionID string, sess 
 			}
 			sess.runner.Touch()
 		}
+	}
+}
+
+// pumpReports drains the runner-reported work-unit deltas onto the
+// session record's LiveCounter. Stops on EOF / runner crash.
+func (b *RunnerBackend) pumpReports(ctx context.Context, sessionID string, sess *runnerSession) {
+	rec := b.store.Get(sessionID)
+	if rec == nil {
+		return
+	}
+	lc, ok := rec.LiveCounter.(*runnerreport.LiveCounter)
+	if !ok || lc == nil {
+		return
+	}
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		delta, err := sess.reports.Recv()
+		if err != nil {
+			if err == io.EOF {
+				return
+			}
+			log.Printf("session-runner: session=%s report recv: %v", sessionID, err)
+			return
+		}
+		if delta == 0 {
+			continue
+		}
+		lc.Add(delta)
+		sess.runner.Touch()
 	}
 }
 

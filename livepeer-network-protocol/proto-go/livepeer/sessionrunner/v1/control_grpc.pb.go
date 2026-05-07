@@ -56,9 +56,11 @@ type SessionRunnerControlClient interface {
 	// ReportWorkUnits is the runner's monotonic-delta reporting
 	// channel for the work-unit-counter shape covered by the
 	// `runnerreport` extractor (plan 0012-followup §8).
-	// The broker accumulates deltas into a per-session atomic.Uint64
-	// that the interim-debit ticker polls.
-	ReportWorkUnits(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WorkUnitReport, WorkUnitAck], error)
+	// The runner is the gRPC server; the broker initiates the call
+	// and reads the server-stream of monotonic deltas. Each delta
+	// accumulates into a per-session atomic.Uint64 the interim-debit
+	// ticker polls.
+	ReportWorkUnits(ctx context.Context, in *WorkUnitReportRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WorkUnitReport], error)
 	// Shutdown asks the runner to drain gracefully. The broker waits
 	// up to --session-runner-shutdown-grace before SIGKILL.
 	Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error)
@@ -95,18 +97,24 @@ func (c *sessionRunnerControlClient) Envelopes(ctx context.Context, opts ...grpc
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SessionRunnerControl_EnvelopesClient = grpc.BidiStreamingClient[ControlEnvelope, ControlEnvelope]
 
-func (c *sessionRunnerControlClient) ReportWorkUnits(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[WorkUnitReport, WorkUnitAck], error) {
+func (c *sessionRunnerControlClient) ReportWorkUnits(ctx context.Context, in *WorkUnitReportRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WorkUnitReport], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &SessionRunnerControl_ServiceDesc.Streams[1], SessionRunnerControl_ReportWorkUnits_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[WorkUnitReport, WorkUnitAck]{ClientStream: stream}
+	x := &grpc.GenericClientStream[WorkUnitReportRequest, WorkUnitReport]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type SessionRunnerControl_ReportWorkUnitsClient = grpc.ClientStreamingClient[WorkUnitReport, WorkUnitAck]
+type SessionRunnerControl_ReportWorkUnitsClient = grpc.ServerStreamingClient[WorkUnitReport]
 
 func (c *sessionRunnerControlClient) Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -134,9 +142,11 @@ type SessionRunnerControlServer interface {
 	// ReportWorkUnits is the runner's monotonic-delta reporting
 	// channel for the work-unit-counter shape covered by the
 	// `runnerreport` extractor (plan 0012-followup §8).
-	// The broker accumulates deltas into a per-session atomic.Uint64
-	// that the interim-debit ticker polls.
-	ReportWorkUnits(grpc.ClientStreamingServer[WorkUnitReport, WorkUnitAck]) error
+	// The runner is the gRPC server; the broker initiates the call
+	// and reads the server-stream of monotonic deltas. Each delta
+	// accumulates into a per-session atomic.Uint64 the interim-debit
+	// ticker polls.
+	ReportWorkUnits(*WorkUnitReportRequest, grpc.ServerStreamingServer[WorkUnitReport]) error
 	// Shutdown asks the runner to drain gracefully. The broker waits
 	// up to --session-runner-shutdown-grace before SIGKILL.
 	Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error)
@@ -156,7 +166,7 @@ func (UnimplementedSessionRunnerControlServer) Health(context.Context, *HealthRe
 func (UnimplementedSessionRunnerControlServer) Envelopes(grpc.BidiStreamingServer[ControlEnvelope, ControlEnvelope]) error {
 	return status.Error(codes.Unimplemented, "method Envelopes not implemented")
 }
-func (UnimplementedSessionRunnerControlServer) ReportWorkUnits(grpc.ClientStreamingServer[WorkUnitReport, WorkUnitAck]) error {
+func (UnimplementedSessionRunnerControlServer) ReportWorkUnits(*WorkUnitReportRequest, grpc.ServerStreamingServer[WorkUnitReport]) error {
 	return status.Error(codes.Unimplemented, "method ReportWorkUnits not implemented")
 }
 func (UnimplementedSessionRunnerControlServer) Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error) {
@@ -209,11 +219,15 @@ func _SessionRunnerControl_Envelopes_Handler(srv interface{}, stream grpc.Server
 type SessionRunnerControl_EnvelopesServer = grpc.BidiStreamingServer[ControlEnvelope, ControlEnvelope]
 
 func _SessionRunnerControl_ReportWorkUnits_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(SessionRunnerControlServer).ReportWorkUnits(&grpc.GenericServerStream[WorkUnitReport, WorkUnitAck]{ServerStream: stream})
+	m := new(WorkUnitReportRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(SessionRunnerControlServer).ReportWorkUnits(m, &grpc.GenericServerStream[WorkUnitReportRequest, WorkUnitReport]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type SessionRunnerControl_ReportWorkUnitsServer = grpc.ClientStreamingServer[WorkUnitReport, WorkUnitAck]
+type SessionRunnerControl_ReportWorkUnitsServer = grpc.ServerStreamingServer[WorkUnitReport]
 
 func _SessionRunnerControl_Shutdown_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ShutdownRequest)
@@ -259,7 +273,7 @@ var SessionRunnerControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ReportWorkUnits",
 			Handler:       _SessionRunnerControl_ReportWorkUnits_Handler,
-			ClientStreams: true,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "livepeer/sessionrunner/v1/control.proto",

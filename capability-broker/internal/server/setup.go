@@ -7,6 +7,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/openaiusage"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/requestformula"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/responsejsonpath"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/runnerreport"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/secondselapsed"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/httpmultipart"
@@ -41,5 +42,6 @@ func defaultExtractors() *extractors.Registry {
 	r.Register(bytescounted.Name, bytescounted.New)         // plan 0007
 	r.Register(secondselapsed.Name, secondselapsed.New)     // plan 0007
 	r.Register(ffmpegprogress.Name, ffmpegprogress.New)     // plan 0007
+	r.Register(runnerreport.Name, runnerreport.New)         // plan 0012-followup
 	return r
 }

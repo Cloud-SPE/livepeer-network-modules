@@ -3,8 +3,11 @@ export { createLiveStreamRepo } from "./liveStreams.js";
 export {
   createWebhookDeliveryRepo,
   createWebhookEndpointRepo,
+  createWebhookFailureRepo,
   type WebhookDeliveryRepo,
   type WebhookEndpointRepo,
+  type WebhookFailure,
+  type WebhookFailureRepo,
 } from "./webhooks.js";
 export {
   createRecordingRepo,

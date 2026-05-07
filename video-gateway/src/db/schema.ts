@@ -196,6 +196,31 @@ export const webhookDeliveries = media.table(
   }),
 );
 
+export const webhookFailures = media.table(
+  "webhook_failures",
+  {
+    id: text("id").primaryKey(),
+    endpointId: text("endpoint_id")
+      .notNull()
+      .references(() => webhookEndpoints.id, { onDelete: "cascade" }),
+    deliveryId: text("delivery_id").notNull(),
+    eventType: text("event_type").notNull(),
+    body: text("body").notNull(),
+    signatureHeader: text("signature_header").notNull(),
+    attemptCount: integer("attempt_count").notNull(),
+    lastError: text("last_error").notNull(),
+    statusCode: integer("status_code"),
+    deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    replayedAt: timestamp("replayed_at", { withTimezone: true }),
+  },
+  (t) => ({
+    byEndpoint: index("webhook_failures_endpoint").on(t.endpointId),
+    byDeadLetteredAt: index("webhook_failures_dead_lettered").on(t.deadLetteredAt),
+  }),
+);
+
 export const recordings = media.table("recordings", {
   id: text("id").primaryKey(),
   liveStreamId: text("live_stream_id")
@@ -250,6 +275,7 @@ export const schema = {
   liveSessionDebits,
   webhookEndpoints,
   webhookDeliveries,
+  webhookFailures,
   recordings,
   pricingLive,
   pricingVod,

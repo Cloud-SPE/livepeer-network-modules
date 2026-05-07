@@ -12,6 +12,8 @@ import type {
   RecordingRepo,
   WebhookDeliveryRepo,
   WebhookEndpointRepo,
+  WebhookFailure,
+  WebhookFailureRepo,
 } from "../repo/index.js";
 
 export function createInMemoryAssetRepo(): AssetRepo & { rows: Map<string, Asset> } {
@@ -157,6 +159,37 @@ export function createInMemoryWebhookDeliveryRepo(): WebhookDeliveryRepo & {
       const cur = rows.get(id);
       if (!cur) return;
       rows.set(id, { ...cur, status: "failed", attempts, lastError });
+    },
+  };
+}
+
+export function createInMemoryWebhookFailureRepo(): WebhookFailureRepo & {
+  rows: Map<string, WebhookFailure>;
+} {
+  const rows = new Map<string, WebhookFailure>();
+  return {
+    rows,
+    async insert(failure) {
+      const f: WebhookFailure = {
+        ...failure,
+        deadLetteredAt: failure.deadLetteredAt ?? new Date(),
+      };
+      rows.set(f.id, f);
+      return f;
+    },
+    async byId(id) {
+      return rows.get(id) ?? null;
+    },
+    async list(opts) {
+      return [...rows.values()]
+        .filter((f) => (opts.endpointId ? f.endpointId === opts.endpointId : true))
+        .sort((a, b) => b.deadLetteredAt.getTime() - a.deadLetteredAt.getTime())
+        .slice(0, opts.limit);
+    },
+    async markReplayed(id, at) {
+      const cur = rows.get(id);
+      if (!cur) return;
+      rows.set(id, { ...cur, replayedAt: at });
     },
   };
 }

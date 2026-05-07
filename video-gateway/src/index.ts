@@ -10,9 +10,11 @@ import {
   createRecordingRepo,
   createWebhookDeliveryRepo,
   createWebhookEndpointRepo,
+  createWebhookFailureRepo,
 } from "./repo/index.js";
 import { createRtmpListener } from "./runtime/rtmp/listener.js";
 import { buildServer } from "./server.js";
+import { createRetryDispatcher } from "./service/webhookDispatcher.js";
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -29,10 +31,23 @@ async function main(): Promise<void> {
     liveStreams: createLiveStreamRepo(videoDb),
     webhookEndpoints: createWebhookEndpointRepo(videoDb),
     webhookDeliveries: createWebhookDeliveryRepo(videoDb),
+    webhookFailures: createWebhookFailureRepo(videoDb),
     recordings: createRecordingRepo(videoDb),
   };
 
-  const app = buildServer({ cfg });
+  const dispatcher = createRetryDispatcher(
+    { pepper: cfg.webhookHmacPepper },
+    {
+      endpoints: repos.webhookEndpoints,
+      deliveries: repos.webhookDeliveries,
+      failures: repos.webhookFailures,
+    },
+  );
+
+  const app = buildServer({
+    cfg,
+    admin: { failures: repos.webhookFailures, dispatcher },
+  });
   const rtmp = createRtmpListener({ cfg });
   app.log.info(
     {

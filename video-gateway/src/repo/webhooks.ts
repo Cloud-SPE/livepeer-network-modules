@@ -1,12 +1,37 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 
 import type { Db } from "../db/pool.js";
-import { webhookDeliveries, webhookEndpoints } from "../db/schema.js";
+import {
+  webhookDeliveries,
+  webhookEndpoints,
+  webhookFailures,
+} from "../db/schema.js";
 import type {
   WebhookDelivery,
   WebhookEndpoint,
   WebhookEventType,
 } from "../engine/index.js";
+
+export interface WebhookFailure {
+  id: string;
+  endpointId: string;
+  deliveryId: string;
+  eventType: WebhookEventType;
+  body: string;
+  signatureHeader: string;
+  attemptCount: number;
+  lastError: string;
+  statusCode: number | null;
+  deadLetteredAt: Date;
+  replayedAt: Date | null;
+}
+
+export interface WebhookFailureRepo {
+  insert(failure: Omit<WebhookFailure, "deadLetteredAt"> & { deadLetteredAt?: Date }): Promise<WebhookFailure>;
+  byId(id: string): Promise<WebhookFailure | null>;
+  list(opts: { endpointId?: string; limit: number }): Promise<WebhookFailure[]>;
+  markReplayed(id: string, at: Date): Promise<void>;
+}
 
 export interface WebhookEndpointRepo {
   insert(endpoint: WebhookEndpoint): Promise<WebhookEndpoint>;
@@ -171,6 +196,86 @@ export function createWebhookDeliveryRepo(db: Db): WebhookDeliveryRepo {
         .update(webhookDeliveries)
         .set({ status: "failed", attempts, lastError })
         .where(eq(webhookDeliveries.id, id));
+    },
+  };
+}
+
+interface FailureRow {
+  id: string;
+  endpointId: string;
+  deliveryId: string;
+  eventType: string;
+  body: string;
+  signatureHeader: string;
+  attemptCount: number;
+  lastError: string;
+  statusCode: number | null;
+  deadLetteredAt: Date;
+  replayedAt: Date | null;
+}
+
+function rowToFailure(row: FailureRow): WebhookFailure {
+  return {
+    id: row.id,
+    endpointId: row.endpointId,
+    deliveryId: row.deliveryId,
+    eventType: row.eventType as WebhookEventType,
+    body: row.body,
+    signatureHeader: row.signatureHeader,
+    attemptCount: row.attemptCount,
+    lastError: row.lastError,
+    statusCode: row.statusCode,
+    deadLetteredAt: row.deadLetteredAt,
+    replayedAt: row.replayedAt,
+  };
+}
+
+export function createWebhookFailureRepo(db: Db): WebhookFailureRepo {
+  return {
+    async insert(failure) {
+      const [row] = await db
+        .insert(webhookFailures)
+        .values({
+          id: failure.id,
+          endpointId: failure.endpointId,
+          deliveryId: failure.deliveryId,
+          eventType: failure.eventType,
+          body: failure.body,
+          signatureHeader: failure.signatureHeader,
+          attemptCount: failure.attemptCount,
+          lastError: failure.lastError,
+          statusCode: failure.statusCode,
+          deadLetteredAt: failure.deadLetteredAt ?? new Date(),
+          replayedAt: failure.replayedAt,
+        })
+        .returning();
+      if (!row) throw new Error("createWebhookFailureRepo.insert: no row returned");
+      return rowToFailure(row as FailureRow);
+    },
+
+    async byId(id) {
+      const rows = await db
+        .select()
+        .from(webhookFailures)
+        .where(eq(webhookFailures.id, id))
+        .limit(1);
+      const row = rows[0];
+      return row ? rowToFailure(row as FailureRow) : null;
+    },
+
+    async list(opts) {
+      const builder = db.select().from(webhookFailures);
+      const filtered = opts.endpointId
+        ? builder.where(eq(webhookFailures.endpointId, opts.endpointId))
+        : builder;
+      const rows = await filtered
+        .orderBy(desc(webhookFailures.deadLetteredAt))
+        .limit(opts.limit);
+      return rows.map((r) => rowToFailure(r as FailureRow));
+    },
+
+    async markReplayed(id, at) {
+      await db.update(webhookFailures).set({ replayedAt: at }).where(eq(webhookFailures.id, id));
     },
   };
 }

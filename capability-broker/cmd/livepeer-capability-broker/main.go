@@ -20,6 +20,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
+	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolplusmedia"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server"
@@ -292,12 +293,14 @@ func main() {
 			ReplayBufferBytes:        int(*sessionControlReconnectBufferBytes),
 			OutboundBufferMessages:   int(*sessionControlReconnectBufferMessages),
 		},
+		WebRTC: mediawebrtc.Config{
+			PublicIP:   *webrtcPublicIP,
+			UDPPortMin: uint16(*webrtcUDPPortMin),
+			UDPPortMax: uint16(*webrtcUDPPortMax),
+		},
 	})
 
 	_ = *sessionControlMaxConcurrent
-	_ = *webrtcPublicIP
-	_ = *webrtcUDPPortMin
-	_ = *webrtcUDPPortMax
 	_ = *containerRuntime
 	_ = *sessionRunnerStartupTimeout
 	_ = *sessionRunnerStallTimeout

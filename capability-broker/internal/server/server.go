@@ -16,6 +16,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/hls"
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
+	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/rtmpingresshlsegress"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolplusmedia"
@@ -54,6 +55,10 @@ type Options struct {
 	// SessionControl configures the session-control-plus-media
 	// driver's control-WS lifecycle.
 	SessionControl sessioncontrolplusmedia.ControlWSConfig
+
+	// WebRTC governs the per-broker pion settings used by the
+	// session-control-plus-media media-plane relay.
+	WebRTC mediawebrtc.Config
 }
 
 // HLSOptions configures the LL-HLS muxer + scratch directory.
@@ -101,6 +106,7 @@ type Server struct {
 	rtmpListener *mediartmp.Listener
 	sessStore    *sessioncontrolplusmedia.Store
 	sessDriver   *sessioncontrolplusmedia.Driver
+	webrtcEngine *mediawebrtc.Engine
 }
 
 // New constructs a Server from a validated config and registers routes. It
@@ -141,19 +147,29 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	})
 	sessDriver := sessioncontrolplusmedia.New(sessStore, sessCfg)
 
+	rtcCfg := opts.WebRTC
+	if rtcCfg.UDPPortMin == 0 {
+		rtcCfg = mediawebrtc.DefaultConfig()
+	}
+	rtcEngine, err := mediawebrtc.NewEngine(rtcCfg)
+	if err != nil {
+		return nil, fmt.Errorf("webrtc engine: %w", err)
+	}
+
 	s := &Server{
-		cfg:        cfg,
-		opts:       opts,
-		mux:        mux,
-		srv:        srv,
-		payment:    paymentClient,
-		modes:      defaultModes(rtmpDriver, sessDriver),
-		extractors: defaultExtractors(),
-		backend:    backend.NewHTTPClient(),
-		secrets:    backend.NewEnvSecretResolver(),
-		rtmpStore:  rtmpStore,
-		sessStore:  sessStore,
-		sessDriver: sessDriver,
+		cfg:          cfg,
+		opts:         opts,
+		mux:          mux,
+		srv:          srv,
+		payment:      paymentClient,
+		modes:        defaultModes(rtmpDriver, sessDriver),
+		extractors:   defaultExtractors(),
+		backend:      backend.NewHTTPClient(),
+		secrets:      backend.NewEnvSecretResolver(),
+		rtmpStore:    rtmpStore,
+		sessStore:    sessStore,
+		sessDriver:   sessDriver,
+		webrtcEngine: rtcEngine,
 	}
 
 	if opts.RTMP.Addr != "" {

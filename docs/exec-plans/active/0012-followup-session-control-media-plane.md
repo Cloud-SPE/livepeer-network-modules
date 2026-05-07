@@ -22,7 +22,8 @@ audience: capability-broker maintainers, vtuber-session integrators, orch operat
 > orchestration** that complete the `session-control-plus-media@v0` mode driver. **No
 > Go code, no `go.mod` edit, no proto change ships from this commit.** The output is a
 > set of pinned decisions, a component layout, a config grammar, a conformance plan,
-> and a list of open questions the user must answer before implementation begins.
+> and a `DECIDED:` block per resolved decision (§14) — all ten Qs locked
+> 2026-05-06.
 >
 > The mode wire-spec is already pinned in
 > `livepeer-network-protocol/modes/session-control-plus-media.md:36-99` (plan 0002,
@@ -137,28 +138,74 @@ immediately after the session-open response. The broker:
 2. Validates that the session-id path component matches a session opened within
    `expires_at`. If no such session, return `401 Unauthorized` (covers both "expired"
    and "never-existed" without leaking which).
-3. Validates an auth token. **Decision: the path's session-id is itself the auth.**
-   The id is generated from `crypto/rand` (12 bytes hex; see `driver.go:100-106`),
-   so the URL is unguessable. A separate token in a header would add complexity for
-   no security gain over the unguessable path. (Compare to ws-realtime: same shape,
-   capability-bearer auth applies if configured per
-   `wsrealtime/driver.go:67-85`.) Open question 1 in §14: should the path-id-only
-   model gain a sibling header bearer for capability-defined extra auth?
+3. Validates an auth token. **Decision (Q1 lock, §14): path-id-only — the session-id
+   in the URL is the auth.** The id is generated from `crypto/rand` (12 bytes hex;
+   see `driver.go:100-106`), so the URL is unguessable. A separate token in a header
+   would add complexity for no security gain over the unguessable path. (Compare to
+   ws-realtime: same shape, capability-bearer auth applies if configured per
+   `wsrealtime/driver.go:67-85`.) Bearer is opt-in per-capability later if operators
+   ask; no sibling header bearer in v0.1.
 
 ### 4.2. Connection lifetime
 
 Connection lifetime **= session lifetime**. The broker holds the control-WS open
 until one of:
 
-- Customer closes (WS close frame from gateway side).
+- Customer closes cleanly (`session.end` from customer, or WS close frame).
 - Broker closes (insufficient balance per plan 0015's `SufficientBalance` check;
-  session-runner crash; idle timeout exceeded; session reaches `extra.max_session_seconds`).
+  session-runner crash; session reaches `extra.max_session_seconds`).
 - Session-runner exits cleanly (broker observes via the IPC channel, then closes the
   WS with `session.ended`).
+- Reconnect window expires with no successful reconnect (see below).
 
-There is **exactly one** control-WS per session. A second upgrade to the same path
-returns `409 Conflict`. The customer cannot reconnect a dropped control-WS — a
-dropped WS terminates the session. (Reconnectable-control-WS is open question 2 in §14.)
+#### 4.2.1. Reconnect-within-30s window (Q2 lock, §14)
+
+A dropped control-WS does **not** immediately terminate the session. The broker
+holds session-side state for `--session-control-reconnect-window` (default `30s`)
+to allow the customer to reconnect across a transient network glitch — the
+multi-hour vtuber session is exactly the case where a 5-second WiFi drop
+shouldn't cost persona context.
+
+**During the window:**
+
+- The session-runner subprocess keeps running.
+- The media-relay PC stays up.
+- Plan 0015's payment-daemon ticker keeps billing — the customer is still
+  consuming work-units, just not sending control messages.
+- Server emits an IPC `ControlEnvelope` of type `runner.control_disconnected` to
+  the runner with the WS close `code` (1006 abnormal close, 1011 server error,
+  etc.) so the runner can pause emission or otherwise react gracefully. Runners
+  are expected to handle this without terminating themselves.
+
+**Reconnect mechanics:**
+
+- A second WebSocket upgrade to the same `/v1/cap/{session_id}/control` path
+  within the window is **accepted** (no longer `409 Conflict` for in-window
+  reconnects). Same path-id auth check as §4.1.
+- The client sends a `Last-Seq` header on the upgrade request (or `?last_seq=`
+  query parameter — pick one at implementation time and document; the header is
+  preferred to keep the URL clean).
+- Server replays buffered server-emitted protocol messages with `seq > Last-Seq`,
+  then resumes live delivery. **Customer-emitted messages are NOT replayed** —
+  customer-side retry is the customer's concern.
+- Once the new WS handshake completes, server emits `session.reconnected` over
+  the new WS and an IPC `ControlEnvelope` of type `runner.control_reconnected`
+  to the runner so the runner can resume emission.
+- Replay buffer is bounded — reuses the §4.4 backpressure limits (default 64
+  messages or 1 MiB JSON, configurable via
+  `--session-control-reconnect-buffer-messages`). Overflow drops the oldest
+  buffered message; client sees a gap, treats it the same as any other transport
+  loss.
+
+**Race policy.** If two reconnect attempts arrive simultaneously, **first to
+complete the handshake wins**; the loser receives `409 Conflict` and must back
+off / not retry within the window.
+
+**After the window expires** with no successful reconnect: full teardown — runner
+`Shutdown(graceful=true)` then SIGKILL after the `--session-runner-shutdown-grace`
+window, media relay close, `Reconcile` + `CloseSession` per plan 0015 §3.3.
+Cause emitted on the runner-crash path is `control_disconnect_window_expired`
+(distinct from `runner_crashed`).
 
 ### 4.3. Frame protocol
 
@@ -193,10 +240,14 @@ coordinated with plan 0015's `insufficient_balance` addition.
 ### 4.5. Heartbeat / idle policy
 
 Broker sends a WS ping every `--session-control-heartbeat-interval` (default
-10s); three missed pongs ⇒ close as dead. The spec at
+10s); three missed pongs ⇒ close the WS as dead. The spec at
 `session-control-plus-media.md:155-156` allows 60s idle as an option; this plan
 pins active heartbeat (cheap, surfaces half-open TCP states the kernel hasn't
 noticed).
+
+A heartbeat-fail close does **not** immediately terminate the session — it
+triggers the reconnect window per §4.2.1. Only after window expiry does the
+session fully tear down.
 
 ### 4.6. Session-runner crash → control-WS close
 
@@ -218,13 +269,13 @@ example; broker code stays generic.
 
 ### 5.1. Publish leg — WebRTC vs RTMP
 
-**Recommendation: WebRTC by default; RTMP as a per-capability opt-in.** Vtuber
-is interactive (~100 ms publish→runner latency vs ~2–5 s for RTMP); WebRTC also
-gives bidirectional negotiation and browser-native publish out of the box. RTMP's
-appeal is reuse of plan 0011-followup's listener and a smaller broker protocol
-surface — fine for non-interactive capabilities (long-form transcribe, batch
-ingest). v0.1 ships WebRTC only; RTMP is a sibling commit when a
-non-interactive capability lands. Open question 3 in §14.
+**Decision (Q3 lock, §14): WebRTC by default; RTMP as a per-capability opt-in.**
+Vtuber is interactive (~100 ms publish→runner latency vs ~2–5 s for RTMP); WebRTC
+also gives bidirectional negotiation and browser-native publish out of the box.
+RTMP's appeal is reuse of plan 0011-followup's listener and a smaller broker
+protocol surface — fine for non-interactive capabilities (long-form transcribe,
+batch ingest). v0.1 ships WebRTC only; RTMP is a sibling commit when a
+non-interactive capability lands.
 
 ### 5.2. Egress leg
 
@@ -237,20 +288,20 @@ control-WS, **not** a sibling SSE stream — matches the wire-spec separation at
 ### 5.3. Per-session media relay — in-process
 
 Broker stands up the relay **in-process** (no sidecar), backed by
-**`github.com/pion/webrtc/v3`** (Go-native, MIT, no cgo; sibling to
-`gorilla/websocket` already used by ws-realtime). One `RTCPeerConnection` per
-session (single PC describing both directions, or two PCs if simpler). Track
-demux: incoming customer tracks forwarded to runner as raw RTP. Track mux:
-runner-emitted tracks routed back through egress. Open question 4 in §14:
-accept the pion footprint as a hard dep, or wrap behind a minimal interface for
-later swap-out?
+**`github.com/pion/webrtc/v3`** — accepted as a direct hard dep per Q4 lock
+(§14). Go-native, MIT, no cgo; sibling to `gorilla/websocket` already used by
+ws-realtime. One `RTCPeerConnection` per session (single PC describing both
+directions, or two PCs if simpler). Track demux: incoming customer tracks
+forwarded to runner as raw RTP. Track mux: runner-emitted tracks routed back
+through egress.
 
 ### 5.4. SDP exchange location — control-WS
 
-**Recommendation: SDP offer/answer flows over the control-WS**, not the
-session-open POST body. Reasons: ICE candidates trickle over time (single-shot
-HTTP body can't carry); mid-session renegotiation needs a persistent channel;
-the customer hasn't built an offer at session-open time. Concrete shape:
+**Decision (Q5 lock, §14): SDP offer/answer flows over the control-WS**, not the
+session-open POST body and not a sibling negotiation socket. Reasons: ICE
+candidates trickle over time (single-shot HTTP body can't carry); mid-session
+renegotiation needs a persistent channel; the customer hasn't built an offer at
+session-open time; one fewer socket and one fewer auth surface. Concrete shape:
 
 1. Session-open 202 returns `media.publish_url = "webrtc:negotiate-on-control-ws"`
    (capability-defined sentinel).
@@ -258,9 +309,6 @@ the customer hasn't built an offer at session-open time. Concrete shape:
 3. Customer sends `media.sdp.offer`; broker replies `media.sdp.answer`; ICE
    candidates trickle as `media.ice.candidate` in both directions.
 4. PC reaches `connected`; broker emits `media.ready`; runner starts emitting.
-
-Open question 5 in §14: keep SDP on the control-WS, or spec a sibling
-`wss://.../media-negotiate` socket so SDP doesn't compete with workload traffic?
 
 ---
 
@@ -282,8 +330,9 @@ Vendoring is rejected: the vtuber session-runner is a 1.6 GB image with Playwrig
 + Chromium + Vite-built three-vrm renderer (anchor:
 `livepeer-cloud-spe/livepeer-network-suite/livepeer-vtuber-project/session-runner/README.md:32-61`);
 other capabilities under this mode will bring their own. The rewrite is not a
-clearinghouse for runner images. Open question 6 in §14: ship a small example
-runner image, and if so where?
+clearinghouse for runner images. A small stub runner ships for conformance only,
+homed at `livepeer-network-protocol/conformance/runner/session-runner-stub/` per
+Q6 lock (§14).
 
 ### 6.3. Broker ↔ session-runner IPC — gRPC over unix socket
 
@@ -319,16 +368,19 @@ decoded frames can decode in the runner (cf.
 | Runner hang (no IPC traffic for `--session-runner-stall-timeout`, default 30s) | watchdog | `Shutdown(graceful=false)` → SIGKILL after grace; same teardown |
 | Socket dial fails at startup (within `--session-runner-startup-timeout`, default 30s) | broker observes | `cause="runner_startup_failed"`; teardown |
 | Invalid IPC framing | per-frame parse error | error counter; >N in W seconds → kill |
+| Control-WS dropped (runner alive) | WS read error / heartbeat-fail / kernel close | broker keeps runner alive for `--session-control-reconnect-window`; emits IPC `runner.control_disconnected` to runner; on successful reconnect, emits IPC `runner.control_reconnected` and replays buffered server-emitted messages with `seq > Last-Seq`; on window expiry, full teardown — runner `Shutdown(graceful=true)` then SIGKILL after grace; `cause="control_disconnect_window_expired"` |
 
-All five surface to the customer as `session.error` on the control-WS; the gateway
-(plan 0008-followup) is responsible for translating that to the human-facing client.
+All six surface to the customer as `session.error` on the control-WS; the gateway
+(plan 0008-followup) is responsible for translating that to the human-facing
+client. The control-WS-dropped row is the only one where the customer may avoid
+session loss entirely by reconnecting in time (§4.2.1).
 
 ### 6.6. Sandboxing
 
 Runner is operator-trusted; the broker doesn't enforce a sandbox beyond what the
-container runtime provides. Default: `--cap-drop=ALL` on Docker; opt back in via
-`--session-runner-extra-cap`. Network mode and GPU access stay operator-configurable
-per capability. Open question 7 in §14.
+container runtime provides. **Decision (Q7 lock, §14): `--cap-drop=ALL` on Docker
+by default; opt back in via `--session-runner-extra-cap`.** Network mode and GPU
+access stay operator-configurable per capability.
 
 ---
 
@@ -400,12 +452,11 @@ This mode driver registers a `LiveCounter` on `Params.LiveCounter` per plan 0015
 | `bytes-counted` | `extractors/bytescounted/` | `atomic.Uint64` incremented on egress bytes leaving the PC |
 | `tokens-generated` (new) | none — does not exist | Runner reports monotonic deltas over sibling gRPC method `SessionRunnerControl.ReportWorkUnits(stream)`; broker accumulates into `atomic.Uint64` |
 
-`tokens-generated` is workload-knowledge; only the runner knows. Whether to ship
-it as a first-class extractor in `internal/extractors/runnerreport/` (cleaner;
-reusable by future modes) or as an anonymous LiveCounter inside the mode driver
-(faster) is open question 8 in §14. Recommend first-class — `runner-reported`
-sets the precedent for any future workload-reported counter. Plan 0015's ticker
-doesn't care how the number is produced; it just calls `CurrentUnits()`.
+`tokens-generated` is workload-knowledge; only the runner knows. **Decision (Q8
+lock, §14): `runner-reported` is first-class.** It ships as a real extractor at
+`internal/extractors/runnerreport/`, reusable by future modes — sets the
+precedent for any future workload-reported counter. Plan 0015's ticker doesn't
+care how the number is produced; it just calls `CurrentUnits()`.
 
 ---
 
@@ -417,7 +468,8 @@ capability-broker/
     modes/
       sessioncontrolplusmedia/
         driver.go          ← extends today's session-open-only file
-        controlws.go       ← new: WS upgrade + frame protocol + heartbeat
+        controlws.go       ← new: WS upgrade + frame protocol + heartbeat + reconnect-window state machine (per §4.2.1)
+        controlws_reconnect.go ← new (or merged into controlws.go at the implementer's call): reconnect-window state, replay buffer, Last-Seq handling
         sessionmgr.go      ← new: per-session state table; startup/teardown
         livecounter.go     ← new: LiveCounter implementations for this mode
     media/
@@ -429,7 +481,7 @@ capability-broker/
         relay.go           ← per-session PC; track demux/mux
         sdp.go             ← offer/answer/ICE plumbing exposed to controlws
     extractors/
-      runnerreport/        ← NEW (per §8 if option-A wins) — runner-reported counter
+      runnerreport/        ← NEW — runner-reported counter (Q8 lock; first-class per §8)
         extractor.go
         livecounter.go
 
@@ -460,6 +512,8 @@ PC machinery in `media/webrtc/` plus a stripped-down control plane.) The
 | `--session-control-max-concurrent-sessions` | uint | `100` | Cap on simultaneous active sessions in this mode. Hard reject above; observability metric counts rejections. |
 | `--session-control-heartbeat-interval` | duration | `10s` | Control-WS ping interval (per §4.5). |
 | `--session-control-missed-heartbeat-threshold` | uint | `3` | Number of missed pongs before connection is declared dead. |
+| `--session-control-reconnect-window` | duration | `30s` | Per-session window during which a dropped control-WS may be reconnected before full teardown (Q2 lock; §4.2.1). |
+| `--session-control-reconnect-buffer-messages` | uint | `64` | Max server-emitted messages buffered per session for replay on reconnect (§4.2.1). |
 | `--session-runner-startup-timeout` | duration | `30s` | Max time from subprocess launch to `Health()` ready. |
 | `--session-runner-stall-timeout` | duration | `30s` | Max IPC silence before watchdog kills the runner. |
 | `--session-runner-shutdown-grace` | duration | `5s` | Time the runner gets to drain on `Shutdown(graceful=true)` before SIGKILL. |
@@ -540,13 +594,26 @@ covers only session-open. This plan adds three siblings:
   Asserts control-WS receives `session.error` with `cause="runner_crashed"`
   within 5s, WS closes with code 1011, final `Reconcile`/`CloseSession`
   arrive at the daemon (indirect inference via `GetBalance` per plan 0015 §9.1).
+- **`reconnect-window.yaml`** — runner connects control-WS, exchanges a few
+  server-emitted messages (capturing `seq`), then force-closes the WS without
+  sending `session.end`. Within 5s the runner reconnects to the same path with
+  `Last-Seq` set to the last observed `seq`; asserts buffered server-emitted
+  messages with `seq > Last-Seq` replay over the new WS, `session.reconnected`
+  fires, the session continues, and the payment ledger reflects continuous
+  billing across the gap (the runner kept running, the ticker kept ticking). A
+  sub-fixture (or sibling `reconnect-window-expired.yaml`) repeats the
+  force-close but does **not** reconnect; asserts that after
+  `--session-control-reconnect-window`, the broker tears down with
+  `cause="control_disconnect_window_expired"` and final
+  `Reconcile`/`CloseSession` land at the daemon.
 
 **Test infrastructure deltas.** Stub image
 `tztcloud/livepeer-conformance-session-runner:v0` (echoes control envelopes;
 echoes media frames; panic-on-startup variant for the crash fixture).
 `webrtc-publisher-fake` compose sidecar to drive synthetic Opus into the
-broker's PC. UDP port range `40000-40999/udp` opened in compose. Image-source
-home is open question 6 in §14.
+broker's PC. UDP port range `40000-40999/udp` opened in compose. Stub-image
+source home is `livepeer-network-protocol/conformance/runner/session-runner-stub/`
+per Q6 lock (§14).
 
 ---
 
@@ -581,8 +648,13 @@ A new §"Session-control-plus-media operations" lands in
 Estimated 6–8 commits, independently reviewable:
 
 1. **C1 — `feat(broker): control-WS scaffold`.** WS upgrade + frame envelope +
-   heartbeat in `internal/modes/sessioncontrolplusmedia/controlws.go`; in-memory
-   session table; new `Livepeer-Error: backpressure_drop` constant.
+   heartbeat + reconnect-window state machine + replay buffer + `Last-Seq`
+   handling in `internal/modes/sessioncontrolplusmedia/controlws.go` (and
+   `controlws_reconnect.go` if split for reviewability); in-memory session table;
+   new `Livepeer-Error: backpressure_drop` constant. **If C1 risks growing too
+   big to review, split as C1a (WS upgrade + frame envelope + heartbeat) and C1b
+   (reconnect-window + replay buffer + `Last-Seq`).** Total commit count stays at
+   8; editor's call on the split.
 2. **C2 — `feat(broker): pion/webrtc relay skeleton`.** New package
    `internal/media/webrtc/`. PC creation + SDP offer/answer + ICE trickle, wired
    to a stub "loopback" backend (publish→egress, no runner). New flags
@@ -610,60 +682,98 @@ landed; C1–C6 + C8 are independent of plan 0015 (interim-debit layers on later
 
 ---
 
-## 14. Risks and open questions
+## 14. Resolved decisions
 
-The user must answer (or defer) each of these before C1 starts:
+All ten open questions resolved on 2026-05-06. The implementing agent works
+against these locks; rationale captured for future readers. One substantive
+override (Q2) is called out explicitly.
 
-1. **Control-WS auth.** §4.1 recommends path-id-only (the unguessable session-id
-   in the URL is the auth). Add a sibling header bearer for capability-defined
-   extra auth (e.g. JWT scoped to the customer)? Recommend: path-id only for
-   v0.1; bearer is opt-in per-capability later.
+### Q1. Control-WS auth
 
-2. **Reconnectable control-WS.** §4.2 pins "dropped WS terminates the session"
-   (matches ws-realtime). For multi-hour vtuber sessions a transient glitch
-   loses persona context. Spec a "reconnect within 30s" window? Recommend: no
-   for v0.1; add if operators ask.
+**DECIDED: path-id-only — the unguessable 12-byte hex session-id IS the auth
+(§4.1).** No sibling header bearer for v0.1. The id is `crypto/rand` 12 bytes
+hex (see `driver.go:100-106`); a separate header token would add complexity for
+no security gain over the unguessable URL. Bearer is opt-in per-capability later
+if operators ask — the `Authorization` header slot stays unallocated, not
+forbidden.
 
-3. **Publish leg — WebRTC vs RTMP vs both.** §5.1 recommends WebRTC default,
-   RTMP as per-capability opt-in (reuses 0011-followup). Ship WebRTC only and
-   defer RTMP entirely? Recommend: WebRTC only for v0.1.
+### Q2. Reconnectable control-WS (OVERRIDE)
 
-4. **pion/webrtc dependency.** §5.3 commits to pion as a hard dep (~150kloc,
-   MIT, no cgo). Alternative: sidecar process speaking RTC (more ops surface,
-   fewer deps). Recommend: accept pion directly; wrap only if a second impl
-   candidate appears.
+**DECIDED: in-v0.1 — ship a reconnect-within-30s window.** Plan recommended
+deferral ("no for v0.1; add if operators ask"); user requested in-v0.1 because
+multi-hour vtuber sessions are exactly the case where transient WiFi drops
+matter most — losing persona context on a 5-second drop is unacceptable UX.
+Mechanics in §4.2.1: server-side state survives for
+`--session-control-reconnect-window` (default `30s`), runner stays alive,
+payment ticker keeps billing, second WS upgrade within window is accepted (no
+longer `409 Conflict` for in-window reconnects), client sends `Last-Seq` and
+broker replays buffered server-emitted messages with `seq > Last-Seq`,
+customer-emitted messages are not replayed (customer-side retry concern), race
+resolved by first-to-complete-handshake, loser gets `409 Conflict`. Window
+expiry triggers full teardown with `cause="control_disconnect_window_expired"`.
+Two new flags: `--session-control-reconnect-window`,
+`--session-control-reconnect-buffer-messages`. Two new IPC envelope types:
+`runner.control_disconnected`, `runner.control_reconnected`.
 
-5. **SDP exchange location.** §5.4 recommends control-WS. Alternative: sibling
-   `wss://.../media-negotiate`. Recommend: control-WS for v0.1 (one fewer
-   socket, one fewer auth surface). Revisit if SDP traffic competes with
-   workload.
+### Q3. Publish leg — WebRTC vs RTMP vs both
 
-6. **Stub session-runner image home.** §11 mentions
-   `tztcloud/livepeer-conformance-session-runner:v0`. Source at
-   `examples/echo-session-runner/` (operator-discoverability) vs
-   `livepeer-network-protocol/conformance/runner/session-runner-stub/`
-   (conformance-coupled)? Recommend: conformance home — first-time operators
-   read the conformance README anyway.
+**DECIDED: WebRTC default; RTMP as per-capability opt-in (§5.1).** Vtuber is
+interactive (~100 ms publish→runner latency vs ~2–5 s for RTMP); WebRTC also
+gives bidirectional negotiation and browser-native publish. RTMP reuses plan
+0011-followup's listener — fine for non-interactive capabilities. v0.1 ships
+WebRTC only; RTMP lands as a sibling commit when a non-interactive capability
+under this mode arrives.
 
-7. **Runner sandboxing posture.** §6.6 defers to the operator's container
-   config. Enforce a minimum baseline (drop-all caps, seccomp required, no
-   host-network)? Recommend: drop-all by default + opt back in via
-   `--session-runner-extra-cap`; network mode stays per-capability.
+### Q4. pion/webrtc dependency
 
-8. **runner-reported extractor — first-class or anonymous.** §8 leaves it open
-   whether `runner-reported` becomes a real extractor type (reusable across
-   modes) or an anonymous LiveCounter in the mode driver (faster). Recommend:
-   first-class — sets the precedent for future workload-reported counters.
+**DECIDED: accept pion as a direct hard dep (§5.3).** Go-native, MIT, no cgo;
+sibling to `gorilla/websocket` already used by ws-realtime. No interface wrap
+for swap-out — wrap only if a second impl candidate concretely appears. The
+sidecar-process alternative trades fewer deps for more ops surface, which is
+the wrong trade for v0.1.
 
-9. **Vtuber-specific glue: own subfolder eventually?** The capability has
-   enough shape (Open-LLM-VTuber integration tokens, persona-graph storage, prompt
-   history) that a future `capabilities/vtuber-session/` doc subfolder might
-   make sense. Recommend: stay an operator config for v0.1; promote only if a
-   second non-vtuber capability under this mode forces the abstraction.
+### Q5. SDP exchange location
 
-10. **Plan 0008-followup ordering.** Gateway-side adapter is independent of
-    this plan; either can ship first. Recommend: this plan first (broker side
-    is the long pole); 0008-followup follows.
+**DECIDED: SDP offer/answer + ICE trickle over the control-WS (§5.4).** No
+sibling `wss://.../media-negotiate` socket. One fewer socket, one fewer auth
+surface. Concrete shape in §5.4. Revisit if SDP traffic ever measurably
+competes with workload traffic on the same socket.
+
+### Q6. Stub session-runner image home
+
+**DECIDED: conformance home —
+`livepeer-network-protocol/conformance/runner/session-runner-stub/`.**
+First-time operators read the conformance README anyway; the stub belongs
+beside the fixtures it serves. Image published as
+`tztcloud/livepeer-conformance-session-runner:v0` (cf. §11).
+
+### Q7. Runner sandboxing posture
+
+**DECIDED: drop-all caps default + opt back in via `--session-runner-extra-cap`
+(§6.6).** Network mode and GPU access stay per-capability operator-configurable
+(GPU especially — vtuber-session needs it; transcribe-batch may not). No
+seccomp / no host-network mandate at the broker layer; deployment-level concern.
+
+### Q8. runner-reported extractor — first-class or anonymous
+
+**DECIDED: first-class — new `internal/extractors/runnerreport/` package
+(§8).** Reusable across future modes; sets the precedent for any future
+workload-reported counter. Plan 0015's ticker doesn't care how the number is
+produced; it just calls `CurrentUnits()`.
+
+### Q9. Vtuber-specific subfolder
+
+**DECIDED: defer.** Stay an operator-config-driven capability for v0.1;
+promote to its own `capabilities/vtuber-session/` doc subfolder only if a
+second non-vtuber capability under this mode forces the abstraction. Until
+then the `host-config.yaml` capability entry plus the operator-pulled image is
+the entire surface.
+
+### Q10. Sequencing with plan 0008-followup
+
+**DECIDED: this plan ships first; gateway-side adapter (plan 0008-followup)
+follows.** The broker side is the long pole; the TS gateway adapter is
+mechanical once the broker URLs answer for real.
 
 ---
 
@@ -684,6 +794,7 @@ Each item has a forwarding address.
 | Verifiable persona-output authenticity (chain-anchored proof) | future plan, decoupled |
 | DRM / paid-replay / content moderation on egress | operator concern; infra exposes hooks only |
 | Renderer-process direct IPC (skipping subprocess, inline renderer) | explicit non-goal — broker stays workload-opaque |
+| Reconnect with state-restoration beyond protocol replay (LLM history reconstruction, in-flight tool calls, etc.) | runner's responsibility on `runner.control_reconnected`; broker only replays server-emitted protocol messages with `seq > Last-Seq` per §4.2.1, and customer-emitted messages are NOT replayed by the broker |
 
 ---
 

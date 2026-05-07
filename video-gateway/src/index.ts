@@ -4,6 +4,13 @@ import pg from "pg";
 
 import { loadConfig } from "./config.js";
 import { createDb } from "./db/pool.js";
+import {
+  createAssetRepo,
+  createLiveStreamRepo,
+  createRecordingRepo,
+  createWebhookDeliveryRepo,
+  createWebhookEndpointRepo,
+} from "./repo/index.js";
 import { createRtmpListener } from "./runtime/rtmp/listener.js";
 import { buildServer } from "./server.js";
 
@@ -17,6 +24,13 @@ async function main(): Promise<void> {
   });
 
   const videoDb = createDb(cfg.databaseUrl);
+  const repos = {
+    assets: createAssetRepo(videoDb),
+    liveStreams: createLiveStreamRepo(videoDb),
+    webhookEndpoints: createWebhookEndpointRepo(videoDb),
+    webhookDeliveries: createWebhookDeliveryRepo(videoDb),
+    recordings: createRecordingRepo(videoDb),
+  };
 
   const app = buildServer({ cfg });
   const rtmp = createRtmpListener({ cfg });
@@ -24,6 +38,7 @@ async function main(): Promise<void> {
     {
       portal_auth: typeof portal.authResolver,
       video_db: typeof videoDb,
+      repos: Object.keys(repos).length,
       rtmp_addr: cfg.rtmpListenAddr,
     },
     "video-gateway booting",

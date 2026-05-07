@@ -8,3 +8,5 @@ packages:
   - "vtuber-gateway"
   - "vtuber-gateway/src/frontend/portal"
   - "vtuber-runner/avatar-renderer"
+  - "video-gateway"
+  - "video-gateway/src/frontend"

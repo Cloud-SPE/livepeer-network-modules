@@ -1,0 +1,27 @@
+# Minimal video-gateway compose. Brings up the gateway only; smoke
+# overlay (compose.smoke.yaml) adds postgres, redis, payment-daemon,
+# capability-broker, and an S3-compat object store.
+
+services:
+  video-gateway:
+    image: tztcloud/livepeer-video-gateway:dev
+    networks: [video-gateway]
+    ports:
+      - "3000:3000"
+      - "1935:1935"
+    environment:
+      LIVEPEER_BROKER_URL: "http://broker:8080"
+      LIVEPEER_BROKER_RTMP_HOST: "broker:1935"
+      LIVEPEER_PAYER_DAEMON_SOCKET: "/var/run/livepeer/payer-daemon.sock"
+      VIDEO_LIVE_HLS_BASE_URL: "http://localhost:3000/_hls"
+      VIDEO_LIVE_RTMP_LISTEN_ADDR: ":1935"
+      VIDEO_VOD_TUS_PATH: "/v1/uploads"
+      VIDEO_GATEWAY_ABR_POLICY: "customer-tier"
+      VIDEO_STALE_STREAM_SWEEP_INTERVAL_SECONDS: "60"
+      DATABASE_URL: "postgres://video:video@postgres:5432/video"
+      REDIS_URL: "redis://redis:6379"
+      PORT: "3000"
+
+networks:
+  video-gateway:
+    driver: bridge

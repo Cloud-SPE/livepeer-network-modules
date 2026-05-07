@@ -5,3 +5,5 @@ packages:
   - "customer-portal/frontend/portal"
   - "customer-portal/frontend/admin"
   - "openai-gateway"
+  - "video-gateway"
+  - "video-gateway/src/frontend"

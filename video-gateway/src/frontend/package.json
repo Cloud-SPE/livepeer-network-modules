@@ -1,0 +1,13 @@
+{
+  "name": "video-gateway-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "pnpm sub-workspace for video-gateway operator admin SPA",
+  "license": "MIT",
+  "scripts": {
+    "build": "echo 'frontend build scaffolded; SPA assets land in phase 2'"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

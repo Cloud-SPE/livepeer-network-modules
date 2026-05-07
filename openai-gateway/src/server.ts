@@ -7,6 +7,7 @@ import { registerEmbeddings } from "./routes/embeddings.js";
 import { registerAudioTranscriptions } from "./routes/audio-transcriptions.js";
 import { registerAudioSpeech } from "./routes/audio-speech.js";
 import { registerImagesGenerations } from "./routes/images-generations.js";
+import { registerRealtime } from "./routes/realtime.js";
 
 export function buildServer(cfg: Config): FastifyInstance {
   const app = Fastify({
@@ -31,6 +32,7 @@ export function buildServer(cfg: Config): FastifyInstance {
   registerAudioTranscriptions(app, cfg);
   registerAudioSpeech(app, cfg);
   registerImagesGenerations(app, cfg);
+  void app.register(registerRealtime, { cfg });
 
   return app;
 }

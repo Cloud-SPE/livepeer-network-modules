@@ -24,9 +24,11 @@ Inherited from the repo root. Plus:
   shared middleware. New SaaS surfaces land in customer-portal/, not here.
 - **Wire surface stays per-product.** Per-OpenAI-endpoint dispatch + route
   → mode mapping is product-specific and lives in this component's
-  `src/routes/` + `src/livepeer/`. Headers, payment minting, and mode
-  drivers come from gateway-adapters/ (or the inlined `src/livepeer/`
-  shim until that workspace dep lands).
+  `src/routes/` + `src/livepeer/`. HTTP-family modes (`http-reqresp`,
+  `http-stream`, `http-multipart`) use the inlined `src/livepeer/` shim;
+  non-HTTP modes import from `@tztcloud/livepeer-gateway-middleware`
+  (workspace dep on `gateway-adapters/ts/`). The `/v1/realtime` route
+  consumes `modes.wsRealtime.connect` from that package.
 - **Rate-card schema is product-owned.** `migrations/0001_openai_rate_cards.sql`
   ships rate_card_chat_tiers / chat_models / embeddings / audio / images
   tables in this component's namespace; the customer-portal `app.*`
@@ -65,11 +67,14 @@ The collapse boundaries:
   audit), idempotency middleware, rate-limit middleware, shared portal +
   admin SPA shells, repo helpers.
 - **openai-gateway owns**: per-OpenAI-endpoint routes (chat / embeddings /
-  audio-transcriptions / audio-speech / images-generations), rate-card
-  schema + materialization (chat tiers + model glob, embeddings, audio,
-  images), product-specific admin SPA extras (rate-card pages), Livepeer
-  wire headers + payment minting + mode dispatch (until the
-  gateway-adapters/ workspace dep lands), broker forward.
+  audio-transcriptions / audio-speech / images-generations / realtime),
+  rate-card schema + materialization (chat tiers + model glob, embeddings,
+  audio, images), product-specific admin SPA extras (rate-card pages),
+  Livepeer wire headers + payment minting + mode dispatch for HTTP-family
+  modes (the `ws-realtime` mode driver is consumed from the
+  `@tztcloud/livepeer-gateway-middleware` workspace dep), broker forward.
+  The `/v1/realtime` endpoint is a WebSocket upgrade that mints a payment
+  and bridges customer frames to the broker via `modes.wsRealtime.connect`.
 - **Per-product RateCardResolver impl** lives in `src/service/pricing/`;
   the resolver interface is owned by customer-portal/ (or, until it ships
   there, defined locally and lifted later).

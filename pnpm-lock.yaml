@@ -84,8 +84,33 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
+  gateway-adapters/ts:
+    dependencies:
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
+    devDependencies:
+      '@grpc/grpc-js':
+        specifier: ^1.12.0
+        version: 1.14.3
+      '@grpc/proto-loader':
+        specifier: ^0.7.13
+        version: 0.7.15
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
   openai-gateway:
     dependencies:
+      '@fastify/websocket':
+        specifier: ^11.2.0
+        version: 11.2.0
       '@grpc/grpc-js':
         specifier: ^1.12.2
         version: 1.14.3
@@ -95,6 +120,9 @@ importers:
       '@livepeer-rewrite/customer-portal':
         specifier: workspace:*
         version: link:../customer-portal
+      '@tztcloud/livepeer-gateway-middleware':
+        specifier: workspace:*
+        version: link:../gateway-adapters/ts
       drizzle-orm:
         specifier: ^0.36.0
         version: 0.36.4(@types/pg@8.20.0)(pg@8.20.0)
@@ -106,6 +134,9 @@ importers:
         version: 4.1.1
       pg:
         specifier: ^8.13.0
+        version: 8.20.0
+      ws:
+        specifier: ^8.18.0
         version: 8.20.0
       zod:
         specifier: ^3.23.0
@@ -120,6 +151,9 @@ importers:
       '@types/pg':
         specifier: ^8.11.10
         version: 8.20.0
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
       typescript:
         specifier: ^5.6.0
         version: 5.9.3

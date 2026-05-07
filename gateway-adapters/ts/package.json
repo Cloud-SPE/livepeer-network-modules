@@ -39,7 +39,7 @@
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
-    "test": "tsc && node --test ./dist/test/*.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/*.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

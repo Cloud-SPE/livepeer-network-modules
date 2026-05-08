@@ -143,6 +143,12 @@ test('routes smoke: chat / embeddings / transcriptions / images forward to broke
     brokerUrl: broker.url,
     resolverSocket: null,
     listenPort: 0,
+    databaseUrl: 'postgres://test:test@localhost:5432/test',
+    authPepper: 'test-pepper',
+    adminUser: null,
+    adminPass: null,
+    publicBaseUrl: null,
+    stripe: null,
     defaultOffering: 'default',
     payerDaemonSocket: sock,
     paymentProtoRoot: protoRoot,
@@ -153,7 +159,7 @@ test('routes smoke: chat / embeddings / transcriptions / images forward to broke
     audioSpeechEnabled: false,
     brokerCallTimeoutMs: 30_000,
   };
-  const server = buildServer(cfg);
+  const server = await buildServer({ cfg });
   await server.listen({ host: '127.0.0.1', port: 0 });
 
   t.after(async () => {

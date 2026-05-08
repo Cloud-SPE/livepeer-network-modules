@@ -16,6 +16,8 @@ A TypeScript Fastify service exposing the current OpenAI-compatible surface:
 - `GET /v1/realtime` (WebSocket upgrade)
 - `POST /v1/images/generations`
 - `POST /v1/audio/speech` stubbed behind a mode gate
+- `GET /portal/*` customer portal UI
+- `GET /admin/console/*` operator admin UI
 
 Each endpoint:
 
@@ -30,12 +32,24 @@ Each endpoint:
 6. Forwards to the selected broker via inlined Livepeer client.
 7. Returns the broker's response to the OpenAI client.
 
+The same runtime now also mounts the first gateway shell routes:
+
+- `POST /portal/signup`
+- `POST /portal/login`
+- `GET /portal/account`
+- `GET /portal/api-keys`
+- `POST /portal/api-keys`
+- `POST /portal/topups/checkout` when Stripe is configured
+- `POST /portal/stripe/webhook` when Stripe is configured
+- `GET /admin/customers`
+- `GET /admin/audit`
+
 ## What it is not
 
-- Production gateway. Customer auth / billing / ledger SaaS concerns
-  still depend on the broader shell stack, and routing policy is still
-  intentionally simple. This remains a reference impl for the wire +
-  resolver shape, not a full product shell.
+- Final production product shell. The portal/admin surface is now real
+  and deployable, but still intentionally thin relative to the older
+  bridge: limited admin flows, API-key-based customer auth, and a v1
+  playground.
 
 ## Status
 
@@ -75,6 +89,22 @@ rewrite:
 Start from
 [compose/.env.manifest-resolver.example](./compose/.env.manifest-resolver.example).
 
+When the shell is enabled, the same host serves:
+
+- customer portal: `/portal/`
+- operator console: `/admin/console/`
+
+Optional Stripe-backed billing requires:
+
+- `OPENAI_GATEWAY_PUBLIC_BASE_URL`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+
+and exposes:
+
+- customer checkout init: `POST /portal/topups/checkout`
+- Stripe webhook: `POST /portal/stripe/webhook`
+
 ## Layout
 
 ```
@@ -97,10 +127,14 @@ openai-gateway/
 │   │   └── routeDispatch.ts       # retry/fallback dispatch helpers
 │   ├── routes/
 │   │   ├── chat-completions.ts
+│   │   ├── customer-portal.ts
 │   │   ├── embeddings.ts
 │   │   ├── audio-transcriptions.ts
 │   │   ├── images-generations.ts
 │   │   └── realtime.ts
+│   ├── frontend/
+│   │   ├── portal/               # bundled customer SPA
+│   │   └── admin/                # bundled operator SPA
 │   ├── config.ts                  # env-based config
 │   ├── server.ts                  # Fastify wiring
 │   └── index.ts                   # entry point

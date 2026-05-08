@@ -19,6 +19,17 @@ export interface Config {
   brokerUrl: string | null;
   resolverSocket: string | null;
   listenPort: number;
+  databaseUrl: string;
+  authPepper: string;
+  adminUser: string | null;
+  adminPass: string | null;
+  publicBaseUrl: string | null;
+  stripe: {
+    secretKey: string;
+    webhookSecret: string;
+    topupMinCents: number;
+    topupMaxCents: number;
+  } | null;
   defaultOffering: string;
   payerDaemonSocket: string;
   paymentProtoRoot: string;
@@ -50,6 +61,12 @@ export function loadConfig(): Config {
     brokerUrl: brokerUrl ?? null,
     resolverSocket,
     listenPort,
+    databaseUrl: requiredEnv("DATABASE_URL"),
+    authPepper: process.env["CUSTOMER_PORTAL_AUTH_PEPPER"] ?? "dev-openai-gateway-pepper",
+    adminUser: process.env["OPENAI_GATEWAY_ADMIN_USER"] ?? null,
+    adminPass: process.env["OPENAI_GATEWAY_ADMIN_PASS"] ?? null,
+    publicBaseUrl: process.env["OPENAI_GATEWAY_PUBLIC_BASE_URL"] ?? null,
+    stripe: loadStripeConfig(),
     defaultOffering: process.env["LIVEPEER_DEFAULT_OFFERING"] ?? "default",
     payerDaemonSocket:
       process.env["LIVEPEER_PAYER_DAEMON_SOCKET"] ?? "/var/run/livepeer/payer-daemon.sock",
@@ -60,6 +77,33 @@ export function loadConfig(): Config {
     offerings: loadOfferingsFromDisk(offeringsConfigPath),
     audioSpeechEnabled: parseBool(process.env["OPENAI_AUDIO_SPEECH_ENABLED"], false),
     brokerCallTimeoutMs: parseInt(process.env["BROKER_CALL_TIMEOUT_MS"] ?? "30000", 10),
+  };
+}
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    throw new Error(`missing required env var: ${name}`);
+  }
+  return value;
+}
+
+function loadStripeConfig():
+  | {
+      secretKey: string;
+      webhookSecret: string;
+      topupMinCents: number;
+      topupMaxCents: number;
+    }
+  | null {
+  const secretKey = process.env["STRIPE_SECRET_KEY"]?.trim();
+  const webhookSecret = process.env["STRIPE_WEBHOOK_SECRET"]?.trim();
+  if (!secretKey || !webhookSecret) return null;
+  return {
+    secretKey,
+    webhookSecret,
+    topupMinCents: parseInt(process.env["STRIPE_TOPUP_MIN_CENTS"] ?? "500", 10),
+    topupMaxCents: parseInt(process.env["STRIPE_TOPUP_MAX_CENTS"] ?? "100000", 10),
   };
 }
 

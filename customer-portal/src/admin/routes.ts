@@ -61,6 +61,20 @@ export function registerAdminRoutes(app: FastifyInstance, deps: RegisterAdminRou
   const realm = deps.realm ?? 'customer-portal-admin';
   const preHandler = basicAuthPreHandler(deps.authResolver, realm);
 
+  app.get('/admin/customers', { preHandler }, async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const limit = q.limit ? Math.min(Number(q.limit), 200) : 50;
+    const customers = await deps.engine.searchCustomers({
+      limit,
+      ...(q.q !== undefined ? { q: q.q } : {}),
+      ...(q.tier === 'free' || q.tier === 'prepaid' ? { tier: q.tier } : {}),
+      ...(q.status === 'active' || q.status === 'suspended' || q.status === 'closed'
+        ? { status: q.status }
+        : {}),
+    });
+    await reply.code(200).send({ customers: customers.map(serializeCustomer) });
+  });
+
   app.post('/admin/customers', { preHandler }, async (req, reply) => {
     const parsed = CreateCustomerSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -179,6 +193,30 @@ export function registerAdminRoutes(app: FastifyInstance, deps: RegisterAdminRou
       ...(q.action !== undefined ? { action: q.action } : {}),
     });
     await reply.code(200).send({ events });
+  });
+
+  app.get('/admin/topups', { preHandler }, async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const limit = q.limit ? Math.min(Number(q.limit), 200) : 50;
+    const topups = await deps.engine.listTopups({
+      limit,
+      ...(q.customer_id !== undefined ? { customerId: q.customer_id } : {}),
+      ...(q.status === 'pending' || q.status === 'succeeded' || q.status === 'failed' || q.status === 'refunded'
+        ? { status: q.status }
+        : {}),
+    });
+    await reply.code(200).send({
+      topups: topups.map((row) => ({
+        id: row.id,
+        customer_id: row.customerId,
+        stripe_session_id: row.stripeSessionId,
+        amount_usd_cents: row.amountUsdCents.toString(),
+        status: row.status,
+        created_at: row.createdAt.toISOString(),
+        disputed_at: row.disputedAt?.toISOString() ?? null,
+        refunded_at: row.refundedAt?.toISOString() ?? null,
+      })),
+    });
   });
 }
 

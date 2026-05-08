@@ -234,6 +234,12 @@ test("resolver-backed selection prefers matching extra/constraints, then lowest 
     brokerUrl: null,
     resolverSocket: resolverSock,
     listenPort: 0,
+    databaseUrl: 'postgres://test:test@localhost:5432/test',
+    authPepper: 'test-pepper',
+    adminUser: null,
+    adminPass: null,
+    publicBaseUrl: null,
+    stripe: null,
     defaultOffering: "default",
     payerDaemonSocket: payerSock,
     paymentProtoRoot,
@@ -244,7 +250,7 @@ test("resolver-backed selection prefers matching extra/constraints, then lowest 
     audioSpeechEnabled: false,
     brokerCallTimeoutMs: 30_000,
   };
-  const server = buildServer(cfg);
+  const server = await buildServer({ cfg });
   await server.listen({ host: "127.0.0.1", port: 0 });
 
   t.after(async () => {

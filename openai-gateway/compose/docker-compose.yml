@@ -11,8 +11,7 @@
 #
 # It also needs a co-located payment-daemon (sender mode) via the same
 # UDS socket directory.
-# Postgres is expected externally — bring it up via
-# `infra/compose/docker-compose.yml --profile pg` first.
+# Postgres is required for the portal/admin shell state.
 #
 # Resolver mode also requires a co-located service-registry-daemon that
 # mounts the same socket directory and exposes
@@ -28,6 +27,14 @@ services:
       LIVEPEER_PAYER_DAEMON_SOCKET: ${LIVEPEER_PAYER_DAEMON_SOCKET:-/var/run/livepeer/payer-daemon.sock}
       LIVEPEER_DEFAULT_OFFERING: ${LIVEPEER_DEFAULT_OFFERING:-default}
       DATABASE_URL: ${DATABASE_URL:-postgres://livepeer:livepeer@postgres:5432/openai_gateway}
+      CUSTOMER_PORTAL_AUTH_PEPPER: ${CUSTOMER_PORTAL_AUTH_PEPPER:-change-me-before-production}
+      OPENAI_GATEWAY_ADMIN_USER: ${OPENAI_GATEWAY_ADMIN_USER:-admin}
+      OPENAI_GATEWAY_ADMIN_PASS: ${OPENAI_GATEWAY_ADMIN_PASS:-change-me-before-production}
+      OPENAI_GATEWAY_PUBLIC_BASE_URL: ${OPENAI_GATEWAY_PUBLIC_BASE_URL:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_TOPUP_MIN_CENTS: ${STRIPE_TOPUP_MIN_CENTS:-500}
+      STRIPE_TOPUP_MAX_CENTS: ${STRIPE_TOPUP_MAX_CENTS:-100000}
       OPENAI_AUDIO_SPEECH_ENABLED: ${OPENAI_AUDIO_SPEECH_ENABLED:-false}
       BROKER_CALL_TIMEOUT_MS: ${BROKER_CALL_TIMEOUT_MS:-30000}
       LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS: ${LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS:-15000}

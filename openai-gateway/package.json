@@ -5,22 +5,32 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
-  "files": ["dist", "README.md", "DESIGN.md"],
+  "files": [
+    "dist",
+    "migrations",
+    "README.md",
+    "DESIGN.md",
+    "src/frontend/admin/dist",
+    "src/frontend/portal/dist"
+  ],
   "scripts": {
-    "build": "tsc",
+    "build": "pnpm -F @livepeer-rewrite/customer-portal-shared build && pnpm -F @livepeer-rewrite/customer-portal build && tsc && vite build --config vite.portal.config.ts && vite build --config vite.admin.config.ts",
     "lint": "tsc --noEmit",
     "start": "node ./dist/index.js",
     "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"
   },
   "dependencies": {
+    "@fastify/static": "^8.2.0",
     "@grpc/grpc-js": "^1.12.2",
     "@grpc/proto-loader": "^0.7.13",
     "@fastify/websocket": "^11.2.0",
     "@livepeer-rewrite/customer-portal": "workspace:*",
+    "@livepeer-rewrite/customer-portal-shared": "workspace:*",
     "@tztcloud/livepeer-gateway-middleware": "workspace:*",
     "drizzle-orm": "^0.36.0",
     "fastify": "^5.0.0",
     "js-yaml": "^4.1.0",
+    "lit": "^3.2.0",
     "pg": "^8.13.0",
     "ws": "^8.18.0",
     "zod": "^3.23.0"
@@ -30,7 +40,8 @@
     "@types/node": "^22.0.0",
     "@types/pg": "^8.11.10",
     "@types/ws": "^8.5.13",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vite": "^8.0.10"
   },
   "engines": {
     "node": ">=20"

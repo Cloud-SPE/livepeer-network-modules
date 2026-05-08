@@ -1,5 +1,8 @@
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import { admin as portalAdmin } from "@livepeer-rewrite/customer-portal";
+import type { CustomerPortal } from "@livepeer-rewrite/customer-portal";
+import type { Db } from "@livepeer-rewrite/customer-portal/db";
 
 import type { Config } from "./config.js";
 import { registerChatCompletions } from "./routes/chat-completions.js";
@@ -8,9 +11,19 @@ import { registerAudioTranscriptions } from "./routes/audio-transcriptions.js";
 import { registerAudioSpeech } from "./routes/audio-speech.js";
 import { registerImagesGenerations } from "./routes/images-generations.js";
 import { registerRealtime } from "./routes/realtime.js";
+import { registerCustomerPortalRoutes } from "./routes/customer-portal.js";
+import { registerStripeRoutes } from "./routes/stripe.js";
+import { defaultAdminDist, defaultPortalDist, registerSpaStatic } from "./runtime/static.js";
 import { createRouteSelector } from "./service/routeSelector.js";
 
-export function buildServer(cfg: Config): FastifyInstance {
+export interface BuildServerDeps {
+  cfg: Config;
+  db?: Db;
+  portal?: CustomerPortal;
+}
+
+export async function buildServer(input: BuildServerDeps): Promise<FastifyInstance> {
+  const { cfg } = input;
   const app = Fastify({
     logger: { level: process.env["LOG_LEVEL"] ?? "info" },
     bodyLimit: 100 * 1024 * 1024,
@@ -33,8 +46,37 @@ export function buildServer(cfg: Config): FastifyInstance {
   registerEmbeddings(app, cfg, routeSelector);
   registerAudioTranscriptions(app, cfg, routeSelector);
   registerAudioSpeech(app, cfg);
+  if (input.db && input.portal) {
+    registerCustomerPortalRoutes(app, {
+      db: input.db,
+      portal: input.portal,
+      authPepper: cfg.authPepper,
+    });
+    registerStripeRoutes(app, {
+      cfg,
+      db: input.db,
+      portal: input.portal,
+    });
+  }
+  if (input.portal?.adminAuthResolver) {
+    portalAdmin.registerAdminRoutes(app, {
+      engine: input.portal.adminEngine,
+      authResolver: input.portal.adminAuthResolver,
+    });
+  }
   registerImagesGenerations(app, cfg, routeSelector);
   void app.register(registerRealtime, { cfg, routeSelector });
+
+  await registerSpaStatic(app, {
+    rootDir: defaultPortalDist(),
+    prefix: "/portal/",
+    label: "portal",
+  });
+  await registerSpaStatic(app, {
+    rootDir: defaultAdminDist(),
+    prefix: "/admin/console/",
+    label: "admin console",
+  });
 
   return app;
 }

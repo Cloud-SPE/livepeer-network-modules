@@ -110,6 +110,12 @@ test('streaming chat: chunks pass through unbuffered', async (t) => {
     brokerUrl: `http://127.0.0.1:${brokerAddr.port}`,
     resolverSocket: null,
     listenPort: 0,
+    databaseUrl: 'postgres://test:test@localhost:5432/test',
+    authPepper: 'test-pepper',
+    adminUser: null,
+    adminPass: null,
+    publicBaseUrl: null,
+    stripe: null,
     defaultOffering: 'default',
     payerDaemonSocket: sock,
     paymentProtoRoot: protoRoot,
@@ -120,7 +126,7 @@ test('streaming chat: chunks pass through unbuffered', async (t) => {
     audioSpeechEnabled: false,
     brokerCallTimeoutMs: 30_000,
   };
-  const server = buildServer(cfg);
+  const server = await buildServer({ cfg });
   await server.listen({ host: '127.0.0.1', port: 0 });
 
   t.after(async () => {

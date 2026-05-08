@@ -15,6 +15,7 @@ WORKDIR /src
 RUN npm install -g pnpm@9.0.0
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal/package.json ./customer-portal/
+COPY customer-portal/frontend/shared/package.json ./customer-portal/frontend/shared/
 COPY gateway-adapters/ts/package.json ./gateway-adapters/ts/
 COPY openai-gateway/package.json ./openai-gateway/
 RUN pnpm install --frozen-lockfile --ignore-scripts
@@ -25,13 +26,15 @@ WORKDIR /src
 RUN npm install -g pnpm@9.0.0
 COPY --from=deps /src/node_modules ./node_modules
 COPY --from=deps /src/customer-portal/node_modules ./customer-portal/node_modules
+COPY --from=deps /src/customer-portal/frontend/shared/node_modules ./customer-portal/frontend/shared/node_modules
 COPY --from=deps /src/gateway-adapters/ts/node_modules ./gateway-adapters/ts/node_modules
 COPY --from=deps /src/openai-gateway/node_modules ./openai-gateway/node_modules
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal ./customer-portal
 COPY gateway-adapters/ts ./gateway-adapters/ts
 COPY openai-gateway ./openai-gateway
-RUN pnpm -F @livepeer-rewrite/customer-portal build \
+RUN pnpm -F @livepeer-rewrite/customer-portal-shared build \
+ && pnpm -F @livepeer-rewrite/customer-portal build \
  && pnpm -F @tztcloud/livepeer-gateway-middleware build \
  && pnpm -F @livepeer-rewrite/openai-gateway build \
  && pnpm --filter @livepeer-rewrite/openai-gateway --prod deploy /out/openai-gateway

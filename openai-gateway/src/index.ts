@@ -1,20 +1,54 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { createCustomerPortal, db as portalDb } from "@livepeer-rewrite/customer-portal";
+import { billing } from "@livepeer-rewrite/customer-portal";
 import { loadConfig } from "./config.js";
 import * as payment from "./livepeer/payment.js";
 import { buildServer } from "./server.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const OPENAI_GATEWAY_ROOT = resolve(__dirname, "..");
+const REPO_ROOT = resolve(OPENAI_GATEWAY_ROOT, "..");
+
 async function main(): Promise<void> {
   const cfg = loadConfig();
+  const pool = portalDb.createPool({ connectionString: cfg.databaseUrl });
+  const db = portalDb.makeDb(pool);
+  await portalDb.runMigrations(db, resolve(REPO_ROOT, "customer-portal", "migrations"));
+  await portalDb.runMigrations(db, resolve(OPENAI_GATEWAY_ROOT, "migrations"));
+  const portal = createCustomerPortal({
+    db,
+    pepper: cfg.authPepper,
+    ...(cfg.stripe
+      ? {
+          stripe: billing.stripe.createSdkStripeClient({
+            secretKey: cfg.stripe.secretKey,
+            webhookSecret: cfg.stripe.webhookSecret,
+          }),
+        }
+      : {}),
+    admin:
+      cfg.adminUser && cfg.adminPass
+        ? {
+            user: cfg.adminUser,
+            pass: cfg.adminPass,
+            realm: "openai-gateway-admin",
+          }
+        : undefined,
+  });
 
   // Dial the local payer-daemon. Routes call payment.buildPayment per
   // request, which uses this connection.
   await payment.init({ socketPath: cfg.payerDaemonSocket, protoRoot: cfg.paymentProtoRoot });
 
-  const app = buildServer(cfg);
+  const app = await buildServer({ cfg, db, portal });
   try {
     await app.listen({ host: "0.0.0.0", port: cfg.listenPort });
   } catch (err) {
     app.log.error(err, "failed to listen");
     payment.shutdown();
+    await pool.end().catch(() => undefined);
     process.exit(1);
   }
 }

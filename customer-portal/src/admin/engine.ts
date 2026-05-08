@@ -36,6 +36,7 @@ export interface AdminEngine {
   createCustomer(input: CreateCustomerInput): Promise<CustomerRow>;
   getCustomer(id: string): Promise<CustomerRow | null>;
   searchCustomers(input: customersRepo.CustomerSearchInput): Promise<CustomerRow[]>;
+  listTopups(input: topupsRepo.TopupSearchInput): Promise<topupsRepo.TopupRow[]>;
   adjustBalance(input: AdjustBalanceInput): Promise<CustomerRow>;
   setStatus(input: SetStatusInput): Promise<boolean>;
   refundTopup(input: RefundTopupInput): Promise<{
@@ -79,6 +80,10 @@ export function createAdminEngine(deps: AdminEngineDeps): AdminEngine {
 
     async searchCustomers(input) {
       return customersRepo.search(deps.db, input);
+    },
+
+    async listTopups(input) {
+      return topupsRepo.search(deps.db, input);
     },
 
     async adjustBalance(input) {

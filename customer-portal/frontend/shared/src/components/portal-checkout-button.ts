@@ -6,6 +6,7 @@ export class PortalCheckoutButton extends LitElement {
   @property({ type: String }) action = '/v1/billing/topup/checkout';
   @property({ type: Number }) amountCents = 1000;
   @property({ type: String }) publishableKey = '';
+  @property({ type: String }) authToken = '';
   @state() private _loading = false;
 
   render(): TemplateResult {
@@ -23,9 +24,11 @@ export class PortalCheckoutButton extends LitElement {
   private async _onClick(): Promise<void> {
     this._loading = true;
     try {
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (this.authToken) headers['authorization'] = `Bearer ${this.authToken}`;
       const res = await fetch(this.action, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers,
         body: JSON.stringify({ amount_usd_cents: this.amountCents }),
       });
       if (!res.ok) {

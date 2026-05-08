@@ -20,6 +20,20 @@
 #   docker compose -f openai-gateway/compose/docker-compose.manifest-resolver.yml up -d
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-livepeer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-livepeer}
+      POSTGRES_DB: ${POSTGRES_DB:-openai_gateway}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-livepeer} -d ${POSTGRES_DB:-openai_gateway}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   service-registry-daemon:
     image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
     command:
@@ -70,6 +84,8 @@ services:
   openai-gateway:
     image: ${REGISTRY:-tztcloud}/livepeer-openai-gateway-reference:${TAG:-v1.0.0}
     depends_on:
+      postgres:
+        condition: service_healthy
       service-registry-daemon:
         condition: service_started
       payment-daemon-sender:
@@ -81,6 +97,14 @@ services:
       LIVEPEER_DEFAULT_OFFERING: ${LIVEPEER_DEFAULT_OFFERING:-model-small}
       LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS: ${LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS:-15000}
       DATABASE_URL: ${DATABASE_URL:-postgres://livepeer:livepeer@postgres:5432/openai_gateway}
+      CUSTOMER_PORTAL_AUTH_PEPPER: ${CUSTOMER_PORTAL_AUTH_PEPPER:-change-me-before-production}
+      OPENAI_GATEWAY_ADMIN_USER: ${OPENAI_GATEWAY_ADMIN_USER:-admin}
+      OPENAI_GATEWAY_ADMIN_PASS: ${OPENAI_GATEWAY_ADMIN_PASS:-change-me-before-production}
+      OPENAI_GATEWAY_PUBLIC_BASE_URL: ${OPENAI_GATEWAY_PUBLIC_BASE_URL:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_TOPUP_MIN_CENTS: ${STRIPE_TOPUP_MIN_CENTS:-500}
+      STRIPE_TOPUP_MAX_CENTS: ${STRIPE_TOPUP_MAX_CENTS:-100000}
       OPENAI_AUDIO_SPEECH_ENABLED: ${OPENAI_AUDIO_SPEECH_ENABLED:-false}
       BROKER_CALL_TIMEOUT_MS: ${BROKER_CALL_TIMEOUT_MS:-30000}
       LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-info}
@@ -91,5 +115,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres-data:
   livepeer-run:
   registry-state:

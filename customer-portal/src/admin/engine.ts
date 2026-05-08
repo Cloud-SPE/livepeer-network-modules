@@ -38,6 +38,7 @@ export interface SetStatusInput {
 export interface AdminEngine {
   createCustomer(input: CreateCustomerInput): Promise<CustomerRow>;
   getCustomer(id: string): Promise<CustomerRow | null>;
+  getReservation(id: string): Promise<reservationsRepo.ReservationRow | null>;
   searchCustomers(input: customersRepo.CustomerSearchInput): Promise<CustomerRow[]>;
   listTopups(input: topupsRepo.TopupSearchInput): Promise<topupsRepo.TopupRow[]>;
   listReservations(input: { customerId?: string; limit: number }): Promise<reservationsRepo.ReservationRow[]>;
@@ -80,6 +81,10 @@ export function createAdminEngine(deps: AdminEngineDeps): AdminEngine {
 
     async getCustomer(id) {
       return customersRepo.findById(deps.db, id);
+    },
+
+    async getReservation(id) {
+      return reservationsRepo.findById(deps.db, id);
     },
 
     async searchCustomers(input) {

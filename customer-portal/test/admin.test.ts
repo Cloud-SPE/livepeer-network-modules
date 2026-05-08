@@ -84,6 +84,10 @@ function fakeEngine(): AdminEngine & {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return (customers.get(id) ?? null) as any;
     },
+    async getReservation(id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (reservations.find((row) => row.id === id) ?? null) as any;
+    },
     async searchCustomers() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return Array.from(customers.values()) as any[];
@@ -233,6 +237,14 @@ test('admin routes round-trip: create, lookup, adjust balance, status, refund, a
   const body = JSON.parse(reservations.body);
   assert.equal(body.reservations.length, 1);
   assert.equal(body.reservations[0].work_id, 'work-1');
+
+  const reservation = await app.inject({
+    method: 'GET',
+    url: '/admin/reservations/res-1',
+    headers: { authorization: auth },
+  });
+  assert.equal(reservation.statusCode, 200);
+  assert.equal(JSON.parse(reservation.body).reservation.model, 'gpt-4o-mini');
 });
 
 test('admin routes reject invalid create payload', async () => {

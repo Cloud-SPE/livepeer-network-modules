@@ -48,6 +48,22 @@ const state = {
     created_at: string;
     resolved_at: string | null;
   }>,
+  selectedReservation: null as null | {
+    id: string;
+    work_id: string;
+    kind: string;
+    state: string;
+    capability: string | null;
+    model: string | null;
+    amount_usd_cents: string | null;
+    committed_usd_cents: string | null;
+    refunded_usd_cents: string | null;
+    amount_tokens: string | null;
+    committed_tokens: string | null;
+    refunded_tokens: string | null;
+    created_at: string;
+    resolved_at: string | null;
+  },
   tab: 'playground' as 'playground' | 'account' | 'keys' | 'billing' | 'usage',
   error: '',
   response: '',
@@ -263,6 +279,7 @@ function usageView() {
               <th>Committed</th>
               <th>Refunded</th>
               <th>Work ID</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -276,11 +293,35 @@ function usageView() {
                 <td>${formatReservationValue(row.committed_usd_cents, row.committed_tokens)}</td>
                 <td>${formatReservationValue(row.refunded_usd_cents, row.refunded_tokens)}</td>
                 <td>${row.work_id}</td>
+                <td><portal-button variant="ghost" @click=${() => openReservation(row.id)}>Open</portal-button></td>
               </tr>`,
             )}
           </tbody>
         </table>
       </portal-data-table>
+      ${state.selectedReservation
+        ? html`
+            <div style="margin-top:1rem">
+              <portal-detail-section
+                heading="Request detail"
+                description="Selected reservation and settled usage details."
+              >
+                <div style="display:grid;gap:0.5rem;">
+                  <div><strong>Reservation:</strong> ${state.selectedReservation.id}</div>
+                  <div><strong>Work ID:</strong> ${state.selectedReservation.work_id}</div>
+                  <div><strong>Capability:</strong> ${state.selectedReservation.capability ?? state.selectedReservation.kind}</div>
+                  <div><strong>Model:</strong> ${state.selectedReservation.model ?? 'n/a'}</div>
+                  <div><strong>Status:</strong> <portal-status-pill label=${state.selectedReservation.state}></portal-status-pill></div>
+                  <div><strong>Reserved:</strong> ${formatReservationValue(state.selectedReservation.amount_usd_cents, state.selectedReservation.amount_tokens)}</div>
+                  <div><strong>Committed:</strong> ${formatReservationValue(state.selectedReservation.committed_usd_cents, state.selectedReservation.committed_tokens)}</div>
+                  <div><strong>Refunded:</strong> ${formatReservationValue(state.selectedReservation.refunded_usd_cents, state.selectedReservation.refunded_tokens)}</div>
+                  <div><strong>Created:</strong> ${state.selectedReservation.created_at}</div>
+                  <div><strong>Resolved:</strong> ${state.selectedReservation.resolved_at ?? '—'}</div>
+                </div>
+              </portal-detail-section>
+            </div>
+          `
+        : ''}
     </portal-card>
   `;
 }
@@ -414,12 +455,19 @@ async function refresh(): Promise<void> {
   draw();
 }
 
+async function openReservation(id: string): Promise<void> {
+  const out = await authRequest(`/portal/usage/${encodeURIComponent(id)}`);
+  state.selectedReservation = out.reservation;
+  draw();
+}
+
 function logout(): void {
   state.apiKey = '';
   state.customer = null;
   state.keys = [];
   state.topups = [];
   state.reservations = [];
+  state.selectedReservation = null;
   state.response = '';
   localStorage.removeItem('openai-gateway:portal-api-key');
   draw();

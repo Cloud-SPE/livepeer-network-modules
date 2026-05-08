@@ -164,23 +164,23 @@ export function registerCustomerPortalRoutes(
       .orderBy(desc(portalDb.reservations.createdAt))
       .limit(100);
     await reply.code(200).send({
-      reservations: reservations.map((row: typeof portalDb.reservations.$inferSelect) => ({
-        id: row.id,
-        work_id: row.workId,
-        kind: row.kind,
-        state: row.state,
-        capability: row.capability ?? null,
-        model: row.model ?? null,
-        amount_usd_cents: row.amountUsdCents?.toString() ?? null,
-        committed_usd_cents: row.committedUsdCents?.toString() ?? null,
-        refunded_usd_cents: row.refundedUsdCents?.toString() ?? null,
-        amount_tokens: row.amountTokens?.toString() ?? null,
-        committed_tokens: row.committedTokens?.toString() ?? null,
-        refunded_tokens: row.refundedTokens?.toString() ?? null,
-        created_at: row.createdAt.toISOString(),
-        resolved_at: row.resolvedAt?.toISOString() ?? null,
-      })),
+      reservations: reservations.map(serializeReservation),
     });
+  });
+
+  app.get<{ Params: { id: string } }>('/portal/usage/:id', { preHandler: requireCustomer }, async (req, reply) => {
+    const caller = req.customerCaller!;
+    const rows = await deps.db
+      .select()
+      .from(portalDb.reservations)
+      .where(eq(portalDb.reservations.id, req.params.id))
+      .limit(1);
+    const row = rows[0];
+    if (!row || row.customerId !== caller.id) {
+      await reply.code(404).send({ error: 'not_found' });
+      return;
+    }
+    await reply.code(200).send({ reservation: serializeReservation(row) });
   });
 }
 
@@ -221,6 +221,25 @@ function serializeApiKey(row: typeof portalDb.apiKeys.$inferSelect): Record<stri
     created_at: row.createdAt.toISOString(),
     last_used_at: row.lastUsedAt?.toISOString() ?? null,
     revoked_at: row.revokedAt?.toISOString() ?? null,
+  };
+}
+
+function serializeReservation(row: typeof portalDb.reservations.$inferSelect): Record<string, unknown> {
+  return {
+    id: row.id,
+    work_id: row.workId,
+    kind: row.kind,
+    state: row.state,
+    capability: row.capability ?? null,
+    model: row.model ?? null,
+    amount_usd_cents: row.amountUsdCents?.toString() ?? null,
+    committed_usd_cents: row.committedUsdCents?.toString() ?? null,
+    refunded_usd_cents: row.refundedUsdCents?.toString() ?? null,
+    amount_tokens: row.amountTokens?.toString() ?? null,
+    committed_tokens: row.committedTokens?.toString() ?? null,
+    refunded_tokens: row.refundedTokens?.toString() ?? null,
+    created_at: row.createdAt.toISOString(),
+    resolved_at: row.resolvedAt?.toISOString() ?? null,
   };
 }
 

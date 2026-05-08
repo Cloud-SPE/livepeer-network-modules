@@ -112,6 +112,15 @@ export function registerAdminRoutes(app: FastifyInstance, deps: RegisterAdminRou
     await reply.code(200).send({ customer: serializeCustomer(customer) });
   });
 
+  app.get<{ Params: { id: string } }>('/admin/reservations/:id', { preHandler }, async (req, reply) => {
+    const reservation = await deps.engine.getReservation(req.params.id);
+    if (!reservation) {
+      await reply.code(404).send({ error: { code: 'not_found', message: 'reservation not found', type: 'NotFound' } });
+      return;
+    }
+    await reply.code(200).send({ reservation: serializeReservation(reservation) });
+  });
+
   app.post<{ Params: { id: string } }>(
     '/admin/customers/:id/balance',
     { preHandler },
@@ -256,5 +265,41 @@ function serializeCustomer(c: { id: string; email: string; tier: string; status:
     status: c.status,
     balance_usd_cents: c.balanceUsdCents.toString(),
     reserved_usd_cents: c.reservedUsdCents.toString(),
+  };
+}
+
+function serializeReservation(row: {
+  id: string;
+  customerId: string;
+  workId: string;
+  kind: string;
+  state: string;
+  capability: string | null;
+  model: string | null;
+  amountUsdCents: bigint | null;
+  committedUsdCents: bigint | null;
+  refundedUsdCents: bigint | null;
+  amountTokens: bigint | null;
+  committedTokens: bigint | null;
+  refundedTokens: bigint | null;
+  createdAt: Date;
+  resolvedAt: Date | null;
+}): Record<string, unknown> {
+  return {
+    id: row.id,
+    customer_id: row.customerId,
+    work_id: row.workId,
+    kind: row.kind,
+    state: row.state,
+    capability: row.capability ?? null,
+    model: row.model ?? null,
+    amount_usd_cents: row.amountUsdCents?.toString() ?? null,
+    committed_usd_cents: row.committedUsdCents?.toString() ?? null,
+    refunded_usd_cents: row.refundedUsdCents?.toString() ?? null,
+    amount_tokens: row.amountTokens?.toString() ?? null,
+    committed_tokens: row.committedTokens?.toString() ?? null,
+    refunded_tokens: row.refundedTokens?.toString() ?? null,
+    created_at: row.createdAt.toISOString(),
+    resolved_at: row.resolvedAt?.toISOString() ?? null,
   };
 }

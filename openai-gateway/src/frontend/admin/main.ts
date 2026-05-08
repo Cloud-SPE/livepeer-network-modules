@@ -67,6 +67,7 @@ const state = {
   audit: [] as AuditEvent[],
   topups: [] as Topup[],
   reservations: [] as Reservation[],
+  selectedReservation: null as Reservation | null,
   resolverCandidates: [] as ResolverCandidate[],
   query: '',
   error: '',
@@ -239,11 +240,32 @@ function dashboardView() {
                             <td><portal-status-pill label=${row.state}></portal-status-pill></td>
                             <td>${formatReservationValue(row.committed_usd_cents, row.committed_tokens)}</td>
                             <td>${row.work_id}</td>
+                            <td><portal-button variant="ghost" @click=${() => openReservation(row.id)}>Open</portal-button></td>
                           </tr>`,
                         )}
                     </tbody>
                   </table>
                 </portal-data-table>
+                ${state.selectedReservation && state.selectedReservation.customer_id === state.selected.id
+                  ? html`
+                      <div style="margin-top:1rem">
+                        <portal-detail-section heading="Selected request" description="Detailed reservation record for the chosen customer request.">
+                          <div style="display:grid;gap:0.5rem;">
+                            <div><strong>Reservation:</strong> ${state.selectedReservation.id}</div>
+                            <div><strong>Work ID:</strong> ${state.selectedReservation.work_id}</div>
+                            <div><strong>Capability:</strong> ${state.selectedReservation.capability ?? state.selectedReservation.kind}</div>
+                            <div><strong>Model:</strong> ${state.selectedReservation.model ?? 'n/a'}</div>
+                            <div><strong>Status:</strong> <portal-status-pill label=${state.selectedReservation.state}></portal-status-pill></div>
+                            <div><strong>Reserved:</strong> ${formatReservationValue(state.selectedReservation.amount_usd_cents, state.selectedReservation.amount_tokens)}</div>
+                            <div><strong>Committed:</strong> ${formatReservationValue(state.selectedReservation.committed_usd_cents, state.selectedReservation.committed_tokens)}</div>
+                            <div><strong>Refunded:</strong> ${formatReservationValue(state.selectedReservation.refunded_usd_cents, state.selectedReservation.refunded_tokens)}</div>
+                            <div><strong>Created:</strong> ${state.selectedReservation.created_at}</div>
+                            <div><strong>Resolved:</strong> ${state.selectedReservation.resolved_at ?? '—'}</div>
+                          </div>
+                        </portal-detail-section>
+                      </div>
+                    `
+                  : ''}
               </portal-detail-section>
             `
           : html`<div style="color:var(--text-2);">Select a customer to inspect details.</div>`}
@@ -273,7 +295,7 @@ function dashboardView() {
       <portal-data-table heading="Recent reservations" description="Latest gateway reservation ledger entries across customers.">
         <table>
           <thead>
-            <tr><th>Created</th><th>Customer</th><th>Capability</th><th>Model</th><th>Status</th><th>Reserved</th><th>Committed</th></tr>
+            <tr><th>Created</th><th>Customer</th><th>Capability</th><th>Model</th><th>Status</th><th>Reserved</th><th>Committed</th><th></th></tr>
           </thead>
           <tbody>
             ${state.reservations.map(
@@ -285,6 +307,7 @@ function dashboardView() {
                 <td><portal-status-pill label=${row.state}></portal-status-pill></td>
                 <td>${formatReservationValue(row.amount_usd_cents, row.amount_tokens)}</td>
                 <td>${formatReservationValue(row.committed_usd_cents, row.committed_tokens)}</td>
+                <td><portal-button variant="ghost" @click=${() => openReservation(row.id)}>Open</portal-button></td>
               </tr>`,
             )}
           </tbody>
@@ -400,6 +423,12 @@ async function selectCustomer(id: string): Promise<void> {
   draw();
 }
 
+async function openReservation(id: string): Promise<void> {
+  const out = await adminRequest(`/admin/reservations/${encodeURIComponent(id)}`);
+  state.selectedReservation = out.reservation;
+  draw();
+}
+
 async function adjustBalance(event: Event): Promise<void> {
   event.preventDefault();
   if (!state.selected) return;
@@ -486,6 +515,7 @@ function logout(): void {
   state.audit = [];
   state.topups = [];
   state.reservations = [];
+  state.selectedReservation = null;
   sessionStorage.removeItem('openai-gateway:admin-auth');
   draw();
 }

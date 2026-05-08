@@ -173,6 +173,7 @@ Current landing shape:
   - reserved vs committed vs refunded values
   - capability / model when the request path reports them
   - work id, created time, resolved time, and state
+  - single-request drilldown from the portal UI
 
 ### 6.2 Operator admin v1
 
@@ -202,6 +203,7 @@ Current landing shape:
 - reservation ledger view for:
   - all recent customer requests
   - selected-customer request drilldown
+  - single reservation detail fetch by id
 
 ### 6.3 Customer playground v1
 

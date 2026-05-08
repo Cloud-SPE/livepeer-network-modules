@@ -244,6 +244,43 @@ Nice-to-have v1.5:
 - advanced pricing editors for every capability in the first cut
 - full email/password customer auth flow
 
+## 6.5 Future incremental product-parity backlog
+
+These items are intentionally deferred so the current gateway/customer/admin
+surface can be deployed and exercised first. They should be treated as
+incremental follow-on work driven by real operator and customer feedback.
+
+### Customer-side future work
+
+- richer dashboard summaries:
+  - spend to date
+  - usage by capability/model
+  - current-period summaries
+- filtered and exportable usage history
+- billing reports and downloadable statements
+- broader account/settings management
+
+### Operator-side future work
+
+- richer gateway health and operator dashboarding
+- request failure inspection
+- retry/fallback visibility
+- deeper resolver/orchestrator diagnostics
+- richer pricing editor beyond raw JSON snapshot replacement
+
+### Playground future work
+
+- broader OpenAI API coverage beyond the first landing set
+- streaming UX improvements
+- request presets/examples
+- richer response inspectors per API family
+
+### Auth/product hardening future work
+
+- full customer login/session model
+- password reset / account recovery
+- broader customer identity lifecycle management
+
 ## 7. Recommended implementation strategy
 
 ### Strategy choice

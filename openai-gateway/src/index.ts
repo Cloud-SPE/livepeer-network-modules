@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,21 +9,18 @@ import * as payment from "./livepeer/payment.js";
 import { buildServer } from "./server.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
 const OPENAI_GATEWAY_ROOT = resolve(__dirname, "..");
 const REPO_ROOT = resolve(OPENAI_GATEWAY_ROOT, "..");
 
 function resolveCustomerPortalMigrationsDir(): string {
+  const packagedPath = resolve(OPENAI_GATEWAY_ROOT, "customer-portal-migrations");
+  if (existsSync(packagedPath)) return packagedPath;
+
   const localRepoPath = resolve(REPO_ROOT, "customer-portal", "migrations");
   if (existsSync(localRepoPath)) return localRepoPath;
 
-  const pkgEntry = require.resolve("@livepeer-rewrite/customer-portal/db");
-  const pkgRoot = resolve(dirname(pkgEntry), "..", "..");
-  const pkgMigrations = resolve(pkgRoot, "migrations");
-  if (existsSync(pkgMigrations)) return pkgMigrations;
-
   throw new Error(
-    `could not locate customer-portal migrations; checked ${localRepoPath} and ${pkgMigrations}`,
+    `could not locate customer-portal migrations; checked ${packagedPath} and ${localRepoPath}`,
   );
 }
 

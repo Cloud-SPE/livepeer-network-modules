@@ -43,6 +43,7 @@ FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 
 WORKDIR /app
 COPY --from=builder --chown=65532:65532 /out/openai-gateway/ /app/
+COPY --chown=65532:65532 customer-portal/migrations/ /app/customer-portal-migrations/
 
 # Proto files for @grpc/proto-loader's runtime parsing.
 COPY --chown=65532:65532 livepeer-network-protocol/proto/ /app/proto/

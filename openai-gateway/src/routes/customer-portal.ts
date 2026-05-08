@@ -154,6 +154,34 @@ export function registerCustomerPortalRoutes(
       })),
     });
   });
+
+  app.get('/portal/usage', { preHandler: requireCustomer }, async (req, reply) => {
+    const caller = req.customerCaller!;
+    const reservations = await deps.db
+      .select()
+      .from(portalDb.reservations)
+      .where(eq(portalDb.reservations.customerId, caller.id))
+      .orderBy(desc(portalDb.reservations.createdAt))
+      .limit(100);
+    await reply.code(200).send({
+      reservations: reservations.map((row: typeof portalDb.reservations.$inferSelect) => ({
+        id: row.id,
+        work_id: row.workId,
+        kind: row.kind,
+        state: row.state,
+        capability: row.capability ?? null,
+        model: row.model ?? null,
+        amount_usd_cents: row.amountUsdCents?.toString() ?? null,
+        committed_usd_cents: row.committedUsdCents?.toString() ?? null,
+        refunded_usd_cents: row.refundedUsdCents?.toString() ?? null,
+        amount_tokens: row.amountTokens?.toString() ?? null,
+        committed_tokens: row.committedTokens?.toString() ?? null,
+        refunded_tokens: row.refundedTokens?.toString() ?? null,
+        created_at: row.createdAt.toISOString(),
+        resolved_at: row.resolvedAt?.toISOString() ?? null,
+      })),
+    });
+  });
 }
 
 function customerAuthPreHandler(

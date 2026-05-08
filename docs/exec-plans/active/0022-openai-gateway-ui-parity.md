@@ -166,6 +166,14 @@ Nice-to-have near-parity:
 - request history / basic consumption drilldown
 - later playground extensions for embeddings / images / audio
 
+Current landing shape:
+
+- account, API keys, billing, and playground are live
+- usage history is now backed by the reservation ledger:
+  - reserved vs committed vs refunded values
+  - capability / model when the request path reports them
+  - work id, created time, resolved time, and state
+
 ### 6.2 Operator admin v1
 
 Minimum usable parity:

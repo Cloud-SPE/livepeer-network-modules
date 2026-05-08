@@ -95,7 +95,14 @@ export async function commit(db: Db, input: PrepaidCommitInput): Promise<Prepaid
     });
 
     const committedAt = new Date();
-    await reservationsRepo.updateState(tx, reservation.id, 'committed', committedAt);
+    await reservationsRepo.updateState(tx, reservation.id, {
+      state: 'committed',
+      resolvedAt: committedAt,
+      committedUsdCents: actual,
+      refundedUsdCents: reserved - actual,
+      capability: input.capability ?? null,
+      model: input.model ?? null,
+    });
 
     return {
       reservationId: reservation.id,
@@ -136,7 +143,11 @@ export async function refund(db: Db, reservationId: string): Promise<PrepaidRefu
     });
 
     const refundedAt = new Date();
-    await reservationsRepo.updateState(tx, reservation.id, 'refunded', refundedAt);
+    await reservationsRepo.updateState(tx, reservation.id, {
+      state: 'refunded',
+      resolvedAt: refundedAt,
+      refundedUsdCents: reserved,
+    });
 
     return {
       reservationId: reservation.id,
@@ -234,7 +245,12 @@ export async function commitQuota(db: Db, input: QuotaCommitInput): Promise<Quot
     });
 
     const committedAt = new Date();
-    await reservationsRepo.updateState(tx, reservation.id, 'committed', committedAt);
+    await reservationsRepo.updateState(tx, reservation.id, {
+      state: 'committed',
+      resolvedAt: committedAt,
+      committedTokens: actual,
+      refundedTokens: reserved - actual,
+    });
 
     return {
       reservationId: reservation.id,
@@ -275,7 +291,11 @@ export async function refundQuota(db: Db, reservationId: string): Promise<QuotaR
     });
 
     const refundedAt = new Date();
-    await reservationsRepo.updateState(tx, reservation.id, 'refunded', refundedAt);
+    await reservationsRepo.updateState(tx, reservation.id, {
+      state: 'refunded',
+      resolvedAt: refundedAt,
+      refundedTokens: reserved,
+    });
 
     return {
       reservationId: reservation.id,

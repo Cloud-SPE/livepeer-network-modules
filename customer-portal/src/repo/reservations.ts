@@ -1,4 +1,4 @@
-import { and, asc, eq, gt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt } from 'drizzle-orm';
 import type { Db } from '../db/pool.js';
 import { reservations } from '../db/schema.js';
 
@@ -32,10 +32,30 @@ export async function findByWorkId(db: Db, workId: string): Promise<ReservationR
 export async function updateState(
   db: Db,
   id: string,
-  state: ReservationState,
-  resolvedAt: Date,
+  values: {
+    state: ReservationState;
+    resolvedAt: Date;
+    committedUsdCents?: bigint | null;
+    committedTokens?: bigint | null;
+    refundedUsdCents?: bigint | null;
+    refundedTokens?: bigint | null;
+    capability?: string | null;
+    model?: string | null;
+  },
 ): Promise<void> {
-  await db.update(reservations).set({ state, resolvedAt }).where(eq(reservations.id, id));
+  await db
+    .update(reservations)
+    .set({
+      state: values.state,
+      resolvedAt: values.resolvedAt,
+      committedUsdCents: values.committedUsdCents,
+      committedTokens: values.committedTokens,
+      refundedUsdCents: values.refundedUsdCents,
+      refundedTokens: values.refundedTokens,
+      capability: values.capability,
+      model: values.model,
+    })
+    .where(eq(reservations.id, id));
 }
 
 export async function listByState(
@@ -53,5 +73,17 @@ export async function listByState(
     .from(reservations)
     .where(where)
     .orderBy(asc(reservations.createdAt))
+    .limit(options.limit);
+}
+
+export async function listByCustomer(
+  db: Db,
+  options: { customerId: string; limit: number },
+): Promise<ReservationRow[]> {
+  return db
+    .select()
+    .from(reservations)
+    .where(eq(reservations.customerId, options.customerId))
+    .orderBy(desc(reservations.createdAt))
     .limit(options.limit);
 }

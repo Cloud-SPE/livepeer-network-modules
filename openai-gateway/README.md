@@ -40,6 +40,7 @@ The same runtime now also mounts the first gateway shell routes:
 - `GET /portal/api-keys`
 - `POST /portal/api-keys`
 - `GET /portal/topups`
+- `GET /portal/usage`
 - `POST /portal/topups/checkout` when Stripe is configured
 - `POST /portal/stripe/webhook` when Stripe is configured
 - `POST /admin/customers`
@@ -60,6 +61,8 @@ The same runtime now also mounts the first gateway shell routes:
   and deployable, but still intentionally thin relative to the older
   bridge: API-key-based customer auth, no full password auth flow, and a v1
   playground.
+  Usage history is reservation-ledger based today, with settled cost/token
+  fields persisted per reservation rather than a separate analytics product.
   Rate-card management is currently JSON-snapshot based rather than a
   polished field-by-field editor.
 

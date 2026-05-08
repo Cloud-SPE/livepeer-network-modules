@@ -32,7 +32,23 @@ const state = {
     status: string;
     created_at: string;
   }>,
-  tab: 'playground' as 'playground' | 'account' | 'keys' | 'billing',
+  reservations: [] as Array<{
+    id: string;
+    work_id: string;
+    kind: string;
+    state: string;
+    capability: string | null;
+    model: string | null;
+    amount_usd_cents: string | null;
+    committed_usd_cents: string | null;
+    refunded_usd_cents: string | null;
+    amount_tokens: string | null;
+    committed_tokens: string | null;
+    refunded_tokens: string | null;
+    created_at: string;
+    resolved_at: string | null;
+  }>,
+  tab: 'playground' as 'playground' | 'account' | 'keys' | 'billing' | 'usage',
   error: '',
   response: '',
   loading: false,
@@ -56,6 +72,7 @@ function draw(): void {
           ${navButton('account', 'Account')}
           ${navButton('keys', 'API Keys')}
           ${navButton('billing', 'Billing')}
+          ${navButton('usage', 'Usage')}
           ${state.customer
             ? html`<portal-button variant="ghost" @click=${logout}>Sign out</portal-button>`
             : ''}
@@ -105,6 +122,7 @@ function dashboardView() {
       ${state.tab === 'account' ? accountView() : ''}
       ${state.tab === 'keys' ? keysView() : ''}
       ${state.tab === 'billing' ? billingView() : ''}
+      ${state.tab === 'usage' ? usageView() : ''}
       ${state.error ? html`<portal-toast variant="danger" .message=${state.error}></portal-toast>` : ''}
     </div>
   `;
@@ -230,6 +248,43 @@ function billingView() {
   `;
 }
 
+function usageView() {
+  return html`
+    <portal-card heading="Usage and request history" subheading="Latest settled gateway reservations for this customer.">
+      <portal-data-table heading="Reservation ledger" description="Tracks reserved, committed, and refunded usage records.">
+        <table>
+          <thead>
+            <tr>
+              <th>Created</th>
+              <th>Capability</th>
+              <th>Model</th>
+              <th>Status</th>
+              <th>Reserved</th>
+              <th>Committed</th>
+              <th>Refunded</th>
+              <th>Work ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.reservations.map(
+              (row) => html`<tr>
+                <td>${row.created_at}</td>
+                <td>${row.capability ?? row.kind}</td>
+                <td>${row.model ?? 'n/a'}</td>
+                <td><portal-status-pill label=${row.state}></portal-status-pill></td>
+                <td>${formatReservationValue(row.amount_usd_cents, row.amount_tokens)}</td>
+                <td>${formatReservationValue(row.committed_usd_cents, row.committed_tokens)}</td>
+                <td>${formatReservationValue(row.refunded_usd_cents, row.refunded_tokens)}</td>
+                <td>${row.work_id}</td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+      </portal-data-table>
+    </portal-card>
+  `;
+}
+
 function navButton(tab: typeof state.tab, label: string) {
   return html`<portal-button variant=${state.tab === tab ? 'primary' : 'ghost'} @click=${() => switchTab(tab)}>${label}</portal-button>`;
 }
@@ -264,6 +319,7 @@ async function loginWithKey(apiKey: string): Promise<void> {
   state.customer = out.customer;
   state.keys = out.api_keys;
   state.topups = (await authRequest('/portal/topups')).topups;
+  state.reservations = (await authRequest('/portal/usage')).reservations;
   state.error = '';
   draw();
 }
@@ -354,6 +410,7 @@ async function refresh(): Promise<void> {
   state.customer = (await authRequest('/portal/account')).customer;
   state.keys = (await authRequest('/portal/api-keys')).api_keys;
   state.topups = (await authRequest('/portal/topups')).topups;
+  state.reservations = (await authRequest('/portal/usage')).reservations;
   draw();
 }
 
@@ -362,6 +419,7 @@ function logout(): void {
   state.customer = null;
   state.keys = [];
   state.topups = [];
+  state.reservations = [];
   state.response = '';
   localStorage.removeItem('openai-gateway:portal-api-key');
   draw();
@@ -391,6 +449,12 @@ async function authRequest(path: string, init: RequestInit = {}): Promise<any> {
 
 function usd(cents: string): string {
   return `$${(Number(cents) / 100).toFixed(2)}`;
+}
+
+function formatReservationValue(cents: string | null, tokens: string | null): string {
+  if (cents !== null) return usd(cents);
+  if (tokens !== null) return `${tokens} tokens`;
+  return 'n/a';
 }
 
 function errorMessage(err: unknown): string {

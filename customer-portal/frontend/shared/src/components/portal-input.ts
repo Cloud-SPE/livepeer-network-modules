@@ -3,6 +3,8 @@ import { customElement, property } from 'lit/decorators.js';
 
 @customElement('portal-input')
 export class PortalInput extends LitElement {
+  static readonly formAssociated = true;
+
   @property({ type: String }) name = '';
   @property({ type: String }) label = '';
   @property({ type: String }) type = 'text';
@@ -10,6 +12,9 @@ export class PortalInput extends LitElement {
   @property({ type: String }) placeholder = '';
   @property({ type: Boolean }) required = false;
   @property({ type: String }) error = '';
+
+  private readonly _internals =
+    typeof this.attachInternals === 'function' ? this.attachInternals() : null;
 
   static styles = css`
     :host {
@@ -50,6 +55,15 @@ export class PortalInput extends LitElement {
     }
   `;
 
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this._syncFormState();
+  }
+
+  override updated(): void {
+    this._syncFormState();
+  }
+
   render(): TemplateResult {
     return html`
       ${this.label ? html`<label for=${this.name}>${this.label}</label>` : ''}
@@ -76,6 +90,16 @@ export class PortalInput extends LitElement {
         composed: true,
       }),
     );
+  }
+
+  private _syncFormState(): void {
+    if (!this._internals) return;
+    this._internals.setFormValue(this.value);
+    if (this.required && !this.value) {
+      this._internals.setValidity({ valueMissing: true }, 'Please fill out this field.');
+      return;
+    }
+    this._internals.setValidity({});
   }
 }
 

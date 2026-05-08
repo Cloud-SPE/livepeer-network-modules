@@ -3,7 +3,8 @@ import path from 'node:path';
 import { sql } from 'drizzle-orm';
 import type { Db } from './pool.js';
 
-const ADVISORY_LOCK_KEY = BigInt('0x6c69767065657273686c'); // 'livpeershl'
+// Keep the migration advisory-lock key within Postgres signed BIGINT range.
+const ADVISORY_LOCK_KEY = BigInt('0x6c69767065657273'); // 'livpeers'
 
 export async function runMigrations(db: Db, migrationsDir: string): Promise<void> {
   await db.execute(sql`SELECT pg_advisory_lock(${ADVISORY_LOCK_KEY.toString()})`);

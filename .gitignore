@@ -20,10 +20,16 @@ Thumbs.db
 /build/
 /out/
 /bin/
+/protocol-daemon/bin/
 
 # Compiled Go binaries (built into runner Docker images, not checked in)
 /video-runners/transcode-runner/transcode-runner
 /video-runners/abr-runner/abr-runner
+
+# Coverage artifacts
+coverage.out
+cov.out
+*.coverprofile
 
 # Node / pnpm
 node_modules/
@@ -37,3 +43,9 @@ pnpm-debug.log*
 # Generated docs (keep checked-in artifacts as sources of truth; output is regen-able)
 /docs/generated/*
 !/docs/generated/.gitkeep
+
+# Python caches / local locks from auxiliary components
+__pycache__/
+*.pyc
+/vtuber-pipeline/uv.lock
+/vtuber-runner/uv.lock

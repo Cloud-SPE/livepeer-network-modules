@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package livepeer.registry.v1;
+
+import "google/protobuf/empty.proto";
+import "livepeer/registry/v1/resolver.proto";
+import "livepeer/registry/v1/types.proto";
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/registry/v1;registryv1";
+
+service Publisher {
+  rpc GetIdentity(google.protobuf.Empty) returns (IdentityResult);
+  rpc BuildManifest(BuildManifestRequest) returns (BuildResult);
+  rpc SignManifest(SignManifestRequest) returns (SignedManifest);
+  rpc BuildAndSign(BuildAndSignRequest) returns (SignedManifest);
+  rpc ProbeWorker(ProbeWorkerRequest) returns (ProbeResult);
+  rpc Health(google.protobuf.Empty) returns (HealthResult);
+}
+
+message IdentityResult {
+  string eth_address = 1;
+}
+
+message BuildManifestRequest {
+  string        proposed_eth_address = 1;
+  repeated Node proposed_nodes       = 2;
+}
+
+message BuildResult {
+  bytes manifest_json    = 1;
+  bytes canonical_bytes  = 2;
+  string canonical_sha256 = 3;
+}
+
+// BuildAndSignRequest is the operator-facing one-shot path: the daemon
+// validates the proposal eth_address against the loaded cold key, builds
+// the canonical manifest from `proposed_nodes`, and signs it with the
+// loaded keystore in a single round-trip. Driven from the secure orch
+// by the livepeer-registry-refresh CLI when capacity changes.
+//
+// HTTP probe-from-URL discovery is a follow-up — for v1, callers
+// supply fully-formed Nodes (operator hand-curates or uses their own
+// inventory tooling). See tech-debt: publisher-http-probe-impl.
+message BuildAndSignRequest {
+  bytes manifest_json = 1;
+}
+
+message SignManifestRequest {
+  bytes manifest_json = 1;
+}
+
+message SignedManifest {
+  bytes  manifest_json   = 1;
+  string signature_value = 2;  // 0x-prefixed 130-hex
+}
+
+message TxHashResult {
+  string tx_hash = 1;
+}
+
+message ProbeWorkerRequest {
+  string url            = 1;
+  int32  timeout_seconds = 2;
+}
+
+message ProbeResult {
+  bytes capabilities_json = 1;
+}

@@ -134,9 +134,13 @@ test('realtime: customer ws bridges to broker via ws-realtime adapter with canon
 
   const cfg: Config = {
     brokerUrl: broker.url,
+    resolverSocket: null,
     listenPort: 0,
     defaultOffering: 'gpt-4o-realtime',
     payerDaemonSocket: sock,
+    paymentProtoRoot: protoRoot,
+    resolverProtoRoot: protoRoot,
+    resolverSnapshotTtlMs: 15_000,
     offeringsConfigPath: '/dev/null',
     offerings: { defaults: {} },
     audioSpeechEnabled: false,

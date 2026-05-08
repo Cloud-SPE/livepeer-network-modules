@@ -33,22 +33,17 @@ COPY gateway-adapters/ts ./gateway-adapters/ts
 COPY openai-gateway ./openai-gateway
 RUN pnpm -F @livepeer-rewrite/customer-portal build \
  && pnpm -F @tztcloud/livepeer-gateway-middleware build \
- && pnpm -F @livepeer-rewrite/openai-gateway build
+ && pnpm -F @livepeer-rewrite/openai-gateway build \
+ && pnpm --filter @livepeer-rewrite/openai-gateway --prod deploy /out/openai-gateway
 
-FROM node:${NODE_VERSION}-alpine AS runtime
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 
 WORKDIR /app
-COPY --from=builder /src/openai-gateway/dist /app/dist
-COPY --from=builder /src/openai-gateway/package.json /app/
-COPY --from=builder /src/customer-portal/dist /app/node_modules/@livepeer-rewrite/customer-portal/dist
-COPY --from=builder /src/customer-portal/package.json /app/node_modules/@livepeer-rewrite/customer-portal/
-COPY --from=builder /src/customer-portal/migrations /app/node_modules/@livepeer-rewrite/customer-portal/migrations
-COPY --from=builder /src/gateway-adapters/ts/dist /app/node_modules/@tztcloud/livepeer-gateway-middleware/dist
-COPY --from=builder /src/gateway-adapters/ts/package.json /app/node_modules/@tztcloud/livepeer-gateway-middleware/
-COPY --from=builder /src/node_modules /app/node_modules
+COPY --from=builder --chown=65532:65532 /out/openai-gateway/ /app/
 
 # Proto files for @grpc/proto-loader's runtime parsing.
-COPY livepeer-network-protocol/proto/ /app/proto/
+COPY --chown=65532:65532 livepeer-network-protocol/proto/ /app/proto/
+COPY --chown=65532:65532 proto-contracts/ /app/proto-contracts/
 
 EXPOSE 3000
-ENTRYPOINT ["node", "/app/dist/index.js"]
+CMD ["/app/dist/index.js"]

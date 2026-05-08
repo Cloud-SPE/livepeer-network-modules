@@ -8,3 +8,5 @@ import "./components/admin-assets.js";
 import "./components/admin-streams.js";
 import "./components/admin-webhooks.js";
 import "./components/admin-recordings.js";
+
+document.body.dataset.livepeerUiMode = "network-console";

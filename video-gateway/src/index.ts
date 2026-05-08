@@ -4,6 +4,8 @@ import pg from "pg";
 
 import { loadConfig } from "./config.js";
 import { createDb } from "./db/pool.js";
+import { createLiveSessionDirectory } from "./livepeer/liveSessionDirectory.js";
+import { createRouteSelector } from "./livepeer/routeSelector.js";
 import {
   createAssetRepo,
   createLiveStreamRepo,
@@ -43,9 +45,18 @@ async function main(): Promise<void> {
       failures: repos.webhookFailures,
     },
   );
+  const liveSessions = createLiveSessionDirectory();
+  const routeSelector = createRouteSelector({
+    brokerUrl: cfg.brokerUrl,
+    resolverSocket: cfg.resolverSocket,
+    resolverProtoRoot: cfg.resolverProtoRoot,
+    resolverSnapshotTtlMs: cfg.resolverSnapshotTtlMs,
+  });
 
   const app = buildServer({
     cfg,
+    routeSelector,
+    liveSessions,
     admin: { failures: repos.webhookFailures, dispatcher },
   });
   const rtmp = createRtmpListener({ cfg });

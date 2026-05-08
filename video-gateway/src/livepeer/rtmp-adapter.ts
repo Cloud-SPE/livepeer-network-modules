@@ -1,13 +1,16 @@
 import type { Config } from "../config.js";
 import { HEADER, SPEC_VERSION } from "./headers.js";
 import { MODE } from "./capabilityMap.js";
+import type { VideoRouteSelector } from "./routeSelector.js";
 import { newRequestId } from "./requestId.js";
 
 export interface OpenRtmpSessionInput {
   cfg: Config;
+  routeSelector: VideoRouteSelector;
   callerId: string;
   offering: string;
   streamId: string;
+  requestHeaders?: Record<string, string | string[] | undefined>;
 }
 
 export interface OpenRtmpSessionOutput {
@@ -16,14 +19,22 @@ export interface OpenRtmpSessionOutput {
   hlsUrl: string;
   expiresAt: string;
   requestId: string;
+  brokerUrl: string;
 }
 
 export async function openRtmpSession(
   input: OpenRtmpSessionInput,
 ): Promise<OpenRtmpSessionOutput> {
   const requestId = newRequestId();
-  const sessionId = `sess_${requestId.slice(4)}`;
-  const url = `${input.cfg.brokerUrl.replace(/\/$/, "")}/v1/cap`;
+  const [route] = await input.routeSelector.select({
+    capability: "video:live.rtmp",
+    offering: input.offering,
+    headers: input.requestHeaders,
+  });
+  if (!route) {
+    throw new Error("no video:live.rtmp route available");
+  }
+  const url = `${route.brokerUrl.replace(/\/$/, "")}/v1/cap`;
   const headers: Record<string, string> = {
     [HEADER.CAPABILITY]: "video:live.rtmp",
     [HEADER.OFFERING]: input.offering,
@@ -36,16 +47,30 @@ export async function openRtmpSession(
     caller_id: input.callerId,
     stream_id: input.streamId,
   });
-  try {
-    await fetch(url, { method: "POST", headers, body });
-  } catch {
-    /* broker dial best-effort in this scaffold; real wire impl handles backoff */
+  const res = await fetch(url, { method: "POST", headers, body });
+  if (!res.ok) {
+    throw new Error(`live session-open failed: ${res.status}`);
+  }
+  const payload = (await res.json()) as {
+    session_id?: string;
+    rtmp_ingest_url?: string;
+    hls_playback_url?: string;
+    expires_at?: string;
+  };
+  if (
+    !payload.session_id ||
+    !payload.rtmp_ingest_url ||
+    !payload.hls_playback_url ||
+    !payload.expires_at
+  ) {
+    throw new Error("live session-open returned malformed response");
   }
   return {
-    sessionId,
-    brokerRtmpUrl: `rtmp://${input.cfg.brokerRtmpHost}/${sessionId}`,
-    hlsUrl: `${input.cfg.hlsBaseUrl}/${sessionId}/master.m3u8`,
-    expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    sessionId: payload.session_id,
+    brokerRtmpUrl: payload.rtmp_ingest_url,
+    hlsUrl: payload.hls_playback_url,
+    expiresAt: payload.expires_at,
     requestId,
+    brokerUrl: route.brokerUrl,
   };
 }

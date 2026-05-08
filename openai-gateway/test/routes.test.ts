@@ -141,9 +141,13 @@ test('routes smoke: chat / embeddings / transcriptions / images forward to broke
 
   const cfg: Config = {
     brokerUrl: broker.url,
+    resolverSocket: null,
     listenPort: 0,
     defaultOffering: 'default',
     payerDaemonSocket: sock,
+    paymentProtoRoot: protoRoot,
+    resolverProtoRoot: protoRoot,
+    resolverSnapshotTtlMs: 15_000,
     offeringsConfigPath: '/dev/null',
     offerings: { defaults: {} },
     audioSpeechEnabled: false,

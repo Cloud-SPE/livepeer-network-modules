@@ -1,0 +1,55 @@
+# Local-dev compose for protocol-daemon. This mirrors the run-only
+# compose under `compose/docker-compose.yml` but keeps the file at the
+# component root for parity with older local workflows.
+
+services:
+  protocol-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-protocol-daemon:${TAG:-v1.0.0}
+    restart: unless-stopped
+
+    command:
+      - --mode=${PROTOCOL_MODE:-both}
+      - --socket=/var/run/livepeer/protocol.sock
+      - --store-path=/var/lib/livepeer/protocol.db
+      # Comma-separated RPC URLs; index 0 is primary, the rest are
+      # backups. The daemon's multi-RPC failover rotates on transient
+      # errors and rate-limits.
+      - --eth-urls=${ETH_URLS}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+      # Required for reward / both modes — the orchestrator's on-chain
+      # transcoder address. Typically the cold identity, distinct from
+      # the keystore's signing address.
+      - --orch-address=${ORCH_ADDRESS}
+      # Preflight: refuse to start when wallet balance < this many wei.
+      # Default 5e15 ≈ 0.005 ETH (~50 reward calls of headroom).
+      - --min-balance-wei=${MIN_BALANCE_WEI:-5000000000000000}
+      # Optional: random delay before initializeRound. Useful only if
+      # you run multiple protocol-daemons that might race for the
+      # round-init slot — single-orchestrator deployments leave this 0.
+      # - --init-jitter=${INIT_JITTER:-0s}
+      # Optional: gas limit for round-init / reward txs (default 1M).
+      # - --gas-limit=${GAS_LIMIT:-1000000}
+      # Logging — recommend json for production log aggregators.
+      - --log-level=${LOG_LEVEL:-info}
+      - --log-format=${LOG_FORMAT:-json}
+      - --metrics-listen=${METRICS_PORT:+:${METRICS_PORT}}
+
+    ports:
+      - "${PROTOCOL_METRICS_BIND:-127.0.0.1}:${METRICS_PORT:-9094}:${METRICS_PORT:-9094}"
+
+    volumes:
+      - ${PROTOCOL_KEYSTORE:-./run/keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PROTOCOL_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - protocol-socket:/var/run/livepeer
+      - protocol-state:/var/lib/livepeer
+
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  protocol-socket:
+  protocol-state:

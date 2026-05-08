@@ -25,13 +25,21 @@ export class AdminWebhooks extends LitElement {
 
   static styles = css`
     :host { display: block; }
-    .toolbar { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
-    input { padding: 0.5rem; border: 1px solid var(--border-1, #d4d4d8); border-radius: 0.375rem; flex: 1; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-1, #d4d4d8); text-align: left; vertical-align: top; }
-    button { background: none; border: 1px solid var(--border-1, #d4d4d8); border-radius: 0.25rem; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
-    .replayed { color: #166534; }
-    .err { color: #b91c1c; }
+    .toolbar { display: flex; gap: var(--space-2); flex: 1; }
+    input { flex: 1; min-height: 2.75rem; }
+    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+    th, td { padding: 0.75rem 0.8rem; border-bottom: 1px solid var(--border-1); text-align: left; vertical-align: top; }
+    th {
+      color: var(--text-3);
+      font-size: var(--font-size-xs);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    tbody tr:hover { background: rgba(255,255,255,0.02); }
+    .replayed { color: var(--success); }
+    .err { color: var(--danger); }
+    .dim { color: var(--text-3); }
   `;
 
   override async connectedCallback(): Promise<void> {
@@ -68,51 +76,68 @@ export class AdminWebhooks extends LitElement {
 
   render(): TemplateResult {
     return html`
-      <h2>Webhook delivery audit</h2>
-      <div class="toolbar">
-        <input
-          placeholder="filter by endpoint id"
-          .value=${this.endpointFilter}
-          @input=${(e: Event): void => {
-            this.endpointFilter = (e.target as HTMLInputElement).value;
-          }}
-          @keydown=${(e: KeyboardEvent): void => {
-            if (e.key === "Enter") void this.load();
-          }}
-        />
-        <portal-button @click=${(): void => void this.load()}>Refresh</portal-button>
-      </div>
-      ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th><th>Endpoint</th><th>Event</th><th>Attempts</th><th>Status</th>
-            <th>Last error</th><th>Dead-lettered</th><th>Replayed</th><th></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${this.rows.map(
-            (r) => html`<tr>
-              <td>${r.id}</td>
-              <td>${r.endpointId}</td>
-              <td>${r.eventType}</td>
-              <td>${r.attemptCount}</td>
-              <td>${r.statusCode ?? "-"}</td>
-              <td>${r.lastError}</td>
-              <td>${r.deadLetteredAt}</td>
-              <td class="replayed">${r.replayedAt ?? ""}</td>
-              <td>
-                <button
-                  ?disabled=${!!this.replayBusy[r.id]}
-                  @click=${(): void => void this.replay(r)}
-                >
-                  ${this.replayBusy[r.id] ? "Replaying." : "Replay"}
-                </button>
-              </td>
-            </tr>`,
-          )}
-        </tbody>
-      </table>
+      <portal-card heading="Webhook Delivery Audit">
+        <portal-data-table
+          heading="Delivery Failures"
+          description="Inspect dead-lettered webhook deliveries, replay them, and filter by endpoint."
+        >
+          <div class="toolbar" slot="toolbar">
+            <input
+              placeholder="filter by endpoint id"
+              .value=${this.endpointFilter}
+              @input=${(e: Event): void => {
+                this.endpointFilter = (e.target as HTMLInputElement).value;
+              }}
+              @keydown=${(e: KeyboardEvent): void => {
+                if (e.key === "Enter") void this.load();
+              }}
+            />
+            <portal-button @click=${(): void => void this.load()}>Refresh</portal-button>
+          </div>
+          ${this.error ? html`<p class="err">${this.error}</p>` : ""}
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th><th>Endpoint</th><th>Event</th><th>Attempts</th><th>Status</th>
+                <th>Last error</th><th>Dead-lettered</th><th>Replayed</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${this.rows.map(
+                (r) => html`<tr>
+                  <td>${r.id}</td>
+                  <td>${r.endpointId}</td>
+                  <td>${r.eventType}</td>
+                  <td>${r.attemptCount}</td>
+                  <td>
+                    <portal-status-pill variant=${r.statusCode && r.statusCode >= 500 ? "danger" : r.statusCode && r.statusCode >= 400 ? "warning" : "neutral"}>
+                      ${r.statusCode ?? "unknown"}
+                    </portal-status-pill>
+                  </td>
+                  <td>${r.lastError || html`<span class="dim">-</span>`}</td>
+                  <td>${r.deadLetteredAt}</td>
+                  <td>
+                    ${r.replayedAt
+                      ? html`<portal-status-pill variant="success">${r.replayedAt}</portal-status-pill>`
+                      : html`<span class="dim">pending</span>`}
+                  </td>
+                  <td>
+                    <portal-action-row align="end">
+                      <portal-button
+                        variant="ghost"
+                        ?disabled=${!!this.replayBusy[r.id]}
+                        @click=${(): void => void this.replay(r)}
+                      >
+                        ${this.replayBusy[r.id] ? "Replaying." : "Replay"}
+                      </portal-button>
+                    </portal-action-row>
+                  </td>
+                </tr>`,
+              )}
+            </tbody>
+          </table>
+        </portal-data-table>
+      </portal-card>
     `;
   }
 }

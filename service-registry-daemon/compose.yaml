@@ -1,0 +1,84 @@
+# Local publisher-mode compose example for livepeer-service-registry-daemon.
+#
+# Use `compose/docker-compose.yml` for the run-only resolver deployment
+# shape used by gateways. This root-level compose stays as the local
+# publisher-mode example for cold-signing workflows.
+#
+# Quick start (publisher):
+#   cp .env.example .env
+#   $EDITOR .env                   # set CHAIN_RPC, REGISTRY_IMAGE_TAG, ORCH_ADDRESS
+#   cp /path/to/your/v3-keystore.json ./keystore.json
+#   printf '%s' 'your-keystore-password' > ./keystore-password
+#   chmod 600 ./keystore-password
+#   docker compose up
+
+services:
+  service-registry-daemon:
+    # Pin to a published tag (default v4.0.2 — bump REGISTRY_IMAGE_TAG
+    # in .env to upgrade). For local development, comment out `image:`
+    # and uncomment the `build:` block below — context is the monorepo
+    # root because the daemon's go.mod uses `replace ../chain-commons`.
+    image: tztcloud/livepeer-service-registry-daemon:${REGISTRY_IMAGE_TAG:-v4.0.2}
+    # build:
+    #   context: ..
+    #   dockerfile: service-registry-daemon/Dockerfile
+    #   args:
+    #     VERSION: dev
+
+    restart: unless-stopped
+
+    command:
+      - --mode=publisher
+      - --socket=/var/run/livepeer/service-registry.sock
+      - --store-path=/var/lib/livepeer/registry-cache.db
+      - --chain-rpc=${CHAIN_RPC}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+      # Optional: cold orch identity distinct from the keystore's signing
+      # address. Leave unset to use the keystore address as the orch
+      # identity.
+      # - --orch-address=${ORCH_ADDRESS}
+      # Optional: write the signed manifest to a file your HTTP server
+      # (nginx / caddy) maps to /.well-known/livepeer-registry.json so
+      # consumers can fetch the off-chain manifest.
+      # - --manifest-out=/var/lib/livepeer/registry-manifest.json
+      # ServiceRegistry writes now live in protocol-daemon. Publisher
+      # mode here is manifest-signing only.
+      # Logging — recommend json for production log aggregators.
+      - --log-level=${LOG_LEVEL:-info}
+      - --log-format=${LOG_FORMAT:-json}
+      # Prometheus listener — set METRICS_PORT empty in .env to disable.
+      # The daemon's recommended port is 9091 per
+      # docs/conventions/ports.md (livepeer-modules-project monorepo).
+      - --metrics-listen=${METRICS_PORT:+:${METRICS_PORT}}
+
+    # Uncomment to expose the metrics port to the host. Bind to
+    # 127.0.0.1 when scraping from a Prometheus on the same host.
+    # ports:
+    #   - "127.0.0.1:${METRICS_PORT:-9091}:${METRICS_PORT:-9091}"
+
+    volumes:
+      # Keystore + password: read-only bind mounts. Operator produces
+      # these out of band (see running-the-daemon.md for `geth account
+      # new`).
+      - ./keystore.json:/etc/livepeer/keystore.json:ro
+      - ./keystore-password:/etc/livepeer/keystore-password:ro
+
+      # Named volumes for state the container writes:
+      #   service-registry-socket — gRPC unix socket; siblings (e.g. an
+      #                             orchestrator frontend that calls
+      #                             SignManifest) mount this volume.
+      #   service-registry-state  — BoltDB cache + write history.
+      - service-registry-socket:/var/run/livepeer
+      - service-registry-state:/var/lib/livepeer
+
+    # Read-only root FS + no-new-privileges. The container only writes
+    # to the two named volumes, both pre-chowned to nonroot (uid 65532).
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  service-registry-socket:
+  service-registry-state:

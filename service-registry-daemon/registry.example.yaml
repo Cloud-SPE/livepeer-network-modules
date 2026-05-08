@@ -1,0 +1,28 @@
+# Example operator overlay for the resolver. The file is consumed via
+# --static-overlay=/path/to/nodes.yaml. See
+# docs/design-docs/static-overlay.md for the full spec.
+
+overlay:
+  - eth_address: "0xabcdef0000000000000000000000000000000000"
+    enabled: true
+    tier_allowed: [free, prepaid]
+    weight: 100
+    unsigned_allowed: false
+    pin:
+      - id: side-channel-1
+        url: "https://internal-orch.example.com:8935"
+        weight: 50
+        capabilities:
+          - name: "openai:/v1/chat/completions"
+            work_unit: token
+            offerings:
+              - id: "gpt-oss-20b"
+                price_per_work_unit_wei: "1000"
+        tier_allowed: [prepaid]
+
+  # An operator who hasn't deployed a manifest yet. Resolver returns
+  # a single legacy node; we explicitly mark it allowed because legacy
+  # is treated as SigLegacy, not SigUnsigned.
+  - eth_address: "0xfedcba0000000000000000000000000000000000"
+    enabled: true
+    weight: 100

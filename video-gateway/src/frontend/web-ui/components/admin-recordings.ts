@@ -21,10 +21,19 @@ export class AdminRecordings extends LitElement {
 
   static styles = css`
     :host { display: block; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-1, #d4d4d8); text-align: left; }
-    .err { color: #b91c1c; }
-    a { color: var(--accent-1, #2563eb); }
+    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+    th, td { padding: 0.75rem 0.8rem; border-bottom: 1px solid var(--border-1); text-align: left; }
+    th {
+      color: var(--text-3);
+      font-size: var(--font-size-xs);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    tbody tr:hover { background: rgba(255,255,255,0.02); }
+    .err { color: var(--danger); }
+    a { color: var(--accent); }
+    .dim { color: var(--text-3); }
   `;
 
   override async connectedCallback(): Promise<void> {
@@ -44,26 +53,36 @@ export class AdminRecordings extends LitElement {
 
   render(): TemplateResult {
     return html`
-      <h2>Recordings</h2>
-      ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-      <table>
-        <thead>
-          <tr><th>ID</th><th>Stream</th><th>Asset</th><th>Status</th><th>Duration</th><th>Started</th><th>Ended</th></tr>
-        </thead>
-        <tbody>
-          ${this.rows.map(
-            (r) => html`<tr>
-              <td>${r.id}</td>
-              <td>${r.streamId}</td>
-              <td>${r.assetId ?? "-"}</td>
-              <td>${r.status}</td>
-              <td>${r.durationSec !== null ? r.durationSec.toFixed(1) + "s" : "-"}</td>
-              <td>${r.startedAt}</td>
-              <td>${r.endedAt ?? ""}</td>
-            </tr>`,
-          )}
-        </tbody>
-      </table>
+      <portal-card heading="Recordings">
+        <portal-data-table
+          heading="Recorded Sessions"
+          description="Review completed and in-progress live recording captures across customer streams."
+        >
+          ${this.error ? html`<p class="err">${this.error}</p>` : ""}
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Stream</th><th>Asset</th><th>Status</th><th>Duration</th><th>Started</th><th>Ended</th></tr>
+            </thead>
+            <tbody>
+              ${this.rows.map(
+                (r) => html`<tr>
+                  <td>${r.id}</td>
+                  <td>${r.streamId}</td>
+                  <td>${r.assetId ?? html`<span class="dim">-</span>`}</td>
+                  <td>
+                    <portal-status-pill variant=${r.status === "ready" ? "success" : r.status === "failed" ? "danger" : "info"}>
+                      ${r.status}
+                    </portal-status-pill>
+                  </td>
+                  <td>${r.durationSec !== null ? r.durationSec.toFixed(1) + "s" : "-"}</td>
+                  <td>${r.startedAt}</td>
+                  <td>${r.endedAt ?? html`<span class="dim">active</span>`}</td>
+                </tr>`,
+              )}
+            </tbody>
+          </table>
+        </portal-data-table>
+      </portal-card>
     `;
   }
 }

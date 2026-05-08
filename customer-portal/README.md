@@ -7,7 +7,9 @@ per-product gateway (`openai-gateway/`, `vtuber-gateway/`,
 `video-gateway/`) embeds this package and configures its own Postgres,
 Redis, Stripe credentials, and API-key pepper.
 
-This is a **library**, not a deployed service. See
+This is a **library**, not a deployed service. The Docker image is a
+slim artifact/import-check image for packaging hygiene, not a long-running
+runtime. See
 [`AGENTS.md`](./AGENTS.md) and the plan brief at
 [`../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md).
 

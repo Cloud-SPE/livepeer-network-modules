@@ -15,7 +15,7 @@ import * as protoLoader from "@grpc/proto-loader";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const PROTO_ROOT = resolve(__dirname, "..", "..", "proto");
+const PROTO_ROOT = resolve(__dirname, "..", "..", "..", "livepeer-network-protocol", "proto");
 
 const PROTO_FILES = [
   "livepeer/payments/v1/types.proto",

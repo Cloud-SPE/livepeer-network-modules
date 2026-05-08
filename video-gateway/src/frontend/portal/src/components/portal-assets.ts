@@ -22,13 +22,21 @@ export class PortalAssets extends LitElement {
 
   static styles = css`
     :host { display: block; }
-    .toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-1, #d4d4d8); text-align: left; }
-    .deleted { color: var(--text-3, #71717a); }
-    button { background: none; border: 1px solid var(--border-1, #d4d4d8); border-radius: 0.25rem; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
-    .err { color: #b91c1c; }
-    a { color: var(--accent-1, #2563eb); }
+    .toolbar { display: flex; gap: var(--space-2); align-items: center; }
+    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+    th, td { padding: 0.7rem 0.75rem; border-bottom: 1px solid var(--border-1); text-align: left; }
+    th {
+      color: var(--text-3);
+      font-size: var(--font-size-xs);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+    .deleted { color: var(--text-3); }
+    button { background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-1); border-radius: var(--radius-pill); padding: 0.35rem 0.65rem; cursor: pointer; font-size: 0.75rem; color: var(--text-1); }
+    .err { color: var(--danger); }
+    a { color: var(--accent); }
   `;
 
   override async connectedCallback(): Promise<void> {
@@ -102,7 +110,11 @@ export class PortalAssets extends LitElement {
   render(): TemplateResult {
     return html`
       <portal-card heading="Asset library">
-        <div class="toolbar">
+        <portal-data-table
+          heading="Library"
+          description="Upload, review, restore, and retire video assets from one place."
+        >
+        <div class="toolbar" slot="toolbar">
           <input type="file" @change=${this.onFile} ?disabled=${this.uploading} />
           ${this.uploading ? html`<span>Uploading.</span>` : ""}
         </div>
@@ -134,6 +146,7 @@ export class PortalAssets extends LitElement {
             )}
           </tbody>
         </table>
+        </portal-data-table>
         <portal-modal
           ?open=${this.confirmDelete !== null}
           heading="Delete asset?"

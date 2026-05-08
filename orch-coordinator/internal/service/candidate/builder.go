@@ -60,7 +60,10 @@ func NewBuilder(scrapeSvc *scrape.Service, store *candidates.Store, opts BuildOp
 func (b *Builder) Rebuild() (*types.Candidate, error) {
 	start := time.Now()
 	snap := b.scrape.Snapshot()
-	cand, err := Build(snap, b.opts)
+	b.mu.RLock()
+	opts := b.opts
+	b.mu.RUnlock()
+	cand, err := Build(snap, opts)
 	if err != nil {
 		b.mu.Lock()
 		b.lastErr = err

@@ -5,11 +5,13 @@
 #   ./infra/scripts/build-images.sh                 # build everything
 #   ./infra/scripts/build-images.sh capability-broker payment-daemon
 #                                                    # build a subset (substring match)
+#   DEPLOY_ONLY=1 ./infra/scripts/build-images.sh    # build/push deployable images only
 #
 # Env:
 #   REGISTRY  default: tztcloud
 #   TAG       default: v1.0.0
 #   PUSH      set to 1 to docker push after each build
+#   DEPLOY_ONLY  set to 1 to exclude local-only base/test/helper images
 #
 # Notes:
 #   - Run from the monorepo root.
@@ -23,6 +25,7 @@ set -euo pipefail
 REGISTRY="${REGISTRY:-tztcloud}"
 TAG="${TAG:-v1.0.0}"
 PUSH="${PUSH:-0}"
+DEPLOY_ONLY="${DEPLOY_ONLY:-0}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
@@ -36,6 +39,16 @@ log()      { printf '\033[1;34m[build]\033[0m %s\n' "$*" >&2; }
 ok()       { printf '\033[1;32m[ ok ]\033[0m %s\n' "$*" >&2; }
 warn()     { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 fail()     { printf '\033[1;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
+is_deploy_only_excluded() {
+  case "$1" in
+    codecs-builder|python-runner-base|openai-gateway-mock-runner|openai-tester|transcode-tester|livepeer-conformance|livepeer-conformance-session-runner|livepeer-gateway-adapters-go|livepeer-gateway-adapters-ts|livepeer-customer-portal|image-model-downloader|rerank-model-downloader)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
 
 # Each entry: "name|context|dockerfile|target_or_empty|extra_build_args_or_empty"
 # Order matters: tier 0 first, then independent components, then images
@@ -48,6 +61,8 @@ declare -a IMAGES=(
   # Tier 1 — Go services, monorepo-root context (proto-go replace dirs)
   "livepeer-capability-broker|.|capability-broker/Dockerfile||"
   "livepeer-payment-daemon|.|payment-daemon/Dockerfile||"
+  "livepeer-protocol-daemon|.|protocol-daemon/Dockerfile||"
+  "livepeer-service-registry-daemon|.|service-registry-daemon/Dockerfile||"
   "livepeer-orch-coordinator|.|orch-coordinator/Dockerfile||"
   "livepeer-secure-orch-console|.|secure-orch-console/Dockerfile||"
   "livepeer-gateway-adapters-go|.|gateway-adapters/go/Dockerfile||"
@@ -111,11 +126,26 @@ else
   fi
 fi
 
+if [[ "$DEPLOY_ONLY" == "1" ]]; then
+  declare -a DEPLOY_SELECTED=()
+  for entry in "${SELECTED[@]}"; do
+    name="${entry%%|*}"
+    if is_deploy_only_excluded "$name"; then
+      continue
+    fi
+    DEPLOY_SELECTED+=("$entry")
+  done
+  SELECTED=("${DEPLOY_SELECTED[@]}")
+  if [[ ${#SELECTED[@]} -eq 0 ]]; then
+    fail "No deployable images matched current selection"
+  fi
+fi
+
 total=${#SELECTED[@]}
 
 # ---- build loop -----------------------------------------------------------
 
-log "registry=${REGISTRY}  tag=${TAG}  push=${PUSH}  building ${total} image(s)"
+log "registry=${REGISTRY}  tag=${TAG}  push=${PUSH}  deploy_only=${DEPLOY_ONLY}  building ${total} image(s)"
 
 for entry in "${SELECTED[@]}"; do
   step=$((step + 1))

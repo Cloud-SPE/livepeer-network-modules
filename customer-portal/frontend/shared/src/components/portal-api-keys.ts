@@ -19,20 +19,36 @@ export class PortalApiKeys extends LitElement {
     :host {
       display: block;
     }
+    .plaintext {
+      border: 1px solid var(--accent-line);
+      background: var(--accent-tint);
+      color: var(--text-1);
+      box-shadow: var(--shadow-sm);
+    }
     table {
       width: 100%;
       border-collapse: collapse;
+      overflow: hidden;
+      border-radius: var(--radius-lg);
+      background: rgba(255, 255, 255, 0.02);
     }
     th,
     td {
       text-align: left;
-      padding: var(--space-2) var(--space-3);
+      padding: 0.8rem 0.9rem;
       border-bottom: 1px solid var(--border-1);
       font-size: var(--font-size-sm);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-3);
+      font-size: var(--font-size-xs);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
     }
     .plaintext {
       font-family: var(--font-mono);
-      background: var(--surface-2);
       padding: var(--space-3);
       border-radius: var(--radius-md);
       word-break: break-all;
@@ -42,6 +58,10 @@ export class PortalApiKeys extends LitElement {
       display: flex;
       gap: var(--space-2);
       margin-bottom: var(--space-4);
+      align-items: end;
+    }
+    tbody tr:hover {
+      background: rgba(255, 255, 255, 0.02);
     }
   `;
 

@@ -29,16 +29,30 @@ export class PortalStreams extends LitElement {
 
   static styles = css`
     :host { display: block; }
-    .form { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
-    .form input { flex: 1; padding: 0.5rem; border: 1px solid var(--border-1, #d4d4d8); border-radius: 0.375rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-1, #d4d4d8); text-align: left; vertical-align: top; }
-    code { background: var(--surface-2, #f4f4f5); padding: 0.1rem 0.3rem; border-radius: 0.25rem; font-size: 0.75rem; }
+    .form { display: flex; gap: var(--space-2); }
+    .form input { flex: 1; min-height: 2.75rem; }
+    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+    th, td { padding: 0.7rem 0.75rem; border-bottom: 1px solid var(--border-1); text-align: left; vertical-align: top; }
+    th {
+      color: var(--text-3);
+      font-size: var(--font-size-xs);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+    code {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 0.18rem 0.4rem;
+      border: 1px solid var(--border-1);
+      border-radius: 0.45rem;
+      font-size: 0.75rem;
+    }
     .reveal { display: flex; align-items: center; gap: 0.5rem; }
     .secret { font-family: monospace; }
-    button { background: none; border: 1px solid var(--border-1, #d4d4d8); border-radius: 0.25rem; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
-    .live { color: #166534; font-weight: 600; }
-    .err { color: #b91c1c; }
+    .live { color: var(--success); font-weight: 650; }
+    .err { color: var(--danger); }
   `;
 
   override async connectedCallback(): Promise<void> {
@@ -92,7 +106,11 @@ export class PortalStreams extends LitElement {
   render(): TemplateResult {
     return html`
       <portal-card heading="Live streams">
-        <form class="form" @submit=${this.createStream}>
+        <portal-data-table
+          heading="Stream Sessions"
+          description="Create new stream keys, inspect playback URLs, and end live sessions."
+        >
+        <form class="form" slot="toolbar" @submit=${this.createStream}>
           <input
             placeholder="stream name"
             .value=${this.newName}
@@ -114,16 +132,21 @@ export class PortalStreams extends LitElement {
                   <span class="secret">
                     ${this.keyRevealed ? this.created.sessionKey : "•••••••••••••"}
                   </span>
-                  <button @click=${(): void => void this.copyKey()}>Copy</button>
-                  <button
+                </div>
+                <portal-action-row>
+                  <portal-button variant="ghost" @click=${(): void => void this.copyKey()}>
+                    Copy
+                  </portal-button>
+                  <portal-button
+                    variant="ghost"
                     @click=${(): void => {
                       this.keyRevealed = false;
                       this.created = null;
                     }}
                   >
                     Dismiss
-                  </button>
-                </div>
+                  </portal-button>
+                </portal-action-row>
                 <p>This key is shown once. Store it before dismissing.</p>
               </portal-card>
             `
@@ -139,19 +162,30 @@ export class PortalStreams extends LitElement {
             ${this.rows.map(
               (r) => html`<tr>
                 <td>${r.name}</td>
-                <td class=${r.status === "live" ? "live" : ""}>${r.status}</td>
+                <td>
+                  <portal-status-pill variant=${r.status === "live" ? "success" : "neutral"}>
+                    ${r.status}
+                  </portal-status-pill>
+                </td>
                 <td>${r.viewerCount ?? "-"}</td>
                 <td><code>${r.playbackUrl}</code></td>
                 <td>${r.createdAt}</td>
                 <td>
                   ${r.endedAt
                     ? "ended"
-                    : html`<button @click=${(): void => void this.endStream(r)}>End</button>`}
+                    : html`
+                        <portal-action-row align="end">
+                          <portal-button variant="danger" @click=${(): void => void this.endStream(r)}>
+                            End
+                          </portal-button>
+                        </portal-action-row>
+                      `}
                 </td>
               </tr>`,
             )}
           </tbody>
         </table>
+        </portal-data-table>
       </portal-card>
     `;
   }

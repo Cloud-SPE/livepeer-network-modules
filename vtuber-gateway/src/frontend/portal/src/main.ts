@@ -2,6 +2,9 @@
 // for the vtuber-specific pages; Vite build + router lands in a
 // follow-up commit.
 
-export {} from "./components/portal-vtuber-sessions.js";
-export {} from "./components/portal-vtuber-persona.js";
-export {} from "./components/portal-vtuber-history.js";
+document.body.dataset.livepeerUiMode = "product-app";
+
+import "./components/portal-vtuber-app.js";
+import "./components/portal-vtuber-sessions.js";
+import "./components/portal-vtuber-persona.js";
+import "./components/portal-vtuber-history.js";

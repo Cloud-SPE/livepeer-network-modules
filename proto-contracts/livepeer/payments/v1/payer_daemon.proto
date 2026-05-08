@@ -1,0 +1,72 @@
+// Livepeer Payments v1 — PayerDaemon service.
+//
+// The PayerDaemon runs next to a payer application (a specialized PayerApp —
+// e.g., an OpenAI bridge or a Livepeer gateway). It creates and signs tickets,
+// manages per-session sender nonces, and watches the payer's on-chain escrow.
+//
+// This service is mounted only when the daemon is started with
+// `--mode=sender`. Calls to it in receiver mode return UNIMPLEMENTED.
+
+syntax = "proto3";
+
+package livepeer.payments.v1;
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/payments/v1;paymentsv1";
+
+service PayerDaemon {
+  // Create a payment blob (a `Payment` carrying one ticket) for a selected
+  // payee identity at an exact face value. The daemon resolves the payee's
+  // worker URL via the local resolver, fetches canonical TicketParams from
+  // the payee-side ticket-params endpoint, then signs a wire-format Payment.
+  rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
+
+  // Inspect the payer's current TicketBroker deposit/reserve state. Read-only;
+  // the daemon does not fund escrow.
+  rpc GetDepositInfo(GetDepositInfoRequest) returns (GetDepositInfoResponse);
+}
+
+message CreatePaymentRequest {
+  // Exact face value to mint into the ticket, in wei, big-endian bytes.
+  bytes face_value = 1;
+
+  // Recipient orchestrator identity (the on-chain payee address), 20 raw
+  // bytes. The daemon resolves a worker URL for this address via the local
+  // service-registry-daemon resolver.
+  bytes recipient = 2;
+
+  // Capability being purchased, e.g. "openai:/v1/chat/completions". Sender
+  // mode forwards this to the payee-side ticket-params endpoint so the worker
+  // can validate the request against its offered routes.
+  string capability = 3;
+
+  // Offering within the capability being purchased, e.g. a model identifier.
+  // Sender mode forwards this to the payee-side ticket-params endpoint.
+  string offering = 4;
+}
+
+message CreatePaymentResponse {
+  // Wire-format `livepeer.payments.v1.Payment` bytes. The caller attaches
+  // these to its app-level request to the payee (typically as an HTTP header).
+  bytes payment_bytes = 1;
+
+  // Number of tickets this payment carries (for metrics / audit).
+  int32 tickets_created = 2;
+
+  // Aggregate expected value (EV = face_value × win_prob) committed by this
+  // payment, in wei, big-endian bytes.
+  bytes expected_value = 3;
+}
+
+message GetDepositInfoRequest {}
+
+message GetDepositInfoResponse {
+  // Current on-chain deposit (wei, big-endian bytes).
+  bytes deposit = 1;
+
+  // Current on-chain reserve (wei, big-endian bytes).
+  bytes reserve = 2;
+
+  // If the payer has initiated an unlock, the round at which withdrawal
+  // becomes possible. Zero when no unlock is pending.
+  int64 withdraw_round = 3;
+}

@@ -27,19 +27,14 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal ./customer-portal
 COPY vtuber-gateway ./vtuber-gateway
 RUN pnpm -F @livepeer-rewrite/customer-portal build \
- && pnpm -F @livepeer-rewrite/vtuber-gateway build
+ && pnpm -F @livepeer-rewrite/vtuber-gateway build \
+ && pnpm --filter @livepeer-rewrite/vtuber-gateway --prod deploy /out/vtuber-gateway
 
-FROM node:${NODE_VERSION}-alpine AS runtime
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 
 WORKDIR /app
-COPY --from=builder /src/vtuber-gateway/dist /app/dist
-COPY --from=builder /src/vtuber-gateway/package.json /app/
-COPY --from=builder /src/vtuber-gateway/migrations /app/migrations
-COPY --from=builder /src/customer-portal/dist /app/node_modules/@livepeer-rewrite/customer-portal/dist
-COPY --from=builder /src/customer-portal/package.json /app/node_modules/@livepeer-rewrite/customer-portal/
-COPY --from=builder /src/customer-portal/migrations /app/node_modules/@livepeer-rewrite/customer-portal/migrations
-COPY --from=builder /src/node_modules /app/node_modules
-COPY livepeer-network-protocol/proto/ /app/proto/
+COPY --from=builder --chown=65532:65532 /out/vtuber-gateway/ /app/
+COPY --chown=65532:65532 livepeer-network-protocol/proto/ /app/proto/
 
 EXPOSE 3001
-ENTRYPOINT ["node", "/app/dist/index.js"]
+CMD ["/app/dist/index.js"]

@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
+  "files": ["dist", "README.md", "DESIGN.md"],
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",

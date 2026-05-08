@@ -8,31 +8,38 @@ middleware → capability-broker → mock backend.
 
 ## What it is
 
-A TypeScript Fastify service exposing three OpenAI-compatible endpoints:
+A TypeScript Fastify service exposing the current OpenAI-compatible surface:
 
 - `POST /v1/chat/completions` (with `stream: true` support)
 - `POST /v1/embeddings`
 - `POST /v1/audio/transcriptions`
+- `GET /v1/realtime` (WebSocket upgrade)
+- `POST /v1/images/generations`
+- `POST /v1/audio/speech` stubbed behind a mode gate
 
 Each endpoint:
 
 1. Reads `model` from the request body / form-field.
-2. Builds a capability ID: `openai:<endpoint>:<model>`.
+2. Maps the request onto a workload capability ID.
 3. Picks the right mode (`http-reqresp@v0` for non-streaming chat /
    embeddings; `http-stream@v0` for streaming chat;
    `http-multipart@v0` for transcriptions).
-4. Forwards to the broker via inlined Livepeer client.
-5. Returns the broker's response to the OpenAI client.
+4. Selects a worker either from a static broker URL or via
+   `service-registry-daemon`.
+5. Mints a `Livepeer-Payment` envelope via the local payer-daemon.
+6. Forwards to the selected broker via inlined Livepeer client.
+7. Returns the broker's response to the OpenAI client.
 
 ## What it is not
 
-- Production gateway. No real customer auth, no payment-daemon
-  integration, no billing ledger, no resolver. v0.1 is a reference
-  impl that proves the wire shape end-to-end.
+- Production gateway. Customer auth / billing / ledger SaaS concerns
+  still depend on the broader shell stack, and routing policy is still
+  intentionally simple. This remains a reference impl for the wire +
+  resolver shape, not a full product shell.
 
 ## Status
 
-**v0.1** — three endpoints implemented; smoke test runs the full
+**v0.1** — the core endpoint set is implemented; smoke test runs the full
 stack via Docker compose. Tracked in
 [plan 0009](../docs/exec-plans/completed/0009-openai-gateway-reference.md).
 
@@ -48,6 +55,26 @@ make help                # show all targets
 
 No host `node` install required.
 
+## Deployment
+
+Two deployment shapes are now supported:
+
+- Static broker routing via [compose/docker-compose.yml](./compose/docker-compose.yml)
+- Manifest-driven routing via
+  [compose/docker-compose.manifest-resolver.yml](./compose/docker-compose.manifest-resolver.yml)
+
+The manifest-driven stack is the production-shaped topology for the
+rewrite:
+
+1. `service-registry-daemon` discovers active orchestrators from chain
+2. it fetches and verifies each orch's published manifest URL
+3. `openai-gateway` selects a route from the resolved pool
+4. `payment-daemon` sender mode mints the `Livepeer-Payment` envelope
+5. the gateway sends the request directly to the selected broker URL
+
+Start from
+[compose/.env.manifest-resolver.example](./compose/.env.manifest-resolver.example).
+
 ## Layout
 
 ```
@@ -55,7 +82,8 @@ openai-gateway/
 ├── package.json
 ├── tsconfig.json
 ├── Dockerfile / Makefile
-├── compose.yaml                   # full stack (gateway + broker + mock-backend)
+├── compose.yaml                   # full smoke stack (gateway + broker + mock-backend)
+├── compose/docker-compose.yml     # run-only deploy shape
 ├── test-broker-config.yaml        # broker config for smoke test
 ├── src/
 │   ├── livepeer/                  # inlined middleware (mirrors @tztcloud/livepeer-gateway-middleware)
@@ -64,10 +92,15 @@ openai-gateway/
 │   │   ├── http-reqresp.ts
 │   │   ├── http-stream.ts
 │   │   └── http-multipart.ts
+│   ├── service/
+│   │   ├── routeSelector.ts       # resolver/static route selection
+│   │   └── routeDispatch.ts       # retry/fallback dispatch helpers
 │   ├── routes/
 │   │   ├── chat-completions.ts
 │   │   ├── embeddings.ts
-│   │   └── audio-transcriptions.ts
+│   │   ├── audio-transcriptions.ts
+│   │   ├── images-generations.ts
+│   │   └── realtime.ts
 │   ├── config.ts                  # env-based config
 │   ├── server.ts                  # Fastify wiring
 │   └── index.ts                   # entry point

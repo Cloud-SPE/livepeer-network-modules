@@ -28,7 +28,8 @@ The full architectural rationale lives in
 
 ## Status
 
-Pre-implementation. The repo is a docs-and-spec scaffold; no production code yet.
+Implementation is underway. The repo now contains working component code alongside the
+cross-cutting design docs.
 
 - [`docs/design-docs/`](./docs/design-docs/) — what we believe and why
 - [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) — what has shipped
@@ -38,17 +39,22 @@ Pre-implementation. The repo is a docs-and-spec scaffold; no production code yet
 ## Repo shape — monorepo for now
 
 This repo is the home for **everything** in the rewrite. Each component lands as a
-top-level subfolder with its own `AGENTS.md`, `docs/`, source, and tests. None exist
-yet; they grow as work progresses.
+top-level subfolder with its own `AGENTS.md`, `docs/`, source, and tests.
 
-Planned (not created yet):
+Current components:
 
-- `livepeer-network-protocol/` — the spec repo (modes, extractors, schemas, conformance tests)
-- `capability-broker/` — workload-agnostic worker process (name TBD)
+- `livepeer-network-protocol/` — spec repo (modes, extractors, schemas, conformance)
+- `capability-broker/` — workload-agnostic worker process
 - `payment-daemon/` — receiver + sender, decoupled from capability/work-unit enums
-- `service-registry-daemon/` — manifest schema + resolver/publisher
-- `orch-coordinator/` — capability-as-roster-entry UX
-- `secure-orch-console/` — diff + one-click sign UX
+- `orch-coordinator/` — manifest candidate builder + publisher host
+- `secure-orch-console/` — cold-key diff-and-sign console
+- `protocol-daemon/` — round init, reward, and on-chain service-URI daemon
+- `service-registry-daemon/` — consumer-side resolver for on-chain orch discovery + manifest fetch/verify/cache
+- `chain-commons/` — shared chain/RPC/txintent support used by protocol-daemon
+- `proto-contracts/` — generated protobuf bindings shared by daemon surfaces
+
+Planned or still-expanding areas:
+
 - `gateway-adapters/` — per-mode middleware (Go and TS reference impls)
 
 Components can be **extracted to standalone repos later** once they stabilize and have
@@ -85,7 +91,7 @@ This repo follows the agent-first harness pattern documented in
 │   ├── product-specs/     # Cross-cutting feature specs (TBD)
 │   ├── generated/         # Machine-produced reference (dep graphs, SBOMs)
 │   └── references/        # External material (conversation transcripts, PDFs)
-└── <component-name>/      # One subfolder per component (none yet — see "Repo shape")
+└── <component-name>/      # One subfolder per component
     ├── AGENTS.md
     ├── docs/
     └── ...

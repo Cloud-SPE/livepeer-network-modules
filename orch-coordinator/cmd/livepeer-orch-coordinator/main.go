@@ -156,6 +156,12 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 
 	mreg := metrics.New()
 
+	publishedStore, err := published.New(filepath.Join(cfg.dataDir, "published"))
+	if err != nil {
+		return fmt.Errorf("published store: %w", err)
+	}
+	nextPublicationSeq := loadNextPublicationSeq(publishedStore, logger.With("component", "candidate"))
+
 	scrapeSvc, err := scrape.New(scrape.Config{
 		OrchEthAddress:  loaded.EthAddress(),
 		Brokers:         loaded.Brokers,
@@ -177,6 +183,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	builder, err := candidate.NewBuilder(scrapeSvc, candStore, candidate.BuildOptions{
 		OrchEthAddress:    loaded.EthAddress(),
 		ManifestTTL:       ttl,
+		PublicationSeq:    nextPublicationSeq,
 		CoordinatorCommit: version,
 	}, logger.With("component", "candidate"))
 	if err != nil {
@@ -190,17 +197,13 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	go scrapeSvc.Run(ctx)
 	go runBuilder(ctx, builder, cfg.scrapeInterval, logger.With("component", "candidate"))
 
-	publishedStore, err := published.New(filepath.Join(cfg.dataDir, "published"))
-	if err != nil {
-		return fmt.Errorf("published store: %w", err)
-	}
 	auditLog, err := audit.Open(filepath.Join(cfg.dataDir, "audit.db"))
 	if err != nil {
 		return fmt.Errorf("audit log: %w", err)
 	}
 	defer auditLog.Close()
 
-	receiveSvc := receive.New(publishedStore, auditLog, loaded.EthAddress(), candidate.SpecVersion)
+	receiveSvc := receive.New(publishedStore, candStore, auditLog, loaded.EthAddress(), candidate.SpecVersion, builder)
 	receiveSvc.SetObserver(mreg)
 
 	admin := adminapi.New(cfg.listenAddr, logger.With("component", "adminapi"))
@@ -381,4 +384,22 @@ func buildLogger(level, format string) *slog.Logger {
 		return slog.New(slog.NewJSONHandler(os.Stderr, opts))
 	}
 	return slog.New(slog.NewTextHandler(os.Stderr, opts))
+}
+
+func loadNextPublicationSeq(store *published.Store, logger *slog.Logger) uint64 {
+	body, _, err := store.Read()
+	if err != nil {
+		if !errors.Is(err, published.ErrEmpty) && logger != nil {
+			logger.Warn("read published manifest for next publication_seq", "err", err)
+		}
+		return 0
+	}
+	sm, err := types.ParseSignedManifest(body)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("parse published manifest for next publication_seq", "err", err)
+		}
+		return 0
+	}
+	return sm.Manifest.PublicationSeq + 1
 }

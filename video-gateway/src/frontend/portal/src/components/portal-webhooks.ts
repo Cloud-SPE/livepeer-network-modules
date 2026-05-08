@@ -50,15 +50,31 @@ export class PortalWebhooks extends LitElement {
 
   static styles = css`
     :host { display: block; }
-    .form { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
-    .form input { flex: 1; padding: 0.5rem; border: 1px solid var(--border-1, #d4d4d8); border-radius: 0.375rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-1, #d4d4d8); text-align: left; }
+    .form { display: flex; gap: var(--space-2); flex: 1; }
+    .form input { flex: 1; min-height: 2.75rem; }
+    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+    th, td { padding: 0.7rem 0.75rem; border-bottom: 1px solid var(--border-1); text-align: left; }
+    th {
+      color: var(--text-3);
+      font-size: var(--font-size-xs);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
     code { font-family: monospace; }
-    pre { background: var(--surface-2, #f4f4f5); padding: 0.75rem; border-radius: 0.375rem; overflow-x: auto; font-size: 0.75rem; }
-    button { background: none; border: 1px solid var(--border-1, #d4d4d8); border-radius: 0.25rem; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
-    .err { color: #b91c1c; }
-    section { margin-top: 1rem; }
+    pre {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-1);
+      padding: 0.9rem;
+      border-radius: var(--radius-lg);
+      overflow-x: auto;
+      font-size: 0.75rem;
+      color: var(--text-2);
+    }
+    .err { color: var(--danger); }
+    section { margin-top: var(--space-5); }
+    .dim { color: var(--text-3); }
   `;
 
   override async connectedCallback(): Promise<void> {
@@ -130,43 +146,49 @@ export class PortalWebhooks extends LitElement {
   render(): TemplateResult {
     return html`
       <portal-card heading="Webhooks">
-        <form class="form" @submit=${this.createEndpoint}>
-          <input
-            placeholder="https://example.com/webhook"
-            .value=${this.newUrl}
-            @input=${(e: Event): void => {
-              this.newUrl = (e.target as HTMLInputElement).value;
-            }}
-          />
-          <portal-button type="submit">Add endpoint</portal-button>
-        </form>
+        <portal-data-table
+          heading="Endpoint Registry"
+          description="Create webhook endpoints, rotate signing secrets, and monitor recent deliveries."
+        >
+          <form class="form" slot="toolbar" @submit=${this.createEndpoint}>
+            <input
+              placeholder="https://example.com/webhook"
+              .value=${this.newUrl}
+              @input=${(e: Event): void => {
+                this.newUrl = (e.target as HTMLInputElement).value;
+              }}
+            />
+            <portal-button type="submit">Add endpoint</portal-button>
+          </form>
 
-        ${this.created
-          ? html`
-              <portal-card heading="Signing secret — copy now (one-time reveal)">
-                <p>URL: <code>${this.created.url}</code></p>
-                <p>
-                  Secret:
-                  <code>${this.secretRevealed ? this.created.signingSecret : "•••••••••••••"}</code>
-                  <button @click=${(): void => void this.copySecret()}>Copy</button>
-                  <button
-                    @click=${(): void => {
-                      this.secretRevealed = false;
-                      this.created = null;
-                    }}
-                  >
-                    Dismiss
-                  </button>
-                </p>
-                <p>Stored hashed; never re-displayed. Rotate if leaked.</p>
-              </portal-card>
-            `
-          : ""}
+          ${this.created
+            ? html`
+                <portal-card heading="Signing secret — copy now (one-time reveal)">
+                  <p>URL: <code>${this.created.url}</code></p>
+                  <p>
+                    Secret:
+                    <code>${this.secretRevealed ? this.created.signingSecret : "•••••••••••••"}</code>
+                  </p>
+                  <portal-action-row>
+                    <portal-button variant="ghost" @click=${(): void => void this.copySecret()}>
+                      Copy
+                    </portal-button>
+                    <portal-button
+                      variant="ghost"
+                      @click=${(): void => {
+                        this.secretRevealed = false;
+                        this.created = null;
+                      }}
+                    >
+                      Dismiss
+                    </portal-button>
+                  </portal-action-row>
+                  <p>Stored hashed; never re-displayed. Rotate if leaked.</p>
+                </portal-card>
+              `
+            : ""}
 
-        ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-
-        <section>
-          <h3>Endpoints</h3>
+          ${this.error ? html`<p class="err">${this.error}</p>` : ""}
           <table>
             <thead>
               <tr><th>URL</th><th>Events</th><th>Last delivery</th><th>Created</th><th></th></tr>
@@ -178,38 +200,57 @@ export class PortalWebhooks extends LitElement {
                   <td>${r.events.join(", ")}</td>
                   <td>
                     ${r.lastDeliveryStatus !== null
-                      ? `${r.lastDeliveryStatus} at ${r.lastDeliveryAt}`
-                      : "-"}
+                      ? html`
+                          <portal-status-pill variant=${r.lastDeliveryStatus >= 500 ? "danger" : r.lastDeliveryStatus >= 400 ? "warning" : "success"}>
+                            ${r.lastDeliveryStatus}
+                          </portal-status-pill>
+                          <span class="dim"> at ${r.lastDeliveryAt}</span>
+                        `
+                      : html`<span class="dim">-</span>`}
                   </td>
                   <td>${r.createdAt}</td>
                   <td>
-                    <button @click=${(): void => void this.rotate(r)}>Rotate</button>
-                    <button @click=${(): void => void this.deleteEndpoint(r)}>Remove</button>
+                    <portal-action-row align="end">
+                      <portal-button variant="ghost" @click=${(): void => void this.rotate(r)}>
+                        Rotate
+                      </portal-button>
+                      <portal-button variant="danger" @click=${(): void => void this.deleteEndpoint(r)}>
+                        Remove
+                      </portal-button>
+                    </portal-action-row>
                   </td>
                 </tr>`,
               )}
             </tbody>
           </table>
-        </section>
+        </portal-data-table>
 
         <section>
-          <h3>Delivery log</h3>
-          <table>
-            <thead>
-              <tr><th>Event</th><th>Endpoint</th><th>Status</th><th>Attempts</th><th>When</th></tr>
-            </thead>
-            <tbody>
-              ${this.deliveries.map(
-                (d) => html`<tr>
-                  <td>${d.eventType}</td>
-                  <td>${d.endpointId}</td>
-                  <td>${d.statusCode ?? "pending"}</td>
-                  <td>${d.attempts}</td>
-                  <td>${d.deliveredAt ?? ""}</td>
-                </tr>`,
-              )}
-            </tbody>
-          </table>
+          <portal-data-table
+            heading="Delivery Log"
+            description="Recent webhook deliveries with status codes and retry counts."
+          >
+            <table>
+              <thead>
+                <tr><th>Event</th><th>Endpoint</th><th>Status</th><th>Attempts</th><th>When</th></tr>
+              </thead>
+              <tbody>
+                ${this.deliveries.map(
+                  (d) => html`<tr>
+                    <td>${d.eventType}</td>
+                    <td>${d.endpointId}</td>
+                    <td>
+                      <portal-status-pill variant=${d.statusCode === null ? "neutral" : d.statusCode >= 500 ? "danger" : d.statusCode >= 400 ? "warning" : "success"}>
+                        ${d.statusCode ?? "pending"}
+                      </portal-status-pill>
+                    </td>
+                    <td>${d.attempts}</td>
+                    <td>${d.deliveredAt ?? html`<span class="dim">queued</span>`}</td>
+                  </tr>`,
+                )}
+              </tbody>
+            </table>
+          </portal-data-table>
         </section>
 
         <section>

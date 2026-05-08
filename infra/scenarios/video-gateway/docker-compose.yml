@@ -1,0 +1,126 @@
+# Scenario: video gateway host with external media worker broker.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-livepeer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-livepeer}
+      POSTGRES_DB: ${POSTGRES_DB:-video_gateway}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-livepeer}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    command:
+      - serve
+      - /data
+    environment:
+      RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-rustfsadmin}
+      RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:-rustfsadmin}
+    ports:
+      - "${RUSTFS_API_PORT:-9000}:9000"
+      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - rustfs-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:9000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rustfs-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ROOT_USER:-rustfsadmin}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_ROOT_PASSWORD:-rustfsadmin}
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        aws --endpoint-url http://rustfs:9000 s3api create-bucket
+        --bucket ${S3_BUCKET:-transcoded} 2>/dev/null || true
+
+  payment-daemon-sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --chain-rpc=${CHAIN_RPC}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-./run/gateway-hot-wallet-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+  video-gateway:
+    image: ${REGISTRY:-tztcloud}/livepeer-video-gateway:${TAG:-v1.0.0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      payment-daemon-sender:
+        condition: service_started
+      rustfs-init:
+        condition: service_completed_successfully
+    environment:
+      PORT: "3000"
+      LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL}
+      LIVEPEER_BROKER_RTMP_HOST: ${LIVEPEER_BROKER_RTMP_HOST}
+      LIVEPEER_PAYER_DAEMON_SOCKET: /var/run/livepeer/payer-daemon.sock
+      VIDEO_LIVE_RTMP_LISTEN_ADDR: ${VIDEO_LIVE_RTMP_LISTEN_ADDR:-:1935}
+      VIDEO_LIVE_HLS_BASE_URL: ${VIDEO_LIVE_HLS_BASE_URL}
+      VIDEO_VOD_TUS_PATH: ${VIDEO_VOD_TUS_PATH:-/v1/uploads}
+      VIDEO_WEBHOOK_HMAC_PEPPER: ${VIDEO_WEBHOOK_HMAC_PEPPER}
+      VIDEO_GATEWAY_ABR_POLICY: ${VIDEO_GATEWAY_ABR_POLICY:-customer-tier}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      CUSTOMER_PORTAL_PEPPER: ${CUSTOMER_PORTAL_PEPPER}
+      BROKER_CALL_TIMEOUT_MS: ${BROKER_CALL_TIMEOUT_MS:-30000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      S3_REGION: ${S3_REGION}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+    ports:
+      - "${VIDEO_GATEWAY_PORT:-3000}:3000"
+      - "${VIDEO_RTMP_PORT:-1935}:1935"
+    volumes:
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+volumes:
+  postgres-data: {}
+  redis-data: {}
+  rustfs-data: {}
+  livepeer-run: {}

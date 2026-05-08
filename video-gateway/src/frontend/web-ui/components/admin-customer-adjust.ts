@@ -14,11 +14,12 @@ export class AdminCustomerAdjust extends LitElement {
 
   static styles = css`
     :host { display: block; }
-    form { display: grid; gap: 0.75rem; max-width: 28rem; }
-    label { display: grid; gap: 0.25rem; font-size: 0.875rem; }
-    input, textarea { padding: 0.5rem; border: 1px solid var(--border-1, #d4d4d8); border-radius: 0.375rem; }
-    .ok { color: #166534; }
-    .err { color: #b91c1c; }
+    form { display: grid; gap: var(--space-3); max-width: 32rem; }
+    label { display: grid; gap: var(--space-1); font-size: var(--font-size-sm); color: var(--text-2); font-weight: 550; }
+    input, textarea { min-height: 2.8rem; padding: 0.7rem 0.85rem; border: 1px solid var(--border-1); border-radius: var(--radius-md); background: rgba(255,255,255,0.03); color: var(--text-1); }
+    .ok { color: var(--success); }
+    .err { color: var(--danger); }
+    .note { color: var(--text-2); font-size: var(--font-size-sm); }
   `;
 
   private onAmount(e: Event): void {
@@ -53,22 +54,29 @@ export class AdminCustomerAdjust extends LitElement {
 
   render(): TemplateResult {
     return html`
-      <h2>Adjust balance — ${this.customerId}</h2>
-      <form @submit=${this.submit}>
-        <label>
-          Amount (cents — negative to debit)
-          <input type="number" .value=${String(this.amountCents)} @input=${this.onAmount} />
-        </label>
-        <label>
-          Reason
-          <textarea rows="3" .value=${this.reason} @input=${this.onReason}></textarea>
-        </label>
-        <portal-button type="submit" ?disabled=${this.status === "submitting"}>
-          ${this.status === "submitting" ? "Submitting." : "Apply adjustment"}
-        </portal-button>
-        ${this.status === "ok" ? html`<p class="ok">${this.message}</p>` : ""}
-        ${this.status === "err" ? html`<p class="err">${this.message}</p>` : ""}
-      </form>
+      <portal-card heading="Adjust Balance — ${this.customerId}">
+        <portal-detail-section
+          heading="Manual adjustment"
+          description="Credit or debit an account directly in cents. Negative amounts reduce balance."
+        >
+          <p class="note">Use this only for operator-driven corrections with a durable audit reason.</p>
+          <form @submit=${this.submit}>
+            <label>
+              Amount (cents — negative to debit)
+              <input type="number" .value=${String(this.amountCents)} @input=${this.onAmount} />
+            </label>
+            <label>
+              Reason
+              <textarea rows="3" .value=${this.reason} @input=${this.onReason}></textarea>
+            </label>
+            <portal-button type="submit" ?disabled=${this.status === "submitting"}>
+              ${this.status === "submitting" ? "Submitting." : "Apply adjustment"}
+            </portal-button>
+            ${this.status === "ok" ? html`<p class="ok">${this.message}</p>` : ""}
+            ${this.status === "err" ? html`<p class="err">${this.message}</p>` : ""}
+          </form>
+        </portal-detail-section>
+      </portal-card>
     `;
   }
 }

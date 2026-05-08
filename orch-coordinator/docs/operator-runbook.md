@@ -5,7 +5,7 @@
 ```
 livepeer-orch-coordinator \
   --config=/etc/livepeer/orch-coordinator.yaml \
-  --data-dir=/var/lib/livepeer/orch-coordinator \
+  --data-dir=/srv/data \
   --listen=:8080 \
   --public-listen=:8081 \
   --metrics-listen=:9091
@@ -22,6 +22,10 @@ The three listeners are intentionally separate:
   404). Defense-in-depth: even if the admin mux gains a new route, it
   cannot leak through this listener.
 - `--metrics-listen` — Prometheus `/metrics` plus a `/healthz` probe.
+
+When running the published container image, use `/srv/data`. The image is
+built to run as `nonroot` and pre-owns that path so Docker named volumes are
+initialized with writable ownership.
 
 ## Dev mode
 

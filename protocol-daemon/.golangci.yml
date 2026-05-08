@@ -1,0 +1,77 @@
+# protocol-daemon-specific golangci-lint config.
+# Inherits from the monorepo-root .golangci.yml; adds path exclusions
+# for CLI-style binaries (where exitAfterDefer + ignored fmt.Fprint
+# returns are intentional patterns).
+#
+# Schema: golangci-lint v2.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+  disable:
+    - gocyclo
+    - lll
+    - funlen
+
+  exclusions:
+    rules:
+      # CLI mains: os.Exit-after-defer is the desired runtime-cancellation
+      # pattern; ignored fmt.Fprint returns to stderr are intentional.
+      - path: cmd/livepeer-protocol-daemon/(main|run)\.go
+        linters:
+          - gocritic
+          - errcheck
+
+      # Lint tools are small CLIs that print to stderr/stdout; ignored
+      # fmt.Fprint returns + 0o755 in test fixture mkdirs are intentional.
+      - path: lint/
+        linters:
+          - gocritic
+          - errcheck
+          - gosec
+
+      # Test files: deferred resp.Body.Close, math/rand for deterministic
+      # fixtures, file-mode 0755 in tmpdir scratch — all standard test
+      # patterns.
+      - path: _test\.go$
+        linters:
+          - errcheck
+          - gosec
+
+      # Demo binary, not production code.
+      - path: examples/
+        linters:
+          - gocritic
+          - errcheck
+
+      # Generated proto stubs (when present).
+      - path: proto/gen/
+        linters:
+          - errcheck
+          - gocritic
+          - gosec
+          - govet
+          - revive
+          - staticcheck
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/Cloud-SPE/livepeer-modules

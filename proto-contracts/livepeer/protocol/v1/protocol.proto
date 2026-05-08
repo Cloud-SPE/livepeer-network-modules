@@ -1,0 +1,214 @@
+// Livepeer Protocol v1 — protocol-daemon gRPC surface.
+//
+// Operator-facing RPCs over a unix socket. No auth at the boundary;
+// trust the local caller.
+//
+// See docs/product-specs/grpc-surface.md for usage, error codes, and
+// examples.
+
+syntax = "proto3";
+
+package livepeer.protocol.v1;
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/protocol/v1;protocolv1";
+
+// Empty is the canonical zero-arg request.
+message Empty {}
+
+// HealthStatus reports the daemon's high-level health.
+message HealthStatus {
+  // ok is true when preflight passed and at least one mode-specific
+  // service is running.
+  bool ok = 1;
+
+  // mode is the daemon's operating mode: "round-init" | "reward" | "both".
+  string mode = 2;
+
+  // version is the binary's build version.
+  string version = 3;
+
+  // chain_id is the configured expected chain ID.
+  uint64 chain_id = 4;
+}
+
+// RoundEvent is one Round transition observed by the daemon.
+message RoundEvent {
+  uint64 number = 1;
+  uint64 start_block = 2;
+  uint64 l1_start_block = 3;
+  uint64 length = 4;
+  bool initialized = 5;
+  bytes block_hash = 6;
+}
+
+// RoundStatus is the round-init service's most recent observation.
+message RoundStatus {
+  uint64 last_round = 1;
+  bytes last_intent_id = 2;
+  string last_error = 3;
+  bool current_round_initialized = 4;
+}
+
+// RewardStatus is the reward service's most recent observation.
+message RewardStatus {
+  uint64 last_round = 1;
+  bytes orch_address = 2;
+  bool eligible = 3;
+  string eligibility_reason = 4;
+  uint64 last_reward_round = 5;
+  bool active = 6;
+  bytes last_intent_id = 7;
+  bytes last_earned_wei = 8; // big-endian unsigned bytes
+  string last_error = 9;
+}
+
+// TxIntentRef is a reference to a TxIntent in chain-commons. Carried by
+// ForceOutcome.submitted and consumed by GetTxIntent.
+message TxIntentRef {
+  bytes id = 1; // 32-byte SHA-256 IntentID
+}
+
+// SetServiceURIRequest asks protocol-daemon to submit a
+// ServiceRegistry.setServiceURI tx through txintent.
+message SetServiceURIRequest {
+  string url = 1;
+}
+
+// SetAIServiceURIRequest asks protocol-daemon to submit an AI service
+// registry setServiceURI tx through txintent.
+message SetAIServiceURIRequest {
+  string url = 1;
+}
+
+// OnChainServiceURIStatus reports the current ServiceRegistry pointer for
+// the orchestrator identity this daemon is managing.
+message OnChainServiceURIStatus {
+  string url = 1;
+}
+
+// OnChainAIServiceURIStatus reports the current AI service registry
+// pointer for the orchestrator identity this daemon is managing.
+message OnChainAIServiceURIStatus {
+  string url = 1;
+}
+
+// RegistrationStatus reports whether the orchestrator has an on-chain
+// ServiceRegistry pointer today.
+message RegistrationStatus {
+  bool registered = 1;
+}
+
+// AIRegistrationStatus reports whether the orchestrator has an on-chain
+// AI service registry pointer today.
+message AIRegistrationStatus {
+  bool registered = 1;
+}
+
+// WalletBalanceStatus reports the daemon wallet's current ETH balance.
+message WalletBalanceStatus {
+  bytes wallet_address = 1;
+  bytes balance_wei = 2; // big-endian unsigned bytes
+}
+
+// ForceOutcome reports the daemon's response to a force-action RPC.
+// Either a transaction was submitted (in which case the IntentID is
+// returned) or the daemon short-circuited because the on-chain state
+// made the action a no-op (in which case a typed reason is returned).
+message ForceOutcome {
+  oneof outcome {
+    TxIntentRef submitted = 1;
+    SkipReason  skipped   = 2;
+  }
+}
+
+// SkipReason carries why the daemon did not fire a transaction.
+message SkipReason {
+  // Human-readable reason — surfaced in operator-facing UIs and audit
+  // logs. Examples: "already rewarded this round", "transcoder is not
+  // active at this round", "round already initialized".
+  string reason = 1;
+
+  // Stable machine identifier; switch on this rather than the human
+  // text. CODE_UNSPECIFIED is reserved for forward-compat (a future
+  // skip path the client doesn't recognize maps here).
+  Code code = 2;
+
+  enum Code {
+    CODE_UNSPECIFIED         = 0;
+    CODE_ALREADY_REWARDED    = 1; // tinfo.LastRewardRound >= round
+    CODE_TRANSCODER_INACTIVE = 2; // !tinfo.IsActiveAtRound(round)
+    CODE_ROUND_INITIALIZED   = 3; // round.Initialized — applies to ForceInitializeRound
+  }
+}
+
+// TxIntentSnapshot mirrors chain-commons.txintent.TxIntent for the wire.
+message TxIntentSnapshot {
+  bytes id = 1;
+  string kind = 2;
+  string status = 3; // "pending"|"signed"|"submitted"|"mined"|"confirmed"|"failed"|"replaced"
+  string failed_class = 4;
+  string failed_code = 5;
+  string failed_message = 6;
+  uint64 created_at_unix_nano = 7;
+  uint64 last_updated_at_unix_nano = 8;
+  uint64 confirmed_at_unix_nano = 9;
+  uint32 attempt_count = 10;
+}
+
+service ProtocolDaemon {
+  // GetRoundStatus returns the round-init service's last observation.
+  // Mode-gated: returns Unimplemented in --mode=reward.
+  rpc GetRoundStatus(Empty) returns (RoundStatus);
+
+  // GetRewardStatus returns the reward service's last observation.
+  // Mode-gated: returns Unimplemented in --mode=round-init.
+  rpc GetRewardStatus(Empty) returns (RewardStatus);
+
+  // ForceInitializeRound triggers the round-init handler immediately.
+  // Returns either the IntentID of a submitted tx or a typed skip
+  // reason (e.g., the round was already initialized).
+  // Mode-gated: returns Unimplemented in --mode=reward.
+  rpc ForceInitializeRound(Empty) returns (ForceOutcome);
+
+  // ForceRewardCall triggers the reward handler immediately. Returns
+  // either the IntentID of a submitted tx or a typed skip reason
+  // (e.g., the orch was already rewarded this round, or is inactive).
+  // Mode-gated: returns Unimplemented in --mode=round-init.
+  rpc ForceRewardCall(Empty) returns (ForceOutcome);
+
+  // SetServiceURI submits a ServiceRegistry.setServiceURI tx for the
+  // operator-supplied public host URL.
+  rpc SetServiceURI(SetServiceURIRequest) returns (TxIntentRef);
+
+  // SetAIServiceURI submits an AI service registry setServiceURI tx for
+  // the operator-supplied public AI host URL.
+  rpc SetAIServiceURI(SetAIServiceURIRequest) returns (TxIntentRef);
+
+  // GetOnChainServiceURI returns the current ServiceRegistry pointer
+  // for the configured orchestrator identity.
+  rpc GetOnChainServiceURI(Empty) returns (OnChainServiceURIStatus);
+
+  // GetOnChainAIServiceURI returns the current AI service registry
+  // pointer for the configured orchestrator identity.
+  rpc GetOnChainAIServiceURI(Empty) returns (OnChainAIServiceURIStatus);
+
+  // IsRegistered reports whether the configured orchestrator identity
+  // has a ServiceRegistry pointer today.
+  rpc IsRegistered(Empty) returns (RegistrationStatus);
+
+  // IsAIRegistered reports whether the configured orchestrator identity
+  // has an AI service registry pointer today.
+  rpc IsAIRegistered(Empty) returns (AIRegistrationStatus);
+
+  // GetWalletBalance returns the daemon wallet's current ETH balance.
+  rpc GetWalletBalance(Empty) returns (WalletBalanceStatus);
+
+  // GetTxIntent returns the current state of a TxIntent.
+  rpc GetTxIntent(TxIntentRef) returns (TxIntentSnapshot);
+
+  // StreamRoundEvents returns Round transitions as they happen.
+  rpc StreamRoundEvents(Empty) returns (stream RoundEvent);
+
+  // Health returns the daemon's health snapshot. Always implemented.
+  rpc Health(Empty) returns (HealthStatus);
+}

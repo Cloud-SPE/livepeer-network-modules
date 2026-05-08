@@ -77,11 +77,36 @@ Frame format is capability-defined JSON (recommended). The protocol expects
   `session.balance.refilled`, `session.usage.tick`, `session.error`,
   `session.ended`.
 - Gateway → broker: `session.end` (graceful shutdown), capability-defined
-  command messages (e.g., for vtuber: `set_persona`, `interject_text`).
+  command messages. The shared session command set includes:
+  - `session.end` — graceful shutdown
+  - `session.topup` — mid-session payment refill
+  - capability-defined command messages (e.g., for vtuber: `set_persona`,
+    `interject_text`)
 
 The control WebSocket is **NOT** the media plane — the broker MUST NOT relay
 media bytes through it. Media flows on the channel(s) described in
 `media.schema`.
+
+### `session.topup`
+
+`session.topup` is the standard gateway-side refill envelope for this mode.
+It is sent on the existing control WebSocket:
+
+```json
+{
+  "type": "session.topup",
+  "body": {
+    "payment_header": "<base64 Livepeer-Payment>"
+  }
+}
+```
+
+- `payment_header` is REQUIRED and carries the same base64 payload that would
+  otherwise be sent in the HTTP `Livepeer-Payment` header.
+- The broker treats this as a control-plane refill message and forwards it to
+  the workload backend for session-specific handling.
+- On success, the backend SHOULD emit `session.balance.refilled` so the gateway
+  and customer-facing control surface can update their balance state.
 
 ### Media plane
 

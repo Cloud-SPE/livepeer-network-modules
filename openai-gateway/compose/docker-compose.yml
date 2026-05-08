@@ -1,22 +1,36 @@
 # Run-only compose for openai-gateway. Build via
 # `./infra/scripts/build-images.sh openai-gateway`.
 #
-# Reaches a co-located capability-broker via LIVEPEER_BROKER_URL and a
-# co-located payment-daemon (sender mode) via the UDS socket.
+# Supports two routing modes:
+#   1. static broker URL via LIVEPEER_BROKER_URL
+#   2. manifest-driven routing via LIVEPEER_RESOLVER_SOCKET
+#
+# In resolver mode, the gateway talks to a co-located
+# service-registry-daemon over the shared unix-socket volume and chooses
+# a broker from the resolved manifest pool per request.
+#
+# It also needs a co-located payment-daemon (sender mode) via the same
+# UDS socket directory.
 # Postgres is expected externally — bring it up via
 # `infra/compose/docker-compose.yml --profile pg` first.
+#
+# Resolver mode also requires a co-located service-registry-daemon that
+# mounts the same socket directory and exposes
+# `/var/run/livepeer/service-registry.sock`.
 
 services:
   openai-gateway:
     image: ${REGISTRY:-tztcloud}/livepeer-openai-gateway-reference:${TAG:-v1.0.0}
     environment:
       PORT: "3000"
-      LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL:-http://capability-broker:8080}
+      LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL:-}
+      LIVEPEER_RESOLVER_SOCKET: ${LIVEPEER_RESOLVER_SOCKET:-}
       LIVEPEER_PAYER_DAEMON_SOCKET: ${LIVEPEER_PAYER_DAEMON_SOCKET:-/var/run/livepeer/payer-daemon.sock}
       LIVEPEER_DEFAULT_OFFERING: ${LIVEPEER_DEFAULT_OFFERING:-default}
       DATABASE_URL: ${DATABASE_URL:-postgres://livepeer:livepeer@postgres:5432/openai_gateway}
       OPENAI_AUDIO_SPEECH_ENABLED: ${OPENAI_AUDIO_SPEECH_ENABLED:-false}
       BROKER_CALL_TIMEOUT_MS: ${BROKER_CALL_TIMEOUT_MS:-30000}
+      LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS: ${LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS:-15000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "${OPENAI_GATEWAY_PORT:-3000}:3000"

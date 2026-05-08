@@ -37,23 +37,28 @@ export class PortalButton extends LitElement {
       align-items: center;
       justify-content: center;
       gap: var(--space-2);
-      padding: var(--space-2) var(--space-4);
-      border-radius: var(--radius-md);
-      background: var(--_bg);
+      padding: 0.72rem 1rem;
+      border-radius: var(--radius-pill);
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--_bg), white 8%) 0%, var(--_bg) 100%);
       color: var(--_fg);
-      font-weight: 600;
+      font-weight: 650;
       font-size: var(--font-size-sm);
       font-family: inherit;
-      border: 1px solid color-mix(in oklch, var(--_bg), black 8%);
+      letter-spacing: 0.01em;
+      border: 1px solid color-mix(in srgb, var(--_bg), black 18%);
       transition:
         background var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
         box-shadow var(--duration-fast) var(--ease-standard),
         transform var(--duration-fast) var(--ease-standard);
       width: 100%;
       cursor: pointer;
+      box-shadow: 0 10px 24px color-mix(in srgb, var(--_bg), transparent 70%);
     }
     button:hover:not(:disabled) {
       background: var(--_bg-hover);
+      border-color: color-mix(in srgb, var(--_bg-hover), white 10%);
     }
     button:active:not(:disabled) {
       transform: translateY(1px);

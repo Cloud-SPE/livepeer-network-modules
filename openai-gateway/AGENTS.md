@@ -70,8 +70,8 @@ The collapse boundaries:
   audio-transcriptions / audio-speech / images-generations / realtime),
   rate-card schema + materialization (chat tiers + model glob, embeddings,
   audio, images), product-specific admin SPA extras (rate-card pages),
-  Livepeer wire headers + payment minting + mode dispatch for HTTP-family
-  modes (the `ws-realtime` mode driver is consumed from the
+  Livepeer wire headers + payment minting + route selection + mode
+  dispatch for HTTP-family modes (the `ws-realtime` mode driver is consumed from the
   `@tztcloud/livepeer-gateway-middleware` workspace dep), broker forward.
   The `/v1/realtime` endpoint is a WebSocket upgrade that mints a payment
   and bridges customer frames to the broker via `modes.wsRealtime.connect`.
@@ -85,7 +85,7 @@ The collapse boundaries:
 - TypeScript strict; tsc is the lint gate.
 - Migrations boot in order: customer-portal/migrations/ first, then
   openai-gateway/migrations/. The shell's `runMigrations(db, dir)`
-  helper is called twice with the two paths from `src/main.ts`.
+  helper is called twice with the two paths from `src/index.ts`.
 - New OpenAI endpoints are spec changes — open a plan.
 - Suite-citation paths in commit messages must match
   `livepeer-network-suite/livepeer-openai-gateway[-core]/...` verbatim

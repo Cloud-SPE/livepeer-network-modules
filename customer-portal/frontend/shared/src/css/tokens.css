@@ -1,37 +1,41 @@
-/* @layer tokens — design-token catalogue. OKLCH palette + light-dark() resolves per OS preference. */
+/* @layer tokens — Livepeer network design-token catalogue. Dark-first brand. */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
 
   /* Surfaces */
-  --surface-0: light-dark(oklch(99% 0.003 250), oklch(14% 0.012 250));
-  --surface-1: light-dark(oklch(97% 0.005 250), oklch(18% 0.012 250));
-  --surface-2: light-dark(oklch(94% 0.007 250), oklch(22% 0.014 250));
-  --surface-3: light-dark(oklch(90% 0.009 250), oklch(26% 0.016 250));
+  --surface-canvas: #111111;
+  --surface-0: #181818;
+  --surface-1: #242424;
+  --surface-2: #2a2a2a;
+  --surface-3: #333333;
+  --surface-overlay: rgba(24, 24, 24, 0.88);
 
   /* Text */
-  --text-1: light-dark(oklch(20% 0.02 250), oklch(96% 0.01 250));
-  --text-2: light-dark(oklch(40% 0.02 250), oklch(80% 0.012 250));
-  --text-3: light-dark(oklch(55% 0.02 250), oklch(64% 0.014 250));
+  --text-1: #f5f7f7;
+  --text-2: rgba(245, 247, 247, 0.78);
+  --text-3: rgba(245, 247, 247, 0.56);
 
   /* Brand / accent */
-  --accent: light-dark(oklch(60% 0.18 240), oklch(72% 0.18 240));
-  --accent-hover: color-mix(in oklch, var(--accent), white 10%);
-  --accent-press: color-mix(in oklch, var(--accent), black 10%);
-  --accent-tint: color-mix(in oklch, var(--accent), transparent 88%);
+  --accent: #18794e;
+  --accent-strong: #1f8c5a;
+  --accent-hover: #239664;
+  --accent-press: #14613f;
+  --accent-tint: rgba(24, 121, 78, 0.18);
+  --accent-line: rgba(24, 121, 78, 0.42);
 
   /* States */
-  --success: light-dark(oklch(60% 0.16 150), oklch(72% 0.16 150));
-  --success-tint: color-mix(in oklch, var(--success), transparent 88%);
-  --warning: light-dark(oklch(70% 0.18 80), oklch(78% 0.18 80));
-  --warning-tint: color-mix(in oklch, var(--warning), transparent 88%);
-  --danger: light-dark(oklch(58% 0.22 25), oklch(70% 0.22 25));
-  --danger-hover: color-mix(in oklch, var(--danger), white 10%);
-  --danger-tint: color-mix(in oklch, var(--danger), transparent 88%);
+  --success: #28a36a;
+  --success-tint: rgba(40, 163, 106, 0.16);
+  --warning: #d9a441;
+  --warning-tint: rgba(217, 164, 65, 0.16);
+  --danger: #d35c5c;
+  --danger-hover: #e16d6d;
+  --danger-tint: rgba(211, 92, 92, 0.16);
 
   /* Borders */
-  --border-1: light-dark(oklch(88% 0.005 250), oklch(30% 0.012 250));
-  --border-2: light-dark(oklch(78% 0.008 250), oklch(40% 0.014 250));
+  --border-1: rgba(255, 255, 255, 0.08);
+  --border-2: rgba(255, 255, 255, 0.14);
 
   /* Spacing */
   --space-1: 0.25rem;
@@ -46,30 +50,30 @@
   --space-12: 6rem;
 
   /* Radius */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.25rem;
   --radius-pill: 9999px;
 
   /* Typography */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-sans: "ABC Favorit", "Sohne", "Inter", "Segoe UI", sans-serif;
+  --font-mono: "ABC Favorit Mono", "SFMono-Regular", Consolas, monospace;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-base: 1rem;
-  --font-size-lg: clamp(1.125rem, 0.95rem + 0.6vw, 1.25rem);
-  --font-size-xl: clamp(1.25rem, 1rem + 1vw, 1.5rem);
-  --font-size-2xl: clamp(1.5rem, 1.1rem + 1.6vw, 2rem);
-  --font-size-3xl: clamp(2rem, 1.4rem + 2.4vw, 3rem);
+  --font-size-lg: clamp(1.125rem, 0.95rem + 0.5vw, 1.25rem);
+  --font-size-xl: clamp(1.35rem, 1.05rem + 0.9vw, 1.7rem);
+  --font-size-2xl: clamp(1.7rem, 1.2rem + 1.5vw, 2.4rem);
+  --font-size-3xl: clamp(2.2rem, 1.45rem + 2.6vw, 3.4rem);
 
   /* Effects */
-  --shadow-sm: 0 1px 2px color-mix(in oklch, black, transparent 92%);
-  --shadow-md: 0 4px 12px color-mix(in oklch, black, transparent 84%);
-  --shadow-lg: 0 12px 32px color-mix(in oklch, black, transparent 78%);
+  --shadow-sm: 0 12px 30px rgba(0, 0, 0, 0.16);
+  --shadow-md: 0 18px 48px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 24px 72px rgba(0, 0, 0, 0.32);
   --duration-fast: 120ms;
-  --duration-base: 200ms;
-  --duration-slow: 320ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 }
 

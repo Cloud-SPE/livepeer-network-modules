@@ -1,0 +1,89 @@
+# Scenario: single worker node with one vLLM-backed capability.
+
+services:
+  vllm_model_runner:
+    image: vllm/vllm-openai:cu130-nightly
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - huggingface-model-cache:/root/.cache/huggingface
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:?set HF_TOKEN}
+    ipc: host
+    command: >
+      --host 0.0.0.0
+      --port 8000
+      --pipeline-parallel-size 1
+      --tensor-parallel-size 1
+      --attention-backend flashinfer
+      --enable-prefix-caching
+      --model sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+      --served-model-name Qwen3.6-27B
+      --kv-cache-dtype fp8_e4m3
+      --gpu-memory-utilization 0.95
+      --max-num-seqs 10
+      --max-num-batched-tokens 4096
+      --max-model-len 196608
+      --reasoning-parser qwen3
+      --tool-call-parser qwen3_coder
+      --enable-auto-tool-choice
+      --async-scheduling
+      --enable-chunked-prefill
+      --default-chat-template-kwargs '{"preserve_thinking":true}'
+      --trust-remote-code
+      --quantization modelopt
+      --language-model-only
+      --speculative-config '{"method":"mtp","num_speculative_tokens":3}'
+      --no-scheduler-reserve-full-isl
+    restart: unless-stopped
+
+  payment-daemon-receiver:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v1.0.0}
+    command:
+      - --mode=receiver
+      - --socket=/var/run/livepeer/payment-daemon.sock
+      - --db=/var/lib/livepeer/payment-daemon/sessions.db
+      - --chain-rpc=${CHAIN_RPC:-}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+      - --orch-address=${ORCH_ADDRESS:?set ORCH_ADDRESS}
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
+      - --redeem-gas=${REDEEM_GAS:-500000}
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-./run/hot-wallet-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - livepeer-run:/var/run/livepeer
+      - payment-daemon-db:/var/lib/livepeer/payment-daemon
+    restart: unless-stopped
+
+  capability-broker:
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${BROKER_TAG:-v1.0.0}
+    depends_on:
+      - vllm_model_runner
+      - payment-daemon-receiver
+    command:
+      - --config=/etc/livepeer/host-config.yaml
+      - --listen=:8080
+      - --metrics=:9090
+    environment:
+      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
+    ports:
+      - "${BROKER_LISTEN_PORT:-8080}:8080"
+      - "${BROKER_METRICS_PORT:-9090}:9090"
+    volumes:
+      - ./host-config.yaml:/etc/livepeer/host-config.yaml:ro
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+volumes:
+  huggingface-model-cache: {}
+  livepeer-run: {}
+  payment-daemon-db: {}

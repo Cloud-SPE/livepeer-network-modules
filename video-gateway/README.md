@@ -17,6 +17,8 @@ A TypeScript Fastify service that:
   `http-reqresp@v0` / `http-stream@v0` modes.
 - Forwards LL-HLS playlist + segment requests strictly to the broker
   (no rewrites, no caching — operator's CDN handles those concerns).
+- Selects brokers either from a static `LIVEPEER_BROKER_URL` or a
+  manifest-driven `service-registry-daemon` resolver socket.
 - Signs outbound customer webhook deliveries with HMAC-SHA-256.
 
 ## What it is not

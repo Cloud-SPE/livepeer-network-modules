@@ -1,0 +1,20 @@
+# Example coordinator-config.yaml for the live broker currently reachable at:
+#   http://10.0.0.17:8080
+#
+# This matches the broker advertising:
+#   capability_id: openai:chat-completions:qwen3.6-27b
+#   offering_id:   vllm-qwen3.6-27b-default
+#   orch address:  0xd00354656922168815fcd1e51cbddb9e359e3c7f
+#
+# Mount this file at /etc/livepeer/orch-coordinator.yaml or copy its contents
+# into your deployment-specific config path.
+
+identity:
+  orch_eth_address: "0xd00354656922168815fcd1e51cbddb9e359e3c7f"
+
+brokers:
+  - name: vllm-broker-a
+    base_url: http://10.0.0.17:8080
+
+publish:
+  manifest_ttl: 24h

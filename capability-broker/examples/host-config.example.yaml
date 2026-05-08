@@ -3,10 +3,14 @@
 # This file is the operator's entire day-to-day surface. Edit, reload, re-publish
 # the manifest. Per requirement R5, no Go module written, no binary rebuilt.
 #
-# v0.1 caveat: only the http-reqresp@v0 mode and the response-jsonpath
-# extractor are implemented. The aspirational openai-* + http-stream entries
-# below are commented out until plans 0006 (modes) and 0007 (extractors) ship.
-# A v0.1 binary will fail-fast at startup if those entries are uncommented.
+# This example is intentionally conservative: it starts with simple HTTP
+# request/response capabilities and keeps more operationally involved shapes
+# (RTMP, long-lived streaming, third-party API resale) commented out until the
+# operator is ready to wire the required backend infrastructure.
+#
+# The current broker binary ships multiple mode drivers and extractors. The
+# commented entries below are examples of real supported shapes, not placeholders
+# for future plans.
 
 identity:
   orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
@@ -28,7 +32,7 @@ payment_daemon:
   # mock: true
 
 capabilities:
-  # ---- v0.1-supported: http-reqresp + response-jsonpath ----
+  # ---- Simple HTTP request/response examples ----
   - id: "kibble:doggo-bark-counter:v1"
     offering_id: "default"
     interaction_mode: "http-reqresp@v0"
@@ -43,7 +47,7 @@ capabilities:
       url: "http://localhost:9000/count"
       auth: "none"
 
-  # ---- v0.1-supported: a second response-jsonpath capability ----
+  # ---- A second request/response example ----
   - id: "demo:echo:v1"
     offering_id: "default"
     interaction_mode: "http-reqresp@v0"
@@ -78,14 +82,14 @@ capabilities:
   #     profile: "h264-live-1080p-nvenc"
   #     url: "https://broker.example.com"
 
-  # ---- Aspirational entries (uncomment as drivers/extractors land) ----
+  # ---- Additional shipped examples (uncomment when your deployment is ready) ----
   #
   # - id: "openai:chat-completions:llama-3-70b"
   #   offering_id: "vllm-h100-batch4"
-  #   interaction_mode: "http-stream@v0"               # plan 0006
+  #   interaction_mode: "http-stream@v0"
   #   work_unit:
   #     name: "tokens"
-  #     extractor: { type: "openai-usage", field: "total_tokens" }   # plan 0007
+  #     extractor: { type: "openai-usage", field: "total_tokens" }
   #   price:
   #     amount_wei: "1500000"
   #     per_units: 1
@@ -99,10 +103,10 @@ capabilities:
   #
   # - id: "openai:chat-completions:gpt-4o"
   #   offering_id: "openai-resale"
-  #   interaction_mode: "http-stream@v0"               # plan 0006
+  #   interaction_mode: "http-stream@v0"
   #   work_unit:
   #     name: "tokens"
-  #     extractor: { type: "openai-usage", field: "total_tokens" }   # plan 0007
+  #     extractor: { type: "openai-usage", field: "total_tokens" }
   #   price:
   #     amount_wei: "8500000"
   #     per_units: 1

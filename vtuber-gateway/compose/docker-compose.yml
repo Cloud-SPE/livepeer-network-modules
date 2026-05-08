@@ -2,7 +2,8 @@
 # `./infra/scripts/build-images.sh vtuber-gateway`.
 #
 # WebSocket control plane + session orchestration. Reaches a co-located
-# capability-broker via LIVEPEER_BROKER_URL and a co-located
+# capability-broker via LIVEPEER_BROKER_URL or a co-located
+# service-registry-daemon via LIVEPEER_RESOLVER_SOCKET, plus a local
 # payment-daemon (sender) via the UDS socket. Postgres expected
 # externally — bring it up via
 # `infra/compose/docker-compose.yml --profile pg`.
@@ -13,6 +14,10 @@ services:
     environment:
       PORT: "3001"
       LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL:-http://capability-broker:8080}
+      LIVEPEER_RESOLVER_SOCKET: ${LIVEPEER_RESOLVER_SOCKET:-}
+      LIVEPEER_RESOLVER_PROTO_ROOT: ${LIVEPEER_RESOLVER_PROTO_ROOT:-/app/proto-contracts}
+      LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS: ${LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS:-15000}
+      LIVEPEER_PAYMENT_PROTO_ROOT: ${LIVEPEER_PAYMENT_PROTO_ROOT:-/app/proto}
       LIVEPEER_PAYER_DAEMON_SOCKET: ${LIVEPEER_PAYER_DAEMON_SOCKET:-/var/run/livepeer/payer-daemon.sock}
       LIVEPEER_PAYER_DEFAULT_FACE_VALUE_WEI: ${LIVEPEER_PAYER_DEFAULT_FACE_VALUE_WEI:-5000000000000000000}
       VTUBER_DEFAULT_OFFERING: ${VTUBER_DEFAULT_OFFERING:-default}
@@ -27,9 +32,12 @@ services:
       VTUBER_CONTROL_RECONNECT_BUFFER_MESSAGES: ${VTUBER_CONTROL_RECONNECT_BUFFER_MESSAGES:-64}
       VTUBER_CONTROL_RECONNECT_BUFFER_BYTES: ${VTUBER_CONTROL_RECONNECT_BUFFER_BYTES:-1048576}
       DATABASE_URL: ${DATABASE_URL:-postgres://livepeer:livepeer@postgres:5432/vtuber_gateway}
+      CUSTOMER_PORTAL_PEPPER: ${CUSTOMER_PORTAL_PEPPER:-dev-pepper}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "${VTUBER_GATEWAY_PORT:-3001}:3001"
     volumes:
       - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${PROTO_ROOT:-../../livepeer-network-protocol/proto}:/app/proto:ro
+      - ${PROTO_CONTRACTS_ROOT:-../../proto-contracts}:/app/proto-contracts:ro
     restart: unless-stopped

@@ -48,6 +48,9 @@ No host Go install required.
 ## Configuration
 
 A single declarative YAML file: [`examples/host-config.example.yaml`](./examples/host-config.example.yaml).
+The example starts with minimal `http-reqresp@v0` entries for smoke bring-up
+and keeps more involved shipped shapes commented out until you wire the
+necessary backend infrastructure.
 
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).

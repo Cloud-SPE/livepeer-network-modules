@@ -8,9 +8,11 @@ Fastify 5 + Zod + drizzle-orm + ESM. Owns:
 - `GET /v1/vtuber/sessions/:id` — status.
 - `POST /v1/vtuber/sessions/:id/end` — customer kill switch.
 - `POST /v1/vtuber/sessions/:id/topup` — extend the session's
-  face-value mid-stream.
-- `WS /v1/vtuber/sessions/:id/control` — live worker↔customer relay
-  (no buffer in M6 per Q9 lock).
+  face-value mid-stream by sending `session.topup` over the broker
+  control WebSocket.
+- Broker-hosted `control_url` returned by session-open — selected via
+  `service-registry-daemon` in manifest mode or a static broker URL in
+  single-orch mode.
 - `POST /v1/billing/topup` + `POST /v1/stripe/webhook` — Stripe
   flows delegated to `customer-portal/`.
 
@@ -45,6 +47,7 @@ MIT.
 Ported from `livepeer-network-suite/livepeer-vtuber-gateway/src/` per
 plan 0013-vtuber §5.1. Schema is renumbered + namespaced to `vtuber.*`
 (per Q5 lock). Quote-related code is dropped (quote-free flow);
-broker URL is the only resolver. The historical "vtuber-livepeer-bridge"
+manifest/resolver selection is now part of the rewrite control plane.
+The historical "vtuber-livepeer-bridge"
 name is retired (per Q6 lock); citations preserve it verbatim where
 they reference suite paths.

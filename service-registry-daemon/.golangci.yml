@@ -1,0 +1,170 @@
+# service-registry-daemon-specific golangci-lint config.
+#
+# Schema: golangci-lint v2.
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # Historical defaults — explicit so an upstream default change doesn't
+    # silently turn any off. (gosimple was merged into staticcheck in v2.)
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    # Error-correctness.
+    - errorlint
+    - errname
+    - nilerr
+    # Context hygiene.
+    - contextcheck
+    # Resource leaks.
+    - bodyclose
+    # Enum exhaustiveness.
+    - exhaustive
+    # Security scanning (conservative excludes below).
+    - gosec
+    # Style / footgun rules.
+    - forbidigo
+    # Architectural-boundary enforcement.
+    - depguard
+
+  settings:
+    errorlint:
+      errorf: true
+      errorf-multi: true
+      asserts: true
+      comparison: true
+
+    exhaustive:
+      check:
+        - switch
+      default-signifies-exhaustive: true
+      package-scope-only: false
+
+    gosec:
+      excludes:
+        - G104  # overlaps errcheck
+        - G304  # operator-supplied paths (keystore, password, overlay)
+        - G115  # int conversion overflow noise
+
+    forbidigo:
+      forbid:
+        - pattern: ^fmt\.Print(|f|ln)$
+          msg: "use slog / a component logger instead of fmt.Print*"
+        - pattern: ^log\.Print(|f|ln)$
+          msg: "use slog / a component logger instead of log.Print*"
+        - pattern: ^log\.Fatal(|f|ln)$
+          msg: "use slog.Error + return non-zero from run() instead of log.Fatal*"
+      exclude-godoc-examples: true
+      analyze-types: true
+
+    depguard:
+      rules:
+        types-has-no-deps:
+          list-mode: lax
+          files:
+            - "**/internal/types/**/*.go"
+          deny:
+            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service"
+              desc: "internal/types is the base layer; cannot depend on service"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime"
+              desc: "internal/types is the base layer; cannot depend on runtime"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers"
+              desc: "internal/types is the base layer; cannot depend on providers"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/repo"
+              desc: "internal/types is the base layer; cannot depend on repo"
+        service-no-direct-io:
+          list-mode: lax
+          files:
+            - "**/internal/service/**/*.go"
+            - "!**/internal/service/**/*_test.go"
+          deny:
+            - pkg: "go.etcd.io/bbolt"
+              desc: "service must not touch bbolt directly — go through providers/store"
+            - pkg: "github.com/ethereum/go-ethereum/ethclient"
+              desc: "service must not dial chain directly — go through providers/chain"
+            - pkg: "github.com/ethereum/go-ethereum/accounts/abi/bind"
+              desc: "service must not hold contract bindings — go through providers/chain"
+            - pkg: "net/http"
+              desc: "service must not fetch HTTP directly — go through providers/manifestfetcher"
+        providers-no-service-imports:
+          list-mode: lax
+          files:
+            - "**/internal/providers/**/*.go"
+            - "!**/internal/providers/**/*_test.go"
+          deny:
+            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service"
+              desc: "providers are below services; cannot import back up"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime"
+              desc: "providers are below runtime; cannot import back up"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/repo"
+              desc: "providers are below repo; cannot import back up"
+
+  exclusions:
+    rules:
+      - path: proto/gen/
+        linters:
+          - errcheck
+          - gosec
+          - govet
+          - staticcheck
+
+      - path: _test\.go$
+        linters:
+          - forbidigo
+          - exhaustive
+          - errcheck
+          - gosec
+          - bodyclose
+
+      - path: examples/
+        linters:
+          - forbidigo
+          - bodyclose
+          - errcheck
+          - gosec
+
+      # cmd/ tools: fmt.Fprint to stderr/stdout is the documented logging
+      # path before the slog logger exists; provider construction
+      # spawns chain-commons goroutines whose lifecycle is the
+      # provider's internal contract; CLI tools handle file I/O directly.
+      - path: cmd/livepeer-service-registry-daemon/
+        linters:
+          - errcheck
+          - forbidigo
+          - contextcheck
+      - path: cmd/livepeer-registry-refresh/
+        linters:
+          - errcheck
+          - forbidigo
+          - gosec
+
+      # lint/ tools: WalkDir + os.ReadFile patterns; these tools run
+      # against the operator's tree, not chain-untrusted input. The
+      # nilerr matches are intentional "skip unparseable file" returns.
+      - path: lint/
+        linters:
+          - errcheck
+          - forbidigo
+          - gosec
+          - nilerr
+
+      # runtime/lifecycle + runtime/metrics: graceful-shutdown Stop()
+      # spawns internal cleanup goroutines without a parent ctx by design;
+      # logging in lifecycle.Run uses a derived background ctx for the
+      # Health() call. Both intentional.
+      - path: internal/runtime/(lifecycle|metrics)/
+        linters:
+          - contextcheck
+
+      # manifest fetcher: deferred resp.Body.Close on a returned
+      # http.Response is the standard idiomatic pattern.
+      - path: internal/providers/manifestfetcher/
+        linters:
+          - errcheck

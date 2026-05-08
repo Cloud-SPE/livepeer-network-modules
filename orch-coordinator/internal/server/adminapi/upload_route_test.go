@@ -42,7 +42,7 @@ func newRecv(t *testing.T) (*receive.Service, *ecdsa.PrivateKey, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { log.Close() })
-	return receive.New(store, log, addr, candidate.SpecVersion), priv, addr
+	return receive.New(store, nil, log, addr, candidate.SpecVersion, nil), priv, addr
 }
 
 func signedBody(t *testing.T, priv *ecdsa.PrivateKey, addr string, seq uint64) []byte {

@@ -1,0 +1,42 @@
+# Example host-config.yaml for a single OpenAI-compatible chat-completions
+# capability backed by a local vLLM container.
+#
+# This shape is suitable for a first LAN deployment:
+# - one capability
+# - one broker
+# - one co-located vLLM backend
+# - one co-located payment-daemon receiver over a shared unix socket
+
+identity:
+  orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
+  label: "vllm-qwen-broker-a"
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+
+capabilities:
+  - id: "openai:chat-completions:qwen3.6-27b"
+    offering_id: "vllm-qwen3.6-27b-default"
+    interaction_mode: "http-stream@v0"
+    work_unit:
+      name: "tokens"
+      extractor:
+        type: "openai-usage"
+        field: "total_tokens"
+    price:
+      amount_wei: "1000000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://vllm_model_runner:8000/v1/chat/completions"
+      auth: "none"
+    extra:
+      provider: "vllm"
+      served_model_name: "Qwen3.6-27B"
+      backend_model: "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+      reasoning_parser: "qwen3"
+      tool_call_parser: "qwen3_coder"

@@ -26,18 +26,14 @@ COPY --from=deps /src/video-gateway/node_modules ./video-gateway/node_modules
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal ./customer-portal
 COPY video-gateway ./video-gateway
-RUN pnpm -F @livepeer-rewrite/customer-portal build && pnpm -F @livepeer-rewrite/video-gateway build
+RUN pnpm -F @livepeer-rewrite/customer-portal build \
+ && pnpm -F @livepeer-rewrite/video-gateway build \
+ && pnpm --filter @livepeer-rewrite/video-gateway --prod deploy /out/video-gateway
 
-FROM node:${NODE_VERSION}-alpine AS runtime
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 
 WORKDIR /app
-COPY --from=builder /src/video-gateway/dist /app/dist
-COPY --from=builder /src/video-gateway/package.json /app/
-COPY --from=builder /src/video-gateway/migrations /app/migrations
-COPY --from=builder /src/customer-portal/dist /app/node_modules/@livepeer-rewrite/customer-portal/dist
-COPY --from=builder /src/customer-portal/package.json /app/node_modules/@livepeer-rewrite/customer-portal/
-COPY --from=builder /src/customer-portal/migrations /app/node_modules/@livepeer-rewrite/customer-portal/migrations
-COPY --from=builder /src/node_modules /app/node_modules
+COPY --from=builder --chown=65532:65532 /out/video-gateway/ /app/
 
 EXPOSE 3000 1935
-ENTRYPOINT ["node", "/app/dist/index.js"]
+CMD ["/app/dist/index.js"]

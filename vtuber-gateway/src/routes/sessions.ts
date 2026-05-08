@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
+import { authPreHandler } from "@livepeer-rewrite/customer-portal/middleware";
+
+import {
+  SELECTOR_HEADER,
+} from "../providers/serviceRegistry.js";
 import type { VtuberGatewayDeps } from "../runtime/deps.js";
 import {
   hashSessionBearer,
@@ -14,7 +19,6 @@ import {
   SessionTopupRequestSchema,
   type SessionOpenRequest,
 } from "../types/vtuber.js";
-import { authPreHandler } from "@livepeer-rewrite/customer-portal/middleware";
 
 export const SessionIdParamsSchema = z.object({
   id: z.string().uuid(),
@@ -52,6 +56,13 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
         const node = await deps.serviceRegistry.select({
           capability: VTUBER_CAPABILITY,
           offering,
+          extra: parseJsonHeader(req.headers[SELECTOR_HEADER.EXTRA]),
+          constraints: parseJsonHeader(
+            req.headers[SELECTOR_HEADER.CONSTRAINTS],
+          ),
+          maxPricePerUnitWei: parseStringHeader(
+            req.headers[SELECTOR_HEADER.MAX_PRICE_WEI],
+          ),
         });
         if (node === null) {
           await reply
@@ -72,15 +83,13 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
           cfg.vtuberWorkerControlBearerPepper,
         );
 
-        const controlUrl = buildControlUrl(req, sessionId);
-
         await deps.sessionStore.insertSession({
           id: sessionId,
           customerId,
           paramsJson: JSON.stringify(body),
           nodeId: node.nodeId,
           nodeUrl: node.nodeUrl,
-          controlUrl,
+          controlUrl: "",
           expiresAt,
         });
         await deps.sessionStore.insertBearer({
@@ -132,11 +141,21 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
               worker_control_bearer: workerBearer.bearer,
             },
             paymentHeader: payment.paymentHeader,
+            offering,
           });
+          const controlUrl = startResp.control_url ?? buildControlUrl(req, sessionId);
           await deps.sessionStore.updateSession(sessionId, {
             status: "active",
             workerSessionId: startResp.session_id,
+            controlUrl,
           });
+          await reply.code(200).send({
+            session_id: sessionId,
+            control_url: controlUrl,
+            expires_at: expiresAt.toISOString(),
+            session_child_bearer: minted.bearer,
+          });
+          return;
         } catch (err) {
           await deps.sessionStore.updateSession(sessionId, {
             status: "errored",
@@ -149,13 +168,6 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
             .send({ error: "worker_start_failed" });
           return;
         }
-
-        await reply.code(200).send({
-          session_id: sessionId,
-          control_url: controlUrl,
-          expires_at: expiresAt.toISOString(),
-          session_child_bearer: minted.bearer,
-        });
       },
     );
 
@@ -361,4 +373,15 @@ export function sessionBearerPreHandler(
     }
     req.vtuberSession = session;
   };
+}
+
+function parseJsonHeader(value: string | string[] | undefined): any {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) return null;
+  return JSON.parse(raw);
+}
+
+function parseStringHeader(value: string | string[] | undefined): string | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw && raw !== "" ? raw : null;
 }

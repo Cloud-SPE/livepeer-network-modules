@@ -1,0 +1,115 @@
+// Livepeer Payments v1 — shared types.
+//
+// These messages are a wire-compatible re-declaration of the payment-relevant
+// portion of go-livepeer's `net/lp_rpc.proto`. Field numbers, tag numbers, and
+// types are preserved byte-for-byte so that `livepeer.payments.v1.Payment`
+// encodes identically to `net.Payment` from go-livepeer.
+//
+// See docs/design-docs/wire-compat.md for the compatibility contract and the
+// round-trip test that enforces it.
+
+syntax = "proto3";
+
+package livepeer.payments.v1;
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/payments/v1;paymentsv1";
+
+// PriceInfo conveys pricing info for a unit of work.
+//
+// `pixelsPerUnit` is a historical name; the denominator is really just "work
+// units" — pixels, tokens, seconds, or anything the consumer chooses. For wire
+// compatibility the field name is preserved.
+message PriceInfo {
+  // Price in wei per `pixels_per_unit` units of work.
+  //
+  // NOTE ON WIRE COMPAT: the proto field NAME differs from go-livepeer's
+  // (`pricePerUnit` vs `price_per_unit`), but the field NUMBER is identical.
+  // Proto encoding keys on the number, not the name, so bytes on the wire
+  // remain compatible. The Go-generated field name is `PricePerUnit` in both
+  // projects. See docs/design-docs/wire-compat.md.
+  int64 price_per_unit = 1;
+
+  // Work units covered by `price_per_unit`. Setting `price_per_unit = 1` with
+  // a larger `pixels_per_unit` lets pricing go finer than 1 wei per unit.
+  int64 pixels_per_unit = 2;
+
+  // Capability this price applies to (uint32 capability ID, as in go-livepeer).
+  // The daemon's RPC surface accepts string capability names and maps them to
+  // this uint32 at the boundary.
+  uint32 capability = 3;
+
+  // Non-binary constraint this price applies to (e.g., a specific model id).
+  string constraint = 4;
+}
+
+// TicketParams is the recipient-controlled portion of a ticket. The payee
+// issues these to a payer during discovery (via `GetQuote`); the payer uses
+// them verbatim when constructing tickets in a `TicketBatch`.
+message TicketParams {
+  // ETH address of the recipient.
+  bytes recipient = 1;
+
+  // Payout in wei if the ticket wins. Represented as big-endian bytes.
+  bytes face_value = 2;
+
+  // Probability the ticket wins, scaled to the 256-bit win-probability field
+  // (maxWinProb = 2^256 - 1). Big-endian bytes.
+  bytes win_prob = 3;
+
+  // 32-byte keccak-256 hash commitment to a random number held by the recipient.
+  bytes recipient_rand_hash = 4;
+
+  // Seed the recipient uses to derive the random number corresponding to
+  // `recipient_rand_hash`.
+  bytes seed = 5;
+
+  // L1 block number after which this set of TicketParams is no longer valid.
+  // Big-endian bytes.
+  bytes expiration_block = 6;
+
+  // Expiration parameters used at ticket-validation time.
+  TicketExpirationParams expiration_params = 7;
+}
+
+// TicketSenderParams contains per-ticket nonce + signature values that the
+// sender produces while creating a ticket batch.
+message TicketSenderParams {
+  // Monotonically increasing counter that makes a ticket unique relative to a
+  // given `recipient_rand_hash` in `TicketParams`.
+  uint32 sender_nonce = 1;
+
+  // Sender's ECDSA signature over the ticket hash.
+  bytes sig = 2;
+}
+
+// TicketExpirationParams carries the Livepeer "round" and associated block
+// hash used to validate ticket freshness against the protocol round state.
+message TicketExpirationParams {
+  // Livepeer protocol round during which the tickets were created.
+  int64 creation_round = 1;
+
+  // Block hash associated with `creation_round`.
+  bytes creation_round_block_hash = 2;
+}
+
+// Payment is the on-the-wire payment message. One `Payment` can carry many
+// tickets (one per entry in `ticket_sender_params`) so a payer can cover a
+// whole segment / job / session in a single wire message.
+message Payment {
+  // Recipient-controlled ticket parameters. Stays the same across all tickets
+  // in this payment.
+  TicketParams ticket_params = 1;
+
+  // ETH address of the sender.
+  bytes sender = 2;
+
+  // Shared expiration params for all tickets in this payment.
+  TicketExpirationParams expiration_params = 3;
+
+  // Per-ticket sender parameters (nonce + signature). One entry per ticket.
+  repeated TicketSenderParams ticket_sender_params = 4;
+
+  // Payer's last-known price for this work. Used by the payee to detect stale
+  // clients and trigger a re-quote.
+  PriceInfo expected_price = 5;
+}

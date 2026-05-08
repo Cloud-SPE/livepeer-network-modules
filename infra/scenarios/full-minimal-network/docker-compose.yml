@@ -1,0 +1,249 @@
+# Scenario: full minimal network.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-livepeer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-livepeer}
+      POSTGRES_DB: ${POSTGRES_DB:-openai_gateway}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-livepeer}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  orch-coordinator:
+    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.0.0}
+    command:
+      - --config=/etc/livepeer/orch-coordinator.yaml
+      - --data-dir=/srv/data
+      - --listen=:8080
+      - --public-listen=:8081
+      - --metrics-listen=:9091
+      - --log-level=info
+      - --log-format=text
+    ports:
+      - "${COORDINATOR_LISTEN_PORT:-8088}:8080"
+      - "${COORDINATOR_PUBLIC_PORT:-8081}:8081"
+      - "${COORDINATOR_METRICS_PORT:-9091}:9091"
+    volumes:
+      - ./orch-coordinator.yaml:/etc/livepeer/orch-coordinator.yaml:ro
+      - coordinator-data:/srv/data
+    restart: unless-stopped
+
+  protocol-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-protocol-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=${PROTOCOL_MODE:-both}
+      - --socket=/var/run/livepeer/protocol.sock
+      - --store-path=/var/lib/livepeer/protocol.db
+      - --eth-urls=${ETH_URLS}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+      - --orch-address=${ORCH_ADDRESS}
+      - --min-balance-wei=${MIN_BALANCE_WEI:-5000000000000000}
+      - --log-level=info
+      - --log-format=json
+      - --metrics-listen=:${PROTOCOL_METRICS_PORT:-9094}
+    ports:
+      - "127.0.0.1:${PROTOCOL_METRICS_PORT:-9094}:${PROTOCOL_METRICS_PORT:-9094}"
+    volumes:
+      - ${PROTOCOL_KEYSTORE:-./run/protocol-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PROTOCOL_KEYSTORE_PASSWORD_FILE:-./run/protocol-keystore-password}:/etc/livepeer/keystore-password:ro
+      - protocol-socket:/var/run/livepeer
+      - protocol-state:/var/lib/livepeer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  service-registry-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=resolver
+      - --socket=/var/run/livepeer/service-registry.sock
+      - --store-path=/var/lib/livepeer/registry-cache.db
+      - --chain-rpc=${CHAIN_RPC}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS}
+      - --discovery=chain
+      - --round-poll-interval=15s
+      - --cache-manifest-ttl=5m
+      - --manifest-max-bytes=1048576
+      - --manifest-fetch-timeout=5s
+      - --max-stale=30m
+      - --reject-unsigned=true
+      - --log-level=info
+      - --log-format=json
+      - --metrics-listen=:${REGISTRY_METRICS_PORT:-9095}
+    ports:
+      - "127.0.0.1:${REGISTRY_METRICS_PORT:-9095}:${REGISTRY_METRICS_PORT:-9095}"
+    volumes:
+      - service-registry-socket:/var/run/livepeer
+      - service-registry-state:/var/lib/livepeer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  secure-orch-console:
+    image: ${REGISTRY:-tztcloud}/livepeer-secure-orch-console:${TAG:-v1.0.0}
+    command:
+      - --keystore=v3:/var/lib/secure-orch/keystore.json
+      - --keystore-password-file=/etc/secure-orch/password
+      - --last-signed=/var/lib/secure-orch/last-signed.json
+      - --audit-log=/var/log/secure-orch/audit.log.jsonl
+      - --audit-rotate-size=104857600
+      - --listen=127.0.0.1:8080
+    ports:
+      - "127.0.0.1:${SECURE_ORCH_PORT:-8080}:8080"
+    volumes:
+      - ${SECURE_ORCH_KEYSTORE:-./run/secure-orch-keystore.json}:/var/lib/secure-orch/keystore.json:ro
+      - ${SECURE_ORCH_PASSWORD_FILE:-./run/secure-orch-password}:/etc/secure-orch/password:ro
+      - secure-orch-data:/var/lib/secure-orch
+      - secure-orch-audit:/var/log/secure-orch
+    restart: unless-stopped
+
+  vllm_model_runner:
+    image: vllm/vllm-openai:cu130-nightly
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - huggingface-model-cache:/root/.cache/huggingface
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:?set HF_TOKEN}
+    ipc: host
+    command: >
+      --host 0.0.0.0
+      --port 8000
+      --pipeline-parallel-size 1
+      --tensor-parallel-size 1
+      --attention-backend flashinfer
+      --enable-prefix-caching
+      --model sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+      --served-model-name Qwen3.6-27B
+      --kv-cache-dtype fp8_e4m3
+      --gpu-memory-utilization 0.95
+      --max-num-seqs 10
+      --max-num-batched-tokens 4096
+      --max-model-len 196608
+      --reasoning-parser qwen3
+      --tool-call-parser qwen3_coder
+      --enable-auto-tool-choice
+      --async-scheduling
+      --enable-chunked-prefill
+      --default-chat-template-kwargs '{"preserve_thinking":true}'
+      --trust-remote-code
+      --quantization modelopt
+      --language-model-only
+      --speculative-config '{"method":"mtp","num_speculative_tokens":3}'
+      --no-scheduler-reserve-full-isl
+    restart: unless-stopped
+
+  payment-daemon-receiver:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v1.0.0}
+    command:
+      - --mode=receiver
+      - --socket=/var/run/livepeer/payment-daemon.sock
+      - --db=/var/lib/livepeer/payment-daemon/sessions.db
+      - --chain-rpc=${CHAIN_RPC:-}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+      - --orch-address=${ORCH_ADDRESS}
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
+      - --redeem-gas=${REDEEM_GAS:-500000}
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${WORKER_PAYMENT_KEYSTORE:-./run/worker-hot-wallet-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - worker-run:/var/run/livepeer
+      - worker-payment-state:/var/lib/livepeer/payment-daemon
+    restart: unless-stopped
+
+  capability-broker:
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${BROKER_TAG:-v1.0.0}
+    depends_on:
+      - vllm_model_runner
+      - payment-daemon-receiver
+    command:
+      - --config=/etc/livepeer/host-config.yaml
+      - --listen=:8080
+      - --metrics=:9090
+    environment:
+      LOG_LEVEL: info
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    volumes:
+      - ./host-config.yaml:/etc/livepeer/host-config.yaml:ro
+      - worker-run:/var/run/livepeer
+    restart: unless-stopped
+
+  payment-daemon-sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v1.0.0}
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --chain-rpc=${CHAIN_RPC}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${GATEWAY_PAYMENT_KEYSTORE:-./run/gateway-hot-wallet-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - gateway-run:/var/run/livepeer
+    restart: unless-stopped
+
+  openai-gateway:
+    image: ${REGISTRY:-tztcloud}/livepeer-openai-gateway-reference:${TAG:-v1.0.0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      payment-daemon-sender:
+        condition: service_started
+      capability-broker:
+        condition: service_started
+    environment:
+      PORT: "3000"
+      LIVEPEER_BROKER_URL: http://capability-broker:8080
+      LIVEPEER_PAYER_DAEMON_SOCKET: /var/run/livepeer/payer-daemon.sock
+      LIVEPEER_DEFAULT_OFFERING: ${LIVEPEER_DEFAULT_OFFERING:-vllm-qwen3.6-27b-default}
+      DATABASE_URL: ${DATABASE_URL}
+      OPENAI_AUDIO_SPEECH_ENABLED: "false"
+      BROKER_CALL_TIMEOUT_MS: ${BROKER_CALL_TIMEOUT_MS:-30000}
+      LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-info}
+    ports:
+      - "${OPENAI_GATEWAY_PORT:-3000}:3000"
+    volumes:
+      - gateway-run:/var/run/livepeer
+    restart: unless-stopped
+
+volumes:
+  postgres-data: {}
+  coordinator-data: {}
+  protocol-socket: {}
+  protocol-state: {}
+  service-registry-socket: {}
+  service-registry-state: {}
+  secure-orch-data: {}
+  secure-orch-audit: {}
+  huggingface-model-cache: {}
+  worker-run: {}
+  worker-payment-state: {}
+  gateway-run: {}

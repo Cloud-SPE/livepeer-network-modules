@@ -17,6 +17,7 @@
 package receive
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/verify"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/audit"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/candidates"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/published"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/candidate"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
@@ -49,25 +51,29 @@ type Observer interface {
 // Service ties the verifier, publish store, audit log, and the
 // candidate builder (for spec_version drift checks) together.
 type Service struct {
-	verifier   verify.Verifier
-	store      *published.Store
-	audit      *audit.Log
-	expectAddr string
-	specVer    string
-	observer   Observer
+	verifier       verify.Verifier
+	store          *published.Store
+	candidateStore *candidates.Store
+	audit          *audit.Log
+	expectAddr     string
+	specVer        string
+	seqSetter      interface{ SetPublicationSeq(uint64) }
+	observer       Observer
 }
 
 // SetObserver attaches a metrics observer.
 func (s *Service) SetObserver(o Observer) { s.observer = o }
 
 // New builds a Service.
-func New(store *published.Store, audit *audit.Log, expectAddr, specVer string) *Service {
+func New(store *published.Store, candidateStore *candidates.Store, audit *audit.Log, expectAddr, specVer string, seqSetter interface{ SetPublicationSeq(uint64) }) *Service {
 	return &Service{
-		verifier:   verify.New(),
-		store:      store,
-		audit:      audit,
-		expectAddr: strings.ToLower(strings.TrimSpace(expectAddr)),
-		specVer:    specVer,
+		verifier:       verify.New(),
+		store:          store,
+		candidateStore: candidateStore,
+		audit:          audit,
+		expectAddr:     strings.ToLower(strings.TrimSpace(expectAddr)),
+		specVer:        specVer,
+		seqSetter:      seqSetter,
 	}
 }
 
@@ -157,6 +163,10 @@ func (s *Service) receiveInner(body []byte, uploader string) (*Result, error) {
 		s.recordFailure(audit.OutcomeDriftRejected, uploader, manifestHash, sigHash, sm.Manifest.PublicationSeq, msg)
 		return nil, &VerifyError{Code: audit.OutcomeDriftRejected, Msg: msg}
 	}
+	if err := s.checkLatestCandidate(canonical); err != nil {
+		s.recordFailure(audit.OutcomeDriftRejected, uploader, manifestHash, sigHash, sm.Manifest.PublicationSeq, err.Error())
+		return nil, &VerifyError{Code: audit.OutcomeDriftRejected, Msg: err.Error()}
+	}
 
 	now := time.Now().UTC()
 	if sm.Manifest.IssuedAt.IsZero() {
@@ -191,6 +201,9 @@ func (s *Service) receiveInner(body []byte, uploader string) (*Result, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("audit append accepted: %w", err)
 	}
+	if s.seqSetter != nil {
+		s.seqSetter.SetPublicationSeq(sm.Manifest.PublicationSeq + 1)
+	}
 
 	return &Result{
 		SignedManifest:  sm,
@@ -198,6 +211,20 @@ func (s *Service) receiveInner(body []byte, uploader string) (*Result, error) {
 		SignatureSHA256: sigHash,
 		PublicationSeq:  sm.Manifest.PublicationSeq,
 	}, nil
+}
+
+func (s *Service) checkLatestCandidate(incomingCanonical []byte) error {
+	if s.candidateStore == nil {
+		return nil
+	}
+	latest, err := s.candidateStore.LatestManifest()
+	if err != nil {
+		return fmt.Errorf("candidate drift: latest candidate unavailable: %w", err)
+	}
+	if !bytes.Equal(incomingCanonical, latest) {
+		return errors.New("candidate drift: signed manifest does not match latest candidate bytes")
+	}
+	return nil
 }
 
 func (s *Service) checkPublicationSeq(incoming uint64) error {

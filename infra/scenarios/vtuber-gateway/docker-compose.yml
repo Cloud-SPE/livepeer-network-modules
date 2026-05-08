@@ -1,0 +1,69 @@
+# Scenario: vtuber gateway host with external worker broker.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-livepeer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-livepeer}
+      POSTGRES_DB: ${POSTGRES_DB:-vtuber_gateway}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-livepeer}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  payment-daemon-sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --chain-rpc=${CHAIN_RPC}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-./run/gateway-hot-wallet-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+  vtuber-gateway:
+    image: ${REGISTRY:-tztcloud}/livepeer-vtuber-gateway:${TAG:-v1.0.0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      payment-daemon-sender:
+        condition: service_started
+    environment:
+      PORT: "3001"
+      LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL}
+      LIVEPEER_PAYER_DAEMON_SOCKET: /var/run/livepeer/payer-daemon.sock
+      LIVEPEER_PAYER_DEFAULT_FACE_VALUE_WEI: ${LIVEPEER_PAYER_DEFAULT_FACE_VALUE_WEI:-5000000000000000000}
+      VTUBER_DEFAULT_OFFERING: ${VTUBER_DEFAULT_OFFERING:-default}
+      VTUBER_SESSION_BEARER_PEPPER: ${VTUBER_SESSION_BEARER_PEPPER}
+      VTUBER_WORKER_CONTROL_BEARER_PEPPER: ${VTUBER_WORKER_CONTROL_BEARER_PEPPER}
+      VTUBER_SESSION_DEFAULT_TTL_SECONDS: ${VTUBER_SESSION_DEFAULT_TTL_SECONDS:-3600}
+      VTUBER_SESSION_BEARER_TTL_SECONDS: ${VTUBER_SESSION_BEARER_TTL_SECONDS:-7200}
+      VTUBER_RATE_CARD_USD_PER_SECOND: ${VTUBER_RATE_CARD_USD_PER_SECOND:-0.01}
+      VTUBER_WORKER_CALL_TIMEOUT_MS: ${VTUBER_WORKER_CALL_TIMEOUT_MS:-15000}
+      VTUBER_RELAY_MAX_PER_SESSION: ${VTUBER_RELAY_MAX_PER_SESSION:-8}
+      VTUBER_CONTROL_RECONNECT_WINDOW: ${VTUBER_CONTROL_RECONNECT_WINDOW:-30s}
+      VTUBER_CONTROL_RECONNECT_BUFFER_MESSAGES: ${VTUBER_CONTROL_RECONNECT_BUFFER_MESSAGES:-64}
+      VTUBER_CONTROL_RECONNECT_BUFFER_BYTES: ${VTUBER_CONTROL_RECONNECT_BUFFER_BYTES:-1048576}
+      DATABASE_URL: ${DATABASE_URL}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${VTUBER_GATEWAY_PORT:-3001}:3001"
+    volumes:
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+volumes:
+  postgres-data: {}
+  livepeer-run: {}

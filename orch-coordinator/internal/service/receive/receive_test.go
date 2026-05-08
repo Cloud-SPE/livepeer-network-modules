@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/verify"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/audit"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/candidates"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/published"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/candidate"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
@@ -36,7 +38,7 @@ func newSvc(t *testing.T) (*Service, *ecdsa.PrivateKey, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { log.Close() })
-	return New(store, log, addr, "0.1.0"), priv, addr
+	return New(store, nil, log, addr, "0.1.0", nil), priv, addr
 }
 
 func sampleManifest(addr string, seq uint64) types.ManifestPayload {
@@ -191,6 +193,94 @@ func TestReceive_AuditCapturesAcceptAndReject(t *testing.T) {
 	}
 }
 
+func TestReceive_RejectsSignedManifestThatDoesNotMatchLatestCandidate(t *testing.T) {
+	priv, err := ethcrypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := strings.ToLower(ethcrypto.PubkeyToAddress(priv.PublicKey).Hex())
+	dir := t.TempDir()
+	pubStore, err := published.New(filepath.Join(dir, "published"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candStore, err := candidates.New(filepath.Join(dir, "candidates"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := audit.Open(filepath.Join(dir, "audit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { log.Close() })
+
+	p1 := sampleManifest(addr, 1)
+	p2 := sampleManifest(addr, 1)
+	p2.Capabilities[0].PricePerUnitWei = "101"
+	latestCandidate, err := candidate.CanonicalBytes(manifestPayloadMap(p2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := candStore.Save(candidates.Snapshot{
+		Timestamp:     time.Now().UTC(),
+		ManifestBytes: latestCandidate,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := New(pubStore, candStore, log, addr, "0.1.0", nil)
+	_, err = svc.Receive(signManifest(t, priv, p1), "u1")
+	var ve *VerifyError
+	if !errIs(err, &ve) || ve.Code != audit.OutcomeDriftRejected {
+		t.Fatalf("expected drift_rejected, got %v", err)
+	}
+}
+
+func TestReceive_AcceptedPublishAdvancesNextPublicationSeq(t *testing.T) {
+	priv, err := ethcrypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := strings.ToLower(ethcrypto.PubkeyToAddress(priv.PublicKey).Hex())
+	dir := t.TempDir()
+	pubStore, err := published.New(filepath.Join(dir, "published"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	candStore, err := candidates.New(filepath.Join(dir, "candidates"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, err := audit.Open(filepath.Join(dir, "audit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { log.Close() })
+	p := sampleManifest(addr, 3)
+	latestCandidate, err := candidate.CanonicalBytes(manifestPayloadMap(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := candStore.Save(candidates.Snapshot{
+		Timestamp:     time.Now().UTC(),
+		ManifestBytes: latestCandidate,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	builder := &stubSeqSetter{}
+	svc := New(pubStore, candStore, log, addr, "0.1.0", builder)
+	if _, err := svc.Receive(signManifest(t, priv, p), "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if builder.seq != 4 {
+		t.Fatalf("next seq = %d, want 4", builder.seq)
+	}
+}
+
+type stubSeqSetter struct{ seq uint64 }
+
+func (s *stubSeqSetter) SetPublicationSeq(seq uint64) { s.seq = seq }
+
 // errIs is a fmt-friendly errors.As that works for our nested
 // VerifyError pointer.
 func errIs(err error, target **VerifyError) bool {
@@ -210,3 +300,4 @@ func errIs(err error, target **VerifyError) bool {
 }
 
 var _ = fmt.Sprintf
+var _ = os.ErrNotExist

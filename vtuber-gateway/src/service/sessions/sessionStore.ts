@@ -35,6 +35,7 @@ export interface InsertBearerInput {
 export interface UpdateSessionInput {
   status?: SessionStatus;
   workerSessionId?: string | null;
+  controlUrl?: string;
   payerWorkId?: string | null;
   errorCode?: string | null;
   endedAt?: Date | null;

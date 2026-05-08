@@ -31,6 +31,10 @@ Inherited from the repo root. Plus:
   playback requests to the broker's LL-HLS handler with no
   cache-control / CORS / playlist-rewrite logic. CDN concerns are
   operator add-on (plan 0013-video §14 OQ1 lock).
+- **Broker selection can be static or manifest-driven.** Static
+  `LIVEPEER_BROKER_URL` remains valid for single-orch deployments;
+  `LIVEPEER_RESOLVER_SOCKET` enables service-registry-driven route
+  selection for live session-open.
 - **VOD soft-delete only in v0.1.** `DELETE /v1/videos/assets/{id}`
   flips `media.assets.deleted_at`; hard-delete + S3 cleanup defers to
   a future janitor-job plan (plan 0013-video §14 OQ2 lock).

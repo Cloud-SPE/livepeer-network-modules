@@ -21,12 +21,20 @@ export class AdminAssets extends LitElement {
 
   static styles = css`
     :host { display: block; }
-    .toolbar { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-1, #d4d4d8); text-align: left; }
-    .deleted { color: var(--text-3, #71717a); }
-    button { background: none; border: 1px solid var(--border-1, #d4d4d8); border-radius: 0.25rem; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
-    .err { color: #b91c1c; }
+    .toolbar { display: flex; gap: var(--space-3); align-items: center; }
+    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+    th, td { padding: 0.75rem 0.8rem; border-bottom: 1px solid var(--border-1); text-align: left; vertical-align: top; }
+    th {
+      color: var(--text-3);
+      font-size: var(--font-size-xs);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+    .deleted { color: var(--text-3); }
+    button { background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-1); border-radius: var(--radius-pill); padding: 0.35rem 0.65rem; cursor: pointer; font-size: 0.75rem; color: var(--text-1); }
+    .err { color: var(--danger); }
   `;
 
   override async connectedCallback(): Promise<void> {
@@ -60,43 +68,49 @@ export class AdminAssets extends LitElement {
 
   render(): TemplateResult {
     return html`
-      <h2>Asset library</h2>
-      <div class="toolbar">
-        <label>
-          <input
-            type="checkbox"
-            .checked=${this.includeDeleted}
-            @change=${(e: Event): void => {
-              this.includeDeleted = (e.target as HTMLInputElement).checked;
-              void this.load();
-            }}
-          />
-          Include soft-deleted
-        </label>
-      </div>
-      ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-      <table>
-        <thead>
-          <tr><th>ID</th><th>Project</th><th>Status</th><th>Duration</th><th>Created</th><th>Deleted</th><th></th></tr>
-        </thead>
-        <tbody>
-          ${this.rows.map(
-            (r) => html`<tr class=${r.deletedAt ? "deleted" : ""}>
-              <td>${r.id}</td>
-              <td>${r.projectId}</td>
-              <td>${r.status}</td>
-              <td>${r.durationSec !== null ? r.durationSec.toFixed(1) + "s" : "-"}</td>
-              <td>${r.createdAt}</td>
-              <td>${r.deletedAt ?? ""}</td>
-              <td>
-                <button @click=${(): void => void this.toggleDelete(r)}>
-                  ${r.deletedAt ? "Restore" : "Soft-delete"}
-                </button>
-              </td>
-            </tr>`,
-          )}
-        </tbody>
-      </table>
+      <portal-card heading="Asset Library">
+        <portal-data-table
+          heading="Asset Inventory"
+          description="Inspect active and soft-deleted assets across customer projects."
+        >
+        <div class="toolbar" slot="toolbar">
+          <label>
+            <input
+              type="checkbox"
+              .checked=${this.includeDeleted}
+              @change=${(e: Event): void => {
+                this.includeDeleted = (e.target as HTMLInputElement).checked;
+                void this.load();
+              }}
+            />
+            Include soft-deleted
+          </label>
+        </div>
+        ${this.error ? html`<p class="err">${this.error}</p>` : ""}
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Project</th><th>Status</th><th>Duration</th><th>Created</th><th>Deleted</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${this.rows.map(
+              (r) => html`<tr class=${r.deletedAt ? "deleted" : ""}>
+                <td>${r.id}</td>
+                <td>${r.projectId}</td>
+                <td>${r.status}</td>
+                <td>${r.durationSec !== null ? r.durationSec.toFixed(1) + "s" : "-"}</td>
+                <td>${r.createdAt}</td>
+                <td>${r.deletedAt ?? ""}</td>
+                <td>
+                  <button @click=${(): void => void this.toggleDelete(r)}>
+                    ${r.deletedAt ? "Restore" : "Soft-delete"}
+                  </button>
+                </td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+        </portal-data-table>
+      </portal-card>
     `;
   }
 }

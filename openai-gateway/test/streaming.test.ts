@@ -108,9 +108,13 @@ test('streaming chat: chunks pass through unbuffered', async (t) => {
 
   const cfg: Config = {
     brokerUrl: `http://127.0.0.1:${brokerAddr.port}`,
+    resolverSocket: null,
     listenPort: 0,
     defaultOffering: 'default',
     payerDaemonSocket: sock,
+    paymentProtoRoot: protoRoot,
+    resolverProtoRoot: protoRoot,
+    resolverSnapshotTtlMs: 15_000,
     offeringsConfigPath: '/dev/null',
     offerings: { defaults: {} },
     audioSpeechEnabled: false,

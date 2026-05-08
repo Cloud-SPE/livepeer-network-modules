@@ -1,0 +1,8 @@
+# Generated artifacts
+
+Files in this directory are produced by `make doc-lint` (and other tooling). Do not hand-edit.
+
+Examples:
+- `manifest-example.md` — a canonical example manifest with signature
+- `db-schema.md` — BoltDB bucket layout, generated from `internal/repo/`
+- `flag-reference.md` — CLI flag table, generated from `cmd/`

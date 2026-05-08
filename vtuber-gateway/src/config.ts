@@ -1,9 +1,28 @@
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { z } from "zod";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(__dirname, "..", "..");
+const DEFAULT_PAYMENT_PROTO_ROOT = firstExistingPath([
+  resolve("/app", "proto"),
+  resolve(REPO_ROOT, "livepeer-network-protocol", "proto"),
+]);
+const DEFAULT_RESOLVER_PROTO_ROOT = firstExistingPath([
+  resolve("/app", "proto-contracts"),
+  resolve(REPO_ROOT, "proto-contracts"),
+]);
 
 export const ConfigSchema = z.object({
   listenPort: z.number().int().positive().default(3001),
   logLevel: z.string().default("info"),
-  brokerUrl: z.string().url(),
+  brokerUrl: z.string().url().nullable().default(null),
+  resolverSocket: z.string().min(1).nullable().default(null),
+  paymentProtoRoot: z.string().min(1).default("/app/proto"),
+  resolverProtoRoot: z.string().min(1).default("/app/proto-contracts"),
+  resolverSnapshotTtlMs: z.number().int().positive().default(15_000),
   payerDaemonSocket: z.string().min(1),
   payerDefaultFaceValueWei: z.string().regex(/^\d+$/),
   vtuberDefaultOffering: z.string().default("default"),
@@ -14,6 +33,8 @@ export const ConfigSchema = z.object({
   vtuberRelayMaxPerSession: z.number().int().positive().default(8),
   vtuberSessionBearerPepper: z.string().min(16),
   vtuberWorkerControlBearerPepper: z.string().min(16),
+  databaseUrl: z.string().min(1).default("postgres://localhost/vtuber_gateway"),
+  customerPortalPepper: z.string().min(1).default("dev-pepper"),
   vtuberControlReconnectWindowMs: z.number().int().nonnegative().default(30_000),
   vtuberControlReconnectBufferMessages: z.number().int().positive().default(64),
   vtuberControlReconnectBufferBytes: z.number().int().positive().default(1 << 20),
@@ -23,8 +44,11 @@ export type Config = z.infer<typeof ConfigSchema>;
 
 export function loadConfig(): Config {
   const brokerUrl = process.env["LIVEPEER_BROKER_URL"];
-  if (brokerUrl === undefined || brokerUrl === "") {
-    throw new Error("LIVEPEER_BROKER_URL env var is required");
+  const resolverSocket = process.env["LIVEPEER_RESOLVER_SOCKET"] ?? null;
+  if ((!brokerUrl || brokerUrl === "") && !resolverSocket) {
+    throw new Error(
+      "set either LIVEPEER_BROKER_URL for static routing or LIVEPEER_RESOLVER_SOCKET for manifest-driven routing",
+    );
   }
   const payerSocket = process.env["LIVEPEER_PAYER_DAEMON_SOCKET"];
   if (payerSocket === undefined || payerSocket === "") {
@@ -46,11 +70,28 @@ export function loadConfig(): Config {
       "VTUBER_WORKER_CONTROL_BEARER_PEPPER env var is required (>=16 chars)",
     );
   }
+  const databaseUrl = process.env["DATABASE_URL"];
+  if (databaseUrl === undefined || databaseUrl === "") {
+    throw new Error("DATABASE_URL env var is required");
+  }
+  const customerPortalPepper = process.env["CUSTOMER_PORTAL_PEPPER"];
+  if (customerPortalPepper === undefined || customerPortalPepper === "") {
+    throw new Error("CUSTOMER_PORTAL_PEPPER env var is required");
+  }
 
   return ConfigSchema.parse({
     listenPort: parseInt(process.env["PORT"] ?? "3001", 10),
     logLevel: process.env["LOG_LEVEL"] ?? "info",
-    brokerUrl,
+    brokerUrl: brokerUrl ?? null,
+    resolverSocket,
+    paymentProtoRoot:
+      process.env["LIVEPEER_PAYMENT_PROTO_ROOT"] ?? DEFAULT_PAYMENT_PROTO_ROOT,
+    resolverProtoRoot:
+      process.env["LIVEPEER_RESOLVER_PROTO_ROOT"] ?? DEFAULT_RESOLVER_PROTO_ROOT,
+    resolverSnapshotTtlMs: parseInt(
+      process.env["LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS"] ?? "15000",
+      10,
+    ),
     payerDaemonSocket: payerSocket,
     payerDefaultFaceValueWei: faceValue,
     vtuberDefaultOffering:
@@ -75,6 +116,8 @@ export function loadConfig(): Config {
     ),
     vtuberSessionBearerPepper: sessionPepper,
     vtuberWorkerControlBearerPepper: workerPepper,
+    databaseUrl,
+    customerPortalPepper,
     vtuberControlReconnectWindowMs: parseDurationMs(
       process.env["VTUBER_CONTROL_RECONNECT_WINDOW"] ?? "30s",
     ),
@@ -87,6 +130,13 @@ export function loadConfig(): Config {
       10,
     ),
   });
+}
+
+function firstExistingPath(paths: string[]): string {
+  for (const candidate of paths) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return paths[0]!;
 }
 
 export function parseDurationMs(value: string): number {

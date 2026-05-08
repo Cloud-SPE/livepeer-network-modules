@@ -2,6 +2,8 @@ import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
 
 import type { Config } from "./config.js";
+import type { LiveSessionDirectory } from "./livepeer/liveSessionDirectory.js";
+import type { VideoRouteSelector } from "./livepeer/routeSelector.js";
 import type { WebhookFailureRepo } from "./repo/index.js";
 import { registerAdmin } from "./routes/admin.js";
 import { registerLiveStreams } from "./routes/live-streams.js";
@@ -14,6 +16,8 @@ import type { RetryDispatcher } from "./service/webhookDispatcher.js";
 
 export interface BuildServerInput {
   cfg: Config;
+  routeSelector: VideoRouteSelector;
+  liveSessions: LiveSessionDirectory;
   admin?: {
     failures: WebhookFailureRepo;
     dispatcher: RetryDispatcher;
@@ -31,10 +35,14 @@ export function buildServer(input: BuildServerInput): FastifyInstance {
     await reply.code(200).header("Content-Type", "text/plain").send("ok\n");
   });
 
-  registerLiveStreams(app, { cfg });
+  registerLiveStreams(app, {
+    cfg,
+    routeSelector: input.routeSelector,
+    liveSessions: input.liveSessions,
+  });
   registerUploads(app, { cfg });
   registerVod(app);
-  registerPlayback(app, { cfg });
+  registerPlayback(app, { cfg, liveSessions: input.liveSessions });
   registerProjects(app);
   registerWebhooks(app);
   if (input.admin) registerAdmin(app, input.admin);

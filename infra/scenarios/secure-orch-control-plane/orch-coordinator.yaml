@@ -1,0 +1,9 @@
+identity:
+  orch_eth_address: "0xYOUR_COLD_ORCH_ADDRESS"
+
+brokers:
+  - name: broker-a
+    base_url: https://broker-a.example.com
+
+publish:
+  manifest_ttl: 24h

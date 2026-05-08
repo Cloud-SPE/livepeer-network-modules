@@ -9,11 +9,13 @@ import { LivepeerBrokerError } from "../livepeer/errors.js";
 import { buildPayment } from "../livepeer/payment.js";
 import { readOrSynthRequestId } from "../livepeer/requestId.js";
 import { resolveDefaultOffering } from "../service/offerings.js";
+import { selectRealtimeCandidate } from "../service/routeDispatch.js";
+import type { RouteSelector } from "../service/routeSelector.js";
 import type { Config } from "../config.js";
 
-export const registerRealtime: FastifyPluginAsync<{ cfg: Config }> = async (
+export const registerRealtime: FastifyPluginAsync<{ cfg: Config; routeSelector: RouteSelector }> = async (
   app: FastifyInstance,
-  deps: { cfg: Config },
+  deps: { cfg: Config; routeSelector: RouteSelector },
 ) => {
   await app.register(websocketPlugin);
 
@@ -32,16 +34,22 @@ export const registerRealtime: FastifyPluginAsync<{ cfg: Config }> = async (
       const requestId = readOrSynthRequestId(req);
 
       try {
+        const candidate = await selectRealtimeCandidate(
+          deps.routeSelector,
+          req,
+          capability,
+          offering,
+        );
         const paymentBlob = await buildPayment({
           capabilityId: capability,
-          offeringId: offering,
+          offeringId: candidate.offering,
         });
 
         const broker = await modes.wsRealtime.connect(
-          { url: cfg.brokerUrl },
+          { url: candidate.brokerUrl },
           {
             capability,
-            offering,
+            offering: candidate.offering,
             paymentBlob,
             requestId,
           },

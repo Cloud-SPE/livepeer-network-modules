@@ -1,0 +1,798 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus instance scraping the livepeer-service-registry daemon",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "table",
+      "name": "Table",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "gauge",
+      "name": "Gauge",
+      "version": ""
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Operator-facing dashboard for the livepeer-service-registry daemon. Answers the 10 sample queries from docs/design-docs/observability.md.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "row",
+      "id": 100,
+      "title": "Overview",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 1},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 1,
+      "title": "Build version",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 1, "w": 6, "h": 4},
+      "targets": [
+        {
+          "expr": "livepeer_registry_build_info{job=~\"$job\"}",
+          "legendFormat": "{{version}} / {{mode}} / {{go_version}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "name",
+        "graphMode": "none",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue"}]}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "Uptime",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 6, "y": 1, "w": 6, "h": 4},
+      "targets": [
+        {
+          "expr": "livepeer_registry_uptime_seconds{job=~\"$job\"}",
+          "legendFormat": "uptime",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value",
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 60}, {"color": "green", "value": 600}]}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "gRPC requests / sec",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 12, "y": 1, "w": 6, "h": 4},
+      "targets": [
+        {
+          "expr": "sum(rate(livepeer_registry_grpc_requests_total{job=~\"$job\"}[1m]))",
+          "legendFormat": "qps",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value",
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue"}]}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "gRPC error rate (5m)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 18, "y": 1, "w": 6, "h": 4},
+      "targets": [
+        {
+          "expr": "sum(rate(livepeer_registry_grpc_requests_total{job=~\"$job\",code!=\"OK\"}[5m])) / clamp_min(sum(rate(livepeer_registry_grpc_requests_total{job=~\"$job\"}[5m])), 1e-9)",
+          "legendFormat": "error rate",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value",
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "red", "value": 0.05}]}
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "row",
+      "id": 200,
+      "title": "Resolver flow",
+      "gridPos": {"x": 0, "y": 5, "w": 24, "h": 1},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 5,
+      "title": "Resolutions / sec by mode",
+      "description": "How many ResolveByAddress completions per second, broken down by which serviceURI mode the resolver detected.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 6, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum by (mode) (rate(livepeer_registry_resolutions_total{job=~\"$job\"}[1m]))",
+          "legendFormat": "{{mode}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "stacking": {"mode": "normal"}}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "Cache hit ratio",
+      "description": "(hit_fresh + hit_stale) / total. A healthy resolver under steady-state traffic should sit above 0.9.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 12, "y": 6, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(livepeer_registry_cache_lookups_total{job=~\"$job\",result=~\"hit_.*\"}[5m])) / clamp_min(sum(rate(livepeer_registry_cache_lookups_total{job=~\"$job\"}[5m])), 1e-9)",
+          "legendFormat": "all hits",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(livepeer_registry_cache_lookups_total{job=~\"$job\",result=\"hit_fresh\"}[5m])) / clamp_min(sum(rate(livepeer_registry_cache_lookups_total{job=~\"$job\"}[5m])), 1e-9)",
+          "legendFormat": "fresh hits only",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "min"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "Resolve p50/p95/p99 by mode",
+      "description": "End-to-end ResolveByAddress latency. Cache hits land in the smallest buckets; chain+fetch lands in the larger ones.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 14, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le, mode) (rate(livepeer_registry_resolve_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p50 {{mode}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, mode) (rate(livepeer_registry_resolve_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p95 {{mode}}",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, mode) (rate(livepeer_registry_resolve_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p99 {{mode}}",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 0}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 8,
+      "title": "Legacy fallbacks / sec",
+      "description": "How often the resolver synthesized a single legacy node because the well-known manifest was unavailable / parse-broken / signature-bad. Should trend down as operators migrate.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 12, "y": 14, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(livepeer_registry_legacy_fallbacks_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"drawStyle": "bars", "fillOpacity": 70, "stacking": {"mode": "normal"}}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["sum"]}, "tooltip": {"mode": "multi"}}
+    },
+
+    {
+      "type": "row",
+      "id": 300,
+      "title": "Manifest pipeline (security-critical)",
+      "gridPos": {"x": 0, "y": 22, "w": 24, "h": 1},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "Manifest verifications / sec by outcome",
+      "description": "signature_mismatch ≠ 0 means MITM, DNS hijack, or operator misconfiguration. Treat as a security incident.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 23, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(livepeer_registry_manifest_verifications_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 20, "stacking": {"mode": "none"}}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "signature_mismatch"},
+            "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}, {"id": "custom.lineWidth", "value": 3}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "verified"},
+            "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]
+          }
+        ]
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "sum"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Manifest fetches / sec by outcome",
+      "description": "off-chain HTTP host health. timeout / http_error spikes indicate the operator's web server is degraded.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 12, "y": 23, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(livepeer_registry_manifest_fetches_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "stacking": {"mode": "normal"}}
+        },
+        "overrides": []
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "sum"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 11,
+      "title": "Manifest fetch duration p99 by outcome",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 31, "w": 8, "h": 7},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, outcome) (rate(livepeer_registry_manifest_fetch_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p99 {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 0}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "Manifest fetch p99 size",
+      "description": "Track this against --manifest-max-bytes (default 256 KiB).",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 8, "y": 31, "w": 8, "h": 7},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(livepeer_registry_manifest_fetch_bytes_bucket{job=~\"$job\"}[15m])))",
+          "legendFormat": "p99 bytes",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "Signature verify duration p99",
+      "description": "secp256k1 recover is CPU-bound. Sustained spikes here usually mean GC pressure or a CPU-starved host.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 16, "y": 31, "w": 8, "h": 7},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(livepeer_registry_signature_verify_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}}
+    },
+
+    {
+      "type": "row",
+      "id": 400,
+      "title": "Chain provider",
+      "gridPos": {"x": 0, "y": 38, "w": 24, "h": 1},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 14,
+      "title": "Chain reads / sec by outcome",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 39, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(livepeer_registry_chain_reads_total{job=~\"$job\"}[1m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "stacking": {"mode": "normal"}}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "unavailable"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
+          {"matcher": {"id": "byName", "options": "ok"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]}
+        ]
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 15,
+      "title": "Chain read duration p50/p95/p99",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 12, "y": 39, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(livepeer_registry_chain_read_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(livepeer_registry_chain_read_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(livepeer_registry_chain_read_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 0}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "stat",
+      "id": 16,
+      "title": "Time since last successful chain read",
+      "description": "Alert when this exceeds your chain-cache TTL × 2.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 47, "w": 12, "h": 5},
+      "targets": [
+        {
+          "expr": "time() - max(livepeer_registry_chain_last_success_timestamp_seconds{job=~\"$job\"})",
+          "legendFormat": "lag",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value",
+        "graphMode": "area",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 60}, {"color": "red", "value": 300}]}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 17,
+      "title": "Chain writes / sec by outcome (publisher mode only)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 12, "y": 47, "w": 12, "h": 5},
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(livepeer_registry_chain_writes_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "bars", "fillOpacity": 70, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["sum"]}, "tooltip": {"mode": "multi"}}
+    },
+
+    {
+      "type": "row",
+      "id": 500,
+      "title": "gRPC traffic",
+      "gridPos": {"x": 0, "y": 52, "w": 24, "h": 1},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 18,
+      "title": "gRPC requests / sec by method",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 53, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum by (service, method) (rate(livepeer_registry_grpc_requests_total{job=~\"$job\"}[1m]))",
+          "legendFormat": "{{service}}/{{method}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 19,
+      "title": "gRPC duration p99 by method (default buckets)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 12, "y": 53, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, service, method) (rate(livepeer_registry_grpc_request_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p99 {{service}}/{{method}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 0}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "table",
+      "id": 20,
+      "title": "Top error registry codes (last hour)",
+      "description": "Stable application-level error codes from docs/product-specs/grpc-surface.md, exposed as the registry_code label.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 61, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "topk(10, sum by (registry_code, service, method) (rate(livepeer_registry_grpc_requests_total{job=~\"$job\",registry_code!=\"_unset_\"}[1h])))",
+          "legendFormat": "",
+          "instant": true,
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "reqps", "custom": {"align": "left"}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Value"}, "properties": [{"id": "displayName", "value": "rate (1h)"}, {"id": "decimals", "value": 4}]}
+        ]
+      },
+      "options": {"showHeader": true, "footer": {"show": false}}
+    },
+    {
+      "type": "timeseries",
+      "id": 21,
+      "title": "gRPC in-flight by method",
+      "description": "Saturation indicator. Sustained values > tens means handlers are queueing.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 12, "y": 61, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "max by (service, method) (livepeer_registry_grpc_in_flight_requests{job=~\"$job\"})",
+          "legendFormat": "{{service}}/{{method}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 20}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}}
+    },
+
+    {
+      "type": "row",
+      "id": 600,
+      "title": "Cache + audit + overlay",
+      "gridPos": {"x": 0, "y": 69, "w": 24, "h": 1},
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 22,
+      "title": "Cache entries",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 70, "w": 6, "h": 4},
+      "targets": [{"expr": "max(livepeer_registry_cache_entries{job=~\"$job\"})", "legendFormat": "entries", "refId": "A"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "value", "graphMode": "area", "colorMode": "value"},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "blue"}]}}, "overrides": []}
+    },
+    {
+      "type": "stat",
+      "id": 23,
+      "title": "Overlay entries",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 6, "y": 70, "w": 6, "h": 4},
+      "targets": [{"expr": "max(livepeer_registry_overlay_entries{job=~\"$job\"})", "legendFormat": "entries", "refId": "A"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "textMode": "value", "graphMode": "area", "colorMode": "value"},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "blue"}]}}, "overrides": []}
+    },
+    {
+      "type": "timeseries",
+      "id": 24,
+      "title": "Audit events / sec by kind",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 12, "y": 70, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (kind) (rate(livepeer_registry_audit_events_total{job=~\"$job\"}[5m]))", "legendFormat": "{{kind}}", "refId": "A"}
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "stacking": {"mode": "normal"}}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "signature_invalid"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}, {"id": "custom.lineWidth", "value": 3}]}
+        ]
+      },
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["sum"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 25,
+      "title": "Cache lookups / sec by result",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 0, "y": 78, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (result) (rate(livepeer_registry_cache_lookups_total{job=~\"$job\"}[1m]))", "legendFormat": "{{result}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 26,
+      "title": "Overlay drops / sec by reason",
+      "description": "Nodes the resolver hid from consumers because the static overlay forbade them.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"x": 12, "y": 78, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum by (reason) (rate(livepeer_registry_overlay_dropped_nodes_total{job=~\"$job\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "bars", "fillOpacity": 70, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["sum"]}, "tooltip": {"mode": "multi"}}
+    },
+
+    {
+      "type": "row",
+      "id": 700,
+      "title": "Process + Go runtime",
+      "gridPos": {"x": 0, "y": 86, "w": 24, "h": 1},
+      "collapsed": true,
+      "panels": [
+        {
+          "type": "timeseries",
+          "id": 27,
+          "title": "Goroutines",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"x": 0, "y": 87, "w": 6, "h": 7},
+          "targets": [{"expr": "go_goroutines{job=~\"$job\"}", "legendFormat": "{{instance}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}, "overrides": []},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "id": 28,
+          "title": "Heap in-use",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"x": 6, "y": 87, "w": 6, "h": 7},
+          "targets": [{"expr": "go_memstats_heap_inuse_bytes{job=~\"$job\"}", "legendFormat": "{{instance}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}, "overrides": []},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "id": 29,
+          "title": "CPU seconds / sec",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"x": 12, "y": 87, "w": 6, "h": 7},
+          "targets": [{"expr": "rate(process_cpu_seconds_total{job=~\"$job\"}[1m])", "legendFormat": "{{instance}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "percentunit", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}, "overrides": []},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        },
+        {
+          "type": "timeseries",
+          "id": 30,
+          "title": "Open file descriptors",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "gridPos": {"x": 18, "y": 87, "w": 6, "h": 7},
+          "targets": [{"expr": "process_open_fds{job=~\"$job\"}", "legendFormat": "{{instance}}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10}}, "overrides": []},
+          "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["livepeer", "registry", "prometheus"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "definition": "label_values(livepeer_registry_build_info, job)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Job",
+        "multi": true,
+        "name": "job",
+        "options": [],
+        "query": {"qryType": 1, "query": "label_values(livepeer_registry_build_info, job)", "refId": "Variable"},
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "definition": "label_values(livepeer_registry_build_info{job=~\"$job\"}, instance)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Instance",
+        "multi": true,
+        "name": "instance",
+        "options": [],
+        "query": {"qryType": 1, "query": "label_values(livepeer_registry_build_info{job=~\"$job\"}, instance)", "refId": "Variable"},
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {"refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "6h"]},
+  "timezone": "",
+  "title": "Livepeer Service Registry",
+  "uid": "livepeer-service-registry",
+  "version": 1,
+  "weekStart": ""
+}

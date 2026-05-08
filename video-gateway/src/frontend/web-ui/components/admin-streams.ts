@@ -21,11 +21,18 @@ export class AdminStreams extends LitElement {
 
   static styles = css`
     :host { display: block; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-1, #d4d4d8); text-align: left; }
-    button { background: none; border: 1px solid var(--border-1, #d4d4d8); border-radius: 0.25rem; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
-    .live { color: #166534; font-weight: 600; }
-    .err { color: #b91c1c; }
+    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+    th, td { padding: 0.75rem 0.8rem; border-bottom: 1px solid var(--border-1); text-align: left; }
+    th {
+      color: var(--text-3);
+      font-size: var(--font-size-xs);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    tbody tr:hover { background: rgba(255,255,255,0.02); }
+    .live { color: var(--success); font-weight: 650; }
+    .err { color: var(--danger); }
   `;
 
   override async connectedCallback(): Promise<void> {
@@ -55,31 +62,47 @@ export class AdminStreams extends LitElement {
 
   render(): TemplateResult {
     return html`
-      <h2>Live stream sessions</h2>
-      ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-      <table>
-        <thead>
-          <tr><th>ID</th><th>Project</th><th>Status</th><th>Viewers</th><th>Record</th><th>Started</th><th>Ended</th><th></th></tr>
-        </thead>
-        <tbody>
-          ${this.rows.map(
-            (r) => html`<tr>
-              <td>${r.id}</td>
-              <td>${r.projectId}</td>
-              <td class=${r.status === "live" ? "live" : ""}>${r.status}</td>
-              <td>${r.viewerCount ?? "-"}</td>
-              <td>${r.recordToVod ? "yes" : "no"}</td>
-              <td>${r.startedAt}</td>
-              <td>${r.endedAt ?? ""}</td>
-              <td>
-                ${r.endedAt
-                  ? ""
-                  : html`<button @click=${(): void => void this.forceEnd(r)}>Force end</button>`}
-              </td>
-            </tr>`,
-          )}
-        </tbody>
-      </table>
+      <portal-card heading="Live Stream Sessions">
+        <portal-data-table
+          heading="Active Streams"
+          description="Current and ended ingest sessions, viewer count, and force-end controls."
+        >
+        ${this.error ? html`<p class="err">${this.error}</p>` : ""}
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Project</th><th>Status</th><th>Viewers</th><th>Record</th><th>Started</th><th>Ended</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${this.rows.map(
+              (r) => html`<tr>
+                <td>${r.id}</td>
+                <td>${r.projectId}</td>
+                <td>
+                  <portal-status-pill variant=${r.status === "live" ? "success" : "neutral"}>
+                    ${r.status}
+                  </portal-status-pill>
+                </td>
+                <td>${r.viewerCount ?? "-"}</td>
+                <td>${r.recordToVod ? "yes" : "no"}</td>
+                <td>${r.startedAt}</td>
+                <td>${r.endedAt ?? ""}</td>
+                <td>
+                  ${r.endedAt
+                    ? ""
+                    : html`
+                        <portal-action-row align="end">
+                          <portal-button variant="danger" @click=${(): void => void this.forceEnd(r)}>
+                            Force end
+                          </portal-button>
+                        </portal-action-row>
+                      `}
+                </td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+        </portal-data-table>
+      </portal-card>
     `;
   }
 }

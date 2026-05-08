@@ -8,16 +8,21 @@ export class PortalCard extends LitElement {
   static styles = css`
     :host {
       display: block;
-      background: var(--surface-1);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.02) 100%),
+        var(--surface-1);
       border: 1px solid var(--border-1);
       border-radius: var(--radius-lg);
       padding: var(--space-5);
+      box-shadow: var(--shadow-sm);
+      backdrop-filter: blur(14px);
     }
     .heading {
       font-size: var(--font-size-lg);
-      font-weight: 600;
+      font-weight: 650;
       color: var(--text-1);
       margin-bottom: var(--space-3);
+      letter-spacing: -0.02em;
     }
   `;
 

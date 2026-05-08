@@ -1,15 +1,19 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-import * as httpMultipart from "../livepeer/http-multipart.js";
 import { Capability } from "../livepeer/capabilityMap.js";
 import { LivepeerBrokerError } from "../livepeer/errors.js";
-import { buildPayment } from "../livepeer/payment.js";
 import { readOrSynthRequestId } from "../livepeer/requestId.js";
 import { HEADER } from "../livepeer/headers.js";
 import { resolveDefaultOffering } from "../service/offerings.js";
+import { dispatchMultipart } from "../service/routeDispatch.js";
+import type { RouteSelector } from "../service/routeSelector.js";
 import type { Config } from "../config.js";
 
-export function registerAudioTranscriptions(app: FastifyInstance, cfg: Config): void {
+export function registerAudioTranscriptions(
+  app: FastifyInstance,
+  cfg: Config,
+  routeSelector: RouteSelector,
+): void {
   app.post(
     "/v1/audio/transcriptions",
     {
@@ -43,11 +47,11 @@ export function registerAudioTranscriptions(app: FastifyInstance, cfg: Config): 
       }
 
       try {
-        const result = await httpMultipart.send({
-          brokerUrl: cfg.brokerUrl,
+        const result = await dispatchMultipart({
+          routeSelector,
+          request: req,
           capability,
           offering,
-          paymentBlob: await buildPayment({ capabilityId: capability, offeringId: offering }),
           body,
           contentType,
           requestId,

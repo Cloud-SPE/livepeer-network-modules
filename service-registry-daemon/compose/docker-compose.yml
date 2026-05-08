@@ -1,0 +1,59 @@
+# Run-only compose for service-registry-daemon in resolver mode. Build
+# via `./infra/scripts/build-images.sh service-registry-daemon`.
+#
+# This is the consumer-side daemon that:
+#   - discovers active orchestrators from the Livepeer pool on chain
+#   - fetches each orch's published manifest URL
+#   - verifies the manifest signature
+#   - serves the resolved pool over a local unix-socket gRPC API
+#
+# Typical local pairing:
+#   - `openai-gateway` mounts `service-registry-socket` at
+#     `/var/run/livepeer` and dials
+#     `/var/run/livepeer/service-registry.sock`
+#
+# Required operator inputs:
+#   - CHAIN_RPC
+# Optional:
+#   - expose METRICS_PORT for Prometheus
+#   - set STATIC_OVERLAY to bypass chain discovery
+
+services:
+  service-registry-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    restart: unless-stopped
+
+    command:
+      - --mode=resolver
+      - --socket=/var/run/livepeer/service-registry.sock
+      - --store-path=/var/lib/livepeer/registry-cache.db
+      - --chain-rpc=${CHAIN_RPC}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS:-0x04cEB6f6d4e0D0d06f3Ec4c0dB4A5715A2c2Be8e}
+      - --discovery=${DISCOVERY_MODE:-chain}
+      - --round-poll-interval=${ROUND_POLL_INTERVAL:-15s}
+      - --cache-manifest-ttl=${CACHE_MANIFEST_TTL:-5m}
+      - --manifest-max-bytes=${MANIFEST_MAX_BYTES:-1048576}
+      - --manifest-fetch-timeout=${MANIFEST_FETCH_TIMEOUT:-5s}
+      - --max-stale=${MAX_STALE:-30m}
+      - --reject-unsigned=${REJECT_UNSIGNED:-true}
+      - --static-overlay=${STATIC_OVERLAY:-}
+      - --log-level=${LOG_LEVEL:-info}
+      - --log-format=${LOG_FORMAT:-json}
+      - --metrics-listen=${METRICS_PORT:+:${METRICS_PORT}}
+
+    ports:
+      - "${REGISTRY_METRICS_BIND:-127.0.0.1}:${METRICS_PORT:-9095}:${METRICS_PORT:-9095}"
+
+    volumes:
+      - service-registry-socket:/var/run/livepeer
+      - service-registry-state:/var/lib/livepeer
+
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  service-registry-socket:
+  service-registry-state:

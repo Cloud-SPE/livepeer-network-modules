@@ -1,0 +1,95 @@
+# Scenario: openai-gateway with manifest-driven routing.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-livepeer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-livepeer}
+      POSTGRES_DB: ${POSTGRES_DB:-openai_gateway}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-livepeer}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  service-registry-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=resolver
+      - --socket=/var/run/livepeer/service-registry.sock
+      - --store-path=/var/lib/livepeer/registry-cache.db
+      - --chain-rpc=${CHAIN_RPC}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS}
+      - --discovery=${DISCOVERY_MODE:-chain}
+      - --round-poll-interval=${ROUND_POLL_INTERVAL:-15s}
+      - --cache-manifest-ttl=${CACHE_MANIFEST_TTL:-5m}
+      - --manifest-max-bytes=${MANIFEST_MAX_BYTES:-1048576}
+      - --manifest-fetch-timeout=${MANIFEST_FETCH_TIMEOUT:-5s}
+      - --max-stale=${MAX_STALE:-30m}
+      - --reject-unsigned=${REJECT_UNSIGNED:-true}
+      - --static-overlay=${STATIC_OVERLAY:-}
+      - --log-level=${REGISTRY_LOG_LEVEL:-info}
+      - --log-format=${REGISTRY_LOG_FORMAT:-json}
+      - --metrics-listen=:${REGISTRY_METRICS_PORT:-9095}
+    ports:
+      - "127.0.0.1:${REGISTRY_METRICS_PORT:-9095}:${REGISTRY_METRICS_PORT:-9095}"
+    volumes:
+      - livepeer-run:/var/run/livepeer
+      - registry-state:/var/lib/livepeer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  payment-daemon-sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --chain-rpc=${CHAIN_RPC}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-./run/gateway-hot-wallet-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+  openai-gateway:
+    image: ${REGISTRY:-tztcloud}/livepeer-openai-gateway-reference:${TAG:-v1.0.0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      service-registry-daemon:
+        condition: service_started
+      payment-daemon-sender:
+        condition: service_started
+    environment:
+      PORT: "3000"
+      DATABASE_URL: ${DATABASE_URL}
+      LIVEPEER_RESOLVER_SOCKET: /var/run/livepeer/service-registry.sock
+      LIVEPEER_PAYER_DAEMON_SOCKET: /var/run/livepeer/payer-daemon.sock
+      LIVEPEER_DEFAULT_OFFERING: ${LIVEPEER_DEFAULT_OFFERING:-model-small}
+      LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS: ${LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS:-15000}
+      OPENAI_AUDIO_SPEECH_ENABLED: ${OPENAI_AUDIO_SPEECH_ENABLED:-false}
+      BROKER_CALL_TIMEOUT_MS: ${BROKER_CALL_TIMEOUT_MS:-30000}
+      LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-info}
+    ports:
+      - "${OPENAI_GATEWAY_BIND:-0.0.0.0}:${OPENAI_GATEWAY_PORT:-3000}:3000"
+    volumes:
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+volumes:
+  postgres-data: {}
+  livepeer-run: {}
+  registry-state: {}

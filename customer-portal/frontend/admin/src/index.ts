@@ -2,6 +2,7 @@ import '@livepeer-rewrite/customer-portal-shared';
 import { HashRouter } from '@livepeer-rewrite/customer-portal-shared';
 
 export function bootstrap(root: HTMLElement): void {
+  document.body.dataset.livepeerUiMode = 'network-console';
   const router = new HashRouter();
   router
     .add('/customers', () => {

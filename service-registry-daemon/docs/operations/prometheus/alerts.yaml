@@ -1,0 +1,289 @@
+# Prometheus alert rules for the livepeer-service-registry daemon.
+#
+# Three severity tiers:
+#   page    — wake someone up (security / data loss / availability)
+#   ticket  — investigate during business hours
+#   info    — dashboard banner; informational only
+#
+# Tune thresholds before applying. Defaults err on the side of "loud
+# enough to be useful" rather than "quiet enough to ignore"; calibrate
+# to your operator-side traffic profile.
+#
+# Install:
+#   1. Drop this file in the path Prometheus scans for rule_files,
+#      e.g. /etc/prometheus/rules.d/livepeer-service-registry.yaml.
+#   2. `prometheus.yml`:
+#        rule_files:
+#          - rules.d/livepeer-service-registry.yaml
+#   3. Reload: `kill -HUP $(pidof prometheus)` or POST /-/reload.
+#
+# Validate locally before deploy:
+#   promtool check rules alerts.yaml
+
+groups:
+  # =====================================================================
+  # CRITICAL — page on these
+  # =====================================================================
+  - name: livepeer-service-registry-critical
+    interval: 30s
+    rules:
+      - alert: RegistrySignatureMismatchSpike
+        expr: |
+          sum(rate(livepeer_registry_manifest_verifications_total{outcome="signature_mismatch"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: page
+          service: livepeer-service-registry
+        annotations:
+          summary: "Manifests are failing signature verification at >0.05/s for 5m"
+          description: |
+            One or more orchestrator manifests are returning signatures that
+            do not recover to the chain-claimed eth address. This is either
+            an MITM / DNS hijack on a manifest URL, or an operator
+            misconfiguration (e.g. signing with the wrong key after a
+            rotation).
+
+            The daemon refuses to cache or return these manifests, so
+            consumers see `manifest_unavailable` errors.
+
+            Use `Resolver.GetAuditLog(eth_address, since, limit)` to
+            identify which orchestrator(s) are affected.
+          impact: "Affected orchestrators are invisible to consumer apps."
+          dashboard: "Livepeer Service Registry → Manifest pipeline → Manifest verifications"
+
+      - alert: RegistryChainRPCStale
+        expr: |
+          (time() - max(livepeer_registry_chain_last_success_timestamp_seconds)) > 300
+        for: 1m
+        labels:
+          severity: page
+          service: livepeer-service-registry
+        annotations:
+          summary: "No successful chain reads in 5 minutes"
+          description: |
+            The daemon's chain provider has not succeeded in 5+ minutes.
+            New ResolveByAddress calls hit the cache; cached entries past
+            --max-stale (default 1h) start returning `cache_stale_failing`.
+
+            Likely causes: chain RPC endpoint down, network partition,
+            wrong --chain-rpc URL, rate-limit exhaustion at the RPC
+            provider.
+
+      - alert: RegistryDaemonDown
+        expr: up{job=~".*livepeer.*registry.*"} == 0
+        for: 2m
+        labels:
+          severity: page
+          service: livepeer-service-registry
+        annotations:
+          summary: "Daemon is unreachable to Prometheus"
+          description: |
+            Prometheus has been unable to scrape the daemon's /metrics
+            endpoint for 2+ minutes. Check whether the daemon is running,
+            whether its --metrics-listen port is reachable, and whether
+            the host is healthy.
+
+      - alert: RegistryGRPCErrorRateHigh
+        expr: |
+          (
+            sum(rate(livepeer_registry_grpc_requests_total{code!="OK"}[5m]))
+            /
+            clamp_min(sum(rate(livepeer_registry_grpc_requests_total[5m])), 1e-9)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: page
+          service: livepeer-service-registry
+        annotations:
+          summary: "gRPC error rate >5% for 10m"
+          description: |
+            More than 5% of gRPC RPCs are returning a non-OK code over the
+            last 5-minute window.
+
+            Top error codes:
+              topk(5, sum by (registry_code) (rate(livepeer_registry_grpc_requests_total{registry_code!="_unset_"}[1h])))
+
+            Common patterns:
+              - manifest_unavailable: operator-side HTTP host is down
+              - chain_unavailable: chain RPC degraded
+              - signature_mismatch: see RegistrySignatureMismatchSpike
+
+  # =====================================================================
+  # WARNING — ticket-worthy, not page-worthy
+  # =====================================================================
+  - name: livepeer-service-registry-warning
+    interval: 1m
+    rules:
+      - alert: RegistryChainRPCSlow
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(livepeer_registry_chain_read_duration_seconds_bucket[5m]))
+          ) > 1.5
+        for: 15m
+        labels:
+          severity: ticket
+          service: livepeer-service-registry
+        annotations:
+          summary: "Chain read p99 latency >1.5s"
+          description: |
+            ServiceRegistry.getServiceURI calls are slow at the tail. The
+            daemon's cache absorbs steady-state load, but new /
+            cache-miss resolves block on this. Investigate the configured
+            --chain-rpc endpoint.
+
+      - alert: RegistryResolveLatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, mode) (rate(livepeer_registry_resolve_duration_seconds_bucket[5m]))
+          ) > 2
+        for: 15m
+        labels:
+          severity: ticket
+          service: livepeer-service-registry
+        annotations:
+          summary: "p99 resolve latency >2s for 15m"
+          description: |
+            End-to-end ResolveByAddress p99 has been above 2s for 15
+            minutes. Sub-rules:
+              - mode=well_known slow → manifest fetcher is slow OR
+                signature verify CPU-starved
+              - mode=legacy slow → chain RPC is slow (cache miss path)
+
+      - alert: RegistryManifestFetcherStale
+        expr: |
+          (time() - max(livepeer_registry_manifest_fetcher_last_success_timestamp_seconds)) > 600
+          and
+          rate(livepeer_registry_manifest_fetches_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          service: livepeer-service-registry
+        annotations:
+          summary: "Manifest fetcher hasn't succeeded in 10m despite attempts"
+          description: |
+            The daemon is trying to fetch manifests but every one is
+            failing. Either the orchestrators it queries are all down
+            (unlikely), or the daemon has lost outbound HTTP capability.
+
+      - alert: RegistryLegacyFallbacksHigh
+        expr: |
+          sum(rate(livepeer_registry_legacy_fallbacks_total[15m])) > 0.5
+        for: 30m
+        labels:
+          severity: ticket
+          service: livepeer-service-registry
+        annotations:
+          summary: "Legacy fallback rate sustained > 0.5/s for 30m"
+          description: |
+            The resolver is synthesizing legacy nodes more than usual.
+            Either many orchestrators are misconfigured (broken manifests
+            at well-known URLs), or many haven't migrated to the manifest
+            format yet.
+
+            Check breakdown:
+              sum by (reason) (rate(livepeer_registry_legacy_fallbacks_total[15m]))
+
+      - alert: RegistryCacheHitRatioLow
+        expr: |
+          (
+            sum(rate(livepeer_registry_cache_lookups_total{result=~"hit_.*"}[15m]))
+            /
+            clamp_min(sum(rate(livepeer_registry_cache_lookups_total[15m])), 1e-9)
+          ) < 0.5
+          and
+          sum(rate(livepeer_registry_cache_lookups_total[15m])) > 1
+        for: 30m
+        labels:
+          severity: ticket
+          service: livepeer-service-registry
+        annotations:
+          summary: "Cache hit ratio below 50% for 30m"
+          description: |
+            Resolver is returning more cold-cache resolves than hits.
+            Either the cache TTLs are too short for the traffic pattern,
+            traffic is too sparse to hit the same address twice, or the
+            cache file is being lost on restart.
+
+            Recently restarted? `livepeer_registry_uptime_seconds`.
+
+      - alert: RegistryGRPCInFlightHigh
+        expr: |
+          max by (service, method) (livepeer_registry_grpc_in_flight_requests) > 100
+        for: 5m
+        labels:
+          severity: ticket
+          service: livepeer-service-registry
+        annotations:
+          summary: "Sustained > 100 in-flight gRPC requests on one method"
+          description: |
+            Handlers are queueing. Likely a slow downstream (chain or
+            manifest fetcher) holding handlers open. Check
+            grpc_request_duration_seconds_fast and the chain / fetcher
+            latency panels.
+
+  # =====================================================================
+  # INFO — dashboard hint, not even a ticket
+  # =====================================================================
+  - name: livepeer-service-registry-info
+    interval: 1m
+    rules:
+      - alert: RegistryCardinalityCapHit
+        expr: |
+          increase(livepeer_registry_grpc_requests_total[1h]) > 0
+          and
+          (
+            count(count by (service, method, code, registry_code) (livepeer_registry_grpc_requests_total))
+            >= 9000
+          )
+        for: 10m
+        labels:
+          severity: info
+          service: livepeer-service-registry
+        annotations:
+          summary: "Approaching cardinality cap on gRPC metric"
+          description: |
+            The grpc_requests_total metric is approaching the daemon's
+            --metrics-max-series-per-metric cap (default 10000). Either
+            traffic legitimately exploded, or a recent code change
+            introduced a high-cardinality label that should be removed.
+
+      - alert: RegistryDaemonRecentlyRestarted
+        expr: livepeer_registry_uptime_seconds < 300
+        for: 0m
+        labels:
+          severity: info
+          service: livepeer-service-registry
+        annotations:
+          summary: "Daemon restarted in the last 5 minutes"
+          description: |
+            Informational. If unexpected, check the previous-process
+            exit code and the stderr log around shutdown time.
+
+      - alert: RegistryOverlayReloadFailed
+        expr: |
+          increase(livepeer_registry_overlay_reloads_total{outcome=~"parse_error|io_error"}[15m]) > 0
+        for: 0m
+        labels:
+          severity: info
+          service: livepeer-service-registry
+        annotations:
+          summary: "Static-overlay reload failed in the last 15 minutes"
+          description: |
+            A nodes.yaml reload failed (parse_error or io_error). The
+            previous valid overlay remains active — no traffic impact —
+            but the change the operator wanted to apply was rejected.
+            Check the daemon log around the timestamp.
+
+      - alert: RegistryMixedDaemonVersions
+        expr: count(count by (version) (livepeer_registry_build_info)) > 1
+        for: 30m
+        labels:
+          severity: info
+          service: livepeer-service-registry
+        annotations:
+          summary: "Multiple daemon versions running across instances"
+          description: |
+            More than one `version` label is present in
+            livepeer_registry_build_info. Expected during a rolling
+            deploy; if it persists past 30 minutes, the rollout is
+            stuck.

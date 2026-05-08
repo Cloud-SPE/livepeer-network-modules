@@ -7,8 +7,11 @@ A reference TypeScript Fastify service that:
 1. Accepts OpenAI-shaped requests on the customer-facing surface.
 2. Translates each request to the new Livepeer wire spec
    (capability ID, offering, mode, headers).
-3. Forwards via Livepeer middleware to a capability-broker.
-4. Returns the broker's response to the OpenAI client.
+3. Selects a broker either from static config or through
+   `service-registry-daemon`.
+4. Mints payments through the local payer-daemon.
+5. Forwards via Livepeer middleware to the selected capability-broker.
+6. Returns the broker's response to the OpenAI client.
 
 This is the "first adopter" reference for the wire spec.
 
@@ -29,17 +32,11 @@ to produce the `Livepeer-Capability` header value.
 
 - **Customer auth.** Accepts any `Authorization: Bearer <token>` value.
   Real per-API-key auth is operator-side.
-- **Resolver.** Hardcoded broker URL via `LIVEPEER_BROKER_URL` env var.
-  Real resolver integration with `service-registry-daemon` is operator-
-  side.
-- **Payment-daemon (sender).** Sends `Livepeer-Payment: stub-payment`.
-  Broker's mock payment middleware accepts any non-empty value. Real
-  envelope minting is plan 0005.
 - **Postgres ledger / Stripe / free-tier.** Operator concerns.
-- **Streaming pass-through.** The middleware buffers the response body
-  to read trailers; the gateway therefore delivers SSE responses
-  atomically. Format is correct; latency semantics differ. Tracked as
-  tech-debt.
+- **Advanced resolver policy.** The gateway now routes from
+  `service-registry-daemon`, but only v1 policy ships: hard
+  `constraints`, soft `extra` preference, lowest-price tie-break, and
+  simple retry on the next candidate.
 
 ## Internal architecture
 

@@ -6,6 +6,7 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
+  "files": ["dist", "migrations", "README.md"],
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
@@ -16,6 +17,8 @@
     "@aws-sdk/client-s3": "^3.679.0",
     "@aws-sdk/s3-request-presigner": "^3.679.0",
     "@fastify/multipart": "^9.0.0",
+    "@grpc/grpc-js": "^1.12.2",
+    "@grpc/proto-loader": "^0.7.13",
     "@livepeer-rewrite/customer-portal": "workspace:*",
     "drizzle-orm": "^0.36.0",
     "fastify": "^5.0.0",

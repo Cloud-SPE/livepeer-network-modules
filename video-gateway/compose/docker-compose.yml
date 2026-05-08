@@ -3,7 +3,8 @@
 #
 # Live RTMP ingest on :1935 + LL-HLS playback + tus VOD upload + Stripe
 # webhook on :3000. Reaches a co-located capability-broker via
-# LIVEPEER_BROKER_URL and a co-located payment-daemon (sender) via UDS.
+# LIVEPEER_BROKER_URL or a co-located service-registry-daemon via
+# LIVEPEER_RESOLVER_SOCKET, plus a payment-daemon (sender) via UDS.
 # Postgres + Redis expected externally — bring them up via
 # `infra/compose/docker-compose.yml --profile pg --profile redis`.
 
@@ -13,6 +14,9 @@ services:
     environment:
       PORT: "3000"
       LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL:-http://capability-broker:8080}
+      LIVEPEER_RESOLVER_SOCKET: ${LIVEPEER_RESOLVER_SOCKET:-}
+      LIVEPEER_RESOLVER_PROTO_ROOT: ${LIVEPEER_RESOLVER_PROTO_ROOT:-/app/proto-contracts}
+      LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS: ${LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS:-15000}
       LIVEPEER_BROKER_RTMP_HOST: ${LIVEPEER_BROKER_RTMP_HOST:-capability-broker}
       LIVEPEER_PAYER_DAEMON_SOCKET: ${LIVEPEER_PAYER_DAEMON_SOCKET:-/var/run/livepeer/payer-daemon.sock}
       VIDEO_LIVE_RTMP_LISTEN_ADDR: ${VIDEO_LIVE_RTMP_LISTEN_ADDR:-:1935}
@@ -30,4 +34,5 @@ services:
       - "${VIDEO_RTMP_PORT:-1935}:1935"
     volumes:
       - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${PROTO_CONTRACTS_ROOT:-../../proto-contracts}:/app/proto-contracts:ro
     restart: unless-stopped

@@ -1,0 +1,319 @@
+// Livepeer Payments v1 — PayeeDaemon service.
+//
+// The PayeeDaemon runs next to a payee application (a specialized PayeeApp —
+// e.g., a WorkerNode or a Livepeer orchestrator). It validates tickets,
+// tracks per-sender balances, and redeems winning tickets on-chain via the
+// TicketBroker.
+//
+// This service is mounted only when the daemon is started with
+// `--mode=receiver`. Calls to it in sender mode return UNIMPLEMENTED.
+
+syntax = "proto3";
+
+package livepeer.payments.v1;
+
+import "livepeer/payments/v1/types.proto";
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/payments/v1;paymentsv1";
+
+service PayeeDaemon {
+  // Return the TicketParams and per-offering pricing for a (sender, capability)
+  // pair. The payer app queries this via its PayeeApp peer and hands the
+  // result to its own PayerDaemon when starting a session. One TicketParams
+  // covers every offering on the capability; per-offering prices are carried in
+  // `offering_prices` and are what the payer checks against when billing.
+  rpc GetQuote(GetQuoteRequest) returns (GetQuoteResponse);
+
+  // Return canonical payee-issued TicketParams for an exact sender /
+  // recipient / face-value tuple. This is the v3.0.1 replacement for the
+  // cryptographic half of the old quote flow: pricing comes from manifest /
+  // resolver, while the payee still owns recipientRandHash and expiry
+  // generation.
+  rpc GetTicketParams(GetTicketParamsRequest) returns (GetTicketParamsResponse);
+
+  // Return the daemon's full configured capability catalog. Drives the
+  // worker's /capabilities HTTP response.
+  rpc ListCapabilities(ListCapabilitiesRequest) returns (ListCapabilitiesResponse);
+
+  // Open a payee-side session and bind authoritative pricing metadata to
+  // `work_id`. The worker later seals the session's sender on the first
+  // successful ProcessPayment.
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+
+  // Validate an incoming payment blob, credit the sender's balance by the
+  // payment's expected value, and queue any winning tickets for redemption.
+  // Requires a previously-opened session for `work_id`.
+  rpc ProcessPayment(ProcessPaymentRequest) returns (ProcessPaymentResponse);
+
+  // Debit session-priced work units from a (sender, work_id) balance after the
+  // payee has actually done the work. Retries are idempotent by
+  // (sender, work_id, debit_seq). Returns the new balance.
+  rpc DebitBalance(DebitBalanceRequest) returns (DebitBalanceResponse);
+
+  // Check whether a (sender, work_id) balance covers a minimum number of
+  // session-priced work units, without debiting.
+  rpc SufficientBalance(SufficientBalanceRequest) returns (SufficientBalanceResponse);
+
+  // Get the current balance for a (sender, work_id) pair.
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+
+  // Close and garbage-collect a work session. Any residual credit is
+  // forfeited.
+  rpc CloseSession(PayeeDaemonCloseSessionRequest) returns (PayeeDaemonCloseSessionResponse);
+
+  // Admin / observability: list winning tickets currently queued for
+  // on-chain redemption.
+  rpc ListPendingRedemptions(ListPendingRedemptionsRequest) returns (ListPendingRedemptionsResponse);
+
+  // Admin / observability: return the on-chain redemption status of a
+  // previously-identified winning ticket.
+  rpc GetRedemptionStatus(GetRedemptionStatusRequest) returns (GetRedemptionStatusResponse);
+}
+
+message GetQuoteRequest {
+  // ETH address of the sender asking for a quote.
+  bytes sender = 1;
+
+  // Capability the sender intends to purchase. The daemon maps this to the
+  // `PriceInfo.capability` uint32 at the wire boundary. One capability may
+  // host many offerings; the response lists them all.
+  string capability = 2;
+}
+
+message GetQuoteResponse {
+  // Single TicketParams for this (sender, capability). Face value is sized
+  // to cover the most expensive offering on this capability so one session
+  // covers the whole offering set without re-keying RecipientRandHash per
+  // offering.
+  TicketParams ticket_params = 1;
+
+  // Per-offering pricing. Ordered by offering id for deterministic comparison
+  // on the bridge's quote-refresh cycle. Empty iff the daemon has no
+  // offerings configured for this capability (caller should treat as NotFound).
+  repeated OfferingPrice offering_prices = 2;
+}
+
+message GetTicketParamsRequest {
+  // ETH address of the sender that will sign the ticket.
+  bytes sender = 1;
+
+  // ETH address of the intended recipient. Must match the receiver daemon's
+  // configured recipient when provided.
+  bytes recipient = 2;
+
+  // Target spend / expected-value request in wei, big-endian bytes, for the
+  // quote-free sender/payee flow. The receiver may return a larger
+  // TicketParams.face_value when redemption economics require a redeemable
+  // winning ticket, paired with a lower win probability so expected spend stays
+  // aligned with this request.
+  bytes face_value = 3;
+
+  // Optional capability / offering metadata for logging and future metrics.
+  string capability = 4;
+  string offering = 5;
+}
+
+message GetTicketParamsResponse {
+  TicketParams ticket_params = 1;
+}
+
+// OfferingPrice pairs an offering identifier with its wei-per-work-unit price.
+// Shared between GetQuoteResponse and ListCapabilitiesResponse so the two
+// surfaces cannot drift.
+message OfferingPrice {
+  // Offering identifier, e.g. "llama-3.3-70b". Must match the offering string the
+  // bridge uses when resolving a request to a node.
+  string id = 1;
+
+  // Price for one work unit (see CapabilityEntry.work_unit for the meaning
+  // of "unit" on this capability).
+  PriceInfo price_info = 2;
+}
+
+// ─── ListCapabilities ─────────────────────────────────────────────────────
+
+message ListCapabilitiesRequest {}
+
+message ListCapabilitiesResponse {
+  reserved 1;
+  reserved "protocol_version";
+
+  // Full capability catalog as parsed by the daemon at startup. Ordered
+  // by capability string, then offering id, for deterministic comparison.
+  repeated CapabilityEntry capabilities = 2;
+}
+
+message CapabilityEntry {
+  // Capability string in the canonical form `openai:<uri-path>` for the
+  // OpenAI module family; other modules use their own domain prefix
+  // (e.g. `transcoding:...`). Opaque to the daemon.
+  string capability = 1;
+
+  // Work-unit identifier for observability ("token", "audio_second",
+  // "image_step_megapixel", "character", ...). The daemon treats work
+  // units as opaque int64 — this field is metadata for the worker /
+  // bridge.
+  string work_unit = 2;
+
+  // Offerings served on this capability, with their configured prices.
+  repeated OfferingPrice offerings = 3;
+}
+
+message OpenSessionRequest {
+  // Opaque session identifier chosen by the payee app.
+  string work_id = 1;
+
+  // Capability the session is opened against.
+  string capability = 2;
+
+  // Offering the session is opened against.
+  string offering = 3;
+
+  // Authoritative price per work unit for this session (wei, big-endian
+  // bytes).
+  bytes price_per_work_unit_wei = 4;
+
+  // Work-unit identifier for this session ("token", "second", ...).
+  string work_unit = 5;
+}
+
+message OpenSessionResponse {
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_OPENED = 1;
+    OUTCOME_ALREADY_OPEN = 2;
+  }
+
+  Outcome outcome = 1;
+}
+
+message ProcessPaymentRequest {
+  // Wire-format `livepeer.payments.v1.Payment` bytes, exactly as received
+  // from the sender.
+  bytes payment_bytes = 1;
+
+  // Opaque session identifier chosen by the payee app. The daemon requires
+  // a previously-opened session with this id.
+  string work_id = 2;
+}
+
+message ProcessPaymentResponse {
+  // Sender address extracted from the validated payment.
+  bytes sender = 1;
+
+  // Expected value credited to the sender's balance by this payment (wei,
+  // big-endian bytes).
+  bytes credited_ev = 2;
+
+  // New balance after crediting (wei, big-endian bytes).
+  bytes balance = 3;
+
+  // Number of tickets in this payment that were identified as winners and
+  // queued for on-chain redemption.
+  int32 winners_queued = 4;
+}
+
+message DebitBalanceRequest {
+  // Sender whose balance is being debited.
+  bytes sender = 1;
+
+  // Work session whose balance is being debited.
+  string work_id = 2;
+
+  // Number of work units actually consumed.
+  int64 work_units = 3;
+
+  // Monotonic debit sequence number within the session. Retries of the same
+  // logical debit must reuse the same value.
+  uint64 debit_seq = 4;
+}
+
+message DebitBalanceResponse {
+  // New balance after debit (wei, big-endian bytes). Negative values indicate
+  // overdraft; callers should stop serving work when this happens.
+  bytes balance = 1;
+}
+
+message SufficientBalanceRequest {
+  bytes sender = 1;
+  string work_id = 2;
+  // Minimum required runway in session-priced work units.
+  int64 min_work_units = 3;
+}
+
+message SufficientBalanceResponse {
+  bool sufficient = 1;
+
+  // Current balance (wei, big-endian bytes).
+  bytes balance = 2;
+}
+
+message GetBalanceRequest {
+  bytes sender = 1;
+  string work_id = 2;
+}
+
+message GetBalanceResponse {
+  bytes balance = 1;
+}
+
+message PayeeDaemonCloseSessionRequest {
+  bytes sender = 1;
+  string work_id = 2;
+}
+
+message PayeeDaemonCloseSessionResponse {
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    OUTCOME_CLOSED = 1;
+    OUTCOME_ALREADY_CLOSED = 2;
+  }
+
+  Outcome outcome = 1;
+}
+
+message ListPendingRedemptionsRequest {
+  // Optional: filter to tickets queued on or after this Unix epoch seconds.
+  int64 since = 1;
+}
+
+message ListPendingRedemptionsResponse {
+  repeated PendingRedemption redemptions = 1;
+}
+
+message PendingRedemption {
+  // Deterministic ticket identifier (keccak256 of the ticket hash).
+  bytes ticket_hash = 1;
+  bytes sender = 2;
+
+  // Face value (wei, big-endian bytes).
+  bytes face_value = 3;
+
+  // Unix epoch seconds when the ticket was queued.
+  int64 queued_at = 4;
+
+  // Number of on-chain redemption attempts made so far.
+  int32 attempts = 5;
+}
+
+message GetRedemptionStatusRequest {
+  bytes ticket_hash = 1;
+}
+
+message GetRedemptionStatusResponse {
+  enum Status {
+    STATUS_UNSPECIFIED = 0;
+    STATUS_QUEUED = 1;
+    STATUS_SUBMITTED = 2;
+    STATUS_CONFIRMED = 3;
+    STATUS_FAILED = 4;
+  }
+
+  Status status = 1;
+
+  // Transaction hash once submitted; empty before then.
+  bytes tx_hash = 2;
+
+  // Non-empty when status is STATUS_FAILED — operator-actionable message.
+  string error = 3;
+}

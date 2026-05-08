@@ -12,11 +12,18 @@ export class PortalBalance extends LitElement {
       display: block;
     }
     .row {
-      display: flex;
-      gap: var(--space-4);
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+      gap: var(--space-3);
     }
     .stat {
-      flex: 1;
+      padding: var(--space-4);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-1);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.012) 100%),
+        var(--surface-1);
+      box-shadow: var(--shadow-sm);
     }
     .label {
       font-size: var(--font-size-xs);
@@ -26,9 +33,10 @@ export class PortalBalance extends LitElement {
     }
     .value {
       font-size: var(--font-size-2xl);
-      font-weight: 700;
+      font-weight: 650;
       color: var(--text-1);
       font-variant-numeric: tabular-nums;
+      letter-spacing: -0.02em;
     }
     .reserved {
       color: var(--text-2);

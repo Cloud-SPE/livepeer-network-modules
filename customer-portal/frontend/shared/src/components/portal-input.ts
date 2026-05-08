@@ -20,21 +20,28 @@ export class PortalInput extends LitElement {
       font-size: var(--font-size-sm);
       color: var(--text-2);
       margin-bottom: var(--space-1);
+      font-weight: 550;
     }
     input {
       width: 100%;
+      min-height: 2.8rem;
       padding: var(--space-2) var(--space-3);
       border-radius: var(--radius-md);
       border: 1px solid var(--border-1);
-      background: var(--surface-0);
+      background: rgba(255, 255, 255, 0.03);
       color: var(--text-1);
       font-size: var(--font-size-base);
       font-family: inherit;
+      transition:
+        border-color var(--duration-fast) var(--ease-standard),
+        box-shadow var(--duration-fast) var(--ease-standard),
+        background var(--duration-fast) var(--ease-standard);
     }
     input:focus-visible {
       outline: 0;
-      border-color: var(--accent);
+      border-color: var(--accent-line);
       box-shadow: 0 0 0 3px var(--accent-tint);
+      background: rgba(255, 255, 255, 0.045);
     }
     .error {
       color: var(--danger);

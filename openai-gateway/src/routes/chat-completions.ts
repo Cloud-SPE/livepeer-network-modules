@@ -1,12 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-import * as httpReqresp from "../livepeer/http-reqresp.js";
-import * as httpStream from "../livepeer/http-stream.js";
 import { Capability } from "../livepeer/capabilityMap.js";
 import { LivepeerBrokerError } from "../livepeer/errors.js";
-import { buildPayment } from "../livepeer/payment.js";
 import { readOrSynthRequestId } from "../livepeer/requestId.js";
 import { resolveDefaultOffering } from "../service/offerings.js";
+import { dispatchReqresp, dispatchStream } from "../service/routeDispatch.js";
+import type { RouteSelector } from "../service/routeSelector.js";
 import { HEADER } from "../livepeer/headers.js";
 import type { Config } from "../config.js";
 
@@ -16,7 +15,11 @@ interface ChatCompletionsBody {
   [k: string]: unknown;
 }
 
-export function registerChatCompletions(app: FastifyInstance, cfg: Config): void {
+export function registerChatCompletions(
+  app: FastifyInstance,
+  cfg: Config,
+  routeSelector: RouteSelector,
+): void {
   app.post("/v1/chat/completions", async (req: FastifyRequest, reply: FastifyReply) => {
     const body = (req.body ?? {}) as ChatCompletionsBody;
     const isStream = body.stream === true;
@@ -33,11 +36,11 @@ export function registerChatCompletions(app: FastifyInstance, cfg: Config): void
 
     try {
       if (isStream) {
-        const handle = await httpStream.sendStreaming({
-          brokerUrl: cfg.brokerUrl,
+        const handle = await dispatchStream({
+          routeSelector,
+          request: req,
           capability,
           offering,
-          paymentBlob: await buildPayment({ capabilityId: capability, offeringId: offering }),
           body: bodyStr,
           contentType: "application/json",
           requestId,
@@ -53,11 +56,11 @@ export function registerChatCompletions(app: FastifyInstance, cfg: Config): void
         return;
       }
 
-      const result = await httpReqresp.send({
-        brokerUrl: cfg.brokerUrl,
+      const result = await dispatchReqresp({
+        routeSelector,
+        request: req,
         capability,
         offering,
-        paymentBlob: await buildPayment({ capabilityId: capability, offeringId: offering }),
         body: bodyStr,
         contentType: "application/json",
         requestId,

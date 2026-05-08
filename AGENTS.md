@@ -1,7 +1,7 @@
 # AGENTS.md
 
-This is `livepeer-network-rewrite` — a docs-and-spec scaffold for a workload-agnostic
-rearchitecture of the Cloud-SPE Livepeer Network supply side. **No production code yet.**
+This is `livepeer-network-rewrite` — a monorepo for the workload-agnostic
+rearchitecture of the Cloud-SPE Livepeer Network supply side.
 
 ## Operating principles
 
@@ -40,10 +40,12 @@ When a component subfolder exists, navigate from this `AGENTS.md` to that compon
 own `AGENTS.md` for component-specific guidance. The root-level `docs/` holds only
 **cross-cutting** material that binds more than one component.
 
-Planned components (none created yet): `livepeer-network-protocol/`,
-`capability-broker/`, `payment-daemon/`, `service-registry-daemon/`,
-`orch-coordinator/`, `secure-orch-console/`, `gateway-adapters/`. See
-[`README.md`](./README.md) §"Repo shape" for the full list.
+Current top-level components include `livepeer-network-protocol/`,
+`capability-broker/`, `payment-daemon/`, `orch-coordinator/`,
+`secure-orch-console/`, `protocol-daemon/`,
+`service-registry-daemon/`, `chain-commons/`, and `proto-contracts/`.
+Additional components still land as top-level subfolders as the rewrite
+expands.
 
 ## Doing work in this repo
 
@@ -56,8 +58,8 @@ Planned components (none created yet): `livepeer-network-protocol/`,
 - **Conversations and external material go in `docs/references/`.** Date-stamped. Treated
   as point-in-time provenance — do not edit after the fact; supersede with a new doc if
   the picture changes.
-- **No production code yet.** When code arrives, it goes in a top-level component
-  subfolder.
+- **Production code lives in top-level component subfolders.** Cross-cutting docs stay
+  at the repo root; component code and operator docs stay with the component.
 - **Do not copy code, schemas, or configs from `livepeer-network-suite` or its
   submodules without explicit user instruction.** This is a clean-slate rewrite (core
   belief #14). Carryover is allowed only when the user names a specific source repo

@@ -1,12 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
-import * as httpReqresp from "../livepeer/http-reqresp.js";
 import { Capability } from "../livepeer/capabilityMap.js";
 import { LivepeerBrokerError } from "../livepeer/errors.js";
-import { buildPayment } from "../livepeer/payment.js";
 import { readOrSynthRequestId } from "../livepeer/requestId.js";
 import { HEADER } from "../livepeer/headers.js";
 import { resolveDefaultOffering } from "../service/offerings.js";
+import { dispatchReqresp } from "../service/routeDispatch.js";
+import type { RouteSelector } from "../service/routeSelector.js";
 import type { Config } from "../config.js";
 
 interface EmbeddingsBody {
@@ -15,7 +15,11 @@ interface EmbeddingsBody {
   [k: string]: unknown;
 }
 
-export function registerEmbeddings(app: FastifyInstance, cfg: Config): void {
+export function registerEmbeddings(
+  app: FastifyInstance,
+  cfg: Config,
+  routeSelector: RouteSelector,
+): void {
   app.post("/v1/embeddings", async (req: FastifyRequest, reply: FastifyReply) => {
     const body = (req.body ?? {}) as EmbeddingsBody;
     const capability = Capability.Embeddings;
@@ -26,11 +30,11 @@ export function registerEmbeddings(app: FastifyInstance, cfg: Config): void {
     const requestId = readOrSynthRequestId(req);
 
     try {
-      const result = await httpReqresp.send({
-        brokerUrl: cfg.brokerUrl,
+      const result = await dispatchReqresp({
+        routeSelector,
+        request: req,
         capability,
         offering,
-        paymentBlob: await buildPayment({ capabilityId: capability, offeringId: offering }),
         body: JSON.stringify(body),
         contentType: "application/json",
         requestId,

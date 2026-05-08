@@ -30,12 +30,21 @@ export class PortalRecordings extends LitElement {
 
   static styles = css`
     :host { display: block; }
-    section { margin-top: 1rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-1, #d4d4d8); text-align: left; }
-    a { color: var(--accent-1, #2563eb); }
-    .err { color: #b91c1c; }
-    .note { color: var(--text-3, #71717a); font-size: 0.75rem; }
+    section { margin-top: var(--space-5); }
+    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+    th, td { padding: 0.7rem 0.75rem; border-bottom: 1px solid var(--border-1); text-align: left; }
+    th {
+      color: var(--text-3);
+      font-size: var(--font-size-xs);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+    a { color: var(--accent); }
+    .err { color: var(--danger); }
+    .note { color: var(--text-3); font-size: 0.75rem; }
+    .dim { color: var(--text-3); }
   `;
 
   override async connectedCallback(): Promise<void> {
@@ -80,54 +89,66 @@ export class PortalRecordings extends LitElement {
         </p>
 
         <section>
-          <h3>Stream record_to_vod toggle</h3>
-          <table>
-            <thead>
-              <tr><th>Stream</th><th>Record</th></tr>
-            </thead>
-            <tbody>
-              ${this.streams.map(
-                (s) => html`<tr>
-                  <td>${s.name}</td>
-                  <td>
-                    <input
-                      type="checkbox"
-                      .checked=${s.recordToVod}
-                      ?disabled=${!!this.busy[s.id]}
-                      @change=${(e: Event): void => {
-                        void this.toggleRecord(s, (e.target as HTMLInputElement).checked);
-                      }}
-                    />
-                  </td>
-                </tr>`,
-              )}
-            </tbody>
-          </table>
+          <portal-data-table
+            heading="Per-Stream Recording Policy"
+            description="Turn recording on for new or existing live streams before they begin broadcasting."
+          >
+            <table>
+              <thead>
+                <tr><th>Stream</th><th>Record</th></tr>
+              </thead>
+              <tbody>
+                ${this.streams.map(
+                  (s) => html`<tr>
+                    <td>${s.name}</td>
+                    <td>
+                      <input
+                        type="checkbox"
+                        .checked=${s.recordToVod}
+                        ?disabled=${!!this.busy[s.id]}
+                        @change=${(e: Event): void => {
+                          void this.toggleRecord(s, (e.target as HTMLInputElement).checked);
+                        }}
+                      />
+                    </td>
+                  </tr>`,
+                )}
+              </tbody>
+            </table>
+          </portal-data-table>
         </section>
 
         <section>
-          <h3>Recorded sessions</h3>
-          <table>
-            <thead>
-              <tr><th>Stream</th><th>Status</th><th>Asset</th><th>Duration</th><th>Started</th><th>Ended</th></tr>
-            </thead>
-            <tbody>
-              ${this.recordings.map(
-                (r) => html`<tr>
-                  <td>${r.streamName}</td>
-                  <td>${r.status}</td>
-                  <td>
-                    ${r.assetId
-                      ? html`<a href="#/assets">${r.assetId}</a>`
-                      : "-"}
-                  </td>
-                  <td>${r.durationSec !== null ? r.durationSec.toFixed(1) + "s" : "-"}</td>
-                  <td>${r.startedAt}</td>
-                  <td>${r.endedAt ?? ""}</td>
-                </tr>`,
-              )}
-            </tbody>
-          </table>
+          <portal-data-table
+            heading="Recorded Sessions"
+            description="Completed and in-progress VOD captures generated from your live streams."
+          >
+            <table>
+              <thead>
+                <tr><th>Stream</th><th>Status</th><th>Asset</th><th>Duration</th><th>Started</th><th>Ended</th></tr>
+              </thead>
+              <tbody>
+                ${this.recordings.map(
+                  (r) => html`<tr>
+                    <td>${r.streamName}</td>
+                    <td>
+                      <portal-status-pill variant=${r.status === "ready" ? "success" : r.status === "failed" ? "danger" : "info"}>
+                        ${r.status}
+                      </portal-status-pill>
+                    </td>
+                    <td>
+                      ${r.assetId
+                        ? html`<a href="#/assets">${r.assetId}</a>`
+                        : html`<span class="dim">-</span>`}
+                    </td>
+                    <td>${r.durationSec !== null ? r.durationSec.toFixed(1) + "s" : "-"}</td>
+                    <td>${r.startedAt}</td>
+                    <td>${r.endedAt ?? html`<span class="dim">active</span>`}</td>
+                  </tr>`,
+                )}
+              </tbody>
+            </table>
+          </portal-data-table>
         </section>
       </portal-card>
     `;

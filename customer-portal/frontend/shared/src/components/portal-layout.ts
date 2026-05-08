@@ -10,27 +10,34 @@ export class PortalLayout extends LitElement {
       display: grid;
       grid-template-rows: auto 1fr auto;
       min-height: 100vh;
-      background: var(--surface-0);
+      background:
+        radial-gradient(circle at top left, var(--accent-tint), transparent 22rem),
+        linear-gradient(180deg, var(--surface-canvas) 0%, var(--surface-0) 100%);
       color: var(--text-1);
       font-family: var(--font-sans);
     }
     header {
       padding: var(--space-3) var(--space-5);
       border-bottom: 1px solid var(--border-1);
-      background: var(--surface-1);
+      background: var(--surface-overlay);
+      backdrop-filter: blur(18px);
     }
     .brand {
       font-weight: 700;
       font-size: var(--font-size-lg);
+      letter-spacing: -0.02em;
     }
     main {
-      padding: var(--space-5);
+      padding: var(--space-6) var(--space-5);
+      width: min(1120px, 100%);
+      margin: 0 auto;
     }
     footer {
       padding: var(--space-3) var(--space-5);
       border-top: 1px solid var(--border-1);
       color: var(--text-3);
       font-size: var(--font-size-xs);
+      background: rgba(255, 255, 255, 0.02);
     }
   `;
 

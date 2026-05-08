@@ -12,6 +12,9 @@ export const HEADER = {
   BACKOFF: "Livepeer-Backoff",
   WORK_UNITS: "Livepeer-Work-Units",
   ERROR: "Livepeer-Error",
+  SELECTOR_EXTRA: "Livepeer-Selector-Extra",
+  SELECTOR_CONSTRAINTS: "Livepeer-Selector-Constraints",
+  SELECTOR_MAX_PRICE_WEI: "Livepeer-Selector-Max-Price-Wei",
 } as const;
 
 export const SPEC_VERSION = "0.1";

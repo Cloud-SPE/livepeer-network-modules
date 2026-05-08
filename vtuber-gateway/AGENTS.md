@@ -32,9 +32,10 @@ Inherited from the repo root + `customer-portal/`. Plus:
   short-lived, minted by this gateway and verified by the runner.
 - **Session-bearer (customer-side) is `vtbs_<43-char-base64url>`** —
   HMAC-SHA-256 with pepper, hash-stored (suite parity).
-- **Live-only control-WS relay; no replay buffer in M6** (Q9 lock).
-  Customer reconnects = `cannot_resume`. 30s replay buffer is a
-  follow-up commit.
+- **Session-open returns the broker-hosted `control_url`.** The local
+  relay route remains in-tree for future gateway-mediated control, but
+  the active runtime path is direct broker control over
+  `session-control-plus-media@v0`.
 - **Vtuber-specific portal pages live in `src/frontend/portal/`**
   (OQ3 lock) — the shared shell only ships common widgets; product
   pages compose those primitives.
@@ -88,5 +89,5 @@ Code is ported from
 `livepeer-network-suite/livepeer-vtuber-gateway/src/` (TypeScript) per
 plan 0013-vtuber §5.1. The schema is renumbered + namespaced to
 `vtuber.*` (suite shipped flat tables in `public.*`). Quote-related
-code (`quoteRefresher`, `serviceRegistry`) is **dropped** per the
-quote-free flow; broker URL is the only resolver.
+code is **dropped** per the quote-free flow; manifest-driven worker
+selection via `service-registry-daemon` is active.

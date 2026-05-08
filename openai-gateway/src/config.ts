@@ -1,10 +1,29 @@
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+import { existsSync } from "node:fs";
+
 import { loadOfferingsFromDisk, type OfferingsConfig } from "./service/offerings.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(__dirname, "..", "..");
+const DEFAULT_PAYMENT_PROTO_ROOT = firstExistingPath([
+  resolve("/app", "proto"),
+  resolve(REPO_ROOT, "livepeer-network-protocol", "proto"),
+]);
+const DEFAULT_RESOLVER_PROTO_ROOT = firstExistingPath([
+  resolve("/app", "proto-contracts"),
+  resolve(REPO_ROOT, "proto-contracts"),
+]);
+
 export interface Config {
-  brokerUrl: string;
+  brokerUrl: string | null;
+  resolverSocket: string | null;
   listenPort: number;
   defaultOffering: string;
   payerDaemonSocket: string;
+  paymentProtoRoot: string;
+  resolverProtoRoot: string;
+  resolverSnapshotTtlMs: number;
   offeringsConfigPath: string;
   offerings: OfferingsConfig;
   audioSpeechEnabled: boolean;
@@ -13,8 +32,11 @@ export interface Config {
 
 export function loadConfig(): Config {
   const brokerUrl = process.env["LIVEPEER_BROKER_URL"];
-  if (!brokerUrl) {
-    throw new Error("LIVEPEER_BROKER_URL env var is required (e.g. http://broker:8080)");
+  const resolverSocket = process.env["LIVEPEER_RESOLVER_SOCKET"] ?? null;
+  if (!brokerUrl && !resolverSocket) {
+    throw new Error(
+      "set either LIVEPEER_BROKER_URL for static routing or LIVEPEER_RESOLVER_SOCKET for manifest-driven routing",
+    );
   }
   const listenPort = parseInt(process.env["PORT"] ?? "3000", 10);
   if (Number.isNaN(listenPort) || listenPort <= 0) {
@@ -25,11 +47,15 @@ export function loadConfig(): Config {
     "/etc/openai-gateway/offerings.yaml";
 
   return {
-    brokerUrl,
+    brokerUrl: brokerUrl ?? null,
+    resolverSocket,
     listenPort,
     defaultOffering: process.env["LIVEPEER_DEFAULT_OFFERING"] ?? "default",
     payerDaemonSocket:
       process.env["LIVEPEER_PAYER_DAEMON_SOCKET"] ?? "/var/run/livepeer/payer-daemon.sock",
+    paymentProtoRoot: process.env["LIVEPEER_PAYMENT_PROTO_ROOT"] ?? DEFAULT_PAYMENT_PROTO_ROOT,
+    resolverProtoRoot: process.env["LIVEPEER_RESOLVER_PROTO_ROOT"] ?? DEFAULT_RESOLVER_PROTO_ROOT,
+    resolverSnapshotTtlMs: parseInt(process.env["LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS"] ?? "15000", 10),
     offeringsConfigPath,
     offerings: loadOfferingsFromDisk(offeringsConfigPath),
     audioSpeechEnabled: parseBool(process.env["OPENAI_AUDIO_SPEECH_ENABLED"], false),
@@ -40,4 +66,11 @@ export function loadConfig(): Config {
 function parseBool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined) return fallback;
   return value === "1" || value.toLowerCase() === "true";
+}
+
+function firstExistingPath(paths: string[]): string {
+  for (const candidate of paths) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return paths[0]!;
 }

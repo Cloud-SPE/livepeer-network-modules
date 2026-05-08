@@ -69,6 +69,7 @@ export function createInMemorySessionStore(): InMemorySessionStore {
         ...(patch.workerSessionId !== undefined
           ? { workerSessionId: patch.workerSessionId }
           : {}),
+        ...(patch.controlUrl !== undefined ? { controlUrl: patch.controlUrl } : {}),
         ...(patch.payerWorkId !== undefined
           ? { payerWorkId: patch.payerWorkId }
           : {}),

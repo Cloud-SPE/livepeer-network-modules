@@ -2,7 +2,9 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import type { Config } from "../config.js";
+import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
 import { openRtmpSession } from "../livepeer/rtmp-adapter.js";
+import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
 import {
   selectAbrLadder,
   type CustomerTier,
@@ -18,6 +20,8 @@ const CreateLiveStreamBody = z.object({
 
 export interface LiveStreamsDeps {
   cfg: Config;
+  routeSelector: VideoRouteSelector;
+  liveSessions: LiveSessionDirectory;
 }
 
 export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps): void {
@@ -28,7 +32,6 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       return;
     }
     const streamId = `live_${randomHex16()}`;
-    const streamKey = randomHex16();
     const recordToVod = parsed.data.record_to_vod ?? false;
     const customerTier: CustomerTier = parsed.data.customer_tier ?? "free";
 
@@ -39,16 +42,23 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
 
     const session = await openRtmpSession({
       cfg: deps.cfg,
+      routeSelector: deps.routeSelector,
       callerId: parsed.data.project_id,
       offering: parsed.data.offering ?? "default",
       streamId,
+      requestHeaders: req.headers,
+    });
+    deps.liveSessions.record({
+      sessionId: session.sessionId,
+      brokerUrl: session.brokerUrl,
+      hlsPlaybackUrl: session.hlsUrl,
     });
 
     await reply.code(201).send({
       stream_id: streamId,
       session_id: session.sessionId,
-      rtmp_push_url: `${session.brokerRtmpUrl}/${streamKey}`,
-      stream_key: streamKey,
+      rtmp_push_url: session.brokerRtmpUrl,
+      stream_key: parseStreamKey(session.brokerRtmpUrl),
       hls_playback_url: session.hlsUrl,
       record_to_vod: recordToVod,
       customer_tier: customerTier,
@@ -79,4 +89,9 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
 
 function randomHex16(): string {
   return Math.random().toString(16).slice(2, 18).padEnd(16, "0");
+}
+
+function parseStreamKey(rtmpUrl: string): string {
+  const segments = rtmpUrl.split("/");
+  return segments[segments.length - 1] ?? "";
 }

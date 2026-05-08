@@ -13,10 +13,13 @@ export class PortalToast extends LitElement {
       display: block;
       padding: var(--space-3) var(--space-4);
       border-radius: var(--radius-md);
-      background: var(--surface-2);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.015) 100%),
+        var(--surface-2);
       color: var(--text-1);
       border: 1px solid var(--border-1);
       font-size: var(--font-size-sm);
+      box-shadow: var(--shadow-sm);
     }
     :host([variant='success']) {
       background: var(--success-tint);

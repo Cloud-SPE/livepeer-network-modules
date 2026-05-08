@@ -1,0 +1,21 @@
+overlay:
+  - eth_address: "0xabcdef0000000000000000000000000000000000"
+    enabled: true
+    tier_allowed: [free, prepaid]
+    weight: 100
+    unsigned_allowed: true   # required when no manifest is present
+    pin:
+      - id: ai-1
+        url: "https://ai-1.example.com:8935"
+        capabilities:
+          - name: "openai:/v1/chat/completions"
+            work_unit: token
+            offerings:
+              - id: gpt-oss-20b
+                price_per_work_unit_wei: "1000"
+        tier_allowed: [prepaid]
+      - id: tx-1
+        url: "https://tx-1.example.com:8935"
+        capabilities:
+          - name: "livepeer:transcoder/h264"
+            work_unit: frame

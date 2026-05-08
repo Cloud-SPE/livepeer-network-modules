@@ -169,6 +169,12 @@ importers:
       '@fastify/multipart':
         specifier: ^9.0.0
         version: 9.4.0
+      '@grpc/grpc-js':
+        specifier: ^1.12.2
+        version: 1.14.3
+      '@grpc/proto-loader':
+        specifier: ^0.7.13
+        version: 0.7.15
       '@livepeer-rewrite/customer-portal':
         specifier: workspace:*
         version: link:../customer-portal
@@ -314,6 +320,19 @@ importers:
       rxjs:
         specifier: ^7.8.0
         version: 7.8.2
+    devDependencies:
+      '@types/jsdom':
+        specifier: ^21.1.7
+        version: 21.1.7
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      jsdom:
+        specifier: ^25.0.0
+        version: 25.0.1
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
 
   vtuber-runner/avatar-renderer:
     dependencies:

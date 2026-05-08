@@ -7,7 +7,7 @@ async function main(): Promise<void> {
 
   // Dial the local payer-daemon. Routes call payment.buildPayment per
   // request, which uses this connection.
-  await payment.init({ socketPath: cfg.payerDaemonSocket });
+  await payment.init({ socketPath: cfg.payerDaemonSocket, protoRoot: cfg.paymentProtoRoot });
 
   const app = buildServer(cfg);
   try {

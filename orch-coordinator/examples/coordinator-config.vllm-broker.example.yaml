@@ -1,0 +1,22 @@
+# Example coordinator-config.yaml for a single capability-broker advertising
+# one OpenAI-compatible chat-completions capability backed by vLLM.
+#
+# Pair this with:
+#   capability-broker/examples/host-config.vllm-chat.example.yaml
+# and:
+#   capability-broker/compose/docker-compose.vllm-chat.yml
+#
+# Replace `orch_eth_address` with the real orchestrator identity whose manifest
+# will be signed on secure-orch. Replace the broker `base_url` with the broker's
+# LAN-reachable address if the coordinator is not running on the same Docker
+# network.
+
+identity:
+  orch_eth_address: "0x1234567890abcdef1234567890abcdef12345678"
+
+brokers:
+  - name: broker-a
+    base_url: http://capability_broker:8080
+
+publish:
+  manifest_ttl: 24h

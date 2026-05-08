@@ -4,3 +4,5 @@ import "./components/portal-assets.js";
 import "./components/portal-streams.js";
 import "./components/portal-webhooks.js";
 import "./components/portal-recordings.js";
+
+document.body.dataset.livepeerUiMode = "product-app";

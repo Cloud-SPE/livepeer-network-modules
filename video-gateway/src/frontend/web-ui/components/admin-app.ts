@@ -16,26 +16,89 @@ export class VideoGatewayAdmin extends LitElement {
   static styles = css`
     :host {
       display: block;
-      font-family: var(--font-sans, system-ui, sans-serif);
     }
-    nav {
+    .hero {
+      display: grid;
+      gap: var(--space-4);
+      margin-bottom: var(--space-5);
+    }
+    .eyebrow {
+      color: var(--accent);
+      font: 600 var(--font-size-xs) / 1 var(--font-sans);
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    h1 {
+      font-size: var(--font-size-3xl);
+    }
+    .lede {
+      max-width: 72ch;
+      color: var(--text-2);
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+      gap: var(--space-3);
+    }
+    .metric {
+      padding: var(--space-4);
+      border: 1px solid var(--border-1);
+      border-radius: var(--radius-lg);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.015) 100%),
+        var(--surface-1);
+      box-shadow: var(--shadow-sm);
+    }
+    .metric-label {
+      display: block;
+      margin-bottom: var(--space-2);
+      color: var(--text-3);
+      font-size: var(--font-size-xs);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+    .metric-value {
+      display: block;
+      color: var(--text-1);
+      font-size: var(--font-size-xl);
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+    .nav {
       display: flex;
-      gap: 0.75rem;
-      padding: 0.75rem 1rem;
-      border-bottom: 1px solid var(--border-1, #d4d4d8);
-      background: var(--surface-1, #fafafa);
+      flex-wrap: wrap;
+      gap: var(--space-2);
     }
-    nav a {
-      color: var(--text-1, #18181b);
+    .nav a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 2.5rem;
+      padding: 0.55rem 0.95rem;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--border-1);
+      background: rgba(255, 255, 255, 0.02);
+      color: var(--text-2);
       text-decoration: none;
       font-weight: 600;
-      font-size: 0.875rem;
+      font-size: var(--font-size-sm);
+      transition:
+        background var(--duration-fast) var(--ease-standard),
+        border-color var(--duration-fast) var(--ease-standard),
+        color var(--duration-fast) var(--ease-standard);
     }
-    nav a.active {
-      color: var(--accent-1, #2563eb);
+    .nav a:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-1);
     }
-    main {
-      padding: 1rem;
+    .nav a.active {
+      color: var(--text-1);
+      border-color: var(--accent-line);
+      background: var(--accent-tint);
+      box-shadow: inset 0 0 0 1px rgba(24, 121, 78, 0.16);
+    }
+    .content {
+      display: grid;
+      gap: var(--space-4);
     }
   `;
 
@@ -99,14 +162,36 @@ export class VideoGatewayAdmin extends LitElement {
     const link = (to: string, label: string, key: string): TemplateResult =>
       html`<a class=${view === key ? "active" : ""} href="#${to}">${label}</a>`;
     return html`
-      <nav>
-        ${link("/customers", "Customers", "customers")}
-        ${link("/assets", "Assets", "assets")}
-        ${link("/streams", "Streams", "streams")}
-        ${link("/webhooks", "Webhooks", "webhooks")}
-        ${link("/recordings", "Recordings", "recordings")}
-      </nav>
-      <main>${this.renderView()}</main>
+      <portal-layout brand="Livepeer Network Console">
+        <div slot="nav" class="nav">
+          ${link("/customers", "Customers", "customers")}
+          ${link("/assets", "Assets", "assets")}
+          ${link("/streams", "Streams", "streams")}
+          ${link("/webhooks", "Webhooks", "webhooks")}
+          ${link("/recordings", "Recordings", "recordings")}
+        </div>
+
+        <section class="hero">
+          <span class="eyebrow">Video Gateway</span>
+          <h1>Operator surface for streams, assets, and webhook delivery.</h1>
+          <p class="lede">
+            This console keeps customer lifecycle, live ingest, VOD capture, and
+            downstream delivery in one place. It uses the same Livepeer network
+            language as the rest of the control plane.
+          </p>
+          <div class="metrics">
+            <portal-metric-tile label="Control Plane" value="Network Console"></portal-metric-tile>
+            <portal-metric-tile label="Routing Model" value="Manifest-driven"></portal-metric-tile>
+            <portal-metric-tile label="Primary Domain" value="Video + VOD"></portal-metric-tile>
+          </div>
+        </section>
+
+        <section class="content">
+          ${this.renderView()}
+        </section>
+
+        <span slot="footer">Livepeer video gateway operator console</span>
+      </portal-layout>
     `;
   }
 }

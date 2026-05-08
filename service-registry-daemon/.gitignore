@@ -1,0 +1,30 @@
+# Build output
+bin/
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local secrets (never commit)
+*.keystore
+*-password
+.env
+keystore.json
+
+# BoltDB cache files (operator-local)
+*.db
+registry-cache.db
+
+# Coverage
+coverage.out
+coverage.html
+
+# Dev sockets
+*.sock

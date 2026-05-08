@@ -1,0 +1,55 @@
+# chain-commons-specific golangci-lint config.
+# Inherits from the monorepo-root .golangci.yml.
+#
+# Schema: golangci-lint v2.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - depguard
+
+  settings:
+    depguard:
+      rules:
+        # Service code may not import bbolt directly — go through providers/store.
+        services:
+          list-mode: lax
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/providers/**"
+            - "!**/testing/**"
+          deny:
+            - pkg: "go.etcd.io/bbolt"
+              desc: "use providers/store instead of bbolt directly"
+
+        # Service code may not import net/http — chain-commons doesn't need
+        # outbound HTTP outside the rpc provider implementation.
+        services-no-http:
+          list-mode: lax
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/providers/**"
+          deny:
+            - pkg: "net/http"
+              desc: "outbound HTTP must live behind a provider abstraction"
+
+        # No prometheus import in any chain-commons code; daemons inject Recorder.
+        no-prometheus:
+          list-mode: lax
+          files:
+            - "$all"
+          deny:
+            - pkg: "github.com/prometheus/client_golang"
+              desc: "chain-commons does not import Prometheus directly; use providers/metrics.Recorder"
+
+  exclusions:
+    rules:
+      # Test files: Close() / Fprint return ignores are standard test patterns.
+      - path: _test\.go$
+        linters:
+          - errcheck

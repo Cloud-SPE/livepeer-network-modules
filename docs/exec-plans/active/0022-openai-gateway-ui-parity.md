@@ -148,12 +148,17 @@ separate frontend-only service.
 Minimum usable parity:
 
 - signup
-- login
+- API-key-backed login
 - account overview / balance
 - API keys
 - billing / top-up
 - usage summary
-- playground for chat-completions against the user’s own API key
+- playground for the first OpenAI API set against the user’s own API key:
+  - chat completions
+  - embeddings
+  - image generation
+  - audio speech
+  - audio transcription
 
 Nice-to-have near-parity:
 
@@ -168,7 +173,9 @@ Minimum usable parity:
 - admin login
 - health
 - customer search/list
+- customer create
 - customer detail
+- balance adjustment
 - manual refund
 - suspend / unsuspend
 - top-up history
@@ -217,6 +224,7 @@ Nice-to-have v1.5:
 - deep node detail parity
 - full route-debug inspector
 - advanced pricing editors for every capability in the first cut
+- full email/password customer auth flow
 
 ## 7. Recommended implementation strategy
 

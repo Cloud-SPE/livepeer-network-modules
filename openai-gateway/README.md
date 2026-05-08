@@ -35,20 +35,27 @@ Each endpoint:
 The same runtime now also mounts the first gateway shell routes:
 
 - `POST /portal/signup`
-- `POST /portal/login`
+- `POST /portal/login` (API-key-based)
 - `GET /portal/account`
 - `GET /portal/api-keys`
 - `POST /portal/api-keys`
+- `GET /portal/topups`
 - `POST /portal/topups/checkout` when Stripe is configured
 - `POST /portal/stripe/webhook` when Stripe is configured
+- `POST /admin/customers`
 - `GET /admin/customers`
+- `GET /admin/customers/:id`
+- `POST /admin/customers/:id/balance`
+- `POST /admin/customers/:id/status`
+- `POST /admin/customers/:id/refund`
+- `GET /admin/topups`
 - `GET /admin/audit`
 
 ## What it is not
 
 - Final production product shell. The portal/admin surface is now real
   and deployable, but still intentionally thin relative to the older
-  bridge: limited admin flows, API-key-based customer auth, and a v1
+  bridge: API-key-based customer auth, no full password auth flow, and a v1
   playground.
 
 ## Status

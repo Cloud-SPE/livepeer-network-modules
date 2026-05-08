@@ -6,6 +6,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   root: resolve(__dirname, 'src/frontend/admin'),
+  base: '/admin/console/',
   build: {
     outDir: 'dist',
     emptyOutDir: true,

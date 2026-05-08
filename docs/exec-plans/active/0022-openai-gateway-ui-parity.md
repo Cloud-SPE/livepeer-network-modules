@@ -187,6 +187,11 @@ OpenAI-specific v1.5:
 - route / resolver visibility
 - resolved offering / candidate inspection
 
+Current landing shape:
+
+- JSON snapshot editor for rate-card management
+- resolver candidate table sourced from the live route selector pool
+
 ### 6.3 Customer playground v1
 
 The portal should include a first-class playground route. The reference idea exists in

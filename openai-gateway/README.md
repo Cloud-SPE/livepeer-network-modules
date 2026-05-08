@@ -50,6 +50,9 @@ The same runtime now also mounts the first gateway shell routes:
 - `POST /admin/customers/:id/refund`
 - `GET /admin/topups`
 - `GET /admin/audit`
+- `GET /admin/openai/rate-card`
+- `PUT /admin/openai/rate-card`
+- `GET /admin/openai/resolver-candidates`
 
 ## What it is not
 
@@ -57,6 +60,8 @@ The same runtime now also mounts the first gateway shell routes:
   and deployable, but still intentionally thin relative to the older
   bridge: API-key-based customer auth, no full password auth flow, and a v1
   playground.
+  Rate-card management is currently JSON-snapshot based rather than a
+  polished field-by-field editor.
 
 ## Status
 

@@ -42,7 +42,7 @@ async function main(): Promise<void> {
   // request, which uses this connection.
   await payment.init({ socketPath: cfg.payerDaemonSocket, protoRoot: cfg.paymentProtoRoot });
 
-  const app = await buildServer({ cfg, db, portal });
+  const app = await buildServer({ cfg, db, portal, rateCardStore: pool });
   try {
     await app.listen({ host: "0.0.0.0", port: cfg.listenPort });
   } catch (err) {

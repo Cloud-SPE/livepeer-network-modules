@@ -3,6 +3,13 @@ import type pg from 'pg';
 import type { ImageQuality, PricingTier, RateCardSnapshot } from '../service/pricing/types.js';
 
 export type Queryable = Pick<pg.Pool, 'query'>;
+type TransactionalClient = {
+  query: (sql: string, args?: unknown[]) => Promise<unknown>;
+  release: () => void;
+};
+type Transactional = {
+  connect: () => Promise<TransactionalClient>;
+};
 
 interface ChatTierRow {
   tier: string;
@@ -111,4 +118,73 @@ export async function loadRateCardSnapshot(pool: Queryable): Promise<RateCardSna
       sortOrder: r.sort_order,
     })),
   };
+}
+
+export async function replaceRateCardSnapshot(
+  pool: Queryable & Partial<Transactional>,
+  snapshot: RateCardSnapshot,
+): Promise<void> {
+  if (!('connect' in pool) || typeof pool.connect !== 'function') {
+    throw new Error('replaceRateCardSnapshot requires a pg.Pool-like client with connect()');
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM app.rate_card_chat_models');
+    await client.query('DELETE FROM app.rate_card_chat_tiers');
+    await client.query('DELETE FROM app.rate_card_embeddings');
+    await client.query('DELETE FROM app.rate_card_audio_speech');
+    await client.query('DELETE FROM app.rate_card_audio_transcripts');
+    await client.query('DELETE FROM app.rate_card_images');
+
+    for (const row of snapshot.chatTiers) {
+      await client.query(
+        `INSERT INTO app.rate_card_chat_tiers (tier, input_usd_per_million, output_usd_per_million)
+         VALUES ($1, $2, $3)`,
+        [row.tier, row.inputUsdPerMillion, row.outputUsdPerMillion],
+      );
+    }
+    for (const row of snapshot.chatModels) {
+      await client.query(
+        `INSERT INTO app.rate_card_chat_models (model_or_pattern, is_pattern, tier, sort_order)
+         VALUES ($1, $2, $3, $4)`,
+        [row.modelOrPattern, row.isPattern, row.tier, row.sortOrder],
+      );
+    }
+    for (const row of snapshot.embeddings) {
+      await client.query(
+        `INSERT INTO app.rate_card_embeddings (model_or_pattern, is_pattern, usd_per_million_tokens, sort_order)
+         VALUES ($1, $2, $3, $4)`,
+        [row.modelOrPattern, row.isPattern, row.usdPerMillionTokens, row.sortOrder],
+      );
+    }
+    for (const row of snapshot.audioSpeech) {
+      await client.query(
+        `INSERT INTO app.rate_card_audio_speech (model_or_pattern, is_pattern, usd_per_million_chars, sort_order)
+         VALUES ($1, $2, $3, $4)`,
+        [row.modelOrPattern, row.isPattern, row.usdPerMillionChars, row.sortOrder],
+      );
+    }
+    for (const row of snapshot.audioTranscripts) {
+      await client.query(
+        `INSERT INTO app.rate_card_audio_transcripts (model_or_pattern, is_pattern, usd_per_minute, sort_order)
+         VALUES ($1, $2, $3, $4)`,
+        [row.modelOrPattern, row.isPattern, row.usdPerMinute, row.sortOrder],
+      );
+    }
+    for (const row of snapshot.images) {
+      await client.query(
+        `INSERT INTO app.rate_card_images (model_or_pattern, is_pattern, size, quality, usd_per_image, sort_order)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [row.modelOrPattern, row.isPattern, row.size, row.quality, row.usdPerImage, row.sortOrder],
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }

@@ -30,6 +30,15 @@ type Topup = {
   refunded_at: string | null;
 };
 
+type ResolverCandidate = {
+  brokerUrl: string;
+  capability: string;
+  offering: string;
+  ethAddress: string;
+  pricePerWorkUnitWei: string;
+  workUnit: string;
+};
+
 const rootEl = document.getElementById('app');
 if (!rootEl) throw new Error('missing #app');
 
@@ -39,6 +48,7 @@ const state = {
   selected: null as Customer | null,
   audit: [] as AuditEvent[],
   topups: [] as Topup[],
+  resolverCandidates: [] as ResolverCandidate[],
   query: '',
   error: '',
   createEmail: '',
@@ -47,6 +57,7 @@ const state = {
   adjustReason: '',
   refundSessionId: '',
   refundReason: '',
+  rateCardJson: '',
 };
 
 void bootstrap();
@@ -217,6 +228,48 @@ function dashboardView() {
       </portal-data-table>
     </div>
     <div style="margin-top:1rem">
+      <portal-card heading="Resolver visibility" subheading="Current manifest-derived route pool available to the gateway.">
+        <portal-data-table heading="Resolved candidates" description="Capability/offering tuples fetched from service-registry-daemon.">
+          <table>
+            <thead>
+              <tr><th>Capability</th><th>Offering</th><th>Broker URL</th><th>Orch</th><th>Price</th></tr>
+            </thead>
+            <tbody>
+              ${state.resolverCandidates.map(
+                (row) => html`<tr>
+                  <td>${row.capability || 'static-broker'}</td>
+                  <td>${row.offering || 'default'}</td>
+                  <td>${row.brokerUrl}</td>
+                  <td>${row.ethAddress || '—'}</td>
+                  <td>${row.pricePerWorkUnitWei}</td>
+                </tr>`,
+              )}
+            </tbody>
+          </table>
+        </portal-data-table>
+      </portal-card>
+    </div>
+    <div style="margin-top:1rem">
+      <portal-card heading="Rate card management" subheading="Inspect and replace the gateway pricing snapshot.">
+        <form @submit=${saveRateCard}>
+          <label style="display:grid;gap:0.5rem;color:var(--text-2);font-size:var(--font-size-sm);">
+            Rate card JSON
+            <textarea
+              name="rate_card_json"
+              rows="18"
+              .value=${state.rateCardJson}
+              @input=${(e: Event) => (state.rateCardJson = (e.currentTarget as HTMLTextAreaElement).value)}
+              style="border-radius:12px;border:1px solid var(--border-1);background:rgba(255,255,255,0.03);color:var(--text-1);padding:0.9rem;font:var(--font-size-sm)/1.5 var(--font-mono);"
+            ></textarea>
+          </label>
+          <portal-action-row>
+            <portal-button variant="ghost" @click=${loadRateCard}>Reload snapshot</portal-button>
+            <portal-button type="submit">Replace rate card</portal-button>
+          </portal-action-row>
+        </form>
+      </portal-card>
+    </div>
+    <div style="margin-top:1rem">
       <portal-data-table heading="Recent admin audit" description="Latest operator actions against the gateway account system.">
         <table>
           <thead>
@@ -270,6 +323,13 @@ async function createCustomer(event: Event): Promise<void> {
   await refresh(out.customer.id);
 }
 
+async function loadRateCard(event?: Event): Promise<void> {
+  event?.preventDefault();
+  const snapshot = await adminRequest('/admin/openai/rate-card');
+  state.rateCardJson = JSON.stringify(snapshot, null, 2);
+  draw();
+}
+
 async function selectCustomer(id: string): Promise<void> {
   const out = await adminRequest(`/admin/customers/${encodeURIComponent(id)}`);
   state.selected = out.customer;
@@ -315,14 +375,28 @@ async function refundTopup(event: Event): Promise<void> {
   await refresh(state.selected.id);
 }
 
+async function saveRateCard(event: Event): Promise<void> {
+  event.preventDefault();
+  await adminRequest('/admin/openai/rate-card', {
+    method: 'PUT',
+    body: state.rateCardJson,
+    headers: { 'content-type': 'application/json' },
+  });
+  await refresh(state.selected?.id);
+}
+
 async function refresh(preferredCustomerId?: string): Promise<void> {
-  const [customers, audit, topups] = await Promise.all([
+  const [customers, audit, topups, resolverCandidates, rateCard] = await Promise.all([
     adminRequest('/admin/customers'),
     adminRequest('/admin/audit'),
     adminRequest('/admin/topups'),
+    adminRequest('/admin/openai/resolver-candidates'),
+    adminRequest('/admin/openai/rate-card'),
   ]);
   state.customers = customers.customers;
   state.topups = topups.topups;
+  state.resolverCandidates = resolverCandidates.candidates;
+  state.rateCardJson = JSON.stringify(rateCard, null, 2);
   state.selected =
     (preferredCustomerId
       ? state.customers.find((row: Customer) => row.id === preferredCustomerId)

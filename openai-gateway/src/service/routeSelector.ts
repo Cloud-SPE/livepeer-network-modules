@@ -104,6 +104,7 @@ interface CachedSnapshot {
 
 export interface RouteSelector {
   select(input: RouteSelectionInput): Promise<RouteCandidate[]>;
+  inspect(): Promise<RouteCandidate[]>;
 }
 
 export function createRouteSelector(cfg: Config): RouteSelector {
@@ -121,6 +122,20 @@ export function createRouteSelector(cfg: Config): RouteSelector {
             ethAddress: "",
             pricePerWorkUnitWei: "0",
             workUnit: "",
+            extra: null,
+            constraints: null,
+          },
+        ];
+      },
+      async inspect(): Promise<RouteCandidate[]> {
+        return [
+          {
+            brokerUrl: cfg.brokerUrl ?? '',
+            capability: '',
+            offering: '',
+            ethAddress: '',
+            pricePerWorkUnitWei: '0',
+            workUnit: '',
             extra: null,
             constraints: null,
           },
@@ -158,6 +173,11 @@ export function createRouteSelector(cfg: Config): RouteSelector {
 
       matches.sort((a, b) => compareCandidates(a, b, hints.preferredExtra));
       return matches;
+    },
+    async inspect(): Promise<RouteCandidate[]> {
+      const snapshot = await loadSnapshot(client, cfg, cache);
+      cache = snapshot;
+      return snapshot.candidates;
     },
   };
 }

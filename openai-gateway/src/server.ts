@@ -12,14 +12,24 @@ import { registerAudioSpeech } from "./routes/audio-speech.js";
 import { registerImagesGenerations } from "./routes/images-generations.js";
 import { registerRealtime } from "./routes/realtime.js";
 import { registerCustomerPortalRoutes } from "./routes/customer-portal.js";
+import { registerOperatorRoutes } from "./routes/operator.js";
 import { registerStripeRoutes } from "./routes/stripe.js";
 import { defaultAdminDist, defaultPortalDist, registerSpaStatic } from "./runtime/static.js";
 import { createRouteSelector } from "./service/routeSelector.js";
+import type { Queryable } from "./repo/rateCard.js";
+
+type RateCardStore = Queryable & {
+  connect?: () => Promise<{
+    query: (sql: string, args?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+    release: () => void;
+  }>;
+};
 
 export interface BuildServerDeps {
   cfg: Config;
   db?: Db;
   portal?: CustomerPortal;
+  rateCardStore?: RateCardStore;
 }
 
 export async function buildServer(input: BuildServerDeps): Promise<FastifyInstance> {
@@ -63,6 +73,13 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
       engine: input.portal.adminEngine,
       authResolver: input.portal.adminAuthResolver,
     });
+    if (input.rateCardStore) {
+      registerOperatorRoutes(app, {
+        authResolver: input.portal.adminAuthResolver,
+        rateCardStore: input.rateCardStore,
+        routeSelector,
+      });
+    }
   }
   registerImagesGenerations(app, cfg, routeSelector);
   void app.register(registerRealtime, { cfg, routeSelector });

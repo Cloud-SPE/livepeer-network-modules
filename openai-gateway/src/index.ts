@@ -18,8 +18,8 @@ function resolveCustomerPortalMigrationsDir(): string {
   const localRepoPath = resolve(REPO_ROOT, "customer-portal", "migrations");
   if (existsSync(localRepoPath)) return localRepoPath;
 
-  const pkgEntry = require.resolve("@livepeer-rewrite/customer-portal");
-  const pkgRoot = resolve(dirname(pkgEntry), "..");
+  const pkgEntry = require.resolve("@livepeer-rewrite/customer-portal/db");
+  const pkgRoot = resolve(dirname(pkgEntry), "..", "..");
   const pkgMigrations = resolve(pkgRoot, "migrations");
   if (existsSync(pkgMigrations)) return pkgMigrations;
 

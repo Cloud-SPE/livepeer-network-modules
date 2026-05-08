@@ -199,6 +199,9 @@ Current landing shape:
 
 - JSON snapshot editor for rate-card management
 - resolver candidate table sourced from the live route selector pool
+- reservation ledger view for:
+  - all recent customer requests
+  - selected-customer request drilldown
 
 ### 6.3 Customer playground v1
 

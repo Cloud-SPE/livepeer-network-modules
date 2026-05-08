@@ -1,6 +1,9 @@
+import { desc } from 'drizzle-orm';
 import type { Db } from '../db/pool.js';
+import { reservations as reservationsTable } from '../db/schema.js';
 import * as customersRepo from '../repo/customers.js';
 import * as adminAuditEventsRepo from '../repo/adminAuditEvents.js';
+import * as reservationsRepo from '../repo/reservations.js';
 import * as topupsRepo from '../repo/topups.js';
 import { reverseTopup } from '../billing/topups.js';
 import type { CustomerRow, CustomerInsert } from '../repo/customers.js';
@@ -37,6 +40,7 @@ export interface AdminEngine {
   getCustomer(id: string): Promise<CustomerRow | null>;
   searchCustomers(input: customersRepo.CustomerSearchInput): Promise<CustomerRow[]>;
   listTopups(input: topupsRepo.TopupSearchInput): Promise<topupsRepo.TopupRow[]>;
+  listReservations(input: { customerId?: string; limit: number }): Promise<reservationsRepo.ReservationRow[]>;
   adjustBalance(input: AdjustBalanceInput): Promise<CustomerRow>;
   setStatus(input: SetStatusInput): Promise<boolean>;
   refundTopup(input: RefundTopupInput): Promise<{
@@ -84,6 +88,20 @@ export function createAdminEngine(deps: AdminEngineDeps): AdminEngine {
 
     async listTopups(input) {
       return topupsRepo.search(deps.db, input);
+    },
+
+    async listReservations(input) {
+      if (input.customerId) {
+        return reservationsRepo.listByCustomer(deps.db, {
+          customerId: input.customerId,
+          limit: input.limit,
+        });
+      }
+      return deps.db
+        .select()
+        .from(reservationsTable)
+        .orderBy(desc(reservationsTable.createdAt))
+        .limit(input.limit);
     },
 
     async adjustBalance(input) {

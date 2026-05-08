@@ -218,6 +218,34 @@ export function registerAdminRoutes(app: FastifyInstance, deps: RegisterAdminRou
       })),
     });
   });
+
+  app.get('/admin/reservations', { preHandler }, async (req, reply) => {
+    const q = req.query as Record<string, string | undefined>;
+    const limit = q.limit ? Math.min(Number(q.limit), 200) : 100;
+    const reservations = await deps.engine.listReservations({
+      limit,
+      ...(q.customer_id !== undefined ? { customerId: q.customer_id } : {}),
+    });
+    await reply.code(200).send({
+      reservations: reservations.map((row) => ({
+        id: row.id,
+        customer_id: row.customerId,
+        work_id: row.workId,
+        kind: row.kind,
+        state: row.state,
+        capability: row.capability ?? null,
+        model: row.model ?? null,
+        amount_usd_cents: row.amountUsdCents?.toString() ?? null,
+        committed_usd_cents: row.committedUsdCents?.toString() ?? null,
+        refunded_usd_cents: row.refundedUsdCents?.toString() ?? null,
+        amount_tokens: row.amountTokens?.toString() ?? null,
+        committed_tokens: row.committedTokens?.toString() ?? null,
+        refunded_tokens: row.refundedTokens?.toString() ?? null,
+        created_at: row.createdAt.toISOString(),
+        resolved_at: row.resolvedAt?.toISOString() ?? null,
+      })),
+    });
+  });
 }
 
 function serializeCustomer(c: { id: string; email: string; tier: string; status: string; balanceUsdCents: bigint; reservedUsdCents: bigint }): Record<string, unknown> {

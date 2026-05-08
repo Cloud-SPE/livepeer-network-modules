@@ -30,6 +30,24 @@ type Topup = {
   refunded_at: string | null;
 };
 
+type Reservation = {
+  id: string;
+  customer_id: string;
+  work_id: string;
+  kind: string;
+  state: string;
+  capability: string | null;
+  model: string | null;
+  amount_usd_cents: string | null;
+  committed_usd_cents: string | null;
+  refunded_usd_cents: string | null;
+  amount_tokens: string | null;
+  committed_tokens: string | null;
+  refunded_tokens: string | null;
+  created_at: string;
+  resolved_at: string | null;
+};
+
 type ResolverCandidate = {
   brokerUrl: string;
   capability: string;
@@ -48,6 +66,7 @@ const state = {
   selected: null as Customer | null,
   audit: [] as AuditEvent[],
   topups: [] as Topup[],
+  reservations: [] as Reservation[],
   resolverCandidates: [] as ResolverCandidate[],
   query: '',
   error: '',
@@ -203,6 +222,29 @@ function dashboardView() {
                   </portal-action-row>
                 </form>
               </portal-detail-section>
+              <portal-detail-section heading="Customer request ledger" description="Latest reservations and settled usage for this customer.">
+                <portal-data-table heading="Reservations" description="Reserved, committed, and refunded work for the selected customer.">
+                  <table>
+                    <thead>
+                      <tr><th>Created</th><th>Capability</th><th>Model</th><th>Status</th><th>Committed</th><th>Work ID</th></tr>
+                    </thead>
+                    <tbody>
+                      ${state.reservations
+                        .filter((row) => row.customer_id === state.selected!.id)
+                        .map(
+                          (row) => html`<tr>
+                            <td>${row.created_at}</td>
+                            <td>${row.capability ?? row.kind}</td>
+                            <td>${row.model ?? 'n/a'}</td>
+                            <td><portal-status-pill label=${row.state}></portal-status-pill></td>
+                            <td>${formatReservationValue(row.committed_usd_cents, row.committed_tokens)}</td>
+                            <td>${row.work_id}</td>
+                          </tr>`,
+                        )}
+                    </tbody>
+                  </table>
+                </portal-data-table>
+              </portal-detail-section>
             `
           : html`<div style="color:var(--text-2);">Select a customer to inspect details.</div>`}
       </portal-card>
@@ -221,6 +263,28 @@ function dashboardView() {
                 <td>${usd(row.amount_usd_cents)}</td>
                 <td><portal-status-pill label=${row.status}></portal-status-pill></td>
                 <td>${row.stripe_session_id}</td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+      </portal-data-table>
+    </div>
+    <div style="margin-top:1rem">
+      <portal-data-table heading="Recent reservations" description="Latest gateway reservation ledger entries across customers.">
+        <table>
+          <thead>
+            <tr><th>Created</th><th>Customer</th><th>Capability</th><th>Model</th><th>Status</th><th>Reserved</th><th>Committed</th></tr>
+          </thead>
+          <tbody>
+            ${state.reservations.map(
+              (row) => html`<tr>
+                <td>${row.created_at}</td>
+                <td>${row.customer_id}</td>
+                <td>${row.capability ?? row.kind}</td>
+                <td>${row.model ?? 'n/a'}</td>
+                <td><portal-status-pill label=${row.state}></portal-status-pill></td>
+                <td>${formatReservationValue(row.amount_usd_cents, row.amount_tokens)}</td>
+                <td>${formatReservationValue(row.committed_usd_cents, row.committed_tokens)}</td>
               </tr>`,
             )}
           </tbody>
@@ -386,15 +450,17 @@ async function saveRateCard(event: Event): Promise<void> {
 }
 
 async function refresh(preferredCustomerId?: string): Promise<void> {
-  const [customers, audit, topups, resolverCandidates, rateCard] = await Promise.all([
+  const [customers, audit, topups, reservations, resolverCandidates, rateCard] = await Promise.all([
     adminRequest('/admin/customers'),
     adminRequest('/admin/audit'),
     adminRequest('/admin/topups'),
+    adminRequest('/admin/reservations'),
     adminRequest('/admin/openai/resolver-candidates'),
     adminRequest('/admin/openai/rate-card'),
   ]);
   state.customers = customers.customers;
   state.topups = topups.topups;
+  state.reservations = reservations.reservations;
   state.resolverCandidates = resolverCandidates.candidates;
   state.rateCardJson = JSON.stringify(rateCard, null, 2);
   state.selected =
@@ -419,6 +485,7 @@ function logout(): void {
   state.selected = null;
   state.audit = [];
   state.topups = [];
+  state.reservations = [];
   sessionStorage.removeItem('openai-gateway:admin-auth');
   draw();
 }
@@ -437,4 +504,10 @@ async function adminRequest(path: string, init: RequestInit = {}): Promise<any> 
 
 function usd(cents: string): string {
   return `$${(Number(cents) / 100).toFixed(2)}`;
+}
+
+function formatReservationValue(cents: string | null, tokens: string | null): string {
+  if (cents !== null) return usd(cents);
+  if (tokens !== null) return `${tokens} tokens`;
+  return 'n/a';
 }

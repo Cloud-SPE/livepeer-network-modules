@@ -50,6 +50,7 @@ The same runtime now also mounts the first gateway shell routes:
 - `POST /admin/customers/:id/status`
 - `POST /admin/customers/:id/refund`
 - `GET /admin/topups`
+- `GET /admin/reservations`
 - `GET /admin/audit`
 - `GET /admin/openai/rate-card`
 - `PUT /admin/openai/rate-card`
@@ -63,6 +64,8 @@ The same runtime now also mounts the first gateway shell routes:
   playground.
   Usage history is reservation-ledger based today, with settled cost/token
   fields persisted per reservation rather than a separate analytics product.
+  The admin console now exposes the same ledger across customers for operator
+  inspection, but it is still a ledger view rather than a full analytics suite.
   Rate-card management is currently JSON-snapshot based rather than a
   polished field-by-field editor.
 

@@ -15,6 +15,23 @@ function fakeEngine(): AdminEngine & {
     reservedUsdCents: bigint;
   }>;
   audit: Array<{ actor: string; action: string }>;
+  reservations: Array<{
+    id: string;
+    customerId: string;
+    workId: string;
+    kind: 'prepaid' | 'free';
+    state: 'open' | 'committed' | 'refunded';
+    amountUsdCents: bigint | null;
+    amountTokens: bigint | null;
+    committedUsdCents: bigint | null;
+    committedTokens: bigint | null;
+    refundedUsdCents: bigint | null;
+    refundedTokens: bigint | null;
+    capability: string | null;
+    model: string | null;
+    createdAt: Date;
+    resolvedAt: Date | null;
+  }>;
 } {
   const customers = new Map<string, {
     id: string;
@@ -25,11 +42,29 @@ function fakeEngine(): AdminEngine & {
     reservedUsdCents: bigint;
   }>();
   const audit: Array<{ actor: string; action: string }> = [];
+  const reservations: Array<{
+    id: string;
+    customerId: string;
+    workId: string;
+    kind: 'prepaid' | 'free';
+    state: 'open' | 'committed' | 'refunded';
+    amountUsdCents: bigint | null;
+    amountTokens: bigint | null;
+    committedUsdCents: bigint | null;
+    committedTokens: bigint | null;
+    refundedUsdCents: bigint | null;
+    refundedTokens: bigint | null;
+    capability: string | null;
+    model: string | null;
+    createdAt: Date;
+    resolvedAt: Date | null;
+  }> = [];
   let n = 0;
 
   return {
     customers,
     audit,
+    reservations,
     async createCustomer(input) {
       n += 1;
       const c = {
@@ -52,6 +87,13 @@ function fakeEngine(): AdminEngine & {
     async searchCustomers() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return Array.from(customers.values()) as any[];
+    },
+    async listTopups() {
+      return [];
+    },
+    async listReservations(input) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return reservations.filter((row) => !input.customerId || row.customerId === input.customerId) as any[];
     },
     async adjustBalance(input) {
       const c = customers.get(input.customerId);
@@ -123,6 +165,23 @@ test('admin routes round-trip: create, lookup, adjust balance, status, refund, a
   });
   assert.equal(create.statusCode, 201);
   const id = JSON.parse(create.body).customer.id;
+  engine.reservations.push({
+    id: 'res-1',
+    customerId: id,
+    workId: 'work-1',
+    kind: 'prepaid',
+    state: 'committed',
+    amountUsdCents: 150n,
+    amountTokens: null,
+    committedUsdCents: 125n,
+    committedTokens: null,
+    refundedUsdCents: 25n,
+    refundedTokens: null,
+    capability: 'openai:/v1/chat/completions',
+    model: 'gpt-4o-mini',
+    createdAt: new Date('2026-05-08T12:00:00Z'),
+    resolvedAt: new Date('2026-05-08T12:00:05Z'),
+  });
 
   const get = await app.inject({
     method: 'GET',
@@ -164,6 +223,16 @@ test('admin routes round-trip: create, lookup, adjust balance, status, refund, a
   assert.equal(audit.statusCode, 200);
   const events = JSON.parse(audit.body).events;
   assert.ok(events.length >= 4);
+
+  const reservations = await app.inject({
+    method: 'GET',
+    url: `/admin/reservations?customer_id=${encodeURIComponent(id)}`,
+    headers: { authorization: auth },
+  });
+  assert.equal(reservations.statusCode, 200);
+  const body = JSON.parse(reservations.body);
+  assert.equal(body.reservations.length, 1);
+  assert.equal(body.reservations[0].work_id, 'work-1');
 });
 
 test('admin routes reject invalid create payload', async () => {

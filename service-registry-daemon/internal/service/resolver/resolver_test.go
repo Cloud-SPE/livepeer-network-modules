@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +168,73 @@ func TestResolveByAddress_HappyPathSignedManifestAIURL(t *testing.T) {
 	}
 }
 
+func TestResolveByAddress_CoordinatorEnvelopeCompat(t *testing.T) {
+	f := newFixture(t)
+	envBody := f.signCoordinatorEnvelope([]types.CoordinatorCapability{
+		{
+			CapabilityID:    "openai:chat-completions",
+			OfferingID:      "qwen3.6-27b-default",
+			InteractionMode: "http-stream@v0",
+			WorkUnit:        types.CoordinatorWorkUnit{Name: "tokens"},
+			PricePerUnitWei: "25000000",
+			WorkerURL:       "https://openai-worker.xodeapp.xyz",
+			Extra: map[string]any{
+				"served_model_name": "Qwen3.6-27B",
+				"provider":          "vllm",
+			},
+			Constraints: map[string]any{
+				"tier": "default",
+			},
+		},
+	})
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Mode != types.ModeWellKnown {
+		t.Fatalf("mode = %v", res.Mode)
+	}
+	if res.SchemaVersion != "0.1.0" {
+		t.Fatalf("schema version = %q", res.SchemaVersion)
+	}
+	if len(res.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(res.Nodes))
+	}
+	node := res.Nodes[0]
+	if node.URL != "https://openai-worker.xodeapp.xyz" {
+		t.Fatalf("node url = %q", node.URL)
+	}
+	if len(node.Capabilities) != 1 {
+		t.Fatalf("capabilities = %+v", node.Capabilities)
+	}
+	cap := node.Capabilities[0]
+	if cap.Name != "openai:chat-completions" {
+		t.Fatalf("capability name = %q", cap.Name)
+	}
+	if cap.WorkUnit != "tokens" {
+		t.Fatalf("work unit = %q", cap.WorkUnit)
+	}
+	if !strings.Contains(string(cap.Extra), "\"served_model_name\":\"Qwen3.6-27B\"") {
+		t.Fatalf("capability extra = %s", string(cap.Extra))
+	}
+	if !strings.Contains(string(cap.Extra), "\"interaction_mode\":\"http-stream@v0\"") {
+		t.Fatalf("capability extra missing interaction_mode: %s", string(cap.Extra))
+	}
+	if len(cap.Offerings) != 1 || cap.Offerings[0].ID != "qwen3.6-27b-default" {
+		t.Fatalf("offerings = %+v", cap.Offerings)
+	}
+	if cap.Offerings[0].PricePerWorkUnitWei != "25000000" {
+		t.Fatalf("offering price = %q", cap.Offerings[0].PricePerWorkUnitWei)
+	}
+	if !strings.Contains(string(cap.Offerings[0].Constraints), "\"tier\":\"default\"") {
+		t.Fatalf("constraints = %s", string(cap.Offerings[0].Constraints))
+	}
+	if !bytesEqual(envBody, f.fetcher.Bodies[f.uri]) {
+		t.Fatal("fixture body mutated unexpectedly")
+	}
+}
+
 func TestResolveByAddress_LegacyFallback(t *testing.T) {
 	f := newFixture(t)
 	// Don't add a manifest body — fetcher will report unavailable.
@@ -214,6 +282,43 @@ func TestResolveByAddress_SignatureMismatchRejected(t *testing.T) {
 	sig, _ := other.SignCanonical(canonical)
 	m.Signature.Value = "0x" + hex(sig)
 	body, _ := json.Marshal(m)
+	f.fetcher.Bodies[f.uri] = body
+
+	_, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+	if !errors.Is(err, types.ErrSignatureMismatch) {
+		t.Fatalf("expected ErrSignatureMismatch, got %v", err)
+	}
+}
+
+func TestResolveByAddress_CoordinatorEnvelopeSignatureMismatchRejected(t *testing.T) {
+	f := newFixture(t)
+	other, _ := signer.GenerateRandom()
+	env := &types.CoordinatorSignedManifest{
+		Manifest: types.CoordinatorManifestPayload{
+			SpecVersion: "0.1.0",
+			IssuedAt:    f.clk.Now(),
+			ExpiresAt:   f.clk.Now().Add(24 * time.Hour),
+			Orch:        types.CoordinatorOrch{EthAddress: string(f.addr)},
+			Capabilities: []types.CoordinatorCapability{
+				{
+					CapabilityID:    "openai:chat-completions",
+					OfferingID:      "default",
+					InteractionMode: "http-stream@v0",
+					WorkUnit:        types.CoordinatorWorkUnit{Name: "tokens"},
+					PricePerUnitWei: "1",
+					WorkerURL:       "https://openai-worker.xodeapp.xyz",
+				},
+			},
+		},
+		Signature: types.CoordinatorEnvelopeSignature{
+			Algorithm:        types.CoordinatorSignatureAlg,
+			Canonicalization: "JCS",
+		},
+	}
+	canonical, _ := types.CoordinatorCanonicalBytes(env.Manifest)
+	sig, _ := other.SignCanonical(canonical)
+	env.Signature.Value = "0x" + hex(sig)
+	body, _ := json.Marshal(env)
 	f.fetcher.Bodies[f.uri] = body
 
 	_, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
@@ -488,4 +593,50 @@ func hex(b []byte) string {
 		out[i*2+1] = digits[c&0x0f]
 	}
 	return string(out)
+}
+
+func (f *fixture) signCoordinatorEnvelope(caps []types.CoordinatorCapability) []byte {
+	f.t.Helper()
+	env := &types.CoordinatorSignedManifest{
+		Manifest: types.CoordinatorManifestPayload{
+			SpecVersion: "0.1.0",
+			IssuedAt:    f.clk.Now(),
+			ExpiresAt:   f.clk.Now().Add(24 * time.Hour),
+			Orch: types.CoordinatorOrch{
+				EthAddress: string(f.addr),
+			},
+			Capabilities: caps,
+		},
+		Signature: types.CoordinatorEnvelopeSignature{
+			Algorithm:        types.CoordinatorSignatureAlg,
+			Canonicalization: "JCS",
+		},
+	}
+	canonical, err := types.CoordinatorCanonicalBytes(env.Manifest)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	sig, err := f.signer.SignCanonical(canonical)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	env.Signature.Value = "0x" + hex(sig)
+	body, err := json.Marshal(env)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.fetcher.Bodies[f.uri] = body
+	return body
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

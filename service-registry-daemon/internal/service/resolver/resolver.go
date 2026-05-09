@@ -283,14 +283,13 @@ func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddr
 		return nil, nil, [32]byte{}, err
 	}
 
-	manifest, err := types.DecodeManifest(body)
+	manifest, canonical, sigHex, err := decodeFetchedManifest(body)
 	if err != nil {
 		s.rec.IncManifestVerify(metrics.OutcomeParseError)
 		s.appendAudit(addr, types.AuditSignatureInvalid, types.ModeWellKnown, "manifest parse: "+err.Error())
 		return nil, nil, [32]byte{}, err
 	}
 
-	// Manifest's claimed eth_address must match the on-chain address.
 	claimed, err := types.ParseEthAddress(manifest.EthAddress)
 	if err != nil {
 		s.rec.IncManifestVerify(metrics.OutcomeParseError)
@@ -301,13 +300,7 @@ func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddr
 		return nil, nil, [32]byte{}, fmt.Errorf("%w: manifest claims %s, chain says %s", types.ErrSignatureMismatch, claimed, addr)
 	}
 
-	// Recover the signer from the canonical bytes.
-	canonical, err := types.CanonicalBytes(manifest)
-	if err != nil {
-		s.rec.IncManifestVerify(metrics.OutcomeParseError)
-		return nil, nil, [32]byte{}, fmt.Errorf("%w: canonical: %w", types.ErrParse, err)
-	}
-	sigBytes, err := decodeSig(manifest.Signature.Value)
+	sigBytes, err := decodeSig(sigHex)
 	if err != nil {
 		s.rec.IncManifestVerify(metrics.OutcomeParseError)
 		return nil, nil, [32]byte{}, err
@@ -327,27 +320,35 @@ func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddr
 	}
 	s.rec.IncManifestVerify(metrics.OutcomeVerified)
 
-	// Project Manifest.Nodes → ResolvedNode.
-	out := make([]types.ResolvedNode, 0, len(manifest.Nodes))
-	for _, n := range manifest.Nodes {
-		out = append(out, types.ResolvedNode{
-			ID:               n.ID,
-			URL:              n.URL,
-			WorkerEthAddress: n.WorkerEthAddress,
-			Extra:            append([]byte(nil), n.Extra...),
-			Capabilities:     append([]types.Capability(nil), n.Capabilities...),
-			Source:           types.SourceManifest,
-			SignatureStatus:  types.SigVerified,
-			OperatorAddr:     addr,
-			Enabled:          true,
-			Weight:           100,
-		})
-	}
-
-	// Diagnostic SHA-256 (also stored on the cache entry for change-detect).
+	out := projectManifest(addr, manifest)
 	sha := bytes32SHA256(body)
 	s.appendAudit(addr, types.AuditManifestFetched, types.ModeWellKnown, fmt.Sprintf("nodes=%d schema=%s", len(out), manifest.SchemaVersion))
 	return out, manifest, sha, nil
+}
+
+func decodeFetchedManifest(body []byte) (*types.Manifest, []byte, string, error) {
+	manifest, err := types.DecodeManifest(body)
+	if err == nil {
+		canonical, cerr := types.CanonicalBytes(manifest)
+		if cerr != nil {
+			return nil, nil, "", fmt.Errorf("%w: canonical: %w", types.ErrParse, cerr)
+		}
+		return manifest, canonical, manifest.Signature.Value, nil
+	}
+
+	env, compatErr := types.DecodeCoordinatorEnvelope(body)
+	if compatErr != nil {
+		return nil, nil, "", err
+	}
+	canonical, cerr := types.CoordinatorCanonicalBytes(env.Manifest)
+	if cerr != nil {
+		return nil, nil, "", fmt.Errorf("%w: canonical: %w", types.ErrParse, cerr)
+	}
+	compatManifest, cerr := env.ToManifest()
+	if cerr != nil {
+		return nil, nil, "", fmt.Errorf("%w: compatibility projection: %w", types.ErrParse, cerr)
+	}
+	return compatManifest, canonical, env.Signature.Value, nil
 }
 
 // tryStaticOverlay synthesizes a result from the operator overlay alone

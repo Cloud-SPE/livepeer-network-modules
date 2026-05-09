@@ -28,7 +28,7 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
   app.post("/v1/live/streams", async (req, reply) => {
     const parsed = CreateLiveStreamBody.safeParse(req.body);
     if (!parsed.success) {
-      await reply.code(400).send({ error: "invalid_body", details: parsed.error.errors });
+      await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
       return;
     }
     const streamId = `live_${randomHex16()}`;

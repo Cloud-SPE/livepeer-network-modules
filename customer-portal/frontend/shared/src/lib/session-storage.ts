@@ -1,6 +1,8 @@
 export interface SessionLike {
-  customerId: string;
-  email: string;
+  token: string;
+  actor: string;
+  customerId?: string;
+  email?: string;
 }
 
 const SESSION_KEY = 'customer-portal:session';

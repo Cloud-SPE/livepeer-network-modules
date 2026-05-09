@@ -1,6 +1,7 @@
 import type {
   InsertBearerInput,
   InsertSessionInput,
+  ListSessionsInput,
   SessionStore,
   UpdateSessionInput,
   VtuberSessionRecord,
@@ -77,6 +78,16 @@ export function createInMemorySessionStore(): InMemorySessionStore {
         ...(patch.endedAt !== undefined ? { endedAt: patch.endedAt } : {}),
       };
       sessions.set(id, next);
+    },
+    async listSessions(input?: ListSessionsInput): Promise<readonly VtuberSessionRecord[]> {
+      const rows = Array.from(sessions.values()).sort(
+        (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+      );
+      const filtered =
+        input?.customerId === undefined
+          ? rows
+          : rows.filter((row) => row.customerId === input.customerId);
+      return filtered.slice(0, input?.limit ?? 100);
     },
     snapshot() {
       return Array.from(sessions.values());

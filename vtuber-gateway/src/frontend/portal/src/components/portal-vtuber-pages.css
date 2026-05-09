@@ -1,0 +1,74 @@
+.vtuber-portal-page-intro,
+.vtuber-portal-page-timeline,
+.vtuber-portal-page-queue {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.vtuber-portal-page-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  min-height: 1.75rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-tint);
+  color: var(--text-1);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vtuber-portal-page-stats,
+.vtuber-portal-page-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--space-3);
+}
+
+.vtuber-portal-page-stat,
+.vtuber-portal-page-panel,
+.vtuber-portal-page-queue-item,
+.vtuber-portal-page-entry {
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.012) 100%),
+    var(--surface-1);
+  box-shadow: var(--shadow-sm);
+}
+
+.vtuber-portal-page-stat-label,
+.vtuber-portal-page-eyebrow,
+.vtuber-portal-page-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--text-3);
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.vtuber-portal-page-stat-label,
+.vtuber-portal-page-eyebrow {
+  display: block;
+  margin-bottom: var(--space-2);
+}
+
+.vtuber-portal-page-stat-value,
+.vtuber-portal-page-entry-title,
+.vtuber-portal-page-queue-title {
+  color: var(--text-1);
+  font-size: var(--font-size-lg);
+  font-weight: 650;
+}
+
+.vtuber-portal-page-entry-title,
+.vtuber-portal-page-queue-title {
+  font-size: var(--font-size-base);
+  margin-bottom: var(--space-1);
+}

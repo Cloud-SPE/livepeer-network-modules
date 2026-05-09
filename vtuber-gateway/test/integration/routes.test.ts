@@ -51,7 +51,7 @@ function buildDeps(opts: FakeOpts = {}): VtuberGatewayDeps {
     authResolver: {
       async resolve() {
         return {
-          id: "00000000-0000-0000-0000-00000000abcd",
+          id: "00000000-0000-4000-8000-00000000abcd",
           tier: "prepaid",
           rateLimitTier: "default",
         };
@@ -162,7 +162,7 @@ test("POST /v1/vtuber/sessions session-open happy path", async () => {
     };
     assert.match(body.session_id, /[0-9a-f-]{36}/);
     assert.match(body.session_child_bearer, /^vtbs_/);
-    const all = (deps.sessionStore as ReturnType<typeof createInMemorySessionStore>).snapshot();
+    const all = await deps.sessionStore.listSessions();
     assert.equal(all.length, 1);
     assert.equal(all[0]!.status, "active");
     assert.equal(all[0]!.workerSessionId, "worker-sess-1");
@@ -188,7 +188,7 @@ test("POST /v1/vtuber/sessions returns 503 + Retry-After when no worker is avail
     assert.equal(resp.statusCode, 503);
     assert.equal(resp.headers["retry-after"], "5");
     assert.equal(resp.headers["livepeer-error"], "no_worker_available");
-    const all = (deps.sessionStore as ReturnType<typeof createInMemorySessionStore>).snapshot();
+    const all = await deps.sessionStore.listSessions();
     assert.equal(all.length, 0, "no session row inserted when no worker");
   } finally {
     await app.close();
@@ -210,7 +210,7 @@ test("POST /v1/vtuber/sessions returns 502 + payment_emit_failed on payer failur
     });
     assert.equal(resp.statusCode, 502);
     assert.equal(resp.headers["livepeer-error"], "payment_emit_failed");
-    const all = (deps.sessionStore as ReturnType<typeof createInMemorySessionStore>).snapshot();
+    const all = await deps.sessionStore.listSessions();
     assert.equal(all.length, 1);
     assert.equal(all[0]!.status, "errored");
     assert.equal(all[0]!.errorCode, "payment_emit_failed");
@@ -234,7 +234,7 @@ test("POST /v1/vtuber/sessions returns 502 + worker_start_failed on runner refus
     });
     assert.equal(resp.statusCode, 502);
     assert.equal(resp.headers["livepeer-error"], "worker_start_failed");
-    const all = (deps.sessionStore as ReturnType<typeof createInMemorySessionStore>).snapshot();
+    const all = await deps.sessionStore.listSessions();
     assert.equal(all[0]!.status, "errored");
     assert.equal(all[0]!.errorCode, "worker_start_failed");
   } finally {
@@ -277,7 +277,7 @@ test("session-bearer-protected GET returns the session record", async () => {
   const deps = buildDeps();
   const cfg = deps.cfg;
   const minted = mintSessionBearer(cfg.vtuberSessionBearerPepper);
-  const sessionId = "00000000-0000-0000-0000-00000000aaaa";
+  const sessionId = "00000000-0000-4000-8000-00000000aaaa";
   const expiresAt = new Date(Date.now() + 60_000);
   await deps.sessionStore.insertSession({
     id: sessionId,
@@ -314,7 +314,7 @@ test("POST /v1/vtuber/sessions/:id/topup rejects non-positive cents", async () =
   const deps = buildDeps();
   const cfg = deps.cfg;
   const minted = mintSessionBearer(cfg.vtuberSessionBearerPepper);
-  const sessionId = "00000000-0000-0000-0000-00000000aaab";
+  const sessionId = "00000000-0000-4000-8000-00000000aaab";
   await deps.sessionStore.insertSession({
     id: sessionId,
     customerId: "cust-1",

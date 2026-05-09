@@ -6,7 +6,11 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
-  "files": ["dist", "migrations", "README.md"],
+  "files": [
+    "dist",
+    "migrations",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "lint": "tsc --noEmit",
@@ -16,20 +20,20 @@
   "dependencies": {
     "@fastify/websocket": "^11.2.0",
     "@grpc/grpc-js": "^1.12.2",
-    "@grpc/proto-loader": "^0.7.13",
+    "@grpc/proto-loader": "^0.8.1",
     "@livepeer-rewrite/customer-portal": "workspace:*",
-    "drizzle-orm": "^0.36.0",
+    "drizzle-orm": "^0.45.2",
     "fastify": "^5.0.0",
     "pg": "^8.13.0",
-    "stripe": "^14.0.0",
+    "stripe": "^22.1.1",
     "ws": "^8.18.0",
-    "zod": "^3.23.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.6.2",
     "@types/pg": "^8.11.10",
     "@types/ws": "^8.5.12",
-    "typescript": "^5.6.0"
+    "typescript": "^6.0.3"
   },
   "engines": {
     "node": ">=20"

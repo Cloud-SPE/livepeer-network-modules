@@ -1,0 +1,318 @@
+{{define "page.html"}}{{template "base" .}}{{end}}
+
+{{define "protocol-status-content"}}
+<section class="summary">
+  <h1>Protocol status</h1>
+  <p class="path">Read-only status from the connected protocol-daemon.</p>
+</section>
+
+{{if .ProtocolStatus}}
+<section>
+  <div class="status-grid">
+    {{template "protocolField" .ProtocolStatus.Health}}
+    {{template "protocolField" .ProtocolStatus.Round}}
+    {{template "protocolField" .ProtocolStatus.Reward}}
+    {{template "protocolField" .ProtocolStatus.ServiceRegistry}}
+    {{template "protocolField" .ProtocolStatus.AIServiceRegistry}}
+    {{template "protocolField" .ProtocolStatus.Wallet}}
+  </div>
+</section>
+{{else}}
+<section>
+  <p class="empty">Protocol-daemon socket is not configured.</p>
+</section>
+{{end}}
+{{end}}
+
+{{define "protocol-actions-content"}}
+<section class="summary">
+  <h1>Protocol actions</h1>
+  <p class="path">Write actions go through protocol-daemon and require full typed confirmation.</p>
+</section>
+
+{{if .ProtocolActionFeedback}}
+<section>
+  <div class="protocol-feedback {{.ProtocolActionFeedback.Result}}">
+    <strong>{{.ProtocolActionFeedback.Action}}</strong>
+    <span>{{.ProtocolActionFeedback.Message}}</span>
+  </div>
+</section>
+{{end}}
+
+{{if .ProtocolStatus}}
+<section class="protocol-actions">
+  <h2>Actions</h2>
+  <p class="path">To confirm any protocol action, type the full orch identity <code>{{.ProtocolStatus.ConfirmAddress}}</code>.</p>
+  <div class="action-grid">
+    <section class="status-card">
+      <h3>Force round init</h3>
+      <form action="/protocol/force-init" method="post" class="protocol-form">
+        <label for="force_init_confirmation">Typed confirmation</label>
+        <input type="text" id="force_init_confirmation" name="typed_confirmation" placeholder="{{.ProtocolStatus.ConfirmAddress}}" autocomplete="off" required>
+        <button type="submit">Force init</button>
+      </form>
+    </section>
+    <section class="status-card">
+      <h3>Force reward</h3>
+      <form action="/protocol/force-reward" method="post" class="protocol-form">
+        <label for="force_reward_confirmation">Typed confirmation</label>
+        <input type="text" id="force_reward_confirmation" name="typed_confirmation" placeholder="{{.ProtocolStatus.ConfirmAddress}}" autocomplete="off" required>
+        <button type="submit">Force reward</button>
+      </form>
+    </section>
+    <section class="status-card">
+      <h3>Set Service Registry URI</h3>
+      <form action="/protocol/set-service-uri" method="post" class="protocol-form">
+        <label for="service_uri">Public URI</label>
+        <input type="text" id="service_uri" name="url" placeholder="https://..." autocomplete="off" required>
+        <label for="service_uri_confirmation">Typed confirmation</label>
+        <input type="text" id="service_uri_confirmation" name="typed_confirmation" placeholder="{{.ProtocolStatus.ConfirmAddress}}" autocomplete="off" required>
+        <button type="submit">Set service URI</button>
+      </form>
+    </section>
+    <section class="status-card">
+      <h3>Set AI Service Registry URI</h3>
+      <form action="/protocol/set-ai-service-uri" method="post" class="protocol-form">
+        <label for="ai_service_uri">Public AI URI</label>
+        <input type="text" id="ai_service_uri" name="url" placeholder="https://..." autocomplete="off" required>
+        <label for="ai_service_uri_confirmation">Typed confirmation</label>
+        <input type="text" id="ai_service_uri_confirmation" name="typed_confirmation" placeholder="{{.ProtocolStatus.ConfirmAddress}}" autocomplete="off" required>
+        <button type="submit">Set AI service URI</button>
+      </form>
+    </section>
+  </div>
+</section>
+{{else}}
+<section>
+  <p class="empty">Protocol-daemon socket is not configured.</p>
+</section>
+{{end}}
+
+{{if .TxIntentLookup}}
+<section class="tx-intent">
+  <h2>Tx intent lookup</h2>
+  <form action="/protocol-actions" method="get" class="protocol-form">
+    <label for="tx_intent_id">Intent ID</label>
+    <input type="text" id="tx_intent_id" name="tx_intent_id" value="{{.TxIntentLookup.Query}}" placeholder="0x..." autocomplete="off">
+    <button type="submit">Lookup intent</button>
+  </form>
+  {{if .TxIntentLookup.Error}}
+  <p class="warn">{{.TxIntentLookup.Error}}</p>
+  {{end}}
+  {{if .TxIntentLookup.Result}}
+  <section class="status-card tx-intent-result">
+    <h3>Intent status</h3>
+    <dl class="meta">
+      {{range .TxIntentLookup.Result.Rows}}
+        <dt>{{index . 0}}</dt><dd><code>{{index . 1}}</code></dd>
+      {{end}}
+    </dl>
+  </section>
+  {{end}}
+</section>
+{{end}}
+{{end}}
+
+{{define "manifests-content"}}
+<section class="summary">
+  <h1>Manifests</h1>
+  <p class="path">Load, diff, sign, and download the operator-reviewed manifest envelope.</p>
+</section>
+
+<section class="last-signed">
+  <h2>Last signed manifest</h2>
+  {{if .HasLastSigned}}
+    <dl class="meta">
+      <dt>publication_seq</dt><dd>{{.LastSignedSummary.PublicationSeq}}</dd>
+      <dt>orch.eth_address</dt><dd><code>{{.LastSignedSummary.EthAddress | lower}}</code></dd>
+      <dt>issued_at</dt><dd>{{.LastSignedSummary.IssuedAt}}</dd>
+      <dt>expires_at</dt><dd>{{.LastSignedSummary.ExpiresAt}}</dd>
+      <dt>capabilities</dt><dd>{{.LastSignedSummary.CapabilityCount}}</dd>
+    </dl>
+    <p class="path">stored at <code>{{.LastSignedPath}}</code></p>
+  {{else}}
+    <p class="empty">No last-signed manifest on disk. The first sign will populate <code>{{.LastSignedPath}}</code>.</p>
+  {{end}}
+</section>
+
+<section class="upload">
+  <h2>Upload candidate manifest</h2>
+  <form action="/candidate" method="post" enctype="multipart/form-data">
+    <label for="candidate">Candidate (manifest.json or tarball containing manifest.json):</label>
+    <input type="file" id="candidate" name="candidate" required>
+    <button type="submit">Upload</button>
+  </form>
+</section>
+
+{{if .CandidateError}}
+<section class="error">
+  <h2>Candidate error</h2>
+  <pre>{{.CandidateError}}</pre>
+</section>
+{{end}}
+
+{{if .Candidate}}
+{{template "diff" .}}
+{{end}}
+{{end}}
+
+{{define "audit-content"}}
+<section class="summary">
+  <h1>Audit</h1>
+  <p class="path">Recent operator events from <code>{{.AuditPath}}</code>.</p>
+</section>
+
+<section class="audit-log">
+  <h2>Events</h2>
+  {{if .AuditError}}
+  <p class="warn">{{.AuditError}}</p>
+  {{else if .AuditEvents}}
+  <div class="audit-pagination">
+    <span class="path">showing {{.CurrentCount}} event(s) per page</span>
+    <div class="audit-pagination-links">
+      {{if .IsPaginated}}<a href="{{.NewestPath}}" class="navlink">Newest</a>{{end}}
+      {{if .HasOlder}}<a href="{{.OlderPath}}" class="navlink">Older</a>{{end}}
+    </div>
+  </div>
+  <div class="audit-list">
+    {{range .AuditEvents}}
+    <article class="status-card audit-event">
+      <dl class="meta">
+        <dt>at</dt><dd>{{.At}}</dd>
+        <dt>kind</dt><dd><code>{{.Kind}}</code></dd>
+        {{if .Actor}}<dt>actor</dt><dd><code>{{.Actor}}</code></dd>{{end}}
+        {{if .EthAddress}}<dt>eth_address</dt><dd><code>{{.EthAddress}}</code></dd>{{end}}
+        {{if .PublicationSeq}}<dt>publication_seq</dt><dd><code>{{.PublicationSeq}}</code></dd>{{end}}
+        {{if .CanonHash}}<dt>canonical_sha256</dt><dd><code>{{.CanonHash}}</code></dd>{{end}}
+        {{if .Note}}<dt>note</dt><dd>{{.Note}}</dd>{{end}}
+      </dl>
+      {{if .Fields}}
+      <pre>{{.Fields}}</pre>
+      {{end}}
+    </article>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="empty">No audit events yet.</p>
+  {{end}}
+</section>
+{{end}}
+
+{{define "protocolField"}}
+<section class="status-card">
+  <h3>{{.Title}}</h3>
+  {{if .Available}}
+    <dl class="meta">
+      {{range .Rows}}
+        <dt>{{index . 0}}</dt><dd><code>{{index . 1}}</code></dd>
+      {{end}}
+    </dl>
+  {{else if .Unimplemented}}
+    <p class="empty">Unavailable in the daemon's current mode.</p>
+  {{else if .Error}}
+    <p class="warn">{{.Error}}</p>
+  {{else}}
+    <p class="empty">No data.</p>
+  {{end}}
+</section>
+{{end}}
+
+{{define "diff"}}
+{{$d := .Candidate.Diff}}
+<section class="diff">
+  <h2>Candidate diff</h2>
+  <p class="source">loaded {{.Candidate.LoadedAt}} from <code>{{.Candidate.SourceName}}</code></p>
+  <p class="canon">canonical sha256: <code>{{.Candidate.CanonHash}}</code></p>
+  <div class="header-card">
+    <div>
+      <span class="label">publication_seq</span>
+      {{if $d.Header.BeforeSeq}}<code>{{$d.Header.BeforeSeq}}</code> &rarr; {{end}}
+      <code class="{{if not $d.Header.SeqMonotonic}}warn{{end}}">{{$d.Header.AfterSeq}}</code>
+      {{if not $d.Header.SeqMonotonic}}<strong class="warn">non-monotonic - resolver will reject</strong>{{end}}
+    </div>
+    <div>
+      <span class="label">orch.eth_address</span>
+      {{if $d.Header.BeforeEthAddress}}<code>{{$d.Header.BeforeEthAddress | lower}}</code> &rarr; {{end}}
+      <code class="{{if not $d.Header.EthAddressStable}}warn{{end}}">{{$d.Header.AfterEthAddress | lower}}</code>
+      {{if not $d.Header.EthAddressStable}}<strong class="warn">eth_address changed - rotation must precede this</strong>{{end}}
+    </div>
+    <div>
+      <span class="label">issued_at</span>
+      {{if $d.Header.BeforeIssuedAt}}<code>{{$d.Header.BeforeIssuedAt}}</code> &rarr; {{end}}
+      <code>{{$d.Header.AfterIssuedAt}}</code>
+    </div>
+    <div>
+      <span class="label">expires_at</span>
+      {{if $d.Header.BeforeExpiresAt}}<code>{{$d.Header.BeforeExpiresAt}}</code> &rarr; {{end}}
+      <code>{{$d.Header.AfterExpiresAt}}</code>
+    </div>
+  </div>
+
+  <p class="summary">
+    <strong>{{len $d.Added}} added</strong>,
+    <strong>{{len $d.Removed}} removed</strong>,
+    <strong>{{len $d.Changed}} changed</strong>,
+    {{len $d.Unchanged}} unchanged
+  </p>
+
+  {{if $d.Added}}
+  <h3 class="added">Added</h3>
+  <ul class="tuples">
+    {{range $d.Added}}
+    <li class="add"><code>{{.CapabilityID}}</code> / <code>{{.OfferingID}}</code><pre>{{prettyJSON .Fields}}</pre></li>
+    {{end}}
+  </ul>
+  {{end}}
+
+  {{if $d.Removed}}
+  <h3 class="removed">Removed</h3>
+  <ul class="tuples">
+    {{range $d.Removed}}
+    <li class="rem"><code>{{.CapabilityID}}</code> / <code>{{.OfferingID}}</code><pre>{{prettyJSON .Fields}}</pre></li>
+    {{end}}
+  </ul>
+  {{end}}
+
+  {{if $d.Changed}}
+  <h3 class="changed">Changed</h3>
+  <ul class="tuples">
+    {{range $d.Changed}}
+    <li class="chg">
+      <code>{{.CapabilityID}}</code> / <code>{{.OfferingID}}</code>
+      <div class="side-by-side">
+        <div><h4>before</h4><pre>{{prettyJSON .Before}}</pre></div>
+        <div><h4>after</h4><pre>{{prettyJSON .After}}</pre></div>
+      </div>
+    </li>
+    {{end}}
+  </ul>
+  {{end}}
+
+  {{if $d.Unchanged}}
+  <details>
+    <summary>{{len $d.Unchanged}} unchanged tuples (collapsed)</summary>
+    <ul class="tuples">
+      {{range $d.Unchanged}}
+      <li class="unch"><code>{{.CapabilityID}}</code> / <code>{{.OfferingID}}</code></li>
+      {{end}}
+    </ul>
+  </details>
+  {{end}}
+</section>
+
+<section class="confirm">
+  <h2>Tap to sign</h2>
+  <p>
+    To confirm, type the last 4 hex chars of the signer address
+    (<code class="signer-address">{{.SignerAddress | lower}}</code>):
+  </p>
+  <form action="/sign" method="post">
+    <label for="confirm_last4">Last 4 hex chars:</label>
+    <input type="text" id="confirm_last4" name="confirm_last4" maxlength="4" pattern="[0-9a-fA-F]{4}" autocomplete="off" required>
+    <button type="submit">Sign &amp; download</button>
+  </form>
+  <form action="/discard" method="post" class="discard">
+    <button type="submit">Discard candidate</button>
+  </form>
+</section>
+{{end}}

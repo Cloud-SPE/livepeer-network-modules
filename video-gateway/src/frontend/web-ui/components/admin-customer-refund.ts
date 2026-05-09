@@ -1,40 +1,51 @@
-import { LitElement, css, html, type TemplateResult } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { html, nothing, render } from "lit";
 import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
+import { installAdminPageStyles } from "./admin-shared.js";
 
-@customElement("admin-customer-refund")
-export class AdminCustomerRefund extends LitElement {
-  @property({ type: String }) customerId = "";
-  @state() private topupId = "";
-  @state() private amountCents = 0;
-  @state() private reason = "";
-  @state() private status: "idle" | "submitting" | "ok" | "err" = "idle";
-  @state() private message = "";
+export class AdminCustomerRefund extends HTMLElement {
+  static get observedAttributes(): string[] {
+    return ["customerid"];
+  }
+
+  private stripeSessionId = "";
+  private reason = "";
+  private status: "idle" | "submitting" | "ok" | "err" = "idle";
+  private message = "";
 
   private api = new ApiClient({ baseUrl: "" });
 
-  static styles = css`
-    :host { display: block; }
-    form { display: grid; gap: var(--space-3); max-width: 32rem; }
-    label { display: grid; gap: var(--space-1); font-size: var(--font-size-sm); color: var(--text-2); font-weight: 550; }
-    input, textarea { min-height: 2.8rem; padding: 0.7rem 0.85rem; border: 1px solid var(--border-1); border-radius: var(--radius-md); background: rgba(255,255,255,0.03); color: var(--text-1); }
-    .ok { color: var(--success); }
-    .err { color: var(--danger); }
-    .note { color: var(--text-2); font-size: var(--font-size-sm); }
-  `;
+  connectedCallback(): void {
+    installAdminPageStyles();
+    this.draw();
+  }
+
+  attributeChangedCallback(): void {
+    if (this.isConnected) {
+      this.draw();
+    }
+  }
+
+  get customerId(): string {
+    return this.getAttribute("customerId") ?? "";
+  }
+
+  set customerId(value: string) {
+    this.setAttribute("customerId", value);
+  }
 
   private async submit(e: Event): Promise<void> {
     e.preventDefault();
-    if (!this.topupId.trim() || !this.reason.trim()) {
+    if (!this.stripeSessionId.trim() || !this.reason.trim()) {
       this.status = "err";
-      this.message = "top-up id and reason are required";
+      this.message = "Stripe session id and reason are required";
+      this.draw();
       return;
     }
     this.status = "submitting";
+    this.draw();
     try {
       await this.api.post(`/admin/customers/${encodeURIComponent(this.customerId)}/refund`, {
-        topup_id: this.topupId,
-        amount_cents: this.amountCents,
+        stripe_session_id: this.stripeSessionId,
         reason: this.reason,
       });
       this.status = "ok";
@@ -43,38 +54,29 @@ export class AdminCustomerRefund extends LitElement {
       this.status = "err";
       this.message = err instanceof Error ? err.message : "refund_failed";
     }
+    this.draw();
   }
 
-  render(): TemplateResult {
-    return html`
+  private draw(): void {
+    render(
+      html`
       <portal-card heading="Manual Refund — ${this.customerId}">
         <portal-detail-section
           heading="Refund request"
-          description="Anchor the refund to a prior top-up and record an operator-visible reason."
+          description="Refund a settled Stripe top-up and record an operator-visible reason."
         >
-          <p class="note">Use the exact top-up identifier when refunding previously prepaid funds.</p>
-          <form @submit=${this.submit}>
-            <label>
-              Top-up ID to refund against
+          <p class="video-admin-page-note">Use the Stripe session id from the customer top-up ledger when refunding prepaid funds.</p>
+          <form @submit=${this.submit} class="video-admin-page-form">
+            <label class="video-admin-page-field">
+              Stripe session id
               <input
-                .value=${this.topupId}
+                .value=${this.stripeSessionId}
                 @input=${(e: Event): void => {
-                  this.topupId = (e.target as HTMLInputElement).value;
+                  this.stripeSessionId = (e.target as HTMLInputElement).value;
                 }}
               />
             </label>
-            <label>
-              Amount (cents)
-              <input
-                type="number"
-                .value=${String(this.amountCents)}
-                @input=${(e: Event): void => {
-                  const v = parseInt((e.target as HTMLInputElement).value, 10);
-                  this.amountCents = Number.isFinite(v) ? v : 0;
-                }}
-              />
-            </label>
-            <label>
+            <label class="video-admin-page-field">
               Reason
               <textarea
                 rows="3"
@@ -87,13 +89,19 @@ export class AdminCustomerRefund extends LitElement {
             <portal-button type="submit" ?disabled=${this.status === "submitting"}>
               ${this.status === "submitting" ? "Submitting." : "Issue refund"}
             </portal-button>
-            ${this.status === "ok" ? html`<p class="ok">${this.message}</p>` : ""}
-            ${this.status === "err" ? html`<p class="err">${this.message}</p>` : ""}
+            ${this.status === "ok" ? html`<p class="video-admin-page-ok">${this.message}</p>` : nothing}
+            ${this.status === "err" ? html`<p class="video-admin-page-error">${this.message}</p>` : nothing}
           </form>
         </portal-detail-section>
       </portal-card>
-    `;
+      `,
+      this,
+    );
   }
+}
+
+if (!customElements.get("admin-customer-refund")) {
+  customElements.define("admin-customer-refund", AdminCustomerRefund);
 }
 
 declare global {

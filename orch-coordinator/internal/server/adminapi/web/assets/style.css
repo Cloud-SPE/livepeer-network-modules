@@ -18,8 +18,10 @@ header nav { display: flex; gap: 1rem; align-items: center; width: 100%; }
 header a { color: #fff; text-decoration: none; }
 header .brand { font-weight: 600; }
 header .orch { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; opacity: 0.85; flex: 1; font-size: 12px; }
+header .actor { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; opacity: 0.95; }
 header .navlink { padding: 0.25rem 0.6rem; border-radius: 4px; }
 header .navlink:hover { background: rgba(255,255,255,0.12); }
+header .logout { margin: 0; }
 main { padding: 1rem; max-width: 1400px; margin: 0 auto; }
 footer { padding: 0.5rem 1rem; color: #777; font-size: 12px; display: flex; justify-content: space-between; }
 
@@ -69,13 +71,14 @@ td.worker code, td.hash code { font-size: 11px; color: #444; }
 .brokers .err { color: #9b1c1c; margin-left: 0.5rem; }
 
 .filters { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
+.refresh { margin-top: 0.75rem; }
 .filters input[type=text], .filters select {
   padding: 0.3rem 0.5rem;
   border: 1px solid #cfd2d7;
   border-radius: 4px;
   font-size: 13px;
 }
-.filters button, .upload button {
+.filters button, .upload button, .refresh button {
   padding: 0.35rem 0.9rem;
   background: #15202b;
   color: #fff;
@@ -86,5 +89,54 @@ td.worker code, td.hash code { font-size: 11px; color: #444; }
 
 .upload form { display: flex; gap: 0.5rem; align-items: center; }
 .upload input[type=file] { font-size: 13px; }
+.upload-flash {
+  margin: 0 0 0.75rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid #e3e4e7;
+  border-radius: 4px;
+  background: #fafbfc;
+}
+.upload-accepted { border-color: #1e6e3a; color: #1e6e3a; }
+.upload-drift_rejected,
+.upload-rollback_rejected,
+.upload-window_invalid { border-color: #6b4a00; color: #6b4a00; }
+.upload-sig_invalid,
+.upload-identity_mismatch,
+.upload-schema_invalid,
+.upload-publish_failed,
+.upload-error { border-color: #9b1c1c; color: #9b1c1c; }
+
+.logout button {
+  padding: 0.35rem 0.9rem;
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.login-card { max-width: 520px; margin: 2rem auto; }
+.login-form {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 420px;
+}
+.login-form input[type=text],
+.login-form input[type=password] {
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #cfd2d7;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.login-form button {
+  width: fit-content;
+  padding: 0.45rem 1rem;
+  background: #15202b;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.login-error { color: #9b1c1c; }
 
 small { color: #777; }

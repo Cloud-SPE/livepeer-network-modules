@@ -3,6 +3,9 @@ import { z } from 'zod';
 import type { AdminAuthResolver } from '../auth/types.js';
 import type { AdminEngine } from './engine.js';
 import { toHttpError } from '../middleware/errors.js';
+import type { CustomerTokenService } from '../auth/customerTokenService.js';
+import type { Db } from '../db/pool.js';
+import * as apiKeysRepo from '../repo/apiKeys.js';
 
 const CreateCustomerSchema = z.object({
   email: z.string().email(),
@@ -32,14 +35,16 @@ declare module 'fastify' {
 }
 
 export interface RegisterAdminRoutesDeps {
+  db: Db;
   engine: AdminEngine;
   authResolver: AdminAuthResolver;
-  realm?: string;
+  customerTokenService: CustomerTokenService;
+  issueApiKey(input: { customerId: string; label?: string }): Promise<{ apiKeyId: string; plaintext: string }>;
+  revokeApiKey(apiKeyId: string): Promise<void>;
 }
 
 function basicAuthPreHandler(
   resolver: AdminAuthResolver,
-  realm: string,
 ): preHandlerAsyncHookHandler {
   return async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const result = await resolver.resolve({
@@ -47,9 +52,8 @@ function basicAuthPreHandler(
       ip: req.ip,
     });
     if (!result) {
-      reply.header('www-authenticate', `Basic realm="${realm}"`);
       await reply.code(401).send({
-        error: { code: 'authentication_failed', message: 'admin authentication required', type: 'AdminAuthError' },
+        error: { code: 'authentication_failed', message: 'admin token + actor required', type: 'AdminAuthError' },
       });
       return;
     }
@@ -58,8 +62,7 @@ function basicAuthPreHandler(
 }
 
 export function registerAdminRoutes(app: FastifyInstance, deps: RegisterAdminRoutesDeps): void {
-  const realm = deps.realm ?? 'customer-portal-admin';
-  const preHandler = basicAuthPreHandler(deps.authResolver, realm);
+  const preHandler = basicAuthPreHandler(deps.authResolver);
 
   app.get('/admin/customers', { preHandler }, async (req, reply) => {
     const q = req.query as Record<string, string | undefined>;
@@ -96,7 +99,15 @@ export function registerAdminRoutes(app: FastifyInstance, deps: RegisterAdminRou
         ...(initial !== undefined ? { initialBalanceUsdCents: initial } : {}),
         actor: req.adminActor!,
       });
-      await reply.code(201).send({ customer: serializeCustomer(customer) });
+      const authToken = await deps.customerTokenService.issue({
+        customerId: customer.id,
+        label: 'Initial UI token',
+      });
+      await reply.code(201).send({
+        customer: serializeCustomer(customer),
+        auth_token: authToken.plaintext,
+        auth_token_id: authToken.tokenId,
+      });
     } catch (err) {
       const { status, envelope } = toHttpError(err);
       await reply.code(status).send(envelope);
@@ -111,6 +122,68 @@ export function registerAdminRoutes(app: FastifyInstance, deps: RegisterAdminRou
     }
     await reply.code(200).send({ customer: serializeCustomer(customer) });
   });
+
+  app.get<{ Params: { id: string } }>('/admin/customers/:id/api-keys', { preHandler }, async (req, reply) => {
+    const keys = await apiKeysRepo.findByCustomer(deps.db, req.params.id);
+    await reply.code(200).send({ api_keys: keys.map(serializeApiKey) });
+  });
+
+  app.post<{ Params: { id: string } }>('/admin/customers/:id/api-keys', { preHandler }, async (req, reply) => {
+    const parsed = z.object({ label: z.string().trim().min(1).optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const { status, envelope } = toHttpError(parsed.error);
+      await reply.code(status).send(envelope);
+      return;
+    }
+    const issued = await deps.issueApiKey({
+      customerId: req.params.id,
+      ...(parsed.data.label !== undefined ? { label: parsed.data.label } : {}),
+    });
+    await reply.code(201).send({
+      api_key: issued.plaintext,
+      api_key_id: issued.apiKeyId,
+    });
+  });
+
+  app.delete<{ Params: { id: string; keyId: string } }>(
+    '/admin/customers/:id/api-keys/:keyId',
+    { preHandler },
+    async (req, reply) => {
+      await deps.revokeApiKey(req.params.keyId);
+      await reply.code(204).send();
+    },
+  );
+
+  app.get<{ Params: { id: string } }>('/admin/customers/:id/auth-tokens', { preHandler }, async (req, reply) => {
+    const tokens = await deps.customerTokenService.list(req.params.id);
+    await reply.code(200).send({ auth_tokens: tokens.map(serializeAuthToken) });
+  });
+
+  app.post<{ Params: { id: string } }>('/admin/customers/:id/auth-tokens', { preHandler }, async (req, reply) => {
+    const parsed = z.object({ label: z.string().trim().min(1).optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) {
+      const { status, envelope } = toHttpError(parsed.error);
+      await reply.code(status).send(envelope);
+      return;
+    }
+    const issued = await deps.customerTokenService.issue({
+      customerId: req.params.id,
+      ...(parsed.data.label !== undefined ? { label: parsed.data.label } : {}),
+    });
+    await reply.code(201).send({
+      auth_token: issued.plaintext,
+      auth_token_id: issued.tokenId,
+    });
+  });
+
+  app.delete<{ Params: { id: string; tokenId: string } }>(
+    '/admin/customers/:id/auth-tokens/:tokenId',
+    { preHandler },
+    async (req, reply) => {
+      await deps.customerTokenService.revoke(req.params.tokenId);
+      await reply.code(204).send();
+    },
+  );
 
   app.get<{ Params: { id: string } }>('/admin/reservations/:id', { preHandler }, async (req, reply) => {
     const reservation = await deps.engine.getReservation(req.params.id);
@@ -301,5 +374,37 @@ function serializeReservation(row: {
     refunded_tokens: row.refundedTokens?.toString() ?? null,
     created_at: row.createdAt.toISOString(),
     resolved_at: row.resolvedAt?.toISOString() ?? null,
+  };
+}
+
+function serializeApiKey(row: {
+  id: string;
+  label: string | null;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+}): Record<string, unknown> {
+  return {
+    id: row.id,
+    label: row.label,
+    created_at: row.createdAt.toISOString(),
+    last_used_at: row.lastUsedAt?.toISOString() ?? null,
+    revoked_at: row.revokedAt?.toISOString() ?? null,
+  };
+}
+
+function serializeAuthToken(row: {
+  id: string;
+  label: string | null;
+  createdAt: Date;
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+}): Record<string, unknown> {
+  return {
+    id: row.id,
+    label: row.label,
+    created_at: row.createdAt.toISOString(),
+    last_used_at: row.lastUsedAt?.toISOString() ?? null,
+    revoked_at: row.revokedAt?.toISOString() ?? null,
   };
 }

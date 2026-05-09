@@ -32,6 +32,23 @@ func TestNewEth_BadAddress(t *testing.T) {
 	}
 }
 
+func TestNewEth_BadAIAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
+	defer srv.Close()
+	cli, err := ethclient.Dial(srv.URL)
+	if err != nil {
+		t.Skip("skipping: ethclient.Dial unavailable")
+	}
+	defer cli.Close()
+	if _, err := NewEth(EthConfig{
+		Client:                   cli,
+		ServiceRegistryAddress:   "0x0000000000000000000000000000000000000001",
+		AIServiceRegistryAddress: "not-an-address",
+	}); err == nil {
+		t.Fatal("expected error on bad AI address")
+	}
+}
+
 // TestEth_GetServiceURI_HappyPath exercises the JSON-RPC eth_call path.
 // The httptest.Server hand-crafts an ABI-encoded string return.
 func TestEth_GetServiceURI_HappyPath(t *testing.T) {
@@ -103,6 +120,45 @@ func TestEth_GetServiceURI_EmptyResult(t *testing.T) {
 	_, err = e.GetServiceURI(context.Background(), addr)
 	if !errors.Is(err, types.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestEth_GetServiceURI_PrefersAIRegistryWhenConfigured(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		data := make([]byte, 96)
+		data[31] = 0x20
+		data[63] = 10
+		copy(data[64:], "https://ai")
+		hex := "0x" + bytesToHex(data)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"` + hex + `"}`))
+	}))
+	defer srv.Close()
+	cli, err := ethclient.Dial(srv.URL)
+	if err != nil {
+		t.Skip("ethclient.Dial unavailable")
+	}
+	defer cli.Close()
+
+	e, err := NewEth(EthConfig{
+		Client:                   cli,
+		ServiceRegistryAddress:   "0x0000000000000000000000000000000000000001",
+		AIServiceRegistryAddress: "0x0000000000000000000000000000000000000002",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, _ := types.ParseEthAddress("0xabcdef0000000000000000000000000000000000")
+	uri, err := e.GetServiceURI(context.Background(), addr)
+	if err != nil {
+		t.Fatalf("GetServiceURI: %v", err)
+	}
+	if uri != "https://ai" {
+		t.Fatalf("got %q", uri)
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 registry call, got %d", calls)
 	}
 }
 

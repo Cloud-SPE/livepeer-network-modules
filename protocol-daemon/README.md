@@ -6,7 +6,7 @@ round initialization, reward calling, and on-chain `ServiceRegistry` /
 durable transaction state machine, multi-RPC failover, Controller-resolved addresses,
 and reorg-aware confirmation tracking are all reused from the shared library.
 
-> **Agent-first repository.** Start with [docs/exec-plans/](docs/exec-plans/) → [docs/design-docs/](docs/design-docs/). Plan 0006 in the monorepo root delivered the daemon end-to-end.
+> **Agent-first repository.** Start with [docs/exec-plans/](docs/exec-plans/) → [docs/design-docs/](docs/design-docs/). Root plan [0020](../docs/exec-plans/completed/0020-protocol-daemon-migration.md) delivered the daemon end-to-end.
 
 ## What it does
 

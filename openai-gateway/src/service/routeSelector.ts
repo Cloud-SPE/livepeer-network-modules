@@ -5,6 +5,7 @@ import type { FastifyRequest } from "fastify";
 
 import type { Config } from "../config.js";
 import { HEADER } from "../livepeer/headers.js";
+import { normalizeCapabilityId } from "../livepeer/capabilityMap.js";
 
 const RESOLVER_PROTO_FILES = [
   "livepeer/registry/v1/types.proto",
@@ -15,6 +16,7 @@ export interface RouteCandidate {
   brokerUrl: string;
   capability: string;
   offering: string;
+  model: string | null;
   ethAddress: string;
   pricePerWorkUnitWei: string;
   workUnit: string;
@@ -119,6 +121,7 @@ export function createRouteSelector(cfg: Config): RouteSelector {
             brokerUrl: cfg.brokerUrl,
             capability: input.capability,
             offering: input.offering,
+            model: input.offering || null,
             ethAddress: "",
             pricePerWorkUnitWei: "0",
             workUnit: "",
@@ -133,6 +136,7 @@ export function createRouteSelector(cfg: Config): RouteSelector {
             brokerUrl: cfg.brokerUrl ?? '',
             capability: '',
             offering: '',
+            model: null,
             ethAddress: '',
             pricePerWorkUnitWei: '0',
             workUnit: '',
@@ -153,9 +157,16 @@ export function createRouteSelector(cfg: Config): RouteSelector {
       cache = snapshot;
 
       const hints = readSelectionHints(input.request);
+      const requestedModel = input.offering.trim();
       const matches = snapshot.candidates.filter((candidate) => {
-        if (candidate.capability !== input.capability) return false;
-        if (candidate.offering !== input.offering) return false;
+        if (candidate.capability !== normalizeCapabilityId(input.capability)) return false;
+        if (requestedModel) {
+          if (candidate.model) {
+            if (candidate.model !== requestedModel) return false;
+          } else if (candidate.offering !== requestedModel) {
+            return false;
+          }
+        }
         if (
           hints.maxPricePerUnitWei !== null &&
           safeBigInt(candidate.pricePerWorkUnitWei) > hints.maxPricePerUnitWei
@@ -211,7 +222,7 @@ async function loadSnapshot(
     client.listKnown({}, (err, resp) => (err ? reject(err) : resolve(resp.entries ?? [])));
   });
 
-  const resolved = await Promise.all(
+  const resolved = await Promise.allSettled(
     known.map(
       (entry) =>
         new Promise<ResolveResult>((resolve, reject) => {
@@ -230,8 +241,14 @@ async function loadSnapshot(
 
   return {
     expiresAt: now + cfg.resolverSnapshotTtlMs,
-    candidates: resolved.flatMap(flattenResolveResult),
+    candidates: collectResolvedResults(resolved).flatMap(flattenResolveResult),
   };
+}
+
+export function collectResolvedResults(
+  results: PromiseSettledResult<ResolveResult>[],
+): ResolveResult[] {
+  return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
 }
 
 function flattenResolveResult(resolved: ResolveResult): RouteCandidate[] {
@@ -241,11 +258,13 @@ function flattenResolveResult(resolved: ResolveResult): RouteCandidate[] {
     const nodeExtra = parseOpaqueJson(node.extraJson);
     for (const capability of node.capabilities ?? []) {
       const mergedExtra = mergeJsonObjects(nodeExtra, parseOpaqueJson(capability.extraJson));
+      const model = inferModel(capability.name, mergedExtra);
       for (const offering of capability.offerings ?? []) {
         out.push({
           brokerUrl: node.url,
-          capability: capability.name,
+          capability: normalizeCapabilityId(stripCapabilityModelSuffix(capability.name)),
           offering: offering.id,
+          model,
           ethAddress: node.operatorAddress,
           pricePerWorkUnitWei: offering.pricePerWorkUnitWei ?? "0",
           workUnit: capability.workUnit ?? "",
@@ -256,6 +275,37 @@ function flattenResolveResult(resolved: ResolveResult): RouteCandidate[] {
     }
   }
   return out;
+}
+
+function inferModel(capabilityName: string, extra: JsonValue | null): string | null {
+  if (isJsonObject(extra) && isJsonObject(extra.openai)) {
+    const model = extra.openai["model"];
+    if (typeof model === "string" && model.trim().length > 0) return model.trim();
+  }
+  const suffix = capabilityModelSuffix(capabilityName);
+  return suffix || null;
+}
+
+function stripCapabilityModelSuffix(capabilityName: string): string {
+  const suffix = capabilityModelSuffix(capabilityName);
+  if (!suffix) return capabilityName;
+  return capabilityName.slice(0, -(suffix.length + 1));
+}
+
+function capabilityModelSuffix(capabilityName: string): string {
+  for (const prefix of [
+    "openai:chat-completions:",
+    "openai:embeddings:",
+    "openai:audio-transcriptions:",
+    "openai:audio-speech:",
+    "openai:images-generations:",
+    "openai:realtime:",
+  ]) {
+    if (capabilityName.startsWith(prefix)) {
+      return capabilityName.slice(prefix.length).trim();
+    }
+  }
+  return "";
 }
 
 function readSelectionHints(req: FastifyRequest): SelectionHints {

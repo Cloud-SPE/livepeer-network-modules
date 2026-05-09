@@ -16,7 +16,8 @@ A single host can run both daemons side-by-side with separate sockets and stores
 | `--store-path` | `/var/lib/livepeer/registry-cache.db` | BoltDB file (resolver only by default; publisher also uses it for write history) |
 | `--chain-rpc` | `https://arb1.arbitrum.io/rpc` | Ethereum JSON-RPC endpoint |
 | `--chain-id` | `42161` | Sanity check; daemon refuses to boot if RPC reports a different chain |
-| `--service-registry-address` | `0xC92d...` (Arbitrum One) | Registry contract used by resolver `getServiceURI()` lookups. Gateway deployments should set this explicitly. |
+| `--service-registry-address` | `""` | Optional override for the primary registry contract used by resolver `getServiceURI()` lookups. When empty, the resolver reads `ServiceRegistry` from Controller. |
+| `--ai-service-registry-address` | `0x04C0...` (Arbitrum One) | Optional AI registry fallback. Resolver consults it when the primary registry has no pointer for the address. |
 | `--log-format` | `text` | `text` or `json` |
 | `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
 

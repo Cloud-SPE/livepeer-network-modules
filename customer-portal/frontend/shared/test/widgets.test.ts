@@ -48,10 +48,8 @@ test('portal-button renders with default variant', async () => {
   document.body.innerHTML = '<portal-button>Click</portal-button>';
   const el = document.querySelector('portal-button');
   assert.ok(el);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (el as any).updateComplete;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   assert.equal((el as any).variant, 'primary');
+  assert.equal(el.querySelector('button')?.textContent?.trim(), 'Click');
 });
 
 test('portal-balance formats cents correctly', async () => {
@@ -59,11 +57,7 @@ test('portal-balance formats cents correctly', async () => {
   document.body.innerHTML =
     '<portal-balance currency="USD" balanceCents="12345" reservedCents="2300"></portal-balance>';
   const el = document.querySelector('portal-balance')!;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (el as any).updateComplete;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const root = (el as any).shadowRoot!;
-  const text = root.textContent ?? '';
+  const text = el.textContent ?? '';
   assert.ok(text.includes('$'));
 });
 

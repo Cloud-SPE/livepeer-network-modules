@@ -1,6 +1,6 @@
-import { LitElement, css, html, type TemplateResult } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { html, nothing, render } from "lit";
 import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
+import { installAdminPageStyles } from "./admin-shared.js";
 
 interface FailureRow {
   id: string;
@@ -14,36 +14,16 @@ interface FailureRow {
   replayedAt: string | null;
 }
 
-@customElement("admin-webhooks")
-export class AdminWebhooks extends LitElement {
-  @state() private rows: FailureRow[] = [];
-  @state() private endpointFilter = "";
-  @state() private error: string | null = null;
-  @state() private replayBusy: Record<string, boolean> = {};
+export class AdminWebhooks extends HTMLElement {
+  private rows: FailureRow[] = [];
+  private endpointFilter = "";
+  private error: string | null = null;
+  private replayBusy: Record<string, boolean> = {};
 
   private api = new ApiClient({ baseUrl: "" });
 
-  static styles = css`
-    :host { display: block; }
-    .toolbar { display: flex; gap: var(--space-2); flex: 1; }
-    input { flex: 1; min-height: 2.75rem; }
-    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
-    th, td { padding: 0.75rem 0.8rem; border-bottom: 1px solid var(--border-1); text-align: left; vertical-align: top; }
-    th {
-      color: var(--text-3);
-      font-size: var(--font-size-xs);
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-    tbody tr:hover { background: rgba(255,255,255,0.02); }
-    .replayed { color: var(--success); }
-    .err { color: var(--danger); }
-    .dim { color: var(--text-3); }
-  `;
-
-  override async connectedCallback(): Promise<void> {
-    super.connectedCallback();
+  async connectedCallback(): Promise<void> {
+    installAdminPageStyles();
     await this.load();
   }
 
@@ -58,6 +38,7 @@ export class AdminWebhooks extends LitElement {
     } catch (err) {
       this.error = err instanceof Error ? err.message : "load_failed";
     }
+    this.draw();
   }
 
   private async replay(row: FailureRow): Promise<void> {
@@ -71,18 +52,21 @@ export class AdminWebhooks extends LitElement {
       const next = { ...this.replayBusy };
       delete next[row.id];
       this.replayBusy = next;
+      this.draw();
     }
   }
 
-  render(): TemplateResult {
-    return html`
+  private draw(): void {
+    render(
+      html`
       <portal-card heading="Webhook Delivery Audit">
         <portal-data-table
           heading="Delivery Failures"
           description="Inspect dead-lettered webhook deliveries, replay them, and filter by endpoint."
         >
-          <div class="toolbar" slot="toolbar">
+          <div class="video-admin-page-toolbar video-admin-page-toolbar--grow" slot="toolbar">
             <input
+              class="video-admin-page-toolbar-input"
               placeholder="filter by endpoint id"
               .value=${this.endpointFilter}
               @input=${(e: Event): void => {
@@ -94,8 +78,8 @@ export class AdminWebhooks extends LitElement {
             />
             <portal-button @click=${(): void => void this.load()}>Refresh</portal-button>
           </div>
-          ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-          <table>
+          ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
+          <table class="video-admin-page-table">
             <thead>
               <tr>
                 <th>ID</th><th>Endpoint</th><th>Event</th><th>Attempts</th><th>Status</th>
@@ -114,12 +98,12 @@ export class AdminWebhooks extends LitElement {
                       ${r.statusCode ?? "unknown"}
                     </portal-status-pill>
                   </td>
-                  <td>${r.lastError || html`<span class="dim">-</span>`}</td>
+                  <td>${r.lastError || html`<span class="video-admin-page-dim">-</span>`}</td>
                   <td>${r.deadLetteredAt}</td>
                   <td>
                     ${r.replayedAt
                       ? html`<portal-status-pill variant="success">${r.replayedAt}</portal-status-pill>`
-                      : html`<span class="dim">pending</span>`}
+                      : html`<span class="video-admin-page-dim">pending</span>`}
                   </td>
                   <td>
                     <portal-action-row align="end">
@@ -138,8 +122,14 @@ export class AdminWebhooks extends LitElement {
           </table>
         </portal-data-table>
       </portal-card>
-    `;
+      `,
+      this,
+    );
   }
+}
+
+if (!customElements.get("admin-webhooks")) {
+  customElements.define("admin-webhooks", AdminWebhooks);
 }
 
 declare global {

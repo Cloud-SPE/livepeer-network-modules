@@ -16,7 +16,7 @@ payment_daemon:
 
 capabilities:
   # Non-streaming chat completions.
-  - id: "openai:chat-completions:gpt-4-test"
+  - id: "openai:/v1/chat/completions"
     offering_id: "default"
     interaction_mode: "http-reqresp@v0"
     work_unit:
@@ -31,7 +31,7 @@ capabilities:
       auth: "none"
 
   # Streaming chat completions (same capability id, different offering + mode).
-  - id: "openai:chat-completions:gpt-4-test"
+  - id: "openai:/v1/chat/completions"
     offering_id: "stream"
     interaction_mode: "http-stream@v0"
     work_unit:
@@ -45,7 +45,7 @@ capabilities:
       url: "http://mock-backend:9000/chat-stream"
       auth: "none"
 
-  - id: "openai:embeddings:bge-test"
+  - id: "openai:/v1/embeddings"
     offering_id: "default"
     interaction_mode: "http-reqresp@v0"
     work_unit:
@@ -59,7 +59,7 @@ capabilities:
       url: "http://mock-backend:9000/embeddings"
       auth: "none"
 
-  - id: "openai:audio-transcriptions:whisper-test"
+  - id: "openai:/v1/audio/transcriptions"
     offering_id: "default"
     interaction_mode: "http-multipart@v0"
     work_unit:

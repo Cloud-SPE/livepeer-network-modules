@@ -1,0 +1,37 @@
+portal-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.portal-modal__backdrop {
+  display: flex;
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: color-mix(in srgb, black, transparent 42%);
+  backdrop-filter: blur(12px);
+}
+
+.portal-modal__panel {
+  width: min(32rem, 100%);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.02) 100%),
+    var(--surface-1);
+  box-shadow: var(--shadow-lg);
+}
+
+.portal-modal__heading {
+  margin: 0;
+  padding: var(--space-5) var(--space-5) 0;
+  font-size: var(--font-size-lg);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.portal-modal__body {
+  padding: var(--space-5);
+}

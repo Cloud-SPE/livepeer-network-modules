@@ -1,80 +1,45 @@
-import { LitElement, css, html, type TemplateResult } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { html, nothing, render } from "lit";
 import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
+import { installAdminPageStyles } from "./admin-shared.js";
 
 interface CustomerRow {
   id: string;
   email: string;
+  tier?: string;
+  status?: string;
   balanceCents: number;
   reservedCents: number;
 }
 
-@customElement("admin-customers")
-export class AdminCustomers extends LitElement {
-  @state() private query = "";
-  @state() private rows: CustomerRow[] = [];
-  @state() private loading = false;
-  @state() private error: string | null = null;
+export class AdminCustomers extends HTMLElement {
+  private query = "";
+  private rows: CustomerRow[] = [];
+  private loading = false;
+  private error: string | null = null;
+  private creating = false;
+  private createEmail = "";
+  private createTier: "free" | "prepaid" = "prepaid";
+  private createBalanceUsd = "0.00";
+  private issuedAuthToken: string | null = null;
 
   private api = new ApiClient({ baseUrl: "" });
-
-  static styles = css`
-    :host { display: block; }
-    .toolbar {
-      display: flex;
-      gap: var(--space-2);
-    }
-    input {
-      flex: 1;
-      min-height: 2.75rem;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      overflow: hidden;
-      border-radius: var(--radius-lg);
-      background: rgba(255, 255, 255, 0.02);
-    }
-    th, td {
-      padding: 0.8rem 0.9rem;
-      text-align: left;
-      border-bottom: 1px solid var(--border-1);
-      font-size: var(--font-size-sm);
-      vertical-align: top;
-    }
-    th {
-      color: var(--text-3);
-      font-size: var(--font-size-xs);
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-    tbody tr:hover {
-      background: rgba(255, 255, 255, 0.025);
-    }
-    a {
-      color: var(--accent);
-      text-underline-offset: 0.18em;
-    }
-    .err { color: var(--danger); }
-    .money {
-      font-family: var(--font-mono);
-      color: var(--text-1);
-    }
-  `;
 
   private async search(): Promise<void> {
     this.loading = true;
     this.error = null;
+    this.draw();
     try {
       const q = encodeURIComponent(this.query.trim());
-      const out = await this.api.get<{ items: CustomerRow[] }>(`/admin/customers?q=${q}`);
-      this.rows = out.items ?? [];
+      const out = await this.api.get<{ customers?: Array<Record<string, unknown>> }>(
+        `/admin/customers?q=${q}`,
+      );
+      this.rows = (out.customers ?? []).map((row) => this.mapRow(row));
     } catch (err) {
       this.error = err instanceof Error ? err.message : "lookup_failed";
       this.rows = [];
     } finally {
       this.loading = false;
+      this.draw();
     }
   }
 
@@ -86,14 +51,116 @@ export class AdminCustomers extends LitElement {
     if (e.key === "Enter") void this.search();
   }
 
-  render(): TemplateResult {
-    return html`
+  async connectedCallback(): Promise<void> {
+    installAdminPageStyles();
+    this.draw();
+    await this.search();
+  }
+
+  private async createCustomer(event: Event): Promise<void> {
+    event.preventDefault();
+    this.creating = true;
+    this.error = null;
+    this.issuedAuthToken = null;
+    this.draw();
+    try {
+      const initialBalance = Math.round(Number(this.createBalanceUsd) * 100);
+      const out = await this.api.post<{
+        auth_token?: string;
+        customer?: { id: string };
+      }>("/admin/customers", {
+        email: this.createEmail,
+        tier: this.createTier,
+        initial_balance_usd_cents: Number.isFinite(initialBalance) ? initialBalance : 0,
+      });
+      this.issuedAuthToken = out.auth_token ?? null;
+      this.createEmail = "";
+      this.createTier = "prepaid";
+      this.createBalanceUsd = "0.00";
+      await this.search();
+      if (out.customer?.id) {
+        window.location.hash = `#/customers/${out.customer.id}`;
+      }
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : "create_failed";
+    } finally {
+      this.creating = false;
+      this.draw();
+    }
+  }
+
+  private mapRow(row: Record<string, unknown>): CustomerRow {
+    return {
+      id: String(row["id"] ?? ""),
+      email: String(row["email"] ?? ""),
+      tier: row["tier"] ? String(row["tier"]) : undefined,
+      status: row["status"] ? String(row["status"]) : undefined,
+      balanceCents: parseInt(String(row["balance_usd_cents"] ?? "0"), 10) || 0,
+      reservedCents: parseInt(String(row["reserved_usd_cents"] ?? "0"), 10) || 0,
+    };
+  }
+
+  private draw(): void {
+    render(
+      html`
       <portal-card heading="Customer Ledger">
         <portal-data-table
           heading="Customers"
-          description="Search customer balances, reservations, and manual adjustment targets."
+          description="Create customers, inspect balances, and jump into token or API-key management."
         >
-        <div class="toolbar" slot="toolbar">
+        <form class="video-admin-page-grid" @submit=${this.createCustomer}>
+          ${this.issuedAuthToken
+            ? html`
+                <div class="video-admin-page-plaintext">
+                  Initial customer auth token. Save it now; it is only shown once:
+                  <div>${this.issuedAuthToken}</div>
+                </div>
+              `
+            : nothing}
+          <div class="video-admin-page-grid video-admin-page-grid--fit">
+            <label class="video-admin-page-field">
+              Email
+              <input
+                type="email"
+                required
+                .value=${this.createEmail}
+                @input=${(event: Event): void => {
+                  this.createEmail = (event.target as HTMLInputElement).value;
+                }}
+              />
+            </label>
+            <label class="video-admin-page-field">
+              Tier
+              <select
+                .value=${this.createTier}
+                @change=${(event: Event): void => {
+                  this.createTier = (event.target as HTMLSelectElement).value as "free" | "prepaid";
+                }}
+              >
+                <option value="prepaid">prepaid</option>
+                <option value="free">free</option>
+              </select>
+            </label>
+            <label class="video-admin-page-field">
+              Initial balance (USD)
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                .value=${this.createBalanceUsd}
+                @input=${(event: Event): void => {
+                  this.createBalanceUsd = (event.target as HTMLInputElement).value;
+                }}
+              />
+            </label>
+          </div>
+          <div class="video-admin-page-actions">
+            <portal-button type="submit" ?disabled=${this.creating}>
+              ${this.creating ? "Creating." : "Create customer"}
+            </portal-button>
+          </div>
+        </form>
+        <div class="video-admin-page-toolbar video-admin-page-toolbar--grow" slot="toolbar">
           <input
             placeholder="email or customer id"
             .value=${this.query}
@@ -102,24 +169,26 @@ export class AdminCustomers extends LitElement {
           />
           <portal-button @click=${(): void => void this.search()}>Search</portal-button>
         </div>
-        ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-        ${this.loading ? html`<p>Loading.</p>` : ""}
-        <table>
+        ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
+        ${this.loading ? html`<p>Loading.</p>` : nothing}
+        <table class="video-admin-page-table">
           <thead>
-            <tr><th>ID</th><th>Email</th><th>Balance</th><th>Reserved</th><th></th></tr>
+            <tr><th>ID</th><th>Email</th><th>Tier</th><th>Status</th><th>Balance</th><th>Reserved</th><th></th></tr>
           </thead>
           <tbody>
             ${this.rows.map(
               (r) => html`
                 <tr>
-                  <td><a href="#/customers/${r.id}">${r.id}</a></td>
+                  <td><a class="video-admin-page-link" href="#/customers/${r.id}">${r.id}</a></td>
                   <td>${r.email}</td>
-                  <td class="money">$${(r.balanceCents / 100).toFixed(2)}</td>
-                  <td class="money">$${(r.reservedCents / 100).toFixed(2)}</td>
+                  <td>${r.tier ?? "—"}</td>
+                  <td>${r.status ?? "—"}</td>
+                  <td class="video-admin-page-money">$${(r.balanceCents / 100).toFixed(2)}</td>
+                  <td class="video-admin-page-money">$${(r.reservedCents / 100).toFixed(2)}</td>
                   <td>
-                    <a href="#/customers/${r.id}/adjust">adjust</a>
+                    <a class="video-admin-page-link" href="#/customers/${r.id}/adjust">adjust</a>
                     &middot;
-                    <a href="#/customers/${r.id}/refund">refund</a>
+                    <a class="video-admin-page-link" href="#/customers/${r.id}/refund">refund</a>
                   </td>
                 </tr>
               `,
@@ -128,8 +197,14 @@ export class AdminCustomers extends LitElement {
         </table>
         </portal-data-table>
       </portal-card>
-    `;
+      `,
+      this,
+    );
   }
+}
+
+if (!customElements.get("admin-customers")) {
+  customElements.define("admin-customers", AdminCustomers);
 }
 
 declare global {

@@ -1,6 +1,19 @@
 {{define "content"}}
 <section class="summary">
   <h1>Roster</h1>
+  {{if .RefreshFlash}}
+  <p class="upload-flash upload-{{.RefreshFlash.Outcome}}">
+    <strong>{{.RefreshFlash.Outcome}}</strong>
+    {{.RefreshFlash.Message}}
+  </p>
+  {{end}}
+  {{if .UploadFlash}}
+  <p class="upload-flash upload-{{.UploadFlash.Outcome}}">
+    <strong>{{.UploadFlash.Outcome}}</strong>
+    {{if .UploadFlash.PublicationSeq}} publication_seq {{.UploadFlash.PublicationSeq}}.{{end}}
+    {{.UploadFlash.Message}}
+  </p>
+  {{end}}
   <div class="badges">
     {{range $kind, $n := .DriftCounts}}
       {{if gt $n 0}}<span class="badge drift-{{$kind}}">{{$kind}}: {{$n}}</span>{{end}}
@@ -26,6 +39,9 @@
       {{range .DriftKinds}}<option value="{{.}}" {{if eq . $.Filter.DriftKind}}selected{{end}}>{{.}}</option>{{end}}
     </select>
     <button type="submit">Filter</button>
+  </form>
+  <form method="post" action="/refresh-roster" class="refresh">
+    <button type="submit">Refresh roster</button>
   </form>
 </section>
 
@@ -67,7 +83,7 @@
 <section class="upload">
   <h2>Upload signed manifest</h2>
   <p>Paste the cold-key-signed <code>manifest.json</code> the operator hand-carried back from secure-orch.</p>
-  <form method="post" action="/admin/signed-manifest" enctype="multipart/form-data">
+  <form method="post" action="/upload-signed-manifest" enctype="multipart/form-data">
     <input type="file" name="manifest" accept="application/json,.json" required>
     <button type="submit">Verify and publish</button>
   </form>

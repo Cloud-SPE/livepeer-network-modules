@@ -82,10 +82,15 @@ func extractManifest(envelope []byte) (map[string]any, error) {
 		return nil, fmt.Errorf("unmarshal envelope: %w", err)
 	}
 	m, ok := outer["manifest"].(map[string]any)
-	if !ok {
-		return nil, errors.New("envelope missing manifest object")
+	if ok {
+		return m, nil
 	}
-	return m, nil
+	// Candidates from orch-coordinator arrive as bare manifest.json,
+	// while last-signed on disk is wrapped as {manifest, signature}.
+	if _, hasSpec := outer["spec_version"]; hasSpec {
+		return outer, nil
+	}
+	return nil, errors.New("envelope missing manifest object")
 }
 
 func diff(before, after map[string]any) *Result {

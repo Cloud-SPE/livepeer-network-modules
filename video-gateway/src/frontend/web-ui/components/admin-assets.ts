@@ -1,6 +1,6 @@
-import { LitElement, css, html, type TemplateResult } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { html, nothing, render } from "lit";
 import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
+import { installAdminPageStyles } from "./admin-shared.js";
 
 interface AssetRow {
   id: string;
@@ -11,34 +11,15 @@ interface AssetRow {
   deletedAt: string | null;
 }
 
-@customElement("admin-assets")
-export class AdminAssets extends LitElement {
-  @state() private rows: AssetRow[] = [];
-  @state() private includeDeleted = false;
-  @state() private error: string | null = null;
+export class AdminAssets extends HTMLElement {
+  private rows: AssetRow[] = [];
+  private includeDeleted = false;
+  private error: string | null = null;
 
   private api = new ApiClient({ baseUrl: "" });
 
-  static styles = css`
-    :host { display: block; }
-    .toolbar { display: flex; gap: var(--space-3); align-items: center; }
-    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
-    th, td { padding: 0.75rem 0.8rem; border-bottom: 1px solid var(--border-1); text-align: left; vertical-align: top; }
-    th {
-      color: var(--text-3);
-      font-size: var(--font-size-xs);
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-    tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
-    .deleted { color: var(--text-3); }
-    button { background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-1); border-radius: var(--radius-pill); padding: 0.35rem 0.65rem; cursor: pointer; font-size: 0.75rem; color: var(--text-1); }
-    .err { color: var(--danger); }
-  `;
-
-  override async connectedCallback(): Promise<void> {
-    super.connectedCallback();
+  async connectedCallback(): Promise<void> {
+    installAdminPageStyles();
     await this.load();
   }
 
@@ -51,6 +32,7 @@ export class AdminAssets extends LitElement {
     } catch (err) {
       this.error = err instanceof Error ? err.message : "load_failed";
     }
+    this.draw();
   }
 
   private async toggleDelete(row: AssetRow): Promise<void> {
@@ -63,17 +45,19 @@ export class AdminAssets extends LitElement {
       await this.load();
     } catch (err) {
       this.error = err instanceof Error ? err.message : "toggle_failed";
+      this.draw();
     }
   }
 
-  render(): TemplateResult {
-    return html`
+  private draw(): void {
+    render(
+      html`
       <portal-card heading="Asset Library">
         <portal-data-table
           heading="Asset Inventory"
           description="Inspect active and soft-deleted assets across customer projects."
         >
-        <div class="toolbar" slot="toolbar">
+        <div class="video-admin-page-toolbar" slot="toolbar">
           <label>
             <input
               type="checkbox"
@@ -86,14 +70,14 @@ export class AdminAssets extends LitElement {
             Include soft-deleted
           </label>
         </div>
-        ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-        <table>
+        ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
+        <table class="video-admin-page-table">
           <thead>
             <tr><th>ID</th><th>Project</th><th>Status</th><th>Duration</th><th>Created</th><th>Deleted</th><th></th></tr>
           </thead>
           <tbody>
-            ${this.rows.map(
-              (r) => html`<tr class=${r.deletedAt ? "deleted" : ""}>
+              ${this.rows.map(
+              (r) => html`<tr class=${r.deletedAt ? "video-admin-page-deleted" : ""}>
                 <td>${r.id}</td>
                 <td>${r.projectId}</td>
                 <td>${r.status}</td>
@@ -101,9 +85,9 @@ export class AdminAssets extends LitElement {
                 <td>${r.createdAt}</td>
                 <td>${r.deletedAt ?? ""}</td>
                 <td>
-                  <button @click=${(): void => void this.toggleDelete(r)}>
+                  <portal-button variant=${r.deletedAt ? "ghost" : "danger"} @click=${(): void => void this.toggleDelete(r)}>
                     ${r.deletedAt ? "Restore" : "Soft-delete"}
-                  </button>
+                  </portal-button>
                 </td>
               </tr>`,
             )}
@@ -111,8 +95,14 @@ export class AdminAssets extends LitElement {
         </table>
         </portal-data-table>
       </portal-card>
-    `;
+      `,
+      this,
+    );
   }
+}
+
+if (!customElements.get("admin-assets")) {
+  customElements.define("admin-assets", AdminAssets);
 }
 
 declare global {

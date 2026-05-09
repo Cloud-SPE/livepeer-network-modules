@@ -3,6 +3,11 @@
 **Status:** active  
 **Last updated:** 2026-05-08
 
+Implementation rules for DOM structure and CSS location live in
+[`frontend-dom-and-css-invariants.md`](./frontend-dom-and-css-invariants.md). This
+document defines the visual system; the invariant doc defines the mandatory frontend
+authoring model.
+
 ## Purpose
 
 The rewrite now has multiple operator and product-facing UIs:
@@ -72,6 +77,14 @@ Current adopted apps:
 - `customer-portal`
 - `video-gateway`
 - `vtuber-gateway`
+
+Current implementation note:
+
+- the shared and product UIs now follow the light-DOM + external-CSS invariant
+  contract
+- the migration that removed shadow-DOM + CSS-in-TS patterns is recorded in
+  [`../exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md`](../exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md)
+- new UI work must continue to follow the invariant doc
 
 Current mode wiring in apps:
 

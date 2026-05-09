@@ -23,25 +23,25 @@ export function registerStripeRoutes(app: FastifyInstance, deps: RegisterStripeR
 
   app.post('/portal/topups/checkout', async (req, reply) => {
     try {
-      const caller = await deps.portal.authService.authenticate(req.headers.authorization);
+      const customerSession = await deps.portal.customerTokenService.authenticate(req.headers.authorization);
       const parsed = CheckoutSchema.parse(req.body);
       const baseUrl = deps.cfg.publicBaseUrl ?? inferBaseUrl(req);
-      const session = await billing.stripe.createTopupCheckoutSession(
+      const checkout = await billing.stripe.createTopupCheckoutSession(
         stripeClient,
         {
           priceMinCents: stripeCfg.topupMinCents,
           priceMaxCents: stripeCfg.topupMaxCents,
         },
         {
-          customerId: caller.id,
+          customerId: customerSession.customer.id,
           amountUsdCents: parsed.amount_usd_cents,
           successUrl: `${baseUrl}/portal/#billing?checkout=success`,
           cancelUrl: `${baseUrl}/portal/#billing?checkout=cancel`,
         },
       );
       await reply.code(200).send({
-        session_id: session.sessionId,
-        url: session.url,
+        session_id: checkout.sessionId,
+        url: checkout.url,
       });
     } catch (err) {
       const { status, envelope } = middleware.toHttpError(err);

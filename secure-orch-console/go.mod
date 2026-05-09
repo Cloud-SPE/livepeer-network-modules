@@ -1,10 +1,12 @@
 module github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console
 
-go 1.25.0
+go 1.25.7
 
 require (
+	github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts v0.0.0
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/google/uuid v1.6.0
+	google.golang.org/grpc v1.80.0
 )
 
 require (
@@ -18,7 +20,13 @@ require (
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/supranational/blst v0.3.16 // indirect
-	golang.org/x/crypto v0.44.0 // indirect
-	golang.org/x/sync v0.18.0 // indirect
+	golang.org/x/crypto v0.47.0 // indirect
+	golang.org/x/net v0.49.0 // indirect
+	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
+	golang.org/x/text v0.33.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260120221211-b8f7ae30c516 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+replace github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts => ../proto-contracts

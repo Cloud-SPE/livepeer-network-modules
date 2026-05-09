@@ -1,0 +1,10 @@
+portal-login,
+portal-signup {
+  display: block;
+}
+
+.portal-login__form,
+.portal-signup__form {
+  display: grid;
+  gap: var(--space-3);
+}

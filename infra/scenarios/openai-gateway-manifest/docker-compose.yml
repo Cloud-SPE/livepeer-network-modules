@@ -76,6 +76,8 @@ services:
     environment:
       PORT: "3000"
       DATABASE_URL: ${DATABASE_URL}
+      CUSTOMER_PORTAL_AUTH_PEPPER: ${CUSTOMER_PORTAL_AUTH_PEPPER:-dev-openai-gateway-pepper}
+      OPENAI_GATEWAY_ADMIN_TOKENS: ${OPENAI_GATEWAY_ADMIN_TOKENS:-}
       LIVEPEER_RESOLVER_SOCKET: /var/run/livepeer/service-registry.sock
       LIVEPEER_PAYER_DAEMON_SOCKET: /var/run/livepeer/payer-daemon.sock
       LIVEPEER_DEFAULT_OFFERING: ${LIVEPEER_DEFAULT_OFFERING:-model-small}

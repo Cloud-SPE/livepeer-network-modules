@@ -1,6 +1,9 @@
-import { createCustomerPortal } from "@livepeer-rewrite/customer-portal";
-import { drizzle } from "drizzle-orm/node-postgres";
-import pg from "pg";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { createCustomerPortal, db as portalDb } from "@livepeer-rewrite/customer-portal";
+import { registerCustomerSelfServiceRoutes } from "@livepeer-rewrite/customer-portal/routes";
 
 import { loadConfig } from "./config.js";
 import { createDb } from "./db/pool.js";
@@ -18,13 +21,32 @@ import { createRtmpListener } from "./runtime/rtmp/listener.js";
 import { buildServer } from "./server.js";
 import { createRetryDispatcher } from "./service/webhookDispatcher.js";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const VIDEO_GATEWAY_ROOT = resolve(__dirname, "..");
+const REPO_ROOT = resolve(VIDEO_GATEWAY_ROOT, "..");
+
+function resolveCustomerPortalMigrationsDir(): string {
+  const packagedPath = resolve(VIDEO_GATEWAY_ROOT, "customer-portal-migrations");
+  if (existsSync(packagedPath)) return packagedPath;
+
+  const localRepoPath = resolve(REPO_ROOT, "customer-portal", "migrations");
+  if (existsSync(localRepoPath)) return localRepoPath;
+
+  throw new Error(
+    `could not locate customer-portal migrations; checked ${packagedPath} and ${localRepoPath}`,
+  );
+}
+
 async function main(): Promise<void> {
   const cfg = loadConfig();
 
-  const portalPool = new pg.Pool({ connectionString: cfg.databaseUrl, max: 10 });
+  const portalPool = portalDb.createPool({ connectionString: cfg.databaseUrl, max: 10 });
+  const portalDbConn = portalDb.makeDb(portalPool);
+  await portalDb.runMigrations(portalDbConn, resolveCustomerPortalMigrationsDir());
   const portal = createCustomerPortal({
-    db: drizzle(portalPool),
+    db: portalDbConn,
     pepper: cfg.customerPortalPepper,
+    admin: cfg.adminTokens.length > 0 ? { tokens: cfg.adminTokens } : undefined,
   });
 
   const videoDb = createDb(cfg.databaseUrl);
@@ -55,9 +77,23 @@ async function main(): Promise<void> {
 
   const app = buildServer({
     cfg,
+    db: portalDbConn,
+    portal,
     routeSelector,
     liveSessions,
-    admin: { failures: repos.webhookFailures, dispatcher },
+    admin: {
+      videoDb,
+      assets: repos.assets,
+      liveStreamsRepo: repos.liveStreams,
+      recordingsRepo: repos.recordings,
+      failures: repos.webhookFailures,
+      dispatcher,
+    },
+  });
+  registerCustomerSelfServiceRoutes(app, {
+    db: portalDbConn,
+    portal,
+    authPepper: cfg.customerPortalPepper,
   });
   const rtmp = createRtmpListener({ cfg });
   app.log.info(

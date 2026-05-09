@@ -18,6 +18,17 @@ It provides:
 - browser-side API helpers
 - shared auth/signup/login components for portal flows
 
+## CSS delivery
+
+Shared styles are shipped as built assets from `dist/css/`, not loaded from `src/` at
+runtime.
+
+- `installGlobalStyles()` injects the built `dist/css/global.css` entrypoint
+- `dist/css/global.css` is flattened during package build so downstream bundles do not
+  rely on runtime `@import` resolution
+- app-local UIs can add their own CSS files, but shared primitives depend on the shared
+  built stylesheet being present in the package output
+
 ## UI modes
 
 The global style layer supports two body modes:

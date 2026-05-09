@@ -5,11 +5,14 @@
 package audit
 
 import (
+	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -18,14 +21,15 @@ import (
 type Kind string
 
 const (
-	KindLoadCandidate Kind = "load_candidate"
-	KindViewDiff      Kind = "view_diff"
-	KindSign          Kind = "sign"
-	KindWriteSigned   Kind = "write_signed"
-	KindAbort         Kind = "abort"
-	KindBoot          Kind = "boot"
-	KindShutdown      Kind = "shutdown"
-	KindRotate        Kind = "rotate"
+	KindLoadCandidate  Kind = "load_candidate"
+	KindViewDiff       Kind = "view_diff"
+	KindSign           Kind = "sign"
+	KindWriteSigned    Kind = "write_signed"
+	KindProtocolAction Kind = "protocol_action"
+	KindAbort          Kind = "abort"
+	KindBoot           Kind = "boot"
+	KindShutdown       Kind = "shutdown"
+	KindRotate         Kind = "rotate"
 )
 
 // Event is one audit record. Required: At, Kind. Everything else is
@@ -33,6 +37,7 @@ const (
 type Event struct {
 	At         time.Time      `json:"at"`
 	Kind       Kind           `json:"kind"`
+	Actor      string         `json:"actor,omitempty"`
 	EthAddress string         `json:"eth_address,omitempty"`
 	CanonHash  string         `json:"canonical_sha256,omitempty"`
 	Seq        *uint64        `json:"publication_seq,omitempty"`
@@ -56,6 +61,12 @@ type Log struct {
 	rotateSize  int64
 	currentSize int64
 	closed      bool
+}
+
+type Page struct {
+	Events     []Event
+	NextCursor string
+	HasOlder   bool
 }
 
 // Open opens (or creates) the JSONL audit log at path with the given
@@ -120,6 +131,56 @@ func (l *Log) Append(e Event) error {
 // Path returns the file path the log writes to.
 func (l *Log) Path() string { return l.path }
 
+// ReadRecent returns up to the last limit events from path in file
+// order. A non-positive limit returns all events.
+func ReadRecent(path string, limit int) ([]Event, error) {
+	page, err := ReadPage(path, limit, "")
+	if err != nil {
+		return nil, err
+	}
+	return page.Events, nil
+}
+
+// ReadPage returns up to limit events in file order using a cursor that
+// walks backward through the append-only file. An empty cursor returns the
+// newest page. The cursor is opaque to callers.
+func ReadPage(path string, limit int, cursor string) (Page, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Page{}, fmt.Errorf("audit: open for read: %w", err)
+	}
+	defer f.Close()
+
+	var events []Event
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var event Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			return Page{}, fmt.Errorf("audit: unmarshal line: %w", err)
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		return Page{}, fmt.Errorf("audit: scan: %w", err)
+	}
+	if limit <= 0 {
+		limit = len(events)
+	}
+	end, err := decodeCursor(cursor, len(events))
+	if err != nil {
+		return Page{}, err
+	}
+	start := max(0, end-limit)
+	page := Page{
+		Events:   events[start:end],
+		HasOlder: start > 0,
+	}
+	if page.HasOlder {
+		page.NextCursor = encodeCursor(start)
+	}
+	return page, nil
+}
+
 // Close flushes and closes the log.
 func (l *Log) Close() error {
 	l.mu.Lock()
@@ -164,4 +225,26 @@ func (l *Log) rotateLocked() error {
 	}
 	l.currentSize += int64(n)
 	return nil
+}
+
+func encodeCursor(end int) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(end)))
+}
+
+func decodeCursor(cursor string, total int) (int, error) {
+	if cursor == "" {
+		return total, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, fmt.Errorf("audit: decode cursor: %w", err)
+	}
+	end, err := strconv.Atoi(string(raw))
+	if err != nil {
+		return 0, fmt.Errorf("audit: parse cursor: %w", err)
+	}
+	if end < 0 || end > total {
+		return 0, errors.New("audit: cursor out of range")
+	}
+	return end, nil
 }

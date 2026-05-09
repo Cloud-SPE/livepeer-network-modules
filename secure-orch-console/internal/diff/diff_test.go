@@ -34,6 +34,18 @@ const after = `{
   "signature": {"value": "0x00"}
 }`
 
+const afterBare = `{
+  "spec_version": "0.2.0",
+  "publication_seq": 6,
+  "issued_at": "2026-05-01T00:00:00Z",
+  "expires_at": "2026-06-01T00:00:00Z",
+  "orch": {"eth_address": "0xaaaa00000000000000000000000000000000aaaa"},
+  "capabilities": [
+    {"capability_id": "openai:chat", "offering_id": "small", "price_per_unit_wei": "1100"},
+    {"capability_id": "video:transcode", "offering_id": "h264", "price_per_unit_wei": "200"}
+  ]
+}`
+
 func TestCompute_FullDiff(t *testing.T) {
 	r, err := Compute([]byte(before), []byte(after))
 	if err != nil {
@@ -69,6 +81,19 @@ func TestCompute_FirstSign(t *testing.T) {
 	}
 	if !r.Header.SeqMonotonic {
 		t.Fatal("first sign should be considered monotonic")
+	}
+}
+
+func TestCompute_AcceptsBareCandidateManifest(t *testing.T) {
+	r, err := Compute([]byte(before), []byte(afterBare))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Added) != 1 || r.Added[0].CapabilityID != "video:transcode" {
+		t.Fatalf("unexpected Added: %+v", r.Added)
+	}
+	if len(r.Changed) != 1 || r.Changed[0].OfferingID != "small" {
+		t.Fatalf("unexpected Changed: %+v", r.Changed)
 	}
 }
 

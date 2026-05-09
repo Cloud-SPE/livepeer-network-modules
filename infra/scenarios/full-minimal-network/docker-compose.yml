@@ -70,10 +70,11 @@ services:
       - --mode=resolver
       - --socket=/var/run/livepeer/service-registry.sock
       - --store-path=/var/lib/livepeer/registry-cache.db
-      - --chain-rpc=${CHAIN_RPC}
+      - --chain-rpc=${CHAIN_RPC:-${ETH_URLS}}
       - --chain-id=${CHAIN_ID:-42161}
       - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
-      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS}
+      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS:-}
+      - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS:-0x04C0b249740175999E5BF5c9ac1dA92431EF34C5}
       - --discovery=chain
       - --round-poll-interval=15s
       - --cache-manifest-ttl=5m
@@ -102,9 +103,9 @@ services:
       - --last-signed=/var/lib/secure-orch/last-signed.json
       - --audit-log=/var/log/secure-orch/audit.log.jsonl
       - --audit-rotate-size=104857600
-      - --listen=127.0.0.1:8080
+      - --listen=${SECURE_ORCH_LISTEN:-127.0.0.1:8080}
     ports:
-      - "127.0.0.1:${SECURE_ORCH_PORT:-8080}:8080"
+      - "${SECURE_ORCH_BIND:-127.0.0.1}:${SECURE_ORCH_PORT:-8080}:8080"
     volumes:
       - ${SECURE_ORCH_KEYSTORE:-./run/secure-orch-keystore.json}:/var/lib/secure-orch/keystore.json:ro
       - ${SECURE_ORCH_PASSWORD_FILE:-./run/secure-orch-password}:/etc/secure-orch/password:ro

@@ -4,6 +4,7 @@ import Fastify from 'fastify';
 import { registerAdminRoutes } from '../src/admin/index.js';
 import { createBasicAdminAuthResolver } from '../src/auth/index.js';
 import type { AdminEngine } from '../src/admin/index.js';
+import type { RegisterAdminRoutesDeps } from '../src/admin/routes.js';
 
 function fakeEngine(): AdminEngine & {
   customers: Map<string, {
@@ -142,15 +143,58 @@ function basicAuth(user: string, pass: string): string {
   return 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
 }
 
-test('admin routes 401 without basic auth', async () => {
+function adminRouteDeps(
+  engine: AdminEngine,
+  authResolver: ReturnType<typeof createBasicAdminAuthResolver>,
+): RegisterAdminRoutesDeps {
+  return {
+    db: {} as RegisterAdminRoutesDeps['db'],
+    engine,
+    authResolver,
+    customerTokenService: {
+      async issue(input) {
+        return {
+          tokenId: `tok-${input.customerId}`,
+          plaintext: `vtbs_${input.customerId}`,
+        };
+      },
+      async list() {
+        return [];
+      },
+      async revoke() {},
+      async authenticate() {
+        throw new Error('unused in admin route tests');
+      },
+      async countActive() {
+        return 1;
+      },
+      invalidate() {},
+    } as RegisterAdminRoutesDeps['customerTokenService'],
+    async issueApiKey(input) {
+      return {
+        apiKeyId: `key-${input.customerId}`,
+        plaintext: `live_${input.customerId}`,
+      };
+    },
+    async revokeApiKey() {},
+  };
+}
+
+test('admin routes 401 without admin auth', async () => {
   const engine = fakeEngine();
   const authResolver = createBasicAdminAuthResolver({ user: 'op', pass: 'sekrit' });
   const app = Fastify();
-  registerAdminRoutes(app, { engine, authResolver });
+  registerAdminRoutes(app, adminRouteDeps(engine, authResolver));
 
   const res = await app.inject({ method: 'GET', url: '/admin/customers/cust-1' });
   assert.equal(res.statusCode, 401);
-  assert.match(String(res.headers['www-authenticate']), /Basic realm/);
+  assert.deepEqual(JSON.parse(res.body), {
+    error: {
+      code: 'authentication_failed',
+      message: 'admin token + actor required',
+      type: 'AdminAuthError',
+    },
+  });
   await app.close();
 });
 
@@ -158,7 +202,7 @@ test('admin routes round-trip: create, lookup, adjust balance, status, refund, a
   const engine = fakeEngine();
   const authResolver = createBasicAdminAuthResolver({ user: 'op', pass: 'sekrit' });
   const app = Fastify();
-  registerAdminRoutes(app, { engine, authResolver });
+  registerAdminRoutes(app, adminRouteDeps(engine, authResolver));
   const auth = basicAuth('op', 'sekrit');
 
   const create = await app.inject({
@@ -251,7 +295,7 @@ test('admin routes reject invalid create payload', async () => {
   const engine = fakeEngine();
   const authResolver = createBasicAdminAuthResolver({ user: 'op', pass: 'sekrit' });
   const app = Fastify();
-  registerAdminRoutes(app, { engine, authResolver });
+  registerAdminRoutes(app, adminRouteDeps(engine, authResolver));
   const auth = basicAuth('op', 'sekrit');
 
   const res = await app.inject({
@@ -268,7 +312,7 @@ test('admin routes 404 on missing customer', async () => {
   const engine = fakeEngine();
   const authResolver = createBasicAdminAuthResolver({ user: 'op', pass: 'sekrit' });
   const app = Fastify();
-  registerAdminRoutes(app, { engine, authResolver });
+  registerAdminRoutes(app, adminRouteDeps(engine, authResolver));
   const auth = basicAuth('op', 'sekrit');
 
   const res = await app.inject({

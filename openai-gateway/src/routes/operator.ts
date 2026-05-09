@@ -16,11 +16,10 @@ export interface RegisterOperatorRoutesDeps {
   authResolver: AdminAuthResolver;
   rateCardStore: Queryable & { connect?: () => Promise<{ query: (sql: string, args?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>; release: () => void }> };
   routeSelector: RouteSelector;
-  realm?: string;
 }
 
 export function registerOperatorRoutes(app: FastifyInstance, deps: RegisterOperatorRoutesDeps): void {
-  const preHandler = basicAuthPreHandler(deps.authResolver, deps.realm ?? 'openai-gateway-admin');
+  const preHandler = adminAuthPreHandler(deps.authResolver);
 
   app.get('/admin/openai/rate-card', { preHandler }, async (_req, reply) => {
     const snapshot = await loadRateCardSnapshot(deps.rateCardStore);
@@ -44,9 +43,8 @@ export function registerOperatorRoutes(app: FastifyInstance, deps: RegisterOpera
   });
 }
 
-function basicAuthPreHandler(
+function adminAuthPreHandler(
   resolver: AdminAuthResolver,
-  realm: string,
 ): preHandlerAsyncHookHandler {
   return async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const result = await resolver.resolve({
@@ -54,9 +52,8 @@ function basicAuthPreHandler(
       ip: req.ip,
     });
     if (!result) {
-      reply.header('www-authenticate', `Basic realm="${realm}"`);
       await reply.code(401).send({
-        error: { code: 'authentication_failed', message: 'admin authentication required', type: 'AdminAuthError' },
+        error: { code: 'authentication_failed', message: 'admin token + actor required', type: 'AdminAuthError' },
       });
       return;
     }

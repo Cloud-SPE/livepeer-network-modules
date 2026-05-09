@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-func TestRun_RejectsRoutableBind(t *testing.T) {
+func TestRun_RejectsAmbiguousBind(t *testing.T) {
 	dir := t.TempDir()
 	keystore := filepath.Join(dir, "ks.json")
 	password := filepath.Join(dir, "pw")
 	os.WriteFile(keystore, []byte("{}"), 0o600)
 	os.WriteFile(password, []byte("pw"), 0o600)
-	cases := []string{"0.0.0.0:8080", ":8080", "1.2.3.4:8080"}
+	cases := []string{":8080"}
 	for _, addr := range cases {
 		t.Run(addr, func(t *testing.T) {
 			err := run([]string{
@@ -24,12 +24,33 @@ func TestRun_RejectsRoutableBind(t *testing.T) {
 				"--audit-log=" + filepath.Join(dir, "audit.jsonl"),
 			})
 			if err == nil {
-				t.Fatalf("expected rejection for %q (hard rule: secure-orch never accepts inbound connections)", addr)
+				t.Fatalf("expected rejection for %q", addr)
 			}
-			if !strings.Contains(err.Error(), "loopback") && !strings.Contains(err.Error(), "host") {
-				t.Fatalf("error should mention loopback gate: %v", err)
+			if !strings.Contains(err.Error(), "host") {
+				t.Fatalf("error should mention host validation: %v", err)
 			}
 		})
+	}
+}
+
+func TestRun_AcceptsNonLoopbackBind(t *testing.T) {
+	dir := t.TempDir()
+	keystore := filepath.Join(dir, "ks.json")
+	password := filepath.Join(dir, "pw")
+	os.WriteFile(keystore, []byte("{}"), 0o600)
+	os.WriteFile(password, []byte("pw"), 0o600)
+	err := run([]string{
+		"--keystore=v3:" + keystore,
+		"--keystore-password-file=" + password,
+		"--listen=0.0.0.0:8080",
+		"--last-signed=" + filepath.Join(dir, "last.json"),
+		"--audit-log=" + filepath.Join(dir, "audit.jsonl"),
+	})
+	if err == nil {
+		t.Fatal("expected later keystore load failure")
+	}
+	if strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("unexpected loopback validation error: %v", err)
 	}
 }
 

@@ -13,6 +13,7 @@ import { registerImagesGenerations } from "./routes/images-generations.js";
 import { registerRealtime } from "./routes/realtime.js";
 import { registerCustomerPortalRoutes } from "./routes/customer-portal.js";
 import { registerOperatorRoutes } from "./routes/operator.js";
+import { registerModelsRoute } from "./routes/models.js";
 import { registerStripeRoutes } from "./routes/stripe.js";
 import { defaultAdminDist, defaultPortalDist, registerSpaStatic } from "./runtime/static.js";
 import { createRouteSelector } from "./service/routeSelector.js";
@@ -61,7 +62,9 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
       db: input.db,
       portal: input.portal,
       authPepper: cfg.authPepper,
+      routeSelector,
     });
+    registerModelsRoute(app, input.portal.authResolver, routeSelector);
     registerStripeRoutes(app, {
       cfg,
       db: input.db,
@@ -70,8 +73,12 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
   }
   if (input.portal?.adminAuthResolver) {
     portalAdmin.registerAdminRoutes(app, {
+      db: input.db!,
       engine: input.portal.adminEngine,
       authResolver: input.portal.adminAuthResolver,
+      customerTokenService: input.portal.customerTokenService,
+      issueApiKey: input.portal.issueApiKey,
+      revokeApiKey: input.portal.revokeApiKey,
     });
     if (input.rateCardStore) {
       registerOperatorRoutes(app, {

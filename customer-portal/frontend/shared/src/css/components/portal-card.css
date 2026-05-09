@@ -1,0 +1,41 @@
+portal-card {
+  display: block;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.02) 100%),
+    var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(14px);
+}
+
+portal-card .portal-card__head {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+portal-card .portal-card__head[hidden] {
+  display: none;
+}
+
+portal-card .portal-card__heading {
+  font-size: var(--font-size-lg);
+  font-weight: 650;
+  color: var(--text-1);
+  letter-spacing: -0.02em;
+}
+
+portal-card .portal-card__subheading {
+  color: var(--text-2);
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  max-width: 70ch;
+}
+
+@media (max-width: 720px) {
+  portal-card {
+    padding: var(--space-5);
+  }
+}

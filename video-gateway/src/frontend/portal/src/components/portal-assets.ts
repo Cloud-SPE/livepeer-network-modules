@@ -1,5 +1,3 @@
-import { LitElement, css, html, type TemplateResult } from "lit";
-import { customElement, state } from "lit/decorators.js";
 import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
 
 interface AssetRow {
@@ -11,54 +9,47 @@ interface AssetRow {
   playbackUrl: string | null;
 }
 
-@customElement("portal-assets")
-export class PortalAssets extends LitElement {
-  @state() private rows: AssetRow[] = [];
-  @state() private uploading = false;
-  @state() private error: string | null = null;
-  @state() private confirmDelete: AssetRow | null = null;
+function installStyles(): void {
+  if (document.getElementById("video-gateway-portal-pages-styles") !== null) {
+    return;
+  }
+  const link = document.createElement("link");
+  link.id = "video-gateway-portal-pages-styles";
+  link.rel = "stylesheet";
+  link.href = new URL("./portal-pages.css", import.meta.url).href;
+  document.head.append(link);
+}
 
-  private api = new ApiClient({ baseUrl: "" });
+export class PortalAssets extends HTMLElement {
+  private rows: AssetRow[] = [];
+  private uploading = false;
+  private error: string | null = null;
+  private confirmDelete: AssetRow | null = null;
 
-  static styles = css`
-    :host { display: block; }
-    .toolbar { display: flex; gap: var(--space-2); align-items: center; }
-    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
-    th, td { padding: 0.7rem 0.75rem; border-bottom: 1px solid var(--border-1); text-align: left; }
-    th {
-      color: var(--text-3);
-      font-size: var(--font-size-xs);
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-    tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
-    .deleted { color: var(--text-3); }
-    button { background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-1); border-radius: var(--radius-pill); padding: 0.35rem 0.65rem; cursor: pointer; font-size: 0.75rem; color: var(--text-1); }
-    .err { color: var(--danger); }
-    a { color: var(--accent); }
-  `;
+  private readonly api = new ApiClient({ baseUrl: "" });
 
-  override async connectedCallback(): Promise<void> {
-    super.connectedCallback();
-    await this.load();
+  connectedCallback(): void {
+    installStyles();
+    void this.load();
   }
 
   private async load(): Promise<void> {
     this.error = null;
     try {
-      const out = await this.api.get<{ items: AssetRow[] }>(`/portal/assets`);
+      const out = await this.api.get<{ items: AssetRow[] }>("/portal/assets");
       this.rows = out.items ?? [];
     } catch (err) {
       this.error = err instanceof Error ? err.message : "load_failed";
     }
+    this.render();
   }
 
   private async upload(file: File): Promise<void> {
     this.uploading = true;
     this.error = null;
+    this.render();
     try {
-      const init = await this.api.post<{ uploadUrl: string; assetId: string }>(`/portal/uploads`, {
+      const init = await this.api.post<{ uploadUrl: string; assetId: string }>("/portal/uploads", {
         filename: file.name,
         size: file.size,
         contentType: file.type,
@@ -72,19 +63,25 @@ export class PortalAssets extends LitElement {
         },
         body: file,
       });
-      if (!tus.ok) throw new Error(`upload_failed_${tus.status}`);
+      if (!tus.ok) {
+        throw new Error(`upload_failed_${tus.status}`);
+      }
       await this.load();
     } catch (err) {
       this.error = err instanceof Error ? err.message : "upload_failed";
+      this.render();
     } finally {
       this.uploading = false;
+      this.render();
     }
   }
 
-  private onFile(e: Event): void {
-    const input = e.target as HTMLInputElement;
+  private onFile(event: Event): void {
+    const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
-    if (file) void this.upload(file);
+    if (file !== undefined) {
+      void this.upload(file);
+    }
     input.value = "";
   }
 
@@ -95,6 +92,7 @@ export class PortalAssets extends LitElement {
       await this.load();
     } catch (err) {
       this.error = err instanceof Error ? err.message : "delete_failed";
+      this.render();
     }
   }
 
@@ -104,74 +102,142 @@ export class PortalAssets extends LitElement {
       await this.load();
     } catch (err) {
       this.error = err instanceof Error ? err.message : "restore_failed";
+      this.render();
     }
   }
 
-  render(): TemplateResult {
-    return html`
-      <portal-card heading="Asset library">
-        <portal-data-table
-          heading="Library"
-          description="Upload, review, restore, and retire video assets from one place."
-        >
-        <div class="toolbar" slot="toolbar">
-          <input type="file" @change=${this.onFile} ?disabled=${this.uploading} />
-          ${this.uploading ? html`<span>Uploading.</span>` : ""}
-        </div>
-        ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-        <table>
-          <thead>
-            <tr><th>ID</th><th>Status</th><th>Duration</th><th>Created</th><th>Playback</th><th></th></tr>
-          </thead>
-          <tbody>
-            ${this.rows.map(
-              (r) => html`<tr class=${r.deletedAt ? "deleted" : ""}>
-                <td>${r.id}</td>
-                <td>${r.status}${r.deletedAt ? " (deleted)" : ""}</td>
-                <td>${r.durationSec !== null ? r.durationSec.toFixed(1) + "s" : "-"}</td>
-                <td>${r.createdAt}</td>
-                <td>${r.playbackUrl ? html`<a href=${r.playbackUrl}>play</a>` : "-"}</td>
-                <td>
-                  ${r.deletedAt
-                    ? html`<button @click=${(): void => void this.restore(r)}>Restore</button>`
-                    : html`<button
-                        @click=${(): void => {
-                          this.confirmDelete = r;
-                        }}
-                      >
-                        Delete
-                      </button>`}
-                </td>
-              </tr>`,
-            )}
-          </tbody>
-        </table>
-        </portal-data-table>
-        <portal-modal
-          ?open=${this.confirmDelete !== null}
-          heading="Delete asset?"
-        >
-          <p>Soft-delete asset ${this.confirmDelete?.id}? Playback will stop.</p>
-          <portal-button
-            variant="danger"
-            @click=${(): void => {
-              if (this.confirmDelete) void this.softDelete(this.confirmDelete);
-            }}
-          >
-            Confirm delete
-          </portal-button>
-          <portal-button
-            variant="ghost"
-            @click=${(): void => {
-              this.confirmDelete = null;
-            }}
-          >
-            Cancel
-          </portal-button>
-        </portal-modal>
-      </portal-card>
+  private render(): void {
+    const card = document.createElement("portal-card");
+    card.setAttribute("heading", "Asset library");
+
+    const tableShell = document.createElement("portal-data-table");
+    tableShell.setAttribute("heading", "Library");
+    tableShell.setAttribute("description", "Upload, review, restore, and retire video assets from one place.");
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "video-portal-page-toolbar";
+    toolbar.slot = "toolbar";
+    const input = document.createElement("input");
+    input.type = "file";
+    input.disabled = this.uploading;
+    input.addEventListener("change", (event) => this.onFile(event));
+    toolbar.append(input);
+    if (this.uploading) {
+      toolbar.append(this.message("span", "Uploading."));
+    }
+    tableShell.append(toolbar);
+
+    if (this.error !== null) {
+      tableShell.append(this.message("p", this.error, "video-portal-page-error"));
+    }
+
+    const table = document.createElement("table");
+    table.className = "video-portal-page-table";
+    table.innerHTML = `
+      <thead>
+        <tr><th>ID</th><th>Status</th><th>Duration</th><th>Created</th><th>Playback</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
     `;
+    const tbody = table.tBodies[0]!;
+    for (const row of this.rows) {
+      const tr = document.createElement("tr");
+      if (row.deletedAt !== null) {
+        tr.className = "video-portal-page-deleted";
+      }
+      tr.append(
+        this.cell(row.id),
+        this.cell(`${row.status}${row.deletedAt !== null ? " (deleted)" : ""}`),
+        this.cell(row.durationSec !== null ? `${row.durationSec.toFixed(1)}s` : "-"),
+        this.cell(row.createdAt),
+        this.playbackCell(row.playbackUrl),
+        this.assetActionCell(row),
+      );
+      tbody.append(tr);
+    }
+    tableShell.append(table);
+
+    const modal = document.createElement("portal-modal");
+    if (this.confirmDelete !== null) {
+      modal.setAttribute("open", "");
+    }
+    modal.setAttribute("heading", "Delete asset?");
+    modal.append(
+      this.message("p", `Soft-delete asset ${this.confirmDelete?.id ?? ""}? Playback will stop.`),
+      this.modalButton("Confirm delete", "danger", () => {
+        if (this.confirmDelete !== null) {
+          void this.softDelete(this.confirmDelete);
+        }
+      }),
+      this.modalButton("Cancel", "ghost", () => {
+        this.confirmDelete = null;
+        this.render();
+      }),
+    );
+
+    card.append(tableShell, modal);
+    this.replaceChildren(card);
   }
+
+  private message<K extends keyof HTMLElementTagNameMap>(tag: K, text: string, className = ""): HTMLElementTagNameMap[K] {
+    const element = document.createElement(tag);
+    if (className !== "") {
+      element.className = className;
+    }
+    element.textContent = text;
+    return element;
+  }
+
+  private cell(text: string): HTMLTableCellElement {
+    const td = document.createElement("td");
+    td.textContent = text;
+    return td;
+  }
+
+  private playbackCell(url: string | null): HTMLTableCellElement {
+    const td = document.createElement("td");
+    if (url === null) {
+      td.textContent = "-";
+      return td;
+    }
+    const link = document.createElement("a");
+    link.href = url;
+    link.textContent = "play";
+    td.append(link);
+    return td;
+  }
+
+  private assetActionCell(row: AssetRow): HTMLTableCellElement {
+    const td = document.createElement("td");
+    const button = document.createElement("button");
+    button.className = "video-portal-page-button";
+    if (row.deletedAt !== null) {
+      button.textContent = "Restore";
+      button.addEventListener("click", () => {
+        void this.restore(row);
+      });
+    } else {
+      button.textContent = "Delete";
+      button.addEventListener("click", () => {
+        this.confirmDelete = row;
+        this.render();
+      });
+    }
+    td.append(button);
+    return td;
+  }
+
+  private modalButton(label: string, variant: string, onClick: () => void): HTMLElement {
+    const button = document.createElement("portal-button");
+    button.setAttribute("variant", variant);
+    button.textContent = label;
+    button.addEventListener("click", onClick);
+    return button;
+  }
+}
+
+if (!customElements.get("portal-assets")) {
+  customElements.define("portal-assets", PortalAssets);
 }
 
 declare global {

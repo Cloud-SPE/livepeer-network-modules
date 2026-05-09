@@ -10,13 +10,18 @@ the suite daemon ran in publisher mode on the secure-orch host. The
 console replaces that publisher surface with a diff-and-sign UX, but
 the keystore concept is unchanged.
 
-## Hard rule
+## Bind posture
 
-**secure-orch never accepts inbound connections.** The console binds
-`127.0.0.1` only. Operators access it via
-`ssh -L 8080:127.0.0.1:8080 secure-orch` from a LAN laptop. Whether
+Loopback-only remains the recommended deployment posture. The console
+now accepts any explicit `host:port` in `--listen`, so operators can
+still use `ssh -L 8080:127.0.0.1:8080 secure-orch` or deliberately
+bind a broader interface if their environment requires it. Whether
 sshd runs at all, on which interface, with what auth posture, is a
 deployment-layer choice (plan 0019 §9.3 / §13 Q6).
+
+If `SECURE_ORCH_ADMIN_TOKENS` is configured, the operator must log in
+with an admin token and actor string before using the UI. The actor is
+recorded into audit events.
 
 ## Scope (v0.1)
 
@@ -44,7 +49,7 @@ secure-orch-console \
 The keystore selector is `v3:<path>`. The password is read from a file
 to avoid TTY-echo footguns; alternatively set
 `LIVEPEER_KEYSTORE_PASSWORD` in the environment. The console refuses
-to start if `--listen` is not a loopback address.
+to start if `--listen` is not an explicit `host:port`.
 
 ## Sign cycle
 

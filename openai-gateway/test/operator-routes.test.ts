@@ -11,7 +11,7 @@ import type { RouteSelector } from '../src/service/routeSelector.js';
 test('operator routes expose resolver candidates and replace rate card snapshot', async (t) => {
   const authResolver: AdminAuthResolver = {
     async resolve(req: AdminAuthResolverRequest) {
-      return req.headers.authorization === 'Basic good'
+      return req.headers.authorization === 'Bearer good' && req.headers['x-actor'] === 'ops@example.com'
         ? { actor: 'ops@example.com' }
         : null;
     },
@@ -38,8 +38,9 @@ test('operator routes expose resolver candidates and replace rate card snapshot'
       return [
         {
           brokerUrl: 'https://broker.example.com',
-          capability: 'openai:/v1/chat/completions',
+          capability: 'openai:chat-completions',
           offering: 'gpt-4o-mini',
+          model: 'gpt-4o-mini',
           ethAddress: '0xabc',
           pricePerWorkUnitWei: '42',
           workUnit: 'million_input_tokens',
@@ -67,7 +68,7 @@ test('operator routes expose resolver candidates and replace rate card snapshot'
   const getRateCard = await app.inject({
     method: 'GET',
     url: '/admin/openai/rate-card',
-    headers: { authorization: 'Basic good' },
+    headers: { authorization: 'Bearer good', 'x-actor': 'ops@example.com' },
   });
   assert.equal(getRateCard.statusCode, 200);
   assert.equal(getRateCard.json().chatTiers[0].tier, 'starter');
@@ -75,7 +76,7 @@ test('operator routes expose resolver candidates and replace rate card snapshot'
   const getCandidates = await app.inject({
     method: 'GET',
     url: '/admin/openai/resolver-candidates',
-    headers: { authorization: 'Basic good' },
+    headers: { authorization: 'Bearer good', 'x-actor': 'ops@example.com' },
   });
   assert.equal(getCandidates.statusCode, 200);
   assert.equal(getCandidates.json().candidates[0].offering, 'gpt-4o-mini');
@@ -92,7 +93,8 @@ test('operator routes expose resolver candidates and replace rate card snapshot'
     method: 'PUT',
     url: '/admin/openai/rate-card',
     headers: {
-      authorization: 'Basic good',
+      authorization: 'Bearer good',
+      'x-actor': 'ops@example.com',
       'content-type': 'application/json',
     },
     payload: JSON.stringify(nextSnapshot),
@@ -102,7 +104,7 @@ test('operator routes expose resolver candidates and replace rate card snapshot'
   const getUpdated = await app.inject({
     method: 'GET',
     url: '/admin/openai/rate-card',
-    headers: { authorization: 'Basic good' },
+    headers: { authorization: 'Bearer good', 'x-actor': 'ops@example.com' },
   });
   const updated = getUpdated.json() as RateCardSnapshot;
   assert.equal(updated.chatTiers[0]?.tier, 'pro');

@@ -9,11 +9,21 @@
 <header>
   <nav>
     <a href="/" class="brand">orch-coordinator</a>
+    {{if .OrchEthAddress}}
     <span class="orch">{{.OrchEthAddress}}</span>
     <a href="/" class="navlink">Roster</a>
     <a href="/diff" class="navlink">Diff</a>
     <a href="/audit" class="navlink">Audit</a>
     <a href="/candidate.tar.gz" class="navlink">Download candidate</a>
+    {{else}}
+    <span class="orch">operator login</span>
+    {{end}}
+    {{if .Actor}}
+    <span class="actor">actor {{.Actor}}</span>
+    <form method="post" action="/logout" class="logout">
+      <button type="submit">Logout</button>
+    </form>
+    {{end}}
   </nav>
 </header>
 <main>

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/receive"
@@ -21,28 +22,12 @@ const MaxUploadBytes = 1 << 20
 //
 //	POST /admin/signed-manifest    multipart/form-data with field "manifest"
 func (s *Server) UploadRoutes(rec *receive.Service) {
-	s.mux.HandleFunc("POST /admin/signed-manifest", func(w http.ResponseWriter, r *http.Request) {
-		body, uploader, err := readUpload(r)
-		if err != nil {
-			httpJSON(w, http.StatusBadRequest, map[string]any{
-				"outcome": "schema_invalid",
-				"error":   err.Error(),
-			})
-			return
-		}
-		res, err := rec.Receive(body, uploader)
-		if err != nil {
-			var ve *receive.VerifyError
-			if errors.As(err, &ve) {
-				httpJSON(w, statusForOutcome(ve.Code), map[string]any{
-					"outcome": string(ve.Code),
-					"error":   ve.Msg,
-				})
-				return
-			}
-			httpJSON(w, http.StatusInternalServerError, map[string]any{
-				"outcome": "internal_error",
-				"error":   err.Error(),
+	s.mux.HandleFunc("POST /admin/signed-manifest", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		res, outcome, msg, status := receiveUpload(rec, r)
+		if status != http.StatusOK || res == nil {
+			httpJSON(w, status, map[string]any{
+				"outcome": string(outcome),
+				"error":   msg,
 			})
 			return
 		}
@@ -52,7 +37,26 @@ func (s *Server) UploadRoutes(rec *receive.Service) {
 			"manifest_sha256":  res.ManifestSHA256,
 			"signature_sha256": res.SignatureSHA256,
 		})
+	}))
+}
+
+func receiveUpload(rec *receive.Service, r *http.Request) (*receive.Result, audit.Outcome, string, int) {
+	body, uploader, err := readUpload(r)
+	if err != nil {
+		return nil, audit.OutcomeSchemaInvalid, err.Error(), http.StatusBadRequest
+	}
+	res, err := rec.ReceiveFrom(body, receive.UploaderIdentity{
+		Name:  uploader,
+		Actor: actorFromRequest(r),
 	})
+	if err != nil {
+		var ve *receive.VerifyError
+		if errors.As(err, &ve) {
+			return nil, ve.Code, ve.Msg, statusForOutcome(ve.Code)
+		}
+		return nil, audit.OutcomePublishFailed, err.Error(), http.StatusInternalServerError
+	}
+	return res, audit.OutcomeAccepted, "", http.StatusOK
 }
 
 // readUpload extracts the manifest bytes from a multipart upload OR a
@@ -60,9 +64,12 @@ func (s *Server) UploadRoutes(rec *receive.Service) {
 // uploaders may POST `application/json` directly.
 func readUpload(r *http.Request) ([]byte, string, error) {
 	r.Body = http.MaxBytesReader(nil, r.Body, MaxUploadBytes)
-	uploader := r.RemoteAddr
-	if h := r.Header.Get("X-Uploader"); h != "" {
-		uploader = h
+	uploader := strings.TrimSpace(actorFromRequest(r))
+	if uploader == "" {
+		uploader = r.RemoteAddr
+		if h := r.Header.Get("X-Uploader"); h != "" {
+			uploader = h
+		}
 	}
 	ct := r.Header.Get("Content-Type")
 	if len(ct) >= 19 && ct[:19] == "multipart/form-data" {

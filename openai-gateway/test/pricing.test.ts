@@ -204,24 +204,24 @@ test('createRateCardResolver routes capability + offering through the lookup tab
   };
   const resolver = createRateCardResolver({ pool: fakePool });
 
-  const chat = await resolver.resolve({ capability: 'openai:/v1/chat/completions', offering: 'model-small' });
+  const chat = await resolver.resolve({ capability: 'openai:chat-completions', offering: 'model-small' });
   assert.ok(chat, 'chat resolution returned null');
   assert.equal(chat.unit, 'million_input_tokens');
 
-  const emb = await resolver.resolve({ capability: 'openai:/v1/embeddings', offering: 'text-embedding-3-small' });
+  const emb = await resolver.resolve({ capability: 'openai:embeddings', offering: 'text-embedding-3-small' });
   assert.ok(emb, 'embeddings resolution returned null');
   assert.equal(emb.unit, 'million_tokens');
 
-  const speech = await resolver.resolve({ capability: 'openai:/v1/audio/speech', offering: 'tts-1' });
+  const speech = await resolver.resolve({ capability: 'openai:audio-speech', offering: 'tts-1' });
   assert.equal(speech?.unit, 'million_chars');
 
-  const txn = await resolver.resolve({ capability: 'openai:/v1/audio/transcriptions', offering: 'whisper-1' });
+  const txn = await resolver.resolve({ capability: 'openai:audio-transcriptions', offering: 'whisper-1' });
   assert.equal(txn?.unit, 'minute');
 
-  const img = await resolver.resolve({ capability: 'openai:/v1/images/generations', offering: 'sdxl' });
+  const img = await resolver.resolve({ capability: 'openai:images-generations', offering: 'sdxl' });
   assert.equal(img?.unit, 'image');
 
-  const miss = await resolver.resolve({ capability: 'openai:/v1/embeddings', offering: 'no-such' });
+  const miss = await resolver.resolve({ capability: 'openai:embeddings', offering: 'no-such' });
   assert.equal(miss, null);
 
   const unknownCap = await resolver.resolve({ capability: 'unknown', offering: 'tts-1' });

@@ -1,73 +1,90 @@
-// Scene history page — recent VRMs + target broadcasts. Phase 4
-// scaffold; full implementation lands in a follow-up commit.
+function installPageStyles(): void {
+  if (document.getElementById("vtuber-gateway-portal-page-styles") !== null) {
+    return;
+  }
+  const link = document.createElement("link");
+  link.id = "vtuber-gateway-portal-page-styles";
+  link.rel = "stylesheet";
+  link.href = new URL("./portal-vtuber-pages.css", import.meta.url).href;
+  document.head.append(link);
+}
 
-import { LitElement, html, css } from "lit";
+export class PortalVtuberHistoryPage extends HTMLElement {
+  connectedCallback(): void {
+    installPageStyles();
+    this.render();
+  }
 
-export class PortalVtuberHistoryPage extends LitElement {
-  static override styles = css`
-    :host {
-      display: grid;
-      gap: var(--space-4);
-    }
-    .timeline {
-      display: grid;
-      gap: var(--space-3);
-    }
-    .entry {
-      padding: var(--space-4);
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--border-1);
-      background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.012) 100%),
-        var(--surface-1);
-      box-shadow: var(--shadow-sm);
-    }
-    .meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--space-2);
-      margin-bottom: var(--space-2);
-      color: var(--text-3);
-      font-size: var(--font-size-xs);
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-    .title {
-      color: var(--text-1);
-      font-weight: 650;
-      margin-bottom: var(--space-1);
-    }
-  `;
+  private render(): void {
+    this.replaceChildren(
+      this.card(
+        "Scene History",
+        this.text(
+          "p",
+          "Recent VRM selections, target broadcast contexts, and session-to-session continuity live here. This is the narrative memory of the VTuber product.",
+        ),
+      ),
+      this.timeline(),
+    );
+  }
 
-  override render() {
-    return html`
-      <portal-card heading="Scene History">
-        <p>
-          Recent VRM selections, target broadcast contexts, and session-to-session
-          continuity live here. This is the narrative memory of the VTuber product.
-        </p>
-      </portal-card>
+  private timeline(): HTMLElement {
+    const timeline = this.wrap("div", "vtuber-portal-page-timeline");
+    timeline.append(
+      this.entry(
+        ["Recent session", "VRM continuity"],
+        "Character + stream context ledger",
+        "Keep a readable archive of model, scene source, and broadcast target changes over time.",
+      ),
+      this.entry(
+        ["Operator memory", "Replayable state"],
+        "Reusable scene packets",
+        "Bring past shows back quickly with archived persona, visuals, and runtime control defaults.",
+      ),
+    );
+    return timeline;
+  }
 
-      <div class="timeline">
-        <section class="entry">
-          <div class="meta">
-            <span>Recent session</span>
-            <span>VRM continuity</span>
-          </div>
-          <div class="title">Character + stream context ledger</div>
-          <p>Keep a readable archive of model, scene source, and broadcast target changes over time.</p>
-        </section>
-        <section class="entry">
-          <div class="meta">
-            <span>Operator memory</span>
-            <span>Replayable state</span>
-          </div>
-          <div class="title">Reusable scene packets</div>
-          <p>Bring past shows back quickly with archived persona, visuals, and runtime control defaults.</p>
-        </section>
-      </div>
-    `;
+  private entry(meta: string[], title: string, body: string): HTMLElement {
+    const metaWrap = this.wrap("div", "vtuber-portal-page-meta");
+    for (const item of meta) {
+      metaWrap.append(this.text("span", item));
+    }
+    return this.wrap(
+      "section",
+      "vtuber-portal-page-entry",
+      metaWrap,
+      this.text("div", title, "vtuber-portal-page-entry-title"),
+      this.text("p", body),
+    );
+  }
+
+  private card(heading: string, ...children: Node[]): HTMLElement {
+    const card = document.createElement("portal-card");
+    card.setAttribute("heading", heading);
+    card.append(...children);
+    return card;
+  }
+
+  private text<K extends keyof HTMLElementTagNameMap>(tag: K, text: string, className = ""): HTMLElementTagNameMap[K] {
+    const element = document.createElement(tag);
+    if (className !== "") {
+      element.className = className;
+    }
+    element.textContent = text;
+    return element;
+  }
+
+  private wrap<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, ...children: Node[]): HTMLElementTagNameMap[K] {
+    const element = document.createElement(tag);
+    if (className !== "") {
+      element.className = className;
+    }
+    element.append(...children);
+    return element;
   }
 }
 
-customElements.define("portal-vtuber-history", PortalVtuberHistoryPage);
+if (!customElements.get("portal-vtuber-history")) {
+  customElements.define("portal-vtuber-history", PortalVtuberHistoryPage);
+}

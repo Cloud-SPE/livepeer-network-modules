@@ -138,8 +138,7 @@ test('realtime: customer ws bridges to broker via ws-realtime adapter with canon
     listenPort: 0,
     databaseUrl: 'postgres://test:test@localhost:5432/test',
     authPepper: 'test-pepper',
-    adminUser: null,
-    adminPass: null,
+    adminTokens: [],
     publicBaseUrl: null,
     stripe: null,
     defaultOffering: 'gpt-4o-realtime',
@@ -180,7 +179,7 @@ test('realtime: customer ws bridges to broker via ws-realtime adapter with canon
   await waitFor(() => broker.upgrades.length > 0, 1000);
   const captured = broker.upgrades[0]!;
   assert.equal(captured.path, '/v1/cap');
-  assert.equal(captured.headers[HEADER.CAPABILITY.toLowerCase()], 'openai:/v1/realtime');
+  assert.equal(captured.headers[HEADER.CAPABILITY.toLowerCase()], 'openai:realtime');
   assert.equal(captured.headers[HEADER.OFFERING.toLowerCase()], 'gpt-4o-realtime');
   assert.equal(
     captured.headers[HEADER.PAYMENT.toLowerCase()],

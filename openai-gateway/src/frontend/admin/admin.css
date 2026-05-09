@@ -1,0 +1,381 @@
+:root {
+  color-scheme: light;
+  --surface-canvas: #f7f7f8;
+  --surface-0: #f7f7f8;
+  --surface-1: #ffffff;
+  --surface-2: #fafbfc;
+  --surface-3: #eef1f5;
+  --surface-overlay: rgba(255, 255, 255, 0.96);
+  --text-1: #1f1f1f;
+  --text-2: #555b66;
+  --text-3: #777f89;
+  --accent: #15202b;
+  --accent-strong: #15202b;
+  --accent-hover: #223243;
+  --accent-press: #0f1822;
+  --accent-tint: rgba(21, 32, 43, 0.08);
+  --accent-line: rgba(21, 32, 43, 0.18);
+  --success: #1e6e3a;
+  --success-tint: rgba(30, 110, 58, 0.12);
+  --warning: #6b4a00;
+  --warning-tint: rgba(107, 74, 0, 0.12);
+  --danger: #9b1c1c;
+  --danger-hover: #b12424;
+  --danger-tint: rgba(155, 28, 28, 0.12);
+  --border-1: #e3e4e7;
+  --border-2: #cfd2d7;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.5rem;
+  --radius-pill: 9999px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+body {
+  margin: 0;
+  background: #f7f7f8;
+  color: #1f1f1f;
+}
+
+portal-layout {
+  background: #f7f7f8;
+  color: #1f1f1f;
+}
+
+portal-layout .portal-layout__header {
+  padding: 0.75rem 1rem;
+  border-bottom: 0;
+  background: #15202b;
+  backdrop-filter: none;
+}
+
+portal-layout .portal-layout__header-shell,
+portal-layout .portal-layout__main,
+portal-layout .portal-layout__footer-shell {
+  width: min(1400px, 100%);
+}
+
+portal-layout .portal-layout__brand {
+  color: #fff;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+portal-layout .portal-layout__main {
+  padding: 1rem;
+}
+
+portal-layout .portal-layout__footer {
+  padding: 0.5rem 1rem;
+  color: #777;
+  border-top: 0;
+  background: transparent;
+}
+
+portal-card,
+portal-data-table,
+portal-detail-section,
+portal-metric-tile {
+  display: block;
+  background: #fff;
+  border: 1px solid #e3e4e7;
+  border-radius: 6px;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+portal-card {
+  padding: 1rem;
+}
+
+portal-card .portal-card__head {
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+portal-card .portal-card__heading {
+  color: #1f1f1f;
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+portal-card .portal-card__subheading,
+portal-detail-section .portal-detail-section__description,
+portal-data-table .portal-data-table__description {
+  color: #666;
+}
+
+portal-detail-section {
+  border-top: 1px solid #eee;
+}
+
+portal-button .portal-button__control {
+  min-height: auto;
+  padding: 0.35rem 0.9rem;
+  border-radius: 4px;
+  box-shadow: none;
+  font-weight: 600;
+}
+
+portal-button[variant="ghost"] .portal-button__control {
+  border-color: #cfd2d7;
+  background: #fff;
+  color: #15202b;
+}
+
+portal-button[variant="danger"] .portal-button__control {
+  border-color: #9b1c1c;
+}
+
+portal-input .portal-input__control,
+.openai-admin-select,
+.openai-admin-table-input {
+  min-height: auto;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #cfd2d7;
+  border-radius: 4px;
+  background: #fff;
+  color: #1f1f1f;
+  box-shadow: none;
+}
+
+portal-input .portal-input__label,
+.openai-admin-field,
+.openai-admin-muted,
+.openai-admin-session-value {
+  color: #555b66;
+}
+
+portal-input .portal-input__control:focus-visible,
+.openai-admin-select:focus-visible,
+.openai-admin-table-input:focus-visible {
+  border-color: #15202b;
+  box-shadow: 0 0 0 3px rgba(21, 32, 43, 0.08);
+  outline: 0;
+}
+
+portal-toast {
+  --border-1: #e3e4e7;
+}
+
+.openai-admin-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.openai-admin-nav portal-button[variant="primary"] .portal-button__control {
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.2);
+  color: #fff;
+}
+
+.openai-admin-nav portal-button[variant="ghost"] .portal-button__control {
+  background: transparent;
+  border-color: transparent;
+  color: rgba(255,255,255,0.84);
+}
+
+.openai-admin-nav portal-button[variant="ghost"] .portal-button__control:hover {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+}
+
+.openai-admin-shell,
+.openai-admin-stack,
+.openai-admin-detail-stack,
+.openai-admin-key-list {
+  display: grid;
+}
+
+.openai-admin-shell {
+  gap: 1.25rem;
+}
+
+.openai-admin-stack {
+  gap: 1rem;
+}
+
+.openai-admin-stack--sm,
+.openai-admin-detail-stack {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.openai-admin-session,
+.openai-admin-row,
+.openai-admin-status-inline,
+.openai-admin-form-inline,
+.audit-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.openai-admin-session,
+.openai-admin-row {
+  justify-content: space-between;
+}
+
+.openai-admin-session-meta {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.openai-admin-eyebrow {
+  color: #666;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.openai-admin-login-form {
+  display: grid;
+  max-width: 32rem;
+  gap: 0.9rem;
+}
+
+.openai-admin-metrics {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.openai-admin-two-col-300,
+.openai-admin-two-col-320,
+.openai-admin-card-grid,
+.openai-admin-detail-grid {
+  display: grid;
+  gap: 1rem;
+  align-items: start;
+}
+
+.openai-admin-two-col-300 {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+.openai-admin-two-col-320 {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.openai-admin-card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.openai-admin-detail-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.openai-admin-form-stack,
+.openai-admin-meta-list,
+.openai-admin-meta-item {
+  display: grid;
+}
+
+.openai-admin-form-stack {
+  gap: 0.75rem;
+}
+
+.openai-admin-meta-list {
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.openai-admin-meta-list--tight {
+  gap: 0.5rem;
+}
+
+.openai-admin-meta-item {
+  gap: 0.2rem;
+}
+
+.openai-admin-meta-item dt {
+  color: #666;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.openai-admin-meta-item dd {
+  margin: 0;
+  color: #1f1f1f;
+  overflow-wrap: anywhere;
+}
+
+.openai-admin-empty {
+  color: #666;
+}
+
+.openai-admin-section-gap {
+  margin-top: 1rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #fafbfc;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #555;
+}
+
+tbody tr:hover {
+  background: #fafbff;
+}
+
+pre {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem;
+  font-size: 12px;
+  background: #f7f8fa;
+  border-radius: 4px;
+  overflow-x: auto;
+  color: #1f1f1f;
+}
+
+code {
+  font-family: var(--font-mono);
+  background: #f0f2f5;
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  white-space: break-spaces;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  portal-layout .portal-layout__header {
+    padding: 0.75rem 1rem;
+  }
+
+  portal-layout .portal-layout__main {
+    padding: 1rem;
+  }
+
+  .openai-admin-row,
+  .openai-admin-session,
+  .openai-admin-form-inline {
+    display: grid;
+  }
+}

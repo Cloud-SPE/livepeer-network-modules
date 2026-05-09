@@ -1,6 +1,5 @@
 // Command secure-orch-console runs the cold-key host's diff-and-sign
-// HTTP server. The server binds 127.0.0.1 only — never a routable
-// interface. Operators reach it via `ssh -L` from a LAN laptop.
+// HTTP server.
 package main
 
 import (
@@ -11,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -39,7 +39,7 @@ func run(args []string) error {
 		lastSignedPath       = fs.String("last-signed", "/var/lib/secure-orch/last-signed.json", "Path to the canonical last-signed envelope used by the diff renderer")
 		auditLogPath         = fs.String("audit-log", "/var/log/secure-orch/audit.log.jsonl", "Append-only JSONL audit log")
 		auditRotateSize      = fs.Int64("audit-rotate-size", audit.DefaultRotateSize, "Audit log size threshold for rotation, in bytes (0 disables)")
-		listen               = fs.String("listen", "127.0.0.1:8080", "Loopback bind address (must be 127.0.0.1, ::1, or localhost)")
+		listen               = fs.String("listen", "127.0.0.1:8080", "HTTP listen address (explicit host:port required)")
 		showVer              = fs.Bool("version", false, "Print version and exit")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -62,6 +62,8 @@ func run(args []string) error {
 		AuditLogPath:    *auditLogPath,
 		AuditRotateSize: *auditRotateSize,
 		Listen:          *listen,
+		ProtocolSocket:  strings.TrimSpace(os.Getenv("PROTOCOL_DAEMON_SOCKET")),
+		AdminTokens:     parseCSVEnv("SECURE_ORCH_ADMIN_TOKENS"),
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -137,4 +139,23 @@ func readPassword(path string) (string, error) {
 		return "", fmt.Errorf("read password file: %w", err)
 	}
 	return strings.TrimRight(string(b), "\r\n"), nil
+}
+
+func parseCSVEnv(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if !slices.Contains(out, part) {
+			out = append(out, part)
+		}
+	}
+	return out
 }

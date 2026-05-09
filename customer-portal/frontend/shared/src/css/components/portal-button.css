@@ -1,0 +1,82 @@
+portal-button {
+  --_bg: var(--accent);
+  --_bg-hover: var(--accent-hover);
+  --_fg: white;
+  display: inline-flex;
+}
+
+portal-button[variant="ghost"] {
+  --_bg: transparent;
+  --_bg-hover: var(--surface-2);
+  --_fg: var(--text-1);
+}
+
+portal-button[variant="danger"] {
+  --_bg: var(--danger);
+  --_bg-hover: var(--danger-hover);
+  --_fg: white;
+}
+
+portal-button[block] {
+  display: flex;
+  width: 100%;
+}
+
+portal-button .portal-button__control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 2.85rem;
+  padding: 0.72rem 1.05rem;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--_bg), white 8%) 0%, var(--_bg) 100%);
+  color: var(--_fg);
+  font-weight: 650;
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  letter-spacing: 0.01em;
+  border: 1px solid color-mix(in srgb, var(--_bg), black 18%);
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+  width: 100%;
+  cursor: pointer;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--_bg), transparent 70%);
+}
+
+portal-button .portal-button__control:hover:not(:disabled) {
+  background: var(--_bg-hover);
+  border-color: color-mix(in srgb, var(--_bg-hover), white 10%);
+}
+
+portal-button .portal-button__control:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+portal-button .portal-button__control:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--_bg), transparent 70%);
+}
+
+portal-button .portal-button__control:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+portal-button .portal-button__spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--_fg), transparent 72%);
+  border-top-color: var(--_fg);
+  animation: portal-button-spin 700ms linear infinite;
+}
+
+@keyframes portal-button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

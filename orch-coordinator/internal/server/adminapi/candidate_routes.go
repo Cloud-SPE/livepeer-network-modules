@@ -19,7 +19,8 @@ import (
 // commits 3+ append /diff, /roster, /admin/signed-manifest, and the
 // web UI routes against the same mux.
 func (s *Server) CandidateRoutes(builder *candidate.Builder, store *candidates.Store) {
-	s.mux.HandleFunc("GET /candidate.json", func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc("GET /candidate.json", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		setCandidateHeaders(w)
 		if cand := builder.Latest(); cand != nil {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(cand.ManifestBytes)
@@ -36,9 +37,10 @@ func (s *Server) CandidateRoutes(builder *candidate.Builder, store *candidates.S
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
-	})
+	}))
 
-	s.mux.HandleFunc("GET /candidate.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc("GET /candidate.tar.gz", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		setCandidateHeaders(w)
 		body, err := store.LatestTarball()
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -51,5 +53,10 @@ func (s *Server) CandidateRoutes(builder *candidate.Builder, store *candidates.S
 		w.Header().Set("Content-Type", "application/gzip")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"candidate.tar.gz\"")
 		_, _ = w.Write(body)
-	})
+	}))
+}
+
+func setCandidateHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
 }

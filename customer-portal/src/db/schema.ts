@@ -17,6 +17,7 @@ export const customerStatus = pgEnum('customer_status', ['active', 'suspended', 
 export const topupStatus = pgEnum('topup_status', ['pending', 'succeeded', 'failed', 'refunded']);
 export const reservationState = pgEnum('reservation_state', ['open', 'committed', 'refunded']);
 export const reservationKind = pgEnum('reservation_kind', ['prepaid', 'free']);
+export const authTokenKind = pgEnum('auth_token_kind', ['customer_ui']);
 
 export const customers = appSchema.table('customers', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -49,6 +50,26 @@ export const apiKeys = appSchema.table(
   (t) => ({
     byHash: index('api_key_hash_idx').on(t.hash),
     byCustomer: index('api_key_customer_idx').on(t.customerId),
+  }),
+);
+
+export const authTokens = appSchema.table(
+  'auth_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id),
+    kind: authTokenKind('kind').notNull().default('customer_ui'),
+    hash: text('hash').notNull(),
+    label: text('label'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (t) => ({
+    byHash: index('auth_token_hash_idx').on(t.hash),
+    byCustomer: index('auth_token_customer_idx').on(t.customerId),
   }),
 );
 
@@ -154,6 +175,7 @@ export const idempotencyRequests = appSchema.table(
 export const schema = {
   customers,
   apiKeys,
+  authTokens,
   reservations,
   topups,
   stripeWebhookEvents,
@@ -164,6 +186,7 @@ export const schema = {
   topupStatus,
   reservationState,
   reservationKind,
+  authTokenKind,
   idempotencyState,
   idempotencyEncoding,
 };

@@ -1,6 +1,6 @@
-import { LitElement, css, html, type TemplateResult } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { html, nothing, render } from "lit";
 import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
+import { installAdminPageStyles } from "./admin-shared.js";
 
 interface StreamRow {
   id: string;
@@ -12,31 +12,14 @@ interface StreamRow {
   recordToVod: boolean;
 }
 
-@customElement("admin-streams")
-export class AdminStreams extends LitElement {
-  @state() private rows: StreamRow[] = [];
-  @state() private error: string | null = null;
+export class AdminStreams extends HTMLElement {
+  private rows: StreamRow[] = [];
+  private error: string | null = null;
 
   private api = new ApiClient({ baseUrl: "" });
 
-  static styles = css`
-    :host { display: block; }
-    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
-    th, td { padding: 0.75rem 0.8rem; border-bottom: 1px solid var(--border-1); text-align: left; }
-    th {
-      color: var(--text-3);
-      font-size: var(--font-size-xs);
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-    tbody tr:hover { background: rgba(255,255,255,0.02); }
-    .live { color: var(--success); font-weight: 650; }
-    .err { color: var(--danger); }
-  `;
-
-  override async connectedCallback(): Promise<void> {
-    super.connectedCallback();
+  async connectedCallback(): Promise<void> {
+    installAdminPageStyles();
     await this.load();
   }
 
@@ -48,6 +31,7 @@ export class AdminStreams extends LitElement {
     } catch (err) {
       this.error = err instanceof Error ? err.message : "load_failed";
     }
+    this.draw();
   }
 
   private async forceEnd(row: StreamRow): Promise<void> {
@@ -57,18 +41,20 @@ export class AdminStreams extends LitElement {
       await this.load();
     } catch (err) {
       this.error = err instanceof Error ? err.message : "force_end_failed";
+      this.draw();
     }
   }
 
-  render(): TemplateResult {
-    return html`
+  private draw(): void {
+    render(
+      html`
       <portal-card heading="Live Stream Sessions">
         <portal-data-table
           heading="Active Streams"
           description="Current and ended ingest sessions, viewer count, and force-end controls."
         >
-        ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-        <table>
+        ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
+        <table class="video-admin-page-table">
           <thead>
             <tr><th>ID</th><th>Project</th><th>Status</th><th>Viewers</th><th>Record</th><th>Started</th><th>Ended</th><th></th></tr>
           </thead>
@@ -88,7 +74,7 @@ export class AdminStreams extends LitElement {
                 <td>${r.endedAt ?? ""}</td>
                 <td>
                   ${r.endedAt
-                    ? ""
+                    ? nothing
                     : html`
                         <portal-action-row align="end">
                           <portal-button variant="danger" @click=${(): void => void this.forceEnd(r)}>
@@ -103,8 +89,14 @@ export class AdminStreams extends LitElement {
         </table>
         </portal-data-table>
       </portal-card>
-    `;
+      `,
+      this,
+    );
   }
+}
+
+if (!customElements.get("admin-streams")) {
+  customElements.define("admin-streams", AdminStreams);
 }
 
 declare global {

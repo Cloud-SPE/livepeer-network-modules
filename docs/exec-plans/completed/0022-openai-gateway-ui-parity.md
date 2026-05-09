@@ -1,9 +1,37 @@
 # Plan 0022 — openai-gateway admin + customer UI parity
 
-**Status:** active  
+**Status:** completed  
 **Opened:** 2026-05-08  
+**Completed:** 2026-05-09  
 **Owner:** harness  
 **Related:** `customer-portal/`, `openai-gateway/`, `video-gateway/`, `vtuber-gateway/`, old sibling source repos `openai-livepeer-bridge/`, `livepeer-cloud-openai-ui/`
+
+## Closeout
+
+This plan is complete.
+
+The current `openai-gateway` runtime now serves:
+
+- `/v1/*`
+- `/healthz`
+- `/portal/*`
+- `/admin/console/*`
+
+from one service, with built frontend assets included in the gateway build.
+
+The customer portal and admin console are both live against real gateway-backed APIs,
+including:
+
+- customer account/key/billing flows
+- customer playground
+- usage / reservation history
+- operator customer management
+- operator audit / top-up / reservation views
+- rate-card and resolver-candidate operator surfaces
+
+Remaining future work described in this document is product backlog, not active parity
+work. Follow-on enhancements should open new plans if they require coordinated design
+or migration effort.
 
 ## 1. Why this plan exists
 

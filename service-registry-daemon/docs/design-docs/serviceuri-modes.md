@@ -6,7 +6,7 @@ last-reviewed: 2026-05-01
 
 # ServiceURI resolver modes
 
-The on-chain `ServiceRegistry.serviceURI` is a single string. Resolver deployments are configured against exactly one registry contract address, and the resolver interprets the string returned by that contract per-resolve. The primary production path is a fully qualified manifest URL; compatibility code paths remain for already-published CSV values, plus a chainless static-overlay mode when the chain has no entry.
+The on-chain `serviceURI` is a single string per registry contract. Resolver deployments read the primary `ServiceRegistry` contract from Controller by default and may optionally override it, plus they may carry an AI registry fallback; the resolver queries the primary first, then the AI registry when the primary has no pointer for the address. The string returned by the first match is interpreted per-resolve. The primary production path is a fully qualified manifest URL; compatibility code paths remain for already-published CSV values, plus a chainless static-overlay mode when the chain has no entry.
 
 ## Mode A — well-known manifest (default for new orchestrators)
 

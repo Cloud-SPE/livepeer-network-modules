@@ -2,10 +2,15 @@ import type { Db } from './db/pool.js';
 import {
   createAuthService,
   createApiKeyAuthResolver,
-  createBasicAdminAuthResolver,
+  createCustomerTokenService,
+  issueKey,
+  revokeKey,
+  createStaticAdminTokenAuthResolver,
+  createUiAuthResolver,
   type AuthResolver,
   type AuthService,
   type AdminAuthResolver,
+  type CustomerTokenService,
 } from './auth/index.js';
 import { createPrepaidQuotaWallet } from './billing/index.js';
 import type { Wallet } from './billing/types.js';
@@ -22,15 +27,18 @@ export interface CreateCustomerPortalInput {
   cacheTtlMs?: number;
   stripe?: StripeClient;
   admin?: {
-    user: string;
-    pass: string;
-    realm?: string;
+    tokens: string[];
   };
+  envPrefix?: 'live' | 'test';
 }
 
 export interface CustomerPortal {
   authService: AuthService;
   authResolver: AuthResolver;
+  customerTokenService: CustomerTokenService;
+  uiAuthResolver: AuthResolver;
+  issueApiKey(input: { customerId: string; label?: string }): Promise<{ apiKeyId: string; plaintext: string }>;
+  revokeApiKey(apiKeyId: string): Promise<void>;
   adminAuthResolver?: AdminAuthResolver;
   wallet: Wallet;
   webhookEventStore: WebhookEventStore;
@@ -47,6 +55,15 @@ export function createCustomerPortal(input: CreateCustomerPortalInput): Customer
     },
   });
   const authResolver = createApiKeyAuthResolver({ service: authService });
+  const customerTokenService = createCustomerTokenService({
+    db: input.db,
+    config: {
+      pepper: input.pepper,
+      cacheTtlMs: input.cacheTtlMs ?? 30_000,
+      envPrefix: input.envPrefix ?? 'live',
+    },
+  });
+  const uiAuthResolver = createUiAuthResolver({ service: customerTokenService });
   const wallet = createPrepaidQuotaWallet({ db: input.db });
   const webhookEventStore = createDbWebhookEventStore(input.db);
   const adminEngine = createAdminEngine({ db: input.db });
@@ -54,15 +71,23 @@ export function createCustomerPortal(input: CreateCustomerPortalInput): Customer
   const portal: CustomerPortal = {
     authService,
     authResolver,
+    customerTokenService,
+    uiAuthResolver,
+    issueApiKey: (keyInput) =>
+      issueKey(input.db, {
+        customerId: keyInput.customerId,
+        envPrefix: input.envPrefix ?? 'live',
+        pepper: input.pepper,
+        ...(keyInput.label !== undefined ? { label: keyInput.label } : {}),
+      }),
+    revokeApiKey: (apiKeyId) => revokeKey(input.db, apiKeyId),
     wallet,
     webhookEventStore,
     adminEngine,
   };
   if (input.admin) {
-    portal.adminAuthResolver = createBasicAdminAuthResolver({
-      user: input.admin.user,
-      pass: input.admin.pass,
-      ...(input.admin.realm !== undefined ? { realm: input.admin.realm } : {}),
+    portal.adminAuthResolver = createStaticAdminTokenAuthResolver({
+      tokens: input.admin.tokens,
     });
   }
   if (input.stripe) {
@@ -78,4 +103,6 @@ export * as registry from './registry/index.js';
 export * as middleware from './middleware/index.js';
 export * as admin from './admin/index.js';
 export * as db from './db/index.js';
+export * as routes from './routes/index.js';
+export { registerCustomerSelfServiceRoutes } from './routes/index.js';
 export * as testing from './testing/index.js';

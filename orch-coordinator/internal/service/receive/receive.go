@@ -1,14 +1,14 @@
 // Package receive verifies a signed manifest upload and atomic-swap
 // publishes it. The five-step verify pipeline (plan 0018 §7):
 //
-//   1. Schema-valid against the manifest schema.
-//   2. Signature recovers to the configured eth_address.
-//   3. manifest.orch.eth_address matches the operator identity.
-//   4. spec_version matches the most-recent candidate the
-//      coordinator built.
-//   5. issued_at and expires_at are well-formed and in the future,
-//      and publication_seq is strictly greater than the currently-
-//      published manifest's value.
+//  1. Schema-valid against the manifest schema.
+//  2. Signature recovers to the configured eth_address.
+//  3. manifest.orch.eth_address matches the operator identity.
+//  4. spec_version matches the most-recent candidate the
+//     coordinator built.
+//  5. issued_at and expires_at are well-formed and in the future,
+//     and publication_seq is strictly greater than the currently-
+//     published manifest's value.
 //
 // On success: take the publish lock, atomic-swap publish, append an
 // audit event with outcome=accepted. On any failure: append an audit
@@ -61,6 +61,11 @@ type Service struct {
 	observer       Observer
 }
 
+type UploaderIdentity struct {
+	Name  string
+	Actor string
+}
+
 // SetObserver attaches a metrics observer.
 func (s *Service) SetObserver(o Observer) { s.observer = o }
 
@@ -89,13 +94,18 @@ type Result struct {
 // Receive runs the five-step verify and (on success) atomic-swap
 // publishes. The caller passes the raw multipart-upload body.
 func (s *Service) Receive(body []byte, uploader string) (*Result, error) {
+	return s.ReceiveFrom(body, UploaderIdentity{Name: uploader, Actor: uploader})
+}
+
+// ReceiveFrom runs the verify/publish flow with structured uploader identity.
+func (s *Service) ReceiveFrom(body []byte, uploader UploaderIdentity) (*Result, error) {
 	start := time.Now()
 	defer func() {
 		if s.observer != nil {
 			s.observer.ObserveVerifyDuration(time.Since(start))
 		}
 	}()
-	res, err := s.receiveInner(body, uploader)
+	res, err := s.receiveInnerFrom(body, uploader)
 	if s.observer != nil {
 		if err != nil {
 			var ve *VerifyError
@@ -116,6 +126,10 @@ func (s *Service) Receive(body []byte, uploader string) (*Result, error) {
 }
 
 func (s *Service) receiveInner(body []byte, uploader string) (*Result, error) {
+	return s.receiveInnerFrom(body, UploaderIdentity{Name: uploader, Actor: uploader})
+}
+
+func (s *Service) receiveInnerFrom(body []byte, uploader UploaderIdentity) (*Result, error) {
 	sm, err := types.ParseSignedManifest(body)
 	if err != nil {
 		s.recordFailure(audit.OutcomeSchemaInvalid, uploader, "", "", 0, err.Error())
@@ -193,7 +207,8 @@ func (s *Service) receiveInner(body []byte, uploader string) (*Result, error) {
 	if _, err := s.audit.Append(audit.Event{
 		At:              now,
 		Outcome:         audit.OutcomeAccepted,
-		Uploader:        uploader,
+		Actor:           uploader.Actor,
+		Uploader:        uploader.Name,
 		SignatureSHA256: sigHash,
 		ManifestSHA256:  manifestHash,
 		PublicationSeq:  sm.Manifest.PublicationSeq,
@@ -256,11 +271,12 @@ func (s *Service) publish(body []byte) error {
 	return s.store.Publish(body)
 }
 
-func (s *Service) recordFailure(code audit.Outcome, uploader, manifestHash, sigHash string, pubSeq uint64, msg string) {
+func (s *Service) recordFailure(code audit.Outcome, uploader UploaderIdentity, manifestHash, sigHash string, pubSeq uint64, msg string) {
 	_, _ = s.audit.Append(audit.Event{
 		At:              time.Now().UTC(),
 		Outcome:         code,
-		Uploader:        uploader,
+		Actor:           uploader.Actor,
+		Uploader:        uploader.Name,
 		SignatureSHA256: sigHash,
 		ManifestSHA256:  manifestHash,
 		PublicationSeq:  pubSeq,

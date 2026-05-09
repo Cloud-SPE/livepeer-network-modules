@@ -9,12 +9,14 @@ import type {
 export interface SdkStripeConfig {
   secretKey: string;
   webhookSecret: string;
-  apiVersion?: string;
+  apiVersion?: NonNullable<ConstructorParameters<typeof Stripe>[1]>['apiVersion'];
 }
 
 export function createSdkStripeClient(config: SdkStripeConfig): StripeClient {
+  const apiVersion: NonNullable<ConstructorParameters<typeof Stripe>[1]>['apiVersion'] =
+    config.apiVersion ?? '2026-04-22.dahlia';
   const stripe = new Stripe(config.secretKey, {
-    apiVersion: (config.apiVersion ?? '2024-10-28.acacia') as Stripe.LatestApiVersion,
+    apiVersion,
     typescript: true,
   });
 

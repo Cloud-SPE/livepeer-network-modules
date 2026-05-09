@@ -13,39 +13,40 @@ import {
 test('parseOfferingsYaml accepts the documented sample shape', () => {
   const cfg = parseOfferingsYaml(`
 defaults:
-  "openai:/v1/chat/completions":
+  "openai:chat-completions":
     streaming: vllm-h100-stream
     non-streaming: vllm-h100-batch4
-  "openai:/v1/embeddings":
+  "openai:embeddings":
     default: bge-large-en
-  "openai:/v1/images/generations":
+  "openai:images-generations":
     default: realvis-xl-v4-lightning
 `);
-  assert.equal(typeof cfg.defaults['openai:/v1/embeddings'], 'object');
+  assert.equal(typeof cfg.defaults['openai:embeddings'], 'object');
 });
 
 test('resolveDefaultOffering picks streaming vs non-streaming variants', () => {
   const cfg = parseOfferingsYaml(`
 defaults:
-  "openai:/v1/chat/completions":
+  "openai:chat-completions":
     streaming: a
     non-streaming: b
-  "openai:/v1/embeddings":
+  "openai:embeddings":
     default: e
 `);
   assert.equal(
-    resolveDefaultOffering(cfg, { capability: 'openai:/v1/chat/completions', variant: 'streaming' }),
+    resolveDefaultOffering(cfg, { capability: 'openai:chat-completions', variant: 'streaming' }),
     'a',
   );
   assert.equal(
     resolveDefaultOffering(cfg, {
-      capability: 'openai:/v1/chat/completions',
+      capability: 'openai:chat-completions',
       variant: 'non-streaming',
     }),
     'b',
   );
+  assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:embeddings' }), 'e');
+  assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:audio-speech' }), null);
   assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:/v1/embeddings' }), 'e');
-  assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:/v1/audio/speech' }), null);
 });
 
 test('loadOfferingsFromDisk returns empty defaults when file is absent', () => {
@@ -56,10 +57,10 @@ test('loadOfferingsFromDisk returns empty defaults when file is absent', () => {
 test('loadOfferingsFromDisk reads a real file', async () => {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'offerings-'));
   const file = path.join(tmp, 'offerings.yaml');
-  await fs.writeFile(file, 'defaults:\n  "openai:/v1/embeddings":\n    default: e\n');
+  await fs.writeFile(file, 'defaults:\n  "openai:embeddings":\n    default: e\n');
   try {
     const cfg = loadOfferingsFromDisk(file);
-    assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:/v1/embeddings' }), 'e');
+    assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:embeddings' }), 'e');
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

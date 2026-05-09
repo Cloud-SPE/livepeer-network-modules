@@ -1,0 +1,37 @@
+portal-toast {
+  display: block;
+}
+
+portal-toast .portal-toast__body {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.015) 100%),
+    var(--surface-2);
+  color: var(--text-1);
+  border: 1px solid var(--border-1);
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  box-shadow: var(--shadow-sm);
+}
+
+portal-toast[variant="success"] .portal-toast__body {
+  background: var(--success-tint);
+  border-color: var(--success);
+}
+
+portal-toast[variant="warning"] .portal-toast__body {
+  background: var(--warning-tint);
+  border-color: var(--warning);
+}
+
+portal-toast[variant="danger"] .portal-toast__body {
+  background: var(--danger-tint);
+  border-color: var(--danger);
+}
+
+portal-toast .portal-toast__message[hidden] {
+  display: none;
+}

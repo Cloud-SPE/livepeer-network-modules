@@ -1,0 +1,42 @@
+portal-status-pill {
+  --_bg: rgba(255, 255, 255, 0.05);
+  --_border: var(--border-1);
+  --_fg: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.75rem;
+  padding: 0.2rem 0.65rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--_border);
+  background: var(--_bg);
+  color: var(--_fg);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+portal-status-pill[variant="info"] {
+  --_bg: var(--accent-tint);
+  --_border: var(--accent-line);
+  --_fg: var(--text-1);
+}
+
+portal-status-pill[variant="success"] {
+  --_bg: var(--success-tint);
+  --_border: color-mix(in srgb, var(--success), white 12%);
+  --_fg: var(--text-1);
+}
+
+portal-status-pill[variant="warning"] {
+  --_bg: var(--warning-tint);
+  --_border: color-mix(in srgb, var(--warning), white 8%);
+  --_fg: var(--text-1);
+}
+
+portal-status-pill[variant="danger"] {
+  --_bg: var(--danger-tint);
+  --_border: color-mix(in srgb, var(--danger), white 10%);
+  --_fg: var(--text-1);
+}

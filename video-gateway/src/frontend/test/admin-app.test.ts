@@ -2,6 +2,8 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 
+const SESSION_KEY = "customer-portal:session";
+
 before(() => {
   const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
     url: "http://localhost/",
@@ -15,6 +17,7 @@ before(() => {
   g.HTMLInputElement = dom.window.HTMLInputElement;
   g.HTMLTextAreaElement = dom.window.HTMLTextAreaElement;
   g.HTMLFormElement = dom.window.HTMLFormElement;
+  g.sessionStorage = dom.window.sessionStorage;
   g.customElements = dom.window.customElements;
   g.Node = dom.window.Node;
   g.Event = dom.window.Event;
@@ -24,8 +27,20 @@ before(() => {
     setTimeout(() => cb(performance.now()), 0) as unknown as number;
   g.cancelAnimationFrame = (id: number): void => clearTimeout(id);
   g.fetch = (async (): Promise<Response> =>
-    new Response('{"items":[]}', { status: 200 })) as typeof fetch;
+    new Response('{"items":[],"customers":[],"auth_tokens":[],"api_keys":[],"topups":[],"reservations":[],"events":[]}', { status: 200 })) as typeof fetch;
 });
+
+function seedSession(): void {
+  window.sessionStorage.setItem(
+    SESSION_KEY,
+    JSON.stringify({ token: "admin-token", actor: "operator" }),
+  );
+}
+
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 test("admin SPA registers all custom elements", async () => {
   await import("../web-ui/main.js");
@@ -34,7 +49,11 @@ test("admin SPA registers all custom elements", async () => {
   assert.ok(customElements.get("admin-customer-detail"));
   assert.ok(customElements.get("admin-customer-adjust"));
   assert.ok(customElements.get("admin-customer-refund"));
+  assert.ok(customElements.get("admin-health"));
   assert.ok(customElements.get("admin-assets"));
+  assert.ok(customElements.get("admin-topups"));
+  assert.ok(customElements.get("admin-reservations"));
+  assert.ok(customElements.get("admin-audit"));
   assert.ok(customElements.get("admin-streams"));
   assert.ok(customElements.get("admin-webhooks"));
   assert.ok(customElements.get("admin-recordings"));
@@ -42,27 +61,33 @@ test("admin SPA registers all custom elements", async () => {
 
 test("admin-app routes resolve via hash", async () => {
   await import("../web-ui/main.js");
+  seedSession();
   document.body.innerHTML = "<video-gateway-admin></video-gateway-admin>";
   window.location.hash = "#/customers";
   const el = document.querySelector("video-gateway-admin")!;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (el as any).updateComplete;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const root = (el as any).shadowRoot!;
-  const html = root.innerHTML as string;
-  assert.ok(html.includes("Customers"));
-  assert.ok(html.includes("admin-customers"));
+  await settle();
+  assert.ok((el.textContent as string).includes("Customers"));
+  assert.ok(el.querySelector("admin-customers"));
 });
 
 test("admin-app navigates to assets route", async () => {
   await import("../web-ui/main.js");
+  seedSession();
   document.body.innerHTML = "<video-gateway-admin></video-gateway-admin>";
   window.location.hash = "#/assets";
   window.dispatchEvent(new Event("hashchange"));
   const el = document.querySelector("video-gateway-admin")!;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (el as any).updateComplete;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const root = (el as any).shadowRoot!;
-  assert.ok((root.innerHTML as string).includes("admin-assets"));
+  await settle();
+  assert.ok(el.querySelector("admin-assets"));
+});
+
+test("admin-app navigates to reservations route", async () => {
+  await import("../web-ui/main.js");
+  seedSession();
+  document.body.innerHTML = "<video-gateway-admin></video-gateway-admin>";
+  window.location.hash = "#/reservations";
+  window.dispatchEvent(new Event("hashchange"));
+  const el = document.querySelector("video-gateway-admin")!;
+  await settle();
+  assert.ok(el.querySelector("admin-reservations"));
 });

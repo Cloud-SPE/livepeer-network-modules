@@ -4,6 +4,9 @@
   "private": true,
   "description": "Workspace root for the Livepeer network rewrite monorepo",
   "license": "MIT",
+  "scripts": {
+    "check:frontend-invariants": "node scripts/check-frontend-invariants.mjs"
+  },
   "engines": {
     "node": ">=20"
   },

@@ -1,0 +1,16 @@
+{{define "content"}}
+<section class="summary login-card">
+  <h1>Operator login</h1>
+  <p class="muted">Enter the orch-coordinator admin token and operator actor identity.</p>
+  {{if .Error}}
+  <p class="login-error">{{.Error}}</p>
+  {{end}}
+  <form method="post" action="/login" class="login-form">
+    <label for="admin_token">Admin token</label>
+    <input type="password" id="admin_token" name="admin_token" autocomplete="current-password" required>
+    <label for="actor">Actor</label>
+    <input type="text" id="actor" name="actor" autocomplete="username" required>
+    <button type="submit">Start session</button>
+  </form>
+</section>
+{{end}}

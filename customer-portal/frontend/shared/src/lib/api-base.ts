@@ -1,3 +1,5 @@
+import { readSession } from './session-storage.js';
+
 export interface ApiClientOptions {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
@@ -26,9 +28,13 @@ export class ApiClient {
   }
 
   async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const session = readSession();
+    const headers: Record<string, string> = body !== undefined ? { 'content-type': 'application/json' } : {};
+    if (session?.token) headers['authorization'] = `Bearer ${session.token}`;
+    if (session?.actor) headers['x-actor'] = session.actor;
     const res = await this.fetchImpl(this.baseUrl + path, {
       method,
-      headers: body !== undefined ? { 'content-type': 'application/json' } : {},
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
       credentials: 'same-origin',
     });

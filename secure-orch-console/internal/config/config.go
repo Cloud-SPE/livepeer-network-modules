@@ -19,6 +19,8 @@ type Config struct {
 	AuditLogPath    string
 	AuditRotateSize int64
 	Listen          string
+	ProtocolSocket  string
+	AdminTokens     []string
 }
 
 // Keystore selects the V3 JSON keystore backing the signer.
@@ -50,7 +52,7 @@ func ParseKeystore(s, passwordFile string) (Keystore, error) {
 }
 
 // Validate confirms required fields are populated and the listen
-// address is loopback-only.
+// address is syntactically valid.
 func (c Config) Validate() error {
 	if c.LastSignedPath == "" {
 		return errors.New("config: --last-signed is required")
@@ -61,19 +63,19 @@ func (c Config) Validate() error {
 	if c.AuditRotateSize < 0 {
 		return errors.New("config: --audit-rotate-size must not be negative")
 	}
-	if err := ValidateLoopbackAddr(c.Listen); err != nil {
+	if err := ValidateListenAddr(c.Listen); err != nil {
 		return err
 	}
 	return nil
 }
 
-// ValidateLoopbackAddr is the bind-address gate enforcing the hard
-// rule. Accepted: 127.0.0.1:<port>, [::1]:<port>, localhost:<port>.
-// Rejected: empty host, 0.0.0.0, any non-loopback IP, any non-localhost
-// hostname.
-func ValidateLoopbackAddr(addr string) error {
+// ValidateListenAddr confirms that --listen is an explicit host:port
+// pair. The operator chooses whether to bind loopback-only or expose
+// the console on a wider interface; the binary only rejects ambiguous
+// all-interface shorthand such as :8080.
+func ValidateListenAddr(addr string) error {
 	if addr == "" {
-		return errors.New("config: --listen is required and must be 127.0.0.1:<port>")
+		return errors.New("config: --listen is required and must be host:port")
 	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -84,16 +86,6 @@ func ValidateLoopbackAddr(addr string) error {
 	}
 	if port == "" {
 		return fmt.Errorf("config: --listen %q has empty port", addr)
-	}
-	if strings.EqualFold(host, "localhost") {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return fmt.Errorf("config: --listen host %q is not a literal IP or 'localhost'", host)
-	}
-	if !ip.IsLoopback() {
-		return fmt.Errorf("config: --listen host %q must be a loopback address (hard rule: secure-orch never accepts inbound connections)", host)
 	}
 	return nil
 }

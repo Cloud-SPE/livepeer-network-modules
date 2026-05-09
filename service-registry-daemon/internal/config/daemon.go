@@ -42,13 +42,14 @@ type Daemon struct {
 	ChainID    int64
 	// ControllerAddress is the Livepeer Controller address; used to
 	// resolve BondingManager + RoundsManager for resolver chain
-	// discovery. Resolver GetServiceURI() lookups use the explicit
-	// ServiceRegistryAddress below. Default Arbitrum One.
-	ControllerAddress      string
-	ServiceRegistryAddress string
-	LogFormat              string
-	LogLevel               string
-	Dev                    bool
+	// discovery and, by default, the ServiceRegistry contract address
+	// for resolver GetServiceURI() lookups. Default Arbitrum One.
+	ControllerAddress        string
+	ServiceRegistryAddress   string
+	AIServiceRegistryAddress string
+	LogFormat                string
+	LogLevel                 string
+	Dev                      bool
 
 	// Resolver-only:
 	// Discovery picks the cache seeding source. See DiscoveryMode.
@@ -89,7 +90,8 @@ func DefaultDaemon() *Daemon {
 		ChainRPC:                  "https://arb1.arbitrum.io/rpc",
 		ChainID:                   42161,
 		ControllerAddress:         "0xD8E8328501E9645d16Cf49539efC04f734606ee4", // Livepeer Controller, Arbitrum One
-		ServiceRegistryAddress:    "0xC92d06C74A26B312bcDE600F0aA22EAC2efA0a90", // placeholder; operator should override or rely on Controller resolution (tech-debt)
+		ServiceRegistryAddress:    "",                                           // empty means resolve via Controller
+		AIServiceRegistryAddress:  "0x04C0b249740175999E5BF5c9ac1dA92431EF34C5", // AI service registry, Arbitrum One
 		LogFormat:                 "text",
 		LogLevel:                  "info",
 		Discovery:                 DiscoveryChain,

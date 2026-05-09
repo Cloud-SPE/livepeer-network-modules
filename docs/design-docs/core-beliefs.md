@@ -1,8 +1,8 @@
 # Core beliefs
 
 Invariants any change in this repo must uphold. These exist because past incidents (or
-strong stakeholder preference) made them load-bearing. To change one, open a plan in
-`exec-plans/active/` first.
+strong stakeholder preference) made them load-bearing. To change one, open a numbered
+plan under `docs/exec-plans/` first.
 
 ## 1. Workload-agnostic by construction
 
@@ -28,9 +28,9 @@ that mask real failures.
 ## 4. Cold orch keystore is sacred
 
 The cold key lives on a firewalled `secure-orch` host and never crosses a host boundary.
-It signs every manifest publication. **Secure-orch never accepts inbound connections.**
-Operator drives the sign cycle (download candidate → sign → upload signed). No automated
-push for v1. Hand-carry friction is solved in console UX, not in the transport.
+It signs every manifest publication. Operator drives the sign cycle (download candidate
+→ sign → upload signed). No automated push for v1. Hand-carry friction is solved in
+console UX, not in the transport.
 
 This may be revisited in v2; not now.
 

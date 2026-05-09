@@ -1,7 +1,8 @@
 # Plan 0020 — protocol-daemon migration into the rewrite monorepo
 
-**Status:** active  
+**Status:** completed  
 **Opened:** 2026-05-07  
+**Completed:** 2026-05-09  
 **Owner:** harness  
 **Related:** plan 0018 (`orch-coordinator`), plan 0019 (`secure-orch-console`), plan 0016 (chain-integrated payment), sibling source repo `livepeer-modules-project/protocol-daemon/`
 
@@ -307,3 +308,30 @@ This plan is complete when:
 
 This keeps the port honest: bring the full daemon and the logic it needs, then adapt
 the publication integration point to the rewrite architecture.
+
+## 12. Closeout
+
+This plan is complete.
+
+Delivered state in the monorepo:
+
+- `protocol-daemon/` exists as a first-class component with `AGENTS.md`, `README.md`,
+  `DESIGN.md`, `Dockerfile`, `Makefile`, `compose/`, and component-local docs.
+- The daemon builds and tests cleanly via `go test ./...`.
+- The shipped runtime preserves round-init, reward, and unix-socket gRPC operator flows.
+- `SetServiceURI` / `GetOnChainServiceURI` and AI service-registry flows are present.
+- Operator docs and compose examples are adapted to the rewrite architecture where
+  `orch-coordinator` hosts the public manifest URL and `protocol-daemon` writes that
+  URL on chain.
+- The component imports rewrite-local `chain-commons` and `proto-contracts` paths rather
+  than depending on sibling repos at build or release time.
+
+Verification performed at closeout:
+
+- `cd protocol-daemon && go test ./...`
+
+Post-closeout note:
+
+- `protocol-daemon` docs previously referenced a non-existent root plan
+  `0006-build-protocol-daemon.md`. That drift is corrected alongside this closeout by
+  pointing component docs at this completed `0020` plan instead.

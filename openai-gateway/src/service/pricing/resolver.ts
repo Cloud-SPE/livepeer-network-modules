@@ -10,6 +10,7 @@ import {
   rateForTier,
 } from './lookup.js';
 import type { ImageQuality, RateCardSnapshot } from './types.js';
+import { Capability, normalizeCapabilityId } from '../../livepeer/capabilityMap.js';
 
 type RateCardResolver = billing.RateCardResolver;
 type ResolveResult = Awaited<ReturnType<RateCardResolver['resolve']>>;
@@ -49,8 +50,8 @@ function resolveCapability(
   offering: string,
 ): ResolveResult {
   const model = offering;
-  switch (capability) {
-    case 'openai:/v1/chat/completions': {
+  switch (normalizeCapabilityId(capability)) {
+    case Capability.ChatCompletions: {
       const tier = resolveChatTier(snapshot, model);
       if (!tier) return null;
       const rate = rateForTier(snapshot, tier);
@@ -59,7 +60,7 @@ function resolveCapability(
         unit: 'million_input_tokens',
       };
     }
-    case 'openai:/v1/embeddings': {
+    case Capability.Embeddings: {
       const rate = resolveEmbeddingsRate(snapshot, model);
       if (!rate) return null;
       return {
@@ -67,7 +68,7 @@ function resolveCapability(
         unit: 'million_tokens',
       };
     }
-    case 'openai:/v1/audio/speech': {
+    case Capability.AudioSpeech: {
       const rate = resolveAudioSpeechRate(snapshot, model);
       if (!rate) return null;
       return {
@@ -75,7 +76,7 @@ function resolveCapability(
         unit: 'million_chars',
       };
     }
-    case 'openai:/v1/audio/transcriptions': {
+    case Capability.AudioTranscriptions: {
       const rate = resolveAudioTranscriptRate(snapshot, model);
       if (!rate) return null;
       return {
@@ -83,7 +84,7 @@ function resolveCapability(
         unit: 'minute',
       };
     }
-    case 'openai:/v1/images/generations': {
+    case Capability.ImagesGenerations: {
       // Default: 1024x1024 standard. Routes that know the size + quality
       // bypass the generic resolver and call estimateImagesReservation
       // directly.

@@ -23,6 +23,7 @@ load-bearing decisions.
 |---|---|
 | What is this repo and why does it exist? | [`README.md`](./README.md) |
 | What invariants must any change uphold? | [`docs/design-docs/core-beliefs.md`](./docs/design-docs/core-beliefs.md) |
+| What frontend DOM/CSS rules apply repo-wide? | [`docs/design-docs/frontend-dom-and-css-invariants.md`](./docs/design-docs/frontend-dom-and-css-invariants.md) |
 | What are the supply-side requirements we're designing against? | [`docs/design-docs/requirements.md`](./docs/design-docs/requirements.md) |
 | What's the proposed architecture at a glance? | [`docs/design-docs/architecture-overview.md`](./docs/design-docs/architecture-overview.md) |
 | What design work has shipped? | [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) |

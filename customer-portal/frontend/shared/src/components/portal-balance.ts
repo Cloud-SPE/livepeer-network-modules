@@ -1,75 +1,87 @@
-import { LitElement, css, html, type TemplateResult } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+export class PortalBalance extends HTMLElement {
+  static get observedAttributes(): string[] {
+    return ["currency", "balancecents", "reservedcents"];
+  }
 
-@customElement('portal-balance')
-export class PortalBalance extends LitElement {
-  @property({ type: String }) currency = 'USD';
-  @property({ type: Number }) balanceCents = 0;
-  @property({ type: Number }) reservedCents = 0;
+  connectedCallback(): void {
+    this.render();
+  }
 
-  static styles = css`
-    :host {
-      display: block;
+  attributeChangedCallback(): void {
+    if (this.isConnected) {
+      this.render();
     }
-    .row {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-      gap: var(--space-3);
-    }
-    .stat {
-      padding: var(--space-4);
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--border-1);
-      background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.012) 100%),
-        var(--surface-1);
-      box-shadow: var(--shadow-sm);
-    }
-    .label {
-      font-size: var(--font-size-xs);
-      color: var(--text-3);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-    }
-    .value {
-      font-size: var(--font-size-2xl);
-      font-weight: 650;
-      color: var(--text-1);
-      font-variant-numeric: tabular-nums;
-      letter-spacing: -0.02em;
-    }
-    .reserved {
-      color: var(--text-2);
-      font-size: var(--font-size-base);
-    }
-  `;
+  }
+
+  get currency(): string {
+    return this.getAttribute("currency") ?? "USD";
+  }
+
+  set currency(value: string) {
+    this.setAttribute("currency", value);
+  }
+
+  get balanceCents(): number {
+    return Number(this.getAttribute("balancecents") ?? "0");
+  }
+
+  set balanceCents(value: number) {
+    this.setAttribute("balancecents", String(value));
+  }
+
+  get reservedCents(): number {
+    return Number(this.getAttribute("reservedcents") ?? "0");
+  }
+
+  set reservedCents(value: number) {
+    this.setAttribute("reservedcents", String(value));
+  }
 
   private format(cents: number): string {
     const dollars = cents / 100;
     return dollars.toLocaleString(undefined, {
-      style: 'currency',
+      style: "currency",
       currency: this.currency,
     });
   }
 
-  render(): TemplateResult {
-    return html`
-      <div class="row">
-        <div class="stat">
-          <div class="label">Available</div>
-          <div class="value">${this.format(this.balanceCents - this.reservedCents)}</div>
-        </div>
-        <div class="stat">
-          <div class="label">Reserved</div>
-          <div class="value reserved">${this.format(this.reservedCents)}</div>
-        </div>
-      </div>
-    `;
+  private render(): void {
+    this.replaceChildren();
+
+    const row = document.createElement("div");
+    row.className = "portal-balance__row";
+
+    row.append(
+      this.createStat("Available", this.format(this.balanceCents - this.reservedCents)),
+      this.createStat("Reserved", this.format(this.reservedCents), "portal-balance__value--reserved"),
+    );
+
+    this.append(row);
   }
+
+  private createStat(labelText: string, valueText: string, valueModifier = ""): HTMLElement {
+    const stat = document.createElement("div");
+    stat.className = "portal-balance__stat";
+
+    const label = document.createElement("div");
+    label.className = "portal-balance__label";
+    label.textContent = labelText;
+
+    const value = document.createElement("div");
+    value.className = `portal-balance__value ${valueModifier}`.trim();
+    value.textContent = valueText;
+
+    stat.append(label, value);
+    return stat;
+  }
+}
+
+if (!customElements.get("portal-balance")) {
+  customElements.define("portal-balance", PortalBalance);
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    'portal-balance': PortalBalance;
+    "portal-balance": PortalBalance;
   }
 }

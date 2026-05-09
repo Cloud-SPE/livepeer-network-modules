@@ -1,6 +1,7 @@
 import type { AuthResolver } from "@livepeer-rewrite/customer-portal/auth";
 
 import type { Config } from "../config.js";
+import type { Db as VtuberDb } from "../db/pool.js";
 import type { PayerDaemonClient } from "../providers/payerDaemon.js";
 import type { ServiceRegistryClient } from "../providers/serviceRegistry.js";
 import type { WorkerClient } from "../providers/workerClient.js";
@@ -37,6 +38,7 @@ export interface VtuberGatewayDeps {
   serviceRegistry: ServiceRegistryClient;
   worker: WorkerClient;
   sessionStore: SessionStore;
+  vtuberDb?: VtuberDb;
   stripe?: VtuberStripeClient;
   webhookEventStore?: VtuberWebhookEventStore;
   topupConfig?: { priceMinCents: number; priceMaxCents: number };

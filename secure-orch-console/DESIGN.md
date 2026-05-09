@@ -15,9 +15,9 @@ only secure-orch produces signatures.
 
 ## Boundaries
 
-- **Inbound:** none on a routable interface, ever. The HTTP server
-  binds `127.0.0.1` only and is reached over `ssh -L` (plan 0019
-  §6.1.1).
+- **Inbound:** operator-chosen. Loopback-only remains the recommended
+  posture for cold-key hosts, but the binary now accepts any explicit
+  `host:port` bind instead of forcing `127.0.0.1`.
 - **Outbound:** none. The console only reads / writes its own local
   filesystem.
 - **Manifest transport:** HTTP-only via the web UI. Operator uploads

@@ -168,6 +168,85 @@ func TestResolveByAddress_HappyPathSignedManifestAIURL(t *testing.T) {
 	}
 }
 
+func TestResolveByAddress_BaseURLProbesStandardWellKnownManifest(t *testing.T) {
+	f := newFixture(t)
+	f.uri = "https://orch.example.com:8935"
+	f.chain.PreLoad(f.addr, f.uri)
+	body := f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: "https://orch.example.com:8935",
+			Capabilities: []types.Capability{
+				{
+					Name:     "openai:/v1/chat/completions",
+					WorkUnit: "token",
+					Offerings: []types.Offering{
+						{ID: "Qwen3.6-27B", PricePerWorkUnitWei: "25000000"},
+					},
+				},
+			},
+		},
+	})
+	delete(f.fetcher.Bodies, f.uri)
+	f.fetcher.Bodies["https://orch.example.com:8935/.well-known/livepeer-registry.json"] = body
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Mode != types.ModeWellKnown {
+		t.Fatalf("mode = %v", res.Mode)
+	}
+	if len(res.Nodes) != 1 || len(res.Nodes[0].Capabilities) != 1 {
+		t.Fatalf("nodes = %+v", res.Nodes)
+	}
+	cap := res.Nodes[0].Capabilities[0]
+	if len(cap.Offerings) != 1 || cap.Offerings[0].ID != "Qwen3.6-27B" {
+		t.Fatalf("offerings = %+v", cap.Offerings)
+	}
+}
+
+func TestResolveByAddress_BaseURLProbesAIWellKnownManifest(t *testing.T) {
+	f := newFixture(t)
+	f.uri = "https://orch.example.com:8935"
+	f.chain.PreLoad(f.addr, f.uri)
+	body := f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: "https://orch.example.com:8935",
+			Capabilities: []types.Capability{
+				{
+					Name:     "openai:/v1/embeddings",
+					WorkUnit: "token",
+					Offerings: []types.Offering{
+						{ID: "text-embedding-3-small", PricePerWorkUnitWei: "1000"},
+					},
+				},
+			},
+		},
+	})
+	delete(f.fetcher.Bodies, f.uri)
+	f.fetcher.Bodies["https://orch.example.com:8935/.well-known/livepeer-ai-registry.json"] = body
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Mode != types.ModeWellKnown {
+		t.Fatalf("mode = %v", res.Mode)
+	}
+	if len(res.Nodes) != 1 || len(res.Nodes[0].Capabilities) != 1 {
+		t.Fatalf("nodes = %+v", res.Nodes)
+	}
+	cap := res.Nodes[0].Capabilities[0]
+	if cap.Name != "openai:/v1/embeddings" {
+		t.Fatalf("capability = %+v", cap)
+	}
+	if len(cap.Offerings) != 1 || cap.Offerings[0].ID != "text-embedding-3-small" {
+		t.Fatalf("offerings = %+v", cap.Offerings)
+	}
+}
+
 func TestResolveByAddress_CoordinatorEnvelopeCompat(t *testing.T) {
 	f := newFixture(t)
 	envBody := f.signCoordinatorEnvelope([]types.CoordinatorCapability{
@@ -462,6 +541,40 @@ func TestDetectMode(t *testing.T) {
 	for _, c := range cases {
 		if got := detectMode(c.in); got != c.want {
 			t.Fatalf("detectMode(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestManifestFetchCandidates(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{
+			in: "https://orch.example.com:8935",
+			want: []string{
+				"https://orch.example.com:8935",
+				"https://orch.example.com:8935/.well-known/livepeer-registry.json",
+				"https://orch.example.com:8935/.well-known/livepeer-ai-registry.json",
+			},
+		},
+		{
+			in: "https://orch.example.com/.well-known/livepeer-registry.json",
+			want: []string{
+				"https://orch.example.com/.well-known/livepeer-registry.json",
+			},
+		},
+	}
+
+	for _, c := range cases {
+		got := manifestFetchCandidates(c.in)
+		if len(got) != len(c.want) {
+			t.Fatalf("manifestFetchCandidates(%q) len=%d want=%d (%v)", c.in, len(got), len(c.want), got)
+		}
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Fatalf("manifestFetchCandidates(%q)[%d] = %q, want %q", c.in, i, got[i], c.want[i])
+			}
 		}
 	}
 }

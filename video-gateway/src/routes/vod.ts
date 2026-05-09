@@ -14,7 +14,7 @@ export function registerVod(app: FastifyInstance): void {
   app.post("/v1/vod/submit", async (req, reply) => {
     const parsed = VodSubmitBody.safeParse(req.body);
     if (!parsed.success) {
-      await reply.code(400).send({ error: "invalid_body", details: parsed.error.errors });
+      await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
       return;
     }
     await reply.code(202).send({

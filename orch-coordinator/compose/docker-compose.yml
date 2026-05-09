@@ -12,6 +12,8 @@
 services:
   orch-coordinator:
     image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.0.0}
+    environment:
+      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS:-}
     command:
       - --config=/etc/livepeer/orch-coordinator.yaml
       - --data-dir=/srv/data
@@ -39,6 +41,8 @@ services:
   orch-coordinator-dev:
     image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.0.0}
     profiles: [dev]
+    environment:
+      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS:-}
     command:
       - --dev
       - --listen=:8080

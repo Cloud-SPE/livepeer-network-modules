@@ -18,14 +18,15 @@ import (
 //
 // Reads are fully implemented (manual ABI encoding for getServiceURI).
 type Eth struct {
-	cli      *ethclient.Client
-	registry common.Address
+	cli        *ethclient.Client
+	registries []common.Address
 }
 
 // EthConfig captures the parameters NewEth needs.
 type EthConfig struct {
-	Client                 *ethclient.Client
-	ServiceRegistryAddress string // 0x-prefixed
+	Client                   *ethclient.Client
+	ServiceRegistryAddress   string // 0x-prefixed
+	AIServiceRegistryAddress string // optional 0x-prefixed; when set, resolver lookups use this registry instead of the primary
 }
 
 // NewEth constructs an Eth chain provider.
@@ -33,12 +34,21 @@ func NewEth(cfg EthConfig) (*Eth, error) {
 	if cfg.Client == nil {
 		return nil, errors.New("chain.NewEth: Client is nil")
 	}
+	if cfg.AIServiceRegistryAddress != "" {
+		if !common.IsHexAddress(cfg.AIServiceRegistryAddress) {
+			return nil, fmt.Errorf("chain.NewEth: invalid AIServiceRegistryAddress %q", cfg.AIServiceRegistryAddress)
+		}
+		return &Eth{
+			cli:        cfg.Client,
+			registries: []common.Address{common.HexToAddress(cfg.AIServiceRegistryAddress)},
+		}, nil
+	}
 	if !common.IsHexAddress(cfg.ServiceRegistryAddress) {
 		return nil, fmt.Errorf("chain.NewEth: invalid ServiceRegistryAddress %q", cfg.ServiceRegistryAddress)
 	}
 	return &Eth{
-		cli:      cfg.Client,
-		registry: common.HexToAddress(cfg.ServiceRegistryAddress),
+		cli:        cfg.Client,
+		registries: []common.Address{common.HexToAddress(cfg.ServiceRegistryAddress)},
 	}, nil
 }
 
@@ -59,25 +69,34 @@ func (e *Eth) GetServiceURI(ctx context.Context, addr types.EthAddress) (string,
 	addrBytes := common.HexToAddress(string(addr)).Bytes()
 	copy(calldata[4+12:], addrBytes)
 
-	msg := ethereum.CallMsg{
-		To:   &e.registry,
-		Data: calldata,
+	var lastNotFound bool
+	for _, registry := range e.registries {
+		msg := ethereum.CallMsg{
+			To:   &registry,
+			Data: calldata,
+		}
+		out, err := e.cli.CallContract(ctx, msg, nil)
+		if err != nil {
+			return "", fmt.Errorf("%w: %w", types.ErrChainUnavailable, err)
+		}
+		if len(out) == 0 {
+			lastNotFound = true
+			continue
+		}
+		uri, err := decodeABIString(out)
+		if err != nil {
+			return "", fmt.Errorf("chain: decode getServiceURI return: %w", err)
+		}
+		if uri == "" {
+			lastNotFound = true
+			continue
+		}
+		return uri, nil
 	}
-	out, err := e.cli.CallContract(ctx, msg, nil)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", types.ErrChainUnavailable, err)
-	}
-	if len(out) == 0 {
+	if lastNotFound {
 		return "", types.ErrNotFound
 	}
-	uri, err := decodeABIString(out)
-	if err != nil {
-		return "", fmt.Errorf("chain: decode getServiceURI return: %w", err)
-	}
-	if uri == "" {
-		return "", types.ErrNotFound
-	}
-	return uri, nil
+	return "", types.ErrNotFound
 }
 
 // decodeABIString decodes a single string returned by an eth_call.

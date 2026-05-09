@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyPluginAsync } from "fastify";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { authPreHandler } from "@livepeer-rewrite/customer-portal/middleware";
@@ -19,6 +20,7 @@ import {
   SessionTopupRequestSchema,
   type SessionOpenRequest,
 } from "../types/vtuber.js";
+import { vtuberNodeHealth, vtuberRateCardSession, vtuberUsageRecord } from "../repo/schema.js";
 
 export const SessionIdParamsSchema = z.object({
   id: z.string().uuid(),
@@ -149,6 +151,7 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
             workerSessionId: startResp.session_id,
             controlUrl,
           });
+          await markNodeSuccess(deps, node.nodeId, node.nodeUrl);
           await reply.code(200).send({
             session_id: sessionId,
             control_url: controlUrl,
@@ -161,6 +164,7 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
             status: "errored",
             errorCode: "worker_start_failed",
           });
+          await markNodeFailure(deps, node.nodeId, node.nodeUrl);
           req.log.error({ err, sessionId }, "workerClient.startSession failed");
           await reply
             .code(502)
@@ -221,7 +225,13 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
         ) {
           try {
             await deps.worker.stopSession(session.nodeUrl, session.workerSessionId);
+            if (session.nodeId !== null) {
+              await markNodeSuccess(deps, session.nodeId, session.nodeUrl);
+            }
           } catch (err) {
+            if (session.nodeId !== null) {
+              await markNodeFailure(deps, session.nodeId, session.nodeUrl);
+            }
             req.log.warn(
               { err, sessionId: session.id },
               "worker.stopSession best-effort failed",
@@ -229,10 +239,14 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
           }
         }
         const endedAt = new Date();
+        const wasAlreadyEnded = session.endedAt !== null || session.status === "ended";
         await deps.sessionStore.updateSession(session.id, {
           status: "ended",
           endedAt,
         });
+        if (!wasAlreadyEnded) {
+          await recordUsageForEndedSession(deps, session, endedAt);
+        }
 
         await reply.code(200).send({
           session_id: session.id,
@@ -305,7 +319,9 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
             sessionId: session.workerSessionId,
             paymentHeader: payment.paymentHeader,
           });
+          await markNodeSuccess(deps, node.nodeId, session.nodeUrl);
         } catch (err) {
+          await markNodeFailure(deps, node.nodeId, session.nodeUrl);
           req.log.error(
             { err, sessionId: session.id },
             "worker.topupSession failed",
@@ -384,4 +400,126 @@ function parseJsonHeader(value: string | string[] | undefined): any {
 function parseStringHeader(value: string | string[] | undefined): string | null {
   const raw = Array.isArray(value) ? value[0] : value;
   return raw && raw !== "" ? raw : null;
+}
+
+async function recordUsageForEndedSession(
+  deps: VtuberGatewayDeps,
+  session: import("../service/sessions/sessionStore.js").VtuberSessionRecord,
+  endedAt: Date,
+): Promise<void> {
+  if (!deps.vtuberDb) {
+    return;
+  }
+  const elapsedMs = Math.max(0, endedAt.getTime() - session.createdAt.getTime());
+  const seconds = Math.max(1, Math.ceil(elapsedMs / 1000));
+  const offering = readOffering(session.paramsJson) ?? "default";
+  const cents = await computeSessionCents(deps, offering, seconds);
+  await deps.vtuberDb.insert(vtuberUsageRecord).values({
+    id: randomUUID(),
+    sessionId: session.id,
+    customerId: session.customerId,
+    seconds,
+    cents,
+    createdAt: endedAt,
+  });
+}
+
+async function computeSessionCents(
+  deps: VtuberGatewayDeps,
+  offering: string,
+  seconds: number,
+): Promise<bigint> {
+  if (!deps.vtuberDb) {
+    return BigInt(Math.max(1, Math.ceil(seconds * parseFloat(deps.cfg.vtuberRateCardUsdPerSecond) * 100)));
+  }
+  const rateRows = await deps.vtuberDb
+    .select({ usdPerSecond: vtuberRateCardSession.usdPerSecond })
+    .from(vtuberRateCardSession)
+    .where(eq(vtuberRateCardSession.offering, offering))
+    .limit(1);
+  const configuredRate =
+    rateRows[0]?.usdPerSecond ?? deps.cfg.vtuberRateCardUsdPerSecond;
+  return BigInt(
+    Math.max(1, Math.ceil(seconds * parseFloat(configuredRate) * 100)),
+  );
+}
+
+function readOffering(paramsJson: string): string | null {
+  try {
+    const parsed = JSON.parse(paramsJson) as Record<string, unknown>;
+    return typeof parsed["offering"] === "string" ? parsed["offering"] : null;
+  } catch {
+    return null;
+  }
+}
+
+async function markNodeSuccess(
+  deps: VtuberGatewayDeps,
+  nodeId: string,
+  nodeUrl: string,
+): Promise<void> {
+  if (!deps.vtuberDb) {
+    return;
+  }
+  const now = new Date();
+  await deps.vtuberDb
+    .insert(vtuberNodeHealth)
+    .values({
+      nodeId,
+      nodeUrl,
+      lastSuccessAt: now,
+      lastFailureAt: null,
+      consecutiveFails: 0,
+      circuitOpen: false,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: vtuberNodeHealth.nodeId,
+      set: {
+        nodeUrl,
+        lastSuccessAt: now,
+        consecutiveFails: 0,
+        circuitOpen: false,
+        updatedAt: now,
+      },
+    });
+}
+
+async function markNodeFailure(
+  deps: VtuberGatewayDeps,
+  nodeId: string,
+  nodeUrl: string,
+): Promise<void> {
+  if (!deps.vtuberDb) {
+    return;
+  }
+  const existing = await deps.vtuberDb
+    .select()
+    .from(vtuberNodeHealth)
+    .where(eq(vtuberNodeHealth.nodeId, nodeId))
+    .limit(1);
+  const priorFails = existing[0]?.consecutiveFails ?? 0;
+  const nextFails = priorFails + 1;
+  const now = new Date();
+  await deps.vtuberDb
+    .insert(vtuberNodeHealth)
+    .values({
+      nodeId,
+      nodeUrl,
+      lastSuccessAt: existing[0]?.lastSuccessAt ?? null,
+      lastFailureAt: now,
+      consecutiveFails: nextFails,
+      circuitOpen: nextFails >= 3,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: vtuberNodeHealth.nodeId,
+      set: {
+        nodeUrl,
+        lastFailureAt: now,
+        consecutiveFails: nextFails,
+        circuitOpen: nextFails >= 3,
+        updatedAt: now,
+      },
+    });
 }

@@ -10,7 +10,7 @@
 // Earnings are observed by parsing the BondingManager.Reward event from
 // the receipt logs after TxIntent.Wait returns.
 //
-// Pattern from docs/exec-plans/active/0006-build-protocol-daemon.md §D.
+// Pattern recorded in docs/exec-plans/completed/0020-protocol-daemon-migration.md §7.
 package reward
 
 import (

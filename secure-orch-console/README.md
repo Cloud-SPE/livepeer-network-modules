@@ -18,13 +18,12 @@ operator drives the sign cycle:
 Designed against
 [`../docs/exec-plans/completed/0019-secure-orch-trust-spine-design.md`](../docs/exec-plans/completed/0019-secure-orch-trust-spine-design.md).
 
-## Hard rule
+## Bind address
 
-**secure-orch never accepts inbound connections.** The console's
-HTTP server binds `127.0.0.1` only. Operators access it via
-`ssh -L 8080:127.0.0.1:8080 secure-orch` from a LAN laptop; the
-tunnel terminates inside secure-orch's loopback. See plan 0019
-§6.1.1 for why this preserves the hard rule.
+Loopback-only remains the recommended deployment posture. The console
+now accepts any explicit `host:port` in `--listen`, so operators can
+choose `127.0.0.1:8080`, `0.0.0.0:8080`, or a specific interface. The
+binary rejects only ambiguous all-interface shorthand such as `:8080`.
 
 ## Status — v0.1
 
@@ -38,11 +37,10 @@ v0.1 ships:
   log with size-based rotation.
 - [`internal/diff/`](./internal/diff/) — structural diff against
   last-signed (header + per-tuple keyed on `(capability_id, offering_id)`).
-- [`internal/config/`](./internal/config/) — operator config + the
-  loopback-bind gate.
-- [`web/`](./web/) — HTTP server bound to `127.0.0.1` only (validated
-  on Listen) with embedded HTML/CSS templates for the diff renderer
-  and tap-to-sign confirm.
+- [`internal/config/`](./internal/config/) — operator config +
+  explicit-listen-address validation.
+- [`web/`](./web/) — HTTP server with embedded HTML/CSS templates for
+  login, diff renderer, and tap-to-sign confirm.
 - [`cmd/secure-orch-console/`](./cmd/secure-orch-console/) — main
   binary. Wires V3-keystore signer through.
 - [`cmd/secure-orch-keygen/`](./cmd/secure-orch-keygen/) — cold-key
@@ -57,6 +55,13 @@ spool dirs, no filesystem watcher, no USB. Hardware-backed signers
 (YubiHSM 2, Ledger, PKCS#11) are explicitly out of scope for v0.1
 (plan 0019 §13 Q1 + §14).
 
+When `SECURE_ORCH_ADMIN_TOKENS` is set, the console requires an
+operator login with admin token + actor identity and records the actor
+into audit events.
+
+When `PROTOCOL_DAEMON_SOCKET` is set, the console also renders a
+protocol status panel using the local `protocol-daemon` unix socket.
+
 ## Image
 
 `tztcloud/livepeer-secure-orch-console:<tag>`
@@ -67,7 +72,7 @@ spool dirs, no filesystem watcher, no USB. Hardware-backed signers
 make build      # build dev image locally
 make test       # in-container go test ./...
 make smoke      # full -race test suite in container
-make run        # foreground the binary; loopback-bound on 127.0.0.1:8080
+make run        # foreground the binary; default bind 127.0.0.1:8080
 ```
 
 ## Documentation

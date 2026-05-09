@@ -16,11 +16,12 @@ export function bridgeRtmpStream(client: Socket, opts: ProxyOptions): void {
   });
 
   client.on("data", (chunk) => {
-    if (upstreamReady) upstream.write(chunk);
-    else buffered.push(chunk);
+    const payload = toBuffer(chunk);
+    if (upstreamReady) upstream.write(payload);
+    else buffered.push(payload);
   });
   upstream.on("data", (chunk) => {
-    client.write(chunk);
+    client.write(toBuffer(chunk));
   });
 
   const finish = (): void => {
@@ -40,4 +41,8 @@ export function bridgeRtmpStream(client: Socket, opts: ProxyOptions): void {
   client.on("error", finish);
   upstream.on("end", finish);
   upstream.on("error", finish);
+}
+
+function toBuffer(chunk: string | Buffer): Buffer {
+  return Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
 }

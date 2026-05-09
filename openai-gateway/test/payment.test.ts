@@ -76,14 +76,14 @@ test('payment.buildPayment sends face_value + recipient + capability + offering 
 
   await payment.init({ socketPath: sock, protoRoot: usingProtoRoot });
   const blob = await payment.buildPayment({
-    capabilityId: 'openai:/v1/chat/completions',
+    capabilityId: 'openai:chat-completions',
     offeringId: 'model-small',
   });
 
   assert.equal(blob, Buffer.from('test-payment-bytes').toString('base64'));
   assert.equal(captured.length, 1);
   const req = captured[0]!;
-  assert.equal(req.capability, 'openai:/v1/chat/completions');
+  assert.equal(req.capability, 'openai:chat-completions');
   assert.equal(req.offering, 'model-small');
   assert.ok(Buffer.isBuffer(req.faceValue), 'face_value should be raw bytes (big-endian)');
   assert.ok(Buffer.isBuffer(req.recipient), 'recipient should be raw bytes (20-byte address)');
@@ -94,15 +94,15 @@ test('payment.buildPayment sends face_value + recipient + capability + offering 
 test('Recorder accumulates work-unit records and drains them', () => {
   const r = createRecorder({ now: () => 42, capacity: 4 });
   r.record({
-    callerId: 'cust-1',
-    capability: 'openai:/v1/chat/completions',
-    offering: 'model-small',
+      callerId: 'cust-1',
+      capability: 'openai:chat-completions',
+      offering: 'model-small',
     workUnits: 10n,
     expectedValueWei: 5_000n,
   });
   r.record({
-    callerId: 'cust-1',
-    capability: 'openai:/v1/embeddings',
+      callerId: 'cust-1',
+      capability: 'openai:embeddings',
     offering: 'text-embedding-3-small',
     workUnits: 1n,
     expectedValueWei: 100n,
@@ -120,7 +120,7 @@ test('Recorder evicts oldest entry past capacity', () => {
   for (let i = 0; i < 5; i++) {
     r.record({
       callerId: `c${i}`,
-      capability: 'openai:/v1/embeddings',
+      capability: 'openai:embeddings',
       offering: 'text-embedding-3-small',
       workUnits: BigInt(i),
       expectedValueWei: 0n,

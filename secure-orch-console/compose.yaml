@@ -1,10 +1,8 @@
-# Local-only smoke stack for secure-orch-console.
+# Local smoke stack for secure-orch-console.
 #
-# Hard rule: secure-orch never accepts inbound connections. The
-# console binds 127.0.0.1:<port> inside the container; exposing it
-# to the host's loopback via `ports: - "127.0.0.1:8080:8080"`
-# preserves the application-layer contract (no listener on a routable
-# interface).
+# Recommended posture: keep the console loopback-bound and expose it
+# only on host loopback. Operators who need a broader bind can change
+# both the published port and the container's --listen address.
 #
 # Run with `make run` once you've populated ./run/keystore.json and
 # ./run/password.

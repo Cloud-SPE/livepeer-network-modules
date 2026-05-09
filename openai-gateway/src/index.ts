@@ -41,14 +41,7 @@ async function main(): Promise<void> {
           }),
         }
       : {}),
-    admin:
-      cfg.adminUser && cfg.adminPass
-        ? {
-            user: cfg.adminUser,
-            pass: cfg.adminPass,
-            realm: "openai-gateway-admin",
-          }
-        : undefined,
+    admin: cfg.adminTokens.length > 0 ? { tokens: cfg.adminTokens } : undefined,
   });
 
   // Dial the local payer-daemon. Routes call payment.buildPayment per

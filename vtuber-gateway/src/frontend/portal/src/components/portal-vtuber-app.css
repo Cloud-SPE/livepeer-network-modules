@@ -1,0 +1,91 @@
+.vtuber-portal-hero {
+  display: grid;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.vtuber-portal-eyebrow {
+  color: var(--accent);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.vtuber-portal-title {
+  font-size: var(--font-size-3xl);
+}
+
+.vtuber-portal-lede {
+  max-width: 72ch;
+}
+
+.vtuber-portal-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-3);
+}
+
+.vtuber-portal-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.vtuber-portal-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.95rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-1);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-2);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.vtuber-portal-nav a:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-1);
+}
+
+.vtuber-portal-nav a.active {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+  background: var(--accent-tint);
+}
+
+.vtuber-portal-content {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.vtuber-portal-meta-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.vtuber-portal-meta-item {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.vtuber-portal-meta-item dt {
+  color: var(--text-3);
+  font-size: var(--font-size-xs);
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.vtuber-portal-meta-item dd {
+  margin: 0;
+  color: var(--text-1);
+}

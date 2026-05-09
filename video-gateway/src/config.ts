@@ -28,6 +28,7 @@ const ConfigSchema = z.object({
   staleStreamSweepIntervalSec: z.number().int().positive(),
   abrPolicy: z.enum(["customer-tier"]),
   customerPortalPepper: z.string().min(1),
+  adminTokens: z.array(z.string().min(1)),
   brokerCallTimeoutMs: z.number().int().positive(),
 });
 
@@ -66,9 +67,18 @@ export function loadConfig(): Config {
     ),
     abrPolicy: process.env["VIDEO_GATEWAY_ABR_POLICY"] ?? "customer-tier",
     customerPortalPepper: process.env["CUSTOMER_PORTAL_PEPPER"] ?? "dev-pepper",
+    adminTokens: parseCsv(process.env["VIDEO_GATEWAY_ADMIN_TOKENS"]),
     brokerCallTimeoutMs: parseInt(process.env["BROKER_CALL_TIMEOUT_MS"] ?? "30000", 10),
   };
   return ConfigSchema.parse(raw);
+}
+
+function parseCsv(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
 }
 
 function firstExistingPath(paths: string[]): string {

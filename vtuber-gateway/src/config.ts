@@ -38,6 +38,7 @@ export const ConfigSchema = z.object({
   vtuberControlReconnectWindowMs: z.number().int().nonnegative().default(30_000),
   vtuberControlReconnectBufferMessages: z.number().int().positive().default(64),
   vtuberControlReconnectBufferBytes: z.number().int().positive().default(1 << 20),
+  adminTokens: z.array(z.string().min(1)).default([]),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -129,6 +130,7 @@ export function loadConfig(): Config {
       process.env["VTUBER_CONTROL_RECONNECT_BUFFER_BYTES"] ?? "1048576",
       10,
     ),
+    adminTokens: parseCsv(process.env["VTUBER_GATEWAY_ADMIN_TOKENS"] ?? ""),
   });
 }
 
@@ -160,4 +162,11 @@ export function parseDurationMs(value: string): number {
     default:
       throw new Error(`invalid duration unit: ${m[2]}`);
   }
+}
+
+function parseCsv(value: string): string[] {
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }

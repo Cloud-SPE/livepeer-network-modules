@@ -9,17 +9,12 @@ Component-local agent map. The repo-root [`../AGENTS.md`](../AGENTS.md)
 is the cross-cutting map; this file scopes to console-specific
 guidance.
 
-## Hard rule (non-negotiable)
+## Bind posture
 
-> **secure-orch never accepts inbound connections.**
-
-The web server binds `127.0.0.1` only. The operator reaches it from a
-LAN laptop via `ssh -L`-tunneled port-forward. Any change that
-introduces a routable bind (`:<port>`, `0.0.0.0:<port>`, named
-interface) is a bug. The startup test in `cmd/secure-orch-console`
-asserts the bound address.
-
-Cite: plan 0019 §6.1.1 + §13 Q6 + core-belief #4.
+Loopback-only remains the recommended deployment posture for the cold
+key host, but the console now leaves the exact bind address to the
+operator. `--listen` must be an explicit `host:port`; ambiguous
+all-interface shorthand such as `:8080` is rejected.
 
 ## Operating principles
 
@@ -79,8 +74,8 @@ because resolvers, coordinators, and gateways all need it.
 - The canonicalizer is zero-dep stdlib only. No third-party JCS lib
   (plan 0019 §13 Q4 lock).
 - Anything that calls `net.Listen` / `http.Server.Addr` /
-  `ListenAndServe` MUST bind `127.0.0.1` or `localhost`. Never
-  `:<port>` or `0.0.0.0:<port>`.
+  `ListenAndServe` MUST require an explicit `host:port`. Never accept
+  ambiguous all-interface shorthand such as `:<port>`.
 - `Signer` is the abstraction in front of the cold-key holder. v0.1
   wires V3 keystore only; the interface is small and abstract enough
   that a hardware-backed signer can land later without changing call

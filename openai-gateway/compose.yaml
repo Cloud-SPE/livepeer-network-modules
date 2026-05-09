@@ -9,8 +9,24 @@
 #   broker          — capability-broker forwards from /v1/cap to mock-backend.
 #   gateway         — openai-gateway translates OpenAI-shaped requests to
 #                     the Livepeer wire spec and forwards via broker.
+#   postgres        — backing store for portal/admin shell routes.
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    networks: [openai-gateway]
+    environment:
+      POSTGRES_DB: openai_gateway
+      POSTGRES_USER: livepeer
+      POSTGRES_PASSWORD: livepeer
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U livepeer -d openai_gateway"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - openai-gateway-postgres:/var/lib/postgresql/data
+
   mock-backend:
     image: python:3.12-alpine
     networks: [openai-gateway]
@@ -118,7 +134,13 @@ services:
 
   gateway:
     image: tztcloud/livepeer-openai-gateway-reference:dev
-    depends_on: [broker, payer-daemon]
+    depends_on:
+      broker:
+        condition: service_started
+      payer-daemon:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     networks: [openai-gateway]
     volumes:
       - livepeer-payment:/var/run/livepeer
@@ -127,6 +149,9 @@ services:
     environment:
       LIVEPEER_BROKER_URL: "http://broker:8080"
       LIVEPEER_PAYER_DAEMON_SOCKET: "/var/run/livepeer/payer-daemon.sock"
+      DATABASE_URL: "postgres://livepeer:livepeer@postgres:5432/openai_gateway"
+      CUSTOMER_PORTAL_AUTH_PEPPER: "smoke-pepper"
+      OPENAI_GATEWAY_ADMIN_TOKENS: "change-me-before-production"
       PORT: "3000"
 
 networks:
@@ -139,3 +164,4 @@ volumes:
   livepeer-payment: {}
   # BoltDB persistence for payment-daemon. Wiped on `make smoke` runs.
   livepeer-payment-data: {}
+  openai-gateway-postgres: {}

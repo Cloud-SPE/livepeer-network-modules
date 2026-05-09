@@ -1,0 +1,73 @@
+.video-admin-hero {
+  display: grid;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.video-admin-eyebrow {
+  color: var(--accent);
+  font: 600 var(--font-size-xs) / 1 var(--font-sans);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.video-admin-title {
+  font-size: var(--font-size-3xl);
+}
+
+.video-admin-lede {
+  max-width: 72ch;
+  color: var(--text-2);
+}
+
+.video-admin-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-3);
+}
+
+.video-admin-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.video-admin-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.95rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-1);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-2);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.video-admin-nav a:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-1);
+}
+
+.video-admin-nav a.active {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px rgba(24, 121, 78, 0.16);
+}
+
+.video-admin-content {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.video-admin-login-form {
+  display: grid;
+  gap: var(--space-3);
+}

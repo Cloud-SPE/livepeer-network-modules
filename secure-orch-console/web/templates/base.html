@@ -3,22 +3,40 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>secure-orch console</title>
+  <title>{{.Title}} - secure-orch console</title>
   <link rel="stylesheet" href="/static/console.css">
 </head>
 <body>
-<header class="banner">
-  <h1>secure-orch console</h1>
-  <div class="signer">
-    <span class="label">signer:</span>
-    <code class="signer-address">{{.SignerAddress | lower}}</code>
-  </div>
+<header>
+  <nav>
+    <a href="/protocol-status" class="brand">secure-orch-console</a>
+    <span class="orch">{{.SignerAddress | lower}}</span>
+    <a href="/protocol-status" class="navlink {{if eq .ActivePage "protocol-status"}}current{{end}}">Protocol status</a>
+    <a href="/protocol-actions" class="navlink {{if eq .ActivePage "protocol-actions"}}current{{end}}">Protocol actions</a>
+    <a href="/manifests" class="navlink {{if eq .ActivePage "manifests"}}current{{end}}">Manifests</a>
+    <a href="/audit" class="navlink {{if eq .ActivePage "audit"}}current{{end}}">Audit</a>
+    {{if .Actor}}
+    <span class="actor">actor {{.Actor}}</span>
+    <form action="/logout" method="post" class="logout">
+      <button type="submit">Logout</button>
+    </form>
+    {{end}}
+  </nav>
 </header>
 <main>
-{{template "content" .}}
+{{if eq .ActivePage "protocol-status"}}
+{{template "protocol-status-content" .}}
+{{else if eq .ActivePage "protocol-actions"}}
+{{template "protocol-actions-content" .}}
+{{else if eq .ActivePage "manifests"}}
+{{template "manifests-content" .}}
+{{else if eq .ActivePage "audit"}}
+{{template "audit-content" .}}
+{{end}}
 </main>
-<footer class="footnote">
-  <p>Hard rule: secure-orch never accepts inbound connections. This UI binds 127.0.0.1 only and is reached over <code>ssh -L</code>.</p>
+<footer>
+  <span>secure-orch cold-key console</span>
+  <span>Recommended posture: keep secure-orch loopback-bound and use <code>ssh -L</code>.</span>
 </footer>
 </body>
 </html>

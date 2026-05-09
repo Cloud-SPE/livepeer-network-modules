@@ -41,10 +41,16 @@ export interface UpdateSessionInput {
   endedAt?: Date | null;
 }
 
+export interface ListSessionsInput {
+  limit?: number;
+  customerId?: string;
+}
+
 export interface SessionStore {
   insertSession(input: InsertSessionInput): Promise<VtuberSessionRecord>;
   insertBearer(input: InsertBearerInput): Promise<void>;
   findById(id: string): Promise<VtuberSessionRecord | null>;
   findByBearerHash(hash: string): Promise<VtuberSessionRecord | null>;
   updateSession(id: string, patch: UpdateSessionInput): Promise<void>;
+  listSessions(input?: ListSessionsInput): Promise<readonly VtuberSessionRecord[]>;
 }

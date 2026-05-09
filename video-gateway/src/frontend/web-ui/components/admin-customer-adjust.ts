@@ -1,26 +1,37 @@
-import { LitElement, css, html, type TemplateResult } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { html, nothing, render } from "lit";
 import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
+import { installAdminPageStyles } from "./admin-shared.js";
 
-@customElement("admin-customer-adjust")
-export class AdminCustomerAdjust extends LitElement {
-  @property({ type: String }) customerId = "";
-  @state() private amountCents = 0;
-  @state() private reason = "";
-  @state() private status: "idle" | "submitting" | "ok" | "err" = "idle";
-  @state() private message = "";
+export class AdminCustomerAdjust extends HTMLElement {
+  static get observedAttributes(): string[] {
+    return ["customerid"];
+  }
+
+  private amountCents = 0;
+  private reason = "";
+  private status: "idle" | "submitting" | "ok" | "err" = "idle";
+  private message = "";
 
   private api = new ApiClient({ baseUrl: "" });
 
-  static styles = css`
-    :host { display: block; }
-    form { display: grid; gap: var(--space-3); max-width: 32rem; }
-    label { display: grid; gap: var(--space-1); font-size: var(--font-size-sm); color: var(--text-2); font-weight: 550; }
-    input, textarea { min-height: 2.8rem; padding: 0.7rem 0.85rem; border: 1px solid var(--border-1); border-radius: var(--radius-md); background: rgba(255,255,255,0.03); color: var(--text-1); }
-    .ok { color: var(--success); }
-    .err { color: var(--danger); }
-    .note { color: var(--text-2); font-size: var(--font-size-sm); }
-  `;
+  connectedCallback(): void {
+    installAdminPageStyles();
+    this.draw();
+  }
+
+  attributeChangedCallback(): void {
+    if (this.isConnected) {
+      this.draw();
+    }
+  }
+
+  get customerId(): string {
+    return this.getAttribute("customerId") ?? "";
+  }
+
+  set customerId(value: string) {
+    this.setAttribute("customerId", value);
+  }
 
   private onAmount(e: Event): void {
     const v = parseInt((e.target as HTMLInputElement).value, 10);
@@ -36,12 +47,14 @@ export class AdminCustomerAdjust extends LitElement {
     if (!this.reason.trim()) {
       this.status = "err";
       this.message = "reason is required";
+      this.draw();
       return;
     }
     this.status = "submitting";
+    this.draw();
     try {
-      await this.api.post(`/admin/customers/${encodeURIComponent(this.customerId)}/adjust`, {
-        amount_cents: this.amountCents,
+      await this.api.post(`/admin/customers/${encodeURIComponent(this.customerId)}/balance`, {
+        delta_usd_cents: this.amountCents,
         reason: this.reason,
       });
       this.status = "ok";
@@ -50,35 +63,43 @@ export class AdminCustomerAdjust extends LitElement {
       this.status = "err";
       this.message = err instanceof Error ? err.message : "adjust_failed";
     }
+    this.draw();
   }
 
-  render(): TemplateResult {
-    return html`
+  private draw(): void {
+    render(
+      html`
       <portal-card heading="Adjust Balance — ${this.customerId}">
         <portal-detail-section
           heading="Manual adjustment"
           description="Credit or debit an account directly in cents. Negative amounts reduce balance."
         >
-          <p class="note">Use this only for operator-driven corrections with a durable audit reason.</p>
-          <form @submit=${this.submit}>
-            <label>
+          <p class="video-admin-page-note">Use this only for operator-driven corrections with a durable audit reason.</p>
+          <form @submit=${this.submit} class="video-admin-page-form">
+            <label class="video-admin-page-field">
               Amount (cents — negative to debit)
               <input type="number" .value=${String(this.amountCents)} @input=${this.onAmount} />
             </label>
-            <label>
+            <label class="video-admin-page-field">
               Reason
               <textarea rows="3" .value=${this.reason} @input=${this.onReason}></textarea>
             </label>
             <portal-button type="submit" ?disabled=${this.status === "submitting"}>
               ${this.status === "submitting" ? "Submitting." : "Apply adjustment"}
             </portal-button>
-            ${this.status === "ok" ? html`<p class="ok">${this.message}</p>` : ""}
-            ${this.status === "err" ? html`<p class="err">${this.message}</p>` : ""}
+            ${this.status === "ok" ? html`<p class="video-admin-page-ok">${this.message}</p>` : nothing}
+            ${this.status === "err" ? html`<p class="video-admin-page-error">${this.message}</p>` : nothing}
           </form>
         </portal-detail-section>
       </portal-card>
-    `;
+      `,
+      this,
+    );
   }
+}
+
+if (!customElements.get("admin-customer-adjust")) {
+  customElements.define("admin-customer-adjust", AdminCustomerAdjust);
 }
 
 declare global {

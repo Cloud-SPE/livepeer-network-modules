@@ -13,6 +13,7 @@ import (
 
 	cchain "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
 	cclock "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/clock"
+	cccontrollerapi "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/controller"
 	cccontroller "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/controller/eth"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/keystore/v3json"
 	ccrpcmulti "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/rpc/multi"
@@ -63,6 +64,10 @@ type builtProviders struct {
 	// overlayLoader returns the current static overlay; reload swaps the
 	// pointer atomically so resolver reads see the new value next call.
 	overlay atomic.Pointer[config.Overlay]
+}
+
+func (bp *builtProviders) addCloser(fn func()) {
+	bp.closers = append(bp.closers, fn)
 }
 
 // build assembles providers from cfg. Dev mode uses fakes; production
@@ -143,6 +148,72 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		}
 	}
 
+	var controllerAddrs cccontrollerapi.Addresses
+
+	// Resolver production deployments resolve ServiceRegistry from the
+	// Controller by default so operators don't need to pass the address
+	// explicitly. The explicit flag remains as an override.
+	if cfg.Mode == config.ModeResolver && !cfg.Dev {
+		ccRPC, err := ccrpcmulti.Open(ccrpcmulti.Options{URLs: []string{cfg.ChainRPC}})
+		if err != nil {
+			return nil, fmt.Errorf("providers: chain-commons rpc: %w", err)
+		}
+		bp.addCloser(func() { _ = ccRPC.Close() })
+
+		ctrl, err := cccontroller.New(ctx, cccontroller.Options{
+			RPC:             ccRPC,
+			ControllerAddr:  ethcommon.HexToAddress(cfg.ControllerAddress),
+			RefreshInterval: 1 * time.Hour,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("providers: chain-commons controller: %w", err)
+		}
+		bp.addCloser(func() {
+			if c, ok := ctrl.(io.Closer); ok {
+				_ = c.Close()
+			}
+		})
+		controllerAddrs = ctrl.Addresses()
+
+		// Resolver chain-discovery: use the same controller + RPC wiring
+		// for round polling and pool walking when chain discovery is on.
+		if cfg.Discovery == config.DiscoveryChain {
+			ts, err := poller.New(poller.Options{
+				RPC:          ccRPC,
+				Controller:   ctrl,
+				PollInterval: cfg.RoundPollInterval,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("providers: chain-commons timesource: %w", err)
+			}
+			bp.addCloser(func() {
+				if c, ok := ts.(io.Closer); ok {
+					_ = c.Close()
+				}
+			})
+
+			rc, err := ccroundclock.New(ccroundclock.Options{
+				TimeSource: ts,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("providers: chain-commons roundclock: %w", err)
+			}
+			named, ok := rc.(ccroundclock.NamedClock)
+			if !ok {
+				return nil, fmt.Errorf("providers: roundclock impl does not satisfy NamedClock")
+			}
+			bp.roundClock = named
+
+			disc, err := discovery.NewChain(ccRPC, controllerAddrs.BondingManager)
+			if err != nil {
+				return nil, fmt.Errorf("providers: discovery: %w", err)
+			}
+			bp.discovery = disc
+		} else {
+			bp.discovery = discovery.NewDisabled()
+		}
+	}
+
 	// Chain
 	if cfg.Dev {
 		// In dev mode, resolver uses an empty in-memory chain (callers
@@ -153,16 +224,27 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 			addr = bp.signer.Address()
 		}
 		bp.chain = chain.NewInMemory(addr)
-	} else {
+	} else if cfg.Mode == config.ModeResolver {
 		cli, err := ethclient.DialContext(ctx, cfg.ChainRPC)
 		if err != nil {
 			return nil, fmt.Errorf("providers: chain dial %s: %w", cfg.ChainRPC, err)
 		}
-		eth, err := chain.NewEth(chain.EthConfig{Client: cli, ServiceRegistryAddress: cfg.ServiceRegistryAddress})
+		serviceRegistryAddress := cfg.ServiceRegistryAddress
+		if serviceRegistryAddress == "" && cfg.Mode == config.ModeResolver {
+			serviceRegistryAddress = controllerAddrs.ServiceRegistry.Hex()
+		}
+		eth, err := chain.NewEth(chain.EthConfig{
+			Client:                   cli,
+			ServiceRegistryAddress:   serviceRegistryAddress,
+			AIServiceRegistryAddress: cfg.AIServiceRegistryAddress,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("providers: chain: %w", err)
 		}
 		bp.chain = eth
+	} else {
+		// Publisher mode doesn't read on-chain serviceURI pointers.
+		bp.chain = chain.NewInMemory("")
 	}
 	bp.chain = chain.WithMetrics(bp.chain, bp.recorder)
 
@@ -195,73 +277,7 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		bp.overlay.Store(config.EmptyOverlay())
 	}
 
-	// Resolver chain-discovery: chain-commons rpc + controller resolver
-	// + timesource poller + roundclock + discovery walker. This is
-	// orthogonal to the existing chain.Eth (which serves
-	// ResolveByAddress's serviceURI reads) — the chain-commons rpc is
-	// dedicated to the discovery pipeline. See plan 0009 §C.
-	if cfg.Mode == config.ModeResolver && cfg.Discovery == config.DiscoveryChain && !cfg.Dev {
-		ccRPC, err := ccrpcmulti.Open(ccrpcmulti.Options{URLs: []string{cfg.ChainRPC}})
-		if err != nil {
-			return nil, fmt.Errorf("providers: chain-commons rpc: %w", err)
-		}
-		bp.closers = append(bp.closers, func() { _ = ccRPC.Close() })
-
-		ctrl, err := cccontroller.New(ctx, cccontroller.Options{
-			RPC:             ccRPC,
-			ControllerAddr:  ethcommon.HexToAddress(cfg.ControllerAddress),
-			RefreshInterval: 1 * time.Hour,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("providers: chain-commons controller: %w", err)
-		}
-		bp.closers = append(bp.closers, func() {
-			if c, ok := ctrl.(io.Closer); ok {
-				_ = c.Close()
-			}
-		})
-		addrs := ctrl.Addresses()
-
-		ts, err := poller.New(poller.Options{
-			RPC:          ccRPC,
-			Controller:   ctrl,
-			PollInterval: cfg.RoundPollInterval,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("providers: chain-commons timesource: %w", err)
-		}
-		bp.closers = append(bp.closers, func() {
-			if c, ok := ts.(io.Closer); ok {
-				_ = c.Close()
-			}
-		})
-
-		// Skip persistent dedup for now: a daemon restart in the
-		// middle of round N triggers one extra pool walk on resume,
-		// which is harmless and cheap (~2N+1 RPCs once per restart).
-		// Wire chain-commons store-backed dedup as a follow-up if the
-		// extra walks ever show up in RPC budgets.
-		rc, err := ccroundclock.New(ccroundclock.Options{
-			TimeSource: ts,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("providers: chain-commons roundclock: %w", err)
-		}
-		// Type-assert to NamedClock so the seeder gets the persistent
-		// per-name subscription. The default impl satisfies both
-		// Clock and NamedClock.
-		named, ok := rc.(ccroundclock.NamedClock)
-		if !ok {
-			return nil, fmt.Errorf("providers: roundclock impl does not satisfy NamedClock")
-		}
-		bp.roundClock = named
-
-		disc, err := discovery.NewChain(ccRPC, addrs.BondingManager)
-		if err != nil {
-			return nil, fmt.Errorf("providers: discovery: %w", err)
-		}
-		bp.discovery = disc
-	} else {
+	if cfg.Mode != config.ModeResolver || cfg.Dev {
 		// Overlay-only / publisher / dev: discovery is the no-op.
 		bp.discovery = discovery.NewDisabled()
 	}

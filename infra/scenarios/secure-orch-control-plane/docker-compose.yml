@@ -3,6 +3,8 @@
 services:
   orch-coordinator:
     image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.0.0}
+    environment:
+      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS:-}
     command:
       - --config=/etc/livepeer/orch-coordinator.yaml
       - --data-dir=/srv/data
@@ -54,10 +56,11 @@ services:
       - --mode=resolver
       - --socket=/var/run/livepeer/service-registry.sock
       - --store-path=/var/lib/livepeer/registry-cache.db
-      - --chain-rpc=${CHAIN_RPC}
+      - --chain-rpc=${CHAIN_RPC:-${ETH_URLS}}
       - --chain-id=${CHAIN_ID:-42161}
       - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
-      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS}
+      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS:-}
+      - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS:-0x04C0b249740175999E5BF5c9ac1dA92431EF34C5}
       - --discovery=${DISCOVERY_MODE:-chain}
       - --round-poll-interval=${ROUND_POLL_INTERVAL:-15s}
       - --cache-manifest-ttl=${CACHE_MANIFEST_TTL:-5m}
@@ -81,18 +84,22 @@ services:
 
   secure-orch-console:
     image: ${REGISTRY:-tztcloud}/livepeer-secure-orch-console:${TAG:-v1.0.0}
+    environment:
+      SECURE_ORCH_ADMIN_TOKENS: ${SECURE_ORCH_ADMIN_TOKENS}
+      PROTOCOL_DAEMON_SOCKET: ${PROTOCOL_DAEMON_SOCKET:-/var/run/livepeer/protocol.sock}
     command:
       - --keystore=v3:/var/lib/secure-orch/keystore.json
       - --keystore-password-file=/etc/secure-orch/password
       - --last-signed=/var/lib/secure-orch/last-signed.json
       - --audit-log=/var/log/secure-orch/audit.log.jsonl
       - --audit-rotate-size=104857600
-      - --listen=127.0.0.1:8080
+      - --listen=${SECURE_ORCH_LISTEN:-127.0.0.1:8080}
     ports:
-      - "127.0.0.1:${SECURE_ORCH_PORT:-8080}:8080"
+      - "${SECURE_ORCH_BIND:-127.0.0.1}:${SECURE_ORCH_PORT:-8080}:8080"
     volumes:
       - ${SECURE_ORCH_KEYSTORE:-./run/secure-orch-keystore.json}:/var/lib/secure-orch/keystore.json:ro
       - ${SECURE_ORCH_PASSWORD_FILE:-./run/secure-orch-password}:/etc/secure-orch/password:ro
+      - protocol-socket:/var/run/livepeer
       - secure-orch-data:/var/lib/secure-orch
       - secure-orch-audit:/var/log/secure-orch
     restart: unless-stopped

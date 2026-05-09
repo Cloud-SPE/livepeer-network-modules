@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -222,6 +223,12 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 	// 5. Overlay merge.
 	overlay := s.overlay()
 	nodes = applyOverlay(addr, nodes, overlay)
+	s.log.Debug("resolver: nodes after overlay",
+		"addr", addr,
+		"mode", mode,
+		"node_count", len(nodes),
+		"node_summary", summarizeNodes(nodes),
+	)
 
 	// 6. Signature policy.
 	allowUns := req.AllowUnsigned || !s.rejectUns
@@ -235,6 +242,7 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 		filtered = append(filtered, n)
 	}
 	nodes = filtered
+	s.logResolvedResult("resolver: returning fresh result", addr, mode, nodes, types.Fresh)
 
 	// 7. Cache write.
 	entry := &manifestcache.Entry{
@@ -278,52 +286,77 @@ func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddr
 	if manifestURL == "" {
 		return nil, nil, [32]byte{}, fmt.Errorf("%w: empty manifest URL", types.ErrManifestUnavailable)
 	}
-	body, err := s.fetcher.Fetch(ctx, manifestURL)
-	if err != nil {
-		return nil, nil, [32]byte{}, err
-	}
+	candidates := manifestFetchCandidates(manifestURL)
+	var lastErr error
+	for _, candidateURL := range candidates {
+		body, err := s.fetcher.Fetch(ctx, candidateURL)
+		if err != nil {
+			lastErr = err
+			continue
+		}
 
-	manifest, canonical, sigHex, err := decodeFetchedManifest(body)
-	if err != nil {
-		s.rec.IncManifestVerify(metrics.OutcomeParseError)
-		s.appendAudit(addr, types.AuditSignatureInvalid, types.ModeWellKnown, "manifest parse: "+err.Error())
-		return nil, nil, [32]byte{}, err
-	}
+		manifest, canonical, sigHex, err := decodeFetchedManifest(body)
+		if err != nil {
+			s.rec.IncManifestVerify(metrics.OutcomeParseError)
+			s.appendAudit(addr, types.AuditSignatureInvalid, types.ModeWellKnown, "manifest parse: "+err.Error())
+			lastErr = err
+			// Some deployments still publish a base service URI on chain and
+			// expose the signed manifest under /.well-known/..., so keep probing
+			// alternate well-known candidates if the direct URL body is not a manifest.
+			continue
+		}
 
-	claimed, err := types.ParseEthAddress(manifest.EthAddress)
-	if err != nil {
-		s.rec.IncManifestVerify(metrics.OutcomeParseError)
-		return nil, nil, [32]byte{}, err
-	}
-	if !claimed.Equal(addr) {
-		s.rec.IncManifestVerify(metrics.OutcomeEthAddressMismatch)
-		return nil, nil, [32]byte{}, fmt.Errorf("%w: manifest claims %s, chain says %s", types.ErrSignatureMismatch, claimed, addr)
-	}
+		claimed, err := types.ParseEthAddress(manifest.EthAddress)
+		if err != nil {
+			s.rec.IncManifestVerify(metrics.OutcomeParseError)
+			lastErr = err
+			continue
+		}
+		if !claimed.Equal(addr) {
+			s.rec.IncManifestVerify(metrics.OutcomeEthAddressMismatch)
+			lastErr = fmt.Errorf("%w: manifest claims %s, chain says %s", types.ErrSignatureMismatch, claimed, addr)
+			continue
+		}
 
-	sigBytes, err := decodeSig(sigHex)
-	if err != nil {
-		s.rec.IncManifestVerify(metrics.OutcomeParseError)
-		return nil, nil, [32]byte{}, err
-	}
-	verifyStart := time.Now()
-	recovered, err := s.verifier.Recover(canonical, sigBytes)
-	s.rec.ObserveSignatureVerify(time.Since(verifyStart))
-	if err != nil {
-		s.rec.IncManifestVerify(metrics.OutcomeSignatureMismatch)
-		s.appendAudit(addr, types.AuditSignatureInvalid, types.ModeWellKnown, "verify: "+err.Error())
-		return nil, nil, [32]byte{}, err
-	}
-	if !recovered.Equal(addr) {
-		s.rec.IncManifestVerify(metrics.OutcomeSignatureMismatch)
-		s.appendAudit(addr, types.AuditSignatureInvalid, types.ModeWellKnown, fmt.Sprintf("recovered %s, expected %s", recovered, addr))
-		return nil, nil, [32]byte{}, fmt.Errorf("%w: recovered %s, expected %s", types.ErrSignatureMismatch, recovered, addr)
-	}
-	s.rec.IncManifestVerify(metrics.OutcomeVerified)
+		sigBytes, err := decodeSig(sigHex)
+		if err != nil {
+			s.rec.IncManifestVerify(metrics.OutcomeParseError)
+			lastErr = err
+			continue
+		}
+		verifyStart := time.Now()
+		recovered, err := s.verifier.Recover(canonical, sigBytes)
+		s.rec.ObserveSignatureVerify(time.Since(verifyStart))
+		if err != nil {
+			s.rec.IncManifestVerify(metrics.OutcomeSignatureMismatch)
+			s.appendAudit(addr, types.AuditSignatureInvalid, types.ModeWellKnown, "verify: "+err.Error())
+			lastErr = err
+			continue
+		}
+		if !recovered.Equal(addr) {
+			s.rec.IncManifestVerify(metrics.OutcomeSignatureMismatch)
+			s.appendAudit(addr, types.AuditSignatureInvalid, types.ModeWellKnown, fmt.Sprintf("recovered %s, expected %s", recovered, addr))
+			lastErr = fmt.Errorf("%w: recovered %s, expected %s", types.ErrSignatureMismatch, recovered, addr)
+			continue
+		}
+		s.rec.IncManifestVerify(metrics.OutcomeVerified)
 
-	out := projectManifest(addr, manifest)
-	sha := bytes32SHA256(body)
-	s.appendAudit(addr, types.AuditManifestFetched, types.ModeWellKnown, fmt.Sprintf("nodes=%d schema=%s", len(out), manifest.SchemaVersion))
-	return out, manifest, sha, nil
+		out := projectManifest(addr, manifest)
+		s.log.Debug("resolver: manifest projected",
+			"addr", addr,
+			"schema_version", manifest.SchemaVersion,
+			"manifest_url", candidateURL,
+			"node_count", len(out),
+			"node_summary", summarizeNodes(out),
+		)
+		sha := bytes32SHA256(body)
+		s.appendAudit(addr, types.AuditManifestFetched, types.ModeWellKnown, fmt.Sprintf("nodes=%d schema=%s", len(out), manifest.SchemaVersion))
+		return out, manifest, sha, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("%w: no manifest fetch candidates for %q", types.ErrManifestUnavailable, manifestURL)
+	}
+	return nil, nil, [32]byte{}, lastErr
 }
 
 func decodeFetchedManifest(body []byte) (*types.Manifest, []byte, string, error) {
@@ -438,8 +471,22 @@ func (s *Service) buildResultFromEntry(e *manifestcache.Entry, freshness types.F
 	default:
 		return nil, fmt.Errorf("%w: cache entry mode=%v", types.ErrUnknownMode, e.Mode)
 	}
+	s.log.Debug("resolver: cache rebuild before overlay",
+		"addr", req.Address,
+		"mode", e.Mode,
+		"freshness", freshness,
+		"node_count", len(nodes),
+		"node_summary", summarizeNodes(nodes),
+	)
 
 	nodes = applyOverlay(req.Address, nodes, overlay)
+	s.log.Debug("resolver: cache rebuild after overlay",
+		"addr", req.Address,
+		"mode", e.Mode,
+		"freshness", freshness,
+		"node_count", len(nodes),
+		"node_summary", summarizeNodes(nodes),
+	)
 	filtered := nodes[:0]
 	for _, n := range nodes {
 		if !signaturePolicyAllows(req.Address, overlay, allowUns, n.SignatureStatus) {
@@ -447,6 +494,7 @@ func (s *Service) buildResultFromEntry(e *manifestcache.Entry, freshness types.F
 		}
 		filtered = append(filtered, n)
 	}
+	s.logResolvedResult("resolver: returning cached result", req.Address, e.Mode, filtered, freshness)
 	return &types.ResolveResult{
 		EthAddress:      req.Address,
 		ResolvedURI:     e.ResolvedURI,
@@ -477,6 +525,54 @@ func projectManifest(addr types.EthAddress, m *types.Manifest) []types.ResolvedN
 		})
 	}
 	return out
+}
+
+func (s *Service) logResolvedResult(msg string, addr types.EthAddress, mode types.ResolveMode, nodes []types.ResolvedNode, freshness types.FreshnessStatus) {
+	kv := []any{
+		"addr", addr,
+		"mode", mode,
+		"freshness", freshness,
+		"node_count", len(nodes),
+		"node_summary", summarizeNodes(nodes),
+	}
+	if len(nodes) == 0 {
+		s.log.Warn(msg, kv...)
+		return
+	}
+	s.log.Debug(msg, kv...)
+}
+
+func summarizeNodes(nodes []types.ResolvedNode) []map[string]any {
+	if len(nodes) == 0 {
+		return nil
+	}
+	const maxNodes = 3
+	limit := len(nodes)
+	if limit > maxNodes {
+		limit = maxNodes
+	}
+	out := make([]map[string]any, 0, limit)
+	for i := 0; i < limit; i++ {
+		n := nodes[i]
+		out = append(out, map[string]any{
+			"id":                 n.ID,
+			"url":                n.URL,
+			"enabled":            n.Enabled,
+			"worker_eth_address": n.WorkerEthAddress,
+			"capability_count":   len(n.Capabilities),
+			"offering_count":     countOfferings(n.Capabilities),
+			"signature_status":   n.SignatureStatus,
+		})
+	}
+	return out
+}
+
+func countOfferings(caps []types.Capability) int {
+	total := 0
+	for _, cap := range caps {
+		total += len(cap.Offerings)
+	}
+	return total
 }
 
 func (s *Service) appendAudit(addr types.EthAddress, kind types.AuditKind, mode types.ResolveMode, detail string) {
@@ -530,4 +626,36 @@ func nonZeroDuration(d, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func manifestFetchCandidates(serviceURI string) []string {
+	candidates := []string{serviceURI}
+	if strings.Contains(serviceURI, "/.well-known/") {
+		return candidates
+	}
+
+	u, err := url.Parse(serviceURI)
+	if err != nil || u.Host == "" {
+		return candidates
+	}
+
+	base := *u
+	base.Path = ""
+	base.RawPath = ""
+	base.RawQuery = ""
+	base.Fragment = ""
+
+	for _, suffix := range []string{
+		"/.well-known/livepeer-registry.json",
+		"/.well-known/livepeer-ai-registry.json",
+	} {
+		next := base
+		next.Path = suffix
+		candidate := next.String()
+		if candidate == serviceURI {
+			continue
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates
 }

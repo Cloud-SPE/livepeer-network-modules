@@ -44,6 +44,7 @@ type Event struct {
 	Seq             uint64    `json:"seq"`
 	At              time.Time `json:"at"`
 	Outcome         Outcome   `json:"outcome"`
+	Actor           string    `json:"actor,omitempty"`
 	Uploader        string    `json:"uploader,omitempty"`
 	SignatureSHA256 string    `json:"signature_sha256,omitempty"`
 	ManifestSHA256  string    `json:"manifest_sha256,omitempty"`

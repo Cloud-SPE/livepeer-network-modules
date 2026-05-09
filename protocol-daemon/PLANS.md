@@ -1,6 +1,6 @@
 # PLANS
 
-Module-internal exec-plans for protocol-daemon. The cross-module plan that birthed this daemon is [`docs/exec-plans/completed/0006-build-protocol-daemon.md`](../docs/exec-plans/completed/0006-build-protocol-daemon.md) (lives in the monorepo root, completed when the daemon shipped).
+Module-internal exec-plans for protocol-daemon. The cross-module plan that birthed this daemon is [`docs/exec-plans/completed/0020-protocol-daemon-migration.md`](../docs/exec-plans/completed/0020-protocol-daemon-migration.md) (lives in the monorepo root, completed when the daemon shipped).
 
 ## Active plans
 

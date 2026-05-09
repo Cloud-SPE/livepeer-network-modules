@@ -121,6 +121,11 @@ Optional Stripe-backed billing requires:
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 
+Admin console auth requires:
+
+- `OPENAI_GATEWAY_ADMIN_TOKENS` as a comma-separated token list
+- every admin request to send `Authorization: Bearer <token>` and `X-Actor: <operator-name>`
+
 and exposes:
 
 - customer checkout init: `POST /portal/topups/checkout`

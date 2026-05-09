@@ -20,6 +20,7 @@ import (
 type Server struct {
 	addr   string
 	logger *slog.Logger
+	auth   *authManager
 
 	mu       sync.Mutex
 	mux      *http.ServeMux
@@ -30,11 +31,11 @@ type Server struct {
 // New builds a Server bound to the given address. addr should be a
 // LAN-private interface (the coordinator's operator UX is intended to
 // be reachable on the LAN, not the public internet).
-func New(addr string, logger *slog.Logger) *Server {
+func New(addr string, logger *slog.Logger, adminTokens []string) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Server{addr: addr, logger: logger, mux: http.NewServeMux()}
+	return &Server{addr: addr, logger: logger, auth: newAuthManager(adminTokens), mux: http.NewServeMux()}
 }
 
 // Mux returns the underlying ServeMux so callers can register

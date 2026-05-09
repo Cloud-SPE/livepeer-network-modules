@@ -75,6 +75,7 @@ func main() {
 		metricsListen:   *metricsListen,
 		configPath:      *configPath,
 		dataDir:         *dataDir,
+		adminTokens:     parseCSVEnv("ORCH_COORDINATOR_ADMIN_TOKENS"),
 		scrapeInterval:  *scrapeInterval,
 		scrapeTimeout:   *scrapeTimeout,
 		freshnessWindow: *freshnessWindow,
@@ -99,6 +100,7 @@ type bootConfig struct {
 	metricsListen   string
 	configPath      string
 	dataDir         string
+	adminTokens     []string
 	scrapeInterval  time.Duration
 	scrapeTimeout   time.Duration
 	freshnessWindow time.Duration
@@ -206,7 +208,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	receiveSvc := receive.New(publishedStore, candStore, auditLog, loaded.EthAddress(), candidate.SpecVersion, builder)
 	receiveSvc.SetObserver(mreg)
 
-	admin := adminapi.New(cfg.listenAddr, logger.With("component", "adminapi"))
+	admin := adminapi.New(cfg.listenAddr, logger.With("component", "adminapi"), cfg.adminTokens)
 	admin.CandidateRoutes(builder, candStore)
 	admin.UploadRoutes(receiveSvc)
 	if err := admin.WebRoutes(adminapi.WebDeps{
@@ -214,6 +216,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 		Scrape:         scrapeSvc,
 		Published:      publishedStore,
 		Audit:          auditLog,
+		Receive:        receiveSvc,
 		OrchEthAddress: loaded.EthAddress(),
 		Version:        version,
 	}); err != nil {
@@ -256,6 +259,32 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	<-ctx.Done()
 	logger.Info("shutdown signal received")
 	return nil
+}
+
+func parseCSVEnv(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		dup := false
+		for _, existing := range out {
+			if existing == part {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func runManifestStateUpdater(ctx context.Context, mreg *metrics.Registry, store *published.Store) {

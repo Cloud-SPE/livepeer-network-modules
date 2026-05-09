@@ -1,7 +1,8 @@
 # AGENTS.md
 
-This is `payment-daemon/` — the receiver-side payment sidecar. The broker
-talks to it over a unix-socket gRPC connection per the spec at
+This is `payment-daemon/` — the payment sidecar for both receiver-side and
+sender-side flows. Brokers, gateways, and test harnesses talk to it over a
+unix-socket gRPC connection per the spec at
 [`../livepeer-network-protocol/proto/livepeer/payments/v1/`](../livepeer-network-protocol/proto/livepeer/payments/v1/).
 
 Component-local agent map. The repo-root [`../AGENTS.md`](../AGENTS.md) is
@@ -14,7 +15,7 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 - **The proto is the contract.** When code disagrees with
   `../livepeer-network-protocol/proto/`, the proto wins. File a plan if
   the proto needs to change.
-- **The daemon is stubbed.** v0.1 accepts any non-empty `ticket` and
+- **The daemon is stubbed.** v0.2 accepts any non-empty `ticket` and
   records it. Don't add ticket-format validation here without a plan;
   that is the chain-integration workstream's domain.
 - **State is durable.** BoltDB is the session ledger. Tests should not

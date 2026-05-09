@@ -1,64 +1,137 @@
-import { LitElement, css, html, type TemplateResult } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
-
-@customElement('portal-layout')
-export class PortalLayout extends LitElement {
-  @property({ type: String }) brand = 'Customer Portal';
-
-  static styles = css`
-    :host {
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      min-height: 100vh;
-      background:
-        radial-gradient(circle at top left, var(--accent-tint), transparent 22rem),
-        linear-gradient(180deg, var(--surface-canvas) 0%, var(--surface-0) 100%);
-      color: var(--text-1);
-      font-family: var(--font-sans);
-    }
-    header {
-      padding: var(--space-3) var(--space-5);
-      border-bottom: 1px solid var(--border-1);
-      background: var(--surface-overlay);
-      backdrop-filter: blur(18px);
-    }
-    .brand {
-      font-weight: 700;
-      font-size: var(--font-size-lg);
-      letter-spacing: -0.02em;
-    }
-    main {
-      padding: var(--space-6) var(--space-5);
-      width: min(1120px, 100%);
-      margin: 0 auto;
-    }
-    footer {
-      padding: var(--space-3) var(--space-5);
-      border-top: 1px solid var(--border-1);
-      color: var(--text-3);
-      font-size: var(--font-size-xs);
-      background: rgba(255, 255, 255, 0.02);
-    }
-  `;
-
-  render(): TemplateResult {
-    return html`
-      <header>
-        <div class="brand">${this.brand}</div>
-        <slot name="nav"></slot>
-      </header>
-      <main>
-        <slot></slot>
-      </main>
-      <footer>
-        <slot name="footer"></slot>
-      </footer>
-    `;
+export class PortalLayout extends HTMLElement {
+  static get observedAttributes(): string[] {
+    return ["brand"];
   }
+
+  connectedCallback(): void {
+    this.render();
+  }
+
+  attributeChangedCallback(): void {
+    if (this.isConnected) {
+      this.render();
+    }
+  }
+
+  get brand(): string {
+    return this.getAttribute("brand") ?? "Customer Portal";
+  }
+
+  set brand(value: string) {
+    this.setAttribute("brand", value);
+  }
+
+  private render(): void {
+    const header = this.ensureHeader();
+    const main = this.ensureMain();
+    const footer = this.ensureFooter();
+    const nav = this.ensureNav(header);
+    const brand = this.ensureBrand(header);
+    const footerShell = this.ensureFooterShell(footer);
+
+    brand.textContent = this.brand;
+
+    const unmanaged = Array.from(this.childNodes).filter((node) => {
+      return node !== header && node !== main && node !== footer;
+    });
+
+    for (const node of unmanaged) {
+      if (node instanceof HTMLElement && node.getAttribute("slot") === "nav") {
+        nav.append(node);
+        node.removeAttribute("slot");
+        continue;
+      }
+      if (node instanceof HTMLElement && node.getAttribute("slot") === "footer") {
+        footerShell.append(node);
+        node.removeAttribute("slot");
+        continue;
+      }
+      main.append(node);
+    }
+
+    nav.hidden = nav.childNodes.length === 0;
+    footer.hidden = footerShell.childNodes.length === 0;
+  }
+
+  private ensureHeader(): HTMLElement {
+    let header = this.querySelector<HTMLElement>(":scope > .portal-layout__header");
+    if (header !== null) {
+      return header;
+    }
+    header = document.createElement("header");
+    header.className = "portal-layout__header";
+    const shell = document.createElement("div");
+    shell.className = "portal-layout__header-shell";
+    header.append(shell);
+    this.append(header);
+    return header;
+  }
+
+  private ensureBrand(header: HTMLElement): HTMLElement {
+    const shell = header.querySelector<HTMLElement>(".portal-layout__header-shell")!;
+    let brand = shell.querySelector<HTMLElement>(".portal-layout__brand");
+    if (brand !== null) {
+      return brand;
+    }
+    brand = document.createElement("div");
+    brand.className = "portal-layout__brand";
+    shell.append(brand);
+    return brand;
+  }
+
+  private ensureNav(header: HTMLElement): HTMLElement {
+    const shell = header.querySelector<HTMLElement>(".portal-layout__header-shell")!;
+    let nav = shell.querySelector<HTMLElement>(".portal-layout__nav");
+    if (nav !== null) {
+      return nav;
+    }
+    nav = document.createElement("nav");
+    nav.className = "portal-layout__nav";
+    nav.setAttribute("aria-label", "Primary");
+    shell.append(nav);
+    return nav;
+  }
+
+  private ensureMain(): HTMLElement {
+    let main = this.querySelector<HTMLElement>(":scope > .portal-layout__main");
+    if (main !== null) {
+      return main;
+    }
+    main = document.createElement("main");
+    main.className = "portal-layout__main";
+    this.append(main);
+    return main;
+  }
+
+  private ensureFooter(): HTMLElement {
+    let footer = this.querySelector<HTMLElement>(":scope > .portal-layout__footer");
+    if (footer !== null) {
+      return footer;
+    }
+    footer = document.createElement("footer");
+    footer.className = "portal-layout__footer";
+    this.append(footer);
+    return footer;
+  }
+
+  private ensureFooterShell(footer: HTMLElement): HTMLElement {
+    let shell = footer.querySelector<HTMLElement>(".portal-layout__footer-shell");
+    if (shell !== null) {
+      return shell;
+    }
+    shell = document.createElement("div");
+    shell.className = "portal-layout__footer-shell";
+    footer.append(shell);
+    return shell;
+  }
+}
+
+if (!customElements.get("portal-layout")) {
+  customElements.define("portal-layout", PortalLayout);
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    'portal-layout': PortalLayout;
+    "portal-layout": PortalLayout;
   }
 }

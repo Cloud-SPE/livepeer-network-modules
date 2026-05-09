@@ -145,8 +145,7 @@ test('routes smoke: chat / embeddings / transcriptions / images forward to broke
     listenPort: 0,
     databaseUrl: 'postgres://test:test@localhost:5432/test',
     authPepper: 'test-pepper',
-    adminUser: null,
-    adminPass: null,
+    adminTokens: [],
     publicBaseUrl: null,
     stripe: null,
     defaultOffering: 'default',
@@ -227,24 +226,24 @@ test('routes smoke: chat / embeddings / transcriptions / images forward to broke
   assert.equal(captures.length, 4);
 
   const chat = captures[0]!;
-  assert.equal(chat.capability, 'openai:/v1/chat/completions');
+  assert.equal(chat.capability, 'openai:chat-completions');
   assert.equal(chat.offering, 'model-small');
   assert.equal(chat.mode, 'http-reqresp@v0');
   assert.ok(chat.requestId, 'broker received a Livepeer-Request-Id');
 
   const emb = captures[1]!;
-  assert.equal(emb.capability, 'openai:/v1/embeddings');
+  assert.equal(emb.capability, 'openai:embeddings');
   assert.equal(emb.offering, 'text-embedding-3-small');
   assert.equal(emb.mode, 'http-reqresp@v0');
   assert.equal(emb.requestId, 'customer-trace-1');
 
   const img = captures[2]!;
-  assert.equal(img.capability, 'openai:/v1/images/generations');
+  assert.equal(img.capability, 'openai:images-generations');
   assert.equal(img.offering, 'sdxl');
   assert.equal(img.mode, 'http-reqresp@v0');
 
   const txn = captures[3]!;
-  assert.equal(txn.capability, 'openai:/v1/audio/transcriptions');
+  assert.equal(txn.capability, 'openai:audio-transcriptions');
   assert.equal(txn.offering, 'whisper-1');
   assert.equal(txn.mode, 'http-multipart@v0');
 });

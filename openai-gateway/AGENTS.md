@@ -90,3 +90,9 @@ The collapse boundaries:
 - Suite-citation paths in commit messages must match
   `livepeer-network-suite/livepeer-openai-gateway[-core]/...` verbatim
   per the repo-root AGENTS.md attribution convention.
+- Frontend work under `src/frontend/` must follow
+  [`../docs/design-docs/frontend-dom-and-css-invariants.md`](../docs/design-docs/frontend-dom-and-css-invariants.md):
+  light DOM only, semantic HTML only, no inline CSS, styling only from checked-in CSS
+  files. The migration recorded in
+  [`../docs/exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md`](../docs/exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md)
+  is complete; treat any new violation as a bug.

@@ -11,6 +11,7 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [gpu-requirements.md](./gpu-requirements.md) | active | NVIDIA Pascal+ floor + per-vendor (Intel QSV, AMD VAAPI) matrix for the workload runners; CUDA toolkit alignment + multi-arch policy per OQ4 |
 | [build-system.md](./build-system.md) | active | Canonical base images (python:3.12-slim, golang:1.22-alpine, ubuntu:24.04, nvidia/cuda:12.9.1-devel-ubuntu24.04) + image-tag pinning + buildx orchestration for the workload runners |
 | [ui-design-system.md](./ui-design-system.md) | active | Shared visual system for all operator and product UIs, aligned to current Livepeer brand and explorer surfaces |
+| [frontend-dom-and-css-invariants.md](./frontend-dom-and-css-invariants.md) | active | Repo-wide frontend implementation contract: light DOM only, semantic HTML only, no inline CSS, styling only from checked-in CSS files |
 
 Stubs (to be written as we drill in):
 

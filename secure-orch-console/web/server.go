@@ -1,6 +1,4 @@
-// Package web is the secure-orch console's HTTP server. It binds
-// 127.0.0.1 only — never a routable interface. Operators reach it
-// via ssh -L from a LAN laptop.
+// Package web is the secure-orch console's HTTP server.
 //
 // The server hosts the candidate-upload form, renders the structural
 // diff against last-signed.json, runs the tap-to-sign confirm gesture,
@@ -15,23 +13,24 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/audit"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/canonical"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/protocol"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/signing"
 )
 
 // Server bundles the console's HTTP surface with the deps the
-// handlers need. Server only ever binds a loopback address; the
-// constructor enforces this.
+// handlers need.
 type Server struct {
 	cfg          config.Config
 	signer       signing.Signer
 	audit        *audit.Log
+	auth         *authManager
+	protocol     *protocol.Client
 	logger       *slog.Logger
 	mux          *http.ServeMux
 	listener     net.Listener
@@ -51,10 +50,9 @@ type stashedCandidate struct {
 	sourceName string
 }
 
-// New builds a Server. The listen address is validated against the
-// loopback gate — non-loopback binds are rejected.
+// New builds a Server.
 func New(cfg config.Config, signer signing.Signer, log *audit.Log, logger *slog.Logger) (*Server, error) {
-	if err := config.ValidateLoopbackAddr(cfg.Listen); err != nil {
+	if err := config.ValidateListenAddr(cfg.Listen); err != nil {
 		return nil, err
 	}
 	if signer == nil {
@@ -66,6 +64,14 @@ func New(cfg config.Config, signer signing.Signer, log *audit.Log, logger *slog.
 	if logger == nil {
 		logger = slog.Default()
 	}
+	var protocolClient *protocol.Client
+	if cfg.ProtocolSocket != "" {
+		client, err := protocol.Dial(context.Background(), cfg.ProtocolSocket)
+		if err != nil {
+			return nil, err
+		}
+		protocolClient = client
+	}
 	tmpls, err := loadTemplates()
 	if err != nil {
 		return nil, err
@@ -74,6 +80,8 @@ func New(cfg config.Config, signer signing.Signer, log *audit.Log, logger *slog.
 		cfg:          cfg,
 		signer:       signer,
 		audit:        log,
+		auth:         newAuthManager(cfg.AdminTokens),
+		protocol:     protocolClient,
 		logger:       logger,
 		mux:          http.NewServeMux(),
 		maxUpload:    8 << 20,
@@ -92,10 +100,6 @@ func (s *Server) Listen() (net.Addr, error) {
 	ln, err := net.Listen("tcp", s.cfg.Listen)
 	if err != nil {
 		return nil, fmt.Errorf("web: listen %s: %w", s.cfg.Listen, err)
-	}
-	if err := assertLoopback(ln.Addr()); err != nil {
-		_ = ln.Close()
-		return nil, err
 	}
 	s.listener = ln
 	s.httpSrv = &http.Server{
@@ -134,10 +138,21 @@ func (s *Server) Addr() string {
 }
 
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET /{$}", s.handleIndex)
-	s.mux.HandleFunc("POST /candidate", s.handleCandidate)
-	s.mux.HandleFunc("POST /discard", s.handleDiscard)
-	s.mux.HandleFunc("POST /sign", s.handleSign)
+	s.mux.HandleFunc("GET /{$}", s.requireAuth(s.handleIndex))
+	s.mux.HandleFunc("GET /protocol-status", s.requireAuth(s.handleProtocolStatusPage))
+	s.mux.HandleFunc("GET /protocol-actions", s.requireAuth(s.handleProtocolActionsPage))
+	s.mux.HandleFunc("GET /manifests", s.requireAuth(s.handleManifestsPage))
+	s.mux.HandleFunc("GET /audit", s.requireAuth(s.handleAuditPage))
+	s.mux.HandleFunc("GET /login", s.handleLoginPage)
+	s.mux.HandleFunc("POST /login", s.handleLoginSubmit)
+	s.mux.HandleFunc("POST /logout", s.requireAuth(s.handleLogout))
+	s.mux.HandleFunc("POST /candidate", s.requireAuth(s.handleCandidate))
+	s.mux.HandleFunc("POST /discard", s.requireAuth(s.handleDiscard))
+	s.mux.HandleFunc("POST /sign", s.requireAuth(s.handleSign))
+	s.mux.HandleFunc("POST /protocol/force-init", s.requireAuth(s.handleProtocolForceInit))
+	s.mux.HandleFunc("POST /protocol/force-reward", s.requireAuth(s.handleProtocolForceReward))
+	s.mux.HandleFunc("POST /protocol/set-service-uri", s.requireAuth(s.handleProtocolSetServiceURI))
+	s.mux.HandleFunc("POST /protocol/set-ai-service-uri", s.requireAuth(s.handleProtocolSetAIServiceURI))
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", s.staticAssets))
 	s.mux.HandleFunc("/", http.NotFound)
@@ -151,17 +166,3 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // envelope bytes for boot-time logging without wrapping the canonical
 // package directly.
 func CanonicalSHA256(b []byte) string { return canonical.SHA256Hex(b) }
-
-func assertLoopback(addr net.Addr) error {
-	tcp, ok := addr.(*net.TCPAddr)
-	if !ok {
-		return fmt.Errorf("web: unexpected listener address type %T", addr)
-	}
-	if !tcp.IP.IsLoopback() {
-		return fmt.Errorf("web: listener bound non-loopback address %s (hard rule violation)", tcp.IP)
-	}
-	if strings.Contains(tcp.IP.String(), "0.0.0.0") {
-		return fmt.Errorf("web: listener bound 0.0.0.0 (hard rule violation)")
-	}
-	return nil
-}

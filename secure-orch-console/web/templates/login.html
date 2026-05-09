@@ -1,0 +1,26 @@
+{{define "login.html"}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>secure-orch login</title>
+  <link rel="stylesheet" href="/static/console.css">
+</head>
+<body>
+<main>
+  <section class="summary login-card">
+    <h2>Operator login</h2>
+    <p>Enter the secure-orch admin token and operator actor identity.</p>
+    {{if .Error}}<p class="login-error">{{.Error}}</p>{{end}}
+    <form action="/login" method="post" class="login-form">
+      <label for="admin_token">Admin token</label>
+      <input type="password" id="admin_token" name="admin_token" autocomplete="current-password" required>
+      <label for="actor">Actor</label>
+      <input type="text" id="actor" name="actor" autocomplete="username" required>
+      <button type="submit">Start session</button>
+    </form>
+  </section>
+</main>
+</body>
+</html>
+{{end}}

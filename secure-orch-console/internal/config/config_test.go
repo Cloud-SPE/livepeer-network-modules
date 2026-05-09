@@ -5,38 +5,37 @@ import (
 	"testing"
 )
 
-func TestValidateLoopbackAddr_Accepts(t *testing.T) {
+func TestValidateListenAddr_Accepts(t *testing.T) {
 	cases := []string{
 		"127.0.0.1:8080",
 		"localhost:8080",
 		"[::1]:8080",
+		"0.0.0.0:8080",
+		"10.0.0.1:8080",
+		"example.com:8080",
 	}
 	for _, c := range cases {
 		t.Run(c, func(t *testing.T) {
-			if err := ValidateLoopbackAddr(c); err != nil {
+			if err := ValidateListenAddr(c); err != nil {
 				t.Fatalf("expected accept, got %v", err)
 			}
 		})
 	}
 }
 
-func TestValidateLoopbackAddr_Rejects(t *testing.T) {
+func TestValidateListenAddr_Rejects(t *testing.T) {
 	cases := []struct {
 		addr string
 		want string
 	}{
 		{"", "required"},
 		{":8080", "empty host"},
-		{"0.0.0.0:8080", "loopback"},
-		{"10.0.0.1:8080", "loopback"},
-		{"192.168.1.1:8080", "loopback"},
-		{"example.com:8080", "not a literal IP"},
 		{"127.0.0.1:", "empty port"},
 		{"::1", "address"},
 	}
 	for _, c := range cases {
 		t.Run(c.addr, func(t *testing.T) {
-			err := ValidateLoopbackAddr(c.addr)
+			err := ValidateListenAddr(c.addr)
 			if err == nil {
 				t.Fatalf("expected reject %q", c.addr)
 			}
@@ -78,8 +77,13 @@ func TestConfigValidate(t *testing.T) {
 	}
 
 	c.Listen = "0.0.0.0:8080"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("expected routable bind to validate, got %v", err)
+	}
+
+	c.Listen = ":8080"
 	if err := c.Validate(); err == nil {
-		t.Fatal("expected loopback rejection")
+		t.Fatal("expected empty-host rejection")
 	}
 
 	c.Listen = "127.0.0.1:8080"

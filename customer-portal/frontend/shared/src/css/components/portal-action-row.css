@@ -1,0 +1,35 @@
+portal-action-row {
+  display: flex;
+  justify-content: flex-start;
+}
+
+portal-action-row[align="end"] {
+  justify-content: flex-end;
+}
+
+.portal-action-row__row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.portal-action-row__row > portal-button,
+.portal-action-row__row > button {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+  portal-action-row {
+    width: 100%;
+  }
+
+  .portal-action-row__row {
+    display: grid;
+    width: 100%;
+  }
+
+  .portal-action-row__row > portal-button {
+    width: 100%;
+  }
+}

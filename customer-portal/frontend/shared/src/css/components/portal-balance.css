@@ -1,0 +1,39 @@
+portal-balance {
+  display: block;
+}
+
+portal-balance .portal-balance__row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-3);
+}
+
+portal-balance .portal-balance__stat {
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.012) 100%),
+    var(--surface-1);
+  box-shadow: var(--shadow-sm);
+}
+
+portal-balance .portal-balance__label {
+  font-size: var(--font-size-xs);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+portal-balance .portal-balance__value {
+  font-size: var(--font-size-2xl);
+  font-weight: 650;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+portal-balance .portal-balance__value--reserved {
+  color: var(--text-2);
+  font-size: var(--font-size-base);
+}

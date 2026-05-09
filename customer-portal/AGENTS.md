@@ -53,9 +53,30 @@ src/
   config/        Zod env schemas
   testing/       Wallet fakes, Stripe stub, test pool factories
 migrations/      drizzle SQL (numbered 0000..NNNN)
-frontend/        pnpm sub-workspace (Lit + RxJS portal/admin/shared widgets)
+frontend/        pnpm sub-workspace (shared/admin/portal UI packages)
 test/            integration + smoke
 ```
+
+## Frontend invariant
+
+All frontend work under `frontend/` must follow the cross-cutting repo rule in
+[`../docs/design-docs/frontend-dom-and-css-invariants.md`](../docs/design-docs/frontend-dom-and-css-invariants.md).
+
+That rule is strict:
+
+- light DOM only
+- semantic HTML only
+- no inline CSS
+- styling only from checked-in CSS files
+
+The frontend migration recorded in
+[`0023-strict-frontend-dom-and-css-invariants`](../docs/exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md)
+is complete.
+
+- do not add shadow-DOM UI code
+- do not add `static styles = css` blocks
+- do not add `style=` attributes
+- treat any new frontend invariant violation as a bug
 
 ## Doing work
 
@@ -100,7 +121,9 @@ explicit user instruction (plan brief §5). Source paths:
 - `livepeer-openai-gateway-core/src/interfaces/{wallet,caller,authResolver,rateLimiter,adminAuthResolver}.ts`
   — interface shapes.
 - `livepeer-openai-gateway/frontend/{shared,portal,admin}/`
-  — Lit + RxJS frontend (TypeScript port per Q5 lock).
+  — initial frontend source port. The rewrite kept the shared-shell product scope while
+  later migrating the implementation to the repo-standard light-DOM + external-CSS
+  architecture.
 
 ## What lives elsewhere
 

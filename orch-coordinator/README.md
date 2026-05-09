@@ -26,6 +26,10 @@ Three listeners:
 The coordinator never holds a signing key. Cold key on `secure-orch` is the
 only signer.
 
+When `ORCH_COORDINATOR_ADMIN_TOKENS` is set, the admin listener requires
+operator login with admin token + actor identity and records the actor on
+signed-manifest upload audit events.
+
 ## Status
 
 **v0.1 scaffold** (plan 0018, commit 1). The flag set, config parser, broker

@@ -15,3 +15,5 @@ export {
   type RecordingRepo,
   type RecordingStatus,
 } from "./recordings.js";
+export type { AssetRepo } from "../engine/index.js";
+export type { LiveStreamRepo } from "../engine/index.js";

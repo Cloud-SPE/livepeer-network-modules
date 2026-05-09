@@ -21,8 +21,7 @@ export interface Config {
   listenPort: number;
   databaseUrl: string;
   authPepper: string;
-  adminUser: string | null;
-  adminPass: string | null;
+  adminTokens: string[];
   publicBaseUrl: string | null;
   stripe: {
     secretKey: string;
@@ -63,8 +62,7 @@ export function loadConfig(): Config {
     listenPort,
     databaseUrl: requiredEnv("DATABASE_URL"),
     authPepper: process.env["CUSTOMER_PORTAL_AUTH_PEPPER"] ?? "dev-openai-gateway-pepper",
-    adminUser: process.env["OPENAI_GATEWAY_ADMIN_USER"] ?? null,
-    adminPass: process.env["OPENAI_GATEWAY_ADMIN_PASS"] ?? null,
+    adminTokens: loadAdminTokens(),
     publicBaseUrl: process.env["OPENAI_GATEWAY_PUBLIC_BASE_URL"] ?? null,
     stripe: loadStripeConfig(),
     defaultOffering: process.env["LIVEPEER_DEFAULT_OFFERING"] ?? "default",
@@ -78,6 +76,18 @@ export function loadConfig(): Config {
     audioSpeechEnabled: parseBool(process.env["OPENAI_AUDIO_SPEECH_ENABLED"], false),
     brokerCallTimeoutMs: parseInt(process.env["BROKER_CALL_TIMEOUT_MS"] ?? "30000", 10),
   };
+}
+
+function parseCsv(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+function loadAdminTokens(): string[] {
+  return parseCsv(process.env["OPENAI_GATEWAY_ADMIN_TOKENS"]);
 }
 
 function requiredEnv(name: string): string {

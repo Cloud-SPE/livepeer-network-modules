@@ -364,7 +364,7 @@ test("POST /v1/vtuber/sessions/:id/end and topup happy path", async () => {
     "../../src/service/auth/sessionBearer.js"
   );
   const minted = mintSessionBearer(cfg.vtuberSessionBearerPepper);
-  const sessionId = "00000000-0000-0000-0000-00000000eeee";
+  const sessionId = "00000000-0000-4000-8000-00000000eeee";
   await deps.sessionStore.insertSession({
     id: sessionId,
     customerId: "cust-1",

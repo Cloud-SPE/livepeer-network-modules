@@ -6,7 +6,7 @@
 // random jitter. Idempotency is content-addressed by round number; the
 // chain-commons TxIntent state machine ensures a duplicate submit is a no-op.
 //
-// Pattern from docs/exec-plans/active/0006-build-protocol-daemon.md §C.
+// Pattern recorded in docs/exec-plans/completed/0020-protocol-daemon-migration.md §7.
 package roundinit
 
 import (

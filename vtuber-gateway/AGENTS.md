@@ -91,3 +91,17 @@ plan 0013-vtuber §5.1. The schema is renumbered + namespaced to
 `vtuber.*` (suite shipped flat tables in `public.*`). Quote-related
 code is **dropped** per the quote-free flow; manifest-driven worker
 selection via `service-registry-daemon` is active.
+
+## Frontend invariant
+
+Frontend work under `src/frontend/` must follow
+[`../docs/design-docs/frontend-dom-and-css-invariants.md`](../docs/design-docs/frontend-dom-and-css-invariants.md):
+
+- light DOM only
+- semantic HTML only
+- no inline CSS
+- styling only from checked-in CSS files
+
+The completed migration is recorded in
+[`../docs/exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md`](../docs/exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md)
+for historical context. Treat any new violation as a bug.

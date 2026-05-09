@@ -1,6 +1,6 @@
-import { LitElement, css, html, type TemplateResult } from "lit";
-import { customElement, state } from "lit/decorators.js";
+import { html, nothing, render } from "lit";
 import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
+import { installAdminPageStyles } from "./admin-shared.js";
 
 interface RecordingRow {
   id: string;
@@ -12,32 +12,14 @@ interface RecordingRow {
   durationSec: number | null;
 }
 
-@customElement("admin-recordings")
-export class AdminRecordings extends LitElement {
-  @state() private rows: RecordingRow[] = [];
-  @state() private error: string | null = null;
+export class AdminRecordings extends HTMLElement {
+  private rows: RecordingRow[] = [];
+  private error: string | null = null;
 
   private api = new ApiClient({ baseUrl: "" });
 
-  static styles = css`
-    :host { display: block; }
-    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
-    th, td { padding: 0.75rem 0.8rem; border-bottom: 1px solid var(--border-1); text-align: left; }
-    th {
-      color: var(--text-3);
-      font-size: var(--font-size-xs);
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-    tbody tr:hover { background: rgba(255,255,255,0.02); }
-    .err { color: var(--danger); }
-    a { color: var(--accent); }
-    .dim { color: var(--text-3); }
-  `;
-
-  override async connectedCallback(): Promise<void> {
-    super.connectedCallback();
+  async connectedCallback(): Promise<void> {
+    installAdminPageStyles();
     await this.load();
   }
 
@@ -49,17 +31,19 @@ export class AdminRecordings extends LitElement {
     } catch (err) {
       this.error = err instanceof Error ? err.message : "load_failed";
     }
+    this.draw();
   }
 
-  render(): TemplateResult {
-    return html`
+  private draw(): void {
+    render(
+      html`
       <portal-card heading="Recordings">
         <portal-data-table
           heading="Recorded Sessions"
           description="Review completed and in-progress live recording captures across customer streams."
         >
-          ${this.error ? html`<p class="err">${this.error}</p>` : ""}
-          <table>
+          ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
+          <table class="video-admin-page-table">
             <thead>
               <tr><th>ID</th><th>Stream</th><th>Asset</th><th>Status</th><th>Duration</th><th>Started</th><th>Ended</th></tr>
             </thead>
@@ -68,7 +52,7 @@ export class AdminRecordings extends LitElement {
                 (r) => html`<tr>
                   <td>${r.id}</td>
                   <td>${r.streamId}</td>
-                  <td>${r.assetId ?? html`<span class="dim">-</span>`}</td>
+                  <td>${r.assetId ?? html`<span class="video-admin-page-dim">-</span>`}</td>
                   <td>
                     <portal-status-pill variant=${r.status === "ready" ? "success" : r.status === "failed" ? "danger" : "info"}>
                       ${r.status}
@@ -76,15 +60,21 @@ export class AdminRecordings extends LitElement {
                   </td>
                   <td>${r.durationSec !== null ? r.durationSec.toFixed(1) + "s" : "-"}</td>
                   <td>${r.startedAt}</td>
-                  <td>${r.endedAt ?? html`<span class="dim">active</span>`}</td>
+                  <td>${r.endedAt ?? html`<span class="video-admin-page-dim">active</span>`}</td>
                 </tr>`,
               )}
             </tbody>
           </table>
         </portal-data-table>
       </portal-card>
-    `;
+      `,
+      this,
+    );
   }
+}
+
+if (!customElements.get("admin-recordings")) {
+  customElements.define("admin-recordings", AdminRecordings);
 }
 
 declare global {

@@ -13,9 +13,9 @@ One binary, two modes:
 | `--mode=publisher` | Orchestrator-side (operator that wants their capabilities discoverable) | `Publisher` gRPC — `BuildManifest`, `SignManifest`, reserved `ProbeWorker` stub | Local keystore |
 | `--mode=resolver`  | Consumer-side (gateway / bridge / AI router that wants to find orchestrators) | `Resolver` gRPC — `ResolveByAddress`, `Select`, `ListKnown`, `Refresh`, `GetAuditLog` | Chain RPC (read-only), HTTP for manifest fetch, BoltDB cache, optional static `nodes.yaml` overlay |
 
-Under the hood the daemon implements a **single-registry, signed-manifest discovery flow**:
+Under the hood the daemon implements a **signed-manifest discovery flow**:
 
-1. The gateway-side resolver is configured with exactly one registry contract address via `--service-registry-address`.
+1. The gateway-side resolver reads `ServiceRegistry` from the configured Controller by default, with an optional `--service-registry-address` override, plus an AI registry fallback via `--ai-service-registry-address`.
 2. The on-chain `getServiceURI(orch)` value is treated as the full manifest URL to fetch.
 3. The resolver fetches that exact URL, verifies the signature against the eth address from the chain, and returns structured orch metadata plus a gateway-facing selected-route API for pricing and dispatch.
 4. If an operator shipped the rejected on-chain CSV format, the resolver decodes it read-only as a compatibility mode.
@@ -151,7 +151,7 @@ For the full mental model — **component map, publish/resolve sequence diagrams
 
 ## Highlights
 
-- **Explicit single-registry resolution** — each resolver deployment reads exactly one configured registry contract address and treats the on-chain `serviceURI` value as the manifest URL to fetch. See [`docs/design-docs/serviceuri-modes.md`](docs/design-docs/serviceuri-modes.md).
+- **Explicit resolver registry order** — each resolver deployment reads a primary `--service-registry-address` and may optionally fall back to `--ai-service-registry-address` when the primary registry has no pointer. The returned on-chain `serviceURI` is treated as the manifest URL to fetch. See [`docs/design-docs/serviceuri-modes.md`](docs/design-docs/serviceuri-modes.md).
 - **Signed claims, recovered against chain identity** — every manifest is signed `eth-personal-sign` over canonical bytes. The resolver recovers the signer and verifies it matches the eth address whose `serviceURI` pointed us there. Mismatch is rejected with `signature_mismatch` and never cached. See [`docs/design-docs/signature-scheme.md`](docs/design-docs/signature-scheme.md).
 - **Workload-agnostic capability namespace** — `openai:/v1/chat/completions`, `livepeer:transcoder/h264`, `livepeer-byoc:my-thing` are all opaque to the daemon. No code change needed to ship a new capability type. See [`docs/design-docs/workload-agnostic-strings.md`](docs/design-docs/workload-agnostic-strings.md).
 - **Static overlay as policy authority** — the on-chain manifest is canonical for what the operator advertises; operator-curated `nodes.yaml` is canonical for what the consumer accepts (`enabled`, `tier_allowed`, `weight`, `unsigned_allowed`). Augment, don't replace. SIGHUP / fsnotify hot-reload. See [`docs/design-docs/static-overlay.md`](docs/design-docs/static-overlay.md).
@@ -161,7 +161,7 @@ For the full mental model — **component map, publish/resolve sequence diagrams
 - **Verbose Prometheus metrics** opt-in via `--metrics-listen=:9091`. Resolutions broken down by mode × freshness, signature-mismatch rates, cache hit ratio, chain RPC latency p99, in-flight gRPC counts — every layer is dashboard-legible. Cardinality-capped to keep Prometheus memory bounded under accidental label-explosion. See [`docs/design-docs/observability.md`](docs/design-docs/observability.md). A 30-panel **Grafana dashboard** ships at [`docs/operations/grafana/`](docs/operations/grafana/), and a 12-rule **Prometheus alert** file at [`docs/operations/prometheus/`](docs/operations/prometheus/) — both import-and-go.
 - **Preflight at startup** — keystore decrypt, store open, signer→address derivation. Misconfiguration fails loud before the gRPC socket ever opens.
 - **One binary, two modes** — publisher and resolver share the same code, the same lints, the same release. Mode-specific RPCs are gated at startup; calling a publisher RPC on a resolver daemon returns `Unimplemented`, never a confusing error.
-- **Resolver-side contract is explicit** — gateway deployments choose one registry contract in config instead of relying on Controller-derived defaults or multi-target probing.
+- **Resolver-side contract is explicit** — gateway deployments choose the registry lookup order in config instead of relying on Controller-derived defaults.
 
 ## Status
 

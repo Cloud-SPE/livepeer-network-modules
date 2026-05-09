@@ -167,6 +167,25 @@ func TestAggregate_DistinctExtraEmitsBoth(t *testing.T) {
 	}
 }
 
+func TestBuild_NormalizesOpenAICapabilityIDAndInjectsModelExtra(t *testing.T) {
+	snap := sampleSnap()
+	c, err := Build(snap, BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.Manifest.Capabilities[0]
+	if got.CapabilityID != "openai:chat-completions" {
+		t.Fatalf("capability_id = %q", got.CapabilityID)
+	}
+	openaiExtra, _ := got.Extra["openai"].(map[string]any)
+	if openaiExtra["model"] != "llama-3-70b" {
+		t.Fatalf("model extra = %#v", openaiExtra["model"])
+	}
+}
+
 func TestCanonicalBytes_SortsKeys(t *testing.T) {
 	v := map[string]any{"b": 1, "a": 2}
 	out, err := CanonicalBytes(v)

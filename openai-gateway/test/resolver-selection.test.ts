@@ -147,7 +147,7 @@ async function startStubResolver(
               extraJson: Buffer.from(JSON.stringify({ geo: { region: "us-east-1" }, provider: "vllm" })),
               capabilities: [
                 {
-                  name: "openai:/v1/chat/completions",
+                  name: "openai:chat-completions",
                   workUnit: "tokens",
                   offerings: [
                     {
@@ -173,7 +173,7 @@ async function startStubResolver(
             extraJson: Buffer.from(JSON.stringify({ geo: { region: "us-west-2" }, provider: "vllm" })),
             capabilities: [
               {
-                name: "openai:/v1/chat/completions",
+                name: "openai:chat-completions",
                 workUnit: "tokens",
                 offerings: [
                   {
@@ -236,8 +236,7 @@ test("resolver-backed selection prefers matching extra/constraints, then lowest 
     listenPort: 0,
     databaseUrl: 'postgres://test:test@localhost:5432/test',
     authPepper: 'test-pepper',
-    adminUser: null,
-    adminPass: null,
+    adminTokens: [],
     publicBaseUrl: null,
     stripe: null,
     defaultOffering: "default",

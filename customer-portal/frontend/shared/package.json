@@ -2,12 +2,16 @@
   "name": "@livepeer-rewrite/customer-portal-shared",
   "version": "0.1.0",
   "private": true,
-  "description": "Shared Lit + RxJS widget catalog for the customer portal frontend",
+  "description": "Shared light-DOM widget catalog for the customer portal frontend",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "files": ["dist", "src", "README.md"],
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -25,10 +29,10 @@
       "types": "./dist/lib/*.d.ts",
       "import": "./dist/lib/*.js"
     },
-    "./css/*": "./src/css/*"
+    "./css/*": "./dist/css/*"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node ./scripts/build-css.mjs",
     "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"
   },
   "dependencies": {
@@ -36,10 +40,10 @@
     "rxjs": "^7.8.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "jsdom": "^25.0.0",
-    "@types/jsdom": "^21.1.7",
-    "typescript": "^5.6.0"
+    "@types/jsdom": "^28.0.1",
+    "@types/node": "^25.6.2",
+    "jsdom": "^29.1.1",
+    "typescript": "^6.0.3"
   },
   "engines": {
     "node": ">=20"

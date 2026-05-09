@@ -11,6 +11,7 @@
         <th>seq</th>
         <th>at</th>
         <th>outcome</th>
+        <th>actor</th>
         <th>uploader</th>
         <th>publication_seq</th>
         <th>manifest sha256</th>
@@ -23,13 +24,14 @@
         <td>{{.Seq}}</td>
         <td>{{.At.Format "2006-01-02T15:04:05Z"}}</td>
         <td><span class="badge audit-{{.Outcome}}">{{.Outcome}}</span></td>
+        <td>{{.Actor}}</td>
         <td>{{.Uploader}}</td>
         <td>{{.PublicationSeq}}</td>
         <td class="hash"><code>{{.ManifestSHA256}}</code></td>
         <td>{{.Note}}</td>
       </tr>
     {{else}}
-      <tr><td colspan="7"><em>no audit events yet</em></td></tr>
+      <tr><td colspan="8"><em>no audit events yet</em></td></tr>
     {{end}}
     </tbody>
   </table>

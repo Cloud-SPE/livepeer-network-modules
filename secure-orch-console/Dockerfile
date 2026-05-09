@@ -4,8 +4,8 @@
 # Image: tztcloud/livepeer-secure-orch-console:<tag>
 #
 # Build context is the monorepo root. The runtime stage stays
-# distroless-static; the binary binds 127.0.0.1 only — confirmed by a
-# unit test on the loopback gate (cmd/secure-orch-console/main_test.go).
+# distroless-static; the binary requires an explicit host:port bind,
+# confirmed by cmd/secure-orch-console tests.
 #
 # Per core belief #16, the GO_VERSION ARG is bumped to latest stable
 # on each release.
@@ -18,6 +18,7 @@ FROM golang:${GO_VERSION}-alpine AS builder
 WORKDIR /src
 
 COPY secure-orch-console/go.mod secure-orch-console/go.sum ./secure-orch-console/
+COPY proto-contracts/ ./proto-contracts/
 RUN cd secure-orch-console && go mod download
 
 COPY secure-orch-console/ ./secure-orch-console/
@@ -36,13 +37,19 @@ RUN cd secure-orch-console && CGO_ENABLED=0 GOOS=linux \
         -o /out/secure-orch-keygen \
         ./cmd/secure-orch-keygen
 
-RUN install -d -m 0700 -o 65532 -g 65532 /out/srv
+RUN install -d -m 0700 -o 65532 -g 65532 \
+        /out/srv \
+        /out/var/lib/secure-orch \
+        /out/var/log/secure-orch \
+    && touch /out/var/lib/secure-orch/.keep /out/var/log/secure-orch/.keep \
+    && chown 65532:65532 /out/var/lib/secure-orch/.keep /out/var/log/secure-orch/.keep
 
 # ---- Test stage ----
 FROM golang:${GO_VERSION}-alpine AS test
 
 WORKDIR /src
 COPY secure-orch-console/go.mod secure-orch-console/go.sum ./secure-orch-console/
+COPY proto-contracts/ ./proto-contracts/
 RUN cd secure-orch-console && go mod download
 COPY secure-orch-console/ ./secure-orch-console/
 RUN cd secure-orch-console && go test -race ./...
@@ -53,8 +60,9 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /out/secure-orch-console /usr/local/bin/secure-orch-console
 COPY --from=builder /out/secure-orch-keygen  /usr/local/bin/secure-orch-keygen
 
-# Default mount point for the operator's spool / state / log dirs.
+# Default mount points for the operator's spool / state / log dirs.
 COPY --from=builder --chown=nonroot:nonroot /out/srv /srv
+COPY --from=builder --chown=nonroot:nonroot /out/var /var
 
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/secure-orch-console"]

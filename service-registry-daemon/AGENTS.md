@@ -50,7 +50,7 @@ Lints enforce this in CI. See [docs/design-docs/architecture.md](docs/design-doc
 
 ## Invariants (do not break without a design-doc)
 
-1. **All resolver modes coexist.** Resolver must transparently handle: (a) a full manifest URL `serviceURI`, (b) an opt-in CSV pointer if encountered (read-only fallback), and (c) chainless static-overlay synth when the chain has no entry but the operator overlay supplies pins (`--discovery=overlay-only` deployments). See `docs/design-docs/serviceuri-modes.md`.
+1. **All resolver modes coexist.** Resolver must transparently handle: (a) a full manifest URL `serviceURI`, (b) an opt-in CSV pointer if encountered (read-only fallback), and (c) chainless static-overlay synth when the chain has no entry but the operator overlay supplies pins (`--discovery=overlay-only` deployments). Resolver chain lookups may consult both `ServiceRegistry` and `AIServiceRegistry`; the chain provider tries the primary registry first, then the AI registry when the primary has no pointer. See `docs/design-docs/serviceuri-modes.md`.
 2. **Workload-agnostic.** No domain in `internal/` may hard-code "ai", "transcoding", "openai", "llm". Capabilities are opaque strings; the registry doesn't know what they mean. See core-beliefs §3.
 3. **Providers boundary.** No cross-cutting dependency is imported outside `internal/providers/`.
 4. **Manifests are signed.** Resolver rejects an unsigned manifest unless the operator has whitelisted that ethAddress as `unsigned-allowed` in the static overlay. Enforced by `lint/no-unverified-manifest`.

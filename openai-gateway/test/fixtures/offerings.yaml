@@ -1,0 +1,4 @@
+defaults:
+  llm:
+    capability: "openai:/v1/chat/completions"
+    offering: "default"

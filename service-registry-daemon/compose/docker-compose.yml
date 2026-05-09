@@ -27,10 +27,11 @@ services:
       - --mode=resolver
       - --socket=/var/run/livepeer/service-registry.sock
       - --store-path=/var/lib/livepeer/registry-cache.db
-      - --chain-rpc=${CHAIN_RPC}
+      - --chain-rpc=${CHAIN_RPC:-${ETH_URLS}}
       - --chain-id=${CHAIN_ID:-42161}
       - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
-      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS:-0x04cEB6f6d4e0D0d06f3Ec4c0dB4A5715A2c2Be8e}
+      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS:-}
+      - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS:-0x04C0b249740175999E5BF5c9ac1dA92431EF34C5}
       - --discovery=${DISCOVERY_MODE:-chain}
       - --round-poll-interval=${ROUND_POLL_INTERVAL:-15s}
       - --cache-manifest-ttl=${CACHE_MANIFEST_TTL:-5m}

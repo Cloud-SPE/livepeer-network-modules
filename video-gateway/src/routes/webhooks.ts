@@ -10,7 +10,7 @@ export function registerWebhooks(app: FastifyInstance): void {
   app.post("/v1/webhooks", async (req, reply) => {
     const parsed = RegisterWebhookBody.safeParse(req.body);
     if (!parsed.success) {
-      await reply.code(400).send({ error: "invalid_body", details: parsed.error.errors });
+      await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
       return;
     }
     const id = `wh_${randomHex16()}`;

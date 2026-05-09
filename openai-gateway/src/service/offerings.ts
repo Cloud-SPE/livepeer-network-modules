@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import yaml from 'js-yaml';
 import { z } from 'zod';
+import { normalizeCapabilityId } from '../livepeer/capabilityMap.js';
 
 const OfferingValueSchema = z.union([
   z.string(),
@@ -38,7 +39,7 @@ export function resolveDefaultOffering(
   config: OfferingsConfig,
   input: ResolveDefaultOfferingInput,
 ): string | null {
-  const entry = config.defaults[input.capability];
+  const entry = config.defaults[normalizeCapabilityId(input.capability)];
   if (!entry) return null;
   if (typeof entry === 'string') return entry;
   if (input.variant && entry[input.variant]) return entry[input.variant]!;

@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHook
 import type { AdminAuthResolver } from "@livepeer-rewrite/customer-portal/auth";
 
 import type { Db as VideoDb } from "../db/pool.js";
+import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
 import { assets, liveStreams, recordings } from "../db/schema.js";
 import type { AssetRepo, LiveStreamRepo, RecordingRepo, WebhookFailureRepo } from "../repo/index.js";
 import type { RetryDispatcher } from "../service/webhookDispatcher.js";
@@ -16,6 +17,7 @@ declare module "fastify" {
 export interface AdminRoutesDeps {
   authResolver: AdminAuthResolver;
   videoDb: VideoDb;
+  routeSelector: VideoRouteSelector;
   assets: AssetRepo;
   liveStreamsRepo: LiveStreamRepo;
   recordingsRepo: RecordingRepo;
@@ -25,6 +27,11 @@ export interface AdminRoutesDeps {
 
 export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void {
   const preHandler = adminAuthPreHandler(deps.authResolver);
+
+  app.get("/admin/video/resolver-candidates", { preHandler }, async (_req, reply) => {
+    const candidates = await deps.routeSelector.inspect();
+    await reply.code(200).send({ candidates });
+  });
 
   app.get("/admin/assets", { preHandler }, async (req, reply) => {
     const query = req.query as Record<string, string | undefined>;

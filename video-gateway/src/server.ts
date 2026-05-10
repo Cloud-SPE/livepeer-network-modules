@@ -70,6 +70,7 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
     registerAdmin(app, {
       ...input.admin,
       authResolver: input.portal.adminAuthResolver,
+      routeSelector: input.routeSelector,
     });
   }
 

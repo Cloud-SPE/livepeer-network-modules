@@ -33,7 +33,7 @@ export class AdminCustomerRefund extends HTMLElement {
     this.setAttribute("customerId", value);
   }
 
-  private async submit(e: Event): Promise<void> {
+  private submit = async (e: Event): Promise<void> => {
     e.preventDefault();
     if (!this.stripeSessionId.trim() || !this.reason.trim()) {
       this.status = "err";
@@ -55,7 +55,7 @@ export class AdminCustomerRefund extends HTMLElement {
       this.message = err instanceof Error ? err.message : "refund_failed";
     }
     this.draw();
-  }
+  };
 
   private draw(): void {
     render(

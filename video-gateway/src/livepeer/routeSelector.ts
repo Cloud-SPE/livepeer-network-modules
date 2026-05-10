@@ -40,6 +40,7 @@ export interface VideoRouteSelector {
     offering: string;
     headers?: IncomingHttpHeaders;
   }): Promise<VideoRouteCandidate[]>;
+  inspect(): Promise<VideoRouteCandidate[]>;
 }
 
 interface ResolverClient extends grpc.Client {
@@ -117,6 +118,9 @@ export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSe
           },
         ];
       },
+      async inspect(): Promise<VideoRouteCandidate[]> {
+        return [];
+      },
     };
   }
 
@@ -156,6 +160,11 @@ export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSe
 
       matches.sort((a, b) => compareCandidates(a, b, preferredExtra));
       return matches;
+    },
+    async inspect(): Promise<VideoRouteCandidate[]> {
+      const snapshot = await loadSnapshot(client, cfg, cache);
+      cache = snapshot;
+      return snapshot.candidates;
     },
   };
 }

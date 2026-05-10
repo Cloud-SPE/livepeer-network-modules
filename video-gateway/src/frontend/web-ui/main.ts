@@ -5,6 +5,7 @@ import "./components/admin-customer-detail.js";
 import "./components/admin-customer-adjust.js";
 import "./components/admin-customer-refund.js";
 import "./components/admin-health.js";
+import "./components/admin-nodes.js";
 import "./components/admin-assets.js";
 import "./components/admin-topups.js";
 import "./components/admin-reservations.js";

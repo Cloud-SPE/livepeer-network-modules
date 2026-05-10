@@ -43,13 +43,13 @@ export class AdminCustomers extends HTMLElement {
     }
   }
 
-  private onInput(e: Event): void {
+  private onInput = (e: Event): void => {
     this.query = (e.target as HTMLInputElement).value;
-  }
+  };
 
-  private onKey(e: KeyboardEvent): void {
+  private onKey = (e: KeyboardEvent): void => {
     if (e.key === "Enter") void this.search();
-  }
+  };
 
   async connectedCallback(): Promise<void> {
     installAdminPageStyles();
@@ -57,7 +57,7 @@ export class AdminCustomers extends HTMLElement {
     await this.search();
   }
 
-  private async createCustomer(event: Event): Promise<void> {
+  private createCustomer = async (event: Event): Promise<void> => {
     event.preventDefault();
     this.creating = true;
     this.error = null;
@@ -87,7 +87,7 @@ export class AdminCustomers extends HTMLElement {
       this.creating = false;
       this.draw();
     }
-  }
+  };
 
   private mapRow(row: Record<string, unknown>): CustomerRow {
     return {

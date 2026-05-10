@@ -33,16 +33,16 @@ export class AdminCustomerAdjust extends HTMLElement {
     this.setAttribute("customerId", value);
   }
 
-  private onAmount(e: Event): void {
+  private onAmount = (e: Event): void => {
     const v = parseInt((e.target as HTMLInputElement).value, 10);
     this.amountCents = Number.isFinite(v) ? v : 0;
-  }
+  };
 
-  private onReason(e: Event): void {
+  private onReason = (e: Event): void => {
     this.reason = (e.target as HTMLTextAreaElement).value;
-  }
+  };
 
-  private async submit(e: Event): Promise<void> {
+  private submit = async (e: Event): Promise<void> => {
     e.preventDefault();
     if (!this.reason.trim()) {
       this.status = "err";
@@ -64,7 +64,7 @@ export class AdminCustomerAdjust extends HTMLElement {
       this.message = err instanceof Error ? err.message : "adjust_failed";
     }
     this.draw();
-  }
+  };
 
   private draw(): void {
     render(

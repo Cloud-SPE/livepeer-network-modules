@@ -31,6 +31,8 @@ export class VideoGatewayAdmin extends HTMLElement {
     this.router = new HashRouter();
     this.router
       .add("/health", () => this.setRoute("health"))
+      .add("/nodes", () => this.setRoute("nodes"))
+      .add("/nodes/:brokerUrl", (_p, params) => this.setRoute("nodes", params))
       .add("/customers", () => this.setRoute("customers"))
       .add("/customers/:id", (_p, params) => this.setRoute("customer-detail", params))
       .add("/customers/:id/adjust", (_p, params) => this.setRoute("customer-adjust", params))
@@ -74,6 +76,7 @@ export class VideoGatewayAdmin extends HTMLElement {
       nav.setAttribute("aria-label", "Primary");
       nav.append(
         this.navLink("/health", "Health", "health"),
+        this.navLink("/nodes", "Nodes", "nodes"),
         this.navLink("/customers", "Customers", "customers"),
         this.navLink("/topups", "Top-ups", "topups"),
         this.navLink("/reservations", "Reservations", "reservations"),
@@ -170,6 +173,13 @@ export class VideoGatewayAdmin extends HTMLElement {
     switch (view) {
       case "health":
         return document.createElement("admin-health");
+      case "nodes": {
+        const el = document.createElement("admin-nodes");
+        if (params["brokerUrl"]) {
+          el.setAttribute("selectedBrokerUrl", params["brokerUrl"]);
+        }
+        return el;
+      }
       case "customers":
         return document.createElement("admin-customers");
       case "customer-detail": {
@@ -297,6 +307,8 @@ export class VideoGatewayAdmin extends HTMLElement {
     switch (this.route.view) {
       case "health":
         return "Health";
+      case "nodes":
+        return "Nodes";
       case "customers":
       case "customer-detail":
       case "customer-adjust":
@@ -325,6 +337,8 @@ export class VideoGatewayAdmin extends HTMLElement {
     switch (this.route.view) {
       case "health":
         return "Gateway readiness, operator auth, and static surface sanity checks.";
+      case "nodes":
+        return "Inspect resolver candidates, broker routes, and price metadata.";
       case "customers":
       case "customer-detail":
       case "customer-adjust":

@@ -56,7 +56,7 @@ function installStyles(): void {
 
 export class VideoGatewayPortal extends HTMLElement {
   private route: RouteState = { view: "assets", params: {} };
-  private authed = !!readSession()?.token;
+  private authed = !!readSession()?.token && !!readSession()?.actor;
   private customer: PortalCustomer | null = null;
   private limits: PortalLimits | null = null;
   private authTokens: CredentialSummary[] = [];
@@ -80,6 +80,9 @@ export class VideoGatewayPortal extends HTMLElement {
       .add("/streams", () => this.setRoute("streams"))
       .add("/webhooks", () => this.setRoute("webhooks"))
       .add("/recordings", () => this.setRoute("recordings"));
+    if (!window.location.hash) {
+      window.location.hash = "#/assets";
+    }
     this.router.start();
     window.addEventListener("storage", this.onSessionChange);
     this.render();
@@ -103,64 +106,40 @@ export class VideoGatewayPortal extends HTMLElement {
 
   private renderShell(): HTMLElement {
     const layout = document.createElement("portal-layout");
-    layout.setAttribute("brand", "Livepeer Video");
-
-    const nav = document.createElement("nav");
-    nav.slot = "nav";
-    nav.className = "video-portal-nav";
-    nav.setAttribute("aria-label", "Primary");
-    if (!this.authed) {
-      nav.append(this.navLink("/login", "Sign in", "login"));
-      nav.append(this.navLink("/signup", "Create account", "signup"));
-    }
-    nav.append(
-      this.navLink("/assets", "Assets", "assets"),
-      this.navLink("/streams", "Streams", "streams"),
-      this.navLink("/recordings", "Recordings", "recordings"),
-      this.navLink("/webhooks", "Webhooks", "webhooks"),
-      this.navLink("/api-keys", "API keys", "api-keys"),
-      this.navLink("/billing", "Billing", "billing"),
-      this.navLink("/account", "Account", "account"),
-    );
+    layout.setAttribute("brand", "Video Gateway Portal");
     if (this.authed) {
-      const signOut = document.createElement("a");
-      signOut.href = "#/login";
+      const nav = document.createElement("nav");
+      nav.slot = "nav";
+      nav.className = "video-portal-nav";
+      nav.setAttribute("aria-label", "Primary");
+      nav.append(
+        this.navLink("/assets", "Assets", "assets"),
+        this.navLink("/streams", "Streams", "streams"),
+        this.navLink("/recordings", "Recordings", "recordings"),
+        this.navLink("/webhooks", "Webhooks", "webhooks"),
+        this.navLink("/api-keys", "Keys", "api-keys"),
+        this.navLink("/billing", "Billing", "billing"),
+        this.navLink("/account", "Account", "account"),
+      );
+      const signOut = document.createElement("portal-button");
+      signOut.setAttribute("variant", "ghost");
       signOut.textContent = "Sign out";
-      signOut.addEventListener("click", (event) => {
-        event.preventDefault();
+      signOut.addEventListener("click", () => {
         this.signOut();
       });
       nav.append(signOut);
+      layout.append(nav);
     }
-
-    const hero = document.createElement("section");
-    hero.className = "video-portal-hero";
-    hero.append(
-      this.text("span", "video-portal-eyebrow", "Video Portal"),
-      this.text("h1", "video-portal-title", "Run livestreams, asset delivery, and webhook automation from one account."),
-      this.text(
-        "p",
-        "video-portal-lede",
-        "The product surface mirrors the Livepeer network brand: premium, technical, and dense where it needs to be. Each route below inherits the same tokens and component language as the operator surfaces.",
-      ),
-      this.metricGrid(),
-    );
-
-    const content = document.createElement("section");
-    content.className = "video-portal-content";
-    if (this.error !== null) {
-      const toast = document.createElement("portal-toast");
-      toast.setAttribute("variant", "danger");
-      toast.setAttribute("message", this.error);
-      content.append(toast);
-    }
-    content.append(this.renderView());
 
     const footer = document.createElement("span");
     footer.slot = "footer";
-    footer.textContent = "Livepeer video customer portal";
+    footer.textContent = "Customer portal";
 
-    layout.append(nav, hero, content, footer);
+    const shell = document.createElement("div");
+    shell.className = "video-portal-shell";
+    shell.append(this.renderSummaryCard(), this.renderFeedback(), this.renderView());
+
+    layout.append(shell, footer);
     return layout;
   }
 
@@ -172,24 +151,6 @@ export class VideoGatewayPortal extends HTMLElement {
       link.className = "active";
     }
     return link;
-  }
-
-  private metricGrid(): HTMLElement {
-    const grid = document.createElement("div");
-    grid.className = "video-portal-feature-grid";
-    grid.append(
-      this.metricTile("Routing", "Manifest-selected"),
-      this.metricTile("Core Workloads", "Streams + Assets"),
-      this.metricTile("Account Surface", "Portal + Billing"),
-    );
-    return grid;
-  }
-
-  private metricTile(label: string, value: string): HTMLElement {
-    const tile = document.createElement("portal-metric-tile");
-    tile.setAttribute("label", label);
-    tile.setAttribute("value", value);
-    return tile;
   }
 
   private text<K extends keyof HTMLElementTagNameMap>(
@@ -205,14 +166,26 @@ export class VideoGatewayPortal extends HTMLElement {
 
   private renderView(): HTMLElement {
     if (!this.authed && this.route.view !== "signup" && this.route.view !== "login") {
-      return this.wrapCard("Sign in", null, this.loginElement());
+      return this.wrapCard(
+        "Customer login",
+        "Use an existing customer auth token and actor identity to access the video gateway portal.",
+        this.loginElement(),
+      );
     }
 
     switch (this.route.view) {
       case "signup":
-        return this.wrapCard("Create account", null, this.signupElement());
+        return this.wrapCard(
+          "Create account",
+          "Provision a customer account and receive the initial browser auth token.",
+          this.signupElement(),
+        );
       case "login":
-        return this.wrapCard("Sign in", null, this.loginElement());
+        return this.wrapCard(
+          "Customer login",
+          "Use an existing customer auth token and actor identity to access the video gateway portal.",
+          this.loginElement(),
+        );
       case "account":
         return this.accountView();
       case "api-keys":
@@ -255,14 +228,14 @@ export class VideoGatewayPortal extends HTMLElement {
   }
 
   private onSignedIn(): void {
-    this.authed = !!readSession()?.token;
+    this.authed = !!readSession()?.token && !!readSession()?.actor;
     this.render();
     void this.loadPortalState();
-    window.location.hash = "#/account";
+    window.location.hash = "#/assets";
   }
 
   private readonly onSessionChange = (): void => {
-    this.authed = !!readSession()?.token;
+    this.authed = !!readSession()?.token && !!readSession()?.actor;
     if (this.authed) {
       void this.loadPortalState();
     } else {
@@ -285,6 +258,106 @@ export class VideoGatewayPortal extends HTMLElement {
     this.topups = [];
     this.render();
     window.location.hash = "#/login";
+  }
+
+  private renderSummaryCard(): HTMLElement {
+    const card = document.createElement("portal-card");
+    card.setAttribute("heading", this.pageHeading());
+    card.setAttribute("subheading", this.pageSubheading());
+
+    if (!this.authed) {
+      return card;
+    }
+
+    const grid = document.createElement("div");
+    grid.className = "video-portal-session-grid";
+    grid.append(
+      this.sessionMeta(
+        "Session",
+        this.customer?.email ?? readSession()?.actor ?? "Authenticated",
+        this.customer ? `${this.customer.tier} tier · ${this.customer.status}` : "Customer session active",
+      ),
+      this.sessionMeta(
+        "Balance",
+        this.formatUsd(this.customer?.balance_usd_cents ?? this.limits?.balance_usd_cents ?? "0"),
+        `Reserved ${this.formatUsd(this.customer?.reserved_usd_cents ?? this.limits?.reserved_usd_cents ?? "0")}`,
+      ),
+    );
+    card.append(grid);
+    return card;
+  }
+
+  private renderFeedback(): HTMLElement {
+    const wrapper = document.createElement("div");
+    wrapper.className = "video-portal-feedback";
+    if (this.error !== null) {
+      const toast = document.createElement("portal-toast");
+      toast.setAttribute("variant", "danger");
+      toast.setAttribute("message", this.error);
+      wrapper.append(toast);
+    }
+    return wrapper;
+  }
+
+  private sessionMeta(eyebrow: string, value: string, copy: string): HTMLElement {
+    const section = document.createElement("div");
+    section.className = "video-portal-session-meta";
+    section.append(
+      this.text("div", "video-portal-eyebrow", eyebrow),
+      this.text("div", "video-portal-session-value", value),
+      this.text("div", "video-portal-session-copy", copy),
+    );
+    return section;
+  }
+
+  private pageHeading(): string {
+    switch (this.route.view) {
+      case "login":
+        return "Customer login";
+      case "signup":
+        return "Create account";
+      case "account":
+        return "Account";
+      case "api-keys":
+        return "Credentials";
+      case "billing":
+        return "Billing";
+      case "assets":
+        return "Assets";
+      case "streams":
+        return "Streams";
+      case "webhooks":
+        return "Webhooks";
+      case "recordings":
+        return "Recordings";
+      default:
+        return "Video Gateway Portal";
+    }
+  }
+
+  private pageSubheading(): string {
+    switch (this.route.view) {
+      case "login":
+        return "Authenticate with a customer auth token issued from the operator console.";
+      case "signup":
+        return "Create a customer account and start issuing tokens and API keys.";
+      case "account":
+        return "Identity, quota posture, and current balance for this customer.";
+      case "api-keys":
+        return "Manage browser auth tokens and application API keys separately.";
+      case "billing":
+        return "Review funding history and current prepaid balance posture.";
+      case "assets":
+        return "Manage uploaded assets, playback state, and restore deleted media.";
+      case "streams":
+        return "Create live streams and inspect RTMP ingest + playback details.";
+      case "webhooks":
+        return "Register webhook endpoints and inspect delivery state.";
+      case "recordings":
+        return "Manage record-to-VOD behavior and completed recordings.";
+      default:
+        return "Customer workflows for streams, assets, billing, and credentials.";
+    }
   }
 
   private accountView(): HTMLElement {

@@ -43,6 +43,7 @@ async function main(): Promise<void> {
   const portalPool = portalDb.createPool({ connectionString: cfg.databaseUrl, max: 10 });
   const portalDbConn = portalDb.makeDb(portalPool);
   await portalDb.runMigrations(portalDbConn, resolveCustomerPortalMigrationsDir());
+  await portalDb.runMigrations(portalDbConn, resolve(VIDEO_GATEWAY_ROOT, "migrations"));
   const portal = createCustomerPortal({
     db: portalDbConn,
     pepper: cfg.customerPortalPepper,

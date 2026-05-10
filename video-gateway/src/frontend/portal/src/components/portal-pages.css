@@ -2,7 +2,8 @@
 .video-portal-page-form,
 .video-portal-page-reveal {
   display: flex;
-  gap: var(--space-2);
+  flex-wrap: wrap;
+  gap: 0.75rem;
   align-items: center;
 }
 
@@ -12,85 +13,86 @@
 
 .video-portal-page-form input {
   flex: 1;
-  min-height: 2.75rem;
+  min-height: auto;
 }
 
 .video-portal-page-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--font-size-sm);
+  font-size: 0.95rem;
 }
 
 .video-portal-page-table th,
 .video-portal-page-table td {
-  padding: 0.7rem 0.75rem;
-  border-bottom: 1px solid var(--border-1);
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid #eee;
   text-align: left;
   vertical-align: top;
 }
 
 .video-portal-page-table th {
-  color: var(--text-3);
-  font-size: var(--font-size-xs);
-  font-weight: 650;
+  background: #fafbfc;
+  font-weight: 600;
+  font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.04em;
+  color: #555;
 }
 
 .video-portal-page-table tbody tr:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: #fafbff;
 }
 
 .video-portal-page-table a {
-  color: var(--accent);
+  color: #15202b;
 }
 
 .video-portal-page-table code {
   display: inline-block;
-  background: rgba(255, 255, 255, 0.04);
-  padding: 0.18rem 0.4rem;
-  border: 1px solid var(--border-1);
-  border-radius: 0.45rem;
-  font-size: 0.75rem;
+  background: #f0f2f5;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid #e3e4e7;
+  border-radius: 4px;
+  font-size: 12px;
 }
 
 .video-portal-page-button {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-pill);
+  background: #fff;
+  border: 1px solid #cfd2d7;
+  border-radius: 4px;
   padding: 0.35rem 0.65rem;
   cursor: pointer;
-  font-size: 0.75rem;
-  color: var(--text-1);
+  font-size: 0.85rem;
+  color: #15202b;
 }
 
 .video-portal-page-error {
-  color: var(--danger);
+  color: #9b1c1c;
 }
 
 .video-portal-page-note,
 .video-portal-page-dim {
-  color: var(--text-3);
+  color: #666;
 }
 
 .video-portal-page-note {
-  font-size: 0.75rem;
+  font-size: 0.85rem;
 }
 
 .video-portal-page-deleted {
-  color: var(--text-3);
+  color: #777f89;
 }
 
 .video-portal-page-secret {
-  font-family: monospace;
+  font-family: var(--font-mono);
 }
 
 .video-portal-page-pre {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border-1);
-  padding: 0.9rem;
-  border-radius: var(--radius-lg);
+  background: #f7f8fa;
+  border: 1px solid #e3e4e7;
+  padding: 0.75rem;
+  border-radius: 4px;
   overflow-x: auto;
-  font-size: 0.75rem;
-  color: var(--text-2);
+  font-size: 12px;
+  color: #1f1f1f;
 }

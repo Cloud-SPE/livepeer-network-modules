@@ -1,7 +1,17 @@
+import { desc, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import type { CustomerPortal } from "@livepeer-rewrite/customer-portal";
+import { z } from "zod";
 
+import type { Config } from "../config.js";
+import type { Db as VideoDb } from "../db/pool.js";
+import { liveStreams, recordings } from "../db/schema.js";
 import { defaultPricingConfig } from "../engine/config/pricing.js";
+import type { LiveStreamRepo } from "../engine/index.js";
+import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
+import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
+import type { RecordingRepo } from "../repo/index.js";
+import { provisionLiveStream } from "./live-streams.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -9,8 +19,22 @@ declare module "fastify" {
   }
 }
 
+const CreatePortalStreamBody = z.object({
+  name: z.string().trim().min(1).max(160),
+});
+
+const UpdateRecordPolicyBody = z.object({
+  record_to_vod: z.boolean(),
+});
+
 export interface RegisterVideoCustomerPortalRoutesDeps {
   portal: CustomerPortal;
+  cfg: Config;
+  routeSelector: VideoRouteSelector;
+  liveSessions: LiveSessionDirectory;
+  videoDb?: VideoDb;
+  liveStreamsRepo?: LiveStreamRepo;
+  recordingsRepo?: RecordingRepo;
 }
 
 export function registerVideoCustomerPortalRoutes(
@@ -22,6 +46,23 @@ export function registerVideoCustomerPortalRoutes(
   app.get("/portal/pricing", { preHandler: requireCustomer }, async (_req, reply) => {
     const pricing = defaultPricingConfig();
     await reply.code(200).send({
+      vod_pipeline_policy: {
+        baseline: {
+          capability: "video:transcode.abr",
+          pipeline: "abr_ladder",
+          description: "Baseline jobs route to the ABR runner with a one-rendition ladder when appropriate.",
+        },
+        standard: {
+          capability: "video:transcode.abr",
+          pipeline: "abr_ladder",
+          description: "Standard jobs route to the ABR ladder runner for multi-rendition packaging.",
+        },
+        premium: {
+          capability: "video:transcode.abr",
+          pipeline: "abr_ladder",
+          description: "Premium jobs route to the ABR ladder runner with the richest codec ladder.",
+        },
+      },
       live: {
         billing_unit: "stream_seconds",
         cents_per_second: pricing.liveCentsPerSecond,
@@ -32,6 +73,178 @@ export function registerVideoCustomerPortalRoutes(
         overhead_cents: pricing.overheadCents,
         cents_per_second: pricing.vodCentsPerSecond,
       },
+    });
+  });
+
+  app.get("/portal/live-streams", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.videoDb) {
+      await reply.code(501).send({ error: "video_db_unavailable" });
+      return;
+    }
+    const rows = await deps.videoDb
+      .select()
+      .from(liveStreams)
+      .where(eq(liveStreams.projectId, req.customerSession!.customer.id))
+      .orderBy(desc(liveStreams.createdAt));
+    await reply.code(200).send({
+      items: rows.map((row) => {
+        const session =
+          row.sessionId !== null
+            ? deps.liveSessions.get(row.sessionId)
+            : deps.liveSessions.getByStreamId(row.id);
+        return {
+          id: row.id,
+          name: row.name ?? row.id,
+          status: portalStatus(row.status),
+          rtmpIngestUrl: session?.brokerRtmpUrl ?? "",
+          playbackUrl: session?.hlsPlaybackUrl ?? "",
+          viewerCount: null,
+          recordToVod: row.recordingEnabled,
+          createdAt: row.createdAt.toISOString(),
+          endedAt: row.endedAt?.toISOString() ?? null,
+        };
+      }),
+    });
+  });
+
+  app.post("/portal/live-streams", { preHandler: requireCustomer }, async (req, reply) => {
+    const parsed = CreatePortalStreamBody.safeParse(req.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+      return;
+    }
+    if (!deps.liveStreamsRepo) {
+      await reply.code(501).send({ error: "live_stream_repo_unavailable" });
+      return;
+    }
+    const session = req.customerSession!;
+    const out = await provisionLiveStream(
+      {
+        cfg: deps.cfg,
+        routeSelector: deps.routeSelector,
+        liveSessions: deps.liveSessions,
+        liveStreamsRepo: deps.liveStreamsRepo,
+      },
+      {
+        projectId: session.customer.id,
+        name: parsed.data.name,
+        customerTier: normalizeCustomerTier(session.customer.tier),
+        recordToVod: false,
+        requestHeaders: req.headers,
+      },
+    );
+    await reply.code(201).send({
+      id: out.streamId,
+      name: out.name,
+      status: "live",
+      rtmpIngestUrl: out.rtmpPushUrl,
+      playbackUrl: out.hlsPlaybackUrl,
+      viewerCount: null,
+      createdAt: out.createdAt.toISOString(),
+      endedAt: null,
+      sessionKey: out.streamKey,
+    });
+  });
+
+  app.post<{ Params: { id: string } }>("/portal/live-streams/:id/end", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.liveStreamsRepo) {
+      await reply.code(501).send({ error: "live_stream_repo_unavailable" });
+      return;
+    }
+    const stream = await deps.liveStreamsRepo.byId(req.params.id);
+    if (!stream || stream.projectId !== req.customerSession!.customer.id) {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+    const endedAt = new Date();
+    await deps.liveStreamsRepo.updateStatus(stream.id, "ended", {
+      lastSeenAt: endedAt,
+      endedAt,
+    });
+    const existingRecordings = deps.recordingsRepo ? await deps.recordingsRepo.byLiveStream(stream.id) : [];
+    const openRecording = existingRecordings.find((row) => row.endedAt === null);
+    if (openRecording && deps.recordingsRepo) {
+      await deps.recordingsRepo.updateStatus(openRecording.id, "pending", { endedAt });
+    }
+    await reply.code(200).send({ ok: true });
+  });
+
+  app.post<{ Params: { id: string } }>("/portal/live-streams/:id/record", { preHandler: requireCustomer }, async (req, reply) => {
+    const parsed = UpdateRecordPolicyBody.safeParse(req.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+      return;
+    }
+    if (!deps.liveStreamsRepo) {
+      await reply.code(501).send({ error: "live_stream_repo_unavailable" });
+      return;
+    }
+    const stream = await deps.liveStreamsRepo.byId(req.params.id);
+    if (!stream || stream.projectId !== req.customerSession!.customer.id) {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+    await deps.liveStreamsRepo.updateStatus(stream.id, stream.status, {
+      recordingEnabled: parsed.data.record_to_vod,
+      lastSeenAt: new Date(),
+    });
+    if (
+      parsed.data.record_to_vod &&
+      deps.recordingsRepo &&
+      (stream.status === "active" || stream.status === "reconnecting")
+    ) {
+      const existing = await deps.recordingsRepo.byLiveStream(stream.id);
+      const hasOpen = existing.some((row) => row.endedAt === null);
+      if (!hasOpen) {
+        await deps.recordingsRepo.insert({
+          id: `rec_${randomHex16()}`,
+          liveStreamId: stream.id,
+          assetId: null,
+          status: "running",
+          startedAt: new Date(),
+          endedAt: null,
+        });
+      }
+    }
+    await reply.code(200).send({ ok: true });
+  });
+
+  app.get("/portal/recordings", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.videoDb) {
+      await reply.code(501).send({ error: "video_db_unavailable" });
+      return;
+    }
+    const streamRows = await deps.videoDb
+      .select({
+        id: liveStreams.id,
+        name: liveStreams.name,
+      })
+      .from(liveStreams)
+      .where(eq(liveStreams.projectId, req.customerSession!.customer.id));
+    if (streamRows.length === 0) {
+      await reply.code(200).send({ items: [] });
+      return;
+    }
+    const streamNameById = new Map(streamRows.map((row) => [row.id, row.name ?? row.id]));
+    const rows = await deps.videoDb
+      .select()
+      .from(recordings)
+      .where(inArray(recordings.liveStreamId, streamRows.map((row) => row.id)))
+      .orderBy(desc(recordings.createdAt));
+    await reply.code(200).send({
+      items: rows.map((row) => ({
+        id: row.id,
+        streamId: row.liveStreamId,
+        streamName: streamNameById.get(row.liveStreamId) ?? row.liveStreamId,
+        assetId: row.assetId,
+        status: row.status,
+        durationSec:
+          row.startedAt && row.endedAt
+            ? Math.max(0, (row.endedAt.getTime() - row.startedAt.getTime()) / 1000)
+            : null,
+        startedAt: (row.startedAt ?? row.createdAt).toISOString(),
+        endedAt: row.endedAt?.toISOString() ?? null,
+      })),
     });
   });
 }
@@ -47,4 +260,20 @@ function customerAuthPreHandler(
       await reply.code(401).send({ error: "authentication_failed", message });
     }
   };
+}
+
+function normalizeCustomerTier(tier: string): "free" | "prepaid" | "enterprise" {
+  if (tier === "prepaid" || tier === "enterprise") {
+    return tier;
+  }
+  return "free";
+}
+
+function portalStatus(status: string): string {
+  if (status === "active" || status === "reconnecting") return "live";
+  return status;
+}
+
+function randomHex16(): string {
+  return Math.random().toString(16).slice(2, 18).padEnd(16, "0");
 }

@@ -51,6 +51,7 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
     cfg,
     routeSelector: input.routeSelector,
     liveSessions: input.liveSessions,
+    liveStreamsRepo: input.admin?.liveStreamsRepo,
   });
   registerUploads(app, { cfg });
   registerVod(app, { routeSelector: input.routeSelector });
@@ -70,6 +71,12 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
   if (input.portal) {
     registerVideoCustomerPortalRoutes(app, {
       portal: input.portal,
+      cfg,
+      routeSelector: input.routeSelector,
+      liveSessions: input.liveSessions,
+      videoDb: input.admin?.videoDb,
+      liveStreamsRepo: input.admin?.liveStreamsRepo,
+      recordingsRepo: input.admin?.recordingsRepo,
     });
   }
   if (input.admin && input.portal?.adminAuthResolver) {

@@ -28,6 +28,7 @@ export class VideoGatewayAdmin extends HTMLElement {
 
   connectedCallback(): void {
     installStyles();
+    this.onSessionChange();
     this.router = new HashRouter();
     this.router
       .add("/health", () => this.setRoute("health"))

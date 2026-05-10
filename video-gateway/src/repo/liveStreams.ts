@@ -13,6 +13,7 @@ import type {
 interface LiveStreamRow {
   id: string;
   projectId: string;
+  name: string | null;
   streamKeyHash: string;
   status: string;
   ingestProtocol: string;
@@ -36,6 +37,7 @@ function rowToStream(row: LiveStreamRow): LiveStream {
   const s: LiveStream = {
     id: row.id,
     projectId: row.projectId,
+    ...(row.name !== null ? { name: row.name } : {}),
     streamKeyHash: row.streamKeyHash,
     status: row.status as LiveStreamStatus,
     ingestProtocol: row.ingestProtocol as IngestProtocol,
@@ -63,6 +65,7 @@ function streamToInsert(
   return {
     id: stream.id,
     projectId: stream.projectId,
+    name: stream.name ?? null,
     streamKeyHash: stream.streamKeyHash,
     status: stream.status,
     ingestProtocol: stream.ingestProtocol,
@@ -109,7 +112,9 @@ export function createLiveStreamRepo(db: Db): LiveStreamRepo {
 
     async updateStatus(id, status, fields) {
       const update: Partial<typeof liveStreams.$inferInsert> = { status };
+      if (fields?.recordingEnabled !== undefined) update.recordingEnabled = fields.recordingEnabled;
       if (fields?.sessionId !== undefined) update.sessionId = fields.sessionId;
+      if (fields?.name !== undefined) update.name = fields.name;
       if (fields?.workerId !== undefined) update.workerId = fields.workerId;
       if (fields?.workerUrl !== undefined) update.workerUrl = fields.workerUrl;
       if (fields?.selectedCapability !== undefined) {

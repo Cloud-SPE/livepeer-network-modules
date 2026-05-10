@@ -119,7 +119,18 @@ export class PortalButton extends HTMLElement {
       const form = this.closest("form");
       if (form !== null) {
         event.preventDefault();
-        form.requestSubmit();
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit();
+          return;
+        }
+        const submitEvent = new SubmitEvent("submit", {
+          bubbles: true,
+          cancelable: true,
+          submitter: event.currentTarget as HTMLElement | null,
+        });
+        if (form.dispatchEvent(submitEvent)) {
+          form.submit();
+        }
       }
     }
   }

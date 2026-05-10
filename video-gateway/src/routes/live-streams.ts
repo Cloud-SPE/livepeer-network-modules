@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
+
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import type { Config } from "../config.js";
+import type { LiveStreamRepo } from "../engine/index.js";
 import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
 import { openRtmpSession } from "../livepeer/rtmp-adapter.js";
 import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
@@ -13,6 +16,7 @@ import {
 
 const CreateLiveStreamBody = z.object({
   project_id: z.string().min(1),
+  name: z.string().trim().min(1).max(160).optional(),
   recording_enabled: z.boolean().optional(),
   record_to_vod: z.boolean().optional(),
   offering: z.string().optional(),
@@ -23,6 +27,35 @@ export interface LiveStreamsDeps {
   cfg: Config;
   routeSelector: VideoRouteSelector;
   liveSessions: LiveSessionDirectory;
+  liveStreamsRepo?: LiveStreamRepo;
+}
+
+export interface ProvisionLiveStreamInput {
+  projectId: string;
+  name?: string;
+  offering?: string;
+  customerTier?: CustomerTier;
+  recordToVod?: boolean;
+  requestHeaders?: Record<string, string | string[] | undefined>;
+}
+
+export interface ProvisionLiveStreamResult {
+  streamId: string;
+  name: string;
+  sessionId: string;
+  rtmpPushUrl: string;
+  streamKey: string;
+  hlsPlaybackUrl: string;
+  recordToVod: boolean;
+  customerTier: CustomerTier;
+  createdAt: Date;
+  abrLadder: Array<{
+    resolution: string;
+    codec: string;
+    bitrateKbps: number;
+  }>;
+  expiresAt: string;
+  requestId: string;
 }
 
 export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps): void {
@@ -32,66 +65,152 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
       return;
     }
-    const streamId = `live_${randomHex16()}`;
-    const recordToVod = parsed.data.record_to_vod ?? false;
-    const customerTier: CustomerTier = parsed.data.customer_tier ?? "free";
-
-    const ladder = selectAbrLadder({
-      customerTier,
-      policy: deps.cfg.abrPolicy,
-    });
-    const selectionHints = buildLiveSelectionHints({
-      customerTier,
-      recordToVod,
-      ladder,
-    });
-
-    const session = await openRtmpSession({
-      cfg: deps.cfg,
-      routeSelector: deps.routeSelector,
-      callerId: parsed.data.project_id,
-      offering: parsed.data.offering ?? "default",
-      streamId,
+    const stream = await provisionLiveStream(deps, {
+      projectId: parsed.data.project_id,
+      name: parsed.data.name,
+      offering: parsed.data.offering,
+      customerTier: parsed.data.customer_tier,
+      recordToVod: parsed.data.record_to_vod ?? parsed.data.recording_enabled,
       requestHeaders: req.headers,
-      selectionHints,
-    });
-    deps.liveSessions.record({
-      sessionId: session.sessionId,
-      brokerUrl: session.brokerUrl,
-      hlsPlaybackUrl: session.hlsUrl,
     });
 
     await reply.code(201).send({
-      stream_id: streamId,
-      session_id: session.sessionId,
-      rtmp_push_url: session.brokerRtmpUrl,
-      stream_key: parseStreamKey(session.brokerRtmpUrl),
-      hls_playback_url: session.hlsUrl,
-      record_to_vod: recordToVod,
-      customer_tier: customerTier,
-      abr_ladder: ladder.map((r) => ({
+      stream_id: stream.streamId,
+      name: stream.name,
+      session_id: stream.sessionId,
+      rtmp_push_url: stream.rtmpPushUrl,
+      stream_key: stream.streamKey,
+      hls_playback_url: stream.hlsPlaybackUrl,
+      record_to_vod: stream.recordToVod,
+      customer_tier: stream.customerTier,
+      abr_ladder: stream.abrLadder.map((r) => ({
         resolution: r.resolution,
         codec: r.codec,
         bitrate_kbps: r.bitrateKbps,
       })),
-      expires_at: session.expiresAt,
-      request_id: session.requestId,
+      expires_at: stream.expiresAt,
+      request_id: stream.requestId,
     });
   });
 
   app.get("/v1/live/streams/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (!deps.liveStreamsRepo) {
+      await reply.code(501).send({ error: "live_stream_repo_unavailable" });
+      return;
+    }
+    const stream = await deps.liveStreamsRepo.byId(id);
+    if (!stream) {
+      await reply.code(404).send({ error: "stream_not_found" });
+      return;
+    }
+    const session = stream.sessionId ? deps.liveSessions.get(stream.sessionId) : deps.liveSessions.getByStreamId(id);
     await reply.code(200).send({
       stream_id: id,
-      status: "starting",
+      name: stream.name ?? id,
+      project_id: stream.projectId,
+      status: publicStatus(stream.status),
+      session_id: stream.sessionId ?? null,
+      playback_url: session?.hlsPlaybackUrl ?? null,
+      record_to_vod: stream.recordingEnabled,
+      created_at: stream.createdAt.toISOString(),
+      ended_at: stream.endedAt?.toISOString() ?? null,
       cost_accrued_cents: 0,
     });
   });
 
   app.post("/v1/live/streams/:id/end", async (req, reply) => {
     const { id } = req.params as { id: string };
-    await reply.code(200).send({ stream_id: id, status: "ended" });
+    if (!deps.liveStreamsRepo) {
+      await reply.code(501).send({ error: "live_stream_repo_unavailable" });
+      return;
+    }
+    const stream = await deps.liveStreamsRepo.byId(id);
+    if (!stream) {
+      await reply.code(404).send({ error: "stream_not_found" });
+      return;
+    }
+    const endedAt = new Date();
+    await deps.liveStreamsRepo.updateStatus(id, "ended", {
+      lastSeenAt: endedAt,
+      endedAt,
+    });
+    await reply.code(200).send({ stream_id: id, status: "ended", ended_at: endedAt.toISOString() });
   });
+}
+
+export async function provisionLiveStream(
+  deps: LiveStreamsDeps,
+  input: ProvisionLiveStreamInput,
+): Promise<ProvisionLiveStreamResult> {
+  const streamId = `live_${randomHex16()}`;
+  const recordToVod = input.recordToVod ?? false;
+  const customerTier: CustomerTier = input.customerTier ?? "free";
+  const offering = input.offering ?? "default";
+  const name = input.name?.trim() || streamId;
+
+  const ladder = selectAbrLadder({
+    customerTier,
+    policy: deps.cfg.abrPolicy,
+  });
+  const selectionHints = buildLiveSelectionHints({
+    customerTier,
+    recordToVod,
+    ladder,
+  });
+  const session = await openRtmpSession({
+    cfg: deps.cfg,
+    routeSelector: deps.routeSelector,
+    callerId: input.projectId,
+    offering,
+    streamId,
+    requestHeaders: input.requestHeaders,
+    selectionHints,
+  });
+
+  const streamKey = parseStreamKey(session.brokerRtmpUrl);
+  const createdAt = new Date();
+  deps.liveSessions.record({
+    streamId,
+    sessionId: session.sessionId,
+    brokerUrl: session.brokerUrl,
+    brokerRtmpUrl: session.brokerRtmpUrl,
+    streamKey,
+    hlsPlaybackUrl: session.hlsUrl,
+  });
+
+  if (deps.liveStreamsRepo) {
+    await deps.liveStreamsRepo.insert({
+      id: streamId,
+      projectId: input.projectId,
+      name,
+      streamKeyHash: hashStreamKey(streamKey),
+      status: "active",
+      ingestProtocol: "rtmp",
+      recordingEnabled: recordToVod,
+      sessionId: session.sessionId,
+      workerUrl: session.brokerUrl,
+      selectedCapability: "video:live.rtmp",
+      selectedOffering: offering,
+      lastSeenAt: createdAt,
+      createdAt,
+    });
+  }
+
+  return {
+    streamId,
+    name,
+    sessionId: session.sessionId,
+    rtmpPushUrl: session.brokerRtmpUrl,
+    streamKey,
+    hlsPlaybackUrl: session.hlsUrl,
+    recordToVod,
+    customerTier,
+    createdAt,
+    abrLadder: ladder,
+    expiresAt: session.expiresAt,
+    requestId: session.requestId,
+  };
 }
 
 function randomHex16(): string {
@@ -101,4 +220,13 @@ function randomHex16(): string {
 function parseStreamKey(rtmpUrl: string): string {
   const segments = rtmpUrl.split("/");
   return segments[segments.length - 1] ?? "";
+}
+
+function hashStreamKey(streamKey: string): string {
+  return createHash("sha256").update(streamKey).digest("hex");
+}
+
+function publicStatus(status: string): string {
+  if (status === "active" || status === "reconnecting") return "live";
+  return status;
 }

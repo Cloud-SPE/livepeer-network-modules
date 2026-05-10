@@ -1,22 +1,31 @@
 export interface LiveSessionRoute {
+  streamId: string;
   sessionId: string;
   brokerUrl: string;
+  brokerRtmpUrl: string;
+  streamKey: string;
   hlsPlaybackUrl: string;
 }
 
 export interface LiveSessionDirectory {
   record(route: LiveSessionRoute): void;
   get(sessionId: string): LiveSessionRoute | null;
+  getByStreamId(streamId: string): LiveSessionRoute | null;
 }
 
 export function createLiveSessionDirectory(): LiveSessionDirectory {
-  const routes = new Map<string, LiveSessionRoute>();
+  const routesBySessionId = new Map<string, LiveSessionRoute>();
+  const routesByStreamId = new Map<string, LiveSessionRoute>();
   return {
     record(route: LiveSessionRoute): void {
-      routes.set(route.sessionId, route);
+      routesBySessionId.set(route.sessionId, route);
+      routesByStreamId.set(route.streamId, route);
     },
     get(sessionId: string): LiveSessionRoute | null {
-      return routes.get(sessionId) ?? null;
+      return routesBySessionId.get(sessionId) ?? null;
+    },
+    getByStreamId(streamId: string): LiveSessionRoute | null {
+      return routesByStreamId.get(streamId) ?? null;
     },
   };
 }

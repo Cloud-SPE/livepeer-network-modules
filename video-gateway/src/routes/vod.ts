@@ -34,7 +34,7 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
     }
     const renditions = expandTier(parsed.data.encoding_tier);
     const quote = estimateCost({
-      capability: "video:transcode.vod",
+      capability: "video:transcode.abr",
       callerTier: "customer",
       renditions,
       estimatedSeconds: parsed.data.estimated_duration_sec,
@@ -42,6 +42,7 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
     });
     await reply.code(200).send({
       capability: quote.capability,
+      pipeline: "abr_ladder",
       encoding_tier: parsed.data.encoding_tier,
       estimated_duration_sec: parsed.data.estimated_duration_sec,
       estimated_cost_usd_cents: quote.cents,
@@ -63,7 +64,7 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
       encodingTier: parsed.data.encoding_tier,
     });
     const [route] = await deps.routeSelector.select({
-      capability: "video:transcode.vod",
+      capability: "video:transcode.abr",
       offering: parsed.data.offering ?? "default",
       headers: req.headers,
       preferredExtra: selectionHints.preferredExtra,
@@ -72,13 +73,15 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
     if (!route) {
       await reply.code(503).send({
         error: "no_video_transcode_route",
-        message: "no transcode route supports the requested VOD job",
+        message: "no video:transcode.abr route supports the requested VOD job",
       });
       return;
     }
     await reply.code(202).send({
       asset_id: parsed.data.asset_id,
       status: "queued",
+      selected_capability: "video:transcode.abr",
+      selected_pipeline: "abr_ladder",
       encoding_tier: parsed.data.encoding_tier,
       selected_offering: route.offering,
       selected_broker_url: route.brokerUrl,

@@ -5,7 +5,6 @@ export interface Caller {
 }
 
 export type Capability =
-  | "video:transcode.vod"
   | "video:transcode.abr"
   | "video:live.rtmp";
 

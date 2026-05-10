@@ -6,6 +6,7 @@ export class PortalSignup extends HTMLElement {
   }
 
   private errorMessage = "";
+  private pending = false;
 
   connectedCallback(): void {
     this.render();
@@ -36,17 +37,18 @@ export class PortalSignup extends HTMLElement {
   private render(): void {
     const form = this.ensureForm();
     const emailInput = this.ensureEmailInput(form);
-    const submit = this.ensureSubmit(form);
     const toast = this.ensureToast(form);
+    const submit = this.ensureSubmit(form);
 
     emailInput.name = "email";
     emailInput.type = "email";
     emailInput.label = "Email";
     emailInput.required = true;
 
-    submit.setAttribute("type", "submit");
+    submit.type = "submit";
+    submit.disabled = this.pending;
     submit.setAttribute("block", "");
-    submit.textContent = "Create account";
+    submit.textContent = this.pending ? "Creating account..." : "Create account";
 
     if (this.errorMessage.length > 0) {
       toast.setAttribute("variant", "danger");
@@ -55,6 +57,10 @@ export class PortalSignup extends HTMLElement {
     } else {
       toast.hidden = true;
       toast.removeAttribute("message");
+    }
+
+    if (toast.parentElement === form && toast.nextElementSibling !== submit) {
+      form.insertBefore(toast, submit);
     }
 
     form.onsubmit = (event) => {
@@ -95,12 +101,13 @@ export class PortalSignup extends HTMLElement {
     };
   }
 
-  private ensureSubmit(form: HTMLFormElement): HTMLElement {
-    let submit = form.querySelector<HTMLElement>(":scope > portal-button[type='submit']");
+  private ensureSubmit(form: HTMLFormElement): HTMLButtonElement {
+    let submit = form.querySelector<HTMLButtonElement>(":scope > .portal-auth-submit");
     if (submit !== null) {
       return submit;
     }
-    submit = document.createElement("portal-button");
+    submit = document.createElement("button");
+    submit.className = "portal-auth-submit";
     form.append(submit);
     return submit;
   }
@@ -121,6 +128,9 @@ export class PortalSignup extends HTMLElement {
     const form = event.currentTarget as HTMLFormElement;
     const data = new FormData(form);
     const body = JSON.stringify({ email: data.get("email") });
+    this.pending = true;
+    this.errorMessage = "";
+    this.render();
     try {
       const response = await fetch(this.action, {
         method: "POST",
@@ -159,6 +169,9 @@ export class PortalSignup extends HTMLElement {
       );
     } catch (error) {
       this.errorMessage = error instanceof Error ? error.message : "signup failed";
+      this.render();
+    } finally {
+      this.pending = false;
       this.render();
     }
   }

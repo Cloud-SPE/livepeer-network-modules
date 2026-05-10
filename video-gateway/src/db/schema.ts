@@ -116,6 +116,7 @@ export const encodingJobs = media.table(
 export const liveStreams = media.table("live_streams", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull(),
+  name: text("name"),
   streamKeyHash: text("stream_key_hash").notNull().unique(),
   status: text("status").notNull(),
   ingestProtocol: text("ingest_protocol").notNull(),

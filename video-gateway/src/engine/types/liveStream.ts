@@ -3,6 +3,7 @@ import type { Capability } from "./caller.js";
 export interface LiveStream {
   id: string;
   projectId: string;
+  name?: string;
   streamKeyHash: string;
   status: LiveStreamStatus;
   ingestProtocol: IngestProtocol;

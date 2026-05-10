@@ -39,6 +39,10 @@ interface TopupSummary {
 }
 
 interface PortalPricing {
+  vod_pipeline_policy: Record<
+    string,
+    { capability: string; pipeline: string; description: string }
+  >;
   live: {
     billing_unit: string;
     cents_per_second: number;
@@ -83,6 +87,7 @@ export class VideoGatewayPortal extends HTMLElement {
 
   connectedCallback(): void {
     installStyles();
+    this.onSessionChange();
     this.router = new HashRouter();
     this.router
       .add("/signup", () => this.setRoute("signup"))
@@ -488,7 +493,24 @@ export class VideoGatewayPortal extends HTMLElement {
         this.metaList([["Overhead cents", String(this.pricing.vod.overhead_cents)]]),
         vodTable,
       );
-      pricingGrid.append(liveCard, vodCard);
+      const policyCard = document.createElement("portal-detail-section");
+      policyCard.setAttribute("heading", "VOD pipeline policy");
+      policyCard.setAttribute("description", "Which worker capability the gateway targets for each encoding tier.");
+      policyCard.append(
+        this.metaList(
+          Object.entries(this.pricing.vod_pipeline_policy).map(([tier, row]) => [
+            tier,
+            `${row.capability} (${row.pipeline})`,
+          ]),
+        ),
+      );
+      for (const [tier, row] of Object.entries(this.pricing.vod_pipeline_policy)) {
+        const note = document.createElement("p");
+        note.className = "video-portal-page-note";
+        note.textContent = `${tier}: ${row.description}`;
+        policyCard.append(note);
+      }
+      pricingGrid.append(liveCard, vodCard, policyCard);
       card.append(pricingGrid);
     }
 

@@ -53,6 +53,25 @@ export class AdminAssets extends HTMLElement {
     render(
       html`
       <portal-card heading="Asset Library">
+        <portal-detail-section
+          heading="VOD pipeline policy"
+          description="Current gateway routing split for offline video work."
+        >
+          <dl class="video-admin-page-meta-list">
+            <div class="video-admin-page-meta-item">
+              <dt>Baseline</dt>
+              <dd><code>video:transcode.abr</code> ABR ladder pipeline, including one-rendition jobs</dd>
+            </div>
+            <div class="video-admin-page-meta-item">
+              <dt>Standard</dt>
+              <dd><code>video:transcode.abr</code> ABR ladder pipeline</dd>
+            </div>
+            <div class="video-admin-page-meta-item">
+              <dt>Premium</dt>
+              <dd><code>video:transcode.abr</code> ABR ladder pipeline</dd>
+            </div>
+          </dl>
+        </portal-detail-section>
         <portal-data-table
           heading="Asset Inventory"
           description="Inspect active and soft-deleted assets across customer projects."

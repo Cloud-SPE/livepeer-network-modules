@@ -9,7 +9,6 @@ export const MODE = {
 export type Mode = (typeof MODE)[keyof typeof MODE];
 
 export const CAPABILITY_MODES: Record<Capability, Mode> = {
-  "video:transcode.vod": MODE.HTTP_REQRESP,
   "video:transcode.abr": MODE.HTTP_REQRESP,
   "video:live.rtmp": MODE.RTMP_INGRESS_HLS_EGRESS,
 };

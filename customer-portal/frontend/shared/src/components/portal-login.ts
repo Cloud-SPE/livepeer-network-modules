@@ -6,6 +6,7 @@ export class PortalLogin extends HTMLElement {
   }
 
   private errorMessage = "";
+  private pending = false;
 
   connectedCallback(): void {
     this.render();
@@ -29,8 +30,8 @@ export class PortalLogin extends HTMLElement {
     const form = this.ensureForm();
     const tokenInput = this.ensureTokenInput(form);
     const actorInput = this.ensureActorInput(form);
-    const submit = this.ensureSubmit(form);
     const toast = this.ensureToast(form);
+    const submit = this.ensureSubmit(form);
 
     tokenInput.name = "token";
     tokenInput.label = "Auth token";
@@ -40,9 +41,10 @@ export class PortalLogin extends HTMLElement {
     actorInput.label = "Actor";
     actorInput.required = true;
 
-    submit.setAttribute("type", "submit");
+    submit.type = "submit";
+    submit.disabled = this.pending;
     submit.setAttribute("block", "");
-    submit.textContent = "Sign in";
+    submit.textContent = this.pending ? "Signing in..." : "Sign in";
 
     if (this.errorMessage.length > 0) {
       toast.setAttribute("variant", "danger");
@@ -51,6 +53,10 @@ export class PortalLogin extends HTMLElement {
     } else {
       toast.hidden = true;
       toast.removeAttribute("message");
+    }
+
+    if (toast.parentElement === form && toast.nextElementSibling !== submit) {
+      form.insertBefore(toast, submit);
     }
 
     form.onsubmit = (event) => {
@@ -89,12 +95,13 @@ export class PortalLogin extends HTMLElement {
     return input as HTMLElement & { name: string; label: string; required: boolean };
   }
 
-  private ensureSubmit(form: HTMLFormElement): HTMLElement {
-    let submit = form.querySelector<HTMLElement>(":scope > portal-button[type='submit']");
+  private ensureSubmit(form: HTMLFormElement): HTMLButtonElement {
+    let submit = form.querySelector<HTMLButtonElement>(":scope > .portal-auth-submit");
     if (submit !== null) {
       return submit;
     }
-    submit = document.createElement("portal-button");
+    submit = document.createElement("button");
+    submit.className = "portal-auth-submit";
     form.append(submit);
     return submit;
   }
@@ -114,6 +121,9 @@ export class PortalLogin extends HTMLElement {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
     const data = new FormData(form);
+    this.pending = true;
+    this.errorMessage = "";
+    this.render();
     try {
       const response = await fetch(this.action, {
         method: "POST",
@@ -145,6 +155,9 @@ export class PortalLogin extends HTMLElement {
       );
     } catch (error) {
       this.errorMessage = error instanceof Error ? error.message : "login failed";
+      this.render();
+    } finally {
+      this.pending = false;
       this.render();
     }
   }

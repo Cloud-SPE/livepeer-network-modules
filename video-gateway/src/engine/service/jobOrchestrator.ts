@@ -65,7 +65,7 @@ export async function probeAndSchedule(
   } = deps;
 
   const route = await workerResolver.selectWorker({
-    capability: "video:transcode.vod",
+    capability: "video:transcode.abr",
     offering: deps.workerOffering,
     tier: deps.callerTier,
     ...(deps.workerSelectionMinWeight !== undefined
@@ -77,7 +77,7 @@ export async function probeAndSchedule(
       deps,
       asset.id,
       "NoWorkersAvailable",
-      "no workers can do video:transcode.vod",
+      "no workers can do video:transcode.abr",
     );
     return;
   }
@@ -152,7 +152,7 @@ export async function probeAndSchedule(
 
   const renditions = expandTier(asset.encodingTier, ladder);
   const quote = estimateCost({
-    capability: "video:transcode.vod",
+    capability: "video:transcode.abr",
     callerTier: deps.callerTier,
     renditions,
     estimatedSeconds: probe.durationSec,
@@ -349,7 +349,7 @@ async function runFinalize(
   const handle = RESERVATION_HANDLES.get(assetId);
   if (handle !== undefined && handle !== null && asset?.durationSec) {
     const usage = reportUsage({
-      capability: "video:transcode.vod",
+      capability: "video:transcode.abr",
       renditions: completed.map((r) => ({
         resolution: r.resolution as Resolution,
         codec: r.codec as Codec,

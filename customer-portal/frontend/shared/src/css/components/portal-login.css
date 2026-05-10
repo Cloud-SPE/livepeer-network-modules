@@ -7,4 +7,57 @@ portal-signup {
 .portal-signup__form {
   display: grid;
   gap: var(--space-3);
+  max-width: 34rem;
+}
+
+.portal-auth-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 2.85rem;
+  padding: 0.72rem 1.05rem;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--accent), black 18%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent), white 8%) 0%,
+    var(--accent) 100%
+  );
+  color: white;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--accent), transparent 70%);
+}
+
+.portal-auth-submit:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: color-mix(in srgb, var(--accent-hover), white 10%);
+}
+
+.portal-auth-submit:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.portal-auth-submit:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+.portal-auth-submit:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.portal-login__form portal-toast,
+.portal-signup__form portal-toast {
+  margin-top: var(--space-1);
 }

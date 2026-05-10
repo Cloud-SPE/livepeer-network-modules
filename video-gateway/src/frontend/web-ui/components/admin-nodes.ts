@@ -56,11 +56,17 @@ export class AdminNodes extends HTMLElement {
       this.selectedBrokerUrl === null
         ? null
         : this.rows.find((row) => row.brokerUrl === this.selectedBrokerUrl) ?? null;
+    const abrCount = this.rows.filter((row) => row.capability === "video:transcode.abr").length;
+    const liveCount = this.rows.filter((row) => row.capability === "video:live.rtmp").length;
 
     render(
       html`
         <div class="video-admin-page-split">
           <portal-data-table heading="Nodes" description="Resolver candidates currently visible to the video gateway.">
+            <div class="video-admin-page-toolbar" slot="toolbar">
+              <span>ABR: ${abrCount}</span>
+              <span>Live: ${liveCount}</span>
+            </div>
             ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
             ${this.loading ? html`<p class="video-admin-page-note">Loading.</p>` : nothing}
             <table class="video-admin-page-table">
@@ -78,7 +84,7 @@ export class AdminNodes extends HTMLElement {
                   (row) => html`
                     <tr>
                       <td><code>${row.brokerUrl}</code></td>
-                      <td>${row.capability}</td>
+                      <td>${this.capabilityLabel(row.capability)}</td>
                       <td>${row.offering}</td>
                       <td>${row.pricePerWorkUnitWei}</td>
                       <td>
@@ -105,7 +111,7 @@ export class AdminNodes extends HTMLElement {
                     </div>
                     <div class="video-admin-page-meta-item">
                       <dt>Capability</dt>
-                      <dd>${selected.capability}</dd>
+                      <dd>${this.capabilityLabel(selected.capability)}</dd>
                     </div>
                     <div class="video-admin-page-meta-item">
                       <dt>Offering</dt>
@@ -135,6 +141,11 @@ export class AdminNodes extends HTMLElement {
 
   private open(brokerUrl: string): void {
     window.location.hash = `#/nodes/${encodeURIComponent(brokerUrl)}`;
+  }
+
+  private capabilityLabel(value: string): string {
+    if (value === "video:transcode.abr") return `${value} (VOD and ladder jobs)`;
+    return value;
   }
 }
 

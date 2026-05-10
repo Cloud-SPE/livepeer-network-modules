@@ -16,7 +16,7 @@ import { registerVod } from "./routes/vod.js";
 import { registerPlayback } from "./routes/playback.js";
 import { registerProjects } from "./routes/projects.js";
 import { registerWebhooks } from "./routes/webhooks.js";
-import { defaultAdminDist, registerSpaStatic } from "./runtime/static.js";
+import { defaultAdminDist, defaultPortalDist, registerSpaStatic } from "./runtime/static.js";
 import type { RetryDispatcher } from "./service/webhookDispatcher.js";
 
 export interface BuildServerInput {
@@ -72,6 +72,12 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
       authResolver: input.portal.adminAuthResolver,
     });
   }
+
+  await registerSpaStatic(app, {
+    rootDir: defaultPortalDist(),
+    prefix: "/portal/",
+    label: "portal",
+  });
 
   await registerSpaStatic(app, {
     rootDir: defaultAdminDist(),

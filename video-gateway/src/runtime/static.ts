@@ -30,6 +30,10 @@ export function defaultAdminDist(): string {
   return resolve(process.cwd(), "src", "frontend", "admin", "dist");
 }
 
+export function defaultPortalDist(): string {
+  return resolve(process.cwd(), "src", "frontend", "portal", "dist");
+}
+
 function ensureTrailingSlash(prefix: string): string {
   return prefix.endsWith("/") ? prefix : `${prefix}/`;
 }

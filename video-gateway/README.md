@@ -20,6 +20,7 @@ A TypeScript Fastify service that:
 - Selects brokers either from a static `LIVEPEER_BROKER_URL` or a
   manifest-driven `service-registry-daemon` resolver socket.
 - Signs outbound customer webhook deliveries with HMAC-SHA-256.
+- Serves a customer portal at `/portal/` and an operator console at `/admin/console/`.
 
 ## What it is not
 
@@ -45,6 +46,20 @@ make help                # show all targets
 ```
 
 No host `node` install required.
+
+## Login surfaces
+
+- `/admin/console/` is the operator admin UI. It requires `VIDEO_GATEWAY_ADMIN_TOKENS`
+  to be set on the gateway, and the browser login form sends:
+  - `Authorization: Bearer <admin-token>`
+  - `X-Actor: <operator-name>`
+- `/portal/` is the customer UI. It uses customer auth tokens issued by the
+  customer-portal subsystem and validated with `CUSTOMER_PORTAL_PEPPER`.
+
+`VIDEO_GATEWAY_ADMIN_TOKENS` and `CUSTOMER_PORTAL_PEPPER` are different concerns:
+
+- `VIDEO_GATEWAY_ADMIN_TOKENS` gates operator-only `/admin/*` routes.
+- `CUSTOMER_PORTAL_PEPPER` hashes and verifies customer login tokens for `/portal/login`.
 
 ## Layout
 

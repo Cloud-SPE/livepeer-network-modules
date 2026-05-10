@@ -14,3 +14,4 @@ import "./components/admin-webhooks.js";
 import "./components/admin-recordings.js";
 
 document.body.dataset.livepeerUiMode = "network-console";
+document.body.dataset.livepeerSessionKey = "video-gateway:admin-session";

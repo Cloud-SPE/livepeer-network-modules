@@ -20,7 +20,10 @@ function installStyles(): void {
 
 export class VideoGatewayAdmin extends HTMLElement {
   private route: RouteState = { view: "customers", params: {} };
-  private authed = !!readSession()?.token;
+  private authed = !!readSession()?.token && !!readSession()?.actor;
+  private actor = readSession()?.actor ?? "";
+  private error = "";
+  private pending = false;
   private router: HashRouter | null = null;
 
   connectedCallback(): void {
@@ -39,6 +42,9 @@ export class VideoGatewayAdmin extends HTMLElement {
       .add("/streams", () => this.setRoute("streams"))
       .add("/webhooks", () => this.setRoute("webhooks"))
       .add("/recordings", () => this.setRoute("recordings"));
+    if (!window.location.hash) {
+      window.location.hash = "#/health";
+    }
     this.router.start();
     window.addEventListener("storage", this.onSessionChange);
     this.render();
@@ -59,59 +65,43 @@ export class VideoGatewayAdmin extends HTMLElement {
 
   private renderShell(): HTMLElement {
     const layout = document.createElement("portal-layout");
-    layout.setAttribute("brand", "Livepeer Network Console");
+    layout.setAttribute("brand", "Video Gateway Admin");
 
-    const nav = document.createElement("nav");
-    nav.slot = "nav";
-    nav.className = "video-admin-nav";
-    nav.setAttribute("aria-label", "Primary");
-    if (!this.authed) {
-      nav.append(this.navLink("/customers", "Sign in", "login"));
-    }
-    nav.append(
-      this.navLink("/health", "Health", "health"),
-      this.navLink("/customers", "Customers", "customers"),
-      this.navLink("/topups", "Top-ups", "topups"),
-      this.navLink("/reservations", "Reservations", "reservations"),
-      this.navLink("/audit", "Audit", "audit"),
-      this.navLink("/assets", "Assets", "assets"),
-      this.navLink("/streams", "Streams", "streams"),
-      this.navLink("/webhooks", "Webhooks", "webhooks"),
-      this.navLink("/recordings", "Recordings", "recordings"),
-    );
     if (this.authed) {
-      const signOut = document.createElement("a");
-      signOut.href = "#/customers";
+      const nav = document.createElement("nav");
+      nav.slot = "nav";
+      nav.className = "video-admin-nav";
+      nav.setAttribute("aria-label", "Primary");
+      nav.append(
+        this.navLink("/health", "Health", "health"),
+        this.navLink("/customers", "Customers", "customers"),
+        this.navLink("/topups", "Top-ups", "topups"),
+        this.navLink("/reservations", "Reservations", "reservations"),
+        this.navLink("/audit", "Audit", "audit"),
+        this.navLink("/assets", "Assets", "assets"),
+        this.navLink("/streams", "Streams", "streams"),
+        this.navLink("/webhooks", "Webhooks", "webhooks"),
+        this.navLink("/recordings", "Recordings", "recordings"),
+      );
+      const signOut = document.createElement("portal-button");
+      signOut.setAttribute("variant", "ghost");
       signOut.textContent = "Sign out";
-      signOut.addEventListener("click", (event) => {
-        event.preventDefault();
+      signOut.addEventListener("click", () => {
         this.signOut();
       });
       nav.append(signOut);
+      layout.append(nav);
     }
-
-    const hero = document.createElement("section");
-    hero.className = "video-admin-hero";
-    hero.append(
-      this.text("span", "video-admin-eyebrow", "Video Gateway"),
-      this.text("h1", "video-admin-title", "Operator surface for streams, assets, and webhook delivery."),
-      this.text(
-        "p",
-        "video-admin-lede",
-        "This console keeps customer lifecycle, live ingest, VOD capture, and downstream delivery in one place. It uses the same Livepeer network language as the rest of the control plane.",
-      ),
-      this.metricGrid(),
-    );
-
-    const content = document.createElement("section");
-    content.className = "video-admin-content";
-    content.append(this.renderView());
 
     const footer = document.createElement("span");
     footer.slot = "footer";
-    footer.textContent = "Livepeer video gateway operator console";
+    footer.textContent = "Operator console";
 
-    layout.append(nav, hero, content, footer);
+    const shell = document.createElement("div");
+    shell.className = "video-admin-shell";
+    shell.append(this.renderSummaryCard(), this.renderView());
+
+    layout.append(shell, footer);
     return layout;
   }
 
@@ -136,31 +126,16 @@ export class VideoGatewayAdmin extends HTMLElement {
     return element;
   }
 
-  private metricGrid(): HTMLElement {
-    const grid = document.createElement("div");
-    grid.className = "video-admin-metrics";
-    grid.append(
-      this.metricTile("Control Plane", "Network Console"),
-      this.metricTile("Routing Model", "Manifest-driven"),
-      this.metricTile("Primary Domain", "Video + VOD"),
-    );
-    return grid;
-  }
-
-  private metricTile(label: string, value: string): HTMLElement {
-    const tile = document.createElement("portal-metric-tile");
-    tile.setAttribute("label", label);
-    tile.setAttribute("value", value);
-    return tile;
-  }
-
   private renderView(): HTMLElement {
     if (!this.authed) {
       const card = document.createElement("portal-card");
-      card.setAttribute("heading", "Admin sign in");
+      card.setAttribute("heading", "Admin login");
+      card.setAttribute("subheading", "Use the gateway admin token and actor identity to access operator workflows.");
       const form = document.createElement("form");
       form.className = "video-admin-login-form";
-      form.addEventListener("submit", (event) => this.onAdminLogin(event));
+      form.addEventListener("submit", (event) => {
+        void this.onAdminLogin(event);
+      });
       const tokenInput = document.createElement("portal-input");
       tokenInput.setAttribute("name", "token");
       tokenInput.setAttribute("label", "Admin token");
@@ -171,10 +146,24 @@ export class VideoGatewayAdmin extends HTMLElement {
       actorInput.setAttribute("required", "");
       const button = document.createElement("portal-button");
       button.setAttribute("type", "submit");
+      if (this.pending) {
+        button.setAttribute("loading", "");
+      } else {
+        button.removeAttribute("loading");
+      }
       button.textContent = "Sign in";
       form.append(tokenInput, actorInput, button);
       card.append(form);
-      return card;
+      const wrapper = document.createElement("div");
+      wrapper.className = "video-admin-content";
+      wrapper.append(card);
+      if (this.error) {
+        const toast = document.createElement("portal-toast");
+        toast.setAttribute("variant", "danger");
+        toast.setAttribute("message", this.error);
+        wrapper.append(toast);
+      }
+      return wrapper;
     }
 
     const { view, params } = this.route;
@@ -217,28 +206,147 @@ export class VideoGatewayAdmin extends HTMLElement {
     }
   }
 
-  private onAdminLogin(event: Event): void {
+  private renderSummaryCard(): HTMLElement {
+    const card = document.createElement("portal-card");
+    card.setAttribute("heading", this.pageHeading());
+    card.setAttribute("subheading", this.pageSubheading());
+
+    if (!this.authed) {
+      return card;
+    }
+
+    const stack = document.createElement("div");
+    stack.className = "video-admin-stack--sm";
+    const session = document.createElement("div");
+    session.className = "video-admin-session";
+    const meta = document.createElement("div");
+    meta.className = "video-admin-session-meta";
+    meta.append(
+      this.text("div", "video-admin-eyebrow", "Operator session"),
+      this.text("div", "video-admin-session-value", this.actor),
+    );
+    session.append(meta);
+    if (this.pending) {
+      const toast = document.createElement("portal-toast");
+      toast.setAttribute("variant", "info");
+      toast.setAttribute("message", "Signing in...");
+      session.append(toast);
+    }
+    stack.append(session);
+    if (this.error) {
+      const toast = document.createElement("portal-toast");
+      toast.setAttribute("variant", "danger");
+      toast.setAttribute("message", this.error);
+      stack.append(toast);
+    }
+    card.append(stack);
+    return card;
+  }
+
+  private async onAdminLogin(event: Event): Promise<void> {
     event.preventDefault();
     const form = new FormData(event.currentTarget as HTMLFormElement);
-    writeSession({
-      token: String(form.get("token") ?? ""),
-      actor: String(form.get("actor") ?? ""),
-    });
-    this.authed = !!readSession()?.token;
+    const token = String(form.get("token") ?? "");
+    const actor = String(form.get("actor") ?? "");
+    this.pending = true;
+    this.error = "";
     this.render();
-    window.location.hash = "#/customers";
+    writeSession({ token, actor });
+    try {
+      const response = await fetch("/admin/assets", {
+        headers: {
+          authorization: `Bearer ${token}`,
+          "x-actor": actor,
+        },
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `login failed (${response.status})`);
+      }
+      this.authed = true;
+      this.actor = actor;
+      window.location.hash = "#/customers";
+    } catch (error) {
+      clearSession();
+      this.authed = false;
+      this.actor = "";
+      this.error = error instanceof Error ? error.message : "login failed";
+    } finally {
+      this.pending = false;
+      this.render();
+    }
   }
 
   private readonly onSessionChange = (): void => {
-    this.authed = !!readSession()?.token;
+    const session = readSession();
+    this.authed = !!session?.token && !!session?.actor;
+    this.actor = session?.actor ?? "";
     this.render();
   };
 
   private signOut(): void {
     clearSession();
     this.authed = false;
+    this.actor = "";
+    this.error = "";
     this.render();
-    window.location.hash = "#/customers";
+    window.location.hash = "#/health";
+  }
+
+  private pageHeading(): string {
+    switch (this.route.view) {
+      case "health":
+        return "Health";
+      case "customers":
+      case "customer-detail":
+      case "customer-adjust":
+      case "customer-refund":
+        return "Customers";
+      case "topups":
+        return "Top-ups";
+      case "reservations":
+        return "Reservations";
+      case "audit":
+        return "Audit";
+      case "assets":
+        return "Assets";
+      case "streams":
+        return "Streams";
+      case "webhooks":
+        return "Webhooks";
+      case "recordings":
+        return "Recordings";
+      default:
+        return "Video Gateway Admin";
+    }
+  }
+
+  private pageSubheading(): string {
+    switch (this.route.view) {
+      case "health":
+        return "Gateway readiness, operator auth, and static surface sanity checks.";
+      case "customers":
+      case "customer-detail":
+      case "customer-adjust":
+      case "customer-refund":
+        return "Provision customers, inspect balances, and manage browser auth tokens and API keys.";
+      case "topups":
+        return "Review customer wallet funding and payment lifecycle events.";
+      case "reservations":
+        return "Inspect reserved, committed, and refunded work against the video gateway.";
+      case "audit":
+        return "Operator activity and customer-impacting administrative events.";
+      case "assets":
+        return "VOD asset lifecycle, storage state, and soft-delete recovery.";
+      case "streams":
+        return "Live ingest state, session lifecycle, and operator termination controls.";
+      case "webhooks":
+        return "Outbound delivery failures and replay workflows.";
+      case "recordings":
+        return "Record-to-VOD outputs and recording state transitions.";
+      default:
+        return "Operator workflows for streams, assets, customers, and webhook delivery.";
+    }
   }
 }
 

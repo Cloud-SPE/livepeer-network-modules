@@ -18,6 +18,7 @@ const DEFAULT_RESOLVER_PROTO_ROOT = firstExistingPath([
 export interface Config {
   brokerUrl: string | null;
   resolverSocket: string | null;
+  recipientHex: string | null;
   listenPort: number;
   databaseUrl: string;
   authPepper: string;
@@ -59,6 +60,7 @@ export function loadConfig(): Config {
   return {
     brokerUrl: brokerUrl ?? null,
     resolverSocket,
+    recipientHex: process.env["LIVEPEER_RECIPIENT_HEX"]?.trim() ?? null,
     listenPort,
     databaseUrl: requiredEnv("DATABASE_URL"),
     authPepper: process.env["CUSTOMER_PORTAL_AUTH_PEPPER"] ?? "dev-openai-gateway-pepper",

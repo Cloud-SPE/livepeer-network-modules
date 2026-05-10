@@ -12,6 +12,7 @@ exposes:
 
 - `POST /v1/cap` — paid request entry point (HTTP modes).
 - `GET /v1/cap` — paid WebSocket upgrade entry point (`ws-realtime` mode).
+- `POST /v1/payment/ticket-params` — unpaid quote-free ticket-params proxy for sender-mode payment daemons.
 - `GET /registry/offerings` — capability inventory for orch-coordinator scrape.
 - `GET /registry/health` — live capability availability for gateway resolvers.
 - `GET /healthz` — process health.

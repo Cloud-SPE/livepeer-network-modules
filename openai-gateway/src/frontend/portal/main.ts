@@ -68,10 +68,15 @@ type PlaygroundModel = {
   id: string;
   capability: string;
   offering: string;
+  supported_modes: string[];
+  surface: CapabilitySurface | null;
   broker_url: string;
   eth_address: string;
   price_per_work_unit_wei: string;
   work_unit: string;
+  supportedModes: string[];
+  requestFields: CapabilitySurfaceField[];
+  responseVariants: CapabilitySurfaceResponseVariant[];
   brokerUrl: string;
   ethAddress: string;
   pricePerWorkUnitWei: string;
@@ -79,6 +84,42 @@ type PlaygroundModel = {
   extra: unknown;
   constraints: unknown;
 };
+
+type CapabilitySurfaceField = {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+  advanced: boolean;
+  description: string;
+  options?: Array<{ value: string; label: string }>;
+  modelDependent?: boolean;
+};
+
+type CapabilitySurfaceResponseVariant = {
+  id: string;
+  label: string;
+  description: string;
+};
+
+type CapabilitySurface = {
+  capability: string;
+  requestTransport: string;
+  requestFields: CapabilitySurfaceField[];
+  responseVariants: CapabilitySurfaceResponseVariant[];
+  rawSupported: boolean;
+  modelDependentFields: string[];
+};
+
+type PlaygroundResponse = {
+  status: number;
+  contentType: string;
+  rawText: string;
+  json: any | null;
+  objectUrl: string | null;
+};
+
+type PlaygroundResponseTab = 'guided' | 'raw';
 
 type PortalRoute = 'dashboard' | 'playground' | 'keys' | 'usage' | 'billing' | 'settings';
 
@@ -106,11 +147,15 @@ const state = {
   error: '',
   notice: null as null | { variant: 'success' | 'warning'; message: string },
   pending: [] as string[],
-  response: '',
   playgroundModels: [] as PlaygroundModel[],
   playgroundCapability: 'chat' as PlaygroundApi,
   playgroundModel: '',
-  playgroundInput: 'Say hello in one sentence.',
+  playgroundFields: {} as Record<string, string>,
+  playgroundRawMode: false,
+  playgroundRawJson: '',
+  playgroundShowAdvanced: false,
+  playgroundResponse: null as PlaygroundResponse | null,
+  playgroundResponseTab: 'guided' as PlaygroundResponseTab,
   loading: false,
 };
 
@@ -135,10 +180,11 @@ async function bootstrap(): Promise<void> {
 }
 
 function draw(): void {
+  const hasSession = Boolean(state.authToken && state.actor);
   render(
     html`
       <portal-layout brand="Livepeer OpenAI Gateway">
-        ${state.customer ? navView() : ''}
+        ${hasSession ? navView() : ''}
         ${state.customer ? shellView() : authView()}
         <span slot="footer">OpenAI-compatible customer portal</span>
       </portal-layout>
@@ -158,25 +204,18 @@ function navView() {
 
 function authView() {
   return html`
-    <div class="openai-portal-auth-grid">
-      <portal-card heading="Create portal access" tone="accent">
-        <form @submit=${signup} class="openai-portal-form">
-          <portal-input name="email" label="Email" type="email" required></portal-input>
-          <div class="openai-portal-section-gap">
-            <portal-button type="submit" ?loading=${isBusy('signup')}>Create account</portal-button>
-          </div>
-        </form>
-      </portal-card>
-      <portal-card heading="Use an existing auth token">
-        <form @submit=${login} class="openai-portal-form">
-          <portal-input name="token" label="Auth token" required></portal-input>
-          <portal-input name="actor" label="Actor" required></portal-input>
-          <div class="openai-portal-section-gap">
-            <portal-button type="submit" ?loading=${isBusy('login')}>Enter portal</portal-button>
-          </div>
-        </form>
-      </portal-card>
-    </div>
+    <portal-card
+      heading="Customer login"
+      subheading="Use an existing customer auth token and actor identity to access the gateway portal."
+    >
+      <form @submit=${login} class="openai-portal-login-form">
+        <portal-input name="token" label="Auth token" required></portal-input>
+        <portal-input name="actor" label="Actor" required></portal-input>
+        <portal-action-row>
+          <portal-button type="submit" ?loading=${isBusy('login')}>Enter portal</portal-button>
+        </portal-action-row>
+      </form>
+    </portal-card>
     ${feedbackView()}
   `;
 }
@@ -304,8 +343,12 @@ function dashboardView() {
 function playgroundView() {
   const options = modelsForApi(state.playgroundCapability);
   const selected = selectedPlaygroundModel();
+  const surface = selected?.surface ?? null;
+  const requestFields = surface
+    ? surface.requestFields.filter((field) => state.playgroundShowAdvanced || !field.advanced)
+    : [];
   return html`
-    <portal-card heading="Playground" subheading="Try the first OpenAI surface set directly against this gateway.">
+    <portal-card heading="Playground" subheading="Exercise the OpenAI-compatible gateway surface with guided fields or raw payloads.">
       <form @submit=${runPlayground} class="openai-portal-form">
         <label class="openai-portal-field">
           API
@@ -330,6 +373,7 @@ function playgroundView() {
             .value=${state.playgroundModel}
             @change=${(event: Event) => {
               state.playgroundModel = (event.currentTarget as HTMLSelectElement).value;
+              resetPlaygroundDraft();
               draw();
             }}
           >
@@ -340,25 +384,63 @@ function playgroundView() {
                 )}
           </select>
         </label>
-        <div class="openai-portal-section-gap">
-          <label class="openai-portal-field">
-            Prompt / input
-            <textarea
-              class="openai-portal-field-control"
-              name="input_text"
-              rows="8"
-              @input=${(event: Event) => {
-                state.playgroundInput = (event.currentTarget as HTMLTextAreaElement).value;
-              }}
-            >${state.playgroundInput}</textarea>
-          </label>
+        <div class="openai-portal-action-row">
+          <portal-button
+            type="button"
+            variant=${state.playgroundRawMode ? 'ghost' : 'primary'}
+            @click=${() => {
+              state.playgroundRawMode = false;
+              draw();
+            }}
+          >Guided mode</portal-button>
+          <portal-button
+            type="button"
+            variant=${state.playgroundRawMode ? 'primary' : 'ghost'}
+            @click=${() => {
+              state.playgroundRawMode = true;
+              state.playgroundRawJson = buildPlaygroundRawJson();
+              draw();
+            }}
+          >Raw mode</portal-button>
+          <portal-button
+            type="button"
+            variant=${state.playgroundShowAdvanced ? 'primary' : 'ghost'}
+            @click=${() => {
+              state.playgroundShowAdvanced = !state.playgroundShowAdvanced;
+              draw();
+            }}
+          >${state.playgroundShowAdvanced ? 'Hide advanced' : 'Show advanced'}</portal-button>
         </div>
-        <div class="openai-portal-section-gap">
-          <label class="openai-portal-field">
-            Audio file (used only for transcription)
-            <input class="openai-portal-field-control" name="audio_file" type="file" accept="audio/*" />
-          </label>
-        </div>
+        ${state.playgroundRawMode
+          ? html`
+              <label class="openai-portal-field">
+                Raw request body
+                <textarea
+                  class="openai-portal-field-control"
+                  name="raw_request"
+                  rows="16"
+                  .value=${state.playgroundRawJson}
+                  @input=${(event: Event) => {
+                    state.playgroundRawJson = (event.currentTarget as HTMLTextAreaElement).value;
+                  }}
+                ></textarea>
+              </label>
+            `
+          : html`
+              <div class="openai-portal-playground-grid">
+                ${requestFields.map((field) => playgroundFieldView(field, selected))}
+              </div>
+            `}
+        ${surface?.requestTransport === 'multipart'
+          ? html`
+              <div class="openai-portal-section-gap">
+                <label class="openai-portal-field">
+                  Audio file
+                  <input class="openai-portal-field-control" name="audio_file" type="file" accept="audio/*" />
+                </label>
+              </div>
+            `
+          : ''}
         <div class="openai-portal-section-gap">
           <portal-button type="submit" ?loading=${state.loading}>Send request</portal-button>
         </div>
@@ -371,6 +453,7 @@ function playgroundView() {
           ${selected
             ? html`
                 ${metaList(playgroundModelMeta(selected), 'openai-portal-meta-list openai-portal-meta-list--tight')}
+                ${playgroundSurfaceSections(selected)}
                 ${playgroundMetadataSections(selected)}
               `
             : html`<p class="openai-portal-empty">No discovered model is available for this API yet.</p>`}
@@ -388,6 +471,7 @@ function playgroundView() {
                       <li class=${model.id === state.playgroundModel ? 'current' : ''}>
                         <button type="button" @click=${() => {
                           state.playgroundModel = model.id;
+                          resetPlaygroundDraft();
                           draw();
                         }}>${model.id}</button>
                         <span>${model.offering}</span>
@@ -399,7 +483,25 @@ function playgroundView() {
         </portal-detail-section>
       </div>
       <div class="openai-portal-section-gap">
-        <pre class="openai-portal-response">${state.response || 'No response yet.'}</pre>
+        <div class="openai-portal-action-row">
+          <portal-button
+            type="button"
+            variant=${state.playgroundResponseTab === 'guided' ? 'primary' : 'ghost'}
+            @click=${() => {
+              state.playgroundResponseTab = 'guided';
+              draw();
+            }}
+          >Guided response</portal-button>
+          <portal-button
+            type="button"
+            variant=${state.playgroundResponseTab === 'raw' ? 'primary' : 'ghost'}
+            @click=${() => {
+              state.playgroundResponseTab = 'raw';
+              draw();
+            }}
+          >Raw response</portal-button>
+        </div>
+        ${playgroundResponseView(selected)}
       </div>
     </portal-card>
   `;
@@ -676,15 +778,6 @@ function pendingSummary(): string {
   return state.pending.length ? `Working on ${state.pending.length} task${state.pending.length === 1 ? '' : 's'}.` : 'Ready';
 }
 
-async function signup(event: Event): Promise<void> {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget as HTMLFormElement);
-  const email = String(form.get('email') ?? '');
-  const out = await withPending('signup', () => post('/portal/signup', { email }));
-  setNotice('success', 'Portal access created. Loading customer workspace.');
-  await loginWithToken(out.auth_token, 'customer');
-}
-
 async function login(event: Event): Promise<void> {
   event.preventDefault();
   const form = new FormData(event.currentTarget as HTMLFormElement);
@@ -714,8 +807,8 @@ async function refresh(): Promise<void> {
   state.topups = (await authRequest('/portal/topups')).topups;
   state.limits = (await authRequest('/portal/account/limits')).limits;
   const usage = await authRequest('/portal/usage');
-  const models = await authRequest('/v1/models');
-  state.playgroundModels = normalizePlaygroundModels(models.data ?? []);
+  const catalog = await authRequest('/portal/playground/catalog');
+  state.playgroundModels = normalizePlaygroundModels(catalog.models ?? []);
   ensurePlaygroundSelection();
   state.reservations = usage.reservations;
   state.groupedUsage = usage.grouped;
@@ -803,60 +896,21 @@ async function runPlayground(event: Event): Promise<void> {
   state.notice = null;
   draw();
   try {
-    const capability = String(form.get('capability') ?? 'chat');
-    const model = String(form.get('model') ?? state.playgroundModel);
-    if (!model) {
-      throw new Error('no discovered model is available for the selected API');
+    const request = buildPlaygroundRequest(form);
+    if (state.playgroundCapability === 'chat') {
+      const streamEnabled = request.streamEnabled;
+      assertPlaygroundModeSupported(request.model, streamEnabled);
     }
-    const inputText = String(form.get('input_text') ?? '');
-    let out: unknown;
-    switch (capability) {
-      case 'embeddings':
-        out = await authRequest('/v1/embeddings', {
-          method: 'POST',
-          body: JSON.stringify({ model, input: [inputText] }),
-        });
-        break;
-      case 'images':
-        out = await authRequest('/v1/images/generations', {
-          method: 'POST',
-          body: JSON.stringify({ model, prompt: inputText, size: '1024x1024', quality: 'standard' }),
-        });
-        break;
-      case 'speech':
-        out = await authRequest('/v1/audio/speech', {
-          method: 'POST',
-          body: JSON.stringify({ model, input: inputText, voice: 'alloy' }),
-        });
-        break;
-      case 'transcriptions': {
-        const multipart = new FormData();
-        multipart.set('model', model);
-        const audioFile = form.get('audio_file');
-        if (audioFile instanceof File && audioFile.size > 0) {
-          multipart.set('file', audioFile);
-        } else {
-          throw new Error('choose an audio file for transcription');
-        }
-        out = await authRequest('/v1/audio/transcriptions', { method: 'POST', body: multipart });
-        break;
-      }
-      case 'chat':
-      default:
-        out = await authRequest('/v1/chat/completions', {
-          method: 'POST',
-          body: JSON.stringify({
-            model,
-            messages: [{ role: 'user', content: inputText }],
-            stream: false,
-          }),
-        });
-        break;
-    }
-    state.response = JSON.stringify(out, null, 2);
+    state.playgroundRawJson = request.preview;
+    clearPlaygroundResponse();
+    state.playgroundResponse = await authRequestSurface(request.path, {
+      method: 'POST',
+      body: request.body,
+    });
+    state.playgroundResponseTab = 'guided';
     setNotice('success', 'Playground request completed.');
   } catch (err) {
-    state.response = '';
+    clearPlaygroundResponse();
     state.error = errorMessage(err);
   } finally {
     state.loading = false;
@@ -876,7 +930,12 @@ async function logout(): Promise<void> {
   state.reservations = [];
   state.groupedUsage = [];
   state.selectedReservation = null;
-  state.response = '';
+  state.playgroundFields = {};
+  state.playgroundRawMode = false;
+  state.playgroundRawJson = '';
+  state.playgroundShowAdvanced = false;
+  clearPlaygroundResponse();
+  state.playgroundResponseTab = 'guided';
   state.notice = null;
   state.pending = [];
   clearSession();
@@ -905,6 +964,29 @@ async function authRequest(path: string, init: RequestInit = {}): Promise<any> {
   if (!res.ok) throw new Error(await res.text());
   if (res.status === 204) return null;
   return res.json();
+}
+
+async function authRequestSurface(path: string, init: RequestInit = {}): Promise<PlaygroundResponse> {
+  const headers = new Headers(init.headers ?? {});
+  headers.set('authorization', `Bearer ${state.authToken}`);
+  headers.set('x-actor', state.actor);
+  if (init.body && !(init.body instanceof FormData) && !headers.has('content-type')) {
+    headers.set('content-type', 'application/json');
+  }
+  const res = await fetch(path, { ...init, headers });
+  const contentType = res.headers.get('content-type') ?? 'application/octet-stream';
+  const bytes = await res.arrayBuffer();
+  const rawText = decodeResponseText(bytes, contentType);
+  if (!res.ok) throw new Error(rawText || `request failed with status ${res.status}`);
+  return {
+    status: res.status,
+    contentType,
+    rawText,
+    json: tryParseJson(rawText, contentType),
+    objectUrl: contentType.startsWith('audio/')
+      ? URL.createObjectURL(new Blob([bytes], { type: contentType }))
+      : null,
+  };
 }
 
 function credentialWidgetFromEvent(event: Event): { showPlaintext?: (plaintext: string) => void } {
@@ -950,35 +1032,206 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function buildPlaygroundRequest(form: FormData): {
+  path: string;
+  body: BodyInit;
+  preview: string;
+  model: string;
+  streamEnabled: boolean;
+} {
+  const model = String(form.get('model') ?? state.playgroundModel);
+  if (!model) throw new Error('no discovered model is available for the selected API');
+  const selected = selectedPlaygroundModel();
+  const surface = selected?.surface;
+  if (!surface) throw new Error('no OpenAI surface metadata is available for the selected capability');
+
+  if (surface.requestTransport === 'multipart') {
+    const multipart = new FormData();
+    const payload = state.playgroundRawMode
+      ? parseRawRequestJson(state.playgroundRawJson)
+      : buildPayloadFromFields(surface, model);
+    for (const [key, value] of Object.entries(payload)) {
+      if (value === undefined || value === null) continue;
+      multipart.set(key, stringifyMultipartValue(value));
+    }
+    const audioFile = form.get('audio_file');
+    if (audioFile instanceof File && audioFile.size > 0) {
+      multipart.set('file', audioFile);
+    } else {
+      throw new Error('choose an audio file for transcription');
+    }
+    return {
+      path: '/v1/audio/transcriptions',
+      body: multipart,
+      preview: JSON.stringify(payload, null, 2),
+      model,
+      streamEnabled: Boolean(payload['stream']),
+    };
+  }
+
+  const payload = state.playgroundRawMode
+    ? parseRawRequestJson(state.playgroundRawJson)
+    : buildPayloadFromFields(surface, model);
+  const streamEnabled = payload['stream'] === true;
+  return {
+    path: pathForPlaygroundApi(state.playgroundCapability),
+    body: JSON.stringify(payload),
+    preview: JSON.stringify(payload, null, 2),
+    model,
+    streamEnabled,
+  };
+}
+
+function buildPayloadFromFields(surface: CapabilitySurface, model: string): Record<string, unknown> {
+  const out: Record<string, unknown> = { model };
+  for (const field of surface.requestFields) {
+    const raw = state.playgroundFields[field.name] ?? '';
+    if (field.name === 'model') continue;
+    const value = coercePlaygroundFieldValue(field, raw);
+    if (value !== undefined) out[field.name] = value;
+  }
+  return out;
+}
+
+function coercePlaygroundFieldValue(field: CapabilitySurfaceField, raw: string): unknown {
+  if (field.type === 'file') return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    if (field.type === 'boolean') return false;
+    return undefined;
+  }
+  switch (field.type) {
+    case 'number': {
+      const value = Number(trimmed);
+      if (!Number.isFinite(value)) throw new Error(`field ${field.name} must be a number`);
+      return value;
+    }
+    case 'boolean':
+      return trimmed === 'true';
+    case 'json':
+      return JSON.parse(trimmed);
+    case 'string[]':
+      return trimmed
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    case 'textarea':
+    case 'string':
+    case 'enum':
+    default:
+      return raw;
+  }
+}
+
+function parseRawRequestJson(raw: string): Record<string, unknown> {
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error('raw request body is empty');
+  const parsed = JSON.parse(trimmed);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('raw request body must be a JSON object');
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function stringifyMultipartValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value);
+}
+
+function decodeResponseText(bytes: ArrayBuffer, contentType: string): string {
+  if (contentType.startsWith('audio/')) return '';
+  return new TextDecoder().decode(bytes);
+}
+
+function tryParseJson(rawText: string, contentType: string): any | null {
+  if (!contentType.includes('json') || !rawText) return null;
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    return null;
+  }
+}
+
 function normalizePlaygroundModels(rows: any[]): PlaygroundModel[] {
-  return rows.map((row) => ({
-    id: String(row.id ?? ''),
-    capability: String(row.capability ?? ''),
-    offering: String(row.offering ?? ''),
-    broker_url: String(row.broker_url ?? ''),
-    eth_address: String(row.eth_address ?? ''),
-    price_per_work_unit_wei: String(row.price_per_work_unit_wei ?? ''),
-    work_unit: String(row.work_unit ?? ''),
-    brokerUrl: String(row.broker_url ?? ''),
-    ethAddress: String(row.eth_address ?? ''),
-    pricePerWorkUnitWei: String(row.price_per_work_unit_wei ?? ''),
-    workUnit: String(row.work_unit ?? ''),
-    extra: row.extra ?? null,
-    constraints: row.constraints ?? null,
-  }));
+  return rows.map((row) => {
+    const surface = normalizeCapabilitySurface(row.surface);
+    return {
+      id: String(row.id ?? ''),
+      capability: String(row.capability ?? ''),
+      offering: String(row.offering ?? ''),
+      supported_modes: normalizeSupportedModes(row.supported_modes ?? row.supportedModes),
+      surface,
+      broker_url: String(row.broker_url ?? row.brokerUrl ?? ''),
+      eth_address: String(row.eth_address ?? row.ethAddress ?? ''),
+      price_per_work_unit_wei: String(row.price_per_work_unit_wei ?? row.pricePerWorkUnitWei ?? ''),
+      work_unit: String(row.work_unit ?? row.workUnit ?? ''),
+      supportedModes: normalizeSupportedModes(row.supported_modes ?? row.supportedModes),
+      requestFields: surface?.requestFields ?? [],
+      responseVariants: surface?.responseVariants ?? [],
+      brokerUrl: String(row.broker_url ?? row.brokerUrl ?? ''),
+      ethAddress: String(row.eth_address ?? row.ethAddress ?? ''),
+      pricePerWorkUnitWei: String(row.price_per_work_unit_wei ?? row.pricePerWorkUnitWei ?? ''),
+      workUnit: String(row.work_unit ?? row.workUnit ?? ''),
+      extra: row.extra ?? null,
+      constraints: row.constraints ?? null,
+    };
+  });
+}
+
+function normalizeCapabilitySurface(value: any): CapabilitySurface | null {
+  if (!value || typeof value !== 'object') return null;
+  const requestFields = Array.isArray(value.requestFields)
+    ? value.requestFields.map((field: any) => ({
+        name: String(field?.name ?? ''),
+        label: String(field?.label ?? ''),
+        type: String(field?.type ?? ''),
+        required: Boolean(field?.required),
+        advanced: Boolean(field?.advanced),
+        description: String(field?.description ?? ''),
+        modelDependent: Boolean(field?.modelDependent),
+        options: Array.isArray(field?.options)
+          ? field.options.map((option: any) => ({
+              value: String(option?.value ?? ''),
+              label: String(option?.label ?? option?.value ?? ''),
+            }))
+          : undefined,
+      }))
+    : [];
+  const responseVariants = Array.isArray(value.responseVariants)
+    ? value.responseVariants.map((variant: any) => ({
+        id: String(variant?.id ?? ''),
+        label: String(variant?.label ?? ''),
+        description: String(variant?.description ?? ''),
+      }))
+    : [];
+  return {
+    capability: String(value.capability ?? ''),
+    requestTransport: String(value.requestTransport ?? ''),
+    requestFields,
+    responseVariants,
+    rawSupported: Boolean(value.rawSupported),
+    modelDependentFields: Array.isArray(value.modelDependentFields)
+      ? value.modelDependentFields.map((field: unknown) => String(field))
+      : [],
+  };
 }
 
 function updatePlaygroundCapability(capability: PlaygroundApi): void {
   state.playgroundCapability = capability;
   const first = modelsForApi(capability)[0];
   state.playgroundModel = first?.id ?? '';
+  resetPlaygroundDraft();
   draw();
 }
 
 function ensurePlaygroundSelection(): void {
   const options = modelsForApi(state.playgroundCapability);
-  if (options.some((model) => model.id === state.playgroundModel)) return;
+  if (options.some((model) => model.id === state.playgroundModel)) {
+    if (Object.keys(state.playgroundFields).length === 0) resetPlaygroundDraft();
+    return;
+  }
   state.playgroundModel = options[0]?.id ?? '';
+  resetPlaygroundDraft();
 }
 
 function modelsForApi(api: PlaygroundApi): PlaygroundModel[] {
@@ -1006,16 +1259,212 @@ function capabilityForPlaygroundApi(api: PlaygroundApi): string {
   }
 }
 
+function pathForPlaygroundApi(api: PlaygroundApi): string {
+  switch (api) {
+    case 'embeddings':
+      return '/v1/embeddings';
+    case 'images':
+      return '/v1/images/generations';
+    case 'speech':
+      return '/v1/audio/speech';
+    case 'transcriptions':
+      return '/v1/audio/transcriptions';
+    case 'chat':
+    default:
+      return '/v1/chat/completions';
+  }
+}
+
+function defaultPlaygroundFields(
+  surface: CapabilitySurface | null,
+  modelId: string,
+): Record<string, string> {
+  const defaults: Record<string, string> = {};
+  for (const field of surface?.requestFields ?? []) {
+    defaults[field.name] = defaultFieldValue(field, modelId);
+  }
+  return defaults;
+}
+
+function defaultFieldValue(field: CapabilitySurfaceField, modelId: string): string {
+  if (field.name === 'model') return modelId;
+  if (field.name === 'messages') {
+    return JSON.stringify([{ role: 'user', content: 'Say hello in one sentence.' }], null, 2);
+  }
+  if (field.name === 'input' && state.playgroundCapability === 'embeddings') {
+    return JSON.stringify(['Say hello in one sentence.'], null, 2);
+  }
+  if (field.name === 'prompt' && state.playgroundCapability === 'images') {
+    return 'An intentional product still life on a concrete desk.';
+  }
+  if (field.name === 'input' && state.playgroundCapability === 'speech') {
+    return 'Say hello in one sentence.';
+  }
+  if (field.name === 'voice' && state.playgroundCapability === 'speech') {
+    return 'alloy';
+  }
+  if (field.name === 'response_format' && state.playgroundCapability === 'transcriptions') {
+    return 'json';
+  }
+  if (field.name === 'response_format' && state.playgroundCapability === 'images') {
+    return 'b64_json';
+  }
+  if (field.name === 'output_format' && state.playgroundCapability === 'images') {
+    return 'png';
+  }
+  if (field.name === 'quality' && state.playgroundCapability === 'images') {
+    return 'standard';
+  }
+  if (field.name === 'size' && state.playgroundCapability === 'images') {
+    return '1024x1024';
+  }
+  if (field.type === 'boolean') return field.name === 'stream' ? 'false' : 'false';
+  if (field.options?.length) return field.options[0]?.value ?? '';
+  return '';
+}
+
+function buildPlaygroundRawJson(): string {
+  const selected = selectedPlaygroundModel();
+  const surface = selected?.surface;
+  if (!surface) return '';
+  try {
+    return JSON.stringify(buildPayloadFromFields(surface, selected?.id ?? ''), null, 2);
+  } catch {
+    return '';
+  }
+}
+
 function playgroundModelMeta(model: PlaygroundModel): [string, unknown][] {
   return [
     ['Capability', model.capability],
     ['Model', model.id],
     ['Offering', model.offering],
+    ['Supported modes', model.supportedModes.length > 0 ? model.supportedModes.join(', ') : 'unknown'],
     ['Broker URL', model.brokerUrl || '—'],
     ['Orchestrator', model.ethAddress || '—'],
     ['Price per work unit', model.pricePerWorkUnitWei || '—'],
     ['Work unit', model.workUnit || '—'],
   ];
+}
+
+function playgroundFieldView(field: CapabilitySurfaceField, selected: PlaygroundModel | null) {
+  if (field.name === 'model' || field.type === 'file') return html``;
+  const value = state.playgroundFields[field.name] ?? '';
+  const disabled =
+    field.name === 'stream' &&
+    state.playgroundCapability === 'chat' &&
+    selected &&
+    !modelSupportsReqresp(selected) &&
+    !modelSupportsStream(selected);
+  if (field.type === 'boolean') {
+    return html`
+      <label class="openai-portal-field">
+        ${field.label}
+        <select
+          class="openai-portal-field-control"
+          .value=${value || 'false'}
+          ?disabled=${disabled}
+          @change=${(event: Event) => updatePlaygroundField(field.name, (event.currentTarget as HTMLSelectElement).value)}
+        >
+          <option value="false">false</option>
+          <option value="true" ?disabled=${field.name === 'stream' && state.playgroundCapability === 'chat' && selected ? !modelSupportsStream(selected) : false}>true</option>
+        </select>
+        <span class="openai-portal-empty">${field.description}</span>
+      </label>
+    `;
+  }
+  if (field.type === 'enum') {
+    return html`
+      <label class="openai-portal-field">
+        ${field.label}
+        <select
+          class="openai-portal-field-control"
+          .value=${value}
+          @change=${(event: Event) => updatePlaygroundField(field.name, (event.currentTarget as HTMLSelectElement).value)}
+        >
+          <option value="">Unset</option>
+          ${(field.options ?? []).map((option) => html`<option value=${option.value}>${option.label}</option>`)}
+        </select>
+        <span class="openai-portal-empty">${field.description}</span>
+      </label>
+    `;
+  }
+  const isMultiline = field.type === 'textarea' || field.type === 'json';
+  if (isMultiline) {
+    return html`
+      <label class="openai-portal-field">
+        ${field.label}
+        <textarea
+          class="openai-portal-field-control"
+          rows=${field.type === 'json' ? 10 : 6}
+          .value=${value}
+          @input=${(event: Event) => updatePlaygroundField(field.name, (event.currentTarget as HTMLTextAreaElement).value)}
+        ></textarea>
+        <span class="openai-portal-empty">${field.description}</span>
+      </label>
+    `;
+  }
+  return html`
+    <label class="openai-portal-field">
+      ${field.label}
+      <input
+        class="openai-portal-field-control"
+        type=${field.type === 'number' ? 'number' : 'text'}
+        .value=${value}
+        @input=${(event: Event) => updatePlaygroundField(field.name, (event.currentTarget as HTMLInputElement).value)}
+      />
+      <span class="openai-portal-empty">${field.description}</span>
+    </label>
+  `;
+}
+
+function updatePlaygroundField(name: string, value: string): void {
+  state.playgroundFields = { ...state.playgroundFields, [name]: value };
+  state.playgroundRawJson = buildPlaygroundRawJson();
+  draw();
+}
+
+function resetPlaygroundDraft(): void {
+  const selected = selectedPlaygroundModel();
+  const surface = selected?.surface ?? null;
+  state.playgroundFields = defaultPlaygroundFields(surface, selected?.id ?? '');
+  state.playgroundRawJson = buildPlaygroundRawJson();
+  clearPlaygroundResponse();
+  state.playgroundResponseTab = 'guided';
+}
+
+function clearPlaygroundResponse(): void {
+  if (state.playgroundResponse?.objectUrl) {
+    URL.revokeObjectURL(state.playgroundResponse.objectUrl);
+  }
+  state.playgroundResponse = null;
+}
+
+function assertPlaygroundModeSupported(modelId: string, stream: boolean): void {
+  const selected = selectedPlaygroundModel();
+  if (!selected || selected.id !== modelId) return;
+  if (stream && !modelSupportsStream(selected)) {
+    throw new Error(`model ${modelId} does not advertise streaming chat support`);
+  }
+  if (!stream && !modelSupportsReqresp(selected)) {
+    throw new Error(`model ${modelId} does not advertise non-streaming chat support`);
+  }
+}
+
+function modelSupportsStream(model: PlaygroundModel): boolean {
+  return model.supportedModes.length === 0 || model.supportedModes.includes('http-stream@v0');
+}
+
+function modelSupportsReqresp(model: PlaygroundModel): boolean {
+  return model.supportedModes.length === 0 || model.supportedModes.includes('http-reqresp@v0');
+}
+
+function normalizeSupportedModes(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => String(entry ?? '').trim())
+    .filter((entry) => entry.length > 0)
+    .sort();
 }
 
 function playgroundMetadataSections(model: PlaygroundModel) {
@@ -1037,6 +1486,189 @@ function playgroundMetadataSections(model: PlaygroundModel) {
       </div>
     </div>
   `;
+}
+
+function playgroundSurfaceSections(model: PlaygroundModel) {
+  const surface = model.surface;
+  if (!surface) {
+    return html`<p class="openai-portal-empty">No OpenAI surface schema has been attached to this capability yet.</p>`;
+  }
+  return html`
+    <div class="openai-portal-playground-meta-grid">
+      <div>
+        <div class="openai-portal-eyebrow">Request surface</div>
+        ${metaList(
+          [
+            ['Transport', surface.requestTransport],
+            ['Fields', String(surface.requestFields.length)],
+            ['Raw mode', surface.rawSupported ? 'supported' : 'not supported'],
+            ['Model-dependent fields', surface.modelDependentFields.length ? surface.modelDependentFields.join(', ') : 'none'],
+          ],
+          'openai-portal-meta-list openai-portal-meta-list--tight',
+        )}
+        <ul class="openai-portal-model-list">
+          ${surface.requestFields.map(
+            (field) => html`
+              <li>
+                <strong>${field.label}</strong>
+                <span>
+                  ${field.name} · ${field.type}${field.required ? ' · required' : ''}${field.advanced ? ' · advanced' : ''}${field.modelDependent ? ' · model-dependent' : ''}
+                </span>
+              </li>
+            `,
+          )}
+        </ul>
+      </div>
+      <div>
+        <div class="openai-portal-eyebrow">Response variants</div>
+        <ul class="openai-portal-model-list">
+          ${surface.responseVariants.map(
+            (variant) => html`
+              <li>
+                <strong>${variant.label}</strong>
+                <span>${variant.id} · ${variant.description}</span>
+              </li>
+            `,
+          )}
+        </ul>
+      </div>
+    </div>
+  `;
+}
+
+function playgroundResponseView(selected: PlaygroundModel | null) {
+  const response = state.playgroundResponse;
+  if (!response) {
+    return html`<pre class="openai-portal-response">No response yet.</pre>`;
+  }
+  if (state.playgroundResponseTab === 'raw') {
+    return html`<pre class="openai-portal-response">${response.rawText || `(binary ${response.contentType} response)`}</pre>`;
+  }
+  if (response.objectUrl && response.contentType.startsWith('audio/')) {
+    return html`
+      <portal-detail-section heading="Audio response" description=${response.contentType}>
+        <audio controls src=${response.objectUrl}></audio>
+      </portal-detail-section>
+    `;
+  }
+  const json = response.json;
+  if (selected?.capability === 'openai:chat-completions') {
+    return renderChatResponse(json, response);
+  }
+  if (selected?.capability === 'openai:embeddings') {
+    return renderEmbeddingsResponse(json, response);
+  }
+  if (selected?.capability === 'openai:images-generations') {
+    return renderImagesResponse(json, response);
+  }
+  if (selected?.capability === 'openai:audio-transcriptions') {
+    return renderTranscriptionResponse(json, response);
+  }
+  return html`<pre class="openai-portal-response">${response.rawText || 'No textual response body.'}</pre>`;
+}
+
+function renderChatResponse(json: any, response: PlaygroundResponse) {
+  if (!json) return html`<pre class="openai-portal-response">${response.rawText}</pre>`;
+  const choices = Array.isArray(json.choices) ? json.choices : [];
+  const usage = json.usage ?? null;
+  return html`
+    <div class="openai-portal-detail-grid">
+      <portal-detail-section heading="Completion" description="Guided chat completion view.">
+        ${choices.length
+          ? html`${choices.map((choice: any, index: number) => html`
+              <div class="openai-portal-section-gap">
+                <div class="openai-portal-eyebrow">Choice ${index + 1}</div>
+                <pre class="openai-portal-response">${formatChatChoice(choice)}</pre>
+              </div>
+            `)}`
+          : html`<p class="openai-portal-empty">No choices were returned.</p>`}
+      </portal-detail-section>
+      <portal-detail-section heading="Usage" description="Returned usage object.">
+        ${usage
+          ? metaList(Object.entries(usage).map(([key, value]) => [key, String(value)]), 'openai-portal-meta-list openai-portal-meta-list--tight')
+          : html`<p class="openai-portal-empty">No usage object was returned.</p>`}
+      </portal-detail-section>
+    </div>
+  `;
+}
+
+function renderEmbeddingsResponse(json: any, response: PlaygroundResponse) {
+  if (!json) return html`<pre class="openai-portal-response">${response.rawText}</pre>`;
+  const embeddings = Array.isArray(json.data) ? json.data : [];
+  const first = embeddings[0];
+  const usage = json.usage ?? null;
+  return html`
+    <div class="openai-portal-detail-grid">
+      <portal-detail-section heading="Embeddings" description="Embedding response summary.">
+        ${metaList(
+          [
+            ['Model', String(json.model ?? '—')],
+            ['Vectors', String(embeddings.length)],
+            ['First vector dimensions', String(Array.isArray(first?.embedding) ? first.embedding.length : 0)],
+          ],
+          'openai-portal-meta-list openai-portal-meta-list--tight',
+        )}
+        ${first ? html`<pre class="openai-portal-response">${JSON.stringify(first, null, 2)}</pre>` : html`<p class="openai-portal-empty">No embeddings returned.</p>`}
+      </portal-detail-section>
+      <portal-detail-section heading="Usage" description="Token accounting.">
+        ${usage
+          ? metaList(Object.entries(usage).map(([key, value]) => [key, String(value)]), 'openai-portal-meta-list openai-portal-meta-list--tight')
+          : html`<p class="openai-portal-empty">No usage object was returned.</p>`}
+      </portal-detail-section>
+    </div>
+  `;
+}
+
+function renderImagesResponse(json: any, response: PlaygroundResponse) {
+  if (!json) return html`<pre class="openai-portal-response">${response.rawText}</pre>`;
+  const images = Array.isArray(json.data) ? json.data : [];
+  return html`
+    <div class="openai-portal-detail-grid">
+      <portal-detail-section heading="Generated images" description="Image outputs rendered from the JSON payload.">
+        ${images.length
+          ? html`
+              <div class="openai-portal-card-grid">
+                ${images.map((image: any, index: number) => html`
+                  <portal-card heading=${`Image ${index + 1}`} subheading=${image.revised_prompt ? 'Includes revised prompt.' : 'Generated asset.'}>
+                    ${typeof image.b64_json === 'string'
+                      ? html`<img class="openai-portal-image-preview" src=${`data:image/png;base64,${image.b64_json}`} alt=${`Generated image ${index + 1}`} />`
+                      : typeof image.url === 'string'
+                        ? html`<a href=${image.url} target="_blank" rel="noreferrer">${image.url}</a>`
+                        : html`<pre class="openai-portal-response">${JSON.stringify(image, null, 2)}</pre>`}
+                    ${image.revised_prompt ? html`<p class="openai-portal-empty">${String(image.revised_prompt)}</p>` : ''}
+                  </portal-card>
+                `)}
+              </div>
+            `
+          : html`<p class="openai-portal-empty">No image outputs were returned.</p>`}
+      </portal-detail-section>
+    </div>
+  `;
+}
+
+function renderTranscriptionResponse(json: any, response: PlaygroundResponse) {
+  if (!json) return html`<pre class="openai-portal-response">${response.rawText}</pre>`;
+  const text = typeof json.text === 'string' ? json.text : null;
+  const segments = Array.isArray(json.segments) ? json.segments : [];
+  return html`
+    <div class="openai-portal-detail-grid">
+      <portal-detail-section heading="Transcript" description="Guided transcription view.">
+        ${text ? html`<pre class="openai-portal-response">${text}</pre>` : html`<pre class="openai-portal-response">${JSON.stringify(json, null, 2)}</pre>`}
+      </portal-detail-section>
+      <portal-detail-section heading="Segments" description="Verbose or diarized segment data when returned.">
+        ${segments.length
+          ? html`<pre class="openai-portal-response">${JSON.stringify(segments, null, 2)}</pre>`
+          : html`<p class="openai-portal-empty">No segment array was returned.</p>`}
+      </portal-detail-section>
+    </div>
+  `;
+}
+
+function formatChatChoice(choice: any): string {
+  const messageContent = choice?.message?.content;
+  if (typeof messageContent === 'string' && messageContent.length > 0) return messageContent;
+  if (choice?.message) return JSON.stringify(choice.message, null, 2);
+  return JSON.stringify(choice, null, 2);
 }
 
 function describeMetadata(value: unknown): [string, unknown][] {

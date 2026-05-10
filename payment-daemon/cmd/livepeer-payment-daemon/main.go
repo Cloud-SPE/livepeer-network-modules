@@ -34,10 +34,10 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/broker/ticketbroker"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/chain"
+	clockonchain "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/clock/onchain"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devbroker"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devclock"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devkeystore"
-	clockonchain "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/clock/onchain"
 	gasprice "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/gasprice/onchain"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/keystore/inmemory"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/keystore/jsonfile"
@@ -55,28 +55,27 @@ const configErrExitCode = 2
 
 func main() {
 	var (
-		mode           = flag.String("mode", "", "required: 'sender' or 'receiver'")
-		socketPath     = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
-		dbPath         = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB session ledger path (receiver only)")
-		chainRPC       = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers and signing key are fakes.")
-		devKeyHex      = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
-		keystorePath   = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc is set.")
-		keystorePwFile = flag.String("keystore-password-file", "", "Path to a file containing the keystore unlock password. Mutually exclusive with LIVEPEER_KEYSTORE_PASSWORD.")
-		orchAddressHex = flag.String("orch-address", "", "Hex (0x-prefixed) on-chain orchestrator identity. Empty = the keystore's address is used as the recipient.")
-
+		mode                = flag.String("mode", "", "required: 'sender' or 'receiver'")
+		socketPath          = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
+		dbPath              = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB session ledger path (receiver only)")
+		chainRPC            = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers and signing key are fakes.")
+		devKeyHex           = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
+		keystorePath        = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc is set.")
+		keystorePwFile      = flag.String("keystore-password-file", "", "Path to a file containing the keystore unlock password. Mutually exclusive with LIVEPEER_KEYSTORE_PASSWORD.")
+		orchAddressHex      = flag.String("orch-address", "", "Hex (0x-prefixed) on-chain orchestrator identity. Empty = the keystore's address is used as the recipient.")
 		controllerAddrHex     = flag.String("chain-controller-address", chain.ArbitrumOneController.Hex(), "Livepeer Controller address. Default = Arbitrum One.")
 		ticketBrokerAddrHex   = flag.String("ticketbroker-address", "", "Override TicketBroker address. Empty = resolve via Controller.")
 		roundsManagerAddrHex  = flag.String("rounds-manager-address", "", "Override RoundsManager address. Empty = resolve via Controller.")
 		bondingManagerAddrHex = flag.String("bonding-manager-address", "", "Override BondingManager address. Empty = resolve via Controller.")
 		expectedChainID       = flag.Int64("expected-chain-id", chain.ArbitrumOneChainID, "Expected eth_chainId. 0 = disable check (escape hatch for forks; production must keep the default).")
 
-		gasPriceMultPct           = flag.Uint64("gas-price-multiplier-pct", 200, "Multiplier applied to eth_gasPrice (200 = 2× headroom).")
-		redeemGas                 = flag.Uint64("redeem-gas", 500_000, "Gas limit used for redeemWinningTicket (Arbitrum L2 empirical cost).")
-		redemptionConfirmations   = flag.Uint64("redemption-confirmations", 4, "Blocks to wait past tx-receipt before declaring confirmed.")
+		gasPriceMultPct            = flag.Uint64("gas-price-multiplier-pct", 200, "Multiplier applied to eth_gasPrice (200 = 2× headroom).")
+		redeemGas                  = flag.Uint64("redeem-gas", 500_000, "Gas limit used for redeemWinningTicket (Arbitrum L2 empirical cost).")
+		redemptionConfirmations    = flag.Uint64("redemption-confirmations", 4, "Blocks to wait past tx-receipt before declaring confirmed.")
 		redemptionIntervalDuration = flag.Duration("redemption-interval", 30*time.Second, "Cadence of the redemption-loop tick (receiver only).")
-		validityWindowRounds      = flag.Int64("validity-window", 2, "Drop tickets whose CreationRound is more than this many rounds behind LastInitializedRound.")
-		clockRefreshInterval      = flag.Duration("clock-refresh-interval", 30*time.Second, "Cadence of RoundsManager + BondingManager polling.")
-		gasPriceRefreshInterval   = flag.Duration("gasprice-refresh-interval", 5*time.Second, "Cadence of eth_gasPrice polling.")
+		validityWindowRounds       = flag.Int64("validity-window", 2, "Drop tickets whose CreationRound is more than this many rounds behind LastInitializedRound.")
+		clockRefreshInterval       = flag.Duration("clock-refresh-interval", 30*time.Second, "Cadence of RoundsManager + BondingManager polling.")
+		gasPriceRefreshInterval    = flag.Duration("gasprice-refresh-interval", 5*time.Second, "Cadence of eth_gasPrice polling.")
 
 		showVer = flag.Bool("version", false, "print version and exit")
 	)
@@ -117,28 +116,27 @@ func main() {
 		"chain", chainStatus(*chainRPC))
 
 	cfg := bootConfig{
-		mode:           *mode,
-		socketPath:     *socketPath,
-		dbPath:         *dbPath,
-		chainRPC:       *chainRPC,
-		devKeyHex:      *devKeyHex,
-		keystorePath:   *keystorePath,
-		keystorePwFile: *keystorePwFile,
-		orchAddressHex: *orchAddressHex,
-
+		mode:                *mode,
+		socketPath:          *socketPath,
+		dbPath:              *dbPath,
+		chainRPC:            *chainRPC,
+		devKeyHex:           *devKeyHex,
+		keystorePath:        *keystorePath,
+		keystorePwFile:      *keystorePwFile,
+		orchAddressHex:      *orchAddressHex,
 		controllerAddrHex:     *controllerAddrHex,
 		ticketBrokerAddrHex:   *ticketBrokerAddrHex,
 		roundsManagerAddrHex:  *roundsManagerAddrHex,
 		bondingManagerAddrHex: *bondingManagerAddrHex,
 		expectedChainID:       *expectedChainID,
 
-		gasPriceMultPct:          *gasPriceMultPct,
-		redeemGas:                *redeemGas,
-		redemptionConfirmations:  *redemptionConfirmations,
-		redemptionInterval:       *redemptionIntervalDuration,
-		validityWindowRounds:     *validityWindowRounds,
-		clockRefreshInterval:     *clockRefreshInterval,
-		gasPriceRefreshInterval:  *gasPriceRefreshInterval,
+		gasPriceMultPct:         *gasPriceMultPct,
+		redeemGas:               *redeemGas,
+		redemptionConfirmations: *redemptionConfirmations,
+		redemptionInterval:      *redemptionIntervalDuration,
+		validityWindowRounds:    *validityWindowRounds,
+		clockRefreshInterval:    *clockRefreshInterval,
+		gasPriceRefreshInterval: *gasPriceRefreshInterval,
 	}
 	if err := run(logger, cfg); err != nil {
 		var cfgErr *configError
@@ -152,15 +150,14 @@ func main() {
 }
 
 type bootConfig struct {
-	mode           string
-	socketPath     string
-	dbPath         string
-	chainRPC       string
-	devKeyHex      string
-	keystorePath   string
-	keystorePwFile string
-	orchAddressHex string
-
+	mode                string
+	socketPath          string
+	dbPath              string
+	chainRPC            string
+	devKeyHex           string
+	keystorePath        string
+	keystorePwFile      string
+	orchAddressHex      string
 	controllerAddrHex     string
 	ticketBrokerAddrHex   string
 	roundsManagerAddrHex  string
@@ -206,7 +203,6 @@ func runSender(logger *slog.Logger, cfg bootConfig) error {
 	}
 	logger.Info("sender identity", "address_hex", fmt.Sprintf("%x", keystore.Address()))
 	logIdentitySplit(logger, keystore.Address(), cfg.orchAddressHex)
-
 	var broker providers.Broker
 	var clock providers.Clock
 	var gp providers.GasPrice
@@ -243,7 +239,13 @@ func runSender(logger *slog.Logger, cfg bootConfig) error {
 		clock = oc
 	}
 
-	svc := sender.New(keystore, broker, clock, logger.With("component", "sender"))
+	svc := sender.New(
+		keystore,
+		broker,
+		clock,
+		logger.With("component", "sender"),
+		sender.NewHTTPTicketParamsFetcher(),
+	)
 	srv := server.NewSender(svc, cfg.socketPath, logger.With("component", "grpc"))
 	return runServer(logger, srv)
 }

@@ -1,9 +1,196 @@
+:root {
+  color-scheme: light;
+  --surface-canvas: #f7f7f8;
+  --surface-0: #f7f7f8;
+  --surface-1: #ffffff;
+  --surface-2: #fafbfc;
+  --surface-3: #eef1f5;
+  --surface-overlay: rgba(255, 255, 255, 0.96);
+  --text-1: #1f1f1f;
+  --text-2: #555b66;
+  --text-3: #777f89;
+  --accent: #15202b;
+  --accent-strong: #15202b;
+  --accent-hover: #223243;
+  --accent-press: #0f1822;
+  --accent-tint: rgba(21, 32, 43, 0.08);
+  --accent-line: rgba(21, 32, 43, 0.18);
+  --success: #1e6e3a;
+  --success-tint: rgba(30, 110, 58, 0.12);
+  --warning: #6b4a00;
+  --warning-tint: rgba(107, 74, 0, 0.12);
+  --danger: #9b1c1c;
+  --danger-hover: #b12424;
+  --danger-tint: rgba(155, 28, 28, 0.12);
+  --border-1: #e3e4e7;
+  --border-2: #cfd2d7;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.5rem;
+  --radius-pill: 9999px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+body {
+  margin: 0;
+  background: #f7f7f8;
+  color: #1f1f1f;
+}
+
+portal-layout {
+  background: #f7f7f8;
+  color: #1f1f1f;
+}
+
+portal-layout .portal-layout__header {
+  padding: 0.75rem 1rem;
+  border-bottom: 0;
+  background: #15202b;
+  backdrop-filter: none;
+}
+
+portal-layout .portal-layout__header-shell,
+portal-layout .portal-layout__main,
+portal-layout .portal-layout__footer-shell {
+  width: min(1400px, 100%);
+}
+
+portal-layout .portal-layout__brand {
+  color: #fff;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+portal-layout .portal-layout__main {
+  padding: 1rem;
+}
+
+portal-layout .portal-layout__footer {
+  padding: 0.5rem 1rem;
+  color: #777;
+  border-top: 0;
+  background: transparent;
+}
+
+portal-card,
+portal-data-table,
+portal-detail-section,
+portal-metric-tile {
+  display: block;
+  background: #fff;
+  border: 1px solid #e3e4e7;
+  border-radius: 6px;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+portal-card {
+  padding: 1rem;
+}
+
+portal-card .portal-card__head {
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+portal-card .portal-card__heading {
+  color: #1f1f1f;
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+portal-card .portal-card__subheading,
+portal-detail-section .portal-detail-section__description,
+portal-data-table .portal-data-table__description {
+  color: #666;
+}
+
+portal-detail-section {
+  border-top: 1px solid #eee;
+}
+
+portal-button .portal-button__control {
+  min-height: auto;
+  padding: 0.35rem 0.9rem;
+  border-radius: 4px;
+  box-shadow: none;
+  font-weight: 600;
+}
+
+portal-button[variant="ghost"] .portal-button__control {
+  border-color: #cfd2d7;
+  background: #fff;
+  color: #15202b;
+}
+
+portal-button[variant="danger"] .portal-button__control {
+  border-color: #9b1c1c;
+}
+
+portal-input .portal-input__control,
+.openai-portal-field-control,
+.openai-portal-model-list li,
+.openai-portal-response {
+  min-height: auto;
+  border: 1px solid #cfd2d7;
+  border-radius: 4px;
+  background: #fff;
+  color: #1f1f1f;
+  box-shadow: none;
+}
+
+portal-input .portal-input__control,
+.openai-portal-field-control {
+  padding: 0.45rem 0.55rem;
+}
+
+portal-input .portal-input__label,
+.openai-portal-field,
+.openai-portal-empty,
+.openai-portal-session-copy {
+  color: #555b66;
+}
+
+portal-input .portal-input__control:focus-visible,
+.openai-portal-field-control:focus-visible {
+  border-color: #15202b;
+  box-shadow: 0 0 0 3px rgba(21, 32, 43, 0.08);
+  outline: 0;
+}
+
+portal-toast {
+  --border-1: #e3e4e7;
+}
+
 .openai-portal-nav {
   display: flex;
   flex-wrap: wrap;
+  gap: 0.75rem;
   align-items: center;
-  gap: 0.6rem;
   margin-top: 0.75rem;
+}
+
+.openai-portal-nav portal-button[variant="primary"] .portal-button__control {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.openai-portal-nav portal-button[variant="ghost"] .portal-button__control {
+  background: transparent;
+  border-color: transparent;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.openai-portal-nav portal-button[variant="ghost"] .portal-button__control:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
 }
 
 .openai-portal-shell,
@@ -14,7 +201,8 @@
 }
 
 .openai-portal-shell,
-.openai-portal-stack {
+.openai-portal-stack,
+.openai-portal-detail-stack {
   gap: 1rem;
 }
 
@@ -26,11 +214,6 @@
 .openai-portal-settings-grid {
   display: grid;
   gap: 1rem;
-}
-
-.openai-portal-auth-grid,
-.openai-portal-key-grid {
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
 .openai-portal-metrics {
@@ -46,14 +229,15 @@
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
+.openai-portal-key-grid,
+.openai-portal-playground-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
 .openai-portal-playground-grid,
 .openai-portal-playground-meta-grid {
   display: grid;
   gap: 1rem;
-}
-
-.openai-portal-playground-grid {
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
 .openai-portal-playground-meta-grid {
@@ -61,69 +245,60 @@
   margin-top: 1rem;
 }
 
+.openai-portal-image-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid #cfd2d7;
+  border-radius: 4px;
+  background: #f7f7f8;
+}
+
 .openai-portal-session-grid {
   display: grid;
-  gap: 0.85rem;
+  gap: 0.75rem;
   align-items: start;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .openai-portal-session-meta {
   display: grid;
-  gap: 0.35rem;
+  gap: 0.2rem;
 }
 
 .openai-portal-eyebrow {
-  color: var(--text-3);
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  color: #666;
+  font-size: 12px;
   text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .openai-portal-session-value {
-  color: var(--text-1);
-  font-size: var(--font-size-sm);
+  color: #1f1f1f;
+  font-size: 0.95rem;
   font-weight: 600;
 }
 
-.openai-portal-session-copy {
-  color: var(--text-2);
-  font-size: var(--font-size-sm);
-}
-
+.openai-portal-login-form,
 .openai-portal-form,
 .openai-portal-form-stack,
-.openai-portal-field,
-.openai-portal-detail-stack {
+.openai-portal-field {
   display: grid;
 }
 
+.openai-portal-login-form,
 .openai-portal-form,
 .openai-portal-form-stack {
-  gap: 0.75rem;
+  gap: 0.9rem;
+}
+
+.openai-portal-login-form {
+  max-width: 32rem;
 }
 
 .openai-portal-field {
   gap: 0.5rem;
-  color: var(--text-2);
-  font-size: var(--font-size-sm);
-}
-
-.openai-portal-field-control {
-  width: 100%;
-  padding: 0.9rem;
-  border: 1px solid var(--border-1);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-1);
-  font: inherit;
-}
-
-.openai-portal-field-control:focus-visible {
-  outline: 0;
-  border-color: var(--accent-line);
-  box-shadow: 0 0 0 3px var(--accent-tint);
+  font-size: 0.95rem;
 }
 
 .openai-portal-section-gap {
@@ -134,19 +309,12 @@
   max-width: 22rem;
 }
 
-.openai-portal-empty {
-  color: var(--text-2);
-}
-
 .openai-portal-response {
   min-height: 10rem;
   margin: 0;
   padding: 1rem;
   white-space: pre-wrap;
   word-break: break-word;
-  border: 1px solid var(--border-1);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
 }
 
 .openai-portal-model-list {
@@ -161,29 +329,26 @@
   display: grid;
   gap: 0.2rem;
   padding: 0.75rem;
-  border: 1px solid var(--border-1);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
 }
 
 .openai-portal-model-list li.current {
-  border-color: var(--accent-line);
-  background: var(--accent-tint);
+  border-color: #15202b;
+  background: rgba(21, 32, 43, 0.06);
 }
 
 .openai-portal-model-list button {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-1);
+  color: #1f1f1f;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .openai-portal-model-list span {
-  color: var(--text-2);
-  font-size: var(--font-size-sm);
+  color: #555b66;
+  font-size: 0.9rem;
 }
 
 .openai-portal-action-row {
@@ -209,8 +374,8 @@
 }
 
 .openai-portal-meta-item dt {
-  color: var(--text-3);
-  font-size: var(--font-size-xs);
+  color: #777f89;
+  font-size: 12px;
   font-weight: 650;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -218,7 +383,7 @@
 
 .openai-portal-meta-item dd {
   margin: 0;
-  color: var(--text-1);
+  color: #1f1f1f;
 }
 
 @media (max-width: 720px) {

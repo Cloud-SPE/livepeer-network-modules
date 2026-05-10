@@ -15,7 +15,7 @@ A TypeScript Fastify service exposing the current OpenAI-compatible surface:
 - `POST /v1/audio/transcriptions`
 - `GET /v1/realtime` (WebSocket upgrade)
 - `POST /v1/images/generations`
-- `POST /v1/audio/speech` stubbed behind a mode gate
+- `POST /v1/audio/speech` (feature-flagged)
 - `GET /portal/*` customer portal UI
 - `GET /admin/console/*` operator admin UI
 
@@ -25,7 +25,8 @@ Each endpoint:
 2. Maps the request onto a workload capability ID.
 3. Picks the right mode (`http-reqresp@v0` for non-streaming chat /
    embeddings; `http-stream@v0` for streaming chat;
-   `http-multipart@v0` for transcriptions).
+   `http-multipart@v0` for transcriptions; `http-reqresp@v0` for audio
+   speech).
 4. Selects a worker either from a static broker URL or via
    `service-registry-daemon`.
 5. Mints a `Livepeer-Payment` envelope via the local payer-daemon.
@@ -77,6 +78,11 @@ The same runtime now also mounts the first gateway shell routes:
 **v0.1** — the core endpoint set is implemented; smoke test runs the full
 stack via Docker compose. Tracked in
 [plan 0009](../docs/exec-plans/completed/0009-openai-gateway-reference.md).
+
+`/v1/audio/speech` is now implemented as a feature-flagged JSON
+request/opaque-binary response path. Set
+`OPENAI_AUDIO_SPEECH_ENABLED=true` and advertise a compatible
+`openai:audio-speech` capability on the broker side to enable it.
 
 ## Build + smoke
 

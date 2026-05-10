@@ -552,8 +552,14 @@ Run with `--mode=...` and a socket path; omit `--chain-rpc`:
 
 ```sh
 ./bin/livepeer-payment-daemon --mode receiver --socket /tmp/rx.sock
-./bin/livepeer-payment-daemon --mode sender   --socket /tmp/tx.sock --ticket-params-base-url=http://localhost:7000
+./bin/livepeer-payment-daemon --mode sender   --socket /tmp/tx.sock
 ```
+
+In sender mode, every `CreatePayment(...)` request must carry
+`ticket_params_base_url`, and sender mode queries
+`POST /v1/payment/ticket-params` on that exact broker origin.
+`CreatePayment` fetches canonical payee-issued `TicketParams` there
+before signing each quote-free payment.
 
 Dev mode prints a loud warning to stderr at startup:
 

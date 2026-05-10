@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"math/big"
 	"sync"
@@ -37,6 +38,21 @@ func NewMock() *Mock {
 		sessions: map[string]*mockSession{},
 		debits:   map[string]int64{},
 	}
+}
+
+func (m *Mock) GetTicketParams(_ context.Context, req GetTicketParamsRequest) (*TicketParams, error) {
+	faceValue := new(big.Int)
+	if req.FaceValue != nil {
+		faceValue.Set(req.FaceValue)
+	}
+	return &TicketParams{
+		Recipient:         append([]byte(nil), req.Recipient...),
+		FaceValue:         faceValue,
+		WinProb:           big.NewInt(0),
+		RecipientRandHash: func() []byte { sum := sha256.Sum256(req.Recipient); return sum[:] }(),
+		Seed:              nil,
+		ExpirationBlock:   new(big.Int),
+	}, nil
 }
 
 func (m *Mock) OpenSession(_ context.Context, req OpenSessionRequest) (*OpenSessionResult, error) {

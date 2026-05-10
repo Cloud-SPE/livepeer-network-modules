@@ -14,6 +14,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /registry/offerings", registry.OfferingsHandler(s.cfg))
 	s.mux.HandleFunc("GET /registry/health", registry.HealthHandler(s.cfg))
 	s.mux.HandleFunc("GET /healthz", registry.HealthzHandler())
+	s.mux.HandleFunc("POST /v1/payment/ticket-params", ticketParamsHandler(s.payment))
 
 	// LL-HLS playback served from the per-session scratch. The URL is
 	// itself a per-session bearer secret (12 random bytes hex) so

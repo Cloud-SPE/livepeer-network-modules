@@ -2,6 +2,7 @@ package sender_test
 
 import (
 	"context"
+	"math/big"
 	"net"
 	"path/filepath"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devclock"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devkeystore"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/sender"
+	senderTypes "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/types"
 )
 
 // stand spins up an in-process sender Service over a unix socket and
@@ -30,7 +32,7 @@ func stand(t *testing.T) (pb.PayerDaemonClient, func()) {
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{})
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -52,6 +54,32 @@ func stand(t *testing.T) (pb.PayerDaemonClient, func()) {
 	return pb.NewPayerDaemonClient(conn), cleanup
 }
 
+type fakeFetcher struct{}
+
+func (fakeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
+	return &senderTypes.TicketParams{
+		Recipient:         append([]byte(nil), req.Recipient...),
+		FaceValue:         new(big.Int).Set(req.FaceValue),
+		WinProb:           big.NewInt(0),
+		RecipientRandHash: []byte("0123456789abcdef0123456789abcdef"),
+		Seed:              []byte{},
+		ExpirationBlock:   big.NewInt(123456),
+		ExpirationParams: &senderTypes.TicketExpirationParams{
+			CreationRound:          1,
+			CreationRoundBlockHash: make([]byte, 32),
+		},
+	}, nil
+}
+
+type recordingFetcher struct {
+	lastBaseURL string
+}
+
+func (f *recordingFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
+	f.lastBaseURL = req.BaseURL
+	return (&fakeFetcher{}).Fetch(context.Background(), req)
+}
+
 func TestCreatePayment_HappyPath(t *testing.T) {
 	client, cleanup := stand(t)
 	defer cleanup()
@@ -60,10 +88,11 @@ func TestCreatePayment_HappyPath(t *testing.T) {
 	defer cancel()
 
 	resp, err := client.CreatePayment(ctx, &pb.CreatePaymentRequest{
-		FaceValue:  []byte{0x03, 0xe8}, // 1000
-		Recipient:  []byte("recipient-20-bytes!!"),
-		Capability: "openai:/v1/chat/completions",
-		Offering:   "gpt-5",
+		FaceValue:           []byte{0x03, 0xe8}, // 1000
+		Recipient:           []byte("recipient-20-bytes!!"),
+		Capability:          "openai:/v1/chat/completions",
+		Offering:            "gpt-5",
+		TicketParamsBaseUrl: "https://broker.example.com",
 	})
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
@@ -107,10 +136,11 @@ func TestCreatePayment_NonceAdvances(t *testing.T) {
 	defer cancel()
 
 	req := &pb.CreatePaymentRequest{
-		FaceValue:  []byte{0x03, 0xe8},
-		Recipient:  []byte("recipient-20-bytes!!"),
-		Capability: "openai:/v1/chat/completions",
-		Offering:   "gpt-5",
+		FaceValue:           []byte{0x03, 0xe8},
+		Recipient:           []byte("recipient-20-bytes!!"),
+		Capability:          "openai:/v1/chat/completions",
+		Offering:            "gpt-5",
+		TicketParamsBaseUrl: "https://broker.example.com",
 	}
 
 	first, err := client.CreatePayment(ctx, req)
@@ -136,6 +166,104 @@ func TestCreatePayment_NonceAdvances(t *testing.T) {
 	// recipient_rand_hash session key.
 	if string(p1.GetTicketParams().GetRecipientRandHash()) != string(p2.GetTicketParams().GetRecipientRandHash()) {
 		t.Error("recipient_rand_hash should be stable across calls in same session")
+	}
+}
+
+func TestCreatePayment_UsesAuthoritativeTicketFaceValue(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "tx.sock")
+
+	keystore, err := devkeystore.New("")
+	if err != nil {
+		t.Fatalf("devkeystore.New: %v", err)
+	}
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, authoritativeFetcher{})
+
+	lis, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	pb.RegisterPayerDaemonServer(gs, svc)
+	go func() { _ = gs.Serve(lis) }()
+	defer gs.GracefulStop()
+
+	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	client := pb.NewPayerDaemonClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := client.CreatePayment(ctx, &pb.CreatePaymentRequest{
+		FaceValue:           []byte{0x03, 0xe8}, // 1000 target spend
+		Recipient:           []byte("recipient-20-bytes!!"),
+		Capability:          "openai:/v1/chat/completions",
+		Offering:            "gpt-5",
+		TicketParamsBaseUrl: "https://broker.example.com",
+	})
+	if err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+
+	var pay pb.Payment
+	if err := proto.Unmarshal(resp.GetPaymentBytes(), &pay); err != nil {
+		t.Fatalf("decode payment: %v", err)
+	}
+	gotFaceValue := new(big.Int).SetBytes(pay.GetTicketParams().GetFaceValue())
+	if gotFaceValue.Cmp(big.NewInt(5000)) != 0 {
+		t.Fatalf("ticket face_value = %s; want 5000", gotFaceValue)
+	}
+	if gotEV := new(big.Int).SetBytes(resp.GetExpectedValue()); gotEV.Cmp(big.NewInt(5000)) != 0 {
+		t.Fatalf("expected_value = %s; want 5000", gotEV)
+	}
+}
+
+func TestCreatePayment_PrefersPerRequestTicketParamsBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "tx.sock")
+
+	keystore, err := devkeystore.New("")
+	if err != nil {
+		t.Fatalf("devkeystore.New: %v", err)
+	}
+	fetcher := &recordingFetcher{}
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher)
+
+	lis, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	pb.RegisterPayerDaemonServer(gs, svc)
+	go func() { _ = gs.Serve(lis) }()
+	defer gs.GracefulStop()
+
+	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	client := pb.NewPayerDaemonClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = client.CreatePayment(ctx, &pb.CreatePaymentRequest{
+		FaceValue:           []byte{0x03, 0xe8},
+		Recipient:           []byte("recipient-20-bytes!!"),
+		Capability:          "openai:chat-completions",
+		Offering:            "gpt-5",
+		TicketParamsBaseUrl: "https://broker-a.example.com",
+	})
+	if err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+	if fetcher.lastBaseURL != "https://broker-a.example.com" {
+		t.Fatalf("fetcher base URL = %q; want request-supplied broker URL", fetcher.lastBaseURL)
 	}
 }
 
@@ -208,4 +336,21 @@ func TestGetDepositInfo(t *testing.T) {
 	if resp.GetWithdrawRound() != 0 {
 		t.Errorf("withdraw_round = %d; want 0 (no unlock pending)", resp.GetWithdrawRound())
 	}
+}
+
+type authoritativeFetcher struct{}
+
+func (authoritativeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
+	return &senderTypes.TicketParams{
+		Recipient:         append([]byte(nil), req.Recipient...),
+		FaceValue:         big.NewInt(5000),
+		WinProb:           new(big.Int).Set(senderTypes.MaxWinProb),
+		RecipientRandHash: []byte("fedcba9876543210fedcba9876543210"),
+		Seed:              []byte{},
+		ExpirationBlock:   big.NewInt(123456),
+		ExpirationParams: &senderTypes.TicketExpirationParams{
+			CreationRound:          1,
+			CreationRoundBlockHash: make([]byte, 32),
+		},
+	}, nil
 }

@@ -43,6 +43,8 @@ export const registerRealtime: FastifyPluginAsync<{ cfg: Config; routeSelector: 
         const paymentBlob = await buildPayment({
           capabilityId: capability,
           offeringId: candidate.offering,
+          recipientHex: candidate.ethAddress,
+          brokerUrl: candidate.brokerUrl,
         });
 
         const broker = await modes.wsRealtime.connect(

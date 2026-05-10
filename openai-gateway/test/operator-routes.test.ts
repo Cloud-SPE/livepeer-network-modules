@@ -41,6 +41,7 @@ test('operator routes expose resolver candidates and replace rate card snapshot'
           capability: 'openai:chat-completions',
           offering: 'gpt-4o-mini',
           model: 'gpt-4o-mini',
+          interactionMode: 'http-reqresp@v0',
           ethAddress: '0xabc',
           pricePerWorkUnitWei: '42',
           workUnit: 'million_input_tokens',

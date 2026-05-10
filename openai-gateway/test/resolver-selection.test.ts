@@ -133,7 +133,7 @@ async function startStubResolver(
       cb(null, {
         entries: [
           { ethAddress: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
-          { ethAddress: "0xwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww" },
+          { ethAddress: "0x9999999999999999999999999999999999999999" },
         ],
       }),
     resolveByAddress: (call: { request: { ethAddress: string } }, cb: grpc.sendUnaryData<unknown>) => {
@@ -149,6 +149,7 @@ async function startStubResolver(
                 {
                   name: "openai:chat-completions",
                   workUnit: "tokens",
+                  extraJson: Buffer.from(JSON.stringify({ interaction_mode: "http-reqresp@v0" })),
                   offerings: [
                     {
                       id: "model-small",
@@ -168,13 +169,14 @@ async function startStubResolver(
         nodes: [
           {
             url: brokers.west,
-            operatorAddress: "0xwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+            operatorAddress: "0x9999999999999999999999999999999999999999",
             enabled: true,
             extraJson: Buffer.from(JSON.stringify({ geo: { region: "us-west-2" }, provider: "vllm" })),
             capabilities: [
               {
                 name: "openai:chat-completions",
                 workUnit: "tokens",
+                extraJson: Buffer.from(JSON.stringify({ interaction_mode: "http-stream@v0" })),
                 offerings: [
                   {
                     id: "model-small",
@@ -206,7 +208,7 @@ async function startStubResolver(
   return server;
 }
 
-test("resolver-backed selection prefers matching extra/constraints, then lowest price", async (t) => {
+test("resolver-backed selection honors interaction mode before price and still applies extra/constraints", async (t) => {
   const paymentProtoRoot = await locatePaymentProtoRoot();
   const resolverProtoRoot = await locateResolverProtoRoot();
   if (!paymentProtoRoot || !resolverProtoRoot) {
@@ -233,6 +235,7 @@ test("resolver-backed selection prefers matching extra/constraints, then lowest 
   const cfg: Config = {
     brokerUrl: null,
     resolverSocket: resolverSock,
+    recipientHex: null,
     listenPort: 0,
     databaseUrl: 'postgres://test:test@localhost:5432/test',
     authPepper: 'test-pepper',
@@ -281,15 +284,15 @@ test("resolver-backed selection prefers matching extra/constraints, then lowest 
   assert.equal(westCaptures.length, 0);
   assert.equal(eastCaptures[0]?.requestId, "resolver-pref-1");
 
-  const cheapestResp = await fetch(`${base}/v1/chat/completions`, {
+  const streamResp = await fetch(`${base}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      [HEADER.REQUEST_ID]: "resolver-cheapest-1",
+      [HEADER.REQUEST_ID]: "resolver-stream-1",
     },
-    body: JSON.stringify({ model: "model-small", messages: [{ role: "user", content: "hi again" }] }),
+    body: JSON.stringify({ model: "model-small", messages: [{ role: "user", content: "hi again" }], stream: true }),
   });
-  assert.equal(cheapestResp.status, 200);
+  assert.equal(streamResp.status, 200);
   assert.equal(westCaptures.length, 1);
-  assert.equal(westCaptures[0]?.requestId, "resolver-cheapest-1");
+  assert.equal(westCaptures[0]?.requestId, "resolver-stream-1");
 });

@@ -287,7 +287,7 @@ function nodesView(selectedBrokerUrl: string | null) {
       ? null
       : state.resolverCandidates.find((row) => row.brokerUrl === selectedBrokerUrl) ?? null;
   return html`
-    <div class="openai-admin-two-col-300">
+    <div class="openai-admin-stack">
       <portal-data-table heading="Nodes" description="Resolver candidates currently visible to the OpenAI gateway.">
         <table>
           <thead>
@@ -306,7 +306,7 @@ function nodesView(selectedBrokerUrl: string | null) {
           </tbody>
         </table>
       </portal-data-table>
-      <portal-detail-section heading="Node detail" description="Selected resolver candidate route metadata.">
+      <portal-card heading="Node detail" subheading="Selected resolver candidate route metadata.">
         ${selectedNode
           ? html`
               ${metaList([
@@ -322,7 +322,7 @@ function nodesView(selectedBrokerUrl: string | null) {
               <pre>${prettyJson(selectedNode.constraints)}</pre>
             `
           : html`<p class="openai-admin-empty">Select a node to inspect routing metadata.</p>`}
-      </portal-detail-section>
+      </portal-card>
     </div>
   `;
 }
@@ -336,7 +336,7 @@ function customersView(selectedCustomerId: string | null) {
     ? state.customers.find((row) => row.id === selectedCustomerId) ?? state.selected
     : state.selected;
   return html`
-    <div class="openai-admin-two-col-320">
+    <div class="openai-admin-stack">
       <portal-card heading="Customers" subheading="Search, create, and select customer accounts.">
         <form @submit=${searchCustomers} class="openai-admin-form-inline">
           <portal-input name="q" label="Search" .value=${state.query}></portal-input>
@@ -372,22 +372,26 @@ function customersView(selectedCustomerId: string | null) {
             ? html`<div class="openai-admin-section-gap"><portal-toast variant="success" message=${`Initial UI auth token: ${state.createdAuthToken}`}></portal-toast></div>`
             : ''}
         </portal-detail-section>
-        <div class="openai-admin-key-list openai-admin-section-gap openai-admin-stack--sm">
-          ${state.customers.map(
-            (row) => html`
-              <portal-detail-section heading=${row.email} description=${row.id}>
-                <div class="openai-admin-row">
-                  <div class="openai-admin-status-inline">
-                    <portal-status-pill label=${row.status}></portal-status-pill>
-                    <span class="openai-admin-balance-inline">${usd(row.balance_usd_cents)}</span>
-                  </div>
-                  <portal-button variant="ghost" @click=${() => setRoute(`customers/${row.id}`)}>Open</portal-button>
-                </div>
-              </portal-detail-section>
-            `,
-          )}
-        </div>
       </portal-card>
+      <portal-data-table heading="Customer list" description="Search results and provisioned customer accounts.">
+        <table>
+          <thead>
+            <tr><th>Email</th><th>Tier</th><th>Status</th><th>Balance</th><th>Reserved</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${state.customers.map(
+              (row) => html`<tr>
+                <td>${row.email}</td>
+                <td>${row.tier}</td>
+                <td><portal-status-pill label=${row.status}></portal-status-pill></td>
+                <td>${usd(row.balance_usd_cents)}</td>
+                <td>${usd(row.reserved_usd_cents)}</td>
+                <td><portal-button variant="ghost" @click=${() => setRoute(`customers/${row.id}`)}>Open</portal-button></td>
+              </tr>`,
+            )}
+          </tbody>
+        </table>
+      </portal-data-table>
       <portal-card heading="Customer detail" subheading="Balance, status, auth tokens, and API keys for the selected account.">
         ${selected ? customerDetailView(selected) : html`<p class="openai-admin-empty">Select a customer to inspect details.</p>`}
       </portal-card>

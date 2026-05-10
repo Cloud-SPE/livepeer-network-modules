@@ -53,10 +53,58 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
     await reply.code(200).header("Content-Type", "text/plain").send("ok\n");
   });
 
-  registerChatCompletions(app, cfg, routeSelector);
-  registerEmbeddings(app, cfg, routeSelector);
-  registerAudioTranscriptions(app, cfg, routeSelector);
-  registerAudioSpeech(app, cfg);
+  registerChatCompletions(
+    app,
+    cfg,
+    routeSelector,
+    input.portal && input.rateCardStore
+      ? {
+          authResolver: input.portal.authResolver,
+          uiAuthResolver: input.portal.uiAuthResolver,
+          wallet: input.portal.wallet,
+          rateCardStore: input.rateCardStore,
+        }
+      : undefined,
+  );
+  registerEmbeddings(
+    app,
+    cfg,
+    routeSelector,
+    input.portal && input.rateCardStore
+      ? {
+          authResolver: input.portal.authResolver,
+          uiAuthResolver: input.portal.uiAuthResolver,
+          wallet: input.portal.wallet,
+          rateCardStore: input.rateCardStore,
+        }
+      : undefined,
+  );
+  registerAudioTranscriptions(
+    app,
+    cfg,
+    routeSelector,
+    input.portal && input.rateCardStore
+      ? {
+          authResolver: input.portal.authResolver,
+          uiAuthResolver: input.portal.uiAuthResolver,
+          wallet: input.portal.wallet,
+          rateCardStore: input.rateCardStore,
+        }
+      : undefined,
+  );
+  registerAudioSpeech(
+    app,
+    cfg,
+    routeSelector,
+    input.portal && input.rateCardStore
+      ? {
+          authResolver: input.portal.authResolver,
+          uiAuthResolver: input.portal.uiAuthResolver,
+          wallet: input.portal.wallet,
+          rateCardStore: input.rateCardStore,
+        }
+      : undefined,
+  );
   if (input.db && input.portal) {
     registerCustomerPortalRoutes(app, {
       db: input.db,
@@ -88,7 +136,19 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
       });
     }
   }
-  registerImagesGenerations(app, cfg, routeSelector);
+  registerImagesGenerations(
+    app,
+    cfg,
+    routeSelector,
+    input.portal && input.rateCardStore
+      ? {
+          authResolver: input.portal.authResolver,
+          uiAuthResolver: input.portal.uiAuthResolver,
+          wallet: input.portal.wallet,
+          rateCardStore: input.rateCardStore,
+        }
+      : undefined,
+  );
   void app.register(registerRealtime, { cfg, routeSelector });
 
   await registerSpaStatic(app, {

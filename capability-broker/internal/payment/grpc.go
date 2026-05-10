@@ -54,6 +54,42 @@ func (g *GRPC) Shutdown() error {
 	return g.conn.Close()
 }
 
+func (g *GRPC) GetTicketParams(ctx context.Context, req GetTicketParamsRequest) (*TicketParams, error) {
+	faceValue := []byte(nil)
+	if req.FaceValue != nil {
+		faceValue = req.FaceValue.Bytes()
+	}
+	resp, err := g.client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+		Sender:     req.Sender,
+		Recipient:  req.Recipient,
+		FaceValue:  faceValue,
+		Capability: req.Capability,
+		Offering:   req.Offering,
+	})
+	if err != nil {
+		return nil, err
+	}
+	tp := resp.GetTicketParams()
+	if tp == nil {
+		return &TicketParams{}, nil
+	}
+	out := &TicketParams{
+		Recipient:         append([]byte(nil), tp.GetRecipient()...),
+		FaceValue:         new(big.Int).SetBytes(tp.GetFaceValue()),
+		WinProb:           new(big.Int).SetBytes(tp.GetWinProb()),
+		RecipientRandHash: append([]byte(nil), tp.GetRecipientRandHash()...),
+		Seed:              append([]byte(nil), tp.GetSeed()...),
+		ExpirationBlock:   new(big.Int).SetBytes(tp.GetExpirationBlock()),
+	}
+	if exp := tp.GetExpirationParams(); exp != nil {
+		out.ExpirationParams = &TicketExpirationParams{
+			CreationRound:          exp.GetCreationRound(),
+			CreationRoundBlockHash: append([]byte(nil), exp.GetCreationRoundBlockHash()...),
+		}
+	}
+	return out, nil
+}
+
 func (g *GRPC) OpenSession(ctx context.Context, req OpenSessionRequest) (*OpenSessionResult, error) {
 	priceBytes := []byte(nil)
 	if req.PricePerWorkUnitWei != nil {

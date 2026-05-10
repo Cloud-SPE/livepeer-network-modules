@@ -21,6 +21,8 @@ export function registerModelsRoute(
         owned_by: "livepeer",
         capability: model.capability,
         offering: model.offering,
+        supported_modes: model.supported_modes,
+        surface: model.surface,
         broker_url: model.brokerUrl,
         eth_address: model.ethAddress,
         price_per_work_unit_wei: model.pricePerWorkUnitWei,

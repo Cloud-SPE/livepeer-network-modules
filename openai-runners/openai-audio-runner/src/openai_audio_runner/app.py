@@ -1,6 +1,7 @@
 import asyncio
 import io
 import logging
+import math
 import os
 import subprocess
 from contextlib import asynccontextmanager
@@ -31,6 +32,7 @@ CAP_TRANSLATIONS = "openai-audio-translations"
 MODEL_ALIAS = "whisper-large-v3"
 
 SUPPORTED_RESPONSE_FORMATS = {"json", "text", "srt", "vtt", "verbose_json"}
+WORK_UNITS_HEADER = "X-Livepeer-Work-Units"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("whisper-runner")
@@ -131,22 +133,29 @@ def _render_vtt(segments) -> str:
 def _build_response(result: dict, response_format: str, task: str, language: Optional[str], duration: float) -> Response:
     text = (result.get("text") or "").strip()
     segments = _chunks_to_segments(result.get("chunks"))
+    work_units = max(0, math.ceil(duration))
+    usage = {
+        "duration_seconds": work_units,
+        "duration_ms": max(0, round(duration * 1000)),
+    }
+    headers = {WORK_UNITS_HEADER: str(work_units)}
 
     if response_format == "text":
-        return PlainTextResponse(text)
+        return PlainTextResponse(text, headers=headers)
     if response_format == "srt":
-        return PlainTextResponse(_render_srt(segments), media_type="application/x-subrip")
+        return PlainTextResponse(_render_srt(segments), media_type="application/x-subrip", headers=headers)
     if response_format == "vtt":
-        return PlainTextResponse(_render_vtt(segments), media_type="text/vtt")
+        return PlainTextResponse(_render_vtt(segments), media_type="text/vtt", headers=headers)
     if response_format == "verbose_json":
         return JSONResponse({
             "task": task,
             "language": language or "",
             "duration": duration,
+            "usage": usage,
             "text": text,
             "segments": segments,
-        })
-    return JSONResponse({"text": text})
+        }, headers=headers)
+    return JSONResponse({"text": text, "usage": usage}, headers=headers)
 
 
 @asynccontextmanager

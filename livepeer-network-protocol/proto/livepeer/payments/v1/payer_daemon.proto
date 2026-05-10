@@ -79,6 +79,13 @@ message CreatePaymentRequest {
   // Offering within the capability being purchased, e.g. a model
   // identifier. Forwarded to the payee-side ticket-params endpoint.
   string offering = 4;
+
+  // Optional per-request broker origin the sender should query for
+  // `POST /v1/payment/ticket-params`. Gateway-backed resolver flows set
+  // this to the selected broker URL so the ticket-params source matches
+  // the payee that will validate the payment. When empty, sender mode
+  // may fall back to a configured default for single-broker/dev setups.
+  string ticket_params_base_url = 5;
 }
 
 message CreatePaymentResponse {

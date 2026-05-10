@@ -38,6 +38,7 @@ interface CreatePaymentRequest {
   recipient: Buffer;
   capability: string;
   offering: string;
+  ticketParamsBaseUrl?: string;
 }
 
 interface CreatePaymentResponse {
@@ -49,11 +50,6 @@ interface CreatePaymentResponse {
 interface HealthResponse {
   status: string;
 }
-
-// 20-byte recipient placeholder; the payer-daemon doesn't validate the
-// address in v0.2 (chain integration is plan 0016) and the receiver
-// embeds whatever the daemon sends.
-const DEFAULT_RECIPIENT_HEX = "1234567890abcdef1234567890abcdef12345678";
 
 // Target spend per request. The receiver may answer with a larger
 // face_value × lower win_prob per the quote-free flow; the gateway
@@ -113,15 +109,18 @@ export function shutdown(): void {
 export async function buildPayment(inputs: {
   capabilityId: string;
   offeringId: string;
+  recipientHex: string;
+  brokerUrl?: string;
 }): Promise<string> {
   if (!cachedClient) {
     throw new Error("buildPayment: payer-daemon client not initialized; call init() first");
   }
   const req: CreatePaymentRequest = {
     faceValue: bigintToBigEndian(DEFAULT_FACE_VALUE_WEI),
-    recipient: hexToBuffer(DEFAULT_RECIPIENT_HEX),
+    recipient: hexToBuffer(inputs.recipientHex),
     capability: inputs.capabilityId,
     offering: inputs.offeringId,
+    ticketParamsBaseUrl: inputs.brokerUrl,
   };
   const resp = await new Promise<CreatePaymentResponse>((res, rej) => {
     cachedClient!.createPayment(req, (err, r) => (err ? rej(err) : res(r)));
@@ -141,5 +140,9 @@ function bigintToBigEndian(n: bigint): Buffer {
 }
 
 function hexToBuffer(hex: string): Buffer {
-  return Buffer.from(hex, "hex");
+  const normalized = hex.trim().replace(/^0x/i, "");
+  if (!/^[0-9a-fA-F]{40}$/.test(normalized)) {
+    throw new Error(`invalid recipient hex address: ${hex}`);
+  }
+  return Buffer.from(normalized, "hex");
 }

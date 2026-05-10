@@ -17,6 +17,7 @@ export interface RouteCandidate {
   capability: string;
   offering: string;
   model: string | null;
+  interactionMode: string | null;
   ethAddress: string;
   pricePerWorkUnitWei: string;
   workUnit: string;
@@ -27,6 +28,7 @@ export interface RouteCandidate {
 export interface RouteSelectionInput {
   capability: string;
   offering: string;
+  interactionMode?: string;
   request: FastifyRequest;
 }
 
@@ -122,7 +124,8 @@ export function createRouteSelector(cfg: Config): RouteSelector {
             capability: input.capability,
             offering: input.offering,
             model: input.offering || null,
-            ethAddress: "",
+            interactionMode: input.interactionMode ?? null,
+            ethAddress: cfg.recipientHex ?? "",
             pricePerWorkUnitWei: "0",
             workUnit: "",
             extra: null,
@@ -137,7 +140,8 @@ export function createRouteSelector(cfg: Config): RouteSelector {
             capability: '',
             offering: '',
             model: null,
-            ethAddress: '',
+            interactionMode: null,
+            ethAddress: cfg.recipientHex ?? '',
             pricePerWorkUnitWei: '0',
             workUnit: '',
             extra: null,
@@ -160,6 +164,9 @@ export function createRouteSelector(cfg: Config): RouteSelector {
       const requestedModel = input.offering.trim();
       const matches = snapshot.candidates.filter((candidate) => {
         if (candidate.capability !== normalizeCapabilityId(input.capability)) return false;
+        if (input.interactionMode && candidate.interactionMode && candidate.interactionMode !== input.interactionMode) {
+          return false;
+        }
         if (requestedModel) {
           if (candidate.model) {
             if (candidate.model !== requestedModel) return false;
@@ -265,6 +272,7 @@ function flattenResolveResult(resolved: ResolveResult): RouteCandidate[] {
           capability: normalizeCapabilityId(stripCapabilityModelSuffix(capability.name)),
           offering: offering.id,
           model,
+          interactionMode: inferInteractionMode(mergedExtra),
           ethAddress: node.operatorAddress,
           pricePerWorkUnitWei: offering.pricePerWorkUnitWei ?? "0",
           workUnit: capability.workUnit ?? "",
@@ -284,6 +292,12 @@ function inferModel(capabilityName: string, extra: JsonValue | null): string | n
   }
   const suffix = capabilityModelSuffix(capabilityName);
   return suffix || null;
+}
+
+function inferInteractionMode(extra: JsonValue | null): string | null {
+  if (!isJsonObject(extra)) return null;
+  const mode = extra["interaction_mode"];
+  return typeof mode === "string" && mode.trim().length > 0 ? mode.trim() : null;
 }
 
 function stripCapabilityModelSuffix(capabilityName: string): string {

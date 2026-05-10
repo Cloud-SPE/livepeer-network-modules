@@ -16,9 +16,10 @@ interface CapturedCreatePayment {
   recipient: Buffer;
   capability: string;
   offering: string;
+  ticketParamsBaseUrl?: string;
 }
 
-test('payment.buildPayment sends face_value + recipient + capability + offering and reads payment_bytes back', async (t) => {
+test('payment.buildPayment sends face_value + recipient + capability + offering + ticket_params_base_url and reads payment_bytes back', async (t) => {
   const captured: CapturedCreatePayment[] = [];
 
   const tmpDir = await fs.mkdtemp(path.join(tmpdir(), 'openai-gateway-payment-'));
@@ -78,6 +79,8 @@ test('payment.buildPayment sends face_value + recipient + capability + offering 
   const blob = await payment.buildPayment({
     capabilityId: 'openai:chat-completions',
     offeringId: 'model-small',
+    recipientHex: '0x1111111111111111111111111111111111111111',
+    brokerUrl: 'https://broker-a.example.com',
   });
 
   assert.equal(blob, Buffer.from('test-payment-bytes').toString('base64'));
@@ -85,10 +88,77 @@ test('payment.buildPayment sends face_value + recipient + capability + offering 
   const req = captured[0]!;
   assert.equal(req.capability, 'openai:chat-completions');
   assert.equal(req.offering, 'model-small');
+  assert.equal(req.ticketParamsBaseUrl, 'https://broker-a.example.com');
   assert.ok(Buffer.isBuffer(req.faceValue), 'face_value should be raw bytes (big-endian)');
   assert.ok(Buffer.isBuffer(req.recipient), 'recipient should be raw bytes (20-byte address)');
   assert.equal(req.recipient.length, 20);
+  assert.equal(req.recipient.toString('hex'), '1111111111111111111111111111111111111111');
   assert.ok(req.faceValue.length > 0, 'face_value should be non-empty for the default 1000 wei');
+});
+
+test('payment.buildPayment rejects malformed recipient addresses', async (t) => {
+  const tmpDir = await fs.mkdtemp(path.join(tmpdir(), 'openai-gateway-payment-'));
+  const sock = path.join(tmpDir, 'payer.sock');
+  const repoProtoRoot = await locateProtoRoot();
+  if (!repoProtoRoot) {
+    t.diagnostic('skipping: livepeer-network-protocol proto tree not found');
+    return;
+  }
+  const usingProtoRoot = repoProtoRoot;
+  const def = await protoLoader.load(
+    [
+      'livepeer/payments/v1/types.proto',
+      'livepeer/payments/v1/payer_daemon.proto',
+    ],
+    {
+      keepCase: false,
+      longs: String,
+      enums: String,
+      defaults: true,
+      oneofs: true,
+      includeDirs: [usingProtoRoot],
+    },
+  );
+  const proto = grpc.loadPackageDefinition(def) as unknown as {
+    livepeer: { payments: { v1: { PayerDaemon: { service: grpc.ServiceDefinition } } } };
+  };
+
+  const server = new grpc.Server();
+  server.addService(proto.livepeer.payments.v1.PayerDaemon.service, {
+    createPayment: (_call: unknown, cb: grpc.sendUnaryData<unknown>) => {
+      cb(null, {
+        paymentBytes: Buffer.from('test-payment-bytes'),
+        ticketsCreated: 1,
+        expectedValue: Buffer.from([0x03, 0xe8]),
+      });
+    },
+    getDepositInfo: (_call: unknown, cb: grpc.sendUnaryData<unknown>) => cb(null, {}),
+    getSessionDebits: (_call: unknown, cb: grpc.sendUnaryData<unknown>) =>
+      cb(null, { totalWorkUnits: 0, debitCount: 0, closed: false }),
+    health: (_call: unknown, cb: grpc.sendUnaryData<unknown>) => cb(null, { status: 'ok' }),
+  });
+  await new Promise<void>((res, rej) => {
+    server.bindAsync(`unix:${sock}`, grpc.ServerCredentials.createInsecure(), (err) =>
+      err ? rej(err) : res(),
+    );
+  });
+
+  t.after(async () => {
+    await new Promise<void>((res) => server.tryShutdown(() => res()));
+    payment.shutdown();
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  await payment.init({ socketPath: sock, protoRoot: usingProtoRoot });
+  await assert.rejects(
+    () =>
+      payment.buildPayment({
+        capabilityId: 'openai:chat-completions',
+        offeringId: 'model-small',
+        recipientHex: 'not-an-address',
+      }),
+    /invalid recipient hex address/,
+  );
 });
 
 test('Recorder accumulates work-unit records and drains them', () => {

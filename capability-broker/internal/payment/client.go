@@ -24,6 +24,11 @@ import (
 //
 // Implementations may persist state (GRPC) or hold it in memory (Mock).
 type Client interface {
+	// GetTicketParams proxies the payee-side quote-free ticket-params
+	// issuance surface. The broker exposes this over HTTP so sender-mode
+	// payment daemons can mint tickets against payee-issued params.
+	GetTicketParams(ctx context.Context, req GetTicketParamsRequest) (*TicketParams, error)
+
 	// OpenSession idempotently opens a payee-side session for the
 	// given work_id with the supplied pricing metadata. Returns the
 	// daemon's outcome (opened vs already-open).
@@ -67,6 +72,33 @@ type OpenSessionRequest struct {
 	WorkUnit            string
 }
 
+// GetTicketParamsRequest mirrors the payee-daemon quote-free request
+// without exposing generated proto types to the broker's HTTP layer.
+type GetTicketParamsRequest struct {
+	Sender     []byte
+	Recipient  []byte
+	FaceValue  *big.Int
+	Capability string
+	Offering   string
+}
+
+// TicketParams is the broker-local shape of payee-issued ticket params.
+type TicketParams struct {
+	Recipient         []byte
+	FaceValue         *big.Int
+	WinProb           *big.Int
+	RecipientRandHash []byte
+	Seed              []byte
+	ExpirationBlock   *big.Int
+	ExpirationParams  *TicketExpirationParams
+}
+
+// TicketExpirationParams mirrors the payee-daemon response submessage.
+type TicketExpirationParams struct {
+	CreationRound          int64
+	CreationRoundBlockHash []byte
+}
+
 // OpenSessionResult is the daemon's outcome enum, simplified to a bool.
 type OpenSessionResult struct {
 	AlreadyOpen bool
@@ -81,9 +113,9 @@ type ProcessPaymentRequest struct {
 // ProcessPaymentResult is what the daemon returns after sealing the
 // sender.
 type ProcessPaymentResult struct {
-	Sender         []byte
-	Balance        *big.Int
-	WinnersQueued  int32
+	Sender        []byte
+	Balance       *big.Int
+	WinnersQueued int32
 }
 
 // DebitBalanceRequest captures one post-handler debit.

@@ -4,6 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
@@ -32,6 +33,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY src ./src
 RUN pip3 install --no-cache-dir --break-system-packages -e . \
+    && python3 -m spacy download en_core_web_sm \
     && rm -rf /root/.cache
 
 COPY offering.yaml /etc/runner/offering.yaml

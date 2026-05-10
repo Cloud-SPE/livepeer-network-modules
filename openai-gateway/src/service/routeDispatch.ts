@@ -9,6 +9,7 @@ interface DispatchCommon {
   routeSelector: RouteSelector;
   capability: string;
   offering: string;
+  interactionMode?: string;
   requestId: string;
   request: import("fastify").FastifyRequest;
 }
@@ -31,7 +32,7 @@ interface StreamDispatch extends DispatchCommon {
 export async function dispatchReqresp(opts: ReqRespDispatch): Promise<httpReqresp.SendResult> {
   return attemptCandidates(
     opts.routeSelector,
-    { capability: opts.capability, offering: opts.offering, request: opts.request },
+    { capability: opts.capability, offering: opts.offering, interactionMode: opts.interactionMode, request: opts.request },
     async (candidate) =>
       httpReqresp.send({
         brokerUrl: candidate.brokerUrl,
@@ -40,6 +41,8 @@ export async function dispatchReqresp(opts: ReqRespDispatch): Promise<httpReqres
         paymentBlob: await buildPayment({
           capabilityId: opts.capability,
           offeringId: candidate.offering,
+          recipientHex: candidate.ethAddress,
+          brokerUrl: candidate.brokerUrl,
         }),
         body: opts.body,
         contentType: opts.contentType,
@@ -51,7 +54,7 @@ export async function dispatchReqresp(opts: ReqRespDispatch): Promise<httpReqres
 export async function dispatchMultipart(opts: MultipartDispatch): Promise<httpMultipart.SendResult> {
   return attemptCandidates(
     opts.routeSelector,
-    { capability: opts.capability, offering: opts.offering, request: opts.request },
+    { capability: opts.capability, offering: opts.offering, interactionMode: opts.interactionMode, request: opts.request },
     async (candidate) =>
       httpMultipart.send({
         brokerUrl: candidate.brokerUrl,
@@ -60,6 +63,8 @@ export async function dispatchMultipart(opts: MultipartDispatch): Promise<httpMu
         paymentBlob: await buildPayment({
           capabilityId: opts.capability,
           offeringId: candidate.offering,
+          recipientHex: candidate.ethAddress,
+          brokerUrl: candidate.brokerUrl,
         }),
         body: opts.body,
         contentType: opts.contentType,
@@ -71,7 +76,7 @@ export async function dispatchMultipart(opts: MultipartDispatch): Promise<httpMu
 export async function dispatchStream(opts: StreamDispatch): Promise<httpStream.StreamHandle> {
   return attemptCandidates(
     opts.routeSelector,
-    { capability: opts.capability, offering: opts.offering, request: opts.request },
+    { capability: opts.capability, offering: opts.offering, interactionMode: opts.interactionMode, request: opts.request },
     async (candidate) =>
       httpStream.sendStreaming({
         brokerUrl: candidate.brokerUrl,
@@ -80,6 +85,8 @@ export async function dispatchStream(opts: StreamDispatch): Promise<httpStream.S
         paymentBlob: await buildPayment({
           capabilityId: opts.capability,
           offeringId: candidate.offering,
+          recipientHex: candidate.ethAddress,
+          brokerUrl: candidate.brokerUrl,
         }),
         body: opts.body,
         contentType: opts.contentType,
@@ -93,8 +100,9 @@ export async function selectRealtimeCandidate(
   request: import("fastify").FastifyRequest,
   capability: string,
   offering: string,
+  interactionMode?: string,
 ): Promise<RouteCandidate> {
-  const candidates = await routeSelector.select({ capability, offering, request });
+  const candidates = await routeSelector.select({ capability, offering, interactionMode, request });
   if (candidates.length === 0) {
     throw new Error(`no route candidates for capability=${capability} offering=${offering}`);
   }
@@ -103,7 +111,7 @@ export async function selectRealtimeCandidate(
 
 async function attemptCandidates<T>(
   routeSelector: RouteSelector,
-  input: { capability: string; offering: string; request: import("fastify").FastifyRequest },
+  input: { capability: string; offering: string; interactionMode?: string; request: import("fastify").FastifyRequest },
   fn: (candidate: RouteCandidate) => Promise<T>,
 ): Promise<T> {
   const candidates = await routeSelector.select(input);

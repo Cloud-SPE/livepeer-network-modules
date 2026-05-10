@@ -1,30 +1,24 @@
 // Package sender implements the PayerDaemon RPC surface and the
 // sender-side ticket-creation state machine.
 //
-// v0.2 scope:
-//   - StartSession opens a session against a recipient/capability/offering
-//     and returns the workID (hex of recipient_rand_hash).
-//   - CreateTicketBatch signs `n` tickets monotonically against the
-//     session, using a stubbed deterministic key (dev mode only).
-//   - For v0.2 the receiver-issued TicketParams flow is stubbed — the
-//     sender fabricates locally-deterministic params instead of calling
-//     `PayeeDaemon.GetTicketParams`. Plan 0016 wires the real fetch.
-//
-// Future scope (plan 0016+):
-//   - Real on-chain Broker queries via providers.Broker.
-//   - Real ECDSA signing via providers.KeyStore.
-//   - MaxEV / MaxTotalEV / DepositMultiplier validation per
-//     `docs/operator-runbook.md` §Economics.
+// Current scope:
+//   - CreatePayment fetches quote-free payee-issued TicketParams over
+//     HTTP from the broker's `/v1/payment/ticket-params` endpoint.
+//   - The sender caches sessions by (recipient, capability, offering,
+//     requested target spend) so repeated calls reuse the same
+//     recipient_rand_hash and nonce stream.
+//   - Each payment is signed against the authoritative TicketParams
+//     returned by the payee, not against a locally fabricated copy.
 package sender
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
+	"strings"
 	"sync"
 
 	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
@@ -41,12 +35,15 @@ type Service struct {
 	broker   providers.Broker
 	clock    providers.Clock
 	logger   *slog.Logger
+	fetcher  TicketParamsFetcher
 
 	mu       sync.Mutex
-	sessions map[string]*senderSession // keyed by hex(recipientRandHash)
+	sessions map[string]*senderSession // keyed by recipient/capability/offering/target-spend tuple
 }
 
 type senderSession struct {
+	workID       string
+	cacheKey     string
 	ticketParams *types.TicketParams
 	nonce        uint32
 	capability   string
@@ -54,7 +51,7 @@ type senderSession struct {
 }
 
 // New constructs a sender Service.
-func New(keystore providers.KeyStore, broker providers.Broker, clock providers.Clock, logger *slog.Logger) *Service {
+func New(keystore providers.KeyStore, broker providers.Broker, clock providers.Clock, logger *slog.Logger, fetcher TicketParamsFetcher) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -63,15 +60,12 @@ func New(keystore providers.KeyStore, broker providers.Broker, clock providers.C
 		broker:   broker,
 		clock:    clock,
 		logger:   logger,
+		fetcher:  fetcher,
 		sessions: map[string]*senderSession{},
 	}
 }
 
 // CreatePayment implements pb.PayerDaemonServer.
-//
-// v0.2 fabricates stub TicketParams locally; plan 0016 fetches them
-// from the receiver via PayeeDaemon.GetTicketParams over HTTP. The wire
-// shape is identical so consumers don't change between v0.2 and 0016.
 func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentRequest) (*pb.CreatePaymentResponse, error) {
 	if len(req.GetRecipient()) == 0 {
 		return nil, errors.New("recipient is empty")
@@ -86,10 +80,16 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	if err != nil {
 		return nil, fmt.Errorf("face_value: %w", err)
 	}
+	if s.fetcher == nil {
+		return nil, errors.New("ticket params fetcher is not configured")
+	}
+	if strings.TrimSpace(req.GetTicketParamsBaseUrl()) == "" {
+		return nil, errors.New("ticket params base URL is empty")
+	}
 
-	// v0.2: defense-in-depth sender validation — query Broker for
-	// deposit/reserve. Dev fake always returns "fine"; plan 0016's real
-	// broker rejects on no-deposit / pending-unlock.
+	// Defense-in-depth sender validation — query Broker for
+	// deposit/reserve. Dev fake always returns "fine"; chain-backed
+	// sender mode rejects on no-deposit / pending-unlock.
 	info, err := s.broker.GetSenderInfo(ctx, s.keystore.Address())
 	if err != nil {
 		return nil, fmt.Errorf("get sender info: %w", err)
@@ -98,27 +98,25 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		return nil, fmt.Errorf("sender validation: %w", err)
 	}
 
-	// Fabricate stub TicketParams. Plan 0016 swaps this for an HTTP
-	// fetch against PayeeDaemon.GetTicketParams (proxied through the
-	// worker's /v1/payment/ticket-params endpoint).
-	params := stubTicketParams(req.GetRecipient(), faceValue, req.GetCapability(), req.GetOffering(), s.clock)
+	session, err := s.findOrOpenSession(
+		ctx,
+		req.GetRecipient(),
+		faceValue,
+		req.GetCapability(),
+		req.GetOffering(),
+		req.GetTicketParamsBaseUrl(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("ticket params: %w", err)
+	}
 
-	// Find or open the session. The sender keys sessions by
-	// recipient_rand_hash so consecutive CreatePayment calls against
-	// the same recipient amortize the params.
-	workID := hex.EncodeToString(params.RecipientRandHash)
-	session := s.findOrOpenSession(workID, params, req.GetCapability(), req.GetOffering())
-
-	// Sign one ticket. Plan 0015 will allow batches > 1 for interim
-	// debits.
-	tsp, err := s.signOneTicket(session, faceValue, params)
+	tsp, err := s.signOneTicket(session)
 	if err != nil {
 		return nil, fmt.Errorf("sign ticket: %w", err)
 	}
 
-	// Build the wire Payment.
 	batch := &types.TicketBatch{
-		TicketParams: params,
+		TicketParams: session.ticketParams,
 		Sender:       s.keystore.Address(),
 		ExpirationParams: &types.TicketExpirationParams{
 			CreationRound:          s.clock.LastInitializedRound(),
@@ -133,14 +131,15 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		return nil, fmt.Errorf("marshal payment: %w", err)
 	}
 
-	ev := types.EV(faceValue, params.WinProb)
+	ev := types.EV(session.ticketParams.FaceValue, session.ticketParams.WinProb)
 	evBytes := evToBytes(ev)
 
 	s.logger.Info("payment created",
-		"work_id", workID,
+		"work_id", session.workID,
 		"capability", req.GetCapability(),
 		"offering", req.GetOffering(),
-		"face_value", faceValue.String(),
+		"target_face_value", faceValue.String(),
+		"ticket_face_value", session.ticketParams.FaceValue.String(),
 		"nonce", tsp.SenderNonce)
 
 	return &pb.CreatePaymentResponse{
@@ -175,33 +174,58 @@ func (s *Service) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthResp
 
 // ─── helpers ──────────────────────────────────────────────────────────
 
-func (s *Service) findOrOpenSession(workID string, params *types.TicketParams, capability, offering string) *senderSession {
+func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceValue *big.Int, capability, offering, ticketParamsBaseURL string) (*senderSession, error) {
+	key := sessionKey(recipient, capability, offering, faceValue, ticketParamsBaseURL)
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if sess, ok := s.sessions[workID]; ok {
-		return sess
+	if sess, ok := s.sessions[key]; ok {
+		s.mu.Unlock()
+		return sess, nil
 	}
+	s.mu.Unlock()
+
+	params, err := s.fetcher.Fetch(ctx, TicketParamsRequest{
+		BaseURL:    ticketParamsBaseURL,
+		Sender:     append([]byte(nil), s.keystore.Address()...),
+		Recipient:  append([]byte(nil), recipient...),
+		FaceValue:  new(big.Int).Set(faceValue),
+		Capability: capability,
+		Offering:   offering,
+	})
+	if err != nil {
+		return nil, err
+	}
+	workID := hex.EncodeToString(params.RecipientRandHash)
 	sess := &senderSession{
-		ticketParams: params,
+		workID:       workID,
+		cacheKey:     key,
+		ticketParams: cloneTicketParams(params),
 		capability:   capability,
 		offering:     offering,
 	}
-	s.sessions[workID] = sess
-	return sess
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.sessions[key]; ok {
+		return existing, nil
+	}
+	s.sessions[key] = sess
+	return sess, nil
 }
 
 // signOneTicket increments the session's nonce, builds a Ticket, hashes
 // it, and signs with the keystore.
-func (s *Service) signOneTicket(session *senderSession, faceValue *big.Int, params *types.TicketParams) (*types.TicketSenderParams, error) {
+func (s *Service) signOneTicket(session *senderSession) (*types.TicketSenderParams, error) {
 	s.mu.Lock()
 	session.nonce++
 	nonce := session.nonce
 	s.mu.Unlock()
 
+	params := session.ticketParams
 	hash := ticketHash(&types.Ticket{
 		Recipient:         params.Recipient,
 		Sender:            s.keystore.Address(),
-		FaceValue:         faceValue,
+		FaceValue:         params.FaceValue,
 		WinProb:           params.WinProb,
 		SenderNonce:       nonce,
 		RecipientRandHash: params.RecipientRandHash,
@@ -218,10 +242,6 @@ func (s *Service) signOneTicket(session *senderSession, faceValue *big.Int, para
 // validateSenderInfo mirrors `pm.validateSenderInfo` from the prior
 // reference impl: rejects when the sender has no deposit, no reserve,
 // or an unlock is imminent.
-//
-// In dev mode the broker never returns these states; this is here so
-// chain integration in plan 0016 is a provider swap, not an architecture
-// change.
 func validateSenderInfo(info *providers.SenderInfo, currentRound int64) error {
 	if info == nil {
 		return errors.New("nil sender info")
@@ -236,36 +256,6 @@ func validateSenderInfo(info *providers.SenderInfo, currentRound int64) error {
 		return errors.New("deposit and reserve set to unlock soon")
 	}
 	return nil
-}
-
-// stubTicketParams fabricates locally-deterministic TicketParams in lieu
-// of an HTTP fetch from the receiver. Plan 0016 deletes this and wires
-// the real fetch.
-//
-// Determinism: recipient_rand_hash = sha256(recipient || capability ||
-// offering); seed is empty (the receiver derives the rand from the hash
-// in real mode); win_prob is zero (so EV = 0) and ExpirationBlock is
-// far in the future. Receiver in dev mode accepts any well-formed
-// params without checking authorship.
-func stubTicketParams(recipient []byte, faceValue *big.Int, capability, offering string, clock providers.Clock) *types.TicketParams {
-	h := sha256.New()
-	_, _ = h.Write(recipient)
-	_, _ = h.Write([]byte(capability))
-	_, _ = h.Write([]byte(offering))
-	rand := h.Sum(nil)
-
-	return &types.TicketParams{
-		Recipient:         append([]byte(nil), recipient...),
-		FaceValue:         new(big.Int).Set(faceValue),
-		WinProb:           big.NewInt(0),
-		RecipientRandHash: rand,
-		Seed:              []byte{},
-		ExpirationBlock:   new(big.Int).Add(clock.LastSeenL1Block(), big.NewInt(1_000_000)),
-		ExpirationParams: &types.TicketExpirationParams{
-			CreationRound:          clock.LastInitializedRound(),
-			CreationRoundBlockHash: clock.LastInitializedL1BlockHash(),
-		},
-	}
 }
 
 // ticketHash returns the contract-defined keccak256 over the ticket's
@@ -286,4 +276,45 @@ func evToBytes(ev *big.Rat) []byte {
 		return nil
 	}
 	return new(big.Int).Quo(num, den).Bytes()
+}
+
+func sessionKey(recipient []byte, capability, offering string, faceValue *big.Int, ticketParamsBaseURL string) string {
+	target := ""
+	if faceValue != nil {
+		target = faceValue.String()
+	}
+	return hex.EncodeToString(recipient) + "|" + capability + "|" + offering + "|" + target + "|" + strings.TrimSpace(ticketParamsBaseURL)
+}
+
+func cloneTicketParams(in *types.TicketParams) *types.TicketParams {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.FaceValue != nil {
+		out.FaceValue = new(big.Int).Set(in.FaceValue)
+	}
+	if in.WinProb != nil {
+		out.WinProb = new(big.Int).Set(in.WinProb)
+	}
+	if in.ExpirationBlock != nil {
+		out.ExpirationBlock = new(big.Int).Set(in.ExpirationBlock)
+	}
+	if in.Recipient != nil {
+		out.Recipient = append([]byte(nil), in.Recipient...)
+	}
+	if in.RecipientRandHash != nil {
+		out.RecipientRandHash = append([]byte(nil), in.RecipientRandHash...)
+	}
+	if in.Seed != nil {
+		out.Seed = append([]byte(nil), in.Seed...)
+	}
+	if in.ExpirationParams != nil {
+		exp := *in.ExpirationParams
+		if in.ExpirationParams.CreationRoundBlockHash != nil {
+			exp.CreationRoundBlockHash = append([]byte(nil), in.ExpirationParams.CreationRoundBlockHash...)
+		}
+		out.ExpirationParams = &exp
+	}
+	return &out
 }

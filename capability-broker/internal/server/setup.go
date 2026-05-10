@@ -6,6 +6,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/ffmpegprogress"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/openaiusage"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/requestformula"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/responseheader"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/responsejsonpath"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/runnerreport"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/secondselapsed"
@@ -37,6 +38,7 @@ func defaultModes(rtmpDriver *rtmpingresshlsegress.Driver, sessDriver *sessionco
 func defaultExtractors() *extractors.Registry {
 	r := extractors.NewRegistry()
 	r.Register(responsejsonpath.Name, responsejsonpath.New) // plan 0003
+	r.Register(responseheader.Name, responseheader.New)     // audio response-header extraction
 	r.Register(openaiusage.Name, openaiusage.New)           // plan 0007
 	r.Register(requestformula.Name, requestformula.New)     // plan 0007
 	r.Register(bytescounted.Name, bytescounted.New)         // plan 0007

@@ -17,7 +17,6 @@ services:
     devices:
       - /dev/dri:/dev/dri
     environment:
-      - CAPABILITY_NAME=transcode-vod
       - RUNNER_ADDR=:8080
       - MAX_QUEUE_SIZE=5
       - TEMP_DIR=/tmp/transcode
@@ -33,7 +32,6 @@ services:
     devices:
       - /dev/dri:/dev/dri
     environment:
-      - CAPABILITY_NAME=abr-ladder
       - RUNNER_ADDR=:8080
       - MAX_QUEUE_SIZE=2
       - TEMP_DIR=/tmp/abr
@@ -50,7 +48,6 @@ services:
     profiles: [nvidia]
     runtime: nvidia
     environment:
-      - CAPABILITY_NAME=transcode-vod
       - RUNNER_ADDR=:8080
       - MAX_QUEUE_SIZE=5
       - TEMP_DIR=/tmp/transcode
@@ -66,7 +63,6 @@ services:
     profiles: [nvidia]
     runtime: nvidia
     environment:
-      - CAPABILITY_NAME=abr-ladder
       - RUNNER_ADDR=:8080
       - MAX_QUEUE_SIZE=2
       - TEMP_DIR=/tmp/abr
@@ -84,7 +80,6 @@ services:
     devices:
       - /dev/dri:/dev/dri
     environment:
-      - CAPABILITY_NAME=transcode-vod
       - RUNNER_ADDR=:8080
       - MAX_QUEUE_SIZE=5
       - TEMP_DIR=/tmp/transcode
@@ -99,7 +94,6 @@ services:
     devices:
       - /dev/dri:/dev/dri
     environment:
-      - CAPABILITY_NAME=abr-ladder
       - RUNNER_ADDR=:8080
       - MAX_QUEUE_SIZE=2
       - TEMP_DIR=/tmp/abr

@@ -43,7 +43,7 @@ validated by the broker-side `payment-daemon/`. The runner sees only:
 
 - HTTP method + path + body.
 - `Livepeer-Capability` + `Livepeer-Offering` headers (informational).
-- The orch-coordinator scrape against `GET /<capability>/options`.
+- A broker-side HTTP forward from the configured backend URL.
 
 ## What stays out of this component
 
@@ -54,5 +54,5 @@ validated by the broker-side `payment-daemon/`. The runner sees only:
 - **Customer auth + billing.** Lives in `customer-portal/` and
   `video-gateway/`.
 - **Payment validation.** Broker-side.
-- **Capability registration.** Orch-coordinator scrapes `GET /<capability>/options`
-  per plan 0018.
+- **Capability advertisement.** Orch-coordinator scrapes broker
+  `/registry/offerings`; the runner is only the workload backend.

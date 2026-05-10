@@ -175,6 +175,9 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.1045.0
         version: 3.1045.0
+      '@fastify/static':
+        specifier: ^9.1.3
+        version: 9.1.3
       '@grpc/grpc-js':
         specifier: ^1.12.2
         version: 1.14.3
@@ -184,6 +187,9 @@ importers:
       '@livepeer-rewrite/customer-portal':
         specifier: workspace:*
         version: link:../customer-portal
+      '@livepeer-rewrite/customer-portal-shared':
+        specifier: workspace:*
+        version: link:../customer-portal/frontend/shared
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.20.0)(pg@8.20.0)
@@ -196,12 +202,18 @@ importers:
       js-yaml:
         specifier: ^4.1.0
         version: 4.1.1
+      lit:
+        specifier: ^3.2.0
+        version: 3.3.2
       node-media-server:
         specifier: ^4.0.5
         version: 4.2.4
       pg:
         specifier: ^8.13.0
         version: 8.20.0
+      rxjs:
+        specifier: ^7.8.0
+        version: 7.8.2
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -218,6 +230,9 @@ importers:
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
+      vite:
+        specifier: ^8.0.10
+        version: 8.0.11(@types/node@25.6.2)(esbuild@0.28.0)
 
   video-gateway/src/frontend:
     dependencies:

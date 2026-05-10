@@ -87,8 +87,3 @@ Set `METRICS_ENABLED=true` to expose `/metrics`. Default-off.
 
 The container's HEALTHCHECK invokes `/usr/local/bin/transcode-runner -healthcheck`.
 HTTP healthcheck via `GET /healthz` also works.
-
-## Capability registration
-
-The orch-coordinator scrapes `GET /transcode-vod/options` per plan
-0018.

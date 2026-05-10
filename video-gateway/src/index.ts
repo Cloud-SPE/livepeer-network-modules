@@ -75,7 +75,7 @@ async function main(): Promise<void> {
     resolverSnapshotTtlMs: cfg.resolverSnapshotTtlMs,
   });
 
-  const app = buildServer({
+  const app = await buildServer({
     cfg,
     db: portalDbConn,
     portal,

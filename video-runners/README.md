@@ -21,7 +21,6 @@ Each runner exposes:
 - `GET <endpoint>/status?job_id=<id>` — poll job state.
 - `GET <endpoint>/presets` — list embedded presets.
 - `GET /healthz` — 200 ready.
-- `GET /<capability>/options` — scraped by orch-coordinator (plan 0018).
 - `GET /metrics` — Prometheus exposition (opt-in via `METRICS_ENABLED=true`).
 
 `live-transcode-runner` is **NOT included** — plan 0011-followup retired

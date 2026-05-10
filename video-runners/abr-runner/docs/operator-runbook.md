@@ -66,7 +66,3 @@ Set `METRICS_ENABLED=true` to expose `/metrics`. Default-off.
 
 Container HEALTHCHECK invokes `/usr/local/bin/abr-runner -healthcheck`.
 HTTP via `GET /healthz` also works.
-
-## Capability registration
-
-The orch-coordinator scrapes `GET /abr-ladder/options` per plan 0018.

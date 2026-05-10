@@ -29,9 +29,9 @@ Inherited from the repo root (agent-first harness pattern). Plus:
   forwards a paid request; the runner sees only HTTP method + path +
   body + the informational `Livepeer-Capability` /
   `Livepeer-Offering` headers.
-- **Capability identity is image-tag-pinned.** `CAPABILITY_NAME=transcode-vod`
-  for `transcode-runner`; `CAPABILITY_NAME=abr-ladder` for `abr-runner`.
-  Per OQ1; offering details live at `/etc/runner/offering.yaml`.
+- **Broker dispatch owns capability identity.** The transcode runners are
+  plain HTTP workers behind `capability-broker`; capability/offering
+  identity lives in broker `host-config.yaml`, not runner env.
 - **GPU passthrough is operator-supplied.** Runners support NVENC, QSV,
   and VAAPI; nvidia-container-toolkit and `/dev/dri/renderD128`
   passthrough are operator concerns documented in the runbook.

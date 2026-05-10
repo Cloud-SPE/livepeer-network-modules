@@ -1,4 +1,4 @@
-# Scenario: video gateway host with external media worker broker.
+# Scenario: video-gateway with manifest-driven routing.
 
 services:
   postgres:
@@ -42,7 +42,7 @@ services:
     volumes:
       - rustfs-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-fs", "http://localhost:9000/"]
+      test: ["CMD-SHELL", "curl -sS -o /dev/null http://localhost:9000/"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -62,6 +62,37 @@ services:
       - >
         aws --endpoint-url http://rustfs:9000 s3api create-bucket
         --bucket ${S3_BUCKET:-transcoded} 2>/dev/null || true
+
+  service-registry-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=resolver
+      - --socket=/var/run/livepeer/service-registry.sock
+      - --store-path=/var/lib/livepeer/registry-cache.db
+      - --chain-rpc=${CHAIN_RPC}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS}
+      - --discovery=${DISCOVERY_MODE:-chain}
+      - --round-poll-interval=${ROUND_POLL_INTERVAL:-15s}
+      - --cache-manifest-ttl=${CACHE_MANIFEST_TTL:-5m}
+      - --manifest-max-bytes=${MANIFEST_MAX_BYTES:-1048576}
+      - --manifest-fetch-timeout=${MANIFEST_FETCH_TIMEOUT:-5s}
+      - --max-stale=${MAX_STALE:-30m}
+      - --reject-unsigned=${REJECT_UNSIGNED:-true}
+      - --static-overlay=${STATIC_OVERLAY:-}
+      - --log-level=${REGISTRY_LOG_LEVEL:-info}
+      - --log-format=${REGISTRY_LOG_FORMAT:-json}
+      - --metrics-listen=:${REGISTRY_METRICS_PORT:-9095}
+    ports:
+      - "127.0.0.1:${REGISTRY_METRICS_PORT:-9095}:${REGISTRY_METRICS_PORT:-9095}"
+    volumes:
+      - livepeer-run:/var/run/livepeer
+      - registry-state:/var/lib/livepeer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
 
   payment-daemon-sender:
     image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
@@ -86,14 +117,17 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      payment-daemon-sender:
-        condition: service_started
       rustfs-init:
         condition: service_completed_successfully
+      service-registry-daemon:
+        condition: service_started
+      payment-daemon-sender:
+        condition: service_started
     environment:
       PORT: "3000"
-      LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL}
-      LIVEPEER_BROKER_RTMP_HOST: ${LIVEPEER_BROKER_RTMP_HOST}
+      LIVEPEER_RESOLVER_SOCKET: /var/run/livepeer/service-registry.sock
+      LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS: ${LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS:-15000}
+      LIVEPEER_BROKER_RTMP_HOST: ${LIVEPEER_BROKER_RTMP_HOST:-broker.example.com}
       LIVEPEER_PAYER_DAEMON_SOCKET: /var/run/livepeer/payer-daemon.sock
       VIDEO_LIVE_RTMP_LISTEN_ADDR: ${VIDEO_LIVE_RTMP_LISTEN_ADDR:-:1935}
       VIDEO_LIVE_HLS_BASE_URL: ${VIDEO_LIVE_HLS_BASE_URL}
@@ -103,8 +137,9 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: ${REDIS_URL}
       CUSTOMER_PORTAL_PEPPER: ${CUSTOMER_PORTAL_PEPPER}
+      VIDEO_GATEWAY_ADMIN_TOKENS: ${VIDEO_GATEWAY_ADMIN_TOKENS:-}
       BROKER_CALL_TIMEOUT_MS: ${BROKER_CALL_TIMEOUT_MS:-30000}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-info}
       S3_REGION: ${S3_REGION}
       S3_BUCKET: ${S3_BUCKET}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
@@ -123,3 +158,4 @@ volumes:
   redis-data: {}
   rustfs-data: {}
   livepeer-run: {}
+  registry-state: {}

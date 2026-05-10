@@ -16,6 +16,7 @@ import { registerVod } from "./routes/vod.js";
 import { registerPlayback } from "./routes/playback.js";
 import { registerProjects } from "./routes/projects.js";
 import { registerWebhooks } from "./routes/webhooks.js";
+import { defaultAdminDist, registerSpaStatic } from "./runtime/static.js";
 import type { RetryDispatcher } from "./service/webhookDispatcher.js";
 
 export interface BuildServerInput {
@@ -34,7 +35,7 @@ export interface BuildServerInput {
   };
 }
 
-export function buildServer(input: BuildServerInput): FastifyInstance {
+export async function buildServer(input: BuildServerInput): Promise<FastifyInstance> {
   const { cfg } = input;
   const app = Fastify({
     logger: { level: process.env["LOG_LEVEL"] ?? "info" },
@@ -71,6 +72,12 @@ export function buildServer(input: BuildServerInput): FastifyInstance {
       authResolver: input.portal.adminAuthResolver,
     });
   }
+
+  await registerSpaStatic(app, {
+    rootDir: defaultAdminDist(),
+    prefix: "/admin/console/",
+    label: "admin console",
+  });
 
   return app;
 }

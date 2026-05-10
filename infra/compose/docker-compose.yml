@@ -45,7 +45,6 @@ services:
     image: rustfs/rustfs:latest
     profiles: [rustfs]
     command:
-      - serve
       - /data
     environment:
       RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-rustfsadmin}

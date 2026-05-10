@@ -217,13 +217,11 @@ COPY --from=ffmpeg-nvidia /usr/local/lib/ /usr/local/lib/
 RUN ldconfig
 
 COPY --from=go-builder /bin/abr-runner /usr/local/bin/abr-runner
-COPY abr-runner/offering.yaml /etc/runner/offering.yaml
 
 RUN groupadd -r transcode && useradd -r -g transcode -d /home/transcode -s /sbin/nologin transcode
 RUN mkdir -p /tmp/abr && chown transcode:transcode /tmp/abr
 
 USER transcode
-ENV CAPABILITY_NAME=abr-ladder
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/usr/local/bin/abr-runner", "-healthcheck"] || exit 1
@@ -264,7 +262,6 @@ COPY --from=ffmpeg-intel /usr/local/lib/ /usr/local/lib/
 RUN ldconfig
 
 COPY --from=go-builder /bin/abr-runner /usr/local/bin/abr-runner
-COPY abr-runner/offering.yaml /etc/runner/offering.yaml
 
 RUN groupadd -r transcode && useradd -r -g transcode -d /home/transcode -s /sbin/nologin transcode && \
     groupadd -r render 2>/dev/null || true && \
@@ -272,7 +269,6 @@ RUN groupadd -r transcode && useradd -r -g transcode -d /home/transcode -s /sbin
 RUN mkdir -p /tmp/abr && chown transcode:transcode /tmp/abr
 
 USER transcode
-ENV CAPABILITY_NAME=abr-ladder
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/usr/local/bin/abr-runner", "-healthcheck"] || exit 1
@@ -301,7 +297,6 @@ COPY --from=ffmpeg-amd /usr/local/lib/ /usr/local/lib/
 RUN ldconfig
 
 COPY --from=go-builder /bin/abr-runner /usr/local/bin/abr-runner
-COPY abr-runner/offering.yaml /etc/runner/offering.yaml
 
 RUN groupadd -r transcode && useradd -r -g transcode -d /home/transcode -s /sbin/nologin transcode && \
     groupadd -r render 2>/dev/null || true && \
@@ -309,7 +304,6 @@ RUN groupadd -r transcode && useradd -r -g transcode -d /home/transcode -s /sbin
 RUN mkdir -p /tmp/abr && chown transcode:transcode /tmp/abr
 
 USER transcode
-ENV CAPABILITY_NAME=abr-ladder
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD ["/usr/local/bin/abr-runner", "-healthcheck"] || exit 1

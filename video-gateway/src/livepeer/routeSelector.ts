@@ -15,7 +15,7 @@ export const SELECTOR_HEADER = {
 } as const;
 
 type JsonPrimitive = string | number | boolean | null;
-type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 export interface VideoRouteCandidate {
   brokerUrl: string;
@@ -39,6 +39,10 @@ export interface VideoRouteSelector {
     capability: string;
     offering: string;
     headers?: IncomingHttpHeaders;
+    preferredExtra?: JsonValue | null;
+    requiredConstraints?: JsonValue | null;
+    maxPricePerUnitWei?: bigint | null;
+    supportFilter?: (candidate: VideoRouteCandidate) => boolean;
   }): Promise<VideoRouteCandidate[]>;
   inspect(): Promise<VideoRouteCandidate[]>;
 }
@@ -132,13 +136,17 @@ export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSe
       const snapshot = await loadSnapshot(client, cfg, cache);
       cache = snapshot;
 
-      const preferredExtra = parseJsonHeader(input.headers?.[SELECTOR_HEADER.EXTRA]);
-      const requiredConstraints = parseJsonHeader(
-        input.headers?.[SELECTOR_HEADER.CONSTRAINTS],
+      const preferredExtra = mergeSelectorValue(
+        parseJsonHeader(input.headers?.[SELECTOR_HEADER.EXTRA]),
+        input.preferredExtra ?? null,
       );
-      const maxPricePerUnitWei = parseBigIntHeader(
-        input.headers?.[SELECTOR_HEADER.MAX_PRICE_WEI],
+      const requiredConstraints = mergeSelectorValue(
+        parseJsonHeader(input.headers?.[SELECTOR_HEADER.CONSTRAINTS]),
+        input.requiredConstraints ?? null,
       );
+      const maxPricePerUnitWei =
+        input.maxPricePerUnitWei ??
+        parseBigIntHeader(input.headers?.[SELECTOR_HEADER.MAX_PRICE_WEI]);
 
       const matches = snapshot.candidates.filter((candidate) => {
         if (candidate.capability !== input.capability) return false;
@@ -153,6 +161,9 @@ export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSe
           requiredConstraints !== null &&
           !isSubset(candidate.constraints, requiredConstraints)
         ) {
+          return false;
+        }
+        if (input.supportFilter && !input.supportFilter(candidate)) {
           return false;
         }
         return true;
@@ -267,6 +278,12 @@ function mergeJsonObjects(a: JsonValue | null, b: JsonValue | null): JsonValue |
   if (!isJsonObject(a)) return b;
   if (!isJsonObject(b)) return a;
   return { ...a, ...b };
+}
+
+function mergeSelectorValue(a: JsonValue | null, b: JsonValue | null): JsonValue | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return mergeJsonObjects(a, b) ?? b;
 }
 
 function compareCandidates(

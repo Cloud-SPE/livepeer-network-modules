@@ -5,6 +5,7 @@ import type { Config } from "../config.js";
 import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
 import { openRtmpSession } from "../livepeer/rtmp-adapter.js";
 import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
+import { buildLiveSelectionHints } from "../livepeer/selectionPolicy.js";
 import {
   selectAbrLadder,
   type CustomerTier,
@@ -39,6 +40,11 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       customerTier,
       policy: deps.cfg.abrPolicy,
     });
+    const selectionHints = buildLiveSelectionHints({
+      customerTier,
+      recordToVod,
+      ladder,
+    });
 
     const session = await openRtmpSession({
       cfg: deps.cfg,
@@ -47,6 +53,7 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       offering: parsed.data.offering ?? "default",
       streamId,
       requestHeaders: req.headers,
+      selectionHints,
     });
     deps.liveSessions.record({
       sessionId: session.sessionId,

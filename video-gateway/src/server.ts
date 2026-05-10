@@ -52,7 +52,7 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
     liveSessions: input.liveSessions,
   });
   registerUploads(app, { cfg });
-  registerVod(app);
+  registerVod(app, { routeSelector: input.routeSelector });
   registerPlayback(app, { cfg, liveSessions: input.liveSessions });
   registerProjects(app);
   registerWebhooks(app);

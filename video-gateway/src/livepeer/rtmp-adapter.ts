@@ -3,6 +3,7 @@ import { HEADER, SPEC_VERSION } from "./headers.js";
 import { MODE } from "./capabilityMap.js";
 import type { VideoRouteSelector } from "./routeSelector.js";
 import { newRequestId } from "./requestId.js";
+import type { DerivedSelectionHints } from "./selectionPolicy.js";
 
 export interface OpenRtmpSessionInput {
   cfg: Config;
@@ -11,6 +12,7 @@ export interface OpenRtmpSessionInput {
   offering: string;
   streamId: string;
   requestHeaders?: Record<string, string | string[] | undefined>;
+  selectionHints?: DerivedSelectionHints;
 }
 
 export interface OpenRtmpSessionOutput {
@@ -30,6 +32,8 @@ export async function openRtmpSession(
     capability: "video:live.rtmp",
     offering: input.offering,
     headers: input.requestHeaders,
+    preferredExtra: input.selectionHints?.preferredExtra ?? null,
+    supportFilter: input.selectionHints?.supportFilter,
   });
   if (!route) {
     throw new Error("no video:live.rtmp route available");

@@ -15,6 +15,7 @@ import { registerUploads } from "./routes/uploads.js";
 import { registerVod } from "./routes/vod.js";
 import { registerPlayback } from "./routes/playback.js";
 import { registerProjects } from "./routes/projects.js";
+import { registerVideoCustomerPortalRoutes } from "./routes/customer-portal.js";
 import { registerWebhooks } from "./routes/webhooks.js";
 import { defaultAdminDist, defaultPortalDist, registerSpaStatic } from "./runtime/static.js";
 import type { RetryDispatcher } from "./service/webhookDispatcher.js";
@@ -64,6 +65,11 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
       customerTokenService: input.portal.customerTokenService,
       issueApiKey: input.portal.issueApiKey,
       revokeApiKey: input.portal.revokeApiKey,
+    });
+  }
+  if (input.portal) {
+    registerVideoCustomerPortalRoutes(app, {
+      portal: input.portal,
     });
   }
   if (input.admin && input.portal?.adminAuthResolver) {

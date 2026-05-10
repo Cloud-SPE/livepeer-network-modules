@@ -2,11 +2,19 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
 import { buildVodSelectionHints } from "../livepeer/selectionPolicy.js";
+import { defaultPricingConfig } from "../engine/config/pricing.js";
+import { estimateCost } from "../engine/service/costQuoter.js";
+import { expandTier } from "../engine/config/encodingLadder.js";
 
 const VodSubmitBody = z.object({
   asset_id: z.string().min(1),
   encoding_tier: z.enum(["baseline", "standard", "premium"]).default("baseline"),
   offering: z.string().optional(),
+});
+
+const VodQuoteBody = z.object({
+  encoding_tier: z.enum(["baseline", "standard", "premium"]).default("baseline"),
+  estimated_duration_sec: z.number().positive(),
 });
 
 const ListAssetsQuery = z.object({
@@ -18,6 +26,33 @@ export interface VodDeps {
 }
 
 export function registerVod(app: FastifyInstance, deps: VodDeps): void {
+  app.post("/v1/vod/quote", async (req, reply) => {
+    const parsed = VodQuoteBody.safeParse(req.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+      return;
+    }
+    const renditions = expandTier(parsed.data.encoding_tier);
+    const quote = estimateCost({
+      capability: "video:transcode.vod",
+      callerTier: "customer",
+      renditions,
+      estimatedSeconds: parsed.data.estimated_duration_sec,
+      pricing: defaultPricingConfig(),
+    });
+    await reply.code(200).send({
+      capability: quote.capability,
+      encoding_tier: parsed.data.encoding_tier,
+      estimated_duration_sec: parsed.data.estimated_duration_sec,
+      estimated_cost_usd_cents: quote.cents,
+      renditions: quote.renditions.map((row) => ({
+        resolution: row.resolution,
+        codec: row.codec,
+        bitrate_kbps: row.bitrateKbps,
+      })),
+    });
+  });
+
   app.post("/v1/vod/submit", async (req, reply) => {
     const parsed = VodSubmitBody.safeParse(req.body);
     if (!parsed.success) {

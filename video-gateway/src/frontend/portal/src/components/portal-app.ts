@@ -38,6 +38,19 @@ interface TopupSummary {
   created_at: string;
 }
 
+interface PortalPricing {
+  live: {
+    billing_unit: string;
+    cents_per_second: number;
+    cents_per_minute: number;
+  };
+  vod: {
+    billing_unit: string;
+    overhead_cents: number;
+    cents_per_second: Record<string, Record<string, number>>;
+  };
+}
+
 interface PortalApiKeysElement extends HTMLElement {
   keys: readonly Record<string, string | null>[];
   showPlaintext(value: string): void;
@@ -62,6 +75,7 @@ export class VideoGatewayPortal extends HTMLElement {
   private authTokens: CredentialSummary[] = [];
   private apiKeys: CredentialSummary[] = [];
   private topups: TopupSummary[] = [];
+  private pricing: PortalPricing | null = null;
   private error: string | null = null;
 
   private readonly api = new ApiClient({ baseUrl: "" });
@@ -244,6 +258,7 @@ export class VideoGatewayPortal extends HTMLElement {
       this.authTokens = [];
       this.apiKeys = [];
       this.topups = [];
+      this.pricing = null;
       this.render();
     }
   };
@@ -256,6 +271,7 @@ export class VideoGatewayPortal extends HTMLElement {
     this.authTokens = [];
     this.apiKeys = [];
     this.topups = [];
+    this.pricing = null;
     this.render();
     window.location.hash = "#/login";
   }
@@ -431,7 +447,50 @@ export class VideoGatewayPortal extends HTMLElement {
   private billingView(): HTMLElement {
     const card = document.createElement("portal-card");
     card.setAttribute("heading", "Billing");
-    card.setAttribute("subheading", "Completed and pending top-ups tied to this customer account.");
+    card.setAttribute("subheading", "Top-ups plus the current live and VOD rate card exposed by the gateway.");
+
+    if (this.pricing !== null) {
+      const pricingGrid = document.createElement("div");
+      pricingGrid.className = "video-portal-session-grid";
+
+      const liveCard = document.createElement("portal-detail-section");
+      liveCard.setAttribute("heading", "Live pricing");
+      liveCard.setAttribute("description", `${this.pricing.live.billing_unit} billed for active RTMP sessions.`);
+      liveCard.append(
+        this.metaList([
+          ["USD cents / second", String(this.pricing.live.cents_per_second)],
+          ["USD cents / minute", String(this.pricing.live.cents_per_minute)],
+        ]),
+      );
+
+      const vodCard = document.createElement("portal-detail-section");
+      vodCard.setAttribute("heading", "VOD pricing");
+      vodCard.setAttribute("description", `${this.pricing.vod.billing_unit} billed across generated renditions.`);
+      const vodTable = document.createElement("table");
+      vodTable.innerHTML = `
+        <thead>
+          <tr><th>Resolution</th><th>H.264</th><th>HEVC</th><th>AV1</th></tr>
+        </thead>
+        <tbody></tbody>
+      `;
+      const tbody = vodTable.tBodies[0]!;
+      for (const [resolution, codecs] of Object.entries(this.pricing.vod.cents_per_second)) {
+        const tr = document.createElement("tr");
+        tr.append(
+          this.cell(resolution),
+          this.cell(String(codecs["h264"] ?? "—")),
+          this.cell(String(codecs["hevc"] ?? "—")),
+          this.cell(String(codecs["av1"] ?? "—")),
+        );
+        tbody.append(tr);
+      }
+      vodCard.append(
+        this.metaList([["Overhead cents", String(this.pricing.vod.overhead_cents)]]),
+        vodTable,
+      );
+      pricingGrid.append(liveCard, vodCard);
+      card.append(pricingGrid);
+    }
 
     const tableShell = document.createElement("portal-data-table");
     tableShell.setAttribute("heading", "Top-up history");
@@ -491,18 +550,20 @@ export class VideoGatewayPortal extends HTMLElement {
   private async loadPortalState(): Promise<void> {
     this.error = null;
     try {
-      const [accountRes, limitsRes, authTokensRes, apiKeysRes, topupsRes] = await Promise.all([
+      const [accountRes, limitsRes, authTokensRes, apiKeysRes, topupsRes, pricingRes] = await Promise.all([
         this.api.get<{ customer: PortalCustomer }>("/portal/account"),
         this.api.get<{ limits: PortalLimits }>("/portal/account/limits"),
         this.api.get<{ auth_tokens: CredentialSummary[] }>("/portal/auth-tokens"),
         this.api.get<{ api_keys: CredentialSummary[] }>("/portal/api-keys"),
         this.api.get<{ topups: TopupSummary[] }>("/portal/topups"),
+        this.api.get<PortalPricing>("/portal/pricing"),
       ]);
       this.customer = accountRes.customer;
       this.limits = limitsRes.limits;
       this.authTokens = authTokensRes.auth_tokens;
       this.apiKeys = apiKeysRes.api_keys;
       this.topups = topupsRes.topups;
+      this.pricing = pricingRes;
     } catch (err) {
       this.error = this.errorMessage(err);
     }

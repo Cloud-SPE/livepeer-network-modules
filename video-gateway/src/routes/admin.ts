@@ -1,4 +1,4 @@
-import { desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import type { AdminAuthResolver } from "@livepeer-rewrite/customer-portal/auth";
 
@@ -48,10 +48,19 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
   app.get("/admin/assets", { preHandler }, async (req, reply) => {
     const query = req.query as Record<string, string | undefined>;
     const includeDeleted = query["include_deleted"] === "true";
+    const projectId = query["project_id"];
     const rows = await deps.videoDb
       .select()
       .from(assets)
-      .where(includeDeleted ? undefined : isNull(assets.deletedAt))
+      .where(
+        projectId
+          ? includeDeleted
+            ? eq(assets.projectId, projectId)
+            : and(eq(assets.projectId, projectId), isNull(assets.deletedAt))
+          : includeDeleted
+            ? undefined
+            : isNull(assets.deletedAt),
+      )
       .orderBy(desc(assets.createdAt))
       .limit(100);
     const playbackByAssetId = new Map<string, string>();
@@ -109,9 +118,12 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
   });
 
   app.get("/admin/live-streams", { preHandler }, async (_req, reply) => {
+    const query = _req.query as Record<string, string | undefined>;
+    const projectId = query["project_id"];
     const rows = await deps.videoDb
       .select()
       .from(liveStreams)
+      .where(projectId ? eq(liveStreams.projectId, projectId) : undefined)
       .orderBy(desc(liveStreams.createdAt))
       .limit(100);
     await reply.code(200).send({
@@ -222,9 +234,25 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
   });
 
   app.get("/admin/recordings", { preHandler }, async (_req, reply) => {
+    const query = _req.query as Record<string, string | undefined>;
+    const projectId = query["project_id"];
+    let scopedStreamIds: string[] | null = null;
+    if (projectId) {
+      scopedStreamIds = (
+        await deps.videoDb
+          .select({ id: liveStreams.id })
+          .from(liveStreams)
+          .where(eq(liveStreams.projectId, projectId))
+      ).map((row) => row.id);
+      if (scopedStreamIds.length === 0) {
+        await reply.code(200).send({ items: [] });
+        return;
+      }
+    }
     const rows = await deps.videoDb
       .select()
       .from(recordings)
+      .where(scopedStreamIds ? inArray(recordings.liveStreamId, scopedStreamIds) : undefined)
       .orderBy(desc(recordings.createdAt))
       .limit(100);
     await reply.code(200).send({

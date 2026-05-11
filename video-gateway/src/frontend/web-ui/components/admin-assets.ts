@@ -14,6 +14,7 @@ interface AssetRow {
 export class AdminAssets extends HTMLElement {
   private rows: AssetRow[] = [];
   private includeDeleted = false;
+  private projectFilter = "";
   private error: string | null = null;
 
   private api = new ApiClient({ baseUrl: "" });
@@ -26,7 +27,10 @@ export class AdminAssets extends HTMLElement {
   private async load(): Promise<void> {
     this.error = null;
     try {
-      const q = this.includeDeleted ? "?include_deleted=true" : "";
+      const params = new URLSearchParams();
+      if (this.includeDeleted) params.set("include_deleted", "true");
+      if (this.projectFilter.trim()) params.set("project_id", this.projectFilter.trim());
+      const q = params.size > 0 ? `?${params.toString()}` : "";
       const out = await this.api.get<{ items: AssetRow[] }>(`/admin/assets${q}`);
       this.rows = out.items ?? [];
     } catch (err) {
@@ -77,6 +81,17 @@ export class AdminAssets extends HTMLElement {
           description="Inspect active and soft-deleted assets across customer projects."
         >
         <div class="video-admin-page-toolbar" slot="toolbar">
+          <input
+            class="video-admin-page-toolbar-input"
+            placeholder="filter by project id"
+            .value=${this.projectFilter}
+            @input=${(e: Event): void => {
+              this.projectFilter = (e.target as HTMLInputElement).value;
+            }}
+            @keydown=${(e: KeyboardEvent): void => {
+              if (e.key === "Enter") void this.load();
+            }}
+          />
           <label>
             <input
               type="checkbox"

@@ -17,6 +17,7 @@ interface StreamRow {
 
 export class AdminStreams extends HTMLElement {
   private rows: StreamRow[] = [];
+  private projectFilter = "";
   private error: string | null = null;
 
   private api = new ApiClient({ baseUrl: "" });
@@ -29,7 +30,10 @@ export class AdminStreams extends HTMLElement {
   private async load(): Promise<void> {
     this.error = null;
     try {
-      const out = await this.api.get<{ items: StreamRow[] }>(`/admin/live-streams`);
+      const query = this.projectFilter.trim()
+        ? `?project_id=${encodeURIComponent(this.projectFilter.trim())}`
+        : "";
+      const out = await this.api.get<{ items: StreamRow[] }>(`/admin/live-streams${query}`);
       this.rows = out.items ?? [];
     } catch (err) {
       this.error = err instanceof Error ? err.message : "load_failed";
@@ -56,6 +60,20 @@ export class AdminStreams extends HTMLElement {
           heading="Active Streams"
           description="Current and ended ingest sessions, viewer count, and force-end controls."
         >
+        <div class="video-admin-page-toolbar video-admin-page-toolbar--grow" slot="toolbar">
+          <input
+            class="video-admin-page-toolbar-input"
+            placeholder="filter by project id"
+            .value=${this.projectFilter}
+            @input=${(e: Event): void => {
+              this.projectFilter = (e.target as HTMLInputElement).value;
+            }}
+            @keydown=${(e: KeyboardEvent): void => {
+              if (e.key === "Enter") void this.load();
+            }}
+          />
+          <portal-button @click=${(): void => void this.load()}>Refresh</portal-button>
+        </div>
         ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
         <table class="video-admin-page-table">
           <thead>

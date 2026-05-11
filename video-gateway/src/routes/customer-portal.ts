@@ -29,6 +29,7 @@ declare module "fastify" {
 
 const CreatePortalStreamBody = z.object({
   name: z.string().trim().min(1).max(160),
+  project_id: z.string().trim().min(1).optional(),
 });
 
 const UpdateRecordPolicyBody = z.object({
@@ -47,6 +48,7 @@ const CreatePortalUploadBody = z.object({
   filename: z.string().trim().min(1).max(255),
   size: z.number().int().positive(),
   contentType: z.string().trim().min(1).max(255).optional(),
+  project_id: z.string().trim().min(1).optional(),
 });
 
 export interface RegisterVideoCustomerPortalRoutesDeps {
@@ -281,12 +283,21 @@ export function registerVideoCustomerPortalRoutes(
       return;
     }
     const projectIds = await customerProjectIds(deps.videoDb, req.customerSession!.customer.id);
+    const requestedProjectId =
+      typeof (req.query as Record<string, unknown>)["project_id"] === "string"
+        ? String((req.query as Record<string, unknown>)["project_id"])
+        : null;
+    if (requestedProjectId && !projectIds.has(requestedProjectId)) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return;
+    }
+    const visibleProjectIds = requestedProjectId ? [requestedProjectId] : [...projectIds];
     const items = projectIds.size === 0
       ? []
       : await deps.videoDb
           .select()
           .from(assets)
-          .where(inArray(assets.projectId, [...projectIds]))
+          .where(inArray(assets.projectId, visibleProjectIds))
           .orderBy(desc(assets.createdAt));
     const playbackByAssetId = new Map<string, string>();
     if (deps.playbackIds) {
@@ -321,7 +332,14 @@ export function registerVideoCustomerPortalRoutes(
       await reply.code(501).send({ error: "upload_storage_unavailable" });
       return;
     }
-    const project = await ensureDefaultProject(deps.videoDb, req.customerSession!.customer.id);
+    const customerId = req.customerSession!.customer.id;
+    const project = parsed.data.project_id
+      ? await getProjectById(deps.videoDb, parsed.data.project_id)
+      : await ensureDefaultProject(deps.videoDb, customerId);
+    if (!project || project.customerId !== customerId) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return;
+    }
     const assetId = `asset_${randomHex16()}`;
     const uploadId = `upload_${randomHex16()}`;
     const storageKey = `uploads/${project.id}/${assetId}/${sanitizeFilename(parsed.data.filename)}`;
@@ -400,6 +418,15 @@ export function registerVideoCustomerPortalRoutes(
       return;
     }
     const projectIds = await customerProjectIds(deps.videoDb, req.customerSession!.customer.id);
+    const requestedProjectId =
+      typeof (req.query as Record<string, unknown>)["project_id"] === "string"
+        ? String((req.query as Record<string, unknown>)["project_id"])
+        : null;
+    if (requestedProjectId && !projectIds.has(requestedProjectId)) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return;
+    }
+    const visibleProjectIds = requestedProjectId ? [requestedProjectId] : [...projectIds];
     if (projectIds.size === 0) {
       await reply.code(200).send({ items: [] });
       return;
@@ -407,7 +434,7 @@ export function registerVideoCustomerPortalRoutes(
     const rows = await deps.videoDb
       .select()
       .from(liveStreams)
-      .where(inArray(liveStreams.projectId, [...projectIds]))
+      .where(inArray(liveStreams.projectId, visibleProjectIds))
       .orderBy(desc(liveStreams.createdAt));
     await reply.code(200).send({
       items: rows.map((row) => {
@@ -418,6 +445,7 @@ export function registerVideoCustomerPortalRoutes(
         return {
           id: row.id,
           name: row.name ?? row.id,
+          projectId: row.projectId,
           status: portalStatus(row.status),
           rtmpIngestUrl: session?.brokerRtmpUrl ?? "",
           playbackUrl: session?.hlsPlaybackUrl ?? "",
@@ -445,7 +473,13 @@ export function registerVideoCustomerPortalRoutes(
       await reply.code(501).send({ error: "video_db_unavailable" });
       return;
     }
-    const project = await ensureDefaultProject(deps.videoDb, session.customer.id);
+    const project = parsed.data.project_id
+      ? await getProjectById(deps.videoDb, parsed.data.project_id)
+      : await ensureDefaultProject(deps.videoDb, session.customer.id);
+    if (!project || project.customerId !== session.customer.id) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return;
+    }
     const out = await provisionLiveStream(
       {
         cfg: deps.cfg,
@@ -567,6 +601,15 @@ export function registerVideoCustomerPortalRoutes(
       return;
     }
     const projectIds = await customerProjectIds(deps.videoDb, req.customerSession!.customer.id);
+    const requestedProjectId =
+      typeof (req.query as Record<string, unknown>)["project_id"] === "string"
+        ? String((req.query as Record<string, unknown>)["project_id"])
+        : null;
+    if (requestedProjectId && !projectIds.has(requestedProjectId)) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return;
+    }
+    const visibleProjectIds = requestedProjectId ? [requestedProjectId] : [...projectIds];
     if (projectIds.size === 0) {
       await reply.code(200).send({ items: [] });
       return;
@@ -577,7 +620,7 @@ export function registerVideoCustomerPortalRoutes(
         name: liveStreams.name,
       })
       .from(liveStreams)
-      .where(inArray(liveStreams.projectId, [...projectIds]));
+      .where(inArray(liveStreams.projectId, visibleProjectIds));
     if (streamRows.length === 0) {
       await reply.code(200).send({ items: [] });
       return;

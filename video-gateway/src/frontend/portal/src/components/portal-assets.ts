@@ -3,10 +3,17 @@ import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
 interface AssetRow {
   id: string;
   status: string;
+  projectId: string;
   durationSec: number | null;
   createdAt: string;
   deletedAt: string | null;
   playbackUrl: string | null;
+}
+
+interface ProjectRow {
+  id: string;
+  name: string;
+  isDefault: boolean;
 }
 
 function installStyles(): void {
@@ -22,6 +29,8 @@ function installStyles(): void {
 
 export class PortalAssets extends HTMLElement {
   private rows: AssetRow[] = [];
+  private projects: ProjectRow[] = [];
+  private selectedProjectId = "";
   private uploading = false;
   private error: string | null = null;
   private confirmDelete: AssetRow | null = null;
@@ -36,8 +45,18 @@ export class PortalAssets extends HTMLElement {
   private async load(): Promise<void> {
     this.error = null;
     try {
-      const out = await this.api.get<{ items: AssetRow[] }>("/portal/assets");
+      const projectQuery = this.selectedProjectId
+        ? `?project_id=${encodeURIComponent(this.selectedProjectId)}`
+        : "";
+      const [out, projectsOut] = await Promise.all([
+        this.api.get<{ items: AssetRow[] }>(`/portal/assets${projectQuery}`),
+        this.api.get<{ items: ProjectRow[]; defaultProjectId: string }>("/portal/projects"),
+      ]);
       this.rows = out.items ?? [];
+      this.projects = projectsOut.items ?? [];
+      if (!this.selectedProjectId && projectsOut.defaultProjectId) {
+        this.selectedProjectId = projectsOut.defaultProjectId;
+      }
     } catch (err) {
       this.error = err instanceof Error ? err.message : "load_failed";
     }
@@ -53,6 +72,7 @@ export class PortalAssets extends HTMLElement {
         filename: file.name,
         size: file.size,
         contentType: file.type,
+        project_id: this.selectedProjectId || undefined,
       });
       const tus = await fetch(init.uploadUrl, {
         method: "PATCH",
@@ -117,11 +137,27 @@ export class PortalAssets extends HTMLElement {
     const toolbar = document.createElement("div");
     toolbar.className = "video-portal-page-toolbar";
     toolbar.slot = "toolbar";
+    const projectSelect = document.createElement("select");
+    const allOption = document.createElement("option");
+    allOption.value = "";
+    allOption.textContent = "All projects";
+    projectSelect.append(allOption);
+    for (const project of this.projects) {
+      const option = document.createElement("option");
+      option.value = project.id;
+      option.textContent = project.name;
+      if (project.id === this.selectedProjectId) option.selected = true;
+      projectSelect.append(option);
+    }
+    projectSelect.addEventListener("change", (event) => {
+      this.selectedProjectId = (event.target as HTMLSelectElement).value;
+      void this.load();
+    });
     const input = document.createElement("input");
     input.type = "file";
     input.disabled = this.uploading;
     input.addEventListener("change", (event) => this.onFile(event));
-    toolbar.append(input);
+    toolbar.append(projectSelect, input);
     if (this.uploading) {
       toolbar.append(this.message("span", "Uploading."));
     }
@@ -135,7 +171,7 @@ export class PortalAssets extends HTMLElement {
     table.className = "video-portal-page-table";
     table.innerHTML = `
       <thead>
-        <tr><th>ID</th><th>Status</th><th>Duration</th><th>Created</th><th>Playback</th><th></th></tr>
+        <tr><th>ID</th><th>Project</th><th>Status</th><th>Duration</th><th>Created</th><th>Playback</th><th></th></tr>
       </thead>
       <tbody></tbody>
     `;
@@ -147,6 +183,7 @@ export class PortalAssets extends HTMLElement {
       }
       tr.append(
         this.cell(row.id),
+        this.cell(row.projectId),
         this.cell(`${row.status}${row.deletedAt !== null ? " (deleted)" : ""}`),
         this.cell(row.durationSec !== null ? `${row.durationSec.toFixed(1)}s` : "-"),
         this.cell(row.createdAt),

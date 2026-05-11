@@ -3,6 +3,7 @@ import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
 interface StreamRow {
   id: string;
   name: string;
+  projectId: string;
   status: string;
   rtmpIngestUrl: string;
   playbackUrl: string;
@@ -13,6 +14,12 @@ interface StreamRow {
 
 interface CreatedStream extends StreamRow {
   sessionKey: string;
+}
+
+interface ProjectRow {
+  id: string;
+  name: string;
+  isDefault: boolean;
 }
 
 function installStyles(): void {
@@ -28,6 +35,8 @@ function installStyles(): void {
 
 export class PortalStreams extends HTMLElement {
   private rows: StreamRow[] = [];
+  private projects: ProjectRow[] = [];
+  private selectedProjectId = "";
   private newName = "";
   private created: CreatedStream | null = null;
   private keyRevealed = false;
@@ -43,8 +52,18 @@ export class PortalStreams extends HTMLElement {
   private async load(): Promise<void> {
     this.error = null;
     try {
-      const out = await this.api.get<{ items: StreamRow[] }>("/portal/live-streams");
+      const query = this.selectedProjectId
+        ? `?project_id=${encodeURIComponent(this.selectedProjectId)}`
+        : "";
+      const [out, projectsOut] = await Promise.all([
+        this.api.get<{ items: StreamRow[] }>(`/portal/live-streams${query}`),
+        this.api.get<{ items: ProjectRow[]; defaultProjectId: string }>("/portal/projects"),
+      ]);
       this.rows = out.items ?? [];
+      this.projects = projectsOut.items ?? [];
+      if (!this.selectedProjectId && projectsOut.defaultProjectId) {
+        this.selectedProjectId = projectsOut.defaultProjectId;
+      }
     } catch (err) {
       this.error = err instanceof Error ? err.message : "load_failed";
     }
@@ -57,7 +76,10 @@ export class PortalStreams extends HTMLElement {
       return;
     }
     try {
-      const out = await this.api.post<CreatedStream>("/portal/live-streams", { name: this.newName });
+      const out = await this.api.post<CreatedStream>("/portal/live-streams", {
+        name: this.newName,
+        project_id: this.selectedProjectId || undefined,
+      });
       this.created = out;
       this.keyRevealed = true;
       this.newName = "";
@@ -106,6 +128,18 @@ export class PortalStreams extends HTMLElement {
     form.addEventListener("submit", (event) => {
       void this.createStream(event);
     });
+    const projectSelect = document.createElement("select");
+    for (const project of this.projects) {
+      const option = document.createElement("option");
+      option.value = project.id;
+      option.textContent = project.name;
+      if (project.id === this.selectedProjectId) option.selected = true;
+      projectSelect.append(option);
+    }
+    projectSelect.addEventListener("change", (event) => {
+      this.selectedProjectId = (event.target as HTMLSelectElement).value;
+      void this.load();
+    });
     const input = document.createElement("input");
     input.placeholder = "stream name";
     input.value = this.newName;
@@ -115,7 +149,7 @@ export class PortalStreams extends HTMLElement {
     const createButton = document.createElement("portal-button");
     createButton.setAttribute("type", "submit");
     createButton.textContent = "Create stream";
-    form.append(input, createButton);
+    form.append(projectSelect, input, createButton);
     tableShell.append(form);
 
     if (this.created !== null) {
@@ -161,7 +195,7 @@ export class PortalStreams extends HTMLElement {
     table.className = "video-portal-page-table";
     table.innerHTML = `
       <thead>
-        <tr><th>Name</th><th>Status</th><th>Viewers</th><th>Playback</th><th>Started</th><th></th></tr>
+        <tr><th>Name</th><th>Project</th><th>Status</th><th>Viewers</th><th>Playback</th><th>Started</th><th></th></tr>
       </thead>
       <tbody></tbody>
     `;
@@ -170,6 +204,7 @@ export class PortalStreams extends HTMLElement {
       const tr = document.createElement("tr");
       tr.append(
         this.cell(row.name),
+        this.cell(row.projectId),
         this.statusCell(row.status, row.status === "live" ? "success" : "neutral"),
         this.cell(row.viewerCount === null ? "-" : String(row.viewerCount)),
         this.codeCell(row.playbackUrl),

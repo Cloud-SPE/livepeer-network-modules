@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import type { AdminAuthResolver } from "@livepeer-rewrite/customer-portal/auth";
+import { z } from "zod";
 
 import type { Db as VideoDb } from "../db/pool.js";
 import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
@@ -40,10 +41,51 @@ export interface AdminRoutesDeps {
 
 export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void {
   const preHandler = adminAuthPreHandler(deps.authResolver);
+  const RouteControlBody = z.object({
+    broker_url: z.string().trim().min(1),
+  });
 
   app.get("/admin/video/resolver-candidates", { preHandler }, async (_req, reply) => {
     const candidates = await deps.routeSelector.inspect();
-    await reply.code(200).send({ candidates });
+    const suppressed = new Set(await deps.routeSelector.suppressedBrokers());
+    await reply.code(200).send({
+      candidates: candidates.map((candidate) => ({
+        ...candidate,
+        suppressed: suppressed.has(candidate.brokerUrl),
+      })),
+    });
+  });
+
+  app.get("/admin/video/route-controls", { preHandler }, async (_req, reply) => {
+    await reply.code(200).send({
+      suppressed_brokers: await deps.routeSelector.suppressedBrokers(),
+    });
+  });
+
+  app.post("/admin/video/route-controls/suppress", { preHandler }, async (req, reply) => {
+    const parsed = RouteControlBody.safeParse(req.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+      return;
+    }
+    await deps.routeSelector.suppressBroker(parsed.data.broker_url);
+    await reply.code(200).send({
+      broker_url: parsed.data.broker_url,
+      suppressed: true,
+    });
+  });
+
+  app.post("/admin/video/route-controls/unsuppress", { preHandler }, async (req, reply) => {
+    const parsed = RouteControlBody.safeParse(req.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+      return;
+    }
+    await deps.routeSelector.unsuppressBroker(parsed.data.broker_url);
+    await reply.code(200).send({
+      broker_url: parsed.data.broker_url,
+      suppressed: false,
+    });
   });
 
   app.get("/admin/assets", { preHandler }, async (req, reply) => {

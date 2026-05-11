@@ -37,6 +37,11 @@ const routeSelector: VideoRouteSelector = {
   async inspect() {
     return [];
   },
+  async suppressBroker() {},
+  async unsuppressBroker() {},
+  async suppressedBrokers() {
+    return [];
+  },
 };
 
 test("live routes: status and end reflect persisted stream state", async () => {

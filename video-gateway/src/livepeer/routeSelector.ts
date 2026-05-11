@@ -45,6 +45,9 @@ export interface VideoRouteSelector {
     supportFilter?: (candidate: VideoRouteCandidate) => boolean;
   }): Promise<VideoRouteCandidate[]>;
   inspect(): Promise<VideoRouteCandidate[]>;
+  suppressBroker(brokerUrl: string): Promise<void>;
+  unsuppressBroker(brokerUrl: string): Promise<void>;
+  suppressedBrokers(): Promise<string[]>;
 }
 
 interface ResolverClient extends grpc.Client {
@@ -104,12 +107,14 @@ interface CachedSnapshot {
 }
 
 export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSelector {
+  const suppressed = new Set<string>();
   if (!cfg.resolverSocket) {
     return {
       async select(input): Promise<VideoRouteCandidate[]> {
         if (!cfg.brokerUrl) {
           throw new Error("static routing requested but LIVEPEER_BROKER_URL is unset");
         }
+        if (suppressed.has(cfg.brokerUrl)) return [];
         return [
           {
             brokerUrl: cfg.brokerUrl,
@@ -123,7 +128,28 @@ export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSe
         ];
       },
       async inspect(): Promise<VideoRouteCandidate[]> {
-        return [];
+        return cfg.brokerUrl && !suppressed.has(cfg.brokerUrl)
+          ? [
+              {
+                brokerUrl: cfg.brokerUrl,
+                ethAddress: "",
+                capability: "",
+                offering: "",
+                pricePerWorkUnitWei: "0",
+                extra: null,
+                constraints: null,
+              },
+            ]
+          : [];
+      },
+      async suppressBroker(brokerUrl): Promise<void> {
+        suppressed.add(brokerUrl);
+      },
+      async unsuppressBroker(brokerUrl): Promise<void> {
+        suppressed.delete(brokerUrl);
+      },
+      async suppressedBrokers(): Promise<string[]> {
+        return [...suppressed.values()].sort();
       },
     };
   }
@@ -149,6 +175,7 @@ export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSe
         parseBigIntHeader(input.headers?.[SELECTOR_HEADER.MAX_PRICE_WEI]);
 
       const matches = snapshot.candidates.filter((candidate) => {
+        if (suppressed.has(candidate.brokerUrl)) return false;
         if (candidate.capability !== input.capability) return false;
         if (candidate.offering !== input.offering) return false;
         if (
@@ -176,6 +203,15 @@ export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSe
       const snapshot = await loadSnapshot(client, cfg, cache);
       cache = snapshot;
       return snapshot.candidates;
+    },
+    async suppressBroker(brokerUrl): Promise<void> {
+      suppressed.add(brokerUrl);
+    },
+    async unsuppressBroker(brokerUrl): Promise<void> {
+      suppressed.delete(brokerUrl);
+    },
+    async suppressedBrokers(): Promise<string[]> {
+      return [...suppressed.values()].sort();
     },
   };
 }

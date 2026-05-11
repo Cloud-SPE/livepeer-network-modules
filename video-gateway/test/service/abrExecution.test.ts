@@ -52,6 +52,11 @@ function createRouteSelectorFake(): VideoRouteSelector {
     async inspect() {
       return [route];
     },
+    async suppressBroker() {},
+    async unsuppressBroker() {},
+    async suppressedBrokers() {
+      return [];
+    },
   };
 }
 

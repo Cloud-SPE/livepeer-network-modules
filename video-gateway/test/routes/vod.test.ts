@@ -24,6 +24,11 @@ const routeSelector: VideoRouteSelector = {
   async inspect() {
     return [];
   },
+  async suppressBroker() {},
+  async unsuppressBroker() {},
+  async suppressedBrokers() {
+    return [];
+  },
 };
 
 test("vod routes: submit persists selected route intent onto the asset", async () => {

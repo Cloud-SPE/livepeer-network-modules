@@ -26,6 +26,11 @@ const routeSelector: VideoRouteSelector = {
   async inspect() {
     return [];
   },
+  async suppressBroker() {},
+  async unsuppressBroker() {},
+  async suppressedBrokers() {
+    return [];
+  },
 };
 
 test("admin routes: asset retry requeues non-ready assets", async () => {
@@ -211,4 +216,96 @@ test("admin routes: recording retry requeues failed recording assets", async () 
   assert.deepEqual(retried, ["asset_failed"]);
   const updated = await recordings.byId("rec_1");
   assert.equal(updated?.status, "pending");
+});
+
+test("admin routes: broker suppression toggles route controls", async () => {
+  const app = Fastify();
+  const suppressed = new Set<string>();
+  const controllableSelector: VideoRouteSelector = {
+    async select() {
+      return [];
+    },
+    async inspect() {
+      return [
+        {
+          brokerUrl: "http://broker.internal:8080",
+          ethAddress: "0x1234",
+          capability: "video:transcode.abr",
+          offering: "default",
+          pricePerWorkUnitWei: "1",
+          extra: null,
+          constraints: null,
+        },
+      ];
+    },
+    async suppressBroker(brokerUrl: string) {
+      suppressed.add(brokerUrl);
+    },
+    async unsuppressBroker(brokerUrl: string) {
+      suppressed.delete(brokerUrl);
+    },
+    async suppressedBrokers() {
+      return [...suppressed];
+    },
+  };
+  registerAdmin(app, {
+    authResolver,
+    videoDb: {} as never,
+    routeSelector: controllableSelector,
+    liveSessions: createLiveSessionDirectory(),
+    assets: createInMemoryAssetRepo(),
+    liveStreamsRepo: createInMemoryLiveStreamRepo(),
+    recordingsRepo: createInMemoryRecordingRepo(),
+    failures: createInMemoryWebhookFailureRepo(),
+    dispatcher: {
+      async dispatch() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+      async replayFailure() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+    },
+  });
+
+  const suppress = await app.inject({
+    method: "POST",
+    url: "/admin/video/route-controls/suppress",
+    headers: { authorization: "Bearer token", "x-actor": "operator" },
+    payload: { broker_url: "http://broker.internal:8080" },
+  });
+  assert.equal(suppress.statusCode, 200);
+  assert.deepEqual(suppress.json(), {
+    broker_url: "http://broker.internal:8080",
+    suppressed: true,
+  });
+
+  const controls = await app.inject({
+    method: "GET",
+    url: "/admin/video/route-controls",
+    headers: { authorization: "Bearer token", "x-actor": "operator" },
+  });
+  assert.equal(controls.statusCode, 200);
+  assert.deepEqual(controls.json(), {
+    suppressed_brokers: ["http://broker.internal:8080"],
+  });
+
+  const candidates = await app.inject({
+    method: "GET",
+    url: "/admin/video/resolver-candidates",
+    headers: { authorization: "Bearer token", "x-actor": "operator" },
+  });
+  assert.equal(candidates.statusCode, 200);
+  assert.equal(candidates.json().candidates[0].suppressed, true);
+
+  const unsuppress = await app.inject({
+    method: "POST",
+    url: "/admin/video/route-controls/unsuppress",
+    headers: { authorization: "Bearer token", "x-actor": "operator" },
+    payload: { broker_url: "http://broker.internal:8080" },
+  });
+  assert.equal(unsuppress.statusCode, 200);
+  assert.deepEqual(unsuppress.json(), {
+    broker_url: "http://broker.internal:8080",
+    suppressed: false,
+  });
 });

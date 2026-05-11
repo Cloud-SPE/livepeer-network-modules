@@ -19,6 +19,7 @@ import type { MutableRenditionRepo } from "../repo/renditions.js";
 import type { AbrExecutionManager } from "../service/abrExecution.js";
 import { usageWorkId, type ChargeSummary, type UsageLedger } from "../service/usageLedger.js";
 import { maybeHandoffRecording, provisionLiveStream } from "./live-streams.js";
+import { createProject, deleteProject, getProjectById, renameProject, summarizeProjectUsage } from "../service/projects.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -32,6 +33,14 @@ const CreatePortalStreamBody = z.object({
 
 const UpdateRecordPolicyBody = z.object({
   record_to_vod: z.boolean(),
+});
+
+const CreatePortalProjectBody = z.object({
+  name: z.string().trim().min(1).max(120),
+});
+
+const UpdatePortalProjectBody = z.object({
+  name: z.string().trim().min(1).max(120),
 });
 
 const CreatePortalUploadBody = z.object({
@@ -146,15 +155,124 @@ export function registerVideoCustomerPortalRoutes(
     }
     const defaultProject = await ensureDefaultProject(deps.videoDb, req.customerSession!.customer.id);
     const rows = await listProjectsForCustomer(deps.videoDb, req.customerSession!.customer.id);
+    const usageById = new Map(
+      await Promise.all(
+        rows.map(async (row) => [row.id, await summarizeProjectUsage(deps.videoDb!, row.id)] as const),
+      ),
+    );
     await reply.code(200).send({
       items: rows.map((row) => ({
         id: row.id,
         name: row.name,
         createdAt: row.createdAt.toISOString(),
         isDefault: row.id === defaultProject.id,
+        usage: {
+          assets: usageById.get(row.id)?.assets ?? 0,
+          uploads: usageById.get(row.id)?.uploads ?? 0,
+          live_streams: usageById.get(row.id)?.liveStreams ?? 0,
+          webhooks: usageById.get(row.id)?.webhooks ?? 0,
+        },
       })),
       defaultProjectId: defaultProject.id,
     });
+  });
+
+  app.post("/portal/projects", { preHandler: requireCustomer }, async (req, reply) => {
+    const parsed = CreatePortalProjectBody.safeParse(req.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+      return;
+    }
+    if (!deps.videoDb) {
+      await reply.code(501).send({ error: "video_db_unavailable" });
+      return;
+    }
+    const project = await createProject(deps.videoDb, {
+      customerId: req.customerSession!.customer.id,
+      name: parsed.data.name,
+    });
+    const usage = await summarizeProjectUsage(deps.videoDb, project.id);
+    await reply.code(201).send({
+      id: project.id,
+      name: project.name,
+      createdAt: project.createdAt.toISOString(),
+      usage: {
+        assets: usage.assets,
+        uploads: usage.uploads,
+        live_streams: usage.liveStreams,
+        webhooks: usage.webhooks,
+      },
+    });
+  });
+
+  app.patch<{ Params: { id: string } }>("/portal/projects/:id", { preHandler: requireCustomer }, async (req, reply) => {
+    const parsed = UpdatePortalProjectBody.safeParse(req.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+      return;
+    }
+    if (!deps.videoDb) {
+      await reply.code(501).send({ error: "video_db_unavailable" });
+      return;
+    }
+    const project = await getProjectById(deps.videoDb, req.params.id);
+    if (!project || project.customerId !== req.customerSession!.customer.id) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return;
+    }
+    const renamed = await renameProject(deps.videoDb, {
+      projectId: project.id,
+      name: parsed.data.name,
+    });
+    if (!renamed) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return;
+    }
+    const usage = await summarizeProjectUsage(deps.videoDb, renamed.id);
+    await reply.code(200).send({
+      id: renamed.id,
+      name: renamed.name,
+      createdAt: renamed.createdAt.toISOString(),
+      usage: {
+        assets: usage.assets,
+        uploads: usage.uploads,
+        live_streams: usage.liveStreams,
+        webhooks: usage.webhooks,
+      },
+    });
+  });
+
+  app.delete<{ Params: { id: string } }>("/portal/projects/:id", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.videoDb) {
+      await reply.code(501).send({ error: "video_db_unavailable" });
+      return;
+    }
+    const customerId = req.customerSession!.customer.id;
+    const project = await getProjectById(deps.videoDb, req.params.id);
+    if (!project || project.customerId !== customerId) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return;
+    }
+    const projectsForCustomer = await listProjectsForCustomer(deps.videoDb, customerId);
+    if (projectsForCustomer.length <= 1) {
+      await reply.code(409).send({ error: "last_project_forbidden" });
+      return;
+    }
+    const usage = await summarizeProjectUsage(deps.videoDb, project.id);
+    if (usage.assets > 0 || usage.uploads > 0 || usage.liveStreams > 0 || usage.webhooks > 0) {
+      await reply.code(409).send({
+        error: "project_not_empty",
+        usage: {
+          assets: usage.assets,
+          uploads: usage.uploads,
+          live_streams: usage.liveStreams,
+          webhooks: usage.webhooks,
+        },
+      });
+      return;
+    }
+    await deleteProject(deps.videoDb, project.id);
+    await reply.code(204).send();
   });
 
   app.get("/portal/assets", { preHandler: requireCustomer }, async (req, reply) => {

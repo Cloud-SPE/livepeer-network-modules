@@ -37,6 +37,7 @@ export interface WebhookEndpointRepo {
   insert(endpoint: WebhookEndpoint): Promise<WebhookEndpoint>;
   byId(id: string): Promise<WebhookEndpoint | null>;
   byProject(projectId: string): Promise<WebhookEndpoint[]>;
+  updateSecret(id: string, secret: string): Promise<void>;
   disable(id: string, at: Date): Promise<void>;
 }
 
@@ -135,6 +136,10 @@ export function createWebhookEndpointRepo(db: Db): WebhookEndpointRepo {
         )
         .orderBy(desc(webhookEndpoints.createdAt));
       return rows.map((r) => rowToEndpoint(r as EndpointRow));
+    },
+
+    async updateSecret(id, secret) {
+      await db.update(webhookEndpoints).set({ secret }).where(eq(webhookEndpoints.id, id));
     },
 
     async disable(id, at) {

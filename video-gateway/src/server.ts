@@ -14,6 +14,8 @@ import type {
   PlaybackIdRepo,
   RecordingRepo,
   UsageRecordRepo,
+  WebhookEndpointRepo,
+  WebhookDeliveryRepo,
   WebhookFailureRepo,
   MutableEncodingJobRepo,
   MutableRenditionRepo,
@@ -50,6 +52,8 @@ export interface BuildServerInput {
     playbackIds: PlaybackIdRepo;
     recordingsRepo: RecordingRepo;
     usageRecords: UsageRecordRepo;
+    webhookEndpoints: WebhookEndpointRepo;
+    webhookDeliveries: WebhookDeliveryRepo;
     failures: WebhookFailureRepo;
     dispatcher: RetryDispatcher;
     execution: AbrExecutionManager;
@@ -121,7 +125,11 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
     storage: input.admin?.storage,
   });
   registerProjects(app, { videoDb: input.admin?.videoDb });
-  registerWebhooks(app);
+  registerWebhooks(app, {
+    videoDb: input.admin?.videoDb,
+    endpoints: input.admin?.webhookEndpoints,
+    deliveries: input.admin?.webhookDeliveries,
+  });
   if (input.portal?.adminAuthResolver && input.db) {
     portalAdmin.registerAdminRoutes(app, {
       db: input.db,
@@ -147,6 +155,8 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
       renditionsRepo: input.admin?.renditionsRepo,
       execution: input.admin?.execution,
       usageRecords: input.admin?.usageRecords,
+      webhookEndpoints: input.admin?.webhookEndpoints,
+      webhookDeliveries: input.admin?.webhookDeliveries,
       usageLedger: input.admin?.usageLedger,
     });
   }

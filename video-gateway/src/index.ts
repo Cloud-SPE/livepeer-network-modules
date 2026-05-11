@@ -140,6 +140,8 @@ export async function main(): Promise<void> {
       liveStreamsRepo: repos.liveStreams,
       recordingsRepo: repos.recordings,
       usageRecords: repos.usageRecords,
+      webhookEndpoints: repos.webhookEndpoints,
+      webhookDeliveries: repos.webhookDeliveries,
       failures: repos.webhookFailures,
       dispatcher,
       execution,

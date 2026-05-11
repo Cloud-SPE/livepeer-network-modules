@@ -4,6 +4,7 @@ document.body.dataset.livepeerSessionKey = "video-gateway:admin-session";
 await import("@livepeer-rewrite/customer-portal-shared");
 await import("./components/admin-app.js");
 await import("./components/admin-customers.js");
+await import("./components/admin-projects.js");
 await import("./components/admin-customer-detail.js");
 await import("./components/admin-customer-adjust.js");
 await import("./components/admin-customer-refund.js");

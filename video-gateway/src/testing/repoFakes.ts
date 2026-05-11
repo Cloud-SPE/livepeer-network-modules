@@ -124,6 +124,11 @@ export function createInMemoryWebhookEndpointRepo(): WebhookEndpointRepo & {
         .filter((e) => e.projectId === projectId && !e.disabledAt)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     },
+    async updateSecret(id, secret) {
+      const cur = rows.get(id);
+      if (!cur) return;
+      rows.set(id, { ...cur, secret });
+    },
     async disable(id, at) {
       const cur = rows.get(id);
       if (!cur) return;

@@ -158,7 +158,7 @@ movement.
 - operators can answer “why is this balance what it is?”
 - VOD quotes are materially consistent with committed VOD charges
 
-## Phase 4 — Projects, Tenancy, and Integration Surfaces
+## Phase 4 — Projects, Tenancy, and Integration Surfaces (Completed)
 
 ### Objective
 

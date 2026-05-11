@@ -35,6 +35,7 @@ export class VideoGatewayAdmin extends HTMLElement {
       .add("/nodes", () => this.setRoute("nodes"))
       .add("/nodes/:brokerUrl", (_p, params) => this.setRoute("nodes", params))
       .add("/customers", () => this.setRoute("customers"))
+      .add("/projects", () => this.setRoute("projects"))
       .add("/customers/:id", (_p, params) => this.setRoute("customer-detail", params))
       .add("/customers/:id/adjust", (_p, params) => this.setRoute("customer-adjust", params))
       .add("/customers/:id/refund", (_p, params) => this.setRoute("customer-refund", params))
@@ -80,6 +81,7 @@ export class VideoGatewayAdmin extends HTMLElement {
         this.navLink("/health", "Health", "health"),
         this.navLink("/nodes", "Nodes", "nodes"),
         this.navLink("/customers", "Customers", "customers"),
+        this.navLink("/projects", "Projects", "projects"),
         this.navLink("/topups", "Top-ups", "topups"),
         this.navLink("/reservations", "Reservations", "reservations"),
         this.navLink("/usage", "Usage", "usage"),
@@ -185,6 +187,8 @@ export class VideoGatewayAdmin extends HTMLElement {
       }
       case "customers":
         return document.createElement("admin-customers");
+      case "projects":
+        return document.createElement("admin-projects");
       case "customer-detail": {
         const el = document.createElement("admin-customer-detail");
         el.setAttribute("customerId", params["id"] ?? "");

@@ -2,6 +2,7 @@ import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
 
 interface WebhookRow {
   id: string;
+  projectId: string;
   url: string;
   events: string[];
   createdAt: string;
@@ -20,6 +21,12 @@ interface DeliveryRow {
 
 interface CreatedEndpoint extends WebhookRow {
   signingSecret: string;
+}
+
+interface ProjectRow {
+  id: string;
+  name: string;
+  isDefault: boolean;
 }
 
 const HMAC_SNIPPET = `// Verify livepeer-video-gateway webhook signatures
@@ -49,6 +56,8 @@ function installStyles(): void {
 export class PortalWebhooks extends HTMLElement {
   private rows: WebhookRow[] = [];
   private deliveries: DeliveryRow[] = [];
+  private projects: ProjectRow[] = [];
+  private selectedProjectId = "";
   private newUrl = "";
   private created: CreatedEndpoint | null = null;
   private secretRevealed = false;
@@ -64,10 +73,20 @@ export class PortalWebhooks extends HTMLElement {
   private async load(): Promise<void> {
     this.error = null;
     try {
-      const out = await this.api.get<{ items: WebhookRow[] }>("/portal/webhooks");
+      const query = this.selectedProjectId
+        ? `?project_id=${encodeURIComponent(this.selectedProjectId)}`
+        : "";
+      const [out, deliveries, projectsOut] = await Promise.all([
+        this.api.get<{ items: WebhookRow[] }>(`/portal/webhooks${query}`),
+        this.api.get<{ items: DeliveryRow[] }>(`/portal/webhook-deliveries${query}`),
+        this.api.get<{ items: ProjectRow[]; defaultProjectId: string }>("/portal/projects"),
+      ]);
       this.rows = out.items ?? [];
-      const deliveries = await this.api.get<{ items: DeliveryRow[] }>("/portal/webhook-deliveries");
       this.deliveries = deliveries.items ?? [];
+      this.projects = projectsOut.items ?? [];
+      if (!this.selectedProjectId && projectsOut.defaultProjectId) {
+        this.selectedProjectId = projectsOut.defaultProjectId;
+      }
     } catch (err) {
       this.error = err instanceof Error ? err.message : "load_failed";
     }
@@ -82,6 +101,7 @@ export class PortalWebhooks extends HTMLElement {
     try {
       const out = await this.api.post<CreatedEndpoint>("/portal/webhooks", {
         url: this.newUrl,
+        project_id: this.selectedProjectId || undefined,
         events: ["asset.ready", "stream.started", "stream.ended", "recording.ready"],
       });
       this.created = out;
@@ -147,6 +167,18 @@ export class PortalWebhooks extends HTMLElement {
     form.addEventListener("submit", (event) => {
       void this.createEndpoint(event);
     });
+    const projectSelect = document.createElement("select");
+    for (const project of this.projects) {
+      const option = document.createElement("option");
+      option.value = project.id;
+      option.textContent = project.name;
+      if (project.id === this.selectedProjectId) option.selected = true;
+      projectSelect.append(option);
+    }
+    projectSelect.addEventListener("change", (event) => {
+      this.selectedProjectId = (event.target as HTMLSelectElement).value;
+      void this.load();
+    });
     const input = document.createElement("input");
     input.placeholder = "https://example.com/webhook";
     input.value = this.newUrl;
@@ -156,7 +188,7 @@ export class PortalWebhooks extends HTMLElement {
     const addButton = document.createElement("portal-button");
     addButton.setAttribute("type", "submit");
     addButton.textContent = "Add endpoint";
-    form.append(input, addButton);
+    form.append(projectSelect, input, addButton);
     shell.append(form);
 
     if (this.created !== null) {
@@ -194,7 +226,7 @@ export class PortalWebhooks extends HTMLElement {
     endpointsTable.className = "video-portal-page-table";
     endpointsTable.innerHTML = `
       <thead>
-        <tr><th>URL</th><th>Events</th><th>Last delivery</th><th>Created</th><th></th></tr>
+        <tr><th>Project</th><th>URL</th><th>Events</th><th>Last delivery</th><th>Created</th><th></th></tr>
       </thead>
       <tbody></tbody>
     `;
@@ -202,6 +234,7 @@ export class PortalWebhooks extends HTMLElement {
     for (const row of this.rows) {
       const tr = document.createElement("tr");
       tr.append(
+        this.cell(row.projectId),
         this.codeCell(row.url),
         this.cell(row.events.join(", ")),
         this.deliveryCell(row),

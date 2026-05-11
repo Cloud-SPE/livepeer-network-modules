@@ -5,6 +5,7 @@ import { installAdminPageStyles } from "./admin-shared.js";
 interface FailureRow {
   id: string;
   endpointId: string;
+  projectId: string | null;
   deliveryId: string;
   eventType: string;
   attemptCount: number;
@@ -17,6 +18,7 @@ interface FailureRow {
 export class AdminWebhooks extends HTMLElement {
   private rows: FailureRow[] = [];
   private endpointFilter = "";
+  private projectFilter = "";
   private error: string | null = null;
   private replayBusy: Record<string, boolean> = {};
 
@@ -30,9 +32,10 @@ export class AdminWebhooks extends HTMLElement {
   private async load(): Promise<void> {
     this.error = null;
     try {
-      const q = this.endpointFilter.trim()
-        ? `?endpoint_id=${encodeURIComponent(this.endpointFilter.trim())}`
-        : "";
+      const params = new URLSearchParams();
+      if (this.endpointFilter.trim()) params.set("endpoint_id", this.endpointFilter.trim());
+      if (this.projectFilter.trim()) params.set("project_id", this.projectFilter.trim());
+      const q = params.size > 0 ? `?${params.toString()}` : "";
       const out = await this.api.get<{ items: FailureRow[] }>(`/admin/webhook-failures${q}`);
       this.rows = out.items ?? [];
     } catch (err) {
@@ -76,13 +79,24 @@ export class AdminWebhooks extends HTMLElement {
                 if (e.key === "Enter") void this.load();
               }}
             />
+            <input
+              class="video-admin-page-toolbar-input"
+              placeholder="filter by project id"
+              .value=${this.projectFilter}
+              @input=${(e: Event): void => {
+                this.projectFilter = (e.target as HTMLInputElement).value;
+              }}
+              @keydown=${(e: KeyboardEvent): void => {
+                if (e.key === "Enter") void this.load();
+              }}
+            />
             <portal-button @click=${(): void => void this.load()}>Refresh</portal-button>
           </div>
           ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
           <table class="video-admin-page-table">
             <thead>
               <tr>
-                <th>ID</th><th>Endpoint</th><th>Event</th><th>Attempts</th><th>Status</th>
+                <th>ID</th><th>Project</th><th>Endpoint</th><th>Event</th><th>Attempts</th><th>Status</th>
                 <th>Last error</th><th>Dead-lettered</th><th>Replayed</th><th></th>
               </tr>
             </thead>
@@ -90,6 +104,7 @@ export class AdminWebhooks extends HTMLElement {
               ${this.rows.map(
                 (r) => html`<tr>
                   <td>${r.id}</td>
+                  <td>${r.projectId ?? "—"}</td>
                   <td>${r.endpointId}</td>
                   <td>${r.eventType}</td>
                   <td>${r.attemptCount}</td>

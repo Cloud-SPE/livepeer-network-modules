@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 import { desc, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import type { CustomerPortal } from "@livepeer-rewrite/customer-portal";
@@ -5,12 +7,13 @@ import { z } from "zod";
 
 import type { Config } from "../config.js";
 import type { Db as VideoDb } from "../db/pool.js";
-import { assets, liveStreams, recordings, uploads } from "../db/schema.js";
+import { assets, liveStreams, recordings, uploads, webhookDeliveries } from "../db/schema.js";
 import { defaultPricingConfig } from "../engine/config/pricing.js";
+import type { WebhookEventType } from "../engine/types/webhook.js";
 import type { AssetRepo, LiveStreamRepo } from "../engine/index.js";
 import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
 import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
-import type { RecordingRepo } from "../repo/index.js";
+import type { RecordingRepo, WebhookDeliveryRepo, WebhookEndpointRepo } from "../repo/index.js";
 import type { UsageRecordRepo } from "../repo/usage.js";
 import { customerProjectIds, ensureDefaultProject, listProjectsForCustomer } from "../service/projects.js";
 import type { PlaybackIdRepo } from "../repo/playbackIds.js";
@@ -51,6 +54,16 @@ const CreatePortalUploadBody = z.object({
   project_id: z.string().trim().min(1).optional(),
 });
 
+const PortalWebhookQuery = z.object({
+  project_id: z.string().trim().min(1).optional(),
+});
+
+const CreatePortalWebhookBody = z.object({
+  project_id: z.string().trim().min(1).optional(),
+  url: z.string().url(),
+  events: z.array(z.string()).optional(),
+});
+
 export interface RegisterVideoCustomerPortalRoutesDeps {
   portal: CustomerPortal;
   cfg: Config;
@@ -66,6 +79,8 @@ export interface RegisterVideoCustomerPortalRoutesDeps {
   execution?: AbrExecutionManager;
   usageRecords?: UsageRecordRepo;
   usageLedger?: UsageLedger;
+  webhookEndpoints?: WebhookEndpointRepo;
+  webhookDeliveries?: WebhookDeliveryRepo;
 }
 
 export function registerVideoCustomerPortalRoutes(
@@ -177,6 +192,160 @@ export function registerVideoCustomerPortalRoutes(
       })),
       defaultProjectId: defaultProject.id,
     });
+  });
+
+  app.get("/portal/webhooks", { preHandler: requireCustomer }, async (req, reply) => {
+    const parsed = PortalWebhookQuery.safeParse(req.query);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_query", details: parsed.error.issues });
+      return;
+    }
+    if (!deps.videoDb || !deps.webhookEndpoints) {
+      await reply.code(501).send({ error: "webhook_registry_unavailable" });
+      return;
+    }
+    const customerId = req.customerSession!.customer.id;
+    const projectIds = await scopedProjectIds(deps.videoDb, customerId, parsed.data.project_id, reply);
+    if (!projectIds) return;
+    const endpoints = (
+      await Promise.all(projectIds.map((projectId) => deps.webhookEndpoints!.byProject(projectId)))
+    ).flat();
+    const lastDeliveryByEndpoint = await recentWebhookDeliveriesByEndpoint(
+      deps.videoDb,
+      endpoints.map((row) => row.id),
+    );
+    await reply.code(200).send({
+      items: endpoints.map((row) => ({
+        id: row.id,
+        projectId: row.projectId,
+        url: row.url,
+        events: row.eventTypes ?? [],
+        createdAt: row.createdAt.toISOString(),
+        lastDeliveryStatus: lastDeliveryByEndpoint.get(row.id)?.status ?? null,
+        lastDeliveryAt: lastDeliveryByEndpoint.get(row.id)?.deliveredAt ?? null,
+      })),
+    });
+  });
+
+  app.get("/portal/webhook-deliveries", { preHandler: requireCustomer }, async (req, reply) => {
+    const parsed = PortalWebhookQuery.safeParse(req.query);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_query", details: parsed.error.issues });
+      return;
+    }
+    if (!deps.videoDb || !deps.webhookEndpoints) {
+      await reply.code(501).send({ error: "webhook_registry_unavailable" });
+      return;
+    }
+    const customerId = req.customerSession!.customer.id;
+    const projectIds = await scopedProjectIds(deps.videoDb, customerId, parsed.data.project_id, reply);
+    if (!projectIds) return;
+    const endpoints = (
+      await Promise.all(projectIds.map((projectId) => deps.webhookEndpoints!.byProject(projectId)))
+    ).flat();
+    const endpointIds = endpoints.map((row) => row.id);
+    if (endpointIds.length === 0) {
+      await reply.code(200).send({ items: [] });
+      return;
+    }
+    const rows = await deps.videoDb
+      .select()
+      .from(webhookDeliveries)
+      .where(inArray(webhookDeliveries.endpointId, endpointIds))
+      .orderBy(desc(webhookDeliveries.createdAt))
+      .limit(100);
+    await reply.code(200).send({
+      items: rows.map((row) => ({
+        id: row.id,
+        endpointId: row.endpointId,
+        eventType: row.eventType,
+        statusCode:
+          row.status === "delivered"
+            ? 200
+            : row.status === "failed"
+              ? 500
+              : null,
+        attempts: row.attempts,
+        deliveredAt: row.deliveredAt?.toISOString() ?? null,
+      })),
+    });
+  });
+
+  app.post("/portal/webhooks", { preHandler: requireCustomer }, async (req, reply) => {
+    const parsed = CreatePortalWebhookBody.safeParse(req.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+      return;
+    }
+    if (!deps.videoDb || !deps.webhookEndpoints) {
+      await reply.code(501).send({ error: "webhook_registry_unavailable" });
+      return;
+    }
+    const customerId = req.customerSession!.customer.id;
+    const project = parsed.data.project_id
+      ? await getProjectById(deps.videoDb, parsed.data.project_id)
+      : await ensureDefaultProject(deps.videoDb, customerId);
+    if (!project || project.customerId !== customerId) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return;
+    }
+    const secret = `whsec_${randomBytes(16).toString("hex")}`;
+    const endpoint = await deps.webhookEndpoints.insert({
+      id: `wh_${Math.random().toString(16).slice(2, 18).padEnd(16, "0")}`,
+      projectId: project.id,
+      url: parsed.data.url,
+      secret,
+      eventTypes: normalizePortalWebhookEvents(parsed.data.events),
+      createdAt: new Date(),
+    });
+    await reply.code(201).send({
+      id: endpoint.id,
+      projectId: endpoint.projectId,
+      url: endpoint.url,
+      events: endpoint.eventTypes ?? [],
+      createdAt: endpoint.createdAt.toISOString(),
+      lastDeliveryStatus: null,
+      lastDeliveryAt: null,
+      signingSecret: endpoint.secret,
+    });
+  });
+
+  app.post<{ Params: { id: string } }>("/portal/webhooks/:id/rotate", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.videoDb || !deps.webhookEndpoints) {
+      await reply.code(501).send({ error: "webhook_registry_unavailable" });
+      return;
+    }
+    const endpoint = await deps.webhookEndpoints.byId(req.params.id);
+    if (!(await customerOwnsWebhookEndpoint(deps.videoDb, req.customerSession!.customer.id, endpoint))) {
+      await reply.code(404).send({ error: "webhook_not_found" });
+      return;
+    }
+    const secret = `whsec_${randomBytes(16).toString("hex")}`;
+    await deps.webhookEndpoints.updateSecret(endpoint!.id, secret);
+    await reply.code(200).send({
+      id: endpoint!.id,
+      projectId: endpoint!.projectId,
+      url: endpoint!.url,
+      events: endpoint!.eventTypes ?? [],
+      createdAt: endpoint!.createdAt.toISOString(),
+      lastDeliveryStatus: null,
+      lastDeliveryAt: null,
+      signingSecret: secret,
+    });
+  });
+
+  app.delete<{ Params: { id: string } }>("/portal/webhooks/:id", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.videoDb || !deps.webhookEndpoints) {
+      await reply.code(501).send({ error: "webhook_registry_unavailable" });
+      return;
+    }
+    const endpoint = await deps.webhookEndpoints.byId(req.params.id);
+    if (!(await customerOwnsWebhookEndpoint(deps.videoDb, req.customerSession!.customer.id, endpoint))) {
+      await reply.code(404).send({ error: "webhook_not_found" });
+      return;
+    }
+    await deps.webhookEndpoints.disable(endpoint!.id, new Date());
+    await reply.code(204).send();
   });
 
   app.post("/portal/projects", { preHandler: requireCustomer }, async (req, reply) => {
@@ -702,6 +871,81 @@ function serializeCharge(
     created_at: charge.createdAt,
     resolved_at: charge.resolvedAt,
   };
+}
+
+async function scopedProjectIds(
+  videoDb: VideoDb,
+  customerId: string,
+  requestedProjectId: string | undefined,
+  reply: FastifyReply,
+): Promise<string[] | null> {
+  if (requestedProjectId) {
+    const project = await getProjectById(videoDb, requestedProjectId);
+    if (!project || project.customerId !== customerId) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return null;
+    }
+    return [project.id];
+  }
+  return [...(await customerProjectIds(videoDb, customerId))];
+}
+
+async function customerOwnsWebhookEndpoint(
+  videoDb: VideoDb,
+  customerId: string,
+  endpoint: { projectId: string } | null,
+): Promise<boolean> {
+  if (!endpoint) return false;
+  const project = await getProjectById(videoDb, endpoint.projectId);
+  return !!project && project.customerId === customerId;
+}
+
+async function recentWebhookDeliveriesByEndpoint(
+  videoDb: VideoDb,
+  endpointIds: string[],
+): Promise<Map<string, { status: number | null; deliveredAt: string | null }>> {
+  if (endpointIds.length === 0) return new Map();
+  const rows = await videoDb
+    .select()
+    .from(webhookDeliveries)
+    .where(inArray(webhookDeliveries.endpointId, endpointIds))
+    .orderBy(desc(webhookDeliveries.createdAt));
+  const out = new Map<string, { status: number | null; deliveredAt: string | null }>();
+  for (const row of rows) {
+    if (out.has(row.endpointId)) continue;
+    out.set(row.endpointId, {
+      status:
+        row.status === "delivered"
+          ? 200
+          : row.status === "failed"
+            ? 500
+            : null,
+      deliveredAt: row.deliveredAt?.toISOString() ?? null,
+    });
+  }
+  return out;
+}
+
+function normalizePortalWebhookEvents(input: string[] | undefined): WebhookEventType[] | null {
+  if (!input || input.length === 0) return null;
+  return input.map((value) => {
+    const normalized = value.trim();
+    if (normalized.startsWith("video.")) return normalized;
+    switch (normalized) {
+      case "asset.ready":
+        return "video.asset.ready";
+      case "asset.errored":
+        return "video.asset.errored";
+      case "stream.started":
+        return "video.live_stream.active";
+      case "stream.ended":
+        return "video.live_stream.ended";
+      case "recording.ready":
+        return "video.live_stream.recording_ready";
+      default:
+        return normalized;
+    }
+  }) as WebhookEventType[];
 }
 
 function randomHex16(): string {

@@ -5,11 +5,12 @@ import type { AdminAuthResolver } from "@livepeer-rewrite/customer-portal/auth";
 import type { Db as VideoDb } from "../db/pool.js";
 import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
 import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
-import { assets, liveStreams, recordings } from "../db/schema.js";
+import { assets, liveStreams, projects, recordings, webhookEndpoints } from "../db/schema.js";
 import type { AssetRepo, LiveStreamRepo, RecordingRepo, WebhookFailureRepo, PlaybackIdRepo, MutableEncodingJobRepo, MutableRenditionRepo } from "../repo/index.js";
 import type { UsageRecordRepo } from "../repo/usage.js";
 import type { RetryDispatcher } from "../service/webhookDispatcher.js";
 import type { AbrExecutionManager } from "../service/abrExecution.js";
+import { summarizeProjectUsage } from "../service/projects.js";
 import { usageWorkId, type ChargeSummary, type UsageLedger } from "../service/usageLedger.js";
 import { maybeHandoffRecording } from "./live-streams.js";
 
@@ -193,6 +194,34 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
     });
   });
 
+  app.get("/admin/projects", { preHandler }, async (req, reply) => {
+    const query = req.query as Record<string, string | undefined>;
+    const customerId = query["customer_id"];
+    const rows = await deps.videoDb
+      .select()
+      .from(projects)
+      .where(customerId ? eq(projects.customerId, customerId) : undefined)
+      .orderBy(desc(projects.createdAt))
+      .limit(200);
+    const usageByProjectId = new Map(
+      await Promise.all(rows.map(async (row) => [row.id, await summarizeProjectUsage(deps.videoDb, row.id)] as const)),
+    );
+    await reply.code(200).send({
+      items: rows.map((row) => ({
+        id: row.id,
+        customer_id: row.customerId,
+        name: row.name,
+        created_at: row.createdAt.toISOString(),
+        usage: {
+          assets: usageByProjectId.get(row.id)?.assets ?? 0,
+          uploads: usageByProjectId.get(row.id)?.uploads ?? 0,
+          live_streams: usageByProjectId.get(row.id)?.liveStreams ?? 0,
+          webhooks: usageByProjectId.get(row.id)?.webhooks ?? 0,
+        },
+      })),
+    });
+  });
+
   app.post<{ Params: { id: string } }>("/admin/live-streams/:id/end", { preHandler }, async (req, reply) => {
     const stream = await deps.liveStreamsRepo.byId(req.params.id);
     if (!stream) {
@@ -275,10 +304,48 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
     const query = req.query as Record<string, string | undefined>;
     const limit = Math.min(parseInt(query["limit"] ?? "50", 10) || 50, 200);
     const endpointId = query["endpoint_id"];
+    const projectId = query["project_id"];
+    if (projectId && !endpointId) {
+      const endpointRows = await deps.videoDb
+        .select({ id: webhookEndpoints.id })
+        .from(webhookEndpoints)
+        .where(eq(webhookEndpoints.projectId, projectId));
+      const endpointIds = endpointRows.map((row) => row.id);
+      if (endpointIds.length === 0) {
+        await reply.code(200).send({ items: [] });
+        return;
+      }
+      const failures = (
+        await Promise.all(endpointIds.map((id) => deps.failures.list({ endpointId: id, limit })))
+      )
+        .flat()
+        .sort((a, b) => b.deadLetteredAt.getTime() - a.deadLetteredAt.getTime())
+        .slice(0, limit);
+      await reply.code(200).send({
+        items: failures.map((row) => ({
+          ...row,
+          projectId,
+        })),
+      });
+      return;
+    }
     const list = await deps.failures.list(
       endpointId ? { endpointId, limit } : { limit },
     );
-    await reply.code(200).send({ items: list });
+    let projectIdByEndpoint = new Map<string, string>();
+    if (list.length > 0) {
+      const endpointRows = await deps.videoDb
+        .select({ id: webhookEndpoints.id, projectId: webhookEndpoints.projectId })
+        .from(webhookEndpoints)
+        .where(inArray(webhookEndpoints.id, [...new Set(list.map((row) => row.endpointId))]));
+      projectIdByEndpoint = new Map(endpointRows.map((row) => [row.id, row.projectId]));
+    }
+    await reply.code(200).send({
+      items: list.map((row) => ({
+        ...row,
+        projectId: projectIdByEndpoint.get(row.endpointId) ?? null,
+      })),
+    });
   });
 
   app.post("/admin/webhook-failures/:id/replay", { preHandler }, async (req, reply) => {

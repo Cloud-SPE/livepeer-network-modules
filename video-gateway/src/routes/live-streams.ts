@@ -76,14 +76,31 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       await reply.code(404).send({ error: "project_not_found" });
       return;
     }
-    const stream = await provisionLiveStream(deps, {
-      projectId: parsed.data.project_id,
-      name: parsed.data.name,
-      offering: parsed.data.offering,
-      customerTier: parsed.data.customer_tier,
-      recordToVod: parsed.data.record_to_vod ?? parsed.data.recording_enabled,
-      requestHeaders: req.headers,
-    });
+    let stream: ProvisionLiveStreamResult;
+    try {
+      stream = await provisionLiveStream(deps, {
+        projectId: parsed.data.project_id,
+        name: parsed.data.name,
+        offering: parsed.data.offering,
+        customerTier: parsed.data.customer_tier,
+        recordToVod: parsed.data.record_to_vod ?? parsed.data.recording_enabled,
+        requestHeaders: req.headers,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "live_session_open_failed";
+      if (message.includes("no video:live.rtmp route available")) {
+        await reply.code(503).send({
+          error: "no_live_route",
+          message,
+        });
+        return;
+      }
+      await reply.code(502).send({
+        error: "live_session_open_failed",
+        message,
+      });
+      return;
+    }
     if (stream.recordToVod && deps.recordingsRepo) {
       const existing = await deps.recordingsRepo.byLiveStream(stream.streamId);
       const hasOpen = existing.some((row) => row.endedAt === null);

@@ -122,12 +122,28 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
       selectedOffering: route.offering,
       errorMessage: undefined,
     });
-    const execution = deps.execution
-      ? await deps.execution.submitAsset({
+    let execution: { executionId: string } | null = null;
+    if (deps.execution) {
+      try {
+        execution = await deps.execution.submitAsset({
           assetId: parsed.data.asset_id,
           route,
-        })
-      : null;
+        });
+      } catch (err) {
+        if (deps.usageLedger) {
+          await deps.usageLedger.refundVodUsage({
+            projectId: asset.projectId,
+            assetId: parsed.data.asset_id,
+          });
+        }
+        const message = err instanceof Error ? err.message : "execution_start_failed";
+        await reply.code(502).send({
+          error: "execution_start_failed",
+          message,
+        });
+        return;
+      }
+    }
     await reply.code(202).send({
       asset_id: parsed.data.asset_id,
       project_id: asset.projectId,

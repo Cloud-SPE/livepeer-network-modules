@@ -175,6 +175,10 @@ export async function main(): Promise<void> {
     usageLedger,
     logger: console,
   });
+  const recoveredAssets = await execution.recoverPendingAssets();
+  if (recoveredAssets.length > 0) {
+    console.info("video-gateway: recovered pending ABR assets on boot", recoveredAssets);
+  }
 
   const app = await buildServer({
     cfg,

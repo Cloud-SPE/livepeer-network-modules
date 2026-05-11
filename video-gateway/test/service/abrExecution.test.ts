@@ -212,6 +212,53 @@ test("ABR execution manager: submitAsset failure persists errored state", async 
   assert.equal(assetJobs[0]?.status, "failed");
 });
 
+test("ABR execution manager: submitAsset worker submit failure persists errored state", async () => {
+  const assets = createInMemoryAssetRepo();
+  const jobs = createInMemoryEncodingJobRepo();
+  const renditions = createInMemoryRenditionRepo();
+  const playbackIds = createInMemoryPlaybackIdRepo();
+  const recordings = createInMemoryRecordingRepo();
+  const liveStreams = createInMemoryLiveStreamRepo();
+
+  await assets.insert({
+    id: "asset_submit_fail",
+    projectId: "proj_1",
+    status: "queued",
+    sourceType: "upload",
+    sourceUrl: "uploads/proj_1/asset_submit_fail/source.mp4",
+    encodingTier: "standard",
+  });
+
+  const manager = createAbrExecutionManager({
+    assets,
+    jobs,
+    renditions,
+    playbackIds,
+    recordings,
+    liveStreams,
+    storage: createStorageFake(),
+    routeSelector: createRouteSelectorFake(),
+    fetchImpl: async (url) => {
+      if (url.endsWith("/v1/video/transcode/abr")) {
+        return new Response("upstream unavailable", { status: 503 });
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+  });
+
+  await assert.rejects(
+    () => manager.submitAsset({ assetId: "asset_submit_fail", route }),
+    /ABR submit failed: 503/,
+  );
+
+  const asset = await assets.byId("asset_submit_fail");
+  assert.equal(asset?.status, "errored");
+  assert.match(asset?.errorMessage ?? "", /worker_submit_failed: 503/);
+
+  const assetJobs = await jobs.byAsset("asset_submit_fail");
+  assert.equal(assetJobs[0]?.status, "failed");
+});
+
 test("ABR execution manager: handoffRecording creates linked VOD asset", async () => {
   const assets = createInMemoryAssetRepo();
   const jobs = createInMemoryEncodingJobRepo();
@@ -302,4 +349,99 @@ test("ABR execution manager: handoffRecording creates linked VOD asset", async (
 
   const liveStream = await liveStreams.byId("live_1");
   assert.equal(liveStream?.recordingAssetId, out.assetId);
+});
+
+test("ABR execution manager: recoverPendingAssets retries queued and running assets on boot", async () => {
+  const assets = createInMemoryAssetRepo();
+  const jobs = createInMemoryEncodingJobRepo();
+  const renditions = createInMemoryRenditionRepo();
+  const playbackIds = createInMemoryPlaybackIdRepo();
+  const recordings = createInMemoryRecordingRepo();
+  const liveStreams = createInMemoryLiveStreamRepo();
+
+  await assets.insert({
+    id: "asset_queued",
+    projectId: "proj_1",
+    status: "queued",
+    sourceType: "upload",
+    sourceUrl: "uploads/proj_1/asset_queued/source.mp4",
+    encodingTier: "standard",
+    selectedOffering: "abr-default",
+    createdAt: new Date("2026-05-10T15:00:00Z"),
+  });
+  await assets.insert({
+    id: "asset_running",
+    projectId: "proj_1",
+    status: "queued",
+    sourceType: "upload",
+    sourceUrl: "uploads/proj_1/asset_running/source.mp4",
+    encodingTier: "baseline",
+    selectedOffering: "abr-default",
+    createdAt: new Date("2026-05-10T15:01:00Z"),
+  });
+  await jobs.insert({
+    id: "job_old_1",
+    assetId: "asset_queued",
+    kind: "encode",
+    status: "queued",
+    createdAt: new Date("2026-05-10T15:00:00Z"),
+  });
+  await jobs.insert({
+    id: "job_old_2",
+    assetId: "asset_running",
+    kind: "encode",
+    status: "running",
+    workerUrl: "http://worker.internal:8080",
+    startedAt: new Date("2026-05-10T15:01:30Z"),
+    createdAt: new Date("2026-05-10T15:01:00Z"),
+  });
+
+  const manager = createAbrExecutionManager({
+    assets,
+    jobs,
+    renditions,
+    playbackIds,
+    recordings,
+    liveStreams,
+    storage: createStorageFake(),
+    routeSelector: createRouteSelectorFake(),
+    fetchImpl: async (url) => {
+      if (url.endsWith("/v1/video/transcode/abr")) {
+        return new Response(JSON.stringify({ job_id: `native_${Math.random()}` }), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v1/video/transcode/abr/status")) {
+        return new Response(
+          JSON.stringify({
+            job_id: "native_any",
+            status: "complete",
+            input: {
+              duration: 60,
+              width: 1280,
+              height: 720,
+              fps: 30,
+              video_codec: "h264",
+              audio_codec: "aac",
+            },
+            renditions: [
+              { name: "1080p", status: "complete", bitrate: 5000 },
+              { name: "720p", status: "complete", bitrate: 2500 },
+              { name: "480p", status: "complete", bitrate: 1000 },
+              { name: "360p", status: "complete", bitrate: 600 },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
+      throw new Error(`unexpected url ${url}`);
+    },
+  });
+
+  const recovered = await manager.recoverPendingAssets();
+  assert.deepEqual(recovered.sort(), ["asset_queued", "asset_running"].sort());
 });

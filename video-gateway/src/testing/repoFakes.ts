@@ -231,6 +231,7 @@ export function createInMemoryRecordingRepo(): RecordingRepo & { rows: Map<strin
 export function createInMemoryEncodingJobRepo(): EncodingJobRepo & {
   rows: Map<string, EncodingJob>;
   deleteByAsset(assetId: string): Promise<void>;
+  listByStatuses(statuses: Array<EncodingJob["status"]>, limit: number): Promise<EncodingJob[]>;
 } {
   const rows = new Map<string, EncodingJob>();
   return {
@@ -269,6 +270,12 @@ export function createInMemoryEncodingJobRepo(): EncodingJobRepo & {
       for (const [id, row] of rows.entries()) {
         if (row.assetId === assetId) rows.delete(id);
       }
+    },
+    async listByStatuses(statuses, limit) {
+      return [...rows.values()]
+        .filter((row) => statuses.includes(row.status))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, limit);
     },
   };
 }

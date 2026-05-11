@@ -96,6 +96,9 @@ test("admin routes: asset retry requeues non-ready assets", async () => {
       async handoffRecording() {
         return { assetId: "asset_recording", executionId: "job_recording" };
       },
+      async recoverPendingAssets() {
+        return [];
+      },
     },
   });
 
@@ -153,6 +156,9 @@ test("admin routes: ready assets cannot be retried", async () => {
       },
       async handoffRecording() {
         return { assetId: "asset_recording", executionId: "job_recording" };
+      },
+      async recoverPendingAssets() {
+        return [];
       },
     },
   });
@@ -217,6 +223,9 @@ test("admin routes: recording retry requeues failed recording assets", async () 
       },
       async handoffRecording() {
         return { assetId: "asset_recording", executionId: "job_recording" };
+      },
+      async recoverPendingAssets() {
+        return [];
       },
     },
   });

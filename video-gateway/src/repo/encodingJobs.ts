@@ -42,6 +42,7 @@ function rowToEncodingJob(row: EncodingJobRow): EncodingJob {
 
 export interface MutableEncodingJobRepo extends EncodingJobRepo {
   deleteByAsset(assetId: string): Promise<void>;
+  listByStatuses(statuses: JobStatus[], limit: number): Promise<EncodingJob[]>;
 }
 
 export function createEncodingJobRepo(db: Db): MutableEncodingJobRepo {
@@ -121,6 +122,17 @@ export function createEncodingJobRepo(db: Db): MutableEncodingJobRepo {
 
     async deleteByAsset(assetId) {
       await db.delete(encodingJobs).where(eq(encodingJobs.assetId, assetId));
+    },
+
+    async listByStatuses(statuses, limit) {
+      if (statuses.length === 0) return [];
+      const rows = await db
+        .select()
+        .from(encodingJobs)
+        .where(inArray(encodingJobs.status, statuses))
+        .orderBy(desc(encodingJobs.createdAt), asc(encodingJobs.id))
+        .limit(limit);
+      return rows.map((row) => rowToEncodingJob(row as EncodingJobRow));
     },
   };
 }

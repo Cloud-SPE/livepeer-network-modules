@@ -46,6 +46,7 @@ export interface AbrExecutionManager {
   submitAsset(input: SubmitAbrAssetInput): Promise<{ executionId: string }>;
   retryAsset(assetId: string): Promise<{ executionId: string }>;
   handoffRecording(input: RecordingHandoffInput): Promise<{ assetId: string; executionId: string }>;
+  recoverPendingAssets(limit?: number): Promise<string[]>;
 }
 
 interface AbrPreset {
@@ -202,6 +203,25 @@ export function createAbrExecutionManager(deps: AbrExecutionManagerDeps): AbrExe
       const execution = await initializeExecution(deps, fetchImpl, asset, route, input.recordingId);
       void runExecution(deps, fetchImpl, execution);
       return { assetId, executionId: execution.executionId };
+    },
+
+    async recoverPendingAssets(limit = 100) {
+      const pending = await deps.jobs.listByStatuses(["queued", "running"], limit);
+      const assetIds = [...new Set(pending.map((job) => job.assetId))];
+      const recovered: string[] = [];
+      for (const assetId of assetIds) {
+        const asset = await deps.assets.byId(assetId);
+        if (!asset || asset.deletedAt || asset.status === "ready") continue;
+        try {
+          await this.retryAsset(assetId);
+          recovered.push(assetId);
+        } catch (err) {
+          deps.logger?.warn?.(
+            `video-gateway: failed to recover pending asset ${assetId}: ${stringifyError(err)}`,
+          );
+        }
+      }
+      return recovered;
     },
   };
 }

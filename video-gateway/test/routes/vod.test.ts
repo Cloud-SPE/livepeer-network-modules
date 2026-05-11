@@ -5,6 +5,7 @@ import Fastify from "fastify";
 
 import type { VideoRouteSelector } from "../../src/livepeer/routeSelector.js";
 import { registerVod } from "../../src/routes/vod.js";
+import type { UsageLedger } from "../../src/service/usageLedger.js";
 import { createInMemoryAssetRepo } from "../../src/testing/repoFakes.js";
 
 const routeSelector: VideoRouteSelector = {
@@ -122,4 +123,88 @@ test("vod routes: deleted asset cannot be resubmitted", async () => {
   });
   assert.equal(res.statusCode, 404);
   assert.deepEqual(res.json(), { error: "asset_not_found" });
+});
+
+test("vod routes: execution start failure returns 502 and refunds reserved usage", async () => {
+  const app = Fastify();
+  const repo = createInMemoryAssetRepo();
+  await repo.insert({
+    id: "asset_exec_fail",
+    projectId: "proj_1",
+    status: "preparing",
+    sourceType: "upload",
+    sourceUrl: "uploads/proj_1/asset_exec_fail/source.mp4",
+    encodingTier: "baseline",
+    createdAt: new Date("2026-05-10T14:00:00Z"),
+  });
+
+  const refunded: string[] = [];
+  const usageLedger: UsageLedger = {
+    async reserveVodEstimate() {
+      return null;
+    },
+    async recordVodUsage() {
+      return 0;
+    },
+    async refundVodUsage(input) {
+      refunded.push(input.assetId);
+      return null;
+    },
+    async recordLiveUsage() {
+      return 0;
+    },
+    async getChargeByAsset() {
+      return null;
+    },
+    async getChargeByLiveStream() {
+      return null;
+    },
+    async listChargesByWorkIds() {
+      return new Map();
+    },
+    async summarizeCustomer() {
+      return {
+        topupTotalCents: 0,
+        usageCommittedCents: 0,
+        reservedOpenCents: 0,
+        refundedCents: 0,
+      };
+    },
+  };
+
+  registerVod(app, {
+    routeSelector,
+    assetsRepo: repo,
+    usageLedger,
+    execution: {
+      async submitAsset() {
+        throw new Error("worker unavailable");
+      },
+      async retryAsset() {
+        return { executionId: "unused" };
+      },
+      async handoffRecording() {
+        return { assetId: "unused", executionId: "unused" };
+      },
+      async recoverPendingAssets() {
+        return [];
+      },
+    },
+  });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/vod/submit",
+    payload: {
+      asset_id: "asset_exec_fail",
+      encoding_tier: "standard",
+      estimated_duration_sec: 42,
+    },
+  });
+  assert.equal(res.statusCode, 502);
+  assert.deepEqual(res.json(), {
+    error: "execution_start_failed",
+    message: "worker unavailable",
+  });
+  assert.deepEqual(refunded, ["asset_exec_fail"]);
 });

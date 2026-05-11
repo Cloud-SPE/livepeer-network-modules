@@ -123,6 +123,9 @@ test("sweepStaleStreamsOnce ends stale live streams and triggers recording hando
         });
         return { assetId: "asset_1", executionId: "job_1" };
       },
+      async recoverPendingAssets() {
+        return [];
+      },
     },
     usageLedger,
     now,

@@ -150,3 +150,83 @@ test("live routes: create rejects unknown project when project validation is ena
   assert.equal(missing.statusCode, 404);
   assert.deepEqual(missing.json(), { error: "project_not_found" });
 });
+
+test("live routes: create returns 503 when no live route is available", async () => {
+  const app = Fastify();
+  registerLiveStreams(app, {
+    cfg,
+    routeSelector,
+    liveSessions: createLiveSessionDirectory(),
+    liveStreamsRepo: createInMemoryLiveStreamRepo(),
+  });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/v1/live/streams",
+    payload: {
+      project_id: "proj_1",
+      name: "No route stream",
+    },
+  });
+  assert.equal(res.statusCode, 503);
+  assert.deepEqual(res.json(), {
+    error: "no_live_route",
+    message: "no video:live.rtmp route available",
+  });
+});
+
+test("live routes: create returns 502 when broker session-open fails", async () => {
+  const app = Fastify();
+  const fetchBefore = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response("upstream down", {
+      status: 502,
+      headers: { "Content-Type": "text/plain" },
+    })) as typeof fetch;
+  try {
+    registerLiveStreams(app, {
+      cfg,
+      routeSelector: {
+        async select() {
+          return [
+            {
+              brokerUrl: "http://broker.internal:8080",
+              ethAddress: "0x1234",
+              capability: "video:live.rtmp",
+              offering: "default",
+              pricePerWorkUnitWei: "25000000",
+              extra: null,
+              constraints: null,
+            },
+          ];
+        },
+        async inspect() {
+          return [];
+        },
+        async suppressBroker() {},
+        async unsuppressBroker() {},
+        async suppressedBrokers() {
+          return [];
+        },
+      },
+      liveSessions: createLiveSessionDirectory(),
+      liveStreamsRepo: createInMemoryLiveStreamRepo(),
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/live/streams",
+      payload: {
+        project_id: "proj_1",
+        name: "Broker failure stream",
+      },
+    });
+    assert.equal(res.statusCode, 502);
+    assert.deepEqual(res.json(), {
+      error: "live_session_open_failed",
+      message: "live session-open failed: 502",
+    });
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
+});

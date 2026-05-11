@@ -60,6 +60,7 @@ test("vod routes: submit persists selected route intent onto the asset", async (
     selected_offering: "abr-default",
     selected_broker_url: "http://broker.internal:8080",
     execution_id: null,
+    billing: null,
   });
 
   const asset = await repo.byId("asset_1");
@@ -78,6 +79,7 @@ test("vod routes: submit persists selected route intent onto the asset", async (
   assert.equal(statusRes.json().selected_offering, "abr-default");
   assert.equal(statusRes.json().encoding_tier, "premium");
   assert.equal(statusRes.json().playback_id, null);
+  assert.equal(statusRes.json().billing, null);
   assert.deepEqual(statusRes.json().renditions, []);
   assert.deepEqual(statusRes.json().jobs, []);
 

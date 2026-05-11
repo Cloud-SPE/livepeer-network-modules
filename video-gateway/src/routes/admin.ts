@@ -7,8 +7,10 @@ import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
 import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
 import { assets, liveStreams, recordings } from "../db/schema.js";
 import type { AssetRepo, LiveStreamRepo, RecordingRepo, WebhookFailureRepo, PlaybackIdRepo, MutableEncodingJobRepo, MutableRenditionRepo } from "../repo/index.js";
+import type { UsageRecordRepo } from "../repo/usage.js";
 import type { RetryDispatcher } from "../service/webhookDispatcher.js";
 import type { AbrExecutionManager } from "../service/abrExecution.js";
+import { usageWorkId, type ChargeSummary, type UsageLedger } from "../service/usageLedger.js";
 import { maybeHandoffRecording } from "./live-streams.js";
 
 declare module "fastify" {
@@ -28,9 +30,11 @@ export interface AdminRoutesDeps {
   playbackIds?: PlaybackIdRepo;
   jobsRepo?: MutableEncodingJobRepo;
   renditionsRepo?: MutableRenditionRepo;
+  usageRecords?: UsageRecordRepo;
   failures: WebhookFailureRepo;
   dispatcher: RetryDispatcher;
   execution?: AbrExecutionManager;
+  usageLedger?: UsageLedger;
 }
 
 export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void {
@@ -129,10 +133,66 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
     });
   });
 
+  app.get("/admin/usage", { preHandler }, async (req, reply) => {
+    if (!deps.usageRecords) {
+      await reply.code(501).send({ error: "usage_unavailable" });
+      return;
+    }
+    const query = req.query as Record<string, string | undefined>;
+    const limit = Math.min(parseInt(query["limit"] ?? "100", 10) || 100, 200);
+    const customerId = query["customer_id"];
+    const rows = customerId
+      ? await deps.usageRecords.listByCustomer(customerId, limit)
+      : await deps.usageRecords.recent(limit);
+    const chargeByWorkId = deps.usageLedger
+      ? await deps.usageLedger.listChargesByWorkIds(
+          rows
+            .map((row) => usageWorkId(row))
+            .filter((workId): workId is string => workId !== null),
+        )
+      : new Map();
+    const summary = customerId && deps.usageLedger
+      ? await deps.usageLedger.summarizeCustomer(customerId)
+      : {
+          topupTotalCents: 0,
+          usageCommittedCents: rows.reduce((sum, row) => sum + row.amountCents, 0),
+          reservedOpenCents: 0,
+          refundedCents: 0,
+        };
+    await reply.code(200).send({
+      items: rows.map((row) => ({
+        id: row.id,
+        project_id: row.projectId,
+        asset_id: row.assetId,
+        live_stream_id: row.liveStreamId,
+        work_id: usageWorkId(row),
+        capability: row.capability,
+        amount_cents: row.amountCents,
+        created_at: row.createdAt.toISOString(),
+        charge: serializeCharge(usageWorkId(row), chargeByWorkId),
+      })),
+      total_amount_cents: rows.reduce((sum, row) => sum + row.amountCents, 0),
+      summary: {
+        topup_total_cents: summary.topupTotalCents,
+        usage_committed_cents: summary.usageCommittedCents,
+        reserved_open_cents: summary.reservedOpenCents,
+        refunded_cents: summary.refundedCents,
+      },
+    });
+  });
+
   app.post<{ Params: { id: string } }>("/admin/live-streams/:id/end", { preHandler }, async (req, reply) => {
     const stream = await deps.liveStreamsRepo.byId(req.params.id);
     if (!stream) {
       await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+    if (stream.endedAt) {
+      await reply.code(200).send({
+        ok: true,
+        recording_asset_id: stream.recordingAssetId ?? null,
+        recording_execution_id: null,
+      });
       return;
     }
     const endedAt = new Date();
@@ -140,6 +200,14 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
       endedAt,
       lastSeenAt: endedAt,
     });
+    if (deps.usageLedger) {
+      const durationSec = Math.max(0, Math.ceil((endedAt.getTime() - stream.createdAt.getTime()) / 1000));
+      await deps.usageLedger.recordLiveUsage({
+        projectId: stream.projectId,
+        liveStreamId: stream.id,
+        durationSec,
+      });
+    }
     const handoff = await maybeHandoffRecording(deps, {
       liveStreamId: stream.id,
       projectId: stream.projectId,
@@ -211,6 +279,29 @@ function restoredAssetStatus(asset: { readyAt?: Date | null; selectedOffering?: 
 function adminStreamStatus(status: string): string {
   if (status === "active" || status === "reconnecting") return "live";
   return status;
+}
+
+function serializeCharge(
+  workId: string | null,
+  charges: Map<string, ChargeSummary>,
+): Record<string, unknown> | null {
+  if (!workId) return null;
+  const charge = charges.get(workId);
+  if (!charge) return null;
+  return {
+    work_id: charge.workId,
+    reservation_id: charge.reservationId,
+    customer_id: charge.customerId,
+    kind: charge.kind,
+    state: charge.state,
+    estimated_amount_cents: charge.estimatedAmountCents,
+    committed_amount_cents: charge.committedAmountCents,
+    refunded_amount_cents: charge.refundedAmountCents,
+    capability: charge.capability,
+    model: charge.model,
+    created_at: charge.createdAt,
+    resolved_at: charge.resolvedAt,
+  };
 }
 
 function adminAuthPreHandler(

@@ -91,6 +91,7 @@ test("live routes: status and end reflect persisted stream state", async () => {
     created_at: createdAt.toISOString(),
     ended_at: null,
     cost_accrued_cents: 0,
+    billing: null,
   });
 
   const endRes = await app.inject({

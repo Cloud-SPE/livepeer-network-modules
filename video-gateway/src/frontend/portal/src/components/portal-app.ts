@@ -38,6 +38,29 @@ interface TopupSummary {
   created_at: string;
 }
 
+interface UsageSummary {
+  id: string;
+  capability: string;
+  amount_cents: number;
+  created_at: string;
+  work_id: string | null;
+  asset_id: string | null;
+  live_stream_id: string | null;
+  charge: {
+    state: string | null;
+    estimated_amount_cents: number | null;
+    committed_amount_cents: number | null;
+    refunded_amount_cents: number | null;
+  } | null;
+}
+
+interface BillingSummary {
+  topup_total_cents: number;
+  usage_committed_cents: number;
+  reserved_open_cents: number;
+  refunded_cents: number;
+}
+
 interface PortalPricing {
   vod_pipeline_policy: Record<
     string,
@@ -79,6 +102,8 @@ export class VideoGatewayPortal extends HTMLElement {
   private authTokens: CredentialSummary[] = [];
   private apiKeys: CredentialSummary[] = [];
   private topups: TopupSummary[] = [];
+  private usage: UsageSummary[] = [];
+  private billingSummary: BillingSummary | null = null;
   private pricing: PortalPricing | null = null;
   private error: string | null = null;
 
@@ -268,6 +293,7 @@ export class VideoGatewayPortal extends HTMLElement {
       this.apiKeys = [];
       this.topups = [];
       this.pricing = null;
+      this.billingSummary = null;
       this.render();
     }
   };
@@ -281,6 +307,7 @@ export class VideoGatewayPortal extends HTMLElement {
     this.apiKeys = [];
     this.topups = [];
     this.pricing = null;
+    this.billingSummary = null;
     this.render();
     window.location.hash = "#/login";
   }
@@ -546,6 +573,45 @@ export class VideoGatewayPortal extends HTMLElement {
     }
     tableShell.append(table);
     card.append(tableShell);
+
+    const usageShell = document.createElement("portal-data-table");
+    usageShell.setAttribute("heading", "Usage ledger");
+    usageShell.setAttribute("description", "Charges committed by the video gateway for VOD jobs and live sessions.");
+    if (this.billingSummary) {
+      usageShell.append(
+        this.metaList([
+          ["Top-up total", this.formatUsdNumber(this.billingSummary.topup_total_cents)],
+          ["Committed media usage", this.formatUsdNumber(this.billingSummary.usage_committed_cents)],
+          ["Open media reservations", this.formatUsdNumber(this.billingSummary.reserved_open_cents)],
+          ["Refunded media reservations", this.formatUsdNumber(this.billingSummary.refunded_cents)],
+        ]),
+      );
+    }
+    const usageTable = document.createElement("table");
+    usageTable.innerHTML = `
+      <thead>
+        <tr><th>Created</th><th>Capability</th><th>Target</th><th>State</th><th>Estimated</th><th>Committed</th><th>Refunded</th></tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    const usageBody = usageTable.tBodies[0]!;
+    for (const row of this.usage ?? []) {
+      const tr = document.createElement("tr");
+      const target = row.asset_id ?? row.live_stream_id ?? "—";
+      const charge = row.charge;
+      tr.append(
+        this.cell(row.created_at),
+        this.cell(row.capability),
+        this.cell(target),
+        this.cell(charge?.state ?? "—"),
+        this.cell(charge?.estimated_amount_cents !== null && charge?.estimated_amount_cents !== undefined ? this.formatUsdNumber(charge.estimated_amount_cents) : "—"),
+        this.cell(charge?.committed_amount_cents !== null && charge?.committed_amount_cents !== undefined ? this.formatUsdNumber(charge.committed_amount_cents) : this.formatUsdNumber(row.amount_cents)),
+        this.cell(charge?.refunded_amount_cents !== null && charge?.refunded_amount_cents !== undefined ? this.formatUsdNumber(charge.refunded_amount_cents) : "—"),
+      );
+      usageBody.append(tr);
+    }
+    usageShell.append(usageTable);
+    card.append(usageShell);
     return card;
   }
 
@@ -580,13 +646,14 @@ export class VideoGatewayPortal extends HTMLElement {
   private async loadPortalState(): Promise<void> {
     this.error = null;
     try {
-      const [accountRes, limitsRes, authTokensRes, apiKeysRes, topupsRes, pricingRes] = await Promise.all([
+      const [accountRes, limitsRes, authTokensRes, apiKeysRes, topupsRes, pricingRes, usageRes] = await Promise.all([
         this.api.get<{ customer: PortalCustomer }>("/portal/account"),
         this.api.get<{ limits: PortalLimits }>("/portal/account/limits"),
         this.api.get<{ auth_tokens: CredentialSummary[] }>("/portal/auth-tokens"),
         this.api.get<{ api_keys: CredentialSummary[] }>("/portal/api-keys"),
         this.api.get<{ topups: TopupSummary[] }>("/portal/topups"),
         this.api.get<PortalPricing>("/portal/pricing"),
+        this.api.get<{ items: UsageSummary[]; summary?: BillingSummary }>("/portal/usage"),
       ]);
       this.customer = accountRes.customer;
       this.limits = limitsRes.limits;
@@ -594,6 +661,8 @@ export class VideoGatewayPortal extends HTMLElement {
       this.apiKeys = apiKeysRes.api_keys;
       this.topups = topupsRes.topups;
       this.pricing = pricingRes;
+      this.usage = usageRes.items;
+      this.billingSummary = usageRes.summary ?? null;
     } catch (err) {
       this.error = this.errorMessage(err);
     }
@@ -654,6 +723,10 @@ export class VideoGatewayPortal extends HTMLElement {
 
   private formatUsd(cents: string): string {
     return `$${(Number(cents) / 100).toFixed(2)}`;
+  }
+
+  private formatUsdNumber(cents: number): string {
+    return `$${(cents / 100).toFixed(2)}`;
   }
 
   private errorMessage(err: unknown): string {

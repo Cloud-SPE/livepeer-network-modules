@@ -13,6 +13,7 @@ import type {
   LiveStreamRepo,
   PlaybackIdRepo,
   RecordingRepo,
+  UsageRecordRepo,
   WebhookFailureRepo,
   MutableEncodingJobRepo,
   MutableRenditionRepo,
@@ -28,6 +29,7 @@ import { registerVideoCustomerPortalRoutes } from "./routes/customer-portal.js";
 import { registerWebhooks } from "./routes/webhooks.js";
 import { defaultAdminDist, defaultPortalDist, registerSpaStatic } from "./runtime/static.js";
 import type { AbrExecutionManager } from "./service/abrExecution.js";
+import type { UsageLedger } from "./service/usageLedger.js";
 import type { RetryDispatcher } from "./service/webhookDispatcher.js";
 import { getProjectById } from "./service/projects.js";
 import { uploads } from "./db/schema.js";
@@ -47,9 +49,11 @@ export interface BuildServerInput {
     renditionsRepo: MutableRenditionRepo;
     playbackIds: PlaybackIdRepo;
     recordingsRepo: RecordingRepo;
+    usageRecords: UsageRecordRepo;
     failures: WebhookFailureRepo;
     dispatcher: RetryDispatcher;
     execution: AbrExecutionManager;
+    usageLedger: UsageLedger;
     storage: StorageProvider;
   };
 }
@@ -72,6 +76,7 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
     liveStreamsRepo: input.admin?.liveStreamsRepo,
     recordingsRepo: input.admin?.recordingsRepo,
     execution: input.admin?.execution,
+    usageLedger: input.admin?.usageLedger,
     projectExists: input.admin?.videoDb
       ? async (projectId: string) => (await getProjectById(input.admin!.videoDb, projectId)) !== null
       : undefined,
@@ -106,6 +111,7 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
     jobsRepo: input.admin?.jobsRepo,
     playbackIds: input.admin?.playbackIds,
     execution: input.admin?.execution,
+    usageLedger: input.admin?.usageLedger,
   });
   registerPlayback(app, {
     cfg,
@@ -140,6 +146,8 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
       jobsRepo: input.admin?.jobsRepo,
       renditionsRepo: input.admin?.renditionsRepo,
       execution: input.admin?.execution,
+      usageRecords: input.admin?.usageRecords,
+      usageLedger: input.admin?.usageLedger,
     });
   }
   if (input.admin && input.portal?.adminAuthResolver) {

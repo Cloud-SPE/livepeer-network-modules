@@ -11,6 +11,7 @@ import type { PlaybackIdRepo } from "../repo/playbackIds.js";
 import type { RecordingRepo } from "../repo/recordings.js";
 import type { StorageProvider } from "../engine/interfaces/storageProvider.js";
 import type { Asset, Codec, EncodingTier, Resolution } from "../engine/types/index.js";
+import type { UsageLedger } from "./usageLedger.js";
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -23,6 +24,7 @@ export interface AbrExecutionManagerDeps {
   liveStreams: LiveStreamRepo;
   storage: StorageProvider;
   routeSelector: VideoRouteSelector;
+  usageLedger?: UsageLedger;
   fetchImpl?: FetchLike;
   logger?: Pick<Console, "info" | "error" | "warn">;
 }
@@ -455,6 +457,15 @@ async function completeExecution(
     readyAt,
     errorMessage: undefined,
   });
+  const asset = await deps.assets.byId(job.assetId);
+  if (asset && body.input?.duration && deps.usageLedger) {
+    await deps.usageLedger.recordVodUsage({
+      projectId: asset.projectId,
+      assetId: asset.id,
+      encodingTier: asset.encodingTier,
+      durationSec: body.input.duration,
+    });
+  }
   if (job.recordingId) {
     await deps.recordings.updateStatus(job.recordingId, "ready", {
       assetId: job.assetId,
@@ -484,6 +495,13 @@ async function failExecution(
   await deps.assets.updateStatus(assetId, "errored", {
     errorMessage: message,
   });
+  const asset = await deps.assets.byId(assetId);
+  if (asset && deps.usageLedger) {
+    await deps.usageLedger.refundVodUsage({
+      projectId: asset.projectId,
+      assetId,
+    });
+  }
   if (recordingId) {
     await deps.recordings.updateStatus(recordingId, "failed", {
       assetId,

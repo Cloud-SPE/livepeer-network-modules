@@ -51,7 +51,7 @@ The largest missing pieces are:
 - operator-grade retry/requeue/drain/debug workflows
 - broader test and migration hardening
 
-## Phase 1 — Make Current Workflows Honest
+## Phase 1 — Make Current Workflows Honest (Completed)
 
 ### Objective
 
@@ -90,7 +90,7 @@ present in the UI and API.
 - admin and portal remain signed in after refresh in the same tab session
 - clean deploy on an empty database succeeds without operator patch-ups
 
-## Phase 2 — Real VOD Execution and Recording Handoff
+## Phase 2 — Real VOD Execution and Recording Handoff (Completed)
 
 ### Objective
 
@@ -125,7 +125,7 @@ selection placeholders.
 - live recordings appear in portal/admin with linked asset IDs
 - failed jobs explain why they failed in operator-visible state
 
-## Phase 3 — Usage, Billing, and Rate Card Completion
+## Phase 3 — Usage, Billing, and Rate Card Completion (Completed)
 
 ### Objective
 

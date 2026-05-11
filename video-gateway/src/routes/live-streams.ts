@@ -15,6 +15,7 @@ import {
 } from "../service/abrSelector.js";
 import type { RecordingRepo } from "../repo/index.js";
 import type { AbrExecutionManager } from "../service/abrExecution.js";
+import type { ChargeSummary, UsageLedger } from "../service/usageLedger.js";
 
 const CreateLiveStreamBody = z.object({
   project_id: z.string().min(1),
@@ -32,6 +33,7 @@ export interface LiveStreamsDeps {
   liveStreamsRepo?: LiveStreamRepo;
   recordingsRepo?: RecordingRepo;
   execution?: AbrExecutionManager;
+  usageLedger?: UsageLedger;
   projectExists?: (projectId: string) => Promise<boolean>;
 }
 
@@ -129,6 +131,7 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       return;
     }
     const session = stream.sessionId ? deps.liveSessions.get(stream.sessionId) : deps.liveSessions.getByStreamId(id);
+    const charge = deps.usageLedger ? await deps.usageLedger.getChargeByLiveStream(id) : null;
     await reply.code(200).send({
       stream_id: id,
       name: stream.name ?? id,
@@ -139,7 +142,8 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       record_to_vod: stream.recordingEnabled,
       created_at: stream.createdAt.toISOString(),
       ended_at: stream.endedAt?.toISOString() ?? null,
-      cost_accrued_cents: 0,
+      cost_accrued_cents: charge?.committedAmountCents ?? 0,
+      billing: serializeCharge(charge),
     });
   });
 
@@ -154,21 +158,45 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       await reply.code(404).send({ error: "stream_not_found" });
       return;
     }
+    if (stream.endedAt) {
+      const charge = deps.usageLedger ? await deps.usageLedger.getChargeByLiveStream(id) : null;
+      await reply.code(200).send({
+        stream_id: id,
+        status: "ended",
+        ended_at: stream.endedAt.toISOString(),
+        cost_accrued_cents: charge?.committedAmountCents ?? 0,
+        billing: serializeCharge(charge),
+        recording_asset_id: stream.recordingAssetId ?? null,
+        recording_execution_id: null,
+      });
+      return;
+    }
     const endedAt = new Date();
     await deps.liveStreamsRepo.updateStatus(id, "ended", {
       lastSeenAt: endedAt,
       endedAt,
     });
+    if (stream.createdAt && deps.usageLedger) {
+      const durationSec = Math.max(0, Math.ceil((endedAt.getTime() - stream.createdAt.getTime()) / 1000));
+      await deps.usageLedger.recordLiveUsage({
+        projectId: stream.projectId,
+        liveStreamId: stream.id,
+        durationSec,
+      });
+    }
     const handoff = await maybeHandoffRecording(deps, {
       liveStreamId: stream.id,
       projectId: stream.projectId,
       sessionId: stream.sessionId,
       endedAt,
     });
+    const charge = deps.usageLedger ? await deps.usageLedger.getChargeByLiveStream(id) : null;
     await reply.code(200).send({
       stream_id: id,
       status: "ended",
       ended_at: endedAt.toISOString(),
+      cost_accrued_cents: charge?.committedAmountCents ?? 0,
+      billing: serializeCharge(charge),
       recording_asset_id: handoff?.assetId ?? stream.recordingAssetId ?? null,
       recording_execution_id: handoff?.executionId ?? null,
     });
@@ -265,6 +293,24 @@ function hashStreamKey(streamKey: string): string {
 function publicStatus(status: string): string {
   if (status === "active" || status === "reconnecting") return "live";
   return status;
+}
+
+function serializeCharge(charge: ChargeSummary | null): Record<string, unknown> | null {
+  if (!charge) return null;
+  return {
+    work_id: charge.workId,
+    reservation_id: charge.reservationId,
+    customer_id: charge.customerId,
+    kind: charge.kind,
+    state: charge.state,
+    estimated_amount_cents: charge.estimatedAmountCents,
+    committed_amount_cents: charge.committedAmountCents,
+    refunded_amount_cents: charge.refundedAmountCents,
+    capability: charge.capability,
+    model: charge.model,
+    created_at: charge.createdAt,
+    resolved_at: charge.resolvedAt,
+  };
 }
 
 export async function maybeHandoffRecording(

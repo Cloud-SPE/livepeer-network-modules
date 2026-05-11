@@ -4,6 +4,14 @@ export { createEncodingJobRepo, type MutableEncodingJobRepo } from "./encodingJo
 export { createRenditionRepo, type MutableRenditionRepo } from "./renditions.js";
 export { createPlaybackIdRepo, type PlaybackIdRepo, type PlaybackIdRecord } from "./playbackIds.js";
 export {
+  createUsageRecordRepo,
+  createLiveSessionDebitRepo,
+  type UsageRecord,
+  type UsageRecordRepo,
+  type LiveSessionDebit,
+  type LiveSessionDebitRepo,
+} from "./usage.js";
+export {
   createWebhookDeliveryRepo,
   createWebhookEndpointRepo,
   createWebhookFailureRepo,

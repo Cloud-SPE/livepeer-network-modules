@@ -41,6 +41,7 @@ export class VideoGatewayAdmin extends HTMLElement {
       .add("/assets", () => this.setRoute("assets"))
       .add("/topups", () => this.setRoute("topups"))
       .add("/reservations", () => this.setRoute("reservations"))
+      .add("/usage", () => this.setRoute("usage"))
       .add("/audit", () => this.setRoute("audit"))
       .add("/streams", () => this.setRoute("streams"))
       .add("/webhooks", () => this.setRoute("webhooks"))
@@ -81,6 +82,7 @@ export class VideoGatewayAdmin extends HTMLElement {
         this.navLink("/customers", "Customers", "customers"),
         this.navLink("/topups", "Top-ups", "topups"),
         this.navLink("/reservations", "Reservations", "reservations"),
+        this.navLink("/usage", "Usage", "usage"),
         this.navLink("/audit", "Audit", "audit"),
         this.navLink("/assets", "Assets", "assets"),
         this.navLink("/streams", "Streams", "streams"),
@@ -204,6 +206,8 @@ export class VideoGatewayAdmin extends HTMLElement {
         return document.createElement("admin-topups");
       case "reservations":
         return document.createElement("admin-reservations");
+      case "usage":
+        return document.createElement("admin-usage");
       case "audit":
         return document.createElement("admin-audit");
       case "streams":
@@ -319,6 +323,8 @@ export class VideoGatewayAdmin extends HTMLElement {
         return "Top-ups";
       case "reservations":
         return "Reservations";
+      case "usage":
+        return "Usage";
       case "audit":
         return "Audit";
       case "assets":
@@ -349,6 +355,8 @@ export class VideoGatewayAdmin extends HTMLElement {
         return "Review customer wallet funding and payment lifecycle events.";
       case "reservations":
         return "Inspect reserved, committed, and refunded work against the video gateway.";
+      case "usage":
+        return "Inspect media charges joined to reservation state and customer balance movement.";
       case "audit":
         return "Operator activity and customer-impacting administrative events.";
       case "assets":

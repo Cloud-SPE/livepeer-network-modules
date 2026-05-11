@@ -12,6 +12,7 @@ await import("./components/admin-nodes.js");
 await import("./components/admin-assets.js");
 await import("./components/admin-topups.js");
 await import("./components/admin-reservations.js");
+await import("./components/admin-usage.js");
 await import("./components/admin-audit.js");
 await import("./components/admin-streams.js");
 await import("./components/admin-webhooks.js");

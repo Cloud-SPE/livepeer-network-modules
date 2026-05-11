@@ -10,10 +10,12 @@ import type { PlaybackIdRepo } from "../repo/playbackIds.js";
 import type { MutableRenditionRepo } from "../repo/renditions.js";
 import type { MutableEncodingJobRepo } from "../repo/encodingJobs.js";
 import type { AbrExecutionManager } from "../service/abrExecution.js";
+import type { ChargeSummary, UsageLedger } from "../service/usageLedger.js";
 
 const VodSubmitBody = z.object({
   asset_id: z.string().min(1),
   encoding_tier: z.enum(["baseline", "standard", "premium"]).default("baseline"),
+  estimated_duration_sec: z.number().positive().optional(),
   offering: z.string().optional(),
 });
 
@@ -33,6 +35,7 @@ export interface VodDeps {
   jobsRepo?: MutableEncodingJobRepo;
   playbackIds?: PlaybackIdRepo;
   execution?: AbrExecutionManager;
+  usageLedger?: UsageLedger;
 }
 
 export function registerVod(app: FastifyInstance, deps: VodDeps): void {
@@ -96,6 +99,24 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
       });
       return;
     }
+    let charge: ChargeSummary | null = null;
+    if (deps.usageLedger) {
+      try {
+        charge = await deps.usageLedger.reserveVodEstimate({
+          projectId: asset.projectId,
+          assetId: parsed.data.asset_id,
+          encodingTier: parsed.data.encoding_tier,
+          estimatedDurationSec: parsed.data.estimated_duration_sec ?? asset.durationSec ?? null,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "billing_reserve_failed";
+        await reply.code(402).send({
+          error: "billing_reserve_failed",
+          message,
+        });
+        return;
+      }
+    }
     await deps.assetsRepo.updateStatus(parsed.data.asset_id, "queued", {
       encodingTier: parsed.data.encoding_tier,
       selectedOffering: route.offering,
@@ -117,6 +138,7 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
       selected_offering: route.offering,
       selected_broker_url: route.brokerUrl,
       execution_id: execution?.executionId ?? null,
+      billing: serializeCharge(charge),
     });
   });
 
@@ -134,6 +156,7 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
     const [playback] = deps.playbackIds ? await deps.playbackIds.byAsset(asset.id) : [];
     const renditions = deps.renditionsRepo ? await deps.renditionsRepo.byAsset(asset.id) : [];
     const jobs = deps.jobsRepo ? await deps.jobsRepo.byAsset(asset.id) : [];
+    const charge = deps.usageLedger ? await deps.usageLedger.getChargeByAsset(asset.id) : null;
     await reply.code(200).send({
       asset_id: asset.id,
       project_id: asset.projectId,
@@ -146,6 +169,7 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
       error_message: asset.errorMessage ?? null,
       playback_id: playback?.id ?? null,
       playback_url: playback ? `/v1/playback/${encodeURIComponent(playback.id)}` : null,
+      billing: serializeCharge(charge),
       renditions: renditions.map((row) => ({
         id: row.id,
         resolution: row.resolution,
@@ -210,6 +234,7 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
     const [playback] = deps.playbackIds ? await deps.playbackIds.byAsset(asset.id) : [];
     const renditions = deps.renditionsRepo ? await deps.renditionsRepo.byAsset(asset.id) : [];
     const jobs = deps.jobsRepo ? await deps.jobsRepo.byAsset(asset.id) : [];
+    const charge = deps.usageLedger ? await deps.usageLedger.getChargeByAsset(asset.id) : null;
     await reply.code(200).send({
       asset_id: asset.id,
       project_id: asset.projectId,
@@ -229,6 +254,7 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
       error_message: asset.errorMessage ?? null,
       playback_id: playback?.id ?? null,
       playback_url: playback ? `/v1/playback/${encodeURIComponent(playback.id)}` : null,
+      billing: serializeCharge(charge),
       renditions: renditions.map((row) => ({
         id: row.id,
         resolution: row.resolution,
@@ -267,4 +293,22 @@ export function registerVod(app: FastifyInstance, deps: VodDeps): void {
     req.log.info({ asset_id: id }, "soft-delete asset");
     await reply.code(204).send();
   });
+}
+
+function serializeCharge(charge: ChargeSummary | null): Record<string, unknown> | null {
+  if (!charge) return null;
+  return {
+    work_id: charge.workId,
+    reservation_id: charge.reservationId,
+    customer_id: charge.customerId,
+    kind: charge.kind,
+    state: charge.state,
+    estimated_amount_cents: charge.estimatedAmountCents,
+    committed_amount_cents: charge.committedAmountCents,
+    refunded_amount_cents: charge.refundedAmountCents,
+    capability: charge.capability,
+    model: charge.model,
+    created_at: charge.createdAt,
+    resolved_at: charge.resolvedAt,
+  };
 }

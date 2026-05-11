@@ -11,11 +11,13 @@ import type { AssetRepo, LiveStreamRepo } from "../engine/index.js";
 import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
 import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
 import type { RecordingRepo } from "../repo/index.js";
+import type { UsageRecordRepo } from "../repo/usage.js";
 import { customerProjectIds, ensureDefaultProject, listProjectsForCustomer } from "../service/projects.js";
 import type { PlaybackIdRepo } from "../repo/playbackIds.js";
 import type { MutableEncodingJobRepo } from "../repo/encodingJobs.js";
 import type { MutableRenditionRepo } from "../repo/renditions.js";
 import type { AbrExecutionManager } from "../service/abrExecution.js";
+import { usageWorkId, type ChargeSummary, type UsageLedger } from "../service/usageLedger.js";
 import { maybeHandoffRecording, provisionLiveStream } from "./live-streams.js";
 
 declare module "fastify" {
@@ -51,6 +53,8 @@ export interface RegisterVideoCustomerPortalRoutesDeps {
   jobsRepo?: MutableEncodingJobRepo;
   renditionsRepo?: MutableRenditionRepo;
   execution?: AbrExecutionManager;
+  usageRecords?: UsageRecordRepo;
+  usageLedger?: UsageLedger;
 }
 
 export function registerVideoCustomerPortalRoutes(
@@ -88,6 +92,49 @@ export function registerVideoCustomerPortalRoutes(
         billing_unit: "rendition_seconds",
         overhead_cents: pricing.overheadCents,
         cents_per_second: pricing.vodCentsPerSecond,
+      },
+    });
+  });
+
+  app.get("/portal/usage", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.videoDb || !deps.usageRecords) {
+      await reply.code(501).send({ error: "usage_unavailable" });
+      return;
+    }
+    const projectIds = [...(await customerProjectIds(deps.videoDb, req.customerSession!.customer.id))];
+    const rows = await deps.usageRecords.listByProjects(projectIds, 100);
+    const chargeByWorkId = deps.usageLedger
+      ? await deps.usageLedger.listChargesByWorkIds(
+          rows
+            .map((row) => usageWorkId(row))
+            .filter((workId): workId is string => workId !== null),
+        )
+      : new Map();
+    const summary = deps.usageLedger
+      ? await deps.usageLedger.summarizeCustomer(req.customerSession!.customer.id)
+      : {
+          topupTotalCents: 0,
+          usageCommittedCents: rows.reduce((sum, row) => sum + row.amountCents, 0),
+          reservedOpenCents: 0,
+          refundedCents: 0,
+        };
+    await reply.code(200).send({
+      items: rows.map((row) => ({
+        id: row.id,
+        capability: row.capability,
+        amount_cents: row.amountCents,
+        created_at: row.createdAt.toISOString(),
+        asset_id: row.assetId,
+        live_stream_id: row.liveStreamId,
+        work_id: usageWorkId(row),
+        charge: serializeCharge(usageWorkId(row), chargeByWorkId),
+      })),
+      total_amount_cents: rows.reduce((sum, row) => sum + row.amountCents, 0),
+      summary: {
+        topup_total_cents: summary.topupTotalCents,
+        usage_committed_cents: summary.usageCommittedCents,
+        reserved_open_cents: summary.reservedOpenCents,
+        refunded_cents: summary.refundedCents,
       },
     });
   });
@@ -321,11 +368,27 @@ export function registerVideoCustomerPortalRoutes(
       await reply.code(404).send({ error: "not_found" });
       return;
     }
+    if (stream.endedAt) {
+      await reply.code(200).send({
+        ok: true,
+        recordingAssetId: stream.recordingAssetId ?? null,
+        recordingExecutionId: null,
+      });
+      return;
+    }
     const endedAt = new Date();
     await deps.liveStreamsRepo.updateStatus(stream.id, "ended", {
       lastSeenAt: endedAt,
       endedAt,
     });
+    if (deps.usageLedger) {
+      const durationSec = Math.max(0, Math.ceil((endedAt.getTime() - stream.createdAt.getTime()) / 1000));
+      await deps.usageLedger.recordLiveUsage({
+        projectId: stream.projectId,
+        liveStreamId: stream.id,
+        durationSec,
+      });
+    }
     const handoff = await maybeHandoffRecording(deps, {
       liveStreamId: stream.id,
       projectId: stream.projectId,
@@ -455,6 +518,29 @@ function normalizeCustomerTier(tier: string): "free" | "prepaid" | "enterprise" 
 function portalStatus(status: string): string {
   if (status === "active" || status === "reconnecting") return "live";
   return status;
+}
+
+function serializeCharge(
+  workId: string | null,
+  charges: Map<string, ChargeSummary>,
+): Record<string, unknown> | null {
+  if (!workId) return null;
+  const charge = charges.get(workId);
+  if (!charge) return null;
+  return {
+    work_id: charge.workId,
+    reservation_id: charge.reservationId,
+    customer_id: charge.customerId,
+    kind: charge.kind,
+    state: charge.state,
+    estimated_amount_cents: charge.estimatedAmountCents,
+    committed_amount_cents: charge.committedAmountCents,
+    refunded_amount_cents: charge.refundedAmountCents,
+    capability: charge.capability,
+    model: charge.model,
+    created_at: charge.createdAt,
+    resolved_at: charge.resolvedAt,
+  };
 }
 
 function randomHex16(): string {

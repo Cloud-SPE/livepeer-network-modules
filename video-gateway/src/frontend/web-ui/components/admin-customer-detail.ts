@@ -43,6 +43,29 @@ interface ReservationRow {
   resolvedAt: string | null;
 }
 
+interface UsageRow {
+  id: string;
+  capability: string;
+  amountCents: number;
+  createdAt: string;
+  workId: string | null;
+  assetId: string | null;
+  liveStreamId: string | null;
+  charge: {
+    state: string | null;
+    estimatedAmountCents: number | null;
+    committedAmountCents: number | null;
+    refundedAmountCents: number | null;
+  } | null;
+}
+
+interface UsageSummary {
+  topupTotalCents: number;
+  usageCommittedCents: number;
+  reservedOpenCents: number;
+  refundedCents: number;
+}
+
 interface AuditRow {
   ts: string;
   actor: string;
@@ -62,6 +85,8 @@ export class AdminCustomerDetail extends HTMLElement {
   private apiKeys: CredentialSummary[] = [];
   private topups: TopupRow[] = [];
   private reservations: ReservationRow[] = [];
+  private usage: UsageRow[] = [];
+  private usageSummary: UsageSummary | null = null;
   private audit: AuditRow[] = [];
   private error: string | null = null;
   private issuingAuthToken = false;
@@ -98,7 +123,7 @@ export class AdminCustomerDetail extends HTMLElement {
     this.error = null;
     this.draw();
     try {
-      const [customerOut, authTokensOut, apiKeysOut, topupsOut, reservationsOut, auditOut] = await Promise.all([
+      const [customerOut, authTokensOut, apiKeysOut, topupsOut, reservationsOut, usageOut, auditOut] = await Promise.all([
         this.api.get<{ customer: Record<string, unknown> }>(`/admin/customers/${encodeURIComponent(this.customerId)}`),
         this.api.get<{ auth_tokens?: Array<Record<string, unknown>> }>(
           `/admin/customers/${encodeURIComponent(this.customerId)}/auth-tokens`,
@@ -112,6 +137,9 @@ export class AdminCustomerDetail extends HTMLElement {
         this.api.get<{ reservations?: Array<Record<string, unknown>> }>(
           `/admin/reservations?customer_id=${encodeURIComponent(this.customerId)}&limit=25`,
         ),
+        this.api.get<{ items?: Array<Record<string, unknown>>; summary?: Record<string, unknown> }>(
+          `/admin/usage?customer_id=${encodeURIComponent(this.customerId)}&limit=50`,
+        ),
         this.api.get<{ events?: Array<Record<string, unknown>> }>(`/admin/audit?limit=100`),
       ]);
 
@@ -120,6 +148,8 @@ export class AdminCustomerDetail extends HTMLElement {
       this.apiKeys = (apiKeysOut.api_keys ?? []).map((row) => this.mapCredential(row));
       this.topups = (topupsOut.topups ?? []).map((row) => this.mapTopup(row));
       this.reservations = (reservationsOut.reservations ?? []).map((row) => this.mapReservation(row));
+      this.usage = (usageOut.items ?? []).map((row) => this.mapUsage(row));
+      this.usageSummary = usageOut.summary ? this.mapUsageSummary(usageOut.summary) : null;
       this.audit = (auditOut.events ?? [])
         .map((row) => this.mapAudit(row))
         .filter((row) => row.targetId === this.customerId || row.detail.includes(this.customerId));
@@ -251,6 +281,45 @@ export class AdminCustomerDetail extends HTMLElement {
       targetType: String(row["targetType"] ?? row["target_type"] ?? ""),
       targetId: row["targetId"] ? String(row["targetId"]) : row["target_id"] ? String(row["target_id"]) : null,
       detail: String(row["detail"] ?? ""),
+    };
+  }
+
+  private mapUsage(row: Record<string, unknown>): UsageRow {
+    return {
+      id: String(row["id"] ?? ""),
+      capability: String(row["capability"] ?? ""),
+      amountCents: parseInt(String(row["amount_cents"] ?? "0"), 10) || 0,
+      createdAt: String(row["created_at"] ?? ""),
+      workId: row["work_id"] ? String(row["work_id"]) : null,
+      assetId: row["asset_id"] ? String(row["asset_id"]) : null,
+      liveStreamId: row["live_stream_id"] ? String(row["live_stream_id"]) : null,
+      charge:
+        row["charge"] && typeof row["charge"] === "object"
+          ? {
+              state:
+                (row["charge"] as Record<string, unknown>)["state"] !== undefined
+                  ? String((row["charge"] as Record<string, unknown>)["state"] ?? "")
+                  : null,
+              estimatedAmountCents: parseMaybeNumber(
+                (row["charge"] as Record<string, unknown>)["estimated_amount_cents"],
+              ),
+              committedAmountCents: parseMaybeNumber(
+                (row["charge"] as Record<string, unknown>)["committed_amount_cents"],
+              ),
+              refundedAmountCents: parseMaybeNumber(
+                (row["charge"] as Record<string, unknown>)["refunded_amount_cents"],
+              ),
+            }
+          : null,
+    };
+  }
+
+  private mapUsageSummary(row: Record<string, unknown>): UsageSummary {
+    return {
+      topupTotalCents: parseMaybeNumber(row["topup_total_cents"]) ?? 0,
+      usageCommittedCents: parseMaybeNumber(row["usage_committed_cents"]) ?? 0,
+      reservedOpenCents: parseMaybeNumber(row["reserved_open_cents"]) ?? 0,
+      refundedCents: parseMaybeNumber(row["refunded_cents"]) ?? 0,
     };
   }
 
@@ -396,6 +465,39 @@ export class AdminCustomerDetail extends HTMLElement {
           </portal-detail-section>
 
           <portal-detail-section
+            heading="Usage"
+            description="Committed gateway charges by media workload."
+          >
+            ${this.usageSummary
+              ? html`
+                  <dl class="video-admin-page-meta-list">
+                    <div class="video-admin-page-meta-item"><dt>Top-ups</dt><dd class="video-admin-page-money">$${(this.usageSummary.topupTotalCents / 100).toFixed(2)}</dd></div>
+                    <div class="video-admin-page-meta-item"><dt>Committed media usage</dt><dd class="video-admin-page-money">$${(this.usageSummary.usageCommittedCents / 100).toFixed(2)}</dd></div>
+                    <div class="video-admin-page-meta-item"><dt>Open media reservations</dt><dd class="video-admin-page-money">$${(this.usageSummary.reservedOpenCents / 100).toFixed(2)}</dd></div>
+                    <div class="video-admin-page-meta-item"><dt>Refunded media reservations</dt><dd class="video-admin-page-money">$${(this.usageSummary.refundedCents / 100).toFixed(2)}</dd></div>
+                  </dl>
+                `
+              : nothing}
+            <table class="video-admin-page-table">
+              <thead><tr><th>ID</th><th>Capability</th><th>Target</th><th>State</th><th>Estimated</th><th>Committed</th><th>Refunded</th><th>When</th></tr></thead>
+              <tbody>
+                ${this.usage.map(
+                  (u) => html`<tr>
+                    <td>${u.id}</td>
+                    <td>${u.capability}</td>
+                    <td>${u.assetId ?? u.liveStreamId ?? "—"}</td>
+                    <td>${u.charge?.state ?? "—"}</td>
+                    <td class="video-admin-page-money">${u.charge?.estimatedAmountCents !== null && u.charge?.estimatedAmountCents !== undefined ? `$${(u.charge.estimatedAmountCents / 100).toFixed(2)}` : "—"}</td>
+                    <td class="video-admin-page-money">${u.charge?.committedAmountCents !== null && u.charge?.committedAmountCents !== undefined ? `$${(u.charge.committedAmountCents / 100).toFixed(2)}` : `$${(u.amountCents / 100).toFixed(2)}`}</td>
+                    <td class="video-admin-page-money">${u.charge?.refundedAmountCents !== null && u.charge?.refundedAmountCents !== undefined ? `$${(u.charge.refundedAmountCents / 100).toFixed(2)}` : "—"}</td>
+                    <td>${u.createdAt}</td>
+                  </tr>`,
+                )}
+              </tbody>
+            </table>
+          </portal-detail-section>
+
+          <portal-detail-section
             heading="Audit"
             description="Operator-visible customer history filtered to this account."
           >
@@ -419,6 +521,12 @@ export class AdminCustomerDetail extends HTMLElement {
       this,
     );
   }
+}
+
+function parseMaybeNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = parseInt(String(value), 10);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 if (!customElements.get("admin-customer-detail")) {

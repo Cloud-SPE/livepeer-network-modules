@@ -16,6 +16,8 @@ import {
   createPlaybackIdRepo,
   createRecordingRepo,
   createRenditionRepo,
+  createLiveSessionDebitRepo,
+  createUsageRecordRepo,
   createWebhookDeliveryRepo,
   createWebhookEndpointRepo,
   createWebhookFailureRepo,
@@ -23,6 +25,7 @@ import {
 import { createRtmpListener } from "./runtime/rtmp/listener.js";
 import { buildServer } from "./server.js";
 import { createAbrExecutionManager } from "./service/abrExecution.js";
+import { createUsageLedger } from "./service/usageLedger.js";
 import { createRetryDispatcher } from "./service/webhookDispatcher.js";
 import { createS3StorageProvider, loadS3ConfigFromEnv } from "./storage/index.js";
 
@@ -79,6 +82,8 @@ export async function main(): Promise<void> {
     renditions: createRenditionRepo(videoDb),
     playbackIds: createPlaybackIdRepo(videoDb),
     liveStreams: createLiveStreamRepo(videoDb),
+    liveSessionDebits: createLiveSessionDebitRepo(videoDb),
+    usageRecords: createUsageRecordRepo(videoDb),
     webhookEndpoints: createWebhookEndpointRepo(videoDb),
     webhookDeliveries: createWebhookDeliveryRepo(videoDb),
     webhookFailures: createWebhookFailureRepo(videoDb),
@@ -101,6 +106,12 @@ export async function main(): Promise<void> {
     resolverProtoRoot: cfg.resolverProtoRoot,
     resolverSnapshotTtlMs: cfg.resolverSnapshotTtlMs,
   });
+  const usageLedger = createUsageLedger({
+    portalDb: portalDbConn,
+    videoDb,
+    usageRecords: repos.usageRecords,
+    liveSessionDebits: repos.liveSessionDebits,
+  });
   const execution = createAbrExecutionManager({
     assets: repos.assets,
     jobs: repos.jobs,
@@ -110,6 +121,7 @@ export async function main(): Promise<void> {
     liveStreams: repos.liveStreams,
     storage,
     routeSelector,
+    usageLedger,
     logger: console,
   });
 
@@ -127,9 +139,11 @@ export async function main(): Promise<void> {
       playbackIds: repos.playbackIds,
       liveStreamsRepo: repos.liveStreams,
       recordingsRepo: repos.recordings,
+      usageRecords: repos.usageRecords,
       failures: repos.webhookFailures,
       dispatcher,
       execution,
+      usageLedger,
       storage,
     },
   });

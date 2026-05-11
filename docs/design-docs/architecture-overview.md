@@ -365,7 +365,7 @@ sequenceDiagram
     Op->>Broker: edit host-config.yaml
     Broker->>Broker: reload /registry/offerings
 
-    Note over Coord,Broker: 2. Coordinator scrapes; builds candidate
+    Note over Coord,Broker: 2. Coordinator scrapes, builds candidate
     Coord->>Broker: GET /registry/offerings
     Broker-->>Coord: capability tuples
     Coord->>Coord: merge per-host fragments → candidate manifest
@@ -387,7 +387,7 @@ sequenceDiagram
     Coord->>Coord: verify sig against orch identity
     Coord->>Coord: atomic-swap publish at<br/>/.well-known/livepeer-registry.json
 
-    Note over Cold: cold key never leaves secure-orch.<br/>Manifests cross host boundaries; keys do not.
+    Note over Cold: cold key never leaves secure-orch.<br/>Manifests cross host boundaries — keys do not.
 ```
 
 **Hard invariants** the sign cycle preserves:

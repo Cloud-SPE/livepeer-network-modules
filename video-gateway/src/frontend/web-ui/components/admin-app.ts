@@ -43,6 +43,7 @@ export class VideoGatewayAdmin extends HTMLElement {
       .add("/topups", () => this.setRoute("topups"))
       .add("/reservations", () => this.setRoute("reservations"))
       .add("/usage", () => this.setRoute("usage"))
+      .add("/playback", () => this.setRoute("playback"))
       .add("/audit", () => this.setRoute("audit"))
       .add("/streams", () => this.setRoute("streams"))
       .add("/webhooks", () => this.setRoute("webhooks"))
@@ -85,6 +86,7 @@ export class VideoGatewayAdmin extends HTMLElement {
         this.navLink("/topups", "Top-ups", "topups"),
         this.navLink("/reservations", "Reservations", "reservations"),
         this.navLink("/usage", "Usage", "usage"),
+        this.navLink("/playback", "Playback", "playback"),
         this.navLink("/audit", "Audit", "audit"),
         this.navLink("/assets", "Assets", "assets"),
         this.navLink("/streams", "Streams", "streams"),
@@ -212,6 +214,8 @@ export class VideoGatewayAdmin extends HTMLElement {
         return document.createElement("admin-reservations");
       case "usage":
         return document.createElement("admin-usage");
+      case "playback":
+        return document.createElement("admin-playback");
       case "audit":
         return document.createElement("admin-audit");
       case "streams":

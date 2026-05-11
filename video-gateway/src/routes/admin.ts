@@ -46,6 +46,10 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
   const RouteControlBody = z.object({
     broker_url: z.string().trim().min(1),
   });
+  const PlaybackPolicyBody = z.object({
+    policy: z.string().trim().min(1),
+    token_required: z.boolean(),
+  });
 
   app.get("/admin/video/resolver-candidates", { preHandler }, async (_req, reply) => {
     const candidates = await deps.routeSelector.inspect();
@@ -264,6 +268,54 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
         reserved_open_cents: summary.reservedOpenCents,
         refunded_cents: summary.refundedCents,
       },
+    });
+  });
+
+  app.get("/admin/playback", { preHandler }, async (_req, reply) => {
+    if (!deps.playbackIds) {
+      await reply.code(501).send({ error: "playback_repo_unavailable" });
+      return;
+    }
+    const rows = await deps.playbackIds.recent(100);
+    await reply.code(200).send({
+      items: rows.map((row) => ({
+        id: row.id,
+        project_id: row.projectId,
+        asset_id: row.assetId,
+        live_stream_id: row.liveStreamId,
+        policy: row.policy,
+        token_required: row.tokenRequired,
+        created_at: row.createdAt.toISOString(),
+      })),
+    });
+  });
+
+  app.post<{ Params: { id: string } }>("/admin/playback/:id/policy", { preHandler }, async (req, reply) => {
+    if (!deps.playbackIds) {
+      await reply.code(501).send({ error: "playback_repo_unavailable" });
+      return;
+    }
+    const parsed = PlaybackPolicyBody.safeParse(req.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
+      return;
+    }
+    const playback = await deps.playbackIds.byId(req.params.id);
+    if (!playback) {
+      await reply.code(404).send({ error: "playback_not_found" });
+      return;
+    }
+    await deps.playbackIds.updatePolicy(playback.id, {
+      policy: parsed.data.policy,
+      tokenRequired: parsed.data.token_required,
+    });
+    await reply.code(200).send({
+      id: playback.id,
+      project_id: playback.projectId,
+      asset_id: playback.assetId,
+      live_stream_id: playback.liveStreamId,
+      policy: parsed.data.policy,
+      token_required: parsed.data.token_required,
     });
   });
 

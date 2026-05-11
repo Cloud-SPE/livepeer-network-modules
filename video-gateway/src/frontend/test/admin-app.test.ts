@@ -53,6 +53,7 @@ test("admin SPA registers all custom elements", async () => {
   assert.ok(customElements.get("admin-assets"));
   assert.ok(customElements.get("admin-topups"));
   assert.ok(customElements.get("admin-reservations"));
+  assert.ok(customElements.get("admin-playback"));
   assert.ok(customElements.get("admin-audit"));
   assert.ok(customElements.get("admin-streams"));
   assert.ok(customElements.get("admin-webhooks"));
@@ -90,6 +91,17 @@ test("admin-app navigates to reservations route", async () => {
   const el = document.querySelector("video-gateway-admin")!;
   await settle();
   assert.ok(el.querySelector("admin-reservations"));
+});
+
+test("admin-app navigates to playback route", async () => {
+  await import("../web-ui/main.js");
+  seedSession();
+  document.body.innerHTML = "<video-gateway-admin></video-gateway-admin>";
+  window.location.hash = "#/playback";
+  window.dispatchEvent(new Event("hashchange"));
+  const el = document.querySelector("video-gateway-admin")!;
+  await settle();
+  assert.ok(el.querySelector("admin-playback"));
 });
 
 test("admin-app survives refresh in the same tab session", async () => {

@@ -9,6 +9,7 @@ import { registerAdmin } from "../../src/routes/admin.js";
 import {
   createInMemoryAssetRepo,
   createInMemoryLiveStreamRepo,
+  createInMemoryPlaybackIdRepo,
   createInMemoryRecordingRepo,
   createInMemoryWebhookFailureRepo,
 } from "../../src/testing/repoFakes.js";
@@ -400,4 +401,68 @@ test("admin routes: live stream list includes health telemetry", async () => {
   assert.equal(items[0].brokerUrl, "http://broker.internal:8080");
   assert.equal(items[1].health, "degraded");
   assert.equal(items[1].sessionKnown, false);
+});
+
+test("admin routes: playback policy can be listed and updated", async () => {
+  const app = Fastify();
+  const playbackIds = createInMemoryPlaybackIdRepo();
+  await playbackIds.insert({
+    id: "play_1",
+    projectId: "proj_1",
+    assetId: "asset_1",
+    liveStreamId: null,
+    policy: "public",
+    tokenRequired: false,
+    createdAt: new Date("2026-05-11T12:00:00Z"),
+  });
+  registerAdmin(app, {
+    authResolver,
+    videoDb: {} as never,
+    routeSelector,
+    liveSessions: createLiveSessionDirectory(),
+    assets: createInMemoryAssetRepo(),
+    liveStreamsRepo: createInMemoryLiveStreamRepo(),
+    recordingsRepo: createInMemoryRecordingRepo(),
+    playbackIds,
+    failures: createInMemoryWebhookFailureRepo(),
+    dispatcher: {
+      async dispatch() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+      async replayFailure() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+    },
+  });
+
+  const listed = await app.inject({
+    method: "GET",
+    url: "/admin/playback",
+    headers: { authorization: "Bearer token", "x-actor": "operator" },
+  });
+  assert.equal(listed.statusCode, 200);
+  assert.equal(listed.json().items.length, 1);
+  assert.equal(listed.json().items[0].policy, "public");
+
+  const updated = await app.inject({
+    method: "POST",
+    url: "/admin/playback/play_1/policy",
+    headers: { authorization: "Bearer token", "x-actor": "operator" },
+    payload: {
+      policy: "signed",
+      token_required: true,
+    },
+  });
+  assert.equal(updated.statusCode, 200);
+  assert.deepEqual(updated.json(), {
+    id: "play_1",
+    project_id: "proj_1",
+    asset_id: "asset_1",
+    live_stream_id: null,
+    policy: "signed",
+    token_required: true,
+  });
+  const stored = await playbackIds.byId("play_1");
+  assert.equal(stored?.policy, "signed");
+  assert.equal(stored?.tokenRequired, true);
 });

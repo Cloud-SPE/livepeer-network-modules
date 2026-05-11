@@ -22,8 +22,8 @@ test("buildPayment: forwards createPayment and returns header+workId", async () 
   });
   const out = await builder({
     callerId: "cust_1",
-    capability: "video:transcode.vod",
-    offering: "h264-vod-720p",
+    capability: "video:transcode.abr",
+    offering: "abr-default",
     workUnits: 60n,
     faceValueWei: "1000000000",
     recipientEthAddress: "0xfeedbeef",
@@ -76,8 +76,8 @@ test("createUnixSocketPayerDaemonClient: forwards request body shape", async () 
   const r = await client.createPayment({
     faceValueWei: "1000",
     recipientEthAddress: "0xabc",
-    capability: "video:transcode.vod",
-    offering: "h264-vod-720p",
+    capability: "video:transcode.abr",
+    offering: "abr-default",
     nodeId: "orch_1",
   });
   assert.equal(r.payerWorkId, "wk_X");
@@ -85,8 +85,8 @@ test("createUnixSocketPayerDaemonClient: forwards request body shape", async () 
   assert.deepEqual(captured.body, {
     face_value_wei: "1000",
     recipient_eth_address: "0xabc",
-    capability: "video:transcode.vod",
-    offering: "h264-vod-720p",
+    capability: "video:transcode.abr",
+    offering: "abr-default",
     node_id: "orch_1",
   });
 });

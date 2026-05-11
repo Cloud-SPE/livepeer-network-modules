@@ -324,6 +324,20 @@ export function createInMemoryPlaybackIdRepo(): PlaybackIdRepo & {
     async byAsset(assetId) {
       return [...rows.values()].filter((row) => row.assetId === assetId);
     },
+    async recent(limit) {
+      return [...rows.values()]
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, limit);
+    },
+    async updatePolicy(id, fields) {
+      const current = rows.get(id);
+      if (!current) return;
+      rows.set(id, {
+        ...current,
+        policy: fields.policy ?? current.policy,
+        tokenRequired: fields.tokenRequired ?? current.tokenRequired,
+      });
+    },
     async deleteByAsset(assetId) {
       for (const [id, row] of rows.entries()) {
         if (row.assetId === assetId) rows.delete(id);

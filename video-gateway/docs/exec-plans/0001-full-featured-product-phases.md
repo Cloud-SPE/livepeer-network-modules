@@ -187,7 +187,7 @@ surface.
 - every media resource is project-scoped in API, portal, and admin
 - webhooks are inspectable and manageable as a product feature
 
-## Phase 5 — Operator Controls and Observability
+## Phase 5 — Operator Controls and Observability (Completed)
 
 ### Objective
 

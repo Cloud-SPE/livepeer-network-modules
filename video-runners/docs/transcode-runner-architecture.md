@@ -37,6 +37,11 @@
 
 This document captures the architectural decisions, evaluated options, and tradeoffs for building a GPU-accelerated transcode runner system within the Livepeer BYOC (Bring Your Own Container) framework. The system enables decentralized video transcoding using NVIDIA NVENC, Intel QuickSync (QSV), and AMD AMF/VAAPI hardware encoders, exposed through the Livepeer BYOC capability registration and routing protocol.
 
+Status note: parts of this planning document predate the current
+gateway/broker integration. The shipped `video-gateway` path now uses
+`video:transcode.abr` for all VOD work, with broker-owned capability
+identity and pricing rather than runner-local capability registration.
+
 The architecture follows a **hybrid modular approach** with three specialized runners sharing a common Go package, GPU-vendor abstraction via per-vendor Docker images, and a zero-trust input/output model using HTTP URL pull and pre-signed upload URLs suitable for decentralized operation.
 
 ---
@@ -189,7 +194,7 @@ Handles single-input, single-output transcoding and media processing tasks:
 - **Container remuxing** — MKV -> MP4, TS -> MP4 (no re-encode)
 - **Video trimming** — Extract time segments
 
-BYOC capability: `"transcode"`
+Planning-era capability: `"transcode"`
 Typical duration: seconds to minutes
 Capacity: maps to NVENC session limit (e.g., 3-5 on consumer GPU)
 
@@ -204,7 +209,7 @@ Handles single-input, multi-output adaptive bitrate ladder generation:
 - **Audio-only renditions** — Low-bandwidth audio stream for ABR ladder
 - **Quality analysis** — Optional VMAF/SSIM/PSNR scoring per rendition
 
-BYOC capability: `"transcode-abr"`
+Planning-era capability: `"transcode-abr"`
 Typical duration: minutes to hours (proportional to input duration x number of renditions)
 Capacity: typically 1-2 concurrent (each job uses multiple NVENC sessions)
 
@@ -217,7 +222,7 @@ Handles real-time transcoding of live streams via Trickle channels:
 - **Resolution downscale** — Real-time 4K -> 1080p, etc.
 - **Mid-stream parameter changes** — Bitrate/quality adjustments via `stream/params`
 
-BYOC capability: `"transcode-live"`
+Planning-era capability: `"transcode-live"`
 Duration: indefinite (billed per second on running clock)
 Capacity: maps to available NVENC sessions minus overhead
 

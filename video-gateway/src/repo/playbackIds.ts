@@ -17,6 +17,8 @@ export interface PlaybackIdRepo {
   insert(row: Omit<PlaybackIdRecord, "createdAt"> & { createdAt?: Date }): Promise<PlaybackIdRecord>;
   byId(id: string): Promise<PlaybackIdRecord | null>;
   byAsset(assetId: string): Promise<PlaybackIdRecord[]>;
+  recent(limit: number): Promise<PlaybackIdRecord[]>;
+  updatePolicy(id: string, fields: { policy?: string; tokenRequired?: boolean }): Promise<void>;
   deleteByAsset(assetId: string): Promise<void>;
 }
 
@@ -64,6 +66,24 @@ export function createPlaybackIdRepo(db: Db): PlaybackIdRepo {
         .where(eq(playbackIds.assetId, assetId))
         .orderBy(asc(playbackIds.createdAt), asc(playbackIds.id));
       return rows.map((row) => rowToPlaybackId(row));
+    },
+
+    async recent(limit) {
+      const rows = await db
+        .select()
+        .from(playbackIds)
+        .orderBy(asc(playbackIds.createdAt), asc(playbackIds.id));
+      return rows.slice(-limit).reverse().map((row) => rowToPlaybackId(row));
+    },
+
+    async updatePolicy(id, fields) {
+      await db
+        .update(playbackIds)
+        .set({
+          policy: fields.policy ?? undefined,
+          tokenRequired: fields.tokenRequired ?? undefined,
+        })
+        .where(eq(playbackIds.id, id));
     },
 
     async deleteByAsset(assetId) {

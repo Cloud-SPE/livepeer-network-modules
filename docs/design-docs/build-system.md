@@ -34,8 +34,7 @@ All Dockerfiles follow the same layer ordering for cache friendliness:
 7. `COPY pyproject.toml` (or go.mod) — small, rarely-changing
 8. `pip install -e .` (or `go mod download`)
 9. `COPY src/` (or full tree) — frequently-changing
-10. `COPY offering.yaml /etc/runner/offering.yaml`
-11. ENV runtime defaults (`CAPABILITY_NAME`, `DEVICE`,
+10. ENV runtime defaults (`RUNNER_ADDR`, `DEVICE`,
     `METRICS_ENABLED`, ...)
 12. `EXPOSE 8080`
 13. `HEALTHCHECK`
@@ -100,7 +99,9 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ## What this doc does NOT cover
 
-- Per-runner offering schemas — see each runner's `offering.yaml`.
+- Broker capability wiring and pricing — for the active video path this
+  lives in `capability-broker` host config rather than runner-local
+  `offering.yaml`.
 - Per-runner ENV reference — see each runner's `README.md`.
 - GPU prerequisites + driver matrix — see
   [`gpu-requirements.md`](./gpu-requirements.md).

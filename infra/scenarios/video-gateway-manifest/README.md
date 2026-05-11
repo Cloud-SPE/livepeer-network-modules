@@ -12,7 +12,9 @@ Reference gateway-side stack for manifest-driven routing:
 The gateway resolves active orchestrators from chain, fetches each
 signed manifest from the on-chain `serviceURI`, selects a route for VOD
 transcode requests, and sends paid requests directly to the chosen
-broker. The `video-gateway` image now bakes in the customer-portal
+broker. The active VOD capability model is `video:transcode.abr` for
+all offline video work, including one-rendition jobs. The
+`video-gateway` image now bakes in the customer-portal
 migrations and resolver proto contracts, so this scenario does not need
 extra bind mounts for those assets.
 
@@ -43,4 +45,15 @@ curl -s http://127.0.0.1:3000/healthz
 redis-cli -u redis://127.0.0.1:6379/0 ping
 curl -s http://127.0.0.1:9095/metrics | head
 docker logs $(docker compose -f infra/scenarios/video-gateway-manifest/docker-compose.yml ps -q service-registry-daemon) --tail 50
+```
+
+Then verify the operator surfaces:
+
+```sh
+curl -s http://127.0.0.1:3000/admin/video/resolver-candidates \
+  -H "Authorization: Bearer $VIDEO_GATEWAY_ADMIN_TOKEN" \
+  -H "X-Actor: ops"
+curl -s http://127.0.0.1:3000/admin/playback \
+  -H "Authorization: Bearer $VIDEO_GATEWAY_ADMIN_TOKEN" \
+  -H "X-Actor: ops"
 ```

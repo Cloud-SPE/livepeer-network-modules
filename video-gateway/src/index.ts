@@ -9,6 +9,7 @@ import { loadConfig } from "./config.js";
 import { createDb } from "./db/pool.js";
 import { createLiveSessionDirectory } from "./livepeer/liveSessionDirectory.js";
 import { createRouteSelector } from "./livepeer/routeSelector.js";
+import type { LiveSessionDirectory } from "./livepeer/liveSessionDirectory.js";
 import {
   createAssetRepo,
   createEncodingJobRepo,
@@ -22,12 +23,17 @@ import {
   createWebhookEndpointRepo,
   createWebhookFailureRepo,
 } from "./repo/index.js";
+import type { LiveStreamRepo } from "./engine/index.js";
+import type { RecordingRepo } from "./repo/index.js";
 import { createRtmpListener } from "./runtime/rtmp/listener.js";
 import { buildServer } from "./server.js";
 import { createAbrExecutionManager } from "./service/abrExecution.js";
+import type { AbrExecutionManager } from "./service/abrExecution.js";
 import { createUsageLedger } from "./service/usageLedger.js";
+import type { UsageLedger } from "./service/usageLedger.js";
 import { createRetryDispatcher } from "./service/webhookDispatcher.js";
 import { createS3StorageProvider, loadS3ConfigFromEnv } from "./storage/index.js";
+import { maybeHandoffRecording } from "./routes/live-streams.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIDEO_GATEWAY_ROOT = resolve(__dirname, "..");
@@ -60,6 +66,51 @@ export function resolveVideoGatewayMigrationsDir(): string {
   const resolvedPath = firstExistingPath(candidates);
   if (resolvedPath) return resolvedPath;
   throw new Error(`could not locate video-gateway migrations; checked ${candidates.join(", ")}`);
+}
+
+export async function sweepStaleStreamsOnce(input: {
+  liveStreams: LiveStreamRepo;
+  liveSessions: LiveSessionDirectory;
+  recordings: RecordingRepo;
+  execution: AbrExecutionManager;
+  usageLedger: UsageLedger;
+  now?: Date;
+  staleAfterSec: number;
+  logger?: Pick<Console, "info" | "warn" | "error">;
+}): Promise<number> {
+  const now = input.now ?? new Date();
+  const cutoff = new Date(now.getTime() - input.staleAfterSec * 1000);
+  const stale = await input.liveStreams.sweepStale(cutoff);
+  for (const stream of stale) {
+    if (stream.endedAt) continue;
+    await input.liveStreams.updateStatus(stream.id, "ended", {
+      endedAt: now,
+      lastSeenAt: now,
+    });
+    if (stream.createdAt) {
+      const durationSec = Math.max(0, Math.ceil((now.getTime() - stream.createdAt.getTime()) / 1000));
+      await input.usageLedger.recordLiveUsage({
+        projectId: stream.projectId,
+        liveStreamId: stream.id,
+        durationSec,
+      });
+    }
+    await maybeHandoffRecording(
+      {
+        liveSessions: input.liveSessions,
+        recordingsRepo: input.recordings,
+        execution: input.execution,
+      },
+      {
+        liveStreamId: stream.id,
+        projectId: stream.projectId,
+        sessionId: stream.sessionId,
+        endedAt: now,
+      },
+    );
+    input.logger?.warn?.("video-gateway: stale live stream swept");
+  }
+  return stale.length;
 }
 
 export async function main(): Promise<void> {
@@ -155,6 +206,18 @@ export async function main(): Promise<void> {
     authPepper: cfg.customerPortalPepper,
   });
   const rtmp = createRtmpListener({ cfg });
+  const staleSweepTimer = setInterval(() => {
+    void sweepStaleStreamsOnce({
+      liveStreams: repos.liveStreams,
+      liveSessions,
+      recordings: repos.recordings,
+      execution,
+      usageLedger,
+      staleAfterSec: cfg.staleStreamSweepIntervalSec,
+      logger: console,
+    });
+  }, cfg.staleStreamSweepIntervalSec * 1000);
+  staleSweepTimer.unref();
   app.log.info(
     {
       portal_auth: typeof portal.authResolver,
@@ -169,6 +232,7 @@ export async function main(): Promise<void> {
     await app.listen({ host: "0.0.0.0", port: cfg.listenPort });
   } catch (err) {
     app.log.error(err, "failed to listen");
+    clearInterval(staleSweepTimer);
     rtmp.close();
     process.exit(1);
   }

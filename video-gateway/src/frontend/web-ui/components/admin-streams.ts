@@ -9,6 +9,11 @@ interface StreamRow {
   status: string;
   sessionId: string | null;
   playbackUrl: string | null;
+  brokerUrl: string | null;
+  sessionKnown: boolean;
+  lastSeenAt: string | null;
+  idleSeconds: number | null;
+  health: "healthy" | "degraded" | "stale" | "ended";
   startedAt: string;
   endedAt: string | null;
   viewerCount: number | null;
@@ -77,7 +82,7 @@ export class AdminStreams extends HTMLElement {
         ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
         <table class="video-admin-page-table">
           <thead>
-            <tr><th>Name</th><th>Project</th><th>Status</th><th>Playback</th><th>Viewers</th><th>Record</th><th>Started</th><th>Ended</th><th></th></tr>
+            <tr><th>Name</th><th>Project</th><th>Health</th><th>Status</th><th>Playback</th><th>Telemetry</th><th>Record</th><th>Started</th><th>Ended</th><th></th></tr>
           </thead>
           <tbody>
             ${this.rows.map(
@@ -88,6 +93,11 @@ export class AdminStreams extends HTMLElement {
                 </td>
                 <td>${r.projectId}</td>
                 <td>
+                  <portal-status-pill variant=${this.healthVariant(r.health)}>
+                    ${r.health}
+                  </portal-status-pill>
+                </td>
+                <td>
                   <portal-status-pill variant=${r.status === "live" ? "success" : "neutral"}>
                     ${r.status}
                   </portal-status-pill>
@@ -97,7 +107,13 @@ export class AdminStreams extends HTMLElement {
                     ? html`<a class="video-admin-page-link" href=${r.playbackUrl}>open</a>`
                     : nothing}
                 </td>
-                <td>${r.viewerCount ?? "-"}</td>
+                <td>
+                  <div>${r.sessionKnown ? "session attached" : "session missing"}</div>
+                  <div class="video-admin-page-dim">${r.brokerUrl ?? "no broker route"}</div>
+                  <div class="video-admin-page-dim">
+                    last seen: ${r.lastSeenAt ?? "never"}${r.idleSeconds !== null ? ` · idle ${r.idleSeconds}s` : ""}
+                  </div>
+                </td>
                 <td>${r.recordToVod ? "yes" : "no"}</td>
                 <td>${r.startedAt}</td>
                 <td>${r.endedAt ?? ""}</td>
@@ -121,6 +137,19 @@ export class AdminStreams extends HTMLElement {
       `,
       this,
     );
+  }
+
+  private healthVariant(value: StreamRow["health"]): "success" | "warning" | "danger" | "neutral" {
+    switch (value) {
+      case "healthy":
+        return "success";
+      case "stale":
+        return "danger";
+      case "degraded":
+        return "warning";
+      default:
+        return "neutral";
+    }
   }
 }
 

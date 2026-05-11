@@ -33,6 +33,28 @@ const routeSelector: VideoRouteSelector = {
   },
 };
 
+function liveStreamsDbFake(rows: Array<Record<string, unknown>>) {
+  return {
+    select() {
+      return {
+        from() {
+          return {
+            where() {
+              return this;
+            },
+            orderBy() {
+              return this;
+            },
+            limit() {
+              return Promise.resolve(rows);
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
 test("admin routes: asset retry requeues non-ready assets", async () => {
   const app = Fastify();
   const assets = createInMemoryAssetRepo();
@@ -308,4 +330,74 @@ test("admin routes: broker suppression toggles route controls", async () => {
     broker_url: "http://broker.internal:8080",
     suppressed: false,
   });
+});
+
+test("admin routes: live stream list includes health telemetry", async () => {
+  const app = Fastify();
+  const liveSessions = createLiveSessionDirectory();
+  liveSessions.record({
+    streamId: "live_healthy",
+    sessionId: "sess_1",
+    brokerUrl: "http://broker.internal:8080",
+    brokerRtmpUrl: "rtmp://broker/live/key",
+    streamKey: "key",
+    hlsPlaybackUrl: "https://playback.example.com/live.m3u8",
+  });
+  const now = Date.now();
+  registerAdmin(app, {
+    authResolver,
+    videoDb: liveStreamsDbFake([
+      {
+        id: "live_healthy",
+        name: "Healthy stream",
+        projectId: "proj_1",
+        status: "active",
+        sessionId: "sess_1",
+        workerUrl: "http://broker.internal:8080",
+        lastSeenAt: new Date(now - 5_000),
+        createdAt: new Date(now - 120_000),
+        endedAt: null,
+        recordingEnabled: true,
+      },
+      {
+        id: "live_stale",
+        name: "Stale stream",
+        projectId: "proj_1",
+        status: "active",
+        sessionId: "sess_missing",
+        workerUrl: "http://broker.internal:8080",
+        lastSeenAt: new Date(now - 120_000),
+        createdAt: new Date(now - 180_000),
+        endedAt: null,
+        recordingEnabled: false,
+      },
+    ]) as never,
+    routeSelector,
+    liveSessions,
+    assets: createInMemoryAssetRepo(),
+    liveStreamsRepo: createInMemoryLiveStreamRepo(),
+    recordingsRepo: createInMemoryRecordingRepo(),
+    failures: createInMemoryWebhookFailureRepo(),
+    dispatcher: {
+      async dispatch() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+      async replayFailure() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+    },
+  });
+
+  const res = await app.inject({
+    method: "GET",
+    url: "/admin/live-streams",
+    headers: { authorization: "Bearer token", "x-actor": "operator" },
+  });
+  assert.equal(res.statusCode, 200);
+  const items = res.json().items;
+  assert.equal(items[0].health, "healthy");
+  assert.equal(items[0].sessionKnown, true);
+  assert.equal(items[0].brokerUrl, "http://broker.internal:8080");
+  assert.equal(items[1].health, "degraded");
+  assert.equal(items[1].sessionKnown, false);
 });

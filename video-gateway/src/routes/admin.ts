@@ -15,6 +15,8 @@ import { summarizeProjectUsage } from "../service/projects.js";
 import { usageWorkId, type ChargeSummary, type UsageLedger } from "../service/usageLedger.js";
 import { maybeHandoffRecording } from "./live-streams.js";
 
+const ADMIN_STREAM_STALE_AFTER_SEC = 60;
+
 declare module "fastify" {
   interface FastifyRequest {
     adminActor?: string;
@@ -203,10 +205,12 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
         projectId: row.projectId,
         status: adminStreamStatus(row.status),
         sessionId: row.sessionId,
-        playbackUrl:
-          row.sessionId !== null
-            ? deps.liveSessions.get(row.sessionId)?.hlsPlaybackUrl ?? null
-            : deps.liveSessions.getByStreamId(row.id)?.hlsPlaybackUrl ?? null,
+        playbackUrl: liveSessionForRow(deps.liveSessions, row)?.hlsPlaybackUrl ?? null,
+        brokerUrl: liveSessionForRow(deps.liveSessions, row)?.brokerUrl ?? row.workerUrl ?? null,
+        sessionKnown: liveSessionForRow(deps.liveSessions, row) !== null,
+        lastSeenAt: row.lastSeenAt?.toISOString() ?? null,
+        idleSeconds: row.lastSeenAt ? Math.max(0, Math.floor((Date.now() - row.lastSeenAt.getTime()) / 1000)) : null,
+        health: adminStreamHealth(row, liveSessionForRow(deps.liveSessions, row) !== null, ADMIN_STREAM_STALE_AFTER_SEC),
         startedAt: row.createdAt.toISOString(),
         endedAt: row.endedAt?.toISOString() ?? null,
         viewerCount: null,
@@ -483,6 +487,27 @@ function restoredAssetStatus(asset: { readyAt?: Date | null; selectedOffering?: 
 function adminStreamStatus(status: string): string {
   if (status === "active" || status === "reconnecting") return "live";
   return status;
+}
+
+function liveSessionForRow(
+  directory: LiveSessionDirectory,
+  row: { id: string; sessionId: string | null },
+) {
+  return row.sessionId ? directory.get(row.sessionId) ?? directory.getByStreamId(row.id) : directory.getByStreamId(row.id);
+}
+
+function adminStreamHealth(
+  row: { status: string; endedAt: Date | null; lastSeenAt: Date | null },
+  sessionKnown: boolean,
+  staleAfterSec: number,
+): "healthy" | "degraded" | "stale" | "ended" {
+  if (row.endedAt) return "ended";
+  if (row.status === "reconnecting") return "degraded";
+  if (!sessionKnown) return "degraded";
+  if (!row.lastSeenAt) return "degraded";
+  const idleSec = Math.max(0, Math.floor((Date.now() - row.lastSeenAt.getTime()) / 1000));
+  if (idleSec > staleAfterSec) return "stale";
+  return "healthy";
 }
 
 function serializeCharge(

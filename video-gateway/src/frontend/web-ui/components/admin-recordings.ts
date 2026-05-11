@@ -34,6 +34,16 @@ export class AdminRecordings extends HTMLElement {
     this.draw();
   }
 
+  private async retry(row: RecordingRow): Promise<void> {
+    try {
+      await this.api.post(`/admin/recordings/${encodeURIComponent(row.id)}/retry`);
+      await this.load();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : "retry_failed";
+      this.draw();
+    }
+  }
+
   private draw(): void {
     render(
       html`
@@ -45,7 +55,7 @@ export class AdminRecordings extends HTMLElement {
           ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
           <table class="video-admin-page-table">
             <thead>
-              <tr><th>ID</th><th>Stream</th><th>Asset</th><th>Status</th><th>Duration</th><th>Started</th><th>Ended</th></tr>
+              <tr><th>ID</th><th>Stream</th><th>Asset</th><th>Status</th><th>Duration</th><th>Started</th><th>Ended</th><th></th></tr>
             </thead>
             <tbody>
               ${this.rows.map(
@@ -61,6 +71,15 @@ export class AdminRecordings extends HTMLElement {
                   <td>${r.durationSec !== null ? r.durationSec.toFixed(1) + "s" : "-"}</td>
                   <td>${r.startedAt}</td>
                   <td>${r.endedAt ?? html`<span class="video-admin-page-dim">active</span>`}</td>
+                  <td>
+                    ${r.assetId !== null && r.status === "failed"
+                      ? html`
+                          <portal-button variant="ghost" @click=${(): void => void this.retry(r)}>
+                            Retry
+                          </portal-button>
+                        `
+                      : nothing}
+                  </td>
                 </tr>`,
               )}
             </tbody>

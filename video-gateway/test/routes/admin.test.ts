@@ -1,0 +1,214 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import Fastify from "fastify";
+
+import { createLiveSessionDirectory } from "../../src/livepeer/liveSessionDirectory.js";
+import type { VideoRouteSelector } from "../../src/livepeer/routeSelector.js";
+import { registerAdmin } from "../../src/routes/admin.js";
+import {
+  createInMemoryAssetRepo,
+  createInMemoryLiveStreamRepo,
+  createInMemoryRecordingRepo,
+  createInMemoryWebhookFailureRepo,
+} from "../../src/testing/repoFakes.js";
+
+const authResolver = {
+  async resolve() {
+    return { actor: "operator" };
+  },
+};
+
+const routeSelector: VideoRouteSelector = {
+  async select() {
+    return [];
+  },
+  async inspect() {
+    return [];
+  },
+};
+
+test("admin routes: asset retry requeues non-ready assets", async () => {
+  const app = Fastify();
+  const assets = createInMemoryAssetRepo();
+  await assets.insert({
+    id: "asset_1",
+    projectId: "proj_1",
+    status: "errored",
+    sourceType: "upload",
+    encodingTier: "standard",
+    createdAt: new Date("2026-05-11T12:00:00Z"),
+  });
+  const retried: string[] = [];
+  registerAdmin(app, {
+    authResolver,
+    videoDb: {} as never,
+    routeSelector,
+    liveSessions: createLiveSessionDirectory(),
+    assets,
+    liveStreamsRepo: createInMemoryLiveStreamRepo(),
+    recordingsRepo: createInMemoryRecordingRepo(),
+    failures: createInMemoryWebhookFailureRepo(),
+    dispatcher: {
+      async dispatch() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+      async replayFailure() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+    },
+    execution: {
+      async submitAsset() {
+        return { executionId: "job_unused" };
+      },
+      async retryAsset(assetId: string) {
+        retried.push(assetId);
+        return { executionId: "job_retry_1" };
+      },
+      async handoffRecording() {
+        return { assetId: "asset_recording", executionId: "job_recording" };
+      },
+    },
+  });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/admin/assets/asset_1/retry",
+    headers: {
+      authorization: "Bearer token",
+      "x-actor": "operator",
+    },
+  });
+  assert.equal(res.statusCode, 202);
+  assert.deepEqual(res.json(), {
+    asset_id: "asset_1",
+    status: "queued",
+    execution_id: "job_retry_1",
+  });
+  assert.deepEqual(retried, ["asset_1"]);
+});
+
+test("admin routes: ready assets cannot be retried", async () => {
+  const app = Fastify();
+  const assets = createInMemoryAssetRepo();
+  await assets.insert({
+    id: "asset_ready",
+    projectId: "proj_1",
+    status: "ready",
+    sourceType: "upload",
+    encodingTier: "standard",
+    createdAt: new Date("2026-05-11T12:00:00Z"),
+  });
+  registerAdmin(app, {
+    authResolver,
+    videoDb: {} as never,
+    routeSelector,
+    liveSessions: createLiveSessionDirectory(),
+    assets,
+    liveStreamsRepo: createInMemoryLiveStreamRepo(),
+    recordingsRepo: createInMemoryRecordingRepo(),
+    failures: createInMemoryWebhookFailureRepo(),
+    dispatcher: {
+      async dispatch() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+      async replayFailure() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+    },
+    execution: {
+      async submitAsset() {
+        return { executionId: "job_unused" };
+      },
+      async retryAsset() {
+        return { executionId: "job_retry_1" };
+      },
+      async handoffRecording() {
+        return { assetId: "asset_recording", executionId: "job_recording" };
+      },
+    },
+  });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/admin/assets/asset_ready/retry",
+    headers: {
+      authorization: "Bearer token",
+      "x-actor": "operator",
+    },
+  });
+  assert.equal(res.statusCode, 409);
+  assert.deepEqual(res.json(), { error: "asset_already_ready" });
+});
+
+test("admin routes: recording retry requeues failed recording assets", async () => {
+  const app = Fastify();
+  const assets = createInMemoryAssetRepo();
+  const recordings = createInMemoryRecordingRepo();
+  await assets.insert({
+    id: "asset_failed",
+    projectId: "proj_1",
+    status: "errored",
+    sourceType: "live_recording",
+    encodingTier: "standard",
+    createdAt: new Date("2026-05-11T12:00:00Z"),
+  });
+  await recordings.insert({
+    id: "rec_1",
+    liveStreamId: "live_1",
+    assetId: "asset_failed",
+    status: "failed",
+    startedAt: new Date("2026-05-11T12:00:00Z"),
+    endedAt: new Date("2026-05-11T12:05:00Z"),
+  });
+  const retried: string[] = [];
+  registerAdmin(app, {
+    authResolver,
+    videoDb: {} as never,
+    routeSelector,
+    liveSessions: createLiveSessionDirectory(),
+    assets,
+    liveStreamsRepo: createInMemoryLiveStreamRepo(),
+    recordingsRepo: recordings,
+    failures: createInMemoryWebhookFailureRepo(),
+    dispatcher: {
+      async dispatch() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+      async replayFailure() {
+        return { delivered: true, attempts: 1, finalStatus: 200, lastError: null };
+      },
+    },
+    execution: {
+      async submitAsset() {
+        return { executionId: "job_unused" };
+      },
+      async retryAsset(assetId: string) {
+        retried.push(assetId);
+        return { executionId: "job_retry_recording" };
+      },
+      async handoffRecording() {
+        return { assetId: "asset_recording", executionId: "job_recording" };
+      },
+    },
+  });
+
+  const res = await app.inject({
+    method: "POST",
+    url: "/admin/recordings/rec_1/retry",
+    headers: {
+      authorization: "Bearer token",
+      "x-actor": "operator",
+    },
+  });
+  assert.equal(res.statusCode, 202);
+  assert.deepEqual(res.json(), {
+    recording_id: "rec_1",
+    asset_id: "asset_failed",
+    status: "pending",
+    execution_id: "job_retry_recording",
+  });
+  assert.deepEqual(retried, ["asset_failed"]);
+  const updated = await recordings.byId("rec_1");
+  assert.equal(updated?.status, "pending");
+});

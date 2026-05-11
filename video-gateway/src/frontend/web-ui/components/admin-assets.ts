@@ -9,6 +9,20 @@ interface AssetRow {
   durationSec: number | null;
   createdAt: string;
   deletedAt: string | null;
+  playbackId?: string | null;
+  playbackUrl?: string | null;
+  renditions?: Array<{
+    id: string;
+    resolution: string;
+    codec: string;
+    status: string;
+  }>;
+  jobs?: Array<{
+    id: string;
+    kind: string;
+    status: string;
+    errorMessage: string | null;
+  }>;
 }
 
 export class AdminAssets extends HTMLElement {
@@ -49,6 +63,16 @@ export class AdminAssets extends HTMLElement {
       await this.load();
     } catch (err) {
       this.error = err instanceof Error ? err.message : "toggle_failed";
+      this.draw();
+    }
+  }
+
+  private async retry(row: AssetRow): Promise<void> {
+    try {
+      await this.api.post(`/admin/assets/${encodeURIComponent(row.id)}/retry`);
+      await this.load();
+    } catch (err) {
+      this.error = err instanceof Error ? err.message : "retry_failed";
       this.draw();
     }
   }
@@ -107,7 +131,7 @@ export class AdminAssets extends HTMLElement {
         ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
         <table class="video-admin-page-table">
           <thead>
-            <tr><th>ID</th><th>Project</th><th>Status</th><th>Duration</th><th>Created</th><th>Deleted</th><th></th></tr>
+            <tr><th>ID</th><th>Project</th><th>Status</th><th>Duration</th><th>Created</th><th>Playback</th><th>Execution</th><th></th></tr>
           </thead>
           <tbody>
               ${this.rows.map(
@@ -117,11 +141,41 @@ export class AdminAssets extends HTMLElement {
                 <td>${r.status}</td>
                 <td>${r.durationSec !== null ? r.durationSec.toFixed(1) + "s" : "-"}</td>
                 <td>${r.createdAt}</td>
-                <td>${r.deletedAt ?? ""}</td>
                 <td>
-                  <portal-button variant=${r.deletedAt ? "ghost" : "danger"} @click=${(): void => void this.toggleDelete(r)}>
-                    ${r.deletedAt ? "Restore" : "Soft-delete"}
-                  </portal-button>
+                  ${r.playbackUrl
+                    ? html`<a class="video-admin-page-link" href=${r.playbackUrl}>${r.playbackId ?? "playback"}</a>`
+                    : html`<span class="video-admin-page-dim">pending</span>`}
+                </td>
+                <td>
+                  <details>
+                    <summary>${(r.jobs?.length ?? 0)} jobs · ${(r.renditions?.length ?? 0)} renditions</summary>
+                    <div class="video-admin-page-stack">
+                      ${(r.jobs ?? []).map(
+                        (job) => html`<div>
+                          <strong>${job.kind}</strong>: ${job.status}
+                          ${job.errorMessage ? html`<div class="video-admin-page-error">${job.errorMessage}</div>` : nothing}
+                        </div>`,
+                      )}
+                      ${(r.renditions ?? []).map(
+                        (rendition) => html`<div>${rendition.resolution} ${rendition.codec} · ${rendition.status}</div>`,
+                      )}
+                      ${r.deletedAt ? html`<div class="video-admin-page-dim">deleted at ${r.deletedAt}</div>` : nothing}
+                    </div>
+                  </details>
+                </td>
+                <td>
+                  <portal-action-row align="end">
+                    ${!r.deletedAt && r.status !== "ready"
+                      ? html`
+                          <portal-button variant="ghost" @click=${(): void => void this.retry(r)}>
+                            Retry
+                          </portal-button>
+                        `
+                      : nothing}
+                    <portal-button variant=${r.deletedAt ? "ghost" : "danger"} @click=${(): void => void this.toggleDelete(r)}>
+                      ${r.deletedAt ? "Restore" : "Soft-delete"}
+                    </portal-button>
+                  </portal-action-row>
                 </td>
               </tr>`,
             )}

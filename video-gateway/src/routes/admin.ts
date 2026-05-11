@@ -104,6 +104,33 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
     await reply.code(204).send();
   });
 
+  app.post<{ Params: { id: string } }>("/admin/assets/:id/retry", { preHandler }, async (req, reply) => {
+    if (!deps.execution) {
+      await reply.code(501).send({ error: "execution_unavailable" });
+      return;
+    }
+    const asset = await deps.assets.byId(req.params.id);
+    if (!asset || asset.deletedAt) {
+      await reply.code(404).send({ error: "asset_not_found" });
+      return;
+    }
+    if (asset.status === "ready") {
+      await reply.code(409).send({ error: "asset_already_ready" });
+      return;
+    }
+    try {
+      const out = await deps.execution.retryAsset(asset.id);
+      await reply.code(202).send({
+        asset_id: asset.id,
+        status: "queued",
+        execution_id: out.executionId,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "retry_failed";
+      await reply.code(502).send({ error: "retry_failed", message });
+    }
+  });
+
   app.post<{ Params: { id: string } }>("/admin/assets/:id/restore", { preHandler }, async (req, reply) => {
     const rows = await deps.videoDb.select().from(assets).where(eq(assets.id, req.params.id)).limit(1);
     const asset = rows[0];
@@ -298,6 +325,46 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
             : null,
       })),
     });
+  });
+
+  app.post<{ Params: { id: string } }>("/admin/recordings/:id/retry", { preHandler }, async (req, reply) => {
+    if (!deps.execution) {
+      await reply.code(501).send({ error: "execution_unavailable" });
+      return;
+    }
+    const recording = await deps.recordingsRepo.byId(req.params.id);
+    if (!recording) {
+      await reply.code(404).send({ error: "recording_not_found" });
+      return;
+    }
+    if (!recording.assetId) {
+      await reply.code(409).send({ error: "recording_asset_missing" });
+      return;
+    }
+    const asset = await deps.assets.byId(recording.assetId);
+    if (!asset || asset.deletedAt) {
+      await reply.code(404).send({ error: "asset_not_found" });
+      return;
+    }
+    if (asset.status === "ready") {
+      await reply.code(409).send({ error: "asset_already_ready" });
+      return;
+    }
+    try {
+      const out = await deps.execution.retryAsset(asset.id);
+      await deps.recordingsRepo.updateStatus(recording.id, "pending", {
+        assetId: asset.id,
+      });
+      await reply.code(202).send({
+        recording_id: recording.id,
+        asset_id: asset.id,
+        status: "pending",
+        execution_id: out.executionId,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "retry_failed";
+      await reply.code(502).send({ error: "retry_failed", message });
+    }
   });
 
   app.get("/admin/webhook-failures", { preHandler }, async (req, reply) => {

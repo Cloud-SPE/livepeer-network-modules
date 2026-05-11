@@ -44,6 +44,7 @@ export interface RecordingHandoffInput {
 
 export interface AbrExecutionManager {
   submitAsset(input: SubmitAbrAssetInput): Promise<{ executionId: string }>;
+  retryAsset(assetId: string): Promise<{ executionId: string }>;
   handoffRecording(input: RecordingHandoffInput): Promise<{ assetId: string; executionId: string }>;
 }
 
@@ -146,6 +147,22 @@ export function createAbrExecutionManager(deps: AbrExecutionManagerDeps): AbrExe
       const asset = await deps.assets.byId(input.assetId);
       if (!asset) throw new Error(`asset ${input.assetId} not found`);
       const execution = await initializeExecution(deps, fetchImpl, asset, input.route);
+      void runExecution(deps, fetchImpl, execution);
+      return { executionId: execution.executionId };
+    },
+
+    async retryAsset(assetId) {
+      const asset = await deps.assets.byId(assetId);
+      if (!asset) throw new Error(`asset ${assetId} not found`);
+      if (asset.deletedAt) throw new Error(`asset ${assetId} is deleted`);
+      const [route] = await deps.routeSelector.select({
+        capability: "video:transcode.abr",
+        offering: asset.selectedOffering ?? "default",
+      });
+      if (!route) {
+        throw new Error(`no video:transcode.abr route available for asset ${assetId}`);
+      }
+      const execution = await initializeExecution(deps, fetchImpl, asset, route);
       void runExecution(deps, fetchImpl, execution);
       return { executionId: execution.executionId };
     },

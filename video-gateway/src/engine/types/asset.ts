@@ -21,7 +21,7 @@ export interface Asset {
   deletedAt?: Date;
 }
 
-export type AssetStatus = "preparing" | "ready" | "errored" | "deleted";
+export type AssetStatus = "preparing" | "queued" | "ready" | "errored" | "deleted";
 export type AssetSourceType = "upload" | "live_recording" | "imported";
 
 export interface Rendition {

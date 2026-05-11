@@ -13,6 +13,7 @@ const RESOLUTION_PIXELS: Record<Resolution, { w: number; h: number }> = {
   "480p": { w: 854, h: 480 },
   "720p": { w: 1280, h: 720 },
   "1080p": { w: 1920, h: 1080 },
+  "2160p": { w: 3840, h: 2160 },
 };
 
 const CODEC_STRING: Record<Codec, string> = {

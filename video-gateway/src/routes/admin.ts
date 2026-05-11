@@ -3,10 +3,13 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHook
 import type { AdminAuthResolver } from "@livepeer-rewrite/customer-portal/auth";
 
 import type { Db as VideoDb } from "../db/pool.js";
+import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
 import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
 import { assets, liveStreams, recordings } from "../db/schema.js";
-import type { AssetRepo, LiveStreamRepo, RecordingRepo, WebhookFailureRepo } from "../repo/index.js";
+import type { AssetRepo, LiveStreamRepo, RecordingRepo, WebhookFailureRepo, PlaybackIdRepo, MutableEncodingJobRepo, MutableRenditionRepo } from "../repo/index.js";
 import type { RetryDispatcher } from "../service/webhookDispatcher.js";
+import type { AbrExecutionManager } from "../service/abrExecution.js";
+import { maybeHandoffRecording } from "./live-streams.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -18,11 +21,16 @@ export interface AdminRoutesDeps {
   authResolver: AdminAuthResolver;
   videoDb: VideoDb;
   routeSelector: VideoRouteSelector;
+  liveSessions: LiveSessionDirectory;
   assets: AssetRepo;
   liveStreamsRepo: LiveStreamRepo;
   recordingsRepo: RecordingRepo;
+  playbackIds?: PlaybackIdRepo;
+  jobsRepo?: MutableEncodingJobRepo;
+  renditionsRepo?: MutableRenditionRepo;
   failures: WebhookFailureRepo;
   dispatcher: RetryDispatcher;
+  execution?: AbrExecutionManager;
 }
 
 export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void {
@@ -42,15 +50,38 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
       .where(includeDeleted ? undefined : isNull(assets.deletedAt))
       .orderBy(desc(assets.createdAt))
       .limit(100);
+    const playbackByAssetId = new Map<string, string>();
+    if (deps.playbackIds) {
+      for (const row of rows) {
+        const [playback] = await deps.playbackIds.byAsset(row.id);
+        if (playback) playbackByAssetId.set(row.id, playback.id);
+      }
+    }
     await reply.code(200).send({
-      items: rows.map((row) => ({
+      items: await Promise.all(rows.map(async (row) => ({
         id: row.id,
         projectId: row.projectId,
         status: row.status,
         durationSec: row.durationSec !== null ? Number(row.durationSec) : null,
         createdAt: row.createdAt.toISOString(),
         deletedAt: row.deletedAt?.toISOString() ?? null,
-      })),
+        playbackId: playbackByAssetId.get(row.id) ?? null,
+        playbackUrl: playbackByAssetId.has(row.id)
+          ? `/v1/playback/${encodeURIComponent(playbackByAssetId.get(row.id)!)}`
+          : null,
+        renditions: deps.renditionsRepo ? (await deps.renditionsRepo.byAsset(row.id)).map((rendition) => ({
+          id: rendition.id,
+          resolution: rendition.resolution,
+          codec: rendition.codec,
+          status: rendition.status,
+        })) : [],
+        jobs: deps.jobsRepo ? (await deps.jobsRepo.byAsset(row.id)).map((job) => ({
+          id: job.id,
+          kind: job.kind,
+          status: job.status,
+          errorMessage: job.errorMessage ?? null,
+        })) : [],
+      }))),
     });
   });
 
@@ -60,9 +91,15 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
   });
 
   app.post<{ Params: { id: string } }>("/admin/assets/:id/restore", { preHandler }, async (req, reply) => {
+    const rows = await deps.videoDb.select().from(assets).where(eq(assets.id, req.params.id)).limit(1);
+    const asset = rows[0];
+    if (!asset) {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
     await deps.videoDb
       .update(assets)
-      .set({ deletedAt: null, status: "ready" })
+      .set({ deletedAt: null, status: restoredAssetStatus(asset) })
       .where(eq(assets.id, req.params.id));
     await reply.code(204).send();
   });
@@ -76,8 +113,14 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
     await reply.code(200).send({
       items: rows.map((row) => ({
         id: row.id,
+        name: row.name ?? row.id,
         projectId: row.projectId,
-        status: row.status,
+        status: adminStreamStatus(row.status),
+        sessionId: row.sessionId,
+        playbackUrl:
+          row.sessionId !== null
+            ? deps.liveSessions.get(row.sessionId)?.hlsPlaybackUrl ?? null
+            : deps.liveSessions.getByStreamId(row.id)?.hlsPlaybackUrl ?? null,
         startedAt: row.createdAt.toISOString(),
         endedAt: row.endedAt?.toISOString() ?? null,
         viewerCount: null,
@@ -87,8 +130,27 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
   });
 
   app.post<{ Params: { id: string } }>("/admin/live-streams/:id/end", { preHandler }, async (req, reply) => {
-    await deps.liveStreamsRepo.updateStatus(req.params.id, "ended", { endedAt: new Date() });
-    await reply.code(200).send({ ok: true });
+    const stream = await deps.liveStreamsRepo.byId(req.params.id);
+    if (!stream) {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+    const endedAt = new Date();
+    await deps.liveStreamsRepo.updateStatus(req.params.id, "ended", {
+      endedAt,
+      lastSeenAt: endedAt,
+    });
+    const handoff = await maybeHandoffRecording(deps, {
+      liveStreamId: stream.id,
+      projectId: stream.projectId,
+      sessionId: stream.sessionId,
+      endedAt,
+    });
+    await reply.code(200).send({
+      ok: true,
+      recording_asset_id: handoff?.assetId ?? stream.recordingAssetId ?? null,
+      recording_execution_id: handoff?.executionId ?? null,
+    });
   });
 
   app.get("/admin/recordings", { preHandler }, async (_req, reply) => {
@@ -138,6 +200,17 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
       await reply.code(404).send({ error: msg });
     }
   });
+}
+
+function restoredAssetStatus(asset: { readyAt?: Date | null; selectedOffering?: string | null }): "ready" | "queued" | "preparing" {
+  if (asset.readyAt) return "ready";
+  if (asset.selectedOffering) return "queued";
+  return "preparing";
+}
+
+function adminStreamStatus(status: string): string {
+  if (status === "active" || status === "reconnecting") return "live";
+  return status;
 }
 
 function adminAuthPreHandler(

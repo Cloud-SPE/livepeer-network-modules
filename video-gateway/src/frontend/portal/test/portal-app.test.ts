@@ -2,7 +2,7 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 
-const SESSION_KEY = "customer-portal:session";
+const SESSION_KEY = "video-gateway:portal-session";
 
 before(() => {
   const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
@@ -46,6 +46,7 @@ test("portal SPA registers all custom elements", async () => {
   await import("../src/main.js");
   assert.ok(customElements.get("video-gateway-portal"));
   assert.ok(customElements.get("portal-assets"));
+  assert.ok(customElements.get("portal-projects"));
   assert.ok(customElements.get("portal-streams"));
   assert.ok(customElements.get("portal-webhooks"));
   assert.ok(customElements.get("portal-recordings"));
@@ -104,4 +105,36 @@ test("portal-app /api-keys route re-exports shared portal-api-keys", async () =>
   const el = document.querySelector("video-gateway-portal")!;
   await settle();
   assert.ok(el.querySelector("portal-api-keys"));
+});
+
+test("portal-app survives refresh in the same tab session", async () => {
+  await import("../src/main.js");
+  seedSession();
+  window.location.hash = "#/assets";
+  document.body.innerHTML = "<video-gateway-portal></video-gateway-portal>";
+  await settle();
+  let el = document.querySelector("video-gateway-portal")!;
+  assert.ok(el.querySelector("portal-assets"));
+
+  document.body.innerHTML = "<video-gateway-portal></video-gateway-portal>";
+  await settle();
+  el = document.querySelector("video-gateway-portal")!;
+  assert.ok(el.querySelector("portal-assets"));
+});
+
+test("portal-app sign out clears the portal session and shows login", async () => {
+  await import("../src/main.js");
+  seedSession();
+  window.location.hash = "#/assets";
+  document.body.innerHTML = "<video-gateway-portal></video-gateway-portal>";
+  await settle();
+  const el = document.querySelector("video-gateway-portal")!;
+  const button = Array.from(el.querySelectorAll("portal-button")).find(
+    (node) => node.textContent?.trim() === "Sign out",
+  );
+  assert.ok(button);
+  button.dispatchEvent(new Event("click"));
+  await settle();
+  assert.equal(window.sessionStorage.getItem(SESSION_KEY), null);
+  assert.ok((el.textContent ?? "").includes("Customer login"));
 });

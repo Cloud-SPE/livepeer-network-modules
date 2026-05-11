@@ -14,6 +14,7 @@ export function defaultPricingConfig(): PricingConfig {
       "480p": { h264: 0.003, hevc: 0.0036, av1: 0.0045 },
       "720p": { h264: 0.005, hevc: 0.006, av1: 0.0075 },
       "1080p": { h264: 0.008, hevc: 0.0096, av1: 0.012 },
+      "2160p": { h264: 0.02, hevc: 0.024, av1: 0.03 },
     },
     liveCentsPerSecond: 0.05,
     overheadCents: 0,

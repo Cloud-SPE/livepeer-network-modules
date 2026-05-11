@@ -110,6 +110,7 @@ export function createAssetRepo(db: Db): AssetRepo {
       if (fields?.ffprobeJson !== undefined) update.ffprobeJson = fields.ffprobeJson;
       if (fields?.sourceUrl !== undefined) update.sourceUrl = fields.sourceUrl;
       if (fields?.selectedOffering !== undefined) update.selectedOffering = fields.selectedOffering;
+      if (fields?.encodingTier !== undefined) update.encodingTier = fields.encodingTier;
       await db.update(assets).set(update).where(eq(assets.id, id));
     },
 

@@ -4,8 +4,11 @@ import { installAdminPageStyles } from "./admin-shared.js";
 
 interface StreamRow {
   id: string;
+  name: string;
   projectId: string;
   status: string;
+  sessionId: string | null;
+  playbackUrl: string | null;
   startedAt: string;
   endedAt: string | null;
   viewerCount: number | null;
@@ -56,17 +59,25 @@ export class AdminStreams extends HTMLElement {
         ${this.error ? html`<p class="video-admin-page-error">${this.error}</p>` : nothing}
         <table class="video-admin-page-table">
           <thead>
-            <tr><th>ID</th><th>Project</th><th>Status</th><th>Viewers</th><th>Record</th><th>Started</th><th>Ended</th><th></th></tr>
+            <tr><th>Name</th><th>Project</th><th>Status</th><th>Playback</th><th>Viewers</th><th>Record</th><th>Started</th><th>Ended</th><th></th></tr>
           </thead>
           <tbody>
             ${this.rows.map(
               (r) => html`<tr>
-                <td>${r.id}</td>
+                <td>
+                  <div>${r.name}</div>
+                  <div class="video-admin-page-dim"><code>${r.id}</code></div>
+                </td>
                 <td>${r.projectId}</td>
                 <td>
                   <portal-status-pill variant=${r.status === "live" ? "success" : "neutral"}>
                     ${r.status}
                   </portal-status-pill>
+                </td>
+                <td>
+                  ${r.playbackUrl
+                    ? html`<a class="video-admin-page-link" href=${r.playbackUrl}>open</a>`
+                    : nothing}
                 </td>
                 <td>${r.viewerCount ?? "-"}</td>
                 <td>${r.recordToVod ? "yes" : "no"}</td>

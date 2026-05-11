@@ -5,13 +5,18 @@ import { z } from "zod";
 
 import type { Config } from "../config.js";
 import type { Db as VideoDb } from "../db/pool.js";
-import { liveStreams, recordings } from "../db/schema.js";
+import { assets, liveStreams, recordings, uploads } from "../db/schema.js";
 import { defaultPricingConfig } from "../engine/config/pricing.js";
-import type { LiveStreamRepo } from "../engine/index.js";
+import type { AssetRepo, LiveStreamRepo } from "../engine/index.js";
 import type { LiveSessionDirectory } from "../livepeer/liveSessionDirectory.js";
 import type { VideoRouteSelector } from "../livepeer/routeSelector.js";
 import type { RecordingRepo } from "../repo/index.js";
-import { provisionLiveStream } from "./live-streams.js";
+import { customerProjectIds, ensureDefaultProject, listProjectsForCustomer } from "../service/projects.js";
+import type { PlaybackIdRepo } from "../repo/playbackIds.js";
+import type { MutableEncodingJobRepo } from "../repo/encodingJobs.js";
+import type { MutableRenditionRepo } from "../repo/renditions.js";
+import type { AbrExecutionManager } from "../service/abrExecution.js";
+import { maybeHandoffRecording, provisionLiveStream } from "./live-streams.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -27,14 +32,25 @@ const UpdateRecordPolicyBody = z.object({
   record_to_vod: z.boolean(),
 });
 
+const CreatePortalUploadBody = z.object({
+  filename: z.string().trim().min(1).max(255),
+  size: z.number().int().positive(),
+  contentType: z.string().trim().min(1).max(255).optional(),
+});
+
 export interface RegisterVideoCustomerPortalRoutesDeps {
   portal: CustomerPortal;
   cfg: Config;
   routeSelector: VideoRouteSelector;
   liveSessions: LiveSessionDirectory;
   videoDb?: VideoDb;
+  assetsRepo?: AssetRepo;
   liveStreamsRepo?: LiveStreamRepo;
   recordingsRepo?: RecordingRepo;
+  playbackIds?: PlaybackIdRepo;
+  jobsRepo?: MutableEncodingJobRepo;
+  renditionsRepo?: MutableRenditionRepo;
+  execution?: AbrExecutionManager;
 }
 
 export function registerVideoCustomerPortalRoutes(
@@ -76,15 +92,157 @@ export function registerVideoCustomerPortalRoutes(
     });
   });
 
-  app.get("/portal/live-streams", { preHandler: requireCustomer }, async (req, reply) => {
+  app.get("/portal/projects", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.videoDb) {
+      await reply.code(501).send({ error: "video_db_unavailable" });
+      return;
+    }
+    const defaultProject = await ensureDefaultProject(deps.videoDb, req.customerSession!.customer.id);
+    const rows = await listProjectsForCustomer(deps.videoDb, req.customerSession!.customer.id);
+    await reply.code(200).send({
+      items: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        createdAt: row.createdAt.toISOString(),
+        isDefault: row.id === defaultProject.id,
+      })),
+      defaultProjectId: defaultProject.id,
+    });
+  });
+
+  app.get("/portal/assets", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.videoDb) {
+      await reply.code(501).send({ error: "video_db_unavailable" });
+      return;
+    }
+    const projectIds = await customerProjectIds(deps.videoDb, req.customerSession!.customer.id);
+    const items = projectIds.size === 0
+      ? []
+      : await deps.videoDb
+          .select()
+          .from(assets)
+          .where(inArray(assets.projectId, [...projectIds]))
+          .orderBy(desc(assets.createdAt));
+    const playbackByAssetId = new Map<string, string>();
+    if (deps.playbackIds) {
+      for (const row of items) {
+        const [playback] = await deps.playbackIds.byAsset(row.id);
+        if (playback) playbackByAssetId.set(row.id, playback.id);
+      }
+    }
+    await reply.code(200).send({
+      items: items.map((row) => ({
+        id: row.id,
+        status: row.status,
+        projectId: row.projectId,
+        durationSec: row.durationSec !== null ? Number(row.durationSec) : null,
+        createdAt: row.createdAt.toISOString(),
+        deletedAt: row.deletedAt?.toISOString() ?? null,
+        playbackId: playbackByAssetId.get(row.id) ?? null,
+        playbackUrl: playbackByAssetId.has(row.id)
+          ? `/v1/playback/${encodeURIComponent(playbackByAssetId.get(row.id)!)}`
+          : null,
+      })),
+    });
+  });
+
+  app.post("/portal/uploads", { preHandler: requireCustomer }, async (req, reply) => {
+    const parsed = CreatePortalUploadBody.safeParse(req.body);
+    if (!parsed.success) {
+      await reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+      return;
+    }
+    if (!deps.videoDb || !deps.assetsRepo) {
+      await reply.code(501).send({ error: "upload_storage_unavailable" });
+      return;
+    }
+    const project = await ensureDefaultProject(deps.videoDb, req.customerSession!.customer.id);
+    const assetId = `asset_${randomHex16()}`;
+    const uploadId = `upload_${randomHex16()}`;
+    const storageKey = `uploads/${project.id}/${assetId}/${sanitizeFilename(parsed.data.filename)}`;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+    await deps.assetsRepo.insert({
+      id: assetId,
+      projectId: project.id,
+      status: "preparing",
+      sourceType: "upload",
+      sourceUrl: storageKey,
+      encodingTier: "baseline",
+      createdAt: now,
+    });
+    await deps.videoDb.insert(uploads).values({
+      id: uploadId,
+      projectId: project.id,
+      assetId,
+      status: "created",
+      uploadUrl: `${deps.cfg.vodTusPath}/${uploadId}`,
+      storageKey,
+      expiresAt,
+      createdAt: now,
+    });
+
+    await reply.code(201).send({
+      assetId,
+      uploadId,
+      projectId: project.id,
+      uploadUrl: `${deps.cfg.vodTusPath}/${uploadId}`,
+    });
+  });
+
+  app.delete<{ Params: { id: string } }>("/portal/assets/:id", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.assetsRepo || !deps.videoDb) {
+      await reply.code(501).send({ error: "asset_repo_unavailable" });
+      return;
+    }
+    const asset = await deps.assetsRepo.byId(req.params.id);
+    const projectIds = await customerProjectIds(deps.videoDb, req.customerSession!.customer.id);
+    if (!asset || !projectIds.has(asset.projectId)) {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+    await deps.assetsRepo.softDelete(asset.id, new Date());
+    await reply.code(204).send();
+  });
+
+  app.post<{ Params: { id: string } }>("/portal/assets/:id/restore", { preHandler: requireCustomer }, async (req, reply) => {
     if (!deps.videoDb) {
       await reply.code(501).send({ error: "video_db_unavailable" });
       return;
     }
     const rows = await deps.videoDb
       .select()
+      .from(assets)
+      .where(eq(assets.id, req.params.id))
+      .limit(1);
+    const asset = rows[0];
+    const projectIds = await customerProjectIds(deps.videoDb, req.customerSession!.customer.id);
+    if (!asset || !projectIds.has(asset.projectId)) {
+      await reply.code(404).send({ error: "not_found" });
+      return;
+    }
+    await deps.videoDb
+      .update(assets)
+      .set({ deletedAt: null, status: restoredAssetStatus(asset) })
+      .where(eq(assets.id, req.params.id));
+    await reply.code(204).send();
+  });
+
+  app.get("/portal/live-streams", { preHandler: requireCustomer }, async (req, reply) => {
+    if (!deps.videoDb) {
+      await reply.code(501).send({ error: "video_db_unavailable" });
+      return;
+    }
+    const projectIds = await customerProjectIds(deps.videoDb, req.customerSession!.customer.id);
+    if (projectIds.size === 0) {
+      await reply.code(200).send({ items: [] });
+      return;
+    }
+    const rows = await deps.videoDb
+      .select()
       .from(liveStreams)
-      .where(eq(liveStreams.projectId, req.customerSession!.customer.id))
+      .where(inArray(liveStreams.projectId, [...projectIds]))
       .orderBy(desc(liveStreams.createdAt));
     await reply.code(200).send({
       items: rows.map((row) => {
@@ -118,6 +276,11 @@ export function registerVideoCustomerPortalRoutes(
       return;
     }
     const session = req.customerSession!;
+    if (!deps.videoDb) {
+      await reply.code(501).send({ error: "video_db_unavailable" });
+      return;
+    }
+    const project = await ensureDefaultProject(deps.videoDb, session.customer.id);
     const out = await provisionLiveStream(
       {
         cfg: deps.cfg,
@@ -126,7 +289,7 @@ export function registerVideoCustomerPortalRoutes(
         liveStreamsRepo: deps.liveStreamsRepo,
       },
       {
-        projectId: session.customer.id,
+        projectId: project.id,
         name: parsed.data.name,
         customerTier: normalizeCustomerTier(session.customer.tier),
         recordToVod: false,
@@ -135,6 +298,7 @@ export function registerVideoCustomerPortalRoutes(
     );
     await reply.code(201).send({
       id: out.streamId,
+      projectId: project.id,
       name: out.name,
       status: "live",
       rtmpIngestUrl: out.rtmpPushUrl,
@@ -147,12 +311,13 @@ export function registerVideoCustomerPortalRoutes(
   });
 
   app.post<{ Params: { id: string } }>("/portal/live-streams/:id/end", { preHandler: requireCustomer }, async (req, reply) => {
-    if (!deps.liveStreamsRepo) {
+    if (!deps.liveStreamsRepo || !deps.videoDb) {
       await reply.code(501).send({ error: "live_stream_repo_unavailable" });
       return;
     }
     const stream = await deps.liveStreamsRepo.byId(req.params.id);
-    if (!stream || stream.projectId !== req.customerSession!.customer.id) {
+    const projectIds = await customerProjectIds(deps.videoDb, req.customerSession!.customer.id);
+    if (!stream || !projectIds.has(stream.projectId)) {
       await reply.code(404).send({ error: "not_found" });
       return;
     }
@@ -161,12 +326,17 @@ export function registerVideoCustomerPortalRoutes(
       lastSeenAt: endedAt,
       endedAt,
     });
-    const existingRecordings = deps.recordingsRepo ? await deps.recordingsRepo.byLiveStream(stream.id) : [];
-    const openRecording = existingRecordings.find((row) => row.endedAt === null);
-    if (openRecording && deps.recordingsRepo) {
-      await deps.recordingsRepo.updateStatus(openRecording.id, "pending", { endedAt });
-    }
-    await reply.code(200).send({ ok: true });
+    const handoff = await maybeHandoffRecording(deps, {
+      liveStreamId: stream.id,
+      projectId: stream.projectId,
+      sessionId: stream.sessionId,
+      endedAt,
+    });
+    await reply.code(200).send({
+      ok: true,
+      recordingAssetId: handoff?.assetId ?? stream.recordingAssetId ?? null,
+      recordingExecutionId: handoff?.executionId ?? null,
+    });
   });
 
   app.post<{ Params: { id: string } }>("/portal/live-streams/:id/record", { preHandler: requireCustomer }, async (req, reply) => {
@@ -175,12 +345,13 @@ export function registerVideoCustomerPortalRoutes(
       await reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
       return;
     }
-    if (!deps.liveStreamsRepo) {
+    if (!deps.liveStreamsRepo || !deps.videoDb) {
       await reply.code(501).send({ error: "live_stream_repo_unavailable" });
       return;
     }
     const stream = await deps.liveStreamsRepo.byId(req.params.id);
-    if (!stream || stream.projectId !== req.customerSession!.customer.id) {
+    const projectIds = await customerProjectIds(deps.videoDb, req.customerSession!.customer.id);
+    if (!stream || !projectIds.has(stream.projectId)) {
       await reply.code(404).send({ error: "not_found" });
       return;
     }
@@ -214,13 +385,18 @@ export function registerVideoCustomerPortalRoutes(
       await reply.code(501).send({ error: "video_db_unavailable" });
       return;
     }
+    const projectIds = await customerProjectIds(deps.videoDb, req.customerSession!.customer.id);
+    if (projectIds.size === 0) {
+      await reply.code(200).send({ items: [] });
+      return;
+    }
     const streamRows = await deps.videoDb
       .select({
         id: liveStreams.id,
         name: liveStreams.name,
       })
       .from(liveStreams)
-      .where(eq(liveStreams.projectId, req.customerSession!.customer.id));
+      .where(inArray(liveStreams.projectId, [...projectIds]));
     if (streamRows.length === 0) {
       await reply.code(200).send({ items: [] });
       return;
@@ -238,6 +414,7 @@ export function registerVideoCustomerPortalRoutes(
         streamName: streamNameById.get(row.liveStreamId) ?? row.liveStreamId,
         assetId: row.assetId,
         status: row.status,
+        assetUrl: row.assetId ? `/v1/videos/assets/${encodeURIComponent(row.assetId)}` : null,
         durationSec:
           row.startedAt && row.endedAt
             ? Math.max(0, (row.endedAt.getTime() - row.startedAt.getTime()) / 1000)
@@ -262,6 +439,12 @@ function customerAuthPreHandler(
   };
 }
 
+function restoredAssetStatus(asset: { readyAt?: Date | null; selectedOffering?: string | null }): "ready" | "queued" | "preparing" {
+  if (asset.readyAt) return "ready";
+  if (asset.selectedOffering) return "queued";
+  return "preparing";
+}
+
 function normalizeCustomerTier(tier: string): "free" | "prepaid" | "enterprise" {
   if (tier === "prepaid" || tier === "enterprise") {
     return tier;
@@ -276,4 +459,8 @@ function portalStatus(status: string): string {
 
 function randomHex16(): string {
   return Math.random().toString(16).slice(2, 18).padEnd(16, "0");
+}
+
+function sanitizeFilename(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, "_");
 }

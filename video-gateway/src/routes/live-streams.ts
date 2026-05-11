@@ -13,6 +13,8 @@ import {
   selectAbrLadder,
   type CustomerTier,
 } from "../service/abrSelector.js";
+import type { RecordingRepo } from "../repo/index.js";
+import type { AbrExecutionManager } from "../service/abrExecution.js";
 
 const CreateLiveStreamBody = z.object({
   project_id: z.string().min(1),
@@ -28,6 +30,9 @@ export interface LiveStreamsDeps {
   routeSelector: VideoRouteSelector;
   liveSessions: LiveSessionDirectory;
   liveStreamsRepo?: LiveStreamRepo;
+  recordingsRepo?: RecordingRepo;
+  execution?: AbrExecutionManager;
+  projectExists?: (projectId: string) => Promise<boolean>;
 }
 
 export interface ProvisionLiveStreamInput {
@@ -65,6 +70,10 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       await reply.code(400).send({ error: "invalid_body", details: parsed.error.issues });
       return;
     }
+    if (deps.projectExists && !(await deps.projectExists(parsed.data.project_id))) {
+      await reply.code(404).send({ error: "project_not_found" });
+      return;
+    }
     const stream = await provisionLiveStream(deps, {
       projectId: parsed.data.project_id,
       name: parsed.data.name,
@@ -73,9 +82,24 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       recordToVod: parsed.data.record_to_vod ?? parsed.data.recording_enabled,
       requestHeaders: req.headers,
     });
+    if (stream.recordToVod && deps.recordingsRepo) {
+      const existing = await deps.recordingsRepo.byLiveStream(stream.streamId);
+      const hasOpen = existing.some((row) => row.endedAt === null);
+      if (!hasOpen) {
+        await deps.recordingsRepo.insert({
+          id: `rec_${randomHex16()}`,
+          liveStreamId: stream.streamId,
+          assetId: null,
+          status: "running",
+          startedAt: stream.createdAt,
+          endedAt: null,
+        });
+      }
+    }
 
     await reply.code(201).send({
       stream_id: stream.streamId,
+      project_id: parsed.data.project_id,
       name: stream.name,
       session_id: stream.sessionId,
       rtmp_push_url: stream.rtmpPushUrl,
@@ -135,7 +159,19 @@ export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps)
       lastSeenAt: endedAt,
       endedAt,
     });
-    await reply.code(200).send({ stream_id: id, status: "ended", ended_at: endedAt.toISOString() });
+    const handoff = await maybeHandoffRecording(deps, {
+      liveStreamId: stream.id,
+      projectId: stream.projectId,
+      sessionId: stream.sessionId,
+      endedAt,
+    });
+    await reply.code(200).send({
+      stream_id: id,
+      status: "ended",
+      ended_at: endedAt.toISOString(),
+      recording_asset_id: handoff?.assetId ?? stream.recordingAssetId ?? null,
+      recording_execution_id: handoff?.executionId ?? null,
+    });
   });
 }
 
@@ -229,4 +265,41 @@ function hashStreamKey(streamKey: string): string {
 function publicStatus(status: string): string {
   if (status === "active" || status === "reconnecting") return "live";
   return status;
+}
+
+export async function maybeHandoffRecording(
+  deps: Pick<LiveStreamsDeps, "liveSessions" | "recordingsRepo" | "execution">,
+  input: {
+    liveStreamId: string;
+    projectId: string;
+    sessionId?: string;
+    endedAt: Date;
+  },
+): Promise<{ assetId: string; executionId: string } | null> {
+  if (!deps.recordingsRepo || !deps.execution) return null;
+  const recordings = await deps.recordingsRepo.byLiveStream(input.liveStreamId);
+  const recording = recordings.find((row) => row.endedAt === null) ?? recordings[0] ?? null;
+  if (!recording) return null;
+  const sourceUrl =
+    (input.sessionId ? deps.liveSessions.get(input.sessionId)?.hlsPlaybackUrl : null)
+    ?? deps.liveSessions.getByStreamId(input.liveStreamId)?.hlsPlaybackUrl
+    ?? null;
+  if (!sourceUrl) {
+    await deps.recordingsRepo.updateStatus(recording.id, "failed", {
+      endedAt: input.endedAt,
+    });
+    return null;
+  }
+  if (recording.endedAt === null) {
+    await deps.recordingsRepo.updateStatus(recording.id, "pending", {
+      endedAt: input.endedAt,
+    });
+  }
+  return deps.execution.handoffRecording({
+    liveStreamId: input.liveStreamId,
+    recordingId: recording.id,
+    projectId: input.projectId,
+    sourceUrl,
+    endedAt: input.endedAt,
+  });
 }

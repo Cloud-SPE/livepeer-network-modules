@@ -6,6 +6,7 @@ export const RESOLUTIONS_ASCENDING: Resolution[] = [
   "480p",
   "720p",
   "1080p",
+  "2160p",
 ];
 
 export const DEFAULT_BITRATE_KBPS: Record<Resolution, Record<Codec, number>> = {
@@ -14,6 +15,7 @@ export const DEFAULT_BITRATE_KBPS: Record<Resolution, Record<Codec, number>> = {
   "480p": { h264: 1400, hevc: 980, av1: 770 },
   "720p": { h264: 2800, hevc: 1960, av1: 1540 },
   "1080p": { h264: 5000, hevc: 3500, av1: 2750 },
+  "2160p": { h264: 15000, hevc: 10000, av1: 8000 },
 };
 
 export interface EncodingLadder {

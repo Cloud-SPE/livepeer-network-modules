@@ -10,11 +10,15 @@ import type {
 import type {
   Recording,
   RecordingRepo,
+  PlaybackIdRecord,
+  PlaybackIdRepo,
   WebhookDeliveryRepo,
   WebhookEndpointRepo,
   WebhookFailure,
   WebhookFailureRepo,
 } from "../repo/index.js";
+import type { EncodingJobRepo, RenditionRepo } from "../engine/index.js";
+import type { EncodingJob, Rendition } from "../engine/types/index.js";
 
 export function createInMemoryAssetRepo(): AssetRepo & { rows: Map<string, Asset> } {
   const rows = new Map<string, Asset>();
@@ -215,6 +219,110 @@ export function createInMemoryRecordingRepo(): RecordingRepo & { rows: Map<strin
       const cur = rows.get(id);
       if (!cur) return;
       rows.set(id, { ...cur, ...fields, status });
+    },
+  };
+}
+
+export function createInMemoryEncodingJobRepo(): EncodingJobRepo & {
+  rows: Map<string, EncodingJob>;
+  deleteByAsset(assetId: string): Promise<void>;
+} {
+  const rows = new Map<string, EncodingJob>();
+  return {
+    rows,
+    async insert(job) {
+      const row: EncodingJob = {
+        ...job,
+        attemptCount: job.attemptCount ?? 0,
+        createdAt: job.createdAt ?? new Date(),
+      };
+      rows.set(row.id, row);
+      return row;
+    },
+    async byId(id) {
+      return rows.get(id) ?? null;
+    },
+    async byAsset(assetId) {
+      return [...rows.values()].filter((row) => row.assetId === assetId);
+    },
+    async queued(assetId, kinds) {
+      return [...rows.values()].filter(
+        (row) => row.assetId === assetId && row.status === "queued" && kinds.includes(row.kind),
+      );
+    },
+    async updateStatus(id, status, fields) {
+      const current = rows.get(id);
+      if (!current) return;
+      rows.set(id, { ...current, ...fields, status });
+    },
+    async incrementAttempt(id) {
+      const current = rows.get(id);
+      if (!current) return;
+      rows.set(id, { ...current, attemptCount: current.attemptCount + 1 });
+    },
+    async deleteByAsset(assetId) {
+      for (const [id, row] of rows.entries()) {
+        if (row.assetId === assetId) rows.delete(id);
+      }
+    },
+  };
+}
+
+export function createInMemoryRenditionRepo(): RenditionRepo & {
+  rows: Map<string, Rendition>;
+  deleteByAsset(assetId: string): Promise<void>;
+} {
+  const rows = new Map<string, Rendition>();
+  return {
+    rows,
+    async insert(rendition) {
+      const row: Rendition = {
+        ...rendition,
+        createdAt: rendition.createdAt ?? new Date(),
+      };
+      rows.set(row.id, row);
+      return row;
+    },
+    async byAsset(assetId) {
+      return [...rows.values()].filter((row) => row.assetId === assetId);
+    },
+    async updateStatus(id, status, fields) {
+      const current = rows.get(id);
+      if (!current) return;
+      rows.set(id, { ...current, ...fields, status });
+    },
+    async deleteByAsset(assetId) {
+      for (const [id, row] of rows.entries()) {
+        if (row.assetId === assetId) rows.delete(id);
+      }
+    },
+  };
+}
+
+export function createInMemoryPlaybackIdRepo(): PlaybackIdRepo & {
+  rows: Map<string, PlaybackIdRecord>;
+} {
+  const rows = new Map<string, PlaybackIdRecord>();
+  return {
+    rows,
+    async insert(record) {
+      const row: PlaybackIdRecord = {
+        ...record,
+        createdAt: record.createdAt ?? new Date(),
+      };
+      rows.set(row.id, row);
+      return row;
+    },
+    async byId(id) {
+      return rows.get(id) ?? null;
+    },
+    async byAsset(assetId) {
+      return [...rows.values()].filter((row) => row.assetId === assetId);
+    },
+    async deleteByAsset(assetId) {
+      for (const [id, row] of rows.entries()) {
+        if (row.assetId === assetId) rows.delete(id);
+      }
     },
   };
 }

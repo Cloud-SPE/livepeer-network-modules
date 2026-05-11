@@ -5,9 +5,18 @@ import type { CustomerPortal } from "@livepeer-rewrite/customer-portal";
 import type { Db as PortalDb } from "@livepeer-rewrite/customer-portal/db";
 
 import type { Config } from "./config.js";
+import type { StorageProvider } from "./engine/interfaces/storageProvider.js";
 import type { LiveSessionDirectory } from "./livepeer/liveSessionDirectory.js";
 import type { VideoRouteSelector } from "./livepeer/routeSelector.js";
-import type { AssetRepo, LiveStreamRepo, RecordingRepo, WebhookFailureRepo } from "./repo/index.js";
+import type {
+  AssetRepo,
+  LiveStreamRepo,
+  PlaybackIdRepo,
+  RecordingRepo,
+  WebhookFailureRepo,
+  MutableEncodingJobRepo,
+  MutableRenditionRepo,
+} from "./repo/index.js";
 import type { Db as VideoDb } from "./db/pool.js";
 import { registerAdmin } from "./routes/admin.js";
 import { registerLiveStreams } from "./routes/live-streams.js";
@@ -18,7 +27,11 @@ import { registerProjects } from "./routes/projects.js";
 import { registerVideoCustomerPortalRoutes } from "./routes/customer-portal.js";
 import { registerWebhooks } from "./routes/webhooks.js";
 import { defaultAdminDist, defaultPortalDist, registerSpaStatic } from "./runtime/static.js";
+import type { AbrExecutionManager } from "./service/abrExecution.js";
 import type { RetryDispatcher } from "./service/webhookDispatcher.js";
+import { getProjectById } from "./service/projects.js";
+import { uploads } from "./db/schema.js";
+import { eq } from "drizzle-orm";
 
 export interface BuildServerInput {
   cfg: Config;
@@ -30,9 +43,14 @@ export interface BuildServerInput {
     videoDb: VideoDb;
     assets: AssetRepo;
     liveStreamsRepo: LiveStreamRepo;
+    jobsRepo: MutableEncodingJobRepo;
+    renditionsRepo: MutableRenditionRepo;
+    playbackIds: PlaybackIdRepo;
     recordingsRepo: RecordingRepo;
     failures: WebhookFailureRepo;
     dispatcher: RetryDispatcher;
+    execution: AbrExecutionManager;
+    storage: StorageProvider;
   };
 }
 
@@ -52,11 +70,51 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
     routeSelector: input.routeSelector,
     liveSessions: input.liveSessions,
     liveStreamsRepo: input.admin?.liveStreamsRepo,
+    recordingsRepo: input.admin?.recordingsRepo,
+    execution: input.admin?.execution,
+    projectExists: input.admin?.videoDb
+      ? async (projectId: string) => (await getProjectById(input.admin!.videoDb, projectId)) !== null
+      : undefined,
   });
-  registerUploads(app, { cfg });
-  registerVod(app, { routeSelector: input.routeSelector });
-  registerPlayback(app, { cfg, liveSessions: input.liveSessions });
-  registerProjects(app);
+  if (input.admin?.videoDb) {
+    registerUploads(app, {
+      cfg,
+      videoDb: input.admin.videoDb,
+      uploadExists: async (id: string) => {
+        const rows = await input.admin!.videoDb.select().from(uploads).where(eq(uploads.id, id)).limit(1);
+        return rows.length > 0;
+      },
+      completeUpload: async (id: string) => {
+        const rows = await input.admin!.videoDb
+          .update(uploads)
+          .set({
+            status: "completed",
+            completedAt: new Date(),
+          })
+          .where(eq(uploads.id, id))
+          .returning({ id: uploads.id });
+        return rows.length > 0;
+      },
+    });
+  } else {
+    registerUploads(app, { cfg, videoDb: input.admin?.videoDb });
+  }
+  registerVod(app, {
+    routeSelector: input.routeSelector,
+    assetsRepo: input.admin?.assets,
+    renditionsRepo: input.admin?.renditionsRepo,
+    jobsRepo: input.admin?.jobsRepo,
+    playbackIds: input.admin?.playbackIds,
+    execution: input.admin?.execution,
+  });
+  registerPlayback(app, {
+    cfg,
+    liveSessions: input.liveSessions,
+    assetsRepo: input.admin?.assets,
+    playbackIds: input.admin?.playbackIds,
+    storage: input.admin?.storage,
+  });
+  registerProjects(app, { videoDb: input.admin?.videoDb });
   registerWebhooks(app);
   if (input.portal?.adminAuthResolver && input.db) {
     portalAdmin.registerAdminRoutes(app, {
@@ -75,8 +133,13 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
       routeSelector: input.routeSelector,
       liveSessions: input.liveSessions,
       videoDb: input.admin?.videoDb,
+      assetsRepo: input.admin?.assets,
       liveStreamsRepo: input.admin?.liveStreamsRepo,
       recordingsRepo: input.admin?.recordingsRepo,
+      playbackIds: input.admin?.playbackIds,
+      jobsRepo: input.admin?.jobsRepo,
+      renditionsRepo: input.admin?.renditionsRepo,
+      execution: input.admin?.execution,
     });
   }
   if (input.admin && input.portal?.adminAuthResolver) {
@@ -84,6 +147,7 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
       ...input.admin,
       authResolver: input.portal.adminAuthResolver,
       routeSelector: input.routeSelector,
+      liveSessions: input.liveSessions,
     });
   }
 

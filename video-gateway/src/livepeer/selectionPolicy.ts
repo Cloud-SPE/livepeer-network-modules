@@ -9,6 +9,7 @@ const RESOLUTION_ORDER: Record<Resolution, number> = {
   "480p": 480,
   "720p": 720,
   "1080p": 1080,
+  "2160p": 2160,
 };
 
 export interface LiveSelectionProfile {

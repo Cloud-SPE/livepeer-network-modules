@@ -10,7 +10,7 @@ export type Capability =
 
 export type Codec = "h264" | "hevc" | "av1";
 
-export type Resolution = "240p" | "360p" | "480p" | "720p" | "1080p";
+export type Resolution = "240p" | "360p" | "480p" | "720p" | "1080p" | "2160p";
 
 export interface RenditionSpec {
   resolution: Resolution;

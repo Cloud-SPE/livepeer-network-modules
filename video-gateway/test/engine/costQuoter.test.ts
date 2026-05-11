@@ -7,7 +7,7 @@ import { defaultPricingConfig } from "../../src/engine/config/pricing.js";
 test("estimateCost: VOD over 60s with two h264 renditions", () => {
   const pricing = defaultPricingConfig();
   const quote = estimateCost({
-    capability: "video:transcode.vod",
+    capability: "video:transcode.abr",
     callerTier: "free",
     renditions: [
       { resolution: "720p", codec: "h264", bitrateKbps: 2800 },
@@ -38,7 +38,7 @@ test("estimateCost: live stream returns overhead-only quote", () => {
 test("reportUsage: total = sum-per-second * actualSeconds", () => {
   const pricing = defaultPricingConfig();
   const usage = reportUsage({
-    capability: "video:transcode.vod",
+    capability: "video:transcode.abr",
     renditions: [{ resolution: "1080p", codec: "h264", bitrateKbps: 5000 }],
     actualSeconds: 100,
     pricing,

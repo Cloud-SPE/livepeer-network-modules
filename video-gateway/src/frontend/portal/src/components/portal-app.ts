@@ -93,6 +93,7 @@ export class VideoGatewayPortal extends HTMLElement {
       .add("/signup", () => this.setRoute("signup"))
       .add("/login", () => this.setRoute("login"))
       .add("/account", () => this.setRoute("account"))
+      .add("/projects", () => this.setRoute("projects"))
       .add("/api-keys", () => this.setRoute("api-keys"))
       .add("/billing", () => this.setRoute("billing"))
       .add("/assets", () => this.setRoute("assets"))
@@ -133,6 +134,7 @@ export class VideoGatewayPortal extends HTMLElement {
       nav.setAttribute("aria-label", "Primary");
       nav.append(
         this.navLink("/assets", "Assets", "assets"),
+        this.navLink("/projects", "Projects", "projects"),
         this.navLink("/streams", "Streams", "streams"),
         this.navLink("/recordings", "Recordings", "recordings"),
         this.navLink("/webhooks", "Webhooks", "webhooks"),
@@ -207,6 +209,8 @@ export class VideoGatewayPortal extends HTMLElement {
         );
       case "account":
         return this.accountView();
+      case "projects":
+        return document.createElement("portal-projects");
       case "api-keys":
         return this.credentialsView();
       case "billing":
@@ -339,6 +343,8 @@ export class VideoGatewayPortal extends HTMLElement {
         return "Create account";
       case "account":
         return "Account";
+      case "projects":
+        return "Projects";
       case "api-keys":
         return "Credentials";
       case "billing":
@@ -364,6 +370,8 @@ export class VideoGatewayPortal extends HTMLElement {
         return "Create a customer account and start issuing tokens and API keys.";
       case "account":
         return "Identity, quota posture, and current balance for this customer.";
+      case "projects":
+        return "Inspect the projects that own your assets, streams, and webhook endpoints.";
       case "api-keys":
         return "Manage browser auth tokens and application API keys separately.";
       case "billing":

@@ -2,7 +2,7 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 
-const SESSION_KEY = "customer-portal:session";
+const SESSION_KEY = "video-gateway:admin-session";
 
 before(() => {
   const dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
@@ -90,4 +90,36 @@ test("admin-app navigates to reservations route", async () => {
   const el = document.querySelector("video-gateway-admin")!;
   await settle();
   assert.ok(el.querySelector("admin-reservations"));
+});
+
+test("admin-app survives refresh in the same tab session", async () => {
+  await import("../web-ui/main.js");
+  seedSession();
+  window.location.hash = "#/assets";
+  document.body.innerHTML = "<video-gateway-admin></video-gateway-admin>";
+  await settle();
+  let el = document.querySelector("video-gateway-admin")!;
+  assert.ok(el.querySelector("admin-assets"));
+
+  document.body.innerHTML = "<video-gateway-admin></video-gateway-admin>";
+  await settle();
+  el = document.querySelector("video-gateway-admin")!;
+  assert.ok(el.querySelector("admin-assets"));
+});
+
+test("admin-app sign out clears the admin session and shows login", async () => {
+  await import("../web-ui/main.js");
+  seedSession();
+  window.location.hash = "#/health";
+  document.body.innerHTML = "<video-gateway-admin></video-gateway-admin>";
+  await settle();
+  const el = document.querySelector("video-gateway-admin")!;
+  const button = Array.from(el.querySelectorAll("portal-button")).find(
+    (node) => node.textContent?.trim() === "Sign out",
+  );
+  assert.ok(button);
+  button.dispatchEvent(new Event("click"));
+  await settle();
+  assert.equal(window.sessionStorage.getItem(SESSION_KEY), null);
+  assert.ok((el.textContent ?? "").includes("Admin login"));
 });

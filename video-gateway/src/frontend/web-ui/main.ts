@@ -16,3 +16,5 @@ await import("./components/admin-audit.js");
 await import("./components/admin-streams.js");
 await import("./components/admin-webhooks.js");
 await import("./components/admin-recordings.js");
+
+export {};

@@ -11,39 +11,61 @@ import { createLiveSessionDirectory } from "./livepeer/liveSessionDirectory.js";
 import { createRouteSelector } from "./livepeer/routeSelector.js";
 import {
   createAssetRepo,
-  createLiveStreamRepo,
+  createEncodingJobRepo,
+    createLiveStreamRepo,
+  createPlaybackIdRepo,
   createRecordingRepo,
+  createRenditionRepo,
   createWebhookDeliveryRepo,
   createWebhookEndpointRepo,
   createWebhookFailureRepo,
 } from "./repo/index.js";
 import { createRtmpListener } from "./runtime/rtmp/listener.js";
 import { buildServer } from "./server.js";
+import { createAbrExecutionManager } from "./service/abrExecution.js";
 import { createRetryDispatcher } from "./service/webhookDispatcher.js";
+import { createS3StorageProvider, loadS3ConfigFromEnv } from "./storage/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VIDEO_GATEWAY_ROOT = resolve(__dirname, "..");
 const REPO_ROOT = resolve(VIDEO_GATEWAY_ROOT, "..");
 
-function resolveCustomerPortalMigrationsDir(): string {
-  const packagedPath = resolve(VIDEO_GATEWAY_ROOT, "customer-portal-migrations");
-  if (existsSync(packagedPath)) return packagedPath;
-
-  const localRepoPath = resolve(REPO_ROOT, "customer-portal", "migrations");
-  if (existsSync(localRepoPath)) return localRepoPath;
-
-  throw new Error(
-    `could not locate customer-portal migrations; checked ${packagedPath} and ${localRepoPath}`,
-  );
+function firstExistingPath(paths: string[]): string | null {
+  for (const candidate of paths) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
-async function main(): Promise<void> {
+export function resolveCustomerPortalMigrationsDir(): string {
+  const candidates = [
+    resolve(VIDEO_GATEWAY_ROOT, "customer-portal-migrations"),
+    resolve(VIDEO_GATEWAY_ROOT, "..", "customer-portal", "migrations"),
+    resolve(VIDEO_GATEWAY_ROOT, "..", "..", "customer-portal", "migrations"),
+    resolve(REPO_ROOT, "customer-portal", "migrations"),
+  ];
+  const resolvedPath = firstExistingPath(candidates);
+  if (resolvedPath) return resolvedPath;
+  throw new Error(`could not locate customer-portal migrations; checked ${candidates.join(", ")}`);
+}
+
+export function resolveVideoGatewayMigrationsDir(): string {
+  const candidates = [
+    resolve(VIDEO_GATEWAY_ROOT, "migrations"),
+    resolve(VIDEO_GATEWAY_ROOT, "..", "migrations"),
+  ];
+  const resolvedPath = firstExistingPath(candidates);
+  if (resolvedPath) return resolvedPath;
+  throw new Error(`could not locate video-gateway migrations; checked ${candidates.join(", ")}`);
+}
+
+export async function main(): Promise<void> {
   const cfg = loadConfig();
 
   const portalPool = portalDb.createPool({ connectionString: cfg.databaseUrl, max: 10 });
   const portalDbConn = portalDb.makeDb(portalPool);
   await portalDb.runMigrations(portalDbConn, resolveCustomerPortalMigrationsDir());
-  await portalDb.runMigrations(portalDbConn, resolve(VIDEO_GATEWAY_ROOT, "migrations"));
+  await portalDb.runMigrations(portalDbConn, resolveVideoGatewayMigrationsDir());
   const portal = createCustomerPortal({
     db: portalDbConn,
     pepper: cfg.customerPortalPepper,
@@ -53,12 +75,16 @@ async function main(): Promise<void> {
   const videoDb = createDb(cfg.databaseUrl);
   const repos = {
     assets: createAssetRepo(videoDb),
+    jobs: createEncodingJobRepo(videoDb),
+    renditions: createRenditionRepo(videoDb),
+    playbackIds: createPlaybackIdRepo(videoDb),
     liveStreams: createLiveStreamRepo(videoDb),
     webhookEndpoints: createWebhookEndpointRepo(videoDb),
     webhookDeliveries: createWebhookDeliveryRepo(videoDb),
     webhookFailures: createWebhookFailureRepo(videoDb),
     recordings: createRecordingRepo(videoDb),
   };
+  const storage = createS3StorageProvider(loadS3ConfigFromEnv());
 
   const dispatcher = createRetryDispatcher(
     { pepper: cfg.webhookHmacPepper },
@@ -75,6 +101,17 @@ async function main(): Promise<void> {
     resolverProtoRoot: cfg.resolverProtoRoot,
     resolverSnapshotTtlMs: cfg.resolverSnapshotTtlMs,
   });
+  const execution = createAbrExecutionManager({
+    assets: repos.assets,
+    jobs: repos.jobs,
+    renditions: repos.renditions,
+    playbackIds: repos.playbackIds,
+    recordings: repos.recordings,
+    liveStreams: repos.liveStreams,
+    storage,
+    routeSelector,
+    logger: console,
+  });
 
   const app = await buildServer({
     cfg,
@@ -85,10 +122,15 @@ async function main(): Promise<void> {
     admin: {
       videoDb,
       assets: repos.assets,
+      jobsRepo: repos.jobs,
+      renditionsRepo: repos.renditions,
+      playbackIds: repos.playbackIds,
       liveStreamsRepo: repos.liveStreams,
       recordingsRepo: repos.recordings,
       failures: repos.webhookFailures,
       dispatcher,
+      execution,
+      storage,
     },
   });
   registerCustomerSelfServiceRoutes(app, {
@@ -116,4 +158,6 @@ async function main(): Promise<void> {
   }
 }
 
-void main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  void main();
+}

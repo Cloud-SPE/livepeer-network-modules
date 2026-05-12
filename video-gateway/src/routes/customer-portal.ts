@@ -649,21 +649,38 @@ export function registerVideoCustomerPortalRoutes(
       await reply.code(404).send({ error: "project_not_found" });
       return;
     }
-    const out = await provisionLiveStream(
-      {
-        cfg: deps.cfg,
-        routeSelector: deps.routeSelector,
-        liveSessions: deps.liveSessions,
-        liveStreamsRepo: deps.liveStreamsRepo,
-      },
-      {
-        projectId: project.id,
-        name: parsed.data.name,
-        customerTier: normalizeCustomerTier(session.customer.tier),
-        recordToVod: false,
-        requestHeaders: req.headers,
-      },
-    );
+    let out;
+    try {
+      out = await provisionLiveStream(
+        {
+          cfg: deps.cfg,
+          routeSelector: deps.routeSelector,
+          liveSessions: deps.liveSessions,
+          liveStreamsRepo: deps.liveStreamsRepo,
+        },
+        {
+          projectId: project.id,
+          name: parsed.data.name,
+          customerTier: normalizeCustomerTier(session.customer.tier),
+          recordToVod: false,
+          requestHeaders: req.headers,
+        },
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "live_session_open_failed";
+      if (message.includes("no video:live.rtmp route available")) {
+        await reply.code(503).send({
+          error: "no_live_route",
+          message,
+        });
+        return;
+      }
+      await reply.code(502).send({
+        error: "live_session_open_failed",
+        message,
+      });
+      return;
+    }
     await reply.code(201).send({
       id: out.streamId,
       projectId: project.id,

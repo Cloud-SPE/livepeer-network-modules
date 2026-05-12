@@ -24,7 +24,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   baseURL: process.env.OPENAI_BASE_URL || "http://localhost:8090/v1",
-  apiKey: "not-needed",
+  apiKey: process.env.OPENAI_API_KEY || "local-dev-no-auth",
 });
 
 const model = process.env.MODEL || "kokoro";

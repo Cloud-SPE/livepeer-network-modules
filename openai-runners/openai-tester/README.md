@@ -7,6 +7,8 @@ through the OpenAI SDK. One test script per capability.
 
 | Script | Capability |
 |---|---|
+| `generate-test-audio.sh` | Generate a local spoken audio fixture for transcription tests |
+| `test-gateway-chat.mjs` | OpenAI SDK smoke test against an OpenAI-compatible gateway |
 | `test-chat-completion.mjs` | `openai-chat-completions` |
 | `test-text-embedding.mjs` | `openai-text-embeddings` |
 | `test-audio-transcription.mjs` | `openai-audio-transcriptions` |
@@ -27,6 +29,18 @@ through the OpenAI SDK. One test script per capability.
 ```bash
 npm install
 node test-chat-completion.mjs
+
+./generate-test-audio.sh test.ogg
+OPENAI_BASE_URL=http://localhost:8090/v1 \
+OPENAI_API_KEY=local-dev-no-auth \
+MODEL=whisper-large-v3 \
+AUDIO_FILE=test.ogg \
+node test-audio-transcription.mjs
+
+OPENAI_BASE_URL=https://openai-gw-sea.cloudspe.com/v1 \
+OPENAI_API_KEY=sk-live-... \
+MODEL=gpt-4.1-mini \
+node test-gateway-chat.mjs
 
 # or via Docker:
 docker run --rm \

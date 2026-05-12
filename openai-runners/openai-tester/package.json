@@ -7,6 +7,7 @@
   },
   "scripts": {
     "test:chat-completion": "node test-chat-completion.mjs",
+    "test:gateway-chat": "node test-gateway-chat.mjs",
     "test:image-generation": "node test-image-generation.mjs",
     "test:text-embedding": "node test-text-embedding.mjs",
     "test:audio-transcription": "node test-audio-transcription.mjs",

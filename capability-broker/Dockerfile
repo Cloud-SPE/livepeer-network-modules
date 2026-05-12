@@ -32,11 +32,19 @@ RUN cd capability-broker && CGO_ENABLED=0 GOOS=linux \
         ./cmd/livepeer-capability-broker
 
 # ---- Runtime stage ----
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --system --uid 65532 --create-home --home-dir /home/nonroot --shell /usr/sbin/nologin nonroot \
+    && mkdir -p /var/lib/livepeer/rtmp-hls \
+    && chown -R 65532:65532 /var/lib/livepeer /home/nonroot
 
 COPY --from=builder /out/livepeer-capability-broker /usr/local/bin/livepeer-capability-broker
 
-USER nonroot:nonroot
-EXPOSE 8080 9090
+USER 65532:65532
+EXPOSE 8080 9090 1935
 ENTRYPOINT ["/usr/local/bin/livepeer-capability-broker"]
 CMD ["--help"]

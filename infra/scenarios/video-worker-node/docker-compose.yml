@@ -1,0 +1,69 @@
+# Scenario: single video worker node with broker-owned live ingest plus
+# one local ABR runner.
+
+services:
+  abr_runner_nvidia:
+    image: ${REGISTRY:-tztcloud}/abr-runner-nvidia:${RUNNER_TAG:-v1.0.0}
+    runtime: nvidia
+    environment:
+      - RUNNER_ADDR=:8080
+      - MAX_QUEUE_SIZE=2
+      - TEMP_DIR=/tmp/abr
+      - JOB_TTL_SECONDS=3600
+      - METRICS_ENABLED=false
+    volumes:
+      - abr-temp:/tmp/abr
+    ports:
+      - "127.0.0.1:8087:8080"
+    restart: unless-stopped
+
+  payment-daemon-receiver:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v1.0.0}
+    command:
+      - --mode=receiver
+      - --socket=/var/run/livepeer/payment-daemon.sock
+      - --db=/var/lib/livepeer/payment-daemon/sessions.db
+      - --chain-rpc=${CHAIN_RPC:-}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+      - --orch-address=${ORCH_ADDRESS:?set ORCH_ADDRESS}
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
+      - --redeem-gas=${REDEEM_GAS:-500000}
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-./run/hot-wallet-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - livepeer-run:/var/run/livepeer
+      - payment-daemon-db:/var/lib/livepeer/payment-daemon
+    restart: unless-stopped
+
+  capability-broker:
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${BROKER_TAG:-v1.0.0}
+    depends_on:
+      - abr_runner_nvidia
+      - payment-daemon-receiver
+    command:
+      - --config=/etc/livepeer/host-config.yaml
+      - --listen=:8080
+      - --metrics=:9090
+      - --rtmp-listen-addr=:1935
+      - --encoder=nvenc
+      - --hls-scratch-dir=/var/lib/livepeer/rtmp-hls
+    environment:
+      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
+    ports:
+      - "${BROKER_LISTEN_PORT:-8080}:8080"
+      - "${BROKER_METRICS_PORT:-9090}:9090"
+      - "${BROKER_RTMP_PORT:-1935}:1935"
+    volumes:
+      - ./host-config.yaml:/etc/livepeer/host-config.yaml:ro
+      - livepeer-run:/var/run/livepeer
+      - broker-hls:/var/lib/livepeer/rtmp-hls
+    restart: unless-stopped
+
+volumes:
+  abr-temp: {}
+  livepeer-run: {}
+  payment-daemon-db: {}
+  broker-hls: {}

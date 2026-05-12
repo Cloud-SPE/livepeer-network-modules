@@ -1,0 +1,61 @@
+identity:
+  orch_eth_address: 0xYOUR_COLD_ORCH_ADDRESS
+  label: "video-worker-node"
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+
+capabilities:
+  - id: "video:transcode.abr"
+    offering_id: "default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "jobs"
+      extractor:
+        type: "request-formula"
+        expression: "1"
+        default: 1
+    price:
+      amount_wei: "25000000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://abr_runner_nvidia:8080/v1/video/transcode/abr"
+      auth: "none"
+    extra:
+      provider: "abr-runner"
+      abr_runner_url: "http://abr_runner_nvidia:8080"
+    constraints:
+      tier: "standard"
+      gpu_vendor: "NVIDIA"
+      gpu_model: "2080"
+
+  - id: "video:live.rtmp"
+    offering_id: "default"
+    interaction_mode: "rtmp-ingress-hls-egress@v0"
+    work_unit:
+      name: "out_time_seconds"
+      extractor:
+        type: "ffmpeg-progress"
+        unit: "out_time_seconds"
+    price:
+      amount_wei: "25000000"
+      per_units: 1
+    backend:
+      transport: "ffmpeg-subprocess"
+      profile: "h264-live-1080p-nvenc"
+      # Replace with the externally-advertised broker URL. The broker uses
+      # this host to derive the RTMP ingest and HLS playback URLs returned to
+      # the gateway at session-open time.
+      url: "https://video-broker.example.com"
+    extra:
+      provider: "capability-broker"
+      live_pipeline: "broker-rtmp-hls"
+    constraints:
+      tier: "standard"
+      gpu_vendor: "NVIDIA"
+      gpu_model: "2080"

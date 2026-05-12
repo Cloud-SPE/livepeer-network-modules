@@ -24,6 +24,11 @@ Each deployable component still owns its minimal runnable bundle under
   - `capability-broker`
   - `payment-daemon` receiver
   - one vLLM-backed worker node
+- `video-worker-node/`
+  - `capability-broker`
+  - `payment-daemon` receiver
+  - one ABR runner
+  - broker-owned RTMP ingest + LL-HLS egress
 - `openai-gateway-manifest/`
   - `openai-gateway`
   - `service-registry-daemon`

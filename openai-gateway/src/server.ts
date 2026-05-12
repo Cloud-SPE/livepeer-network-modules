@@ -60,7 +60,6 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
     input.portal && input.rateCardStore
       ? {
           authResolver: input.portal.authResolver,
-          uiAuthResolver: input.portal.uiAuthResolver,
           wallet: input.portal.wallet,
           rateCardStore: input.rateCardStore,
         }
@@ -73,7 +72,6 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
     input.portal && input.rateCardStore
       ? {
           authResolver: input.portal.authResolver,
-          uiAuthResolver: input.portal.uiAuthResolver,
           wallet: input.portal.wallet,
           rateCardStore: input.rateCardStore,
         }
@@ -86,7 +84,6 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
     input.portal && input.rateCardStore
       ? {
           authResolver: input.portal.authResolver,
-          uiAuthResolver: input.portal.uiAuthResolver,
           wallet: input.portal.wallet,
           rateCardStore: input.rateCardStore,
         }
@@ -99,7 +96,6 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
     input.portal && input.rateCardStore
       ? {
           authResolver: input.portal.authResolver,
-          uiAuthResolver: input.portal.uiAuthResolver,
           wallet: input.portal.wallet,
           rateCardStore: input.rateCardStore,
         }
@@ -143,7 +139,6 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
     input.portal && input.rateCardStore
       ? {
           authResolver: input.portal.authResolver,
-          uiAuthResolver: input.portal.uiAuthResolver,
           wallet: input.portal.wallet,
           rateCardStore: input.rateCardStore,
         }

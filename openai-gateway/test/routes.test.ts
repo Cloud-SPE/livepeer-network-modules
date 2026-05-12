@@ -268,13 +268,7 @@ function createPortalForApi(wallet: Wallet): CustomerPortal {
       },
     },
     customerTokenService: {} as CustomerPortal['customerTokenService'],
-    uiAuthResolver: {
-      async resolve(req) {
-        return req.headers.authorization === 'Bearer ui-good'
-          ? { id: 'cust-ui', tier: 'prepaid', rateLimitTier: 'default' }
-          : null;
-      },
-    },
+    uiAuthResolver: {} as CustomerPortal['uiAuthResolver'],
     issueApiKey: async () => ({ apiKeyId: 'k1', plaintext: 'sk-live-good' }),
     revokeApiKey: async () => undefined,
     wallet,
@@ -428,7 +422,7 @@ test('routes smoke: chat / embeddings / speech / transcriptions / images forward
   assert.equal(txn.mode, 'http-multipart@v0');
 });
 
-test('authenticated chat reserves then commits usage for req/resp and stream flows', async (t) => {
+test('authenticated chat reserves then commits usage for API-key req/resp and stream flows', async (t) => {
   const protoRoot = await locateProtoRoot();
   if (!protoRoot) {
     t.diagnostic('skipping: livepeer-network-protocol proto tree not found');
@@ -527,7 +521,7 @@ test('authenticated chat reserves then commits usage for req/resp and stream flo
 
   const reqresp = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', authorization: 'Bearer ui-good' },
+    headers: { 'Content-Type': 'application/json', authorization: 'Bearer sk-live-good' },
     body: JSON.stringify({ model: 'model-small', max_tokens: 50, messages: [{ role: 'user', content: 'hi' }] }),
   });
   assert.equal(reqresp.status, 200);
@@ -556,6 +550,74 @@ test('authenticated chat reserves then commits usage for req/resp and stream flo
   );
   assert.equal(captures[0]?.mode, 'http-reqresp@v0');
   assert.equal(captures[1]?.mode, 'http-stream@v0');
+});
+
+test('openai api routes reject UI auth tokens with 401', async (t) => {
+  const protoRoot = await locateProtoRoot();
+  if (!protoRoot) {
+    t.diagnostic('skipping: livepeer-network-protocol proto tree not found');
+    return;
+  }
+  const tmpDir = await fs.mkdtemp(path.join(tmpdir(), 'openai-gateway-ui-auth-reject-'));
+  const sock = path.join(tmpDir, 'payer.sock');
+  const broker = Fastify({ logger: false });
+  await broker.listen({ host: '127.0.0.1', port: 0 });
+  const brokerAddr = broker.server.address();
+  if (!brokerAddr || typeof brokerAddr === 'string') throw new Error('no broker addr');
+
+  const grpcSrv = await startStubPayerDaemon(sock, protoRoot);
+  await payment.init({ socketPath: sock, protoRoot });
+
+  const wallet = createTrackingWallet();
+  const cfg: Config = {
+    brokerUrl: `http://127.0.0.1:${brokerAddr.port}`,
+    resolverSocket: null,
+    recipientHex: '0x1111111111111111111111111111111111111111',
+    listenPort: 0,
+    databaseUrl: 'postgres://test:test@localhost:5432/test',
+    authPepper: 'test-pepper',
+    adminTokens: [],
+    publicBaseUrl: null,
+    stripe: null,
+    defaultOffering: 'default',
+    payerDaemonSocket: sock,
+    paymentProtoRoot: protoRoot,
+    resolverProtoRoot: protoRoot,
+    resolverSnapshotTtlMs: 15_000,
+    offeringsConfigPath: '/dev/null',
+    offerings: { defaults: {} },
+    audioSpeechEnabled: false,
+    brokerCallTimeoutMs: 30_000,
+  };
+  const server = await buildServer({
+    cfg,
+    portal: createPortalForApi(wallet),
+    rateCardStore: createMockRateCardStore() as any,
+  });
+  await server.listen({ host: '127.0.0.1', port: 0 });
+
+  t.after(async () => {
+    await server.close();
+    await broker.close();
+    await new Promise<void>((res) => grpcSrv.tryShutdown(() => res()));
+    payment.shutdown();
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  const addr = server.server.address();
+  if (!addr || typeof addr === 'string') throw new Error('no listen address');
+  const base = `http://127.0.0.1:${addr.port}`;
+
+  const resp = await fetch(`${base}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', authorization: 'Bearer ui-good' },
+    body: JSON.stringify({ model: 'model-small', messages: [{ role: 'user', content: 'hi' }] }),
+  });
+
+  assert.equal(resp.status, 401);
+  assert.equal(wallet.reserveCalls.length, 0);
+  assert.equal(wallet.commitCalls.length, 0);
+  assert.equal(wallet.refundCalls.length, 0);
 });
 
 test('authenticated embeddings, images, speech, and transcriptions reserve then commit usage', async (t) => {
@@ -814,7 +876,7 @@ test('authenticated chat refunds reservation when upstream fails before completi
 
   const resp = await fetch(`${base}/v1/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', authorization: 'Bearer ui-good' },
+    headers: { 'Content-Type': 'application/json', authorization: 'Bearer sk-live-good' },
     body: JSON.stringify({ model: 'model-small', messages: [{ role: 'user', content: 'hi' }] }),
   });
 

@@ -11,7 +11,6 @@ import { dispatchReqresp } from "../service/routeDispatch.js";
 import type { RouteSelector } from "../service/routeSelector.js";
 import type { Config } from "../config.js";
 import type { Queryable } from "../repo/rateCard.js";
-import { createChainedAuthResolver } from "../service/auth.js";
 import { createNonChatBillingService } from "../service/nonChatBilling.js";
 
 interface AudioSpeechBody {
@@ -32,7 +31,6 @@ type Wallet = billing.Wallet;
 
 export interface RegisterAudioSpeechBillingDeps {
   authResolver: AuthResolver;
-  uiAuthResolver?: AuthResolver;
   wallet: Wallet;
   rateCardStore: Queryable;
 }
@@ -50,9 +48,7 @@ export function registerAudioSpeech(
       })
     : null;
   const preHandler = billingDeps
-    ? middleware.authPreHandler(
-        createChainedAuthResolver(billingDeps.authResolver, billingDeps.uiAuthResolver),
-      )
+    ? middleware.authPreHandler(billingDeps.authResolver)
     : undefined;
 
   app.post("/v1/audio/speech", { ...(preHandler ? { preHandler } : {}) }, async (req: FastifyRequest, reply: FastifyReply) => {

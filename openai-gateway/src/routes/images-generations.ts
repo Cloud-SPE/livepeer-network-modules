@@ -11,7 +11,6 @@ import { dispatchReqresp } from "../service/routeDispatch.js";
 import type { RouteSelector } from "../service/routeSelector.js";
 import type { Config } from "../config.js";
 import type { Queryable } from "../repo/rateCard.js";
-import { createChainedAuthResolver } from "../service/auth.js";
 import { createNonChatBillingService } from "../service/nonChatBilling.js";
 
 interface ImagesGenerationsBody {
@@ -28,7 +27,6 @@ type Wallet = billing.Wallet;
 
 export interface RegisterImagesBillingDeps {
   authResolver: AuthResolver;
-  uiAuthResolver?: AuthResolver;
   wallet: Wallet;
   rateCardStore: Queryable;
 }
@@ -46,9 +44,7 @@ export function registerImagesGenerations(
       })
     : null;
   const preHandler = billingDeps
-    ? middleware.authPreHandler(
-        createChainedAuthResolver(billingDeps.authResolver, billingDeps.uiAuthResolver),
-      )
+    ? middleware.authPreHandler(billingDeps.authResolver)
     : undefined;
 
   app.post("/v1/images/generations", { ...(preHandler ? { preHandler } : {}) }, async (req: FastifyRequest, reply: FastifyReply) => {

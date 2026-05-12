@@ -1,0 +1,36 @@
+# Overlay: front the Vtuber Gateway with Traefik. [PREVIEW]
+#
+# Layer this on top of docker-compose.yml when running behind the
+# ingress-traefik stack. Drops the publicly-published :3001 port and
+# adds Traefik routing labels for the public hostname.
+#
+# Vtuber sessions use long-lived HTTP + WebSocket connections. Traefik
+# forwards WS upgrade headers automatically — no special config needed.
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/gateway-onboarding/vtuber-gateway/docker-compose.yml \
+#     -f infra/scenarios/gateway-onboarding/vtuber-gateway/docker-compose.traefik.yml \
+#     --env-file infra/scenarios/gateway-onboarding/vtuber-gateway/.env \
+#     up -d
+
+services:
+  vtuber-gateway:
+    ports: []
+    networks:
+      - default
+      - ingress
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=ingress"
+
+      - "traefik.http.routers.vtuber-gateway.entrypoints=websecure"
+      - "traefik.http.routers.vtuber-gateway.service=vtuber-gateway"
+      - "traefik.http.routers.vtuber-gateway.tls.certresolver=${TRAEFIK_CERTRESOLVER:-cloudflare}"
+      - "traefik.http.routers.vtuber-gateway.rule=Host(`${GATEWAY_HOST:?set GATEWAY_HOST to the public hostname for this gateway}`)"
+      - "traefik.http.services.vtuber-gateway.loadbalancer.server.port=3001"
+      - "traefik.http.services.vtuber-gateway.loadbalancer.passhostheader=true"
+
+networks:
+  ingress:
+    external: true

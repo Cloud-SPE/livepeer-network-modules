@@ -1,0 +1,43 @@
+# Scenario: Cloudflare Tunnel ingress.
+#
+# Tunnel-mode reverse proxy that connects outbound to Cloudflare's edge.
+# No inbound :80 / :443 needed on the host — ideal for LAN nodes behind
+# NAT, residential ISPs that block low ports, or anywhere you don't want
+# to expose ports directly.
+#
+# Public hostname → backend service mapping lives in the Cloudflare Zero
+# Trust dashboard, NOT in this compose file:
+#   https://one.dash.cloudflare.com → Networks → Tunnels → <your tunnel> →
+#   Public Hostname tab.
+#
+# Run one cloudflared instance per public-facing box. The Secure Orch host
+# does not need a tunnel.
+#
+# Prerequisites:
+#   docker network create ingress
+#   # Optional, only if you also use the centralized-Prom pattern:
+#   docker network create metrics
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:${CLOUDFLARED_TAG:-latest}
+    container_name: cloudflared
+    hostname: cloudflared
+    restart: unless-stopped
+    networks:
+      - ingress
+      # Uncomment if you run a centralized Prometheus that scrapes
+      # across hosts via a shared `metrics` external network.
+      # - metrics
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${TUNNEL_TOKEN:?set TUNNEL_TOKEN to the value shown when you created the tunnel in Cloudflare Zero Trust}
+
+networks:
+  ingress:
+    external: true
+  # metrics:
+  #   external: true

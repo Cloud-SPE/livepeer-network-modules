@@ -1,0 +1,55 @@
+# Scenario: Traefik ingress.
+#
+# TLS-terminating reverse proxy that fronts the public-facing orchestrator
+# components. Run this on each host that exposes services to the internet
+# (Orch Coordinator host, every Capability Broker host). The Secure Orch
+# host does NOT need ingress — it has no inbound internet.
+#
+# Cert resolution defaults to the Cloudflare DNS challenge. A Let's Encrypt
+# HTTP-01 alternative is documented in traefik.example.yml.
+#
+# Downstream services (orch-coordinator, capability-broker) attach to the
+# external `ingress` network and declare their own Traefik labels. See the
+# README for example labels.
+#
+# Prerequisites:
+#   docker network create ingress
+#   sudo mkdir -p /opt/livepeer/traefik
+#   sudo cp infra/scenarios/orchestrator-onboarding/ingress-traefik/traefik.example.yml \
+#           /opt/livepeer/traefik/traefik.yml
+
+services:
+  traefik:
+    image: traefik:${TRAEFIK_TAG:-v3.6.4}
+    container_name: traefik
+    hostname: traefik
+    restart: unless-stopped
+    environment:
+      # Preferred: scoped DNS API token (minimum permission Zone:DNS:Edit on
+      # the zone(s) you want certs for). Leave the legacy pair blank when
+      # using this.
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN:-}
+      # Legacy: global API key + email. Only used if CF_DNS_API_TOKEN is
+      # empty. Global keys are powerful — prefer the scoped token above.
+      CF_API_EMAIL: ${CF_API_EMAIL:-}
+      CF_API_KEY: ${CF_API_KEY:-}
+    ports:
+      - "${TRAEFIK_HTTP_PORT:-80}:80"
+      - "${TRAEFIK_HTTPS_PORT:-443}:443"
+      # Dashboard / API. Default off. Enable only behind auth via Traefik
+      # labels on this service — never publish :8080 directly.
+      # - "127.0.0.1:8080:8080"
+    volumes:
+      - ${TRAEFIK_CONFIG_DIR:-/opt/livepeer/traefik}:/etc/traefik:ro
+      - traefik-certs:/ssl-certs
+      - traefik-logs:/var/log/traefik
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  traefik-certs: {}
+  traefik-logs: {}
+
+networks:
+  default:
+    name: ingress
+    external: true

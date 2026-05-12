@@ -1,0 +1,73 @@
+# Scenario: Capability Broker.
+#
+# The broker is the per-data-center entry point that gateways call to reach
+# your capabilities. Run one broker (or a load-balanced pair) per data
+# center / home setup. The broker can live on the same box as the workloads
+# it advertises, or on a dedicated box that routes to workloads on other
+# servers.
+#
+# What this stack runs:
+#   - capability-broker         routes inbound work to capabilities
+#   - payment-daemon (receiver) redeems payment tickets on-chain
+#
+# What lives outside this stack (per host-config.yaml):
+#   - The actual capability workers (vLLM, ABR, etc.). They can be
+#     containers on this same box (declared by you), or remote services
+#     this broker proxies to.
+#
+# The host-config.yaml at COORDINATOR_CONFIG defines which capabilities this
+# broker advertises and where the workloads live. Variants for common
+# hardware mixes are documented separately.
+
+services:
+  payment-daemon-receiver:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v1.0.0}
+    container_name: payment-daemon-receiver
+    hostname: payment-daemon-receiver
+    command:
+      - --mode=receiver
+      - --socket=/var/run/livepeer/payment-daemon.sock
+      - --db=/var/lib/livepeer/payment-daemon/sessions.db
+      - --chain-rpc=${CHAIN_RPC:-}
+      - --orch-address=${ORCH_ADDRESS:?set ORCH_ADDRESS to the cold/on-chain orch identity}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
+      - --redeem-gas=${REDEEM_GAS:-500000}
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-/opt/livepeer/payment-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-/opt/livepeer/payment-keystore-password}:/etc/livepeer/keystore-password:ro
+      - livepeer-run:/var/run/livepeer
+      - payment-daemon-db:/var/lib/livepeer/payment-daemon
+    restart: unless-stopped
+
+  capability-broker:
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.0.0}
+    container_name: capability-broker
+    hostname: capability-broker
+    command:
+      - --config=/etc/livepeer/host-config.yaml
+      - --listen=:8080
+      - --metrics=:9090
+    environment:
+      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
+    ports:
+      # Public broker endpoint. Gateways resolve your manifest from the
+      # orch-coordinator, find this URL there, and call it directly. Put a
+      # TLS-terminating reverse proxy in front of this in production.
+      - "${BROKER_PUBLIC_BIND:-0.0.0.0}:${BROKER_LISTEN_PORT:-8080}:8080"
+      # Metrics — keep private.
+      - "${BROKER_METRICS_BIND:-127.0.0.1}:${BROKER_METRICS_PORT:-9090}:9090"
+    volumes:
+      - ${BROKER_CONFIG:-/opt/livepeer/host-config.yaml}:/etc/livepeer/host-config.yaml:ro
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+    depends_on:
+      payment-daemon-receiver:
+        condition: service_started
+
+volumes:
+  livepeer-run: {}
+  payment-daemon-db: {}

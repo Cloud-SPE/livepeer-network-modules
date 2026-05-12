@@ -1,0 +1,65 @@
+# Scenario: Nginx ingress (nginx-proxy + acme-companion).
+#
+# Label/env-based reverse proxy with automatic Let's Encrypt HTTP-01 cert
+# issuance. Requires inbound :80 reachable from Let's Encrypt servers and
+# inbound :443 for HTTPS traffic. Use this on cloud hosts that can accept
+# inbound traffic on low ports.
+#
+# For NAT'd / LAN hosts that cannot expose :80 or :443, use the
+# `ingress-cloudflared` scenario instead.
+#
+# Downstream services register via env vars (VIRTUAL_HOST, VIRTUAL_PORT,
+# LETSENCRYPT_HOST) declared in their docker-compose.nginx.yml overlays —
+# nginx-proxy and acme-companion pick them up over the Docker socket.
+#
+# Prerequisites:
+#   docker network create ingress
+
+services:
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy:${NGINX_PROXY_TAG:-latest}
+    container_name: nginx-proxy
+    hostname: nginx-proxy
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    environment:
+      # Auto-redirect inbound HTTP to HTTPS for everything except the
+      # /.well-known/acme-challenge/ path, which stays on HTTP for the
+      # Let's Encrypt HTTP-01 challenge.
+      HTTPS_METHOD: redirect
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - nginx-certs:/etc/nginx/certs
+      - nginx-vhost:/etc/nginx/vhost.d
+      - nginx-html:/usr/share/nginx/html
+
+  acme-companion:
+    image: nginxproxy/acme-companion:${ACME_COMPANION_TAG:-latest}
+    container_name: nginx-proxy-acme
+    hostname: nginx-proxy-acme
+    restart: unless-stopped
+    depends_on:
+      - nginx-proxy
+    volumes_from:
+      - nginx-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - nginx-acme:/etc/acme.sh
+    environment:
+      # Email Let's Encrypt sends expiry notices to. Used as the default
+      # contact for every cert issued unless LETSENCRYPT_EMAIL is set on
+      # the individual downstream service.
+      DEFAULT_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL to your contact address for Let's Encrypt cert notices}
+
+volumes:
+  nginx-certs: {}
+  nginx-vhost: {}
+  nginx-html: {}
+  nginx-acme: {}
+
+networks:
+  default:
+    name: ingress
+    external: true

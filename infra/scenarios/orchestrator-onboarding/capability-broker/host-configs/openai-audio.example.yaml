@@ -1,0 +1,81 @@
+# Capability Broker host-config — OpenAI Audio.
+#
+# Advertises two OpenAI-compatible audio capabilities:
+#   - openai:audio-transcriptions  (speech → text, e.g. Whisper)
+#   - openai:audio-speech          (text → speech, e.g. Kokoro)
+#
+# Pair this with audio runner containers reachable from the broker via the
+# backend.url hosts below. See openai-runners/compose/docker-compose.audio.yml
+# for a reference runner deployment.
+
+identity:
+  orch_eth_address: 0xYOUR_ORCH_ADDRESS
+  label: "audio-broker"
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+
+capabilities:
+  # ── speech-to-text ──────────────────────────────────────────────────────
+  - id: "openai:audio-transcriptions"
+    offering_id: "whisper-large-v3"
+    interaction_mode: "http-multipart@v0"
+    work_unit:
+      # Whisper bills by seconds of audio. The runner reports the figure
+      # back to the broker via a response header.
+      name: "seconds"
+      extractor:
+        type: "response-header"
+        header: "X-Livepeer-Work-Units"
+        default: 0
+    price:
+      amount_wei: "25000000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://byoc_whisper_runner:8080/v1/audio/transcriptions"
+      auth: "none"
+    extra:
+      openai:
+        model: "whisper-large-v3"
+      provider: "byoc-whisper"
+      served_model_name: "whisper-large-v3"
+      backend_model: "openai/whisper-large-v3"
+    constraints:
+      tier: "standard"
+      gpu: "4090"
+
+  # ── text-to-speech ──────────────────────────────────────────────────────
+  - id: "openai:audio-speech"
+    offering_id: "kokoro"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      # Kokoro bills by input characters. Counted client-side and passed
+      # through a private field on the request body.
+      name: "characters"
+      extractor:
+        type: "request-formula"
+        expression: "input_chars"
+        fields:
+          input_chars: "$._livepeer_input_chars"
+        default: 0
+    price:
+      amount_wei: "25000000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://byoc_kokoro_runner:8080/v1/audio/speech"
+      auth: "none"
+    extra:
+      openai:
+        model: "kokoro"
+      provider: "byoc-kokoro"
+      served_model_name: "kokoro"
+      backend_model: "hexgrad/Kokoro-82M"
+    constraints:
+      tier: "standard"
+      gpu: "4090"

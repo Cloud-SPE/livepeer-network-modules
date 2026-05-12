@@ -1,0 +1,33 @@
+# Overlay: front the Video Gateway HTTP API with nginx-proxy +
+# acme-companion (Let's Encrypt HTTP-01 challenge).
+#
+# Drops the publicly-published HTTP :5000 port and registers the gateway
+# with nginx-proxy via env vars. KEEPS the RTMP :1935 port mapped
+# directly — RTMP is TCP and can't be proxied through nginx-proxy.
+# acme-companion issues / renews the cert via HTTP-01 (requires inbound
+# :80 reachable from the public internet).
+#
+# Pick THIS overlay OR docker-compose.nginx-dns01.yml, not both.
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/gateway-onboarding/video-gateway/docker-compose.yml \
+#     -f infra/scenarios/gateway-onboarding/video-gateway/docker-compose.nginx.yml \
+#     --env-file infra/scenarios/gateway-onboarding/video-gateway/.env \
+#     up -d
+
+services:
+  video-gateway:
+    ports:
+      - "${VIDEO_RTMP_BIND:-0.0.0.0}:${VIDEO_RTMP_PORT:-1935}:1935"
+    networks:
+      - default
+      - ingress
+    environment:
+      VIRTUAL_HOST: ${GATEWAY_HOST:?set GATEWAY_HOST to the public hostname for this gateway}
+      VIRTUAL_PORT: "3000"
+      LETSENCRYPT_HOST: ${GATEWAY_HOST:?set GATEWAY_HOST to the public hostname for this gateway}
+
+networks:
+  ingress:
+    external: true

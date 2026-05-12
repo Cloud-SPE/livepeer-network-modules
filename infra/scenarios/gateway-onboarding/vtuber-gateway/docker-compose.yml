@@ -1,0 +1,138 @@
+# Scenario: Vtuber Gateway.
+#
+# ────────────────────────────────────────────────────────────────────────
+# PREVIEW — DO NOT USE ON LIVE NETWORK.
+#
+# The vtuber gateway is under active development. The compose below
+# describes the *target* shape (chain-resolved brokers via the AI
+# Service Registry, matching the OpenAI + Video gateway patterns). The
+# vtuber-gateway image at the published TAG may not yet support every
+# env var here. Use this scenario only against your own dev environment
+# until the gateway is announced as production-ready.
+# ────────────────────────────────────────────────────────────────────────
+#
+# Sender-side gateway for vtuber pipeline workloads — long-lived,
+# session-based traffic with control-plane reconnect semantics. Routes
+# sessions to vtuber-capable capability brokers discovered from the
+# on-chain AI Service Registry.
+#
+# Single-host, no load balancing. Public surface is the gateway HTTP /
+# WebSocket API on :3001 — production must terminate TLS at a reverse
+# proxy in front (Traefik or Nginx; see overlays).
+#
+# Services:
+#   - postgres                  session + bearer state for the gateway
+#   - service-registry-daemon   resolves the AI Service Registry from chain
+#   - payment-daemon (sender)   signs and sends ticket payments to orchs
+#   - vtuber-gateway            the gateway HTTP + WS API itself
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_TAG:-16-alpine}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-livepeer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-vtuber_gateway}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-livepeer} -d ${POSTGRES_DB:-vtuber_gateway}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  service-registry-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=resolver
+      - --socket=/var/run/livepeer/service-registry.sock
+      - --store-path=/var/lib/livepeer/registry-cache.db
+      - --chain-rpc=${CHAIN_RPC:?set CHAIN_RPC}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS:-0x04C0b249740175999E5BF5c9ac1dA92431EF34C5}
+      - --discovery=${DISCOVERY_MODE:-chain}
+      - --round-poll-interval=${ROUND_POLL_INTERVAL:-120s}
+      - --cache-manifest-ttl=${CACHE_MANIFEST_TTL:-5m}
+      - --manifest-max-bytes=${MANIFEST_MAX_BYTES:-1048576}
+      - --manifest-fetch-timeout=${MANIFEST_FETCH_TIMEOUT:-5s}
+      - --max-stale=${MAX_STALE:-30m}
+      - --reject-unsigned=${REJECT_UNSIGNED:-true}
+      - --static-overlay=${STATIC_OVERLAY:-}
+      - --log-level=${REGISTRY_LOG_LEVEL:-info}
+      - --log-format=${REGISTRY_LOG_FORMAT:-json}
+      - --metrics-listen=:${REGISTRY_METRICS_PORT:-9095}
+    volumes:
+      - livepeer-run:/var/run/livepeer
+      - registry-state:/var/lib/livepeer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  payment-daemon-sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --chain-rpc=${CHAIN_RPC:?set CHAIN_RPC}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-/opt/livepeer/keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-/opt/livepeer/keystore-password}:/etc/livepeer/keystore-password:ro
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+  vtuber-gateway:
+    image: ${REGISTRY:-tztcloud}/livepeer-vtuber-gateway:${TAG:-v1.0.0}
+    container_name: vtuber-gateway
+    hostname: vtuber-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      service-registry-daemon:
+        condition: service_started
+      payment-daemon-sender:
+        condition: service_started
+    environment:
+      PORT: "3001"
+      # DATABASE_URL is derived from POSTGRES_* so the credentials only
+      # have to be set once in .env.
+      DATABASE_URL: postgres://${POSTGRES_USER:-livepeer}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vtuber_gateway}
+      LIVEPEER_RESOLVER_SOCKET: /var/run/livepeer/service-registry.sock
+      LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS: ${LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS:-15000}
+      LIVEPEER_PAYER_DAEMON_SOCKET: /var/run/livepeer/payer-daemon.sock
+      LIVEPEER_PAYER_DEFAULT_FACE_VALUE_WEI: ${LIVEPEER_PAYER_DEFAULT_FACE_VALUE_WEI:-5000000000000000000}
+
+      # --- vtuber-specific session model ---
+      VTUBER_DEFAULT_OFFERING: ${VTUBER_DEFAULT_OFFERING:-default}
+      VTUBER_SESSION_BEARER_PEPPER: ${VTUBER_SESSION_BEARER_PEPPER:?set VTUBER_SESSION_BEARER_PEPPER (openssl rand -hex 32)}
+      VTUBER_WORKER_CONTROL_BEARER_PEPPER: ${VTUBER_WORKER_CONTROL_BEARER_PEPPER:?set VTUBER_WORKER_CONTROL_BEARER_PEPPER (openssl rand -hex 32)}
+      VTUBER_SESSION_DEFAULT_TTL_SECONDS: ${VTUBER_SESSION_DEFAULT_TTL_SECONDS:-3600}
+      VTUBER_SESSION_BEARER_TTL_SECONDS: ${VTUBER_SESSION_BEARER_TTL_SECONDS:-7200}
+      VTUBER_RATE_CARD_USD_PER_SECOND: ${VTUBER_RATE_CARD_USD_PER_SECOND:-0.01}
+      VTUBER_WORKER_CALL_TIMEOUT_MS: ${VTUBER_WORKER_CALL_TIMEOUT_MS:-15000}
+      VTUBER_RELAY_MAX_PER_SESSION: ${VTUBER_RELAY_MAX_PER_SESSION:-8}
+      VTUBER_CONTROL_RECONNECT_WINDOW: ${VTUBER_CONTROL_RECONNECT_WINDOW:-30s}
+      VTUBER_CONTROL_RECONNECT_BUFFER_MESSAGES: ${VTUBER_CONTROL_RECONNECT_BUFFER_MESSAGES:-64}
+      VTUBER_CONTROL_RECONNECT_BUFFER_BYTES: ${VTUBER_CONTROL_RECONNECT_BUFFER_BYTES:-1048576}
+
+      LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-info}
+    ports:
+      # Default exposes the gateway directly for standalone bring-up.
+      # Layer one of the ingress overlays for production — the overlay
+      # drops this mapping and routes inbound traffic through the
+      # `ingress` network instead.
+      - "${VTUBER_GATEWAY_BIND:-0.0.0.0}:${VTUBER_GATEWAY_PORT:-3001}:3001"
+    volumes:
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+volumes:
+  postgres-data: {}
+  livepeer-run: {}
+  registry-state: {}

@@ -1,0 +1,36 @@
+# Overlay: front the Video Gateway HTTP API with Traefik.
+#
+# Layer this on top of docker-compose.yml when running behind the
+# ingress-traefik stack on the same host. Drops the publicly-published
+# HTTP :5000 port; KEEPS the RTMP :1935 port mapped directly (RTMP is
+# TCP, can't be proxied through HTTP routers).
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/gateway-onboarding/video-gateway/docker-compose.yml \
+#     -f infra/scenarios/gateway-onboarding/video-gateway/docker-compose.traefik.yml \
+#     --env-file infra/scenarios/gateway-onboarding/video-gateway/.env \
+#     up -d
+
+services:
+  video-gateway:
+    # Drop the HTTP port mapping; keep RTMP direct.
+    ports:
+      - "${VIDEO_RTMP_BIND:-0.0.0.0}:${VIDEO_RTMP_PORT:-1935}:1935"
+    networks:
+      - default
+      - ingress
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=ingress"
+
+      - "traefik.http.routers.video-gateway.entrypoints=websecure"
+      - "traefik.http.routers.video-gateway.service=video-gateway"
+      - "traefik.http.routers.video-gateway.tls.certresolver=${TRAEFIK_CERTRESOLVER:-cloudflare}"
+      - "traefik.http.routers.video-gateway.rule=Host(`${GATEWAY_HOST:?set GATEWAY_HOST to the public hostname for this gateway}`)"
+      - "traefik.http.services.video-gateway.loadbalancer.server.port=3000"
+      - "traefik.http.services.video-gateway.loadbalancer.passhostheader=true"
+
+networks:
+  ingress:
+    external: true

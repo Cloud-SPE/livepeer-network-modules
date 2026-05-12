@@ -1,0 +1,36 @@
+# Overlay: front the OpenAI Gateway with nginx-proxy + acme-companion
+# using the Cloudflare DNS-01 challenge.
+#
+# Same shape as docker-compose.nginx.yml, but acme-companion issues the
+# cert via DNS-01 instead of HTTP-01. Use this when:
+#   - port :80 is not reachable from the public internet, or
+#   - you want wildcard certs / faster issuance via DNS, or
+#   - your domain is on Cloudflare DNS and you prefer the DNS path.
+#
+# Pick THIS overlay OR docker-compose.nginx.yml, not both.
+#
+# Requires CF_DNS_API_TOKEN, CF_ACCOUNT_ID, CF_ZONE_ID in your .env. The
+# token must have Zone:DNS:Edit on the zone hosting GATEWAY_HOST.
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/gateway-onboarding/openai-gateway/docker-compose.yml \
+#     -f infra/scenarios/gateway-onboarding/openai-gateway/docker-compose.nginx-dns01.yml \
+#     --env-file infra/scenarios/gateway-onboarding/openai-gateway/.env \
+#     up -d
+
+services:
+  openai-gateway:
+    ports: []
+    networks:
+      - default
+      - ingress
+    environment:
+      VIRTUAL_HOST: ${GATEWAY_HOST:?set GATEWAY_HOST to the public hostname for this gateway}
+      VIRTUAL_PORT: "3000"
+      LETSENCRYPT_HOST: ${GATEWAY_HOST:?set GATEWAY_HOST to the public hostname for this gateway}
+      ACMESH_DNS_API_CONFIG: "DNS_API=dns_cf;CF_Token=${CF_DNS_API_TOKEN:?set CF_DNS_API_TOKEN};CF_Account_ID=${CF_ACCOUNT_ID:?set CF_ACCOUNT_ID};CF_Zone_ID=${CF_ZONE_ID:?set CF_ZONE_ID}"
+
+networks:
+  ingress:
+    external: true

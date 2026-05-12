@@ -1,0 +1,120 @@
+# Scenario: OpenAI Gateway.
+#
+# Sender-side gateway that exposes an OpenAI-compatible API to customers
+# and routes requests to capability brokers it discovers from the on-chain
+# AI Service Registry.
+#
+# Single-host, no load balancing. Public surface is the gateway's HTTP API
+# on :3000 — production must terminate TLS at a reverse proxy in front
+# (see the Traefik / Nginx overlays).
+#
+# Services:
+#   - postgres                  customer + session state for the gateway
+#   - service-registry-daemon   resolves the orchestrator registry from chain
+#   - payment-daemon (sender)   signs and sends ticket payments to orchs
+#   - openai-gateway            the gateway HTTP API itself
+#
+# All four share an internal compose-managed network. Only the gateway is
+# attached to the external `ingress` network (via the ingress overlays)
+# so the proxy can reach it.
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_TAG:-16-alpine}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-livepeer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-openai_gateway}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-livepeer} -d ${POSTGRES_DB:-openai_gateway}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  service-registry-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=resolver
+      - --socket=/var/run/livepeer/service-registry.sock
+      - --store-path=/var/lib/livepeer/registry-cache.db
+      - --chain-rpc=${CHAIN_RPC:?set CHAIN_RPC}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS:-0x04C0b249740175999E5BF5c9ac1dA92431EF34C5}
+      - --discovery=${DISCOVERY_MODE:-chain}
+      - --round-poll-interval=${ROUND_POLL_INTERVAL:-120s}
+      - --cache-manifest-ttl=${CACHE_MANIFEST_TTL:-5m}
+      - --manifest-max-bytes=${MANIFEST_MAX_BYTES:-1048576}
+      - --manifest-fetch-timeout=${MANIFEST_FETCH_TIMEOUT:-5s}
+      - --max-stale=${MAX_STALE:-30m}
+      - --reject-unsigned=${REJECT_UNSIGNED:-true}
+      - --static-overlay=${STATIC_OVERLAY:-}
+      - --log-level=${REGISTRY_LOG_LEVEL:-info}
+      - --log-format=${REGISTRY_LOG_FORMAT:-json}
+      - --metrics-listen=:${REGISTRY_METRICS_PORT:-9095}
+    volumes:
+      - livepeer-run:/var/run/livepeer
+      - registry-state:/var/lib/livepeer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  payment-daemon-sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --chain-rpc=${CHAIN_RPC:?set CHAIN_RPC}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-/opt/livepeer/keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-/opt/livepeer/keystore-password}:/etc/livepeer/keystore-password:ro
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+  openai-gateway:
+    image: ${REGISTRY:-tztcloud}/livepeer-openai-gateway-reference:${TAG:-v1.0.0}
+    container_name: openai-gateway
+    hostname: openai-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      service-registry-daemon:
+        condition: service_started
+      payment-daemon-sender:
+        condition: service_started
+    environment:
+      PORT: "3000"
+      # DATABASE_URL is derived from POSTGRES_* so the credentials only
+      # have to be set once in .env. POSTGRES_PASSWORD must be URL-safe
+      # (alphanumeric is fine; URL-encode if you use special chars).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-livepeer}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-openai_gateway}
+      CUSTOMER_PORTAL_AUTH_PEPPER: ${CUSTOMER_PORTAL_AUTH_PEPPER:?set CUSTOMER_PORTAL_AUTH_PEPPER (openssl rand -hex 32)}
+      OPENAI_GATEWAY_ADMIN_TOKENS: ${OPENAI_GATEWAY_ADMIN_TOKENS:?set OPENAI_GATEWAY_ADMIN_TOKENS (openssl rand -hex 32)}
+      LIVEPEER_RESOLVER_SOCKET: /var/run/livepeer/service-registry.sock
+      LIVEPEER_PAYER_DAEMON_SOCKET: /var/run/livepeer/payer-daemon.sock
+      LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS: ${LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS:-15000}
+      OPENAI_AUDIO_SPEECH_ENABLED: ${OPENAI_AUDIO_SPEECH_ENABLED:-false}
+      BROKER_CALL_TIMEOUT_MS: ${BROKER_CALL_TIMEOUT_MS:-30000}
+      LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-info}
+    ports:
+      # Default exposes the gateway directly on :3000 for standalone
+      # bring-up / smoke testing. Layer one of the ingress overlays for
+      # production — the overlay drops this mapping and routes inbound
+      # traffic through the `ingress` network instead.
+      - "${OPENAI_GATEWAY_BIND:-0.0.0.0}:${OPENAI_GATEWAY_PORT:-3000}:3000"
+    volumes:
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+volumes:
+  postgres-data: {}
+  livepeer-run: {}
+  registry-state: {}

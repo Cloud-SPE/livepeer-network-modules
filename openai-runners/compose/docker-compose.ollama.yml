@@ -10,17 +10,5 @@ services:
     ports:
       - "11434:11434"
 
-  openai_chat_completion_runner:
-    depends_on:
-      - ollama
-    environment:
-      - UPSTREAM_URL=http://ollama:11434/v1/chat/completions
-
-  openai_embeddings_runner:
-    depends_on:
-      - ollama
-    environment:
-      - UPSTREAM_URL=http://ollama:11434/v1/embeddings
-
 volumes:
   ollama-models: {}

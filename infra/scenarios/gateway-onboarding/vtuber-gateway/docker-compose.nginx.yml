@@ -1,0 +1,30 @@
+# Overlay: front the Vtuber Gateway with nginx-proxy + acme-companion
+# (Let's Encrypt HTTP-01 challenge). [PREVIEW]
+#
+# Drops the publicly-published :3001 port and registers the gateway with
+# nginx-proxy via env vars. nginx-proxy handles HTTP and WebSocket
+# upgrades automatically.
+#
+# Pick THIS overlay OR docker-compose.nginx-dns01.yml, not both.
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/gateway-onboarding/vtuber-gateway/docker-compose.yml \
+#     -f infra/scenarios/gateway-onboarding/vtuber-gateway/docker-compose.nginx.yml \
+#     --env-file infra/scenarios/gateway-onboarding/vtuber-gateway/.env \
+#     up -d
+
+services:
+  vtuber-gateway:
+    ports: []
+    networks:
+      - default
+      - ingress
+    environment:
+      VIRTUAL_HOST: ${GATEWAY_HOST:?set GATEWAY_HOST to the public hostname for this gateway}
+      VIRTUAL_PORT: "3001"
+      LETSENCRYPT_HOST: ${GATEWAY_HOST:?set GATEWAY_HOST to the public hostname for this gateway}
+
+networks:
+  ingress:
+    external: true

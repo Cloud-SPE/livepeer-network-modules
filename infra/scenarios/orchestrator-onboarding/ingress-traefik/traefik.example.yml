@@ -1,0 +1,88 @@
+# Traefik static configuration. Install at /opt/livepeer/traefik/traefik.yml
+# (or wherever TRAEFIK_CONFIG_DIR points). The file provider reads this
+# directory, so additional dynamic config files can be dropped alongside it.
+
+global:
+  checkNewVersion: true
+  sendAnonymousUsage: false
+
+# Trust self-signed certs on internal backends. The downstream broker /
+# coordinator services in this stack listen on plain HTTP inside the
+# `ingress` network — Traefik terminates TLS at the edge.
+serversTransport:
+  insecureSkipVerify: true
+  maxIdleConnsPerHost: 50
+
+log:
+  level: INFO
+  format: common
+
+accesslog:
+  format: common
+
+api:
+  dashboard: true
+  # Keep `insecure: false`. Expose the dashboard via labels on the traefik
+  # service (with auth middleware) if you want it reachable. Never publish
+  # :8080 directly to the internet.
+  insecure: false
+
+entryPoints:
+  web:
+    address: :80
+    # If you switch to Let's Encrypt HTTP-01 (see below), uncomment to
+    # redirect plain HTTP to HTTPS automatically.
+    # http:
+    #   redirections:
+    #     entryPoint:
+    #       to: websecure
+    #       scheme: https
+  websecure:
+    address: :443
+  metrics:
+    address: :8443
+
+metrics:
+  prometheus:
+    addRoutersLabels: true
+    entryPoint: metrics
+    buckets:
+      - 0.1
+      - 0.3
+      - 1.2
+      - 5.0
+
+certificatesResolvers:
+  # Cloudflare DNS challenge — recommended when your domains are on
+  # Cloudflare DNS. Works for hosts with no inbound :80 (LAN nodes,
+  # cloudflare-tunnel'd nodes, etc.). Credentials are read from
+  # CF_DNS_API_TOKEN (preferred) or CF_API_EMAIL + CF_API_KEY.
+  cloudflare:
+    acme:
+      email: you@example.com              # EDIT before first start
+      storage: /ssl-certs/acme-cloudflare.json
+      dnschallenge:
+        resolvers:
+          - 1.1.1.1
+          - 1.0.0.1
+        provider: cloudflare
+
+  # Let's Encrypt HTTP-01 challenge — alternative when your domains aren't
+  # on Cloudflare. Requires inbound :80 reachable from Let's Encrypt
+  # servers (no NAT issues, no firewall blocking :80). Switch downstream
+  # routers' `tls.certresolver` from `cloudflare` to `letsencrypt` to use.
+  # letsencrypt:
+  #   acme:
+  #     email: ${ACME_EMAIL}
+  #     storage: /ssl-certs/acme-letsencrypt.json
+  #     httpchallenge:
+  #       entryPoint: web
+
+providers:
+  docker:
+    # Services on the `ingress` network opt in by setting
+    # `traefik.enable=true` in their labels. Nothing is auto-exposed.
+    exposedByDefault: false
+  file:
+    directory: /etc/traefik
+    watch: true

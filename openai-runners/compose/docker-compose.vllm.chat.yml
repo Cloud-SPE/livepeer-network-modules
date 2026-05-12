@@ -14,11 +14,5 @@ services:
     ports:
       - "8000:8000"
 
-  openai_chat_completion_runner:
-    depends_on:
-      - vllm_chat
-    environment:
-      - UPSTREAM_URL=http://vllm_chat:8000/v1/chat/completions
-
 volumes:
   hf-cache: {}

@@ -14,12 +14,6 @@ services:
       - hf-cache:/root/.cache/huggingface
     ports:
       - "8001:8000"
-
-  openai_embeddings_runner:
-    depends_on:
-      - vllm_embeddings
-    environment:
-      - UPSTREAM_URL=http://vllm_embeddings:8000/v1/embeddings
-
+      -
 volumes:
   hf-cache: {}

@@ -1,0 +1,40 @@
+# Overlay: front the Orch Coordinator with nginx-proxy + acme-companion.
+#
+# Layer this on top of docker-compose.yml when running behind the
+# ingress-nginx stack on the same host. Removes the publicly-published
+# 8081 port and registers the service with nginx-proxy via env vars.
+#
+# nginx-proxy picks up VIRTUAL_HOST, VIRTUAL_PORT, and VIRTUAL_PATH over
+# the Docker socket and routes ONLY `/.well-known/livepeer-registry.json`
+# to this container's :8081. acme-companion picks up LETSENCRYPT_HOST and
+# issues / renews the cert via HTTP-01.
+#
+# Admin (:8080) and metrics (:9091) stay on loopback for local debugging.
+#
+# Reuses COORDINATOR_HOST from the Traefik overlay so swapping ingress
+# flavors doesn't require .env changes.
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/orchestrator-onboarding/orch-coordinator/docker-compose.yml \
+#     -f infra/scenarios/orchestrator-onboarding/orch-coordinator/docker-compose.nginx.yml \
+#     --env-file infra/scenarios/orchestrator-onboarding/orch-coordinator/.env \
+#     up -d
+
+services:
+  orch-coordinator:
+    ports:
+      - "${COORDINATOR_ADMIN_BIND:-127.0.0.1}:${COORDINATOR_LISTEN_PORT:-8080}:8080"
+      - "${COORDINATOR_METRICS_BIND:-127.0.0.1}:${COORDINATOR_METRICS_PORT:-9091}:9091"
+    networks:
+      - default
+      - ingress
+    environment:
+      VIRTUAL_HOST: ${COORDINATOR_HOST:?set COORDINATOR_HOST to the public hostname for this coordinator}
+      VIRTUAL_PORT: "8081"
+      VIRTUAL_PATH: "/.well-known/livepeer-registry.json"
+      LETSENCRYPT_HOST: ${COORDINATOR_HOST:?set COORDINATOR_HOST to the public hostname for this coordinator}
+
+networks:
+  ingress:
+    external: true

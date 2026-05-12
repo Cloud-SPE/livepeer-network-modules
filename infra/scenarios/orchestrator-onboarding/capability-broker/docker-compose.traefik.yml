@@ -1,0 +1,41 @@
+# Overlay: front the Capability Broker with Traefik.
+#
+# Layer this on top of docker-compose.yml when running behind the
+# ingress-traefik stack. Removes the publicly-published broker port and
+# adds the Traefik labels for the broker hostname (which must match the
+# `base_url` you listed for this broker in your Orch Coordinator's
+# coordinator-config.yaml).
+#
+# Metrics (:9090) stays on loopback for local debugging. Do NOT publish it
+# through Traefik without auth middleware in front.
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/orchestrator-onboarding/capability-broker/docker-compose.yml \
+#     -f infra/scenarios/orchestrator-onboarding/capability-broker/docker-compose.traefik.yml \
+#     --env-file infra/scenarios/orchestrator-onboarding/capability-broker/.env \
+#     up -d
+
+services:
+  capability-broker:
+    # Drop the public 8080 port mapping. Traefik routes inbound traffic
+    # through the `ingress` network instead. Metrics stays on loopback.
+    ports:
+      - "${BROKER_METRICS_BIND:-127.0.0.1}:${BROKER_METRICS_PORT:-9090}:9090"
+    networks:
+      - default
+      - ingress
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=ingress"
+
+      - "traefik.http.routers.broker.entrypoints=websecure"
+      - "traefik.http.routers.broker.service=broker"
+      - "traefik.http.routers.broker.tls.certresolver=${TRAEFIK_CERTRESOLVER:-cloudflare}"
+      - "traefik.http.routers.broker.rule=Host(`${BROKER_HOST:?set BROKER_HOST to the public hostname for this broker (must match coordinator-config.yaml brokers[].base_url)}`)"
+      - "traefik.http.services.broker.loadbalancer.server.port=8080"
+      - "traefik.http.services.broker.loadbalancer.passhostheader=true"
+
+networks:
+  ingress:
+    external: true

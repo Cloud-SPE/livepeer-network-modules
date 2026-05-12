@@ -1,0 +1,36 @@
+# Overlay: front the Orch Coordinator with a Cloudflare Tunnel.
+#
+# Layer this on top of docker-compose.yml when running behind the
+# ingress-cloudflared stack on the same host. Removes the publicly-
+# published 8081 port (cloudflared reaches the container by name on the
+# `ingress` network) and attaches the service to that network.
+#
+# No Traefik labels — the public-hostname mapping lives in the Cloudflare
+# Zero Trust dashboard, not in this compose file.
+#
+# Admin (:8080) and metrics (:9091) stay on loopback for local debugging.
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/orchestrator-onboarding/orch-coordinator/docker-compose.yml \
+#     -f infra/scenarios/orchestrator-onboarding/orch-coordinator/docker-compose.cloudflared.yml \
+#     --env-file infra/scenarios/orchestrator-onboarding/orch-coordinator/.env \
+#     up -d
+#
+# Zero Trust UI mapping for this host:
+#   Public hostname:  <your coordinator domain, e.g. coordinator.example.com>
+#   Path:             /.well-known/livepeer-registry.json   (optional, locks the tunnel to this endpoint)
+#   Service:          http://orch-coordinator:8081
+
+services:
+  orch-coordinator:
+    ports:
+      - "${COORDINATOR_ADMIN_BIND:-127.0.0.1}:${COORDINATOR_LISTEN_PORT:-8080}:8080"
+      - "${COORDINATOR_METRICS_BIND:-127.0.0.1}:${COORDINATOR_METRICS_PORT:-9091}:9091"
+    networks:
+      - default
+      - ingress
+
+networks:
+  ingress:
+    external: true

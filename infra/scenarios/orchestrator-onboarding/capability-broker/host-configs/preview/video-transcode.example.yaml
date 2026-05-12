@@ -1,0 +1,56 @@
+# Capability Broker host-config — Video Transcode VOD.
+#
+# ────────────────────────────────────────────────────────────────────────
+# PREVIEW — DO NOT USE IN PRODUCTION.
+#
+# The video/transcode capability is still under test. The final gateway
+# integration and protocol version have not been published. Orchestrators
+# should not advertise this capability until the corresponding gateway
+# release is out.
+#
+# This file is in the repo for onboarding-guide reference only.
+# ────────────────────────────────────────────────────────────────────────
+#
+# Advertises one VOD transcode capability backed by an NVIDIA transcode
+# runner. One request = one billable job.
+
+identity:
+  orch_eth_address: 0xYOUR_ORCH_ADDRESS
+  label: "transcode-broker"
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+
+capabilities:
+  - id: "video:transcode.vod"
+    offering_id: "transcode-vod-nvidia"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      # Per-job billing. The expression is a literal 1, so every successful
+      # request increments the meter by one unit. The preset field is
+      # declared on the request for future per-preset pricing variants.
+      name: "jobs"
+      extractor:
+        type: "request-formula"
+        expression: "1"
+        fields:
+          preset: "$.preset"
+        default: 1
+    price:
+      amount_wei: "25000000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://transcode_runner_nvidia:8080/v1/video/transcode"
+      auth: "none"
+    extra:
+      provider: "transcode-runner"
+      gpu_vendor: "nvidia"
+    constraints:
+      tier: "standard"
+      gpu_model: "1080"
+      gpu_vendor: "NVIDIA"

@@ -1,0 +1,80 @@
+# Capability Broker host-config — OpenAI Chat Completions.
+#
+# Advertises a single chat model with two interaction modes:
+#   - http-stream@v0   for gateways that want SSE streaming
+#   - http-reqresp@v0  for gateways that want a single buffered response
+#
+# Same backend, same model, same price — different gateway integration paths.
+# Pair this with a vLLM runner reachable from the broker. See
+# openai-runners/compose/docker-compose.vllm.chat.yml for a reference
+# runner deployment.
+
+identity:
+  orch_eth_address: 0xYOUR_ORCH_ADDRESS
+  label: "chat-broker"
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+
+capabilities:
+  # ── streaming chat completions ──────────────────────────────────────────
+  - id: "openai:chat-completions"
+    offering_id: "vllm-qwen3.6-27b-stream"
+    interaction_mode: "http-stream@v0"
+    work_unit:
+      # vLLM emits an OpenAI-shaped usage block; the broker reads
+      # total_tokens directly out of that.
+      name: "tokens"
+      extractor:
+        type: "openai-usage"
+        field: "total_tokens"
+    price:
+      amount_wei: "25000000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://vllm_model_runner:8000/v1/chat/completions"
+      auth: "none"
+    extra:
+      openai:
+        model: "Qwen3.6-27B"
+      provider: "vllm"
+      served_model_name: "Qwen3.6-27B"
+      backend_model: "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+      reasoning_parser: "qwen3"
+      tool_call_parser: "qwen3_coder"
+    constraints:
+      tier: "standard"
+      gpu: "5090"
+
+  # ── non-streaming (request/response) chat completions ───────────────────
+  - id: "openai:chat-completions"
+    offering_id: "vllm-qwen3.6-27b-default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "tokens"
+      extractor:
+        type: "openai-usage"
+        field: "total_tokens"
+    price:
+      amount_wei: "25000000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://vllm_model_runner:8000/v1/chat/completions"
+      auth: "none"
+    extra:
+      openai:
+        model: "Qwen3.6-27B"
+      provider: "vllm"
+      served_model_name: "Qwen3.6-27B"
+      backend_model: "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+      reasoning_parser: "qwen3"
+      tool_call_parser: "qwen3_coder"
+    constraints:
+      tier: "standard"
+      gpu: "5090"

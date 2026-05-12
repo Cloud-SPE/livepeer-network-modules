@@ -1,0 +1,27 @@
+# Orch Coordinator config — defines your fleet.
+#
+# Install at /opt/livepeer/coordinator-config.yaml (or wherever
+# COORDINATOR_CONFIG points). The coordinator reads this file on startup
+# and re-reads on SIGHUP.
+
+identity:
+  # Your orchestrator's on-chain address. Must match the address whose
+  # private key signs the published manifest on your Secure Orch host.
+  orch_eth_address: "0xYOUR_ORCH_ADDRESS"
+
+# One entry per capability-broker (worker node) in your fleet. Name them
+# however you like — region, hardware role, or whatever helps you keep
+# track. The base_url must be reachable by gateways over TLS.
+brokers:
+  - name: local-rig-1
+    base_url: https://rig-1.example.com
+  - name: local-rig-2
+    base_url: https://rig-2.example.com
+  - name: eu-central
+    base_url: https://eu-central.example.com
+  - name: us-central
+    base_url: https://us-central.example.com
+
+publish:
+  # How long downstream consumers should treat a published manifest as fresh.
+  manifest_ttl: 24h

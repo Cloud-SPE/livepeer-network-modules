@@ -1,0 +1,190 @@
+# Scenario: Video Gateway.
+#
+# Sender-side gateway for video workloads: VOD uploads (tus), live
+# streaming ingest via RTMP, and ABR delivery. Routes requests to video
+# capability brokers discovered from the on-chain AI Service Registry.
+#
+# Single-host, no load balancing. Two public surfaces:
+#   - HTTP API on :3000 internally (mapped to ${VIDEO_GATEWAY_PORT} on host)
+#       → can be fronted by Traefik / Nginx (HTTP overlays).
+#   - RTMP ingest on :1935 internally (mapped to ${VIDEO_RTMP_PORT} on host)
+#       → MUST be exposed directly. RTMP is TCP, not HTTP, and won't go
+#         through nginx-proxy / Traefik HTTP routers.
+#
+# Services on the private compose network:
+#   - postgres                  customer + session state
+#   - redis                     live stream state / sweeper queues
+#   - rustfs                    S3-compatible object storage for transcoded segments
+#   - rustfs-init               one-shot bucket creator
+#   - service-registry-daemon   resolves the AI Service Registry from chain
+#   - payment-daemon (sender)   signs and sends ticket payments to orchs
+#   - video-gateway             the gateway HTTP + RTMP listener itself
+#
+# Only video-gateway attaches to the external `ingress` network (via the
+# ingress overlays) so the proxy can reach its HTTP listener. Postgres /
+# redis / rustfs / daemons never touch the internet.
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_TAG:-16-alpine}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-livepeer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-video_gateway}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-livepeer} -d ${POSTGRES_DB:-video_gateway}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:${REDIS_TAG:-7-alpine}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  rustfs:
+    image: rustfs/rustfs:${RUSTFS_TAG:-latest}
+    command:
+      - /data
+    environment:
+      RUSTFS_ROOT_USER: ${RUSTFS_ROOT_USER:-rustfsadmin}
+      RUSTFS_ROOT_PASSWORD: ${RUSTFS_ROOT_PASSWORD:?set RUSTFS_ROOT_PASSWORD}
+    volumes:
+      - rustfs-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sS -o /dev/null http://localhost:9000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  rustfs-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ROOT_USER:-rustfsadmin}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_ROOT_PASSWORD:?set RUSTFS_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: ${S3_REGION:-us-east-1}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        aws --endpoint-url http://rustfs:9000 s3api create-bucket
+        --bucket ${S3_BUCKET:-transcoded} 2>/dev/null || true
+
+  payment-daemon-sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --chain-rpc=${CHAIN_RPC:?set CHAIN_RPC}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - ${PAYMENT_KEYSTORE:-/opt/livepeer/keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-/opt/livepeer/keystore-password}:/etc/livepeer/keystore-password:ro
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+  service-registry-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=resolver
+      - --socket=/var/run/livepeer/service-registry.sock
+      - --store-path=/var/lib/livepeer/registry-cache.db
+      - --chain-rpc=${CHAIN_RPC:?set CHAIN_RPC}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS:-0x04C0b249740175999E5BF5c9ac1dA92431EF34C5}
+      - --discovery=${DISCOVERY_MODE:-chain}
+      - --round-poll-interval=${ROUND_POLL_INTERVAL:-120s}
+      - --cache-manifest-ttl=${CACHE_MANIFEST_TTL:-5m}
+      - --manifest-max-bytes=${MANIFEST_MAX_BYTES:-1048576}
+      - --manifest-fetch-timeout=${MANIFEST_FETCH_TIMEOUT:-5s}
+      - --max-stale=${MAX_STALE:-30m}
+      - --reject-unsigned=${REJECT_UNSIGNED:-true}
+      - --static-overlay=${STATIC_OVERLAY:-}
+      - --log-level=${REGISTRY_LOG_LEVEL:-info}
+      - --log-format=${REGISTRY_LOG_FORMAT:-json}
+      - --metrics-listen=:${REGISTRY_METRICS_PORT:-9095}
+    volumes:
+      - livepeer-run:/var/run/livepeer
+      - registry-state:/var/lib/livepeer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  video-gateway:
+    image: ${REGISTRY:-tztcloud}/livepeer-video-gateway:${TAG:-v1.0.0}
+    container_name: video-gateway
+    hostname: video-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+      payment-daemon-sender:
+        condition: service_started
+      service-registry-daemon:
+        condition: service_started
+    environment:
+      PORT: "3000"
+      # DATABASE_URL is derived from POSTGRES_* so the credentials only
+      # have to be set once in .env. POSTGRES_PASSWORD must be URL-safe
+      # (alphanumeric is fine; URL-encode if you use special chars).
+      DATABASE_URL: postgres://${POSTGRES_USER:-livepeer}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-video_gateway}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      LIVEPEER_RESOLVER_SOCKET: /var/run/livepeer/service-registry.sock
+      LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS: ${LIVEPEER_RESOLVER_SNAPSHOT_TTL_MS:-15000}
+      LIVEPEER_PAYER_DAEMON_SOCKET: /var/run/livepeer/payer-daemon.sock
+      VIDEO_VOD_TUS_PATH: ${VIDEO_VOD_TUS_PATH:-/v1/uploads}
+      VIDEO_WEBHOOK_HMAC_PEPPER: ${VIDEO_WEBHOOK_HMAC_PEPPER:?set VIDEO_WEBHOOK_HMAC_PEPPER (openssl rand -hex 32)}
+      VIDEO_GATEWAY_ABR_POLICY: ${VIDEO_GATEWAY_ABR_POLICY:-customer-tier}
+      VIDEO_STALE_STREAM_SWEEP_INTERVAL_SECONDS: ${VIDEO_STALE_STREAM_SWEEP_INTERVAL_SECONDS:-60}
+      CUSTOMER_PORTAL_PEPPER: ${CUSTOMER_PORTAL_PEPPER:?set CUSTOMER_PORTAL_PEPPER (openssl rand -hex 32)}
+      VIDEO_GATEWAY_ADMIN_TOKENS: ${VIDEO_GATEWAY_ADMIN_TOKENS:?set VIDEO_GATEWAY_ADMIN_TOKENS (openssl rand -hex 32)}
+      BROKER_CALL_TIMEOUT_MS: ${BROKER_CALL_TIMEOUT_MS:-30000}
+      LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-info}
+      # S3 / object storage. Defaults assume the bundled rustfs; override
+      # for AWS or another S3-compatible provider.
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-transcoded}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://rustfs:9000}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-${RUSTFS_ROOT_USER:-rustfsadmin}}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${RUSTFS_ROOT_PASSWORD:?set RUSTFS_ROOT_PASSWORD}}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+    ports:
+      # HTTP API. Default exposes the gateway directly on the host for
+      # standalone bring-up. Layer one of the ingress overlays for
+      # production — the overlay drops this mapping.
+      - "${VIDEO_GATEWAY_BIND:-0.0.0.0}:${VIDEO_GATEWAY_PORT:-5000}:3000"
+      # RTMP ingest. ALWAYS exposed directly on the host — RTMP is TCP,
+      # not HTTP, and cannot be routed through Traefik / Nginx HTTP
+      # proxies. Ingress overlays keep this mapping in place.
+      - "${VIDEO_RTMP_BIND:-0.0.0.0}:${VIDEO_RTMP_PORT:-1935}:1935"
+    volumes:
+      - livepeer-run:/var/run/livepeer
+    restart: unless-stopped
+
+volumes:
+  postgres-data: {}
+  redis-data: {}
+  rustfs-data: {}
+  livepeer-run: {}
+  registry-state: {}

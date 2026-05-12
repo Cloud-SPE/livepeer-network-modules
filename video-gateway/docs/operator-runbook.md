@@ -8,9 +8,9 @@ recovery shape as it actually ships in this repo.
 Two reference scenarios exist:
 
 - static broker mode:
-  [`infra/scenarios/video-gateway/README.md`](../../infra/scenarios/video-gateway/README.md)
+  [`infra/scenarios/archive/video-gateway/README.md`](../../infra/scenarios/archive/video-gateway/README.md)
 - resolver/manifest mode:
-  [`infra/scenarios/video-gateway-manifest/README.md`](../../infra/scenarios/video-gateway-manifest/README.md)
+  [`infra/scenarios/archive/video-gateway-manifest/README.md`](../../infra/scenarios/archive/video-gateway-manifest/README.md)
 
 For the current product model, resolver mode is the preferred path for
 VOD and route selection.

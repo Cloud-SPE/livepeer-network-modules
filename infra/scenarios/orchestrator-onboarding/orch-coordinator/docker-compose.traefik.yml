@@ -1,0 +1,42 @@
+# Overlay: front the Orch Coordinator with Traefik.
+#
+# Layer this on top of docker-compose.yml when running behind the
+# ingress-traefik stack. Removes the publicly-published port and adds the
+# Traefik labels for the `.well-known/livepeer-registry.json` endpoint.
+#
+# Admin (:8080) and metrics (:9091) stay on loopback for local debugging.
+# Reach them via the host or via `docker exec`. Do NOT publish them through
+# Traefik without auth middleware in front.
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/orchestrator-onboarding/orch-coordinator/docker-compose.yml \
+#     -f infra/scenarios/orchestrator-onboarding/orch-coordinator/docker-compose.traefik.yml \
+#     --env-file infra/scenarios/orchestrator-onboarding/orch-coordinator/.env \
+#     up -d
+
+services:
+  orch-coordinator:
+    # Drop the public 8081 port mapping. Traefik routes inbound traffic
+    # through the `ingress` network instead. Admin + metrics stay on
+    # loopback for local debugging.
+    ports:
+      - "${COORDINATOR_ADMIN_BIND:-127.0.0.1}:${COORDINATOR_LISTEN_PORT:-8080}:8080"
+      - "${COORDINATOR_METRICS_BIND:-127.0.0.1}:${COORDINATOR_METRICS_PORT:-9091}:9091"
+    networks:
+      - default
+      - ingress
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=ingress"
+
+      - "traefik.http.routers.orch-registry.entrypoints=websecure"
+      - "traefik.http.routers.orch-registry.service=orch-registry"
+      - "traefik.http.routers.orch-registry.tls.certresolver=${TRAEFIK_CERTRESOLVER:-cloudflare}"
+      - "traefik.http.routers.orch-registry.rule=Host(`${COORDINATOR_HOST:?set COORDINATOR_HOST to the public hostname for this coordinator}`) && PathPrefix(`/.well-known/livepeer-registry.json`)"
+      - "traefik.http.services.orch-registry.loadbalancer.server.port=8081"
+      - "traefik.http.services.orch-registry.loadbalancer.passhostheader=true"
+
+networks:
+  ingress:
+    external: true

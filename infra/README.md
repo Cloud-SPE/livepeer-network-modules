@@ -7,17 +7,27 @@ Operator helpers that don't belong inside any single component.
 ```
 infra/
 ├── scenarios/
-│   ├── secure-orch-control-plane/
-│   ├── single-worker-node/
-│   ├── openai-gateway-manifest/
-│   ├── video-gateway/
-│   ├── vtuber-gateway/
-│   └── full-minimal-network/
+│   ├── orchestrator-onboarding/   # active orchestrator onboarding guide + stacks
+│   │   ├── README.md              # the onboarding guide
+│   │   ├── secure-orch-control-plane/
+│   │   ├── orch-coordinator/
+│   │   ├── capability-broker/
+│   │   ├── ingress-traefik/
+│   │   ├── ingress-cloudflared/
+│   │   └── ingress-nginx/
+│   ├── gateway-onboarding/        # active gateway onboarding guide + stacks
+│   │   ├── README.md              # the gateway onboarding guide
+│   │   ├── openai-gateway/
+│   │   ├── video-gateway/
+│   │   ├── vtuber-gateway/        # PREVIEW
+│   │   ├── ingress-traefik/
+│   │   └── ingress-nginx/
+│   └── archive/                   # earlier scenarios, preserved for reference
 ├── compose/
-│   ├── docker-compose.yml     # shared services (postgres, redis, rustfs) — profile-gated
-│   └── .env.example           # copy to .env, edit, then --env-file in compose
+│   ├── docker-compose.yml         # shared services (postgres, redis, rustfs) — profile-gated
+│   └── .env.example               # copy to .env, edit, then --env-file in compose
 └── scripts/
-    └── build-images.sh        # builds every image in dependency order
+    └── build-images.sh            # builds every image in dependency order
 ```
 
 ## Building images
@@ -45,25 +55,25 @@ Defaults: `REGISTRY=tztcloud`, `TAG=v1.0.0`, `PUSH=0`.
 
 ## Scenario stacks
 
-`infra/scenarios/` contains staged, multi-module deployment examples.
-These are operator-facing topologies that show how modules fit
-together in a real rollout.
+`infra/scenarios/` is organized by audience:
 
-Current scenarios:
+- **`orchestrator-onboarding/`** — the active orchestrator onboarding
+  guide and every stack referenced by it (Secure Orch, Orch Coordinator,
+  Capability Broker, three ingress options). The `README.md` at that path
+  is the guide itself.
+- **`gateway-onboarding/`** — the active gateway onboarding guide and
+  every stack referenced by it (OpenAI / Video / Vtuber gateways, plus
+  Traefik and Nginx ingress).
+- **`archive/`** — earlier multi-module scenarios kept for historical
+  reference. Not maintained against the current onboarding flow.
 
-- `secure-orch-control-plane/`
-- `single-worker-node/`
-- `openai-gateway-manifest/`
-- `video-gateway/`
-- `vtuber-gateway/`
-- `full-minimal-network/`
-
-Each scenario directory contains:
+Each scenario directory inside contains:
 
 - `docker-compose.yml`
+- optional overlays (`docker-compose.<ingress>.yml`)
 - `.env.example`
 - any scenario-local config files
-- a short `README.md`
+- a `README.md`
 
 ## Shared services
 

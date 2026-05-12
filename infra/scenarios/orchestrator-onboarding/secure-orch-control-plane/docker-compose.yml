@@ -1,0 +1,96 @@
+# Scenario: Secure Orch.
+#
+# This stack runs on the orchestrator's cold-key host: the box that holds the
+# ETH keystore + password. Production deployments must run this host with NO
+# inbound internet access. Outbound to the ETH RPC endpoints is required.
+#
+# On-disk convention assumed by the defaults:
+#   /opt/livepeer/keystore.json
+#   /opt/livepeer/keystore-password
+#
+# Services:
+#   - protocol-daemon          chain reads/writes (rounds, rewards, URI)
+#   - service-registry-daemon  resolves active orchestrators from chain
+#   - secure-orch-console      signs candidates with the cold key
+#
+# orch-coordinator runs on a separate, public-facing host and is not part of
+# this stack.
+
+services:
+  protocol-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-protocol-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=${PROTOCOL_MODE:-both}
+      - --socket=/var/run/livepeer/protocol.sock
+      - --store-path=/var/lib/livepeer/protocol.db
+      - --eth-urls=${ETH_URLS}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --keystore-path=/etc/livepeer/keystore.json
+      - --keystore-password-file=/etc/livepeer/keystore-password
+      - --orch-address=${ORCH_ADDRESS}
+      - --min-balance-wei=${MIN_BALANCE_WEI:-5000000000000000}
+      - --log-level=info
+      - --log-format=json
+      - --metrics-listen=:${PROTOCOL_METRICS_PORT:-9094}
+    ports:
+      - "${PROTOCOL_METRICS_PORT:-9094}:${PROTOCOL_METRICS_PORT:-9094}"
+    volumes:
+      - ${PROTOCOL_KEYSTORE:-/opt/livepeer/keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PROTOCOL_KEYSTORE_PASSWORD_FILE:-/opt/livepeer/keystore-password}:/etc/livepeer/keystore-password:ro
+      - socket:/var/run/livepeer
+      - state:/var/lib/livepeer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  service-registry-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=resolver
+      - --socket=/var/run/livepeer/service-registry.sock
+      - --store-path=/var/lib/livepeer/registry-cache.db
+      - --chain-rpc=${CHAIN_RPC:-${ETH_URLS}}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS:-}
+      - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS:-0x04C0b249740175999E5BF5c9ac1dA92431EF34C5}
+      - --discovery=${DISCOVERY_MODE:-chain}
+    ports:
+      - "${REGISTRY_METRICS_PORT:-9095}:${REGISTRY_METRICS_PORT:-9095}"
+    volumes:
+      - socket:/var/run/livepeer
+      - state:/var/lib/livepeer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  secure-orch-console:
+    image: ${REGISTRY:-tztcloud}/livepeer-secure-orch-console:${TAG:-v1.0.0}
+    command:
+      - --keystore=v3:/var/lib/secure-orch/keystore.json
+      - --keystore-password-file=/etc/secure-orch/password
+      - --last-signed=/var/lib/secure-orch/last-signed.json
+      - --audit-log=/var/log/secure-orch/audit.log.jsonl
+      - --audit-rotate-size=104857600
+      - --listen=${SECURE_ORCH_LISTEN:-0.0.0.0:8081}
+    ports:
+      - "${SECURE_ORCH_PORT:-8081}:8081"
+    environment:
+      PROTOCOL_DAEMON_SOCKET: /var/run/livepeer/protocol.sock
+      SECURE_ORCH_ADMIN_TOKENS: ${SECURE_ORCH_ADMIN_TOKENS}
+    volumes:
+      - ${SECURE_ORCH_KEYSTORE:-/opt/livepeer/keystore.json}:/var/lib/secure-orch/keystore.json:ro
+      - ${SECURE_ORCH_PASSWORD_FILE:-/opt/livepeer/keystore-password}:/etc/secure-orch/password:ro
+      - data:/var/lib/secure-orch
+      - logs:/var/log/secure-orch
+      - socket:/var/run/livepeer
+    restart: unless-stopped
+
+volumes:
+  logs: {}
+  data: {}
+  socket: {}
+  state: {}

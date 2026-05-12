@@ -1,0 +1,39 @@
+# Overlay: front the Capability Broker with nginx-proxy + acme-companion.
+#
+# Layer this on top of docker-compose.yml when running behind the
+# ingress-nginx stack on the same host. Removes the publicly-published
+# 8080 port and registers the service with nginx-proxy via env vars.
+#
+# nginx-proxy picks up VIRTUAL_HOST and VIRTUAL_PORT over the Docker
+# socket and routes the broker hostname to :8080. acme-companion picks up
+# LETSENCRYPT_HOST and issues / renews the cert via HTTP-01.
+#
+# Metrics (:9090) stays on loopback for local debugging.
+#
+# Reuses BROKER_HOST from the Traefik overlay so swapping ingress flavors
+# doesn't require .env changes. BROKER_HOST must match the `base_url`
+# you listed for this broker in your Orch Coordinator's
+# coordinator-config.yaml.
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/orchestrator-onboarding/capability-broker/docker-compose.yml \
+#     -f infra/scenarios/orchestrator-onboarding/capability-broker/docker-compose.nginx.yml \
+#     --env-file infra/scenarios/orchestrator-onboarding/capability-broker/.env \
+#     up -d
+
+services:
+  capability-broker:
+    ports:
+      - "${BROKER_METRICS_BIND:-127.0.0.1}:${BROKER_METRICS_PORT:-9090}:9090"
+    networks:
+      - default
+      - ingress
+    environment:
+      VIRTUAL_HOST: ${BROKER_HOST:?set BROKER_HOST to the public hostname for this broker (must match coordinator-config.yaml brokers[].base_url)}
+      VIRTUAL_PORT: "8080"
+      LETSENCRYPT_HOST: ${BROKER_HOST:?set BROKER_HOST to the public hostname for this broker (must match coordinator-config.yaml brokers[].base_url)}
+
+networks:
+  ingress:
+    external: true

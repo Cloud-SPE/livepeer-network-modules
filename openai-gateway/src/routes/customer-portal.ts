@@ -5,7 +5,7 @@ import type { CustomerPortal } from '@livepeer-rewrite/customer-portal';
 import { auth, db as portalDb } from '@livepeer-rewrite/customer-portal';
 import type { Db } from '@livepeer-rewrite/customer-portal/db';
 import type { RouteSelector } from '../service/routeSelector.js';
-import { buildModelCatalog } from '../service/catalog.js';
+import { buildPortalModelCatalog } from '../service/catalog.js';
 
 const SignupSchema = z.object({
   email: z.string().email(),
@@ -264,8 +264,8 @@ export function registerCustomerPortalRoutes(
   });
 
   app.get('/portal/playground/catalog', { preHandler: requireCustomer }, async (_req, reply) => {
-    const models = buildModelCatalog(await deps.routeSelector.inspect());
-    await reply.code(200).send({ models });
+    const catalog = buildPortalModelCatalog(await deps.routeSelector.inspect());
+    await reply.code(200).send(catalog);
   });
 
   app.get<{ Params: { id: string } }>('/portal/usage/:id', { preHandler: requireCustomer }, async (req, reply) => {

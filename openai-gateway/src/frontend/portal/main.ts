@@ -1,6 +1,12 @@
 import '@livepeer-rewrite/customer-portal-shared';
 import { clearSession, readSession, writeSession } from '@livepeer-rewrite/customer-portal-shared';
 import { html, render } from 'lit';
+import {
+  modelSupportsReqresp,
+  modelSupportsStream,
+  selectVariantForInteractionMode,
+  selectorHeadersForVariant,
+} from './selection.js';
 
 type Customer = {
   id: string;
@@ -64,25 +70,38 @@ type GroupedUsage = {
   committed_tokens: string;
 };
 
-type PlaygroundModel = {
-  id: string;
-  capability: string;
+type PlaygroundVariant = {
+  selection_key: string;
   offering: string;
   supported_modes: string[];
-  surface: CapabilitySurface | null;
   broker_url: string;
   eth_address: string;
   price_per_work_unit_wei: string;
   work_unit: string;
   supportedModes: string[];
-  requestFields: CapabilitySurfaceField[];
-  responseVariants: CapabilitySurfaceResponseVariant[];
   brokerUrl: string;
   ethAddress: string;
   pricePerWorkUnitWei: string;
   workUnit: string;
   extra: unknown;
   constraints: unknown;
+};
+
+type PlaygroundModel = {
+  model_id: string;
+  capability: string;
+  supported_modes: string[];
+  surface: CapabilitySurface | null;
+  supportedModes: string[];
+  requestFields: CapabilitySurfaceField[];
+  responseVariants: CapabilitySurfaceResponseVariant[];
+  variants: PlaygroundVariant[];
+};
+
+type PlaygroundCapabilityCatalog = {
+  id: string;
+  label: string;
+  models: PlaygroundModel[];
 };
 
 type CapabilitySurfaceField = {
@@ -147,9 +166,10 @@ const state = {
   error: '',
   notice: null as null | { variant: 'success' | 'warning'; message: string },
   pending: [] as string[],
-  playgroundModels: [] as PlaygroundModel[],
+  playgroundCatalog: [] as PlaygroundCapabilityCatalog[],
   playgroundCapability: 'chat' as PlaygroundApi,
-  playgroundModel: '',
+  playgroundModelId: '',
+  playgroundVariantKey: '',
   playgroundFields: {} as Record<string, string>,
   playgroundRawMode: false,
   playgroundRawJson: '',
@@ -350,40 +370,67 @@ function playgroundView() {
   return html`
     <portal-card heading="Playground" subheading="Exercise the OpenAI-compatible gateway surface with guided fields or raw payloads.">
       <form @submit=${runPlayground} class="openai-portal-form">
-        <label class="openai-portal-field">
-          API
-          <select
-            class="openai-portal-field-control"
-            name="capability"
-            .value=${state.playgroundCapability}
-            @change=${(event: Event) => updatePlaygroundCapability((event.currentTarget as HTMLSelectElement).value as PlaygroundApi)}
-          >
-            <option value="chat">Chat completions</option>
-            <option value="embeddings">Embeddings</option>
-            <option value="images">Image generation</option>
-            <option value="speech">Audio speech</option>
-            <option value="transcriptions">Audio transcription</option>
-          </select>
-        </label>
-        <label class="openai-portal-field">
-          Model
-          <select
-            class="openai-portal-field-control"
-            name="model"
-            .value=${state.playgroundModel}
-            @change=${(event: Event) => {
-              state.playgroundModel = (event.currentTarget as HTMLSelectElement).value;
-              resetPlaygroundDraft();
-              draw();
-            }}
-          >
-            ${options.length === 0
-              ? html`<option value="">No discovered models</option>`
-              : options.map(
-                  (model) => html`<option value=${model.id}>${model.id} · ${model.offering}</option>`,
-                )}
-          </select>
-        </label>
+        <div class="openai-portal-playground-toolbar">
+          <label class="openai-portal-field">
+            API
+            <select
+              class="openai-portal-field-control"
+              name="capability"
+              .value=${state.playgroundCapability}
+              @change=${(event: Event) => updatePlaygroundCapability((event.currentTarget as HTMLSelectElement).value as PlaygroundApi)}
+            >
+              <option value="chat">Chat completions</option>
+              <option value="embeddings">Embeddings</option>
+              <option value="images">Image generation</option>
+              <option value="speech">Audio speech</option>
+              <option value="transcriptions">Audio transcription</option>
+            </select>
+          </label>
+          <label class="openai-portal-field">
+            Model
+            <select
+              class="openai-portal-field-control"
+              name="model"
+              .value=${state.playgroundModelId}
+              @change=${(event: Event) => {
+                state.playgroundModelId = (event.currentTarget as HTMLSelectElement).value;
+                syncPlaygroundVariantSelection();
+                resetPlaygroundDraft();
+                draw();
+              }}
+            >
+              ${options.length === 0
+                ? html`<option value="">No discovered models</option>`
+                : options.map(
+                    (model) => html`<option value=${model.model_id}>${model.model_id}</option>`,
+                  )}
+            </select>
+          </label>
+          ${selected && selected.variants.length > 0
+            ? html`
+                <label class="openai-portal-field">
+                  Route variant
+                  <select
+                    class="openai-portal-field-control"
+                    name="variant"
+                    .value=${state.playgroundVariantKey}
+                    @change=${(event: Event) => {
+                      state.playgroundVariantKey = (event.currentTarget as HTMLSelectElement).value;
+                      draw();
+                    }}
+                  >
+                    ${selected.variants.map(
+                      (variant) => html`
+                        <option value=${variant.selection_key}>
+                          ${variant.offering} · ${variant.supportedModes.length ? variant.supportedModes.join(', ') : 'unknown mode'}
+                        </option>
+                      `,
+                    )}
+                  </select>
+                </label>
+              `
+            : html`<div></div>`}
+        </div>
         <div class="openai-portal-action-row">
           <portal-button
             type="button"
@@ -445,22 +492,29 @@ function playgroundView() {
           <portal-button type="submit" ?loading=${state.loading}>Send request</portal-button>
         </div>
       </form>
-      <div class="openai-portal-section-gap openai-portal-playground-grid">
+      <div class="openai-portal-section-gap openai-portal-playground-insights">
         <portal-detail-section
-          heading="Discovered model"
-          description="Resolver-backed route metadata surfaced from /v1/models for customer selection."
+          heading="Selected route"
+          description="The currently selected model and variant that will drive selector headers for the next request."
         >
           ${selected
             ? html`
                 ${metaList(playgroundModelMeta(selected), 'openai-portal-meta-list openai-portal-meta-list--tight')}
-                ${playgroundSurfaceSections(selected)}
-                ${playgroundMetadataSections(selected)}
+                ${playgroundMetadataSections()}
               `
             : html`<p class="openai-portal-empty">No discovered model is available for this API yet.</p>`}
         </portal-detail-section>
         <portal-detail-section
+          heading="OpenAI API schema"
+          description="Reference information for the selected capability: available request fields and possible response shapes."
+        >
+          ${selected
+            ? html`${playgroundSurfaceSections(selected)}`
+            : html`<p class="openai-portal-empty">No capability schema is available yet.</p>`}
+        </portal-detail-section>
+        <portal-detail-section
           heading="Available models"
-          description="Current discovered choices for the selected API surface."
+          description="Resolver-backed public model choices available for the selected API surface."
         >
           ${options.length === 0
             ? html`<p class="openai-portal-empty">No resolver-backed models discovered yet.</p>`
@@ -468,18 +522,30 @@ function playgroundView() {
                 <ul class="openai-portal-model-list">
                   ${options.map(
                     (model) => html`
-                      <li class=${model.id === state.playgroundModel ? 'current' : ''}>
+                      <li class=${model.model_id === state.playgroundModelId ? 'current' : ''}>
                         <button type="button" @click=${() => {
-                          state.playgroundModel = model.id;
+                          state.playgroundModelId = model.model_id;
+                          syncPlaygroundVariantSelection();
                           resetPlaygroundDraft();
                           draw();
-                        }}>${model.id}</button>
-                        <span>${model.offering}</span>
+                        }}>${model.model_id}</button>
+                        <span>${model.supportedModes.length ? model.supportedModes.join(', ') : 'unknown modes'}</span>
                       </li>
                     `,
                   )}
                 </ul>
               `}
+        </portal-detail-section>
+        <portal-detail-section
+          heading="Selection policy"
+          description="How the playground turns the discovered catalog into gateway selection inputs."
+        >
+          ${metaList([
+            ['Request mode', describeCurrentPlaygroundMode(selected?.surface ?? null)],
+            ['Constraints', 'Sent as hard filters when the selected variant advertises them'],
+            ['Extras', 'Sent as ranking preferences when the selected variant advertises them'],
+            ['Pinning', 'No orch or broker URL pinning is performed in this portal'],
+          ], 'openai-portal-meta-list openai-portal-meta-list--tight')}
         </portal-detail-section>
       </div>
       <div class="openai-portal-section-gap">
@@ -808,7 +874,7 @@ async function refresh(): Promise<void> {
   state.limits = (await authRequest('/portal/account/limits')).limits;
   const usage = await authRequest('/portal/usage');
   const catalog = await authRequest('/portal/playground/catalog');
-  state.playgroundModels = normalizePlaygroundModels(catalog.models ?? []);
+  state.playgroundCatalog = normalizePlaygroundCatalog(catalog.capabilities ?? []);
   ensurePlaygroundSelection();
   state.reservations = usage.reservations;
   state.groupedUsage = usage.grouped;
@@ -901,11 +967,15 @@ async function runPlayground(event: Event): Promise<void> {
       const streamEnabled = request.streamEnabled;
       assertPlaygroundModeSupported(request.model, streamEnabled);
     }
+    if (request.interactionMode && !request.variant) {
+      throw new Error(`no discovered variant supports ${request.interactionMode} for model ${request.model}`);
+    }
     state.playgroundRawJson = request.preview;
     clearPlaygroundResponse();
     state.playgroundResponse = await authRequestSurface(request.path, {
       method: 'POST',
       body: request.body,
+      headers: selectorHeadersForVariant(request.variant),
     });
     state.playgroundResponseTab = 'guided';
     setNotice('success', 'Playground request completed.');
@@ -930,6 +1000,9 @@ async function logout(): Promise<void> {
   state.reservations = [];
   state.groupedUsage = [];
   state.selectedReservation = null;
+  state.playgroundCatalog = [];
+  state.playgroundModelId = '';
+  state.playgroundVariantKey = '';
   state.playgroundFields = {};
   state.playgroundRawMode = false;
   state.playgroundRawJson = '';
@@ -1038,8 +1111,10 @@ function buildPlaygroundRequest(form: FormData): {
   preview: string;
   model: string;
   streamEnabled: boolean;
+  interactionMode: string | null;
+  variant: PlaygroundVariant | null;
 } {
-  const model = String(form.get('model') ?? state.playgroundModel);
+  const model = String(form.get('model') ?? state.playgroundModelId);
   if (!model) throw new Error('no discovered model is available for the selected API');
   const selected = selectedPlaygroundModel();
   const surface = selected?.surface;
@@ -1066,6 +1141,8 @@ function buildPlaygroundRequest(form: FormData): {
       preview: JSON.stringify(payload, null, 2),
       model,
       streamEnabled: Boolean(payload['stream']),
+      interactionMode: inferInteractionMode(surface, payload),
+      variant: selectVariantForMode(selected, inferInteractionMode(surface, payload)),
     };
   }
 
@@ -1079,6 +1156,8 @@ function buildPlaygroundRequest(form: FormData): {
     preview: JSON.stringify(payload, null, 2),
     model,
     streamEnabled,
+    interactionMode: inferInteractionMode(surface, payload),
+    variant: selectVariantForMode(selected, inferInteractionMode(surface, payload)),
   };
 }
 
@@ -1152,30 +1231,43 @@ function tryParseJson(rawText: string, contentType: string): any | null {
   }
 }
 
-function normalizePlaygroundModels(rows: any[]): PlaygroundModel[] {
-  return rows.map((row) => {
-    const surface = normalizeCapabilitySurface(row.surface);
-    return {
-      id: String(row.id ?? ''),
-      capability: String(row.capability ?? ''),
-      offering: String(row.offering ?? ''),
-      supported_modes: normalizeSupportedModes(row.supported_modes ?? row.supportedModes),
-      surface,
-      broker_url: String(row.broker_url ?? row.brokerUrl ?? ''),
-      eth_address: String(row.eth_address ?? row.ethAddress ?? ''),
-      price_per_work_unit_wei: String(row.price_per_work_unit_wei ?? row.pricePerWorkUnitWei ?? ''),
-      work_unit: String(row.work_unit ?? row.workUnit ?? ''),
-      supportedModes: normalizeSupportedModes(row.supported_modes ?? row.supportedModes),
-      requestFields: surface?.requestFields ?? [],
-      responseVariants: surface?.responseVariants ?? [],
-      brokerUrl: String(row.broker_url ?? row.brokerUrl ?? ''),
-      ethAddress: String(row.eth_address ?? row.ethAddress ?? ''),
-      pricePerWorkUnitWei: String(row.price_per_work_unit_wei ?? row.pricePerWorkUnitWei ?? ''),
-      workUnit: String(row.work_unit ?? row.workUnit ?? ''),
-      extra: row.extra ?? null,
-      constraints: row.constraints ?? null,
-    };
-  });
+function normalizePlaygroundCatalog(rows: any[]): PlaygroundCapabilityCatalog[] {
+  return rows.map((row) => ({
+    id: String(row?.id ?? ''),
+    label: String(row?.label ?? row?.id ?? ''),
+    models: Array.isArray(row?.models)
+      ? row.models.map((model: any) => {
+          const surface = normalizeCapabilitySurface(model?.surface);
+          return {
+            model_id: String(model?.model_id ?? model?.modelId ?? ''),
+            capability: String(model?.capability ?? row?.id ?? ''),
+            supported_modes: normalizeSupportedModes(model?.supported_modes ?? model?.supportedModes),
+            surface,
+            supportedModes: normalizeSupportedModes(model?.supported_modes ?? model?.supportedModes),
+            requestFields: surface?.requestFields ?? [],
+            responseVariants: surface?.responseVariants ?? [],
+            variants: Array.isArray(model?.variants)
+              ? model.variants.map((variant: any) => ({
+                  selection_key: String(variant?.selection_key ?? variant?.selectionKey ?? ''),
+                  offering: String(variant?.offering ?? ''),
+                  supported_modes: normalizeSupportedModes(variant?.supported_modes ?? variant?.supportedModes),
+                  broker_url: String(variant?.broker_url ?? variant?.brokerUrl ?? ''),
+                  eth_address: String(variant?.eth_address ?? variant?.ethAddress ?? ''),
+                  price_per_work_unit_wei: String(variant?.price_per_work_unit_wei ?? variant?.pricePerWorkUnitWei ?? ''),
+                  work_unit: String(variant?.work_unit ?? variant?.workUnit ?? ''),
+                  supportedModes: normalizeSupportedModes(variant?.supported_modes ?? variant?.supportedModes),
+                  brokerUrl: String(variant?.broker_url ?? variant?.brokerUrl ?? ''),
+                  ethAddress: String(variant?.eth_address ?? variant?.ethAddress ?? ''),
+                  pricePerWorkUnitWei: String(variant?.price_per_work_unit_wei ?? variant?.pricePerWorkUnitWei ?? ''),
+                  workUnit: String(variant?.work_unit ?? variant?.workUnit ?? ''),
+                  extra: variant?.extra ?? null,
+                  constraints: variant?.constraints ?? null,
+                }))
+              : [],
+          } satisfies PlaygroundModel;
+        })
+      : [],
+  }));
 }
 
 function normalizeCapabilitySurface(value: any): CapabilitySurface | null {
@@ -1219,28 +1311,58 @@ function normalizeCapabilitySurface(value: any): CapabilitySurface | null {
 function updatePlaygroundCapability(capability: PlaygroundApi): void {
   state.playgroundCapability = capability;
   const first = modelsForApi(capability)[0];
-  state.playgroundModel = first?.id ?? '';
+  state.playgroundModelId = first?.model_id ?? '';
+  syncPlaygroundVariantSelection();
   resetPlaygroundDraft();
   draw();
 }
 
 function ensurePlaygroundSelection(): void {
   const options = modelsForApi(state.playgroundCapability);
-  if (options.some((model) => model.id === state.playgroundModel)) {
+  if (options.some((model) => model.model_id === state.playgroundModelId)) {
+    syncPlaygroundVariantSelection();
     if (Object.keys(state.playgroundFields).length === 0) resetPlaygroundDraft();
     return;
   }
-  state.playgroundModel = options[0]?.id ?? '';
+  state.playgroundModelId = options[0]?.model_id ?? '';
+  syncPlaygroundVariantSelection();
   resetPlaygroundDraft();
 }
 
 function modelsForApi(api: PlaygroundApi): PlaygroundModel[] {
   const capability = capabilityForPlaygroundApi(api);
-  return state.playgroundModels.filter((model) => model.capability === capability);
+  const catalog = state.playgroundCatalog.find((entry) => entry.id === capability);
+  return catalog?.models ?? [];
 }
 
 function selectedPlaygroundModel(): PlaygroundModel | null {
-  return modelsForApi(state.playgroundCapability).find((model) => model.id === state.playgroundModel) ?? null;
+  return modelsForApi(state.playgroundCapability).find((model) => model.model_id === state.playgroundModelId) ?? null;
+}
+
+function selectedPlaygroundVariant(): PlaygroundVariant | null {
+  const selected = selectedPlaygroundModel();
+  if (!selected) return null;
+  return (
+    selected.variants.find((variant) => variant.selection_key === state.playgroundVariantKey) ??
+    selected.variants[0] ??
+    null
+  );
+}
+
+function syncPlaygroundVariantSelection(): void {
+  const selected = selectedPlaygroundModel();
+  if (!selected || selected.variants.length === 0) {
+    state.playgroundVariantKey = '';
+    return;
+  }
+  const preferredMode = currentRequestedInteractionMode(selected.surface);
+  const compatible = selectVariantForMode(selected, preferredMode);
+  if (compatible) {
+    state.playgroundVariantKey = compatible.selection_key;
+    return;
+  }
+  if (selected.variants.some((variant) => variant.selection_key === state.playgroundVariantKey)) return;
+  state.playgroundVariantKey = selected.variants[0]!.selection_key;
 }
 
 function capabilityForPlaygroundApi(api: PlaygroundApi): string {
@@ -1273,6 +1395,27 @@ function pathForPlaygroundApi(api: PlaygroundApi): string {
     default:
       return '/v1/chat/completions';
   }
+}
+
+function inferInteractionMode(
+  surface: CapabilitySurface,
+  payload: Record<string, unknown>,
+): string | null {
+  if (surface.requestTransport === 'multipart') return 'http-multipart@v0';
+  if (surface.requestTransport !== 'json') return null;
+  return payload['stream'] === true ? 'http-stream@v0' : 'http-reqresp@v0';
+}
+
+function currentRequestedInteractionMode(surface: CapabilitySurface | null): string | null {
+  if (!surface) return null;
+  if (surface.requestTransport === 'multipart') return 'http-multipart@v0';
+  if (surface.requestTransport !== 'json') return null;
+  return state.playgroundFields['stream'] === 'true' ? 'http-stream@v0' : 'http-reqresp@v0';
+}
+
+function selectVariantForMode(model: PlaygroundModel | null, interactionMode: string | null): PlaygroundVariant | null {
+  if (!model) return null;
+  return selectVariantForInteractionMode(model.variants, state.playgroundVariantKey, interactionMode);
 }
 
 function defaultPlaygroundFields(
@@ -1328,22 +1471,24 @@ function buildPlaygroundRawJson(): string {
   const surface = selected?.surface;
   if (!surface) return '';
   try {
-    return JSON.stringify(buildPayloadFromFields(surface, selected?.id ?? ''), null, 2);
+    return JSON.stringify(buildPayloadFromFields(surface, selected?.model_id ?? ''), null, 2);
   } catch {
     return '';
   }
 }
 
 function playgroundModelMeta(model: PlaygroundModel): [string, unknown][] {
+  const activeVariant = selectedPlaygroundVariant();
   return [
     ['Capability', model.capability],
-    ['Model', model.id],
-    ['Offering', model.offering],
+    ['Model', model.model_id],
     ['Supported modes', model.supportedModes.length > 0 ? model.supportedModes.join(', ') : 'unknown'],
-    ['Broker URL', model.brokerUrl || '—'],
-    ['Orchestrator', model.ethAddress || '—'],
-    ['Price per work unit', model.pricePerWorkUnitWei || '—'],
-    ['Work unit', model.workUnit || '—'],
+    ['Variants', String(model.variants.length)],
+    ['Selected variant', activeVariant?.offering ?? 'automatic'],
+    ['Broker URL', activeVariant?.brokerUrl ?? '—'],
+    ['Orchestrator', activeVariant?.ethAddress ?? '—'],
+    ['Price per work unit', activeVariant?.pricePerWorkUnitWei ?? '—'],
+    ['Work unit', activeVariant?.workUnit ?? '—'],
   ];
 }
 
@@ -1420,6 +1565,7 @@ function playgroundFieldView(field: CapabilitySurfaceField, selected: Playground
 
 function updatePlaygroundField(name: string, value: string): void {
   state.playgroundFields = { ...state.playgroundFields, [name]: value };
+  if (name === 'stream') syncPlaygroundVariantSelection();
   state.playgroundRawJson = buildPlaygroundRawJson();
   draw();
 }
@@ -1427,7 +1573,8 @@ function updatePlaygroundField(name: string, value: string): void {
 function resetPlaygroundDraft(): void {
   const selected = selectedPlaygroundModel();
   const surface = selected?.surface ?? null;
-  state.playgroundFields = defaultPlaygroundFields(surface, selected?.id ?? '');
+  state.playgroundFields = defaultPlaygroundFields(surface, selected?.model_id ?? '');
+  syncPlaygroundVariantSelection();
   state.playgroundRawJson = buildPlaygroundRawJson();
   clearPlaygroundResponse();
   state.playgroundResponseTab = 'guided';
@@ -1442,21 +1589,13 @@ function clearPlaygroundResponse(): void {
 
 function assertPlaygroundModeSupported(modelId: string, stream: boolean): void {
   const selected = selectedPlaygroundModel();
-  if (!selected || selected.id !== modelId) return;
+  if (!selected || selected.model_id !== modelId) return;
   if (stream && !modelSupportsStream(selected)) {
     throw new Error(`model ${modelId} does not advertise streaming chat support`);
   }
   if (!stream && !modelSupportsReqresp(selected)) {
     throw new Error(`model ${modelId} does not advertise non-streaming chat support`);
   }
-}
-
-function modelSupportsStream(model: PlaygroundModel): boolean {
-  return model.supportedModes.length === 0 || model.supportedModes.includes('http-stream@v0');
-}
-
-function modelSupportsReqresp(model: PlaygroundModel): boolean {
-  return model.supportedModes.length === 0 || model.supportedModes.includes('http-reqresp@v0');
 }
 
 function normalizeSupportedModes(value: unknown): string[] {
@@ -1467,21 +1606,59 @@ function normalizeSupportedModes(value: unknown): string[] {
     .sort();
 }
 
-function playgroundMetadataSections(model: PlaygroundModel) {
-  const extras = describeMetadata(model.extra);
-  const constraints = describeMetadata(model.constraints);
+function describeCurrentPlaygroundMode(surface: CapabilitySurface | null): string {
+  const interactionMode = currentRequestedInteractionMode(surface);
+  switch (interactionMode) {
+    case 'http-stream@v0':
+      return 'Streaming chat';
+    case 'http-reqresp@v0':
+      return 'Request/response';
+    case 'http-multipart@v0':
+      return 'Multipart upload';
+    default:
+      return 'Not mode-sensitive';
+  }
+}
+
+function playgroundMetadataSections() {
+  const variant = selectedPlaygroundVariant();
+  const extras = describeMetadata(variant?.extra ?? null);
+  const constraints = describeMetadata(variant?.constraints ?? null);
   return html`
+    <div class="openai-portal-section-gap">
+      <div class="openai-portal-eyebrow">Selected variant metadata</div>
+      ${variant
+        ? metaList(
+            [
+              ['Selection key', variant.selection_key],
+              ['Offering', variant.offering],
+              ['Supported modes', variant.supportedModes.length ? variant.supportedModes.join(', ') : 'unknown'],
+              ['Broker URL', variant.brokerUrl || '—'],
+              ['Orchestrator', variant.ethAddress || '—'],
+              ['Price per work unit', variant.pricePerWorkUnitWei || '—'],
+              ['Work unit', variant.workUnit || '—'],
+            ],
+            'openai-portal-meta-list openai-portal-meta-list--tight',
+          )
+        : html`<p class="openai-portal-empty">No variant is currently selected.</p>`}
+    </div>
     <div class="openai-portal-playground-meta-grid">
       <div>
-        <div class="openai-portal-eyebrow">Extras</div>
+        <div class="openai-portal-eyebrow">Variant extras</div>
         ${extras.length
-          ? metaList(extras, 'openai-portal-meta-list openai-portal-meta-list--tight')
+          ? html`
+              ${metaList(extras, 'openai-portal-meta-list openai-portal-meta-list--tight')}
+              <pre class="openai-portal-response">${formatMetadataJson(variant?.extra)}</pre>
+            `
           : html`<p class="openai-portal-empty">No surfaced extras.</p>`}
       </div>
       <div>
-        <div class="openai-portal-eyebrow">Constraints</div>
+        <div class="openai-portal-eyebrow">Variant constraints</div>
         ${constraints.length
-          ? metaList(constraints, 'openai-portal-meta-list openai-portal-meta-list--tight')
+          ? html`
+              ${metaList(constraints, 'openai-portal-meta-list openai-portal-meta-list--tight')}
+              <pre class="openai-portal-response">${formatMetadataJson(variant?.constraints)}</pre>
+            `
           : html`<p class="openai-portal-empty">No surfaced constraints.</p>`}
       </div>
     </div>
@@ -1669,6 +1846,16 @@ function formatChatChoice(choice: any): string {
   if (typeof messageContent === 'string' && messageContent.length > 0) return messageContent;
   if (choice?.message) return JSON.stringify(choice.message, null, 2);
   return JSON.stringify(choice, null, 2);
+}
+
+function formatMetadataJson(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function describeMetadata(value: unknown): [string, unknown][] {

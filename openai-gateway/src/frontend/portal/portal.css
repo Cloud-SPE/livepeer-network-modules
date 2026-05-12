@@ -234,10 +234,26 @@ portal-toast {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
+.openai-portal-playground-toolbar,
+.openai-portal-playground-insights {
+  display: grid;
+  gap: 1rem;
+}
+
+.openai-portal-playground-toolbar {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: end;
+}
+
 .openai-portal-playground-grid,
 .openai-portal-playground-meta-grid {
   display: grid;
   gap: 1rem;
+}
+
+.openai-portal-playground-insights {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  align-items: start;
 }
 
 .openai-portal-playground-meta-grid {
@@ -315,6 +331,10 @@ portal-toast {
   padding: 1rem;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  line-height: 1.5;
 }
 
 .openai-portal-model-list {
@@ -387,6 +407,10 @@ portal-toast {
 }
 
 @media (max-width: 720px) {
+  .openai-portal-playground-insights {
+    grid-template-columns: 1fr;
+  }
+
   .openai-portal-action-row {
     flex-direction: column;
     align-items: stretch;

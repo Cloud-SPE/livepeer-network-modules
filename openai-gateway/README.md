@@ -59,6 +59,11 @@ The same runtime now also mounts the first gateway shell routes:
 - `PUT /admin/openai/rate-card`
 - `GET /admin/openai/resolver-candidates`
 
+The customer playground consumes a portal-specific normalized catalog from
+`GET /portal/playground/catalog`. That route is intentionally richer than
+`GET /v1/models`: the portal catalog is model-centric and variant-aware for UI
+selection, while `/v1/models` stays flat and OpenAI-facing.
+
 ## What it is not
 
 - Final production product shell. The portal/admin surface is now real

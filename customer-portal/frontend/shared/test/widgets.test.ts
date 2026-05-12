@@ -69,3 +69,30 @@ test('portal-status-pill reflects the variant attribute', async () => {
   await (el as any).updateComplete;
   assert.equal(el.getAttribute('variant'), 'success');
 });
+
+test('portal-login surfaces backend error messages', async () => {
+  await import('../src/index.js');
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ message: 'malformed authorization header: token format invalid' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+
+  try {
+    document.body.innerHTML = '<portal-login></portal-login>';
+    const el = document.querySelector('portal-login')!;
+    const form = el.querySelector('form')!;
+    const [tokenInput, actorInput] = Array.from(el.querySelectorAll('portal-input'));
+    tokenInput.setAttribute('value', 'sk-live-not-a-ui-token');
+    actorInput.setAttribute('value', 'customer');
+
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const toast = el.querySelector('portal-toast')!;
+    assert.equal(toast.getAttribute('message'), 'malformed authorization header: token format invalid');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

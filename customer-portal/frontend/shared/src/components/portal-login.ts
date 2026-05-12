@@ -134,7 +134,7 @@ export class PortalLogin extends HTMLElement {
         }),
       });
       if (!response.ok) {
-        this.errorMessage = `login failed (${response.status})`;
+        this.errorMessage = await readErrorMessage(response);
         this.render();
         return;
       }
@@ -161,6 +161,18 @@ export class PortalLogin extends HTMLElement {
       this.render();
     }
   }
+}
+
+async function readErrorMessage(response: Response): Promise<string> {
+  try {
+    const json = (await response.json()) as { message?: unknown };
+    if (typeof json.message === "string" && json.message.trim().length > 0) {
+      return json.message;
+    }
+  } catch {
+    // Fall through to the generic status message when the response is not JSON.
+  }
+  return `login failed (${response.status})`;
 }
 
 if (!customElements.get("portal-login")) {

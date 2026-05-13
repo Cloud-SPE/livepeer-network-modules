@@ -28,7 +28,9 @@ only signer.
 
 When `ORCH_COORDINATOR_ADMIN_TOKENS` is set, the admin listener requires
 operator login with admin token + actor identity and records the actor on
-signed-manifest upload audit events.
+signed-manifest upload audit events. The admin UI allows one active
+session at a time, with a 12-hour absolute timeout and a 30-minute
+idle timeout.
 
 ## Status
 

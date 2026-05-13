@@ -473,6 +473,7 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
+		MaxAge:   int(sessionAbsoluteTTL / time.Second),
 	})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

@@ -174,6 +174,9 @@ func TestWebRoutes_AuthLoginRequired(t *testing.T) {
 	if loginResp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d", loginResp.StatusCode)
 	}
+	if got := loginResp.Header.Get("Set-Cookie"); !strings.Contains(got, "Max-Age=43200") {
+		t.Fatalf("expected 12h session cookie, got %q", got)
+	}
 
 	resp, err = client.Get("http://" + srv.Addr() + "/")
 	if err != nil {

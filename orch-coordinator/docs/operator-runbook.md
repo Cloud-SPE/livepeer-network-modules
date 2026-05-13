@@ -25,7 +25,10 @@ The three listeners are intentionally separate:
 
 When `ORCH_COORDINATOR_ADMIN_TOKENS` is set, the `--listen` admin surface
 requires login. Operators submit an admin token plus `actor`; the UI keeps a
-single active session and upload audit events record that actor.
+single active session, with a 12-hour absolute timeout and a 30-minute
+idle timeout, and upload audit events record that actor. Expired
+sessions are released automatically on the next request or login
+attempt.
 
 When running the published container image, use `/srv/data`. The image is
 built to run as `nonroot` and pre-owns that path so Docker named volumes are

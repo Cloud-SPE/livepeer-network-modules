@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/published"
@@ -74,6 +75,7 @@ func (s *Server) WebRoutes(deps WebDeps) error {
 			Path:     "/",
 			HttpOnly: true,
 			SameSite: http.SameSiteStrictMode,
+			MaxAge:   int(sessionAbsoluteTTL / time.Second),
 		})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 	})

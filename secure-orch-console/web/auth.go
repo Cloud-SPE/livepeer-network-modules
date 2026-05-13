@@ -8,9 +8,15 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 const sessionCookieName = "secure_orch_session"
+
+const (
+	sessionAbsoluteTTL = 12 * time.Hour
+	sessionIdleTTL     = 30 * time.Minute
+)
 
 type actorContextKey struct{}
 
@@ -20,11 +26,14 @@ type authManager struct {
 	mu      sync.Mutex
 	tokens  map[string]struct{}
 	current *session
+	now     func() time.Time
 }
 
 type session struct {
-	id    string
-	actor string
+	id         string
+	actor      string
+	createdAt  time.Time
+	lastSeenAt time.Time
 }
 
 func newAuthManager(tokens []string) *authManager {
@@ -42,7 +51,7 @@ func newAuthManager(tokens []string) *authManager {
 	if len(allowed) == 0 {
 		return nil
 	}
-	return &authManager{tokens: allowed}
+	return &authManager{tokens: allowed, now: time.Now}
 }
 
 func (a *authManager) login(token, actor string) (string, error) {
@@ -66,7 +75,8 @@ func (a *authManager) login(token, actor string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	a.current = &session{id: id, actor: actor}
+	now := a.now()
+	a.current = &session{id: id, actor: actor, createdAt: now, lastSeenAt: now}
 	return id, nil
 }
 
@@ -90,6 +100,12 @@ func (a *authManager) actor(sessionID string) (string, bool) {
 	if a.current == nil || a.current.id != sessionID {
 		return "", false
 	}
+	now := a.now()
+	if now.Sub(a.current.createdAt) >= sessionAbsoluteTTL || now.Sub(a.current.lastSeenAt) >= sessionIdleTTL {
+		a.current = nil
+		return "", false
+	}
+	a.current.lastSeenAt = now
 	return a.current.actor, true
 }
 

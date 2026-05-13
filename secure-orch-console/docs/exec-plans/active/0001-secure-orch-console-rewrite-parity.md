@@ -97,7 +97,8 @@ Retain a single embedded Go HTTP server, but split the surface into:
 - Config via `SECURE_ORCH_ADMIN_TOKENS`, comma-separated.
 - Operator submits token + actor once.
 - Server validates token, issues one cookie-backed session, and rejects a second
-  concurrent session.
+  concurrent session. Sessions expire after 12 hours absolute or 30 minutes
+  idle, and expired sessions release the single-session slot automatically.
 - Actor becomes part of every audited gesture.
 
 ### 4.3 Protocol integration
@@ -172,4 +173,3 @@ split of responsibilities:
 - local signing in `secure-orch-console`
 - chain actions in `protocol-daemon`
 - authenticated operator identity and auditable action history
-

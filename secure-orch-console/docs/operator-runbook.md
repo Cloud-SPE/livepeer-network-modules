@@ -21,7 +21,10 @@ deployment-layer choice (plan 0019 §9.3 / §13 Q6).
 
 If `SECURE_ORCH_ADMIN_TOKENS` is configured, the operator must log in
 with an admin token and actor string before using the UI. The actor is
-recorded into audit events.
+recorded into audit events. The UI permits one active operator session
+at a time, with a 12-hour absolute timeout and a 30-minute idle
+timeout. Expired sessions are released automatically on the next
+request or login attempt.
 
 ## Scope (v0.1)
 

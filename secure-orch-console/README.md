@@ -57,7 +57,8 @@ spool dirs, no filesystem watcher, no USB. Hardware-backed signers
 
 When `SECURE_ORCH_ADMIN_TOKENS` is set, the console requires an
 operator login with admin token + actor identity and records the actor
-into audit events.
+into audit events. The login is a single active session with a 12-hour
+absolute timeout and a 30-minute idle timeout.
 
 When `PROTOCOL_DAEMON_SOCKET` is set, the console also renders a
 protocol status panel using the local `protocol-daemon` unix socket.

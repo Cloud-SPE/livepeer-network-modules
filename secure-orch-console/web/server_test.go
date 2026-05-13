@@ -414,6 +414,9 @@ func TestServer_AuthLoginAndActorAudit(t *testing.T) {
 	if loginResp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d", loginResp.StatusCode)
 	}
+	if got := loginResp.Header.Get("Set-Cookie"); !strings.Contains(got, "Max-Age=43200") {
+		t.Fatalf("expected 12h session cookie, got %q", got)
+	}
 
 	addr := strings.ToLower(srv.signer.Address().String())
 	manifest := `{"manifest":{"spec_version":"0.2.0","publication_seq":1,"orch":{"eth_address":"` + addr + `"},"capabilities":[]}}`

@@ -3,7 +3,9 @@
 This is `openai-runners/` — the workload-binary tree that serves
 OpenAI-shaped HTTP endpoints to the capability broker. Five sub-components:
 
-- `python-runner-base/` — shared Python base image (Phase 1b lock).
+- `python-runner-base/` — shared CPU Python base image.
+- `python-gpu-runner-base/` — shared CUDA Python base image for GPU runners.
+- `python-gpu-media-runner-base/` — shared CUDA media base for audio-style GPU runners.
 - `openai-runner/` — Go proxy for chat + embeddings (Ollama / vLLM upstream).
 - `openai-audio-runner/` — Whisper STT (Python).
 - `openai-tts-runner/` — Kokoro TTS (Python).
@@ -33,11 +35,12 @@ Inherited from the repo root (agent-first harness pattern). Plus:
   (Prometheus exposition format) per OQ5; default-off, zero overhead.
 - **Multi-arch policy.** ML runners ship amd64-only; the Go-based
   `openai-runner/` ships multi-arch (amd64 + arm64) per OQ4.
-- **Python runners share a base image.** All Python runners
-  (`openai-audio-runner`, `openai-tts-runner`, `openai-image-generation-runner`)
-  inherit from `python-runner-base/` per OQ2. The Go-based
-  `openai-runner/` is a separate Go runtime; it does not use the Python
-  base.
+- **Python runners share base images.** CPU-only tooling inherits from
+  `python-runner-base/`; generic CUDA-backed workload runners inherit
+  from `python-gpu-runner-base/`; audio-style CUDA runners
+  (`openai-audio-runner`, `openai-tts-runner`) inherit from
+  `python-gpu-media-runner-base/`. The Go-based `openai-runner/` is a
+  separate Go runtime; it does not use the Python bases.
 
 ## Where to look
 
@@ -54,16 +57,16 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 
 - **All gestures are Docker-first** (per repo-root core belief #15). Do not
   add steps that require host Python or host Go.
-- **Per-runner Dockerfiles inherit the shared Python base.** Add only
+- **Per-runner Dockerfiles inherit the shared Python bases.** Add only
   model-specific deps + entrypoints in each runner's Dockerfile; common
   deps (`fastapi`, `pydantic`, `pydantic-settings`, `structlog`,
-  `uvicorn`, `prometheus-client`) live in `python-runner-base/`.
+  `uvicorn`, `prometheus-client`) live in the shared base images.
 - **Capability names are canonical.** Allowed values include
   `openai-chat-completions`, `openai-text-embeddings`,
   `openai-audio-transcriptions`, `openai-audio-translations`,
   `openai-audio-speech`, `image-generation`. One value per image.
-- **Image tags are frozen at v0.8.10.** Do not bump without explicit user
-  approval (per user-memory `feedback_no_image_version_bumps.md`).
+- **Default runner tag is v1.0.0.** Keep shared bases and downstream
+  runner builds on the same tag unless the caller overrides `TAG=...`.
 - **No per-runner LICENSE files.** Repo-root MIT applies.
 
 ## What lives elsewhere

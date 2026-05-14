@@ -4,11 +4,15 @@ version = "0.1.0"
 description = "Cohere-compatible /v1/rerank runner — sentence-transformers CrossEncoder."
 requires-python = ">=3.12"
 dependencies = [
-    "sentence-transformers>=3.0.0",
-    "transformers>=4.40.0",
-    "accelerate>=0.30.0",
-    "safetensors>=0.4.0",
-    "numpy>=1.26.0",
+    # zerank-2 worked against the original BYOC runner's sentence-transformers
+    # 3.x / transformers 4.x API shape. Unbounded majors let the resolver pull
+    # sentence-transformers 5.x + transformers 5.x, which breaks CrossEncoder
+    # inference at runtime (`BatchEncoding` reaching `torch.embedding()`).
+    "sentence-transformers>=3.0.0,<5.0.0",
+    "transformers>=4.40.0,<5.0.0",
+    "accelerate>=0.30.0,<2.0.0",
+    "safetensors>=0.4.0,<1.0.0",
+    "numpy>=1.26.0,<3.0.0",
 ]
 
 [project.scripts]

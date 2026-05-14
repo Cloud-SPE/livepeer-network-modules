@@ -33,9 +33,10 @@ infra/
 ## Building images
 
 The script pulls **no** images — it builds everything from source in
-dependency order. Tier 0 (`codecs-builder`, `python-runner-base`) lands
-first so the multi-arch video runners and Python ML runners can FROM
-them.
+dependency order. Tier 0 (`codecs-builder`, `python-runner-base`,
+`python-gpu-runner-base`, `python-gpu-media-runner-base`) lands first so
+the multi-arch video runners, CPU Python tooling, and GPU Python runners
+can `FROM` them.
 
 ```sh
 # Build everything as tztcloud/<name>:v1.0.0

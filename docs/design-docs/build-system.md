@@ -13,12 +13,10 @@ This doc binds three components: `openai-runners/`, `rerank-runner/`,
 | Base image | Used by | Purpose |
 |---|---|---|
 | `python:3.12-slim` | `openai-runners/python-runner-base/`, `image-model-downloader`, `rerank-runner/model-downloader/` | Python 3.12 + the canonical FastAPI/pydantic/uvicorn pins. Cached once across CPU-only Python tooling. |
+| `nvidia/cuda:12.9.1-runtime-ubuntu24.04` | `openai-runners/python-gpu-runner-base/`, `openai-runners/python-gpu-media-runner-base/`, `openai-runners/openai-audio-runner/`, `openai-runners/openai-tts-runner/`, `openai-runners/openai-image-generation-runner/`, `rerank-runner/`, `video-runners/transcode-runner/` (NVIDIA runtime stage), `video-runners/abr-runner/` (NVIDIA runtime stage) | Shared CUDA runtime for Python GPU runners and NVIDIA runtime stages. Smaller than the devel image; no compiler toolchain. |
 | `golang:1.22-alpine` | `openai-runners/openai-runner/` (build stage), `video-runners/transcode-runner/` + `video-runners/abr-runner/` (go-builder stage) | Go 1.22 build environment; pure Go, no native deps. |
 | `ubuntu:24.04` | `video-runners/codecs-builder/`, `video-runners/transcode-runner/` (Intel + AMD runtime stages), `video-runners/abr-runner/` (Intel + AMD runtime stages) | Codec build + Intel/AMD ffmpeg runtime. |
-| `nvidia/cuda:12.9.1-devel-ubuntu24.04` | `openai-runners/openai-audio-runner/`, `openai-runners/openai-tts-runner/`, `openai-runners/openai-image-generation-runner/`, `rerank-runner/`, `video-runners/transcode-runner/` (NVIDIA build stage), `video-runners/abr-runner/` (NVIDIA build stage) | CUDA 12.9 toolkit for compiling FFmpeg with NVENC + building Python torch CUDA wheels. |
-
-Plus `nvidia/cuda:12.9.1-runtime-ubuntu24.04` for NVIDIA runtime stages
-of the video transcode runners (smaller than the devel image).
+| `nvidia/cuda:12.9.1-devel-ubuntu24.04` | `video-runners/transcode-runner/` (NVIDIA build stage), `video-runners/abr-runner/` (NVIDIA build stage) | CUDA 12.9 toolkit for compiling FFmpeg with NVENC. |
 
 ## Layer ordering
 
@@ -45,34 +43,37 @@ Editing `src/` invalidates only step 9 and downstream.
 
 ## Image tags
 
-All runner images are tagged **`v0.8.10`**, frozen per user-memory
-`feedback_no_image_version_bumps.md`. Republishing the same tag is the
-ship gesture; do not bump the tag without explicit user approval.
+Default runner image tag is **`v1.0.0`** for the current local build
+path. Shared bases and downstream runners should use the same tag unless
+the caller overrides `TAG=...`.
 
 | Image | Repository |
 |---|---|
-| Python base | `tztcloud/python-runner-base:v0.8.10` |
-| OpenAI chat proxy (Go) | `tztcloud/openai-runner-chat:v0.8.10` |
-| OpenAI embeddings proxy (Go) | `tztcloud/openai-runner-embeddings:v0.8.10` |
-| Whisper STT | `tztcloud/openai-audio-runner:v0.8.10` |
-| Kokoro TTS | `tztcloud/openai-tts-runner:v0.8.10` |
-| Diffusers image gen | `tztcloud/openai-image-generation-runner:v0.8.10` |
-| HF model downloader | `tztcloud/image-model-downloader:v0.8.10` |
-| OpenAI tester | `tztcloud/openai-tester:v0.8.10` |
-| Rerank | `tztcloud/rerank-runner:v0.8.10` |
-| Rerank model downloader | `tztcloud/rerank-model-downloader:v0.8.10` |
-| Codecs builder | `tztcloud/codecs-builder:v0.8.10` |
-| VOD transcode (NVIDIA / Intel / AMD) | `tztcloud/transcode-runner{,-intel,-amd}:v0.8.10` |
-| ABR ladder (NVIDIA / Intel / AMD) | `tztcloud/abr-runner{,-intel,-amd}:v0.8.10` |
-| Transcode tester | `tztcloud/transcode-tester:v0.8.10` |
+| Python base | `tztcloud/python-runner-base:v1.0.0` |
+| Python GPU base | `tztcloud/python-gpu-runner-base:v1.0.0` |
+| Python GPU media base | `tztcloud/python-gpu-media-runner-base:v1.0.0` |
+| OpenAI chat proxy (Go) | `tztcloud/openai-runner-chat:v1.0.0` |
+| OpenAI embeddings proxy (Go) | `tztcloud/openai-runner-embeddings:v1.0.0` |
+| Whisper STT | `tztcloud/openai-audio-runner:v1.0.0` |
+| Kokoro TTS | `tztcloud/openai-tts-runner:v1.0.0` |
+| Diffusers image gen | `tztcloud/openai-image-generation-runner:v1.0.0` |
+| HF model downloader | `tztcloud/image-model-downloader:v1.0.0` |
+| OpenAI tester | `tztcloud/openai-tester:v1.0.0` |
+| Rerank | `tztcloud/rerank-runner:v1.0.0` |
+| Rerank model downloader | `tztcloud/rerank-model-downloader:v1.0.0` |
+| Codecs builder | `tztcloud/codecs-builder:v1.0.0` |
+| VOD transcode (NVIDIA / Intel / AMD) | `tztcloud/transcode-runner{,-intel,-amd}:v1.0.0` |
+| ABR ladder (NVIDIA / Intel / AMD) | `tztcloud/abr-runner{,-intel,-amd}:v1.0.0` |
+| Transcode tester | `tztcloud/transcode-tester:v1.0.0` |
 
 ## Build orchestrators
 
 Each component ships a `build.sh` script and a `Makefile`:
 
-- `openai-runners/{Makefile,build.sh}` — builds the Python base, the
-  Go proxy (multi-arch buildx), the four Python runners, the model
-  downloader, and the tester. Smoke gesture validates compose configs.
+- `openai-runners/{Makefile,build.sh}` — builds the CPU Python base,
+  the GPU Python base, the GPU Python media base, the Go proxy
+  (multi-arch buildx), the four Python runners, the model downloader,
+  and the tester. Smoke gesture validates compose configs.
 - `rerank-runner/{Makefile,build.sh}` — runner + model downloader.
 - `video-runners/{Makefile,build.sh}` — codecs-builder, both runners
   (default = NVIDIA target), tester. Intel + AMD targets are
@@ -93,7 +94,7 @@ The Go proxy uses Docker buildx for the multi-arch build:
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
   --target chat \
-  -t tztcloud/openai-runner-chat:v0.8.10 \
+  -t tztcloud/openai-runner-chat:v1.0.0 \
   openai-runners/openai-runner
 ```
 

@@ -3,18 +3,31 @@
 # required.
 
 REGISTRY    ?= tztcloud
-TAG         ?= v0.8.10
+TAG         ?= v1.0.0
 PLATFORMS   ?= linux/amd64
 
-.PHONY: build base go-runner audio tts image downloader tester smoke clean help
+.PHONY: build base gpu-base gpu-media-base go-runner audio tts image downloader tester smoke clean help
 
-build: base go-runner audio tts image downloader tester ## Build all runner images locally
+build: base gpu-base gpu-media-base go-runner audio tts image downloader tester ## Build all runner images locally
 
 base: ## Build the shared python-runner-base image
 	docker build \
 		-t $(REGISTRY)/python-runner-base:$(TAG) \
 		-f python-runner-base/Dockerfile \
 		python-runner-base
+
+gpu-base: ## Build the shared python-gpu-runner-base image
+	docker build \
+		-t $(REGISTRY)/python-gpu-runner-base:$(TAG) \
+		-f python-gpu-runner-base/Dockerfile \
+		python-gpu-runner-base
+
+gpu-media-base: gpu-base ## Build the shared python-gpu-media-runner-base image
+	docker build \
+		--build-arg BASE_IMAGE=$(REGISTRY)/python-gpu-runner-base:$(TAG) \
+		-t $(REGISTRY)/python-gpu-media-runner-base:$(TAG) \
+		-f python-gpu-media-runner-base/Dockerfile \
+		python-gpu-media-runner-base
 
 go-runner: ## Build the Go openai-runner (chat + embeddings)
 	docker build \
@@ -28,23 +41,23 @@ go-runner: ## Build the Go openai-runner (chat + embeddings)
 		-f openai-runner/Dockerfile \
 		openai-runner
 
-audio: base ## Build the openai-audio-runner image
+audio: gpu-media-base ## Build the openai-audio-runner image
 	docker build \
-		--build-arg BASE_IMAGE=$(REGISTRY)/python-runner-base:$(TAG) \
+		--build-arg BASE_IMAGE=$(REGISTRY)/python-gpu-media-runner-base:$(TAG) \
 		-t $(REGISTRY)/openai-audio-runner:$(TAG) \
 		-f openai-audio-runner/Dockerfile \
 		openai-audio-runner
 
-tts: base ## Build the openai-tts-runner image
+tts: gpu-media-base ## Build the openai-tts-runner image
 	docker build \
-		--build-arg BASE_IMAGE=$(REGISTRY)/python-runner-base:$(TAG) \
+		--build-arg BASE_IMAGE=$(REGISTRY)/python-gpu-media-runner-base:$(TAG) \
 		-t $(REGISTRY)/openai-tts-runner:$(TAG) \
 		-f openai-tts-runner/Dockerfile \
 		openai-tts-runner
 
-image: base ## Build the openai-image-generation-runner image
+image: gpu-base ## Build the openai-image-generation-runner image
 	docker build \
-		--build-arg BASE_IMAGE=$(REGISTRY)/python-runner-base:$(TAG) \
+		--build-arg BASE_IMAGE=$(REGISTRY)/python-gpu-runner-base:$(TAG) \
 		-t $(REGISTRY)/openai-image-generation-runner:$(TAG) \
 		-f openai-image-generation-runner/Dockerfile \
 		openai-image-generation-runner
@@ -67,6 +80,8 @@ smoke: ## Cross-runner smoke against compose stack
 clean: ## Remove dev images
 	docker rmi \
 		$(REGISTRY)/python-runner-base:$(TAG) \
+		$(REGISTRY)/python-gpu-runner-base:$(TAG) \
+		$(REGISTRY)/python-gpu-media-runner-base:$(TAG) \
 		$(REGISTRY)/openai-runner-chat:$(TAG) \
 		$(REGISTRY)/openai-runner-embeddings:$(TAG) \
 		$(REGISTRY)/openai-audio-runner:$(TAG) \

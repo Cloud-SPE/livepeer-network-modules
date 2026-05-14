@@ -173,3 +173,30 @@ capabilities:
   #   constraints:
   #     tier: "standard"
   #     gpu: "4090"
+  #
+  # - id: "rerank"
+  #   offering_id: "zerank-2-default"
+  #   interaction_mode: "http-reqresp@v0"
+  #   work_unit:
+  #     # rerank-runner does not emit a usage field today, so the broker
+  #     # meters this capability as one priced request per call.
+  #     name: "requests"
+  #     extractor:
+  #       type: "request-formula"
+  #       expression: "1"
+  #       fields: {}
+  #       default: 1
+  #   price:
+  #     amount_wei: "25000000"
+  #     per_units: 1
+  #   backend:
+  #     transport: "http"
+  #     # If the broker shares a Docker network with the runner, use the
+  #     # container DNS name. Host-run brokers can use 127.0.0.1:8080 instead.
+  #     url: "http://rerank_runner:8080/v1/rerank"
+  #     auth: "none"
+  #   extra:
+  #     provider: "rerank-runner"
+  #     model: "zeroentropy/zerank-2"
+  #   constraints:
+  #     gpu_vendor: "NVIDIA"

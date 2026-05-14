@@ -5,8 +5,7 @@ HTTP server stack. Per OQ2 lock in plan 0013-runners-byoc-migration.
 
 ## Image
 
-`tztcloud/python-runner-base:v0.8.10` (frozen tag per user-memory
-`feedback_no_image_version_bumps.md`).
+`tztcloud/python-runner-base:v1.0.0`.
 
 Inherits `python:3.12-slim` and pre-installs the canonical Python pins:
 
@@ -20,15 +19,15 @@ Inherits `python:3.12-slim` and pre-installs the canonical Python pins:
 | `prometheus-client` | `>=0.21.0,<0.22.0` |
 | `python-multipart` | `>=0.0.12,<0.1.0` |
 
-System packages: `ca-certificates`, `curl`, `ffmpeg`. ffmpeg is needed
-by `openai-audio-runner` (decode mp3/m4a/webm uploads) and
-`openai-tts-runner` (encode mp3/opus/aac output); baking it into the
-base trims per-image build time.
+System packages: `ca-certificates`, `curl`, `ffmpeg`. This base is for
+CPU Python tooling and non-CUDA consumers. The GPU-backed OpenAI
+runners now inherit from sibling `python-gpu-runner-base/`; they no
+longer use this image directly.
 
 ## How per-runner Dockerfiles inherit it
 
 ```dockerfile
-ARG BASE_IMAGE=tztcloud/python-runner-base:v0.8.10
+ARG BASE_IMAGE=tztcloud/python-runner-base:v1.0.0
 FROM ${BASE_IMAGE}
 
 # Add only model-specific deps:
@@ -44,13 +43,14 @@ ENV CAPABILITY_NAME=...
 CMD ["python", "-m", "<runner_name>"]
 ```
 
-Each runner's `pyproject.toml` declares **only** model-specific deps —
-the common deps live here.
+Each CPU-oriented runner's `pyproject.toml` declares **only**
+model-specific deps — the common deps live here. GPU-backed runners use
+`python-gpu-runner-base/` instead.
 
 ## Build
 
 ```bash
-docker build -t tztcloud/python-runner-base:v0.8.10 .
+docker build -t tztcloud/python-runner-base:v1.0.0 .
 ```
 
 Or from the parent component:

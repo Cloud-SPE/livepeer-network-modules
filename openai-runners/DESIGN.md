@@ -40,14 +40,28 @@ stateless: per-job in-memory state plus a per-process model load. No DB.
 
 Plus per-capability keys (see the per-runner READMEs).
 
-## Shared Python base image (OQ2)
+## Shared Python base images (OQ2)
 
-`python-runner-base/` is a single Dockerfile inheriting from
+`python-runner-base/` is the CPU Python base inheriting from
 `python:3.12-slim` with the canonical Python pins baked in: `fastapi`,
 `pydantic`, `pydantic-settings`, `structlog`, `uvicorn`,
-`prometheus-client`. Per-runner Python Dockerfiles `FROM
-python-runner-base:<tag>` and add only model-specific deps (torch,
-diffusers, transformers, faster-whisper, kokoro, etc.).
+`prometheus-client`.
+
+`python-gpu-runner-base/` is the CUDA Python base inheriting from
+`nvidia/cuda:12.9.1-runtime-ubuntu24.04` with the same canonical Python
+pins preinstalled in `/opt/venv`.
+
+`python-gpu-media-runner-base/` is a sibling CUDA media base inheriting from
+`python-gpu-runner-base:<tag>` and baking in the shared `ffmpeg` runtime used
+by the audio-style runners.
+
+The CUDA-backed runner Dockerfiles split into two groups:
+
+- `openai-audio-runner` and `openai-tts-runner` `FROM
+  python-gpu-media-runner-base:<tag>` and add only model-specific deps
+  plus remaining runner-local OS packages like `espeak-ng`.
+- `openai-image-generation-runner` `FROM python-gpu-runner-base:<tag>`
+  directly because it does not need the media stack.
 
 The Go-based `openai-runner/` proxy is independent — it uses
 `golang:1.22-alpine` for build and `alpine:3.20` for runtime. No shared

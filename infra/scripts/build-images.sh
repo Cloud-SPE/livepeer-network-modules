@@ -15,8 +15,10 @@
 #
 # Notes:
 #   - Run from the monorepo root.
-#   - Tier 0 base images (codecs-builder, python-runner-base) are built
-#     first; downstream multi-arch video runners FROM the codecs image.
+#   - Tier 0 base images (codecs-builder, python-runner-base,
+#     python-gpu-runner-base, python-gpu-media-runner-base) are built
+#     first; downstream multi-arch video runners and GPU Python runners
+#     depend on them.
 #   - Multi-target Dockerfiles (openai-runner: chat+embeddings; video
 #     transcode/abr: nvidia+intel+amd) are expanded into multiple builds.
 
@@ -41,7 +43,7 @@ warn()     { printf '\033[1;33m[warn]\033[0m %s\n' "$*" >&2; }
 fail()     { printf '\033[1;31m[fail]\033[0m %s\n' "$*" >&2; exit 1; }
 is_deploy_only_excluded() {
   case "$1" in
-    codecs-builder|python-runner-base|openai-gateway-mock-runner|openai-tester|transcode-tester|livepeer-conformance|livepeer-conformance-session-runner|livepeer-gateway-adapters-go|livepeer-gateway-adapters-ts|livepeer-customer-portal|image-model-downloader|rerank-model-downloader)
+    codecs-builder|python-runner-base|python-gpu-runner-base|python-gpu-media-runner-base|openai-gateway-mock-runner|openai-tester|transcode-tester|livepeer-conformance|livepeer-conformance-session-runner|livepeer-gateway-adapters-go|livepeer-gateway-adapters-ts|livepeer-customer-portal|image-model-downloader|rerank-model-downloader)
       return 0
       ;;
     *)
@@ -57,6 +59,8 @@ declare -a IMAGES=(
   # Tier 0 — base images consumed by downstream FROMs / BASE_IMAGE args
   "codecs-builder|video-runners/codecs-builder|video-runners/codecs-builder/Dockerfile||"
   "python-runner-base|openai-runners/python-runner-base|openai-runners/python-runner-base/Dockerfile||"
+  "python-gpu-runner-base|openai-runners/python-gpu-runner-base|openai-runners/python-gpu-runner-base/Dockerfile||"
+  "python-gpu-media-runner-base|openai-runners/python-gpu-media-runner-base|openai-runners/python-gpu-media-runner-base/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-runner-base:${TAG}"
 
   # Tier 1 — Go services, monorepo-root context (proto-go replace dirs)
   "livepeer-capability-broker|.|capability-broker/Dockerfile||"
@@ -92,9 +96,9 @@ declare -a IMAGES=(
   # Tier 5 — Heavy GPU/ML runners
   "vtuber-runner|.|vtuber-runner/Dockerfile||"
   "rerank-runner|rerank-runner|rerank-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-runner-base:${TAG}"
-  "openai-audio-runner|openai-runners/openai-audio-runner|openai-runners/openai-audio-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-runner-base:${TAG}"
-  "openai-image-generation-runner|openai-runners/openai-image-generation-runner|openai-runners/openai-image-generation-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-runner-base:${TAG}"
-  "openai-tts-runner|openai-runners/openai-tts-runner|openai-runners/openai-tts-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-runner-base:${TAG}"
+  "openai-audio-runner|openai-runners/openai-audio-runner|openai-runners/openai-audio-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-media-runner-base:${TAG}"
+  "openai-image-generation-runner|openai-runners/openai-image-generation-runner|openai-runners/openai-image-generation-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-runner-base:${TAG}"
+  "openai-tts-runner|openai-runners/openai-tts-runner|openai-runners/openai-tts-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-media-runner-base:${TAG}"
 
   # Tier 5 — Multi-arch video runners (codecs-builder consumed via build-arg)
   "abr-runner|video-runners|video-runners/abr-runner/Dockerfile|runtime-amd|--build-arg=CODECS_IMAGE=${REGISTRY}/codecs-builder:${TAG}"
@@ -104,6 +108,12 @@ declare -a IMAGES=(
   "transcode-runner-nvidia|video-runners|video-runners/transcode-runner/Dockerfile|runtime-nvidia|--build-arg=CODECS_IMAGE=${REGISTRY}/codecs-builder:${TAG}"
   "transcode-runner-intel|video-runners|video-runners/transcode-runner/Dockerfile|runtime-intel|--build-arg=CODECS_IMAGE=${REGISTRY}/codecs-builder:${TAG}"
 )
+
+declare -A IMAGE_ENTRY_BY_NAME=()
+for entry in "${IMAGES[@]}"; do
+  name="${entry%%|*}"
+  IMAGE_ENTRY_BY_NAME["$name"]="$entry"
+done
 
 # ---- filter ---------------------------------------------------------------
 
@@ -141,6 +151,46 @@ if [[ "$DEPLOY_ONLY" == "1" ]]; then
   fi
 fi
 
+# Expand filtered selections to include required locally-built dependency
+# images referenced through build args such as:
+#   --build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-media-runner-base:${TAG}
+#   --build-arg=CODECS_IMAGE=${REGISTRY}/codecs-builder:${TAG}
+declare -A SELECTED_BY_NAME=()
+for entry in "${SELECTED[@]}"; do
+  name="${entry%%|*}"
+  SELECTED_BY_NAME["$name"]=1
+done
+
+changed=1
+while [[ "$changed" == "1" ]]; do
+  changed=0
+  for entry in "${SELECTED[@]}"; do
+    IFS='|' read -r name context dockerfile target build_args <<<"$entry"
+    while [[ "$build_args" =~ ${REGISTRY}/([^:[:space:]]+):${TAG} ]]; do
+      dep_name="${BASH_REMATCH[1]}"
+      if [[ -n "${IMAGE_ENTRY_BY_NAME[$dep_name]:-}" && -z "${SELECTED_BY_NAME[$dep_name]:-}" ]]; then
+        dep_entry="${IMAGE_ENTRY_BY_NAME[$dep_name]}"
+        SELECTED+=("$dep_entry")
+        SELECTED_BY_NAME["$dep_name"]=1
+        changed=1
+      fi
+      build_args="${build_args#*"${REGISTRY}/${dep_name}:${TAG}"}"
+    done
+  done
+done
+
+# Restore global dependency order after subset expansion.
+if [[ ${#SELECTED[@]} -gt 1 ]]; then
+  declare -a ORDERED_SELECTED=()
+  for entry in "${IMAGES[@]}"; do
+    name="${entry%%|*}"
+    if [[ -n "${SELECTED_BY_NAME[$name]:-}" ]]; then
+      ORDERED_SELECTED+=("$entry")
+    fi
+  done
+  SELECTED=("${ORDERED_SELECTED[@]}")
+fi
+
 total=${#SELECTED[@]}
 
 # ---- build loop -----------------------------------------------------------
@@ -165,6 +215,10 @@ for entry in "${SELECTED[@]}"; do
   ok "[$step/$total] $full_tag"
 
   if [[ "$PUSH" == "1" ]]; then
+    if [[ "$DEPLOY_ONLY" == "1" ]] && is_deploy_only_excluded "$name"; then
+      ok "[$step/$total] built helper image only; skipping push for $full_tag"
+      continue
+    fi
     log "[$step/$total] pushing $full_tag"
     docker push "$full_tag" || fail "push failed for $full_tag"
     ok "[$step/$total] pushed $full_tag"

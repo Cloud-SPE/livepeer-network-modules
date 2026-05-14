@@ -27,10 +27,10 @@ CUDA toolkit alignment per runner (baked into the runtime image):
 
 | Runner | CUDA base image |
 |---|---|
-| `openai-runners/openai-audio-runner` | `nvidia/cuda:12.9.1-devel-ubuntu24.04` |
-| `openai-runners/openai-tts-runner` | `nvidia/cuda:12.9.1-devel-ubuntu24.04` |
-| `openai-runners/openai-image-generation-runner` | `nvidia/cuda:12.9.1-devel-ubuntu24.04` |
-| `rerank-runner` | `nvidia/cuda:12.9.1-devel-ubuntu24.04` |
+| `openai-runners/openai-audio-runner` | `nvidia/cuda:12.9.1-runtime-ubuntu24.04` via `python-gpu-media-runner-base` |
+| `openai-runners/openai-tts-runner` | `nvidia/cuda:12.9.1-runtime-ubuntu24.04` via `python-gpu-media-runner-base` |
+| `openai-runners/openai-image-generation-runner` | `nvidia/cuda:12.9.1-runtime-ubuntu24.04` |
+| `rerank-runner` | `nvidia/cuda:12.9.1-runtime-ubuntu24.04` |
 | `video-runners/transcode-runner` (nvidia target) | `nvidia/cuda:12.9.1-runtime-ubuntu24.04` |
 | `video-runners/abr-runner` (nvidia target) | `nvidia/cuda:12.9.1-runtime-ubuntu24.04` |
 

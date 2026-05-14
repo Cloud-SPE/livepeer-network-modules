@@ -8,11 +8,13 @@ broker-dispatched container.
 
 ## What it is
 
-Five runner images plus a shared Python base:
+Five runner images plus shared Python bases:
 
 | Sub-component | Language | Capability |
 |---|---|---|
-| `python-runner-base/` | Dockerfile-only | shared base for the Python runners (Phase 1b) |
+| `python-runner-base/` | Dockerfile-only | shared CPU Python base |
+| `python-gpu-runner-base/` | Dockerfile-only | shared CUDA Python base for GPU runners |
+| `python-gpu-media-runner-base/` | Dockerfile-only | shared CUDA Python media base for audio-style GPU runners |
 | `openai-runner/` | Go | `openai-chat-completions` + `openai-text-embeddings` (proxy in front of Ollama / vLLM) |
 | `openai-audio-runner/` | Python (FastAPI) | `openai-audio-transcriptions` + `openai-audio-translations` (Whisper) |
 | `openai-tts-runner/` | Python (FastAPI) | `openai-audio-speech` (Kokoro TTS) |
@@ -45,6 +47,10 @@ make help               # show all targets
 ```
 
 No host Python or host Go install required.
+
+`openai-audio-runner/` and `openai-tts-runner/` build on the media base,
+which adds the shared `ffmpeg` runtime once instead of repeating it in both
+images.
 
 ## Configuration
 

@@ -50,9 +50,9 @@ own `AGENTS.md` for component-specific guidance. The root-level `docs/` holds on
 Current top-level components include `livepeer-network-protocol/`,
 `capability-broker/`, `payment-daemon/`, `orch-coordinator/`,
 `secure-orch-console/`, `protocol-daemon/`,
-`service-registry-daemon/`, `chain-commons/`, and `proto-contracts/`.
-Additional components still land as top-level subfolders as the rewrite
-expands.
+`service-registry-daemon/`, `chain-commons/`, `proto-contracts/`, and
+`daydream-gateway/`. Additional components still land as top-level
+subfolders as the rewrite expands.
 
 ## Doing work in this repo
 

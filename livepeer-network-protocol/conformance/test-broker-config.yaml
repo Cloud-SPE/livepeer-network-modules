@@ -272,6 +272,92 @@ capabilities:
           LIVEPEER_STUB_CRASH_DELAY_MS: "2000"
         startup_timeout: "10s"
 
+  # ---- fixtures/session-control-external-media/happy-path.yaml (plan 0026) ----
+  - id: "test:external-media-happy-path:v1"
+    offering_id: "default"
+    interaction_mode: "session-control-external-media@v0"
+    work_unit:
+      name: "seconds"
+      extractor:
+        type: "seconds-elapsed"
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://mock-scope-backend:8000"
+      auth: "none"
+    extra:
+      media_schema: "scope-passthrough/v0"
+      session_start_path: "/api/v1/session/start"
+      session_stop_path: "/api/v1/session/stop"
+
+  # ---- fixtures/session-control-external-media/balance-exhausted.yaml (plan 0026) ----
+  - id: "test:external-media-balance-exhausted:v1"
+    offering_id: "default"
+    interaction_mode: "session-control-external-media@v0"
+    work_unit:
+      name: "seconds"
+      extractor:
+        type: "seconds-elapsed"
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://mock-scope-backend:8000"
+      auth: "none"
+    extra:
+      media_schema: "scope-passthrough/v0"
+      session_start_path: "/api/v1/session/start"
+      session_stop_path: "/api/v1/session/stop"
+
+  # ---- fixtures/session-control-external-media/runner-disconnect.yaml (plan 0026) ----
+  - id: "test:external-media-runner-disconnect:v1"
+    offering_id: "default"
+    interaction_mode: "session-control-external-media@v0"
+    work_unit:
+      name: "seconds"
+      extractor:
+        type: "seconds-elapsed"
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://mock-scope-backend:8000"
+      auth: "none"
+    extra:
+      media_schema: "scope-passthrough/v0"
+      session_start_path: "/api/v1/session/start"
+      session_stop_path: "/api/v1/session/stop"
+      backend_unresponsive_timeout_seconds: 3
+      stub_behavior: "silent-after-start"
+
+  # ---- fixtures/session-control-external-media/proxy-passthrough.yaml (plan 0026) ----
+  - id: "test:external-media-proxy-passthrough:v1"
+    offering_id: "default"
+    interaction_mode: "session-control-external-media@v0"
+    work_unit:
+      name: "seconds"
+      extractor:
+        type: "seconds-elapsed"
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://mock-scope-backend:8000"
+      auth: "none"
+    extra:
+      media_schema: "scope-passthrough/v0"
+      session_start_path: "/api/v1/session/start"
+      session_stop_path: "/api/v1/session/stop"
+
   # ---- fixtures/http-reqresp/openai-usage.yaml ----
   - id: "test:extractor-openai-usage:v1"
     offering_id: "default"

@@ -1,0 +1,34 @@
+{
+  "name": "@livepeer-rewrite/daydream-gateway",
+  "version": "0.1.0",
+  "description": "Thin broadcaster-side gateway exposing Daydream Scope as a paid Livepeer capability (plan 0026)",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "start": "node ./dist/index.js",
+    "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.2",
+    "@grpc/proto-loader": "^0.8.1",
+    "@tztcloud/livepeer-gateway-middleware": "workspace:*",
+    "fastify": "^5.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "@types/ws": "^8.5.13",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

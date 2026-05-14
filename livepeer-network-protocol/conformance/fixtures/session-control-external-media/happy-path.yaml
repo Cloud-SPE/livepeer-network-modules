@@ -1,0 +1,77 @@
+# Happy-path conformance fixture for the session-control-external-media@v0
+# mode (plan 0026).
+#
+# Runner sends the session-open POST; broker returns 202 with session_id,
+# control_url, media.scope_url, expires_at. The control-plane WebSocket
+# upgrades and emits session.started + at least one session.usage.tick
+# before the runner sends session.end and the WS closes cleanly.
+
+name: happy-path
+mode: session-control-external-media@v0
+spec_version: "0.1"
+description: |
+  Session-open POST → 202 + control_url + media.scope_url. Runner opens
+  the control WS, observes session.started, exchanges no application-defined
+  command frames (rejected by mode), receives at least one
+  session.usage.tick within cadence_seconds, sends session.end, asserts
+  graceful close with code 1000.
+
+setup:
+  capability:
+    id: test:external-media-happy-path:v1
+    offering_id: default
+    interaction_mode: session-control-external-media@v0
+    work_unit:
+      name: seconds
+      extractor:
+        type: seconds-elapsed
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-scope-backend:8000
+      auth: none
+    extra:
+      media_schema: scope-passthrough/v0
+      session_start_path: /api/v1/session/start
+      session_stop_path: /api/v1/session/stop
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:external-media-happy-path:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: session-control-external-media@v0
+    Content-Type: application/json
+  body: |
+    {}
+
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 202
+  headers_present:
+    - Livepeer-Request-Id
+  body_fields_present:
+    - session_id
+    - control_url
+    - media.schema
+    - media.scope_url
+    - expires_at
+
+session_control:
+  upgrade: true
+  expect_envelopes:
+    - type: session.started
+  expect_envelopes_within_seconds: 5
+  expect_at_least_one:
+    - type: session.usage.tick
+  send_session_end: true
+  expect_close_code: 1000

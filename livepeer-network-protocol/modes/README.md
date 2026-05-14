@@ -9,8 +9,12 @@ One spec per interaction mode. The initial six (resolution of plan 0002):
 - [`rtmp-ingress-hls-egress.md`](./rtmp-ingress-hls-egress.md) — RTMP in → HLS manifest+segments out. **Accepted 2026-05-06.**
 - [`session-control-plus-media.md`](./session-control-plus-media.md) — HTTP session-open → long-lived capability-defined media plane. **Accepted 2026-05-06.**
 
-**Status:** all six initial modes accepted. To propose a seventh, see
-[`../PROCESS.md`](../PROCESS.md).
+Added later:
+
+- [`session-control-external-media.md`](./session-control-external-media.md) — HTTP session-open → broker reverse-proxy to long-lived multi-session backend that owns its own media plane. **Accepted 2026-05-14.**
+
+**Status:** initial six plus the external-media variant accepted. To propose
+another, see [`../PROCESS.md`](../PROCESS.md).
 
 Each mode has its own SemVer (per Q2 hybrid SemVer). Mode files declare their version
 in YAML frontmatter.

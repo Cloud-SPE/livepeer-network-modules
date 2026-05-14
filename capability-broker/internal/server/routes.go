@@ -57,13 +57,43 @@ func (s *Server) registerRoutes() {
 	// session id; 204 on a successful tear-down.
 	s.mux.HandleFunc("POST /v1/cap/{session_id}/end", s.rtmpCloseSession)
 
-	// GET /v1/cap/{session_id}/control — session-control-plus-media
-	// control-WebSocket upgrade. Unpaid: the URL path is the
-	// per-session bearer (Q1 lock — path-id-only auth). The driver's
-	// upgrade handler validates the session id against its store.
-	if s.sessDriver != nil {
-		s.mux.HandleFunc("GET /v1/cap/{session_id}/control", s.sessDriver.ServeControlWS)
+	// GET /v1/cap/{session_id}/control — session-control-plus-media OR
+	// session-control-external-media control-WebSocket upgrade. Unpaid:
+	// the URL path is the per-session bearer (Q1 lock — path-id-only
+	// auth). The dispatcher routes by session-store ownership.
+	if s.sessDriver != nil || s.extDriver != nil {
+		s.mux.HandleFunc("GET /v1/cap/{session_id}/control", s.dispatchControlWS)
 	}
+
+	// /_scope/{session_id}/{path...} — session-control-external-media
+	// reverse-proxy plane. Forwards customer (gateway) traffic to the
+	// workload backend's HTTP API. Unpaid: the session id is the
+	// bearer. The driver's proxy handler authorises against the live
+	// session record + strips Livepeer-* headers.
+	if s.extDriver != nil {
+		s.mux.HandleFunc("/_scope/{session_id}/{path...}", s.extDriver.ServeProxy)
+	}
+}
+
+// dispatchControlWS routes a control-WS upgrade to whichever mode owns
+// the named session. If both stores claim it (cannot happen — IDs are
+// 12 random bytes), the external-media driver wins. If neither owns it,
+// returns 401.
+func (s *Server) dispatchControlWS(w http.ResponseWriter, r *http.Request) {
+	sessID := r.PathValue("session_id")
+	if sessID == "" {
+		http.Error(w, "missing session_id", http.StatusBadRequest)
+		return
+	}
+	if s.extDriver != nil && s.extDriver.Store().Get(sessID) != nil {
+		s.extDriver.ServeControlWS(w, r)
+		return
+	}
+	if s.sessDriver != nil {
+		s.sessDriver.ServeControlWS(w, r)
+		return
+	}
+	http.Error(w, "session not found", http.StatusUnauthorized)
 }
 
 // capabilityLookup returns a CapabilityLookup function the payment

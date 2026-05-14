@@ -129,6 +129,8 @@ func modeSupportsInterimDebit(mode string) bool {
 		return true
 	case "session-control-plus-media@v0":
 		return true
+	case "session-control-external-media@v0":
+		return true
 	case "rtmp-ingress-hls-egress@v0":
 		return true
 	default:

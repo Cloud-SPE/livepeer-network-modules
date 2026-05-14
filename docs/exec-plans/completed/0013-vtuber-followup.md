@@ -229,7 +229,7 @@ The implementing agent ships in **6 commits** over five phases:
 5. **Phase 5 — `refactor(vtuber-pipeline): purge bridge-* symbol names per user-memory ban`.** §10; pytest stays green.
 6. **Phase 6 — `docs(plan-0013-vtuber-followup): plan close`.** Move active → completed; do not touch `PLANS.md`.
 
-`pnpm -F @livepeer-rewrite/vtuber-gateway build` + `test` are green at every commit. `vtuber-pipeline` pytest passes after the rename. `go test ./...` stays untouched.
+`pnpm -F @livepeer-network-modules/vtuber-gateway build` + `test` are green at every commit. `vtuber-pipeline` pytest passes after the rename. `go test ./...` stays untouched.
 
 ## 14. Resolved decisions
 

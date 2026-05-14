@@ -1,5 +1,5 @@
 {
-  "name": "@livepeer-rewrite/avatar-renderer",
+  "name": "@livepeer-network-modules/avatar-renderer",
   "version": "0.1.0",
   "private": true,
   "description": "Browser-side VRM renderer served into headless Chromium by vtuber-runner. three.js + @pixiv/three-vrm + WebCodecs.",

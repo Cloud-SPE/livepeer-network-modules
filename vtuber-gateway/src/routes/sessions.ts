@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { authPreHandler } from "@livepeer-rewrite/customer-portal/middleware";
+import { authPreHandler } from "@livepeer-network-modules/customer-portal/middleware";
 
 import {
   SELECTOR_HEADER,

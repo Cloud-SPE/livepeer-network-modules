@@ -1,5 +1,5 @@
 {
-  "name": "@livepeer-rewrite/vtuber-gateway-portal",
+  "name": "@livepeer-network-modules/vtuber-gateway-portal",
   "version": "0.1.0",
   "private": true,
   "description": "Vtuber-specific portal SPA. Composes customer-portal/frontend/shared widgets + vtuber-specific pages (session list, persona authoring, scene history) per plan 0013-vtuber OQ3 lock.",
@@ -14,7 +14,7 @@
     "test": "tsc -p tsconfig.test.json && mkdir -p dist-test/src/components && cp src/components/*.css dist-test/src/components/ && node --test ./dist-test/test/**/*.test.js"
   },
   "dependencies": {
-    "@livepeer-rewrite/customer-portal-shared": "workspace:*",
+    "@livepeer-network-modules/customer-portal-shared": "workspace:*",
     "rxjs": "^7.8.0"
   },
   "devDependencies": {

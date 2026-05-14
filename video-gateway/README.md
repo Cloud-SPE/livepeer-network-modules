@@ -65,7 +65,7 @@ No host `node` install required.
 
 ```
 video-gateway/
-├── package.json                 # @livepeer-rewrite/video-gateway
+├── package.json                 # @livepeer-network-modules/video-gateway
 ├── tsconfig.json
 ├── Dockerfile / Makefile
 ├── compose.yaml                 # gateway only

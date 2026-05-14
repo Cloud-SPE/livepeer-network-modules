@@ -1,4 +1,4 @@
-import type { auth, billing } from "@livepeer-rewrite/customer-portal";
+import type { auth, billing } from "@livepeer-network-modules/customer-portal";
 
 import { loadRateCardSnapshot, type Queryable } from "../repo/rateCard.js";
 import {

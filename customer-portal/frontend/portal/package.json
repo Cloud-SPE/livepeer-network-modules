@@ -1,5 +1,5 @@
 {
-  "name": "@livepeer-rewrite/customer-portal-portal-scaffold",
+  "name": "@livepeer-network-modules/customer-portal-portal-scaffold",
   "version": "0.1.0",
   "private": true,
   "description": "Customer-facing SPA scaffold consuming customer-portal-shared. Per-product portals extend this.",
@@ -10,7 +10,7 @@
     "build": "echo 'scaffold; per-product Vite build is downstream'"
   },
   "dependencies": {
-    "@livepeer-rewrite/customer-portal-shared": "workspace:*",
+    "@livepeer-network-modules/customer-portal-shared": "workspace:*",
     "rxjs": "^7.8.0"
   },
   "engines": {

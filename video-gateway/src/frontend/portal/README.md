@@ -1,7 +1,7 @@
 # `video-gateway/src/frontend/portal/`
 
 Customer-facing portal SPA for the video product. pnpm sub-workspace
-`@livepeer-rewrite/video-gateway-portal`.
+`@livepeer-network-modules/video-gateway-portal`.
 
 Composes `customer-portal/frontend/shared/` widgets (signup / login /
 api-keys / billing / account) and adds video-specific routes:
@@ -22,11 +22,11 @@ preHandler at the gateway level, not in the SPA).
 ## Build
 
 ```sh
-pnpm -F @livepeer-rewrite/video-gateway-portal build
+pnpm -F @livepeer-network-modules/video-gateway-portal build
 ```
 
 ## Tests
 
 ```sh
-pnpm -F @livepeer-rewrite/video-gateway-portal test
+pnpm -F @livepeer-network-modules/video-gateway-portal test
 ```

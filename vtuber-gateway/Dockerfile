@@ -26,9 +26,9 @@ COPY --from=deps /src/vtuber-gateway/node_modules ./vtuber-gateway/node_modules
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal ./customer-portal
 COPY vtuber-gateway ./vtuber-gateway
-RUN pnpm -F @livepeer-rewrite/customer-portal build \
- && pnpm -F @livepeer-rewrite/vtuber-gateway build \
- && pnpm --filter @livepeer-rewrite/vtuber-gateway --prod deploy /out/vtuber-gateway
+RUN pnpm -F @livepeer-network-modules/customer-portal build \
+ && pnpm -F @livepeer-network-modules/vtuber-gateway build \
+ && pnpm --filter @livepeer-network-modules/vtuber-gateway --prod deploy /out/vtuber-gateway
 
 FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 

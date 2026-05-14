@@ -1,4 +1,4 @@
-import { ApiClient, HashRouter, clearSession, readSession, writeSession } from "@livepeer-rewrite/customer-portal-shared";
+import { ApiClient, HashRouter, clearSession, readSession, writeSession } from "@livepeer-network-modules/customer-portal-shared";
 
 export const VTUBER_GATEWAY_ADMIN_APP_TAG = "vtuber-gateway-admin";
 

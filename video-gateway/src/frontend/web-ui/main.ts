@@ -1,7 +1,7 @@
 document.body.dataset.livepeerUiMode = "network-console";
 document.body.dataset.livepeerSessionKey = "video-gateway:admin-session";
 
-await import("@livepeer-rewrite/customer-portal-shared");
+await import("@livepeer-network-modules/customer-portal-shared");
 await import("./components/admin-app.js");
 await import("./components/admin-customers.js");
 await import("./components/admin-projects.js");

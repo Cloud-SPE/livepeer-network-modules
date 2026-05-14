@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
 import type { VtuberGatewayDeps } from "../runtime/deps.js";
-import { authPreHandler } from "@livepeer-rewrite/customer-portal/middleware";
+import { authPreHandler } from "@livepeer-network-modules/customer-portal/middleware";
 
 export const BillingTopupRequestSchema = z.object({
   cents: z.number().int().positive(),

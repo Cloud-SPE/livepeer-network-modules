@@ -81,6 +81,7 @@ declare -a IMAGES=(
   "livepeer-customer-portal|customer-portal|customer-portal/Dockerfile||"
   "livepeer-gateway-adapters-ts|gateway-adapters/ts|gateway-adapters/ts/Dockerfile||"
   "livepeer-openai-gateway-reference|.|openai-gateway/Dockerfile||"
+  "livepeer-daydream-gateway|.|daydream-gateway/Dockerfile||"
   "livepeer-video-gateway|.|video-gateway/Dockerfile||"
   "livepeer-vtuber-gateway|.|vtuber-gateway/Dockerfile||"
 

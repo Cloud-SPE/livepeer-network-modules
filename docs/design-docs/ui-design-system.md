@@ -464,7 +464,7 @@ just a handful of helper CSS files.
 When building or editing a UI in this repo:
 
 1. Set the correct `livepeerUiMode` at app startup.
-2. Import from `@livepeer-rewrite/customer-portal-shared` before writing new primitives.
+2. Import from `@livepeer-network-modules/customer-portal-shared` before writing new primitives.
 3. If a pattern repeats across more than one page, promote it into the shared package.
 4. If a pattern is app-specific, keep it local but compose it from shared primitives.
 5. Update this doc when a new primitive or mode rule becomes load-bearing.

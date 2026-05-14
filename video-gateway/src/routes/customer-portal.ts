@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { desc, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
-import type { CustomerPortal } from "@livepeer-rewrite/customer-portal";
+import type { CustomerPortal } from "@livepeer-network-modules/customer-portal";
 import { z } from "zod";
 
 import type { Config } from "../config.js";

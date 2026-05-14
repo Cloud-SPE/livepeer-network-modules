@@ -20,6 +20,7 @@ import { SessionRouter } from "./sessionRouter.js";
 import { registerOrchRoutes } from "./routes/orchs.js";
 import { registerPassthroughRoutes } from "./routes/passthrough.js";
 import { registerSessionRoutes } from "./routes/sessions.js";
+import { registerStudioStatic } from "./runtime/static.js";
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
@@ -34,7 +35,7 @@ async function main(): Promise<void> {
 
   await initPayer({
     socketPath: cfg.payerDaemonSocket,
-    protoRoot: cfg.protoRoot,
+    protoRoot: cfg.paymentProtoRoot,
   });
   app.log.info({ socket: cfg.payerDaemonSocket }, "payer-daemon connected");
 
@@ -44,6 +45,7 @@ async function main(): Promise<void> {
   registerOrchRoutes(app, selector);
   registerSessionRoutes(app, cfg, selector, router);
   registerPassthroughRoutes(app, router);
+  await registerStudioStatic(app);
 
   const [host, port] = parseListen(cfg.listen);
   await app.listen({ host, port });

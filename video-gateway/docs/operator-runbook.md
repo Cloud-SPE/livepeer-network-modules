@@ -134,9 +134,9 @@ docker compose up -d --force-recreate video-gateway
 Run:
 
 ```bash
-pnpm -F @livepeer-rewrite/video-gateway test
-pnpm -F @livepeer-rewrite/video-gateway-web-ui test
-pnpm -F @livepeer-rewrite/video-gateway build
+pnpm -F @livepeer-network-modules/video-gateway test
+pnpm -F @livepeer-network-modules/video-gateway-web-ui test
+pnpm -F @livepeer-network-modules/video-gateway build
 ```
 
 Then verify:

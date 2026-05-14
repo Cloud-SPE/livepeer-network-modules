@@ -179,7 +179,7 @@ matching the file's opt-in convention):
 ### 4.5 New component: `daydream-gateway/`
 
 Top-level TS component. Paper-thin. **Does not** depend on
-`@livepeer-rewrite/customer-portal`. Has no DB, no migrations, no
+`@livepeer-network-modules/customer-portal`. Has no DB, no migrations, no
 admin SPA, no API-key auth, no rate-card schema.
 
 ```
@@ -235,7 +235,7 @@ services:
     networks: [scope-control, egress]
     deploy: { resources: { reservations: { devices: [{ driver: nvidia, count: 1 }] } } }
   capability-broker:
-    image: livepeer-rewrite/capability-broker:latest
+    image: tztcloud/capability-broker:latest
     networks: [public, scope-control]
     volumes: [./host-config.yaml:/etc/broker/host-config.yaml]
   payment-daemon:

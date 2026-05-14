@@ -1,8 +1,8 @@
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
-import { admin as portalAdmin } from "@livepeer-rewrite/customer-portal";
-import type { CustomerPortal } from "@livepeer-rewrite/customer-portal";
-import type { Db as PortalDb } from "@livepeer-rewrite/customer-portal/db";
+import { admin as portalAdmin } from "@livepeer-network-modules/customer-portal";
+import type { CustomerPortal } from "@livepeer-network-modules/customer-portal";
+import type { Db as PortalDb } from "@livepeer-network-modules/customer-portal/db";
 
 import type { Config } from "./config.js";
 import type { StorageProvider } from "./engine/interfaces/storageProvider.js";

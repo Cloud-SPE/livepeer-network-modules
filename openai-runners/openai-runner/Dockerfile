@@ -14,7 +14,6 @@ ENV RUNNER_ADDR=:8080
 ENV CAPABILITY_NAME=openai-chat-completions
 EXPOSE 8080
 COPY --from=build /bin/chat-runner /runner
-COPY offering.yaml /etc/runner/offering.yaml
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -fsS http://localhost:8080/healthz || exit 1
 ENTRYPOINT ["/runner"]
@@ -26,7 +25,6 @@ ENV RUNNER_ADDR=:8080
 ENV CAPABILITY_NAME=openai-text-embeddings
 EXPOSE 8080
 COPY --from=build /bin/embeddings-runner /runner
-COPY offering.yaml /etc/runner/offering.yaml
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD curl -fsS http://localhost:8080/healthz || exit 1
 ENTRYPOINT ["/runner"]

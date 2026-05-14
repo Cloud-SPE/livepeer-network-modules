@@ -1,5 +1,5 @@
 {
-  "name": "@livepeer-rewrite/vtuber-gateway",
+  "name": "@livepeer-network-modules/vtuber-gateway",
   "version": "0.1.0",
   "description": "Customer-facing vtuber gateway — per-session payment-daemon flow, control-WS relay, Stripe checkout, portal SPA. Imports customer-portal/ for shared SaaS shell primitives.",
   "license": "MIT",
@@ -21,7 +21,7 @@
     "@fastify/websocket": "^11.2.0",
     "@grpc/grpc-js": "^1.12.2",
     "@grpc/proto-loader": "^0.8.1",
-    "@livepeer-rewrite/customer-portal": "workspace:*",
+    "@livepeer-network-modules/customer-portal": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.0.0",
     "pg": "^8.13.0",

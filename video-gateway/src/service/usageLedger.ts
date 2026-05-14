@@ -4,13 +4,13 @@ import {
   commit as commitReservation,
   refund as refundReservation,
   reserve as reserveReservation,
-} from "@livepeer-rewrite/customer-portal/billing";
+} from "@livepeer-network-modules/customer-portal/billing";
 import {
   customers,
   reservations,
   topups,
   type Db as PortalDb,
-} from "@livepeer-rewrite/customer-portal/db";
+} from "@livepeer-network-modules/customer-portal/db";
 import { desc, eq, inArray } from "drizzle-orm";
 
 import type { Db as VideoDb } from "../db/pool.js";

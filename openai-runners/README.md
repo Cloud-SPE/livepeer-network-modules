@@ -58,10 +58,6 @@ Each runner accepts a common set of env vars (`CAPABILITY_NAME`,
 `DEVICE`, `METRICS_ENABLED`) plus per-capability keys. See each runner's
 own README for the full list.
 
-Offering details (presets, model variants, rate-card hints) live in an
-embedded YAML manifest at `/etc/runner/offering.yaml` per image; mount
-an override file at the same path to customize.
-
 ## Compose overlays
 
 Per-backend compose overlays live in [`compose/`](./compose/):

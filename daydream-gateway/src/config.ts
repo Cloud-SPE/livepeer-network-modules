@@ -9,8 +9,10 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { existsSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(__dirname, "..", "..");
 
 export interface Config {
   /** HTTP listen address (e.g. ":9100" or "0.0.0.0:9100"). */
@@ -40,17 +42,21 @@ export interface Config {
   /** Cache TTL for the resolver snapshot. */
   resolverSnapshotTtlMs: number;
 
-  /** Path to proto-contracts repo root for protoLoader includes. */
-  protoRoot: string;
+  /** Path to livepeer-network-protocol/proto for payer-daemon protos. */
+  paymentProtoRoot: string;
+
+  /** Path to proto-contracts for resolver/service-registry protos. */
+  resolverProtoRoot: string;
 }
 
-const DEFAULT_PROTO_ROOT = resolve(
-  __dirname,
-  "..",
-  "..",
-  "livepeer-network-protocol",
-  "proto",
-);
+const DEFAULT_PAYMENT_PROTO_ROOT = firstExistingPath([
+  resolve("/app", "proto"),
+  resolve(REPO_ROOT, "livepeer-network-protocol", "proto"),
+]);
+const DEFAULT_RESOLVER_PROTO_ROOT = firstExistingPath([
+  resolve("/app", "proto-contracts"),
+  resolve(REPO_ROOT, "proto-contracts"),
+]);
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const listen = env.DAYDREAM_GATEWAY_LISTEN ?? ":9100";
@@ -79,6 +85,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     resolverSnapshotTtlMs: Number(
       env.DAYDREAM_GATEWAY_RESOLVER_TTL_MS ?? "30000",
     ),
-    protoRoot: env.DAYDREAM_GATEWAY_PROTO_ROOT ?? DEFAULT_PROTO_ROOT,
+    paymentProtoRoot:
+      env.DAYDREAM_GATEWAY_PAYMENT_PROTO_ROOT ?? DEFAULT_PAYMENT_PROTO_ROOT,
+    resolverProtoRoot:
+      env.DAYDREAM_GATEWAY_RESOLVER_PROTO_ROOT ?? DEFAULT_RESOLVER_PROTO_ROOT,
   };
+}
+
+function firstExistingPath(paths: string[]): string {
+  for (const candidate of paths) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return paths[0]!;
 }

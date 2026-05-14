@@ -72,7 +72,7 @@ TypeScript 5+, Node 20+, Fastify 5, Zod 3, drizzle-orm + `pg`,
 ioredis, lit (frontend). It is **not** an OSS-vs-SaaS split — there
 is no companion engine package, no published npm artifact, no
 two-package coordination. Per-product gateways import from
-`@livepeer-rewrite/customer-portal/*` via the pnpm workspace.
+`@livepeer-network-modules/customer-portal/*` via the pnpm workspace.
 
 ## 2. What predecessor work left unfinished
 
@@ -165,7 +165,7 @@ customer-portal/
   Makefile                     — `make build`, `make test`, `make lint`, `make smoke`
   Dockerfile                   — N/A (library; no runtime image)
   compose.yaml                 — N/A (library; no compose stack)
-  package.json                 — `@livepeer-rewrite/customer-portal`; ESM-only;
+  package.json                 — `@livepeer-network-modules/customer-portal`; ESM-only;
                                  exports map: ./auth, ./billing, ./db, ./stripe,
                                  ./middleware, ./repo, ./service, ./testing,
                                  ./frontend/portal, ./frontend/admin, ./frontend/shared
@@ -235,7 +235,7 @@ customer-portal/
 ```
 
 Per-product gateways depend on the package via `pnpm` workspace; they
-import what they need (`from '@livepeer-rewrite/customer-portal/auth'`)
+import what they need (`from '@livepeer-network-modules/customer-portal/auth'`)
 and compose the rest.
 
 ## 5. Source-to-destination file map
@@ -504,13 +504,13 @@ Per-product gateway composition example (openai-gateway):
 
 ```typescript
 // per-product gateway src/main.ts
-import { createPgDatabase, runMigrations } from '@livepeer-rewrite/customer-portal/db';
-import { createApiKeyAuthResolver, authPreHandler } from '@livepeer-rewrite/customer-portal/middleware';
-import { createPrepaidQuotaWallet } from '@livepeer-rewrite/customer-portal/billing';
-import { createRateLimiter, rateLimitPreHandler } from '@livepeer-rewrite/customer-portal/middleware';
-import { registerStripeWebhookRoute } from '@livepeer-rewrite/customer-portal/stripe';
-import { createPaymentSender } from '@livepeer-rewrite/gateway-adapters/payment';
-import { httpReqRespSend } from '@livepeer-rewrite/gateway-adapters/modes';
+import { createPgDatabase, runMigrations } from '@livepeer-network-modules/customer-portal/db';
+import { createApiKeyAuthResolver, authPreHandler } from '@livepeer-network-modules/customer-portal/middleware';
+import { createPrepaidQuotaWallet } from '@livepeer-network-modules/customer-portal/billing';
+import { createRateLimiter, rateLimitPreHandler } from '@livepeer-network-modules/customer-portal/middleware';
+import { registerStripeWebhookRoute } from '@livepeer-network-modules/customer-portal/stripe';
+import { createPaymentSender } from '@livepeer-network-modules/gateway-adapters/payment';
+import { httpReqRespSend } from '@livepeer-network-modules/gateway-adapters/modes';
 import { registerChatCompletionsRoute } from './routes/chatCompletions.js';
 // …compose Fastify app, drop in pre-handlers, register product routes…
 ```
@@ -645,7 +645,7 @@ schema (`src/db/schema.ts` + `migrations/0000_app_init.sql`) byte-
 identical to the suite's `0000_app_init.sql` modulo the rate-card
 tables (which stay in the openai-gateway brief).
 
-**Acceptance:** `pnpm -F @livepeer-rewrite/customer-portal build`
+**Acceptance:** `pnpm -F @livepeer-network-modules/customer-portal build`
 green; `drizzle-kit migrate` runs cleanly against an empty Postgres.
 
 ### Phase 2 — Auth + billing services
@@ -683,7 +683,7 @@ TS-port the suite's `frontend/shared/`, `frontend/portal/`,
 these with their own components (e.g. openai-gateway adds
 `admin-rate-card-chat`).
 
-**Acceptance:** `pnpm -F @livepeer-rewrite/customer-portal build`
+**Acceptance:** `pnpm -F @livepeer-network-modules/customer-portal build`
 emits frontend bundles. A consumer gateway can import and render the
 portal shell.
 

@@ -1,4 +1,4 @@
-import type { auth } from "@livepeer-rewrite/customer-portal";
+import type { auth } from "@livepeer-network-modules/customer-portal";
 
 type AuthResolver = auth.AuthResolver;
 type AuthResolverRequest = auth.AuthResolverRequest;

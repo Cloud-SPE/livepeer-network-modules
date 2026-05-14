@@ -90,7 +90,10 @@ interface CachedSnapshot {
 }
 
 export function createOrchSelector(cfg: Config): OrchSelector {
-  const client = newResolverClient(cfg.resolverSocket, cfg.protoRoot);
+  const client = newResolverClient(
+    cfg.resolverSocket,
+    cfg.resolverProtoRoot,
+  );
   let cache: CachedSnapshot | null = null;
 
   async function load(): Promise<OrchCandidate[]> {

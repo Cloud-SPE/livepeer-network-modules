@@ -161,7 +161,7 @@ openai-gateway/
   Dockerfile                         ← multi-stage; SaaS portal/admin bundles + Node runtime
   compose.yaml                       ← extends rewrite reference; adds Postgres + Redis services
   compose.prod.yaml                  ← prod overlay (no port exposes; named volumes)
-  package.json                       ← @livepeer-rewrite/openai-gateway; ESM-only
+  package.json                       ← @livepeer-network-modules/openai-gateway; ESM-only
   pnpm-workspace not needed (root manages)
   tsconfig.json                      ← extends repo root tsconfig.base.json
   vitest.config.ts
@@ -424,9 +424,9 @@ pass-through, which is part of the route handler).
 openai-gateway/
   package.json:
     dependencies:
-      "@livepeer-rewrite/customer-portal":  "workspace:*"
-      "@livepeer-rewrite/gateway-adapters": "workspace:*"
-      "@livepeer-rewrite/livepeer-network-protocol-go": (no — Go-only; openai-gateway is TS)
+      "@livepeer-network-modules/customer-portal":  "workspace:*"
+      "@livepeer-network-modules/gateway-adapters": "workspace:*"
+      "@livepeer-network-modules/livepeer-network-protocol-go": (no — Go-only; openai-gateway is TS)
       fastify, zod, drizzle-orm, pg, ioredis, stripe, lit, rxjs
 ```
 
@@ -612,7 +612,7 @@ from the existing reference impl unchanged. Add empty dirs for
 `pricing/`, `repo/`, `frontend/`, `migrations/`. Compose stack
 extended with Postgres + Redis services from suite compose.
 
-**Acceptance:** `pnpm -F @livepeer-rewrite/openai-gateway build`
+**Acceptance:** `pnpm -F @livepeer-network-modules/openai-gateway build`
 green; existing reference impl smoke (chat / embeddings /
 transcriptions per plan 0009) still passes; Postgres + Redis come up
 clean. Diff: ~+200 LOC (compose + scaffolding).

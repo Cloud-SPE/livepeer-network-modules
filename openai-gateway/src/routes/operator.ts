@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
-import type { AdminAuthResolver } from '@livepeer-rewrite/customer-portal/auth';
-import { middleware } from '@livepeer-rewrite/customer-portal';
+import type { AdminAuthResolver } from '@livepeer-network-modules/customer-portal/auth';
+import { middleware } from '@livepeer-network-modules/customer-portal';
 
 import type { RouteSelector } from '../service/routeSelector.js';
 import type { RateCardSnapshot } from '../service/pricing/types.js';

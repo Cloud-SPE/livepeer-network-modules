@@ -342,7 +342,7 @@ openai-gateway/
 
 Each frontend should:
 
-- import `@livepeer-rewrite/customer-portal-shared`
+- import `@livepeer-network-modules/customer-portal-shared`
 - set `livepeerUiMode`
 - own openai-specific routes and service adapters
 - build to `dist/`

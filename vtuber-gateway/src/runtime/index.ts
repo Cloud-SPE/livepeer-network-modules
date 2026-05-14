@@ -4,4 +4,4 @@
 // vtuber-gateway code paths can import shared shell primitives via a
 // single facade.
 
-export * as customerPortal from "@livepeer-rewrite/customer-portal";
+export * as customerPortal from "@livepeer-network-modules/customer-portal";

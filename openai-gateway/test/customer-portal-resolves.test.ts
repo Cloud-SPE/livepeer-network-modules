@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createCustomerPortal, auth, billing, middleware, admin, db } from '@livepeer-rewrite/customer-portal';
+import { createCustomerPortal, auth, billing, middleware, admin, db } from '@livepeer-network-modules/customer-portal';
 
 test('customer-portal entrypoint exports createCustomerPortal', () => {
   assert.equal(typeof createCustomerPortal, 'function');

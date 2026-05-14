@@ -86,9 +86,9 @@ export ETH_RPC_URL=https://arb1.arbitrum.io/rpc
 docker compose -f compose.yaml up -d
 ```
 
-The gateway is now listening on `:9100`. Point your `scope-playground-ui`
-SPA's backend URL at `http://localhost:9100` (or your gateway's
-externally-routable URL).
+The gateway is now listening on `:9100` and serves the embedded Scope UI
+from `/`. Open `http://localhost:9100/` (or your gateway's
+externally-routable URL) directly.
 
 Verify:
 
@@ -102,7 +102,7 @@ curl http://localhost:9100/v1/orchs | jq .
 
 ## Step 4 — Open a session
 
-The SPA does this automatically. If you want to drive it by hand:
+The embedded UI does this automatically. If you want to drive it by hand:
 
 ```bash
 SESSION=$(curl -s -X POST http://localhost:9100/v1/sessions | jq -r .session_id)
@@ -113,9 +113,9 @@ curl -H "X-Daydream-Session: $SESSION" \
      http://localhost:9100/api/v1/pipeline/status | jq .
 ```
 
-The SPA does not need to know about session_id explicitly — it just
-points at the gateway and the gateway's singleton-session shortcut
-handles routing.
+The embedded UI does not need to know about `session_id` explicitly —
+it opens `/v1/sessions` and sends `X-Daydream-Session` on subsequent
+`/api/v1/*` requests automatically.
 
 ## Network surfaces summary
 

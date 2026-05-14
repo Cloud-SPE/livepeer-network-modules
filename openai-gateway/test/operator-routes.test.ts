@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import Fastify from 'fastify';
-import type { AdminAuthResolver, AdminAuthResolverRequest } from '@livepeer-rewrite/customer-portal/auth';
+import type { AdminAuthResolver, AdminAuthResolverRequest } from '@livepeer-network-modules/customer-portal/auth';
 
 import { registerOperatorRoutes } from '../src/routes/operator.js';
 import type { RateCardSnapshot } from '../src/service/pricing/types.js';

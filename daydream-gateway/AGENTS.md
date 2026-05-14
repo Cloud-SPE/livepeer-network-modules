@@ -21,9 +21,13 @@ Inherited from the repo root. Plus:
   **no** admin SPA, **no** rate-card schema. The user running this
   gateway is the broadcaster (with their own Arbitrum-funded address);
   there are no customers below them.
-- **Reference UI is `scope-playground-ui`** (separate repo). This
-  gateway is the API; that SPA is one consumer. Third-party SPAs,
-  CLIs, and automation can consume the same API directly.
+- **Embedded UI ships in this component.** `frontend/` is a copied and
+  adapted Scope playground UI served from the same origin as the
+  gateway. Third-party SPAs, CLIs, and automation can still consume the
+  API directly.
+- **Same-origin UI only.** The embedded UI uses the current page origin
+  for all API and WebRTC calls; it is not configured by a separate
+  frontend backend-host variable.
 - **API surface is Scope-API-compatible by design.** A consumer that
   works against a direct Scope server works against this gateway as
   long as it talks to `/api/v1/*` paths; the gateway intercepts
@@ -49,7 +53,7 @@ Inherited from the repo root. Plus:
 | Compose stack (gateway side) | [`compose.yaml`](./compose.yaml) |
 | The broker it talks to | [`../capability-broker/`](../capability-broker/) |
 | The mode spec | [`../livepeer-network-protocol/modes/session-control-external-media.md`](../livepeer-network-protocol/modes/session-control-external-media.md) |
-| Reference SPA | `scope-playground-ui` (separate repo) |
+| Embedded SPA source | [`frontend/`](./frontend/) |
 
 ## Layout
 
@@ -60,6 +64,7 @@ daydream-gateway/
   README.md
   Dockerfile
   compose.yaml
+  frontend/           ← embedded Scope playground UI source
   package.json
   tsconfig.json
   src/
@@ -82,7 +87,7 @@ daydream-gateway/
 
 - Docker-first per core belief #15. `docker compose -f compose.yaml up`.
 - TypeScript strict; tsc is the lint gate (same as `openai-gateway`).
-- Do not add `@livepeer-rewrite/customer-portal` as a dependency. If
+- Do not add `@livepeer-network-modules/customer-portal` as a dependency. If
   you find yourself needing per-customer state, the design is wrong —
   this component is broadcaster-scoped, not customer-scoped.
 - Workload-specific knobs (e.g. `media.session_start_path`) come from
@@ -94,7 +99,8 @@ daydream-gateway/
 
 - The broker on the orch host — `../capability-broker/`.
 - The mode spec — `../livepeer-network-protocol/modes/session-control-external-media.md`.
-- Reference SPA — `scope-playground-ui` (separate repo); changes there
-  are a separate PR.
+- Embedded SPA source lives in `frontend/`; it was copied from the
+  sibling `scope-playground-ui` repo and adapted for same-origin
+  gateway use.
 - Customer billing — does not exist here; the broadcaster's own
   Arbitrum funding is the only payment source.

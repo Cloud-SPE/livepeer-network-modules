@@ -20,7 +20,7 @@ Inherited from the repo root. Plus:
   `livepeer-video-core@0.0.1-dev` package was never published; its
   source merges into this component (plan 0013-video §14 Q4 lock).
 - **Consume customer-portal, do not duplicate it.** Workspace dep
-  `@livepeer-rewrite/customer-portal` is the only source of customer
+  `@livepeer-network-modules/customer-portal` is the only source of customer
   identity, ledger movement, Stripe webhook handling, admin SPA, and
   shared middleware. New SaaS surfaces land in customer-portal/, not
   here.
@@ -64,12 +64,12 @@ Inherited from the repo root. Plus:
 ## Integration pattern with customer-portal
 
 The customer-portal/ workspace package is consumed via `package.json`
-`"@livepeer-rewrite/customer-portal": "workspace:*"`. Imports resolve
+`"@livepeer-network-modules/customer-portal": "workspace:*"`. Imports resolve
 through the namespaced subpath exports:
 
 ```ts
-import { createCustomerPortal } from '@livepeer-rewrite/customer-portal';
-import { auth, billing, middleware, admin, db, repo } from '@livepeer-rewrite/customer-portal';
+import { createCustomerPortal } from '@livepeer-network-modules/customer-portal';
+import { auth, billing, middleware, admin, db, repo } from '@livepeer-network-modules/customer-portal';
 ```
 
 The collapse boundaries:

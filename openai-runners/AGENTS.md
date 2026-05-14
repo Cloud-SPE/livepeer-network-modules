@@ -26,8 +26,7 @@ Inherited from the repo root (agent-first harness pattern). Plus:
   + path + body + the informational `Livepeer-Capability` /
   `Livepeer-Offering` headers.
 - **Capability identity is image-tag-pinned.** Each runner image declares
-  its capability via the `CAPABILITY_NAME` env var (per OQ1). Offering
-  details live in an embedded YAML manifest at `/etc/runner/offering.yaml`.
+  its capability via the `CAPABILITY_NAME` env var (per OQ1).
 - **GPU probe fails fast.** ML runners exit non-zero at startup if
   `DEVICE=cuda` and no GPU is detected (per OQ3); operators set
   `DEVICE=cpu` to fall back.

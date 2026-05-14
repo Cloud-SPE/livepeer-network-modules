@@ -19,10 +19,11 @@ RUN pnpm install --frozen-lockfile
 # Copy source and build.
 COPY gateway-adapters/ts/ gateway-adapters/ts/
 COPY daydream-gateway/ daydream-gateway/
-COPY livepeer-network-protocol/proto/ livepeer-network-protocol/proto/
+COPY livepeer-network-protocol/proto/ proto/
+COPY proto-contracts/ proto-contracts/
 
 RUN pnpm -F @tztcloud/livepeer-gateway-middleware build
-RUN pnpm -F @livepeer-rewrite/daydream-gateway build
+RUN pnpm -F @livepeer-network-modules/daydream-gateway build
 
 # Stage 2: runtime.
 FROM node:20-alpine AS runtime
@@ -34,8 +35,10 @@ ENV NODE_ENV=production
 COPY --from=build /repo/pnpm-workspace.yaml /repo/package.json /repo/pnpm-lock.yaml ./
 COPY --from=build /repo/daydream-gateway/package.json daydream-gateway/
 COPY --from=build /repo/daydream-gateway/dist daydream-gateway/dist
+COPY --from=build /repo/daydream-gateway/frontend/dist daydream-gateway/frontend/dist
 COPY --from=build /repo/gateway-adapters/ts gateway-adapters/ts
-COPY --from=build /repo/livepeer-network-protocol/proto livepeer-network-protocol/proto
+COPY --from=build /repo/proto proto
+COPY --from=build /repo/proto-contracts proto-contracts
 
 RUN pnpm install --frozen-lockfile --prod
 

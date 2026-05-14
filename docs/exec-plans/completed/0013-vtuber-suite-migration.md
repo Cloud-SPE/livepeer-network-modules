@@ -201,7 +201,7 @@ vtuber-gateway/
   Dockerfile
   compose.yaml
   compose.prod.yaml
-  package.json                ← @livepeer-rewrite/vtuber-gateway; ESM-only
+  package.json                ← @livepeer-network-modules/vtuber-gateway; ESM-only
   tsconfig.json
   vitest.config.ts
   drizzle.config.ts
@@ -375,7 +375,7 @@ vtuber-runner/
         telemetry.py
         vector_log.py
     avatar_renderer/           ← TS sub-workspace (browser code)
-      package.json             ← @livepeer-rewrite/avatar-renderer
+      package.json             ← @livepeer-network-modules/avatar-renderer
       tsconfig.json
       vite.config.ts
       vitest.config.ts
@@ -670,8 +670,8 @@ parameter docs.
 vtuber-gateway/
   package.json:
     dependencies:
-      "@livepeer-rewrite/customer-portal":  "workspace:*"
-      "@livepeer-rewrite/gateway-adapters": "workspace:*"
+      "@livepeer-network-modules/customer-portal":  "workspace:*"
+      "@livepeer-network-modules/gateway-adapters": "workspace:*"
       fastify, zod, drizzle-orm, pg, ioredis, stripe, lit, rxjs, ws
 ```
 
@@ -912,7 +912,7 @@ Create `vtuber-gateway/` workspace package; depend on
 `customer-portal/` + `gateway-adapters/`. Land
 `migrations/0000_vtuber_init.sql` (vtuber.* namespace).
 
-**Acceptance:** `pnpm -F @livepeer-rewrite/vtuber-gateway build`
+**Acceptance:** `pnpm -F @livepeer-network-modules/vtuber-gateway build`
 green; migrations apply cleanly; admin SPA loads the customer-portal
 shell.
 

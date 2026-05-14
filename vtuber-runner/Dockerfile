@@ -25,11 +25,11 @@ RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
 COPY vtuber-runner/avatar-renderer/package.json vtuber-runner/avatar-renderer/
 
-RUN pnpm install --frozen-lockfile --filter @livepeer-rewrite/avatar-renderer || \
-    pnpm install --filter @livepeer-rewrite/avatar-renderer
+RUN pnpm install --frozen-lockfile --filter @livepeer-network-modules/avatar-renderer || \
+    pnpm install --filter @livepeer-network-modules/avatar-renderer
 
 COPY vtuber-runner/avatar-renderer/ vtuber-runner/avatar-renderer/
-RUN pnpm --filter @livepeer-rewrite/avatar-renderer build
+RUN pnpm --filter @livepeer-network-modules/avatar-renderer build
 
 RUN test -f vtuber-runner/avatar-renderer/dist/index.html
 

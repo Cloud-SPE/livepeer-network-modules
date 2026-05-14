@@ -33,11 +33,11 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal ./customer-portal
 COPY gateway-adapters/ts ./gateway-adapters/ts
 COPY openai-gateway ./openai-gateway
-RUN pnpm -F @livepeer-rewrite/customer-portal-shared build \
- && pnpm -F @livepeer-rewrite/customer-portal build \
+RUN pnpm -F @livepeer-network-modules/customer-portal-shared build \
+ && pnpm -F @livepeer-network-modules/customer-portal build \
  && pnpm -F @tztcloud/livepeer-gateway-middleware build \
- && pnpm -F @livepeer-rewrite/openai-gateway build \
- && pnpm --filter @livepeer-rewrite/openai-gateway --prod deploy /out/openai-gateway
+ && pnpm -F @livepeer-network-modules/openai-gateway build \
+ && pnpm --filter @livepeer-network-modules/openai-gateway --prod deploy /out/openai-gateway
 
 FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 

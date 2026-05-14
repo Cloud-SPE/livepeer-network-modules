@@ -16,13 +16,14 @@ operator running this gateway is the broadcaster.
    (`POST /v1/cap`, mode `session-control-external-media@v0`).
 5. Hands back the broker's `scope_url` to the consumer.
 6. Transparently proxies every subsequent `/api/v1/*` call to that
-   `scope_url`, so consumers (e.g. `scope-playground-ui`) work without
-   knowing they are talking to a Livepeer orchestrator.
+   `scope_url`, so consumers work without knowing they are talking to a
+   Livepeer orchestrator.
+7. Serves an embedded Scope playground UI from the same origin on `/`.
 
 ## Architecture
 
 ```
-   consumer (e.g. scope-playground-ui SPA)
+   consumer browser
         │
         │  HTTP: /v1/orchs (list),
         │        /v1/sessions (open),
@@ -61,9 +62,10 @@ pnpm build
 pnpm start
 ```
 
-Point `scope-playground-ui`'s backend URL at `http://localhost:9100` (or
-your gateway's externally-routable URL) and the SPA works unchanged
-aside from latency.
+Then open `http://localhost:9100/` (or your gateway's externally-routable
+URL). The embedded UI and gateway share the same host, so the frontend
+uses `window.location.origin` and does not need a separate backend host
+variable.
 
 ## See also
 

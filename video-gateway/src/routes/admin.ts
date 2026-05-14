@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
-import type { AdminAuthResolver } from "@livepeer-rewrite/customer-portal/auth";
+import type { AdminAuthResolver } from "@livepeer-network-modules/customer-portal/auth";
 import { z } from "zod";
 
 import type { Db as VideoDb } from "../db/pool.js";

@@ -45,7 +45,7 @@ node test-gateway-chat.mjs
 # or via Docker:
 docker run --rm \
   -e OPENAI_BASE_URL=http://broker:8090/v1 \
-  tztcloud/openai-tester:v0.8.10 \
+  tztcloud/openai-tester:v1.0.0 \
   node test-chat-completion.mjs
 ```
 

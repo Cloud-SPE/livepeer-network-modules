@@ -445,7 +445,7 @@ This doc deliberately does not cover:
 - **Image tag ownership during the cutover window.** Per core-belief #14
   (clean-slate rewrite — the suite is untouched) and per user-memory
   `feedback_no_image_version_bumps.md`, the rewrite does not bump or
-  republish suite image tags. Current pin is `v0.8.10` across the rewrite's
+  republish suite image tags. Current default tag is `v1.0.0` across the rewrite's
   Cloud-SPE images; the migration does not bump as part of the move.
   Each side maintains its own release line; phase 5 archives the suite
   line.

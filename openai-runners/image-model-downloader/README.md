@@ -18,7 +18,7 @@ runner containers start; not needed during normal operation.
 docker run --rm \
   -v ai-image-models:/models \
   -e MODEL_IDS="SG161222/RealVisXL_V4.0_Lightning,black-forest-labs/FLUX.1-dev" \
-  tztcloud/image-model-downloader:v0.8.10
+  tztcloud/image-model-downloader:v1.0.0
 ```
 
 Or via compose:

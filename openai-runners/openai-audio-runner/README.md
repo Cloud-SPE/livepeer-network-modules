@@ -40,7 +40,7 @@ amd64-only per OQ4. CUDA 12.9 base image; matches RTX 4090 + 5090
 hardware.
 
 ```bash
-docker build -t tztcloud/openai-audio-runner:v0.8.10 .
+docker build -t tztcloud/openai-audio-runner:v1.0.0 .
 ```
 
 ## Source attribution

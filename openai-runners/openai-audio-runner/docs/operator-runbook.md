@@ -9,11 +9,10 @@ amd64-only per OQ4 (NVIDIA arm64 GPU support exists on Jetson + GH200
 but isn't the default deployment shape).
 
 ```bash
-docker build -t tztcloud/openai-audio-runner:v0.8.10 .
+docker build -t tztcloud/openai-audio-runner:v1.0.0 .
 ```
 
-Tag **frozen at v0.8.10** per user-memory
-`feedback_no_image_version_bumps.md`.
+Default tag: **v1.0.0**.
 
 ## GPU prerequisites
 
@@ -50,7 +49,7 @@ via HuggingFace; the `/models` volume persists the cache):
 docker run --rm \
   -v ai-whisper-models:/models \
   -e MODEL_IDS="openai/whisper-large-v3" \
-  tztcloud/image-model-downloader:v0.8.10
+  tztcloud/image-model-downloader:v1.0.0
 ```
 
 Whisper-large-v3 is ~3 GB on disk.
@@ -59,7 +58,7 @@ Whisper-large-v3 is ~3 GB on disk.
 
 | Image | Platforms |
 |---|---|
-| `openai-audio-runner:v0.8.10` | linux/amd64 only |
+| `openai-audio-runner:v1.0.0` | linux/amd64 only |
 
 ## Prometheus integration (OQ5)
 

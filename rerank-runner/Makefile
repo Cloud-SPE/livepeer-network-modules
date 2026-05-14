@@ -3,7 +3,7 @@
 # required.
 
 REGISTRY    ?= tztcloud
-TAG         ?= v0.8.10
+TAG         ?= v1.0.0
 BASE_IMAGE  ?= $(REGISTRY)/python-runner-base:$(TAG)
 
 .PHONY: build runner downloader smoke clean help

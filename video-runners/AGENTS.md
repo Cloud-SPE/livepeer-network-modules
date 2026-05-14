@@ -57,8 +57,8 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 ## Doing work in this component
 
 - **All gestures are Docker-first** (per repo-root core belief #15).
-- **Image tags are frozen at v0.8.10.** Do not bump without explicit user
-  approval.
+- **Default runner tag is v1.0.0.** Keep codecs-builder and downstream
+  runner builds on the same tag unless the caller overrides `TAG=...`.
 - **No per-runner LICENSE files.** Repo-root MIT applies.
 - **Adjust transcode-core import path on port** to
   `github.com/Cloud-SPE/livepeer-network-rewrite/video-runners/transcode-core`.

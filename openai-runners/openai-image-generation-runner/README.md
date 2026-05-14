@@ -39,7 +39,7 @@ sensible defaults (FLUX vs RealVisXL vs SDXL).
 amd64-only per OQ4. CUDA 12.9 base image.
 
 ```bash
-docker build -t tztcloud/openai-image-generation-runner:v0.8.10 .
+docker build -t tztcloud/openai-image-generation-runner:v1.0.0 .
 ```
 
 ## Source attribution

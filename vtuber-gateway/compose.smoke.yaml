@@ -9,7 +9,7 @@
 #                     (workload binary running on the orch host)
 #   gateway         — vtuber-gateway TS Fastify service
 #
-# Image tags pinned to v0.8.10 per user-memory feedback_no_image_version_bumps.
+# Default image tags use v1.0.0 for the smoke stack.
 
 services:
   postgres:
@@ -25,7 +25,7 @@ services:
       - vtuber-pg:/var/lib/postgresql/data
 
   payment-daemon:
-    image: tztcloud/livepeer-payment-daemon:v0.8.10
+    image: tztcloud/livepeer-payment-daemon:v1.0.0
     networks: [vtuber-stack]
     volumes:
       - livepeer-payment:/var/run/livepeer
@@ -36,7 +36,7 @@ services:
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
 
   payer-daemon:
-    image: tztcloud/livepeer-payment-daemon:v0.8.10
+    image: tztcloud/livepeer-payment-daemon:v1.0.0
     networks: [vtuber-stack]
     volumes:
       - livepeer-payment:/var/run/livepeer
@@ -45,7 +45,7 @@ services:
       - --socket=/var/run/livepeer/payer-daemon.sock
 
   broker:
-    image: tztcloud/livepeer-capability-broker:v0.8.10
+    image: tztcloud/livepeer-capability-broker:v1.0.0
     depends_on: [payment-daemon, vtuber-runner]
     networks: [vtuber-stack]
     volumes:

@@ -3,7 +3,7 @@
 # required.
 
 REGISTRY    ?= tztcloud
-TAG         ?= v0.8.10
+TAG         ?= v1.0.0
 CODECS_IMAGE ?= $(REGISTRY)/codecs-builder:$(TAG)
 
 .PHONY: build codecs transcode abr tester smoke clean help

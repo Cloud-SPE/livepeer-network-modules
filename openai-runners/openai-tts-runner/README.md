@@ -37,7 +37,7 @@ manifest `extra.voices`.
 amd64-only per OQ4. Requires GPU; CPU fallback via `DEVICE=cpu`.
 
 ```bash
-docker build -t tztcloud/openai-tts-runner:v0.8.10 .
+docker build -t tztcloud/openai-tts-runner:v1.0.0 .
 ```
 
 ## Source attribution

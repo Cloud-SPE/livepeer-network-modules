@@ -43,8 +43,8 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 ## Doing work in this component
 
 - **All gestures are Docker-first** (per repo-root core belief #15).
-- **Image tag is frozen at v0.8.10.** Do not bump without explicit user
-  approval.
+- **Default runner tag is v1.0.0.** Keep shared base and runner builds on
+  the same tag unless the caller overrides `TAG=...`.
 - **No per-runner LICENSE file.** Repo-root MIT applies.
 - **Default model: `zeroentropy/zerank-2`.** A CrossEncoder; ~8GB.
   Use `model-downloader/` to pre-pull weights into a shared volume.

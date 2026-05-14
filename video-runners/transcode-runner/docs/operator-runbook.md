@@ -13,25 +13,24 @@ Three multi-stage build targets per vendor:
 ```bash
 # NVIDIA NVENC + NVDEC + CUDA
 docker build --target runtime-nvidia \
-  --build-arg CODECS_IMAGE=tztcloud/codecs-builder:v0.8.10 \
-  -t tztcloud/transcode-runner:v0.8.10 \
+  --build-arg CODECS_IMAGE=tztcloud/codecs-builder:v1.0.0 \
+  -t tztcloud/transcode-runner:v1.0.0 \
   -f transcode-runner/Dockerfile ..
 
 # Intel QSV (oneVPL) + VAAPI
 docker build --target runtime-intel \
-  --build-arg CODECS_IMAGE=tztcloud/codecs-builder:v0.8.10 \
-  -t tztcloud/transcode-runner-intel:v0.8.10 \
+  --build-arg CODECS_IMAGE=tztcloud/codecs-builder:v1.0.0 \
+  -t tztcloud/transcode-runner-intel:v1.0.0 \
   -f transcode-runner/Dockerfile ..
 
 # AMD VAAPI
 docker build --target runtime-amd \
-  --build-arg CODECS_IMAGE=tztcloud/codecs-builder:v0.8.10 \
-  -t tztcloud/transcode-runner-amd:v0.8.10 \
+  --build-arg CODECS_IMAGE=tztcloud/codecs-builder:v1.0.0 \
+  -t tztcloud/transcode-runner-amd:v1.0.0 \
   -f transcode-runner/Dockerfile ..
 ```
 
-Tag **frozen at v0.8.10** per user-memory
-`feedback_no_image_version_bumps.md`.
+Default tag: **v1.0.0**.
 
 ## GPU prerequisites
 
@@ -66,9 +65,9 @@ when no GPU device is present. Slow but functional.
 
 | Image | Platforms |
 |---|---|
-| `transcode-runner:v0.8.10` (nvidia) | linux/amd64 only |
-| `transcode-runner-intel:v0.8.10` | linux/amd64 only |
-| `transcode-runner-amd:v0.8.10` | linux/amd64 only |
+| `transcode-runner:v1.0.0` (nvidia) | linux/amd64 only |
+| `transcode-runner-intel:v1.0.0` | linux/amd64 only |
+| `transcode-runner-amd:v1.0.0` | linux/amd64 only |
 
 ## Prometheus integration (OQ5)
 

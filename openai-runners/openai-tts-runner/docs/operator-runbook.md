@@ -69,4 +69,7 @@ plan 0018.
 
 OpenAI voice names (`alloy`, `echo`, `fable`, `onyx`, `nova`, ...) are
 mapped to Kokoro voices automatically. See the runner's `offering.yaml`
-for the full alias table.
+for the full alias table. The options payload also exposes
+`default_voice`, `voices.native`, and `voices.aliases` so the
+capability broker can mirror the served voice inventory into manifest
+metadata.

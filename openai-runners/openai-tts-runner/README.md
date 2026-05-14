@@ -27,7 +27,10 @@ Python FastAPI workload binary serving `/v1/audio/speech` (Kokoro TTS).
 | `METRICS_ENABLED` | `false` | Opt-in `/metrics` Prometheus endpoint (per OQ5) |
 
 OpenAI voice names (`alloy`, `echo`, `fable`, ...) are mapped to Kokoro
-voices automatically; see `offering.yaml` for the full alias table.
+voices automatically; see `offering.yaml` for the full alias table. The
+`/openai-audio-speech/options` endpoint returns the default voice plus the
+native voice inventory and alias map so the broker can publish them into
+manifest `extra.voices`.
 
 ## Build
 

@@ -97,18 +97,18 @@ type FFmpegOptions struct {
 // listener (cfg.Listen.Paid) for /v1/cap and /registry/*, and a metrics
 // listener (cfg.Listen.Metrics) for Prometheus scraping.
 type Server struct {
-	cfg          *config.Config
-	opts         Options
-	mux          *http.ServeMux
-	srv          *http.Server
-	metricsSrv   *http.Server
-	payment      payment.Client
-	modes        *modes.Registry
-	extractors   *extractors.Registry
-	backend      backend.Forwarder
-	secrets      backend.SecretResolver
-	rtmpStore    *rtmpingresshlsegress.Store
-	rtmpListener *mediartmp.Listener
+	cfg           *config.Config
+	opts          Options
+	mux           *http.ServeMux
+	srv           *http.Server
+	metricsSrv    *http.Server
+	payment       payment.Client
+	modes         *modes.Registry
+	extractors    *extractors.Registry
+	backend       backend.Forwarder
+	secrets       backend.SecretResolver
+	rtmpStore     *rtmpingresshlsegress.Store
+	rtmpListener  *mediartmp.Listener
 	sessStore     *sessioncontrolplusmedia.Store
 	sessDriver    *sessioncontrolplusmedia.Driver
 	webrtcEngine  *mediawebrtc.Engine
@@ -128,6 +128,8 @@ type Server struct {
 // fails fast if it is unreachable; the broker should not bind its paid
 // listener with no working payment surface.
 func New(cfg *config.Config, opts Options) (*Server, error) {
+	hydrateRunnerMetadata(context.Background(), cfg)
+
 	mux := http.NewServeMux()
 	srv := &http.Server{
 		Addr:              cfg.Listen.Paid,
@@ -199,9 +201,9 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			DuplicatePolicy:  opts.RTMP.DuplicatePolicy,
 			RequireStreamKey: opts.RTMP.RequireStreamKey,
 		}, &mediaLookup{
-			store:   rtmpStore,
-			ffmpeg:  opts.FFmpeg,
-			hls:     opts.HLS,
+			store:  rtmpStore,
+			ffmpeg: opts.FFmpeg,
+			hls:    opts.HLS,
 			lookupCap: func(capID, offID string) (encoderProfile string, ok bool) {
 				for i := range cfg.Capabilities {
 					c := &cfg.Capabilities[i]

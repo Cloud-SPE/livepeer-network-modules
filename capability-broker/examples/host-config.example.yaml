@@ -145,3 +145,31 @@ capabilities:
   #   extra:
   #     backend_provider: "openai"
   #     region: "global"
+  #
+  # - id: "openai:images-generations"
+  #   offering_id: "SG161222/RealVisXL_V4.0_Lightning"
+  #   interaction_mode: "http-reqresp@v0"
+  #   work_unit:
+  #     name: "images"
+  #     extractor:
+  #       type: "request-formula"
+  #       expression: "n"
+  #       fields:
+  #         n: "$.n"
+  #       default: 1
+  #   price:
+  #     amount_wei: "25000000"
+  #     per_units: 1
+  #   backend:
+  #     transport: "http"
+  #     url: "http://openai_image_gen_runner:8080/v1/images/generations"
+  #     auth: "none"
+  #   extra:
+  #     openai:
+  #       model: "SG161222/RealVisXL_V4.0_Lightning"
+  #     provider: "openai-image-generation-runner"
+  #     served_model_name: "SG161222/RealVisXL_V4.0_Lightning"
+  #     backend_model: "SG161222/RealVisXL_V4.0_Lightning"
+  #   constraints:
+  #     tier: "standard"
+  #     gpu: "4090"

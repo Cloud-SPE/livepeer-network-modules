@@ -28,6 +28,16 @@ METRICS_ENABLED = os.environ.get("METRICS_ENABLED", "false").lower() in ("true",
 CAPABILITY_NAME = os.environ.get("CAPABILITY_NAME", "openai-audio-speech")
 CAP_SPEECH = "openai-audio-speech"
 MODEL_ALIAS = "kokoro"
+AVAILABLE_VOICES = [
+    "af_bella",
+    "am_michael",
+    "bm_george",
+    "am_adam",
+    "af_sarah",
+    "bf_emma",
+    "bf_isabella",
+    "bm_lewis",
+]
 
 OPENAI_VOICE_MAP = {
     "alloy":   "af_bella",
@@ -197,7 +207,14 @@ async def healthz():
 
 @app.get(f"/{CAP_SPEECH}/options")
 async def speech_options():
-    return {"models": [MODEL_ALIAS]}
+    return {
+        "models": [MODEL_ALIAS],
+        "default_voice": DEFAULT_VOICE,
+        "voices": {
+            "native": AVAILABLE_VOICES,
+            "aliases": OPENAI_VOICE_MAP,
+        },
+    }
 
 
 if METRICS_ENABLED:

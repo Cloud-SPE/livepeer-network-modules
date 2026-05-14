@@ -1,7 +1,7 @@
 document.body.dataset.livepeerUiMode = "product-app";
 document.body.dataset.livepeerSessionKey = "video-gateway:portal-session";
 
-await import("@livepeer-rewrite/customer-portal-shared");
+await import("@livepeer-network-modules/customer-portal-shared");
 await import("./components/portal-app.js");
 await import("./components/portal-assets.js");
 await import("./components/portal-projects.js");

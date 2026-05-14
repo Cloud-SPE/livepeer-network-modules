@@ -2,7 +2,7 @@
 
 This is `customer-portal/` — the shared SaaS-shell library for per-product
 gateways in the rewrite (`openai-gateway/`, `vtuber-gateway/`,
-`video-gateway/`). Distributed as `@livepeer-rewrite/customer-portal` via
+`video-gateway/`). Distributed as `@livepeer-network-modules/customer-portal` via
 the pnpm workspace; consumers import factories from subpath exports.
 
 The plan brief is

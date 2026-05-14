@@ -1,4 +1,4 @@
-import { ApiClient, HashRouter, clearSession, readSession } from "@livepeer-rewrite/customer-portal-shared";
+import { ApiClient, HashRouter, clearSession, readSession } from "@livepeer-network-modules/customer-portal-shared";
 
 type RouteView = "signup" | "login" | "account" | "api-keys" | "billing" | "sessions" | "persona" | "history";
 

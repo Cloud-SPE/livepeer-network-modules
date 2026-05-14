@@ -1,9 +1,9 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
 import { z } from 'zod';
-import type { CustomerPortal } from '@livepeer-rewrite/customer-portal';
-import { auth, db as portalDb } from '@livepeer-rewrite/customer-portal';
-import type { Db } from '@livepeer-rewrite/customer-portal/db';
+import type { CustomerPortal } from '@livepeer-network-modules/customer-portal';
+import { auth, db as portalDb } from '@livepeer-network-modules/customer-portal';
+import type { Db } from '@livepeer-network-modules/customer-portal/db';
 import type { RouteSelector } from '../service/routeSelector.js';
 import { buildPortalModelCatalog } from '../service/catalog.js';
 

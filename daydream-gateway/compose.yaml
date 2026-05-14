@@ -1,0 +1,63 @@
+# Gateway-side compose stack for the daydream-scope capability.
+#
+# Two containers:
+#   - payment-daemon in SENDER mode (mints payments against the
+#     broadcaster's funded Arbitrum One address)
+#   - daydream-gateway (this component)
+#
+# The orch-side stack (Scope + broker + payment-daemon receiver +
+# service-registry) lives in capability-broker/compose/daydream-scope.yaml.
+#
+# Required env:
+#   BROADCASTER_ETH_KEY          path to the broadcaster's keystore JSON
+#   BROADCASTER_ETH_PASSPHRASE_FILE  path to passphrase file
+#   ETH_RPC_URL                  Arbitrum One RPC endpoint
+#   DAYDREAM_GATEWAY_RESOLVER_SOCKET_DIR  host directory mounting the
+#       service-registry-daemon UDS (this gateway expects the registry
+#       daemon to be reachable somehow — typically you'd run a
+#       gateway-side registry-daemon resolver alongside, or mount the
+#       orch-side socket if co-located on dev).
+
+services:
+  payment-daemon-sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --eth-rpc-url=${ETH_RPC_URL:?ETH_RPC_URL required}
+      - --eth-keystore=${BROADCASTER_ETH_KEY:?BROADCASTER_ETH_KEY required}
+      - --eth-passphrase-file=${BROADCASTER_ETH_PASSPHRASE_FILE:?required}
+    volumes:
+      - ${LIVEPEER_RUN_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${BROADCASTER_ETH_KEY}:${BROADCASTER_ETH_KEY}:ro
+      - ${BROADCASTER_ETH_PASSPHRASE_FILE}:${BROADCASTER_ETH_PASSPHRASE_FILE}:ro
+    restart: unless-stopped
+
+  service-registry-resolver:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    command:
+      - --listen=unix:/var/run/livepeer/service-registry.sock
+      - --eth-rpc-url=${ETH_RPC_URL}
+    volumes:
+      - ${LIVEPEER_RUN_DIR:-/var/run/livepeer}:/var/run/livepeer
+    restart: unless-stopped
+
+  daydream-gateway:
+    image: ${REGISTRY:-tztcloud}/livepeer-daydream-gateway:${TAG:-v1.0.0}
+    environment:
+      DAYDREAM_GATEWAY_LISTEN: ":9100"
+      DAYDREAM_GATEWAY_PAYER_DAEMON_SOCKET: /var/run/livepeer/payer-daemon.sock
+      DAYDREAM_GATEWAY_RESOLVER_SOCKET: /var/run/livepeer/service-registry.sock
+      DAYDREAM_GATEWAY_CAPABILITY_ID: daydream:scope:v1
+      DAYDREAM_GATEWAY_OFFERING_ID: default
+      DAYDREAM_GATEWAY_INTERACTION_MODE: session-control-external-media@v0
+      DAYDREAM_GATEWAY_PINNED_ORCH: ${DAYDREAM_GATEWAY_PINNED_ORCH:-}
+      DAYDREAM_GATEWAY_LOG_LEVEL: ${DAYDREAM_GATEWAY_LOG_LEVEL:-info}
+    ports:
+      - "${DAYDREAM_GATEWAY_PORT:-9100}:9100"
+    volumes:
+      - ${LIVEPEER_RUN_DIR:-/var/run/livepeer}:/var/run/livepeer
+    depends_on:
+      - payment-daemon-sender
+      - service-registry-resolver
+    restart: unless-stopped

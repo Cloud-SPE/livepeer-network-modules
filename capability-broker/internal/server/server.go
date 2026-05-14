@@ -20,6 +20,7 @@ import (
 	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/rtmpingresshlsegress"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolexternalmedia"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolplusmedia"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
@@ -111,6 +112,8 @@ type Server struct {
 	rtmpListener  *mediartmp.Listener
 	sessStore     *sessioncontrolplusmedia.Store
 	sessDriver    *sessioncontrolplusmedia.Driver
+	extStore      *sessioncontrolexternalmedia.Store
+	extDriver     *sessioncontrolexternalmedia.Driver
 	webrtcEngine  *mediawebrtc.Engine
 	sessRunnerSup *sessionrunner.Supervisor
 }
@@ -177,19 +180,24 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	runnerBackend := sessioncontrolplusmedia.NewRunnerBackend(runnerSup, resolver, rtcEngine, sessStore)
 	sessDriver.SetBackend(runnerBackend)
 
+	extStore := sessioncontrolexternalmedia.NewStore()
+	extDriver := sessioncontrolexternalmedia.New(extStore, sessioncontrolexternalmedia.DefaultConfig())
+
 	s := &Server{
 		cfg:           cfg,
 		opts:          opts,
 		mux:           mux,
 		srv:           srv,
 		payment:       paymentClient,
-		modes:         defaultModes(rtmpDriver, sessDriver),
+		modes:         defaultModes(rtmpDriver, sessDriver, extDriver),
 		extractors:    defaultExtractors(),
 		backend:       backend.NewHTTPClient(),
 		secrets:       backend.NewEnvSecretResolver(),
 		rtmpStore:     rtmpStore,
 		sessStore:     sessStore,
 		sessDriver:    sessDriver,
+		extStore:      extStore,
+		extDriver:     extDriver,
 		webrtcEngine:  rtcEngine,
 		sessRunnerSup: runnerSup,
 	}

@@ -310,7 +310,7 @@ Auth: route guard via customer-portal's admin-auth controller.
 ## 10. Customer portal SPA (Phase 7)
 
 `src/frontend/portal/` — NEW pnpm sub-workspace
-`@livepeer-rewrite/video-gateway-portal`. Mirrors
+`@livepeer-network-modules/video-gateway-portal`. Mirrors
 `vtuber-gateway/src/frontend/portal/` shape.
 
 | Page | Route | Notes |

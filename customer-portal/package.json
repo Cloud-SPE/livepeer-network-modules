@@ -1,5 +1,5 @@
 {
-  "name": "@livepeer-rewrite/customer-portal",
+  "name": "@livepeer-network-modules/customer-portal",
   "version": "0.1.0",
   "description": "Shared SaaS-shell library for per-product Livepeer rewrite gateways (auth, ledger, Stripe, admin engine)",
   "license": "MIT",

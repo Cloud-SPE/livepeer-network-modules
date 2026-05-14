@@ -1,5 +1,5 @@
 {
-  "name": "@livepeer-rewrite/customer-portal-admin-scaffold",
+  "name": "@livepeer-network-modules/customer-portal-admin-scaffold",
   "version": "0.1.0",
   "private": true,
   "description": "Operator admin SPA scaffold consuming customer-portal-shared. Per-product admins extend this.",
@@ -10,7 +10,7 @@
     "build": "echo 'scaffold; per-product Vite build is downstream'"
   },
   "dependencies": {
-    "@livepeer-rewrite/customer-portal-shared": "workspace:*",
+    "@livepeer-network-modules/customer-portal-shared": "workspace:*",
     "rxjs": "^7.8.0"
   },
   "engines": {

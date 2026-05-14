@@ -1,4 +1,4 @@
-import '@livepeer-rewrite/customer-portal-shared';
+import '@livepeer-network-modules/customer-portal-shared';
 import { html, render } from 'lit';
 
 type Customer = {

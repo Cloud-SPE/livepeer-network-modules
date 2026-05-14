@@ -1,0 +1,96 @@
+# Orch-side compose stack for the daydream-scope capability.
+#
+# Boot order is:
+#   1. service-registry-daemon (publishes the orch's manifest pointer)
+#   2. payment-daemon (receiver mode on this orch)
+#   3. daydreamlive/scope:main (upstream image, unmodified)
+#   4. capability-broker (talks to the above three)
+#
+# Network topology (per plan 0026 §3):
+#
+#   public         — broker's HTTPS listener faces the outside world.
+#   scope-control  — broker ↔ Scope HTTP-only; no other reach.
+#   egress         — Scope egress to Cloudflare TURN; outbound only.
+#
+# Scope's WebRTC media UDP ports never face the public internet directly;
+# only Cloudflare TURN's IP ranges talk to them (via the `egress` net).
+#
+# Required env:
+#   HF_TOKEN                        Cloudflare TURN auth via HuggingFace
+#   ORCH_ETH_ADDRESS                operator's chain identity
+#   REGISTRY, TAG                   (optional) image registry overrides
+#
+# Build the broker image with `./infra/scripts/build-images.sh capability-broker`.
+
+services:
+  service-registry-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    command: ["--listen=unix:/var/run/livepeer/service-registry.sock"]
+    volumes:
+      - ${LIVEPEER_RUN_DIR:-/var/run/livepeer}:/var/run/livepeer
+    networks: [public]
+    restart: unless-stopped
+
+  payment-daemon:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    command: ["--mode=receiver", "--socket=/var/run/livepeer/payment-daemon.sock"]
+    environment:
+      ORCH_ETH_ADDRESS: ${ORCH_ETH_ADDRESS}
+    volumes:
+      - ${LIVEPEER_RUN_DIR:-/var/run/livepeer}:/var/run/livepeer
+    networks: [public]
+    restart: unless-stopped
+
+  scope:
+    image: daydreamlive/scope:main
+    environment:
+      HF_TOKEN: ${HF_TOKEN:?HF_TOKEN required for Cloudflare TURN}
+      DAYDREAM_SCOPE_MODELS_DIR: /workspace/models
+    volumes:
+      - scope-models:/workspace/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      scope-control: {}
+      egress: {}
+    restart: unless-stopped
+    # No published ports: Scope's HTTP API is reachable only via the
+    # broker on the `scope-control` net; its WebRTC media UDP traffic
+    # goes out via the `egress` net to Cloudflare TURN.
+
+  capability-broker:
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.0.0}
+    command:
+      - --config=/etc/livepeer/host-config.yaml
+      - --listen=:8080
+      - --metrics=:9090
+    environment:
+      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
+    ports:
+      - "${BROKER_LISTEN_PORT:-8080}:8080"
+      - "${BROKER_METRICS_PORT:-9090}:9090"
+    volumes:
+      - ${BROKER_CONFIG:-./host-config.yaml}:/etc/livepeer/host-config.yaml:ro
+      - ${LIVEPEER_RUN_DIR:-/var/run/livepeer}:/var/run/livepeer
+    networks:
+      public: {}
+      scope-control: {}
+    depends_on:
+      - payment-daemon
+      - service-registry-daemon
+      - scope
+    restart: unless-stopped
+
+networks:
+  public: {}
+  scope-control:
+    internal: true   # broker ↔ Scope only; no external reach.
+  egress: {}         # default bridge; outbound only (Scope → Cloudflare).
+
+volumes:
+  scope-models:

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { middleware } from "@livepeer-rewrite/customer-portal";
-import type { AuthResolver } from "@livepeer-rewrite/customer-portal/auth";
+import { middleware } from "@livepeer-network-modules/customer-portal";
+import type { AuthResolver } from "@livepeer-network-modules/customer-portal/auth";
 
 import type { RouteSelector } from "../service/routeSelector.js";
 import { buildModelCatalog } from "../service/catalog.js";

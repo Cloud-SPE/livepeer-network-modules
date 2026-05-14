@@ -88,6 +88,39 @@ capabilities:
   #     tier: "standard"
   #     gpu_vendor: "NVIDIA"
 
+  # ---- Daydream Scope (session-control-external-media) ----
+  # Real-time generative-video workload run from the upstream
+  # `daydreamlive/scope:main` image (unmodified). The broker proxies the
+  # control plane and meters seconds-elapsed; media flows
+  # browser ↔ Cloudflare TURN ↔ Scope directly, never through the broker.
+  # See plan 0026.
+  #
+  # Operator prereq: HF_TOKEN env on the Scope container (Cloudflare TURN auth).
+  # See `daydream-gateway/docs/operator-runbook.md` for deployment.
+  #
+  # - id: "daydream:scope:v1"
+  #   offering_id: "default"
+  #   interaction_mode: "session-control-external-media@v0"
+  #   work_unit:
+  #     name: "seconds"
+  #     extractor: { type: "seconds-elapsed", granularity: 1 }
+  #   price:
+  #     amount_wei: "1500000"
+  #     per_units: 1
+  #   backend:
+  #     transport: "http"
+  #     url: "http://scope:8000"
+  #     auth: "none"
+  #   extra:
+  #     workload: "daydream-scope"
+  #     media_schema: "scope-passthrough/v0"
+  #     session_start_path: "/api/v1/session/start"
+  #     session_stop_path: "/api/v1/session/stop"
+  #     turn_provider: "cloudflare"
+  #   constraints:
+  #     tier: "standard"
+  #     gpu_vendor: "NVIDIA"
+
   # ---- Live RTMP transcode (rtmp-ingress-hls-egress + ffmpeg-progress) ----
   # Stream the resulting LL-HLS playlist from the broker's /_hls/<sess>/...
   # path. The broker's --rtmp-listen-addr must be set for the listener to

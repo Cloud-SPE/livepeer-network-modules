@@ -1,5 +1,5 @@
 {
-  "name": "@livepeer-rewrite/vtuber-gateway-admin",
+  "name": "@livepeer-network-modules/vtuber-gateway-admin",
   "version": "0.1.0",
   "private": true,
   "description": "Operator admin SPA for the vtuber-gateway. Composes customer-portal shared widgets and adds vtuber-specific admin pages.",
@@ -14,7 +14,7 @@
     "test": "tsc -p tsconfig.test.json && mkdir -p dist-test/src/components && cp src/components/*.css dist-test/src/components/ && node --test ./dist-test/test/**/*.test.js"
   },
   "dependencies": {
-    "@livepeer-rewrite/customer-portal-shared": "workspace:*",
+    "@livepeer-network-modules/customer-portal-shared": "workspace:*",
     "rxjs": "^7.8.0"
   },
   "devDependencies": {

@@ -19,7 +19,7 @@ the cross-cutting map.
 
 Inherited from the repo root + `customer-portal/`. Plus:
 
-- **Imports `@livepeer-rewrite/customer-portal` for SaaS-shell
+- **Imports `@livepeer-network-modules/customer-portal` for SaaS-shell
   primitives** — auth (`sessionBearer`), Stripe checkout + webhook,
   admin engine, Postgres pool. The shell owns `app.*`; this gateway
   owns `vtuber.*` (per Q5 lock).

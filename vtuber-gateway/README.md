@@ -29,8 +29,8 @@ keys via the portal SPA. Both modes coexist on the same auth surface.
 
 ```sh
 pnpm install
-pnpm --filter @livepeer-rewrite/vtuber-gateway build
-pnpm --filter @livepeer-rewrite/vtuber-gateway test
+pnpm --filter @livepeer-network-modules/vtuber-gateway build
+pnpm --filter @livepeer-network-modules/vtuber-gateway test
 ```
 
 ## Layout

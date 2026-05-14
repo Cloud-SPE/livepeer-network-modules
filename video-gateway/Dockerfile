@@ -28,9 +28,9 @@ COPY --from=deps /src/video-gateway/node_modules ./video-gateway/node_modules
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal ./customer-portal
 COPY video-gateway ./video-gateway
-RUN pnpm -F @livepeer-rewrite/customer-portal build \
- && pnpm -F @livepeer-rewrite/video-gateway build \
- && pnpm --filter @livepeer-rewrite/video-gateway --prod deploy /out/video-gateway
+RUN pnpm -F @livepeer-network-modules/customer-portal build \
+ && pnpm -F @livepeer-network-modules/video-gateway build \
+ && pnpm --filter @livepeer-network-modules/video-gateway --prod deploy /out/video-gateway
 
 FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
 

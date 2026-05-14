@@ -1,0 +1,77 @@
+# Balance-exhausted conformance fixture for
+# session-control-external-media@v0 (plan 0026).
+#
+# Initial debit covers only runway_min_seconds. The broker ticks down,
+# emits session.balance.low at the warning threshold, then emits
+# session.error{code=balance_exhausted}, short-circuits the
+# capability-declared backend stop endpoint via the /_scope proxy,
+# closes the WS with 1011, and reconciles + closes the session on the
+# payment-daemon.
+
+name: balance-exhausted
+mode: session-control-external-media@v0
+spec_version: "0.1"
+description: |
+  Initial payment funds only ~10s of session runway. Broker emits
+  session.balance.low before exhaustion, then session.error with
+  code=balance_exhausted, invokes the capability-declared session stop
+  path on the backend via /_scope, closes the WS with code 1011, calls
+  Reconcile + CloseSession on the payment-daemon, and the gateway
+  observes no further session.usage.tick frames after the error.
+
+setup:
+  capability:
+    id: test:external-media-balance-exhausted:v1
+    offering_id: default
+    interaction_mode: session-control-external-media@v0
+    work_unit:
+      name: seconds
+      extractor:
+        type: seconds-elapsed
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-scope-backend:8000
+      auth: none
+    extra:
+      media_schema: scope-passthrough/v0
+      session_start_path: /api/v1/session/start
+      session_stop_path: /api/v1/session/stop
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:external-media-balance-exhausted:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-short-runway>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: session-control-external-media@v0
+    Content-Type: application/json
+  body: |
+    {}
+
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 202
+  body_fields_present:
+    - session_id
+    - control_url
+    - media.scope_url
+
+session_control:
+  upgrade: true
+  expect_envelopes:
+    - type: session.started
+    - type: session.balance.low
+  expect_session_error:
+    code: balance_exhausted
+  expect_close_code: 1011
+  expect_backend_stop_called: true
+  expect_no_further_ticks_after_error: true

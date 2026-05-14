@@ -1,0 +1,92 @@
+# Proxy-passthrough conformance fixture for
+# session-control-external-media@v0 (plan 0026).
+#
+# After session-open, runner issues a non-lifecycle backend call through
+# the broker's /_scope/<session_id>/* reverse proxy. Asserts: status,
+# body, and headers are forwarded verbatim aside from Livepeer-* header
+# stripping; the proxy authorises against the live session record;
+# requests for unknown / closed session_id get 404.
+
+name: proxy-passthrough
+mode: session-control-external-media@v0
+spec_version: "0.1"
+description: |
+  After session-open, runner issues GET /_scope/<sid>/api/v1/pipeline/status
+  on the broker's reverse-proxy plane. Asserts: 200 + JSON body forwarded
+  verbatim, Livepeer-* request headers were stripped before forwarding,
+  and a parallel request to /_scope/sess_invalid/api/v1/pipeline/status
+  returns 404. The session.usage.tick clock is unaffected by proxy
+  passthrough traffic.
+
+setup:
+  capability:
+    id: test:external-media-proxy-passthrough:v1
+    offering_id: default
+    interaction_mode: session-control-external-media@v0
+    work_unit:
+      name: seconds
+      extractor:
+        type: seconds-elapsed
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-scope-backend:8000
+      auth: none
+    extra:
+      media_schema: scope-passthrough/v0
+      session_start_path: /api/v1/session/start
+      session_stop_path: /api/v1/session/stop
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:external-media-proxy-passthrough:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: session-control-external-media@v0
+    Content-Type: application/json
+  body: |
+    {}
+
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 202
+  body_fields_present:
+    - session_id
+    - control_url
+    - media.scope_url
+
+proxy_passthrough:
+  upgrade_control_ws: true
+  requests:
+    - name: valid-session-passthrough
+      method: GET
+      path_template: /_scope/{session_id}/api/v1/pipeline/status
+      expect_status: 200
+      expect_body_fields_present:
+        - status
+      expect_backend_received_no_headers:
+        - Livepeer-Capability
+        - Livepeer-Offering
+        - Livepeer-Payment
+        - Livepeer-Mode
+        - Livepeer-Spec-Version
+    - name: unknown-session-id
+      method: GET
+      path: /_scope/sess_invalid/api/v1/pipeline/status
+      expect_status: 404
+
+session_control:
+  upgrade: true
+  expect_envelopes:
+    - type: session.started
+  send_session_end: true
+  expect_close_code: 1000

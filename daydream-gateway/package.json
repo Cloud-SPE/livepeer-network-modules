@@ -1,0 +1,44 @@
+{
+  "name": "@livepeer-network-modules/daydream-gateway",
+  "version": "0.1.0",
+  "description": "Thin broadcaster-side gateway exposing Daydream Scope as a paid Livepeer capability (plan 0026)",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "frontend/dist",
+    "README.md",
+    "AGENTS.md"
+  ],
+  "scripts": {
+    "build": "tsc && vite build --config vite.ui.config.ts",
+    "lint": "tsc --noEmit",
+    "start": "node ./dist/index.js",
+    "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"
+  },
+  "dependencies": {
+    "@fastify/static": "^9.1.3",
+    "@xstate/react": "^6.1.0",
+    "@grpc/grpc-js": "^1.12.2",
+    "@grpc/proto-loader": "^0.8.1",
+    "@tztcloud/livepeer-gateway-middleware": "workspace:*",
+    "fastify": "^5.0.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "ws": "^8.18.0",
+    "xstate": "^5.31.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.12"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

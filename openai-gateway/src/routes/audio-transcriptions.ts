@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { auth, billing } from "@livepeer-rewrite/customer-portal";
-import { middleware } from "@livepeer-rewrite/customer-portal";
+import type { auth, billing } from "@livepeer-network-modules/customer-portal";
+import { middleware } from "@livepeer-network-modules/customer-portal";
 
 import { Capability } from "../livepeer/capabilityMap.js";
 import { LivepeerBrokerError } from "../livepeer/errors.js";

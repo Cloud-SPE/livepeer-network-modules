@@ -1,6 +1,6 @@
 import { desc } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
-import type { AdminAuthResolver } from "@livepeer-rewrite/customer-portal/auth";
+import type { AdminAuthResolver } from "@livepeer-network-modules/customer-portal/auth";
 
 import type { Db } from "../db/pool.js";
 import { vtuberNodeHealth, vtuberRateCardSession, vtuberUsageRecord } from "../repo/schema.js";

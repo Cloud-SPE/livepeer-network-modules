@@ -1,5 +1,5 @@
 import { html, render, nothing } from "lit";
-import { ApiClient } from "@livepeer-rewrite/customer-portal-shared";
+import { ApiClient } from "@livepeer-network-modules/customer-portal-shared";
 import { installAdminPageStyles } from "./admin-shared.js";
 
 interface TopupRow {

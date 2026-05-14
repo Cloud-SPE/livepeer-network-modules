@@ -1,5 +1,5 @@
 {
-  "name": "@livepeer-rewrite/video-gateway-portal",
+  "name": "@livepeer-network-modules/video-gateway-portal",
   "version": "0.1.0",
   "private": true,
   "description": "Customer-facing portal SPA for the video-gateway. Composes customer-portal/frontend/shared widgets + adds video-specific routes (assets / streams / webhooks / recordings).",
@@ -14,7 +14,7 @@
     "test": "tsc -p tsconfig.test.json && mkdir -p dist-test/src/components && cp src/components/*.css dist-test/src/components/ && node --test ./dist-test/test/**/*.test.js"
   },
   "dependencies": {
-    "@livepeer-rewrite/customer-portal-shared": "workspace:*",
+    "@livepeer-network-modules/customer-portal-shared": "workspace:*",
     "rxjs": "^7.8.0"
   },
   "devDependencies": {

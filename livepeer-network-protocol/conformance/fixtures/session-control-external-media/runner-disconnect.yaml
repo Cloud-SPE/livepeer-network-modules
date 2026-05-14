@@ -1,0 +1,76 @@
+# Runner-disconnect conformance fixture for
+# session-control-external-media@v0 (plan 0026).
+#
+# Stub Scope-shaped backend stops responding to /_scope proxy requests
+# (configured to drop after N seconds). Broker proxy detects an
+# unreachable-backend window, emits session.error{code=runner_disconnect},
+# closes WS with 1011, refunds remainder.
+
+name: runner-disconnect
+mode: session-control-external-media@v0
+spec_version: "0.1"
+description: |
+  Stub backend goes silent after first session.started tick. Broker
+  /_scope proxy retries fail for backend-unresponsive-timeout window
+  (default 30s, shortened to 3s in this fixture). Broker emits
+  session.error{code=runner_disconnect} on the control WS, closes with
+  code 1011, calls Reconcile (capped at observed seconds-elapsed) +
+  CloseSession on the payment-daemon, refunds the remainder.
+
+setup:
+  capability:
+    id: test:external-media-runner-disconnect:v1
+    offering_id: default
+    interaction_mode: session-control-external-media@v0
+    work_unit:
+      name: seconds
+      extractor:
+        type: seconds-elapsed
+        granularity: 1
+    price:
+      amount_wei: "1500000"
+      per_units: 1
+    backend:
+      transport: http
+      url: http://mock-scope-backend:8000
+      auth: none
+    extra:
+      media_schema: scope-passthrough/v0
+      session_start_path: /api/v1/session/start
+      session_stop_path: /api/v1/session/stop
+      backend_unresponsive_timeout_seconds: 3
+      stub_behavior: silent-after-start
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: test:external-media-runner-disconnect:v1
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: session-control-external-media@v0
+    Content-Type: application/json
+  body: |
+    {}
+
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 202
+  body_fields_present:
+    - session_id
+    - control_url
+    - media.scope_url
+
+session_control:
+  upgrade: true
+  expect_envelopes:
+    - type: session.started
+  expect_envelopes_within_seconds: 10
+  expect_session_error:
+    code: runner_disconnect
+  expect_close_code: 1011
+  expect_refund_on_remaining_balance: true

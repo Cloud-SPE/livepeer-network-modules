@@ -1,4 +1,4 @@
-# `@livepeer-rewrite/customer-portal`
+# `@livepeer-network-modules/customer-portal`
 
 Shared SaaS-shell library for per-product Livepeer rewrite gateways.
 Provides API-key auth, customer ledger, Stripe top-ups, operator admin
@@ -17,19 +17,19 @@ runtime. See
 
 | Subpath | Purpose |
 |---|---|
-| `@livepeer-rewrite/customer-portal/auth` | API-key generate/hash/verify, AuthResolver |
-| `@livepeer-rewrite/customer-portal/billing` | Wallet, reservations, top-ups |
-| `@livepeer-rewrite/customer-portal/payment` | Stripe checkout + webhook |
-| `@livepeer-rewrite/customer-portal/middleware` | Fastify pre-handlers |
-| `@livepeer-rewrite/customer-portal/admin` | Operator admin engine |
-| `@livepeer-rewrite/customer-portal/db` | drizzle pgSchema, migrations runner |
-| `@livepeer-rewrite/customer-portal/registry` | Service-registry hooks (placeholder) |
+| `@livepeer-network-modules/customer-portal/auth` | API-key generate/hash/verify, AuthResolver |
+| `@livepeer-network-modules/customer-portal/billing` | Wallet, reservations, top-ups |
+| `@livepeer-network-modules/customer-portal/payment` | Stripe checkout + webhook |
+| `@livepeer-network-modules/customer-portal/middleware` | Fastify pre-handlers |
+| `@livepeer-network-modules/customer-portal/admin` | Operator admin engine |
+| `@livepeer-network-modules/customer-portal/db` | drizzle pgSchema, migrations runner |
+| `@livepeer-network-modules/customer-portal/registry` | Service-registry hooks (placeholder) |
 
 ## Build
 
 ```
-pnpm -F @livepeer-rewrite/customer-portal build
-pnpm -F @livepeer-rewrite/customer-portal test
+pnpm -F @livepeer-network-modules/customer-portal build
+pnpm -F @livepeer-network-modules/customer-portal test
 ```
 
 ## Frontend sub-workspace

@@ -1,5 +1,5 @@
-import '@livepeer-rewrite/customer-portal-shared';
-import { HashRouter } from '@livepeer-rewrite/customer-portal-shared';
+import '@livepeer-network-modules/customer-portal-shared';
+import { HashRouter } from '@livepeer-network-modules/customer-portal-shared';
 
 export function bootstrap(root: HTMLElement): void {
   document.body.dataset.livepeerUiMode = 'network-console';

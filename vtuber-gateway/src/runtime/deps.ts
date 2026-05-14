@@ -1,4 +1,4 @@
-import type { AuthResolver } from "@livepeer-rewrite/customer-portal/auth";
+import type { AuthResolver } from "@livepeer-network-modules/customer-portal/auth";
 
 import type { Config } from "../config.js";
 import type { Db as VtuberDb } from "../db/pool.js";

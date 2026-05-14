@@ -13,8 +13,8 @@ import * as payment from '../src/livepeer/payment.js';
 import { buildServer } from '../src/server.js';
 import type { Config } from '../src/config.js';
 import { HEADER } from '../src/livepeer/headers.js';
-import type { CustomerPortal } from '@livepeer-rewrite/customer-portal';
-import type { Wallet } from '@livepeer-rewrite/customer-portal/billing';
+import type { CustomerPortal } from '@livepeer-network-modules/customer-portal';
+import type { Wallet } from '@livepeer-network-modules/customer-portal/billing';
 
 interface CapturedBrokerCall {
   capability: string;

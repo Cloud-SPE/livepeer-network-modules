@@ -1,10 +1,10 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import type { CustomerPortal } from '@livepeer-rewrite/customer-portal';
-import { billing, middleware } from '@livepeer-rewrite/customer-portal';
+import type { CustomerPortal } from '@livepeer-network-modules/customer-portal';
+import { billing, middleware } from '@livepeer-network-modules/customer-portal';
 
 import type { Config } from '../config.js';
-import type { Db } from '@livepeer-rewrite/customer-portal/db';
+import type { Db } from '@livepeer-network-modules/customer-portal/db';
 
 const CheckoutSchema = z.object({
   amount_usd_cents: z.number().int().positive(),

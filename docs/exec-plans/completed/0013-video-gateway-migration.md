@@ -163,7 +163,7 @@ video-gateway/
   Dockerfile                     ← multi-stage; node + RTMP listener
   compose.yaml                   ← extends rewrite reference
   compose.prod.yaml
-  package.json                   ← @livepeer-rewrite/video-gateway
+  package.json                   ← @livepeer-network-modules/video-gateway
   tsconfig.json
   vitest.config.ts
   drizzle.config.ts
@@ -491,8 +491,8 @@ edge replication, geographic routing — gateway doesn't reinvent CDN.
 video-gateway/
   package.json:
     dependencies:
-      "@livepeer-rewrite/customer-portal":  "workspace:*"
-      "@livepeer-rewrite/gateway-adapters": "workspace:*"
+      "@livepeer-network-modules/customer-portal":  "workspace:*"
+      "@livepeer-network-modules/gateway-adapters": "workspace:*"
       fastify, @fastify/multipart, zod, drizzle-orm, pg, ioredis,
       stripe, lit, rxjs, "<TS-RTMP-lib>" (per §6.2)
 ```
@@ -630,7 +630,7 @@ per plan 0011-followup §11.4.
 `pricing/`, `frontend/`, `runtime/rtmp/`, `migrations/`. Compose
 stack with Postgres + Redis + payment-daemon + broker + mock-runner.
 
-**Acceptance:** `pnpm -F @livepeer-rewrite/video-gateway build` green;
+**Acceptance:** `pnpm -F @livepeer-network-modules/video-gateway build` green;
 empty Fastify app starts; mock services come up.
 
 ### Phase 2 — Engine port (video-core)

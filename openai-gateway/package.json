@@ -1,5 +1,5 @@
 {
-  "name": "@livepeer-rewrite/openai-gateway",
+  "name": "@livepeer-network-modules/openai-gateway",
   "version": "0.2.0",
   "description": "OpenAI-compatible gateway for the Livepeer network rewrite (paid HTTP adapter)",
   "private": true,
@@ -14,7 +14,7 @@
     "src/frontend/portal/dist"
   ],
   "scripts": {
-    "build": "pnpm -F @livepeer-rewrite/customer-portal-shared build && pnpm -F @livepeer-rewrite/customer-portal build && tsc && vite build --config vite.portal.config.ts && vite build --config vite.admin.config.ts",
+    "build": "pnpm -F @livepeer-network-modules/customer-portal-shared build && pnpm -F @livepeer-network-modules/customer-portal build && tsc && vite build --config vite.portal.config.ts && vite build --config vite.admin.config.ts",
     "lint": "tsc --noEmit",
     "start": "node ./dist/index.js",
     "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"
@@ -24,8 +24,8 @@
     "@fastify/websocket": "^11.2.0",
     "@grpc/grpc-js": "^1.12.2",
     "@grpc/proto-loader": "^0.8.1",
-    "@livepeer-rewrite/customer-portal": "workspace:*",
-    "@livepeer-rewrite/customer-portal-shared": "workspace:*",
+    "@livepeer-network-modules/customer-portal": "workspace:*",
+    "@livepeer-network-modules/customer-portal-shared": "workspace:*",
     "@tztcloud/livepeer-gateway-middleware": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.0.0",

@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createCustomerPortal, db as portalDb } from "@livepeer-rewrite/customer-portal";
-import { registerCustomerSelfServiceRoutes } from "@livepeer-rewrite/customer-portal/routes";
+import { createCustomerPortal, db as portalDb } from "@livepeer-network-modules/customer-portal";
+import { registerCustomerSelfServiceRoutes } from "@livepeer-network-modules/customer-portal/routes";
 
 import { loadConfig } from "./config.js";
 import { createDb } from "./db/pool.js";

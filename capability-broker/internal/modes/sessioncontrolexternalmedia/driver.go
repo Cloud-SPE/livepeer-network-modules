@@ -299,9 +299,9 @@ func deriveControlURL(r *http.Request, sessID string) (string, error) {
 	if host == "" {
 		return "", errInvalidRequest
 	}
-	scheme := "wss"
-	if r.TLS == nil {
-		scheme = "ws"
+	scheme := "ws"
+	if externalRequestScheme(r) == "https" {
+		scheme = "wss"
 	}
 	return scheme + "://" + host + "/v1/cap/" + sessID + "/control", nil
 }
@@ -313,11 +313,20 @@ func deriveScopeURL(r *http.Request, sessID string) (string, error) {
 	if host == "" {
 		return "", errInvalidRequest
 	}
-	scheme := "https"
-	if r.TLS == nil {
-		scheme = "http"
-	}
+	scheme := externalRequestScheme(r)
 	return scheme + "://" + host + "/_scope/" + sessID + "/", nil
+}
+
+func externalRequestScheme(r *http.Request) string {
+	if xfProto := r.Header.Get("X-Forwarded-Proto"); xfProto != "" {
+		if proto := strings.TrimSpace(strings.Split(xfProto, ",")[0]); proto != "" {
+			return strings.ToLower(proto)
+		}
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
 }
 
 // scopeURLPath returns the path the proxy is mounted at for a given

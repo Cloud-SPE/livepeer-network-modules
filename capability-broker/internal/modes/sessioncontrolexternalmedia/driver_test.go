@@ -2,6 +2,7 @@ package sessioncontrolexternalmedia
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -114,5 +115,70 @@ func TestMode_IsCanonical(t *testing.T) {
 	d := New(NewStore(), DefaultConfig())
 	if d.Mode() != "session-control-external-media@v0" {
 		t.Fatalf("Mode(): got %q", d.Mode())
+	}
+}
+
+func TestDeriveControlURL_HonorsExternalScheme(t *testing.T) {
+	tests := []struct {
+		name string
+		tls  bool
+		xfp  string
+		want string
+	}{
+		{
+			name: "plain http",
+			want: "ws://broker.example.com/v1/cap/sess_x/control",
+		},
+		{
+			name: "direct tls",
+			tls:  true,
+			want: "wss://broker.example.com/v1/cap/sess_x/control",
+		},
+		{
+			name: "tls terminated proxy",
+			xfp:  "https",
+			want: "wss://broker.example.com/v1/cap/sess_x/control",
+		},
+		{
+			name: "forwarded proto list",
+			xfp:  "https, http",
+			want: "wss://broker.example.com/v1/cap/sess_x/control",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/cap", nil)
+			req.Host = "broker.example.com"
+			if tc.tls {
+				req.TLS = &tls.ConnectionState{}
+			}
+			if tc.xfp != "" {
+				req.Header.Set("X-Forwarded-Proto", tc.xfp)
+			}
+
+			got, err := deriveControlURL(req, "sess_x")
+			if err != nil {
+				t.Fatalf("deriveControlURL: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("control_url: got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDeriveScopeURL_HonorsExternalScheme(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/cap", nil)
+	req.Host = "broker.example.com"
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	got, err := deriveScopeURL(req, "sess_x")
+	if err != nil {
+		t.Fatalf("deriveScopeURL: %v", err)
+	}
+	want := "https://broker.example.com/_scope/sess_x/"
+	if got != want {
+		t.Fatalf("scope_url: got %q want %q", got, want)
 	}
 }

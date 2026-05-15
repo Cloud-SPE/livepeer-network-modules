@@ -13,6 +13,7 @@ WORKDIR /src
 RUN npm install -g pnpm@9.0.0
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal/package.json ./customer-portal/
+COPY gateway-route-health/package.json ./gateway-route-health/
 COPY vtuber-gateway/package.json ./vtuber-gateway/
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
@@ -22,11 +23,14 @@ WORKDIR /src
 RUN npm install -g pnpm@9.0.0
 COPY --from=deps /src/node_modules ./node_modules
 COPY --from=deps /src/customer-portal/node_modules ./customer-portal/node_modules
+COPY --from=deps /src/gateway-route-health/node_modules ./gateway-route-health/node_modules
 COPY --from=deps /src/vtuber-gateway/node_modules ./vtuber-gateway/node_modules
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal ./customer-portal
+COPY gateway-route-health ./gateway-route-health
 COPY vtuber-gateway ./vtuber-gateway
 RUN pnpm -F @livepeer-network-modules/customer-portal build \
+ && pnpm -F @livepeer-network-modules/gateway-route-health build \
  && pnpm -F @livepeer-network-modules/vtuber-gateway build \
  && pnpm --filter @livepeer-network-modules/vtuber-gateway --prod deploy /out/vtuber-gateway
 

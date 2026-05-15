@@ -17,6 +17,7 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal/package.json ./customer-portal/
 COPY customer-portal/frontend/shared/package.json ./customer-portal/frontend/shared/
 COPY gateway-adapters/ts/package.json ./gateway-adapters/ts/
+COPY gateway-route-health/package.json ./gateway-route-health/
 COPY openai-gateway/package.json ./openai-gateway/
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
@@ -28,14 +29,17 @@ COPY --from=deps /src/node_modules ./node_modules
 COPY --from=deps /src/customer-portal/node_modules ./customer-portal/node_modules
 COPY --from=deps /src/customer-portal/frontend/shared/node_modules ./customer-portal/frontend/shared/node_modules
 COPY --from=deps /src/gateway-adapters/ts/node_modules ./gateway-adapters/ts/node_modules
+COPY --from=deps /src/gateway-route-health/node_modules ./gateway-route-health/node_modules
 COPY --from=deps /src/openai-gateway/node_modules ./openai-gateway/node_modules
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY customer-portal ./customer-portal
 COPY gateway-adapters/ts ./gateway-adapters/ts
+COPY gateway-route-health ./gateway-route-health
 COPY openai-gateway ./openai-gateway
 RUN pnpm -F @livepeer-network-modules/customer-portal-shared build \
  && pnpm -F @livepeer-network-modules/customer-portal build \
  && pnpm -F @tztcloud/livepeer-gateway-middleware build \
+ && pnpm -F @livepeer-network-modules/gateway-route-health build \
  && pnpm -F @livepeer-network-modules/openai-gateway build \
  && pnpm --filter @livepeer-network-modules/openai-gateway --prod deploy /out/openai-gateway
 

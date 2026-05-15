@@ -11,16 +11,16 @@ dependency.
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
   --target chat \
-  -t tztcloud/openai-runner-chat:v1.0.0 \
+  -t tztcloud/openai-runner-chat:v1.1.0 \
   ../openai-runner
 
 docker buildx build --platform linux/amd64,linux/arm64 \
   --target embeddings \
-  -t tztcloud/openai-runner-embeddings:v1.0.0 \
+  -t tztcloud/openai-runner-embeddings:v1.1.0 \
   ../openai-runner
 ```
 
-Default tag is **v1.0.0**. Keep related runner/base images on the same
+Default tag is **v1.1.0**. Keep related runner/base images on the same
 tag unless the caller overrides `TAG=...`.
 
 ## GPU prerequisites
@@ -38,8 +38,8 @@ upstream server handles device selection.
 
 | Image | Platforms | Notes |
 |---|---|---|
-| `openai-runner-chat:v1.0.0` | linux/amd64, linux/arm64 | Use the arm64 build on Apple Silicon dev machines or AWS Graviton |
-| `openai-runner-embeddings:v1.0.0` | linux/amd64, linux/arm64 | same |
+| `openai-runner-chat:v1.1.0` | linux/amd64, linux/arm64 | Use the arm64 build on Apple Silicon dev machines or AWS Graviton |
+| `openai-runner-embeddings:v1.1.0` | linux/amd64, linux/arm64 | same |
 
 Multi-arch is enabled because the runner is pure-Go with no native
 deps and the proxy footprint is small (~15 MB per arch).

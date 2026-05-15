@@ -40,7 +40,7 @@ imports from `customer-portal/` (this brief's foundation, plan
 
 This brief is **chain-gated**: it emits payments via `payment-daemon/`
 sender mode; production cutover gates on plan 0016 (chain-integrated
-payment-daemon) reaching v1.0.0. Pre-1.0.0 implementation against the
+payment-daemon) reaching v1.1.0. Pre-1.0.0 implementation against the
 stub provider is fine for paper + smoke testing; production smoke on
 Arbitrum One per `docs/design-docs/migration-from-suite.md` §3.
 

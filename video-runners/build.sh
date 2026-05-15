@@ -5,11 +5,11 @@ set -euo pipefail
 #
 # Environment:
 #   REGISTRY      Docker registry prefix (default: tztcloud)
-#   TAG           Image tag (default: v1.0.0)
+#   TAG           Image tag (default: v1.1.0)
 #   PUSH          Push images after build (default: false)
 
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-v1.0.0}"
+TAG="${TAG:-v1.1.0}"
 PUSH="${PUSH:-false}"
 CODECS_IMAGE="${CODECS_IMAGE:-${REGISTRY}/codecs-builder:${TAG}}"
 

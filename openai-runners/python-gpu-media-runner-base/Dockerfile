@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=tztcloud/python-gpu-runner-base:v1.0.0
+ARG BASE_IMAGE=tztcloud/python-gpu-runner-base:v1.1.0
 FROM ${BASE_IMAGE}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

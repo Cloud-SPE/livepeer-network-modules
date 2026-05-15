@@ -8,10 +8,10 @@ Cohere-compatible reranker (`/v1/rerank`). Loads
 amd64-only per OQ4.
 
 ```bash
-docker build -t tztcloud/rerank-runner:v1.0.0 .
+docker build -t tztcloud/rerank-runner:v1.1.0 .
 ```
 
-Default tag: **v1.0.0**.
+Default tag: **v1.1.0**.
 
 ## GPU prerequisites
 
@@ -39,7 +39,7 @@ Pre-pull via the sibling `model-downloader` image:
 docker run --rm \
   -v ai-rerank-models:/models \
   -e MODEL_ID="zeroentropy/zerank-2" \
-  tztcloud/rerank-model-downloader:v1.0.0
+  tztcloud/rerank-model-downloader:v1.1.0
 ```
 
 zerank-2 is ~8 GB on disk.
@@ -48,7 +48,7 @@ zerank-2 is ~8 GB on disk.
 
 | Image | Platforms |
 |---|---|
-| `rerank-runner:v1.0.0` | linux/amd64 only |
+| `rerank-runner:v1.1.0` | linux/amd64 only |
 
 ## Prometheus integration (OQ5)
 

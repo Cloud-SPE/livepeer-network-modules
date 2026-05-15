@@ -20,7 +20,7 @@
 
 services:
   secure-orch-console:
-    image: ${REGISTRY:-tztcloud}/livepeer-secure-orch-console:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-secure-orch-console:${TAG:-v1.1.0}
     environment:
       SECURE_ORCH_ADMIN_TOKENS: ${SECURE_ORCH_ADMIN_TOKENS}
       PROTOCOL_DAEMON_SOCKET: ${PROTOCOL_DAEMON_SOCKET:-/var/run/livepeer/protocol.sock}

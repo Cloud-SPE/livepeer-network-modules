@@ -24,7 +24,7 @@
 
 services:
   service-registry-daemon:
-    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.1.0}
     command: ["--listen=unix:/var/run/livepeer/service-registry.sock"]
     volumes:
       - ${LIVEPEER_RUN_DIR:-/var/run/livepeer}:/var/run/livepeer
@@ -32,7 +32,7 @@ services:
     restart: unless-stopped
 
   payment-daemon:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.1.0}
     command: ["--mode=receiver", "--socket=/var/run/livepeer/payment-daemon.sock"]
     environment:
       ORCH_ETH_ADDRESS: ${ORCH_ETH_ADDRESS}
@@ -64,7 +64,7 @@ services:
     # goes out via the `egress` net to Cloudflare TURN.
 
   capability-broker:
-    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.1.0}
     command:
       - --config=/etc/livepeer/host-config.yaml
       - --listen=:8080

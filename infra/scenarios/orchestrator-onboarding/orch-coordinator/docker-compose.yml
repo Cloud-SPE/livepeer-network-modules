@@ -14,7 +14,7 @@
 
 services:
   orch-coordinator:
-    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.1.0}
     container_name: orch-coordinator
     hostname: orch-coordinator
     command:

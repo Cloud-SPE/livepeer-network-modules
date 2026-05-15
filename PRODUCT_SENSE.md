@@ -49,7 +49,7 @@ A **workload-agnostic supply-side rearchitecture**:
   egress-only; operator hand-carries signed manifests. (May change in v2; not now.)
 - **Not a fork or successor of `livepeer-network-suite`.** That repo continues to ship
   and is not modified by anything done here. The two share no submodules, no pinned
-  SHAs, and no release schedule. This repo's first release is v1.0.0; the suite's
+  SHAs, and no release schedule. This repo's first release is v1.1.0; the suite's
   release line is independent.
 
 ## Anti-goals

@@ -43,7 +43,7 @@ services:
     restart: unless-stopped
 
   service-registry-daemon:
-    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v1.1.0}
     command:
       - --mode=resolver
       - --socket=/var/run/livepeer/service-registry.sock
@@ -72,7 +72,7 @@ services:
     restart: unless-stopped
 
   payment-daemon-sender:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.1.0}
     command:
       - --mode=sender
       - --socket=/var/run/livepeer/payer-daemon.sock
@@ -88,7 +88,7 @@ services:
     restart: unless-stopped
 
   vtuber-gateway:
-    image: ${REGISTRY:-tztcloud}/livepeer-vtuber-gateway:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-vtuber-gateway:${TAG:-v1.1.0}
     container_name: vtuber-gateway
     hostname: vtuber-gateway
     depends_on:

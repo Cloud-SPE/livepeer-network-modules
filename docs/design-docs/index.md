@@ -13,7 +13,7 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [payment-decoupling.md](./payment-decoupling.md) | active | What changed in `payment-daemon` for opaque capability / work-unit names |
 | [backend-health.md](./backend-health.md) | active | Three-layer health model (manifest / live / failure-rate) — which layer answers which routing question |
 | [trust-model.md](./trust-model.md) | active | Cold-key + sign-cycle deep dive; threat model and what each invariant defends against |
-| [migration-from-suite.md](./migration-from-suite.md) | active | Suite-to-rewrite component map, phased deprecation timeline (gated by v1.0.0), and what the suite preserves long-term (cold key, on-chain identity, chain state) |
+| [migration-from-suite.md](./migration-from-suite.md) | active | Suite-to-rewrite component map, phased deprecation timeline (gated by v1.1.0), and what the suite preserves long-term (cold key, on-chain identity, chain state) |
 | [gpu-requirements.md](./gpu-requirements.md) | active | NVIDIA Pascal+ floor + per-vendor (Intel QSV, AMD VAAPI) matrix for the workload runners; CUDA toolkit alignment + multi-arch policy per OQ4 |
 | [build-system.md](./build-system.md) | active | Canonical base images (python:3.12-slim, nvidia/cuda:12.9.1-runtime-ubuntu24.04, golang:1.22-alpine, ubuntu:24.04, plus CUDA devel where build stages require it) + image-tag pinning + buildx orchestration for the workload runners |
 | [ui-design-system.md](./ui-design-system.md) | active | Shared visual system for all operator and product UIs, aligned to current Livepeer brand and explorer surfaces |

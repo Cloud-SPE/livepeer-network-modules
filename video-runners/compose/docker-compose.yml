@@ -13,7 +13,7 @@
 services:
   # ---- AMD VAAPI (default profile — works on most Linux hosts) ----
   transcode_runner:
-    image: ${REGISTRY:-tztcloud}/transcode-runner:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/transcode-runner:${TAG:-v1.1.0}
     devices:
       - /dev/dri:/dev/dri
     environment:
@@ -28,7 +28,7 @@ services:
       - "${TRANSCODE_RUNNER_PORT:-8086}:8080"
 
   abr_runner:
-    image: ${REGISTRY:-tztcloud}/abr-runner:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/abr-runner:${TAG:-v1.1.0}
     devices:
       - /dev/dri:/dev/dri
     environment:
@@ -44,7 +44,7 @@ services:
 
   # ---- NVIDIA NVENC/NVDEC (profile: nvidia) ----
   transcode_runner_nvidia:
-    image: ${REGISTRY:-tztcloud}/transcode-runner-nvidia:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/transcode-runner-nvidia:${TAG:-v1.1.0}
     profiles: [nvidia]
     runtime: nvidia
     environment:
@@ -59,7 +59,7 @@ services:
       - "${TRANSCODE_RUNNER_PORT:-8086}:8080"
 
   abr_runner_nvidia:
-    image: ${REGISTRY:-tztcloud}/abr-runner-nvidia:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/abr-runner-nvidia:${TAG:-v1.1.0}
     profiles: [nvidia]
     runtime: nvidia
     environment:
@@ -75,7 +75,7 @@ services:
 
   # ---- Intel QSV / VAAPI (profile: intel) ----
   transcode_runner_intel:
-    image: ${REGISTRY:-tztcloud}/transcode-runner-intel:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/transcode-runner-intel:${TAG:-v1.1.0}
     profiles: [intel]
     devices:
       - /dev/dri:/dev/dri
@@ -89,7 +89,7 @@ services:
       - transcode-temp:/tmp/transcode
 
   abr_runner_intel:
-    image: ${REGISTRY:-tztcloud}/abr-runner-intel:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/abr-runner-intel:${TAG:-v1.1.0}
     profiles: [intel]
     devices:
       - /dev/dri:/dev/dri

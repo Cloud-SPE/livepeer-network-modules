@@ -43,28 +43,28 @@ Editing `src/` invalidates only step 9 and downstream.
 
 ## Image tags
 
-Default runner image tag is **`v1.0.0`** for the current local build
+Default runner image tag is **`v1.1.0`** for the current local build
 path. Shared bases and downstream runners should use the same tag unless
 the caller overrides `TAG=...`.
 
 | Image | Repository |
 |---|---|
-| Python base | `tztcloud/python-runner-base:v1.0.0` |
-| Python GPU base | `tztcloud/python-gpu-runner-base:v1.0.0` |
-| Python GPU media base | `tztcloud/python-gpu-media-runner-base:v1.0.0` |
-| OpenAI chat proxy (Go) | `tztcloud/openai-runner-chat:v1.0.0` |
-| OpenAI embeddings proxy (Go) | `tztcloud/openai-runner-embeddings:v1.0.0` |
-| Whisper STT | `tztcloud/openai-audio-runner:v1.0.0` |
-| Kokoro TTS | `tztcloud/openai-tts-runner:v1.0.0` |
-| Diffusers image gen | `tztcloud/openai-image-generation-runner:v1.0.0` |
-| HF model downloader | `tztcloud/image-model-downloader:v1.0.0` |
-| OpenAI tester | `tztcloud/openai-tester:v1.0.0` |
-| Rerank | `tztcloud/rerank-runner:v1.0.0` |
-| Rerank model downloader | `tztcloud/rerank-model-downloader:v1.0.0` |
-| Codecs builder | `tztcloud/codecs-builder:v1.0.0` |
-| VOD transcode (NVIDIA / Intel / AMD) | `tztcloud/transcode-runner{,-intel,-amd}:v1.0.0` |
-| ABR ladder (NVIDIA / Intel / AMD) | `tztcloud/abr-runner{,-intel,-amd}:v1.0.0` |
-| Transcode tester | `tztcloud/transcode-tester:v1.0.0` |
+| Python base | `tztcloud/python-runner-base:v1.1.0` |
+| Python GPU base | `tztcloud/python-gpu-runner-base:v1.1.0` |
+| Python GPU media base | `tztcloud/python-gpu-media-runner-base:v1.1.0` |
+| OpenAI chat proxy (Go) | `tztcloud/openai-runner-chat:v1.1.0` |
+| OpenAI embeddings proxy (Go) | `tztcloud/openai-runner-embeddings:v1.1.0` |
+| Whisper STT | `tztcloud/openai-audio-runner:v1.1.0` |
+| Kokoro TTS | `tztcloud/openai-tts-runner:v1.1.0` |
+| Diffusers image gen | `tztcloud/openai-image-generation-runner:v1.1.0` |
+| HF model downloader | `tztcloud/image-model-downloader:v1.1.0` |
+| OpenAI tester | `tztcloud/openai-tester:v1.1.0` |
+| Rerank | `tztcloud/rerank-runner:v1.1.0` |
+| Rerank model downloader | `tztcloud/rerank-model-downloader:v1.1.0` |
+| Codecs builder | `tztcloud/codecs-builder:v1.1.0` |
+| VOD transcode (NVIDIA / Intel / AMD) | `tztcloud/transcode-runner{,-intel,-amd}:v1.1.0` |
+| ABR ladder (NVIDIA / Intel / AMD) | `tztcloud/abr-runner{,-intel,-amd}:v1.1.0` |
+| Transcode tester | `tztcloud/transcode-tester:v1.1.0` |
 
 ## Build orchestrators
 
@@ -94,7 +94,7 @@ The Go proxy uses Docker buildx for the multi-arch build:
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
   --target chat \
-  -t tztcloud/openai-runner-chat:v1.0.0 \
+  -t tztcloud/openai-runner-chat:v1.1.0 \
   openai-runners/openai-runner
 ```
 

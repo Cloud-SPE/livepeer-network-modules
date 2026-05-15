@@ -12,7 +12,7 @@
 services:
   # Synthetic-fixture mode for smoke tests. No config file required.
   orch-coordinator-dev:
-    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.1.0}
     environment:
       ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS:-}
     command:

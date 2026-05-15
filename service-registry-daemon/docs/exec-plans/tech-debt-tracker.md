@@ -63,7 +63,7 @@ Append-only list of known debt. Strike through when resolved; include the PR or 
 - Description: `Dockerfile` + `make docker-build` produce a local image but nothing publishes tagged images.
 - Remediation: GHCR publishing workflow on tagged releases.
 - Partial: 2026-04-25 — `make docker-push DOCKER_TAG=vX.Y.Z` now pushes both the version tag and `:latest` to `tztcloud/livepeer-service-registry-daemon` on Docker Hub. `compose.yaml` consumes the published image. First published version was `v0.8.10`.
-- Resolved: 2026-04-26 — plan 0008 landed `.github/workflows/docker.yml`, which builds + pushes all three module images (payment, service-registry, protocol) on tag push. Stable tags also re-tag `:latest`; pre-release tags push only the version tag. First fully-CI-published release is `v1.0.0`.
+- Resolved: 2026-04-26 — plan 0008 landed `.github/workflows/docker.yml`, which builds + pushes all three module images (payment, service-registry, protocol) on tag push. Stable tags also re-tag `:latest`; pre-release tags push only the version tag. First fully-CI-published release is `v1.1.0`.
 
 ### docker-multi-arch
 - Opened: 2026-04-25

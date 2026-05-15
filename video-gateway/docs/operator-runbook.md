@@ -138,7 +138,7 @@ Primary URLs:
 ## Rebuild and redeploy
 
 ```bash
-TAG=v1.0.0 REGISTRY=tztcloud ./infra/scripts/build-images.sh livepeer-video-gateway
+TAG=v1.1.0 REGISTRY=tztcloud ./infra/scripts/build-images.sh livepeer-video-gateway
 docker compose up -d --force-recreate video-gateway
 ```
 

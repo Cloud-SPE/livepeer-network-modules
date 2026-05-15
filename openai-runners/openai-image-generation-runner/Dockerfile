@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=tztcloud/python-gpu-runner-base:v1.0.0
+ARG BASE_IMAGE=tztcloud/python-gpu-runner-base:v1.1.0
 FROM ${BASE_IMAGE} AS builder
 
 RUN pip install --no-cache-dir \

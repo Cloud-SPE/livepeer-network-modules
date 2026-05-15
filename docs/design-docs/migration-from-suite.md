@@ -10,7 +10,7 @@ This doc maps every component of the existing `livepeer-network-suite`, the
 in-scope subset of `livepeer-cloud-spe/livepeer-byoc/` (the workload-runner
 tree), the canonical top-level `livepeer-vtuber-project/`, and the prior Go
 reference implementation `livepeer-modules-project/` to its replacement in
-this rewrite. Phases are gated by the rewrite's v1.0.0; this doc identifies
+this rewrite. Phases are gated by the rewrite's v1.1.0; this doc identifies
 what stays preserved long-term (operational state, secrets, on-chain identity).
 Per-component code-level deltas live in five paper-only migration briefs
 (see §2 below); this doc is the cross-cutting digest.
@@ -128,7 +128,7 @@ Five migration briefs (the "0013 family") shipped via
 |---|---|---|---|
 | `0013-shell` | `customer-portal/` (new shared library) | Pattern-extracted from `livepeer-openai-gateway-core/` + `livepeer-openai-gateway/` shell + `livepeer-vtuber-gateway/` SaaS layer | No — foundation for the others |
 | `0013-openai` | `openai-gateway/` (existing reference; absorbs SaaS) | `livepeer-openai-gateway-core/` + `livepeer-openai-gateway/` | Yes (emits payments) |
-| `0013-vtuber` | `vtuber-gateway/` + `vtuber-pipeline/` + `vtuber-runner/` (3 new) | `livepeer-vtuber-gateway/` + `livepeer-vtuber-project/{pipeline-app,session-runner,avatar-renderer}/` | Mixed — gateway gates on chain v1.0.0; pipeline + runner can pre-ship |
+| `0013-vtuber` | `vtuber-gateway/` + `vtuber-pipeline/` + `vtuber-runner/` (3 new) | `livepeer-vtuber-gateway/` + `livepeer-vtuber-project/{pipeline-app,session-runner,avatar-renderer}/` | Mixed — gateway gates on chain v1.1.0; pipeline + runner can pre-ship |
 | `0013-video` | `video-gateway/` (new) | `livepeer-video-gateway/` + `livepeer-video-core/` | Yes (emits payments) |
 | `0013-runners` | `openai-runners/` + `rerank-runner/` + `video-runners/` (3 new) | `livepeer-byoc/{openai-runners,rerank-runner,transcode-runners}/` (skip `live-transcode-runner`, `gateway-proxy`, `video-generation`, `register-capabilities`, `deployment-examples`) | No — workload only |
 
@@ -168,7 +168,7 @@ The pre-collapse plan 0013 (separate-SaaS-repo proposal) is preserved at
 | `livepeer-byoc/transcode-runners/transcode-tester` | `video-runners/transcode-tester/` per plan 0013-runners. | being lifted | plan 0013-runners |
 | `livepeer-byoc/transcode-runners/live-transcode-runner` | DROPPED. Capability-broker's mode driver (plan 0011-followup) replaces it. | retired | plan 0011-followup |
 | `livepeer-byoc/gateway-proxy` | DROPPED. Was for go-livepeer; not needed in rewrite. | retired | plan 0013-runners §15 |
-| `livepeer-byoc/video-generation` | DROPPED per user lock; not needed for v1.0.0. | retired | plan 0013-runners §15 |
+| `livepeer-byoc/video-generation` | DROPPED per user lock; not needed for v1.1.0. | retired | plan 0013-runners §15 |
 | `livepeer-byoc/register-capabilities` | DROPPED. Replaced by orch-coordinator scrape per plan 0018; runners' `GET /options` preserved. | retired | plan 0018; plan 0013-runners |
 | `livepeer-byoc/deployment-examples` | DROPPED per user lock; rewrite ships its own runbooks. | retired | plan 0013-runners §15 |
 | `livepeer-secure-orch-console` | `secure-orch-console/` in this monorepo (diff + one-click sign UX) | partially ported | plan 0019 (planned) |
@@ -184,7 +184,7 @@ The pre-collapse plan 0013 (separate-SaaS-repo proposal) is preserved at
 
 Phases run sequentially; each phase has a hard gate before the next opens.
 
-### Phase 1 — Rewrite reaches v1.0.0 (gates everything else)
+### Phase 1 — Rewrite reaches v1.1.0 (gates everything else)
 
 Acceptance: this monorepo cuts its first tag. Specifically: chain integration
 (plan 0016) lands so the `payment-daemon` providers bind to Arbitrum One, the
@@ -364,7 +364,7 @@ What an operator running the suite today does to migrate. Each phase below
 is gated by the corresponding deprecation phase above; no operator action is
 needed until phase 2 opens.
 
-### Phase 1 (rewrite reaches v1.0.0) — operator does nothing
+### Phase 1 (rewrite reaches v1.1.0) — operator does nothing
 
 The rewrite ships in parallel. Operators continue to run their suite-shaped
 fleet. No action required.
@@ -422,7 +422,7 @@ Operators do nothing. The suite repo's archival is a publisher-side action.
 | Custom capabilities operators have built that don't fit the rewrite's six initial modes | Per `architecture-overview.md` Layer 2, extending modes is supported (new mode = one adapter on each side, not a trunk schema change). Operators with a sixth-mode capability open a plan that adds the mode; their existing custom worker keeps running on the suite shape until that plan lands. |
 | Operator on the cold-key path is uncomfortable with the new manifest schema | The `secure-orch-console/` UX surface (plan 0019) is explicitly diff-driven — the operator sees the candidate manifest's flat-tuple shape next to the previously-signed shape before tapping sign. No silent schema upgrade. |
 | Chain-state divergence (escrow / reserve / redeemed-ticket set) between suite and rewrite `payment-daemon` instances | All three are persistent on Arbitrum One or in BoltDB; the rewrite reads/writes the same stores. Plan 0016 closes this explicitly with a fixture set against a real Arbitrum One contract address. |
-| Plan 0013 (OpenAI gateway migration brief) gets ahead of plan 0016 (chain integration), causing per-gateway smoke to fail against unbacked stub providers | Phase 1 explicitly gates everything else on the rewrite reaching v1.0.0, which requires plan 0016 closed. No phase-2 work opens until phase 1's gate is observable (the v1.0.0 tag + Arbitrum One smoke). |
+| Plan 0013 (OpenAI gateway migration brief) gets ahead of plan 0016 (chain integration), causing per-gateway smoke to fail against unbacked stub providers | Phase 1 explicitly gates everything else on the rewrite reaching v1.1.0, which requires plan 0016 closed. No phase-2 work opens until phase 1's gate is observable (the v1.1.0 tag + Arbitrum One smoke). |
 | Operator who maintains forks of `worker-runtime` to add custom capabilities loses the fork's substrate when `worker-runtime` is killed | The new substrate is a YAML config + an extractor recipe. Where the fork added a capability, the rewrite's flow is: declare the capability in `host-config.yaml`, point its `backend` at the existing custom inference service, pick a matching `extractor` recipe. The recipe set is a small, deliberately curated library (six recipes today); adding a new one is a broker change per `architecture-overview.md` lines 117–119, scoped behind its own plan. |
 
 ## 8. Out of scope
@@ -445,7 +445,7 @@ This doc deliberately does not cover:
 - **Image tag ownership during the cutover window.** Per core-belief #14
   (clean-slate rewrite — the suite is untouched) and per user-memory
   `feedback_no_image_version_bumps.md`, the rewrite does not bump or
-  republish suite image tags. Current default tag is `v1.0.0` across the rewrite's
+  republish suite image tags. Current default tag is `v1.1.0` across the rewrite's
   Cloud-SPE images; the migration does not bump as part of the move.
   Each side maintains its own release line; phase 5 archives the suite
   line.

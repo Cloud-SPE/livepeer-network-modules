@@ -21,7 +21,7 @@ explains when you need a PR vs. when you can land directly.
 ## What a new-mode PR must include
 
 1. The mode spec under `modes/<new>.md` with frontmatter declaring its version (start
-   at `v0.1.0`; bump to `v1.0.0` only when the mode is judged stable).
+   at `v0.1.0`; bump to `v1.1.0` only when the mode is judged stable).
 2. At least one demonstrable use case in the PR description.
 3. Conformance fixtures under `conformance/fixtures/<new>/` covering the happy path
    plus at least one failure case.

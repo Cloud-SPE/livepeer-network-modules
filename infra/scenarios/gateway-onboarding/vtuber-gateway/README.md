@@ -10,7 +10,7 @@
 > Everything in this scenario describes the **target** shape — modeled
 > on the OpenAI + Video gateway patterns so the migration lands cleanly
 > when the code catches up. Some env vars in the compose may not be
-> wired in the published image at `tztcloud/livepeer-vtuber-gateway:v1.0.0`
+> wired in the published image at `tztcloud/livepeer-vtuber-gateway:v1.1.0`
 > yet. Treat this as a use-case reference, not a deployable runbook.
 >
 > When in doubt: run the OpenAI or Video gateway instead.

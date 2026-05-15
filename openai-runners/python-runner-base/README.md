@@ -5,7 +5,7 @@ HTTP server stack. Per OQ2 lock in plan 0013-runners-byoc-migration.
 
 ## Image
 
-`tztcloud/python-runner-base:v1.0.0`.
+`tztcloud/python-runner-base:v1.1.0`.
 
 Inherits `python:3.12-slim` and pre-installs the canonical Python pins:
 
@@ -27,7 +27,7 @@ longer use this image directly.
 ## How per-runner Dockerfiles inherit it
 
 ```dockerfile
-ARG BASE_IMAGE=tztcloud/python-runner-base:v1.0.0
+ARG BASE_IMAGE=tztcloud/python-runner-base:v1.1.0
 FROM ${BASE_IMAGE}
 
 # Add only model-specific deps:
@@ -50,7 +50,7 @@ model-specific deps — the common deps live here. GPU-backed runners use
 ## Build
 
 ```bash
-docker build -t tztcloud/python-runner-base:v1.0.0 .
+docker build -t tztcloud/python-runner-base:v1.1.0 .
 ```
 
 Or from the parent component:

@@ -99,7 +99,7 @@ definitions, header conventions, prior implementations), the material is **copie
 on explicit user instruction** — never automatically, never wholesale. Each copy is a
 deliberate decision recorded in the commit message that introduces it.
 
-The first time this repo cuts a release, it becomes **v1.0.0**. Until then, all SHAs
+The first time this repo cuts a release, it becomes **v1.1.0**. Until then, all SHAs
 are unstable and re-pin-able. Components inside the monorepo do not have independent
 versions until they're extracted to standalone repos.
 

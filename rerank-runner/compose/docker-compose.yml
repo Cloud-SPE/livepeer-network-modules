@@ -3,7 +3,7 @@
 
 services:
   rerank_runner:
-    image: ${REGISTRY:-tztcloud}/rerank-runner:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/rerank-runner:${TAG:-v1.1.0}
     runtime: nvidia
     environment:
       - CAPABILITY_NAME=rerank
@@ -22,7 +22,7 @@ services:
       - "${RERANK_RUNNER_PORT:-8081}:8080"
 
   rerank_model_downloader:
-    image: ${REGISTRY:-tztcloud}/rerank-model-downloader:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/rerank-model-downloader:${TAG:-v1.1.0}
     profiles: [downloader]
     environment:
       - MODEL_ID=${RERANK_MODEL_ID:-zeroentropy/zerank-2}

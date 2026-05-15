@@ -22,7 +22,7 @@
 
 services:
   protocol-daemon:
-    image: ${REGISTRY:-tztcloud}/livepeer-protocol-daemon:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-protocol-daemon:${TAG:-v1.1.0}
     restart: unless-stopped
 
     command:

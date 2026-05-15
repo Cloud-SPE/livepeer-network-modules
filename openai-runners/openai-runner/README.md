@@ -35,11 +35,11 @@ proxy itself.
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
   --target chat \
-  -t tztcloud/openai-runner-chat:v1.0.0 .
+  -t tztcloud/openai-runner-chat:v1.1.0 .
 
 docker buildx build --platform linux/amd64,linux/arm64 \
   --target embeddings \
-  -t tztcloud/openai-runner-embeddings:v1.0.0 .
+  -t tztcloud/openai-runner-embeddings:v1.1.0 .
 ```
 
 ## Source attribution

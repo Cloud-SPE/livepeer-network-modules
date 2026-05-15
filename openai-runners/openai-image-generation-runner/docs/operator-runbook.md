@@ -8,10 +8,10 @@ model families.
 amd64-only per OQ4 (CUDA 12.9 base image).
 
 ```bash
-docker build -t tztcloud/openai-image-generation-runner:v1.0.0 .
+docker build -t tztcloud/openai-image-generation-runner:v1.1.0 .
 ```
 
-Default tag: **v1.0.0**.
+Default tag: **v1.1.0**.
 
 ## GPU prerequisites
 
@@ -48,7 +48,7 @@ docker run --rm \
   -v ai-image-models:/models \
   -e MODEL_IDS="SG161222/RealVisXL_V4.0_Lightning,black-forest-labs/FLUX.1-dev" \
   -e HF_TOKEN=hf_xxx \
-  tztcloud/image-model-downloader:v1.0.0
+  tztcloud/image-model-downloader:v1.1.0
 ```
 
 Pre-compile Triton kernels for faster cold starts:
@@ -61,7 +61,7 @@ Pre-compile Triton kernels for faster cold starts:
 
 | Image | Platforms |
 |---|---|
-| `openai-image-generation-runner:v1.0.0` | linux/amd64 only |
+| `openai-image-generation-runner:v1.1.0` | linux/amd64 only |
 
 ## Prometheus integration (OQ5)
 

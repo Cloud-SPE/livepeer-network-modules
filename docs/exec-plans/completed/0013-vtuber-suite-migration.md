@@ -43,7 +43,7 @@ three new components:
 
 Chain-gating is **mixed**: `vtuber-gateway/` emits payments, so its
 production cutover gates on plan 0016 (chain-integrated payment-
-daemon) reaching v1.0.0. `vtuber-pipeline/` and `vtuber-runner/` are
+daemon) reaching v1.1.0. `vtuber-pipeline/` and `vtuber-runner/` are
 pre-1.0.0-shippable — the pipeline doesn't sign tickets (it consumes
 the gateway's API), and the runner is workload-side (consumes broker
 dispatch; receiver-side `payment-daemon/` is already chain-stubbed
@@ -92,7 +92,7 @@ The vtuber-project (canonical top-level) ships:
   frames over WS to the session-runner.
 
 The vtuber-project is preserved but its **canonical home** moves into
-the rewrite monorepo at v1.0.0. That migration is what this brief
+the rewrite monorepo at v1.1.0. That migration is what this brief
 describes.
 
 ## 3. Reference architecture

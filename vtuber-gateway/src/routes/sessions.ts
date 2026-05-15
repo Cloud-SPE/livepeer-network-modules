@@ -151,6 +151,7 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
             workerSessionId: startResp.session_id,
             controlUrl,
           });
+          await deps.serviceRegistry.recordOutcome(node, { ok: true, retryable: false });
           await markNodeSuccess(deps, node.nodeId, node.nodeUrl);
           await reply.code(200).send({
             session_id: sessionId,
@@ -160,6 +161,7 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
           });
           return;
         } catch (err) {
+          await deps.serviceRegistry.recordOutcome(node, { ok: false, retryable: true }, "worker_start_failed");
           await deps.sessionStore.updateSession(sessionId, {
             status: "errored",
             errorCode: "worker_start_failed",
@@ -221,14 +223,23 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
 
         if (
           session.workerSessionId !== null &&
+          session.nodeId !== null &&
           session.nodeUrl !== null
         ) {
           try {
             await deps.worker.stopSession(session.nodeUrl, session.workerSessionId);
+            const node = await deps.serviceRegistry.getNode(session.nodeId);
+            if (node !== null) {
+              await deps.serviceRegistry.recordOutcome(node, { ok: true, retryable: false });
+            }
             if (session.nodeId !== null) {
               await markNodeSuccess(deps, session.nodeId, session.nodeUrl);
             }
           } catch (err) {
+            const node = session.nodeId !== null ? await deps.serviceRegistry.getNode(session.nodeId) : null;
+            if (node !== null) {
+              await deps.serviceRegistry.recordOutcome(node, { ok: false, retryable: true }, "worker_stop_failed");
+            }
             if (session.nodeId !== null) {
               await markNodeFailure(deps, session.nodeId, session.nodeUrl);
             }
@@ -319,8 +330,10 @@ export const registerSessionsRoutes: FastifyPluginAsync<SessionsRouteDeps> =
             sessionId: session.workerSessionId,
             paymentHeader: payment.paymentHeader,
           });
+          await deps.serviceRegistry.recordOutcome(node, { ok: true, retryable: false });
           await markNodeSuccess(deps, node.nodeId, session.nodeUrl);
         } catch (err) {
+          await deps.serviceRegistry.recordOutcome(node, { ok: false, retryable: true }, "worker_topup_failed");
           await markNodeFailure(deps, node.nodeId, session.nodeUrl);
           req.log.error(
             { err, sessionId: session.id },

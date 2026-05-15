@@ -25,6 +25,8 @@ const cfg: Config = {
   customerPortalPepper: "pepper",
   adminTokens: [],
   brokerCallTimeoutMs: 30000,
+  routeFailureThreshold: 2,
+  routeCooldownMs: 30000,
 };
 
 test("upload routes: public upload init is rejected when no creator is wired", async () => {

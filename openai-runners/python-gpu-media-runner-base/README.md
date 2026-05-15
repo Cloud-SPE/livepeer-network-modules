@@ -18,8 +18,8 @@ and stored twice.
 
 ```bash
 docker build \
-  --build-arg BASE_IMAGE=tztcloud/python-gpu-runner-base:v1.0.0 \
-  -t tztcloud/python-gpu-media-runner-base:v1.0.0 \
+  --build-arg BASE_IMAGE=tztcloud/python-gpu-runner-base:v1.1.0 \
+  -t tztcloud/python-gpu-media-runner-base:v1.1.0 \
   .
 ```
 

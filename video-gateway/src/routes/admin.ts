@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import type { AdminAuthResolver } from "@livepeer-network-modules/customer-portal/auth";
+import { renderRouteHealthMetrics, summarizeRouteHealth } from "@livepeer-network-modules/gateway-route-health";
 import { z } from "zod";
 
 import type { Db as VideoDb } from "../db/pool.js";
@@ -54,12 +55,26 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
   app.get("/admin/video/resolver-candidates", { preHandler }, async (_req, reply) => {
     const candidates = await deps.routeSelector.inspect();
     const suppressed = new Set(await deps.routeSelector.suppressedBrokers());
+    const health = await deps.routeSelector.inspectHealth();
+    const metrics = await deps.routeSelector.inspectMetrics();
     await reply.code(200).send({
       candidates: candidates.map((candidate) => ({
         ...candidate,
         suppressed: suppressed.has(candidate.brokerUrl),
       })),
+      health,
+      summary: summarizeRouteHealth(health),
+      metrics,
     });
+  });
+
+  app.get("/admin/video/route-health/metrics", { preHandler }, async (_req, reply) => {
+    const health = await deps.routeSelector.inspectHealth();
+    const metrics = await deps.routeSelector.inspectMetrics();
+    await reply
+      .code(200)
+      .header("Content-Type", "text/plain; version=0.0.4")
+      .send(renderRouteHealthMetrics("video", summarizeRouteHealth(health), metrics));
   });
 
   app.get("/admin/video/route-controls", { preHandler }, async (_req, reply) => {

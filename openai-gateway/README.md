@@ -142,6 +142,18 @@ and exposes:
 - customer checkout init: `POST /portal/topups/checkout`
 - Stripe webhook: `POST /portal/stripe/webhook`
 
+Layer 3 route-health operator endpoints:
+
+- `GET /admin/openai/resolver-candidates`
+- `GET /admin/openai/route-health/metrics`
+
+Interpretation:
+
+- resolver candidates are already pruned by `service-registry-daemon` for
+  signed-manifest validity and broker live health
+- route-health metrics and summaries are the gateway's local Layer 3 view of
+  recent route outcomes and cooldown state
+
 ## Layout
 
 ```

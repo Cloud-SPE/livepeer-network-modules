@@ -356,14 +356,21 @@ async function initializeExecution(
   });
   if (!submitRes.ok) {
     const message = await safeResponseText(submitRes);
+    await deps.routeSelector.recordOutcome(
+      route,
+      { ok: false, retryable: submitRes.status >= 500 || submitRes.status === 429 },
+      `worker_submit_failed:${submitRes.status}`,
+    );
     await failExecution(deps, executionId, asset.id, renditionTargets, recordingId, `worker_submit_failed: ${submitRes.status} ${message}`);
     throw new Error(`ABR submit failed: ${submitRes.status} ${message}`);
   }
   const submitBody = (await submitRes.json()) as { job_id?: string };
   if (!submitBody.job_id) {
+    await deps.routeSelector.recordOutcome(route, { ok: false, retryable: true }, "worker_submit_missing_job_id");
     await failExecution(deps, executionId, asset.id, renditionTargets, recordingId, "worker_submit_failed: missing job_id");
     throw new Error("ABR submit returned malformed response");
   }
+  await deps.routeSelector.recordOutcome(route, { ok: true, retryable: false });
   await deps.jobs.updateStatus(executionId, "running", {
     startedAt: new Date(),
     workerUrl: workerBaseUrl,

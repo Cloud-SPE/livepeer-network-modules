@@ -68,6 +68,9 @@ export async function buildServer(input: BuildServerInput): Promise<FastifyInsta
     logger: { level: process.env["LOG_LEVEL"] ?? "info" },
     bodyLimit: 100 * 1024 * 1024,
   });
+  app.addHook("onClose", async () => {
+    await input.routeSelector.close?.();
+  });
 
   app.get("/healthz", async (_req, reply) => {
     await reply.code(200).header("Content-Type", "text/plain").send("ok\n");

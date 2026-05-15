@@ -7,7 +7,7 @@ runner-specific OS packages, torch extras, and app deps.
 
 ## Image
 
-`tztcloud/python-gpu-runner-base:v1.0.0`.
+`tztcloud/python-gpu-runner-base:v1.1.0`.
 
 Base image: `nvidia/cuda:12.9.1-runtime-ubuntu24.04`.
 
@@ -29,7 +29,7 @@ Preinstalled:
 ## How GPU runner Dockerfiles inherit it
 
 ```dockerfile
-ARG BASE_IMAGE=tztcloud/python-gpu-runner-base:v1.0.0
+ARG BASE_IMAGE=tztcloud/python-gpu-runner-base:v1.1.0
 FROM ${BASE_IMAGE} AS builder
 
 RUN pip install --no-cache-dir \
@@ -55,7 +55,7 @@ to avoid repeating the shared `ffmpeg` payload.
 ## Build
 
 ```bash
-docker build -t tztcloud/python-gpu-runner-base:v1.0.0 .
+docker build -t tztcloud/python-gpu-runner-base:v1.1.0 .
 ```
 
 Or from the parent component:

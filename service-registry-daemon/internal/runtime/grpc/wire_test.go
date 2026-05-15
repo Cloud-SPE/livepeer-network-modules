@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/chain"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/livehealthfetcher"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/logger"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/manifestfetcher"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/signer"
@@ -337,6 +341,233 @@ func TestWire_Refresh_ListKnown(t *testing.T) {
 	}
 	if len(known.GetEntries()) != 1 {
 		t.Fatalf("known entries: %d", len(known.GetEntries()))
+	}
+}
+
+func TestUnixSocketResolveAndSelect_UseLiveBrokerHealth(t *testing.T) {
+	sk, err := signer.GenerateRandom()
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := sk.Address()
+	uri := "https://orch.example.com/.well-known/livepeer-registry.json"
+
+	clk := &clock.Fixed{T: time.Unix(1745000000, 0).UTC()}
+	chainProvider := chain.NewInMemory(addr)
+	chainProvider.PreLoad(addr, uri)
+	fetcher := &manifestfetcher.Static{Bodies: map[string][]byte{}}
+	overlay := config.EmptyOverlay()
+	kv := store.NewMemory()
+	cacheRepo := manifestcache.New(kv)
+	auditRepo := audit.New(kv)
+
+	type healthState struct {
+		mu       sync.RWMutex
+		snapshot types.RouteHealthSnapshot
+	}
+	currentHealth := &healthState{}
+	setHealth := func(snapshot types.RouteHealthSnapshot) {
+		currentHealth.mu.Lock()
+		currentHealth.snapshot = snapshot
+		currentHealth.mu.Unlock()
+	}
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/registry/health" {
+			http.NotFound(w, r)
+			return
+		}
+		currentHealth.mu.RLock()
+		snapshot := currentHealth.snapshot
+		currentHealth.mu.RUnlock()
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(snapshot); err != nil {
+			t.Errorf("encode health snapshot: %v", err)
+		}
+	}))
+	defer broker.Close()
+
+	setHealth(types.RouteHealthSnapshot{
+		BrokerStatus: "ready",
+		GeneratedAt:  clk.Now(),
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "openai:chat-completions",
+				OfferingID: "healthy",
+				Status:     "ready",
+				StaleAfter: clk.Now().Add(time.Minute),
+			},
+			{
+				ID:         "openai:chat-completions",
+				OfferingID: "degraded",
+				Status:     "degraded",
+				StaleAfter: clk.Now().Add(time.Second),
+			},
+		},
+	})
+
+	manifest := &types.Manifest{
+		SchemaVersion: types.SchemaVersion,
+		EthAddress:    string(addr),
+		IssuedAt:      clk.Now(),
+		Nodes: []types.Node{
+			{
+				ID:  "n1",
+				URL: broker.URL,
+				Capabilities: []types.Capability{
+					{
+						Name:     "openai:chat-completions",
+						WorkUnit: "token",
+						Offerings: []types.Offering{
+							{ID: "healthy", PricePerWorkUnitWei: "10"},
+							{ID: "degraded", PricePerWorkUnitWei: "11"},
+						},
+					},
+				},
+			},
+		},
+		Signature: types.Signature{Alg: types.SignatureAlgEthPersonal},
+	}
+	canonical, err := types.CanonicalBytes(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := sk.SignCanonical(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Signature.Value = "0x" + hexLower(sig)
+	manifest.Signature.SignedCanonicalBytesSHA256 = types.CanonicalSHA256(canonical)
+	body, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetcher.Bodies[uri] = body
+
+	resolverSvc := resolver.New(resolver.Config{
+		Chain:      chainProvider,
+		Fetcher:    fetcher,
+		Verifier:   verifier.New(),
+		Cache:      cacheRepo,
+		Audit:      auditRepo,
+		Overlay:    func() *config.Overlay { return overlay },
+		Clock:      clk,
+		LiveHealth: livehealthfetcher.New(2 * time.Second),
+	})
+	server, err := NewServer(Config{
+		Resolver: resolverSvc,
+		Cache:    cacheRepo,
+		Audit:    auditRepo,
+		Logger:   logger.Discard(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sockPath := filepath.Join(t.TempDir(), "resolver.sock")
+	listener, err := NewListener(ListenerConfig{
+		SocketPath: sockPath,
+		Server:     server,
+		Logger:     logger.Discard(),
+		Version:    "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- listener.Serve(ctx) }()
+	t.Cleanup(func() {
+		listener.Stop()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("listener serve: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Errorf("listener did not stop")
+		}
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := net.Dial("unix", sockPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("socket never appeared")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	conn, err := grpc.NewClient(
+		"unix://"+sockPath,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	cli := registryv1.NewResolverClient(conn)
+	// Prime the cache and verify raw resolve pruning keeps only healthy offerings.
+	resolved, err := cli.ResolveByAddress(context.Background(), &registryv1.ResolveByAddressRequest{
+		EthAddress: string(addr),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.GetNodes()) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(resolved.GetNodes()))
+	}
+	if len(resolved.GetNodes()[0].GetCapabilities()) != 1 {
+		t.Fatalf("expected 1 capability, got %d", len(resolved.GetNodes()[0].GetCapabilities()))
+	}
+	gotOfferings := resolved.GetNodes()[0].GetCapabilities()[0].GetOfferings()
+	if len(gotOfferings) != 1 || gotOfferings[0].GetId() != "healthy" {
+		t.Fatalf("expected only healthy offering after live pruning, got %+v", gotOfferings)
+	}
+
+	_, err = cli.Select(context.Background(), &registryv1.SelectRequest{
+		Capability: "openai:chat-completions",
+		Offering:   "degraded",
+	})
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("expected degraded offering to be excluded, got err=%v code=%v", err, status.Code(err))
+	}
+
+	clk.T = clk.T.Add(2 * time.Second)
+	setHealth(types.RouteHealthSnapshot{
+		BrokerStatus: "ready",
+		GeneratedAt:  clk.Now(),
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "openai:chat-completions",
+				OfferingID: "healthy",
+				Status:     "ready",
+				StaleAfter: clk.Now().Add(time.Minute),
+			},
+			{
+				ID:         "openai:chat-completions",
+				OfferingID: "degraded",
+				Status:     "ready",
+				StaleAfter: clk.Now().Add(time.Minute),
+			},
+		},
+	})
+
+	selected, err := cli.Select(context.Background(), &registryv1.SelectRequest{
+		Capability: "openai:chat-completions",
+		Offering:   "degraded",
+	})
+	if err != nil {
+		t.Fatalf("expected degraded offering to recover after live health changed, got %v", err)
+	}
+	if selected.GetRoute().GetWorkerUrl() != broker.URL {
+		t.Fatalf("worker_url = %q, want %q", selected.GetRoute().GetWorkerUrl(), broker.URL)
+	}
+	if selected.GetRoute().GetOffering() != "degraded" {
+		t.Fatalf("offering = %q, want degraded", selected.GetRoute().GetOffering())
 	}
 }
 

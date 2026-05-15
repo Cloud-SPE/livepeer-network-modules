@@ -30,6 +30,8 @@ const ConfigSchema = z.object({
   customerPortalPepper: z.string().min(1),
   adminTokens: z.array(z.string().min(1)),
   brokerCallTimeoutMs: z.number().int().positive(),
+  routeFailureThreshold: z.number().int().positive(),
+  routeCooldownMs: z.number().int().positive(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -69,6 +71,8 @@ export function loadConfig(): Config {
     customerPortalPepper: process.env["CUSTOMER_PORTAL_PEPPER"] ?? "dev-pepper",
     adminTokens: parseCsv(process.env["VIDEO_GATEWAY_ADMIN_TOKENS"]),
     brokerCallTimeoutMs: parseInt(process.env["BROKER_CALL_TIMEOUT_MS"] ?? "30000", 10),
+    routeFailureThreshold: parseInt(process.env["LIVEPEER_ROUTE_FAILURE_THRESHOLD"] ?? "2", 10),
+    routeCooldownMs: parseInt(process.env["LIVEPEER_ROUTE_COOLDOWN_MS"] ?? "30000", 10),
   };
   return ConfigSchema.parse(raw);
 }

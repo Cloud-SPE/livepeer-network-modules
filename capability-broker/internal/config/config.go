@@ -37,10 +37,32 @@ type Capability struct {
 	OfferingID      string         `yaml:"offering_id"`
 	InteractionMode string         `yaml:"interaction_mode"`
 	WorkUnit        WorkUnit       `yaml:"work_unit"`
+	Health          Health         `yaml:"health,omitempty"`
 	Price           Price          `yaml:"price"`
 	Backend         Backend        `yaml:"backend"`
 	Extra           map[string]any `yaml:"extra,omitempty"`
 	Constraints     map[string]any `yaml:"constraints,omitempty"`
+}
+
+// Health configures per-tuple live-health behavior.
+type Health struct {
+	InitialStatus string      `yaml:"initial_status,omitempty"`
+	Drain         HealthDrain `yaml:"drain,omitempty"`
+	Probe         HealthProbe `yaml:"probe,omitempty"`
+}
+
+type HealthDrain struct {
+	Enabled bool `yaml:"enabled,omitempty"`
+}
+
+// HealthProbe selects a broker-local probe recipe and cadence.
+type HealthProbe struct {
+	Type           string         `yaml:"type,omitempty"`
+	IntervalMS     int            `yaml:"interval_ms,omitempty"`
+	TimeoutMS      int            `yaml:"timeout_ms,omitempty"`
+	UnhealthyAfter int            `yaml:"unhealthy_after,omitempty"`
+	HealthyAfter   int            `yaml:"healthy_after,omitempty"`
+	Config         map[string]any `yaml:"config,omitempty"`
 }
 
 // WorkUnit declares the metering dimension and the recipe used to compute it.

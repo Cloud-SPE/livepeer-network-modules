@@ -8,10 +8,10 @@ Kokoro TTS runner serving `/v1/audio/speech`. Loads
 amd64-only per OQ4.
 
 ```bash
-docker build -t tztcloud/openai-tts-runner:v1.0.0 .
+docker build -t tztcloud/openai-tts-runner:v1.1.0 .
 ```
 
-Default tag: **v1.0.0**.
+Default tag: **v1.1.0**.
 
 ## GPU prerequisites
 
@@ -39,14 +39,14 @@ Same pattern as `openai-audio-runner` but smaller (~165 MB on disk):
 docker run --rm \
   -v ai-kokoro-models:/models \
   -e MODEL_IDS="hexgrad/Kokoro-82M" \
-  tztcloud/image-model-downloader:v1.0.0
+  tztcloud/image-model-downloader:v1.1.0
 ```
 
 ## Multi-arch matrix per OQ4
 
 | Image | Platforms |
 |---|---|
-| `openai-tts-runner:v1.0.0` | linux/amd64 only |
+| `openai-tts-runner:v1.1.0` | linux/amd64 only |
 
 ## Prometheus integration (OQ5)
 

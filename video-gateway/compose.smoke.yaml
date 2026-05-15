@@ -37,7 +37,7 @@ services:
       - /data
 
   payer-daemon:
-    image: tztcloud/livepeer-payment-daemon:v1.0.0
+    image: tztcloud/livepeer-payment-daemon:v1.1.0
     networks: [video-gateway]
     volumes:
       - livepeer-payment:/var/run/livepeer
@@ -46,7 +46,7 @@ services:
       - --socket=/var/run/livepeer/payer-daemon.sock
 
   payment-daemon:
-    image: tztcloud/livepeer-payment-daemon:v1.0.0
+    image: tztcloud/livepeer-payment-daemon:v1.1.0
     networks: [video-gateway]
     volumes:
       - livepeer-payment:/var/run/livepeer
@@ -57,7 +57,7 @@ services:
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
 
   broker:
-    image: tztcloud/livepeer-capability-broker:v1.0.0
+    image: tztcloud/livepeer-capability-broker:v1.1.0
     depends_on: [payment-daemon]
     networks: [video-gateway]
     volumes:

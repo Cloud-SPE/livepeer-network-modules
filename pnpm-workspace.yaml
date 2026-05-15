@@ -6,6 +6,7 @@ packages:
   - "customer-portal/frontend/admin"
   - "daydream-gateway"
   - "gateway-adapters/ts"
+  - "gateway-route-health"
   - "openai-gateway"
   - "vtuber-gateway"
   - "vtuber-gateway/src/frontend/admin"

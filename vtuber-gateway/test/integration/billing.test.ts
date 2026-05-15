@@ -25,6 +25,8 @@ function fakeCfg() {
     vtuberRelayMaxPerSession: 8,
     vtuberSessionBearerPepper: "this-is-a-test-pepper-min-16-chars",
     vtuberWorkerControlBearerPepper: "another-test-pepper-min-16-chars",
+    routeFailureThreshold: 2,
+    routeCooldownMs: 30000,
   });
 }
 
@@ -114,6 +116,19 @@ function fakeDeps(): VtuberGatewayDeps {
       },
       async select() {
         return null;
+      },
+      async recordOutcome() {},
+      async inspectHealth() {
+        return [];
+      },
+      async inspectMetrics() {
+        return {
+          attemptsTotal: 0,
+          successesTotal: 0,
+          retryableFailuresTotal: 0,
+          nonRetryableFailuresTotal: 0,
+          cooldownsOpenedTotal: 0,
+        };
       },
       async close() {},
     },
@@ -334,6 +349,19 @@ test("POST /v1/vtuber/sessions/:id/end and topup happy path", async () => {
     },
     async select() {
       return node;
+    },
+    async recordOutcome() {},
+    async inspectHealth() {
+      return [];
+    },
+    async inspectMetrics() {
+      return {
+        attemptsTotal: 0,
+        successesTotal: 0,
+        retryableFailuresTotal: 0,
+        nonRetryableFailuresTotal: 0,
+        cooldownsOpenedTotal: 0,
+      };
     },
     async close() {},
   };

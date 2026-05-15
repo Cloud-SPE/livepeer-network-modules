@@ -26,11 +26,13 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/chain"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/livehealthfetcher"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/logger"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/manifestfetcher"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/metrics"
@@ -56,6 +58,9 @@ type Service struct {
 	manifest  time.Duration
 	maxStale  time.Duration
 	rejectUns bool
+	liveHealth livehealthfetcher.Fetcher
+	liveMu     sync.RWMutex
+	liveCache  map[string]liveHealthCacheEntry
 }
 
 // Config wires the service.
@@ -75,6 +80,7 @@ type Config struct {
 	CacheManifestTTL time.Duration
 	MaxStale         time.Duration
 	RejectUnsigned   bool
+	LiveHealth       livehealthfetcher.Fetcher
 }
 
 // New constructs a resolver Service.
@@ -116,12 +122,22 @@ func New(c Config) *Service {
 		manifest:  nonZeroDuration(c.CacheManifestTTL, 10*time.Minute),
 		maxStale:  nonZeroDuration(c.MaxStale, 1*time.Hour),
 		rejectUns: c.RejectUnsigned,
+		liveHealth: c.LiveHealth,
+		liveCache:  map[string]liveHealthCacheEntry{},
 	}
+}
+
+type liveHealthCacheEntry struct {
+	status     string
+	staleAfter time.Time
+	checkedAt  time.Time
 }
 
 // Request bundles the inputs for a single resolve.
 type Request struct {
 	Address             types.EthAddress
+	Capability          string
+	Offering            string
 	AllowLegacyFallback bool
 	AllowUnsigned       bool
 	ForceRefresh        bool
@@ -138,7 +154,7 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 		if cached, ok, err := s.cache.Get(addr); err == nil && ok {
 			if s.cacheFresh(cached, now) {
 				s.rec.IncCacheLookup(metrics.CacheHitFresh)
-				res, rerr := s.buildResultFromEntry(cached, types.Fresh, req)
+				res, rerr := s.buildResultFromEntry(ctx, cached, types.Fresh, req)
 				if rerr == nil {
 					s.rec.IncResolution(modeLabel(cached.Mode), metrics.FreshnessFresh)
 					s.rec.ObserveResolveDuration(modeLabel(cached.Mode), metrics.FreshnessFresh, time.Since(start))
@@ -158,7 +174,7 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 		// On chain failure, return last-good if we have one within max-stale.
 		if cached, ok, _ := s.cache.Get(addr); ok && now.Sub(cached.FetchedAt) < s.maxStale {
 			s.appendAudit(addr, types.AuditFallbackUsed, cached.Mode, "chain unavailable, served last-good: "+err.Error())
-			res, rerr := s.buildResultFromEntry(cached, types.StaleFailing, req)
+			res, rerr := s.buildResultFromEntry(ctx, cached, types.StaleFailing, req)
 			if rerr == nil {
 				s.rec.IncResolution(modeLabel(cached.Mode), metrics.FreshnessStaleFailing)
 				s.rec.ObserveResolveDuration(modeLabel(cached.Mode), metrics.FreshnessStaleFailing, time.Since(start))
@@ -242,6 +258,7 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 		filtered = append(filtered, n)
 	}
 	nodes = filtered
+	nodes = s.filterLiveHealthy(ctx, nodes, req)
 	s.logResolvedResult("resolver: returning fresh result", addr, mode, nodes, types.Fresh)
 
 	// 7. Cache write.
@@ -443,7 +460,7 @@ func (s *Service) cacheFresh(e *manifestcache.Entry, now time.Time) bool {
 	return now.Sub(e.FetchedAt) < s.manifest && now.Sub(e.ChainSeenAt) < s.chainTTL
 }
 
-func (s *Service) buildResultFromEntry(e *manifestcache.Entry, freshness types.FreshnessStatus, req Request) (*types.ResolveResult, error) {
+func (s *Service) buildResultFromEntry(ctx context.Context, e *manifestcache.Entry, freshness types.FreshnessStatus, req Request) (*types.ResolveResult, error) {
 	overlay := s.overlay()
 	allowUns := req.AllowUnsigned || !s.rejectUns
 
@@ -494,6 +511,7 @@ func (s *Service) buildResultFromEntry(e *manifestcache.Entry, freshness types.F
 		}
 		filtered = append(filtered, n)
 	}
+	filtered = s.filterLiveHealthy(ctx, filtered, req)
 	s.logResolvedResult("resolver: returning cached result", req.Address, e.Mode, filtered, freshness)
 	return &types.ResolveResult{
 		EthAddress:      req.Address,
@@ -540,6 +558,155 @@ func (s *Service) logResolvedResult(msg string, addr types.EthAddress, mode type
 		return
 	}
 	s.log.Debug(msg, kv...)
+}
+
+func (s *Service) filterLiveHealthy(ctx context.Context, nodes []types.ResolvedNode, req Request) []types.ResolvedNode {
+	if s.liveHealth == nil {
+		return nodes
+	}
+	if req.Capability != "" && req.Offering != "" {
+		out := nodes[:0]
+		for _, n := range nodes {
+			if !nodeContainsTarget(n, req.Capability, req.Offering) {
+				out = append(out, n)
+				continue
+			}
+			status, ok := s.lookupLiveHealth(ctx, n.URL, req.Capability, req.Offering)
+			if ok && status == "ready" {
+				s.rec.IncLiveHealthDecision(metrics.OutcomeAllowedReady)
+				out = append(out, n)
+				continue
+			}
+			if !ok {
+				s.rec.IncLiveHealthDecision(metrics.OutcomeExcludedStale)
+				continue
+			}
+			s.rec.IncLiveHealthDecision(metrics.OutcomeExcludedUnhealthy)
+		}
+		return out
+	}
+	out := nodes[:0]
+	for _, n := range nodes {
+		pruned, ok := s.pruneNodeToLiveHealthy(ctx, n)
+		if ok {
+			out = append(out, pruned)
+		}
+	}
+	return out
+}
+
+func (s *Service) pruneNodeToLiveHealthy(ctx context.Context, node types.ResolvedNode) (types.ResolvedNode, bool) {
+	if len(node.Capabilities) == 0 {
+		return node, true
+	}
+	snap, err := s.liveHealth.Fetch(ctx, node.URL)
+	if err != nil || snap == nil || len(snap.Capabilities) == 0 {
+		if err != nil {
+			s.rec.IncLiveHealthDecision(metrics.OutcomeLiveHealthFetchErr)
+		} else {
+			s.rec.IncLiveHealthDecision(metrics.OutcomeLiveHealthMissing)
+		}
+		return node, true
+	}
+	healthByTuple := make(map[string]types.RouteHealthCapability, len(snap.Capabilities))
+	now := s.clock.Now()
+	for _, cap := range snap.Capabilities {
+		key := strings.ToLower(cap.ID) + "|" + strings.ToLower(cap.OfferingID)
+		healthByTuple[key] = cap
+		s.liveMu.Lock()
+		s.liveCache[node.URL+"|"+strings.ToLower(cap.ID)+"|"+strings.ToLower(cap.OfferingID)] = liveHealthCacheEntry{
+			status:     cap.Status,
+			staleAfter: cap.StaleAfter,
+			checkedAt:  now,
+		}
+		s.liveMu.Unlock()
+	}
+	prunedNode := node
+	prunedCaps := make([]types.Capability, 0, len(node.Capabilities))
+	for _, cap := range node.Capabilities {
+		if len(cap.Offerings) == 0 {
+			continue
+		}
+		prunedCap := cap
+		prunedOfferings := make([]types.Offering, 0, len(cap.Offerings))
+		for _, off := range cap.Offerings {
+			entry, ok := healthByTuple[strings.ToLower(cap.Name)+"|"+strings.ToLower(off.ID)]
+			if ok && entry.Status == "ready" && !entry.StaleAfter.IsZero() && now.Before(entry.StaleAfter) {
+				s.rec.IncLiveHealthDecision(metrics.OutcomeAllowedReady)
+				prunedOfferings = append(prunedOfferings, off)
+				continue
+			}
+			if !ok || entry.StaleAfter.IsZero() || !now.Before(entry.StaleAfter) {
+				s.rec.IncLiveHealthDecision(metrics.OutcomeExcludedStale)
+				continue
+			}
+			s.rec.IncLiveHealthDecision(metrics.OutcomeExcludedUnhealthy)
+		}
+		if len(prunedOfferings) == 0 {
+			continue
+		}
+		prunedCap.Offerings = prunedOfferings
+		prunedCaps = append(prunedCaps, prunedCap)
+	}
+	if len(prunedCaps) == 0 {
+		return types.ResolvedNode{}, false
+	}
+	prunedNode.Capabilities = prunedCaps
+	return prunedNode, true
+}
+
+func nodeContainsTarget(n types.ResolvedNode, capability, offering string) bool {
+	for _, cap := range n.Capabilities {
+		if !strings.EqualFold(cap.Name, capability) {
+			continue
+		}
+		for _, off := range cap.Offerings {
+			if strings.EqualFold(off.ID, offering) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Service) lookupLiveHealth(ctx context.Context, workerURL, capability, offering string) (string, bool) {
+	key := workerURL + "|" + strings.ToLower(capability) + "|" + strings.ToLower(offering)
+	now := s.clock.Now()
+
+	s.liveMu.RLock()
+	if ent, ok := s.liveCache[key]; ok && !ent.staleAfter.IsZero() && now.Before(ent.staleAfter) {
+		s.liveMu.RUnlock()
+		return ent.status, true
+	}
+	s.liveMu.RUnlock()
+
+	snap, err := s.liveHealth.Fetch(ctx, workerURL)
+	if err != nil || snap == nil {
+		s.liveMu.Lock()
+		s.liveCache[key] = liveHealthCacheEntry{status: "stale", checkedAt: now}
+		s.liveMu.Unlock()
+		return "", false
+	}
+	for _, cap := range snap.Capabilities {
+		if strings.EqualFold(cap.ID, capability) && strings.EqualFold(cap.OfferingID, offering) {
+			ent := liveHealthCacheEntry{
+				status:     cap.Status,
+				staleAfter: cap.StaleAfter,
+				checkedAt:  now,
+			}
+			s.liveMu.Lock()
+			s.liveCache[key] = ent
+			s.liveMu.Unlock()
+			if cap.StaleAfter.IsZero() || now.After(cap.StaleAfter) {
+				return "", false
+			}
+			return cap.Status, true
+		}
+	}
+	s.liveMu.Lock()
+	s.liveCache[key] = liveHealthCacheEntry{status: "stale", checkedAt: now}
+	s.liveMu.Unlock()
+	return "", false
 }
 
 func summarizeNodes(nodes []types.ResolvedNode) []map[string]any {

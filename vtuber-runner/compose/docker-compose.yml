@@ -8,7 +8,7 @@
 
 services:
   vtuber-runner:
-    image: ${REGISTRY:-tztcloud}/vtuber-runner:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/vtuber-runner:${TAG:-v1.1.0}
     environment:
       SESSION_RUNNER_HTTP_HOST: 0.0.0.0
       SESSION_RUNNER_HTTP_PORT: "8080"

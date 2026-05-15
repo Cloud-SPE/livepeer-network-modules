@@ -44,7 +44,7 @@ services:
     restart: unless-stopped
 
   payment-daemon-receiver:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v1.1.0}
     command:
       - --mode=receiver
       - --socket=/var/run/livepeer/payment-daemon.sock
@@ -65,7 +65,7 @@ services:
     restart: unless-stopped
 
   capability-broker:
-    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${BROKER_TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${BROKER_TAG:-v1.1.0}
     depends_on:
       - vllm_model_runner
       - payment-daemon-receiver

@@ -39,7 +39,7 @@ the multi-arch video runners, CPU Python tooling, and GPU Python runners
 can `FROM` them.
 
 ```sh
-# Build everything as tztcloud/<name>:v1.0.0
+# Build everything as tztcloud/<name>:v1.1.0
 ./infra/scripts/build-images.sh
 
 # Build a single component (substring match)
@@ -52,7 +52,7 @@ REGISTRY=ghcr.io/myorg TAG=2026.5.7 ./infra/scripts/build-images.sh
 PUSH=1 REGISTRY=ghcr.io/myorg TAG=2026.5.7 ./infra/scripts/build-images.sh
 ```
 
-Defaults: `REGISTRY=tztcloud`, `TAG=v1.0.0`, `PUSH=0`.
+Defaults: `REGISTRY=tztcloud`, `TAG=v1.1.0`, `PUSH=0`.
 
 ## Scenario stacks
 

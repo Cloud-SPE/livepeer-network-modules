@@ -1,5 +1,11 @@
 # Plan 0018 — orch-coordinator design
 
+> Historical design note: the coordinator is now implemented. Where this plan
+> says "optional" or describes pre-implementation choices, prefer the shipped
+> behavior in [`../../design-docs/backend-health.md`](../../design-docs/backend-health.md),
+> [`../../design-docs/architecture-overview.md`](../../design-docs/architecture-overview.md),
+> and the `orch-coordinator/` code.
+
 **Status:** design-doc (pure paper; no code, no `go.mod` edits)
 **Opened:** 2026-05-06
 **Owner:** harness
@@ -81,8 +87,10 @@ single candidate manifest.
 - LAN broker `/registry/offerings` endpoints (HTTP GET, JSON, shape
   defined in `capability-broker/internal/server/registry/offerings.go`
   lines 35–53).
-- Optionally `/registry/health` for the live-availability signal
-  (`capability-broker/internal/server/registry/health.go` lines 19–33).
+- `/registry/health` for the live-availability signal. The shipped
+  coordinator polls both `/registry/offerings` and `/registry/health`,
+  keeps them separate, and does not mutate signed-manifest content from
+  live-health state.
 - Static config file (`coordinator-config.yaml`) listing the broker
   hosts, the orch's `eth_address`, and tunables.
 
@@ -164,9 +172,9 @@ Concrete behaviors:
 discovery (DNS-SD, Consul, Kubernetes Service) is a follow-up plan.
 
 **Scrape cadence.** Recommend **every 30 seconds**, configurable via
-`--scrape-interval`. Matches the live-availability cadence the broker's
-health endpoint targets ("gateway resolvers poll every 15-30s",
-`capability-broker/internal/server/registry/health.go` line 14).
+`--scrape-interval`. In the shipped design, the coordinator caches
+offerings and live health separately and surfaces freshness for both in
+the roster view.
 
 **Per-broker timeout.** Recommend **5s** for `/registry/offerings`,
 configurable via `--scrape-timeout`. Brokers exceeding it are treated

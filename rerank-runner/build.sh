@@ -5,12 +5,12 @@ set -euo pipefail
 #
 # Environment:
 #   REGISTRY      Docker registry prefix (default: tztcloud)
-#   TAG           Image tag (default: v1.0.0)
+#   TAG           Image tag (default: v1.1.0)
 #   BASE_IMAGE    Python base image (default: ${REGISTRY}/python-runner-base:${TAG})
 #   PUSH          Push images after build (default: false)
 
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-v1.0.0}"
+TAG="${TAG:-v1.1.0}"
 BASE_IMAGE="${BASE_IMAGE:-${REGISTRY}/python-runner-base:${TAG}}"
 PUSH="${PUSH:-false}"
 

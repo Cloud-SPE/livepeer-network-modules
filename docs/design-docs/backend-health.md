@@ -114,6 +114,30 @@ backends right now?
 }
 ```
 
+The broker may use specialized backend checks internally. That is
+expected. The architectural requirement is not "every capability uses
+the same probe"; it is "every capability publishes the same normalized
+health surface."
+
+In practice:
+
+- each tuple in `host-config.yaml` may choose a broker-side probe recipe
+- the probe recipe may be shallow or specialized depending on workload
+- the broker maps the result onto generic outward states:
+  `ready`, `draining`, `degraded`, `unreachable`, `stale`
+
+Examples of legitimate specialized checks:
+
+- OpenAI-compatible backend: model-specific readiness, not just port-open
+- RTMP pipeline: ingest path healthy and encoder initialized
+- realtime session backend: control plane healthy and required media
+  dependency reachable
+- third-party SaaS backend: credentials valid and upstream quota not
+  exhausted
+
+The coordinator, resolver, and gateways should not need to understand
+those semantics. They consume only the broker's normalized result.
+
 **Freshness budget:** seconds. Backend reachability is probed on cadence
 (periodic + on-demand) and cached briefly.
 
@@ -137,6 +161,26 @@ backends right now?
 **Key invariant:** live health is **unsigned**. It cannot be aggregated
 into a market-wide claim without out-of-band validation — anyone can serve
 a green `/healthz`.
+
+### Probe extensibility
+
+This stack is expected to serve capabilities with different definitions
+of "ready". The extensibility point belongs in the broker:
+
+- **operator-facing choice:** `host-config.yaml` selects the probe recipe
+  and thresholds per tuple
+- **core-module implementation:** capability-broker ships the probe
+  recipe library and executes probes on cadence
+- **cross-stack contract:** `/registry/health` exposes only normalized
+  status, freshness, and reason
+
+That keeps custom health behavior compatible with the workload-agnostic
+architecture:
+
+- custom behavior lives at the edge, next to the backend
+- shared modules stay generic
+- gateways and resolvers route on normalized status, not on
+  capability-specific heuristics
 
 ```mermaid
 sequenceDiagram
@@ -258,6 +302,112 @@ Each layer corresponds to a different operator surface:
 | 1 | edit `host-config.yaml` + sign cycle | secure-orch-console |
 | 2 | restart broker, mark drain, fix backend | broker `/admin` + container orchestration |
 | 3 | inspect dashboards, declare incident | metrics / alerting stack |
+
+## Execution placement
+
+The three-layer model is only useful if the implementation split stays
+clean. The practical rule is:
+
+- **coordinator builds and hosts claims**
+- **resolver composes claims + live readiness**
+- **gateway makes the final routing choice**
+- **broker is the source of truth for runtime reachability**
+
+Anything else tends to smear trust and liveness together.
+
+### Which component runs which check
+
+| Check | Source of truth | Implemented in | Cached by | Consumed by | Must not do |
+|---|---|---|---|---|---|
+| "Did the operator declare this tuple?" | cold-signed manifest | `orch-coordinator` hosts; `service-registry-daemon` verifies | `service-registry-daemon` | gateways, scrapers, operators | infer live health |
+| "Is the broker process alive?" | `GET /healthz` | capability broker | orch-coordinator, `service-registry-daemon`, watchdogs | coordinator UX, resolver, ops | create or remove manifest entries |
+| "Is this `(capability, offering)` backend ready right now?" | `GET /registry/health` | capability broker | orch-coordinator, `service-registry-daemon` | gateway route selection, coordinator UX | override signed manifest |
+| "Has this route been failing under real traffic?" | request outcomes over time | gateway + broker metrics | gateway-local policy, third-party scrapers | gateway retry / weighting, dashboards | become a signed market claim |
+
+### Orch-coordinator responsibilities
+
+The coordinator has two separate jobs and they must stay separate:
+
+1. **Candidate-manifest pipeline**
+   - scrape `GET /registry/offerings`
+   - build candidate manifest bytes
+   - host the signed manifest after upload
+2. **Operational visibility**
+   - poll `GET /healthz` and `GET /registry/health`
+   - show per-broker / per-capability freshness and readiness in the UI
+   - expose metrics and alerts for stale or unreachable brokers
+
+The coordinator may use live health to explain what is happening on the
+LAN, but it must **not** auto-edit the signed manifest because a broker
+went red for a short time. Broker outages are Layer 2; manifest changes
+are Layer 1.
+
+### Service-registry-daemon responsibilities
+
+The resolver is where Layer 1 and Layer 2 get composed for routing:
+
+1. verify and cache signed manifests from the orch `serviceURI`
+2. maintain a short-TTL cache of broker live health
+3. return only tuples that pass both checks:
+   - present in a valid signed manifest
+   - currently `ready` in broker live health
+
+If live-health data is stale past policy TTL, the resolver should treat
+that route as unavailable for hot-path selection rather than silently
+assuming green.
+
+### Gateway responsibilities
+
+The gateway should not re-implement chain or manifest verification logic.
+Its job is:
+
+1. ask `service-registry-daemon` for candidates that already passed
+   Layer 1 and Layer 2
+2. apply gateway-local policy for Layer 3:
+   - recent success / failure rate
+   - timeout history
+   - optional latency or backoff weighting
+3. retry or skip bad routes based on observed outcomes
+
+This is why the gateway is the right place for circuit breaking and
+failure-rate weighting, but the wrong place for deciding whether an orch
+is entitled to advertise a capability at all.
+
+### Capability-broker responsibilities
+
+The broker owns the live health answers because it is the component that
+actually knows whether the backend can serve work now.
+
+- `GET /healthz` answers: "is the broker process up?"
+- `GET /registry/health` answers: "is this advertised tuple ready,
+  draining, degraded, unreachable, or stale?"
+
+Probe recipes may differ by backend type, but the broker must normalize
+them into workload-agnostic states. Neither the coordinator nor the
+resolver should learn capability-specific semantics just to answer a
+health question.
+
+### OpenAI gateway example
+
+For `POST /v1/chat/completions` targeting
+`openai:chat-completions:llama-3-70b`:
+
+1. broker advertises the tuple in `/registry/offerings`
+2. coordinator includes it in the next candidate manifest
+3. operator signs; coordinator publishes
+4. resolver verifies the signed manifest and caches the tuple
+5. resolver polls broker `/registry/health`
+6. OpenAI gateway asks resolver for candidates
+7. resolver returns only routes that are both:
+   - signed in the manifest
+   - currently live-healthy
+8. gateway applies recent failure history before choosing the final route
+
+If the model backend dies but the signed manifest still lists it, the
+route should disappear from resolver selection without forcing a new sign
+cycle. If the operator permanently removes the model, that change goes
+through the manifest path and survives even if the broker would otherwise
+report green health.
 
 If a capability looks unhealthy and you don't know why, ask: **which layer
 is failing?** That's a faster path to the right fix than starting from the

@@ -5,6 +5,7 @@ import Fastify from "fastify";
 
 import type { Config } from "../../src/config.js";
 import { createLiveSessionDirectory } from "../../src/livepeer/liveSessionDirectory.js";
+import { RouteHealthTracker } from "../../src/livepeer/routeHealth.js";
 import type { VideoRouteSelector } from "../../src/livepeer/routeSelector.js";
 import { registerLiveStreams } from "../../src/routes/live-streams.js";
 import { createInMemoryLiveStreamRepo } from "../../src/testing/repoFakes.js";
@@ -28,6 +29,8 @@ const cfg: Config = {
   customerPortalPepper: "pepper",
   adminTokens: [],
   brokerCallTimeoutMs: 30000,
+  routeFailureThreshold: 2,
+  routeCooldownMs: 30000,
 };
 
 const routeSelector: VideoRouteSelector = {
@@ -41,6 +44,19 @@ const routeSelector: VideoRouteSelector = {
   async unsuppressBroker() {},
   async suppressedBrokers() {
     return [];
+  },
+  async recordOutcome() {},
+  async inspectHealth() {
+    return [];
+  },
+  async inspectMetrics() {
+    return {
+      attemptsTotal: 0,
+      successesTotal: 0,
+      retryableFailuresTotal: 0,
+      nonRetryableFailuresTotal: 0,
+      cooldownsOpenedTotal: 0,
+    };
   },
 };
 
@@ -208,6 +224,19 @@ test("live routes: create returns 502 when broker session-open fails", async () 
         async suppressedBrokers() {
           return [];
         },
+        async recordOutcome() {},
+        async inspectHealth() {
+          return [];
+        },
+        async inspectMetrics() {
+          return {
+            attemptsTotal: 0,
+            successesTotal: 0,
+            retryableFailuresTotal: 0,
+            nonRetryableFailuresTotal: 0,
+            cooldownsOpenedTotal: 0,
+          };
+        },
       },
       liveSessions: createLiveSessionDirectory(),
       liveStreamsRepo: createInMemoryLiveStreamRepo(),
@@ -226,6 +255,106 @@ test("live routes: create returns 502 when broker session-open fails", async () 
       error: "live_session_open_failed",
       message: "live session-open failed: 502",
     });
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
+});
+
+test("live routes: session-open retries next broker and cools failing route for later requests", async () => {
+  const app = Fastify();
+  const tracker = new RouteHealthTracker({ failureThreshold: 1, cooldownMs: 60_000 });
+  const baseRoutes = [
+    {
+      brokerUrl: "http://broker-a.internal:8080",
+      ethAddress: "0xaaaa",
+      capability: "video:live.rtmp",
+      offering: "default",
+      pricePerWorkUnitWei: "1",
+      extra: null,
+      constraints: null,
+    },
+    {
+      brokerUrl: "http://broker-b.internal:8080",
+      ethAddress: "0xbbbb",
+      capability: "video:live.rtmp",
+      offering: "default",
+      pricePerWorkUnitWei: "2",
+      extra: null,
+      constraints: null,
+    },
+  ] as const;
+  let brokerACalls = 0;
+  let brokerBCalls = 0;
+  const fetchBefore = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    if (url.startsWith("http://broker-a.internal:8080")) {
+      brokerACalls += 1;
+      return new Response("upstream down", { status: 503 });
+    }
+    brokerBCalls += 1;
+    return new Response(JSON.stringify({
+      session_id: `sess_${brokerBCalls}`,
+      rtmp_ingest_url: "rtmp://broker-b.internal/live/stream-key",
+      hls_playback_url: "https://playback.example.com/hls/live/index.m3u8",
+      expires_at: "2026-05-15T00:00:00Z",
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+  try {
+    registerLiveStreams(app, {
+      cfg,
+      routeSelector: {
+        async select() {
+          return tracker.rankCandidates([...baseRoutes]);
+        },
+        async inspect() {
+          return [...baseRoutes];
+        },
+        async suppressBroker() {},
+        async unsuppressBroker() {},
+        async suppressedBrokers() {
+          return [];
+        },
+        async recordOutcome(candidate, outcome, reason) {
+          tracker.record(candidate, outcome, reason);
+        },
+        async inspectHealth() {
+          return tracker.inspect();
+        },
+        async inspectMetrics() {
+          return tracker.inspectMetrics();
+        },
+      },
+      liveSessions: createLiveSessionDirectory(),
+      liveStreamsRepo: createInMemoryLiveStreamRepo(),
+    });
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/live/streams",
+      payload: {
+        project_id: "proj_1",
+        name: "Retry stream",
+      },
+    });
+    assert.equal(first.statusCode, 201);
+    assert.equal(brokerACalls, 1);
+    assert.equal(brokerBCalls, 1);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/live/streams",
+      payload: {
+        project_id: "proj_1",
+        name: "Cooldown stream",
+      },
+    });
+    assert.equal(second.statusCode, 201);
+    assert.equal(brokerACalls, 1, "cooled broker should be skipped on subsequent request");
+    assert.equal(brokerBCalls, 2);
   } finally {
     globalThis.fetch = fetchBefore;
   }

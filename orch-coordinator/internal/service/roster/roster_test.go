@@ -19,8 +19,8 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 		WindowStart: now.Add(-30 * time.Second),
 		WindowEnd:   now,
 		Brokers: []scrape.BrokerStatus{
-			{Name: "b1", BaseURL: "http://b1", Freshness: scrape.FreshnessOK},
-			{Name: "b2", BaseURL: "http://b2", Freshness: scrape.FreshnessStaleFailing, LastError: "timeout"},
+			{Name: "b1", BaseURL: "http://b1", Freshness: scrape.FreshnessOK, TupleHealth: map[string]types.BrokerHealthCapability{"cap|off": {ID: "cap", OfferingID: "off", Status: "ready", Reason: "probe_ok", StaleAfter: now.Add(time.Minute)}}},
+			{Name: "b2", BaseURL: "http://b2", Freshness: scrape.FreshnessStaleFailing, LastError: "timeout", TupleHealth: map[string]types.BrokerHealthCapability{"cap|off": {ID: "cap", OfferingID: "off", Status: "degraded", Reason: "timeout", StaleAfter: now.Add(time.Minute)}}},
 		},
 		SourceTuples: []types.SourceTuple{
 			{BrokerName: "b1", Offering: types.BrokerOffering{
@@ -42,6 +42,9 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 	}
 	if len(v.Rows[0].Brokers) != 2 {
 		t.Fatalf("expected 2 broker cells, got %d", len(v.Rows[0].Brokers))
+	}
+	if got := v.Rows[0].Brokers[0].LiveStatus; got != "ready" {
+		t.Fatalf("live status = %q, want ready", got)
 	}
 	if v.Rows[0].Drift != "added" {
 		t.Fatalf("drift: %s", v.Rows[0].Drift)

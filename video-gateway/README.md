@@ -61,6 +61,20 @@ No host `node` install required.
 - `VIDEO_GATEWAY_ADMIN_TOKENS` gates operator-only `/admin/*` routes.
 - `CUSTOMER_PORTAL_PEPPER` hashes and verifies customer login tokens for `/portal/login`.
 
+Layer 3 route-health operator endpoints:
+
+- `GET /admin/video/resolver-candidates`
+- `GET /admin/video/route-health/metrics`
+
+Interpretation:
+
+- `service-registry-daemon` supplies only routes that survive signed-manifest
+  and broker live-health checks
+- `/admin/video/resolver-candidates` shows that resolver-backed set plus the
+  gateway's local Layer 3 summary and per-route state
+- `/admin/video/route-health/metrics` exposes the same cooldown and outcome
+  counters in Prometheus text format
+
 ## Layout
 
 ```

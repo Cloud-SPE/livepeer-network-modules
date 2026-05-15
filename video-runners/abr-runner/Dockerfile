@@ -1,5 +1,5 @@
 ARG REGISTRY=tztcloud
-ARG TAG=v1.0.0
+ARG TAG=v1.1.0
 ARG CODECS_IMAGE=${REGISTRY}/codecs-builder:${TAG}
 FROM ${CODECS_IMAGE} AS codecs-builder
 

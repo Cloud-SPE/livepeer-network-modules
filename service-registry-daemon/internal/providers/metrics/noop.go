@@ -26,6 +26,7 @@ func (*Noop) SetGRPCInFlight(_, _ string, _ int)       {}
 func (*Noop) IncResolution(_, _ string)                           {}
 func (*Noop) ObserveResolveDuration(_, _ string, _ time.Duration) {}
 func (*Noop) IncLegacyFallback(_ string)                          {}
+func (*Noop) IncLiveHealthDecision(_ string)                      {}
 
 func (*Noop) IncManifestFetch(_ string)                             {}
 func (*Noop) ObserveManifestFetch(_ string, _ time.Duration, _ int) {}

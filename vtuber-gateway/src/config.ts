@@ -39,6 +39,8 @@ export const ConfigSchema = z.object({
   vtuberControlReconnectBufferMessages: z.number().int().positive().default(64),
   vtuberControlReconnectBufferBytes: z.number().int().positive().default(1 << 20),
   adminTokens: z.array(z.string().min(1)).default([]),
+  routeFailureThreshold: z.number().int().positive().default(2),
+  routeCooldownMs: z.number().int().positive().default(30_000),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -131,6 +133,8 @@ export function loadConfig(): Config {
       10,
     ),
     adminTokens: parseCsv(process.env["VTUBER_GATEWAY_ADMIN_TOKENS"] ?? ""),
+    routeFailureThreshold: parseInt(process.env["LIVEPEER_ROUTE_FAILURE_THRESHOLD"] ?? "2", 10),
+    routeCooldownMs: parseInt(process.env["LIVEPEER_ROUTE_COOLDOWN_MS"] ?? "30000", 10),
   });
 }
 

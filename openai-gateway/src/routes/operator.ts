@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
 import type { AdminAuthResolver } from '@livepeer-network-modules/customer-portal/auth';
 import { middleware } from '@livepeer-network-modules/customer-portal';
+import { renderRouteHealthMetrics, summarizeRouteHealth } from '@livepeer-network-modules/gateway-route-health';
 
 import type { RouteSelector } from '../service/routeSelector.js';
 import type { RateCardSnapshot } from '../service/pricing/types.js';
@@ -39,7 +40,18 @@ export function registerOperatorRoutes(app: FastifyInstance, deps: RegisterOpera
 
   app.get('/admin/openai/resolver-candidates', { preHandler }, async (_req, reply) => {
     const candidates = await deps.routeSelector.inspect();
-    await reply.code(200).send({ candidates });
+    const health = deps.routeSelector.inspectHealth();
+    const metrics = deps.routeSelector.inspectMetrics();
+    await reply.code(200).send({ candidates, health, summary: summarizeRouteHealth(health), metrics });
+  });
+
+  app.get('/admin/openai/route-health/metrics', { preHandler }, async (_req, reply) => {
+    const health = deps.routeSelector.inspectHealth();
+    const metrics = deps.routeSelector.inspectMetrics();
+    await reply
+      .code(200)
+      .header('Content-Type', 'text/plain; version=0.0.4')
+      .send(renderRouteHealthMetrics('openai', summarizeRouteHealth(health), metrics));
   });
 }
 

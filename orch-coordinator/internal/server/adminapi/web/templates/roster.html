@@ -24,8 +24,9 @@
     <ul>
     {{range .BrokerStatus}}
       <li class="broker-{{.Freshness}}">
-        <strong>{{.Name}}</strong> — {{.Freshness}} ({{.BaseURL}})
+        <strong>{{.Name}}</strong> — scrape={{.Freshness}} live={{.LiveStatus}} ({{.BaseURL}})
         {{if .LastError}}<span class="err">{{.LastError}}</span>{{end}}
+        {{if .HealthError}}<span class="err">{{.HealthError}}</span>{{end}}
       </li>
     {{end}}
     </ul>
@@ -66,7 +67,9 @@
         <td>{{.PriceWei}}{{if and (ne .OldPriceWei "") (ne .OldPriceWei .PriceWei)}}<br><small class="was">was {{.OldPriceWei}}</small>{{end}}</td>
         <td>
           {{range .Brokers}}
-            <span class="broker-cell broker-{{.Freshness}}">{{.Name}}</span>
+            <span class="broker-cell broker-{{.Freshness}}" title="{{if .LiveReason}}{{.LiveReason}}{{end}}">
+              {{.Name}}{{if .LiveStatus}} · {{.LiveStatus}}{{end}}{{if .HealthStale}} · stale{{end}}
+            </span>
           {{end}}
         </td>
         <td class="worker"><code>{{.WorkerURL}}</code></td>

@@ -52,6 +52,7 @@ Current components:
 - `service-registry-daemon/` — consumer-side resolver for on-chain orch discovery + manifest fetch/verify/cache
 - `chain-commons/` — shared chain/RPC/txintent support used by protocol-daemon
 - `proto-contracts/` — generated protobuf bindings shared by daemon surfaces
+- `gateway-route-health/` — shared Layer 3 route-health tracker used by gateways
 
 Planned or still-expanding areas:
 
@@ -63,6 +64,19 @@ way to keep cross-cutting design coherent during the rewrite.
 
 Cross-cutting design lives at the repo root in `docs/`. Per-component design lives
 **inside the component's own `docs/`** when that component arrives.
+
+## Workspace packages
+
+The JS/TS parts of the repo use a root `pnpm` workspace. Shared packages such as
+`customer-portal/`, `customer-portal/frontend/shared/`, and
+`gateway-route-health/` are consumed via `workspace:*` dependencies by the
+gateway packages.
+
+When adding a new shared JS/TS package:
+
+- add it to [`pnpm-workspace.yaml`](./pnpm-workspace.yaml)
+- reference it from dependents with `workspace:*`
+- run `pnpm install` so local workspace links are refreshed before building
 
 ## Operating model
 

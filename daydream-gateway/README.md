@@ -67,6 +67,20 @@ URL). The embedded UI and gateway share the same host, so the frontend
 uses `window.location.origin` and does not need a separate backend host
 variable.
 
+Layer 3 route-health endpoints:
+
+- `GET /v1/orchs`
+- `GET /v1/orchs/metrics`
+
+Interpretation:
+
+- `service-registry-daemon` removes routes that fail signed-manifest or broker
+  live-health checks before this gateway sees them
+- `/v1/orchs` then shows the remaining candidates plus the gateway's local
+  cooldown state
+- `/v1/orchs/metrics` exposes the same Layer 3 counters in Prometheus text
+  format
+
 ## See also
 
 - Component guidance: [AGENTS.md](./AGENTS.md)

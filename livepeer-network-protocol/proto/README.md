@@ -30,7 +30,7 @@ note. Field-removals or renumbering require a new package version.
 
 ## Status
 
-`v1` is a pre-1.0 working copy until the monorepo cuts v1.0.0. Until then,
+`v1` is a pre-1.0 working copy until the monorepo cuts v1.1.0. Until then,
 breaking changes can land inside `v1/` as long as every co-released
 component is updated in the same commit.
 

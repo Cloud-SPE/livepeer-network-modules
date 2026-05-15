@@ -5,12 +5,12 @@ set -euo pipefail
 #
 # Environment:
 #   REGISTRY        Docker registry prefix (default: tztcloud)
-#   TAG             Image tag (default: v1.0.0)
+#   TAG             Image tag (default: v1.1.0)
 #   PUSH            Push images after build (default: false)
 #   PLATFORMS       Buildx platforms (default: linux/amd64; openai-runner ships multi-arch per OQ4)
 
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-v1.0.0}"
+TAG="${TAG:-v1.1.0}"
 PUSH="${PUSH:-false}"
 PLATFORMS="${PLATFORMS:-linux/amd64}"
 

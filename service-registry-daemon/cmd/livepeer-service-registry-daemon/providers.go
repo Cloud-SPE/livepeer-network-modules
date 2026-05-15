@@ -25,6 +25,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/clock"
 	clockadapter "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/clock/chaincommonsadapter"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/discovery"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/livehealthfetcher"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/logger"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/manifestfetcher"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/metrics"
@@ -47,6 +48,7 @@ type builtProviders struct {
 	signer   signer.Signer
 	verify   verifier.Verifier
 	fetcher  manifestfetcher.ManifestFetcher
+	liveHealth livehealthfetcher.Fetcher
 	clock    clock.Clock
 	recorder metrics.Recorder
 
@@ -257,6 +259,7 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		}),
 		bp.recorder,
 	)
+	bp.liveHealth = livehealthfetcher.New(cfg.WorkerProbeTimeout)
 
 	// Static overlay (resolver only)
 	if cfg.StaticOverlayPath != "" {

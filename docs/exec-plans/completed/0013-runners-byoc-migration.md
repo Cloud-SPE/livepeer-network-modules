@@ -853,7 +853,7 @@ overlays + per-domain ML deps.
 
 ### Q3. video-generation runner — keep or drop
 
-**DECIDED: drop.** Per user lock; not needed in v1.0.0. Future
+**DECIDED: drop.** Per user lock; not needed in v1.1.0. Future
 re-introduction is its own plan.
 
 ### Q4. register-capabilities sidecar — keep or drop

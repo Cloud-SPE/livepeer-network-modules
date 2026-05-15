@@ -12,17 +12,20 @@ RUN corepack enable
 # (gateway-adapters/ts is a workspace dependency).
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
 COPY gateway-adapters/ts/package.json gateway-adapters/ts/
+COPY gateway-route-health/package.json gateway-route-health/
 COPY daydream-gateway/package.json daydream-gateway/
 
 RUN pnpm install --frozen-lockfile
 
 # Copy source and build.
 COPY gateway-adapters/ts/ gateway-adapters/ts/
+COPY gateway-route-health/ gateway-route-health/
 COPY daydream-gateway/ daydream-gateway/
 COPY livepeer-network-protocol/proto/ proto/
 COPY proto-contracts/ proto-contracts/
 
 RUN pnpm -F @tztcloud/livepeer-gateway-middleware build
+RUN pnpm -F @livepeer-network-modules/gateway-route-health build
 RUN pnpm -F @livepeer-network-modules/daydream-gateway build
 
 # Stage 2: runtime.
@@ -37,6 +40,7 @@ COPY --from=build /repo/daydream-gateway/package.json daydream-gateway/
 COPY --from=build /repo/daydream-gateway/dist daydream-gateway/dist
 COPY --from=build /repo/daydream-gateway/frontend/dist daydream-gateway/frontend/dist
 COPY --from=build /repo/gateway-adapters/ts gateway-adapters/ts
+COPY --from=build /repo/gateway-route-health gateway-route-health
 COPY --from=build /repo/proto proto
 COPY --from=build /repo/proto-contracts proto-contracts
 

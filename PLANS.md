@@ -235,7 +235,7 @@ discrete plan dispatches when priority surfaces.
 
 ## Versioning
 
-Pre-1.0.0 until the first release is cut. **v1.0.0 = the first release of this
+Pre-1.0.0 until the first release is cut. **v1.1.0 = the first release of this
 monorepo.** Components inside the monorepo do not have independent versions yet; when
 a component is extracted to a standalone repo, its versioning becomes its own concern.
 Until extraction, the monorepo's tag is the single coordinated release artifact for

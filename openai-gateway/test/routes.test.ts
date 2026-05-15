@@ -310,6 +310,8 @@ test('routes smoke: chat / embeddings / speech / transcriptions / images forward
     offerings: { defaults: {} },
     audioSpeechEnabled: true,
     brokerCallTimeoutMs: 30_000,
+    routeFailureThreshold: 2,
+    routeCooldownMs: 30_000,
   };
   const server = await buildServer({ cfg });
   await server.listen({ host: '127.0.0.1', port: 0 });
@@ -499,6 +501,8 @@ test('authenticated chat reserves then commits usage for API-key req/resp and st
     offerings: { defaults: {} },
     audioSpeechEnabled: false,
     brokerCallTimeoutMs: 30_000,
+    routeFailureThreshold: 2,
+    routeCooldownMs: 30_000,
   };
   const server = await buildServer({
     cfg,
@@ -588,6 +592,8 @@ test('openai api routes reject UI auth tokens with 401', async (t) => {
     offerings: { defaults: {} },
     audioSpeechEnabled: false,
     brokerCallTimeoutMs: 30_000,
+    routeFailureThreshold: 2,
+    routeCooldownMs: 30_000,
   };
   const server = await buildServer({
     cfg,
@@ -726,6 +732,8 @@ test('authenticated embeddings, images, speech, and transcriptions reserve then 
     offerings: { defaults: {} },
     audioSpeechEnabled: true,
     brokerCallTimeoutMs: 30_000,
+    routeFailureThreshold: 2,
+    routeCooldownMs: 30_000,
   };
   const server = await buildServer({
     cfg,
@@ -854,6 +862,8 @@ test('authenticated chat refunds reservation when upstream fails before completi
     offerings: { defaults: {} },
     audioSpeechEnabled: false,
     brokerCallTimeoutMs: 30_000,
+    routeFailureThreshold: 2,
+    routeCooldownMs: 30_000,
   };
   const server = await buildServer({
     cfg,

@@ -13,7 +13,7 @@
 
 services:
   capability-broker:
-    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.1.0}
     command:
       - --config=/etc/livepeer/host-config.yaml
       - --listen=:8080
@@ -31,7 +31,7 @@ services:
   # Opt-in RTMP listener for rtmp-ingress-hls-egress@v0 mode.
   # Enable with `--profile rtmp`. Maps :1935 + GPU device passthrough.
   capability-broker-rtmp:
-    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.1.0}
     profiles: [rtmp]
     command:
       - --config=/etc/livepeer/host-config.yaml

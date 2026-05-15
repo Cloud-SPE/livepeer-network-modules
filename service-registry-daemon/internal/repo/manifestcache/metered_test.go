@@ -24,6 +24,7 @@ func (*fakeRecorder) SetGRPCInFlight(_, _ string, _ int)                    {}
 func (*fakeRecorder) IncResolution(_, _ string)                             {}
 func (*fakeRecorder) ObserveResolveDuration(_, _ string, _ time.Duration)   {}
 func (*fakeRecorder) IncLegacyFallback(_ string)                            {}
+func (*fakeRecorder) IncLiveHealthDecision(_ string)                        {}
 func (*fakeRecorder) IncManifestFetch(_ string)                             {}
 func (*fakeRecorder) ObserveManifestFetch(_ string, _ time.Duration, _ int) {}
 func (*fakeRecorder) IncManifestVerify(_ string)                            {}

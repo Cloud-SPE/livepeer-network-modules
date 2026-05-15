@@ -9,7 +9,7 @@
 #
 # Env:
 #   REGISTRY  default: tztcloud
-#   TAG       default: v1.0.0
+#   TAG       default: v1.1.0
 #   PUSH      set to 1 to docker push after each build
 #   DEPLOY_ONLY  set to 1 to exclude local-only base/test/helper images
 #
@@ -25,7 +25,7 @@
 set -euo pipefail
 
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-v1.0.0}"
+TAG="${TAG:-v1.1.0}"
 PUSH="${PUSH:-0}"
 DEPLOY_ONLY="${DEPLOY_ONLY:-0}"
 

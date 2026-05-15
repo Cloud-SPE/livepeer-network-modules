@@ -98,6 +98,8 @@ func (s *Server) Select(ctx context.Context, req SelectRequest) (*SelectedRoute,
 	all := make([]types.ResolvedNode, 0, len(addrs)*2)
 	for _, addr := range addrs {
 		res, err := s.resolverSvc.ResolveByAddress(ctx, resolver.Request{
+			Capability:          req.Capability,
+			Offering:            req.Offering,
 			Address:             addr,
 			AllowLegacyFallback: true,
 			AllowUnsigned:       true, // Select trusts caller; signature filtering done server-side via overlay

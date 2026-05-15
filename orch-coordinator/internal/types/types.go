@@ -44,6 +44,27 @@ type BrokerOfferings struct {
 	Capabilities   []BrokerOffering `json:"capabilities"`
 }
 
+// BrokerHealthCapability is one tuple-health entry from
+// capability-broker /registry/health.
+type BrokerHealthCapability struct {
+	ID                   string    `json:"id"`
+	OfferingID           string    `json:"offering_id"`
+	Status               string    `json:"status"`
+	Reason               string    `json:"reason,omitempty"`
+	ProbeType            string    `json:"probe_type,omitempty"`
+	ProbedAt             time.Time `json:"probed_at,omitempty"`
+	StaleAfter           time.Time `json:"stale_after,omitempty"`
+	ConsecutiveSuccesses int       `json:"consecutive_successes,omitempty"`
+	ConsecutiveFailures  int       `json:"consecutive_failures,omitempty"`
+}
+
+// BrokerHealth is the full /registry/health response.
+type BrokerHealth struct {
+	BrokerStatus string                   `json:"broker_status"`
+	GeneratedAt  time.Time                `json:"generated_at"`
+	Capabilities []BrokerHealthCapability `json:"capabilities"`
+}
+
 // Validate runs a boundary-decoder pass on the freshly-scraped
 // payload: orch identity match, required fields, decimal-string price,
 // non-empty interaction_mode and work_unit.
@@ -66,6 +87,25 @@ func (b *BrokerOfferings) Validate(expectedOrch string) error {
 		}
 		if !isNonNegativeDecimalString(c.PricePerUnitWei) {
 			return fmt.Errorf("capabilities[%d].price_per_unit_wei: must be a non-negative decimal string, got %q", i, c.PricePerUnitWei)
+		}
+	}
+	return nil
+}
+
+// Validate checks the broker /registry/health response shape. It is a
+// live unsigned signal, so validation is structural only.
+func (b *BrokerHealth) Validate() error {
+	for i, c := range b.Capabilities {
+		if c.ID == "" {
+			return fmt.Errorf("capabilities[%d].id: required", i)
+		}
+		if c.OfferingID == "" {
+			return fmt.Errorf("capabilities[%d].offering_id: required", i)
+		}
+		switch c.Status {
+		case "ready", "draining", "degraded", "unreachable", "stale":
+		default:
+			return fmt.Errorf("capabilities[%d].status: invalid %q", i, c.Status)
 		}
 	}
 	return nil

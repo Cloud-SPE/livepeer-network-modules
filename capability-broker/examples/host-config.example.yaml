@@ -39,6 +39,15 @@ capabilities:
     work_unit:
       name: "barks"
       extractor: { type: "response-jsonpath", path: "$.bark_count" }
+    health:
+      probe:
+        type: "http-status"
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 2
+        healthy_after: 1
+        config:
+          url: "http://localhost:9000/healthz"
     price:
       amount_wei: "100"
       per_units: 1
@@ -54,6 +63,17 @@ capabilities:
     work_unit:
       name: "echoes"
       extractor: { type: "response-jsonpath", path: "$.count", default: 1 }
+    health:
+      probe:
+        type: "http-jsonpath"
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 2
+        healthy_after: 1
+        config:
+          url: "http://localhost:9001/healthz"
+          path: "$.ready"
+          equals: "true"
     price:
       amount_wei: "10"
       per_units: 1
@@ -111,6 +131,17 @@ capabilities:
   #     transport: "http"
   #     url: "http://scope:8000"
   #     auth: "none"
+  #   health:
+  #     probe:
+  #       type: "http-jsonpath"
+  #       interval_ms: 5000
+  #       timeout_ms: 1500
+  #       unhealthy_after: 2
+  #       healthy_after: 1
+  #       config:
+  #         url: "http://scope:8000/api/v1/pipeline/status"
+  #         path: "$.ready"
+  #         equals: "true"
   #   extra:
   #     workload: "daydream-scope"
   #     media_schema: "scope-passthrough/v0"
@@ -156,6 +187,16 @@ capabilities:
   #     transport: "http"
   #     url: "http://10.0.0.5:8000/v1/chat/completions"
   #     auth: "none"
+  #   health:
+  #     probe:
+  #       type: "http-openai-model-ready"
+  #       interval_ms: 5000
+  #       timeout_ms: 1500
+  #       unhealthy_after: 2
+  #       healthy_after: 1
+  #       config:
+  #         url: "http://10.0.0.5:8000/v1/models"
+  #         expect_model: "llama-3-70b"
   #   extra:
   #     region: "us-west-2"
   #     gpu_class: "h100"

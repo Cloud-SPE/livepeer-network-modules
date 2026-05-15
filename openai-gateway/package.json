@@ -26,6 +26,7 @@
     "@grpc/proto-loader": "^0.8.1",
     "@livepeer-network-modules/customer-portal": "workspace:*",
     "@livepeer-network-modules/customer-portal-shared": "workspace:*",
+    "@livepeer-network-modules/gateway-route-health": "workspace:*",
     "@tztcloud/livepeer-gateway-middleware": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.0.0",

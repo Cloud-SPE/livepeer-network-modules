@@ -13,6 +13,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/ffmpegprogress"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/health"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/hls"
 	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
@@ -108,6 +109,7 @@ type Server struct {
 	extractors    *extractors.Registry
 	backend       backend.Forwarder
 	secrets       backend.SecretResolver
+	health        *health.Manager
 	rtmpStore     *rtmpingresshlsegress.Store
 	rtmpListener  *mediartmp.Listener
 	sessStore     *sessioncontrolplusmedia.Store
@@ -193,6 +195,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		extractors:    defaultExtractors(),
 		backend:       backend.NewHTTPClient(),
 		secrets:       backend.NewEnvSecretResolver(),
+		health:        health.New(cfg),
 		rtmpStore:     rtmpStore,
 		sessStore:     sessStore,
 		sessDriver:    sessDriver,
@@ -433,6 +436,9 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if s.sessDriver != nil {
 		go s.sessDriver.RunReconnectWatchdog(ctx)
+	}
+	if s.health != nil {
+		go s.health.Run(ctx)
 	}
 
 	select {

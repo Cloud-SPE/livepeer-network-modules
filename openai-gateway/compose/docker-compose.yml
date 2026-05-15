@@ -19,7 +19,7 @@
 
 services:
   openai-gateway:
-    image: ${REGISTRY:-tztcloud}/livepeer-openai-gateway-reference:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-openai-gateway-reference:${TAG:-v1.1.0}
     environment:
       PORT: "3000"
       LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL:-}

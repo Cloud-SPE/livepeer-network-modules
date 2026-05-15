@@ -6,6 +6,7 @@ import type { FastifyRequest } from "fastify";
 import type { Config } from "../config.js";
 import { HEADER } from "../livepeer/headers.js";
 import { normalizeCapabilityId } from "../livepeer/capabilityMap.js";
+import { RouteHealthTracker, type RouteHealthMetrics, type RouteHealthSnapshot, type RouteOutcome } from "./routeHealth.js";
 
 const RESOLVER_PROTO_FILES = [
   "livepeer/registry/v1/types.proto",
@@ -109,6 +110,10 @@ interface CachedSnapshot {
 export interface RouteSelector {
   select(input: RouteSelectionInput): Promise<RouteCandidate[]>;
   inspect(): Promise<RouteCandidate[]>;
+  recordOutcome(candidate: RouteCandidate, outcome: RouteOutcome, reason?: string): void;
+  inspectHealth(): RouteHealthSnapshot[];
+  inspectMetrics(): RouteHealthMetrics;
+  close?(): Promise<void>;
 }
 
 export function createRouteSelector(cfg: Config): RouteSelector {
@@ -149,10 +154,28 @@ export function createRouteSelector(cfg: Config): RouteSelector {
           },
         ];
       },
+      recordOutcome(): void {},
+      inspectHealth(): RouteHealthSnapshot[] {
+        return [];
+      },
+      inspectMetrics(): RouteHealthMetrics {
+        return {
+          attemptsTotal: 0,
+          successesTotal: 0,
+          retryableFailuresTotal: 0,
+          nonRetryableFailuresTotal: 0,
+          cooldownsOpenedTotal: 0,
+        };
+      },
+      async close(): Promise<void> {},
     };
   }
 
   const client = newResolverClient(cfg.resolverSocket, cfg.resolverProtoRoot);
+  const health = new RouteHealthTracker({
+    failureThreshold: Math.max(1, cfg.routeFailureThreshold),
+    cooldownMs: Math.max(1_000, cfg.routeCooldownMs),
+  });
   let cache: CachedSnapshot | null = null;
 
   return {
@@ -190,12 +213,24 @@ export function createRouteSelector(cfg: Config): RouteSelector {
       });
 
       matches.sort((a, b) => compareCandidates(a, b, hints.preferredExtra));
-      return matches;
+      return health.rankCandidates(matches);
     },
     async inspect(): Promise<RouteCandidate[]> {
       const snapshot = await loadSnapshot(client, cfg, cache);
       cache = snapshot;
       return snapshot.candidates;
+    },
+    recordOutcome(candidate: RouteCandidate, outcome: RouteOutcome, reason?: string): void {
+      health.record(candidate, outcome, reason);
+    },
+    inspectHealth(): RouteHealthSnapshot[] {
+      return health.inspect();
+    },
+    inspectMetrics(): RouteHealthMetrics {
+      return health.inspectMetrics();
+    },
+    async close(): Promise<void> {
+      client.close();
     },
   };
 }

@@ -122,9 +122,12 @@ async function attemptCandidates<T>(
   let lastError: unknown = null;
   for (const candidate of candidates) {
     try {
-      return await fn(candidate);
+      const result = await fn(candidate);
+      routeSelector.recordOutcome(candidate, { ok: true, retryable: false });
+      return result;
     } catch (err) {
       lastError = err;
+      routeSelector.recordOutcome(candidate, { ok: false, retryable: shouldPenalize(err) }, describeFailure(err));
       if (!shouldRetry(err)) break;
     }
   }
@@ -135,4 +138,19 @@ async function attemptCandidates<T>(
 function shouldRetry(err: unknown): boolean {
   if (!(err instanceof LivepeerBrokerError)) return true;
   return err.status >= 500;
+}
+
+function shouldPenalize(err: unknown): boolean {
+  if (!(err instanceof LivepeerBrokerError)) return true;
+  return err.status >= 500 || err.status === 429;
+}
+
+function describeFailure(err: unknown): string {
+  if (err instanceof LivepeerBrokerError) {
+    return `${err.code}:${err.status}`;
+  }
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  return "unknown_failure";
 }

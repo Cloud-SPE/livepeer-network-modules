@@ -3,7 +3,7 @@
 # required.
 
 REGISTRY    ?= tztcloud
-TAG         ?= v1.0.0
+TAG         ?= v1.1.0
 PLATFORMS   ?= linux/amd64
 
 .PHONY: build base gpu-base gpu-media-base go-runner audio tts image downloader tester smoke clean help

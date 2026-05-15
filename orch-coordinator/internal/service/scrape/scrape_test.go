@@ -19,11 +19,12 @@ type fakeClient struct {
 }
 
 type fakeResult struct {
-	out *types.BrokerOfferings
-	err error
+	out    *types.BrokerOfferings
+	health *types.BrokerHealth
+	err    error
 }
 
-func (f *fakeClient) Fetch(ctx context.Context, baseURL string) (*types.BrokerOfferings, error) {
+func (f *fakeClient) FetchOfferings(ctx context.Context, baseURL string) (*types.BrokerOfferings, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if r, ok := f.results[baseURL]; ok {
@@ -32,10 +33,33 @@ func (f *fakeClient) Fetch(ctx context.Context, baseURL string) (*types.BrokerOf
 	return nil, errors.New("fakeClient: no fixture for " + baseURL)
 }
 
+func (f *fakeClient) FetchHealth(ctx context.Context, baseURL string) (*types.BrokerHealth, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if r, ok := f.results[baseURL]; ok {
+		if r.err != nil {
+			return nil, r.err
+		}
+		if r.health != nil {
+			return r.health, nil
+		}
+		return &types.BrokerHealth{}, nil
+	}
+	return nil, errors.New("fakeClient: no fixture for " + baseURL)
+}
+
 func (f *fakeClient) set(baseURL string, out *types.BrokerOfferings, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.results[baseURL] = fakeResult{out: out, err: err}
+}
+
+func (f *fakeClient) setHealth(baseURL string, out *types.BrokerHealth) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ent := f.results[baseURL]
+	ent.health = out
+	f.results[baseURL] = ent
 }
 
 func newFake() *fakeClient {
@@ -60,6 +84,10 @@ func TestService_HappyPath(t *testing.T) {
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	fc := newFake()
 	fc.set("http://x:1", newOfferings(addr, sampleCap("c", "o")), nil)
+	fc.setHealth("http://x:1", &types.BrokerHealth{
+		BrokerStatus: "ready",
+		Capabilities: []types.BrokerHealthCapability{{ID: "c", OfferingID: "o", Status: "ready"}},
+	})
 	svc, err := New(Config{
 		OrchEthAddress: addr,
 		Brokers:        []config.Broker{{Name: "b1", BaseURL: "http://x:1"}},
@@ -77,12 +105,19 @@ func TestService_HappyPath(t *testing.T) {
 	if snap.Brokers[0].Freshness != FreshnessOK {
 		t.Fatalf("freshness: %s", snap.Brokers[0].Freshness)
 	}
+	if snap.Brokers[0].LiveStatus != "ready" {
+		t.Fatalf("live status: %s", snap.Brokers[0].LiveStatus)
+	}
 }
 
 func TestService_SoftFailureKeepsLastGood(t *testing.T) {
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	fc := newFake()
 	fc.set("http://x:1", newOfferings(addr, sampleCap("c", "o")), nil)
+	fc.setHealth("http://x:1", &types.BrokerHealth{
+		BrokerStatus: "ready",
+		Capabilities: []types.BrokerHealthCapability{{ID: "c", OfferingID: "o", Status: "ready"}},
+	})
 	svc, _ := New(Config{
 		OrchEthAddress: addr,
 		Brokers:        []config.Broker{{Name: "b1", BaseURL: "http://x:1"}},
@@ -107,6 +142,10 @@ func TestService_HardFailureDropsEntries(t *testing.T) {
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	fc := newFake()
 	fc.set("http://x:1", newOfferings(addr, sampleCap("c", "o")), nil)
+	fc.setHealth("http://x:1", &types.BrokerHealth{
+		BrokerStatus: "ready",
+		Capabilities: []types.BrokerHealthCapability{{ID: "c", OfferingID: "o", Status: "ready"}},
+	})
 	svc, _ := New(Config{
 		OrchEthAddress: addr,
 		Brokers:        []config.Broker{{Name: "b1", BaseURL: "http://x:1"}},
@@ -131,6 +170,10 @@ func TestService_OrchMismatchIsHardFail(t *testing.T) {
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	fc := newFake()
 	fc.set("http://x:1", newOfferings("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", sampleCap("c", "o")), nil)
+	fc.setHealth("http://x:1", &types.BrokerHealth{
+		BrokerStatus: "ready",
+		Capabilities: []types.BrokerHealthCapability{{ID: "c", OfferingID: "o", Status: "ready"}},
+	})
 	svc, _ := New(Config{
 		OrchEthAddress: addr,
 		Brokers:        []config.Broker{{Name: "b1", BaseURL: "http://x:1"}},

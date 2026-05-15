@@ -104,7 +104,7 @@ The five logical layers, top to bottom:
 
 ## Layer 1 — Capability broker
 
-**One process per host, workload-agnostic.** No per-capability Go code. Five jobs:
+**One process per host, workload-agnostic.** No per-capability Go code. Core jobs:
 
 1. Read a single `host-config.yaml`.
 2. Expose `GET /registry/offerings`, `GET /registry/health`, `GET /healthz`,
@@ -115,9 +115,13 @@ The five logical layers, top to bottom:
    return the response.
 4. Report `actualUnits` to co-located `payment-daemon` (receiver) over unix socket — same
    socket regardless of capability.
-5. Optionally aggregate `/registry/offerings` from peer brokers on the LAN.
+5. Execute broker-local health probes on cadence and publish normalized
+   per-tuple snapshots on `GET /registry/health`.
 
-**The broker contains zero capability semantics.**
+**The broker contains zero routing semantics upstream of normalized health.**
+Capability-specific readiness logic is allowed inside probe recipes, but it
+must stop at the broker boundary and publish only the shared outward states
+`ready`, `draining`, `degraded`, `unreachable`, and `stale`.
 
 Replaces: `openai-worker-node`, `vtuber-worker-node`, `video-worker-node`.
 
@@ -172,7 +176,8 @@ The fixed wire contracts. Capabilities pick one. Initial set:
 | `http-multipart` | multipart upload → response | `openai:audio-transcriptions` |
 | `ws-realtime` | bidirectional WebSocket | `openai:realtime`, vtuber `/control` |
 | `rtmp-ingress-hls-egress` | RTMP in → HLS manifest+segments out | `video:live.rtmp` |
-| `session-control-plus-media` | HTTP session-open → long-lived media plane | `livepeer:vtuber-session` |
+| `session-control-plus-media` | HTTP session-open → broker-managed long-lived media/runtime plane | `livepeer:vtuber-session` |
+| `session-control-external-media` | HTTP session-open → external long-lived media plane | `daydream:scope:v1` |
 
 Each mode is implemented once in the broker, once in the gateway. **New capability
 under an existing mode = zero code.** New mode = one adapter on each side.
@@ -190,6 +195,7 @@ flowchart LR
         C4["openai:realtime"]
         C5["video:live.rtmp"]
         C6["livepeer:vtuber-session"]
+        C8["daydream:scope:v1"]
         C7["customer:custom-rest-api"]
     end
 
@@ -201,6 +207,7 @@ flowchart LR
         M4["ws-realtime"]
         M5["rtmp-ingress-hls-egress"]
         M6["session-control-plus-media"]
+        M7["session-control-external-media"]
     end
 
     subgraph adapters["One adapter per mode<br/>(broker side + gateway side)"]
@@ -211,6 +218,7 @@ flowchart LR
         A4["ws adapter"]
         A5["rtmp adapter"]
         A6["session adapter"]
+        A7["external-media session adapter"]
     end
 
     C1 --> M2
@@ -219,6 +227,7 @@ flowchart LR
     C4 --> M4
     C5 --> M5
     C6 --> M6
+    C8 --> M7
     C7 --> M1
 
     M1 --> A1
@@ -227,13 +236,14 @@ flowchart LR
     M4 --> A4
     M5 --> A5
     M6 --> A6
+    M7 --> A7
 ```
 
 **Adding a brand-new capability under an existing mode is a YAML edit** —
 no broker, gateway, or daemon release. Adding a new mode is the rare case
 where code lands in both `capability-broker/` and `gateway-adapters/`.
 
-Detail to come: `interaction-modes.md`.
+See [`./interaction-modes.md`](./interaction-modes.md).
 
 ## Layer 3 — Declarative capability config
 
@@ -249,6 +259,14 @@ capabilities:
     work_unit:
       name: "tokens"
       extractor: { type: "openai-usage" }
+    health:
+      probe:
+        type: "http-openai-model-ready"
+        path: "/healthz"
+        expect_model: "llama-3-70b"
+        timeout_ms: 1500
+        interval_ms: 5000
+        unhealthy_after: 2
     price:
       amount_wei: 1500000
       per_units: 1
@@ -261,6 +279,32 @@ capabilities:
 The `extractor` library is a small fixed set of recipes (`openai-usage`,
 `response-jsonpath`, `request-formula`, `bytes-counted`, `seconds-elapsed`,
 `ffmpeg-progress`). Adding an extractor is a broker change but extremely rare.
+
+Live health follows the same pattern: the broker owns a small fixed
+library of **probe recipes** and `host-config.yaml` selects one per tuple.
+Examples might include:
+
+- `http-status` — shallow HTTP reachability
+- `http-jsonpath` — response field must match an expected value
+- `http-openai-model-ready` — backend is up and a specific model is loaded
+- `tcp-connect` — port accepts connections
+- `command-exit-0` — local process or sidecar probe
+- `runner-options-match` — backend reports the expected offering or mode
+- `manual-drain` — operator intent overrides automatic readiness
+
+The important boundary is:
+
+- **capabilities choose a probe recipe**
+- **the broker executes the probe**
+- **the broker normalizes the result to generic outward states**
+
+That lets the core modules support specialized health behavior without
+teaching the coordinator, resolver, or gateways what "model loaded",
+"pipeline warmed", or "TURN path ready" mean for any specific workload.
+
+Just like extractors, new probe recipe types are broker changes and
+should be rare. Day-to-day operator work is selecting and tuning existing
+recipes in YAML, not writing new code.
 
 This is the operator's entire day-to-day surface.
 
@@ -397,7 +441,7 @@ sequenceDiagram
 - Both the coordinator and every downstream resolver verify the signature
   against on-chain orch identity. Trust nothing the coordinator says alone.
 
-Detail to come: `trust-model.md`.
+See [`./trust-model.md`](./trust-model.md).
 
 ## Layer 6 — Payment
 
@@ -499,21 +543,32 @@ enforcement point (cuts the session when balance hits zero); the gateway-side
 ledger is the commercial record. Usage ticks are idempotent so a retry never
 double-charges.
 
-Detail to come: `payment-decoupling.md`.
+See [`./payment-decoupling.md`](./payment-decoupling.md).
 
 ## Layer 7 — Routing (gateway side)
 
+- `service-registry-daemon` applies Layer 1 + Layer 2 before the gateway sees
+  a route: signed-manifest validity plus broker live health.
 - Gateway resolves a route → gets the tuple including `interaction_mode`.
 - Picks the matching mode adapter (req/resp, stream, ws, RTMP, session) — generic across
   capabilities.
 - Wraps with `Authorization` (customer's bearer), `Livepeer-Payment` (ticket from sender
   daemon), `Livepeer-Capability: <id>`, `Livepeer-Offering: <id>`, opens transport,
   forwards.
+- Gateway applies Layer 3 locally: recent request outcomes can temporarily
+  cool a route even when manifest + live health are still green.
 - For session/stream/realtime: payment is amortized
   (`OpenSession + periodic Debit + CloseSession`).
 
 **Gateway code is per-mode, not per-capability.** New capability under an existing mode
 lights up automatically once the manifest carries it.
+
+**Gateway health policy is shared, not forked.** The gateways reuse the
+workspace package
+[`../../gateway-route-health/`](../../gateway-route-health/) for cooldown
+tracking, cumulative counters, summary generation, and Prometheus-style
+rendering so OpenAI, video, VTuber, and Daydream all apply the same Layer 3
+policy shape.
 
 ```mermaid
 flowchart TD
@@ -553,6 +608,11 @@ the network works underneath.
 - Counters: `livepeer_routes_total{capability,offering,outcome}`
 - Histograms: `livepeer_price_paid_wei{capability}`
 - Gauges: `livepeer_capacity_available{capability}`
+- `service-registry-daemon` also exposes Layer 2 route-admission counters for
+  decisions like `allowed_ready`, `excluded_unhealthy`, `excluded_stale`,
+  `live_health_missing`, and `live_health_fetch_error`.
+- Gateways expose Layer 3 route-health counters and summaries through both
+  debug/admin JSON and Prometheus text endpoints.
 - Independent third party scrapes both sides → public market data feed.
 
 Architecture provides surfaces; aggregation is third-party.

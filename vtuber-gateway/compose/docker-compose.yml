@@ -10,7 +10,7 @@
 
 services:
   vtuber-gateway:
-    image: ${REGISTRY:-tztcloud}/livepeer-vtuber-gateway:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-vtuber-gateway:${TAG:-v1.1.0}
     environment:
       PORT: "3001"
       LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL:-http://capability-broker:8080}

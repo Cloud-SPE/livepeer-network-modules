@@ -21,7 +21,7 @@
 
 services:
   payment-daemon-receiver:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v1.1.0}
     container_name: payment-daemon-receiver
     hostname: payment-daemon-receiver
     command:
@@ -44,7 +44,7 @@ services:
     restart: unless-stopped
 
   capability-broker:
-    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.1.0}
     container_name: capability-broker
     hostname: capability-broker
     command:

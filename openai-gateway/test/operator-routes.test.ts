@@ -50,6 +50,29 @@ test('operator routes expose resolver candidates and replace rate card snapshot'
         },
       ];
     },
+    recordOutcome() {},
+    inspectHealth() {
+      return [
+        {
+          key: 'https://broker.example.com|0xabc|openai:chat-completions|gpt-4o-mini|http-reqresp@v0',
+          consecutiveFailures: 2,
+          coolingDown: true,
+          cooldownUntil: 123456,
+          lastFailureAt: 111111,
+          lastFailureReason: 'broker_503',
+          lastSuccessAt: 100000,
+        },
+      ];
+    },
+    inspectMetrics() {
+      return {
+        attemptsTotal: 3,
+        successesTotal: 1,
+        retryableFailuresTotal: 2,
+        nonRetryableFailuresTotal: 0,
+        cooldownsOpenedTotal: 1,
+      };
+    },
   };
 
   const app = Fastify();
@@ -81,6 +104,30 @@ test('operator routes expose resolver candidates and replace rate card snapshot'
   });
   assert.equal(getCandidates.statusCode, 200);
   assert.equal(getCandidates.json().candidates[0].offering, 'gpt-4o-mini');
+  assert.deepEqual(getCandidates.json().summary, {
+    tracked_routes: 1,
+    cooling_routes: 1,
+    routes_with_failures: 1,
+    latest_failure_at: 111111,
+    latest_success_at: 100000,
+  });
+  assert.deepEqual(getCandidates.json().metrics, {
+    attemptsTotal: 3,
+    successesTotal: 1,
+    retryableFailuresTotal: 2,
+    nonRetryableFailuresTotal: 0,
+    cooldownsOpenedTotal: 1,
+  });
+
+  const getProm = await app.inject({
+    method: 'GET',
+    url: '/admin/openai/route-health/metrics',
+    headers: { authorization: 'Bearer good', 'x-actor': 'ops@example.com' },
+  });
+  assert.equal(getProm.statusCode, 200);
+  assert.match(getProm.headers['content-type'] ?? '', /^text\/plain/);
+  assert.match(getProm.body, /livepeer_gateway_route_health_attempts_total\{gateway="openai"\} 3/);
+  assert.match(getProm.body, /livepeer_gateway_route_health_cooling_routes\{gateway="openai"\} 1/);
 
   const nextSnapshot: RateCardSnapshot = {
     chatTiers: [{ tier: 'pro', inputUsdPerMillion: 3, outputUsdPerMillion: 4 }],

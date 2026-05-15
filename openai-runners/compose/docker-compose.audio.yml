@@ -5,7 +5,7 @@
 
 services:
   openai_audio_runner:
-    image: ${REGISTRY:-tztcloud}/openai-audio-runner:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/openai-audio-runner:${TAG:-v1.1.0}
     runtime: nvidia
     environment:
       - CAPABILITY_NAME=openai-audio-transcriptions
@@ -25,7 +25,7 @@ services:
       - "${AUDIO_RUNNER_PORT:-8084}:8080"
 
   openai_tts_runner:
-    image: ${REGISTRY:-tztcloud}/openai-tts-runner:${TAG:-v1.0.0}
+    image: ${REGISTRY:-tztcloud}/openai-tts-runner:${TAG:-v1.1.0}
     runtime: nvidia
     environment:
       - CAPABILITY_NAME=openai-audio-speech

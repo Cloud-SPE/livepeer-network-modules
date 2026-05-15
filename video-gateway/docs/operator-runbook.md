@@ -64,7 +64,20 @@ curl -sSf http://127.0.0.1:3000/healthz
 curl -sSf http://127.0.0.1:3000/admin/video/resolver-candidates \
   -H "Authorization: Bearer $VIDEO_GATEWAY_ADMIN_TOKEN" \
   -H "X-Actor: ops"
+curl -sSf http://127.0.0.1:3000/admin/video/route-health/metrics \
+  -H "Authorization: Bearer $VIDEO_GATEWAY_ADMIN_TOKEN" \
+  -H "X-Actor: ops"
 ```
+
+Interpretation:
+
+- `/admin/video/resolver-candidates` shows the current resolver-backed routes
+  after Layer 1 and Layer 2 filtering, plus gateway-local Layer 3 summary and
+  per-route state
+- `/admin/video/route-health/metrics` exposes the gateway's Layer 3 counters
+  and gauges in Prometheus text format
+- if a broker tuple is missing here, look at `service-registry-daemon` and the
+  broker's `/registry/health` before assuming the gateway suppressed it locally
 
 Storage check:
 

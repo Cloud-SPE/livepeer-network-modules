@@ -33,6 +33,20 @@ pnpm --filter @livepeer-network-modules/vtuber-gateway build
 pnpm --filter @livepeer-network-modules/vtuber-gateway test
 ```
 
+Layer 3 route-health operator endpoints:
+
+- `GET /admin/vtuber/node-health`
+- `GET /admin/vtuber/route-health/metrics`
+
+Interpretation:
+
+- `service-registry-daemon` supplies only routes that survive manifest and
+  broker live-health checks
+- `/admin/vtuber/node-health` adds the gateway's local Layer 3 view on top of
+  that resolver-backed set
+- `/admin/vtuber/route-health/metrics` exposes the same cooldown and outcome
+  counters in Prometheus text format
+
 ## Layout
 
 See [`AGENTS.md`](./AGENTS.md). The migration brief is

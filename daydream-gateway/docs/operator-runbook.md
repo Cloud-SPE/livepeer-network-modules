@@ -1,6 +1,6 @@
-# Operator runbook — daydream-scope on Livepeer
+# Operator runbook — Daydream Scope on Livepeer
 
-Step-by-step for standing up the daydream-scope capability end-to-end.
+Step-by-step for standing up the Daydream Scope capability end-to-end.
 Two stacks: the orchestrator-side stack (runs the GPU workload + payment
 receiver + registry publisher + broker) and the broadcaster-side stack
 (this gateway + a payment sender). The two halves communicate only over
@@ -46,33 +46,39 @@ Verify:
   ```bash
   curl http://localhost:8080/registry/offerings | jq .
   ```
+- The broker's `/registry/health` endpoint reports the tuple as `ready`:
+  ```bash
+  curl http://localhost:8080/registry/health | jq .
+  ```
 - Scope has loaded a pipeline (this is automatic on first session-open,
   but you can pre-warm by exec'ing into Scope and calling
   `/api/v1/pipeline/load`).
 
-## Step 2 — Publish to the on-chain service registry
+## Step 2 — Publish the signed manifest through orch-coordinator
 
-The orch must publish a manifest pointing at this broker's externally-
-routable URL. Manifest schema lives in
-`service-registry-daemon/docs/design-docs/manifest-schema.md`. Example
-fragment for daydream-scope:
+The orch must publish a **signed** manifest that includes the
+`daydream:scope:v1` tuple and points at this broker's externally-routable URL.
+In the rewrite, this is not a direct handwritten service-registry payload.
+The flow is:
 
-```yaml
-nodes:
-  - operator: 0x...your orch address
-    url: https://broker.your-orch.example.com
-    capabilities:
-      - name: daydream-scope
-        work_unit: second
-        offerings:
-          - id: default
-            price_per_work_unit_wei: "1500000"
-            constraints: { gpu_class: "L40S", tier: "standard" }
-```
+1. `orch-coordinator` scrapes `/registry/offerings`
+2. operator reviews the candidate manifest
+3. candidate is carried to `secure-orch`
+4. cold key signs it
+5. signed manifest is uploaded back to `orch-coordinator`
+6. `service-registry-daemon` resolves the published well-known URL
 
-Publish via `protocol-daemon` per its own runbook
-(`protocol-daemon/docs/operations/`). The service-registry-daemon on
-the broadcaster side will then resolve this orch.
+Relevant references:
+
+- [`../../docs/design-docs/architecture-overview.md`](../../docs/design-docs/architecture-overview.md)
+- [`../../docs/design-docs/trust-model.md`](../../docs/design-docs/trust-model.md)
+- [`../../docs/design-docs/backend-health.md`](../../docs/design-docs/backend-health.md)
+- [`../../orch-coordinator/docs/operator-runbook.md`](../../orch-coordinator/docs/operator-runbook.md)
+
+Broadcaster-side resolution will only return routes that pass:
+
+- Layer 1: signed-manifest validity
+- Layer 2: broker live health from `/registry/health`
 
 ## Step 3 — Broadcaster host
 
@@ -97,8 +103,19 @@ curl http://localhost:9100/healthz
 # {"status":"ok"}
 
 curl http://localhost:9100/v1/orchs | jq .
-# Should list one or more orchs advertising daydream-scope.
+# Should list one or more orchs advertising Daydream Scope.
+
+curl http://localhost:9100/v1/orchs/metrics
+# Prometheus text for gateway-local Layer 3 route health.
 ```
+
+Interpret the surfaces like this:
+
+- `/v1/orchs` shows the current resolver-backed candidate set plus
+  gateway-local route-health summary
+- `service-registry-daemon` has already removed any route that fails signed
+  manifest or broker live-health checks
+- `/v1/orchs/metrics` shows gateway-local cooldown and route-outcome counters
 
 ## Step 4 — Open a session
 
@@ -151,9 +168,9 @@ Broadcaster-paid expenses:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `GET /v1/orchs` returns empty | service-registry-daemon can't resolve any orchs | Check the daemon's logs; verify on-chain manifest pointer is set; bump TTL via env if cached |
+| `GET /v1/orchs` returns empty | no routes survive manifest or live-health filtering | Check the daemon's logs; verify the signed manifest is published; check broker `/registry/health`; verify the tuple is `ready` |
 | `POST /v1/sessions` returns 502 | Payment minting succeeded but broker rejected payment | Check broker logs for `livepeerheader` error code; verify broadcaster has LPT |
-| `POST /v1/sessions` returns 503 | No orchs available for the (capability, offering) tuple | Check `GET /v1/orchs` directly; check manifest pointer |
+| `POST /v1/sessions` returns 503 | No orchs available for the `(capability, offering)` tuple after Layer 2 or Layer 3 filtering | Check `GET /v1/orchs`; inspect `/v1/orchs/metrics`; check whether the broker tuple is `degraded`, `draining`, `stale`, or locally cooled |
 | WebRTC offer succeeds but no video frames | Cloudflare TURN credentials expired or `HF_TOKEN` not set on Scope | Check Scope container env; rotate `HF_TOKEN` |
 | Scope HTTP 404 on `/api/v1/*` | session_id from SPA doesn't match any router entry | Check `X-Daydream-Session` header; check session hasn't expired |
 | Sessions auto-close around 1h mark | broker `DefaultExpiresIn` reached | Reopen session; this is by design |

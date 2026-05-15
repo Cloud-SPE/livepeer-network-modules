@@ -1,7 +1,7 @@
 // Package registry implements the unpaid registry endpoints:
 //
 //	GET /registry/offerings  — capability inventory (manifest payload sans signature)
-//	GET /registry/health     — currently-available capabilities (live signal)
+//	GET /registry/health     — normalized per-tuple live-health snapshots
 //	GET /healthz             — process liveness probe
 //
 // Per the spec, the broker only publishes the bare offerings payload; signing

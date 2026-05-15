@@ -32,6 +32,19 @@ const routeSelector: VideoRouteSelector = {
   async suppressedBrokers() {
     return [];
   },
+  async recordOutcome() {},
+  async inspectHealth() {
+    return [];
+  },
+  async inspectMetrics() {
+    return {
+      attemptsTotal: 0,
+      successesTotal: 0,
+      retryableFailuresTotal: 0,
+      nonRetryableFailuresTotal: 0,
+      cooldownsOpenedTotal: 0,
+    };
+  },
 };
 
 function liveStreamsDbFake(rows: Array<Record<string, unknown>>) {
@@ -279,6 +292,19 @@ test("admin routes: broker suppression toggles route controls", async () => {
     async suppressedBrokers() {
       return [...suppressed];
     },
+    async recordOutcome() {},
+    async inspectHealth() {
+      return [];
+    },
+    async inspectMetrics() {
+      return {
+        attemptsTotal: 0,
+        successesTotal: 0,
+        retryableFailuresTotal: 0,
+        nonRetryableFailuresTotal: 0,
+        cooldownsOpenedTotal: 0,
+      };
+    },
   };
   registerAdmin(app, {
     authResolver,
@@ -328,6 +354,30 @@ test("admin routes: broker suppression toggles route controls", async () => {
   });
   assert.equal(candidates.statusCode, 200);
   assert.equal(candidates.json().candidates[0].suppressed, true);
+  assert.deepEqual(candidates.json().summary, {
+    tracked_routes: 0,
+    cooling_routes: 0,
+    routes_with_failures: 0,
+    latest_failure_at: null,
+    latest_success_at: null,
+  });
+  assert.deepEqual(candidates.json().metrics, {
+    attemptsTotal: 0,
+    successesTotal: 0,
+    retryableFailuresTotal: 0,
+    nonRetryableFailuresTotal: 0,
+    cooldownsOpenedTotal: 0,
+  });
+
+  const prom = await app.inject({
+    method: "GET",
+    url: "/admin/video/route-health/metrics",
+    headers: { authorization: "Bearer token", "x-actor": "operator" },
+  });
+  assert.equal(prom.statusCode, 200);
+  assert.match(prom.headers["content-type"] ?? "", /^text\/plain/);
+  assert.match(prom.body, /livepeer_gateway_route_health_attempts_total\{gateway="video"\} 0/);
+  assert.match(prom.body, /livepeer_gateway_route_health_tracked_routes\{gateway="video"\} 0/);
 
   const unsuppress = await app.inject({
     method: "POST",

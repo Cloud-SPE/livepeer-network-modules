@@ -1,6 +1,7 @@
 import { desc } from "drizzle-orm";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import type { AdminAuthResolver } from "@livepeer-network-modules/customer-portal/auth";
+import { renderRouteHealthMetrics, summarizeRouteHealth } from "@livepeer-network-modules/gateway-route-health";
 
 import type { Db } from "../db/pool.js";
 import { vtuberNodeHealth, vtuberRateCardSession, vtuberUsageRecord } from "../repo/schema.js";
@@ -72,6 +73,15 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
       .from(vtuberNodeHealth)
       .orderBy(desc(vtuberNodeHealth.updatedAt))
       .limit(100);
+    const routeHealth = await deps.serviceRegistry.inspectHealth();
+    const routeMetrics = await deps.serviceRegistry.inspectMetrics();
+    const routeHealthByNodeUrl = new Map<string, typeof routeHealth[number]>();
+    for (const entry of routeHealth) {
+      const nodeUrl = entry.key.split("|", 1)[0];
+      if (nodeUrl) {
+        routeHealthByNodeUrl.set(nodeUrl, entry);
+      }
+    }
     const rows =
       storedRows.length > 0
         ? storedRows
@@ -85,6 +95,8 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
             updatedAt: new Date(0),
           }));
     await reply.code(200).send({
+      summary: summarizeRouteHealth(routeHealth),
+      metrics: routeMetrics,
       nodes: rows.map((row) => ({
         node_id: row.nodeId,
         node_url: row.nodeUrl,
@@ -93,8 +105,18 @@ export function registerAdmin(app: FastifyInstance, deps: AdminRoutesDeps): void
         consecutive_fails: row.consecutiveFails,
         circuit_open: row.circuitOpen,
         updated_at: row.updatedAt.toISOString(),
+        route_health: routeHealthByNodeUrl.get(row.nodeUrl) ?? null,
       })),
     });
+  });
+
+  app.get("/admin/vtuber/route-health/metrics", { preHandler }, async (_req, reply) => {
+    const routeHealth = await deps.serviceRegistry.inspectHealth();
+    const routeMetrics = await deps.serviceRegistry.inspectMetrics();
+    await reply
+      .code(200)
+      .header("Content-Type", "text/plain; version=0.0.4")
+      .send(renderRouteHealthMetrics("vtuber", summarizeRouteHealth(routeHealth), routeMetrics));
   });
 
   app.get("/admin/vtuber/rate-card", { preHandler }, async (_req, reply) => {

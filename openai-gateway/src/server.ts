@@ -40,6 +40,9 @@ export async function buildServer(input: BuildServerDeps): Promise<FastifyInstan
     bodyLimit: 100 * 1024 * 1024,
   });
   const routeSelector = createRouteSelector(cfg);
+  app.addHook("onClose", async () => {
+    await routeSelector.close?.();
+  });
 
   app.addContentTypeParser(
     /^multipart\/form-data/,

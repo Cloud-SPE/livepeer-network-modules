@@ -2,6 +2,7 @@ import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 
 import type { IncomingHttpHeaders } from "node:http";
+import { RouteHealthTracker, type RouteHealthMetrics, type RouteHealthSnapshot, type RouteOutcome } from "./routeHealth.js";
 
 const RESOLVER_PROTO_FILES = [
   "livepeer/registry/v1/types.proto",
@@ -32,6 +33,8 @@ export interface VideoRouteSelectorConfig {
   resolverSocket: string | null;
   resolverProtoRoot: string;
   resolverSnapshotTtlMs: number;
+  routeFailureThreshold: number;
+  routeCooldownMs: number;
 }
 
 export interface VideoRouteSelector {
@@ -48,6 +51,10 @@ export interface VideoRouteSelector {
   suppressBroker(brokerUrl: string): Promise<void>;
   unsuppressBroker(brokerUrl: string): Promise<void>;
   suppressedBrokers(): Promise<string[]>;
+  recordOutcome(candidate: VideoRouteCandidate, outcome: RouteOutcome, reason?: string): Promise<void>;
+  inspectHealth(): Promise<RouteHealthSnapshot[]>;
+  inspectMetrics(): Promise<RouteHealthMetrics>;
+  close?(): Promise<void>;
 }
 
 interface ResolverClient extends grpc.Client {
@@ -108,6 +115,10 @@ interface CachedSnapshot {
 
 export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSelector {
   const suppressed = new Set<string>();
+  const health = new RouteHealthTracker({
+    failureThreshold: Math.max(1, cfg.routeFailureThreshold),
+    cooldownMs: Math.max(1_000, cfg.routeCooldownMs),
+  });
   if (!cfg.resolverSocket) {
     return {
       async select(input): Promise<VideoRouteCandidate[]> {
@@ -151,6 +162,16 @@ export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSe
       async suppressedBrokers(): Promise<string[]> {
         return [...suppressed.values()].sort();
       },
+      async recordOutcome(candidate, outcome, reason): Promise<void> {
+        health.record(candidate, outcome, reason);
+      },
+      async inspectHealth(): Promise<RouteHealthSnapshot[]> {
+        return health.inspect();
+      },
+      async inspectMetrics(): Promise<RouteHealthMetrics> {
+        return health.inspectMetrics();
+      },
+      async close(): Promise<void> {},
     };
   }
 
@@ -197,7 +218,7 @@ export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSe
       });
 
       matches.sort((a, b) => compareCandidates(a, b, preferredExtra));
-      return matches;
+      return health.rankCandidates(matches);
     },
     async inspect(): Promise<VideoRouteCandidate[]> {
       const snapshot = await loadSnapshot(client, cfg, cache);
@@ -212,6 +233,18 @@ export function createRouteSelector(cfg: VideoRouteSelectorConfig): VideoRouteSe
     },
     async suppressedBrokers(): Promise<string[]> {
       return [...suppressed.values()].sort();
+    },
+    async recordOutcome(candidate, outcome, reason): Promise<void> {
+      health.record(candidate, outcome, reason);
+    },
+    async inspectHealth(): Promise<RouteHealthSnapshot[]> {
+      return health.inspect();
+    },
+    async inspectMetrics(): Promise<RouteHealthMetrics> {
+      return health.inspectMetrics();
+    },
+    async close(): Promise<void> {
+      client.close();
     },
   };
 }

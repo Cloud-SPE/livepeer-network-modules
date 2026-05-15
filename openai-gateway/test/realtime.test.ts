@@ -151,6 +151,8 @@ test('realtime: customer ws bridges to broker via ws-realtime adapter with canon
     offerings: { defaults: {} },
     audioSpeechEnabled: false,
     brokerCallTimeoutMs: 30_000,
+    routeFailureThreshold: 2,
+    routeCooldownMs: 30_000,
   };
   const server = await buildServer({ cfg });
   await server.listen({ host: '127.0.0.1', port: 0 });

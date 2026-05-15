@@ -64,6 +64,7 @@ func run(ctx context.Context, args []string) error {
 			CacheManifestTTL: cfg.CacheManifestTTL,
 			MaxStale:         cfg.MaxStale,
 			RejectUnsigned:   cfg.RejectUnsigned,
+			LiveHealth:       bp.liveHealth,
 		})
 		srvCfg.Resolver = resolverSvc
 	case config.ModePublisher:

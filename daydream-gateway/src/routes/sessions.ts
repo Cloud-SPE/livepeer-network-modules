@@ -70,6 +70,11 @@ export function registerSessionRoutes(
           body: "{}",
         });
         if (!res.ok) {
+          selector.recordOutcome(
+            orch,
+            { ok: false, retryable: res.status >= 500 || res.status === 429 },
+            `broker_session_open_failed:${res.status}`,
+          );
           lastErr = new Error(
             `broker session-open failed: ${res.status} ${await res.text()}`,
           );
@@ -85,6 +90,7 @@ export function registerSessionRoutes(
           onError: (reason) =>
             app.log.warn({ session_id: sessionId, reason }, "session error"),
         });
+        selector.recordOutcome(orch, { ok: true, retryable: false });
         router.add({
           sessionId,
           orch,
@@ -105,6 +111,9 @@ export function registerSessionRoutes(
           },
         });
       } catch (e) {
+        if (orch) {
+          selector.recordOutcome(orch, { ok: false, retryable: true }, (e as Error).message);
+        }
         lastErr = e;
         continue;
       }

@@ -39,6 +39,8 @@ export interface Config {
   offerings: OfferingsConfig;
   audioSpeechEnabled: boolean;
   brokerCallTimeoutMs: number;
+  routeFailureThreshold: number;
+  routeCooldownMs: number;
 }
 
 export function loadConfig(): Config {
@@ -77,6 +79,8 @@ export function loadConfig(): Config {
     offerings: loadOfferingsFromDisk(offeringsConfigPath),
     audioSpeechEnabled: parseBool(process.env["OPENAI_AUDIO_SPEECH_ENABLED"], false),
     brokerCallTimeoutMs: parseInt(process.env["BROKER_CALL_TIMEOUT_MS"] ?? "30000", 10),
+    routeFailureThreshold: parseInt(process.env["LIVEPEER_ROUTE_FAILURE_THRESHOLD"] ?? "2", 10),
+    routeCooldownMs: parseInt(process.env["LIVEPEER_ROUTE_COOLDOWN_MS"] ?? "30000", 10),
   };
 }
 

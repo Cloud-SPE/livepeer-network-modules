@@ -11,6 +11,7 @@ package roster
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/candidate"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/diff"
@@ -38,9 +39,12 @@ type Row struct {
 // BrokerCell describes one broker that advertises this row's tuple,
 // with its current freshness and any error.
 type BrokerCell struct {
-	Name      string
-	Freshness string
-	Error     string
+	Name         string
+	Freshness    string
+	Error        string
+	LiveStatus   string
+	LiveReason   string
+	HealthStale  bool
 }
 
 // View is the rendered roster.
@@ -172,6 +176,13 @@ func brokersByUniquenessKey(snap scrape.Snapshot) map[string][]BrokerCell {
 		if b, ok := freshness[st.BrokerName]; ok {
 			cell.Freshness = b.Freshness
 			cell.Error = b.LastError
+			if h, ok := b.TupleHealth[tupleHealthKey(st.Offering.CapabilityID, st.Offering.OfferingID)]; ok {
+				cell.LiveStatus = h.Status
+				cell.LiveReason = h.Reason
+				if !h.StaleAfter.IsZero() && h.StaleAfter.Before(stampNow()) {
+					cell.HealthStale = true
+				}
+			}
 		}
 		out[k] = append(out[k], cell)
 	}
@@ -179,6 +190,12 @@ func brokersByUniquenessKey(snap scrape.Snapshot) map[string][]BrokerCell {
 		sort.Slice(out[k], func(i, j int) bool { return out[k][i].Name < out[k][j].Name })
 	}
 	return out
+}
+
+var stampNow = func() time.Time { return time.Now().UTC() }
+
+func tupleHealthKey(capabilityID, offeringID string) string {
+	return capabilityID + "|" + offeringID
 }
 
 func uniquenessKey(capID, offeringID string, extra, constraints map[string]any) string {

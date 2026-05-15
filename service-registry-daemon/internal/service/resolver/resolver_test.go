@@ -14,6 +14,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/chain"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/clock"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/manifestfetcher"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/signer"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/store"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/verifier"
@@ -32,9 +33,11 @@ type fixture struct {
 	uri     string
 	chain   *chain.InMemory
 	fetcher *manifestfetcher.Static
+	health  *fakeLiveHealthFetcher
 	overlay *config.Overlay
 	cache   manifestcache.Repo
 	audit   audit.Repo
+	rec     *metrics.Counter
 	clk     *clock.Fixed
 	svc     *Service
 }
@@ -51,11 +54,13 @@ func newFixture(t *testing.T) *fixture {
 	c := chain.NewInMemory(addr)
 	c.PreLoad(addr, uri)
 	fetcher := &manifestfetcher.Static{Bodies: map[string][]byte{}}
+	health := &fakeLiveHealthFetcher{snapshots: map[string]*types.RouteHealthSnapshot{}}
 	overlay := config.EmptyOverlay()
 
 	kv := store.NewMemory()
 	cacheRepo := manifestcache.New(kv)
 	auditRepo := audit.New(kv)
+	rec := metrics.NewCounter()
 	clk := &clock.Fixed{T: time.Unix(1745000000, 0).UTC()}
 
 	svc := New(Config{
@@ -66,6 +71,8 @@ func newFixture(t *testing.T) *fixture {
 		Audit:    auditRepo,
 		Overlay:  func() *config.Overlay { return overlay },
 		Clock:    clk,
+		Recorder: rec,
+		LiveHealth: health,
 		// rejectUnsigned default = false here
 	})
 	return &fixture{
@@ -75,12 +82,29 @@ func newFixture(t *testing.T) *fixture {
 		uri:     uri,
 		chain:   c,
 		fetcher: fetcher,
+		health:  health,
 		overlay: overlay,
 		cache:   cacheRepo,
 		audit:   auditRepo,
+		rec:     rec,
 		clk:     clk,
 		svc:     svc,
 	}
+}
+
+type fakeLiveHealthFetcher struct {
+	snapshots map[string]*types.RouteHealthSnapshot
+	err       error
+}
+
+func (f *fakeLiveHealthFetcher) Fetch(ctx context.Context, workerURL string) (*types.RouteHealthSnapshot, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	if snap, ok := f.snapshots[workerURL]; ok {
+		return snap, nil
+	}
+	return &types.RouteHealthSnapshot{}, nil
 }
 
 // signManifestForFixture builds a manifest signed by f.signer for f.addr.
@@ -480,6 +504,259 @@ func TestResolveByAddress_CacheReuseFresh(t *testing.T) {
 	}
 	if res.FreshnessStatus != types.Fresh {
 		t.Fatalf("expected Fresh, got %v", res.FreshnessStatus)
+	}
+}
+
+func TestResolveByAddress_FiltersLiveUnhealthyRequestedTuple(t *testing.T) {
+	f := newFixture(t)
+	workerURL := "https://orch.example.com:8935"
+	f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: workerURL,
+			Capabilities: []types.Capability{
+				{
+					Name:     "openai:chat-completions",
+					WorkUnit: "token",
+					Offerings: []types.Offering{
+						{ID: "default", PricePerWorkUnitWei: "1"},
+					},
+				},
+			},
+		},
+	})
+	f.health.snapshots[workerURL] = &types.RouteHealthSnapshot{
+		BrokerStatus: "ready",
+		GeneratedAt:  f.clk.Now(),
+		Capabilities: []types.RouteHealthCapability{{
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Status:     "degraded",
+			Reason:     "probe_failed",
+			StaleAfter: f.clk.Now().Add(time.Minute),
+		}},
+	}
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{
+		Address:    f.addr,
+		Capability: "openai:chat-completions",
+		Offering:   "default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 0 {
+		t.Fatalf("expected 0 nodes after live-health filter, got %d", len(res.Nodes))
+	}
+	if got := f.rec.LiveHealthDecisions.Load(); got != 1 {
+		t.Fatalf("expected 1 live-health decision metric, got %d", got)
+	}
+}
+
+func TestResolveByAddress_KeepsLiveHealthyRequestedTuple(t *testing.T) {
+	f := newFixture(t)
+	workerURL := "https://orch.example.com:8935"
+	f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: workerURL,
+			Capabilities: []types.Capability{
+				{
+					Name:     "openai:chat-completions",
+					WorkUnit: "token",
+					Offerings: []types.Offering{
+						{ID: "default", PricePerWorkUnitWei: "1"},
+					},
+				},
+			},
+		},
+	})
+	f.health.snapshots[workerURL] = &types.RouteHealthSnapshot{
+		BrokerStatus: "ready",
+		GeneratedAt:  f.clk.Now(),
+		Capabilities: []types.RouteHealthCapability{{
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Status:     "ready",
+			Reason:     "probe_ok",
+			StaleAfter: f.clk.Now().Add(time.Minute),
+		}},
+	}
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{
+		Address:    f.addr,
+		Capability: "openai:chat-completions",
+		Offering:   "default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 1 {
+		t.Fatalf("expected 1 node after live-health filter, got %d", len(res.Nodes))
+	}
+}
+
+func TestResolveByAddress_PrunesLiveUnhealthyOfferingsWithoutExplicitRouteRequest(t *testing.T) {
+	f := newFixture(t)
+	f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: "https://orch.example.com:8935",
+			Capabilities: []types.Capability{
+				{
+					Name:     "openai:/v1/chat/completions",
+					WorkUnit: "token",
+					Offerings: []types.Offering{
+						{ID: "healthy", PricePerWorkUnitWei: "10"},
+						{ID: "degraded", PricePerWorkUnitWei: "11"},
+					},
+				},
+			},
+		},
+	})
+	f.health.snapshots["https://orch.example.com:8935"] = &types.RouteHealthSnapshot{
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "openai:/v1/chat/completions",
+				OfferingID: "healthy",
+				Status:     "ready",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+			{
+				ID:         "openai:/v1/chat/completions",
+				OfferingID: "degraded",
+				Status:     "degraded",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+		},
+	}
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(res.Nodes))
+	}
+	if len(res.Nodes[0].Capabilities) != 1 {
+		t.Fatalf("expected 1 capability, got %d", len(res.Nodes[0].Capabilities))
+	}
+	offerings := res.Nodes[0].Capabilities[0].Offerings
+	if len(offerings) != 1 || offerings[0].ID != "healthy" {
+		t.Fatalf("expected only healthy offering to remain, got %+v", offerings)
+	}
+}
+
+func TestResolveByAddress_FiltersDrainingRequestedTuple(t *testing.T) {
+	f := newFixture(t)
+	f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: "https://orch.example.com:8935",
+			Capabilities: []types.Capability{
+				{
+					Name:     "video:live.rtmp",
+					WorkUnit: "seconds",
+					Offerings: []types.Offering{
+						{ID: "default", PricePerWorkUnitWei: "10"},
+					},
+				},
+			},
+		},
+	})
+	f.health.snapshots["https://orch.example.com:8935"] = &types.RouteHealthSnapshot{
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "video:live.rtmp",
+				OfferingID: "default",
+				Status:     "draining",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+		},
+	}
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{
+		Address:    f.addr,
+		Capability: "video:live.rtmp",
+		Offering:   "default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 0 {
+		t.Fatalf("expected draining tuple to be filtered, got %+v", res.Nodes)
+	}
+}
+
+func TestResolveByAddress_FiltersStaleRequestedTuple(t *testing.T) {
+	f := newFixture(t)
+	f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: "https://orch.example.com:8935",
+			Capabilities: []types.Capability{
+				{
+					Name:     "daydream:scope:v1",
+					WorkUnit: "sessions",
+					Offerings: []types.Offering{
+						{ID: "default", PricePerWorkUnitWei: "10"},
+					},
+				},
+			},
+		},
+	})
+	f.health.snapshots["https://orch.example.com:8935"] = &types.RouteHealthSnapshot{
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "daydream:scope:v1",
+				OfferingID: "default",
+				Status:     "ready",
+				StaleAfter: f.clk.Now().Add(-1 * time.Second),
+			},
+		},
+	}
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{
+		Address:    f.addr,
+		Capability: "daydream:scope:v1",
+		Offering:   "default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 0 {
+		t.Fatalf("expected stale tuple to be filtered, got %+v", res.Nodes)
+	}
+}
+
+func TestResolveByAddress_LiveHealthFetchErrorLeavesRawResolveUsableAndRecordsMetric(t *testing.T) {
+	f := newFixture(t)
+	f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: "https://orch.example.com:8935",
+			Capabilities: []types.Capability{
+				{
+					Name:     "openai:/v1/chat/completions",
+					WorkUnit: "token",
+					Offerings: []types.Offering{
+						{ID: "default", PricePerWorkUnitWei: "1"},
+					},
+				},
+			},
+		},
+	})
+	f.health.err = errors.New("dial tcp: connection refused")
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 1 {
+		t.Fatalf("expected raw resolve to remain usable on live-health fetch error, got %d nodes", len(res.Nodes))
+	}
+	if got := f.rec.LiveHealthDecisions.Load(); got == 0 {
+		t.Fatal("expected live-health decision metric to record fetch error path")
 	}
 }
 

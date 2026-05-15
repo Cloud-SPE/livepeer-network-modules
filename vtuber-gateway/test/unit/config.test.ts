@@ -18,6 +18,8 @@ test("ConfigSchema parses a minimal valid env shape", () => {
     vtuberRelayMaxPerSession: 8,
     vtuberSessionBearerPepper: "this-is-a-test-pepper-min-16-chars",
     vtuberWorkerControlBearerPepper: "another-test-pepper-min-16-chars",
+    routeFailureThreshold: 2,
+    routeCooldownMs: 30000,
   });
   assert.equal(cfg.listenPort, 3001);
   assert.equal(cfg.brokerUrl, "http://broker:8080");
@@ -39,6 +41,8 @@ test("ConfigSchema rejects pepper shorter than 16 chars", () => {
       vtuberRelayMaxPerSession: 8,
       vtuberSessionBearerPepper: "short",
       vtuberWorkerControlBearerPepper: "another-test-pepper-min-16-chars",
+      routeFailureThreshold: 2,
+      routeCooldownMs: 30000,
     }),
   );
 });

@@ -39,6 +39,10 @@ type BrokerStatus struct {
 	LastError      string
 	Freshness      string
 	Offerings      []types.BrokerOffering
+	HealthCheckedAt time.Time
+	HealthError     string
+	LiveStatus      string
+	TupleHealth     map[string]types.BrokerHealthCapability
 }
 
 // Snapshot is a point-in-time view of the scrape cache.
@@ -118,6 +122,8 @@ func New(cfg Config, client brokerclient.Client, logger *slog.Logger) (*Service,
 			BaseURL:   b.BaseURL,
 			WorkerURL: workerURL,
 			Freshness: FreshnessNeverSucceeded,
+			LiveStatus: "stale",
+			TupleHealth: map[string]types.BrokerHealthCapability{},
 		}
 	}
 	return s, nil
@@ -162,9 +168,13 @@ func (s *Service) scrapeOnce(ctx context.Context) {
 	for _, b := range s.cfg.Brokers {
 		start := time.Now()
 		bctx, cancel := context.WithTimeout(ctx, s.cfg.ScrapeTimeout)
-		offerings, err := s.client.Fetch(bctx, b.BaseURL)
+		offerings, err := s.client.FetchOfferings(bctx, b.BaseURL)
 		cancel()
 		outcome := s.applyResult(b, offerings, err)
+		hctx, hcancel := context.WithTimeout(ctx, s.cfg.ScrapeTimeout)
+		health, herr := s.client.FetchHealth(hctx, b.BaseURL)
+		hcancel()
+		s.applyHealth(b, health, herr)
 		if s.observer != nil {
 			s.observer.ObserveScrape(b.Name, outcome, time.Since(start))
 		}
@@ -242,6 +252,41 @@ func (s *Service) applyResult(b config.Broker, offerings *types.BrokerOfferings,
 	return "ok"
 }
 
+func (s *Service) applyHealth(b config.Broker, health *types.BrokerHealth, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.cache[b.Name]
+	if !ok {
+		return
+	}
+	now := time.Now().UTC()
+	st.HealthCheckedAt = now
+	if err != nil {
+		st.HealthError = err.Error()
+		st.LiveStatus = "stale"
+		st.TupleHealth = map[string]types.BrokerHealthCapability{}
+		return
+	}
+	if health == nil {
+		st.HealthError = "empty health response"
+		st.LiveStatus = "stale"
+		st.TupleHealth = map[string]types.BrokerHealthCapability{}
+		return
+	}
+	if validateErr := health.Validate(); validateErr != nil {
+		st.HealthError = validateErr.Error()
+		st.LiveStatus = "stale"
+		st.TupleHealth = map[string]types.BrokerHealthCapability{}
+		return
+	}
+	st.HealthError = ""
+	st.LiveStatus = health.BrokerStatus
+	st.TupleHealth = make(map[string]types.BrokerHealthCapability, len(health.Capabilities))
+	for _, cap := range health.Capabilities {
+		st.TupleHealth[tupleHealthKey(cap.ID, cap.OfferingID)] = cap
+	}
+}
+
 // Snapshot returns a deep-copy view of the cache. The window bounds
 // are derived from the freshest broker's success timestamp; a broker
 // without a recent success contributes its last-good entries flagged
@@ -263,6 +308,12 @@ func (s *Service) Snapshot() Snapshot {
 		}
 		copyBroker := *st
 		copyBroker.Offerings = append([]types.BrokerOffering(nil), st.Offerings...)
+		if st.TupleHealth != nil {
+			copyBroker.TupleHealth = make(map[string]types.BrokerHealthCapability, len(st.TupleHealth))
+			for k, v := range st.TupleHealth {
+				copyBroker.TupleHealth[k] = v
+			}
+		}
 		out.Brokers = append(out.Brokers, copyBroker)
 		if !st.LastSuccessAt.IsZero() && st.LastSuccessAt.Before(earliest) {
 			earliest = st.LastSuccessAt
@@ -283,6 +334,10 @@ func (s *Service) Snapshot() Snapshot {
 	}
 	out.WindowStart = earliest
 	return out
+}
+
+func tupleHealthKey(capabilityID, offeringID string) string {
+	return capabilityID + "|" + offeringID
 }
 
 // IsValidWorkerURL is the boundary check the candidate service runs

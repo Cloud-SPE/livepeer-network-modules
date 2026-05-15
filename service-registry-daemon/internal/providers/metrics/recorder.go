@@ -46,6 +46,9 @@ type Recorder interface {
 	// legacy node because a manifest was unavailable / too large /
 	// unparseable.
 	IncLegacyFallback(reason string)
+	// IncLiveHealthDecision counts Layer 2 route-health decisions made
+	// by the resolver before a route reaches a gateway.
+	IncLiveHealthDecision(reason string)
 
 	// ----- Manifest pipeline -----
 
@@ -129,6 +132,11 @@ const (
 	OutcomeEthAddressMismatch = "eth_address_mismatch"
 	OutcomeKeystoreLocked     = "keystore_locked"
 	OutcomeIOError            = "io_error"
+	OutcomeAllowedReady       = "allowed_ready"
+	OutcomeExcludedUnhealthy  = "excluded_unhealthy"
+	OutcomeExcludedStale      = "excluded_stale"
+	OutcomeLiveHealthMissing  = "live_health_missing"
+	OutcomeLiveHealthFetchErr = "live_health_fetch_error"
 
 	// cache lookup result
 	CacheHitFresh = "hit_fresh"

@@ -35,7 +35,8 @@ var (
 // Client is the brokerclient interface. Real impl is HTTPClient; tests
 // inject a fake.
 type Client interface {
-	Fetch(ctx context.Context, baseURL string) (*types.BrokerOfferings, error)
+	FetchOfferings(ctx context.Context, baseURL string) (*types.BrokerOfferings, error)
+	FetchHealth(ctx context.Context, baseURL string) (*types.BrokerHealth, error)
 }
 
 // HTTPClient is the production brokerclient.
@@ -52,10 +53,10 @@ func New(timeout time.Duration) *HTTPClient {
 	}
 }
 
-// Fetch issues `GET <baseURL>/registry/offerings` and decodes the
+// FetchOfferings issues `GET <baseURL>/registry/offerings` and decodes the
 // response. Caller is responsible for the per-broker context (deadline,
 // cancellation).
-func (c *HTTPClient) Fetch(ctx context.Context, baseURL string) (*types.BrokerOfferings, error) {
+func (c *HTTPClient) FetchOfferings(ctx context.Context, baseURL string) (*types.BrokerOfferings, error) {
 	url := strings.TrimRight(baseURL, "/") + "/registry/offerings"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -81,6 +82,42 @@ func (c *HTTPClient) Fetch(ctx context.Context, baseURL string) (*types.BrokerOf
 	}
 
 	var out types.BrokerOfferings
+	dec := json.NewDecoder(strings.NewReader(string(body)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		return nil, fmt.Errorf("%w: decode: %v", ErrBrokerSchema, err)
+	}
+	return &out, nil
+}
+
+// FetchHealth issues `GET <baseURL>/registry/health` and decodes the
+// response. Caller is responsible for the per-broker context.
+func (c *HTTPClient) FetchHealth(ctx context.Context, baseURL string) (*types.BrokerHealth, error) {
+	url := strings.TrimRight(baseURL, "/") + "/registry/health"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: build request: %v", ErrBrokerUnreachable, err)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBrokerUnreachable, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read body: %v", ErrBrokerUnreachable, err)
+	}
+
+	if resp.StatusCode >= 500 {
+		return nil, fmt.Errorf("%w: HTTP %d", ErrBrokerUnreachable, resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: HTTP %d", ErrBrokerSchema, resp.StatusCode)
+	}
+
+	var out types.BrokerHealth
 	dec := json.NewDecoder(strings.NewReader(string(body)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {

@@ -384,6 +384,16 @@ func newDevFake(orchAddr string, brokers []config.Broker) brokerclient.Client {
 			OrchEthAddress: orchAddr,
 			Capabilities:   caps,
 		}, nil)
+		f.SetHealth(b.BaseURL, &types.BrokerHealth{
+			BrokerStatus: "ready",
+			GeneratedAt:  time.Now().UTC(),
+			Capabilities: []types.BrokerHealthCapability{{
+				ID:         "demo:echo:v1",
+				OfferingID: "default",
+				Status:     "ready",
+				Reason:     "probe_ok",
+			}},
+		}, nil)
 	}
 	return f
 }

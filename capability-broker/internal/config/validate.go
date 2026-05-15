@@ -13,6 +13,25 @@ var (
 	priceWeiRE        = regexp.MustCompile(`^[0-9]+$`)
 )
 
+var validHealthStatuses = map[string]bool{
+	"":            true,
+	"ready":       true,
+	"draining":    true,
+	"degraded":    true,
+	"unreachable": true,
+	"stale":       true,
+}
+
+var validProbeTypes = map[string]bool{
+	"":                        true,
+	"http-status":             true,
+	"http-jsonpath":           true,
+	"http-openai-model-ready": true,
+	"tcp-connect":             true,
+	"command-exit-0":          true,
+	"manual-drain":            true,
+}
+
 var validEncoderProfiles = map[string]bool{
 	"passthrough":             true,
 	"h264-live-1080p-libx264": true,
@@ -126,6 +145,98 @@ func (c *Config) Validate() error {
 			}
 		default:
 			return fmt.Errorf("%s: backend.auth.method %q is not supported", ctx, cap.Backend.Auth.Method)
+		}
+
+		if !validHealthStatuses[cap.Health.InitialStatus] {
+			return fmt.Errorf("%s: health.initial_status %q is invalid", ctx, cap.Health.InitialStatus)
+		}
+		if cap.Health.InitialStatus == "" {
+			cap.Health.InitialStatus = "stale"
+		}
+
+		switch {
+		case cap.Health.Drain.Enabled:
+			if cap.Health.Probe.Type == "" {
+				cap.Health.Probe.Type = "manual-drain"
+			}
+		case cap.Health.Probe.Type == "":
+			if cap.Backend.Transport == "http" && cap.Backend.URL != "" {
+				cap.Health.Probe.Type = "http-status"
+				if cap.Health.Probe.Config == nil {
+					cap.Health.Probe.Config = map[string]any{}
+				}
+				if _, ok := cap.Health.Probe.Config["url"]; !ok {
+					cap.Health.Probe.Config["url"] = cap.Backend.URL
+				}
+			}
+		}
+
+		if !validProbeTypes[cap.Health.Probe.Type] {
+			return fmt.Errorf("%s: health.probe.type %q is invalid", ctx, cap.Health.Probe.Type)
+		}
+		if cap.Health.Probe.Type != "" && cap.Health.Probe.Type != "manual-drain" {
+			if cap.Health.Probe.IntervalMS == 0 {
+				cap.Health.Probe.IntervalMS = 5000
+			}
+			if cap.Health.Probe.TimeoutMS == 0 {
+				cap.Health.Probe.TimeoutMS = 1500
+			}
+			if cap.Health.Probe.UnhealthyAfter == 0 {
+				cap.Health.Probe.UnhealthyAfter = 2
+			}
+			if cap.Health.Probe.HealthyAfter == 0 {
+				cap.Health.Probe.HealthyAfter = 1
+			}
+			if cap.Health.Probe.IntervalMS <= 0 {
+				return fmt.Errorf("%s: health.probe.interval_ms must be > 0", ctx)
+			}
+			if cap.Health.Probe.TimeoutMS <= 0 {
+				return fmt.Errorf("%s: health.probe.timeout_ms must be > 0", ctx)
+			}
+			if cap.Health.Probe.UnhealthyAfter < 1 {
+				return fmt.Errorf("%s: health.probe.unhealthy_after must be >= 1", ctx)
+			}
+			if cap.Health.Probe.HealthyAfter < 1 {
+				return fmt.Errorf("%s: health.probe.healthy_after must be >= 1", ctx)
+			}
+		}
+		if cap.Health.Probe.Config == nil {
+			cap.Health.Probe.Config = map[string]any{}
+		}
+		switch cap.Health.Probe.Type {
+		case "http-status", "http-jsonpath", "http-openai-model-ready":
+			if _, ok := cap.Health.Probe.Config["url"]; !ok && cap.Backend.URL != "" {
+				cap.Health.Probe.Config["url"] = cap.Backend.URL
+			}
+			rawURL, _ := cap.Health.Probe.Config["url"].(string)
+			if cap.Health.Probe.Type != "" && cap.Health.Probe.Type != "manual-drain" && rawURL == "" {
+				return fmt.Errorf("%s: health.probe.config.url is required for %s", ctx, cap.Health.Probe.Type)
+			}
+			if cap.Health.Probe.Type == "http-jsonpath" {
+				if _, ok := cap.Health.Probe.Config["path"].(string); !ok {
+					return fmt.Errorf("%s: health.probe.config.path must be a string for http-jsonpath", ctx)
+				}
+			}
+			if cap.Health.Probe.Type == "http-openai-model-ready" {
+				if _, ok := cap.Health.Probe.Config["expect_model"].(string); !ok {
+					return fmt.Errorf("%s: health.probe.config.expect_model must be a string for http-openai-model-ready", ctx)
+				}
+			}
+		case "tcp-connect":
+			if _, ok := cap.Health.Probe.Config["address"]; !ok && cap.Backend.URL != "" {
+				if u, err := url.Parse(cap.Backend.URL); err == nil && u.Host != "" {
+					cap.Health.Probe.Config["address"] = u.Host
+				}
+			}
+			rawAddr, _ := cap.Health.Probe.Config["address"].(string)
+			if rawAddr == "" {
+				return fmt.Errorf("%s: health.probe.config.address is required for tcp-connect", ctx)
+			}
+		case "command-exit-0":
+			cmd, ok := cap.Health.Probe.Config["command"].([]any)
+			if !ok || len(cmd) == 0 {
+				return fmt.Errorf("%s: health.probe.config.command must be a non-empty list for command-exit-0", ctx)
+			}
 		}
 	}
 

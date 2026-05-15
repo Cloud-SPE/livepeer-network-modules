@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { ConfigSchema } from "../../src/config.js";
+import { RouteHealthTracker } from "../../src/providers/routeHealth.js";
 import { buildServer } from "../../src/server.js";
 import type { VtuberGatewayDeps } from "../../src/runtime/deps.js";
 import { createInMemorySessionStore } from "../../src/service/sessions/inMemorySessionStore.js";
@@ -25,6 +26,8 @@ function testConfig() {
     vtuberRelayMaxPerSession: 8,
     vtuberSessionBearerPepper: "this-is-a-test-pepper-min-16-chars",
     vtuberWorkerControlBearerPepper: "another-test-pepper-min-16-chars",
+    routeFailureThreshold: 2,
+    routeCooldownMs: 30000,
   });
 }
 
@@ -78,6 +81,19 @@ function buildDeps(opts: FakeOpts = {}): VtuberGatewayDeps {
       },
       async select() {
         return opts.withWorker === false ? null : node;
+      },
+      async recordOutcome() {},
+      async inspectHealth() {
+        return [];
+      },
+      async inspectMetrics() {
+        return {
+          attemptsTotal: 0,
+          successesTotal: 0,
+          retryableFailuresTotal: 0,
+          nonRetryableFailuresTotal: 0,
+          cooldownsOpenedTotal: 0,
+        };
       },
       async close() {},
     },
@@ -237,6 +253,91 @@ test("POST /v1/vtuber/sessions returns 502 + worker_start_failed on runner refus
     const all = await deps.sessionStore.listSessions();
     assert.equal(all[0]!.status, "errored");
     assert.equal(all[0]!.errorCode, "worker_start_failed");
+  } finally {
+    await app.close();
+  }
+});
+
+test("POST /v1/vtuber/sessions cools a failing node and uses the next node on later requests", async () => {
+  const deps = buildDeps();
+  const tracker = new RouteHealthTracker({ failureThreshold: 1, cooldownMs: 60_000 });
+  const nodeA = {
+    nodeId: "node-a",
+    nodeUrl: "http://node-a:8080",
+    ethAddress: "0xaaa0000000000000000000000000000000000000",
+    capabilities: ["livepeer:vtuber-session"],
+    offering: "default",
+  };
+  const nodeB = {
+    nodeId: "node-b",
+    nodeUrl: "http://node-b:8080",
+    ethAddress: "0xbbb0000000000000000000000000000000000000",
+    capabilities: ["livepeer:vtuber-session"],
+    offering: "default",
+  };
+  deps.serviceRegistry = {
+    async listVtuberNodes() {
+      return [nodeA, nodeB];
+    },
+    async getNode(nodeId: string) {
+      return nodeId === nodeA.nodeId ? nodeA : nodeId === nodeB.nodeId ? nodeB : null;
+    },
+    async select() {
+      return tracker.rankCandidates([nodeA, nodeB])[0] ?? null;
+    },
+    async recordOutcome(node, outcome, reason) {
+      tracker.record(node, outcome, reason);
+    },
+    async inspectHealth() {
+      return tracker.inspect();
+    },
+    async inspectMetrics() {
+      return tracker.inspectMetrics();
+    },
+    async close() {},
+  };
+  const startedUrls: string[] = [];
+  deps.worker = {
+    async startSession(nodeUrl) {
+      startedUrls.push(nodeUrl);
+      if (nodeUrl === nodeA.nodeUrl) {
+        throw new Error("runner refused");
+      }
+      return {
+        session_id: "worker-sess-2",
+        status: "active",
+        started_at: new Date().toISOString(),
+        control_url: "ws://gw.invalid/control",
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      };
+    },
+    async stopSession() {},
+    async topupSession() {},
+  };
+  const app = await buildServer(deps);
+  try {
+    const first = await app.inject({
+      method: "POST",
+      url: "/v1/vtuber/sessions",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer sk-test",
+      },
+      payload: VALID_OPEN_BODY,
+    });
+    assert.equal(first.statusCode, 502);
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/v1/vtuber/sessions",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer sk-test",
+      },
+      payload: VALID_OPEN_BODY,
+    });
+    assert.equal(second.statusCode, 200);
+    assert.deepEqual(startedUrls, [nodeA.nodeUrl, nodeB.nodeUrl]);
   } finally {
     await app.close();
   }

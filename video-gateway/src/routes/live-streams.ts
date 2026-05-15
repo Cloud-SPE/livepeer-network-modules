@@ -66,6 +66,10 @@ export interface ProvisionLiveStreamResult {
 }
 
 export function registerLiveStreams(app: FastifyInstance, deps: LiveStreamsDeps): void {
+  app.addHook("onClose", async () => {
+    await deps.routeSelector.close?.();
+  });
+
   app.post("/v1/live/streams", async (req, reply) => {
     const parsed = CreateLiveStreamBody.safeParse(req.body);
     if (!parsed.success) {

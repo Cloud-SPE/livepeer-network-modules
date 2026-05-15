@@ -47,6 +47,12 @@ export interface Config {
 
   /** Path to proto-contracts for resolver/service-registry protos. */
   resolverProtoRoot: string;
+
+  /** Retryable failure threshold before a route cools down locally. */
+  routeFailureThreshold: number;
+
+  /** Cooldown duration for locally failing routes. */
+  routeCooldownMs: number;
 }
 
 const DEFAULT_PAYMENT_PROTO_ROOT = firstExistingPath([
@@ -89,6 +95,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       env.DAYDREAM_GATEWAY_PAYMENT_PROTO_ROOT ?? DEFAULT_PAYMENT_PROTO_ROOT,
     resolverProtoRoot:
       env.DAYDREAM_GATEWAY_RESOLVER_PROTO_ROOT ?? DEFAULT_RESOLVER_PROTO_ROOT,
+    routeFailureThreshold: Number(
+      env.DAYDREAM_GATEWAY_ROUTE_FAILURE_THRESHOLD ?? "2",
+    ),
+    routeCooldownMs: Number(
+      env.DAYDREAM_GATEWAY_ROUTE_COOLDOWN_MS ?? "30000",
+    ),
   };
 }
 

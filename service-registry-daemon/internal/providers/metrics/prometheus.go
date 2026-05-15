@@ -38,6 +38,7 @@ type Prometheus struct {
 	grpcRequests     *capVec
 	resolutions      *capVec
 	legacyFallbacks  *capVec
+	liveHealthDecisions *capVec
 	manifestFetches  *capVec
 	manifestVerifies *capVec
 	cacheLookups     *capVec
@@ -98,6 +99,11 @@ func NewPrometheus(cfg PrometheusConfig) *Prometheus {
 	p.legacyFallbacks = newCap(reg, p.onCapHit, "legacy_fallbacks_total", prometheus.NewCounterVec(
 		prometheus.CounterOpts{Namespace: ns, Name: "legacy_fallbacks_total",
 			Help: "Resolver synthesized a legacy node because no manifest was returnable."},
+		[]string{"reason"},
+	))
+	p.liveHealthDecisions = newCap(reg, p.onCapHit, "live_health_decisions_total", prometheus.NewCounterVec(
+		prometheus.CounterOpts{Namespace: ns, Name: "live_health_decisions_total",
+			Help: "Layer 2 live-health route decisions made by the resolver before a route reaches a gateway."},
 		[]string{"reason"},
 	))
 	p.manifestFetches = newCap(reg, p.onCapHit, "manifest_fetches_total", prometheus.NewCounterVec(
@@ -317,6 +323,9 @@ func (p *Prometheus) ObserveResolveDuration(mode, freshness string, d time.Durat
 }
 func (p *Prometheus) IncLegacyFallback(reason string) {
 	p.legacyFallbacks.inc(unset(reason))
+}
+func (p *Prometheus) IncLiveHealthDecision(reason string) {
+	p.liveHealthDecisions.inc(unset(reason))
 }
 
 func (p *Prometheus) IncManifestFetch(outcome string) {

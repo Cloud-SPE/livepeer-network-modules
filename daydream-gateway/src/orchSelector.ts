@@ -14,6 +14,7 @@ import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 
 import type { Config } from "./config.js";
+import { RouteHealthTracker, type RouteHealthMetrics, type RouteHealthSnapshot, type RouteOutcome } from "./routeHealth.js";
 
 const RESOLVER_PROTO_FILES = [
   "livepeer/registry/v1/types.proto",
@@ -82,6 +83,10 @@ export interface OrchSelector {
   list(): Promise<OrchCandidate[]>;
   /** Pick one candidate at random; throws if none available. */
   pickRandom(): Promise<OrchCandidate>;
+  recordOutcome(candidate: OrchCandidate, outcome: RouteOutcome, reason?: string): void;
+  inspectHealth(): RouteHealthSnapshot[];
+  inspectMetrics(): RouteHealthMetrics;
+  close?(): Promise<void>;
 }
 
 interface CachedSnapshot {
@@ -95,6 +100,10 @@ export function createOrchSelector(cfg: Config): OrchSelector {
     cfg.resolverProtoRoot,
   );
   let cache: CachedSnapshot | null = null;
+  const health = new RouteHealthTracker({
+    failureThreshold: Math.max(1, cfg.routeFailureThreshold),
+    cooldownMs: Math.max(1_000, cfg.routeCooldownMs),
+  });
 
   async function load(): Promise<OrchCandidate[]> {
     const now = Date.now();
@@ -168,8 +177,25 @@ export function createOrchSelector(cfg: Config): OrchSelector {
           `no orchestrators advertising capability ${cfg.capabilityId}/${cfg.offeringId}`,
         );
       }
-      const idx = Math.floor(Math.random() * candidates.length);
-      return candidates[idx]!;
+      const picked = health.chooseRandom(candidates);
+      if (!picked) {
+        throw new Error(
+          `no orchestrators advertising capability ${cfg.capabilityId}/${cfg.offeringId}`,
+        );
+      }
+      return picked;
+    },
+    recordOutcome(candidate, outcome, reason) {
+      health.record(candidate, outcome, reason);
+    },
+    inspectHealth() {
+      return health.inspect();
+    },
+    inspectMetrics() {
+      return health.inspectMetrics();
+    },
+    async close() {
+      client.close();
     },
   };
 }

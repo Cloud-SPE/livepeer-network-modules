@@ -15,8 +15,9 @@ type FakeClient struct {
 }
 
 type fakeEntry struct {
-	out *types.BrokerOfferings
-	err error
+	offerings *types.BrokerOfferings
+	health    *types.BrokerHealth
+	err       error
 }
 
 // NewFake returns an empty FakeClient. Caller must Set() each baseURL.
@@ -27,15 +28,41 @@ func NewFake() *FakeClient { return &FakeClient{results: make(map[string]fakeEnt
 func (f *FakeClient) Set(baseURL string, out *types.BrokerOfferings, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.results[baseURL] = fakeEntry{out: out, err: err}
+	ent := f.results[baseURL]
+	ent.offerings = out
+	ent.err = err
+	f.results[baseURL] = ent
 }
 
-// Fetch satisfies the Client interface.
-func (f *FakeClient) Fetch(ctx context.Context, baseURL string) (*types.BrokerOfferings, error) {
+// SetHealth installs a health fixture for the given baseURL.
+func (f *FakeClient) SetHealth(baseURL string, out *types.BrokerHealth, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ent := f.results[baseURL]
+	ent.health = out
+	ent.err = err
+	f.results[baseURL] = ent
+}
+
+// FetchOfferings satisfies the Client interface.
+func (f *FakeClient) FetchOfferings(ctx context.Context, baseURL string) (*types.BrokerOfferings, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if r, ok := f.results[baseURL]; ok {
-		return r.out, r.err
+		return r.offerings, r.err
+	}
+	return nil, ErrBrokerUnreachable
+}
+
+// FetchHealth satisfies the Client interface.
+func (f *FakeClient) FetchHealth(ctx context.Context, baseURL string) (*types.BrokerHealth, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if r, ok := f.results[baseURL]; ok {
+		if r.health != nil || r.err != nil {
+			return r.health, r.err
+		}
+		return &types.BrokerHealth{}, nil
 	}
 	return nil, ErrBrokerUnreachable
 }

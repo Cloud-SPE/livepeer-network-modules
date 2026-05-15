@@ -1,5 +1,6 @@
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
+import { RouteHealthTracker, type RouteHealthMetrics, type RouteHealthSnapshot, type RouteOutcome } from "./routeHealth.js";
 
 const RESOLVER_PROTO_FILES = [
   "livepeer/registry/v1/types.proto",
@@ -38,6 +39,9 @@ export interface ServiceRegistryClient {
   listVtuberNodes(): Promise<readonly NodeDescriptor[]>;
   getNode(nodeId: string): Promise<NodeDescriptor | null>;
   select(req: SelectNodeRequest): Promise<NodeDescriptor | null>;
+  recordOutcome(node: NodeDescriptor, outcome: RouteOutcome, reason?: string): Promise<void>;
+  inspectHealth(): Promise<RouteHealthSnapshot[]>;
+  inspectMetrics(): Promise<RouteHealthMetrics>;
   close(): Promise<void>;
 }
 
@@ -102,7 +106,13 @@ export function createServiceRegistryClient(input: {
   resolverSocket: string | null;
   resolverProtoRoot: string;
   resolverSnapshotTtlMs: number;
+  routeFailureThreshold: number;
+  routeCooldownMs: number;
 }): ServiceRegistryClient {
+  const health = new RouteHealthTracker({
+    failureThreshold: Math.max(1, input.routeFailureThreshold),
+    cooldownMs: Math.max(1_000, input.routeCooldownMs),
+  });
   if (!input.resolverSocket) {
     if (!input.brokerUrl) {
       throw new Error(
@@ -119,6 +129,15 @@ export function createServiceRegistryClient(input: {
       },
       async select(): Promise<NodeDescriptor | null> {
         return node;
+      },
+      async recordOutcome(selectedNode, outcome, reason): Promise<void> {
+        health.record(selectedNode, outcome, reason);
+      },
+      async inspectHealth(): Promise<RouteHealthSnapshot[]> {
+        return health.inspect();
+      },
+      async inspectMetrics(): Promise<RouteHealthMetrics> {
+        return health.inspectMetrics();
       },
       async close(): Promise<void> {},
     };
@@ -176,13 +195,22 @@ export function createServiceRegistryClient(input: {
         ) {
           return false;
         }
-        if (req.constraints && !isSubset(node.constraints ?? null, req.constraints)) {
+      if (req.constraints && !isSubset(node.constraints ?? null, req.constraints)) {
           return false;
         }
         return true;
       });
       matches.sort((a, b) => compareCandidates(a, b, req.extra ?? null));
-      return matches[0] ?? null;
+      return health.rankCandidates(matches)[0] ?? null;
+    },
+    async recordOutcome(node, outcome, reason): Promise<void> {
+      health.record(node, outcome, reason);
+    },
+    async inspectHealth(): Promise<RouteHealthSnapshot[]> {
+      return health.inspect();
+    },
+    async inspectMetrics(): Promise<RouteHealthMetrics> {
+      return health.inspectMetrics();
     },
     async close(): Promise<void> {
       client.close();

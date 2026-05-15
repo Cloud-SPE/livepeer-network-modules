@@ -22,6 +22,7 @@ type Counter struct {
 	Resolutions       atomic.Int64
 	ResolveDurations  atomic.Int64
 	LegacyFallbacks   atomic.Int64
+	LiveHealthDecisions atomic.Int64
 	ManifestFetches   atomic.Int64
 	ManifestFetchObs  atomic.Int64
 	ManifestVerifies  atomic.Int64
@@ -60,6 +61,7 @@ func (c *Counter) SetGRPCInFlight(_, _ string, n int)       { c.GRPCInFlight.Sto
 func (c *Counter) IncResolution(_, _ string)                           { c.Resolutions.Add(1) }
 func (c *Counter) ObserveResolveDuration(_, _ string, _ time.Duration) { c.ResolveDurations.Add(1) }
 func (c *Counter) IncLegacyFallback(_ string)                          { c.LegacyFallbacks.Add(1) }
+func (c *Counter) IncLiveHealthDecision(_ string)                      { c.LiveHealthDecisions.Add(1) }
 
 func (c *Counter) IncManifestFetch(outcome string) {
 	c.ManifestFetches.Add(1)

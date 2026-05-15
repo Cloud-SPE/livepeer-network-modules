@@ -78,6 +78,8 @@ async function main(): Promise<void> {
     resolverSocket: cfg.resolverSocket,
     resolverProtoRoot: cfg.resolverProtoRoot,
     resolverSnapshotTtlMs: cfg.resolverSnapshotTtlMs,
+    routeFailureThreshold: cfg.routeFailureThreshold,
+    routeCooldownMs: cfg.routeCooldownMs,
   });
   const worker = createBrokerWorkerClient();
 

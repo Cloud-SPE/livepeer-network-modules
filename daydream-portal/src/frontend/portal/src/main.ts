@@ -9,6 +9,7 @@ document.body.dataset.livepeerUiMode = "product-app";
 
 import "./components/portal-daydream-app.js";
 import "./components/portal-daydream-waitlist.js";
+import "./components/portal-daydream-login.js";
 import "./components/portal-daydream-playground.js";
 import "./components/portal-daydream-prompts.js";
 import "./components/portal-daydream-usage.js";

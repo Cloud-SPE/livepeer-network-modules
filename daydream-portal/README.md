@@ -58,6 +58,7 @@ TURN.
 |---|---|---|
 | POST | `/portal/waitlist` | Submit signup (idempotent on email) |
 | GET | `/portal/waitlist/status?email=` | Check own status |
+| POST | `/portal/login-by-key` | Exchange API key for short-lived UI token |
 | GET | `/healthz` | Liveness |
 
 ### Customer (UI token, `Authorization: Bearer <ui_token>`)
@@ -76,7 +77,7 @@ TURN.
 `customer-portal` also exposes `/portal/login`, `/portal/keys`, etc. on
 the same instance; see its README.
 
-### Admin (`X-Admin-Token` + `X-Admin-Actor`)
+### Admin (`Authorization: Bearer <admin-token>` + `X-Actor: <name>`)
 
 | Method | Path | Purpose |
 |---|---|---|

@@ -72,11 +72,7 @@ export class PortalDaydreamApp extends HTMLElement {
         this.root.innerHTML = "<portal-daydream-waitlist></portal-daydream-waitlist>";
       })
       .add("/login", () => {
-        this.root.innerHTML = `
-          <portal-card heading="Sign in">
-            <p>Paste the API key your operator issued you.</p>
-            <portal-login></portal-login>
-          </portal-card>`;
+        this.root.innerHTML = "<portal-daydream-login></portal-daydream-login>";
       })
       .add("/playground", () => {
         if (!this.requireAuth()) return;

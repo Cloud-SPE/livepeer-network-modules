@@ -59,6 +59,13 @@ export class DaydreamPortalApi {
     );
   }
 
+  loginByKey(input: {
+    api_key: string;
+    actor: string;
+  }): Promise<{ auth_token: string; auth_token_id: string; customer: { id: string; email: string } }> {
+    return this.client.post("/portal/login-by-key", input);
+  }
+
   openSession(params?: Record<string, unknown>): Promise<OpenSessionResponse> {
     return this.client.post("/portal/sessions", { params: params ?? {} });
   }

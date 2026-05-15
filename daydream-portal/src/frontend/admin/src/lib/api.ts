@@ -55,8 +55,10 @@ export class DaydreamAdminApi {
     const creds = readCreds();
     const h: Record<string, string> = { "content-type": "application/json" };
     if (creds) {
-      h["x-admin-token"] = creds.token;
-      h["x-admin-actor"] = creds.actor;
+      // customer-portal's static admin resolver consumes the standard
+      // Authorization: Bearer header plus X-Actor for the audit log.
+      h["authorization"] = `Bearer ${creds.token}`;
+      h["x-actor"] = creds.actor;
     }
     return h;
   }

@@ -1,13 +1,16 @@
+import { resolve } from "node:path";
 import { defineConfig } from "vite";
-
-// Dev: `pnpm -F @livepeer-network-modules/daydream-portal-admin dev`.
-// Build: `pnpm -F @livepeer-network-modules/daydream-portal-admin build:bundle`.
-//
-// Runs on a different port than the portal SPA so both can be served
-// concurrently against the same backend.
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   root: "src",
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": resolve(__dirname, "src"),
+    },
+  },
   server: {
     port: 5174,
     host: "127.0.0.1",

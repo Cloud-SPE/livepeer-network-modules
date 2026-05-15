@@ -1,14 +1,16 @@
+import { resolve } from "node:path";
 import { defineConfig } from "vite";
-
-// Dev: `pnpm -F @livepeer-network-modules/daydream-portal-portal dev`.
-// Build: `pnpm -F @livepeer-network-modules/daydream-portal-portal build:bundle`.
-//
-// Workspace imports from @livepeer-network-modules/customer-portal-shared
-// resolve via the shared package's `exports` map (built artifacts in
-// dist/), so make sure that package has been built before vite dev.
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   root: "src",
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": resolve(__dirname, "src"),
+    },
+  },
   server: {
     port: 5173,
     host: "127.0.0.1",

@@ -1,12 +1,44 @@
-// Admin HTTP client. Admin auth is via two headers: X-Admin-Token and
-// X-Admin-Actor (the operator's name for the audit log). The shared
-// ApiClient routes its own bearer + actor headers, but the admin
-// resolver in customer-portal expects different header names — so we
-// roll a slim client of our own here.
+// Admin HTTP client. customer-portal's static admin resolver expects
+// the standard Authorization: Bearer header plus X-Actor for the
+// audit-log actor.
 
-export interface AdminCreds {
-  token: string;
-  actor: string;
+import { readCreds } from "./creds";
+
+export class ApiError extends Error {
+  constructor(public status: number, public body: unknown) {
+    super(
+      typeof body === "string"
+        ? body
+        : (body as { message?: string } | { error?: { message?: string } })
+          ? JSON.stringify(body)
+          : `HTTP ${status}`,
+    );
+  }
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const creds = readCreds();
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["content-type"] = "application/json";
+  if (creds) {
+    headers["authorization"] = `Bearer ${creds.token}`;
+    headers["x-actor"] = creds.actor;
+  }
+  const res = await fetch(path, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    credentials: "same-origin",
+  });
+  const text = await res.text();
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : undefined;
+  } catch {
+    parsed = text;
+  }
+  if (!res.ok) throw new ApiError(res.status, parsed);
+  return parsed as T;
 }
 
 export interface WaitlistEntry {
@@ -28,97 +60,27 @@ export interface AdminUsageSummary {
   unique_customers: number;
 }
 
-const STORAGE_KEY = "daydream-admin:creds";
-
-export function readCreds(): AdminCreds | null {
-  try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as AdminCreds;
-  } catch {
-    return null;
-  }
+export interface ApproveResult {
+  waitlist_id: string;
+  customer_id: string;
+  api_key_id: string;
+  api_key: string;
+  warning: string;
 }
 
-export function writeCreds(creds: AdminCreds): void {
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(creds));
-}
-
-export function clearCreds(): void {
-  sessionStorage.removeItem(STORAGE_KEY);
-}
-
-export class DaydreamAdminApi {
-  constructor(private baseUrl: string = "") {}
-
-  private headers(): Record<string, string> {
-    const creds = readCreds();
-    const h: Record<string, string> = { "content-type": "application/json" };
-    if (creds) {
-      // customer-portal's static admin resolver consumes the standard
-      // Authorization: Bearer header plus X-Actor for the audit log.
-      h["authorization"] = `Bearer ${creds.token}`;
-      h["x-actor"] = creds.actor;
-    }
-    return h;
-  }
-
-  private async request<T>(
-    method: string,
-    path: string,
-    body?: unknown,
-  ): Promise<T> {
-    const res = await fetch(this.baseUrl + path, {
-      method,
-      headers: this.headers(),
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      credentials: "same-origin",
-    });
-    const text = await res.text();
-    let parsed: unknown;
-    try {
-      parsed = text ? JSON.parse(text) : undefined;
-    } catch {
-      parsed = text;
-    }
-    if (!res.ok) {
-      throw new Error(
-        `[${res.status}] ${typeof parsed === "string" ? parsed : JSON.stringify(parsed)}`,
-      );
-    }
-    return parsed as T;
-  }
-
-  listWaitlist(status?: WaitlistEntry["status"]): Promise<{
-    entries: WaitlistEntry[];
-  }> {
-    const q = status ? `?status=${encodeURIComponent(status)}` : "";
-    return this.request("GET", `/admin/waitlist${q}`);
-  }
-
-  approveWaitlist(
-    id: string,
-    keyLabel?: string,
-  ): Promise<{
-    waitlist_id: string;
-    customer_id: string;
-    api_key_id: string;
-    api_key: string;
-    warning: string;
-  }> {
-    return this.request("POST", `/admin/waitlist/${id}/approve`, {
-      key_label: keyLabel,
-    });
-  }
-
-  rejectWaitlist(id: string, reason?: string): Promise<{
-    waitlist_id: string;
-    status: string;
-  }> {
-    return this.request("POST", `/admin/waitlist/${id}/reject`, { reason });
-  }
-
-  usageSummary(): Promise<AdminUsageSummary> {
-    return this.request("GET", "/admin/usage/summary");
-  }
-}
+export const adminApi = {
+  listWaitlist: (status?: WaitlistEntry["status"]) =>
+    request<{ entries: WaitlistEntry[] }>(
+      "GET",
+      `/admin/waitlist${status ? `?status=${status}` : ""}`,
+    ),
+  approve: (id: string, key_label?: string) =>
+    request<ApproveResult>("POST", `/admin/waitlist/${id}/approve`, { key_label }),
+  reject: (id: string, reason?: string) =>
+    request<{ waitlist_id: string; status: string }>(
+      "POST",
+      `/admin/waitlist/${id}/reject`,
+      { reason },
+    ),
+  usageSummary: () => request<AdminUsageSummary>("GET", "/admin/usage/summary"),
+};

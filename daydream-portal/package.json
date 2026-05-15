@@ -1,0 +1,38 @@
+{
+  "name": "@livepeer-network-modules/daydream-portal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Operator-run SaaS portal in front of daydream-gateway. Waitlist-gated signup, single API key per user, usage tracking, minimal admin. Embeds @livepeer-network-modules/customer-portal (auth, admin engine). Stripe and Wallet paths intentionally disabled.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "migrations",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "lint": "tsc --noEmit",
+    "start": "node ./dist/index.js",
+    "test": "tsc -p tsconfig.test.json && node --test ./dist-test/test/**/*.test.js"
+  },
+  "dependencies": {
+    "@livepeer-network-modules/customer-portal": "workspace:*",
+    "@livepeer-network-modules/gateway-route-health": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "fastify": "^5.0.0",
+    "pg": "^8.13.0",
+    "undici": "^7.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "@types/pg": "^8.11.10",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

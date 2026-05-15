@@ -1,0 +1,36 @@
+# Minimal local-dev compose for daydream-portal. Brings up only the
+# portal + a Postgres stub. The portal points at a separately-run
+# daydream-gateway (see ../daydream-gateway/compose.yaml).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    networks: [daydream-portal]
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: daydream
+      POSTGRES_PASSWORD: daydream
+      POSTGRES_DB: daydream_portal
+    volumes:
+      - daydream-portal-pg:/var/lib/postgresql/data
+
+  portal:
+    image: tztcloud/livepeer-daydream-portal:dev
+    depends_on: [postgres]
+    networks: [daydream-portal]
+    ports:
+      - "8080:8080"
+    environment:
+      DAYDREAM_PORTAL_POSTGRES_URL: "postgres://daydream:daydream@postgres:5432/daydream_portal"
+      DAYDREAM_PORTAL_AUTH_PEPPER: "${DAYDREAM_PORTAL_AUTH_PEPPER:-please-override-pepper-min-16-chars}"
+      DAYDREAM_PORTAL_GATEWAY_BASE_URL: "${DAYDREAM_PORTAL_GATEWAY_BASE_URL:-http://host.docker.internal:9100}"
+      DAYDREAM_PORTAL_ADMIN_TOKENS: "${DAYDREAM_PORTAL_ADMIN_TOKENS:-}"
+      DAYDREAM_PORTAL_LISTEN_PORT: "8080"
+
+networks:
+  daydream-portal:
+    driver: bridge
+
+volumes:
+  daydream-portal-pg: {}

@@ -136,6 +136,40 @@ importers:
         specifier: ^8.0.12
         version: 8.0.13(@types/node@25.6.2)(esbuild@0.28.0)
 
+  daydream-portal:
+    dependencies:
+      '@livepeer-network-modules/customer-portal':
+        specifier: workspace:*
+        version: link:../customer-portal
+      '@livepeer-network-modules/gateway-route-health':
+        specifier: workspace:*
+        version: link:../gateway-route-health
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(pg@8.20.0)
+      fastify:
+        specifier: ^5.0.0
+        version: 5.8.5
+      pg:
+        specifier: ^8.13.0
+        version: 8.20.0
+      undici:
+        specifier: ^7.0.0
+        version: 7.25.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^25.6.2
+        version: 25.6.2
+      '@types/pg':
+        specifier: ^8.11.10
+        version: 8.20.0
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+
   gateway-adapters/ts:
     dependencies:
       ws:

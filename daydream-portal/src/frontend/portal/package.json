@@ -1,0 +1,27 @@
+{
+  "name": "@livepeer-network-modules/daydream-portal-portal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Daydream-portal user-facing SPA. Composes customer-portal-shared widgets plus daydream-specific components (playground, saved prompts, usage).",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && mkdir -p dist/components && cp src/components/*.css dist/components/ 2>/dev/null || true",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@livepeer-network-modules/customer-portal-shared": "workspace:*",
+    "rxjs": "^7.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

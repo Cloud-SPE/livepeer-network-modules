@@ -1,0 +1,27 @@
+{
+  "name": "@livepeer-network-modules/daydream-portal-admin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Daydream-portal operator admin SPA. Tiny by design: waitlist queue (approve/reject) + per-customer + operator-wide usage rollups. No moderation, no BullMQ.",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && mkdir -p dist/components && cp src/components/*.css dist/components/ 2>/dev/null || true",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@livepeer-network-modules/customer-portal-shared": "workspace:*",
+    "rxjs": "^7.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

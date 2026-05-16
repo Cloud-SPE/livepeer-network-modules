@@ -24,6 +24,15 @@ def build_app(*, settings: Settings, manager: SessionManager) -> FastAPI:
         return {
             "capabilities": ["livepeer:vtuber-session"],
             "renderer": settings.renderer,
+            "task": "session",
+            "control_schema": "vtuber-control/v1",
+            "media_schema": "trickle-segment-stream/v1",
+            "features": {
+                "renderer_control": True,
+                "status_polling": True,
+                "trickle_publish": True,
+                "youtube_egress": True,
+            },
         }
 
     app.include_router(build_router(manager))

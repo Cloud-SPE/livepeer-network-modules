@@ -70,15 +70,57 @@ Optional stable enrichment fields are:
 - `features.*` (booleans only)
 
 For `provider: "vllm"` and `provider: "ollama"` on HTTP OpenAI-compatible
-backends, the broker attempts a startup metadata probe against `GET /v1/models`.
-When the configured `extra.openai.model` is present upstream, the broker fills
-missing `served_model_name`, `backend_model`, and capability-appropriate
+backends, the broker probes `GET /v1/models`. When the configured
+`extra.openai.model` is present upstream, the broker fills missing
+`served_model_name`, `backend_model`, and capability-appropriate
 `features.*` fields in `/registry/offerings`. Operator-declared values still
 win; discovery fills gaps only.
 
-The broker refreshes this metadata periodically while running. Per-offering
+The same overlay pattern also applies to current audio, video, and vtuber
+runner families:
+
+- audio runners enrich `extra.audio.*` from `GET /openai-audio-*/options`
+- video runners enrich `extra.video.*` from `GET /v1/video/transcode*/presets`
+- `vtuber-runner` enriches `extra.vtuber.*` from `GET /options`
+
+The broker refreshes eligible metadata periodically while running. Per-offering
 refresh status and the last discovery result are exposed on
-`GET /registry/health` under each capability's `metadata` object.
+`GET /registry/health` under each capability's `metadata` object for every
+family that participates in discovery.
+
+Use `--metadata-refresh-interval=<duration>` to tune that cadence. The default
+is `5m`. Set a negative duration to disable periodic refresh after the initial
+startup discovery pass.
+
+Current `metadata.last_result` values are family-aware. Examples:
+
+- `model_not_found`
+- `models_probe_failed`
+- `audio_options_empty`
+- `audio_options_probe_failed`
+- `video_presets_empty`
+- `video_presets_probe_failed`
+- `vtuber_options_empty`
+- `vtuber_options_probe_failed`
+
+Prometheus also exposes
+`livepeer_metadata_refresh_total{family,provider,result}` so discovery
+regressions are visible without polling `GET /registry/health`.
+It also exposes:
+
+- `livepeer_metadata_refresh_duration_seconds{family,provider,result}`
+- `livepeer_metadata_refresh_last_attempt_timestamp_seconds{family,capability,offering,provider}`
+- `livepeer_metadata_refresh_last_success_timestamp_seconds{family,capability,offering,provider}`
+- `livepeer_metadata_refresh_last_success_age_seconds{family,capability,offering,provider}`
+- `livepeer_metadata_refresh_current_result{family,capability,offering,provider,result}`
+- `livepeer_metadata_refresh_consecutive_failures{family,capability,offering,provider}`
+
+`GET /registry/health` also exposes metadata-level `consecutive_failures` per
+offering so the human-facing status surface and Prometheus stay aligned.
+On unhealthy refreshes, `last_success_at` is preserved rather than overwritten,
+so the age gauge measures time since the last healthy metadata refresh.
+The same health payload now includes metadata-level `last_success_age_seconds`
+for operators who are inspecting JSON directly instead of scraping metrics.
 
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).

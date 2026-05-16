@@ -323,9 +323,40 @@ Rules:
   may probe `GET /v1/models` at startup and fill missing
   `served_model_name`, `backend_model`, and stable `features.*` fields when the
   configured `extra.openai.model` is found upstream.
+- For runner families with stable options or presets surfaces, the broker may
+  fill missing `extra.audio.*`, `extra.video.*`, or `extra.vtuber.*` fields
+  from those family-specific endpoints using the same fill-only merge policy.
 - The broker refreshes this metadata on a bounded cadence while running.
   Discovery freshness, provider, last result, and last error are exposed via
   `GET /registry/health`; they do not change the tuple's market identity.
+- Prometheus also exposes
+  `livepeer_metadata_refresh_total{family,provider,result}` so discovery drift
+  and probe failures are visible without polling per-offering health.
+- It also exposes refresh latency and freshness signals via
+  `livepeer_metadata_refresh_duration_seconds{family,provider,result}`,
+  `livepeer_metadata_refresh_last_attempt_timestamp_seconds{family,capability,offering,provider}`,
+  and
+  `livepeer_metadata_refresh_last_success_timestamp_seconds{family,capability,offering,provider}`,
+  plus `livepeer_metadata_refresh_last_success_age_seconds{family,capability,offering,provider}`.
+- For alerting on the current discovery state, it also exposes
+  `livepeer_metadata_refresh_current_result{family,capability,offering,provider,result}`,
+  where the active result label is `1` and previous results are reset to `0`
+  when the offering transitions.
+- To surface sustained discovery breakage, it also exposes
+  `livepeer_metadata_refresh_consecutive_failures{family,capability,offering,provider}`,
+  and the same `consecutive_failures` value appears in
+  `GET /registry/health` metadata for each applicable offering.
+- On unhealthy refreshes, the broker preserves `last_success_at` instead of
+  overwriting it, so age-based alerting tracks time since the last healthy
+  metadata refresh rather than time since the last failed probe.
+- `GET /registry/health` also publishes metadata-level
+  `last_success_age_seconds` so operators inspecting the JSON health surface
+  can see the same freshness signal without Prometheus.
+- `last_result` is family-aware rather than a single generic status. For
+  example, OpenAI-compatible offerings may report `model_not_found` or
+  `models_probe_failed`, while runner families may report
+  `audio_options_probe_failed`, `video_presets_empty`, or
+  `vtuber_options_probe_failed`.
 
 Boundary:
 
@@ -337,6 +368,165 @@ Boundary:
 - Volatile runtime facts such as full model inventories, queue depth,
   throughput, utilization, or context window belong in live health, metrics,
   or diagnostics, not in the signed manifest.
+
+### Family-specific stable `extra` contracts
+
+The same pattern applies across every runner family in the rewrite:
+
+- `host-config.yaml` defines the offering's market identity.
+- Family-specific discovery validates and enriches only stable metadata.
+- Volatile runtime state belongs in `GET /registry/health` or metrics, not in
+  the signed manifest.
+
+Every family should expose a small stable namespace under `extra`:
+
+- `extra.openai.*`
+- `extra.audio.*`
+- `extra.video.*`
+- `extra.vtuber.*`
+
+with a shared top-level `provider` field naming the backend or runner family.
+
+#### Audio
+
+For audio capabilities, the stable contract separates workload type from
+runner-specific live state:
+
+```yaml
+extra:
+  openai:
+    model: "whisper-large-v3"
+  provider: "openai-audio-runner"
+  served_model_name: "whisper-large-v3"
+  backend_model: "openai/whisper-large-v3"
+  audio:
+    task: "transcription"
+    formats:
+      input: ["mp3", "wav", "m4a", "flac"]
+      output: ["json", "text", "srt", "verbose_json", "vtt"]
+```
+
+```yaml
+extra:
+  openai:
+    model: "kokoro"
+  provider: "openai-tts-runner"
+  served_model_name: "kokoro"
+  backend_model: "hexgrad/Kokoro-82M"
+  audio:
+    task: "speech"
+    voices:
+      default: "af_bella"
+      native: ["af_bella", "am_michael"]
+      aliases:
+        alloy: "af_bella"
+        echo: "am_michael"
+    formats:
+      output: ["mp3", "wav", "pcm"]
+```
+
+Stable:
+
+- model identity
+- voice/options catalog
+- supported input/output formats
+- backend family
+
+Live only:
+
+- model warm state
+- queue depth
+- GPU readiness
+- transient inference failures
+
+#### Video
+
+Video capabilities should publish the stable pipeline shape, not current load:
+
+```yaml
+extra:
+  provider: "abr-runner"
+  video:
+    task: "abr-transcode"
+    presets: ["abr-standard", "abr-premium"]
+    codecs: ["h264", "hevc"]
+    packaging: ["hls"]
+    hardware:
+      gpu_vendor: "nvidia"
+```
+
+```yaml
+extra:
+  provider: "transcode-runner"
+  video:
+    task: "transcode"
+    presets: ["h264-1080p", "hevc-1080p"]
+    codecs: ["h264", "hevc"]
+    packaging: ["mp4"]
+    hardware:
+      gpu_vendor: "intel"
+```
+
+Stable:
+
+- task shape (`transcode`, `abr-transcode`, etc.)
+- supported preset names
+- supported video codecs
+- packaging outputs
+- hardware vendor hints
+
+Live only:
+
+- encoder availability
+- scratch-disk pressure
+- concurrent job count
+- GPU load
+- temporary backpressure
+
+#### VTuber
+
+Session-style VTuber workloads should publish stable runtime capabilities and
+schema versions, not live session availability:
+
+```yaml
+extra:
+  provider: "vtuber-runner"
+  vtuber:
+    task: "session"
+    control_schema: "vtuber-control/v1"
+    media_schema: "trickle-segment-stream/v1"
+    features:
+      renderer_control: true
+      status_polling: true
+      trickle_publish: true
+      youtube_egress: true
+```
+
+Stable:
+
+- control/media schema identifiers
+- supported session features
+- runner family
+
+Live only:
+
+- available session slots
+- media-plane readiness
+- reconnect window state
+- renderer warm/cold state
+
+#### New families
+
+Any new runner family should define four things before implementation:
+
+1. the base `capability_id`
+2. the minimal stable `extra.<family>` schema
+3. the discovery source that fills stable enrichment fields
+4. the live-health source for volatile runtime state
+
+This keeps new workloads consistent with the broker's publication boundary:
+stable capability facts in `/registry/offerings`, live availability facts in
+`/registry/health`, and no direct runner-owned manifest identity.
 
 Live health follows the same pattern: the broker owns a small fixed
 library of **probe recipes** and `host-config.yaml` selects one per tuple.

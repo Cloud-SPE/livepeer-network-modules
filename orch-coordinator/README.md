@@ -12,7 +12,9 @@ back via HTTP POST, and atomic-swap publishes the live manifest at
 
 One process per orch operator (not per host). A single operator with multiple
 broker hosts on the LAN runs one coordinator; the coordinator scrapes them
-all and unifies their offerings into a single candidate manifest.
+all and unifies their offerings into a single candidate manifest. In addition
+to `/registry/offerings`, it also consumes broker `/registry/health` so the
+roster can surface per-tuple liveness and broker metadata-discovery state.
 
 Three listeners:
 
@@ -25,6 +27,11 @@ Three listeners:
 
 The coordinator never holds a signing key. Cold key on `secure-orch` is the
 only signer.
+
+`candidate.tar.gz` now carries richer operator-only provenance in
+`metadata.json`, including broker metadata-warning thresholds, per-broker
+metadata summaries, and per-tuple metadata warnings when broker discovery is
+degraded, stale, or has never succeeded.
 
 When `ORCH_COORDINATOR_ADMIN_TOKENS` is set, the admin listener requires
 operator login with admin token + actor identity and records the actor on

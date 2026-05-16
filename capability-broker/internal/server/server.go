@@ -32,6 +32,11 @@ import (
 // interim-debit cadence) live here so they don't pollute the
 // host-config.yaml grammar — operators set them via CLI flags.
 type Options struct {
+	// MetadataRefreshInterval controls periodic stable-metadata refresh for
+	// discovery-capable offerings. Zero falls back to the broker default.
+	// Negative values disable periodic refresh after the initial bootstrap pass.
+	MetadataRefreshInterval time.Duration
+
 	// InterimDebit governs the long-running session ticker per plan
 	// 0015. Zero values are a safe disabled state (v0.2 single-debit
 	// fall-through).
@@ -134,7 +139,6 @@ type Server struct {
 // fails fast if it is unreachable; the broker should not bind its paid
 // listener with no working payment surface.
 func New(cfg *config.Config, opts Options) (*Server, error) {
-	hydrateRunnerMetadata(context.Background(), cfg)
 	metadata := newMetadataCatalog()
 	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
 
@@ -445,7 +449,7 @@ func (s *Server) Run(ctx context.Context) error {
 		go s.health.Run(ctx)
 	}
 	if s.metadata != nil {
-		go s.runMetadataRefresh(ctx, 5*time.Minute)
+		go s.runMetadataRefresh(ctx, s.metadataRefreshInterval())
 	}
 
 	select {
@@ -460,6 +464,16 @@ func (s *Server) Run(ctx context.Context) error {
 		_ = s.metricsSrv.Close()
 		return err
 	}
+}
+
+func (s *Server) metadataRefreshInterval() time.Duration {
+	if s.opts.MetadataRefreshInterval < 0 {
+		return 0
+	}
+	if s.opts.MetadataRefreshInterval == 0 {
+		return 5 * time.Minute
+	}
+	return s.opts.MetadataRefreshInterval
 }
 
 func (s *Server) runMetadataRefresh(ctx context.Context, interval time.Duration) {

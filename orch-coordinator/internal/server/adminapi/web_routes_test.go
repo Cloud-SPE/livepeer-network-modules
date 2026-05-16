@@ -87,6 +87,9 @@ func TestWebRoutes_RosterRenders(t *testing.T) {
 	if !strings.Contains(string(body), "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
 		t.Fatalf("expected orch address in header")
 	}
+	if !strings.Contains(string(body), "meta=stale") || !strings.Contains(string(body), "models_probe_failed") {
+		t.Fatalf("expected metadata state in roster, got %s", body)
+	}
 }
 
 func TestWebRoutes_DiffRenders(t *testing.T) {

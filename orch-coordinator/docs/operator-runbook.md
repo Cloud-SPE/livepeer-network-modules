@@ -57,6 +57,29 @@ The orch eth address is the on-chain `ServiceRegistry` (or
 `AIServiceRegistry`) entry the cold key on secure-orch will sign for.
 The broker list is static for v0.1; service discovery is a follow-up.
 
+## Roster metadata states
+
+The roster consumes both broker `/registry/offerings` and `/registry/health`.
+Each broker cell now shows broker metadata-discovery state in addition to live
+tuple health:
+
+- `meta=ok` — broker discovery is healthy for that tuple.
+- `meta=degraded` — broker discovery has recent failures or the last healthy
+  refresh is getting old.
+- `meta=stale` — the last healthy metadata refresh is older than the
+  coordinator freshness window.
+- `meta=never_succeeded` — the broker has never completed a healthy metadata
+  refresh for that tuple.
+
+By default, coordinator classification uses:
+
+- metadata warning threshold = `2 * scrape-interval`
+- metadata stale threshold = `freshness-window`
+
+The broker summary block on the roster page also shows how many tuples on that
+broker have unhealthy or stale metadata state, plus the worst metadata age
+seen on that broker.
+
 ## Endpoints
 
 ### Operator UX (`--listen`)
@@ -68,6 +91,14 @@ The broker list is static for v0.1; service discovery is a follow-up.
 | POST | `/admin/signed-manifest` | Upload a cold-key-signed manifest (multipart or JSON) |
 
 Web UI routes (`/`, `/diff`, `/audit`) land in plan 0018 commit 6.
+
+`metadata.json` is operator-only and not signed. It now includes:
+
+- `metadata_warning_threshold_seconds`
+- `metadata_stale_threshold_seconds`
+- enriched `source_brokers` entries with broker metadata summary counts
+- `warnings` for high-level metadata issues
+- `tuple_metadata_warnings` for per-broker, per-tuple metadata problems
 
 ### Resolver-facing (`--public-listen`)
 
@@ -118,6 +149,22 @@ increments.
 Action: investigate broker host. The operator may continue signing
 and publishing while the soft failure persists; the published
 manifest reflects the most-recent successful scrape's state.
+
+### Broker metadata-discovery degradation
+
+The coordinator does not drop tuples from the candidate only because broker
+metadata discovery is degraded or stale. Instead, the roster surfaces
+`meta=degraded`, `meta=stale`, or `meta=never_succeeded` per tuple so the
+operator can decide whether to keep publishing that broker's offering.
+
+Action: inspect broker `/registry/health`, the roster broker summary, and the
+broker's metadata discovery logs. Treat sustained `consecutive_failures`,
+large `last_success_age_seconds`, or `never_succeeded` as operator warnings
+even when the tuple still appears in the candidate.
+
+Before signing, inspect `metadata.json` inside `candidate.tar.gz`. If
+`tuple_metadata_warnings` is non-empty, the candidate was built from at least
+one tuple whose broker metadata state was not `ok` at build time.
 
 ### Scrape hard failure (malformed JSON, schema-invalid)
 

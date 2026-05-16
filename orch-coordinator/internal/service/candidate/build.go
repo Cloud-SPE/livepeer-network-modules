@@ -17,6 +17,13 @@ import (
 // livepeer-network-protocol/manifest/changelog.md.
 const SpecVersion = "0.1.0"
 
+const (
+	WarningCodeMetadataNeverSucceeded = "metadata_never_succeeded"
+	WarningCodeMetadataStale          = "metadata_stale"
+	WarningCodeMetadataDegraded       = "metadata_degraded"
+	WarningCodeMetadataProbeFailed    = "metadata_probe_failed"
+)
+
 // PriceConflictError is returned when two brokers advertise the same
 // uniqueness key with different prices. Hard fail loud — the candidate
 // build refuses to proceed; the operator must reconcile the broker
@@ -93,13 +100,17 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 	}
 
 	meta := types.Metadata{
-		CandidateTimestamp: issuedAt,
-		ScrapeWindowStart:  snap.WindowStart.UTC(),
-		ScrapeWindowEnd:    snap.WindowEnd.UTC(),
-		SourceBrokers:      brokerEntries(snap),
-		CoordinatorCommit:  opts.CoordinatorCommit,
-		SchemaVersion:      SpecVersion,
-		HAEndpoints:        ha,
+		CandidateTimestamp:              issuedAt,
+		ScrapeWindowStart:               snap.WindowStart.UTC(),
+		ScrapeWindowEnd:                 snap.WindowEnd.UTC(),
+		SourceBrokers:                   brokerEntries(snap),
+		MetadataWarningThresholdSeconds: int64(snap.MetadataWarningAfter / time.Second),
+		MetadataStaleThresholdSeconds:   int64(snap.MetadataStaleAfter / time.Second),
+		Warnings:                        metadataWarnings(snap),
+		TupleMetadataWarnings:           tupleMetadataWarnings(snap),
+		CoordinatorCommit:               opts.CoordinatorCommit,
+		SchemaVersion:                   SpecVersion,
+		HAEndpoints:                     ha,
 	}
 
 	return &types.Candidate{
@@ -291,15 +302,137 @@ func brokerEntries(snap scrape.Snapshot) []types.MetadataBrokerEntry {
 	out := make([]types.MetadataBrokerEntry, 0, len(snap.Brokers))
 	for _, b := range snap.Brokers {
 		out = append(out, types.MetadataBrokerEntry{
-			Name:      b.Name,
-			BaseURL:   b.BaseURL,
-			Status:    b.Freshness,
-			ScrapedAt: b.LastSuccessAt,
-			Error:     b.LastError,
+			Name:                     b.Name,
+			BaseURL:                  b.BaseURL,
+			Status:                   b.Freshness,
+			ScrapedAt:                b.LastSuccessAt,
+			Error:                    b.LastError,
+			MetadataApplicableTuples: b.MetadataApplicableTuples,
+			MetadataUnhealthyTuples:  b.MetadataUnhealthyTuples,
+			MetadataStaleTuples:      b.MetadataStaleTuples,
+			MetadataWorstAgeSeconds:  b.MetadataWorstAgeSeconds,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func metadataWarnings(snap scrape.Snapshot) []types.MetadataWarning {
+	var out []types.MetadataWarning
+	totalUnhealthy := 0
+	totalStale := 0
+	totalNeverSucceeded := 0
+	for _, b := range snap.Brokers {
+		totalUnhealthy += b.MetadataUnhealthyTuples
+		totalStale += b.MetadataStaleTuples
+		for _, h := range b.TupleHealth {
+			if h.Metadata == nil || !h.Metadata.Applicable {
+				continue
+			}
+			state, _ := types.ClassifyBrokerHealthMetadata(h.Metadata, snap.MetadataWarningAfter, snap.MetadataStaleAfter)
+			if state == types.MetadataStateNeverSucceeded {
+				totalNeverSucceeded++
+			}
+		}
+	}
+	if totalUnhealthy > 0 {
+		out = append(out, types.MetadataWarning{
+			Code:     WarningCodeMetadataDegraded,
+			Severity: "warning",
+			Message:  fmt.Sprintf("%d tuple(s) have degraded broker metadata discovery state", totalUnhealthy),
+		})
+	}
+	if totalStale > 0 {
+		out = append(out, types.MetadataWarning{
+			Code:     WarningCodeMetadataStale,
+			Severity: "warning",
+			Message:  fmt.Sprintf("%d tuple(s) have stale broker metadata discovery state", totalStale),
+		})
+	}
+	if totalNeverSucceeded > 0 {
+		out = append(out, types.MetadataWarning{
+			Code:     WarningCodeMetadataNeverSucceeded,
+			Severity: "warning",
+			Message:  fmt.Sprintf("%d tuple(s) have never completed a healthy broker metadata refresh", totalNeverSucceeded),
+		})
+	}
+	return out
+}
+
+func tupleMetadataWarnings(snap scrape.Snapshot) []types.TupleMetadataWarning {
+	out := make([]types.TupleMetadataWarning, 0)
+	seen := make(map[string]struct{})
+	brokers := make(map[string]scrape.BrokerStatus, len(snap.Brokers))
+	for _, b := range snap.Brokers {
+		brokers[b.Name] = b
+	}
+	for _, src := range snap.SourceTuples {
+		b, ok := brokers[src.BrokerName]
+		if !ok {
+			continue
+		}
+		health, ok := b.TupleHealth[brokerTupleHealthKey(src.Offering.CapabilityID, src.Offering.OfferingID)]
+		if !ok || health.Metadata == nil || !health.Metadata.Applicable {
+			continue
+		}
+		state, ageSeconds := types.ClassifyBrokerHealthMetadata(health.Metadata, snap.MetadataWarningAfter, snap.MetadataStaleAfter)
+		if state == "" || state == types.MetadataStateOK {
+			continue
+		}
+		key := src.BrokerName + "|" + src.Offering.CapabilityID + "|" + src.Offering.OfferingID + "|" + src.WorkerURL
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, types.TupleMetadataWarning{
+			Code:                  metadataWarningCode(state, health.Metadata.LastResult),
+			Severity:              "warning",
+			BrokerName:            src.BrokerName,
+			BaseURL:               src.BaseURL,
+			CapabilityID:          src.Offering.CapabilityID,
+			OfferingID:            src.Offering.OfferingID,
+			WorkerURL:             src.WorkerURL,
+			MetadataState:         state,
+			MetadataResult:        health.Metadata.LastResult,
+			MetadataError:         health.Metadata.LastError,
+			LastSuccessAgeSeconds: ageSeconds,
+			ConsecutiveFailures:   health.Metadata.ConsecutiveFailures,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.BrokerName != b.BrokerName {
+			return a.BrokerName < b.BrokerName
+		}
+		if a.CapabilityID != b.CapabilityID {
+			return a.CapabilityID < b.CapabilityID
+		}
+		if a.OfferingID != b.OfferingID {
+			return a.OfferingID < b.OfferingID
+		}
+		return a.WorkerURL < b.WorkerURL
+	})
+	return out
+}
+
+func metadataWarningCode(state, result string) string {
+	switch state {
+	case types.MetadataStateNeverSucceeded:
+		return WarningCodeMetadataNeverSucceeded
+	case types.MetadataStateStale:
+		return WarningCodeMetadataStale
+	case types.MetadataStateDegraded:
+		if !types.MetadataResultHealthy(result) {
+			return WarningCodeMetadataProbeFailed
+		}
+		return WarningCodeMetadataDegraded
+	default:
+		return WarningCodeMetadataDegraded
+	}
+}
+
+func brokerTupleHealthKey(capabilityID, offeringID string) string {
+	return capabilityID + "|" + offeringID
 }
 
 // MarshalMetadata returns the canonical metadata.json bytes (NOT

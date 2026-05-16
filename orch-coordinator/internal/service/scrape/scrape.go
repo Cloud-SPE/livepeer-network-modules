@@ -23,34 +23,40 @@ import (
 
 // Freshness flags applied per-broker after each scrape cycle.
 const (
-	FreshnessOK            = "ok"
-	FreshnessStaleFailing  = "stale_failing"
-	FreshnessSchemaError   = "schema_error"
+	FreshnessOK             = "ok"
+	FreshnessStaleFailing   = "stale_failing"
+	FreshnessSchemaError    = "schema_error"
 	FreshnessNeverSucceeded = "never_succeeded"
 )
 
 // BrokerStatus holds the per-broker poll state held in the cache.
 type BrokerStatus struct {
-	Name           string
-	BaseURL        string
-	WorkerURL      string
-	LastSuccessAt  time.Time
-	LastAttemptAt  time.Time
-	LastError      string
-	Freshness      string
-	Offerings      []types.BrokerOffering
-	HealthCheckedAt time.Time
-	HealthError     string
-	LiveStatus      string
-	TupleHealth     map[string]types.BrokerHealthCapability
+	Name                     string
+	BaseURL                  string
+	WorkerURL                string
+	LastSuccessAt            time.Time
+	LastAttemptAt            time.Time
+	LastError                string
+	Freshness                string
+	Offerings                []types.BrokerOffering
+	HealthCheckedAt          time.Time
+	HealthError              string
+	LiveStatus               string
+	TupleHealth              map[string]types.BrokerHealthCapability
+	MetadataApplicableTuples int
+	MetadataUnhealthyTuples  int
+	MetadataStaleTuples      int
+	MetadataWorstAgeSeconds  float64
 }
 
 // Snapshot is a point-in-time view of the scrape cache.
 type Snapshot struct {
-	OrchEthAddress string
-	WindowStart    time.Time
-	WindowEnd      time.Time
-	Brokers        []BrokerStatus
+	OrchEthAddress       string
+	WindowStart          time.Time
+	WindowEnd            time.Time
+	MetadataWarningAfter time.Duration
+	MetadataStaleAfter   time.Duration
+	Brokers              []BrokerStatus
 	// SourceTuples is the flat list of (broker, offering) pairs that
 	// the candidate service deduplicates by uniqueness key.
 	SourceTuples []types.SourceTuple
@@ -118,11 +124,11 @@ func New(cfg Config, client brokerclient.Client, logger *slog.Logger) (*Service,
 	for _, b := range cfg.Brokers {
 		workerURL := s.deriveWorkerURL(b)
 		s.cache[b.Name] = &BrokerStatus{
-			Name:      b.Name,
-			BaseURL:   b.BaseURL,
-			WorkerURL: workerURL,
-			Freshness: FreshnessNeverSucceeded,
-			LiveStatus: "stale",
+			Name:        b.Name,
+			BaseURL:     b.BaseURL,
+			WorkerURL:   workerURL,
+			Freshness:   FreshnessNeverSucceeded,
+			LiveStatus:  "stale",
 			TupleHealth: map[string]types.BrokerHealthCapability{},
 		}
 	}
@@ -296,9 +302,11 @@ func (s *Service) Snapshot() Snapshot {
 	defer s.mu.RUnlock()
 	now := time.Now().UTC()
 	out := Snapshot{
-		OrchEthAddress: s.cfg.OrchEthAddress,
-		WindowEnd:      now,
-		Brokers:        make([]BrokerStatus, 0, len(s.cache)),
+		OrchEthAddress:       s.cfg.OrchEthAddress,
+		WindowEnd:            now,
+		MetadataWarningAfter: 2 * s.cfg.ScrapeInterval,
+		MetadataStaleAfter:   s.cfg.FreshnessWindow,
+		Brokers:              make([]BrokerStatus, 0, len(s.cache)),
 	}
 	earliest := now
 	for _, b := range s.cfg.Brokers {
@@ -312,6 +320,20 @@ func (s *Service) Snapshot() Snapshot {
 			copyBroker.TupleHealth = make(map[string]types.BrokerHealthCapability, len(st.TupleHealth))
 			for k, v := range st.TupleHealth {
 				copyBroker.TupleHealth[k] = v
+				if v.Metadata == nil || !v.Metadata.Applicable {
+					continue
+				}
+				copyBroker.MetadataApplicableTuples++
+				state, ageSeconds := types.ClassifyBrokerHealthMetadata(v.Metadata, out.MetadataWarningAfter, out.MetadataStaleAfter)
+				if state != types.MetadataStateOK {
+					copyBroker.MetadataUnhealthyTuples++
+				}
+				if state == types.MetadataStateStale || state == types.MetadataStateNeverSucceeded {
+					copyBroker.MetadataStaleTuples++
+				}
+				if ageSeconds > copyBroker.MetadataWorstAgeSeconds {
+					copyBroker.MetadataWorstAgeSeconds = ageSeconds
+				}
 			}
 		}
 		out.Brokers = append(out.Brokers, copyBroker)

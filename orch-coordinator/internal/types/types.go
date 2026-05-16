@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+const (
+	MetadataStateOK             = "ok"
+	MetadataStateDegraded       = "degraded"
+	MetadataStateStale          = "stale"
+	MetadataStateNeverSucceeded = "never_succeeded"
+)
+
 // BrokerOffering is one capability tuple as advertised by a broker's
 // /registry/offerings endpoint. Mirrors
 // capability-broker/internal/server/registry/offerings.go's wire shape
@@ -47,15 +54,27 @@ type BrokerOfferings struct {
 // BrokerHealthCapability is one tuple-health entry from
 // capability-broker /registry/health.
 type BrokerHealthCapability struct {
-	ID                   string    `json:"id"`
-	OfferingID           string    `json:"offering_id"`
-	Status               string    `json:"status"`
-	Reason               string    `json:"reason,omitempty"`
-	ProbeType            string    `json:"probe_type,omitempty"`
-	ProbedAt             time.Time `json:"probed_at,omitempty"`
-	StaleAfter           time.Time `json:"stale_after,omitempty"`
-	ConsecutiveSuccesses int       `json:"consecutive_successes,omitempty"`
-	ConsecutiveFailures  int       `json:"consecutive_failures,omitempty"`
+	ID                   string                `json:"id"`
+	OfferingID           string                `json:"offering_id"`
+	Status               string                `json:"status"`
+	Reason               string                `json:"reason,omitempty"`
+	ProbeType            string                `json:"probe_type,omitempty"`
+	ProbedAt             time.Time             `json:"probed_at,omitempty"`
+	StaleAfter           time.Time             `json:"stale_after,omitempty"`
+	ConsecutiveSuccesses int                   `json:"consecutive_successes,omitempty"`
+	ConsecutiveFailures  int                   `json:"consecutive_failures,omitempty"`
+	Metadata             *BrokerHealthMetadata `json:"metadata,omitempty"`
+}
+
+type BrokerHealthMetadata struct {
+	Provider              string    `json:"provider,omitempty"`
+	Applicable            bool      `json:"applicable"`
+	LastAttemptAt         time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt         time.Time `json:"last_success_at,omitempty"`
+	LastSuccessAgeSeconds float64   `json:"last_success_age_seconds,omitempty"`
+	LastError             string    `json:"last_error,omitempty"`
+	LastResult            string    `json:"last_result,omitempty"`
+	ConsecutiveFailures   int       `json:"consecutive_failures,omitempty"`
 }
 
 // BrokerHealth is the full /registry/health response.
@@ -109,6 +128,36 @@ func (b *BrokerHealth) Validate() error {
 		}
 	}
 	return nil
+}
+
+func MetadataResultHealthy(result string) bool {
+	switch result {
+	case "enriched", "empty":
+		return true
+	default:
+		return false
+	}
+}
+
+func ClassifyBrokerHealthMetadata(meta *BrokerHealthMetadata, warningAfter, staleAfter time.Duration) (string, float64) {
+	if meta == nil || !meta.Applicable {
+		return "", -1
+	}
+	ageSeconds := meta.LastSuccessAgeSeconds
+	if ageSeconds < 0 || meta.LastSuccessAt.IsZero() {
+		return MetadataStateNeverSucceeded, -1
+	}
+	age := time.Duration(ageSeconds * float64(time.Second))
+	if staleAfter > 0 && age >= staleAfter {
+		return MetadataStateStale, ageSeconds
+	}
+	if meta.ConsecutiveFailures > 0 || !MetadataResultHealthy(meta.LastResult) {
+		return MetadataStateDegraded, ageSeconds
+	}
+	if warningAfter > 0 && age >= warningAfter {
+		return MetadataStateDegraded, ageSeconds
+	}
+	return MetadataStateOK, ageSeconds
 }
 
 // SourceTuple is one offering tagged with the broker that advertised
@@ -180,22 +229,51 @@ type Candidate struct {
 
 // Metadata is the operator-only sidecar (NOT signed).
 type Metadata struct {
-	CandidateTimestamp time.Time             `json:"candidate_timestamp"`
-	ScrapeWindowStart  time.Time             `json:"scrape_window_start"`
-	ScrapeWindowEnd    time.Time             `json:"scrape_window_end"`
-	SourceBrokers      []MetadataBrokerEntry `json:"source_brokers"`
-	CoordinatorCommit  string                `json:"coordinator_commit"`
-	SchemaVersion      string                `json:"schema_version"`
-	HAEndpoints        []HAEndpoint          `json:"ha_endpoints,omitempty"`
+	CandidateTimestamp              time.Time              `json:"candidate_timestamp"`
+	ScrapeWindowStart               time.Time              `json:"scrape_window_start"`
+	ScrapeWindowEnd                 time.Time              `json:"scrape_window_end"`
+	SourceBrokers                   []MetadataBrokerEntry  `json:"source_brokers"`
+	MetadataWarningThresholdSeconds int64                  `json:"metadata_warning_threshold_seconds,omitempty"`
+	MetadataStaleThresholdSeconds   int64                  `json:"metadata_stale_threshold_seconds,omitempty"`
+	Warnings                        []MetadataWarning      `json:"warnings,omitempty"`
+	TupleMetadataWarnings           []TupleMetadataWarning `json:"tuple_metadata_warnings,omitempty"`
+	CoordinatorCommit               string                 `json:"coordinator_commit"`
+	SchemaVersion                   string                 `json:"schema_version"`
+	HAEndpoints                     []HAEndpoint           `json:"ha_endpoints,omitempty"`
 }
 
 // MetadataBrokerEntry records per-broker scrape success/failure.
 type MetadataBrokerEntry struct {
-	Name      string    `json:"name"`
-	BaseURL   string    `json:"base_url"`
-	Status    string    `json:"status"`
-	ScrapedAt time.Time `json:"scraped_at,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	Name                     string    `json:"name"`
+	BaseURL                  string    `json:"base_url"`
+	Status                   string    `json:"status"`
+	ScrapedAt                time.Time `json:"scraped_at,omitempty"`
+	Error                    string    `json:"error,omitempty"`
+	MetadataApplicableTuples int       `json:"metadata_applicable_tuples,omitempty"`
+	MetadataUnhealthyTuples  int       `json:"metadata_unhealthy_tuples,omitempty"`
+	MetadataStaleTuples      int       `json:"metadata_stale_tuples,omitempty"`
+	MetadataWorstAgeSeconds  float64   `json:"metadata_worst_age_seconds,omitempty"`
+}
+
+type MetadataWarning struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+}
+
+type TupleMetadataWarning struct {
+	Code                  string  `json:"code"`
+	Severity              string  `json:"severity"`
+	BrokerName            string  `json:"broker_name"`
+	BaseURL               string  `json:"base_url"`
+	CapabilityID          string  `json:"capability_id"`
+	OfferingID            string  `json:"offering_id"`
+	WorkerURL             string  `json:"worker_url,omitempty"`
+	MetadataState         string  `json:"metadata_state"`
+	MetadataResult        string  `json:"metadata_result,omitempty"`
+	MetadataError         string  `json:"metadata_error,omitempty"`
+	LastSuccessAgeSeconds float64 `json:"last_success_age_seconds,omitempty"`
+	ConsecutiveFailures   int     `json:"consecutive_failures,omitempty"`
 }
 
 // HAEndpoint records the alternate worker_url(s) that were dropped

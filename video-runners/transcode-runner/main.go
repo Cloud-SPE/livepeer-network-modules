@@ -355,14 +355,16 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func handlePresets(w http.ResponseWriter, r *http.Request) {
 	type presetInfo struct {
-		Presets []transcode.Preset `json:"presets"`
-		GPU     string             `json:"gpu"`
-		Count   int                `json:"count"`
+		Presets   []transcode.Preset `json:"presets"`
+		GPU       string             `json:"gpu"`
+		GPUVendor string             `json:"gpu_vendor"`
+		Count     int                `json:"count"`
 	}
 	writeJSON(w, http.StatusOK, presetInfo{
-		Presets: presets,
-		GPU:     hw.GPUName,
-		Count:   len(presets),
+		Presets:   presets,
+		GPU:       hw.GPUName,
+		GPUVendor: string(hw.Vendor),
+		Count:     len(presets),
 	})
 }
 

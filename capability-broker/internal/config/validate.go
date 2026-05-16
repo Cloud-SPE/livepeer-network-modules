@@ -50,12 +50,26 @@ var deprecatedOpenAICapabilityIDSuffixes = []string{
 }
 
 var openAICapabilityIDsRequiringModel = map[string]struct{}{
-	"openai:chat-completions":    {},
-	"openai:embeddings":          {},
+	"openai:chat-completions":     {},
+	"openai:embeddings":           {},
 	"openai:audio-transcriptions": {},
-	"openai:audio-speech":        {},
-	"openai:images-generations":  {},
-	"openai:realtime":            {},
+	"openai:audio-speech":         {},
+	"openai:images-generations":   {},
+	"openai:realtime":             {},
+}
+
+var audioTaskByCapabilityID = map[string]string{
+	"openai:audio-transcriptions": "transcription",
+	"openai:audio-speech":         "speech",
+}
+
+var videoTaskByCapabilityID = map[string]string{
+	"video:transcode.vod": "transcode",
+	"video:transcode.abr": "abr-transcode",
+}
+
+var vtuberTaskByCapabilityID = map[string]string{
+	"livepeer:vtuber-session": "session",
 }
 
 func encoderProfileList() []string {
@@ -104,7 +118,7 @@ func (c *Config) Validate() error {
 		if cap.OfferingID == "" {
 			return fmt.Errorf("%s: offering_id is required", ctx)
 		}
-		if err := validateOpenAIExtra(ctx, cap); err != nil {
+		if err := validateCapabilityExtra(ctx, cap); err != nil {
 			return err
 		}
 		key := cap.ID + "|" + cap.OfferingID
@@ -270,38 +284,96 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func validateOpenAIExtra(ctx string, cap *Capability) error {
-	if !strings.HasPrefix(cap.ID, "openai:") {
-		return nil
-	}
-
-	openaiRaw, ok := cap.Extra["openai"]
-	if !ok {
-		return fmt.Errorf("%s: extra.openai is required for %s", ctx, cap.ID)
-	}
-	openaiExtra, ok := openaiRaw.(map[string]any)
-	if !ok {
-		return fmt.Errorf("%s: extra.openai must be a map for %s", ctx, cap.ID)
-	}
+func validateCapabilityExtra(ctx string, cap *Capability) error {
 	provider := strings.TrimSpace(asString(cap.Extra["provider"]))
-	if provider == "" {
-		return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
-	}
-	if _, needsModel := openAICapabilityIDsRequiringModel[cap.ID]; needsModel {
-		model := strings.TrimSpace(asString(openaiExtra["model"]))
-		if model == "" {
-			return fmt.Errorf("%s: extra.openai.model is required for %s", ctx, cap.ID)
-		}
-	}
-	if featuresRaw, ok := cap.Extra["features"]; ok {
-		features, ok := featuresRaw.(map[string]any)
+	if strings.HasPrefix(cap.ID, "openai:") {
+		openaiRaw, ok := cap.Extra["openai"]
 		if !ok {
-			return fmt.Errorf("%s: extra.features must be a map for %s", ctx, cap.ID)
+			return fmt.Errorf("%s: extra.openai is required for %s", ctx, cap.ID)
 		}
-		for key, value := range features {
-			if _, ok := value.(bool); !ok {
-				return fmt.Errorf("%s: extra.features.%s must be a boolean for %s", ctx, key, cap.ID)
+		openaiExtra, ok := openaiRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.openai must be a map for %s", ctx, cap.ID)
+		}
+		if provider == "" {
+			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
+		}
+		if _, needsModel := openAICapabilityIDsRequiringModel[cap.ID]; needsModel {
+			model := strings.TrimSpace(asString(openaiExtra["model"]))
+			if model == "" {
+				return fmt.Errorf("%s: extra.openai.model is required for %s", ctx, cap.ID)
 			}
+		}
+		if featuresRaw, ok := cap.Extra["features"]; ok {
+			features, ok := featuresRaw.(map[string]any)
+			if !ok {
+				return fmt.Errorf("%s: extra.features must be a map for %s", ctx, cap.ID)
+			}
+			for key, value := range features {
+				if _, ok := value.(bool); !ok {
+					return fmt.Errorf("%s: extra.features.%s must be a boolean for %s", ctx, key, cap.ID)
+				}
+			}
+		}
+	}
+	if requiredTask, ok := audioTaskByCapabilityID[cap.ID]; ok {
+		if provider == "" {
+			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
+		}
+		audioRaw, ok := cap.Extra["audio"]
+		if !ok {
+			return fmt.Errorf("%s: extra.audio is required for %s", ctx, cap.ID)
+		}
+		audioExtra, ok := audioRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.audio must be a map for %s", ctx, cap.ID)
+		}
+		task := strings.TrimSpace(asString(audioExtra["task"]))
+		if task == "" {
+			return fmt.Errorf("%s: extra.audio.task is required for %s", ctx, cap.ID)
+		}
+		if task != requiredTask {
+			return fmt.Errorf("%s: extra.audio.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
+		}
+	}
+	if requiredTask, ok := videoTaskByCapabilityID[cap.ID]; ok {
+		if provider == "" {
+			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
+		}
+		videoRaw, ok := cap.Extra["video"]
+		if !ok {
+			return fmt.Errorf("%s: extra.video is required for %s", ctx, cap.ID)
+		}
+		videoExtra, ok := videoRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.video must be a map for %s", ctx, cap.ID)
+		}
+		task := strings.TrimSpace(asString(videoExtra["task"]))
+		if task == "" {
+			return fmt.Errorf("%s: extra.video.task is required for %s", ctx, cap.ID)
+		}
+		if task != requiredTask {
+			return fmt.Errorf("%s: extra.video.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
+		}
+	}
+	if requiredTask, ok := vtuberTaskByCapabilityID[cap.ID]; ok {
+		if provider == "" {
+			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
+		}
+		vtuberRaw, ok := cap.Extra["vtuber"]
+		if !ok {
+			return fmt.Errorf("%s: extra.vtuber is required for %s", ctx, cap.ID)
+		}
+		vtuberExtra, ok := vtuberRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.vtuber must be a map for %s", ctx, cap.ID)
+		}
+		task := strings.TrimSpace(asString(vtuberExtra["task"]))
+		if task == "" {
+			return fmt.Errorf("%s: extra.vtuber.task is required for %s", ctx, cap.ID)
+		}
+		if task != requiredTask {
+			return fmt.Errorf("%s: extra.vtuber.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
 		}
 	}
 

@@ -16,11 +16,54 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 		WorkerURL: "https://w",
 	}}}
 	snap := scrape.Snapshot{
-		WindowStart: now.Add(-30 * time.Second),
-		WindowEnd:   now,
+		WindowStart:          now.Add(-30 * time.Second),
+		WindowEnd:            now,
+		MetadataWarningAfter: 30 * time.Second,
+		MetadataStaleAfter:   time.Minute,
 		Brokers: []scrape.BrokerStatus{
-			{Name: "b1", BaseURL: "http://b1", Freshness: scrape.FreshnessOK, TupleHealth: map[string]types.BrokerHealthCapability{"cap|off": {ID: "cap", OfferingID: "off", Status: "ready", Reason: "probe_ok", StaleAfter: now.Add(time.Minute)}}},
-			{Name: "b2", BaseURL: "http://b2", Freshness: scrape.FreshnessStaleFailing, LastError: "timeout", TupleHealth: map[string]types.BrokerHealthCapability{"cap|off": {ID: "cap", OfferingID: "off", Status: "degraded", Reason: "timeout", StaleAfter: now.Add(time.Minute)}}},
+			{
+				Name:      "b1",
+				BaseURL:   "http://b1",
+				Freshness: scrape.FreshnessOK,
+				TupleHealth: map[string]types.BrokerHealthCapability{
+					"cap|off": {
+						ID:         "cap",
+						OfferingID: "off",
+						Status:     "ready",
+						Reason:     "probe_ok",
+						StaleAfter: now.Add(time.Minute),
+						Metadata: &types.BrokerHealthMetadata{
+							Applicable:            true,
+							LastResult:            "enriched",
+							LastSuccessAt:         now.Add(-10 * time.Second),
+							LastSuccessAgeSeconds: 10,
+						},
+					},
+				},
+			},
+			{
+				Name:      "b2",
+				BaseURL:   "http://b2",
+				Freshness: scrape.FreshnessStaleFailing,
+				LastError: "timeout",
+				TupleHealth: map[string]types.BrokerHealthCapability{
+					"cap|off": {
+						ID:         "cap",
+						OfferingID: "off",
+						Status:     "degraded",
+						Reason:     "timeout",
+						StaleAfter: now.Add(time.Minute),
+						Metadata: &types.BrokerHealthMetadata{
+							Applicable:            true,
+							LastResult:            "models_probe_failed",
+							LastSuccessAt:         now.Add(-2 * time.Minute),
+							LastSuccessAgeSeconds: 120,
+							ConsecutiveFailures:   2,
+							LastError:             "probe failed",
+						},
+					},
+				},
+			},
 		},
 		SourceTuples: []types.SourceTuple{
 			{BrokerName: "b1", Offering: types.BrokerOffering{
@@ -45,6 +88,12 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 	}
 	if got := v.Rows[0].Brokers[0].LiveStatus; got != "ready" {
 		t.Fatalf("live status = %q, want ready", got)
+	}
+	if got := v.Rows[0].Brokers[0].MetadataState; got != types.MetadataStateOK {
+		t.Fatalf("metadata state = %q, want ok", got)
+	}
+	if got := v.Rows[0].Brokers[1].MetadataState; got != types.MetadataStateStale {
+		t.Fatalf("metadata state = %q, want stale", got)
 	}
 	if v.Rows[0].Drift != "added" {
 		t.Fatalf("drift: %s", v.Rows[0].Drift)

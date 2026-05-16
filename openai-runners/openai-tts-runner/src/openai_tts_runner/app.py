@@ -209,6 +209,10 @@ async def healthz():
 async def speech_options():
     return {
         "models": [MODEL_ALIAS],
+        "task": "speech",
+        "formats": {
+            "output": sorted(FORMAT_TABLE.keys()),
+        },
         "default_voice": DEFAULT_VOICE,
         "voices": {
             "native": AVAILABLE_VOICES,

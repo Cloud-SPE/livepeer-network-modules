@@ -39,12 +39,17 @@ type Row struct {
 // BrokerCell describes one broker that advertises this row's tuple,
 // with its current freshness and any error.
 type BrokerCell struct {
-	Name         string
-	Freshness    string
-	Error        string
-	LiveStatus   string
-	LiveReason   string
-	HealthStale  bool
+	Name               string
+	Freshness          string
+	Error              string
+	LiveStatus         string
+	LiveReason         string
+	HealthStale        bool
+	MetadataState      string
+	MetadataResult     string
+	MetadataError      string
+	MetadataAgeSeconds float64
+	MetadataFailures   int
 }
 
 // View is the rendered roster.
@@ -181,6 +186,16 @@ func brokersByUniquenessKey(snap scrape.Snapshot) map[string][]BrokerCell {
 				cell.LiveReason = h.Reason
 				if !h.StaleAfter.IsZero() && h.StaleAfter.Before(stampNow()) {
 					cell.HealthStale = true
+				}
+				if h.Metadata != nil {
+					cell.MetadataState, cell.MetadataAgeSeconds = types.ClassifyBrokerHealthMetadata(
+						h.Metadata,
+						snap.MetadataWarningAfter,
+						snap.MetadataStaleAfter,
+					)
+					cell.MetadataResult = h.Metadata.LastResult
+					cell.MetadataError = h.Metadata.LastError
+					cell.MetadataFailures = h.Metadata.ConsecutiveFailures
 				}
 			}
 		}

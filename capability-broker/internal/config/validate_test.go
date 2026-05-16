@@ -22,7 +22,7 @@ func TestValidateDefaultsHTTPHealthProbe(t *testing.T) {
 				URL:       "http://backend:8000/v1/chat/completions",
 			},
 			Extra: map[string]any{
-				"openai": map[string]any{"model": "llama-3-70b"},
+				"openai":   map[string]any{"model": "llama-3-70b"},
 				"provider": "vllm",
 			},
 		}},
@@ -120,7 +120,7 @@ func TestValidateRejectsOpenAICapabilityWithoutModel(t *testing.T) {
 				URL:       "http://backend:8000/v1/chat/completions",
 			},
 			Extra: map[string]any{
-				"openai": map[string]any{},
+				"openai":   map[string]any{},
 				"provider": "vllm",
 			},
 		}},
@@ -177,7 +177,7 @@ func TestValidateRejectsNonMapOpenAIExtra(t *testing.T) {
 				URL:       "http://backend:8000/v1/chat/completions",
 			},
 			Extra: map[string]any{
-				"openai": "llama-3-70b",
+				"openai":   "llama-3-70b",
 				"provider": "vllm",
 			},
 		}},
@@ -206,7 +206,7 @@ func TestValidateRejectsNonBooleanFeatureFlags(t *testing.T) {
 				URL:       "http://backend:8000/v1/chat/completions",
 			},
 			Extra: map[string]any{
-				"openai": map[string]any{"model": "llama-3-70b"},
+				"openai":   map[string]any{"model": "llama-3-70b"},
 				"provider": "vllm",
 				"features": map[string]any{
 					"streaming": "true",
@@ -238,14 +238,278 @@ func TestValidateAcceptsOpenAIExtraShape(t *testing.T) {
 				URL:       "http://backend:8000/v1/chat/completions",
 			},
 			Extra: map[string]any{
-				"openai": map[string]any{"model": "llama-3-70b"},
-				"provider": "vllm",
+				"openai":            map[string]any{"model": "llama-3-70b"},
+				"provider":          "vllm",
 				"served_model_name": "Llama 3 70B",
-				"backend_model": "meta-llama/Llama-3-70b",
+				"backend_model":     "meta-llama/Llama-3-70b",
 				"features": map[string]any{
 					"streaming": true,
-					"tools": true,
+					"tools":     true,
 					"json_mode": true,
+				},
+			},
+		}},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsAudioCapabilityWithoutAudioExtra(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "openai:audio-transcriptions",
+			OfferingID:      "default",
+			InteractionMode: "http-multipart@v0",
+			WorkUnit: WorkUnit{
+				Name:      "seconds",
+				Extractor: map[string]any{"type": "response-header"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/v1/audio/transcriptions",
+			},
+			Extra: map[string]any{
+				"openai":   map[string]any{"model": "whisper-large-v3"},
+				"provider": "openai-audio-runner",
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "extra.audio is required") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsAudioCapabilityWithWrongTask(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "openai:audio-speech",
+			OfferingID:      "default",
+			InteractionMode: "http-reqresp@v0",
+			WorkUnit: WorkUnit{
+				Name:      "characters",
+				Extractor: map[string]any{"type": "request-formula"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/v1/audio/speech",
+			},
+			Extra: map[string]any{
+				"openai":   map[string]any{"model": "kokoro"},
+				"provider": "openai-tts-runner",
+				"audio":    map[string]any{"task": "transcription"},
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "extra.audio.task") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateAcceptsAudioExtraShape(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "openai:audio-speech",
+			OfferingID:      "default",
+			InteractionMode: "http-reqresp@v0",
+			WorkUnit: WorkUnit{
+				Name:      "characters",
+				Extractor: map[string]any{"type": "request-formula"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/v1/audio/speech",
+			},
+			Extra: map[string]any{
+				"openai":   map[string]any{"model": "kokoro"},
+				"provider": "openai-tts-runner",
+				"audio": map[string]any{
+					"task": "speech",
+				},
+			},
+		}},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsVideoCapabilityWithoutVideoExtra(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "video:transcode.vod",
+			OfferingID:      "default",
+			InteractionMode: "http-reqresp@v0",
+			WorkUnit: WorkUnit{
+				Name:      "jobs",
+				Extractor: map[string]any{"type": "request-formula"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/v1/video/transcode",
+			},
+			Extra: map[string]any{
+				"provider": "transcode-runner",
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "extra.video is required") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsVideoCapabilityWithWrongTask(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "video:transcode.abr",
+			OfferingID:      "default",
+			InteractionMode: "http-reqresp@v0",
+			WorkUnit: WorkUnit{
+				Name:      "jobs",
+				Extractor: map[string]any{"type": "request-formula"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/v1/video/transcode/abr",
+			},
+			Extra: map[string]any{
+				"provider": "abr-runner",
+				"video":    map[string]any{"task": "transcode"},
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "extra.video.task") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateAcceptsVideoExtraShape(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "video:transcode.abr",
+			OfferingID:      "default",
+			InteractionMode: "http-reqresp@v0",
+			WorkUnit: WorkUnit{
+				Name:      "jobs",
+				Extractor: map[string]any{"type": "request-formula"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/v1/video/transcode/abr",
+			},
+			Extra: map[string]any{
+				"provider": "abr-runner",
+				"video": map[string]any{
+					"task": "abr-transcode",
+				},
+			},
+		}},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsVTuberCapabilityWithoutVTuberExtra(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "livepeer:vtuber-session",
+			OfferingID:      "default",
+			InteractionMode: "session-control-plus-media@v0",
+			WorkUnit: WorkUnit{
+				Name:      "seconds",
+				Extractor: map[string]any{"type": "seconds-elapsed"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/api/sessions/start",
+			},
+			Extra: map[string]any{
+				"provider": "vtuber-runner",
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "extra.vtuber is required") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsVTuberCapabilityWithWrongTask(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "livepeer:vtuber-session",
+			OfferingID:      "default",
+			InteractionMode: "session-control-plus-media@v0",
+			WorkUnit: WorkUnit{
+				Name:      "seconds",
+				Extractor: map[string]any{"type": "seconds-elapsed"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/api/sessions/start",
+			},
+			Extra: map[string]any{
+				"provider": "vtuber-runner",
+				"vtuber":   map[string]any{"task": "avatar"},
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "extra.vtuber.task") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateAcceptsVTuberExtraShape(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "livepeer:vtuber-session",
+			OfferingID:      "default",
+			InteractionMode: "session-control-plus-media@v0",
+			WorkUnit: WorkUnit{
+				Name:      "seconds",
+				Extractor: map[string]any{"type": "seconds-elapsed"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/api/sessions/start",
+			},
+			Extra: map[string]any{
+				"provider": "vtuber-runner",
+				"vtuber": map[string]any{
+					"task": "session",
 				},
 			},
 		}},

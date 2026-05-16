@@ -23,7 +23,8 @@ identity**.
 The Pool is a regular orch from the outside: one `eth_address`, one signed
 manifest at one well-known URL, one bond in `BondingManager`, one
 secure-orch with its own cold key. The novelty is internal — its "backends"
-are remote member brokers, not local containers.
+are **remote workload runtimes operated by third-party members** (vLLM,
+Ollama, FFmpeg, runners), not local containers co-located with the broker.
 
 ## 2. Goals
 
@@ -52,26 +53,174 @@ are remote member brokers, not local containers.
 
 | Fork | Question | Status |
 |---|---|---|
-| 1 | Front-proxy vs. publish-only | OPEN |
-| 2 | Member-side node type | OPEN |
-| 3 | Pool↔member trust binding | OPEN |
+| 1 | Front-proxy vs. publish-only | **DECIDED** — front-proxy (see §5) |
+| 2 | Member-side node type | **DECIDED** — backend provider only, no broker / no payment-daemon (see §5) |
+| 3 | Pool↔member trust binding | **DECIDED** — standard backend security; no PKI (see §5) |
 | 4 | Settlement model | OPEN |
-| 5 | Manifest attribution per member | DEFERRED — revisit after forks 1+2 |
+| 5 | Manifest attribution per member | DROPPED — members are invisible to gateways and chain under decided Fork 2 |
 
 Full statement of each fork lives in the kickoff reference doc §3.
 
 ## 5. Decision log
 
-*(Decisions land here as forks resolve. Each entry: date, fork, decision,
-short rationale.)*
+### 2026-05-16 — Fork 1: Front-proxy
+
+**Decision:** Pool sits in the data path. Gateway tickets are payable to
+the Pool's `eth_address`; the Pool's edge-broker validates and forwards to
+member brokers. The `worker_url ↔ eth_address` 1:1 in the manifest is
+preserved.
+
+**Rationale:**
+- Zero protocol change at the manifest, payment-daemon, gateway, or chain
+  layer. The Pool's edge-broker is a regular `capability-broker` whose
+  backends happen to be remote member brokers.
+- Preserves the invariant "the entity that gets paid is the entity doing
+  the work" at the public layer.
+- One-way migration: front-proxy → publish-only later is achievable if
+  member-signed attestations and payment-redirect modes are added. The
+  reverse migration is awkward, so we lock in the cleaner shape first.
+
+**Operational refinement (not a re-decision):** for streaming modes
+(`rtmp-ingress-hls-egress`, `ws-realtime`,
+`session-control-plus-media`) where Pool-edge bandwidth is significant,
+revisit a per-mode passthrough analogous to
+`session-control-external-media` (architecture-overview.md:180) once
+traffic profiles are known. Not v1 scope.
+
+### 2026-05-16 — Fork 2: Member is a backend provider, no broker / no payment-daemon
+
+**Decision:** A Pool member runs only the workload runtime they already
+operate (vLLM, Ollama, FFmpeg, video-runner, etc.) exposed at a URL the
+Pool's broker can reach. Members do **not** run `capability-broker`, do
+**not** run `payment-daemon`, and never see a Livepeer ticket. The Pool's
+`capability-broker` treats member runtimes as remote backends via the
+existing `backend.transport` / `backend.url` / `backend.auth` mechanism in
+`host-config.yaml`.
+
+**Member identity** is the member's `eth_address`. At sign-up the member
+signs a registration nonce with the address's private key (e.g., via
+MetaMask) to prove ownership. After registration, the address is the
+Pool-internal tracking ID and the payout destination — it is **not** used
+as a Livepeer-protocol participant identity. Members are invisible to
+gateways and to the chain.
+
+**Member data model** is a 1:N:N hierarchy:
+
+```
+Member { eth_address, display_name, contact, commercial_terms,
+         backends: [ Backend { id, url, auth,
+                               capability_offerings: [ ... ] } ] }
+```
+
+Each member registers N backends; each backend declares N capability
+offerings. **Pricing is Pool-set per published tuple** (not member-set):
+members declare what they can do, the Pool declares the gateway-facing
+price. Pool's payout rate to each member is a separate internal config
+that drives settlement (Fork 4).
+
+**Rationale:**
+- The existing `capability-broker` already supports remote backends. A
+  Pool member's runtime is, from the broker's perspective, "just another
+  backend." No new protocol surface needed on the member side.
+- Members keep their existing operational stack. Onboarding friction
+  reduces to "give the Pool your backend URL + prove ownership of an
+  `eth_address` with a one-time signature." No hot wallet, no
+  `payment-daemon`, no Livepeer-protocol knowledge required.
+- Pool runs the standard four-archetype orch stack unchanged. Gateway-,
+  manifest-, and chain-facing protocol surfaces are unchanged.
+- The β/γ split from the earlier working position is eliminated. The
+  original framing was overcomplicating the member side. See the kickoff
+  reference doc §3 for the superseded framing.
+
+**Carry-forward design surface (lands in design-docs when
+`pool-controller/` implementation begins):**
+- `capability-broker/` gains **multiple backends per capability** with a
+  selection algorithm (see Fork 3 / Component-shape decision below).
+- `host-config.yaml` gains a `members:` block (or equivalent) carrying the
+  N:N hierarchy. Concrete schema lands later.
+
+### 2026-05-16 — Fork 3: Standard backend security; no Pool PKI
+
+**Decision:** Pool↔member protocol-level "trust binding" collapses to
+**standard backend security** — the same shape any orch uses to protect
+its own backend endpoints today. Concretely:
+
+- Bearer tokens, mTLS, or IP allowlists on the Pool→member backend HTTP
+  channel. Per-deployment operational choice, not a protocol concern.
+- Backend auth configured in the Pool's `host-config.yaml` per backend
+  entry, reusing the existing `backend.auth` mechanism (extended as needed
+  for Bearer-token-reference and similar).
+- One-time `eth_address` ownership challenge at member sign-up (sign a
+  nonce). Not used at runtime; only for registration integrity.
+
+**No Pool-issued PKI. No Pool-managed CA. No mTLS rotation infrastructure.
+No PII collection beyond what the Pool's product (contracts, payouts)
+needs operationally.**
+
+**Rationale:**
+- With Fork 2 settled, the Pool→member channel reduces to standard
+  backend HTTP. The earlier framing (mTLS / signed membership manifest /
+  on-chain registry) was scoped against a more complex member model that
+  no longer exists.
+- Reuses primitives the broker already has; nothing new to design at the
+  protocol layer.
+
+### 2026-05-16 — Component shape: hybrid (Option C)
+
+**Decision:** Selection algorithm + multi-backend support land in
+`capability-broker/` as general-purpose orch features. Member registry,
+accounting, payout, and trust-score computation land in a **new top-level
+`pool-controller/` component**. `orch-coordinator/` is unchanged.
+
+**Component layout:**
+
+| Component | Status | Role |
+|---|---|---|
+| `capability-broker/` | modified | Adds multi-backend-per-capability, per-request backend selection, per-backend metrics, synthetic-probe recipes. Reusable beyond Pool. |
+| `orch-coordinator/` | unchanged | Scrapes broker, signs manifest cycle, publishes at the well-known URL. Pool uses it identically to any other orch. |
+| `pool-controller/` | **new** | Admin UI + member directory (BoltDB), generates `host-config.yaml` for the Pool's broker, scrapes broker metrics for trust scoring, runs the payout job. **Not in the data path** — if down, gateway traffic continues. |
+
+**Rationale:**
+- Single-responsibility carves cleanly: broker routes, coordinator
+  publishes, pool-controller manages members + money.
+- Broker improvements (multi-backend, selection) benefit any orch with
+  redundant capacity, not just Pools.
+- Pool-controller can grow operationally (heavier admin UI, accounting
+  features) without polluting the coordinator's intentionally minimal
+  code-of-conduct (`orch-coordinator/AGENTS.md` lines 93–105).
+- Clean extraction path: `pool-controller/` can be lifted into its own
+  repo once the Pool product matures.
+
+**Carry-forward selection-algorithm spec (v1 target):**
+
+1. **Filter** — keep backend if probe ready, no Layer-3 cooldown, no
+   operator drain, `trust_score ≥ floor` (default `0.10`).
+2. **Weight** — `weight = trust_score × success_rate_last_5min ×
+   (1 / max(latency_p95_ms, 1))`.
+3. **Pick** — weighted random over eligible backends. If zero pass the
+   filter, 503 + `Livepeer-Backoff` per core belief #8.
+
+**Carry-forward member-validation spec (v1 target):**
+
+- Synthetic probes per interaction mode (one-token completion for
+  `openai:chat-completions`, an embedding on a fixed string for
+  `openai:embeddings`, a 1-second test stream for `video:live.rtmp`,
+  etc.). Cadence configurable.
+- Trust score: `0.0`–`1.0` EMA over a 24h window of synthetic + real
+  success rates. Floor `0.05`. Drifts toward `0.5` for inactive members.
+- Online sampling / shadow-backend response diffing deferred to v1.1.
+
+These specs graduate to `docs/design-docs/` when `pool-controller/`
+implementation begins.
 
 ## 6. Open questions
 
-- Pool economic model: fixed-rate buyer of capacity vs. revenue-share.
+- Pool economic model: fixed-rate buyer of capacity vs. revenue-share
+  (Fork 4 territory). User has voiced preference for revenue-share by
+  round; concrete shape lands in Fork 4.
 - Heterogeneous capability composition across members
-  (per-member model/region/GPU-class differences) vs. homogeneous menu.
-- Component shape: extend `orch-coordinator/` + add an edge-broker mode to
-  `capability-broker/`, vs. introduce a new top-level `pool-orchestrator/`.
+  (per-member model/region/GPU-class differences) vs. homogeneous menu —
+  schema implication for the `members:` block in `host-config.yaml`.
 
 ## 7. Out of scope (deferred to v2+)
 

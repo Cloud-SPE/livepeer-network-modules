@@ -17,11 +17,32 @@ import (
 func sampleSnap() scrape.Snapshot {
 	now := mustTime("2026-05-06T12:00:00Z")
 	return scrape.Snapshot{
-		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		WindowStart:    now.Add(-30 * time.Second),
-		WindowEnd:      now,
+		OrchEthAddress:       "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		WindowStart:          now.Add(-30 * time.Second),
+		WindowEnd:            now,
+		MetadataWarningAfter: 30 * time.Second,
+		MetadataStaleAfter:   2 * time.Minute,
 		Brokers: []scrape.BrokerStatus{
-			{Name: "b1", BaseURL: "http://b1:8080", Freshness: scrape.FreshnessOK, LastSuccessAt: now},
+			{
+				Name:                     "b1",
+				BaseURL:                  "http://b1:8080",
+				Freshness:                scrape.FreshnessOK,
+				LastSuccessAt:            now,
+				MetadataApplicableTuples: 1,
+				TupleHealth: map[string]types.BrokerHealthCapability{
+					"openai:chat-completions|vllm-h100-batch4": {
+						ID:         "openai:chat-completions",
+						OfferingID: "vllm-h100-batch4",
+						Status:     "ready",
+						Metadata: &types.BrokerHealthMetadata{
+							Applicable:            true,
+							LastResult:            "enriched",
+							LastSuccessAt:         now.Add(-10 * time.Second),
+							LastSuccessAgeSeconds: 10,
+						},
+					},
+				},
+			},
 		},
 		SourceTuples: []types.SourceTuple{
 			{
@@ -192,6 +213,60 @@ func TestBuild_PreservesOpenAICapabilityIDAndModelExtra(t *testing.T) {
 	openaiExtra, _ := got.Extra["openai"].(map[string]any)
 	if openaiExtra["model"] != "llama-3-70b" {
 		t.Fatalf("model extra = %#v", openaiExtra["model"])
+	}
+}
+
+func TestBuild_EmitsTupleMetadataWarnings(t *testing.T) {
+	snap := sampleSnap()
+	now := snap.WindowEnd
+	snap.Brokers[0].MetadataUnhealthyTuples = 1
+	snap.Brokers[0].MetadataStaleTuples = 1
+	snap.Brokers[0].MetadataWorstAgeSeconds = 180
+	snap.Brokers[0].TupleHealth["openai:chat-completions|vllm-h100-batch4"] = types.BrokerHealthCapability{
+		ID:         "openai:chat-completions",
+		OfferingID: "vllm-h100-batch4",
+		Status:     "ready",
+		Metadata: &types.BrokerHealthMetadata{
+			Applicable:            true,
+			LastResult:            "models_probe_failed",
+			LastSuccessAt:         now.Add(-3 * time.Minute),
+			LastSuccessAgeSeconds: 180,
+			ConsecutiveFailures:   2,
+			LastError:             "probe failed",
+		},
+	}
+
+	c, err := Build(snap, BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Metadata.MetadataWarningThresholdSeconds; got != 30 {
+		t.Fatalf("warning threshold seconds = %d; want 30", got)
+	}
+	if got := c.Metadata.MetadataStaleThresholdSeconds; got != 120 {
+		t.Fatalf("stale threshold seconds = %d; want 120", got)
+	}
+	if len(c.Metadata.Warnings) == 0 {
+		t.Fatal("expected top-level metadata warnings")
+	}
+	if len(c.Metadata.TupleMetadataWarnings) != 1 {
+		t.Fatalf("tuple metadata warnings = %d; want 1", len(c.Metadata.TupleMetadataWarnings))
+	}
+	w := c.Metadata.TupleMetadataWarnings[0]
+	if w.Code != WarningCodeMetadataStale {
+		t.Fatalf("warning code = %q; want %q", w.Code, WarningCodeMetadataStale)
+	}
+	if w.MetadataState != types.MetadataStateStale {
+		t.Fatalf("metadata state = %q; want stale", w.MetadataState)
+	}
+	if w.ConsecutiveFailures != 2 {
+		t.Fatalf("consecutive failures = %d; want 2", w.ConsecutiveFailures)
+	}
+	if c.Metadata.SourceBrokers[0].MetadataWorstAgeSeconds != 180 {
+		t.Fatalf("broker metadata worst age = %v; want 180", c.Metadata.SourceBrokers[0].MetadataWorstAgeSeconds)
 	}
 }
 

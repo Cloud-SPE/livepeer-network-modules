@@ -229,22 +229,51 @@ type Candidate struct {
 
 // Metadata is the operator-only sidecar (NOT signed).
 type Metadata struct {
-	CandidateTimestamp time.Time             `json:"candidate_timestamp"`
-	ScrapeWindowStart  time.Time             `json:"scrape_window_start"`
-	ScrapeWindowEnd    time.Time             `json:"scrape_window_end"`
-	SourceBrokers      []MetadataBrokerEntry `json:"source_brokers"`
-	CoordinatorCommit  string                `json:"coordinator_commit"`
-	SchemaVersion      string                `json:"schema_version"`
-	HAEndpoints        []HAEndpoint          `json:"ha_endpoints,omitempty"`
+	CandidateTimestamp              time.Time              `json:"candidate_timestamp"`
+	ScrapeWindowStart               time.Time              `json:"scrape_window_start"`
+	ScrapeWindowEnd                 time.Time              `json:"scrape_window_end"`
+	SourceBrokers                   []MetadataBrokerEntry  `json:"source_brokers"`
+	MetadataWarningThresholdSeconds int64                  `json:"metadata_warning_threshold_seconds,omitempty"`
+	MetadataStaleThresholdSeconds   int64                  `json:"metadata_stale_threshold_seconds,omitempty"`
+	Warnings                        []MetadataWarning      `json:"warnings,omitempty"`
+	TupleMetadataWarnings           []TupleMetadataWarning `json:"tuple_metadata_warnings,omitempty"`
+	CoordinatorCommit               string                 `json:"coordinator_commit"`
+	SchemaVersion                   string                 `json:"schema_version"`
+	HAEndpoints                     []HAEndpoint           `json:"ha_endpoints,omitempty"`
 }
 
 // MetadataBrokerEntry records per-broker scrape success/failure.
 type MetadataBrokerEntry struct {
-	Name      string    `json:"name"`
-	BaseURL   string    `json:"base_url"`
-	Status    string    `json:"status"`
-	ScrapedAt time.Time `json:"scraped_at,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	Name                     string    `json:"name"`
+	BaseURL                  string    `json:"base_url"`
+	Status                   string    `json:"status"`
+	ScrapedAt                time.Time `json:"scraped_at,omitempty"`
+	Error                    string    `json:"error,omitempty"`
+	MetadataApplicableTuples int       `json:"metadata_applicable_tuples,omitempty"`
+	MetadataUnhealthyTuples  int       `json:"metadata_unhealthy_tuples,omitempty"`
+	MetadataStaleTuples      int       `json:"metadata_stale_tuples,omitempty"`
+	MetadataWorstAgeSeconds  float64   `json:"metadata_worst_age_seconds,omitempty"`
+}
+
+type MetadataWarning struct {
+	Code     string `json:"code"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+}
+
+type TupleMetadataWarning struct {
+	Code                  string  `json:"code"`
+	Severity              string  `json:"severity"`
+	BrokerName            string  `json:"broker_name"`
+	BaseURL               string  `json:"base_url"`
+	CapabilityID          string  `json:"capability_id"`
+	OfferingID            string  `json:"offering_id"`
+	WorkerURL             string  `json:"worker_url,omitempty"`
+	MetadataState         string  `json:"metadata_state"`
+	MetadataResult        string  `json:"metadata_result,omitempty"`
+	MetadataError         string  `json:"metadata_error,omitempty"`
+	LastSuccessAgeSeconds float64 `json:"last_success_age_seconds,omitempty"`
+	ConsecutiveFailures   int     `json:"consecutive_failures,omitempty"`
 }
 
 // HAEndpoint records the alternate worker_url(s) that were dropped

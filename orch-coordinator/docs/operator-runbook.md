@@ -92,6 +92,14 @@ seen on that broker.
 
 Web UI routes (`/`, `/diff`, `/audit`) land in plan 0018 commit 6.
 
+`metadata.json` is operator-only and not signed. It now includes:
+
+- `metadata_warning_threshold_seconds`
+- `metadata_stale_threshold_seconds`
+- enriched `source_brokers` entries with broker metadata summary counts
+- `warnings` for high-level metadata issues
+- `tuple_metadata_warnings` for per-broker, per-tuple metadata problems
+
 ### Resolver-facing (`--public-listen`)
 
 | Method | Path | Purpose |
@@ -153,6 +161,10 @@ Action: inspect broker `/registry/health`, the roster broker summary, and the
 broker's metadata discovery logs. Treat sustained `consecutive_failures`,
 large `last_success_age_seconds`, or `never_succeeded` as operator warnings
 even when the tuple still appears in the candidate.
+
+Before signing, inspect `metadata.json` inside `candidate.tar.gz`. If
+`tuple_metadata_warnings` is non-empty, the candidate was built from at least
+one tuple whose broker metadata state was not `ok` at build time.
 
 ### Scrape hard failure (malformed JSON, schema-invalid)
 

@@ -28,6 +28,11 @@ Three listeners:
 The coordinator never holds a signing key. Cold key on `secure-orch` is the
 only signer.
 
+`candidate.tar.gz` now carries richer operator-only provenance in
+`metadata.json`, including broker metadata-warning thresholds, per-broker
+metadata summaries, and per-tuple metadata warnings when broker discovery is
+degraded, stale, or has never succeeded.
+
 When `ORCH_COORDINATOR_ADMIN_TOKENS` is set, the admin listener requires
 operator login with admin token + actor identity and records the actor on
 signed-manifest upload audit events. The admin UI allows one active

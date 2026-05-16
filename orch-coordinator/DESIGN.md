@@ -23,6 +23,9 @@ Outputs:
 - The candidate manifest — packaged as a `tar.gz` (`manifest.json` JCS
   bytes + `metadata.json` operator-only sidecar). Operator downloads via
   the web UI.
+  The sidecar now includes broker metadata thresholds, per-broker metadata
+  summaries, and per-tuple metadata warnings so the operator can evaluate
+  degraded discovery state before hand-carrying the candidate for signing.
 - The currently-published signed manifest — served on the resolver-facing
   listener at `/.well-known/livepeer-registry.json`.
 

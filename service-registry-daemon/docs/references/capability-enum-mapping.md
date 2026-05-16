@@ -20,7 +20,7 @@ Translation reference between this repo's opaque-string capability namespace and
 - For **AI pipelines** that have a 1:1 OpenAI-API equivalent, prefer the `openai:` namespace (consumers often have OpenAI-compatible client libraries and benefit from the literal API path).
 - For **AI pipelines** without a clean OpenAI mapping, use `livepeer:ai/<name>`.
 - For **transcoding**, use `livepeer:transcoder/<codec>`.
-- For **operator-defined capabilities**, use `livepeer-byoc:<name>`.
+- For **operator-defined capabilities**, use a namespace the operator owns (e.g. `myco:<name>`).
 
 ## Why we don't enforce this
 

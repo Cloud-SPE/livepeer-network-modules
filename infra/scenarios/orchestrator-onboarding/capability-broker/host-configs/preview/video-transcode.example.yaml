@@ -40,6 +40,17 @@ capabilities:
         fields:
           preset: "$.preset"
         default: 1
+    # Live-health probe (Layer 2). The NVIDIA transcode runner exposes
+    # /healthz; broker reports `unreachable` if it stops answering.
+    health:
+      probe:
+        type: "http-status"
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 2
+        healthy_after: 1
+        config:
+          url: "http://transcode_runner_nvidia:8080/healthz"
     price:
       amount_wei: "25000000"
       per_units: 1

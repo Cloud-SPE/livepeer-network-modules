@@ -32,17 +32,29 @@ capabilities:
         type: "response-header"
         header: "X-Livepeer-Work-Units"
         default: 0
+    # Live-health probe (Layer 2). The audio runner returns 503 from
+    # /healthz until its model finishes loading; the broker only advertises
+    # this offering as `ready` once the runner reports 2xx.
+    health:
+      probe:
+        type: "http-status"
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 2
+        healthy_after: 1
+        config:
+          url: "http://openai_audio_runner:8080/healthz"
     price:
       amount_wei: "25000000"
       per_units: 1
     backend:
       transport: "http"
-      url: "http://byoc_whisper_runner:8080/v1/audio/transcriptions"
+      url: "http://openai_audio_runner:8080/v1/audio/transcriptions"
       auth: "none"
     extra:
       openai:
         model: "whisper-large-v3"
-      provider: "byoc-whisper"
+      provider: "openai-audio-runner"
       served_model_name: "whisper-large-v3"
       backend_model: "openai/whisper-large-v3"
     constraints:
@@ -63,17 +75,28 @@ capabilities:
         fields:
           input_chars: "$._livepeer_input_chars"
         default: 0
+    # Live-health probe (Layer 2). The Kokoro runner gates /healthz on
+    # pipeline load; treat 200 as "voice synthesis is warm".
+    health:
+      probe:
+        type: "http-status"
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 2
+        healthy_after: 1
+        config:
+          url: "http://openai_tts_runner:8080/healthz"
     price:
       amount_wei: "25000000"
       per_units: 1
     backend:
       transport: "http"
-      url: "http://byoc_kokoro_runner:8080/v1/audio/speech"
+      url: "http://openai_tts_runner:8080/v1/audio/speech"
       auth: "none"
     extra:
       openai:
         model: "kokoro"
-      provider: "byoc-kokoro"
+      provider: "openai-tts-runner"
       served_model_name: "kokoro"
       backend_model: "hexgrad/Kokoro-82M"
     constraints:

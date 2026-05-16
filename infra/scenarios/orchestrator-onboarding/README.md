@@ -170,6 +170,19 @@ extraction patterns, one per `extractor.type`:
 
 Pick whichever your runner can support; mix freely.
 
+**Health probes.** Each capability also declares a `health.probe` block.
+The broker probes the backend on cadence and exposes the result on
+`GET /registry/health` — gateways consult that surface before routing
+paid traffic and skip offerings that are `unreachable`, `degraded`, or
+`draining`. When a backend dies, the route disappears from gateway
+selection without forcing a fresh sign cycle on your manifest. The
+example host-configs ship probes that fit each backend
+(`http-openai-model-ready` for vLLM, `http-status` against `/healthz`
+for the audio runners). See the capability-broker scenario README for
+the full probe-type table and
+[`docs/design-docs/backend-health.md`](../../../docs/design-docs/backend-health.md)
+for the three-layer model (manifest / live / failure-rate).
+
 **Bring it up:** see
 [`capability-broker/README.md`](./capability-broker/README.md). Short form,
 repeated on every broker host:
@@ -283,12 +296,16 @@ fronted by an ingress (Steps 3 + 4):
 # Manifest URL serves your signed manifest
 curl -s https://coordinator.<your-domain>/.well-known/livepeer-registry.json | jq '.brokers'
 
-# Each broker is reachable over TLS
-curl -sI https://broker-a.<your-domain>/
-curl -sI https://broker-b.<your-domain>/
+# Each broker process is up
+curl -sf https://broker-a.<your-domain>/healthz
+curl -sf https://broker-b.<your-domain>/healthz
 
 # Each broker advertises the expected capabilities
-curl -s https://broker-a.<your-domain>/capabilities | jq .
+curl -s https://broker-a.<your-domain>/registry/offerings | jq .
+
+# Each (capability, offering) on each broker is `ready` — anything reporting
+# `unreachable` or `stale` will be skipped by gateways
+curl -s https://broker-a.<your-domain>/registry/health | jq .
 ```
 
 Once gateways start sending paid work, the `payment-daemon-receiver` on

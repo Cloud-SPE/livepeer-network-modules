@@ -40,13 +40,26 @@ What runs **alongside** this stack (declared in `host-config.yaml`):
 
 ## Listeners
 
-| Port | Visibility | Purpose                                |
-| ---- | ---------- | -------------------------------------- |
-| 8080 | **Public** | Broker API called by gateways          |
-| 9090 | Private    | Prometheus metrics                     |
+| Port | Visibility | Purpose                                                                      |
+| ---- | ---------- | ---------------------------------------------------------------------------- |
+| 8080 | **Public** | Broker API (`/registry/offerings`, `/registry/health`, `/healthz`, paid traffic) |
+| 9090 | Private    | Prometheus metrics                                                           |
 
 Production must terminate TLS in front of 8080. A reverse-proxy (Traefik)
 reference is documented separately.
+
+### Health endpoints on :8080
+
+| Path                | Returns                                                            |
+| ------------------- | ------------------------------------------------------------------ |
+| `GET /healthz`      | Broker process liveness (200 once the process is up)               |
+| `GET /registry/health` | Per-`(capability, offering)` live-health snapshot — `ready` / `draining` / `degraded` / `unreachable` / `stale` |
+
+`/registry/health` is what resolvers and gateways consult before routing
+paid traffic. The values it reports come from the `health.probe` block on
+each capability in `host-config.yaml` (see below). See
+[`docs/design-docs/backend-health.md`](../../../docs/design-docs/backend-health.md)
+for the full three-layer model (manifest / live / failure-rate).
 
 ## On-disk layout
 
@@ -108,6 +121,11 @@ matching gateway release is published.
   `total_tokens` from the OpenAI `usage` block (`openai-usage`); the
   preview transcode variant uses `request-formula` with a literal `1` for
   per-job billing. Use whichever pattern your runner can support.
+- **Each capability declares a `health.probe`.** The probe runs on
+  cadence and feeds the broker's `/registry/health` surface. If a probe
+  fails enough times in a row the offering is reported `unreachable` and
+  gateways skip routing here until it recovers — the signed manifest is
+  not touched. See "Health probes" below.
 - **Same model, two interaction modes.** The chat host-config advertises
   the same Qwen model under both `http-stream@v0` and `http-reqresp@v0`
   with different `offering_id`s. Gateways pick whichever fits their
@@ -115,6 +133,54 @@ matching gateway release is published.
 - **`constraints` is operator-supplied metadata.** Gateways may use it
   to route requests to brokers with the hardware they expect (e.g.
   `gpu: "4090"`, `gpu_model: "1080"`, `gpu_vendor: "NVIDIA"`).
+
+### Health probes
+
+Every capability gets a `health.probe` block. The broker runs it on
+cadence and exposes the result on `GET /registry/health` so resolvers
+and gateways can skip an offering whose backend has gone dark — without
+forcing a fresh sign cycle on the manifest.
+
+| Probe `type`                | Use when                                                                                  |
+| --------------------------- | ----------------------------------------------------------------------------------------- |
+| `http-status`               | The backend exposes a plain `/healthz` (or similar) that returns 2xx when ready.          |
+| `http-jsonpath`             | The backend's health endpoint returns JSON and you need to assert a specific field value. |
+| `http-openai-model-ready`   | OpenAI-compatible backend (vLLM, OpenAI SaaS) — probe `/v1/models` and assert the model is listed. |
+| `tcp-connect`               | Non-HTTP backends — broker just opens a TCP socket.                                       |
+| `command-exit-0`            | Side-channel checks that need a shell command (e.g. inspect a local file).                |
+| `manual-drain`              | Operator-driven; `status: draining` until the operator clears it.                         |
+
+Shared knobs (defaults shown):
+
+```yaml
+health:
+  probe:
+    type: http-status          # required
+    interval_ms: 5000          # cadence between probes
+    timeout_ms: 1500           # single probe timeout
+    unhealthy_after: 2         # consecutive failures → unreachable
+    healthy_after: 1           # consecutive successes → ready
+    config:
+      url: http://runner:8080/healthz   # type-specific config
+```
+
+If you omit `health.probe` entirely on an `http`-transport capability,
+the broker falls back to `http-status` against `backend.url`. That URL
+is almost always a `POST`-only endpoint, so the GET probe gets 405
+(Method Not Allowed) → reported as `degraded`, and the resolver only
+admits offerings whose status is `ready`. Always point the probe at a
+real health surface.
+
+Operator surfaces for the three health layers:
+
+| Layer            | Operator action                                  | Where             |
+| ---------------- | ------------------------------------------------ | ----------------- |
+| 1 (manifest)     | Edit `host-config.yaml`, run sign cycle          | secure-orch-console |
+| 2 (live)         | Restart broker, mark drain, fix backend          | broker `/registry/health` + container orchestration |
+| 3 (failure-rate) | Inspect dashboards, declare incident             | metrics / alerting stack |
+
+See [`docs/design-docs/backend-health.md`](../../../docs/design-docs/backend-health.md)
+for the full model.
 
 ## Bring-up
 
@@ -146,16 +212,25 @@ You must set these in `.env` before bring-up:
 ## Verify
 
 ```sh
-# Broker metrics
-curl -s http://127.0.0.1:9090/metrics | head
+# Broker process is up
+curl -sf http://127.0.0.1:8080/healthz
 
 # Broker capability advertisement (shape depends on host-config.yaml)
-curl -s http://127.0.0.1:8080/capabilities | jq .
+curl -s http://127.0.0.1:8080/registry/offerings | jq .
+
+# Per-(capability, offering) live health — every entry should reach `ready`
+# once probes settle. `unreachable` here means the backend is not answering
+# the probe URL you configured in host-config.yaml.
+curl -s http://127.0.0.1:8080/registry/health | jq .
+
+# Prometheus metrics
+curl -s http://127.0.0.1:9090/metrics | head
 ```
 
-Once the broker is up and its URL is listed under `brokers[]` in your
-Orch Coordinator's `coordinator-config.yaml`, the next manifest publish
-will surface it to gateways.
+Once the broker is up, all offerings report `ready` on `/registry/health`,
+and its URL is listed under `brokers[]` in your Orch Coordinator's
+`coordinator-config.yaml`, the next manifest publish will surface it to
+gateways.
 
 ## Fleet pattern
 

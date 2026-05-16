@@ -42,7 +42,7 @@ func TestHydrateRunnerMetadata_PopulatesKokoroVoices(t *testing.T) {
 					URL:       ts.URL + "/v1/audio/speech",
 				},
 				Extra: map[string]any{
-					"provider": "byoc-kokoro",
+					"provider": "openai-tts-runner",
 				},
 			},
 		},
@@ -71,7 +71,7 @@ func TestHydrateRunnerMetadata_PopulatesKokoroVoices(t *testing.T) {
 	if aliases["alloy"] != "af_bella" || aliases["echo"] != "am_michael" {
 		t.Fatalf("aliases = %#v", aliases)
 	}
-	if cfg.Capabilities[0].Extra["provider"] != "byoc-kokoro" {
+	if cfg.Capabilities[0].Extra["provider"] != "openai-tts-runner" {
 		t.Fatalf("provider should be preserved")
 	}
 }
@@ -90,7 +90,7 @@ func TestHydrateRunnerMetadata_SkipsOnFetchFailure(t *testing.T) {
 					URL:       "http://127.0.0.1:1/v1/audio/speech",
 				},
 				Extra: map[string]any{
-					"provider": "byoc-kokoro",
+					"provider": "openai-tts-runner",
 				},
 			},
 		},
@@ -101,7 +101,7 @@ func TestHydrateRunnerMetadata_SkipsOnFetchFailure(t *testing.T) {
 	if _, ok := cfg.Capabilities[0].Extra["voices"]; ok {
 		t.Fatalf("voices should not be set on fetch failure")
 	}
-	if cfg.Capabilities[0].Extra["provider"] != "byoc-kokoro" {
+	if cfg.Capabilities[0].Extra["provider"] != "openai-tts-runner" {
 		t.Fatalf("provider should be preserved")
 	}
 }

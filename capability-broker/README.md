@@ -103,6 +103,10 @@ Current `metadata.last_result` values are family-aware. Examples:
 - `vtuber_options_empty`
 - `vtuber_options_probe_failed`
 
+Prometheus also exposes
+`livepeer_metadata_refresh_total{family,provider,result}` so discovery
+regressions are visible without polling `GET /registry/health`.
+
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).
 

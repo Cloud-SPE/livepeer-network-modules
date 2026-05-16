@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/registry"
 )
 
@@ -235,6 +236,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 		}
 		catalog.Set(cap.ID, cap.OfferingID, discovered)
 		catalog.SetStatus(cap.ID, cap.OfferingID, status)
+		observability.RecordMetadataRefresh(metadataFamily(cap.ID), provider, status.LastResult)
 	}
 }
 
@@ -925,6 +927,21 @@ func fillOpenAIFeatures(cap *config.Capability, discovered map[string]any) {
 		return
 	}
 	features[featureKey] = featureValue
+}
+
+func metadataFamily(capabilityID string) string {
+	switch {
+	case strings.HasPrefix(capabilityID, "openai:audio-"):
+		return "audio"
+	case strings.HasPrefix(capabilityID, "openai:"):
+		return "openai"
+	case strings.HasPrefix(capabilityID, "video:"):
+		return "video"
+	case capabilityID == "livepeer:vtuber-session":
+		return "vtuber"
+	default:
+		return "other"
+	}
 }
 
 func inferredOpenAIFeature(capabilityID string) (string, bool, bool) {

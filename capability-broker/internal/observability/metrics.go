@@ -36,6 +36,11 @@ var (
 		Name: "livepeer_mode_work_units_total",
 		Help: "Sum of actualUnits reported by the extractor across all paid requests.",
 	}, []string{"capability", "offering"})
+
+	metadataRefreshTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "livepeer_metadata_refresh_total",
+		Help: "Total metadata discovery refresh attempts, labeled by family, provider, and result.",
+	}, []string{"family", "provider", "result"})
 )
 
 // RecordRequest emits one request's metrics.
@@ -54,6 +59,11 @@ func RecordRequest(capID, offID, outcome string, durationSeconds float64, workUn
 			workUnitsTotal.WithLabelValues(capID, offID).Add(float64(workUnits))
 		}
 	}
+}
+
+// RecordMetadataRefresh emits one metadata discovery refresh outcome.
+func RecordMetadataRefresh(family, provider, result string) {
+	metadataRefreshTotal.WithLabelValues(family, provider, result).Inc()
 }
 
 // MetricsHandler returns a Prometheus scrape handler suitable for mounting at

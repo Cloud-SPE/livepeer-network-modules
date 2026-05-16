@@ -110,6 +110,55 @@ func TestService_HappyPath(t *testing.T) {
 	}
 }
 
+func TestService_PreservesHealthMetadataAndSummaries(t *testing.T) {
+	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	fc := newFake()
+	fc.set("http://x:1", newOfferings(addr, sampleCap("c", "o")), nil)
+	fc.setHealth("http://x:1", &types.BrokerHealth{
+		BrokerStatus: "ready",
+		Capabilities: []types.BrokerHealthCapability{{
+			ID: "c", OfferingID: "o", Status: "ready",
+			Metadata: &types.BrokerHealthMetadata{
+				Provider:              "vllm",
+				Applicable:            true,
+				LastResult:            "models_probe_failed",
+				LastSuccessAt:         time.Now().UTC().Add(-5 * time.Minute),
+				LastSuccessAgeSeconds: 300,
+				ConsecutiveFailures:   2,
+			},
+		}},
+	})
+	svc, err := New(Config{
+		OrchEthAddress:  addr,
+		Brokers:         []config.Broker{{Name: "b1", BaseURL: "http://x:1"}},
+		ScrapeInterval:  30 * time.Second,
+		ScrapeTimeout:   100 * time.Millisecond,
+		FreshnessWindow: 2 * time.Minute,
+	}, fc, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.ScrapeOnce(context.Background())
+	snap := svc.Snapshot()
+	got := snap.Brokers[0]
+	meta := got.TupleHealth["c|o"].Metadata
+	if meta == nil {
+		t.Fatal("expected tuple health metadata")
+	}
+	if meta.LastResult != "models_probe_failed" {
+		t.Fatalf("metadata.last_result = %q", meta.LastResult)
+	}
+	if got.MetadataApplicableTuples != 1 {
+		t.Fatalf("metadata applicable tuples = %d; want 1", got.MetadataApplicableTuples)
+	}
+	if got.MetadataUnhealthyTuples != 1 {
+		t.Fatalf("metadata unhealthy tuples = %d; want 1", got.MetadataUnhealthyTuples)
+	}
+	if got.MetadataStaleTuples != 1 {
+		t.Fatalf("metadata stale tuples = %d; want 1", got.MetadataStaleTuples)
+	}
+}
+
 func TestService_SoftFailureKeepsLastGood(t *testing.T) {
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	fc := newFake()

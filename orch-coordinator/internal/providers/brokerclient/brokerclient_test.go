@@ -101,7 +101,7 @@ func TestHTTPClient_FetchHealth_HappyPath(t *testing.T) {
 			t.Errorf("unexpected path %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"broker_status":"ready","generated_at":"2026-05-14T00:00:00Z","capabilities":[{"id":"cap","offering_id":"off","status":"ready"}]}`))
+		w.Write([]byte(`{"broker_status":"ready","generated_at":"2026-05-14T00:00:00Z","capabilities":[{"id":"cap","offering_id":"off","status":"ready","metadata":{"provider":"vllm","applicable":true,"last_result":"enriched","last_success_age_seconds":12,"consecutive_failures":0}}]}`))
 	}))
 	defer srv.Close()
 	c := New(2 * time.Second)
@@ -111,5 +111,11 @@ func TestHTTPClient_FetchHealth_HappyPath(t *testing.T) {
 	}
 	if out.BrokerStatus != "ready" || len(out.Capabilities) != 1 {
 		t.Fatalf("unexpected health %+v", out)
+	}
+	if out.Capabilities[0].Metadata == nil {
+		t.Fatal("expected metadata to decode")
+	}
+	if got := out.Capabilities[0].Metadata.LastResult; got != "enriched" {
+		t.Fatalf("metadata.last_result = %q; want enriched", got)
 	}
 }

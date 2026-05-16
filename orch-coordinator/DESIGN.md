@@ -12,6 +12,9 @@ One coordinator process per orch operator. Inputs:
 
 - LAN broker `/registry/offerings` endpoints — HTTP GET, JSON. Shape pinned
   by [`../capability-broker/internal/server/registry/offerings.go`](../capability-broker/internal/server/registry/offerings.go).
+- LAN broker `/registry/health` endpoints — HTTP GET, JSON. Used for tuple
+  liveness plus broker metadata-discovery status such as `last_result`,
+  `consecutive_failures`, and freshness age.
 - Static config file `coordinator-config.yaml` — broker list, orch identity,
   tunables.
 
@@ -142,6 +145,9 @@ over the publish dir; concurrent uploaders block on the lock.
 
 - **In-memory.** Scrape cache (latest broker offerings + per-broker
   status). Recoverable on restart by re-scraping.
+  The per-broker status now includes broker `/registry/health` tuple metadata
+  so the roster can classify metadata state as `ok`, `degraded`, `stale`, or
+  `never_succeeded`.
 - **On disk.**
   - `<data-dir>/published/manifest.json` — the live signed manifest.
   - `<data-dir>/candidates/<timestamp>/{manifest.json,metadata.json}` —

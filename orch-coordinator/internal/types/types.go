@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+const (
+	MetadataStateOK             = "ok"
+	MetadataStateDegraded       = "degraded"
+	MetadataStateStale          = "stale"
+	MetadataStateNeverSucceeded = "never_succeeded"
+)
+
 // BrokerOffering is one capability tuple as advertised by a broker's
 // /registry/offerings endpoint. Mirrors
 // capability-broker/internal/server/registry/offerings.go's wire shape
@@ -47,15 +54,27 @@ type BrokerOfferings struct {
 // BrokerHealthCapability is one tuple-health entry from
 // capability-broker /registry/health.
 type BrokerHealthCapability struct {
-	ID                   string    `json:"id"`
-	OfferingID           string    `json:"offering_id"`
-	Status               string    `json:"status"`
-	Reason               string    `json:"reason,omitempty"`
-	ProbeType            string    `json:"probe_type,omitempty"`
-	ProbedAt             time.Time `json:"probed_at,omitempty"`
-	StaleAfter           time.Time `json:"stale_after,omitempty"`
-	ConsecutiveSuccesses int       `json:"consecutive_successes,omitempty"`
-	ConsecutiveFailures  int       `json:"consecutive_failures,omitempty"`
+	ID                   string                `json:"id"`
+	OfferingID           string                `json:"offering_id"`
+	Status               string                `json:"status"`
+	Reason               string                `json:"reason,omitempty"`
+	ProbeType            string                `json:"probe_type,omitempty"`
+	ProbedAt             time.Time             `json:"probed_at,omitempty"`
+	StaleAfter           time.Time             `json:"stale_after,omitempty"`
+	ConsecutiveSuccesses int                   `json:"consecutive_successes,omitempty"`
+	ConsecutiveFailures  int                   `json:"consecutive_failures,omitempty"`
+	Metadata             *BrokerHealthMetadata `json:"metadata,omitempty"`
+}
+
+type BrokerHealthMetadata struct {
+	Provider              string    `json:"provider,omitempty"`
+	Applicable            bool      `json:"applicable"`
+	LastAttemptAt         time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt         time.Time `json:"last_success_at,omitempty"`
+	LastSuccessAgeSeconds float64   `json:"last_success_age_seconds,omitempty"`
+	LastError             string    `json:"last_error,omitempty"`
+	LastResult            string    `json:"last_result,omitempty"`
+	ConsecutiveFailures   int       `json:"consecutive_failures,omitempty"`
 }
 
 // BrokerHealth is the full /registry/health response.
@@ -109,6 +128,36 @@ func (b *BrokerHealth) Validate() error {
 		}
 	}
 	return nil
+}
+
+func MetadataResultHealthy(result string) bool {
+	switch result {
+	case "enriched", "empty":
+		return true
+	default:
+		return false
+	}
+}
+
+func ClassifyBrokerHealthMetadata(meta *BrokerHealthMetadata, warningAfter, staleAfter time.Duration) (string, float64) {
+	if meta == nil || !meta.Applicable {
+		return "", -1
+	}
+	ageSeconds := meta.LastSuccessAgeSeconds
+	if ageSeconds < 0 || meta.LastSuccessAt.IsZero() {
+		return MetadataStateNeverSucceeded, -1
+	}
+	age := time.Duration(ageSeconds * float64(time.Second))
+	if staleAfter > 0 && age >= staleAfter {
+		return MetadataStateStale, ageSeconds
+	}
+	if meta.ConsecutiveFailures > 0 || !MetadataResultHealthy(meta.LastResult) {
+		return MetadataStateDegraded, ageSeconds
+	}
+	if warningAfter > 0 && age >= warningAfter {
+		return MetadataStateDegraded, ageSeconds
+	}
+	return MetadataStateOK, ageSeconds
 }
 
 // SourceTuple is one offering tagged with the broker that advertised

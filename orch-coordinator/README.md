@@ -12,7 +12,9 @@ back via HTTP POST, and atomic-swap publishes the live manifest at
 
 One process per orch operator (not per host). A single operator with multiple
 broker hosts on the LAN runs one coordinator; the coordinator scrapes them
-all and unifies their offerings into a single candidate manifest.
+all and unifies their offerings into a single candidate manifest. In addition
+to `/registry/offerings`, it also consumes broker `/registry/health` so the
+roster can surface per-tuple liveness and broker metadata-discovery state.
 
 Three listeners:
 

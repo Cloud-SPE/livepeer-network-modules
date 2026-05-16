@@ -55,6 +55,8 @@ capabilities:
       openai:
         model: "whisper-large-v3"
       provider: "openai-audio-runner"
+      audio:
+        task: "transcription"
       served_model_name: "whisper-large-v3"
       backend_model: "openai/whisper-large-v3"
     constraints:
@@ -97,6 +99,8 @@ capabilities:
       openai:
         model: "kokoro"
       provider: "openai-tts-runner"
+      audio:
+        task: "speech"
       served_model_name: "kokoro"
       backend_model: "hexgrad/Kokoro-82M"
     constraints:

@@ -60,7 +60,10 @@ capabilities:
       auth: "none"
     extra:
       provider: "transcode-runner"
-      gpu_vendor: "nvidia"
+      video:
+        task: "transcode"
+        hardware:
+          gpu_vendor: "nvidia"
     constraints:
       tier: "standard"
       gpu_model: "1080"

@@ -103,7 +103,12 @@ capabilities:
   #     auth: "none"
   #   extra:
   #     provider: "abr-runner"
+  #     video:
+  #       task: "abr-transcode"
   #     abr_runner_url: "http://abr-runner:8080"
+  #     # Optional stable fields like video.presets, video.codecs,
+  #     # video.packaging, and video.hardware.gpu_vendor may be
+  #     # auto-hydrated from GET /v1/video/transcode/abr/presets.
   #   constraints:
   #     tier: "standard"
   #     gpu_vendor: "NVIDIA"

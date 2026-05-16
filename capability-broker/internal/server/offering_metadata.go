@@ -16,13 +16,63 @@ import (
 )
 
 const kokoroOptionsPath = "/openai-audio-speech/options"
+const (
+	audioTranscriptionsOptionsPath = "/openai-audio-transcriptions/options"
+	audioSpeechTask                = "speech"
+	audioTranscriptionTask         = "transcription"
+	videoTranscodePresetsPath      = "/v1/video/transcode/presets"
+	videoABRPresetsPath            = "/v1/video/transcode/abr/presets"
+)
 
 type kokoroOptionsResponse struct {
+	Task    string `json:"task"`
+	Formats struct {
+		Output []string `json:"output"`
+	} `json:"formats"`
 	DefaultVoice string `json:"default_voice"`
 	Voices       struct {
 		Native  []string          `json:"native"`
 		Aliases map[string]string `json:"aliases"`
 	} `json:"voices"`
+}
+
+type openAIAudioOptionsResponse struct {
+	Task    string `json:"task"`
+	Formats struct {
+		Input  []string `json:"input"`
+		Output []string `json:"output"`
+	} `json:"formats"`
+}
+
+type videoTranscodePresetsResponse struct {
+	Presets   []videoTranscodePreset `json:"presets"`
+	GPU       string                 `json:"gpu"`
+	GPUVendor string                 `json:"gpu_vendor"`
+	Count     int                    `json:"count"`
+}
+
+type videoTranscodePreset struct {
+	Name       string `json:"name"`
+	VideoCodec string `json:"video_codec"`
+}
+
+type videoABRPresetsResponse struct {
+	Presets   []videoABRPreset `json:"presets"`
+	GPU       string           `json:"gpu"`
+	GPUVendor string           `json:"gpu_vendor"`
+	Count     int              `json:"count"`
+}
+
+type videoABRPreset struct {
+	Name       string              `json:"name"`
+	Format     string              `json:"format"`
+	Renditions []videoABRRendition `json:"renditions"`
+}
+
+type videoABRRendition struct {
+	Video *struct {
+		Codec string `json:"codec"`
+	} `json:"video,omitempty"`
 }
 
 func hydrateRunnerMetadata(ctx context.Context, cfg *config.Config) {
@@ -35,6 +85,21 @@ func hydrateRunnerMetadataWithClient(ctx context.Context, client *http.Client, c
 		cap := &cfg.Capabilities[i]
 		if cap.ID == "openai:audio-speech" && cap.Backend.Transport == "http" {
 			if err := hydrateKokoroVoices(ctx, client, cap); err != nil {
+				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
+			}
+		}
+		if cap.ID == "openai:audio-transcriptions" && cap.Backend.Transport == "http" {
+			if err := hydrateOpenAIAudioOptions(ctx, client, cap, audioTranscriptionsOptionsPath); err != nil {
+				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
+			}
+		}
+		if cap.ID == "video:transcode.vod" && cap.Backend.Transport == "http" {
+			if err := hydrateVideoTranscodeMetadata(ctx, client, cap); err != nil {
+				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
+			}
+		}
+		if cap.ID == "video:transcode.abr" && cap.Backend.Transport == "http" {
+			if err := hydrateVideoABRMetadata(ctx, client, cap); err != nil {
 				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
 			}
 		}
@@ -226,11 +291,144 @@ func hydrateKokoroVoices(ctx context.Context, client *http.Client, cap *config.C
 	if cap.Extra == nil {
 		cap.Extra = make(map[string]any)
 	}
-	cap.Extra["voices"] = map[string]any{
-		"default": payload.DefaultVoice,
-		"native":  payload.Voices.Native,
-		"aliases": payload.Voices.Aliases,
+	audioExtra := ensureNestedMap(cap.Extra, "audio")
+	fillExtraString(audioExtra, "task", payload.Task)
+	formats := map[string]any{}
+	if len(payload.Formats.Output) > 0 {
+		formats["output"] = payload.Formats.Output
 	}
+	if len(formats) > 0 {
+		if _, exists := audioExtra["formats"]; !exists {
+			audioExtra["formats"] = formats
+		}
+	}
+	if _, exists := audioExtra["voices"]; !exists {
+		audioExtra["voices"] = map[string]any{
+			"default": payload.DefaultVoice,
+			"native":  payload.Voices.Native,
+			"aliases": payload.Voices.Aliases,
+		}
+	}
+	return nil
+}
+
+func hydrateOpenAIAudioOptions(ctx context.Context, client *http.Client, cap *config.Capability, optionsPath string) error {
+	optionsURL, err := deriveOptionsURL(cap.Backend.URL, optionsPath)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, optionsURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return &unexpectedStatusError{statusCode: resp.StatusCode}
+	}
+
+	var payload openAIAudioOptionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return err
+	}
+
+	if cap.Extra == nil {
+		cap.Extra = make(map[string]any)
+	}
+	audioExtra := ensureNestedMap(cap.Extra, "audio")
+	fillExtraString(audioExtra, "task", payload.Task)
+	if len(payload.Formats.Input) > 0 || len(payload.Formats.Output) > 0 {
+		if _, exists := audioExtra["formats"]; !exists {
+			formats := map[string]any{}
+			if len(payload.Formats.Input) > 0 {
+				formats["input"] = payload.Formats.Input
+			}
+			if len(payload.Formats.Output) > 0 {
+				formats["output"] = payload.Formats.Output
+			}
+			audioExtra["formats"] = formats
+		}
+	}
+	return nil
+}
+
+func hydrateVideoTranscodeMetadata(ctx context.Context, client *http.Client, cap *config.Capability) error {
+	presetsURL, err := deriveOptionsURL(cap.Backend.URL, videoTranscodePresetsPath)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, presetsURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return &unexpectedStatusError{statusCode: resp.StatusCode}
+	}
+
+	var payload videoTranscodePresetsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return err
+	}
+
+	if cap.Extra == nil {
+		cap.Extra = make(map[string]any)
+	}
+	videoExtra := ensureNestedMap(cap.Extra, "video")
+	fillVideoStringSlice(videoExtra, "presets", namedPresets(payload.Presets))
+	fillVideoStringSlice(videoExtra, "codecs", uniqueVideoCodecs(payload.Presets))
+	fillVideoStringSlice(videoExtra, "packaging", []string{"mp4"})
+	fillVideoHardwareVendor(videoExtra, payload.GPUVendor)
+	return nil
+}
+
+func hydrateVideoABRMetadata(ctx context.Context, client *http.Client, cap *config.Capability) error {
+	presetsURL, err := deriveOptionsURL(cap.Backend.URL, videoABRPresetsPath)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, presetsURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return &unexpectedStatusError{statusCode: resp.StatusCode}
+	}
+
+	var payload videoABRPresetsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return err
+	}
+
+	if cap.Extra == nil {
+		cap.Extra = make(map[string]any)
+	}
+	videoExtra := ensureNestedMap(cap.Extra, "video")
+	fillVideoStringSlice(videoExtra, "presets", namedABRPresets(payload.Presets))
+	fillVideoStringSlice(videoExtra, "codecs", uniqueABRVideoCodecs(payload.Presets))
+	fillVideoStringSlice(videoExtra, "packaging", uniqueABRPackaging(payload.Presets))
+	fillVideoHardwareVendor(videoExtra, payload.GPUVendor)
 	return nil
 }
 
@@ -315,6 +513,124 @@ func fillExtraString(extra map[string]any, key, value string) {
 		return
 	}
 	extra[key] = value
+}
+
+func ensureNestedMap(extra map[string]any, key string) map[string]any {
+	nested, _ := extra[key].(map[string]any)
+	if nested == nil {
+		nested = map[string]any{}
+		extra[key] = nested
+	}
+	return nested
+}
+
+func fillVideoStringSlice(videoExtra map[string]any, key string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	if _, exists := videoExtra[key]; exists {
+		return
+	}
+	videoExtra[key] = values
+}
+
+func fillVideoHardwareVendor(videoExtra map[string]any, gpuVendor string) {
+	gpuVendor = strings.TrimSpace(gpuVendor)
+	if gpuVendor == "" {
+		return
+	}
+	hardware := ensureNestedMap(videoExtra, "hardware")
+	fillExtraString(hardware, "gpu_vendor", gpuVendor)
+}
+
+func namedPresets(presets []videoTranscodePreset) []string {
+	out := make([]string, 0, len(presets))
+	seen := make(map[string]struct{}, len(presets))
+	for _, preset := range presets {
+		name := strings.TrimSpace(preset.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
+func uniqueVideoCodecs(presets []videoTranscodePreset) []string {
+	out := make([]string, 0, len(presets))
+	seen := make(map[string]struct{}, len(presets))
+	for _, preset := range presets {
+		codec := strings.TrimSpace(preset.VideoCodec)
+		if codec == "" {
+			continue
+		}
+		if _, ok := seen[codec]; ok {
+			continue
+		}
+		seen[codec] = struct{}{}
+		out = append(out, codec)
+	}
+	return out
+}
+
+func namedABRPresets(presets []videoABRPreset) []string {
+	out := make([]string, 0, len(presets))
+	seen := make(map[string]struct{}, len(presets))
+	for _, preset := range presets {
+		name := strings.TrimSpace(preset.Name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
+func uniqueABRVideoCodecs(presets []videoABRPreset) []string {
+	var out []string
+	seen := make(map[string]struct{})
+	for _, preset := range presets {
+		for _, rendition := range preset.Renditions {
+			if rendition.Video == nil {
+				continue
+			}
+			codec := strings.TrimSpace(rendition.Video.Codec)
+			if codec == "" {
+				continue
+			}
+			if _, ok := seen[codec]; ok {
+				continue
+			}
+			seen[codec] = struct{}{}
+			out = append(out, codec)
+		}
+	}
+	return out
+}
+
+func uniqueABRPackaging(presets []videoABRPreset) []string {
+	var out []string
+	seen := make(map[string]struct{})
+	for _, preset := range presets {
+		format := strings.TrimSpace(preset.Format)
+		if format == "" {
+			continue
+		}
+		if _, ok := seen[format]; ok {
+			continue
+		}
+		seen[format] = struct{}{}
+		out = append(out, format)
+	}
+	return out
 }
 
 func fillDiscoveredString(base, discovered map[string]any, key, value string) {

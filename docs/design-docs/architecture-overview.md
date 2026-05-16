@@ -338,6 +338,167 @@ Boundary:
   throughput, utilization, or context window belong in live health, metrics,
   or diagnostics, not in the signed manifest.
 
+### Family-specific stable `extra` contracts
+
+The same pattern applies across every runner family in the rewrite:
+
+- `host-config.yaml` defines the offering's market identity.
+- Family-specific discovery validates and enriches only stable metadata.
+- Volatile runtime state belongs in `GET /registry/health` or metrics, not in
+  the signed manifest.
+
+Every family should expose a small stable namespace under `extra`:
+
+- `extra.openai.*`
+- `extra.audio.*`
+- `extra.video.*`
+- `extra.vtuber.*`
+
+with a shared top-level `provider` field naming the backend or runner family.
+
+#### Audio
+
+For audio capabilities, the stable contract separates workload type from
+runner-specific live state:
+
+```yaml
+extra:
+  openai:
+    model: "whisper-large-v3"
+  provider: "openai-audio-runner"
+  served_model_name: "whisper-large-v3"
+  backend_model: "openai/whisper-large-v3"
+  audio:
+    task: "transcription"
+    formats:
+      input: ["mp3", "wav", "m4a", "flac"]
+      output: ["json", "text", "srt", "verbose_json", "vtt"]
+```
+
+```yaml
+extra:
+  openai:
+    model: "kokoro"
+  provider: "openai-tts-runner"
+  served_model_name: "kokoro"
+  backend_model: "hexgrad/Kokoro-82M"
+  audio:
+    task: "speech"
+    voices:
+      default: "af_bella"
+      native: ["af_bella", "am_michael"]
+      aliases:
+        alloy: "af_bella"
+        echo: "am_michael"
+    formats:
+      output: ["mp3", "wav", "pcm"]
+```
+
+Stable:
+
+- model identity
+- voice/options catalog
+- supported input/output formats
+- backend family
+
+Live only:
+
+- model warm state
+- queue depth
+- GPU readiness
+- transient inference failures
+
+#### Video
+
+Video capabilities should publish the stable pipeline shape, not current load:
+
+```yaml
+extra:
+  provider: "abr-runner"
+  video:
+    task: "abr-transcode"
+    presets: ["abr-standard", "abr-premium"]
+    codecs: ["h264", "hevc"]
+    packaging: ["hls"]
+    hardware:
+      gpu_vendor: "nvidia"
+```
+
+```yaml
+extra:
+  provider: "transcode-runner"
+  video:
+    task: "transcode"
+    presets: ["h264-1080p", "hevc-1080p"]
+    codecs: ["h264", "hevc"]
+    packaging: ["mp4"]
+    hardware:
+      gpu_vendor: "intel"
+```
+
+Stable:
+
+- task shape (`transcode`, `abr-transcode`, etc.)
+- supported preset names
+- supported video codecs
+- packaging outputs
+- hardware vendor hints
+
+Live only:
+
+- encoder availability
+- scratch-disk pressure
+- concurrent job count
+- GPU load
+- temporary backpressure
+
+#### VTuber
+
+Session-style VTuber workloads should publish stable runtime capabilities and
+schema versions, not live session availability:
+
+```yaml
+extra:
+  provider: "vtuber-runner"
+  vtuber:
+    task: "session"
+    avatars: ["nova", "luna", "iris"]
+    control_schema: "vtuber-control/v1"
+    media_schema: "webrtc-avatar/v1"
+    features:
+      voice_input: true
+      text_input: true
+      realtime_animation: true
+      reconnect: true
+```
+
+Stable:
+
+- avatar catalog
+- control/media schema identifiers
+- supported session features
+- runner family
+
+Live only:
+
+- available session slots
+- media-plane readiness
+- reconnect window state
+- renderer warm/cold state
+
+#### New families
+
+Any new runner family should define four things before implementation:
+
+1. the base `capability_id`
+2. the minimal stable `extra.<family>` schema
+3. the discovery source that fills stable enrichment fields
+4. the live-health source for volatile runtime state
+
+This keeps new workloads consistent with the broker's publication boundary:
+stable capability facts in `/registry/offerings`, live availability facts in
+`/registry/health`, and no direct runner-owned manifest identity.
+
 Live health follows the same pattern: the broker owns a small fixed
 library of **probe recipes** and `host-config.yaml` selects one per tuple.
 Examples might include:

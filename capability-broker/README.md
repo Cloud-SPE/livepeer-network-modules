@@ -119,6 +119,8 @@ It also exposes:
 offering so the human-facing status surface and Prometheus stay aligned.
 On unhealthy refreshes, `last_success_at` is preserved rather than overwritten,
 so the age gauge measures time since the last healthy metadata refresh.
+The same health payload now includes metadata-level `last_success_age_seconds`
+for operators who are inspecting JSON directly instead of scraping metrics.
 
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).

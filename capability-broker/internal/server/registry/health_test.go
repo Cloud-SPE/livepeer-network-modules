@@ -55,10 +55,11 @@ func TestHealthHandler_EmbedsMetadataStatus(t *testing.T) {
 		Capabilities []struct {
 			ID       string `json:"id"`
 			Metadata struct {
-				Provider            string `json:"provider"`
-				Applicable          bool   `json:"applicable"`
-				LastResult          string `json:"last_result"`
-				ConsecutiveFailures int    `json:"consecutive_failures"`
+				Provider              string  `json:"provider"`
+				Applicable            bool    `json:"applicable"`
+				LastResult            string  `json:"last_result"`
+				LastSuccessAgeSeconds float64 `json:"last_success_age_seconds"`
+				ConsecutiveFailures   int     `json:"consecutive_failures"`
 			} `json:"metadata"`
 		} `json:"capabilities"`
 	}
@@ -80,5 +81,8 @@ func TestHealthHandler_EmbedsMetadataStatus(t *testing.T) {
 	}
 	if got.Metadata.ConsecutiveFailures != 2 {
 		t.Fatalf("metadata.consecutive_failures = %d; want 2", got.Metadata.ConsecutiveFailures)
+	}
+	if got.Metadata.LastSuccessAgeSeconds < 0 {
+		t.Fatalf("metadata.last_success_age_seconds = %v; want non-negative", got.Metadata.LastSuccessAgeSeconds)
 	}
 }

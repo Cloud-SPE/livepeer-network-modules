@@ -349,6 +349,9 @@ Rules:
 - On unhealthy refreshes, the broker preserves `last_success_at` instead of
   overwriting it, so age-based alerting tracks time since the last healthy
   metadata refresh rather than time since the last failed probe.
+- `GET /registry/health` also publishes metadata-level
+  `last_success_age_seconds` so operators inspecting the JSON health surface
+  can see the same freshness signal without Prometheus.
 - `last_result` is family-aware rather than a single generic status. For
   example, OpenAI-compatible offerings may report `model_not_found` or
   `models_probe_failed`, while runner families may report

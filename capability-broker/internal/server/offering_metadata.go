@@ -191,6 +191,13 @@ func metadataCatalogKey(capabilityID, offeringID string) string {
 	return capabilityID + "|" + offeringID
 }
 
+func previousMetadataResult(status registry.MetadataStatus, ok bool) string {
+	if !ok {
+		return ""
+	}
+	return status.LastResult
+}
+
 type metadataRefreshStatus struct {
 	Provider      string
 	Applicable    bool
@@ -210,6 +217,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 		if !applicable {
 			continue
 		}
+		previousStatus, hadPreviousStatus := catalog.StatusFor(cap.ID, cap.OfferingID)
 		status := metadataRefreshStatus{
 			Provider:      provider,
 			Applicable:    true,
@@ -229,6 +237,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 				cap.OfferingID,
 				provider,
 				status.LastResult,
+				previousMetadataResult(previousStatus, hadPreviousStatus),
 				time.Since(startedAt).Seconds(),
 				attemptedAt,
 				time.Time{},
@@ -254,6 +263,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 			cap.OfferingID,
 			provider,
 			status.LastResult,
+			previousMetadataResult(previousStatus, hadPreviousStatus),
 			time.Since(startedAt).Seconds(),
 			attemptedAt,
 			status.LastSuccessAt,

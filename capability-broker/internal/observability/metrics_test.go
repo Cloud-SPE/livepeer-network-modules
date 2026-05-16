@@ -20,6 +20,7 @@ func TestRecordMetadataRefresh(t *testing.T) {
 		"vtuber-default",
 		"vtuber-runner",
 		"enriched",
+		"",
 		0.25,
 		attemptedAt,
 		successAt,
@@ -63,6 +64,16 @@ func TestRecordMetadataRefresh(t *testing.T) {
 	if got := histogram.GetHistogram().GetSampleCount(); got < 1 {
 		t.Fatalf("histogram sample count = %d; want at least 1", got)
 	}
+
+	if got := testutil.ToFloat64(metadataRefreshCurrentResult.WithLabelValues(
+		"vtuber",
+		"livepeer:vtuber-session",
+		"vtuber-default",
+		"vtuber-runner",
+		"enriched",
+	)); got != 1 {
+		t.Fatalf("current result gauge = %v; want 1", got)
+	}
 }
 
 func TestRecordMetadataRefresh_NormalizesEmptyLabels(t *testing.T) {
@@ -70,7 +81,7 @@ func TestRecordMetadataRefresh_NormalizesEmptyLabels(t *testing.T) {
 
 	before := testutil.ToFloat64(metadataRefreshTotal.WithLabelValues("other", "unknown", "unknown"))
 
-	RecordMetadataRefresh("other", "", "", "", "", 0.1, attemptedAt, time.Time{})
+	RecordMetadataRefresh("other", "", "", "", "", "", 0.1, attemptedAt, time.Time{})
 
 	after := testutil.ToFloat64(metadataRefreshTotal.WithLabelValues("other", "unknown", "unknown"))
 	if after != before+1 {
@@ -84,5 +95,63 @@ func TestRecordMetadataRefresh_NormalizesEmptyLabels(t *testing.T) {
 		"unknown",
 	)); got != float64(attemptedAt.Unix()) {
 		t.Fatalf("last attempt timestamp = %v; want %v", got, float64(attemptedAt.Unix()))
+	}
+
+	if got := testutil.ToFloat64(metadataRefreshCurrentResult.WithLabelValues(
+		"other",
+		"unknown",
+		"unknown",
+		"unknown",
+		"unknown",
+	)); got != 1 {
+		t.Fatalf("current result gauge = %v; want 1", got)
+	}
+}
+
+func TestRecordMetadataRefresh_ResetsPreviousCurrentResult(t *testing.T) {
+	attemptedAt := time.Unix(1710000200, 0).UTC()
+
+	RecordMetadataRefresh(
+		"openai",
+		"openai:chat-completions",
+		"chat-default",
+		"vllm",
+		"enriched",
+		"",
+		0.1,
+		attemptedAt,
+		attemptedAt,
+	)
+
+	RecordMetadataRefresh(
+		"openai",
+		"openai:chat-completions",
+		"chat-default",
+		"vllm",
+		"model_not_found",
+		"enriched",
+		0.1,
+		attemptedAt.Add(time.Minute),
+		time.Time{},
+	)
+
+	if got := testutil.ToFloat64(metadataRefreshCurrentResult.WithLabelValues(
+		"openai",
+		"openai:chat-completions",
+		"chat-default",
+		"vllm",
+		"enriched",
+	)); got != 0 {
+		t.Fatalf("previous result gauge = %v; want 0", got)
+	}
+
+	if got := testutil.ToFloat64(metadataRefreshCurrentResult.WithLabelValues(
+		"openai",
+		"openai:chat-completions",
+		"chat-default",
+		"vllm",
+		"model_not_found",
+	)); got != 1 {
+		t.Fatalf("new result gauge = %v; want 1", got)
 	}
 }

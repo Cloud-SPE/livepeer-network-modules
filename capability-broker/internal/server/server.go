@@ -101,6 +101,7 @@ type FFmpegOptions struct {
 type Server struct {
 	cfg           *config.Config
 	opts          Options
+	metadata      *metadataCatalog
 	mux           *http.ServeMux
 	srv           *http.Server
 	metricsSrv    *http.Server
@@ -134,6 +135,8 @@ type Server struct {
 // listener with no working payment surface.
 func New(cfg *config.Config, opts Options) (*Server, error) {
 	hydrateRunnerMetadata(context.Background(), cfg)
+	metadata := newMetadataCatalog()
+	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
 
 	mux := http.NewServeMux()
 	srv := &http.Server{
@@ -188,6 +191,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	s := &Server{
 		cfg:           cfg,
 		opts:          opts,
+		metadata:      metadata,
 		mux:           mux,
 		srv:           srv,
 		payment:       paymentClient,
@@ -440,6 +444,9 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.health != nil {
 		go s.health.Run(ctx)
 	}
+	if s.metadata != nil {
+		go s.runMetadataRefresh(ctx, 5*time.Minute)
+	}
 
 	select {
 	case <-ctx.Done():
@@ -452,5 +459,22 @@ func (s *Server) Run(ctx context.Context) error {
 		_ = s.srv.Close()
 		_ = s.metricsSrv.Close()
 		return err
+	}
+}
+
+func (s *Server) runMetadataRefresh(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	client := &http.Client{Timeout: 2 * time.Second}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refreshMetadataCatalog(ctx, client, s.cfg, s.metadata)
+		}
 	}
 }

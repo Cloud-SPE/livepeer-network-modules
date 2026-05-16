@@ -319,6 +319,13 @@ Rules:
 - `features.*`, when present, are booleans.
 - Operator-owned deployment labels such as `region`, `gpu_class`, and
   `latency_tier` may also live in `extra`.
+- For `provider: "vllm"` and `provider: "ollama"` on HTTP backends, the broker
+  may probe `GET /v1/models` at startup and fill missing
+  `served_model_name`, `backend_model`, and stable `features.*` fields when the
+  configured `extra.openai.model` is found upstream.
+- The broker refreshes this metadata on a bounded cadence while running.
+  Discovery freshness, provider, last result, and last error are exposed via
+  `GET /registry/health`; they do not change the tuple's market identity.
 
 Boundary:
 

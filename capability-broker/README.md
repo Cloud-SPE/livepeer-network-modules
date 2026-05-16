@@ -69,6 +69,17 @@ Optional stable enrichment fields are:
 - `backend_model`
 - `features.*` (booleans only)
 
+For `provider: "vllm"` and `provider: "ollama"` on HTTP OpenAI-compatible
+backends, the broker attempts a startup metadata probe against `GET /v1/models`.
+When the configured `extra.openai.model` is present upstream, the broker fills
+missing `served_model_name`, `backend_model`, and capability-appropriate
+`features.*` fields in `/registry/offerings`. Operator-declared values still
+win; discovery fills gaps only.
+
+The broker refreshes this metadata periodically while running. Per-offering
+refresh status and the last discovery result are exposed on
+`GET /registry/health` under each capability's `metadata` object.
+
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).
 

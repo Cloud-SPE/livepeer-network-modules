@@ -200,8 +200,11 @@ capabilities:
   #   extra:
   #     openai:
   #       model: "llama-3-70b"
+  #     provider: "vllm"
   #     region: "us-west-2"
   #     gpu_class: "h100"
+  #     # Optional stable fields like served_model_name, backend_model,
+  #     # and features.* may be auto-hydrated from GET /v1/models.
   #
   # - id: "openai:chat-completions"
   #   offering_id: "openai-resale"
@@ -221,6 +224,7 @@ capabilities:
   #   extra:
   #     openai:
   #       model: "gpt-4o"
+  #     provider: "openai"
   #     backend_provider: "openai"
   #     region: "global"
   #

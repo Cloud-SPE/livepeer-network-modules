@@ -36,6 +36,31 @@ cross-cutting design docs.
 - [`docs/references/`](./docs/references/) — source material (conversation transcripts, the
   OpenAI Harness PDF)
 
+## Setup (fresh clone)
+
+The repo pins its Node and pnpm versions so installs are reproducible. Three
+one-time commands after cloning:
+
+```sh
+# 1. Switch to the pinned Node major (reads .nvmrc).
+#    Replace `fnm` with `nvm`/`asdf`/whichever manager you use.
+fnm use
+
+# 2. Enable Corepack — ships with Node, off by default. This makes the
+#    pinned pnpm@9.0.0 available via shim. Re-run after switching Node
+#    versions; not needed again after that.
+corepack enable
+
+# 3. Install workspace dependencies. With `engine-strict=true` in
+#    .npmrc, this hard-fails if step 1 left you on the wrong Node.
+pnpm install
+```
+
+You never run `npm install -g pnpm` — Corepack reads `packageManager` from
+`package.json` and materializes the exact pinned pnpm release (with sha512
+integrity hash). That removes a whole class of "works on my machine"
+breakage where contributors run different pnpm versions.
+
 ## Repo shape — monorepo for now
 
 This repo is the home for **everything** in the rewrite. Each component lands as a

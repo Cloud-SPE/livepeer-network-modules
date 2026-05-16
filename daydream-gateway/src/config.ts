@@ -96,10 +96,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     resolverProtoRoot:
       env.DAYDREAM_GATEWAY_RESOLVER_PROTO_ROOT ?? DEFAULT_RESOLVER_PROTO_ROOT,
     routeFailureThreshold: Number(
-      env.DAYDREAM_GATEWAY_ROUTE_FAILURE_THRESHOLD ?? "2",
+      env.LIVEPEER_ROUTE_FAILURE_THRESHOLD ?? "2",
     ),
     routeCooldownMs: Number(
-      env.DAYDREAM_GATEWAY_ROUTE_COOLDOWN_MS ?? "30000",
+      env.LIVEPEER_ROUTE_COOLDOWN_MS ?? "30000",
     ),
   };
 }

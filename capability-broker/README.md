@@ -53,6 +53,22 @@ The example starts with minimal `http-reqresp@v0` entries for smoke bring-up
 and keeps more involved shipped shapes commented out until you wire the
 necessary backend infrastructure.
 
+For OpenAI-compatible offerings, use the base capability family in `id`
+(`openai:chat-completions`, `openai:embeddings`, etc.) and put model identity
+in `extra.openai.model`. Deprecated suffixed forms such as
+`openai:chat-completions:<model>` are rejected by config validation.
+
+Current broker validation for `openai:*` offerings requires:
+
+- `extra.openai.model`
+- `extra.provider`
+
+Optional stable enrichment fields are:
+
+- `served_model_name`
+- `backend_model`
+- `features.*` (booleans only)
+
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).
 

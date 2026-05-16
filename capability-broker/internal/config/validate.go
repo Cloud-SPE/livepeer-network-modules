@@ -49,6 +49,15 @@ var deprecatedOpenAICapabilityIDSuffixes = []string{
 	"openai:realtime:",
 }
 
+var openAICapabilityIDsRequiringModel = map[string]struct{}{
+	"openai:chat-completions":    {},
+	"openai:embeddings":          {},
+	"openai:audio-transcriptions": {},
+	"openai:audio-speech":        {},
+	"openai:images-generations":  {},
+	"openai:realtime":            {},
+}
+
 func encoderProfileList() []string {
 	out := make([]string, 0, len(validEncoderProfiles))
 	for k := range validEncoderProfiles {
@@ -94,6 +103,9 @@ func (c *Config) Validate() error {
 		}
 		if cap.OfferingID == "" {
 			return fmt.Errorf("%s: offering_id is required", ctx)
+		}
+		if err := validateOpenAIExtra(ctx, cap); err != nil {
+			return err
 		}
 		key := cap.ID + "|" + cap.OfferingID
 		if _, dup := seen[key]; dup {
@@ -256,4 +268,52 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+func validateOpenAIExtra(ctx string, cap *Capability) error {
+	if !strings.HasPrefix(cap.ID, "openai:") {
+		return nil
+	}
+
+	openaiRaw, ok := cap.Extra["openai"]
+	if !ok {
+		return fmt.Errorf("%s: extra.openai is required for %s", ctx, cap.ID)
+	}
+	openaiExtra, ok := openaiRaw.(map[string]any)
+	if !ok {
+		return fmt.Errorf("%s: extra.openai must be a map for %s", ctx, cap.ID)
+	}
+	provider := strings.TrimSpace(asString(cap.Extra["provider"]))
+	if provider == "" {
+		return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
+	}
+	if _, needsModel := openAICapabilityIDsRequiringModel[cap.ID]; needsModel {
+		model := strings.TrimSpace(asString(openaiExtra["model"]))
+		if model == "" {
+			return fmt.Errorf("%s: extra.openai.model is required for %s", ctx, cap.ID)
+		}
+	}
+	if featuresRaw, ok := cap.Extra["features"]; ok {
+		features, ok := featuresRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.features must be a map for %s", ctx, cap.ID)
+		}
+		for key, value := range features {
+			if _, ok := value.(bool); !ok {
+				return fmt.Errorf("%s: extra.features.%s must be a boolean for %s", ctx, key, cap.ID)
+			}
+		}
+	}
+
+	return nil
+}
+
+func asString(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
 }

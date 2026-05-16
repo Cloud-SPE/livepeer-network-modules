@@ -277,6 +277,7 @@ capabilities:
     extra:
       openai:
         model: "llama-3-70b"
+      provider: "vllm"
       region: "us-west-2"
       gpu_class: "h100"
 ```
@@ -284,6 +285,51 @@ capabilities:
 The `extractor` library is a small fixed set of recipes (`openai-usage`,
 `response-jsonpath`, `request-formula`, `bytes-counted`, `seconds-elapsed`,
 `ffmpeg-progress`). Adding an extractor is a broker change but extremely rare.
+
+### OpenAI-compatible `extra` shape
+
+For OpenAI-compatible offerings, the canonical `capability_id` stays at the
+base endpoint family (`openai:chat-completions`, `openai:embeddings`,
+`openai:audio-transcriptions`, `openai:audio-speech`,
+`openai:images-generations`, `openai:realtime`). Model identity does **not**
+live in `capability_id`; it lives in `extra.openai.model`.
+
+The standardized shape is:
+
+```yaml
+extra:
+  openai:
+    model: "Qwen3.6-27B"
+  provider: "vllm"
+  served_model_name: "Qwen3.6-27B"
+  backend_model: "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+  features:
+    streaming: true
+    tools: true
+    embeddings: false
+    json_mode: true
+```
+
+Rules:
+
+- `extra.openai.model` is required for current `openai:*` offerings.
+- `extra.provider` is required for current `openai:*` offerings.
+- `served_model_name`, `backend_model`, and `features.*` are optional stable
+  enrichment fields.
+- `features.*`, when present, are booleans.
+- Operator-owned deployment labels such as `region`, `gpu_class`, and
+  `latency_tier` may also live in `extra`.
+
+Boundary:
+
+- `host-config.yaml` owns operator intent: capability family, offering ID,
+  interaction mode, price, metering, backend URL, and routing constraints.
+- Runtime discovery may validate and enrich an offering, but it does not invent
+  or rewrite its market identity. The broker must not rewrite
+  `extra.openai.model`, `offering_id`, `price`, or `constraints`.
+- Volatile runtime facts such as full model inventories, queue depth,
+  throughput, utilization, or context window belong in live health, metrics,
+  or diagnostics, not in the signed manifest.
 
 Live health follows the same pattern: the broker owns a small fixed
 library of **probe recipes** and `host-config.yaml` selects one per tuple.

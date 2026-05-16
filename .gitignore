@@ -40,6 +40,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# TS test-build outputs (e.g. daydream-gateway's `pnpm test` writes here)
+**/dist-test/
+**/*.tsbuildinfo
+
 # Generated docs (keep checked-in artifacts as sources of truth; output is regen-able)
 /docs/generated/*
 !/docs/generated/.gitkeep

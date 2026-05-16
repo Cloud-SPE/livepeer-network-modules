@@ -38,28 +38,58 @@ cross-cutting design docs.
 
 ## Setup (fresh clone)
 
-The repo pins its Node and pnpm versions so installs are reproducible. Three
-one-time commands after cloning:
+The repo pins every toolchain it builds against so installs are
+reproducible. Two paths — pick whichever fits your machine.
+
+### Pinned versions
+
+| File              | What it pins              | Read by                                       |
+| ----------------- | ------------------------- | --------------------------------------------- |
+| `.tool-versions`  | Node `24`, Go `1.25.7`    | asdf / mise / rtx (unified multi-tool)        |
+| `.nvmrc`          | Node `24` (fallback)      | fnm, nvm                                      |
+| `package.json`    | `pnpm@9.0.0` + sha512     | Corepack (ships with Node)                    |
+| `go.mod` per pkg  | `go 1.25.x` per module    | the `go` command (auto-toolchain since 1.21)  |
+
+### Option A — Unified with mise / asdf (recommended)
+
+One tool installs everything `.tool-versions` lists.
 
 ```sh
-# 1. Switch to the pinned Node major (reads .nvmrc).
-#    Replace `fnm` with `nvm`/`asdf`/whichever manager you use.
-fnm use
-
-# 2. Enable Corepack — ships with Node, off by default. This makes the
-#    pinned pnpm@9.0.0 available via shim. Re-run after switching Node
-#    versions; not needed again after that.
-corepack enable
-
-# 3. Install workspace dependencies. With `engine-strict=true` in
-#    .npmrc, this hard-fails if step 1 left you on the wrong Node.
-pnpm install
+# (one-time) install mise: https://mise.jdx.dev/getting-started.html
+mise install            # reads .tool-versions, installs Node 24 + Go 1.25.7
+corepack enable         # activates pinned pnpm@9.0.0 shim
+pnpm install            # populates the JS workspace
+go work sync 2>/dev/null || true   # if you use a go.work file; harmless otherwise
 ```
 
-You never run `npm install -g pnpm` — Corepack reads `packageManager` from
-`package.json` and materializes the exact pinned pnpm release (with sha512
-integrity hash). That removes a whole class of "works on my machine"
-breakage where contributors run different pnpm versions.
+### Option B — Separate managers (fnm + your existing Go install)
+
+If you already use `fnm` for Node and have Go installed system-wide:
+
+```sh
+fnm use                 # reads .nvmrc → Node 24
+corepack enable         # activates pinned pnpm@9.0.0 shim
+pnpm install            # `engine-strict=true` in .npmrc hard-fails on wrong Node
+```
+
+For Go, every module's `go.mod` declares its required version (e.g.
+`go 1.25.7`). Any `go` ≥ 1.21 on your machine will **auto-download
+the right toolchain** the first time you run `go build` / `go test` —
+that's Go's built-in `GOTOOLCHAIN=auto` behavior. No `goenv` / `g`
+needed unless you specifically want one.
+
+### Why this works for fresh clones
+
+- **Corepack reads `packageManager` from `package.json`** and materializes
+  the exact pinned pnpm release (with sha512 integrity hash). You never
+  run `npm install -g pnpm`; contributors can't drift onto different
+  pnpm versions.
+- **`engine-strict=true` in `.npmrc`** makes pnpm fail loud when the
+  active Node doesn't satisfy `engines.node`, instead of silently
+  mis-installing dependencies.
+- **Go's auto-toolchain (1.21+)** fetches and uses the version named
+  in `go.mod` even if your default `go` binary is older. No per-machine
+  Go install dance.
 
 ## Repo shape — monorepo for now
 

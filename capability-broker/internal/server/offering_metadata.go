@@ -214,7 +214,11 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 		}
 		if err != nil {
 			status.LastError = err.Error()
-			status.LastResult = "error"
+			if result != "" {
+				status.LastResult = result
+			} else {
+				status.LastResult = "error"
+			}
 			catalog.SetStatus(cap.ID, cap.OfferingID, status)
 			log.Printf("registry metadata refresh skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
 			continue
@@ -274,11 +278,11 @@ func discoverOpenAIBackendMetadata(ctx context.Context, client *http.Client, cap
 
 	modelsURL, err := deriveOpenAIModelsURL(cap.Backend.URL)
 	if err != nil {
-		return nil, true, provider, "", err
+		return nil, true, provider, "models_probe_failed", err
 	}
 	model, err := fetchOpenAIModelRecord(ctx, client, modelsURL, modelName)
 	if err != nil {
-		return nil, true, provider, "", err
+		return nil, true, provider, "models_probe_failed", err
 	}
 	if model == nil {
 		return nil, true, provider, "model_not_found", nil
@@ -302,15 +306,23 @@ func discoverAudioMetadata(ctx context.Context, client *http.Client, cap *config
 	case "openai:audio-speech":
 		payload, err := fetchKokoroOptions(ctx, client, cap.Backend.URL)
 		if err != nil {
-			return nil, true, provider, "", err
+			return nil, true, provider, "audio_options_probe_failed", err
 		}
-		return discoveredAudioSpeechExtra(cap.Extra, payload), true, provider, "enriched", nil
+		discovered := discoveredAudioSpeechExtra(cap.Extra, payload)
+		if len(discovered) == 0 {
+			return nil, true, provider, "audio_options_empty", nil
+		}
+		return discovered, true, provider, "enriched", nil
 	case "openai:audio-transcriptions":
 		payload, err := fetchOpenAIAudioOptions(ctx, client, cap.Backend.URL, audioTranscriptionsOptionsPath)
 		if err != nil {
-			return nil, true, provider, "", err
+			return nil, true, provider, "audio_options_probe_failed", err
 		}
-		return discoveredAudioOptionsExtra(cap.Extra, payload), true, provider, "enriched", nil
+		discovered := discoveredAudioOptionsExtra(cap.Extra, payload)
+		if len(discovered) == 0 {
+			return nil, true, provider, "audio_options_empty", nil
+		}
+		return discovered, true, provider, "enriched", nil
 	default:
 		return nil, false, "", "", nil
 	}
@@ -325,15 +337,23 @@ func discoverVideoMetadata(ctx context.Context, client *http.Client, cap *config
 	case "video:transcode.vod":
 		payload, err := fetchVideoTranscodePresets(ctx, client, cap.Backend.URL)
 		if err != nil {
-			return nil, true, provider, "", err
+			return nil, true, provider, "video_presets_probe_failed", err
 		}
-		return discoveredVideoTranscodeExtra(cap.Extra, payload), true, provider, "enriched", nil
+		discovered := discoveredVideoTranscodeExtra(cap.Extra, payload)
+		if len(discovered) == 0 {
+			return nil, true, provider, "video_presets_empty", nil
+		}
+		return discovered, true, provider, "enriched", nil
 	case "video:transcode.abr":
 		payload, err := fetchVideoABRPresets(ctx, client, cap.Backend.URL)
 		if err != nil {
-			return nil, true, provider, "", err
+			return nil, true, provider, "video_presets_probe_failed", err
 		}
-		return discoveredVideoABRExtra(cap.Extra, payload), true, provider, "enriched", nil
+		discovered := discoveredVideoABRExtra(cap.Extra, payload)
+		if len(discovered) == 0 {
+			return nil, true, provider, "video_presets_empty", nil
+		}
+		return discovered, true, provider, "enriched", nil
 	default:
 		return nil, false, "", "", nil
 	}
@@ -346,9 +366,13 @@ func discoverVTuberMetadata(ctx context.Context, client *http.Client, cap *confi
 	provider := strings.TrimSpace(asString(cap.Extra["provider"]))
 	payload, err := fetchVTuberOptions(ctx, client, cap.Backend.URL)
 	if err != nil {
-		return nil, true, provider, "", err
+		return nil, true, provider, "vtuber_options_probe_failed", err
 	}
-	return discoveredVTuberExtra(cap.Extra, payload), true, provider, "enriched", nil
+	discovered := discoveredVTuberExtra(cap.Extra, payload)
+	if len(discovered) == 0 {
+		return nil, true, provider, "vtuber_options_empty", nil
+	}
+	return discovered, true, provider, "enriched", nil
 }
 
 func hydrateKokoroVoices(ctx context.Context, client *http.Client, cap *config.Capability) error {

@@ -92,6 +92,17 @@ Use `--metadata-refresh-interval=<duration>` to tune that cadence. The default
 is `5m`. Set a negative duration to disable periodic refresh after the initial
 startup discovery pass.
 
+Current `metadata.last_result` values are family-aware. Examples:
+
+- `model_not_found`
+- `models_probe_failed`
+- `audio_options_empty`
+- `audio_options_probe_failed`
+- `video_presets_empty`
+- `video_presets_probe_failed`
+- `vtuber_options_empty`
+- `vtuber_options_probe_failed`
+
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).
 

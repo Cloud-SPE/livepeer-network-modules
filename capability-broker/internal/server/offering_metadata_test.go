@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/registry"
@@ -393,6 +394,89 @@ func TestRefreshMetadataCatalog_PopulatesVTuberMetadataStatus(t *testing.T) {
 	}
 	if status.LastSuccessAt.IsZero() {
 		t.Fatal("last_success_at should be populated")
+	}
+}
+
+func TestRefreshMetadataCatalog_VTuberProbeFailureSetsSpecificResult(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "livepeer:vtuber-session",
+				OfferingID:      "vtuber-default",
+				InteractionMode: "session-control-plus-media@v0",
+				Backend: config.Backend{
+					Transport: "http",
+					URL:       "http://127.0.0.1:1/api/sessions/start",
+				},
+				Extra: map[string]any{
+					"provider": "vtuber-runner",
+					"vtuber":   map[string]any{"task": "session"},
+				},
+			},
+		},
+	}
+
+	catalog := newMetadataCatalog()
+	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 10 * time.Millisecond}, cfg, catalog)
+
+	status, ok := catalog.StatusFor("livepeer:vtuber-session", "vtuber-default")
+	if !ok {
+		t.Fatal("expected metadata refresh status")
+	}
+	if status.LastResult != "vtuber_options_probe_failed" {
+		t.Fatalf("last_result = %q; want vtuber_options_probe_failed", status.LastResult)
+	}
+	if status.LastError == "" {
+		t.Fatal("last_error should be populated")
+	}
+}
+
+func TestRefreshMetadataCatalog_AudioEmptySetsSpecificResult(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != audioTranscriptionsOptionsPath {
+			t.Fatalf("path = %s; want %s", r.URL.Path, audioTranscriptionsOptionsPath)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task": "transcription",
+		})
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "openai:audio-transcriptions",
+				OfferingID:      "whisper-default",
+				InteractionMode: "http-multipart@v0",
+				Backend: config.Backend{
+					Transport: "http",
+					URL:       ts.URL + "/v1/audio/transcriptions",
+				},
+				Extra: map[string]any{
+					"provider": "openai-audio-runner",
+					"openai":   map[string]any{"model": "whisper-large-v3"},
+					"audio": map[string]any{
+						"task":    "transcription",
+						"formats": map[string]any{"input": []string{"mp3"}},
+					},
+				},
+			},
+		},
+	}
+
+	catalog := newMetadataCatalog()
+	refreshMetadataCatalog(context.Background(), ts.Client(), cfg, catalog)
+
+	status, ok := catalog.StatusFor("openai:audio-transcriptions", "whisper-default")
+	if !ok {
+		t.Fatal("expected metadata refresh status")
+	}
+	if status.LastResult != "audio_options_empty" {
+		t.Fatalf("last_result = %q; want audio_options_empty", status.LastResult)
 	}
 }
 

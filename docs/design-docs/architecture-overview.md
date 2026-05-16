@@ -329,6 +329,11 @@ Rules:
 - The broker refreshes this metadata on a bounded cadence while running.
   Discovery freshness, provider, last result, and last error are exposed via
   `GET /registry/health`; they do not change the tuple's market identity.
+- `last_result` is family-aware rather than a single generic status. For
+  example, OpenAI-compatible offerings may report `model_not_found` or
+  `models_probe_failed`, while runner families may report
+  `audio_options_probe_failed`, `video_presets_empty`, or
+  `vtuber_options_probe_failed`.
 
 Boundary:
 

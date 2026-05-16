@@ -323,6 +323,9 @@ Rules:
   may probe `GET /v1/models` at startup and fill missing
   `served_model_name`, `backend_model`, and stable `features.*` fields when the
   configured `extra.openai.model` is found upstream.
+- For runner families with stable options or presets surfaces, the broker may
+  fill missing `extra.audio.*`, `extra.video.*`, or `extra.vtuber.*` fields
+  from those family-specific endpoints using the same fill-only merge policy.
 - The broker refreshes this metadata on a bounded cadence while running.
   Discovery freshness, provider, last result, and last error are exposed via
   `GET /registry/health`; they do not change the tuple's market identity.

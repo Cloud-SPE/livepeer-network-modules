@@ -203,7 +203,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 	for i := range cfg.Capabilities {
 		cap := &cfg.Capabilities[i]
 		attemptedAt := time.Now().UTC()
-		discovered, applicable, provider, err := discoverOpenAIBackendMetadata(ctx, client, cap)
+		discovered, applicable, provider, result, err := discoverCapabilityMetadata(ctx, client, cap)
 		if !applicable {
 			continue
 		}
@@ -220,10 +220,14 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 			continue
 		}
 		status.LastSuccessAt = attemptedAt
-		if len(discovered) == 0 {
-			status.LastResult = "model_not_found"
+		if result == "" {
+			if len(discovered) == 0 {
+				status.LastResult = "empty"
+			} else {
+				status.LastResult = "enriched"
+			}
 		} else {
-			status.LastResult = "enriched"
+			status.LastResult = result
 		}
 		catalog.Set(cap.ID, cap.OfferingID, discovered)
 		catalog.SetStatus(cap.ID, cap.OfferingID, status)
@@ -239,29 +243,45 @@ type openAIModelRecord struct {
 	Root string `json:"root"`
 }
 
-func discoverOpenAIBackendMetadata(ctx context.Context, client *http.Client, cap *config.Capability) (map[string]any, bool, string, error) {
+func discoverCapabilityMetadata(ctx context.Context, client *http.Client, cap *config.Capability) (map[string]any, bool, string, string, error) {
+	if discovered, applicable, provider, result, err := discoverOpenAIBackendMetadata(ctx, client, cap); applicable || err != nil {
+		return discovered, applicable, provider, result, err
+	}
+	if discovered, applicable, provider, result, err := discoverAudioMetadata(ctx, client, cap); applicable || err != nil {
+		return discovered, applicable, provider, result, err
+	}
+	if discovered, applicable, provider, result, err := discoverVideoMetadata(ctx, client, cap); applicable || err != nil {
+		return discovered, applicable, provider, result, err
+	}
+	if discovered, applicable, provider, result, err := discoverVTuberMetadata(ctx, client, cap); applicable || err != nil {
+		return discovered, applicable, provider, result, err
+	}
+	return nil, false, strings.TrimSpace(asString(cap.Extra["provider"])), "", nil
+}
+
+func discoverOpenAIBackendMetadata(ctx context.Context, client *http.Client, cap *config.Capability) (map[string]any, bool, string, string, error) {
 	if !strings.HasPrefix(cap.ID, "openai:") {
-		return nil, false, "", nil
+		return nil, false, "", "", nil
 	}
 	provider := strings.TrimSpace(asString(cap.Extra["provider"]))
 	if provider != "vllm" && provider != "ollama" {
-		return nil, false, provider, nil
+		return nil, false, provider, "", nil
 	}
 	modelName, ok := openAIConfiguredModel(cap)
 	if !ok {
-		return nil, true, provider, nil
+		return nil, true, provider, "empty", nil
 	}
 
 	modelsURL, err := deriveOpenAIModelsURL(cap.Backend.URL)
 	if err != nil {
-		return nil, true, provider, err
+		return nil, true, provider, "", err
 	}
 	model, err := fetchOpenAIModelRecord(ctx, client, modelsURL, modelName)
 	if err != nil {
-		return nil, true, provider, err
+		return nil, true, provider, "", err
 	}
 	if model == nil {
-		return nil, true, provider, nil
+		return nil, true, provider, "model_not_found", nil
 	}
 
 	discovered := map[string]any{}
@@ -270,33 +290,70 @@ func discoverOpenAIBackendMetadata(ctx context.Context, client *http.Client, cap
 		fillDiscoveredString(cap.Extra, discovered, "backend_model", backendModel)
 	}
 	fillOpenAIFeatures(cap, discovered)
-	return discovered, true, provider, nil
+	return discovered, true, provider, "enriched", nil
+}
+
+func discoverAudioMetadata(ctx context.Context, client *http.Client, cap *config.Capability) (map[string]any, bool, string, string, error) {
+	if cap.Backend.Transport != "http" {
+		return nil, false, "", "", nil
+	}
+	provider := strings.TrimSpace(asString(cap.Extra["provider"]))
+	switch cap.ID {
+	case "openai:audio-speech":
+		payload, err := fetchKokoroOptions(ctx, client, cap.Backend.URL)
+		if err != nil {
+			return nil, true, provider, "", err
+		}
+		return discoveredAudioSpeechExtra(cap.Extra, payload), true, provider, "enriched", nil
+	case "openai:audio-transcriptions":
+		payload, err := fetchOpenAIAudioOptions(ctx, client, cap.Backend.URL, audioTranscriptionsOptionsPath)
+		if err != nil {
+			return nil, true, provider, "", err
+		}
+		return discoveredAudioOptionsExtra(cap.Extra, payload), true, provider, "enriched", nil
+	default:
+		return nil, false, "", "", nil
+	}
+}
+
+func discoverVideoMetadata(ctx context.Context, client *http.Client, cap *config.Capability) (map[string]any, bool, string, string, error) {
+	if cap.Backend.Transport != "http" {
+		return nil, false, "", "", nil
+	}
+	provider := strings.TrimSpace(asString(cap.Extra["provider"]))
+	switch cap.ID {
+	case "video:transcode.vod":
+		payload, err := fetchVideoTranscodePresets(ctx, client, cap.Backend.URL)
+		if err != nil {
+			return nil, true, provider, "", err
+		}
+		return discoveredVideoTranscodeExtra(cap.Extra, payload), true, provider, "enriched", nil
+	case "video:transcode.abr":
+		payload, err := fetchVideoABRPresets(ctx, client, cap.Backend.URL)
+		if err != nil {
+			return nil, true, provider, "", err
+		}
+		return discoveredVideoABRExtra(cap.Extra, payload), true, provider, "enriched", nil
+	default:
+		return nil, false, "", "", nil
+	}
+}
+
+func discoverVTuberMetadata(ctx context.Context, client *http.Client, cap *config.Capability) (map[string]any, bool, string, string, error) {
+	if cap.ID != "livepeer:vtuber-session" || cap.Backend.Transport != "http" {
+		return nil, false, "", "", nil
+	}
+	provider := strings.TrimSpace(asString(cap.Extra["provider"]))
+	payload, err := fetchVTuberOptions(ctx, client, cap.Backend.URL)
+	if err != nil {
+		return nil, true, provider, "", err
+	}
+	return discoveredVTuberExtra(cap.Extra, payload), true, provider, "enriched", nil
 }
 
 func hydrateKokoroVoices(ctx context.Context, client *http.Client, cap *config.Capability) error {
-	optionsURL, err := deriveOptionsURL(cap.Backend.URL, kokoroOptionsPath)
+	payload, err := fetchKokoroOptions(ctx, client, cap.Backend.URL)
 	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, optionsURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return &unexpectedStatusError{statusCode: resp.StatusCode}
-	}
-
-	var payload kokoroOptionsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return err
 	}
 	if len(payload.Voices.Native) == 0 && len(payload.Voices.Aliases) == 0 && payload.DefaultVoice == "" {
@@ -306,186 +363,244 @@ func hydrateKokoroVoices(ctx context.Context, client *http.Client, cap *config.C
 	if cap.Extra == nil {
 		cap.Extra = make(map[string]any)
 	}
-	audioExtra := ensureNestedMap(cap.Extra, "audio")
-	fillExtraString(audioExtra, "task", payload.Task)
-	formats := map[string]any{}
-	if len(payload.Formats.Output) > 0 {
-		formats["output"] = payload.Formats.Output
+	mergeDiscoveredExtra(cap.Extra, discoveredAudioSpeechExtra(cap.Extra, payload))
+	return nil
+}
+
+func hydrateOpenAIAudioOptions(ctx context.Context, client *http.Client, cap *config.Capability, optionsPath string) error {
+	payload, err := fetchOpenAIAudioOptions(ctx, client, cap.Backend.URL, optionsPath)
+	if err != nil {
+		return err
 	}
-	if len(formats) > 0 {
-		if _, exists := audioExtra["formats"]; !exists {
-			audioExtra["formats"] = formats
+
+	if cap.Extra == nil {
+		cap.Extra = make(map[string]any)
+	}
+	mergeDiscoveredExtra(cap.Extra, discoveredAudioOptionsExtra(cap.Extra, payload))
+	return nil
+}
+
+func hydrateVideoTranscodeMetadata(ctx context.Context, client *http.Client, cap *config.Capability) error {
+	payload, err := fetchVideoTranscodePresets(ctx, client, cap.Backend.URL)
+	if err != nil {
+		return err
+	}
+
+	if cap.Extra == nil {
+		cap.Extra = make(map[string]any)
+	}
+	mergeDiscoveredExtra(cap.Extra, discoveredVideoTranscodeExtra(cap.Extra, payload))
+	return nil
+}
+
+func hydrateVideoABRMetadata(ctx context.Context, client *http.Client, cap *config.Capability) error {
+	payload, err := fetchVideoABRPresets(ctx, client, cap.Backend.URL)
+	if err != nil {
+		return err
+	}
+
+	if cap.Extra == nil {
+		cap.Extra = make(map[string]any)
+	}
+	mergeDiscoveredExtra(cap.Extra, discoveredVideoABRExtra(cap.Extra, payload))
+	return nil
+}
+
+func hydrateVTuberMetadata(ctx context.Context, client *http.Client, cap *config.Capability) error {
+	payload, err := fetchVTuberOptions(ctx, client, cap.Backend.URL)
+	if err != nil {
+		return err
+	}
+
+	if cap.Extra == nil {
+		cap.Extra = make(map[string]any)
+	}
+	mergeDiscoveredExtra(cap.Extra, discoveredVTuberExtra(cap.Extra, payload))
+	return nil
+}
+
+func fetchKokoroOptions(ctx context.Context, client *http.Client, backendURL string) (kokoroOptionsResponse, error) {
+	optionsURL, err := deriveOptionsURL(backendURL, kokoroOptionsPath)
+	if err != nil {
+		return kokoroOptionsResponse{}, err
+	}
+	var payload kokoroOptionsResponse
+	if err := fetchJSON(ctx, client, optionsURL, &payload); err != nil {
+		return kokoroOptionsResponse{}, err
+	}
+	return payload, nil
+}
+
+func fetchOpenAIAudioOptions(ctx context.Context, client *http.Client, backendURL, optionsPath string) (openAIAudioOptionsResponse, error) {
+	optionsURL, err := deriveOptionsURL(backendURL, optionsPath)
+	if err != nil {
+		return openAIAudioOptionsResponse{}, err
+	}
+	var payload openAIAudioOptionsResponse
+	if err := fetchJSON(ctx, client, optionsURL, &payload); err != nil {
+		return openAIAudioOptionsResponse{}, err
+	}
+	return payload, nil
+}
+
+func fetchVideoTranscodePresets(ctx context.Context, client *http.Client, backendURL string) (videoTranscodePresetsResponse, error) {
+	presetsURL, err := deriveOptionsURL(backendURL, videoTranscodePresetsPath)
+	if err != nil {
+		return videoTranscodePresetsResponse{}, err
+	}
+	var payload videoTranscodePresetsResponse
+	if err := fetchJSON(ctx, client, presetsURL, &payload); err != nil {
+		return videoTranscodePresetsResponse{}, err
+	}
+	return payload, nil
+}
+
+func fetchVideoABRPresets(ctx context.Context, client *http.Client, backendURL string) (videoABRPresetsResponse, error) {
+	presetsURL, err := deriveOptionsURL(backendURL, videoABRPresetsPath)
+	if err != nil {
+		return videoABRPresetsResponse{}, err
+	}
+	var payload videoABRPresetsResponse
+	if err := fetchJSON(ctx, client, presetsURL, &payload); err != nil {
+		return videoABRPresetsResponse{}, err
+	}
+	return payload, nil
+}
+
+func fetchVTuberOptions(ctx context.Context, client *http.Client, backendURL string) (vtuberOptionsResponse, error) {
+	optionsURL, err := deriveOptionsURL(backendURL, vtuberOptionsPath)
+	if err != nil {
+		return vtuberOptionsResponse{}, err
+	}
+	var payload vtuberOptionsResponse
+	if err := fetchJSON(ctx, client, optionsURL, &payload); err != nil {
+		return vtuberOptionsResponse{}, err
+	}
+	return payload, nil
+}
+
+func fetchJSON(ctx context.Context, client *http.Client, requestURL string, dst any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return &unexpectedStatusError{statusCode: resp.StatusCode}
+	}
+	return json.NewDecoder(resp.Body).Decode(dst)
+}
+
+func discoveredAudioSpeechExtra(base map[string]any, payload kokoroOptionsResponse) map[string]any {
+	discovered := map[string]any{}
+	audio := map[string]any{}
+	fillDiscoveredString(nestedMap(base, "audio"), audio, "task", payload.Task)
+	if len(payload.Formats.Output) > 0 {
+		formats := map[string]any{}
+		if !nestedKeyExists(base, "audio", "formats") {
+			formats["output"] = payload.Formats.Output
+			audio["formats"] = formats
 		}
 	}
-	if _, exists := audioExtra["voices"]; !exists {
-		audioExtra["voices"] = map[string]any{
+	if !nestedKeyExists(base, "audio", "voices") {
+		audio["voices"] = map[string]any{
 			"default": payload.DefaultVoice,
 			"native":  payload.Voices.Native,
 			"aliases": payload.Voices.Aliases,
 		}
 	}
-	return nil
+	if len(audio) > 0 {
+		discovered["audio"] = audio
+	}
+	return discovered
 }
 
-func hydrateOpenAIAudioOptions(ctx context.Context, client *http.Client, cap *config.Capability, optionsPath string) error {
-	optionsURL, err := deriveOptionsURL(cap.Backend.URL, optionsPath)
-	if err != nil {
-		return err
+func discoveredAudioOptionsExtra(base map[string]any, payload openAIAudioOptionsResponse) map[string]any {
+	discovered := map[string]any{}
+	audio := map[string]any{}
+	fillDiscoveredString(nestedMap(base, "audio"), audio, "task", payload.Task)
+	if !nestedKeyExists(base, "audio", "formats") && (len(payload.Formats.Input) > 0 || len(payload.Formats.Output) > 0) {
+		formats := map[string]any{}
+		if len(payload.Formats.Input) > 0 {
+			formats["input"] = payload.Formats.Input
+		}
+		if len(payload.Formats.Output) > 0 {
+			formats["output"] = payload.Formats.Output
+		}
+		audio["formats"] = formats
 	}
+	if len(audio) > 0 {
+		discovered["audio"] = audio
+	}
+	return discovered
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, optionsURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &unexpectedStatusError{statusCode: resp.StatusCode}
-	}
-
-	var payload openAIAudioOptionsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return err
-	}
-
-	if cap.Extra == nil {
-		cap.Extra = make(map[string]any)
-	}
-	audioExtra := ensureNestedMap(cap.Extra, "audio")
-	fillExtraString(audioExtra, "task", payload.Task)
-	if len(payload.Formats.Input) > 0 || len(payload.Formats.Output) > 0 {
-		if _, exists := audioExtra["formats"]; !exists {
-			formats := map[string]any{}
-			if len(payload.Formats.Input) > 0 {
-				formats["input"] = payload.Formats.Input
-			}
-			if len(payload.Formats.Output) > 0 {
-				formats["output"] = payload.Formats.Output
-			}
-			audioExtra["formats"] = formats
+func discoveredVideoTranscodeExtra(base map[string]any, payload videoTranscodePresetsResponse) map[string]any {
+	discovered := map[string]any{}
+	video := map[string]any{}
+	fillDiscoveredStringSlice(nestedMap(base, "video"), video, "presets", namedPresets(payload.Presets))
+	fillDiscoveredStringSlice(nestedMap(base, "video"), video, "codecs", uniqueVideoCodecs(payload.Presets))
+	fillDiscoveredStringSlice(nestedMap(base, "video"), video, "packaging", []string{"mp4"})
+	if strings.TrimSpace(payload.GPUVendor) != "" && !nestedKeyExists(base, "video", "hardware") {
+		video["hardware"] = map[string]any{"gpu_vendor": payload.GPUVendor}
+	} else if strings.TrimSpace(payload.GPUVendor) != "" {
+		hardwareBase := nestedMap(nestedMap(base, "video"), "hardware")
+		hardware := map[string]any{}
+		fillDiscoveredString(hardwareBase, hardware, "gpu_vendor", payload.GPUVendor)
+		if len(hardware) > 0 {
+			video["hardware"] = hardware
 		}
 	}
-	return nil
+	if len(video) > 0 {
+		discovered["video"] = video
+	}
+	return discovered
 }
 
-func hydrateVideoTranscodeMetadata(ctx context.Context, client *http.Client, cap *config.Capability) error {
-	presetsURL, err := deriveOptionsURL(cap.Backend.URL, videoTranscodePresetsPath)
-	if err != nil {
-		return err
+func discoveredVideoABRExtra(base map[string]any, payload videoABRPresetsResponse) map[string]any {
+	discovered := map[string]any{}
+	video := map[string]any{}
+	fillDiscoveredStringSlice(nestedMap(base, "video"), video, "presets", namedABRPresets(payload.Presets))
+	fillDiscoveredStringSlice(nestedMap(base, "video"), video, "codecs", uniqueABRVideoCodecs(payload.Presets))
+	fillDiscoveredStringSlice(nestedMap(base, "video"), video, "packaging", uniqueABRPackaging(payload.Presets))
+	if strings.TrimSpace(payload.GPUVendor) != "" && !nestedKeyExists(base, "video", "hardware") {
+		video["hardware"] = map[string]any{"gpu_vendor": payload.GPUVendor}
+	} else if strings.TrimSpace(payload.GPUVendor) != "" {
+		hardwareBase := nestedMap(nestedMap(base, "video"), "hardware")
+		hardware := map[string]any{}
+		fillDiscoveredString(hardwareBase, hardware, "gpu_vendor", payload.GPUVendor)
+		if len(hardware) > 0 {
+			video["hardware"] = hardware
+		}
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, presetsURL, nil)
-	if err != nil {
-		return err
+	if len(video) > 0 {
+		discovered["video"] = video
 	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &unexpectedStatusError{statusCode: resp.StatusCode}
-	}
-
-	var payload videoTranscodePresetsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return err
-	}
-
-	if cap.Extra == nil {
-		cap.Extra = make(map[string]any)
-	}
-	videoExtra := ensureNestedMap(cap.Extra, "video")
-	fillVideoStringSlice(videoExtra, "presets", namedPresets(payload.Presets))
-	fillVideoStringSlice(videoExtra, "codecs", uniqueVideoCodecs(payload.Presets))
-	fillVideoStringSlice(videoExtra, "packaging", []string{"mp4"})
-	fillVideoHardwareVendor(videoExtra, payload.GPUVendor)
-	return nil
+	return discovered
 }
 
-func hydrateVideoABRMetadata(ctx context.Context, client *http.Client, cap *config.Capability) error {
-	presetsURL, err := deriveOptionsURL(cap.Backend.URL, videoABRPresetsPath)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, presetsURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &unexpectedStatusError{statusCode: resp.StatusCode}
-	}
-
-	var payload videoABRPresetsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return err
-	}
-
-	if cap.Extra == nil {
-		cap.Extra = make(map[string]any)
-	}
-	videoExtra := ensureNestedMap(cap.Extra, "video")
-	fillVideoStringSlice(videoExtra, "presets", namedABRPresets(payload.Presets))
-	fillVideoStringSlice(videoExtra, "codecs", uniqueABRVideoCodecs(payload.Presets))
-	fillVideoStringSlice(videoExtra, "packaging", uniqueABRPackaging(payload.Presets))
-	fillVideoHardwareVendor(videoExtra, payload.GPUVendor)
-	return nil
-}
-
-func hydrateVTuberMetadata(ctx context.Context, client *http.Client, cap *config.Capability) error {
-	optionsURL, err := deriveOptionsURL(cap.Backend.URL, vtuberOptionsPath)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, optionsURL, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &unexpectedStatusError{statusCode: resp.StatusCode}
-	}
-
-	var payload vtuberOptionsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return err
-	}
-
-	if cap.Extra == nil {
-		cap.Extra = make(map[string]any)
-	}
-	vtuberExtra := ensureNestedMap(cap.Extra, "vtuber")
-	fillExtraString(vtuberExtra, "task", payload.Task)
-	fillExtraString(vtuberExtra, "control_schema", payload.ControlSchema)
-	fillExtraString(vtuberExtra, "media_schema", payload.MediaSchema)
-	if _, exists := vtuberExtra["features"]; !exists {
+func discoveredVTuberExtra(base map[string]any, payload vtuberOptionsResponse) map[string]any {
+	discovered := map[string]any{}
+	vtuber := map[string]any{}
+	vtuberBase := nestedMap(base, "vtuber")
+	fillDiscoveredString(vtuberBase, vtuber, "task", payload.Task)
+	fillDiscoveredString(vtuberBase, vtuber, "control_schema", payload.ControlSchema)
+	fillDiscoveredString(vtuberBase, vtuber, "media_schema", payload.MediaSchema)
+	if !nestedKeyExists(base, "vtuber", "features") {
 		if features := boolMap(payload.Features); len(features) > 0 {
-			vtuberExtra["features"] = features
+			vtuber["features"] = features
 		}
 	}
-	return nil
+	if len(vtuber) > 0 {
+		discovered["vtuber"] = vtuber
+	}
+	return discovered
 }
 
 func fetchOpenAIModelRecord(ctx context.Context, client *http.Client, modelsURL, modelName string) (*openAIModelRecord, error) {
@@ -590,6 +705,16 @@ func fillVideoStringSlice(videoExtra map[string]any, key string, values []string
 	videoExtra[key] = values
 }
 
+func fillDiscoveredStringSlice(base, discovered map[string]any, key string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	if _, exists := base[key]; exists {
+		return
+	}
+	discovered[key] = values
+}
+
 func fillVideoHardwareVendor(videoExtra map[string]any, gpuVendor string) {
 	gpuVendor = strings.TrimSpace(gpuVendor)
 	if gpuVendor == "" {
@@ -615,6 +740,50 @@ func boolMap(raw map[string]any) map[string]bool {
 		return nil
 	}
 	return out
+}
+
+func nestedMap(base map[string]any, key string) map[string]any {
+	if base == nil {
+		return nil
+	}
+	nested, _ := base[key].(map[string]any)
+	return nested
+}
+
+func nestedKeyExists(base map[string]any, keys ...string) bool {
+	current := base
+	for i, key := range keys {
+		if current == nil {
+			return false
+		}
+		value, ok := current[key]
+		if !ok {
+			return false
+		}
+		if i == len(keys)-1 {
+			return true
+		}
+		next, ok := value.(map[string]any)
+		if !ok {
+			return false
+		}
+		current = next
+	}
+	return false
+}
+
+func mergeDiscoveredExtra(base, discovered map[string]any) {
+	for key, value := range discovered {
+		if nested, ok := value.(map[string]any); ok {
+			dest := ensureNestedMap(base, key)
+			mergeDiscoveredExtra(dest, nested)
+			continue
+		}
+		if _, exists := base[key]; exists {
+			continue
+		}
+		base[key] = value
+	}
 }
 
 func namedPresets(presets []videoTranscodePreset) []string {

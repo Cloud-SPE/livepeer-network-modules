@@ -331,6 +331,71 @@ func TestHydrateRunnerMetadata_PopulatesVTuberMetadata(t *testing.T) {
 	}
 }
 
+func TestRefreshMetadataCatalog_PopulatesVTuberMetadataStatus(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != vtuberOptionsPath {
+			t.Fatalf("path = %s; want %s", r.URL.Path, vtuberOptionsPath)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"capabilities":   []string{"livepeer:vtuber-session"},
+			"renderer":       "chromium",
+			"task":           "session",
+			"control_schema": "vtuber-control/v1",
+			"media_schema":   "trickle-segment-stream/v1",
+			"features": map[string]any{
+				"renderer_control": true,
+				"status_polling":   true,
+			},
+		})
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "livepeer:vtuber-session",
+				OfferingID:      "vtuber-default",
+				InteractionMode: "session-control-plus-media@v0",
+				Backend: config.Backend{
+					Transport: "http",
+					URL:       ts.URL + "/api/sessions/start",
+				},
+				Extra: map[string]any{
+					"provider": "vtuber-runner",
+					"vtuber":   map[string]any{"task": "session"},
+				},
+			},
+		},
+	}
+
+	catalog := newMetadataCatalog()
+	refreshMetadataCatalog(context.Background(), ts.Client(), cfg, catalog)
+
+	extra := catalog.ExtraFor("livepeer:vtuber-session", "vtuber-default")
+	vtuber, ok := extra["vtuber"].(map[string]any)
+	if !ok {
+		t.Fatalf("catalog vtuber extra missing: %#v", extra["vtuber"])
+	}
+	if got := vtuber["control_schema"]; got != "vtuber-control/v1" {
+		t.Fatalf("vtuber.control_schema = %#v; want vtuber-control/v1", got)
+	}
+	status, ok := catalog.StatusFor("livepeer:vtuber-session", "vtuber-default")
+	if !ok {
+		t.Fatal("expected metadata refresh status")
+	}
+	if status.Provider != "vtuber-runner" {
+		t.Fatalf("provider = %q; want vtuber-runner", status.Provider)
+	}
+	if status.LastResult != "enriched" {
+		t.Fatalf("last_result = %q; want enriched", status.LastResult)
+	}
+	if status.LastSuccessAt.IsZero() {
+		t.Fatal("last_success_at should be populated")
+	}
+}
+
 func TestHydrateRunnerMetadata_PopulatesOpenAIMetadataForVLLM(t *testing.T) {
 	t.Parallel()
 

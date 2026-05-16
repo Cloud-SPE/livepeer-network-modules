@@ -21,6 +21,8 @@ Thumbs.db
 /out/
 /bin/
 /protocol-daemon/bin/
+# Per-workspace build outputs (gateways, customer-portal, etc.)
+**/dist/
 
 # Compiled Go binaries (built into runner Docker images, not checked in)
 /video-runners/transcode-runner/transcode-runner

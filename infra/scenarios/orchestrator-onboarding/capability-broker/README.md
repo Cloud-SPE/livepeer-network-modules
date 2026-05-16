@@ -58,7 +58,7 @@ reference is documented separately.
 `/registry/health` is what resolvers and gateways consult before routing
 paid traffic. The values it reports come from the `health.probe` block on
 each capability in `host-config.yaml` (see below). See
-[`docs/design-docs/backend-health.md`](../../../docs/design-docs/backend-health.md)
+[`docs/design-docs/backend-health.md`](../../../../docs/design-docs/backend-health.md)
 for the full three-layer model (manifest / live / failure-rate).
 
 ## On-disk layout
@@ -179,7 +179,7 @@ Operator surfaces for the three health layers:
 | 2 (live)         | Restart broker, mark drain, fix backend          | broker `/registry/health` + container orchestration |
 | 3 (failure-rate) | Inspect dashboards, declare incident             | metrics / alerting stack |
 
-See [`docs/design-docs/backend-health.md`](../../../docs/design-docs/backend-health.md)
+See [`docs/design-docs/backend-health.md`](../../../../docs/design-docs/backend-health.md)
 for the full model.
 
 ## Bring-up

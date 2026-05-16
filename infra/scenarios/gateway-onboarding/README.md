@@ -308,6 +308,32 @@ floor.
 Customer-facing service shouldn't see more than a few seconds of
 disruption.
 
+### Route health (three-layer model)
+
+The gateway picks a broker route by composing three layers:
+
+1. **Layer 1 (manifest)** — `service-registry-daemon` only returns
+   candidates the orch has cold-signed for the requested capability.
+2. **Layer 2 (live)** — the resolver polls each broker's
+   `/registry/health` and drops anything not `ready`.
+3. **Layer 3 (failure-rate)** — the gateway tracks per-route outcomes
+   and opens a short cooldown after repeated retryable failures.
+
+You only configure Layer 3 here. Two knobs in each gateway's `.env`,
+shared across openai / video / vtuber:
+
+| Knob                               | Default | Effect                                                       |
+| ---------------------------------- | ------- | ------------------------------------------------------------ |
+| `LIVEPEER_ROUTE_FAILURE_THRESHOLD` | `2`     | Failures before a route enters cooldown                      |
+| `LIVEPEER_ROUTE_COOLDOWN_MS`       | `30000` | How long the route stays excluded before being retried (ms)  |
+
+If a route disappears from selection unexpectedly, the fastest debug
+question is **which layer dropped it?** Layer 1 is an orch-side fix
+(manifest), Layer 2 is a broker-side fix (probe / backend), Layer 3 is
+gateway-local (wait it out, restart, or retune the knobs). See
+[`docs/design-docs/backend-health.md`](../../../docs/design-docs/backend-health.md)
+for the full model.
+
 ### Centralized observability
 
 Each gateway exposes Prometheus metrics on the `service-registry-daemon`

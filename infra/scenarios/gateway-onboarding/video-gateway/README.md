@@ -165,6 +165,43 @@ S3_FORCE_PATH_STYLE=false               # AWS S3 prefers virtual-hosted-style
 For external S3 you can drop the `rustfs` + `rustfs-init` services from
 your compose invocation, but keeping them running idle does no harm.
 
+## Route health
+
+The gateway composes three layers when picking a broker route:
+
+1. **Layer 1 (manifest)** — `service-registry-daemon` only returns
+   candidates whose orchestrator has cold-signed for the requested
+   capability.
+2. **Layer 2 (live)** — the resolver polls each broker's
+   `/registry/health` and drops offerings not currently `ready`.
+3. **Layer 3 (failure-rate)** — this gateway tracks per-route outcomes
+   and opens a short **cooldown** for a route after repeated retryable
+   failures, even if Layer 1+2 still say it's available. For video,
+   route identity is keyed by broker + operator + capability + offering.
+
+You only manage Layer 3 here. Two `.env` knobs:
+
+| Knob                                 | Default | Effect                                                                      |
+| ------------------------------------ | ------- | --------------------------------------------------------------------------- |
+| `LIVEPEER_ROUTE_FAILURE_THRESHOLD`   | `2`     | Consecutive retryable failures before a route enters cooldown.              |
+| `LIVEPEER_ROUTE_COOLDOWN_MS`         | `30000` | How long the route stays excluded from selection (ms) before being retried. |
+
+These apply to both VOD (HTTP) and live (RTMP) job routing — RTMP
+sessions in flight finish on the route they started on; new sessions
+pick a non-cooled route.
+
+If a route disappears from selection and you don't know why, ask
+**which layer dropped it?**
+
+- Layer 1: missing or mismatched signed manifest entry. Fix on the
+  orch side.
+- Layer 2: broker reports the offering as `degraded` / `unreachable` /
+  `stale` on `/registry/health`. Fix on the broker side.
+- Layer 3: this gateway opened a cooldown after recent failures.
+
+See [`docs/design-docs/backend-health.md`](../../../../docs/design-docs/backend-health.md)
+for the three-layer model end to end.
+
 ## Verify
 
 ```sh

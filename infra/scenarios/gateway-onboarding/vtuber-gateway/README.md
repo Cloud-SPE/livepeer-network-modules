@@ -147,6 +147,28 @@ In `.env` before bring-up:
   invalidates active broker control-channel bearers.
 - **`CHAIN_RPC`** — your Arbitrum RPC endpoint.
 
+## Route health
+
+Same three-layer model as the OpenAI and Video gateways — `service-registry-daemon`
+pre-filters by Layer 1 (signed manifest) and Layer 2 (broker
+`/registry/health`); this gateway adds Layer 3 (gateway-local
+circuit breaker keyed by node URL + operator + capabilities + offering).
+The Layer 3 knobs live in `.env`:
+
+| Knob                                 | Default | Effect                                                                      |
+| ------------------------------------ | ------- | --------------------------------------------------------------------------- |
+| `LIVEPEER_ROUTE_FAILURE_THRESHOLD`   | `2`     | Consecutive retryable failures before a route enters cooldown.              |
+| `LIVEPEER_ROUTE_COOLDOWN_MS`         | `30000` | How long the route stays excluded from selection (ms) before being retried. |
+
+Note: long-lived vtuber sessions are pinned at session-open. A
+mid-session broker failure opens the cooldown for *future* session-open
+calls; the in-flight session terminates per the gateway's normal
+reconnect / timeout policy.
+
+If a candidate disappears from session-open and you don't know why, ask
+**which layer dropped it?** — see
+[`docs/design-docs/backend-health.md`](../../../../docs/design-docs/backend-health.md).
+
 ## Verify
 
 ```sh

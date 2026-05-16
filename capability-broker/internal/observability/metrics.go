@@ -59,6 +59,11 @@ var (
 		Help: "Unix timestamp of the most recent successful metadata discovery refresh for a published offering.",
 	}, []string{"family", "capability", "offering", "provider"})
 
+	metadataRefreshLastSuccessAge = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "livepeer_metadata_refresh_last_success_age_seconds",
+		Help: "Age in seconds since the most recent healthy metadata discovery refresh for a published offering. -1 means no healthy refresh has completed yet.",
+	}, []string{"family", "capability", "offering", "provider"})
+
 	metadataRefreshCurrentResult = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "livepeer_metadata_refresh_current_result",
 		Help: "Current metadata discovery result for a published offering. The active result label is 1 and previous results are reset to 0 on transition.",
@@ -108,6 +113,9 @@ func RecordMetadataRefresh(
 	metadataRefreshLastAttemptTimestamp.WithLabelValues(family, capability, offering, provider).Set(float64(attemptedAt.UTC().Unix()))
 	if !successAt.IsZero() {
 		metadataRefreshLastSuccessTimestamp.WithLabelValues(family, capability, offering, provider).Set(float64(successAt.UTC().Unix()))
+		metadataRefreshLastSuccessAge.WithLabelValues(family, capability, offering, provider).Set(attemptedAt.Sub(successAt).Seconds())
+	} else {
+		metadataRefreshLastSuccessAge.WithLabelValues(family, capability, offering, provider).Set(-1)
 	}
 	if previousResult != result {
 		metadataRefreshCurrentResult.WithLabelValues(family, capability, offering, provider, previousResult).Set(0)

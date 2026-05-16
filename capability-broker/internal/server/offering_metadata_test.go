@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -666,6 +667,73 @@ func TestHydrateRunnerMetadata_SkipsWhenConfiguredModelNotFound(t *testing.T) {
 	}
 	if status.LastResult != "model_not_found" {
 		t.Fatalf("last_result = %q; want model_not_found", status.LastResult)
+	}
+}
+
+func TestRefreshMetadataCatalog_PreservesLastSuccessAtAcrossUnhealthyResult(t *testing.T) {
+	t.Parallel()
+
+	var modelsPayload atomic.Value
+	modelsPayload.Store(map[string]any{
+		"data": []map[string]any{
+			{"id": "bge-large-en-v1.5"},
+		},
+	})
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(modelsPayload.Load())
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "openai:embeddings",
+				OfferingID:      "default",
+				InteractionMode: "http-reqresp@v0",
+				Backend: config.Backend{
+					Transport: "http",
+					URL:       ts.URL + "/v1/embeddings",
+				},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "bge-large-en-v1.5"},
+					"provider": "ollama",
+				},
+			},
+		},
+	}
+
+	catalog := newMetadataCatalog()
+	refreshMetadataCatalog(context.Background(), ts.Client(), cfg, catalog)
+
+	firstStatus, ok := catalog.StatusFor("openai:embeddings", "default")
+	if !ok {
+		t.Fatal("expected metadata refresh status after healthy refresh")
+	}
+	if firstStatus.LastSuccessAt.IsZero() {
+		t.Fatal("expected non-zero last_success_at after healthy refresh")
+	}
+
+	modelsPayload.Store(map[string]any{
+		"data": []map[string]any{
+			{"id": "other-model"},
+		},
+	})
+
+	refreshMetadataCatalog(context.Background(), ts.Client(), cfg, catalog)
+
+	secondStatus, ok := catalog.StatusFor("openai:embeddings", "default")
+	if !ok {
+		t.Fatal("expected metadata refresh status after unhealthy refresh")
+	}
+	if secondStatus.LastResult != "model_not_found" {
+		t.Fatalf("last_result = %q; want model_not_found", secondStatus.LastResult)
+	}
+	if !secondStatus.LastSuccessAt.Equal(firstStatus.LastSuccessAt) {
+		t.Fatalf("last_success_at = %v; want preserved %v", secondStatus.LastSuccessAt, firstStatus.LastSuccessAt)
+	}
+	if secondStatus.ConsecutiveFailures != 1 {
+		t.Fatalf("consecutive_failures = %d; want 1", secondStatus.ConsecutiveFailures)
 	}
 }
 

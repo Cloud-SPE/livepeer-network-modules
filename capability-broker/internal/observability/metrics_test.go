@@ -11,7 +11,7 @@ import (
 
 func TestRecordMetadataRefresh(t *testing.T) {
 	attemptedAt := time.Unix(1710000000, 0).UTC()
-	successAt := attemptedAt.Add(2 * time.Second)
+	successAt := attemptedAt.Add(-2 * time.Second)
 	before := testutil.ToFloat64(metadataRefreshTotal.WithLabelValues("vtuber", "vtuber-runner", "enriched"))
 
 	RecordMetadataRefresh(
@@ -48,6 +48,15 @@ func TestRecordMetadataRefresh(t *testing.T) {
 		"vtuber-runner",
 	)); got != float64(successAt.Unix()) {
 		t.Fatalf("last success timestamp = %v; want %v", got, float64(successAt.Unix()))
+	}
+
+	if got := testutil.ToFloat64(metadataRefreshLastSuccessAge.WithLabelValues(
+		"vtuber",
+		"livepeer:vtuber-session",
+		"vtuber-default",
+		"vtuber-runner",
+	)); got != 2 {
+		t.Fatalf("last success age = %v; want 2", got)
 	}
 
 	observer, err := metadataRefreshDuration.GetMetricWithLabelValues("vtuber", "vtuber-runner", "enriched")
@@ -124,6 +133,15 @@ func TestRecordMetadataRefresh_NormalizesEmptyLabels(t *testing.T) {
 		"unknown",
 	)); got != 1 {
 		t.Fatalf("consecutive failures gauge = %v; want 1", got)
+	}
+
+	if got := testutil.ToFloat64(metadataRefreshLastSuccessAge.WithLabelValues(
+		"other",
+		"unknown",
+		"unknown",
+		"unknown",
+	)); got != -1 {
+		t.Fatalf("last success age = %v; want -1", got)
 	}
 }
 

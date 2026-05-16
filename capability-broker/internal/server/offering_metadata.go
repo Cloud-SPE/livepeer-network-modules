@@ -209,6 +209,16 @@ func nextMetadataFailureCount(status registry.MetadataStatus, ok bool, result st
 	return status.ConsecutiveFailures + 1
 }
 
+func nextMetadataLastSuccessAt(status registry.MetadataStatus, ok bool, attemptedAt time.Time, result string) time.Time {
+	if metadataRefreshResultHealthy(result) {
+		return attemptedAt
+	}
+	if !ok {
+		return time.Time{}
+	}
+	return status.LastSuccessAt
+}
+
 func metadataRefreshResultHealthy(result string) bool {
 	switch result {
 	case "enriched", "empty":
@@ -251,6 +261,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 			} else {
 				status.LastResult = "error"
 			}
+			status.LastSuccessAt = nextMetadataLastSuccessAt(previousStatus, hadPreviousStatus, attemptedAt, status.LastResult)
 			status.ConsecutiveFailures = nextMetadataFailureCount(previousStatus, hadPreviousStatus, status.LastResult)
 			catalog.SetStatus(cap.ID, cap.OfferingID, status)
 			observability.RecordMetadataRefresh(
@@ -263,12 +274,11 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 				status.ConsecutiveFailures,
 				time.Since(startedAt).Seconds(),
 				attemptedAt,
-				time.Time{},
+				status.LastSuccessAt,
 			)
 			log.Printf("registry metadata refresh skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
 			continue
 		}
-		status.LastSuccessAt = attemptedAt
 		if result == "" {
 			if len(discovered) == 0 {
 				status.LastResult = "empty"
@@ -278,6 +288,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 		} else {
 			status.LastResult = result
 		}
+		status.LastSuccessAt = nextMetadataLastSuccessAt(previousStatus, hadPreviousStatus, attemptedAt, status.LastResult)
 		status.ConsecutiveFailures = nextMetadataFailureCount(previousStatus, hadPreviousStatus, status.LastResult)
 		catalog.Set(cap.ID, cap.OfferingID, discovered)
 		catalog.SetStatus(cap.ID, cap.OfferingID, status)

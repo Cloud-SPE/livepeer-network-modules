@@ -336,7 +336,8 @@ Rules:
   `livepeer_metadata_refresh_duration_seconds{family,provider,result}`,
   `livepeer_metadata_refresh_last_attempt_timestamp_seconds{family,capability,offering,provider}`,
   and
-  `livepeer_metadata_refresh_last_success_timestamp_seconds{family,capability,offering,provider}`.
+  `livepeer_metadata_refresh_last_success_timestamp_seconds{family,capability,offering,provider}`,
+  plus `livepeer_metadata_refresh_last_success_age_seconds{family,capability,offering,provider}`.
 - For alerting on the current discovery state, it also exposes
   `livepeer_metadata_refresh_current_result{family,capability,offering,provider,result}`,
   where the active result label is `1` and previous results are reset to `0`
@@ -345,6 +346,9 @@ Rules:
   `livepeer_metadata_refresh_consecutive_failures{family,capability,offering,provider}`,
   and the same `consecutive_failures` value appears in
   `GET /registry/health` metadata for each applicable offering.
+- On unhealthy refreshes, the broker preserves `last_success_at` instead of
+  overwriting it, so age-based alerting tracks time since the last healthy
+  metadata refresh rather than time since the last failed probe.
 - `last_result` is family-aware rather than a single generic status. For
   example, OpenAI-compatible offerings may report `model_not_found` or
   `models_probe_failed`, while runner families may report

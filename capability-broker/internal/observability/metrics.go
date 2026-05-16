@@ -85,12 +85,24 @@ func RecordMetadataRefresh(
 	attemptedAt time.Time,
 	successAt time.Time,
 ) {
+	family = metadataLabelValue(family)
+	capability = metadataLabelValue(capability)
+	offering = metadataLabelValue(offering)
+	provider = metadataLabelValue(provider)
+	result = metadataLabelValue(result)
 	metadataRefreshTotal.WithLabelValues(family, provider, result).Inc()
 	metadataRefreshDuration.WithLabelValues(family, provider, result).Observe(durationSeconds)
 	metadataRefreshLastAttemptTimestamp.WithLabelValues(family, capability, offering, provider).Set(float64(attemptedAt.UTC().Unix()))
 	if !successAt.IsZero() {
 		metadataRefreshLastSuccessTimestamp.WithLabelValues(family, capability, offering, provider).Set(float64(successAt.UTC().Unix()))
 	}
+}
+
+func metadataLabelValue(v string) string {
+	if v == "" {
+		return "unknown"
+	}
+	return v
 }
 
 // MetricsHandler returns a Prometheus scrape handler suitable for mounting at

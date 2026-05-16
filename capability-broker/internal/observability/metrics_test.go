@@ -64,3 +64,25 @@ func TestRecordMetadataRefresh(t *testing.T) {
 		t.Fatalf("histogram sample count = %d; want at least 1", got)
 	}
 }
+
+func TestRecordMetadataRefresh_NormalizesEmptyLabels(t *testing.T) {
+	attemptedAt := time.Unix(1710000100, 0).UTC()
+
+	before := testutil.ToFloat64(metadataRefreshTotal.WithLabelValues("other", "unknown", "unknown"))
+
+	RecordMetadataRefresh("other", "", "", "", "", 0.1, attemptedAt, time.Time{})
+
+	after := testutil.ToFloat64(metadataRefreshTotal.WithLabelValues("other", "unknown", "unknown"))
+	if after != before+1 {
+		t.Fatalf("counter delta = %v; want %v", after-before, 1.0)
+	}
+
+	if got := testutil.ToFloat64(metadataRefreshLastAttemptTimestamp.WithLabelValues(
+		"other",
+		"unknown",
+		"unknown",
+		"unknown",
+	)); got != float64(attemptedAt.Unix()) {
+		t.Fatalf("last attempt timestamp = %v; want %v", got, float64(attemptedAt.Unix()))
+	}
+}

@@ -341,6 +341,10 @@ Rules:
   `livepeer_metadata_refresh_current_result{family,capability,offering,provider,result}`,
   where the active result label is `1` and previous results are reset to `0`
   when the offering transitions.
+- To surface sustained discovery breakage, it also exposes
+  `livepeer_metadata_refresh_consecutive_failures{family,capability,offering,provider}`,
+  and the same `consecutive_failures` value appears in
+  `GET /registry/health` metadata for each applicable offering.
 - `last_result` is family-aware rather than a single generic status. For
   example, OpenAI-compatible offerings may report `model_not_found` or
   `models_probe_failed`, while runner families may report

@@ -21,6 +21,7 @@ func TestRecordMetadataRefresh(t *testing.T) {
 		"vtuber-runner",
 		"enriched",
 		"",
+		0,
 		0.25,
 		attemptedAt,
 		successAt,
@@ -74,6 +75,15 @@ func TestRecordMetadataRefresh(t *testing.T) {
 	)); got != 1 {
 		t.Fatalf("current result gauge = %v; want 1", got)
 	}
+
+	if got := testutil.ToFloat64(metadataRefreshConsecutiveFailures.WithLabelValues(
+		"vtuber",
+		"livepeer:vtuber-session",
+		"vtuber-default",
+		"vtuber-runner",
+	)); got != 0 {
+		t.Fatalf("consecutive failures gauge = %v; want 0", got)
+	}
 }
 
 func TestRecordMetadataRefresh_NormalizesEmptyLabels(t *testing.T) {
@@ -81,7 +91,7 @@ func TestRecordMetadataRefresh_NormalizesEmptyLabels(t *testing.T) {
 
 	before := testutil.ToFloat64(metadataRefreshTotal.WithLabelValues("other", "unknown", "unknown"))
 
-	RecordMetadataRefresh("other", "", "", "", "", "", 0.1, attemptedAt, time.Time{})
+	RecordMetadataRefresh("other", "", "", "", "", "", 1, 0.1, attemptedAt, time.Time{})
 
 	after := testutil.ToFloat64(metadataRefreshTotal.WithLabelValues("other", "unknown", "unknown"))
 	if after != before+1 {
@@ -106,6 +116,15 @@ func TestRecordMetadataRefresh_NormalizesEmptyLabels(t *testing.T) {
 	)); got != 1 {
 		t.Fatalf("current result gauge = %v; want 1", got)
 	}
+
+	if got := testutil.ToFloat64(metadataRefreshConsecutiveFailures.WithLabelValues(
+		"other",
+		"unknown",
+		"unknown",
+		"unknown",
+	)); got != 1 {
+		t.Fatalf("consecutive failures gauge = %v; want 1", got)
+	}
 }
 
 func TestRecordMetadataRefresh_ResetsPreviousCurrentResult(t *testing.T) {
@@ -118,6 +137,7 @@ func TestRecordMetadataRefresh_ResetsPreviousCurrentResult(t *testing.T) {
 		"vllm",
 		"enriched",
 		"",
+		0,
 		0.1,
 		attemptedAt,
 		attemptedAt,
@@ -130,6 +150,7 @@ func TestRecordMetadataRefresh_ResetsPreviousCurrentResult(t *testing.T) {
 		"vllm",
 		"model_not_found",
 		"enriched",
+		1,
 		0.1,
 		attemptedAt.Add(time.Minute),
 		time.Time{},
@@ -153,5 +174,14 @@ func TestRecordMetadataRefresh_ResetsPreviousCurrentResult(t *testing.T) {
 		"model_not_found",
 	)); got != 1 {
 		t.Fatalf("new result gauge = %v; want 1", got)
+	}
+
+	if got := testutil.ToFloat64(metadataRefreshConsecutiveFailures.WithLabelValues(
+		"openai",
+		"openai:chat-completions",
+		"chat-default",
+		"vllm",
+	)); got != 1 {
+		t.Fatalf("consecutive failures gauge = %v; want 1", got)
 	}
 }

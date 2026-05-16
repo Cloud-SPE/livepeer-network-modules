@@ -112,6 +112,10 @@ It also exposes:
 - `livepeer_metadata_refresh_last_attempt_timestamp_seconds{family,capability,offering,provider}`
 - `livepeer_metadata_refresh_last_success_timestamp_seconds{family,capability,offering,provider}`
 - `livepeer_metadata_refresh_current_result{family,capability,offering,provider,result}`
+- `livepeer_metadata_refresh_consecutive_failures{family,capability,offering,provider}`
+
+`GET /registry/health` also exposes metadata-level `consecutive_failures` per
+offering so the human-facing status surface and Prometheus stay aligned.
 
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).

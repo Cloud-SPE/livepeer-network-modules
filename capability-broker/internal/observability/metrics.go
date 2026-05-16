@@ -63,6 +63,11 @@ var (
 		Name: "livepeer_metadata_refresh_current_result",
 		Help: "Current metadata discovery result for a published offering. The active result label is 1 and previous results are reset to 0 on transition.",
 	}, []string{"family", "capability", "offering", "provider", "result"})
+
+	metadataRefreshConsecutiveFailures = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "livepeer_metadata_refresh_consecutive_failures",
+		Help: "Number of consecutive unhealthy metadata discovery results for a published offering.",
+	}, []string{"family", "capability", "offering", "provider"})
 )
 
 // RecordRequest emits one request's metrics.
@@ -87,6 +92,7 @@ func RecordRequest(capID, offID, outcome string, durationSeconds float64, workUn
 func RecordMetadataRefresh(
 	family, capability, offering, provider, result string,
 	previousResult string,
+	consecutiveFailures int,
 	durationSeconds float64,
 	attemptedAt time.Time,
 	successAt time.Time,
@@ -107,6 +113,7 @@ func RecordMetadataRefresh(
 		metadataRefreshCurrentResult.WithLabelValues(family, capability, offering, provider, previousResult).Set(0)
 	}
 	metadataRefreshCurrentResult.WithLabelValues(family, capability, offering, provider, result).Set(1)
+	metadataRefreshConsecutiveFailures.WithLabelValues(family, capability, offering, provider).Set(float64(consecutiveFailures))
 }
 
 func metadataLabelValue(v string) string {

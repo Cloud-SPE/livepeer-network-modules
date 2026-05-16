@@ -14,12 +14,13 @@ type MetadataStatusSource interface {
 }
 
 type MetadataStatus struct {
-	Provider      string
-	Applicable    bool
-	LastAttemptAt time.Time
-	LastSuccessAt time.Time
-	LastError     string
-	LastResult    string
+	Provider            string
+	Applicable          bool
+	LastAttemptAt       time.Time
+	LastSuccessAt       time.Time
+	LastError           string
+	LastResult          string
+	ConsecutiveFailures int
 }
 
 type healthResponse struct {
@@ -42,12 +43,13 @@ type healthCapabilityStatus struct {
 }
 
 type metadataStatus struct {
-	Provider      string    `json:"provider,omitempty"`
-	Applicable    bool      `json:"applicable"`
-	LastAttemptAt time.Time `json:"last_attempt_at,omitempty"`
-	LastSuccessAt time.Time `json:"last_success_at,omitempty"`
-	LastError     string    `json:"last_error,omitempty"`
-	LastResult    string    `json:"last_result,omitempty"`
+	Provider            string    `json:"provider,omitempty"`
+	Applicable          bool      `json:"applicable"`
+	LastAttemptAt       time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt       time.Time `json:"last_success_at,omitempty"`
+	LastError           string    `json:"last_error,omitempty"`
+	LastResult          string    `json:"last_result,omitempty"`
+	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
 }
 
 // HealthHandler returns the broker's normalized live-health snapshot.
@@ -75,12 +77,13 @@ func HealthHandler(mgr *health.Manager, metadata MetadataStatusSource) http.Hand
 			}
 			if st, ok := metadata.StatusFor(cap.ID, cap.OfferingID); ok {
 				entry.Metadata = &metadataStatus{
-					Provider:      st.Provider,
-					Applicable:    st.Applicable,
-					LastAttemptAt: st.LastAttemptAt,
-					LastSuccessAt: st.LastSuccessAt,
-					LastError:     st.LastError,
-					LastResult:    st.LastResult,
+					Provider:            st.Provider,
+					Applicable:          st.Applicable,
+					LastAttemptAt:       st.LastAttemptAt,
+					LastSuccessAt:       st.LastSuccessAt,
+					LastError:           st.LastError,
+					LastResult:          st.LastResult,
+					ConsecutiveFailures: st.ConsecutiveFailures,
 				}
 			}
 			out.Capabilities = append(out.Capabilities, entry)

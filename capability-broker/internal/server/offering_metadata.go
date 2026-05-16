@@ -155,12 +155,13 @@ func (c *metadataCatalog) StatusFor(capabilityID, offeringID string) (registry.M
 		return registry.MetadataStatus{}, false
 	}
 	return registry.MetadataStatus{
-		Provider:      st.Provider,
-		Applicable:    st.Applicable,
-		LastAttemptAt: st.LastAttemptAt,
-		LastSuccessAt: st.LastSuccessAt,
-		LastError:     st.LastError,
-		LastResult:    st.LastResult,
+		Provider:            st.Provider,
+		Applicable:          st.Applicable,
+		LastAttemptAt:       st.LastAttemptAt,
+		LastSuccessAt:       st.LastSuccessAt,
+		LastError:           st.LastError,
+		LastResult:          st.LastResult,
+		ConsecutiveFailures: st.ConsecutiveFailures,
 	}, true
 }
 
@@ -198,13 +199,33 @@ func previousMetadataResult(status registry.MetadataStatus, ok bool) string {
 	return status.LastResult
 }
 
+func nextMetadataFailureCount(status registry.MetadataStatus, ok bool, result string) int {
+	if metadataRefreshResultHealthy(result) {
+		return 0
+	}
+	if !ok {
+		return 1
+	}
+	return status.ConsecutiveFailures + 1
+}
+
+func metadataRefreshResultHealthy(result string) bool {
+	switch result {
+	case "enriched", "empty":
+		return true
+	default:
+		return false
+	}
+}
+
 type metadataRefreshStatus struct {
-	Provider      string
-	Applicable    bool
-	LastAttemptAt time.Time
-	LastSuccessAt time.Time
-	LastError     string
-	LastResult    string
+	Provider            string
+	Applicable          bool
+	LastAttemptAt       time.Time
+	LastSuccessAt       time.Time
+	LastError           string
+	LastResult          string
+	ConsecutiveFailures int
 }
 
 func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *config.Config, catalog *metadataCatalog) {
@@ -230,6 +251,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 			} else {
 				status.LastResult = "error"
 			}
+			status.ConsecutiveFailures = nextMetadataFailureCount(previousStatus, hadPreviousStatus, status.LastResult)
 			catalog.SetStatus(cap.ID, cap.OfferingID, status)
 			observability.RecordMetadataRefresh(
 				family,
@@ -238,6 +260,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 				provider,
 				status.LastResult,
 				previousMetadataResult(previousStatus, hadPreviousStatus),
+				status.ConsecutiveFailures,
 				time.Since(startedAt).Seconds(),
 				attemptedAt,
 				time.Time{},
@@ -255,6 +278,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 		} else {
 			status.LastResult = result
 		}
+		status.ConsecutiveFailures = nextMetadataFailureCount(previousStatus, hadPreviousStatus, status.LastResult)
 		catalog.Set(cap.ID, cap.OfferingID, discovered)
 		catalog.SetStatus(cap.ID, cap.OfferingID, status)
 		observability.RecordMetadataRefresh(
@@ -264,6 +288,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 			provider,
 			status.LastResult,
 			previousMetadataResult(previousStatus, hadPreviousStatus),
+			status.ConsecutiveFailures,
 			time.Since(startedAt).Seconds(),
 			attemptedAt,
 			status.LastSuccessAt,

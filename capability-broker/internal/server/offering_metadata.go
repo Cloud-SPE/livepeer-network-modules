@@ -221,6 +221,7 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 				status.LastResult = "error"
 			}
 			catalog.SetStatus(cap.ID, cap.OfferingID, status)
+			observability.RecordMetadataRefresh(metadataFamily(cap.ID), provider, status.LastResult)
 			log.Printf("registry metadata refresh skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
 			continue
 		}

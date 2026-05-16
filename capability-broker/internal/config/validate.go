@@ -40,6 +40,15 @@ var validEncoderProfiles = map[string]bool{
 	"h264-live-1080p-vaapi":   true,
 }
 
+var deprecatedOpenAICapabilityIDSuffixes = []string{
+	"openai:chat-completions:",
+	"openai:embeddings:",
+	"openai:audio-transcriptions:",
+	"openai:audio-speech:",
+	"openai:images-generations:",
+	"openai:realtime:",
+}
+
 func encoderProfileList() []string {
 	out := make([]string, 0, len(validEncoderProfiles))
 	for k := range validEncoderProfiles {
@@ -76,6 +85,12 @@ func (c *Config) Validate() error {
 
 		if cap.ID == "" {
 			return fmt.Errorf("%s: id is required", ctx)
+		}
+		for _, prefix := range deprecatedOpenAICapabilityIDSuffixes {
+			if strings.HasPrefix(cap.ID, prefix) {
+				return fmt.Errorf("%s: id %q uses deprecated OpenAI capability syntax; use %q and set extra.openai.model instead",
+					ctx, cap.ID, strings.TrimSuffix(prefix, ":"))
+			}
 		}
 		if cap.OfferingID == "" {
 			return fmt.Errorf("%s: offering_id is required", ctx)

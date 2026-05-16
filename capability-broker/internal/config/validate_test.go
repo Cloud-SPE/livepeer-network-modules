@@ -1,12 +1,15 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateDefaultsHTTPHealthProbe(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions:test",
+			ID:              "openai:chat-completions",
 			OfferingID:      "default",
 			InteractionMode: "http-stream@v0",
 			WorkUnit: WorkUnit{
@@ -34,5 +37,36 @@ func TestValidateDefaultsHTTPHealthProbe(t *testing.T) {
 	}
 	if got := cap.Health.Probe.Config["url"]; got != "http://backend:8000/v1/chat/completions" {
 		t.Fatalf("probe url = %v", got)
+	}
+}
+
+func TestValidateRejectsDeprecatedOpenAICapabilityIDSyntax(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "openai:chat-completions:llama-3-70b",
+			OfferingID:      "default",
+			InteractionMode: "http-stream@v0",
+			WorkUnit: WorkUnit{
+				Name:      "tokens",
+				Extractor: map[string]any{"type": "openai-usage"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8000/v1/chat/completions",
+			},
+			Extra: map[string]any{
+				"openai": map[string]any{"model": "llama-3-70b"},
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, want deprecated capability syntax rejection")
+	}
+	if !strings.Contains(err.Error(), "deprecated OpenAI capability syntax") {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }

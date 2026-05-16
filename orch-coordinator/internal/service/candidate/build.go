@@ -12,15 +12,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
 )
 
-var openAICapabilityPrefixes = []string{
-	"openai:chat-completions:",
-	"openai:embeddings:",
-	"openai:audio-transcriptions:",
-	"openai:audio-speech:",
-	"openai:images-generations:",
-	"openai:realtime:",
-}
-
 // SpecVersion is the manifest spec version emitted by this coordinator.
 // Pinned to whatever the spec repo declares. Update in lockstep with
 // livepeer-network-protocol/manifest/changelog.md.
@@ -265,7 +256,6 @@ func aggregate(sources []types.SourceTuple) ([]types.CapabilityTuple, []types.HA
 // (capability_id, offering_id, extra, constraints). Worker URL is not
 // part of identity (Q2 lock).
 func uniquenessKey(o types.BrokerOffering) (string, error) {
-	o = normalizeOpenAIOffering(o)
 	root := map[string]any{
 		"capability_id": o.CapabilityID,
 		"offering_id":   o.OfferingID,
@@ -284,7 +274,7 @@ func uniquenessKey(o types.BrokerOffering) (string, error) {
 }
 
 func tupleFrom(s types.SourceTuple) types.CapabilityTuple {
-	offering := normalizeOpenAIOffering(s.Offering)
+	offering := s.Offering
 	return types.CapabilityTuple{
 		CapabilityID:    offering.CapabilityID,
 		OfferingID:      offering.OfferingID,
@@ -295,42 +285,6 @@ func tupleFrom(s types.SourceTuple) types.CapabilityTuple {
 		Extra:           offering.Extra,
 		Constraints:     offering.Constraints,
 	}
-}
-
-func normalizeOpenAIOffering(o types.BrokerOffering) types.BrokerOffering {
-	normalizedID, model := normalizeOpenAICapabilityID(o.CapabilityID)
-	if normalizedID == o.CapabilityID && model == "" {
-		return o
-	}
-	o.CapabilityID = normalizedID
-	if model == "" {
-		return o
-	}
-	if o.Extra == nil {
-		o.Extra = map[string]any{}
-	}
-	openaiExtra, _ := o.Extra["openai"].(map[string]any)
-	if openaiExtra == nil {
-		openaiExtra = map[string]any{}
-	}
-	if raw := strings.TrimSpace(fmt.Sprint(openaiExtra["model"])); raw == "" || raw == "<nil>" {
-		openaiExtra["model"] = model
-	}
-	o.Extra["openai"] = openaiExtra
-	return o
-}
-
-func normalizeOpenAICapabilityID(capabilityID string) (normalized string, model string) {
-	for _, prefix := range openAICapabilityPrefixes {
-		if strings.HasPrefix(capabilityID, prefix) {
-			suffix := strings.TrimSpace(strings.TrimPrefix(capabilityID, prefix))
-			if suffix == "" {
-				return strings.TrimSuffix(prefix, ":"), ""
-			}
-			return strings.TrimSuffix(prefix, ":"), suffix
-		}
-	}
-	return capabilityID, ""
 }
 
 func brokerEntries(snap scrape.Snapshot) []types.MetadataBrokerEntry {

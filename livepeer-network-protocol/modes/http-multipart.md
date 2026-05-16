@@ -38,7 +38,7 @@ This is a delta document. Everything not stated here inherits from
 ```
 POST /v1/cap HTTP/1.1
 Host: broker-a.orch.example.com
-Livepeer-Capability: openai:audio-transcriptions:whisper-large-v3
+Livepeer-Capability: openai:audio-transcriptions
 Livepeer-Offering: whisper-h100
 Livepeer-Payment: <base64-encoded payment envelope>
 Livepeer-Spec-Version: 0.1

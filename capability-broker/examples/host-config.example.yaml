@@ -174,7 +174,7 @@ capabilities:
 
   # ---- Additional shipped examples (uncomment when your deployment is ready) ----
   #
-  # - id: "openai:chat-completions:llama-3-70b"
+  # - id: "openai:chat-completions"
   #   offering_id: "vllm-h100-batch4"
   #   interaction_mode: "http-stream@v0"
   #   work_unit:
@@ -198,10 +198,12 @@ capabilities:
   #         url: "http://10.0.0.5:8000/v1/models"
   #         expect_model: "llama-3-70b"
   #   extra:
+  #     openai:
+  #       model: "llama-3-70b"
   #     region: "us-west-2"
   #     gpu_class: "h100"
   #
-  # - id: "openai:chat-completions:gpt-4o"
+  # - id: "openai:chat-completions"
   #   offering_id: "openai-resale"
   #   interaction_mode: "http-stream@v0"
   #   work_unit:
@@ -217,6 +219,8 @@ capabilities:
   #       method: "bearer"
   #       secret_ref: "env://OPENAI_API_KEY"           # vault:// in plan 0005
   #   extra:
+  #     openai:
+  #       model: "gpt-4o"
   #     backend_provider: "openai"
   #     region: "global"
   #

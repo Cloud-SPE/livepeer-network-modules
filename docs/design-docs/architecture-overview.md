@@ -189,8 +189,8 @@ under an existing mode = zero code.** New mode = one adapter on each side.
 flowchart LR
     subgraph caps["Capabilities (declared in host-config.yaml)"]
         direction TB
-        C1["openai:chat-completions:llama-3-70b"]
-        C2["openai:embeddings:small"]
+        C1["openai:chat-completions"]
+        C2["openai:embeddings"]
         C3["openai:audio-transcriptions"]
         C4["openai:realtime"]
         C5["video:live.rtmp"]
@@ -254,7 +254,7 @@ identity:
   orch_eth_address: 0xabc...
 
 capabilities:
-  - id: "openai:chat-completions:llama-3-70b"
+  - id: "openai:chat-completions"
     interaction_mode: "http-stream"
     work_unit:
       name: "tokens"
@@ -274,6 +274,11 @@ capabilities:
       transport: "http"
       url: "http://10.0.0.5:8000/v1/chat/completions"
       auth: "none"
+    extra:
+      openai:
+        model: "llama-3-70b"
+      region: "us-west-2"
+      gpu_class: "h100"
 ```
 
 The `extractor` library is a small fixed set of recipes (`openai-usage`,
@@ -338,7 +343,7 @@ for the manifest-side write-up.
 ### Resolver fetch flow
 
 What happens when the gateway needs to know "who serves
-`openai:chat-completions:llama-3-70b` right now?" The resolver verifies the
+`openai:chat-completions` with `extra.openai.model=llama-3-70b` right now?" The resolver verifies the
 signature on every fetch — the coordinator host is not trusted.
 
 ```mermaid

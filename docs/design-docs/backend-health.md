@@ -98,7 +98,7 @@ backends right now?
 {
   "capabilities": [
     {
-      "id": "openai:chat-completions:llama-3-70b",
+      "id": "openai:chat-completions",
       "offering_id": "tier-a",
       "status": "ready",
       "last_probe_ms": 1450,
@@ -390,7 +390,7 @@ health question.
 ### OpenAI gateway example
 
 For `POST /v1/chat/completions` targeting
-`openai:chat-completions:llama-3-70b`:
+`openai:chat-completions` with `extra.openai.model=llama-3-70b`:
 
 1. broker advertises the tuple in `/registry/offerings`
 2. coordinator includes it in the next candidate manifest

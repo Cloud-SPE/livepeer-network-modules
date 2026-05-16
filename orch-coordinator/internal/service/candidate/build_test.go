@@ -29,12 +29,15 @@ func sampleSnap() scrape.Snapshot {
 				BaseURL:    "http://b1:8080",
 				WorkerURL:  "https://b1.example/",
 				Offering: types.BrokerOffering{
-					CapabilityID:    "openai:chat-completions:llama-3-70b",
+					CapabilityID:    "openai:chat-completions",
 					OfferingID:      "vllm-h100-batch4",
 					InteractionMode: "http-stream@v1",
 					WorkUnit:        types.WorkUnit{Name: "tokens"},
 					PricePerUnitWei: "1500000",
-					Extra:           map[string]any{"region": "us-west-2"},
+					Extra: map[string]any{
+						"region": "us-west-2",
+						"openai": map[string]any{"model": "llama-3-70b"},
+					},
 				},
 				ScrapedAt: now,
 			},
@@ -91,12 +94,15 @@ func TestAggregate_PriceConflictHardFails(t *testing.T) {
 		BrokerName: "b2",
 		WorkerURL:  "https://b2.example/",
 		Offering: types.BrokerOffering{
-			CapabilityID:    "openai:chat-completions:llama-3-70b",
+			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
 			InteractionMode: "http-stream@v1",
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "1500001", // different price
-			Extra:           map[string]any{"region": "us-west-2"},
+			Extra: map[string]any{
+				"region": "us-west-2",
+				"openai": map[string]any{"model": "llama-3-70b"},
+			},
 		},
 	})
 	_, err := Build(snap, BuildOptions{
@@ -115,12 +121,15 @@ func TestAggregate_HAPairDedupsToLexMin(t *testing.T) {
 		BrokerName: "b2",
 		WorkerURL:  "https://aaa.example/",
 		Offering: types.BrokerOffering{
-			CapabilityID:    "openai:chat-completions:llama-3-70b",
+			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
 			InteractionMode: "http-stream@v1",
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "1500000", // same price
-			Extra:           map[string]any{"region": "us-west-2"},
+			Extra: map[string]any{
+				"region": "us-west-2",
+				"openai": map[string]any{"model": "llama-3-70b"},
+			},
 		},
 	})
 	c, err := Build(snap, BuildOptions{
@@ -147,7 +156,7 @@ func TestAggregate_DistinctExtraEmitsBoth(t *testing.T) {
 		BrokerName: "b2",
 		WorkerURL:  "https://b2.example/",
 		Offering: types.BrokerOffering{
-			CapabilityID:    "openai:chat-completions:llama-3-70b",
+			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
 			InteractionMode: "http-stream@v1",
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
@@ -167,7 +176,7 @@ func TestAggregate_DistinctExtraEmitsBoth(t *testing.T) {
 	}
 }
 
-func TestBuild_NormalizesOpenAICapabilityIDAndInjectsModelExtra(t *testing.T) {
+func TestBuild_PreservesOpenAICapabilityIDAndModelExtra(t *testing.T) {
 	snap := sampleSnap()
 	c, err := Build(snap, BuildOptions{
 		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

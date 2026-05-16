@@ -2,7 +2,7 @@
 #   http://10.0.0.17:8080
 #
 # This matches the broker advertising:
-#   capability_id: openai:chat-completions:qwen3.6-27b
+#   capability_id: openai:chat-completions
 #   offering_id:   vllm-qwen3.6-27b-default
 #   orch address:  0xd00354656922168815fcd1e51cbddb9e359e3c7f
 #

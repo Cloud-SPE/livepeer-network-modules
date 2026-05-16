@@ -88,6 +88,10 @@ refresh status and the last discovery result are exposed on
 `GET /registry/health` under each capability's `metadata` object for every
 family that participates in discovery.
 
+Use `--metadata-refresh-interval=<duration>` to tune that cadence. The default
+is `5m`. Set a negative duration to disable periodic refresh after the initial
+startup discovery pass.
+
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).
 

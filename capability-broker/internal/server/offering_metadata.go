@@ -22,6 +22,7 @@ const (
 	audioTranscriptionTask         = "transcription"
 	videoTranscodePresetsPath      = "/v1/video/transcode/presets"
 	videoABRPresetsPath            = "/v1/video/transcode/abr/presets"
+	vtuberOptionsPath              = "/options"
 )
 
 type kokoroOptionsResponse struct {
@@ -75,6 +76,15 @@ type videoABRRendition struct {
 	} `json:"video,omitempty"`
 }
 
+type vtuberOptionsResponse struct {
+	Capabilities  []string       `json:"capabilities"`
+	Renderer      string         `json:"renderer"`
+	Task          string         `json:"task"`
+	ControlSchema string         `json:"control_schema"`
+	MediaSchema   string         `json:"media_schema"`
+	Features      map[string]any `json:"features"`
+}
+
 func hydrateRunnerMetadata(ctx context.Context, cfg *config.Config) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	hydrateRunnerMetadataWithClient(ctx, client, cfg)
@@ -100,6 +110,11 @@ func hydrateRunnerMetadataWithClient(ctx context.Context, client *http.Client, c
 		}
 		if cap.ID == "video:transcode.abr" && cap.Backend.Transport == "http" {
 			if err := hydrateVideoABRMetadata(ctx, client, cap); err != nil {
+				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
+			}
+		}
+		if cap.ID == "livepeer:vtuber-session" && cap.Backend.Transport == "http" {
+			if err := hydrateVTuberMetadata(ctx, client, cap); err != nil {
 				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
 			}
 		}
@@ -432,6 +447,47 @@ func hydrateVideoABRMetadata(ctx context.Context, client *http.Client, cap *conf
 	return nil
 }
 
+func hydrateVTuberMetadata(ctx context.Context, client *http.Client, cap *config.Capability) error {
+	optionsURL, err := deriveOptionsURL(cap.Backend.URL, vtuberOptionsPath)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, optionsURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return &unexpectedStatusError{statusCode: resp.StatusCode}
+	}
+
+	var payload vtuberOptionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return err
+	}
+
+	if cap.Extra == nil {
+		cap.Extra = make(map[string]any)
+	}
+	vtuberExtra := ensureNestedMap(cap.Extra, "vtuber")
+	fillExtraString(vtuberExtra, "task", payload.Task)
+	fillExtraString(vtuberExtra, "control_schema", payload.ControlSchema)
+	fillExtraString(vtuberExtra, "media_schema", payload.MediaSchema)
+	if _, exists := vtuberExtra["features"]; !exists {
+		if features := boolMap(payload.Features); len(features) > 0 {
+			vtuberExtra["features"] = features
+		}
+	}
+	return nil
+}
+
 func fetchOpenAIModelRecord(ctx context.Context, client *http.Client, modelsURL, modelName string) (*openAIModelRecord, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
 	if err != nil {
@@ -541,6 +597,24 @@ func fillVideoHardwareVendor(videoExtra map[string]any, gpuVendor string) {
 	}
 	hardware := ensureNestedMap(videoExtra, "hardware")
 	fillExtraString(hardware, "gpu_vendor", gpuVendor)
+}
+
+func boolMap(raw map[string]any) map[string]bool {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]bool)
+	for key, value := range raw {
+		boolean, ok := value.(bool)
+		if !ok {
+			continue
+		}
+		out[key] = boolean
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func namedPresets(presets []videoTranscodePreset) []string {

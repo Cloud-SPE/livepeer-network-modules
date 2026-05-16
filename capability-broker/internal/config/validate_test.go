@@ -432,3 +432,90 @@ func TestValidateAcceptsVideoExtraShape(t *testing.T) {
 		t.Fatalf("Validate() error = %v", err)
 	}
 }
+
+func TestValidateRejectsVTuberCapabilityWithoutVTuberExtra(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "livepeer:vtuber-session",
+			OfferingID:      "default",
+			InteractionMode: "session-control-plus-media@v0",
+			WorkUnit: WorkUnit{
+				Name:      "seconds",
+				Extractor: map[string]any{"type": "seconds-elapsed"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/api/sessions/start",
+			},
+			Extra: map[string]any{
+				"provider": "vtuber-runner",
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "extra.vtuber is required") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsVTuberCapabilityWithWrongTask(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "livepeer:vtuber-session",
+			OfferingID:      "default",
+			InteractionMode: "session-control-plus-media@v0",
+			WorkUnit: WorkUnit{
+				Name:      "seconds",
+				Extractor: map[string]any{"type": "seconds-elapsed"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/api/sessions/start",
+			},
+			Extra: map[string]any{
+				"provider": "vtuber-runner",
+				"vtuber":   map[string]any{"task": "avatar"},
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "extra.vtuber.task") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateAcceptsVTuberExtraShape(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "livepeer:vtuber-session",
+			OfferingID:      "default",
+			InteractionMode: "session-control-plus-media@v0",
+			WorkUnit: WorkUnit{
+				Name:      "seconds",
+				Extractor: map[string]any{"type": "seconds-elapsed"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8080/api/sessions/start",
+			},
+			Extra: map[string]any{
+				"provider": "vtuber-runner",
+				"vtuber": map[string]any{
+					"task": "session",
+				},
+			},
+		}},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}

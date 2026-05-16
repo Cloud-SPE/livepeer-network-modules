@@ -68,6 +68,10 @@ var videoTaskByCapabilityID = map[string]string{
 	"video:transcode.abr": "abr-transcode",
 }
 
+var vtuberTaskByCapabilityID = map[string]string{
+	"livepeer:vtuber-session": "session",
+}
+
 func encoderProfileList() []string {
 	out := make([]string, 0, len(validEncoderProfiles))
 	for k := range validEncoderProfiles {
@@ -350,6 +354,26 @@ func validateCapabilityExtra(ctx string, cap *Capability) error {
 		}
 		if task != requiredTask {
 			return fmt.Errorf("%s: extra.video.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
+		}
+	}
+	if requiredTask, ok := vtuberTaskByCapabilityID[cap.ID]; ok {
+		if provider == "" {
+			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
+		}
+		vtuberRaw, ok := cap.Extra["vtuber"]
+		if !ok {
+			return fmt.Errorf("%s: extra.vtuber is required for %s", ctx, cap.ID)
+		}
+		vtuberExtra, ok := vtuberRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.vtuber must be a map for %s", ctx, cap.ID)
+		}
+		task := strings.TrimSpace(asString(vtuberExtra["task"]))
+		if task == "" {
+			return fmt.Errorf("%s: extra.vtuber.task is required for %s", ctx, cap.ID)
+		}
+		if task != requiredTask {
+			return fmt.Errorf("%s: extra.vtuber.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
 		}
 	}
 

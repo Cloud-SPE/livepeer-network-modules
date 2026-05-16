@@ -269,6 +269,68 @@ func TestHydrateRunnerMetadata_PopulatesVideoABRMetadata(t *testing.T) {
 	}
 }
 
+func TestHydrateRunnerMetadata_PopulatesVTuberMetadata(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != vtuberOptionsPath {
+			t.Fatalf("path = %s; want %s", r.URL.Path, vtuberOptionsPath)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"capabilities":   []string{"livepeer:vtuber-session"},
+			"renderer":       "chromium",
+			"task":           "session",
+			"control_schema": "vtuber-control/v1",
+			"media_schema":   "trickle-segment-stream/v1",
+			"features": map[string]any{
+				"renderer_control": true,
+				"status_polling":   true,
+				"trickle_publish":  true,
+				"youtube_egress":   true,
+			},
+		})
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "livepeer:vtuber-session",
+				OfferingID:      "vtuber-default",
+				InteractionMode: "session-control-plus-media@v0",
+				Backend: config.Backend{
+					Transport: "http",
+					URL:       ts.URL + "/api/sessions/start",
+				},
+				Extra: map[string]any{
+					"provider": "vtuber-runner",
+					"vtuber":   map[string]any{"task": "session"},
+				},
+			},
+		},
+	}
+
+	hydrateRunnerMetadataWithClient(context.Background(), ts.Client(), cfg)
+
+	vtuber, ok := cfg.Capabilities[0].Extra["vtuber"].(map[string]any)
+	if !ok {
+		t.Fatalf("extra.vtuber missing or wrong type: %#v", cfg.Capabilities[0].Extra["vtuber"])
+	}
+	if got := vtuber["control_schema"]; got != "vtuber-control/v1" {
+		t.Fatalf("vtuber.control_schema = %#v; want vtuber-control/v1", got)
+	}
+	if got := vtuber["media_schema"]; got != "trickle-segment-stream/v1" {
+		t.Fatalf("vtuber.media_schema = %#v; want trickle-segment-stream/v1", got)
+	}
+	features, ok := vtuber["features"].(map[string]bool)
+	if !ok {
+		t.Fatalf("vtuber.features missing or wrong type: %#v", vtuber["features"])
+	}
+	if !features["renderer_control"] || !features["status_polling"] || !features["trickle_publish"] || !features["youtube_egress"] {
+		t.Fatalf("vtuber.features = %#v", features)
+	}
+}
+
 func TestHydrateRunnerMetadata_PopulatesOpenAIMetadataForVLLM(t *testing.T) {
 	t.Parallel()
 

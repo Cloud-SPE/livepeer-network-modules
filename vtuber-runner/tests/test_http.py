@@ -30,6 +30,13 @@ def test_options_lists_vtuber_session_capability() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert "livepeer:vtuber-session" in body["capabilities"]
+    assert body["task"] == "session"
+    assert body["control_schema"] == "vtuber-control/v1"
+    assert body["media_schema"] == "trickle-segment-stream/v1"
+    assert body["features"]["renderer_control"] is True
+    assert body["features"]["status_polling"] is True
+    assert body["features"]["trickle_publish"] is True
+    assert body["features"]["youtube_egress"] is True
 
 
 def test_session_status_404_for_unknown_id() -> None:

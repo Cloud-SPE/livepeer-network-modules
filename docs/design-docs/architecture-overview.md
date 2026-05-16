@@ -462,19 +462,17 @@ extra:
   provider: "vtuber-runner"
   vtuber:
     task: "session"
-    avatars: ["nova", "luna", "iris"]
     control_schema: "vtuber-control/v1"
-    media_schema: "webrtc-avatar/v1"
+    media_schema: "trickle-segment-stream/v1"
     features:
-      voice_input: true
-      text_input: true
-      realtime_animation: true
-      reconnect: true
+      renderer_control: true
+      status_polling: true
+      trickle_publish: true
+      youtube_egress: true
 ```
 
 Stable:
 
-- avatar catalog
 - control/media schema identifiers
 - supported session features
 - runner family

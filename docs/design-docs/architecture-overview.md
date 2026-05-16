@@ -332,6 +332,11 @@ Rules:
 - Prometheus also exposes
   `livepeer_metadata_refresh_total{family,provider,result}` so discovery drift
   and probe failures are visible without polling per-offering health.
+- It also exposes refresh latency and freshness signals via
+  `livepeer_metadata_refresh_duration_seconds{family,provider,result}`,
+  `livepeer_metadata_refresh_last_attempt_timestamp_seconds{family,capability,offering,provider}`,
+  and
+  `livepeer_metadata_refresh_last_success_timestamp_seconds{family,capability,offering,provider}`.
 - `last_result` is family-aware rather than a single generic status. For
   example, OpenAI-compatible offerings may report `model_not_found` or
   `models_probe_failed`, while runner families may report

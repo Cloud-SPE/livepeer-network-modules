@@ -204,6 +204,8 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 	for i := range cfg.Capabilities {
 		cap := &cfg.Capabilities[i]
 		attemptedAt := time.Now().UTC()
+		startedAt := time.Now()
+		family := metadataFamily(cap.ID)
 		discovered, applicable, provider, result, err := discoverCapabilityMetadata(ctx, client, cap)
 		if !applicable {
 			continue
@@ -221,7 +223,16 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 				status.LastResult = "error"
 			}
 			catalog.SetStatus(cap.ID, cap.OfferingID, status)
-			observability.RecordMetadataRefresh(metadataFamily(cap.ID), provider, status.LastResult)
+			observability.RecordMetadataRefresh(
+				family,
+				cap.ID,
+				cap.OfferingID,
+				provider,
+				status.LastResult,
+				time.Since(startedAt).Seconds(),
+				attemptedAt,
+				time.Time{},
+			)
 			log.Printf("registry metadata refresh skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
 			continue
 		}
@@ -237,7 +248,16 @@ func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *confi
 		}
 		catalog.Set(cap.ID, cap.OfferingID, discovered)
 		catalog.SetStatus(cap.ID, cap.OfferingID, status)
-		observability.RecordMetadataRefresh(metadataFamily(cap.ID), provider, status.LastResult)
+		observability.RecordMetadataRefresh(
+			family,
+			cap.ID,
+			cap.OfferingID,
+			provider,
+			status.LastResult,
+			time.Since(startedAt).Seconds(),
+			attemptedAt,
+			status.LastSuccessAt,
+		)
 	}
 }
 

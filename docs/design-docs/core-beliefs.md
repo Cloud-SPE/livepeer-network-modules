@@ -99,9 +99,9 @@ definitions, header conventions, prior implementations), the material is **copie
 on explicit user instruction** — never automatically, never wholesale. Each copy is a
 deliberate decision recorded in the commit message that introduces it.
 
-The first time this repo cuts a release, it becomes **v1.1.0**. Until then, all SHAs
-are unstable and re-pin-able. Components inside the monorepo do not have independent
-versions until they're extracted to standalone repos.
+This repo stays on a coordinated pre-1.0 release line until extraction begins.
+Components inside the monorepo do not have independent versions until they're
+extracted to standalone repos.
 
 ## 15. Docker-first build and run
 

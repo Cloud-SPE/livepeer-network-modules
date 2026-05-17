@@ -101,14 +101,16 @@ CPU performance per runner (rough, 32-core EPYC reference):
 | zerank-2 | ~50ms per doc on RTX 4090 | ~3s per doc | feasible for small batches |
 | transcode-runner / abr-runner | NVENC realtime + multi-stream | x264 software 1-3x realtime | feasible single-stream |
 
-The Go-based `openai-runner/` (chat + embeddings proxy) is pure-Go and
-has no GPU dependency — multi-arch (amd64 + arm64) per OQ4.
+The Go-based `openai-chat-runner/` and `openai-embeddings-runner/` proxies
+are pure-Go and have no GPU dependency — both ship multi-arch (amd64 +
+arm64) per OQ4.
 
 ## Multi-arch policy (per OQ4)
 
 | Component | Platforms |
 |---|---|
 | `openai-runners/openai-chat-runner` (Go proxy) | linux/amd64 + linux/arm64 |
+| `openai-runners/openai-embeddings-runner` (Go proxy) | linux/amd64 + linux/arm64 |
 | All other runners | linux/amd64 only |
 
 NVIDIA arm64 GPU support exists (Jetson, GH200) but isn't the default

@@ -106,5 +106,5 @@ at the runner and use the `response-trailer` extractor:
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t tztcloud/openai-chat-runner:v1.1.0 .
+  -t tztcloud/openai-chat-runner:v1.2.0 .
 ```

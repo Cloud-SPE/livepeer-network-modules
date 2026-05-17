@@ -89,7 +89,7 @@ This is already relatively consistent.
 Notes:
 
 - CUDA is already mostly aligned on `12.9.1`.
-- First consolidation pass removed several hardcoded `v1.1.0` base-image
+- First consolidation pass removed several hardcoded stale base-image
   references from GPU runner Dockerfiles.
 - `rerank-runner` now derives from `python-gpu-runner-base` instead of
   duplicating the Python/CUDA bootstrap directly.
@@ -111,10 +111,10 @@ This made partial upgrades easy and consistent upgrades hard.
 
 ### 2. GPU Python runner base inheritance drifted
 
-Several Dockerfiles referenced:
+Several Dockerfiles previously referenced:
 
-- `tztcloud/python-gpu-runner-base:v1.1.0`
-- `tztcloud/python-gpu-media-runner-base:v1.1.0`
+- `tztcloud/python-gpu-runner-base:<stale-tag>`
+- `tztcloud/python-gpu-media-runner-base:<stale-tag>`
 
 directly in their `ARG BASE_IMAGE` defaults. That created silent drift from the
 canonical image tag and made local direct builds inconsistent with the repo’s
@@ -191,13 +191,10 @@ The first consolidation pass parameterized their shared version literals, but
 
 ### High-priority next pass
 
-1. Normalize all direct image-tag defaults still pinned to `v1.1.0`
-   across compose files, onboarding scenarios, helper scripts, and operator
-   docs.
-2. Audit all Go Dockerfiles and converge on a single builder pattern:
+1. Audit all Go Dockerfiles and converge on a single builder pattern:
    - one monorepo-safe dependency-copy pattern for local `replace` modules
    - one runtime family choice per service class
-3. Decide whether `distroless/static:nonroot` holdouts should move to
+2. Decide whether `distroless/static:nonroot` holdouts should move to
    `distroless/static-debian12:nonroot` for consistency.
 
 ### Medium-priority next pass
@@ -262,8 +259,6 @@ Call the current state:
 
 The next meaningful implementation step is:
 
-1. eliminate remaining `v1.1.0` deployment-surface defaults repo-wide
-2. normalize the remaining Go Dockerfile families
-3. then tackle the video-runner FFmpeg/CUDA deduplication as its own focused
+1. normalize the remaining Go Dockerfile families
+2. then tackle the video-runner FFmpeg/CUDA deduplication as its own focused
    refactor
-

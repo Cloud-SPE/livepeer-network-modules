@@ -6,7 +6,8 @@ OpenAI-shaped HTTP endpoints to the capability broker. Five sub-components:
 - `python-runner-base/` — shared CPU Python base image.
 - `python-gpu-runner-base/` — shared CUDA Python base image for GPU runners.
 - `python-gpu-media-runner-base/` — shared CUDA media base for audio-style GPU runners.
-- `openai-runner/` — Go proxy for chat + embeddings (Ollama / vLLM upstream).
+- `openai-chat-runner/` — Go proxy for chat completions (Ollama / vLLM upstream).
+- `openai-embeddings-runner/` — Go proxy for text embeddings (Ollama / vLLM upstream).
 - `openai-audio-runner/` — Whisper STT (Python).
 - `openai-tts-runner/` — Kokoro TTS (Python).
 - `openai-image-generation-runner/` — diffusers image generation (Python).
@@ -33,12 +34,14 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 - **Metrics are opt-in.** `METRICS_ENABLED=true` exposes `/metrics`
   (Prometheus exposition format) per OQ5; default-off, zero overhead.
 - **Multi-arch policy.** ML runners ship amd64-only; the Go-based
-  `openai-runner/` ships multi-arch (amd64 + arm64) per OQ4.
+  `openai-chat-runner/` and `openai-embeddings-runner/` ship multi-arch
+  (amd64 + arm64) per OQ4.
 - **Python runners share base images.** CPU-only tooling inherits from
   `python-runner-base/`; generic CUDA-backed workload runners inherit
   from `python-gpu-runner-base/`; audio-style CUDA runners
   (`openai-audio-runner`, `openai-tts-runner`) inherit from
-  `python-gpu-media-runner-base/`. The Go-based `openai-runner/` is a
+  `python-gpu-media-runner-base/`. The Go-based `openai-chat-runner/` and
+  `openai-embeddings-runner/` are
   separate Go runtime; it does not use the Python bases.
 
 ## Where to look
@@ -64,7 +67,7 @@ Inherited from the repo root (agent-first harness pattern). Plus:
   `openai-chat-completions`, `openai-text-embeddings`,
   `openai-audio-transcriptions`, `openai-audio-translations`,
   `openai-audio-speech`, `image-generation`. One value per image.
-- **Default runner tag is v1.1.0.** Keep shared bases and downstream
+- **Default runner tag is v1.2.0.** Keep shared bases and downstream
   runner builds on the same tag unless the caller overrides `TAG=...`.
 - **No per-runner LICENSE files.** Repo-root MIT applies.
 

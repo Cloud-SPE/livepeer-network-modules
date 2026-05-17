@@ -1,5 +1,5 @@
 {
-  "name": "livepeer-network-rewrite",
+  "name": "livepeer-network-modules",
   "version": "0.0.0",
   "private": true,
   "description": "Workspace root for the Livepeer network rewrite monorepo",

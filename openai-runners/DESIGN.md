@@ -63,7 +63,8 @@ The CUDA-backed runner Dockerfiles split into two groups:
 - `openai-image-generation-runner` `FROM python-gpu-runner-base:<tag>`
   directly because it does not need the media stack.
 
-The Go-based `openai-runner/` proxy is independent — it uses
+The Go-based `openai-chat-runner/` and `openai-embeddings-runner/` proxies
+are independent — they use
 `golang:1.22-alpine` for build and `alpine:3.20` for runtime. No shared
 base across Go runners.
 

@@ -21,7 +21,7 @@ explains when you need a PR vs. when you can land directly.
 ## What a new-mode PR must include
 
 1. The mode spec under `modes/<new>.md` with frontmatter declaring its version (start
-   at `v0.1.0`; bump to `v1.1.0` only when the mode is judged stable).
+   at `v0.1.0`; bump to `v1.2.0` only when the mode is judged stable).
 2. At least one demonstrable use case in the PR description.
 3. Conformance fixtures under `conformance/fixtures/<new>/` covering the happy path
    plus at least one failure case.
@@ -65,7 +65,7 @@ who pin to a pre-1.0 version do so at their own risk.
 
 ## Governance
 
-The spec subfolder lives in the `livepeer-network-rewrite` monorepo until it stabilizes
+The spec subfolder lives in the `livepeer-network-modules` monorepo until it stabilizes
 and is judged ready for extraction to a standalone repo. The extraction is itself a
 PR-tracked decision; at that point this `PROCESS.md` migrates with the spec and adds
 release-tagging procedure.

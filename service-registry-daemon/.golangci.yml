@@ -71,13 +71,13 @@ linters:
           files:
             - "**/internal/types/**/*.go"
           deny:
-            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service"
               desc: "internal/types is the base layer; cannot depend on service"
-            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime"
               desc: "internal/types is the base layer; cannot depend on runtime"
-            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers"
               desc: "internal/types is the base layer; cannot depend on providers"
-            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/repo"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo"
               desc: "internal/types is the base layer; cannot depend on repo"
         service-no-direct-io:
           list-mode: lax
@@ -99,11 +99,11 @@ linters:
             - "**/internal/providers/**/*.go"
             - "!**/internal/providers/**/*_test.go"
           deny:
-            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service"
               desc: "providers are below services; cannot import back up"
-            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime"
               desc: "providers are below runtime; cannot import back up"
-            - pkg: "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/repo"
+            - pkg: "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo"
               desc: "providers are below repo; cannot import back up"
 
   exclusions:

@@ -58,7 +58,7 @@ docker run --rm \
   -e POOL_CONTROLLER_ADMIN_TOKEN="${POOL_CONTROLLER_ADMIN_TOKEN}" \
   -v "$PWD/pool-controller/examples/pool-controller-config.compose.yaml:/etc/livepeer/pool-controller.yaml:ro" \
   -v "$PWD/infra/scenarios/pool-orchestrator/run:/out" \
-  tztcloud/livepeer-pool-controller:v1.1.0 \
+  tztcloud/livepeer-pool-controller:v1.2.0 \
   generate-broker-config \
   --config /etc/livepeer/pool-controller.yaml \
   > infra/scenarios/pool-orchestrator/run/generated-broker-host-config.yaml

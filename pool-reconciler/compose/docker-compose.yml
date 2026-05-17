@@ -8,7 +8,7 @@
 
 services:
   pool-reconciler:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-reconciler:${TAG:-v1.1.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-reconciler:${TAG:-v1.2.0}
     command:
       - watch-rounds
       - --config=/etc/livepeer/pool-reconciler.yaml

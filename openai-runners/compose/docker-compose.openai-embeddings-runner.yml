@@ -14,7 +14,7 @@
 
 services:
   openai_embeddings_runner:
-    image: ${REGISTRY:-tztcloud}/openai-embeddings-runner:${TAG:-v1.1.0}
+    image: ${REGISTRY:-tztcloud}/openai-embeddings-runner:${TAG:-v1.2.0}
     container_name: openai_embeddings_runner
     hostname: openai_embeddings_runner
     environment:

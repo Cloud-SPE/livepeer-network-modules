@@ -8,14 +8,15 @@ broker-dispatched container.
 
 ## What it is
 
-Five runner images plus shared Python bases:
+Six runner images plus shared Python bases:
 
 | Sub-component | Language | Capability |
 |---|---|---|
 | `python-runner-base/` | Dockerfile-only | shared CPU Python base |
 | `python-gpu-runner-base/` | Dockerfile-only | shared CUDA Python base for GPU runners |
 | `python-gpu-media-runner-base/` | Dockerfile-only | shared CUDA Python media base for audio-style GPU runners |
-| `openai-runner/` | Go | `openai-chat-completions` + `openai-text-embeddings` (proxy in front of Ollama / vLLM) |
+| `openai-chat-runner/` | Go | `openai-chat-completions` (proxy in front of Ollama / vLLM) |
+| `openai-embeddings-runner/` | Go | `openai-text-embeddings` (proxy in front of Ollama / vLLM) |
 | `openai-audio-runner/` | Python (FastAPI) | `openai-audio-transcriptions` + `openai-audio-translations` (Whisper) |
 | `openai-tts-runner/` | Python (FastAPI) | `openai-audio-speech` (Kokoro TTS) |
 | `openai-image-generation-runner/` | Python (FastAPI) | `image-generation` (diffusers) |

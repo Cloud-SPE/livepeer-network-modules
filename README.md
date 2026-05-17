@@ -1,4 +1,4 @@
-# livepeer-network-rewrite
+# livepeer-network-modules
 
 A workload-agnostic rearchitecture of the Cloud-SPE Livepeer Network supply side.
 

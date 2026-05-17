@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This is `livepeer-network-rewrite` — a monorepo for the workload-agnostic
+This is `livepeer-network-modules` — the monorepo for the workload-agnostic
 rearchitecture of the Cloud-SPE Livepeer Network supply side.
 
 ## Operating principles

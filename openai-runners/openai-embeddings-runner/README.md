@@ -74,5 +74,5 @@ broker's host-config `extra:` block (operator entries always win).
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t tztcloud/openai-embeddings-runner:v1.1.0 .
+  -t tztcloud/openai-embeddings-runner:v1.2.0 .
 ```

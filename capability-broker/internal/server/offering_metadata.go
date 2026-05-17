@@ -24,6 +24,8 @@ const (
 	videoTranscodePresetsPath      = "/v1/video/transcode/presets"
 	videoABRPresetsPath            = "/v1/video/transcode/abr/presets"
 	vtuberOptionsPath              = "/options"
+	openAIChatOptionsPath          = "/openai-chat-completions/options"
+	openAIChatRunnerProvider       = "openai-chat-runner"
 )
 
 type kokoroOptionsResponse struct {
@@ -86,6 +88,21 @@ type vtuberOptionsResponse struct {
 	Features      map[string]any `json:"features"`
 }
 
+// openAIChatOptionsResponse mirrors the payload served by
+// openai-chat-runner's /openai-chat-completions/options endpoint. Maps
+// 1:1 to the fields the broker merges into the capability's `extra`
+// block (operator-set values always win — see discoveredOpenAIChatExtra).
+type openAIChatOptionsResponse struct {
+	Task            string         `json:"task"`
+	Models          []string       `json:"models"`
+	ServedModelName string         `json:"served_model_name"`
+	BackendModel    string         `json:"backend_model"`
+	ContextLength   int            `json:"context_length"`
+	Parsers         map[string]any `json:"parsers"`
+	Quantization    string         `json:"quantization"`
+	Features        map[string]any `json:"features"`
+}
+
 func hydrateRunnerMetadata(ctx context.Context, cfg *config.Config) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	hydrateRunnerMetadataWithClient(ctx, client, cfg)
@@ -94,6 +111,12 @@ func hydrateRunnerMetadata(ctx context.Context, cfg *config.Config) {
 func hydrateRunnerMetadataWithClient(ctx context.Context, client *http.Client, cfg *config.Config) {
 	for i := range cfg.Capabilities {
 		cap := &cfg.Capabilities[i]
+		if cap.ID == "openai:chat-completions" && cap.Backend.Transport == "http" &&
+			strings.TrimSpace(asString(cap.Extra["provider"])) == openAIChatRunnerProvider {
+			if err := hydrateOpenAIChat(ctx, client, cap); err != nil {
+				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
+			}
+		}
 		if cap.ID == "openai:audio-speech" && cap.Backend.Transport == "http" {
 			if err := hydrateKokoroVoices(ctx, client, cap); err != nil {
 				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
@@ -337,6 +360,9 @@ func discoverOpenAIBackendMetadata(ctx context.Context, client *http.Client, cap
 		return nil, false, "", "", nil
 	}
 	provider := strings.TrimSpace(asString(cap.Extra["provider"]))
+	if provider == openAIChatRunnerProvider && cap.ID == "openai:chat-completions" {
+		return discoverOpenAIChatRunnerMetadata(ctx, client, cap, provider)
+	}
 	if provider != "vllm" && provider != "ollama" {
 		return nil, false, provider, "", nil
 	}
@@ -363,6 +389,24 @@ func discoverOpenAIBackendMetadata(ctx context.Context, client *http.Client, cap
 		fillDiscoveredString(cap.Extra, discovered, "backend_model", backendModel)
 	}
 	fillOpenAIFeatures(cap, discovered)
+	return discovered, true, provider, "enriched", nil
+}
+
+// discoverOpenAIChatRunnerMetadata is the periodic-refresh path for
+// chat-completions capabilities served by openai-chat-runner. Instead
+// of probing vLLM directly, it reads the runner's /options endpoint
+// (which itself talks to vLLM + reads operator env) and lets the
+// broker merge richer extras: parsers, features, context length,
+// quantization. Operator-set host-config values still win.
+func discoverOpenAIChatRunnerMetadata(ctx context.Context, client *http.Client, cap *config.Capability, provider string) (map[string]any, bool, string, string, error) {
+	payload, err := fetchOpenAIChatOptions(ctx, client, cap.Backend.URL)
+	if err != nil {
+		return nil, true, provider, "chat_options_probe_failed", err
+	}
+	discovered := discoveredOpenAIChatExtra(cap.Extra, payload)
+	if len(discovered) == 0 {
+		return nil, true, provider, "chat_options_empty", nil
+	}
 	return discovered, true, provider, "enriched", nil
 }
 
@@ -512,6 +556,30 @@ func hydrateVTuberMetadata(ctx context.Context, client *http.Client, cap *config
 	return nil
 }
 
+func fetchOpenAIChatOptions(ctx context.Context, client *http.Client, backendURL string) (openAIChatOptionsResponse, error) {
+	optionsURL, err := deriveOptionsURL(backendURL, openAIChatOptionsPath)
+	if err != nil {
+		return openAIChatOptionsResponse{}, err
+	}
+	var payload openAIChatOptionsResponse
+	if err := fetchJSON(ctx, client, optionsURL, &payload); err != nil {
+		return openAIChatOptionsResponse{}, err
+	}
+	return payload, nil
+}
+
+func hydrateOpenAIChat(ctx context.Context, client *http.Client, cap *config.Capability) error {
+	payload, err := fetchOpenAIChatOptions(ctx, client, cap.Backend.URL)
+	if err != nil {
+		return err
+	}
+	if cap.Extra == nil {
+		cap.Extra = make(map[string]any)
+	}
+	mergeDiscoveredExtra(cap.Extra, discoveredOpenAIChatExtra(cap.Extra, payload))
+	return nil
+}
+
 func fetchKokoroOptions(ctx context.Context, client *http.Client, backendURL string) (kokoroOptionsResponse, error) {
 	optionsURL, err := deriveOptionsURL(backendURL, kokoroOptionsPath)
 	if err != nil {
@@ -588,6 +656,48 @@ func fetchJSON(ctx context.Context, client *http.Client, requestURL string, dst 
 		return &unexpectedStatusError{statusCode: resp.StatusCode}
 	}
 	return json.NewDecoder(resp.Body).Decode(dst)
+}
+
+// discoveredOpenAIChatExtra translates an openai-chat-runner /options
+// payload into the map fragment merged into the capability's `extra`.
+// Operator-set values always win: if the host-config already declares
+// `served_model_name`, the discovered value is dropped. Mirrors the
+// merge semantics of discoveredAudioSpeechExtra et al.
+func discoveredOpenAIChatExtra(base map[string]any, payload openAIChatOptionsResponse) map[string]any {
+	discovered := map[string]any{}
+
+	fillDiscoveredString(base, discovered, "served_model_name", payload.ServedModelName)
+	fillDiscoveredString(base, discovered, "backend_model", payload.BackendModel)
+	fillDiscoveredString(base, discovered, "quantization", payload.Quantization)
+
+	if payload.ContextLength > 0 {
+		if _, present := base["context_length"]; !present {
+			discovered["context_length"] = payload.ContextLength
+		}
+	}
+
+	if reasoning := strings.TrimSpace(asString(payload.Parsers["reasoning"])); reasoning != "" {
+		fillDiscoveredString(base, discovered, "reasoning_parser", reasoning)
+	}
+	if toolCall := strings.TrimSpace(asString(payload.Parsers["tool_call"])); toolCall != "" {
+		fillDiscoveredString(base, discovered, "tool_call_parser", toolCall)
+	}
+
+	if len(payload.Features) > 0 {
+		existing, _ := base["features"].(map[string]any)
+		merged := map[string]any{}
+		for k, v := range payload.Features {
+			if _, present := existing[k]; present {
+				continue
+			}
+			merged[k] = v
+		}
+		if len(merged) > 0 {
+			discovered["features"] = merged
+		}
+	}
+
+	return discovered
 }
 
 func discoveredAudioSpeechExtra(base map[string]any, payload kokoroOptionsResponse) map[string]any {

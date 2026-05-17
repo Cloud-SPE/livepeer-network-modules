@@ -806,3 +806,213 @@ func TestHydrateRunnerMetadata_PopulatesOpenAIAudioFormats(t *testing.T) {
 		t.Fatalf("audio.formats.output = %#v", formats["output"])
 	}
 }
+
+func chatRunnerOptionsServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != openAIChatOptionsPath {
+			t.Fatalf("path = %s; want %s", r.URL.Path, openAIChatOptionsPath)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task":              "chat",
+			"models":            []string{"Qwen3.6-27B"},
+			"served_model_name": "Qwen3.6-27B",
+			"backend_model":     "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
+			"context_length":    196608,
+			"quantization":      "modelopt",
+			"parsers": map[string]any{
+				"reasoning": "qwen3",
+				"tool_call": "qwen3_coder",
+			},
+			"features": map[string]any{
+				"streaming":              true,
+				"include_usage_required": true,
+				"tool_calling":           true,
+				"reasoning":              true,
+			},
+		})
+	}))
+}
+
+func TestHydrateRunnerMetadata_PopulatesChatRunnerFields(t *testing.T) {
+	t.Parallel()
+	ts := chatRunnerOptionsServer(t)
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "openai:chat-completions",
+				OfferingID:      "vllm-qwen3.6-27b-stream",
+				InteractionMode: "http-stream@v0",
+				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "Qwen3.6-27B"},
+					"provider": "openai-chat-runner",
+				},
+			},
+		},
+	}
+
+	hydrateRunnerMetadataWithClient(context.Background(), ts.Client(), cfg)
+
+	extra := cfg.Capabilities[0].Extra
+	if got := extra["served_model_name"]; got != "Qwen3.6-27B" {
+		t.Fatalf("served_model_name = %#v", got)
+	}
+	if got := extra["backend_model"]; got != "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" {
+		t.Fatalf("backend_model = %#v", got)
+	}
+	if got := extra["context_length"]; got != 196608 {
+		t.Fatalf("context_length = %#v", got)
+	}
+	if got := extra["quantization"]; got != "modelopt" {
+		t.Fatalf("quantization = %#v", got)
+	}
+	if got := extra["reasoning_parser"]; got != "qwen3" {
+		t.Fatalf("reasoning_parser = %#v", got)
+	}
+	if got := extra["tool_call_parser"]; got != "qwen3_coder" {
+		t.Fatalf("tool_call_parser = %#v", got)
+	}
+	features, ok := extra["features"].(map[string]any)
+	if !ok {
+		t.Fatalf("features missing: %#v", extra["features"])
+	}
+	if features["streaming"] != true || features["include_usage_required"] != true {
+		t.Fatalf("features missing required flags: %#v", features)
+	}
+}
+
+func TestHydrateRunnerMetadata_OperatorValuesWin(t *testing.T) {
+	t.Parallel()
+	ts := chatRunnerOptionsServer(t)
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "openai:chat-completions",
+				OfferingID:      "operator-pinned",
+				InteractionMode: "http-stream@v0",
+				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
+				Extra: map[string]any{
+					"openai":            map[string]any{"model": "Qwen3.6-27B"},
+					"provider":          "openai-chat-runner",
+					"served_model_name": "operator-served",
+					"reasoning_parser":  "operator-reasoning",
+				},
+			},
+		},
+	}
+
+	hydrateRunnerMetadataWithClient(context.Background(), ts.Client(), cfg)
+
+	extra := cfg.Capabilities[0].Extra
+	if got := extra["served_model_name"]; got != "operator-served" {
+		t.Fatalf("operator served_model_name should win; got %#v", got)
+	}
+	if got := extra["reasoning_parser"]; got != "operator-reasoning" {
+		t.Fatalf("operator reasoning_parser should win; got %#v", got)
+	}
+	// Fields the operator didn't set should still be hydrated.
+	if got := extra["backend_model"]; got != "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP" {
+		t.Fatalf("backend_model should be hydrated; got %#v", got)
+	}
+	if got := extra["tool_call_parser"]; got != "qwen3_coder" {
+		t.Fatalf("tool_call_parser should be hydrated; got %#v", got)
+	}
+}
+
+func TestHydrateRunnerMetadata_VllmProviderSkipsChatRunnerPath(t *testing.T) {
+	t.Parallel()
+	// If provider != openai-chat-runner, the hydrate path is skipped
+	// entirely — direct-vLLM deployments keep working as before.
+	hit := atomic.Bool{}
+	ts := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		hit.Store(true)
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "openai:chat-completions",
+				OfferingID:      "direct-vllm",
+				InteractionMode: "http-stream@v0",
+				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "Qwen3.6-27B"},
+					"provider": "vllm",
+				},
+			},
+		},
+	}
+
+	hydrateRunnerMetadataWithClient(context.Background(), ts.Client(), cfg)
+	if hit.Load() {
+		t.Fatal("chat-runner /options endpoint should not be hit when provider=vllm")
+	}
+}
+
+func TestDiscoveredOpenAIChatExtra_FeaturesMergePreservesOperatorEntries(t *testing.T) {
+	t.Parallel()
+	base := map[string]any{
+		"features": map[string]any{
+			"streaming": false, // operator explicitly disabled
+		},
+	}
+	payload := openAIChatOptionsResponse{
+		Features: map[string]any{
+			"streaming":              true, // runner says true; operator should win
+			"include_usage_required": true,
+		},
+	}
+	discovered := discoveredOpenAIChatExtra(base, payload)
+	features, ok := discovered["features"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected features in discovered; got %#v", discovered["features"])
+	}
+	if _, present := features["streaming"]; present {
+		t.Fatalf("streaming was operator-set; should not be in discovered: %#v", features)
+	}
+	if features["include_usage_required"] != true {
+		t.Fatalf("include_usage_required should be hydrated; got %#v", features["include_usage_required"])
+	}
+}
+
+func TestDiscoverOpenAIBackendMetadata_ChatRunnerProviderProbesOptionsEndpoint(t *testing.T) {
+	t.Parallel()
+	ts := chatRunnerOptionsServer(t)
+	defer ts.Close()
+
+	cap := &config.Capability{
+		ID:              "openai:chat-completions",
+		OfferingID:      "x",
+		InteractionMode: "http-stream@v0",
+		Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
+		Extra: map[string]any{
+			"openai":   map[string]any{"model": "Qwen3.6-27B"},
+			"provider": "openai-chat-runner",
+		},
+	}
+	client := ts.Client()
+	client.Timeout = 2 * time.Second
+
+	discovered, applicable, provider, result, err := discoverOpenAIBackendMetadata(context.Background(), client, cap)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if !applicable {
+		t.Fatal("expected applicable=true for openai-chat-runner provider")
+	}
+	if provider != "openai-chat-runner" {
+		t.Fatalf("provider = %q", provider)
+	}
+	if result != "enriched" {
+		t.Fatalf("result = %q; want enriched", result)
+	}
+	if discovered["served_model_name"] != "Qwen3.6-27B" {
+		t.Fatalf("discovered served_model_name = %#v", discovered["served_model_name"])
+	}
+}

@@ -1016,3 +1016,176 @@ func TestDiscoverOpenAIBackendMetadata_ChatRunnerProviderProbesOptionsEndpoint(t
 		t.Fatalf("discovered served_model_name = %#v", discovered["served_model_name"])
 	}
 }
+
+func embeddingsRunnerOptionsServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != openAIEmbeddingsOptionsPath {
+			t.Fatalf("path = %s; want %s", r.URL.Path, openAIEmbeddingsOptionsPath)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task":                 "embeddings",
+			"models":               []string{"bge-large-en-v1.5"},
+			"served_model_name":    "bge-large-en-v1.5",
+			"backend_model":        "BAAI/bge-large-en-v1.5",
+			"embedding_dimensions": 1024,
+			"max_input_tokens":     512,
+			"pooling_mode":         "cls",
+			"upstream_kind":        "vllm",
+			"features": map[string]any{
+				"streaming": false,
+			},
+		})
+	}))
+}
+
+func TestHydrateRunnerMetadata_PopulatesEmbeddingsRunnerFields(t *testing.T) {
+	t.Parallel()
+	ts := embeddingsRunnerOptionsServer(t)
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "openai:embeddings",
+				OfferingID:      "bge-large-en-v1.5",
+				InteractionMode: "http-reqresp@v0",
+				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "bge-large-en-v1.5"},
+					"provider": "openai-embeddings-runner",
+				},
+			},
+		},
+	}
+
+	hydrateRunnerMetadataWithClient(context.Background(), ts.Client(), cfg)
+
+	extra := cfg.Capabilities[0].Extra
+	if got := extra["served_model_name"]; got != "bge-large-en-v1.5" {
+		t.Fatalf("served_model_name = %#v", got)
+	}
+	if got := extra["backend_model"]; got != "BAAI/bge-large-en-v1.5" {
+		t.Fatalf("backend_model = %#v", got)
+	}
+	if got := extra["embedding_dimensions"]; got != 1024 {
+		t.Fatalf("embedding_dimensions = %#v", got)
+	}
+	if got := extra["max_input_tokens"]; got != 512 {
+		t.Fatalf("max_input_tokens = %#v", got)
+	}
+	if got := extra["pooling_mode"]; got != "cls" {
+		t.Fatalf("pooling_mode = %#v", got)
+	}
+	features, ok := extra["features"].(map[string]any)
+	if !ok {
+		t.Fatalf("features missing: %#v", extra["features"])
+	}
+	if features["streaming"] != false {
+		t.Fatalf("streaming feature = %#v; want false for embeddings", features["streaming"])
+	}
+}
+
+func TestHydrateRunnerMetadata_EmbeddingsOperatorValuesWin(t *testing.T) {
+	t.Parallel()
+	ts := embeddingsRunnerOptionsServer(t)
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "openai:embeddings",
+				OfferingID:      "operator-pinned",
+				InteractionMode: "http-reqresp@v0",
+				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
+				Extra: map[string]any{
+					"openai":            map[string]any{"model": "bge-large-en-v1.5"},
+					"provider":          "openai-embeddings-runner",
+					"served_model_name": "operator-served",
+					"max_input_tokens":  256,
+				},
+			},
+		},
+	}
+
+	hydrateRunnerMetadataWithClient(context.Background(), ts.Client(), cfg)
+
+	extra := cfg.Capabilities[0].Extra
+	if got := extra["served_model_name"]; got != "operator-served" {
+		t.Fatalf("operator served_model_name should win; got %#v", got)
+	}
+	if got := extra["max_input_tokens"]; got != 256 {
+		t.Fatalf("operator max_input_tokens should win; got %#v", got)
+	}
+	if got := extra["backend_model"]; got != "BAAI/bge-large-en-v1.5" {
+		t.Fatalf("backend_model should be hydrated; got %#v", got)
+	}
+	if got := extra["embedding_dimensions"]; got != 1024 {
+		t.Fatalf("embedding_dimensions should be hydrated; got %#v", got)
+	}
+}
+
+func TestDiscoverOpenAIBackendMetadata_EmbeddingsRunnerProviderProbesOptionsEndpoint(t *testing.T) {
+	t.Parallel()
+	ts := embeddingsRunnerOptionsServer(t)
+	defer ts.Close()
+
+	cap := &config.Capability{
+		ID:              "openai:embeddings",
+		OfferingID:      "x",
+		InteractionMode: "http-reqresp@v0",
+		Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
+		Extra: map[string]any{
+			"openai":   map[string]any{"model": "bge-large-en-v1.5"},
+			"provider": "openai-embeddings-runner",
+		},
+	}
+	client := ts.Client()
+	client.Timeout = 2 * time.Second
+
+	discovered, applicable, provider, result, err := discoverOpenAIBackendMetadata(context.Background(), client, cap)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if !applicable {
+		t.Fatal("expected applicable=true for openai-embeddings-runner provider")
+	}
+	if provider != "openai-embeddings-runner" {
+		t.Fatalf("provider = %q", provider)
+	}
+	if result != "enriched" {
+		t.Fatalf("result = %q; want enriched", result)
+	}
+	if discovered["embedding_dimensions"] != 1024 {
+		t.Fatalf("discovered embedding_dimensions = %#v", discovered["embedding_dimensions"])
+	}
+}
+
+func TestHydrateRunnerMetadata_VllmEmbeddingsProviderSkipsRunnerPath(t *testing.T) {
+	t.Parallel()
+	hit := atomic.Bool{}
+	ts := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		hit.Store(true)
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:              "openai:embeddings",
+				OfferingID:      "direct-vllm",
+				InteractionMode: "http-reqresp@v0",
+				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "bge-large-en-v1.5"},
+					"provider": "vllm",
+				},
+			},
+		},
+	}
+
+	hydrateRunnerMetadataWithClient(context.Background(), ts.Client(), cfg)
+	if hit.Load() {
+		t.Fatal("embeddings-runner /options should not be probed when provider=vllm")
+	}
+}

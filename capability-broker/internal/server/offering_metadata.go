@@ -26,6 +26,8 @@ const (
 	vtuberOptionsPath              = "/options"
 	openAIChatOptionsPath          = "/openai-chat-completions/options"
 	openAIChatRunnerProvider       = "openai-chat-runner"
+	openAIEmbeddingsOptionsPath    = "/openai-text-embeddings/options"
+	openAIEmbeddingsRunnerProvider = "openai-embeddings-runner"
 )
 
 type kokoroOptionsResponse struct {
@@ -103,6 +105,20 @@ type openAIChatOptionsResponse struct {
 	Features        map[string]any `json:"features"`
 }
 
+// openAIEmbeddingsOptionsResponse mirrors the payload served by
+// openai-embeddings-runner's /openai-text-embeddings/options endpoint.
+// Same merge semantics as the chat variant.
+type openAIEmbeddingsOptionsResponse struct {
+	Task                string         `json:"task"`
+	Models              []string       `json:"models"`
+	ServedModelName     string         `json:"served_model_name"`
+	BackendModel        string         `json:"backend_model"`
+	EmbeddingDimensions int            `json:"embedding_dimensions"`
+	MaxInputTokens      int            `json:"max_input_tokens"`
+	PoolingMode         string         `json:"pooling_mode"`
+	Features            map[string]any `json:"features"`
+}
+
 func hydrateRunnerMetadata(ctx context.Context, cfg *config.Config) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	hydrateRunnerMetadataWithClient(ctx, client, cfg)
@@ -114,6 +130,12 @@ func hydrateRunnerMetadataWithClient(ctx context.Context, client *http.Client, c
 		if cap.ID == "openai:chat-completions" && cap.Backend.Transport == "http" &&
 			strings.TrimSpace(asString(cap.Extra["provider"])) == openAIChatRunnerProvider {
 			if err := hydrateOpenAIChat(ctx, client, cap); err != nil {
+				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
+			}
+		}
+		if cap.ID == "openai:embeddings" && cap.Backend.Transport == "http" &&
+			strings.TrimSpace(asString(cap.Extra["provider"])) == openAIEmbeddingsRunnerProvider {
+			if err := hydrateOpenAIEmbeddings(ctx, client, cap); err != nil {
 				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
 			}
 		}
@@ -363,6 +385,9 @@ func discoverOpenAIBackendMetadata(ctx context.Context, client *http.Client, cap
 	if provider == openAIChatRunnerProvider && cap.ID == "openai:chat-completions" {
 		return discoverOpenAIChatRunnerMetadata(ctx, client, cap, provider)
 	}
+	if provider == openAIEmbeddingsRunnerProvider && cap.ID == "openai:embeddings" {
+		return discoverOpenAIEmbeddingsRunnerMetadata(ctx, client, cap, provider)
+	}
 	if provider != "vllm" && provider != "ollama" {
 		return nil, false, provider, "", nil
 	}
@@ -406,6 +431,23 @@ func discoverOpenAIChatRunnerMetadata(ctx context.Context, client *http.Client, 
 	discovered := discoveredOpenAIChatExtra(cap.Extra, payload)
 	if len(discovered) == 0 {
 		return nil, true, provider, "chat_options_empty", nil
+	}
+	return discovered, true, provider, "enriched", nil
+}
+
+// discoverOpenAIEmbeddingsRunnerMetadata is the periodic-refresh path
+// for openai:embeddings capabilities served by
+// openai-embeddings-runner. Reads the runner's /options endpoint and
+// merges richer extras: embedding dimensions, max input length,
+// pooling mode. Operator-set values win.
+func discoverOpenAIEmbeddingsRunnerMetadata(ctx context.Context, client *http.Client, cap *config.Capability, provider string) (map[string]any, bool, string, string, error) {
+	payload, err := fetchOpenAIEmbeddingsOptions(ctx, client, cap.Backend.URL)
+	if err != nil {
+		return nil, true, provider, "embeddings_options_probe_failed", err
+	}
+	discovered := discoveredOpenAIEmbeddingsExtra(cap.Extra, payload)
+	if len(discovered) == 0 {
+		return nil, true, provider, "embeddings_options_empty", nil
 	}
 	return discovered, true, provider, "enriched", nil
 }
@@ -580,6 +622,30 @@ func hydrateOpenAIChat(ctx context.Context, client *http.Client, cap *config.Cap
 	return nil
 }
 
+func fetchOpenAIEmbeddingsOptions(ctx context.Context, client *http.Client, backendURL string) (openAIEmbeddingsOptionsResponse, error) {
+	optionsURL, err := deriveOptionsURL(backendURL, openAIEmbeddingsOptionsPath)
+	if err != nil {
+		return openAIEmbeddingsOptionsResponse{}, err
+	}
+	var payload openAIEmbeddingsOptionsResponse
+	if err := fetchJSON(ctx, client, optionsURL, &payload); err != nil {
+		return openAIEmbeddingsOptionsResponse{}, err
+	}
+	return payload, nil
+}
+
+func hydrateOpenAIEmbeddings(ctx context.Context, client *http.Client, cap *config.Capability) error {
+	payload, err := fetchOpenAIEmbeddingsOptions(ctx, client, cap.Backend.URL)
+	if err != nil {
+		return err
+	}
+	if cap.Extra == nil {
+		cap.Extra = make(map[string]any)
+	}
+	mergeDiscoveredExtra(cap.Extra, discoveredOpenAIEmbeddingsExtra(cap.Extra, payload))
+	return nil
+}
+
 func fetchKokoroOptions(ctx context.Context, client *http.Client, backendURL string) (kokoroOptionsResponse, error) {
 	optionsURL, err := deriveOptionsURL(backendURL, kokoroOptionsPath)
 	if err != nil {
@@ -656,6 +722,45 @@ func fetchJSON(ctx context.Context, client *http.Client, requestURL string, dst 
 		return &unexpectedStatusError{statusCode: resp.StatusCode}
 	}
 	return json.NewDecoder(resp.Body).Decode(dst)
+}
+
+// discoveredOpenAIEmbeddingsExtra translates an
+// openai-embeddings-runner /options payload into the map fragment
+// merged into the capability's `extra`. Same operator-wins semantics
+// as the chat variant.
+func discoveredOpenAIEmbeddingsExtra(base map[string]any, payload openAIEmbeddingsOptionsResponse) map[string]any {
+	discovered := map[string]any{}
+
+	fillDiscoveredString(base, discovered, "served_model_name", payload.ServedModelName)
+	fillDiscoveredString(base, discovered, "backend_model", payload.BackendModel)
+	fillDiscoveredString(base, discovered, "pooling_mode", payload.PoolingMode)
+
+	if payload.EmbeddingDimensions > 0 {
+		if _, present := base["embedding_dimensions"]; !present {
+			discovered["embedding_dimensions"] = payload.EmbeddingDimensions
+		}
+	}
+	if payload.MaxInputTokens > 0 {
+		if _, present := base["max_input_tokens"]; !present {
+			discovered["max_input_tokens"] = payload.MaxInputTokens
+		}
+	}
+
+	if len(payload.Features) > 0 {
+		existing, _ := base["features"].(map[string]any)
+		merged := map[string]any{}
+		for k, v := range payload.Features {
+			if _, present := existing[k]; present {
+				continue
+			}
+			merged[k] = v
+		}
+		if len(merged) > 0 {
+			discovered["features"] = merged
+		}
+	}
+
+	return discovered
 }
 
 // discoveredOpenAIChatExtra translates an openai-chat-runner /options

@@ -24,18 +24,35 @@
 
 set -euo pipefail
 
-REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-v1.2.0}"
-PUSH="${PUSH:-0}"
-DEPLOY_ONLY="${DEPLOY_ONLY:-0}"
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+
+VERSION_ENV_FILE="${ROOT}/infra/build/image-versions.env"
+if [[ -f "$VERSION_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  . "$VERSION_ENV_FILE"
+fi
+
+REGISTRY="${REGISTRY:-tztcloud}"
+TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.2.0}}"
+PUSH="${PUSH:-0}"
+DEPLOY_ONLY="${DEPLOY_ONLY:-0}"
 
 # ---- helpers --------------------------------------------------------------
 
 step=0
 total=0
+
+GLOBAL_BUILD_ARGS=(
+  "--build-arg=REGISTRY=${REGISTRY}"
+  "--build-arg=TAG=${TAG}"
+  "--build-arg=GO_VERSION=${GO_VERSION:-1.25.7}"
+  "--build-arg=NODE_VERSION=${NODE_VERSION:-22}"
+  "--build-arg=PYTHON_VERSION=${PYTHON_VERSION:-3.12}"
+  "--build-arg=ALPINE_VERSION=${ALPINE_VERSION:-3.20}"
+  "--build-arg=UBUNTU_VERSION=${UBUNTU_VERSION:-24.04}"
+  "--build-arg=CUDA_VERSION=${CUDA_VERSION:-12.9.1}"
+)
 
 log()      { printf '\033[1;34m[build]\033[0m %s\n' "$*" >&2; }
 ok()       { printf '\033[1;32m[ ok ]\033[0m %s\n' "$*" >&2; }
@@ -208,6 +225,7 @@ for entry in "${SELECTED[@]}"; do
   full_tag="${REGISTRY}/${name}:${TAG}"
 
   args=(build -t "$full_tag" -f "$dockerfile")
+  args+=("${GLOBAL_BUILD_ARGS[@]}")
   [[ -n "$target" ]]     && args+=(--target "$target")
   [[ -n "$build_args" ]] && args+=("$build_args")
   args+=("$context")

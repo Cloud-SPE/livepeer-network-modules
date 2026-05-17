@@ -5,13 +5,20 @@ set -euo pipefail
 #
 # Environment:
 #   REGISTRY      Docker registry prefix (default: tztcloud)
-#   TAG           Image tag (default: v1.1.0)
-#   BASE_IMAGE    Python base image (default: ${REGISTRY}/python-runner-base:${TAG})
+#   TAG           Image tag (default: from infra/build/image-versions.env)
+#   BASE_IMAGE    Python GPU base image (default: ${REGISTRY}/python-gpu-runner-base:${TAG})
 #   PUSH          Push images after build (default: false)
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION_ENV_FILE="${ROOT}/infra/build/image-versions.env"
+if [[ -f "$VERSION_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  . "$VERSION_ENV_FILE"
+fi
+
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-v1.1.0}"
-BASE_IMAGE="${BASE_IMAGE:-${REGISTRY}/python-runner-base:${TAG}}"
+TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.2.0}}"
+BASE_IMAGE="${BASE_IMAGE:-${REGISTRY}/python-gpu-runner-base:${TAG}}"
 PUSH="${PUSH:-false}"
 
 cmd="${1:-build}"
@@ -20,6 +27,8 @@ build_runner() {
   image="${REGISTRY}/rerank-runner:${TAG}"
   echo "==> Building ${image} (FROM ${BASE_IMAGE})"
   docker build \
+    --build-arg "REGISTRY=${REGISTRY}" \
+    --build-arg "TAG=${TAG}" \
     --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
     -t "${image}" \
     -f Dockerfile \

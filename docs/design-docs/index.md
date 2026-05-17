@@ -7,6 +7,7 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [core-beliefs.md](./core-beliefs.md) | active | Invariants every change must uphold |
 | [requirements.md](./requirements.md) | active | The 11 supply-side requirements with rationale |
 | [architecture-overview.md](./architecture-overview.md) | active | The 8-layer proposed architecture at a glance, with mermaid diagrams per layer |
+| [container-platform-audit.md](./container-platform-audit.md) | active | Base-image/version matrix, duplication audit, canonical version manifest, and the target normalization path for Docker builds |
 | [interaction-modes.md](./interaction-modes.md) | active | The finite set of gateway↔broker wire shapes and when each mode is the right fit |
 | [payment-daemon-interactions.md](./payment-daemon-interactions.md) | active | Cross-cutting guide to how the gateway, broker, and both `payment-daemon` roles interact |
 | [streaming-workload-pattern.md](./streaming-workload-pattern.md) | active | Long-lived-session blueprint (broker-side meter + gateway-side ledger) for `ws-realtime`, `session-control-plus-media`, and `rtmp-…` modes |

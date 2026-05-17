@@ -1,4 +1,7 @@
-FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS build
+ARG GO_VERSION=1.25.7
+ARG ALPINE_VERSION=3.20
+
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 COPY . .
@@ -6,7 +9,7 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /bin/embeddings-runner ./cmd/runner
 
-FROM alpine:3.20
+FROM alpine:${ALPINE_VERSION}
 RUN apk add --no-cache curl ca-certificates && adduser -D -H runner
 USER runner
 ENV RUNNER_ADDR=:8080

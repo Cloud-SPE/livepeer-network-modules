@@ -1,12 +1,15 @@
 ARG REGISTRY=tztcloud
-ARG TAG=v1.1.0
+ARG TAG=v1.2.0
+ARG CUDA_VERSION=12.9.1
+ARG UBUNTU_VERSION=24.04
+ARG GO_VERSION=1.25.7
 ARG CODECS_IMAGE=${REGISTRY}/codecs-builder:${TAG}
 FROM ${CODECS_IMAGE} AS codecs-builder
 
 # ============================================================================
 # Stage: ffmpeg-nvidia — ffmpeg with CUDA/NVENC/NVDEC support
 # ============================================================================
-FROM nvidia/cuda:12.9.1-devel-ubuntu24.04 AS ffmpeg-nvidia
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS ffmpeg-nvidia
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -64,7 +67,7 @@ RUN ldconfig
 # ============================================================================
 # Stage: ffmpeg-intel — ffmpeg with Intel QSV (oneVPL) + VAAPI support
 # ============================================================================
-FROM ubuntu:24.04 AS ffmpeg-intel
+FROM ubuntu:${UBUNTU_VERSION} AS ffmpeg-intel
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -128,7 +131,7 @@ RUN ldconfig
 # ============================================================================
 # Stage: ffmpeg-amd — ffmpeg with AMD VAAPI support
 # ============================================================================
-FROM ubuntu:24.04 AS ffmpeg-amd
+FROM ubuntu:${UBUNTU_VERSION} AS ffmpeg-amd
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -181,7 +184,7 @@ RUN ldconfig
 # ============================================================================
 # Stage: go-builder — shared across all GPU targets
 # ============================================================================
-FROM golang:1.22-alpine AS go-builder
+FROM golang:${GO_VERSION}-alpine AS go-builder
 
 RUN apk add --no-cache git
 
@@ -201,7 +204,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/abr-runner .
 # ============================================================================
 # Stage: runtime-nvidia
 # ============================================================================
-FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04 AS runtime-nvidia
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION} AS runtime-nvidia
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -230,7 +233,7 @@ ENTRYPOINT ["/usr/local/bin/abr-runner"]
 # ============================================================================
 # Stage: runtime-intel
 # ============================================================================
-FROM ubuntu:24.04 AS runtime-intel
+FROM ubuntu:${UBUNTU_VERSION} AS runtime-intel
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -277,7 +280,7 @@ ENTRYPOINT ["/usr/local/bin/abr-runner"]
 # ============================================================================
 # Stage: runtime-amd
 # ============================================================================
-FROM ubuntu:24.04 AS runtime-amd
+FROM ubuntu:${UBUNTU_VERSION} AS runtime-amd
 
 ENV DEBIAN_FRONTEND=noninteractive
 

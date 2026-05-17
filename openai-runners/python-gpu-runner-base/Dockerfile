@@ -1,4 +1,6 @@
-FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04
+ARG CUDA_VERSION=12.9.1
+ARG UBUNTU_VERSION=24.04
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1

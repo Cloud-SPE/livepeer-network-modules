@@ -5,12 +5,19 @@ set -euo pipefail
 #
 # Environment:
 #   REGISTRY        Docker registry prefix (default: tztcloud)
-#   TAG             Image tag (default: v1.1.0)
+#   TAG             Image tag (default: from infra/build/image-versions.env)
 #   PUSH            Push images after build (default: false)
 #   PLATFORMS       Buildx platforms (default: linux/amd64; openai-runner ships multi-arch per OQ4)
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION_ENV_FILE="${ROOT}/infra/build/image-versions.env"
+if [[ -f "$VERSION_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  . "$VERSION_ENV_FILE"
+fi
+
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-v1.1.0}"
+TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.2.0}}"
 PUSH="${PUSH:-false}"
 PLATFORMS="${PLATFORMS:-linux/amd64}"
 
@@ -33,6 +40,8 @@ build_gpu_base() {
 build_gpu_media_base() {
   echo "==> Building ${gpu_media_base_image} (FROM ${gpu_base_image})"
   docker build \
+    --build-arg "REGISTRY=${REGISTRY}" \
+    --build-arg "TAG=${TAG}" \
     --build-arg "BASE_IMAGE=${gpu_base_image}" \
     -t "${gpu_media_base_image}" \
     -f python-gpu-media-runner-base/Dockerfile \
@@ -44,6 +53,8 @@ build_chat_runner() {
   echo "==> Building ${image} (platforms ${PLATFORMS})"
   docker buildx build \
     --platform "${PLATFORMS}" \
+    --build-arg "GO_VERSION=${GO_VERSION:-1.25.7}" \
+    --build-arg "ALPINE_VERSION=${ALPINE_VERSION:-3.20}" \
     -t "${image}" \
     --load \
     -f openai-chat-runner/Dockerfile \
@@ -55,6 +66,8 @@ build_embeddings_runner() {
   echo "==> Building ${image} (platforms ${PLATFORMS})"
   docker buildx build \
     --platform "${PLATFORMS}" \
+    --build-arg "GO_VERSION=${GO_VERSION:-1.25.7}" \
+    --build-arg "ALPINE_VERSION=${ALPINE_VERSION:-3.20}" \
     -t "${image}" \
     --load \
     -f openai-embeddings-runner/Dockerfile \
@@ -68,6 +81,8 @@ build_python_runner() {
   image="${REGISTRY}/${image_suffix}:${TAG}"
   echo "==> Building ${image} (FROM ${base_image})"
   docker build \
+    --build-arg "REGISTRY=${REGISTRY}" \
+    --build-arg "TAG=${TAG}" \
     --build-arg "BASE_IMAGE=${base_image}" \
     -t "${image}" \
     -f "${dir}/Dockerfile" \

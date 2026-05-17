@@ -116,7 +116,7 @@ declare -a IMAGES=(
 
   # Tier 5 — Heavy GPU/ML runners
   "vtuber-runner|.|vtuber-runner/Dockerfile||"
-  "rerank-runner|rerank-runner|rerank-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-runner-base:${TAG}"
+  "rerank-runner|rerank-runner|rerank-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-runner-base:${TAG}"
   "openai-audio-runner|openai-runners/openai-audio-runner|openai-runners/openai-audio-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-media-runner-base:${TAG}"
   "openai-image-generation-runner|openai-runners/openai-image-generation-runner|openai-runners/openai-image-generation-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-runner-base:${TAG}"
   "openai-tts-runner|openai-runners/openai-tts-runner|openai-runners/openai-tts-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-media-runner-base:${TAG}"

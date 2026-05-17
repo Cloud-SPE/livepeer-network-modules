@@ -94,6 +94,127 @@ func TestBuild_Idempotent(t *testing.T) {
 	}
 }
 
+func TestBuild_DebouncesIssuedAtWhenContentUnchanged(t *testing.T) {
+	first := sampleSnap()
+	opts := BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+		PublicationSeq: 7,
+	}
+	c1, err := Build(first, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c1.ContentHash == "" {
+		t.Fatal("expected non-empty ContentHash on first build")
+	}
+
+	// Second scrape: window advances 60s; capabilities are unchanged.
+	second := sampleSnap()
+	second.WindowStart = first.WindowEnd
+	second.WindowEnd = first.WindowEnd.Add(60 * time.Second)
+
+	opts.PrevContentHash = c1.ContentHash
+	opts.PrevIssuedAt = c1.Manifest.IssuedAt
+	c2, err := Build(second, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c2.Manifest.IssuedAt.Equal(c1.Manifest.IssuedAt) {
+		t.Fatalf("issued_at drifted: c1=%s c2=%s", c1.Manifest.IssuedAt, c2.Manifest.IssuedAt)
+	}
+	if !c2.Manifest.ExpiresAt.Equal(c1.Manifest.ExpiresAt) {
+		t.Fatalf("expires_at drifted: c1=%s c2=%s", c1.Manifest.ExpiresAt, c2.Manifest.ExpiresAt)
+	}
+	if !bytes.Equal(c1.ManifestBytes, c2.ManifestBytes) {
+		t.Fatalf("manifest_bytes drifted on identical content")
+	}
+}
+
+func TestBuild_AdvancesIssuedAtOnContentChange(t *testing.T) {
+	first := sampleSnap()
+	opts := BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+	}
+	c1, err := Build(first, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second scrape: window advances AND price changes (content drift).
+	second := sampleSnap()
+	second.WindowStart = first.WindowEnd
+	second.WindowEnd = first.WindowEnd.Add(60 * time.Second)
+	second.SourceTuples[0].Offering.PricePerUnitWei = "9000000"
+
+	opts.PrevContentHash = c1.ContentHash
+	opts.PrevIssuedAt = c1.Manifest.IssuedAt
+	c2, err := Build(second, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c2.Manifest.IssuedAt.Equal(c1.Manifest.IssuedAt) {
+		t.Fatalf("expected issued_at to advance on content change; got %s", c2.Manifest.IssuedAt)
+	}
+	if !c2.Manifest.IssuedAt.Equal(second.WindowEnd) {
+		t.Fatalf("issued_at = %s; want window end %s", c2.Manifest.IssuedAt, second.WindowEnd)
+	}
+	if c2.ContentHash == c1.ContentHash {
+		t.Fatal("expected ContentHash to differ on content change")
+	}
+}
+
+func TestBuild_DebouncesIssuedAtWhenOnlyVolatileMetadataChanges(t *testing.T) {
+	first := sampleSnap()
+	opts := BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+	}
+	c1, err := Build(first, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second scrape: window advances and broker metadata health degrades,
+	// but the capability content (orch + capabilities tuples) is unchanged.
+	second := sampleSnap()
+	second.WindowStart = first.WindowEnd
+	second.WindowEnd = first.WindowEnd.Add(60 * time.Second)
+	second.Brokers[0].MetadataUnhealthyTuples = 1
+	second.Brokers[0].MetadataWorstAgeSeconds = 180
+	second.Brokers[0].TupleHealth["openai:chat-completions|vllm-h100-batch4"] = types.BrokerHealthCapability{
+		ID:         "openai:chat-completions",
+		OfferingID: "vllm-h100-batch4",
+		Status:     "ready",
+		Metadata: &types.BrokerHealthMetadata{
+			Applicable:            true,
+			LastResult:            "models_probe_failed",
+			LastSuccessAt:         second.WindowEnd.Add(-3 * time.Minute),
+			LastSuccessAgeSeconds: 180,
+			ConsecutiveFailures:   2,
+			LastError:             "probe failed",
+		},
+	}
+
+	opts.PrevContentHash = c1.ContentHash
+	opts.PrevIssuedAt = c1.Manifest.IssuedAt
+	c2, err := Build(second, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c2.Manifest.IssuedAt.Equal(c1.Manifest.IssuedAt) {
+		t.Fatalf("issued_at drifted on volatile-metadata-only change: c1=%s c2=%s", c1.Manifest.IssuedAt, c2.Manifest.IssuedAt)
+	}
+	if !bytes.Equal(c1.ManifestBytes, c2.ManifestBytes) {
+		t.Fatal("manifest_bytes drifted on volatile-metadata-only change")
+	}
+	// Sidecar SHOULD reflect the new metadata health regardless.
+	if len(c2.Metadata.TupleMetadataWarnings) == 0 {
+		t.Fatal("expected metadata sidecar to surface new tuple warning")
+	}
+}
+
 func TestBuild_IssuedAtIsScrapeWindowEnd(t *testing.T) {
 	snap := sampleSnap()
 	opts := BuildOptions{

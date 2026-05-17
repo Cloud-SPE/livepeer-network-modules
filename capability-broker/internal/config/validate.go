@@ -196,8 +196,15 @@ func (c *Config) Validate() error {
 			if !validEncoderProfiles[cap.Backend.Profile] {
 				return fmt.Errorf("%s: backend.profile %q is not one of %v", ctx, cap.Backend.Profile, encoderProfileList())
 			}
+		case "session-runner":
+			if cap.Backend.SessionRunner == nil {
+				return fmt.Errorf("%s: backend.session_runner is required for transport=session-runner", ctx)
+			}
+			if strings.TrimSpace(cap.Backend.SessionRunner.Image) == "" {
+				return fmt.Errorf("%s: backend.session_runner.image is required for transport=session-runner", ctx)
+			}
 		default:
-			return fmt.Errorf("%s: backend.transport %q is not yet supported (only 'http' or 'ffmpeg-subprocess' in v0.1)", ctx, cap.Backend.Transport)
+			return fmt.Errorf("%s: backend.transport %q is not yet supported (only 'http', 'ffmpeg-subprocess', or 'session-runner' in v0.1)", ctx, cap.Backend.Transport)
 		}
 
 		switch cap.Backend.Auth.Method {

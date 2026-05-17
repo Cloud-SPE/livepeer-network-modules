@@ -58,6 +58,14 @@ type BuildOptions struct {
 	ManifestTTL       time.Duration
 	PublicationSeq    uint64
 	CoordinatorCommit string
+	// PrevContentHash + PrevIssuedAt debounce issued_at when content
+	// has not changed. When PrevIssuedAt is non-zero and PrevContentHash
+	// equals the new build's content hash, issued_at (and expires_at)
+	// reuse the prior values so manifest_bytes stay byte-identical
+	// across scrapes — letting an operator sign and upload one
+	// candidate even if it spans multiple scrape cycles.
+	PrevContentHash string
+	PrevIssuedAt    time.Time
 }
 
 // Build assembles a candidate from a scrape snapshot. The result is
@@ -76,9 +84,22 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		return nil, err
 	}
 
+	orch := types.Orch{
+		EthAddress: strings.ToLower(strings.TrimSpace(opts.OrchEthAddress)),
+		ServiceURI: opts.ServiceURI,
+	}
+
+	contentHash, err := computeContentHash(orch, tuples)
+	if err != nil {
+		return nil, err
+	}
+
 	issuedAt := snap.WindowEnd.UTC()
 	if issuedAt.IsZero() {
 		issuedAt = time.Now().UTC()
+	}
+	if opts.PrevContentHash != "" && opts.PrevContentHash == contentHash && !opts.PrevIssuedAt.IsZero() {
+		issuedAt = opts.PrevIssuedAt.UTC()
 	}
 	expiresAt := issuedAt.Add(opts.ManifestTTL)
 
@@ -87,11 +108,8 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		PublicationSeq: opts.PublicationSeq,
 		IssuedAt:       issuedAt,
 		ExpiresAt:      expiresAt,
-		Orch: types.Orch{
-			EthAddress: strings.ToLower(strings.TrimSpace(opts.OrchEthAddress)),
-			ServiceURI: opts.ServiceURI,
-		},
-		Capabilities: tuples,
+		Orch:           orch,
+		Capabilities:   tuples,
 	}
 
 	bytes, err := canonicalManifestBytes(payload)
@@ -117,7 +135,25 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		ManifestBytes: bytes,
 		Manifest:      payload,
 		Metadata:      meta,
+		ContentHash:   contentHash,
 	}, nil
+}
+
+// computeContentHash returns a stable hex digest over the
+// content-bearing fields of the manifest (orch + capabilities). Used
+// to debounce issued_at: when the hash matches the prior build, the
+// canonical bytes can keep the same issued_at/expires_at and remain
+// byte-identical for signing.
+func computeContentHash(orch types.Orch, tuples []types.CapabilityTuple) (string, error) {
+	root := map[string]any{
+		"orch":         orchToMap(orch),
+		"capabilities": capsToList(tuples),
+	}
+	b, err := CanonicalBytes(root)
+	if err != nil {
+		return "", fmt.Errorf("candidate: content hash: %w", err)
+	}
+	return SHA256Hex(b), nil
 }
 
 func canonicalManifestBytes(p types.ManifestPayload) ([]byte, error) {

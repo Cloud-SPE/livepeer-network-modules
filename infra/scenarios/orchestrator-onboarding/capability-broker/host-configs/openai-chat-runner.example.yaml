@@ -1,0 +1,98 @@
+# Capability Broker host-config — OpenAI Chat Completions with the
+# openai-chat-runner sidecar.
+#
+# Sits in front of vLLM, parses streaming responses, and emits an
+# X-Livepeer-Work-Units HTTP trailer the broker reads via the
+# response-trailer extractor. The non-streaming offering keeps using
+# openai-usage on the response body — that path doesn't need a sidecar.
+#
+# Pair this with both compose files:
+#   - openai-runners/compose/docker-compose.vllm.chat.yml  (the vLLM upstream)
+#   - openai-runners/compose/docker-compose.openai-chat-runner.yml  (the sidecar)
+
+identity:
+  orch_eth_address: 0xYOUR_ORCH_ADDRESS
+  label: "chat-broker"
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+
+capabilities:
+  # ── streaming chat completions (billed via runner-emitted trailer) ───────
+  - id: "openai:chat-completions"
+    offering_id: "vllm-qwen3.6-27b-stream"
+    interaction_mode: "http-stream@v0"
+    work_unit:
+      name: "tokens"
+      extractor:
+        type: "response-trailer"
+        trailer: "X-Livepeer-Work-Units"
+        default: 0
+    health:
+      probe:
+        type: "http-status"
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 2
+        healthy_after: 1
+        config:
+          url: "http://openai_chat_runner:8080/healthz"
+    price:
+      amount_wei: "25000000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://openai_chat_runner:8080/v1/chat/completions"
+      auth: "none"
+    extra:
+      openai:
+        model: "Qwen3.6-27B"
+      provider: "openai-chat-runner"
+      served_model_name: "Qwen3.6-27B"
+      backend_model: "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+      reasoning_parser: "qwen3"
+      tool_call_parser: "qwen3_coder"
+    constraints:
+      tier: "standard"
+      gpu: "5090"
+
+  # ── non-streaming chat completions (billed via openai-usage on body) ─────
+  - id: "openai:chat-completions"
+    offering_id: "vllm-qwen3.6-27b-default"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "tokens"
+      extractor:
+        type: "openai-usage"
+        field: "total_tokens"
+    health:
+      probe:
+        type: "http-status"
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 2
+        healthy_after: 1
+        config:
+          url: "http://openai_chat_runner:8080/healthz"
+    price:
+      amount_wei: "25000000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://openai_chat_runner:8080/v1/chat/completions"
+      auth: "none"
+    extra:
+      openai:
+        model: "Qwen3.6-27B"
+      provider: "openai-chat-runner"
+      served_model_name: "Qwen3.6-27B"
+      backend_model: "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
+      reasoning_parser: "qwen3"
+      tool_call_parser: "qwen3_coder"
+    constraints:
+      tier: "standard"
+      gpu: "5090"

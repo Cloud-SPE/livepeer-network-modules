@@ -36,12 +36,16 @@ RUN install -d -m 0700 -o 65532 -g 65532 /out/srv/data
 # ---- Test stage ----
 FROM golang:${GO_VERSION}-alpine AS test
 
+# `go test -race` requires CGO + a C toolchain. The runtime image stays
+# CGO-free; the toolchain is only present in this throwaway test stage.
+RUN apk add --no-cache gcc musl-dev
+
 WORKDIR /src
 COPY orch-coordinator/go.mod orch-coordinator/go.sum ./orch-coordinator/
 COPY livepeer-network-protocol/ ./livepeer-network-protocol/
 RUN cd orch-coordinator && go mod download
 COPY orch-coordinator/ ./orch-coordinator/
-RUN cd orch-coordinator && go test -race -count=1 ./...
+RUN cd orch-coordinator && CGO_ENABLED=1 go test -race -count=1 ./...
 
 # ---- Runtime stage ----
 FROM gcr.io/distroless/static-debian12:nonroot

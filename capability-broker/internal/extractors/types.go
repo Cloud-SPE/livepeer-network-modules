@@ -56,6 +56,13 @@ type Response struct {
 	Status  int
 	Body    []byte
 	Headers http.Header
+	// Trailers carries HTTP trailers from the upstream response.
+	// Populated by mode drivers AFTER the body is fully read (Go's
+	// http.Response surfaces trailers in resp.Trailer only at that
+	// point). Streaming-aware runners use trailers to report
+	// post-body values like X-Livepeer-Work-Units; the response-trailer
+	// extractor reads them.
+	Trailers http.Header
 	// Duration is wall-clock time the broker spent on this request,
 	// from start of mode dispatch to extractor invocation. Mode drivers
 	// populate this for any mode where a meaningful per-request elapsed

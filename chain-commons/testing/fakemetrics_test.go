@@ -3,7 +3,7 @@ package chaintesting
 import (
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/metrics"
 )
 
 func TestFakeMetrics_Counter(t *testing.T) {

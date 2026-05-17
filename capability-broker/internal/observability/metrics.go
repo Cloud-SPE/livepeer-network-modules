@@ -38,6 +38,11 @@ var (
 		Help: "Sum of actualUnits reported by the extractor across all paid requests.",
 	}, []string{"capability", "offering"})
 
+	backendSelectionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "livepeer_backend_selected_total",
+		Help: "Total backend selections for published offerings with one or more runtime backend candidates.",
+	}, []string{"capability", "offering", "backend_id"})
+
 	metadataRefreshTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "livepeer_metadata_refresh_total",
 		Help: "Total metadata discovery refresh attempts, labeled by family, provider, and result.",
@@ -91,6 +96,13 @@ func RecordRequest(capID, offID, outcome string, durationSeconds float64, workUn
 			workUnitsTotal.WithLabelValues(capID, offID).Add(float64(workUnits))
 		}
 	}
+}
+
+func RecordBackendSelection(capID, offID, backendID string) {
+	if capID == "" || offID == "" || backendID == "" {
+		return
+	}
+	backendSelectionsTotal.WithLabelValues(capID, offID, backendID).Inc()
 }
 
 // RecordMetadataRefresh emits one metadata discovery refresh outcome.

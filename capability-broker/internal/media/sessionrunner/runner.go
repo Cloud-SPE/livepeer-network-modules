@@ -234,8 +234,8 @@ type Runner struct {
 	mu      sync.Mutex
 	waitErr error
 
-	lastTouch  atomic.Int64
-	closing    atomic.Bool
+	lastTouch atomic.Int64
+	closing   atomic.Bool
 }
 
 // SessionID returns the runner's session id.

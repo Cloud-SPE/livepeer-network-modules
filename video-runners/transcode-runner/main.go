@@ -22,7 +22,7 @@ import (
 	"syscall"
 	"time"
 
-	transcode "github.com/Cloud-SPE/livepeer-network-rewrite/video-runners/transcode-core"
+	transcode "github.com/Cloud-SPE/livepeer-network-modules/video-runners/transcode-core"
 )
 
 //go:embed presets.yaml

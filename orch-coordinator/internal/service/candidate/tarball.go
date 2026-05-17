@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
 // PackTarball wraps the candidate as a tar.gz with two members:

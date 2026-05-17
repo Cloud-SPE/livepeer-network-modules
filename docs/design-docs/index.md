@@ -18,6 +18,7 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [build-system.md](./build-system.md) | active | Canonical base images (python:3.12-slim, nvidia/cuda:12.9.1-runtime-ubuntu24.04, golang:1.22-alpine, ubuntu:24.04, plus CUDA devel where build stages require it) + image-tag pinning + buildx orchestration for the workload runners |
 | [ui-design-system.md](./ui-design-system.md) | active | Shared visual system for all operator and product UIs, aligned to current Livepeer brand and explorer surfaces |
 | [frontend-dom-and-css-invariants.md](./frontend-dom-and-css-invariants.md) | active | Repo-wide frontend implementation contract: light DOM only, semantic HTML only, no inline CSS, styling only from checked-in CSS files |
+| [pool-node-production-readiness.md](./pool-node-production-readiness.md) | active | Cross-cutting production gate for the Pool stack: persistence, secrets, retry policy, alerting, privacy, and live runtime validation |
 
 Stubs (to be written as we drill in):
 

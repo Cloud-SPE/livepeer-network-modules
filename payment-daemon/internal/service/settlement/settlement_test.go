@@ -8,11 +8,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devclock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/escrow"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/settlement"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/settlement"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 )
 
 // fakeBroker lets tests pin IsUsedTicket / Redeem behavior + observe
@@ -20,10 +20,10 @@ import (
 type fakeBroker struct {
 	mu sync.Mutex
 
-	used         map[string]bool
-	redeemError  error
-	redeemed     [][]byte
-	senderInfo   *providers.SenderInfo
+	used        map[string]bool
+	redeemError error
+	redeemed    [][]byte
+	senderInfo  *providers.SenderInfo
 }
 
 func (f *fakeBroker) GetSenderInfo(_ context.Context, _ []byte) (*providers.SenderInfo, error) {

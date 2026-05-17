@@ -18,7 +18,7 @@ External Go consumers can import the generated stubs directly once the
 submodule tag is published:
 
 ```bash
-go get github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts@v0.1.1
+go get github.com/Cloud-SPE/livepeer-network-modules/proto-contracts@v0.1.1
 ```
 
 `worker-runtime` consumes this module the same way. The published release path

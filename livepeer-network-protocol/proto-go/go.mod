@@ -4,7 +4,7 @@
 // shared across components in the monorepo (capability-broker,
 // payment-daemon, conformance runner). The .proto sources live next door
 // in `../proto/`; regenerate with `make -C ../../payment-daemon proto`.
-module github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go
+module github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go
 
 go 1.25.0
 

@@ -32,6 +32,19 @@ type PendingRedemption struct {
 	Hash   []byte
 }
 
+// RedeemedRedemption is the durable record for a ticket that has left the
+// pending queue, either because it was confirmed on-chain or drained
+// locally after a terminal failure.
+type RedeemedRedemption struct {
+	TicketHash       []byte `json:"ticket_hash"`
+	TxHash           []byte `json:"tx_hash"`
+	Sender           []byte `json:"sender"`
+	FaceValueWei     string `json:"face_value_wei"`
+	CreationRound    int64  `json:"creation_round"`
+	RedeemedRound    int64  `json:"redeemed_round"`
+	ConfirmedOnChain bool   `json:"confirmed_on_chain"`
+}
+
 // EnqueueRedemption inserts a winning ticket into the FIFO redemption
 // queue, idempotently. Returns (true, nil) if the ticket was enqueued;
 // (false, nil) if it was already pending or already redeemed.
@@ -101,15 +114,31 @@ func (s *Store) PendingRedemptions() ([]PendingRedemption, error) {
 	return out, err
 }
 
-// MarkRedeemed removes a queued ticket and records its on-chain tx
-// hash (or all-zero for "drained locally without on-chain redemption").
-func (s *Store) MarkRedeemed(ticketHash, txHash []byte) error {
+// MarkRedeemed removes a queued ticket and records its final redemption
+// metadata. A zero tx hash means the ticket drained locally without an
+// on-chain confirmation.
+func (s *Store) MarkRedeemed(ticketHash, txHash []byte, ticket *SignedTicket, redeemedRound int64) error {
 	if len(ticketHash) != 32 {
 		return fmt.Errorf("ticketHash must be 32 bytes, got %d", len(ticketHash))
+	}
+	if ticket == nil {
+		return fmt.Errorf("ticket is nil")
 	}
 	stamped := make([]byte, 32)
 	if len(txHash) > 0 {
 		copy(stamped, txHash[:min(32, len(txHash))])
+	}
+	record, err := json.Marshal(RedeemedRedemption{
+		TicketHash:       append([]byte(nil), ticketHash...),
+		TxHash:           stamped,
+		Sender:           append([]byte(nil), ticket.Sender...),
+		FaceValueWei:     ticket.FaceValue.String(),
+		CreationRound:    ticket.CreationRound,
+		RedeemedRound:    redeemedRound,
+		ConfirmedOnChain: !isAllZero(stamped),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal redeemed record: %w", err)
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
 		byHash := tx.Bucket([]byte(redemptionsByHash))
@@ -123,7 +152,7 @@ func (s *Store) MarkRedeemed(ticketHash, txHash []byte) error {
 				return err
 			}
 		}
-		return redeemed.Put(ticketHash, stamped)
+		return redeemed.Put(ticketHash, record)
 	})
 }
 
@@ -137,10 +166,51 @@ func (s *Store) RedeemedTxHash(ticketHash []byte) ([]byte, error) {
 		if v == nil {
 			return nil
 		}
-		out = append([]byte(nil), v...)
+		// Backward compatibility: older records stored only the raw tx hash.
+		if len(v) == 32 {
+			out = append([]byte(nil), v...)
+			return nil
+		}
+		var rec RedeemedRedemption
+		if err := json.Unmarshal(v, &rec); err != nil {
+			return fmt.Errorf("decode redeemed record: %w", err)
+		}
+		out = append([]byte(nil), rec.TxHash...)
 		return nil
 	})
 	return out, err
+}
+
+// RoundRevenue sums confirmed on-chain redemption face value for one
+// Livepeer round.
+func (s *Store) RoundRevenue(roundID int64) (*big.Int, uint64, error) {
+	total := new(big.Int)
+	var count uint64
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket([]byte(redemptionsRedeemed)).ForEach(func(_, v []byte) error {
+			if len(v) == 32 {
+				return nil
+			}
+			var rec RedeemedRedemption
+			if err := json.Unmarshal(v, &rec); err != nil {
+				return fmt.Errorf("decode redeemed record: %w", err)
+			}
+			if !rec.ConfirmedOnChain || rec.RedeemedRound != roundID {
+				return nil
+			}
+			faceValue, ok := new(big.Int).SetString(rec.FaceValueWei, 10)
+			if !ok {
+				return fmt.Errorf("invalid redeemed face value %q", rec.FaceValueWei)
+			}
+			total.Add(total, faceValue)
+			count++
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return total, count, nil
 }
 
 func seqBytes(n uint64) []byte {
@@ -154,4 +224,13 @@ func readSeq(b []byte) uint64 {
 		return 0
 	}
 	return binary.BigEndian.Uint64(b)
+}
+
+func isAllZero(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }

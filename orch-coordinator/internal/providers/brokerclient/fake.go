@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
 // FakeClient is a deterministic in-memory brokerclient used by --dev

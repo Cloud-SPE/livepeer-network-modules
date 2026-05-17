@@ -548,7 +548,7 @@ const file_livepeer_registry_v1_types_proto_rawDesc = "" +
 	"\x0fSOURCE_MANIFEST\x10\x01\x12\x11\n" +
 	"\rSOURCE_LEGACY\x10\x02\x12\x19\n" +
 	"\x15SOURCE_STATIC_OVERLAY\x10\x03\x12\x17\n" +
-	"\x13SOURCE_CSV_FALLBACK\x10\x04B_Z]github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/registry/v1;registryv1b\x06proto3"
+	"\x13SOURCE_CSV_FALLBACK\x10\x04B_Z]github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/registry/v1;registryv1b\x06proto3"
 
 var (
 	file_livepeer_registry_v1_types_proto_rawDescOnce sync.Once

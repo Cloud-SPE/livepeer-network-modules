@@ -29,7 +29,7 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 )
 
 // Sentinel errors returned by Redeem-side flow. Settlement classifies
@@ -87,8 +87,8 @@ type Broker struct {
 	signer   providers.TxSigner
 	log      *slog.Logger
 
-	mu    sync.Mutex
-	nonce uint64
+	mu          sync.Mutex
+	nonce       uint64
 	noncePrimed bool
 }
 

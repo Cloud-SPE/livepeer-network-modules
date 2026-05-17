@@ -7,16 +7,16 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/logger"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/repo/audit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/repo/manifestcache"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime/grpc"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime/lifecycle"
-	rmetrics "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime/metrics"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime/seeder"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service/publisher"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service/resolver"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/audit"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/manifestcache"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/grpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/lifecycle"
+	rmetrics "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/seeder"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/publisher"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/resolver"
 )
 
 // run is the testable entrypoint — main() calls it with os.Args.

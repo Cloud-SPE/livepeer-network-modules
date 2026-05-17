@@ -1,9 +1,9 @@
-module github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console
+module github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console
 
 go 1.25.7
 
 require (
-	github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts v0.0.0
+	github.com/Cloud-SPE/livepeer-network-modules/proto-contracts v0.0.0
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/google/uuid v1.6.0
 	google.golang.org/grpc v1.80.0
@@ -29,4 +29,4 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts => ../proto-contracts
+replace github.com/Cloud-SPE/livepeer-network-modules/proto-contracts => ../proto-contracts

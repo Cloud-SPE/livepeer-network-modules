@@ -12,7 +12,7 @@ syntax = "proto3";
 
 package livepeer.payments.v1;
 
-option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/payments/v1;paymentsv1";
+option go_package = "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/payments/v1;paymentsv1";
 
 // PriceInfo conveys pricing info for a unit of work.
 //

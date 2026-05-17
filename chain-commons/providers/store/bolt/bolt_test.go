@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/store"
 )
 
 func openTempStore(t *testing.T) (store.Store, string) {

@@ -5,7 +5,7 @@ import (
 
 	pwebrtc "github.com/pion/webrtc/v3"
 
-	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
+	mediawebrtc "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/webrtc"
 )
 
 func newTestEngine(t *testing.T) *mediawebrtc.Engine {

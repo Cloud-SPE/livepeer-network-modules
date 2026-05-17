@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/logger"
-	pmetrics "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
+	pmetrics "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/metrics"
 )
 
 // reservePort grabs a free port by binding once and immediately

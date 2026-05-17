@@ -18,7 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
 // Sentinel errors.

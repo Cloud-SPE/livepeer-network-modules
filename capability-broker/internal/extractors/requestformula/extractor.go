@@ -30,7 +30,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 )
 
 const Name = "request-formula"

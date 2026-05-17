@@ -14,7 +14,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 )
 
 type ExtraOverlaySource interface {
@@ -61,7 +61,13 @@ func buildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPa
 		OrchEthAddress: cfg.Identity.OrchEthAddress,
 		Capabilities:   make([]offeringsCapabilityV1, 0, len(cfg.Capabilities)),
 	}
+	seen := map[string]struct{}{}
 	for _, c := range cfg.Capabilities {
+		key := c.ID + "|" + c.OfferingID
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
 		extra := mergeExtraMaps(c.Extra, overlayFor(overlays, c.ID, c.OfferingID))
 		out.Capabilities = append(out.Capabilities, offeringsCapabilityV1{
 			CapabilityID:    c.ID,

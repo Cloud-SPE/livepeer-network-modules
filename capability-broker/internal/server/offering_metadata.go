@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/registry"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/registry"
 )
 
 const kokoroOptionsPath = "/openai-audio-speech/options"
@@ -92,8 +92,14 @@ func hydrateRunnerMetadata(ctx context.Context, cfg *config.Config) {
 }
 
 func hydrateRunnerMetadataWithClient(ctx context.Context, client *http.Client, cfg *config.Config) {
+	seen := map[string]struct{}{}
 	for i := range cfg.Capabilities {
 		cap := &cfg.Capabilities[i]
+		key := cap.ID + "|" + cap.OfferingID
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
 		if cap.ID == "openai:audio-speech" && cap.Backend.Transport == "http" {
 			if err := hydrateKokoroVoices(ctx, client, cap); err != nil {
 				log.Printf("registry metadata hydrate skipped for %s/%s: %v", cap.ID, cap.OfferingID, err)
@@ -239,8 +245,14 @@ type metadataRefreshStatus struct {
 }
 
 func refreshMetadataCatalog(ctx context.Context, client *http.Client, cfg *config.Config, catalog *metadataCatalog) {
+	seen := map[string]struct{}{}
 	for i := range cfg.Capabilities {
 		cap := &cfg.Capabilities[i]
+		key := cap.ID + "|" + cap.OfferingID
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
 		attemptedAt := time.Now().UTC()
 		startedAt := time.Now()
 		family := metadataFamily(cap.ID)

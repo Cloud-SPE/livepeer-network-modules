@@ -3,7 +3,7 @@ package runnerreport
 import (
 	"sync/atomic"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 )
 
 // LiveCounter accumulates monotonic-positive deltas from a runner-reported

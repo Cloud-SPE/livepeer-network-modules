@@ -3,7 +3,7 @@ package registry
 import (
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 )
 
 type stubOverlaySource struct {
@@ -62,5 +62,42 @@ func TestBuildOfferings_MergesOverlayWithoutMutatingConfig(t *testing.T) {
 	}
 	if _, exists := baseVTuber["control_schema"]; exists {
 		t.Fatal("config extra.vtuber should not be mutated by overlay merge")
+	}
+}
+
+func TestBuildOfferings_DedupesRepeatedPublishedTuple(t *testing.T) {
+	cfg := &config.Config{
+		Identity: config.Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []config.Capability{
+			{
+				ID:              "openai:chat-completions",
+				OfferingID:      "shared",
+				InteractionMode: "http-stream@v0",
+				WorkUnit:        config.WorkUnit{Name: "tokens"},
+				Price:           config.Price{AmountWei: "1", PerUnits: 1},
+				Backend:         config.Backend{ID: "a", Transport: "http", URL: "http://backend-a"},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "llama-3-70b"},
+					"provider": "vllm",
+				},
+			},
+			{
+				ID:              "openai:chat-completions",
+				OfferingID:      "shared",
+				InteractionMode: "http-stream@v0",
+				WorkUnit:        config.WorkUnit{Name: "tokens"},
+				Price:           config.Price{AmountWei: "1", PerUnits: 1},
+				Backend:         config.Backend{ID: "b", Transport: "http", URL: "http://backend-b"},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "llama-3-70b"},
+					"provider": "vllm",
+				},
+			},
+		},
+	}
+
+	payload := buildOfferings(cfg, nil)
+	if got := len(payload.Capabilities); got != 1 {
+		t.Fatalf("capabilities count = %d; want 1", got)
 	}
 }

@@ -15,13 +15,13 @@
 # Go reports `[no test files]` and `go test ./...` doesn't even produce a
 # coverage number for them. Listed here so coverage-gate's "every package
 # must score >=75%" check has explicit waivers.)
-github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/controller    # interface-only; impl in providers/controller/eth/
-github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/gasoracle     # interface-only; impl in providers/gasoracle/ttl/
-github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/keystore      # interface-only; v3-json impl in providers/keystore/v3json/
-github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logs          # interface-only; impl in providers/logs/poller/
-github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/receipts      # interface-only; impl in providers/receipts/reorg/
-github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/rpc           # interface-only; multi-URL impl in providers/rpc/multi/
-github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/timesource    # interface-only; impl in providers/timesource/poller/
+github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/controller    # interface-only; impl in providers/controller/eth/
+github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/gasoracle     # interface-only; impl in providers/gasoracle/ttl/
+github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/keystore      # interface-only; v3-json impl in providers/keystore/v3json/
+github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logs          # interface-only; impl in providers/logs/poller/
+github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/receipts      # interface-only; impl in providers/receipts/reorg/
+github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc           # interface-only; multi-URL impl in providers/rpc/multi/
+github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/timesource    # interface-only; impl in providers/timesource/poller/
 
 # Note as of testing/ + bolt commit:
 #   providers/store/bolt is now implemented (86.8% coverage; over the 75% gate)
@@ -32,4 +32,4 @@ github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/timesource
 # multi-step state machines through every error path. The happy paths and
 # common error paths ARE covered (65%+); the remaining branches require a
 # more elaborate scenario harness that's a follow-up.
-github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/receipts/reorg  # 65% — header-fetch retry loop branches; covered by integration test in follow-up
+github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/receipts/reorg  # 65% — header-fetch retry loop branches; covered by integration test in follow-up

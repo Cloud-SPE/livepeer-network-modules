@@ -8,7 +8,7 @@ syntax = "proto3";
 
 package livepeer.sessionrunner.v1;
 
-option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1;sessionrunnerv1";
+option go_package = "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1;sessionrunnerv1";
 
 service SessionRunnerMedia {
   // Frames is the bidirectional raw-RTP stream. Customer→broker→runner

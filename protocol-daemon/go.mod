@@ -1,4 +1,4 @@
-module github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon
+module github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon
 
 go 1.25.7
 
@@ -6,17 +6,17 @@ go 1.25.7
 // directive. CI / production releases swap this for a tagged version
 // (plan 0008's concern); for in-monorepo development the relative path
 // avoids the google.golang.org/genproto conflict that go.work surfaces.
-replace github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons => ../chain-commons
+replace github.com/Cloud-SPE/livepeer-network-modules/chain-commons => ../chain-commons
 
 require (
-	github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons v0.0.0-20260430170820-93fdaeb71d5e
+	github.com/Cloud-SPE/livepeer-network-modules/chain-commons v0.0.0-20260430170820-93fdaeb71d5e
 	github.com/ethereum/go-ethereum v1.17.2
 	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11
 )
 
 require (
-	github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts v0.0.0
+	github.com/Cloud-SPE/livepeer-network-modules/proto-contracts v0.0.0
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20260416073033-7c2071eaa8d4 // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
@@ -55,4 +55,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260427160629-7cedc36a6bc4 // indirect
 )
 
-replace github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts => ../proto-contracts
+replace github.com/Cloud-SPE/livepeer-network-modules/proto-contracts => ../proto-contracts

@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	clogs "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logs"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logs/poller"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/eventlog"
-	chaintest "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	clogs "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logs"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logs/poller"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/eventlog"
+	chaintest "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
 	"github.com/ethereum/go-ethereum"
 )
 

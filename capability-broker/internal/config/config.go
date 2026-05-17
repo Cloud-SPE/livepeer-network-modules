@@ -9,6 +9,7 @@ type Config struct {
 	Identity      Identity      `yaml:"identity"`
 	Listen        Listen        `yaml:"listen,omitempty"`
 	PaymentDaemon PaymentDaemon `yaml:"payment_daemon,omitempty"`
+	ReceiptSink   ReceiptSink   `yaml:"receipt_sink,omitempty"`
 	Capabilities  []Capability  `yaml:"capabilities"`
 }
 
@@ -31,6 +32,14 @@ type PaymentDaemon struct {
 	Mock   bool   `yaml:"mock,omitempty"`
 }
 
+// ReceiptSink configures optional best-effort posting of work receipts to a
+// pool-controller admin API. When omitted, the broker emits no receipt events.
+type ReceiptSink struct {
+	URL       string     `yaml:"url,omitempty"`
+	Auth      AuthConfig `yaml:"auth,omitempty"`
+	TimeoutMS int        `yaml:"timeout_ms,omitempty"`
+}
+
 // Capability is one entry in the host-config.yaml capabilities array.
 type Capability struct {
 	ID              string         `yaml:"id"`
@@ -42,6 +51,14 @@ type Capability struct {
 	Backend         Backend        `yaml:"backend"`
 	Extra           map[string]any `yaml:"extra,omitempty"`
 	Constraints     map[string]any `yaml:"constraints,omitempty"`
+}
+
+func (c Capability) GetBackendID() string {
+	return c.Backend.ID
+}
+
+func (c Capability) GetBackendURL() string {
+	return c.Backend.URL
 }
 
 // Health configures per-tuple live-health behavior.
@@ -81,6 +98,7 @@ type Price struct {
 
 // Backend describes how the broker forwards a request to the upstream backend.
 type Backend struct {
+	ID        string     `yaml:"id,omitempty"`
 	Transport string     `yaml:"transport"`
 	URL       string     `yaml:"url,omitempty"`
 	Auth      AuthConfig `yaml:"auth,omitempty"`
@@ -98,13 +116,13 @@ type Backend struct {
 // the per-session container the broker stands up under
 // transport=session-runner.
 type SessionRunnerBackend struct {
-	Image          string                  `yaml:"image"`
-	Command        []string                `yaml:"command,omitempty"`
-	Env            map[string]string       `yaml:"env,omitempty"`
-	Resources      SessionRunnerResources  `yaml:"resources,omitempty"`
-	StartupTimeout string                  `yaml:"startup_timeout,omitempty"`
-	NetworkMode    string                  `yaml:"network_mode,omitempty"`
-	Media          SessionRunnerMediaSpec  `yaml:"media,omitempty"`
+	Image          string                 `yaml:"image"`
+	Command        []string               `yaml:"command,omitempty"`
+	Env            map[string]string      `yaml:"env,omitempty"`
+	Resources      SessionRunnerResources `yaml:"resources,omitempty"`
+	StartupTimeout string                 `yaml:"startup_timeout,omitempty"`
+	NetworkMode    string                 `yaml:"network_mode,omitempty"`
+	Media          SessionRunnerMediaSpec `yaml:"media,omitempty"`
 }
 
 // SessionRunnerResources expresses the memory / CPU / GPU envelope for

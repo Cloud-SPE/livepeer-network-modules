@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/audit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/published"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/server/adminapi/web"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/candidate"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/diff"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/receive"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/roster"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/scrape"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/audit"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/published"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/server/adminapi/web"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/candidate"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/diff"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/receive"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/roster"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
 // WebDeps bundles the read-only services the web UI handlers need.

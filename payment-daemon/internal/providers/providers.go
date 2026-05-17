@@ -18,9 +18,9 @@ import (
 // Returned by Broker.GetSenderInfo. Numerical fields are *big.Int so
 // arithmetic in escrow / sender code can use exact math.
 type SenderInfo struct {
-	Deposit        *big.Int // wei
-	Reserve        *Reserve
-	WithdrawRound  int64    // 0 if no unlock pending
+	Deposit       *big.Int // wei
+	Reserve       *Reserve
+	WithdrawRound int64 // 0 if no unlock pending
 }
 
 // Reserve breaks down the sender's reserve pool. `FundsRemaining` is

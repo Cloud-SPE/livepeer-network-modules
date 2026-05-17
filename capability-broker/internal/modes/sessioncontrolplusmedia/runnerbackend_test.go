@@ -17,11 +17,11 @@ import (
 // every Attach / Detach / Reattach / Shutdown call and drops envelopes
 // onto a per-session inbound channel that the test reads.
 type fakeBackend struct {
-	mu        sync.Mutex
-	sessions  map[string]*fakeSession
-	detaches  []string
-	reattach  []string
-	shutdown  []string
+	mu       sync.Mutex
+	sessions map[string]*fakeSession
+	detaches []string
+	reattach []string
+	shutdown []string
 }
 
 type fakeSession struct {

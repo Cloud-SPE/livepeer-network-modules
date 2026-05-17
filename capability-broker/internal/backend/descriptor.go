@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 )
 
 // Forwarder is the interface the broker uses to issue outbound calls. The
@@ -20,10 +20,10 @@ type Forwarder interface {
 
 // ForwardRequest carries everything needed for one outbound call.
 type ForwardRequest struct {
-	URL     string         // absolute URL of the backend
-	Method  string         // typically copied from inbound (POST for http-reqresp)
-	Headers http.Header    // SHOULD be Livepeer-stripped + backend-auth injected
-	Body    io.Reader      // request body
+	URL     string      // absolute URL of the backend
+	Method  string      // typically copied from inbound (POST for http-reqresp)
+	Headers http.Header // SHOULD be Livepeer-stripped + backend-auth injected
+	Body    io.Reader   // request body
 }
 
 // SecretResolver resolves backend-auth secret references (e.g., "vault://..."

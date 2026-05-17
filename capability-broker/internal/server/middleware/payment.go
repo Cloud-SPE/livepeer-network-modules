@@ -12,9 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
 )
 
 // CapabilitySpec is what the payment middleware needs to pass to the
@@ -61,10 +62,26 @@ type InterimDebitConfig struct {
 // LiveCounter() concurrently with dispatch's SetLiveCounter call.
 type SessionState struct {
 	live atomic.Pointer[liveCounterHolder]
+	meta atomic.Pointer[receiptMetaHolder]
 }
 
 type liveCounterHolder struct {
 	lc extractors.LiveCounter
+}
+
+type receiptMetaHolder struct {
+	meta ReceiptMeta
+}
+
+type ReceiptMeta struct {
+	WorkID           string
+	RoundID          string
+	RequestID        string
+	CapabilityID     string
+	OfferingID       string
+	MemberEthAddress string
+	BackendID        string
+	ExpectedMaxUnits uint64
 }
 
 // SetLiveCounter publishes a LiveCounter for the in-flight session.
@@ -87,6 +104,23 @@ func (s *SessionState) LiveCounter() extractors.LiveCounter {
 		return h.lc
 	}
 	return nil
+}
+
+func (s *SessionState) SetReceiptMeta(meta ReceiptMeta) {
+	if s == nil {
+		return
+	}
+	s.meta.Store(&receiptMetaHolder{meta: meta})
+}
+
+func (s *SessionState) ReceiptMeta() (ReceiptMeta, bool) {
+	if s == nil {
+		return ReceiptMeta{}, false
+	}
+	if h := s.meta.Load(); h != nil {
+		return h.meta, true
+	}
+	return ReceiptMeta{}, false
 }
 
 type sessionStateKey struct{}
@@ -122,7 +156,7 @@ func SessionStateFromContext(ctx context.Context) *SessionState {
 //   - capability not found in host-config       → 404 + capability_not_served
 //   - offering not found under capability       → 404 + offering_not_served
 //   - daemon rejects (mismatch / bad sender)    → 401 + payment_invalid
-func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitConfig) Middleware {
+func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitConfig, receiptSink receipts.Client) Middleware {
 	// Production-safety warning per plan 0015 §9.1: tick intervals
 	// below 1s are intended for conformance fixtures only.
 	if idc.Interval > 0 && idc.Interval < time.Second {
@@ -205,6 +239,13 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			//    falls through to the v0.2 single-debit flow.
 			state := &SessionState{}
 			ctx = context.WithValue(ctx, sessionStateKey{}, state)
+			state.SetReceiptMeta(ReceiptMeta{
+				WorkID:       workID,
+				RoundID:      DerivePaymentRoundID(paymentBytes),
+				RequestID:    RequestIDFromContext(ctx),
+				CapabilityID: capability,
+				OfferingID:   offering,
+			})
 			handlerCtx, cancelHandler := context.WithCancel(ctx)
 			defer cancelHandler()
 
@@ -310,8 +351,36 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			if reason := terminationReason.Load(); reason != nil {
 				log.Printf("warning: interim-debit terminated work_id=%s reason=%s", workID, *reason)
 			}
+
+			if receiptSink != nil && actual > 0 {
+				if meta, ok := state.ReceiptMeta(); ok {
+					if err := receiptSink.UpsertWorkReceipt(ctx, receipts.WorkReceipt{
+						ID:                meta.WorkID,
+						RoundID:           meta.RoundID,
+						RequestID:         meta.RequestID,
+						CapabilityID:      meta.CapabilityID,
+						OfferingID:        meta.OfferingID,
+						MemberEthAddress:  meta.MemberEthAddress,
+						BackendID:         meta.BackendID,
+						ExpectedMaxUnits:  meta.ExpectedMaxUnits,
+						ActualUnits:       actual,
+						GatewayRevenueWei: metaGatewayRevenue(meta, spec, actual),
+						Status:            "final",
+					}); err != nil {
+						log.Printf("warning: work receipt final emit failed work_id=%s: %v", meta.WorkID, err)
+					}
+				}
+			}
 		})
 	}
+}
+
+func metaGatewayRevenue(meta ReceiptMeta, spec CapabilitySpec, actual uint64) string {
+	if spec.PricePerWorkUnitWei == nil || actual == 0 {
+		return ""
+	}
+	total := new(big.Int).Mul(spec.PricePerWorkUnitWei, new(big.Int).SetUint64(actual))
+	return total.String()
 }
 
 // interimDebitArgs is the parameter bundle for the ticker goroutine.

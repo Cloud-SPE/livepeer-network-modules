@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/clock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/signer"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/store"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/verifier"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/repo/audit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/signer"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/verifier"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/audit"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 func newPublisher(t *testing.T) (*Service, signer.Signer, *chain.InMemory) {

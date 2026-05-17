@@ -3,8 +3,8 @@ package resolver
 import (
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/utils"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/utils"
 )
 
 // detectMode classifies an on-chain serviceURI value into one of the

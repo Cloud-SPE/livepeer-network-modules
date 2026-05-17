@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/clock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/logger"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/signer"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/store"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime/grpc"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service/publisher"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/signer"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/grpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/publisher"
 )
 
 func TestRun_ContextCancelEndsCleanly(t *testing.T) {

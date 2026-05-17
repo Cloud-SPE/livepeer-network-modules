@@ -13,7 +13,7 @@ writes in their own language without an IPC tax:
 | Half | Distribution | Modes covered |
 |---|---|---|
 | [`ts/`](./ts/) | npm package `@tztcloud/livepeer-gateway-middleware` | HTTP family (`http-reqresp@v0`, `http-stream@v0`, `http-multipart@v0`), `ws-realtime@v0`, control-WS surface of `session-control-plus-media@v0` |
-| [`go/`](./go/) | Go module `github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go` | `rtmp-ingress-hls-egress@v0` (RTMP listener + relay), WebRTC media-plane SFU pass-through for `session-control-plus-media@v0` |
+| [`go/`](./go/) | Go module `github.com/Cloud-SPE/livepeer-network-modules/gateway-adapters/go` | `rtmp-ingress-hls-egress@v0` (RTMP listener + relay), WebRTC media-plane SFU pass-through for `session-control-plus-media@v0` |
 
 The split mirrors production reality: the HTTP-family and WebSocket
 adapters fit cleanly in Node-on-the-gateway deployments (the reference

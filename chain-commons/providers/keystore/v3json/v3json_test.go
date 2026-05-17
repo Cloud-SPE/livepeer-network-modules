@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	ksiface "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/keystore"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/keystore/v3json"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	ksiface "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/keystore"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/keystore/v3json"
 	ethkeystore "github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"

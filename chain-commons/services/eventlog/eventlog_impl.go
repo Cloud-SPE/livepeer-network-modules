@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	clogs "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logs"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	clogs "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logs"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
 )

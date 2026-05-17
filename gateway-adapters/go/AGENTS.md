@@ -1,7 +1,7 @@
 # AGENTS.md — Go half
 
 This is the Go half of `gateway-adapters/`. Distributed as the Go module
-`github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go`.
+`github.com/Cloud-SPE/livepeer-network-modules/gateway-adapters/go`.
 The TS half lives at [`../ts/`](../ts/); the cross-language map lives at
 [`../AGENTS.md`](../AGENTS.md).
 
@@ -41,7 +41,7 @@ Plus:
   host go install required.
 - **Tests:** `go test -race -count=1 ./...` — same as
   capability-broker.
-- **Module path** is `github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go`.
+- **Module path** is `github.com/Cloud-SPE/livepeer-network-modules/gateway-adapters/go`.
   The trailing `/go` is the literal path segment; sub-module of the
   monorepo, mirroring the `payment-daemon/`, `capability-broker/`,
   etc. precedents.

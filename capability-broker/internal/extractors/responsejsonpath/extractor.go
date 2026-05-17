@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 )
 
 // Name is the extractor type identifier registered in the extractors registry.

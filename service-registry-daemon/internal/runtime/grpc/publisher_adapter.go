@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 
-	registryv1 "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/registry/v1"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service/publisher"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	registryv1 "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/registry/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/publisher"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 

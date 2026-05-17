@@ -1,4 +1,4 @@
-module github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon
+module github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon
 
 go 1.25.7
 
@@ -22,8 +22,8 @@ require (
 )
 
 require (
-	github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons v0.0.0-20260430170820-93fdaeb71d5e
-	github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts v0.0.0
+	github.com/Cloud-SPE/livepeer-network-modules/chain-commons v0.0.0-20260430170820-93fdaeb71d5e
+	github.com/Cloud-SPE/livepeer-network-modules/proto-contracts v0.0.0
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20260416073033-7c2071eaa8d4 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -65,6 +65,6 @@ require (
 // chain-commons is a sibling module in this monorepo, not yet published to
 // a remote. Use a workspace-style replace until plan 0008 sets up tagged
 // versioning. CI passes by virtue of the local checkout being adjacent.
-replace github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons => ../chain-commons
+replace github.com/Cloud-SPE/livepeer-network-modules/chain-commons => ../chain-commons
 
-replace github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts => ../proto-contracts
+replace github.com/Cloud-SPE/livepeer-network-modules/proto-contracts => ../proto-contracts

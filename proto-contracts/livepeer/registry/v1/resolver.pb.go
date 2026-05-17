@@ -947,7 +947,7 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\tListKnown\x12&.livepeer.registry.v1.ListKnownRequest\x1a%.livepeer.registry.v1.ListKnownResult\x12G\n" +
 	"\aRefresh\x12$.livepeer.registry.v1.RefreshRequest\x1a\x16.google.protobuf.Empty\x12]\n" +
 	"\vGetAuditLog\x12(.livepeer.registry.v1.GetAuditLogRequest\x1a$.livepeer.registry.v1.AuditLogResult\x12D\n" +
-	"\x06Health\x12\x16.google.protobuf.Empty\x1a\".livepeer.registry.v1.HealthResultB_Z]github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/registry/v1;registryv1b\x06proto3"
+	"\x06Health\x12\x16.google.protobuf.Empty\x1a\".livepeer.registry.v1.HealthResultB_Z]github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/registry/v1;registryv1b\x06proto3"
 
 var (
 	file_livepeer_registry_v1_resolver_proto_rawDescOnce sync.Once

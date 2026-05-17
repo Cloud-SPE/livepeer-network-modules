@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"testing"
 
-	ksiface "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/keystore"
+	ksiface "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/keystore"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )

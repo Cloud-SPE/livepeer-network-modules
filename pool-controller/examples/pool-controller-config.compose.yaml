@@ -1,0 +1,53 @@
+identity:
+  orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
+  label: pool-orch
+
+admin_auth:
+  bearer_token_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+
+receipt_sink:
+  url: http://pool-controller:8080
+  timeout_ms: 1500
+  auth:
+    method: bearer
+    secret_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
+
+members:
+  - eth_address: 0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    display_name: member-a
+    payout_mode: onchain
+    backends:
+      - id: member-a-chat
+        transport: http
+        url: http://member-a-runner:8000/v1/chat/completions
+        auth:
+          method: none
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: llama-3-70b
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor:
+                type: openai-usage
+                field: total_tokens
+            price:
+              amount_wei: "1500000"
+              per_units: 1
+            health:
+              probe:
+                type: http-openai-model-ready
+                interval_ms: 5000
+                timeout_ms: 1500
+                unhealthy_after: 2
+                healthy_after: 1
+                config:
+                  url: http://member-a-runner:8000/v1/models
+                  expect_model: llama-3-70b

@@ -12,20 +12,20 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 )
 
 // ControlWSConfig holds the broker-wide knobs for the control-WS path.
 // Driver-owned; populated from CLI flags at server construction.
 type ControlWSConfig struct {
-	HeartbeatInterval         time.Duration
-	MissedHeartbeatThreshold  int
-	ReconnectWindow           time.Duration
-	BackpressureDropAfter     time.Duration
-	OutboundBufferMessages    int
-	ReplayBufferMessages      int
-	ReplayBufferBytes         int
-	HandshakeTimeout          time.Duration
+	HeartbeatInterval        time.Duration
+	MissedHeartbeatThreshold int
+	ReconnectWindow          time.Duration
+	BackpressureDropAfter    time.Duration
+	OutboundBufferMessages   int
+	ReplayBufferMessages     int
+	ReplayBufferBytes        int
+	HandshakeTimeout         time.Duration
 }
 
 // DefaultControlWSConfig returns the recommended defaults from §10.1.

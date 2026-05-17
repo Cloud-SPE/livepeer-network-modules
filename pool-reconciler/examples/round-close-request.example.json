@@ -1,0 +1,9 @@
+{
+  "id": "round-close-2026-05-16-124",
+  "round_id": "124",
+  "pool_revenue_wei": "2000",
+  "pool_cut_wei": "200",
+  "included_work_receipt_ids": [
+    "work-1"
+  ]
+}

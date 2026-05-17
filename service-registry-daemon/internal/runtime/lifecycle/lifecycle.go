@@ -14,11 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/logger"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/store"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime/grpc"
-	rmetrics "github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime/metrics"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/runtime/seeder"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/grpc"
+	rmetrics "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/seeder"
 )
 
 // RunConfig is the input to Run.

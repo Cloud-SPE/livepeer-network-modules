@@ -17,13 +17,13 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/controller"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/gasoracle"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/keystore"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logger"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/rpc"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/controller"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/gasoracle"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/keystore"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/types"
 )
 
 // Config wires the preflight runner.

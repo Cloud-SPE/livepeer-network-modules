@@ -256,6 +256,166 @@ func TestValidateAcceptsOpenAIExtraShape(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsRepeatedPublishedTupleWithDistinctBackends(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{
+			{
+				ID:              "openai:chat-completions",
+				OfferingID:      "shared",
+				InteractionMode: "http-stream@v0",
+				WorkUnit: WorkUnit{
+					Name:      "tokens",
+					Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
+				},
+				Price: Price{AmountWei: "1", PerUnits: 1},
+				Backend: Backend{
+					ID:        "backend-a",
+					Transport: "http",
+					URL:       "http://backend-a:8000/v1/chat/completions",
+				},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "llama-3-70b"},
+					"provider": "vllm",
+				},
+			},
+			{
+				ID:              "openai:chat-completions",
+				OfferingID:      "shared",
+				InteractionMode: "http-stream@v0",
+				WorkUnit: WorkUnit{
+					Name:      "tokens",
+					Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
+				},
+				Price: Price{AmountWei: "1", PerUnits: 1},
+				Backend: Backend{
+					ID:        "backend-b",
+					Transport: "http",
+					URL:       "http://backend-b:8000/v1/chat/completions",
+				},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "llama-3-70b"},
+					"provider": "vllm",
+				},
+			},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsRepeatedPublishedTupleWithMismatchedPrice(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{
+			{
+				ID:              "openai:chat-completions",
+				OfferingID:      "shared",
+				InteractionMode: "http-stream@v0",
+				WorkUnit: WorkUnit{
+					Name:      "tokens",
+					Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
+				},
+				Price: Price{AmountWei: "1", PerUnits: 1},
+				Backend: Backend{
+					ID:        "backend-a",
+					Transport: "http",
+					URL:       "http://backend-a:8000/v1/chat/completions",
+				},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "llama-3-70b"},
+					"provider": "vllm",
+				},
+			},
+			{
+				ID:              "openai:chat-completions",
+				OfferingID:      "shared",
+				InteractionMode: "http-stream@v0",
+				WorkUnit: WorkUnit{
+					Name:      "tokens",
+					Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
+				},
+				Price: Price{AmountWei: "2", PerUnits: 1},
+				Backend: Backend{
+					ID:        "backend-b",
+					Transport: "http",
+					URL:       "http://backend-b:8000/v1/chat/completions",
+				},
+				Extra: map[string]any{
+					"openai":   map[string]any{"model": "llama-3-70b"},
+					"provider": "vllm",
+				},
+			},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "repeated published tuple must reuse the same price") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateAcceptsReceiptSink(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		ReceiptSink: ReceiptSink{
+			URL: "http://pool-controller:8080",
+			Auth: AuthConfig{
+				Method:    "bearer",
+				SecretRef: "env://POOL_CONTROLLER_TOKEN",
+			},
+			TimeoutMS: 1500,
+		},
+		Capabilities: []Capability{{
+			ID:              "openai:chat-completions",
+			OfferingID:      "default",
+			InteractionMode: "http-stream@v0",
+			WorkUnit:        WorkUnit{Name: "tokens", Extractor: map[string]any{"type": "openai-usage"}},
+			Price:           Price{AmountWei: "1", PerUnits: 1},
+			Backend:         Backend{Transport: "http", URL: "http://backend:8000/v1/chat/completions"},
+			Extra: map[string]any{
+				"openai":   map[string]any{"model": "llama-3-70b"},
+				"provider": "vllm",
+			},
+		}},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsReceiptSinkBearerWithoutSecret(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		ReceiptSink: ReceiptSink{
+			URL: "http://pool-controller:8080",
+			Auth: AuthConfig{
+				Method: "bearer",
+			},
+		},
+		Capabilities: []Capability{{
+			ID:              "openai:chat-completions",
+			OfferingID:      "default",
+			InteractionMode: "http-stream@v0",
+			WorkUnit:        WorkUnit{Name: "tokens", Extractor: map[string]any{"type": "openai-usage"}},
+			Price:           Price{AmountWei: "1", PerUnits: 1},
+			Backend:         Backend{Transport: "http", URL: "http://backend:8000/v1/chat/completions"},
+			Extra: map[string]any{
+				"openai":   map[string]any{"model": "llama-3-70b"},
+				"provider": "vllm",
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "receipt_sink.auth.secret_ref is required") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestValidateRejectsAudioCapabilityWithoutAudioExtra(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},

@@ -14,9 +14,9 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/receiver"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 )
 
 func bytes20(b byte) []byte {
@@ -86,11 +86,11 @@ func TestSessionLifecycle(t *testing.T) {
 
 	// 1. OpenSession.
 	openResp, err := client.OpenSession(ctx, &pb.OpenSessionRequest{
-		WorkId:               workID,
-		Capability:           "openai:/v1/chat/completions",
-		Offering:             "gpt-5",
-		PricePerWorkUnitWei:  big.NewInt(100).Bytes(),
-		WorkUnit:             "token",
+		WorkId:              workID,
+		Capability:          "openai:/v1/chat/completions",
+		Offering:            "gpt-5",
+		PricePerWorkUnitWei: big.NewInt(100).Bytes(),
+		WorkUnit:            "token",
 	})
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)
@@ -101,11 +101,11 @@ func TestSessionLifecycle(t *testing.T) {
 
 	// 2. OpenSession again → ALREADY_OPEN (idempotent).
 	openResp2, err := client.OpenSession(ctx, &pb.OpenSessionRequest{
-		WorkId:               workID,
-		Capability:           "openai:/v1/chat/completions",
-		Offering:             "gpt-5",
-		PricePerWorkUnitWei:  big.NewInt(100).Bytes(),
-		WorkUnit:             "token",
+		WorkId:              workID,
+		Capability:          "openai:/v1/chat/completions",
+		Offering:            "gpt-5",
+		PricePerWorkUnitWei: big.NewInt(100).Bytes(),
+		WorkUnit:            "token",
 	})
 	if err != nil {
 		t.Fatalf("OpenSession (re-open): %v", err)
@@ -216,9 +216,9 @@ func TestProcessPayment_SenderMismatch(t *testing.T) {
 
 	const workID = "test-work-mismatch"
 	if _, err := client.OpenSession(ctx, &pb.OpenSessionRequest{
-		WorkId:               workID,
-		Capability:           "x", Offering: "y", WorkUnit: "u",
-		PricePerWorkUnitWei:  big.NewInt(1).Bytes(),
+		WorkId:     workID,
+		Capability: "x", Offering: "y", WorkUnit: "u",
+		PricePerWorkUnitWei: big.NewInt(1).Bytes(),
 	}); err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
@@ -278,6 +278,41 @@ func TestSufficientBalance(t *testing.T) {
 	}
 	if suff2.GetSufficient() {
 		t.Error("SufficientBalance for 1 unit should be false at zero balance")
+	}
+}
+
+func TestGetRoundRevenue(t *testing.T) {
+	client, st, cleanup := stand(t)
+	defer cleanup()
+
+	ticketHash := make([]byte, 32)
+	ticketHash[0] = 0xaa
+	ticket := &store.SignedTicket{
+		Sender:        bytes20(0x01),
+		FaceValue:     big.NewInt(3000),
+		CreationRound: 123,
+	}
+	if _, err := st.EnqueueRedemption(ticketHash, ticket); err != nil {
+		t.Fatalf("EnqueueRedemption() error = %v", err)
+	}
+	confirmedTxHash := make([]byte, 32)
+	confirmedTxHash[0] = 0x55
+	if err := st.MarkRedeemed(ticketHash, confirmedTxHash, ticket, 124); err != nil {
+		t.Fatalf("MarkRedeemed() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := client.GetRoundRevenue(ctx, &pb.GetRoundRevenueRequest{RoundId: 124})
+	if err != nil {
+		t.Fatalf("GetRoundRevenue() error = %v", err)
+	}
+	revenue := new(big.Int).SetBytes(resp.GetConfirmedRevenueWei())
+	if revenue.Cmp(big.NewInt(3000)) != 0 {
+		t.Fatalf("revenue = %s; want 3000", revenue.String())
+	}
+	if resp.GetConfirmedTicketCount() != 1 {
+		t.Fatalf("confirmed_ticket_count = %d; want 1", resp.GetConfirmedTicketCount())
 	}
 }
 

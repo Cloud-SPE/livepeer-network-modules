@@ -203,3 +203,22 @@ func TestRecordMetadataRefresh_ResetsPreviousCurrentResult(t *testing.T) {
 		t.Fatalf("consecutive failures gauge = %v; want 1", got)
 	}
 }
+
+func TestRecordBackendSelection(t *testing.T) {
+	before := testutil.ToFloat64(backendSelectionsTotal.WithLabelValues(
+		"openai:chat-completions",
+		"shared",
+		"member-west",
+	))
+
+	RecordBackendSelection("openai:chat-completions", "shared", "member-west")
+
+	after := testutil.ToFloat64(backendSelectionsTotal.WithLabelValues(
+		"openai:chat-completions",
+		"shared",
+		"member-west",
+	))
+	if after != before+1 {
+		t.Fatalf("counter delta = %v; want %v", after-before, 1.0)
+	}
+}

@@ -15,9 +15,9 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	ccbm "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/bondingmanager"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/rpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	ccbm "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/bondingmanager"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 )
 
 // Reward-side selector. Read-only selectors live in chain-commons.

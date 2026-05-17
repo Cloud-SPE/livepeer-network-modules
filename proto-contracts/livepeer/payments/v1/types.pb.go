@@ -455,7 +455,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x06sender\x18\x02 \x01(\fR\x06sender\x12Y\n" +
 	"\x11expiration_params\x18\x03 \x01(\v2,.livepeer.payments.v1.TicketExpirationParamsR\x10expirationParams\x12Z\n" +
 	"\x14ticket_sender_params\x18\x04 \x03(\v2(.livepeer.payments.v1.TicketSenderParamsR\x12ticketSenderParams\x12F\n" +
-	"\x0eexpected_price\x18\x05 \x01(\v2\x1f.livepeer.payments.v1.PriceInfoR\rexpectedPriceB_Z]github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/payments/v1;paymentsv1b\x06proto3"
+	"\x0eexpected_price\x18\x05 \x01(\v2\x1f.livepeer.payments.v1.PriceInfoR\rexpectedPriceB_Z]github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/payments/v1;paymentsv1b\x06proto3"
 
 var (
 	file_livepeer_payments_v1_types_proto_rawDescOnce sync.Once

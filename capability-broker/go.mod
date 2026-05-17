@@ -1,9 +1,9 @@
-module github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker
+module github.com/Cloud-SPE/livepeer-network-modules/capability-broker
 
 go 1.25.0
 
 require (
-	github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go v0.0.0-00010101000000-000000000000
+	github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go v0.0.0-00010101000000-000000000000
 	github.com/gorilla/websocket v1.5.3
 	github.com/pion/webrtc/v3 v3.3.6
 	github.com/prometheus/client_golang v1.23.2
@@ -56,4 +56,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260226221140-a57be14db171 // indirect
 )
 
-replace github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go => ../livepeer-network-protocol/proto-go
+replace github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go => ../livepeer-network-protocol/proto-go

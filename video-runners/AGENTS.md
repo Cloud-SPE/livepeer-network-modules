@@ -61,7 +61,7 @@ Inherited from the repo root (agent-first harness pattern). Plus:
   runner builds on the same tag unless the caller overrides `TAG=...`.
 - **No per-runner LICENSE files.** Repo-root MIT applies.
 - **Adjust transcode-core import path on port** to
-  `github.com/Cloud-SPE/livepeer-network-rewrite/video-runners/transcode-core`.
+  `github.com/Cloud-SPE/livepeer-network-modules/video-runners/transcode-core`.
 - **Skip `live-transcode-runner`.** Plan 0011-followup retired it; the
   broker's mode driver + FFmpeg pipeline + LL-HLS server replaces it.
 - **`transcode-core/live.go` may carry residual helpers.** Audit

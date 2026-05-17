@@ -6,7 +6,7 @@ import (
 	"math/big"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/gasoracle"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/gasoracle"
 )
 
 func TestFakeGasOracle_SuggestDefaults(t *testing.T) {

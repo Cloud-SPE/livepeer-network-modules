@@ -46,4 +46,4 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 Ported from `livepeer-byoc/openai-runners/openai-runner/` (Go module
 renamed from `openai_runner` to
-`github.com/Cloud-SPE/livepeer-network-rewrite/openai-runners/openai-runner`).
+`github.com/Cloud-SPE/livepeer-network-modules/openai-runners/openai-runner`).

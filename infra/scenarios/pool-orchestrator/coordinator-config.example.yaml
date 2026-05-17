@@ -1,0 +1,9 @@
+identity:
+  orch_eth_address: "0xYOUR_ORCH_ADDRESS"
+
+brokers:
+  - name: pool-edge
+    base_url: https://pool-broker.example.com
+
+publish:
+  manifest_ttl: 24h

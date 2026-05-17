@@ -15,15 +15,15 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/roundclock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/txintent"
-	aiserviceregistrysvc "github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/service/aiserviceregistry"
-	orchstatussvc "github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/service/orchstatus"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/service/reward"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/service/roundinit"
-	serviceregistrysvc "github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/service/serviceregistry"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/roundclock"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/txintent"
+	aiserviceregistrysvc "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/aiserviceregistry"
+	orchstatussvc "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/orchstatus"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/reward"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/roundinit"
+	serviceregistrysvc "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/serviceregistry"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/types"
 )
 
 // ErrUnimplemented mirrors codes.Unimplemented for the Go-native API.

@@ -6,7 +6,7 @@ import "google/protobuf/empty.proto";
 import "livepeer/registry/v1/resolver.proto";
 import "livepeer/registry/v1/types.proto";
 
-option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/registry/v1;registryv1";
+option go_package = "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/registry/v1;registryv1";
 
 service Publisher {
   rpc GetIdentity(google.protobuf.Empty) returns (IdentityResult);

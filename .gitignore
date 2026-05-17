@@ -15,6 +15,13 @@ Thumbs.db
 *.pem
 *.key
 
+# Pool local-only configs / secrets / state
+**/*-config.local.yaml
+**/keystore.json
+**/keystore-password
+**/var/local-run/
+**/*.db
+
 # Build output (when code arrives)
 /dist/
 /build/

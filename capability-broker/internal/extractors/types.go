@@ -53,9 +53,9 @@ type Request struct {
 
 // Response carries the parts of the backend response available to extractors.
 type Response struct {
-	Status   int
-	Body     []byte
-	Headers  http.Header
+	Status  int
+	Body    []byte
+	Headers http.Header
 	// Duration is wall-clock time the broker spent on this request,
 	// from start of mode dispatch to extractor invocation. Mode drivers
 	// populate this for any mode where a meaningful per-request elapsed

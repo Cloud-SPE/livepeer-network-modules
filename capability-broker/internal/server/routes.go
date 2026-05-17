@@ -1,12 +1,11 @@
 package server
 
 import (
-	"math/big"
 	"net/http"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/hls"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/registry"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/hls"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/registry"
 )
 
 func (s *Server) registerRoutes() {
@@ -37,7 +36,7 @@ func (s *Server) registerRoutes() {
 		middleware.RequestID,
 		middleware.Metrics,
 		middleware.Headers,
-		middleware.Payment(s.payment, s.capabilityLookup(), s.opts.InterimDebit),
+		middleware.Payment(s.payment, s.capabilityLookup(), s.opts.InterimDebit, s.receiptSink),
 	)
 
 	// POST /v1/cap — http-reqresp / http-stream / http-multipart /
@@ -106,25 +105,6 @@ func (s *Server) dispatchControlWS(w http.ResponseWriter, r *http.Request) {
 // price_per_work_unit_wei is `amount_wei / per_units`.
 func (s *Server) capabilityLookup() middleware.CapabilityLookup {
 	return func(capability, offering string) (middleware.CapabilitySpec, bool) {
-		cap, ok := s.lookup(capability, offering)
-		if !ok || cap == nil {
-			return middleware.CapabilitySpec{}, false
-		}
-		amount, ok := new(big.Int).SetString(cap.Price.AmountWei, 10)
-		if !ok {
-			return middleware.CapabilitySpec{}, false
-		}
-		perUnits := big.NewInt(int64(cap.Price.PerUnits))
-		if perUnits.Sign() == 0 {
-			return middleware.CapabilitySpec{}, false
-		}
-		// Wei per work unit = amount_wei / per_units. Integer division
-		// is fine — config validates per_units > 0 and amount_wei is a
-		// non-negative decimal string.
-		pricePerUnit := new(big.Int).Quo(amount, perUnits)
-		return middleware.CapabilitySpec{
-			WorkUnit:            cap.WorkUnit.Name,
-			PricePerWorkUnitWei: pricePerUnit,
-		}, true
+		return s.lookupSpec(capability, offering)
 	}
 }

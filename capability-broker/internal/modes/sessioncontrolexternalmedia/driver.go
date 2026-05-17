@@ -12,8 +12,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
 )
 
 // Mode is the canonical mode-name@vN string for this driver.
@@ -44,12 +44,12 @@ const (
 
 // Config holds the driver's tunables.
 type Config struct {
-	HeartbeatInterval         time.Duration
-	MissedHeartbeatThreshold  int
-	BackpressureDropAfter     time.Duration
-	OutboundBufferMessages    int
-	HandshakeTimeout          time.Duration
-	UsageTickCadence          time.Duration
+	HeartbeatInterval          time.Duration
+	MissedHeartbeatThreshold   int
+	BackpressureDropAfter      time.Duration
+	OutboundBufferMessages     int
+	HandshakeTimeout           time.Duration
+	UsageTickCadence           time.Duration
 	BackendUnresponsiveTimeout time.Duration
 }
 

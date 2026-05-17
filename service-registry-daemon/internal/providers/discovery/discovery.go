@@ -22,10 +22,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	ccbm "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/bondingmanager"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/rpc"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	ccbm "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/bondingmanager"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 // Discovery enumerates the on-chain set of active orchestrators.

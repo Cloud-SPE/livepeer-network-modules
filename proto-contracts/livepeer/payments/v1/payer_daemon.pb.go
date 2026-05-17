@@ -296,7 +296,7 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\x0ewithdraw_round\x18\x03 \x01(\x03R\rwithdrawRound2\xe4\x01\n" +
 	"\vPayerDaemon\x12h\n" +
 	"\rCreatePayment\x12*.livepeer.payments.v1.CreatePaymentRequest\x1a+.livepeer.payments.v1.CreatePaymentResponse\x12k\n" +
-	"\x0eGetDepositInfo\x12+.livepeer.payments.v1.GetDepositInfoRequest\x1a,.livepeer.payments.v1.GetDepositInfoResponseB_Z]github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/payments/v1;paymentsv1b\x06proto3"
+	"\x0eGetDepositInfo\x12+.livepeer.payments.v1.GetDepositInfoRequest\x1a,.livepeer.payments.v1.GetDepositInfoResponseB_Z]github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/payments/v1;paymentsv1b\x06proto3"
 
 var (
 	file_livepeer_payments_v1_payer_daemon_proto_rawDescOnce sync.Once

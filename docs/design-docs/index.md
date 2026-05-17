@@ -12,6 +12,7 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [payment-daemon-interactions.md](./payment-daemon-interactions.md) | active | Cross-cutting guide to how the gateway, broker, and both `payment-daemon` roles interact |
 | [streaming-workload-pattern.md](./streaming-workload-pattern.md) | active | Long-lived-session blueprint (broker-side meter + gateway-side ledger) for `ws-realtime`, `session-control-plus-media`, and `rtmp-…` modes |
 | [payment-decoupling.md](./payment-decoupling.md) | active | What changed in `payment-daemon` for opaque capability / work-unit names |
+| [pricing-overview.md](./pricing-overview.md) | active | End-to-end synthesis: how price flows from `host-config.yaml` through manifest, discovery, headers, extractors, modes, session, debit, settlement, and pool receipts |
 | [backend-health.md](./backend-health.md) | active | Three-layer health model (manifest / live / failure-rate) — which layer answers which routing question |
 | [trust-model.md](./trust-model.md) | active | Cold-key + sign-cycle deep dive; threat model and what each invariant defends against |
 | [migration-from-suite.md](./migration-from-suite.md) | active | Suite-to-rewrite component map, phased deprecation timeline (gated by the first rewrite release tag), and what the suite preserves long-term (cold key, on-chain identity, chain state) |

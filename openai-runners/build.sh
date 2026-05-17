@@ -101,9 +101,18 @@ case "${cmd}" in
     build_gpu_media_base
     ;;
   smoke)
-    echo "==> Cross-runner smoke against compose stack"
-    docker compose -f compose/docker-compose.yml config >/dev/null
-    echo "compose config valid"
+    echo "==> Validating compose snippets"
+    shopt -s nullglob
+    snippets=(compose/docker-compose.*.yml)
+    if [ ${#snippets[@]} -eq 0 ]; then
+      echo "no compose snippets found under compose/" >&2
+      exit 1
+    fi
+    for f in "${snippets[@]}"; do
+      echo "  - $f"
+      docker compose -f "$f" config >/dev/null
+    done
+    echo "All compose snippets valid (${#snippets[@]} file(s))"
     ;;
   *)
     echo "usage: build.sh [build|base|gpu-base|gpu-media-base|smoke]" >&2

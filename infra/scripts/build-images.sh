@@ -19,8 +19,8 @@
 #     python-gpu-runner-base, python-gpu-media-runner-base) are built
 #     first; downstream multi-arch video runners and GPU Python runners
 #     depend on them.
-#   - Multi-target Dockerfiles (openai-runner: chat+embeddings; video
-#     transcode/abr: nvidia+intel+amd) are expanded into multiple builds.
+#   - Multi-target Dockerfiles (video transcode/abr: nvidia+intel+amd)
+#     are expanded into multiple builds.
 
 set -euo pipefail
 
@@ -72,10 +72,6 @@ declare -a IMAGES=(
   "livepeer-gateway-adapters-go|.|gateway-adapters/go/Dockerfile||"
   "livepeer-conformance|.|livepeer-network-protocol/conformance/Dockerfile||"
   "livepeer-conformance-session-runner|.|livepeer-network-protocol/conformance/runner/session-runner-stub/Dockerfile||"
-
-  # Tier 1 — Go workload runners (multi-target Dockerfile)
-  "openai-runner-chat|openai-runners/openai-runner|openai-runners/openai-runner/Dockerfile|chat|"
-  "openai-runner-embeddings|openai-runners/openai-runner|openai-runners/openai-runner/Dockerfile|embeddings|"
 
   # Tier 2 — Node SaaS gateways (monorepo-root context, pnpm workspace)
   "livepeer-customer-portal|customer-portal|customer-portal/Dockerfile||"

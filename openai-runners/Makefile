@@ -6,9 +6,9 @@ REGISTRY    ?= tztcloud
 TAG         ?= v1.1.0
 PLATFORMS   ?= linux/amd64
 
-.PHONY: build base gpu-base gpu-media-base go-runner audio tts image downloader tester smoke clean help
+.PHONY: build base gpu-base gpu-media-base audio tts image downloader tester smoke clean help
 
-build: base gpu-base gpu-media-base go-runner audio tts image downloader tester ## Build all runner images locally
+build: base gpu-base gpu-media-base audio tts image downloader tester ## Build all runner images locally
 
 base: ## Build the shared python-runner-base image
 	docker build \
@@ -28,18 +28,6 @@ gpu-media-base: gpu-base ## Build the shared python-gpu-media-runner-base image
 		-t $(REGISTRY)/python-gpu-media-runner-base:$(TAG) \
 		-f python-gpu-media-runner-base/Dockerfile \
 		python-gpu-media-runner-base
-
-go-runner: ## Build the Go openai-runner (chat + embeddings)
-	docker build \
-		--target chat \
-		-t $(REGISTRY)/openai-runner-chat:$(TAG) \
-		-f openai-runner/Dockerfile \
-		openai-runner
-	docker build \
-		--target embeddings \
-		-t $(REGISTRY)/openai-runner-embeddings:$(TAG) \
-		-f openai-runner/Dockerfile \
-		openai-runner
 
 audio: gpu-media-base ## Build the openai-audio-runner image
 	docker build \
@@ -82,8 +70,6 @@ clean: ## Remove dev images
 		$(REGISTRY)/python-runner-base:$(TAG) \
 		$(REGISTRY)/python-gpu-runner-base:$(TAG) \
 		$(REGISTRY)/python-gpu-media-runner-base:$(TAG) \
-		$(REGISTRY)/openai-runner-chat:$(TAG) \
-		$(REGISTRY)/openai-runner-embeddings:$(TAG) \
 		$(REGISTRY)/openai-audio-runner:$(TAG) \
 		$(REGISTRY)/openai-tts-runner:$(TAG) \
 		$(REGISTRY)/openai-image-generation-runner:$(TAG) \

@@ -52,7 +52,10 @@ func TestStreamAndCountUsage_HonoursFieldSelector(t *testing.T) {
 }
 
 func TestStreamAndCountUsage_NoUsageFrameReturnsZero(t *testing.T) {
-	// Same stream but with the usage frame removed.
+	// Older Ollama (pre-v0.5) silently drops stream_options.include_usage
+	// — the final SSE frame has no `usage` object. The runner must not
+	// crash; it bills 0 and the body still forwards intact. Operator is
+	// expected to upgrade Ollama; this test guards against regression.
 	noUsage := strings.Replace(
 		vllmStreamFixture,
 		`data: {"id":"x","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":30,"total_tokens":42}}`+"\n\n",
@@ -63,6 +66,9 @@ func TestStreamAndCountUsage_NoUsageFrameReturnsZero(t *testing.T) {
 	got := streamAndCountUsage(&out, strings.NewReader(noUsage), "total_tokens", nil)
 	if got != 0 {
 		t.Fatalf("expected 0 when no usage frame is present; got %d", got)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"content":"Hello"`)) {
+		t.Fatal("body should still stream through even without a usage frame")
 	}
 }
 

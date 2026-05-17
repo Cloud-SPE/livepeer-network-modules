@@ -91,3 +91,19 @@ func TestBuildOptionsPayload_OperatorOverridesDiscoveredModel(t *testing.T) {
 		t.Fatalf("operator-set SERVED_MODEL_NAME should win over discovery; got %v", out["served_model_name"])
 	}
 }
+
+func TestBuildOptionsPayload_AdvertisesUpstreamKind(t *testing.T) {
+	for _, kind := range []string{"vllm", "ollama"} {
+		out := buildOptionsPayload([]string{"m"}, optionsConfig{upstreamKind: kind})
+		if got := out["upstream_kind"]; got != kind {
+			t.Errorf("kind=%s: got %v, want %s", kind, got, kind)
+		}
+	}
+}
+
+func TestBuildOptionsPayload_OmitsUpstreamKindWhenEmpty(t *testing.T) {
+	out := buildOptionsPayload([]string{"m"}, optionsConfig{})
+	if _, present := out["upstream_kind"]; present {
+		t.Fatal("upstream_kind should be omitted when unset")
+	}
+}

@@ -1,9 +1,9 @@
 # openai-chat-runner
 
 Streaming-aware OpenAI chat-completions proxy that sits between the
-capability broker and a vLLM (or any OpenAI-compatible) backend. Its
-added value over the transparent `openai-runner` (chat target) is
-**token counting for streaming requests**:
+capability broker and a vLLM or Ollama backend (or any
+OpenAI-compatible upstream). Its added value over a transparent proxy
+is **token counting for streaming requests**:
 
 - For `stream: true` requests, the runner scans the upstream SSE
   response, accumulates the final `usage.total_tokens` value, and
@@ -32,7 +32,8 @@ gateway-facing side.
 | Env var | Default | Purpose |
 |---|---|---|
 | `RUNNER_ADDR` | `:8080` | HTTP bind |
-| `UPSTREAM_URL` | (required) | Upstream OpenAI-compatible chat-completions endpoint, e.g. `http://vllm_model_runner:8000/v1/chat/completions` |
+| `UPSTREAM_URL` | (required) | Upstream OpenAI-compatible chat-completions endpoint, e.g. `http://vllm_model_runner:8000/v1/chat/completions` or `http://ollama:11434/v1/chat/completions` |
+| `UPSTREAM_KIND` | `vllm` | One of `vllm`, `ollama`. Advertised in the `/options` payload; same code path today (future hook for kind-specific quirks). |
 | `CAPABILITY_NAME` | `openai-chat-completions` | Path segment for the `/options` endpoint |
 | `USAGE_FIELD` | `total_tokens` | Which `usage.*` field to bill on (`prompt_tokens`, `completion_tokens`, or `total_tokens`) |
 | `MODEL_DISCOVERY_RETRIES` | `10` | Startup retries against upstream `/v1/models` |
@@ -64,9 +65,16 @@ Derived `features` flags (always present in the options payload):
 ## Client request shape
 
 For streaming requests, the runner **auto-injects**
-`stream_options.include_usage: true` if absent. vLLM only emits the
-final `usage` frame when this flag is set; without it, billing would
-default to 0. Clients can pre-set the flag explicitly (including
+`stream_options.include_usage: true` if absent.
+
+- **vLLM** honours `include_usage` on all supported releases. Works
+  out of the box.
+- **Ollama** honours `include_usage` starting in v0.5. Older
+  Ollama silently drops the flag — the final SSE frame has no
+  `usage` object and the runner bills 0 tokens. Operators on older
+  Ollama should upgrade before deploying this runner.
+
+Clients can pre-set the flag explicitly (including
 `include_usage: false`, which the runner honours).
 
 ## Broker wiring

@@ -53,8 +53,10 @@ func Run() {
 	}
 	capability := env("CAPABILITY_NAME", defaultCapability)
 	usageField := env("USAGE_FIELD", "total_tokens")
+	upstreamKind := env("UPSTREAM_KIND", "vllm")
 	maxBodyBytes := defaultMaxBodyBytes
 	optionsCfg := optionsConfigFromEnv()
+	optionsCfg.upstreamKind = upstreamKind
 
 	client := &http.Client{Transport: newTransport()}
 
@@ -95,8 +97,8 @@ func Run() {
 		_ = json.NewEncoder(w).Encode(buildOptionsPayload(models, optionsCfg))
 	})
 
-	log.Printf("openai-chat-runner listening on %s capability=%s upstream=%s usage_field=%s",
-		addr, capability, upstream, usageField)
+	log.Printf("openai-chat-runner listening on %s capability=%s upstream=%s upstream_kind=%s usage_field=%s",
+		addr, capability, upstream, upstreamKind, usageField)
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
@@ -221,6 +223,7 @@ type optionsConfig struct {
 	reasoningParser string
 	toolCallParser  string
 	quantization    string
+	upstreamKind    string // "vllm" or "ollama"; advertised in payload
 }
 
 func optionsConfigFromEnv() optionsConfig {
@@ -255,6 +258,9 @@ func buildOptionsPayload(models []string, cfg optionsConfig) map[string]any {
 	out := map[string]any{
 		"task":   "chat",
 		"models": models,
+	}
+	if kind := strings.TrimSpace(cfg.upstreamKind); kind != "" {
+		out["upstream_kind"] = kind
 	}
 
 	served := cfg.servedModelName

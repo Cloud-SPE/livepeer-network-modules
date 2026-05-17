@@ -2,9 +2,11 @@
 
 BIN := bin/livepeer-protocol-daemon
 DOCKER_TAG ?= dev
+VERSION ?= $(shell VERSION_PREFIX="$(DOCKER_TAG)" FALLBACK_VERSION=dev ../infra/build/git-version.sh)
+GO_LDFLAGS := -s -w -X main.version=$(VERSION)
 
 build:
-	go build -o $(BIN) ./cmd/livepeer-protocol-daemon
+	go build -trimpath -ldflags '$(GO_LDFLAGS)' -o $(BIN) ./cmd/livepeer-protocol-daemon
 
 test:
 	go test ./...
@@ -56,7 +58,7 @@ coverage-check: coverage
 # Build context is the monorepo root because the daemon's go.mod uses
 # `replace ../chain-commons` and the Dockerfile copies the sibling tree in.
 docker-build:
-	docker build --build-arg VERSION=$(DOCKER_TAG) -t tztcloud/livepeer-protocol-daemon:$(DOCKER_TAG) -f Dockerfile ..
+	docker build --build-arg VERSION=$(VERSION) -t tztcloud/livepeer-protocol-daemon:$(DOCKER_TAG) -f Dockerfile ..
 
 clean:
 	rm -rf bin/ coverage.out

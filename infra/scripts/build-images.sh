@@ -10,6 +10,7 @@
 # Env:
 #   REGISTRY  default: tztcloud
 #   TAG       default: v1.2.0
+#   VERSION   default: derived from git tag/sha for binary build metadata
 #   PUSH      set to 1 to docker push after each build
 #   DEPLOY_ONLY  set to 1 to exclude local-only base/test/helper images
 #
@@ -37,6 +38,8 @@ REGISTRY="${REGISTRY:-tztcloud}"
 TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.2.0}}"
 PUSH="${PUSH:-0}"
 DEPLOY_ONLY="${DEPLOY_ONLY:-0}"
+DEFAULT_VERSION="$(VERSION_PREFIX="${TAG}" FALLBACK_VERSION="${TAG}" ./infra/build/git-version.sh)"
+VERSION="${VERSION:-${DEFAULT_VERSION}}"
 
 # ---- helpers --------------------------------------------------------------
 
@@ -52,6 +55,7 @@ GLOBAL_BUILD_ARGS=(
   "--build-arg=ALPINE_VERSION=${ALPINE_VERSION:-3.20}"
   "--build-arg=UBUNTU_VERSION=${UBUNTU_VERSION:-24.04}"
   "--build-arg=CUDA_VERSION=${CUDA_VERSION:-12.9.1}"
+  "--build-arg=VERSION=${VERSION}"
 )
 
 log()      { printf '\033[1;34m[build]\033[0m %s\n' "$*" >&2; }
@@ -216,7 +220,7 @@ total=${#SELECTED[@]}
 
 # ---- build loop -----------------------------------------------------------
 
-log "registry=${REGISTRY}  tag=${TAG}  push=${PUSH}  deploy_only=${DEPLOY_ONLY}  building ${total} image(s)"
+log "registry=${REGISTRY}  tag=${TAG}  version=${VERSION}  push=${PUSH}  deploy_only=${DEPLOY_ONLY}  building ${total} image(s)"
 
 for entry in "${SELECTED[@]}"; do
   step=$((step + 1))

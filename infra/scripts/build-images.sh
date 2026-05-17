@@ -76,6 +76,8 @@ declare -a IMAGES=(
   # Tier 1 — Go workload runners (multi-target Dockerfile)
   "openai-runner-chat|openai-runners/openai-runner|openai-runners/openai-runner/Dockerfile|chat|"
   "openai-runner-embeddings|openai-runners/openai-runner|openai-runners/openai-runner/Dockerfile|embeddings|"
+  "openai-chat-runner|openai-runners/openai-chat-runner|openai-runners/openai-chat-runner/Dockerfile||"
+  "openai-embeddings-runner|openai-runners/openai-embeddings-runner|openai-runners/openai-embeddings-runner/Dockerfile||"
 
   # Tier 2 — Node SaaS gateways (monorepo-root context, pnpm workspace)
   "livepeer-customer-portal|customer-portal|customer-portal/Dockerfile||"

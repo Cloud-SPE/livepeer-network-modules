@@ -53,6 +53,28 @@ build_go_runner() {
   done
 }
 
+build_chat_runner() {
+  image="${REGISTRY}/openai-chat-runner:${TAG}"
+  echo "==> Building ${image} (platforms ${PLATFORMS})"
+  docker buildx build \
+    --platform "${PLATFORMS}" \
+    -t "${image}" \
+    --load \
+    -f openai-chat-runner/Dockerfile \
+    openai-chat-runner
+}
+
+build_embeddings_runner() {
+  image="${REGISTRY}/openai-embeddings-runner:${TAG}"
+  echo "==> Building ${image} (platforms ${PLATFORMS})"
+  docker buildx build \
+    --platform "${PLATFORMS}" \
+    -t "${image}" \
+    --load \
+    -f openai-embeddings-runner/Dockerfile \
+    openai-embeddings-runner
+}
+
 build_python_runner() {
   local dir="$1"
   local image_suffix="$2"
@@ -84,6 +106,8 @@ case "${cmd}" in
     build_gpu_base
     build_gpu_media_base
     build_go_runner
+    build_chat_runner
+    build_embeddings_runner
     build_python_runner openai-audio-runner openai-audio-runner "${gpu_media_base_image}"
     build_python_runner openai-tts-runner openai-tts-runner "${gpu_media_base_image}"
     build_python_runner openai-image-generation-runner openai-image-generation-runner "${gpu_base_image}"
@@ -128,6 +152,8 @@ if [ "${PUSH}" = "true" ]; then
   for image in \
     "${REGISTRY}/openai-runner-chat:${TAG}" \
     "${REGISTRY}/openai-runner-embeddings:${TAG}" \
+    "${REGISTRY}/openai-chat-runner:${TAG}" \
+    "${REGISTRY}/openai-embeddings-runner:${TAG}" \
     "${REGISTRY}/openai-audio-runner:${TAG}" \
     "${REGISTRY}/openai-tts-runner:${TAG}" \
     "${REGISTRY}/openai-image-generation-runner:${TAG}" \

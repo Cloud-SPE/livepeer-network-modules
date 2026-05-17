@@ -87,6 +87,7 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 		Status:   resp.StatusCode,
 		Body:     respBody,
 		Headers:  resp.Header,
+		Trailers: resp.Trailer,
 		Duration: time.Since(start),
 	})
 	if err != nil {

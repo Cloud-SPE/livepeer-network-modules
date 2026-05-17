@@ -9,11 +9,11 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/controller"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/gasoracle"
-	chaintesting "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/controller"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/gasoracle"
+	chaintesting "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/types"
 )
 
 // fakeGasOracle is a minimal gasoracle.GasOracle for tests.

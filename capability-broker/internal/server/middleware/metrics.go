@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 )
 
 // Metrics is a paid-route middleware that records request observability:

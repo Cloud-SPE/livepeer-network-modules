@@ -22,6 +22,21 @@ Dispatches inbound requests to backends declared in `host-config.yaml`. Reports
 work units via the offering's declared extractor. Validates payment via a
 co-located `payment-daemon` (over unix socket; v0.1 uses a stub client).
 
+Repeated `capabilities[]` entries with the same `(id, offering_id)` are
+treated as one published offering with multiple runtime backend candidates.
+`/registry/offerings` dedupes the published tuple; request dispatch selects a
+currently-eligible backend at runtime.
+
+When `receipt_sink.url` is configured, the broker also emits best-effort Pool
+work receipts to `pool-controller`:
+
+- `stub` after backend selection
+- `final` after post-request unit reconciliation
+
+Receipt-sink failures are logged but do not fail paid requests.
+If `pool-controller` enables `admin_auth`, configure the matching bearer token
+on `receipt_sink.auth`.
+
 **This binary contains zero capability-specific code.** All workload knowledge
 lives in mode adapters and extractor implementations, both standardized in the
 spec.
@@ -121,6 +136,9 @@ On unhealthy refreshes, `last_success_at` is preserved rather than overwritten,
 so the age gauge measures time since the last healthy metadata refresh.
 The same health payload now includes metadata-level `last_success_age_seconds`
 for operators who are inspecting JSON directly instead of scraping metrics.
+When repeated published tuples are configured, the same health payload exposes a
+`backends[]` array per published capability so operator tooling can see each
+candidate backend's individual status.
 
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).

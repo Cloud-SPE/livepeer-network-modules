@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logger"
 )
 
 // Config wires the Prometheus listener.

@@ -8,8 +8,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	chaintesting "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	chaintesting "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
 )
 
 func TestPackRewardWithHint(t *testing.T) {

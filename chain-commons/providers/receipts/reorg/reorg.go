@@ -12,11 +12,11 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	cerrors "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/errors"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/clock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/receipts"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/rpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	cerrors "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/receipts"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 	"github.com/ethereum/go-ethereum"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 )

@@ -31,6 +31,17 @@ payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock
   # mock: true
 
+# Optional best-effort receipt sink for Pool accounting. When set, the broker
+# posts `stub` and `final` work receipts to pool-controller's admin API without
+# failing paid traffic if the sink is unavailable.
+#
+# receipt_sink:
+#   url: "http://pool-controller:8080"
+#   timeout_ms: 1500
+#   auth:
+#     method: "bearer"
+#     secret_ref: "env://POOL_CONTROLLER_TOKEN"
+
 capabilities:
   # ---- Simple HTTP request/response examples ----
   - id: "kibble:doggo-bark-counter:v1"
@@ -203,6 +214,51 @@ capabilities:
   #     url: "https://broker.example.com"
 
   # ---- Additional shipped examples (uncomment when your deployment is ready) ----
+  #
+  # ---- Multi-backend shared offering example ----
+  # Repeating the same `(id, offering_id)` publishes one manifest tuple while
+  # giving the broker multiple candidate backends to choose from at request
+  # time. This is the shape `pool-controller/` emits for Pool members.
+  #
+  # - id: "openai:chat-completions"
+  #   offering_id: "llama-3-70b-shared"
+  #   interaction_mode: "http-stream@v0"
+  #   work_unit:
+  #     name: "tokens"
+  #     extractor: { type: "openai-usage", field: "total_tokens" }
+  #   price:
+  #     amount_wei: "1500000"
+  #     per_units: 1
+  #   backend:
+  #     id: "member-west"
+  #     transport: "http"
+  #     url: "http://10.0.0.5:8000/v1/chat/completions"
+  #     auth: "none"
+  #   extra:
+  #     openai:
+  #       model: "llama-3-70b"
+  #     provider: "vllm"
+  #
+  # - id: "openai:chat-completions"
+  #   offering_id: "llama-3-70b-shared"
+  #   interaction_mode: "http-stream@v0"
+  #   work_unit:
+  #     name: "tokens"
+  #     extractor: { type: "openai-usage", field: "total_tokens" }
+  #   price:
+  #     amount_wei: "1500000"
+  #     per_units: 1
+  #   backend:
+  #     id: "member-east"
+  #     transport: "http"
+  #     url: "http://10.0.0.6:8000/v1/chat/completions"
+  #     auth:
+  #       method: "bearer"
+  #       secret_ref: "env://MEMBER_EAST_TOKEN"
+  #   extra:
+  #     openai:
+  #       model: "llama-3-70b"
+  #     provider: "vllm"
   #
   # - id: "openai:chat-completions"
   #   offering_id: "vllm-h100-batch4"

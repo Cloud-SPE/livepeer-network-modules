@@ -3,9 +3,9 @@ package grpc
 import (
 	"math/big"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/txintent"
-	protocolv1 "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/protocol/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/txintent"
+	protocolv1 "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/protocol/v1"
 )
 
 // Conversion between Go-native handler types (Server's HealthStatus,

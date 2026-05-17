@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/gasoracle"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/gasoracle"
 )
 
 // FakeGasOracle is a programmable GasOracle for tests.

@@ -12,12 +12,12 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devbroker"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devclock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devkeystore"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/sender"
-	senderTypes "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/types"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devbroker"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devkeystore"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/sender"
+	senderTypes "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
 // stand spins up an in-process sender Service over a unix socket and

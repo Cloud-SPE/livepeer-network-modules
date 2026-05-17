@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/clock"
 )
 
 // FakeClock is a deterministic Clock implementation. Tests advance time

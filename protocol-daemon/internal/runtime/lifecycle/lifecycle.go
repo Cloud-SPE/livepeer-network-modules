@@ -12,12 +12,12 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logger"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/roundclock"
-	grpcrt "github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/runtime/grpc"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/service/reward"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/service/roundinit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/roundclock"
+	grpcrt "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/runtime/grpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/reward"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/roundinit"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/types"
 )
 
 // Config wires the lifecycle.

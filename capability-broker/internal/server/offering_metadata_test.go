@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/registry"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/registry"
 )
 
 func TestHydrateRunnerMetadata_PopulatesKokoroVoices(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/canonical"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/signing"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/canonical"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/signing"
 )
 
 // canonicalManifestBytes accepts either a bare manifest object or an

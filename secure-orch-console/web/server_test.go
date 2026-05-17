@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	protocolv1 "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/protocol/v1"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/audit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/signing"
+	protocolv1 "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/protocol/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/audit"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/signing"
 	"google.golang.org/grpc"
 )
 

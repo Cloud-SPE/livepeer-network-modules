@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 )
 
 type Status string
@@ -29,6 +29,7 @@ const (
 type Snapshot struct {
 	ID                   string    `json:"id"`
 	OfferingID           string    `json:"offering_id"`
+	BackendID            string    `json:"backend_id,omitempty"`
 	Status               Status    `json:"status"`
 	Reason               string    `json:"reason,omitempty"`
 	ProbeType            string    `json:"probe_type,omitempty"`
@@ -347,11 +348,15 @@ func (m *Manager) Snapshot() Response {
 		GeneratedAt:  time.Now().UTC(),
 		Capabilities: make([]Snapshot, 0, len(m.states)),
 	}
-	brokerStatus := StatusReady
+	grouped := map[string][]Snapshot{}
 	for _, st := range m.states {
 		snap := st.snapshot()
 		out.Capabilities = append(out.Capabilities, snap)
-		switch snap.Status {
+		grouped[snap.ID+"|"+snap.OfferingID] = append(grouped[snap.ID+"|"+snap.OfferingID], snap)
+	}
+	brokerStatus := StatusReady
+	for _, snaps := range grouped {
+		switch aggregateStatuses(snaps) {
 		case StatusUnreachable:
 			brokerStatus = StatusDegraded
 		case StatusDegraded:
@@ -361,6 +366,20 @@ func (m *Manager) Snapshot() Response {
 		}
 	}
 	out.BrokerStatus = string(brokerStatus)
+	return out
+}
+
+func (m *Manager) SnapshotsFor(capabilityID, offeringID string) []Snapshot {
+	if m == nil {
+		return nil
+	}
+	out := make([]Snapshot, 0)
+	for _, st := range m.states {
+		if st.cap.ID != capabilityID || st.cap.OfferingID != offeringID {
+			continue
+		}
+		out = append(out, st.snapshot())
+	}
 	return out
 }
 
@@ -375,6 +394,7 @@ func (st *state) snapshot() Snapshot {
 	return Snapshot{
 		ID:                   st.cap.ID,
 		OfferingID:           st.cap.OfferingID,
+		BackendID:            backendID(st.cap),
 		Status:               status,
 		Reason:               st.reason,
 		ProbeType:            st.cap.Health.Probe.Type,
@@ -383,6 +403,45 @@ func (st *state) snapshot() Snapshot {
 		ConsecutiveSuccesses: st.consecutiveSuccesses,
 		ConsecutiveFailures:  st.consecutiveFailures,
 	}
+}
+
+func backendID(cap CapabilityLike) string {
+	if cap.GetBackendID() != "" {
+		return cap.GetBackendID()
+	}
+	if cap.GetBackendURL() != "" {
+		return cap.GetBackendURL()
+	}
+	return ""
+}
+
+func aggregateStatuses(snaps []Snapshot) Status {
+	if len(snaps) == 0 {
+		return StatusStale
+	}
+	best := StatusUnreachable
+	for _, snap := range snaps {
+		switch snap.Status {
+		case StatusReady:
+			return StatusReady
+		case StatusDegraded:
+			best = StatusDegraded
+		case StatusDraining:
+			if best != StatusDegraded {
+				best = StatusDraining
+			}
+		case StatusStale:
+			if best != StatusDegraded && best != StatusDraining {
+				best = StatusStale
+			}
+		}
+	}
+	return best
+}
+
+type CapabilityLike interface {
+	GetBackendID() string
+	GetBackendURL() string
 }
 
 func boundedReason(reason, fallback string) string {

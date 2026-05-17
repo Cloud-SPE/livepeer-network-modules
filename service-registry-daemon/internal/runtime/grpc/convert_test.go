@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	registryv1 "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/registry/v1"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service/selection"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	registryv1 "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/registry/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/selection"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 func TestResolveModeToProto(t *testing.T) {

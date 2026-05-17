@@ -31,22 +31,22 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/broker/ticketbroker"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/chain"
-	clockonchain "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/clock/onchain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devbroker"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devclock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devkeystore"
-	gasprice "github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/gasprice/onchain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/keystore/inmemory"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/keystore/jsonfile"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/server"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/escrow"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/receiver"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/sender"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/settlement"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/broker/ticketbroker"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/chain"
+	clockonchain "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/clock/onchain"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devbroker"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devkeystore"
+	gasprice "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/gasprice/onchain"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/inmemory"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/jsonfile"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/server"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/sender"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/settlement"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 )
 
 var version = "dev"
@@ -55,14 +55,14 @@ const configErrExitCode = 2
 
 func main() {
 	var (
-		mode                = flag.String("mode", "", "required: 'sender' or 'receiver'")
-		socketPath          = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
-		dbPath              = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB session ledger path (receiver only)")
-		chainRPC            = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers and signing key are fakes.")
-		devKeyHex           = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
-		keystorePath        = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc is set.")
-		keystorePwFile      = flag.String("keystore-password-file", "", "Path to a file containing the keystore unlock password. Mutually exclusive with LIVEPEER_KEYSTORE_PASSWORD.")
-		orchAddressHex      = flag.String("orch-address", "", "Hex (0x-prefixed) on-chain orchestrator identity. Empty = the keystore's address is used as the recipient.")
+		mode                  = flag.String("mode", "", "required: 'sender' or 'receiver'")
+		socketPath            = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
+		dbPath                = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB session ledger path (receiver only)")
+		chainRPC              = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers and signing key are fakes.")
+		devKeyHex             = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
+		keystorePath          = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc is set.")
+		keystorePwFile        = flag.String("keystore-password-file", "", "Path to a file containing the keystore unlock password. Mutually exclusive with LIVEPEER_KEYSTORE_PASSWORD.")
+		orchAddressHex        = flag.String("orch-address", "", "Hex (0x-prefixed) on-chain orchestrator identity. Empty = the keystore's address is used as the recipient.")
 		controllerAddrHex     = flag.String("chain-controller-address", chain.ArbitrumOneController.Hex(), "Livepeer Controller address. Default = Arbitrum One.")
 		ticketBrokerAddrHex   = flag.String("ticketbroker-address", "", "Override TicketBroker address. Empty = resolve via Controller.")
 		roundsManagerAddrHex  = flag.String("rounds-manager-address", "", "Override RoundsManager address. Empty = resolve via Controller.")
@@ -116,14 +116,14 @@ func main() {
 		"chain", chainStatus(*chainRPC))
 
 	cfg := bootConfig{
-		mode:                *mode,
-		socketPath:          *socketPath,
-		dbPath:              *dbPath,
-		chainRPC:            *chainRPC,
-		devKeyHex:           *devKeyHex,
-		keystorePath:        *keystorePath,
-		keystorePwFile:      *keystorePwFile,
-		orchAddressHex:      *orchAddressHex,
+		mode:                  *mode,
+		socketPath:            *socketPath,
+		dbPath:                *dbPath,
+		chainRPC:              *chainRPC,
+		devKeyHex:             *devKeyHex,
+		keystorePath:          *keystorePath,
+		keystorePwFile:        *keystorePwFile,
+		orchAddressHex:        *orchAddressHex,
 		controllerAddrHex:     *controllerAddrHex,
 		ticketBrokerAddrHex:   *ticketBrokerAddrHex,
 		roundsManagerAddrHex:  *roundsManagerAddrHex,
@@ -150,14 +150,14 @@ func main() {
 }
 
 type bootConfig struct {
-	mode                string
-	socketPath          string
-	dbPath              string
-	chainRPC            string
-	devKeyHex           string
-	keystorePath        string
-	keystorePwFile      string
-	orchAddressHex      string
+	mode                  string
+	socketPath            string
+	dbPath                string
+	chainRPC              string
+	devKeyHex             string
+	keystorePath          string
+	keystorePwFile        string
+	orchAddressHex        string
 	controllerAddrHex     string
 	ticketBrokerAddrHex   string
 	roundsManagerAddrHex  string

@@ -1,0 +1,19 @@
+pool_controller:
+  url: http://pool-controller:8080
+  bearer_token_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
+  timeout_ms: 1500
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+  timeout_ms: 1500
+
+pool:
+  commission_bps: 1000
+
+reconcile:
+  state_path: /var/lib/livepeer/pool-reconciler-state.db
+  backfill_limit: 32
+  retry_interval_ms: 5000
+
+round_source:
+  protocol_daemon_socket: /var/run/livepeer/protocol.sock

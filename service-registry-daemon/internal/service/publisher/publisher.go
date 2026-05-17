@@ -6,13 +6,13 @@ package publisher
 import (
 	"fmt"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/clock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/logger"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/metrics"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/signer"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/repo/audit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/signer"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/audit"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 // Service is the publisher business-logic surface.

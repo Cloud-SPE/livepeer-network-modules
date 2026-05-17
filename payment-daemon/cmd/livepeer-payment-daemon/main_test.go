@@ -294,13 +294,13 @@ func TestLogIdentitySplitMalformedOrchTreatedAsSingle(t *testing.T) {
 
 func TestNormalizeAddrHex(t *testing.T) {
 	cases := map[string]string{
-		"0x" + strings.Repeat("ab", 20):       strings.Repeat("ab", 20),
-		strings.Repeat("AB", 20):              strings.Repeat("ab", 20),
-		"  0X" + strings.Repeat("01", 20):     strings.Repeat("01", 20),
-		"0xtoo-short":                         "",
-		"":                                    "",
-		"0x" + strings.Repeat("zz", 20):       "",
-		"0x" + strings.Repeat("ab", 21):       "",
+		"0x" + strings.Repeat("ab", 20):   strings.Repeat("ab", 20),
+		strings.Repeat("AB", 20):          strings.Repeat("ab", 20),
+		"  0X" + strings.Repeat("01", 20): strings.Repeat("01", 20),
+		"0xtoo-short":                     "",
+		"":                                "",
+		"0x" + strings.Repeat("zz", 20):   "",
+		"0x" + strings.Repeat("ab", 21):   "",
 	}
 	for in, want := range cases {
 		got := normalizeAddrHex(in)

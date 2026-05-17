@@ -1,0 +1,21 @@
+# Run-only compose for pool-reconciler. Build via
+# `./infra/scripts/build-images.sh pool-reconciler`.
+#
+# Expected dependencies:
+#   - pool-controller reachable at the URL in the mounted config
+#   - protocol-daemon UDS mounted into /var/run/livepeer
+#   - payment-daemon UDS mounted into /var/run/livepeer
+
+services:
+  pool-reconciler:
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-reconciler:${TAG:-v1.1.0}
+    command:
+      - watch-rounds
+      - --config=/etc/livepeer/pool-reconciler.yaml
+    environment:
+      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:-}
+    volumes:
+      - ${POOL_RECONCILER_CONFIG:-../examples/pool-reconciler-config.compose.yaml}:/etc/livepeer/pool-reconciler.yaml:ro
+      - ${POOL_RECONCILER_STATE_DIR:-./run/data}:/var/lib/livepeer
+      - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+    restart: unless-stopped

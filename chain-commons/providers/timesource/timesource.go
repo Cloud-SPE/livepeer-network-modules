@@ -10,7 +10,7 @@ package timesource
 import (
 	"context"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 )
 
 // TimeSource is the on-chain time abstraction.

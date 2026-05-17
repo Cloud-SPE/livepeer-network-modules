@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 )
 
 // Headers validates the five required Livepeer-* request headers per

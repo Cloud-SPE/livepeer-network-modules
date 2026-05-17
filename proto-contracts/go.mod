@@ -1,4 +1,4 @@
-module github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts
+module github.com/Cloud-SPE/livepeer-network-modules/proto-contracts
 
 go 1.25.7
 

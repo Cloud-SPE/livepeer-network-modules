@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/providers/brokerclient"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/providers/brokerclient"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
 // Freshness flags applied per-broker after each scrape cycle.

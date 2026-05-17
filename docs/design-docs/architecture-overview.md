@@ -102,6 +102,66 @@ The five logical layers, top to bottom:
 - **Gateway** — resolver + sender + per-mode adapter. Talks to the broker over
   whichever interaction mode the resolved tuple declares.
 
+## Pool overlay
+
+The base architecture stays unchanged for a Pool orch from the outside: the
+gateway still sees one orch identity, one coordinator-published manifest, and
+one broker endpoint. The Pool-specific machinery stays inside the Pool
+operator's control plane and accounting workers.
+
+```mermaid
+flowchart LR
+    subgraph secure_host["secure-orch / protocol host"]
+        SOC["secure-orch-console"]
+        PRD["protocol-daemon"]
+    end
+
+    subgraph public_host["Pool public/data-plane host"]
+        direction TB
+        OC["orch-coordinator"]
+        PCB["capability-broker<br/>(Pool edge broker)"]
+        PPD["payment-daemon receiver"]
+        PCC["pool-controller"]
+        PRC["pool-reconciler"]
+        PPE["pool-payout-executor"]
+    end
+
+    subgraph members["Pool members"]
+        direction LR
+        MB1["member backend A"]
+        MB2["member backend B"]
+        MB3["member backend N"]
+    end
+
+    GW["gateway"] --> PCB
+    PCB --> PPD
+    PCB --> MB1
+    PCB --> MB2
+    PCB --> MB3
+
+    PCC -.->|"render broker host-config"| PCB
+    PCC -.->|"exported payout intents"| PPE
+    PCB -.->|"stub/final work receipts"| PCC
+    PRD -.->|"round timing"| PRC
+    PPD -.->|"confirmed revenue"| PRC
+    PRC -.->|"round-close payload"| PCC
+    PPE -.->|"submitted / paid / failed"| PCC
+    OC -.->|"scrape offerings + host signed manifest"| PCB
+    SOC -.-> OC
+```
+
+Current Pool implementation boundaries:
+
+- `pool-controller` owns member records, receipt persistence, round receipts,
+  payout intents, retry history, public summaries, and broker-config
+  generation.
+- `pool-reconciler` closes rounds from `protocol-daemon` timing,
+  `payment-daemon` realized revenue, and `pool-controller` work receipts.
+- `pool-payout-executor` executes native-`ETH` payouts on Arbitrum and writes
+  back payout state.
+- A full public/data-plane deployment example now lives under
+  [`../../infra/scenarios/pool-orchestrator/`](../../infra/scenarios/pool-orchestrator/).
+
 ## Layer 1 — Capability broker
 
 **One process per host, workload-agnostic.** No per-capability Go code. Core jobs:

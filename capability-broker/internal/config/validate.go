@@ -1,9 +1,11 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -93,12 +95,37 @@ func (c *Config) Validate() error {
 	if c.Listen.Metrics == "" {
 		c.Listen.Metrics = ":9090"
 	}
+	if c.ReceiptSink.URL != "" {
+		u, err := url.Parse(c.ReceiptSink.URL)
+		if err != nil {
+			return fmt.Errorf("receipt_sink.url is invalid: %w", err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("receipt_sink.url scheme must be http or https (got %q)", u.Scheme)
+		}
+		switch c.ReceiptSink.Auth.Method {
+		case "", "none":
+		case "bearer":
+			if c.ReceiptSink.Auth.SecretRef == "" {
+				return fmt.Errorf("receipt_sink.auth.secret_ref is required when method=bearer")
+			}
+			if !strings.Contains(c.ReceiptSink.Auth.SecretRef, "://") {
+				return fmt.Errorf("receipt_sink.auth.secret_ref should be a URI-style reference (got %q)", c.ReceiptSink.Auth.SecretRef)
+			}
+		default:
+			return fmt.Errorf("receipt_sink.auth.method %q is not supported", c.ReceiptSink.Auth.Method)
+		}
+		if c.ReceiptSink.TimeoutMS < 0 {
+			return fmt.Errorf("receipt_sink.timeout_ms must be >= 0")
+		}
+	}
 
 	if len(c.Capabilities) == 0 {
 		return fmt.Errorf("capabilities: must declare at least one")
 	}
 
-	seen := make(map[string]struct{}, len(c.Capabilities))
+	seenPublished := make(map[string]int, len(c.Capabilities))
+	seenBackendsPerTuple := make(map[string]map[string]struct{}, len(c.Capabilities))
 	for i := range c.Capabilities {
 		cap := &c.Capabilities[i]
 		ctx := fmt.Sprintf("capabilities[%d]", i)
@@ -122,10 +149,6 @@ func (c *Config) Validate() error {
 			return err
 		}
 		key := cap.ID + "|" + cap.OfferingID
-		if _, dup := seen[key]; dup {
-			return fmt.Errorf("%s: duplicate (capability_id, offering_id) pair", ctx)
-		}
-		seen[key] = struct{}{}
 
 		if !interactionModeRE.MatchString(cap.InteractionMode) {
 			return fmt.Errorf("%s: interaction_mode must match <name>@v<major> (got %q)", ctx, cap.InteractionMode)
@@ -150,6 +173,9 @@ func (c *Config) Validate() error {
 
 		if cap.Backend.Transport == "" {
 			return fmt.Errorf("%s: backend.transport is required", ctx)
+		}
+		if cap.Backend.ID == "" && cap.Backend.URL != "" {
+			cap.Backend.ID = cap.Backend.URL
 		}
 		switch cap.Backend.Transport {
 		case "http":
@@ -286,9 +312,96 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("%s: health.probe.config.command must be a non-empty list for command-exit-0", ctx)
 			}
 		}
+
+		if previousIndex, ok := seenPublished[key]; ok {
+			if err := validateRepeatedPublishedTuple(c.Capabilities[previousIndex], *cap, ctx); err != nil {
+				return err
+			}
+		} else {
+			seenPublished[key] = i
+		}
+		if seenBackendsPerTuple[key] == nil {
+			seenBackendsPerTuple[key] = map[string]struct{}{}
+		}
+		if cap.Backend.ID != "" {
+			if _, dup := seenBackendsPerTuple[key][cap.Backend.ID]; dup {
+				return fmt.Errorf("%s: duplicate backend.id %q under published tuple %s/%s", ctx, cap.Backend.ID, cap.ID, cap.OfferingID)
+			}
+			seenBackendsPerTuple[key][cap.Backend.ID] = struct{}{}
+		}
 	}
 
 	return nil
+}
+
+func validateRepeatedPublishedTuple(previous, current Capability, ctx string) error {
+	if previous.InteractionMode != current.InteractionMode {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same interaction_mode", ctx)
+	}
+	if previous.WorkUnit.Name != current.WorkUnit.Name {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same work_unit.name", ctx)
+	}
+	if !jsonMapsEqual(previous.WorkUnit.Extractor, current.WorkUnit.Extractor) {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same work_unit.extractor", ctx)
+	}
+	if previous.Price != current.Price {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same price", ctx)
+	}
+	if !jsonMapsEqual(previous.Extra, current.Extra) {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same extra metadata", ctx)
+	}
+	if !jsonMapsEqual(previous.Constraints, current.Constraints) {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same constraints", ctx)
+	}
+	return nil
+}
+
+func jsonMapsEqual(left, right map[string]any) bool {
+	if len(left) == 0 && len(right) == 0 {
+		return true
+	}
+	leftJSON, err := stableJSON(left)
+	if err != nil {
+		return false
+	}
+	rightJSON, err := stableJSON(right)
+	if err != nil {
+		return false
+	}
+	return leftJSON == rightJSON
+}
+
+func stableJSON(v any) (string, error) {
+	normalized := normalizeForJSON(v)
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func normalizeForJSON(v any) any {
+	switch typed := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for k := range typed {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		out := make(map[string]any, len(typed))
+		for _, k := range keys {
+			out[k] = normalizeForJSON(typed[k])
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, normalizeForJSON(item))
+		}
+		return out
+	default:
+		return typed
+	}
 }
 
 func validateCapabilityExtra(ctx string, cap *Capability) error {

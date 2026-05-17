@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/envelope"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/fixtures"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/mockbackend"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/report"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/runner/internal/envelope"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/runner/internal/fixtures"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/runner/internal/mockbackend"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/runner/internal/report"
 )
 
 // runEndToEnd executes the full RTMP push + LL-HLS fetch flow per

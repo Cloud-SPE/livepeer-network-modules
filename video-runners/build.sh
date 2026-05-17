@@ -5,11 +5,18 @@ set -euo pipefail
 #
 # Environment:
 #   REGISTRY      Docker registry prefix (default: tztcloud)
-#   TAG           Image tag (default: v1.1.0)
+#   TAG           Image tag (default: from infra/build/image-versions.env)
 #   PUSH          Push images after build (default: false)
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION_ENV_FILE="${ROOT}/infra/build/image-versions.env"
+if [[ -f "$VERSION_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  . "$VERSION_ENV_FILE"
+fi
+
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-v1.1.0}"
+TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.2.0}}"
 PUSH="${PUSH:-false}"
 CODECS_IMAGE="${CODECS_IMAGE:-${REGISTRY}/codecs-builder:${TAG}}"
 
@@ -24,6 +31,11 @@ build_transcode() {
   image="${REGISTRY}/transcode-runner:${TAG}"
   echo "==> Building ${image} (FROM ${CODECS_IMAGE})"
   docker build \
+    --build-arg "REGISTRY=${REGISTRY}" \
+    --build-arg "TAG=${TAG}" \
+    --build-arg "CUDA_VERSION=${CUDA_VERSION:-12.9.1}" \
+    --build-arg "UBUNTU_VERSION=${UBUNTU_VERSION:-24.04}" \
+    --build-arg "GO_VERSION=${GO_VERSION:-1.25.7}" \
     --build-arg "CODECS_IMAGE=${CODECS_IMAGE}" \
     -t "${image}" \
     -f transcode-runner/Dockerfile \
@@ -34,6 +46,11 @@ build_abr() {
   image="${REGISTRY}/abr-runner:${TAG}"
   echo "==> Building ${image} (FROM ${CODECS_IMAGE})"
   docker build \
+    --build-arg "REGISTRY=${REGISTRY}" \
+    --build-arg "TAG=${TAG}" \
+    --build-arg "CUDA_VERSION=${CUDA_VERSION:-12.9.1}" \
+    --build-arg "UBUNTU_VERSION=${UBUNTU_VERSION:-24.04}" \
+    --build-arg "GO_VERSION=${GO_VERSION:-1.25.7}" \
     --build-arg "CODECS_IMAGE=${CODECS_IMAGE}" \
     -t "${image}" \
     -f abr-runner/Dockerfile \

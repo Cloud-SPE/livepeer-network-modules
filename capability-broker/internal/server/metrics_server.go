@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 )
 
 // newMetricsServer builds the Prometheus scrape server (separate listener

@@ -7,8 +7,8 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/rpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 )
 
 // RegistryReader reads ServiceRegistry state for an orchestrator.

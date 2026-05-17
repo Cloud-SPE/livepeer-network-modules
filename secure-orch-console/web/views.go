@@ -1,6 +1,6 @@
 package web
 
-import "github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/diff"
+import "github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/diff"
 
 type pageView struct {
 	Title           string

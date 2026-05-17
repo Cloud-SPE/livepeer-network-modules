@@ -1,6 +1,29 @@
 # Plan 0029 — Pool node design
 
-**Status:** active — design phase (paper only; no code, no `go.mod` edits)
+**Status:** active — partial implementation landed (`pool-controller/`
+scaffold + broker-config generation + broker multi-backend tuple grouping /
+selection + BoltDB-backed config snapshot persistence + receipt-write API +
+broker stub/final work-receipt producer + manual round-close API +
+`pool-reconciler/` scaffold with protocol-daemon round-source client and
+round-close preflight + payment-daemon confirmed-round-revenue read path +
+work-receipt round attribution + durable reconciler checkpoint/backfill loop +
+pool-controller payout-intent derivation/export + `pool-payout-executor/`
+scaffold with controller read/write contract + native-ETH Arbitrum executor
+commands + executor reconcile-once / reconcile-loop automation + reconciler
+integration coverage + controller member payout summary); trust-score landed
+in broker selection/health; richer member/public APIs landed; executor local
+run-history / retry-metadata persistence + local reconcile backoff + payout
+intent lease/claim semantics + renewal/release + owned-lease restart recovery
++ partial-batch untouched-release + payout alert reporting + failed-intent
+requeue + round-level payout summaries + explicit executor requeue command +
+executor alert inspection command + explicit payout failed_at timing landed;
+executor alert-driven failed requeue command + canonical payout retry history
+landed; retry-history-based payout alerts + round-level retry churn summaries
+landed; member-level retry churn summaries landed; default-off v1 auto-requeue
+policy landed; keystore-backed live Arbitrum runtime validation landed;
+production-readiness checklist + component runbooks landed; Docker-first
+deployment manifests landed; multi-round reconciler/executor soak coverage
+landed
 **Opened:** 2026-05-16
 **Owner:** harness
 **Branch:** `feature/pool-node-design`
@@ -170,7 +193,9 @@ needs operationally.**
 **Decision:** Selection algorithm + multi-backend support land in
 `capability-broker/` as general-purpose orch features. Member registry,
 accounting, payout, and trust-score computation land in a **new top-level
-`pool-controller/` component**. `orch-coordinator/` is unchanged.
+`pool-controller/` component**. Round-close payload production lands in a
+separate **new top-level `pool-reconciler/` component**. `orch-coordinator/`
+is unchanged.
 
 **Component layout:**
 
@@ -179,17 +204,63 @@ accounting, payout, and trust-score computation land in a **new top-level
 | `capability-broker/` | modified | Adds multi-backend-per-capability, per-request backend selection, per-backend metrics, synthetic-probe recipes. Reusable beyond Pool. |
 | `orch-coordinator/` | unchanged | Scrapes broker, signs manifest cycle, publishes at the well-known URL. Pool uses it identically to any other orch. |
 | `pool-controller/` | **new** | Admin UI + member directory (BoltDB), generates `host-config.yaml` for the Pool's broker, scrapes broker metrics for trust scoring, runs the payout job. **Not in the data path** — if down, gateway traffic continues. |
+| `pool-reconciler/` | **new** | Consumes round timing from `protocol-daemon`, prepares canonical round-close payloads, and submits them to `pool-controller`. Starts manual/file-driven, grows into the protocol-triggered reconciliation loop later. |
+
+**Implemented deployment topology at a glance:**
+
+```mermaid
+flowchart LR
+    subgraph secure_host["secure-orch / protocol host"]
+        SOC["secure-orch-console"]
+        PRD["protocol-daemon"]
+    end
+
+    subgraph pool_public_host["Pool public/data-plane host"]
+        direction TB
+        OC["orch-coordinator"]
+        PCB["capability-broker"]
+        PPD["payment-daemon receiver"]
+        PCC["pool-controller"]
+        PRC["pool-reconciler"]
+        PPE["pool-payout-executor"]
+    end
+
+    subgraph members["Pool members"]
+        direction LR
+        MB1["member backend A"]
+        MB2["member backend B"]
+        MBN["member backend N"]
+    end
+
+    GW["gateway"] --> PCB
+    PCB --> PPD
+    PCB --> MB1
+    PCB --> MB2
+    PCB --> MBN
+    PCC -.->|"render host-config"| PCB
+    PCB -.->|"work receipts"| PCC
+    PRD -.->|"round events"| PRC
+    PPD -.->|"redeemed revenue"| PRC
+    PRC -.->|"round-close payloads"| PCC
+    PCC -.->|"payout intents"| PPE
+    PPE -.->|"status / tx hashes"| PCC
+    SOC -.-> OC
+```
 
 **Rationale:**
 - Single-responsibility carves cleanly: broker routes, coordinator
-  publishes, pool-controller manages members + money.
+  publishes, pool-controller persists money state, pool-reconciler assembles
+  round-close calls.
 - Broker improvements (multi-backend, selection) benefit any orch with
   redundant capacity, not just Pools.
 - Pool-controller can grow operationally (heavier admin UI, accounting
   features) without polluting the coordinator's intentionally minimal
   code-of-conduct (`orch-coordinator/AGENTS.md` lines 93–105).
+- Protocol-daemon stays protocol-scoped. It remains the round clock source
+  without becoming a payout client.
 - Clean extraction path: `pool-controller/` can be lifted into its own
-  repo once the Pool product matures.
+  repo once the Pool product matures, and `pool-reconciler/` can do the same
+  if reconciliation grows into its own operational service.
 
 **Carry-forward selection-algorithm spec (v1 target):**
 
@@ -316,65 +387,71 @@ accounting risk.
 
 ### 2026-05-16 — Pool-controller v1 scope
 
-**Decision:** New top-level `pool-controller/` component owns the full
-Pool product surface — member directory, accounting, payouts, trust
-scoring, public directory, automated SLA enforcement. Not in the data
-path. Module layout follows the `orch-coordinator/internal/` pattern.
+**Decision:** New top-level `pool-controller/` component owns Pool member
+records, broker-config generation, receipt persistence, round-close
+accounting, payout-intent state, and operator/public read surfaces. It is not
+in the data path.
 
-**Three listeners on the pool-controller binary:**
+**Current implemented server shape:**
 
-- `--admin-listen` — operator UX (admin UI + JSON API).
-- `--member-portal-listen` — member self-service (wallet sign-in,
-  application, dashboard, receipt downloads). Bundled in the same binary
-  on a separate listener.
-- `--public-listen` — public member directory and round-receipt
-  transparency. Serves explicitly-permitted paths only (404 elsewhere,
-  per the coordinator's defense-in-depth pattern at
-  [`../../../orch-coordinator/AGENTS.md`](../../../orch-coordinator/AGENTS.md)
-  lines 27–31).
+- one primary HTTP listener (`listen.paid`, default `:8080`) carrying both:
+  - `/admin/v1/*` endpoints behind optional bearer auth
+  - `/public/v1/*` endpoints with safe derived data only
+- one metrics listener (`listen.metrics`, default `:9090`)
 
-**Public listener endpoints:**
+**Current implemented public endpoints:**
 
-- `GET /public/pool` — Pool-level summary (operator name, commission
-  rate, member count, total throughput, capability coverage).
-- `GET /public/members` — listing: `display_name`, capabilities offered,
-  aggregated trust score (24h/7d/30d), normalized lifetime contribution
-  (% of Pool total), recent SLA events.
-- `GET /public/members/{eth_address}` — per-member detail.
-- `GET /public/rounds` — round receipt history.
-- `GET /public/rounds/{round_id}` — single round receipt full breakdown.
+- `GET /public/v1/summary`
+- `GET /public/v1/rounds`
+- `GET /public/v1/offerings`
+- `GET /public/v1/member-payouts?member_eth_address=0x...`
 
-**Hidden from public:** backend URLs, contact info, commercial terms,
-payout rates, real-time trust scores. Public visibility is **mandatory**
-for approved members in v1 (no private-listing opt-out).
+**Current implemented admin/accounting endpoints:**
 
-**Automated SLA enforcement (three-tier with hysteresis):**
+- receipt persistence:
+  - `POST /admin/v1/work-receipts`
+  - `POST /admin/v1/round-receipts`
+  - `POST /admin/v1/round-close`
+- payout lifecycle:
+  - `POST /admin/v1/payout-intents/derive`
+  - `POST /admin/v1/payout-intents/export`
+  - `POST /admin/v1/payout-intents/claim`
+  - `POST /admin/v1/payout-intents/renew`
+  - `POST /admin/v1/payout-intents/release`
+  - `POST /admin/v1/payout-intents/requeue`
+  - `POST /admin/v1/payout-intents/status`
+- operator summaries:
+  - `GET /admin/v1/payout-intents`
+  - `GET /admin/v1/member-payouts`
+  - `GET /admin/v1/payout-rounds`
+  - `GET /admin/v1/payout-alerts`
 
-| Tier | Trigger (default) | Effect | Recovery |
-|---|---|---|---|
-| Warning | `trust_score < 0.30` | Notify operator + member; log; no traffic change | Auto-clear when `score > 0.35` sustained 1h |
-| Auto-drain | `trust_score < 0.15` OR warning sustained 6h | Backend removed from broker selection (no new traffic); in-flight completes | Auto-undrain when `score > 0.25` sustained 6h |
-| Auto-suspend | `trust_score < 0.05` OR drain sustained 24h | Member fully suspended; broker config regenerated without member | **Operator must manually reinstate (v1).** Auto-reinstate after cooldown is v1.1. |
+**Current payout model:**
 
-Per-backend granularity for drains; member-level conditions trip suspend
-(e.g., "all backends drained → auto-suspend member"). All thresholds
-configurable. Drain/undrain/suspend → broker config update (immediate
-routing effect). Auto-suspend optionally emits a "pending publish"
-notification so operator can sign without the suspended member at the
-next sign cycle. **Cold-key signing is never automated.**
+- deterministic payout intents are derived from a closed round receipt
+- intents start `pending`
+- `export` marks them `exported` and supports JSON or CSV
+- executor lease semantics prevent duplicate pickup across multiple workers
+- executor writes back `submitted`, `paid`, or `failed`
+- controller persists canonical retry history:
+  - `failed_at`
+  - `retry_count`
+  - `last_requeued_at`
 
-**Payouts:**
+**Current execution split:**
 
-- **Default: on-chain transfer** to member's registered `eth_address` via
-  pool-controller's hot payout wallet.
-- **Per-member `payout_mode: "manual"`** flag for off-rails payment (USDC
-  ACH, fiat, etc.). pool-controller tracks contributions and round
-  receipts as normal but skips on-chain transfer; "outstanding owed"
-  shows in admin UI until operator marks paid after handling externally.
-- **No CSV export feature.** Admin UI / JSON API expose the same data;
-  no special file format.
+- `pool-controller` is the accounting sink and payout-intent source of truth
+- `pool-reconciler` produces canonical round-close payloads
+- `pool-payout-executor` executes native-`ETH` payouts on Arbitrum
 
-**Manifest integration — pool-controller is a *client* of the existing
+**What is explicitly not implemented yet in `pool-controller`:**
+
+- member self-service portal / wallet sign-in UX
+- multi-listener split between admin/member/public binaries
+- automated member approval workflow
+- policy-driven auto-drain / auto-suspend orchestration
+
+**Manifest integration — pool-controller remains a *client* of the existing
 operator-driven sign cycle. No new signing path. No automation past cold
 key.** Operational events flow as today:
 
@@ -420,17 +497,9 @@ migrations:
 - `Member.approved_at_policy_version` — version of approval policy at
   approval time (for audit).
 
-**Member self-service flow (v1):**
-
-1. Member signs in via wallet signature (proves `eth_address` ownership).
-2. Member fills application: `display_name`, contact, backends + URLs +
-   auth, declared capability offerings per backend, accepts standard
-   contract version.
-3. pool-controller runs **pre-approval synthetic probes** against the
-   member's declared backends; results visible to operator.
-4. Operator reviews application + probe results, approves or rejects.
-5. On approval: member enters broker config (warm-up phase); next
-   manifest sign cycle publishes their offerings to gateways.
+**Member self-service flow is deferred.** The current implementation is
+config-first: operators manage member records in the Pool config YAML, and
+pool-controller renders broker config and accounting state from that source.
 
 **Module layout (carry-forward to component scaffolding):**
 

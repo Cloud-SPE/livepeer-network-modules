@@ -502,7 +502,7 @@ const file_livepeer_registry_v1_publisher_proto_rawDesc = "" +
 	"\fSignManifest\x12).livepeer.registry.v1.SignManifestRequest\x1a$.livepeer.registry.v1.SignedManifest\x12_\n" +
 	"\fBuildAndSign\x12).livepeer.registry.v1.BuildAndSignRequest\x1a$.livepeer.registry.v1.SignedManifest\x12Z\n" +
 	"\vProbeWorker\x12(.livepeer.registry.v1.ProbeWorkerRequest\x1a!.livepeer.registry.v1.ProbeResult\x12D\n" +
-	"\x06Health\x12\x16.google.protobuf.Empty\x1a\".livepeer.registry.v1.HealthResultB_Z]github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/registry/v1;registryv1b\x06proto3"
+	"\x06Health\x12\x16.google.protobuf.Empty\x1a\".livepeer.registry.v1.HealthResultB_Z]github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/registry/v1;registryv1b\x06proto3"
 
 var (
 	file_livepeer_registry_v1_publisher_proto_rawDescOnce sync.Once

@@ -1,0 +1,27 @@
+# Run-only compose for pool-controller. Build via
+# `./infra/scripts/build-images.sh pool-controller`.
+#
+# Required operator inputs:
+#   - pool-controller config YAML
+#   - durable data dir
+#   - payment-daemon socket dir if real receiver integration is enabled
+#   - admin bearer token env var when config uses admin_auth.bearer_token_ref
+
+services:
+  pool-controller:
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-controller:${TAG:-v1.1.0}
+    command:
+      - serve
+      - --config=/etc/livepeer/pool-controller.yaml
+      - --data-dir=/var/lib/livepeer/pool-controller
+      - --listen=:8080
+    environment:
+      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:-}
+    ports:
+      - "${POOL_CONTROLLER_PORT:-8080}:8080"
+      - "${POOL_CONTROLLER_METRICS_PORT:-9090}:9090"
+    volumes:
+      - ${POOL_CONTROLLER_CONFIG:-../examples/pool-controller-config.example.yaml}:/etc/livepeer/pool-controller.yaml:ro
+      - ${POOL_CONTROLLER_DATA_DIR:-./run/data}:/var/lib/livepeer/pool-controller
+      - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+    restart: unless-stopped

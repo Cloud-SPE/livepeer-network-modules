@@ -19,8 +19,8 @@ import (
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logger"
-	protocolv1 "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/protocol/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logger"
+	protocolv1 "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/protocol/v1"
 )
 
 // ListenerConfig captures the inputs to NewListener.

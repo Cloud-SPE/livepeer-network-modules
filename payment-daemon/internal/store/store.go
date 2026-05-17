@@ -2,15 +2,15 @@
 //
 // Schema:
 //
-//   bucket "sessions"        — keyed by composite (sender, work_id);
-//                               value is JSON-encoded Session record.
-//   bucket "debit_seqs"       — keyed by composite (sender, work_id,
-//                               debit_seq); value is the recorded
-//                               work_units. Used for idempotent debits.
-//   bucket "capability_index" — keyed by work_id; value is the sender
-//                               that opened it. Lets OpenSession be
-//                               idempotent before the sender is sealed
-//                               on first ProcessPayment.
+//	bucket "sessions"        — keyed by composite (sender, work_id);
+//	                            value is JSON-encoded Session record.
+//	bucket "debit_seqs"       — keyed by composite (sender, work_id,
+//	                            debit_seq); value is the recorded
+//	                            work_units. Used for idempotent debits.
+//	bucket "capability_index" — keyed by work_id; value is the sender
+//	                            that opened it. Lets OpenSession be
+//	                            idempotent before the sender is sealed
+//	                            on first ProcessPayment.
 //
 // Sessions are sealed to a sender on the first successful
 // ProcessPayment. OpenSession sets `sender == nil`; ProcessPayment
@@ -29,17 +29,17 @@ import (
 )
 
 const (
-	sessionsBucket = "sessions"
+	sessionsBucket  = "sessions"
 	debitSeqsBucket = "debit_seqs"
 	capIndexBucket  = "capability_index"
 
 	// Plan 0016 buckets — owned by store, consumed by receiver +
 	// settlement via the helper methods further down this file.
-	noncesBucket           = "nonces"
-	redemptionsPending     = "redemptions_pending"
-	redemptionsByHash      = "redemptions_by_hash"
-	redemptionsRedeemed    = "redemptions_redeemed"
-	redemptionsMeta        = "redemptions_meta"
+	noncesBucket        = "nonces"
+	redemptionsPending  = "redemptions_pending"
+	redemptionsByHash   = "redemptions_by_hash"
+	redemptionsRedeemed = "redemptions_redeemed"
+	redemptionsMeta     = "redemptions_meta"
 )
 
 const metaNextSeq = "next_seq"

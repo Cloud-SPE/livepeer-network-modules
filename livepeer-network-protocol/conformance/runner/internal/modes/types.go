@@ -13,9 +13,9 @@ package modes
 import (
 	"context"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/fixtures"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/mockbackend"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/report"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/runner/internal/fixtures"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/runner/internal/mockbackend"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/runner/internal/report"
 )
 
 // Driver runs a fixture against a target and returns a Result.

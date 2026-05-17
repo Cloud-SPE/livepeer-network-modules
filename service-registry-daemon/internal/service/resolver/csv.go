@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 // csvManifest is the shape we accept for the read-only CSV-fallback

@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/store"
 	bbolt "go.etcd.io/bbolt"
 )
 

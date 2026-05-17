@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logger"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/store"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/timesource"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/timesource"
 )
 
 const lastEmittedBucket = "chain_commons_roundclock_last_emitted"

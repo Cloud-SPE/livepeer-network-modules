@@ -4,9 +4,9 @@
 package aiserviceregistry
 
 import (
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/rpc"
-	srprovider "github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/providers/serviceregistry"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
+	srprovider "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/providers/serviceregistry"
 )
 
 // Bindings is the AI registry-facing write/read surface. The AI registry

@@ -19,8 +19,8 @@ import (
 	"errors"
 	"sync"
 
-	cstore "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/store"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/store"
+	cstore "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/store"
 )
 
 // New wraps a chain-commons store.Store as a registry-daemon store.Store.

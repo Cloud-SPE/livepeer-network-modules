@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"errors"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/metrics"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 // sha256Sum returns the 32-byte SHA-256 of b. Local helper so the

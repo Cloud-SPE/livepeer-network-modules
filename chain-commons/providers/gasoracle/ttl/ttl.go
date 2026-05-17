@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	cerrors "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/errors"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/clock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/gasoracle"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/rpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	cerrors "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/gasoracle"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 )
 
 // Options wires a TTL-cached GasOracle.

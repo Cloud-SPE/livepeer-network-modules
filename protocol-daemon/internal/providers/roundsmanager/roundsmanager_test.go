@@ -6,7 +6,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	chaintesting "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"
+	chaintesting "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
 )
 
 func TestPackInitializeRound(t *testing.T) {

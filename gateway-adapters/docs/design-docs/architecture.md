@@ -77,5 +77,5 @@ loop.
   subpath exports (`./modes/http-reqresp` etc.) so consumers can
   import only what they need.
 - **Go half:** sub-module
-  `github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go`.
+  `github.com/Cloud-SPE/livepeer-network-modules/gateway-adapters/go`.
   Per-mode packages so consumers `import` only the modes they use.

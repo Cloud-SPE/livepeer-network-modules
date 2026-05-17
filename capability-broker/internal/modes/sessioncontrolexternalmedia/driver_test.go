@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
 )
 
 func TestServeSessionOpen_HappyPath(t *testing.T) {

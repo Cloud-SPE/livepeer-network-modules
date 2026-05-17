@@ -1,4 +1,4 @@
-module github.com/Cloud-SPE/livepeer-network-rewrite/video-runners/transcode-core
+module github.com/Cloud-SPE/livepeer-network-modules/video-runners/transcode-core
 
 go 1.22
 

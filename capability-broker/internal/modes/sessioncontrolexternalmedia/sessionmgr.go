@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 )
 
 // SessionRecord is the per-session state the broker keeps from

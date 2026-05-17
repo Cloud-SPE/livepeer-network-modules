@@ -1194,7 +1194,7 @@ const file_livepeer_protocol_v1_protocol_proto_rawDesc = "" +
 	"\x10GetWalletBalance\x12\x1b.livepeer.protocol.v1.Empty\x1a).livepeer.protocol.v1.WalletBalanceStatus\x12X\n" +
 	"\vGetTxIntent\x12!.livepeer.protocol.v1.TxIntentRef\x1a&.livepeer.protocol.v1.TxIntentSnapshot\x12T\n" +
 	"\x11StreamRoundEvents\x12\x1b.livepeer.protocol.v1.Empty\x1a .livepeer.protocol.v1.RoundEvent0\x01\x12I\n" +
-	"\x06Health\x12\x1b.livepeer.protocol.v1.Empty\x1a\".livepeer.protocol.v1.HealthStatusB_Z]github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/protocol/v1;protocolv1b\x06proto3"
+	"\x06Health\x12\x1b.livepeer.protocol.v1.Empty\x1a\".livepeer.protocol.v1.HealthStatusB_Z]github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/protocol/v1;protocolv1b\x06proto3"
 
 var (
 	file_livepeer_protocol_v1_protocol_proto_rawDescOnce sync.Once

@@ -11,8 +11,8 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	cerrors "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	cerrors "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/errors"
 )
 
 // IntentID is a deterministic identifier derived from (Kind, KeyParams).

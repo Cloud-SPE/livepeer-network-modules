@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

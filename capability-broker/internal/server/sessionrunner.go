@@ -3,9 +3,9 @@ package server
 import (
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolplusmedia"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/sessionrunner"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolplusmedia"
 )
 
 // sessionRunnerResolver returns a CapabilityResolver the runner-backend

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/metrics"
 )
 
 // FakeMetrics is a Recorder that captures every emission for test assertion.

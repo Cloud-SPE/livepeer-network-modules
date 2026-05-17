@@ -177,15 +177,15 @@ func TestCheckDirSkipsTestdataAndVendor(t *testing.T) {
 
 func TestDefaultSkipExcludesConventional(t *testing.T) {
 	cases := map[string]bool{
-		"testdata":                          true,
-		"some/path/testdata":                true,
-		"vendor":                            true,
-		"a/vendor":                          true,
-		"proto/gen":                         true,
-		"lint/no-secrets-in-logs":           true,
-		"lint/no-secrets-in-logs/testdata":  true,
-		"cmd/livepeer-payment-daemon":       false,
-		"internal/service/sender":           false,
+		"testdata":                         true,
+		"some/path/testdata":               true,
+		"vendor":                           true,
+		"a/vendor":                         true,
+		"proto/gen":                        true,
+		"lint/no-secrets-in-logs":          true,
+		"lint/no-secrets-in-logs/testdata": true,
+		"cmd/livepeer-payment-daemon":      false,
+		"internal/service/sender":          false,
 	}
 	for path, wantSkip := range cases {
 		if got := DefaultSkip(path); got != wantSkip {

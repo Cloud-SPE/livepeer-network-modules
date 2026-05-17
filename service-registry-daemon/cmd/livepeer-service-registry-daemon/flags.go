@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/config"
 )
 
 // parseFlags processes argv into a *config.Daemon. Returns (cfg, nil)

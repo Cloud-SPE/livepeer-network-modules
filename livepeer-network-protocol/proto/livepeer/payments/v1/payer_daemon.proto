@@ -18,7 +18,7 @@ package livepeer.payments.v1;
 
 import "livepeer/payments/v1/types.proto";
 
-option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
+option go_package = "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
 
 service PayerDaemon {
   // Create a payment blob (a `Payment` carrying one or more tickets)

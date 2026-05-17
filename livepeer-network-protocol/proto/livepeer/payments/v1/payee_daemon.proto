@@ -19,7 +19,7 @@ package livepeer.payments.v1;
 
 import "livepeer/payments/v1/types.proto";
 
-option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
+option go_package = "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
 
 service PayeeDaemon {
   // Return the TicketParams and per-offering pricing for a (sender,
@@ -75,6 +75,11 @@ service PayeeDaemon {
   // Admin / observability: return the on-chain redemption status of
   // a previously-identified winning ticket.
   rpc GetRedemptionStatus(GetRedemptionStatusRequest) returns (GetRedemptionStatusResponse);
+
+  // Admin / reconciliation: aggregate confirmed redemption revenue
+  // for a single Livepeer round. Revenue is recognized only for
+  // confirmed on-chain redemptions, not merely queued winners.
+  rpc GetRoundRevenue(GetRoundRevenueRequest) returns (GetRoundRevenueResponse);
 
   // Health returns "ok" if the daemon is ready to accept sessions.
   // The broker calls this once at startup before binding its paid
@@ -292,6 +297,16 @@ message GetRedemptionStatusResponse {
   // Non-empty when status is STATUS_FAILED — operator-actionable
   // message.
   string error = 3;
+}
+
+message GetRoundRevenueRequest {
+  int64 round_id = 1;
+}
+
+message GetRoundRevenueResponse {
+  int64 round_id = 1;
+  bytes confirmed_revenue_wei = 2;
+  uint64 confirmed_ticket_count = 3;
 }
 
 // ─── Health ───────────────────────────────────────────────────────────

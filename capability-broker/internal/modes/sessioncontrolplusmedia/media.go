@@ -9,9 +9,9 @@ import (
 
 	pwebrtc "github.com/pion/webrtc/v3"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
-	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
-	srpb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/sessionrunner"
+	mediawebrtc "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/webrtc"
+	srpb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1"
 )
 
 // MediaRelay is the per-session glue between the pion PeerConnection
@@ -23,7 +23,7 @@ type MediaRelay struct {
 	relay     *mediawebrtc.Relay
 	stream    *sessionrunner.MediaRelay
 
-	mu    sync.Mutex
+	mu         sync.Mutex
 	tracksByID map[string]*pwebrtc.TrackLocalStaticRTP
 }
 

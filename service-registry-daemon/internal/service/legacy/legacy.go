@@ -4,7 +4,7 @@
 package legacy
 
 import (
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 // Synthesize constructs a single legacy ResolvedNode for an address

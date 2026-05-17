@@ -1,14 +1,14 @@
-module github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon
+module github.com/Cloud-SPE/livepeer-network-modules/payment-daemon
 
 go 1.25.0
 
 // In-monorepo dependency on the proto-go module. Until the monorepo
 // publishes a v1 tag, the replace directive points at the sibling
 // directory; after extraction this becomes a normal versioned dep.
-replace github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go => ../livepeer-network-protocol/proto-go
+replace github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go => ../livepeer-network-protocol/proto-go
 
 require (
-	github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go v0.0.0-00010101000000-000000000000
+	github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go v0.0.0-00010101000000-000000000000
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/google/uuid v1.6.0
 	go.etcd.io/bbolt v1.4.3

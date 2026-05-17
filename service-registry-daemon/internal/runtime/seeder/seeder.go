@@ -16,12 +16,12 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/roundclock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/discovery"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/logger"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service/resolver"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/roundclock"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/discovery"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/resolver"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 // Seeder pairs a Discovery with a Resolver, refreshing the resolver's

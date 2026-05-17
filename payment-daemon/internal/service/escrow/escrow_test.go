@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devbroker"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/devclock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/escrow"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devbroker"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow"
 )
 
 // fakeBroker lets tests pin SenderInfo / claimed values.

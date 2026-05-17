@@ -9,6 +9,6 @@
 // suites. Public API; breaking-change rules apply.
 //
 // This package's name is "chaintesting" so consumers can write
-// `import chaintest "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"`
+// `import chaintest "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"`
 // without colliding with the stdlib testing package.
 package chaintesting

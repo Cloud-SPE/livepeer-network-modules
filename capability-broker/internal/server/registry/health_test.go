@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/health"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
 )
 
 type stubMetadataStatusSource struct {
@@ -22,13 +22,26 @@ func (s stubMetadataStatusSource) StatusFor(capabilityID, offeringID string) (Me
 
 func TestHealthHandler_EmbedsMetadataStatus(t *testing.T) {
 	mgr := health.New(&config.Config{
-		Capabilities: []config.Capability{{
-			ID:         "openai:chat-completions",
-			OfferingID: "default",
-			Health: config.Health{
-				InitialStatus: "ready",
+		Capabilities: []config.Capability{
+			{
+				ID:         "openai:chat-completions",
+				OfferingID: "default",
+				Backend:    config.Backend{ID: "backend-a", URL: "http://backend-a"},
+				Health: config.Health{
+					InitialStatus: "ready",
+				},
 			},
-		}},
+			{
+				ID:         "openai:chat-completions",
+				OfferingID: "default",
+				Backend:    config.Backend{ID: "backend-b", URL: "http://backend-b"},
+				Health: config.Health{
+					InitialStatus: "draining",
+					Drain:         config.HealthDrain{Enabled: true},
+					Probe:         config.HealthProbe{Type: "manual-drain"},
+				},
+			},
+		},
 	})
 	meta := stubMetadataStatusSource{
 		status: map[string]MetadataStatus{
@@ -54,6 +67,14 @@ func TestHealthHandler_EmbedsMetadataStatus(t *testing.T) {
 	var out struct {
 		Capabilities []struct {
 			ID       string `json:"id"`
+			Status   string `json:"status"`
+			Backends []struct {
+				BackendID         string `json:"backend_id"`
+				Status            string `json:"status"`
+				SelectionEligible bool   `json:"selection_eligible"`
+				SelectionWeight   int    `json:"selection_weight"`
+				SelectionReason   string `json:"selection_reason"`
+			} `json:"backends"`
 			Metadata struct {
 				Provider              string  `json:"provider"`
 				Applicable            bool    `json:"applicable"`
@@ -70,6 +91,21 @@ func TestHealthHandler_EmbedsMetadataStatus(t *testing.T) {
 		t.Fatalf("capabilities count = %d; want 1", len(out.Capabilities))
 	}
 	got := out.Capabilities[0]
+	if got.Status != "ready" {
+		t.Fatalf("capability status = %q; want ready", got.Status)
+	}
+	if len(got.Backends) != 2 {
+		t.Fatalf("backend count = %d; want 2", len(got.Backends))
+	}
+	if !got.Backends[0].SelectionEligible || got.Backends[0].SelectionWeight == 0 {
+		t.Fatalf("backend[0] selection fields = %+v; want eligible positive weight", got.Backends[0])
+	}
+	if got.Backends[0].SelectionReason == "" {
+		t.Fatalf("backend[0] selection reason empty: %+v", got.Backends[0])
+	}
+	if got.Backends[1].SelectionEligible || got.Backends[1].SelectionWeight != 0 {
+		t.Fatalf("backend[1] selection fields = %+v; want ineligible zero weight", got.Backends[1])
+	}
 	if got.Metadata.Provider != "vllm" {
 		t.Fatalf("metadata.provider = %q; want vllm", got.Metadata.Provider)
 	}

@@ -14,11 +14,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/keystore/inmemory"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/receiver"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/types"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/inmemory"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
 // chainStand is like stand but lets the caller pin the recipient address

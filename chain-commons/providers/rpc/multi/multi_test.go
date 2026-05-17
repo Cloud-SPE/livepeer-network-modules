@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/config"
-	cerrors "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
+	cerrors "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/errors"
 )
 
 // fakeRPCServer responds to JSON-RPC calls. handler is invoked with the

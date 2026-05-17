@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 )
 
 func TestManagerHTTPStatusProbeBecomesReady(t *testing.T) {

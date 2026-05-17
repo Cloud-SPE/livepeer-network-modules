@@ -2,11 +2,11 @@
 // the precedent of payment-daemon/, capability-broker/,
 // orch-coordinator/, and secure-orch-console/. Future extraction is a
 // mechanical move.
-module github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go
+module github.com/Cloud-SPE/livepeer-network-modules/gateway-adapters/go
 
 go 1.25.0
 
-replace github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go => ../../livepeer-network-protocol/proto-go
+replace github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go => ../../livepeer-network-protocol/proto-go
 
 require (
 	github.com/pion/webrtc/v3 v3.3.6

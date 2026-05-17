@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/timesource"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/roundclock"
-	chaintest "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/timesource"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/roundclock"
+	chaintest "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
 )
 
 // stubTimeSource is a minimal in-test TimeSource. SubscribeRounds returns

@@ -1,4 +1,4 @@
-module github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons
+module github.com/Cloud-SPE/livepeer-network-modules/chain-commons
 
 go 1.25.7
 

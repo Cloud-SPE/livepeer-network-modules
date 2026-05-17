@@ -1,0 +1,21 @@
+pool_controller:
+  url: http://pool-controller:8080
+  bearer_token_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
+  timeout_ms: 1500
+
+executor:
+  batch_size: 25
+  executor_id: executor-a
+  lease_ttl_seconds: 300
+  rpc_url: https://arb1.arbitrum.io/rpc
+  chain_id: 42161
+  keystore_path: ./keystore.json
+  keystore_password_path: ./keystore-password
+  confirmation_blocks: 1
+  state_path: ./var/pool-payout-executor/state.db
+  run_history_limit: 100
+  backoff_base_ms: 5000
+  backoff_max_ms: 300000
+  auto_requeue_failed: false
+  max_retries: 3
+  requeue_cooldown_seconds: 3600

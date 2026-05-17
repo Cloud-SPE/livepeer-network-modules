@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/scrape"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
 // SpecVersion is the manifest spec version emitted by this coordinator.

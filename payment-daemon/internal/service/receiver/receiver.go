@@ -16,10 +16,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/receiver/validator"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/types"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver/validator"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
 // Service implements pb.PayeeDaemonServer.
@@ -508,6 +508,23 @@ func (s *Service) GetRedemptionStatus(_ context.Context, req *pb.GetRedemptionSt
 		}
 	}
 	return &pb.GetRedemptionStatusResponse{Status: pb.GetRedemptionStatusResponse_STATUS_UNSPECIFIED}, nil
+}
+
+// GetRoundRevenue returns confirmed redemption revenue for a single
+// Livepeer round.
+func (s *Service) GetRoundRevenue(_ context.Context, req *pb.GetRoundRevenueRequest) (*pb.GetRoundRevenueResponse, error) {
+	if req.GetRoundId() < 0 {
+		return nil, status.Error(codes.InvalidArgument, "round_id must be >= 0")
+	}
+	revenue, count, err := s.store.RoundRevenue(req.GetRoundId())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "round revenue: %v", err)
+	}
+	return &pb.GetRoundRevenueResponse{
+		RoundId:              req.GetRoundId(),
+		ConfirmedRevenueWei:  revenue.Bytes(),
+		ConfirmedTicketCount: count,
+	}, nil
 }
 
 // Health returns "ok" — the broker probes this at startup.

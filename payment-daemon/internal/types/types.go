@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"math/big"
 
-	pb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 )
 
 // MaxWinProb is `2^256 - 1`. Win probabilities are encoded as 256-bit
@@ -61,11 +61,11 @@ type Ticket struct {
 // TicketBatch is the result of CreateTicketBatch — a fully-formed
 // Payment with one or more signed tickets.
 type TicketBatch struct {
-	TicketParams        *TicketParams
-	Sender              []byte
-	ExpirationParams    *TicketExpirationParams
-	TicketSenderParams  []*TicketSenderParams
-	ExpectedPrice       *PriceInfo
+	TicketParams       *TicketParams
+	Sender             []byte
+	ExpirationParams   *TicketExpirationParams
+	TicketSenderParams []*TicketSenderParams
+	ExpectedPrice      *PriceInfo
 }
 
 // TicketSenderParams is the in-process form of `pb.TicketSenderParams`.

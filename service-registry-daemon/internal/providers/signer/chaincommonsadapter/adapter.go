@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/keystore"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/signer"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/keystore"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/signer"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 // New wraps a chain-commons keystore.Keystore as a registry-daemon

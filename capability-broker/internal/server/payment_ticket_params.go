@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 )
 
 const maxTicketParamsBodyBytes = 8 << 10

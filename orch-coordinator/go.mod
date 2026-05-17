@@ -1,9 +1,9 @@
-module github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator
+module github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator
 
 go 1.25.0
 
 require (
-	github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/verify v0.0.0-00010101000000-000000000000
+	github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/verify v0.0.0-00010101000000-000000000000
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/prometheus/client_golang v1.15.0
 	go.etcd.io/bbolt v1.4.3
@@ -25,4 +25,4 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/verify => ../livepeer-network-protocol/verify
+replace github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/verify => ../livepeer-network-protocol/verify

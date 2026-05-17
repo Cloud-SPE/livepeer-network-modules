@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
+ARG GO_VERSION=1.25.7
+
 # Build context is the monorepo root (../), not this directory. The daemon's
 # go.mod has a `replace github.com/.../chain-commons => ../chain-commons`,
 # so the sibling chain-commons tree must be visible to the builder. The
@@ -8,7 +10,7 @@
 # `-f service-registry-daemon/Dockerfile`.
 
 # --- builder ---
-FROM golang:1.25-alpine AS builder
+FROM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /src
 

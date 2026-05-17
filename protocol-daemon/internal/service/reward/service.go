@@ -22,14 +22,14 @@ import (
 
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/clock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logger"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/metrics"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/roundclock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/txintent"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/providers/bondingmanager"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/roundclock"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/txintent"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/providers/bondingmanager"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/types"
 )
 
 // BondingManager is the subset of the ABI binding the service depends on.

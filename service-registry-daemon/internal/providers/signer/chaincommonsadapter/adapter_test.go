@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	chaintest "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/signer"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/signer/chaincommonsadapter"
+	chaintest "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/signer"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/signer/chaincommonsadapter"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 

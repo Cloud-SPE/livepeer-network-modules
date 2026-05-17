@@ -3,7 +3,7 @@
 // and re-run the same secp256k1 + EIP-191 personal-sign recovery; this
 // module is the single source of truth for that recovery so the bytes-
 // identical guarantee with secure-orch-console's signer holds.
-module github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/verify
+module github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/verify
 
 go 1.25.0
 

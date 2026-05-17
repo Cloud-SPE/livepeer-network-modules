@@ -12,8 +12,8 @@ import (
 	"errors"
 	"time"
 
-	cclock "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/clock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/clock"
+	cclock "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/clock"
 )
 
 // New wraps a chain-commons clock.Clock as a registry-daemon

@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/audit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/receive"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/audit"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/receive"
 )
 
 // MaxUploadBytes caps the multipart-upload body size. The signed

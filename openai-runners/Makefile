@@ -6,9 +6,9 @@ REGISTRY    ?= tztcloud
 TAG         ?= v1.1.0
 PLATFORMS   ?= linux/amd64
 
-.PHONY: build base gpu-base gpu-media-base go-runner audio tts image downloader tester smoke clean help
+.PHONY: build base gpu-base gpu-media-base chat-runner embeddings-runner audio tts image downloader tester smoke clean help
 
-build: base gpu-base gpu-media-base go-runner audio tts image downloader tester ## Build all runner images locally
+build: base gpu-base gpu-media-base chat-runner embeddings-runner audio tts image downloader tester ## Build all runner images locally
 
 base: ## Build the shared python-runner-base image
 	docker build \
@@ -29,17 +29,21 @@ gpu-media-base: gpu-base ## Build the shared python-gpu-media-runner-base image
 		-f python-gpu-media-runner-base/Dockerfile \
 		python-gpu-media-runner-base
 
-go-runner: ## Build the Go openai-runner (chat + embeddings)
-	docker build \
-		--target chat \
-		-t $(REGISTRY)/openai-runner-chat:$(TAG) \
-		-f openai-runner/Dockerfile \
-		openai-runner
-	docker build \
-		--target embeddings \
-		-t $(REGISTRY)/openai-runner-embeddings:$(TAG) \
-		-f openai-runner/Dockerfile \
-		openai-runner
+chat-runner: ## Build the streaming-aware openai-chat-runner image (multi-arch)
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		-t $(REGISTRY)/openai-chat-runner:$(TAG) \
+		--load \
+		-f openai-chat-runner/Dockerfile \
+		openai-chat-runner
+
+embeddings-runner: ## Build the openai-embeddings-runner image (multi-arch)
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		-t $(REGISTRY)/openai-embeddings-runner:$(TAG) \
+		--load \
+		-f openai-embeddings-runner/Dockerfile \
+		openai-embeddings-runner
 
 audio: gpu-media-base ## Build the openai-audio-runner image
 	docker build \
@@ -82,8 +86,8 @@ clean: ## Remove dev images
 		$(REGISTRY)/python-runner-base:$(TAG) \
 		$(REGISTRY)/python-gpu-runner-base:$(TAG) \
 		$(REGISTRY)/python-gpu-media-runner-base:$(TAG) \
-		$(REGISTRY)/openai-runner-chat:$(TAG) \
-		$(REGISTRY)/openai-runner-embeddings:$(TAG) \
+		$(REGISTRY)/openai-chat-runner:$(TAG) \
+		$(REGISTRY)/openai-embeddings-runner:$(TAG) \
 		$(REGISTRY)/openai-audio-runner:$(TAG) \
 		$(REGISTRY)/openai-tts-runner:$(TAG) \
 		$(REGISTRY)/openai-image-generation-runner:$(TAG) \

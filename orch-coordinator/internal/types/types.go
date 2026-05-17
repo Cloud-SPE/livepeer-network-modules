@@ -225,6 +225,12 @@ type Candidate struct {
 	ManifestBytes []byte
 	Manifest      ManifestPayload
 	Metadata      Metadata
+	// ContentHash is a stable digest over the content-bearing fields of
+	// Manifest (orch + capabilities), excluding issued_at, expires_at,
+	// and publication_seq. The Builder uses it to debounce issued_at so
+	// the signed bytes stay identical across scrapes when no content
+	// has changed. Internal only; never marshaled.
+	ContentHash string `json:"-"`
 }
 
 // Metadata is the operator-only sidecar (NOT signed).

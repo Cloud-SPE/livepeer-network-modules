@@ -8,6 +8,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/requestformula"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/responseheader"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/responsejsonpath"
+	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/responsetrailer"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/runnerreport"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/secondselapsed"
 	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
@@ -41,6 +42,7 @@ func defaultExtractors() *extractors.Registry {
 	r := extractors.NewRegistry()
 	r.Register(responsejsonpath.Name, responsejsonpath.New) // plan 0003
 	r.Register(responseheader.Name, responseheader.New)     // audio response-header extraction
+	r.Register(responsetrailer.Name, responsetrailer.New)   // streaming work-units via HTTP trailer
 	r.Register(openaiusage.Name, openaiusage.New)           // plan 0007
 	r.Register(requestformula.Name, requestformula.New)     // plan 0007
 	r.Register(bytescounted.Name, bytescounted.New)         // plan 0007

@@ -519,3 +519,58 @@ func TestValidateAcceptsVTuberExtraShape(t *testing.T) {
 		t.Fatalf("Validate() error = %v", err)
 	}
 }
+
+func sessionRunnerCap() Capability {
+	return Capability{
+		ID:              "test:session:v1",
+		OfferingID:      "default",
+		InteractionMode: "session-control-plus-media@v0",
+		WorkUnit: WorkUnit{
+			Name:      "seconds",
+			Extractor: map[string]any{"type": "seconds-elapsed"},
+		},
+		Price: Price{AmountWei: "1", PerUnits: 1},
+		Backend: Backend{
+			Transport: "session-runner",
+			SessionRunner: &SessionRunnerBackend{
+				Image: "tztcloud/livepeer-conformance-session-runner:v0",
+			},
+		},
+	}
+}
+
+func TestValidateAcceptsSessionRunnerTransport(t *testing.T) {
+	cfg := &Config{
+		Identity:     Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{sessionRunnerCap()},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsSessionRunnerMissingBlock(t *testing.T) {
+	cap := sessionRunnerCap()
+	cap.Backend.SessionRunner = nil
+	cfg := &Config{
+		Identity:     Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{cap},
+	}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "backend.session_runner is required") {
+		t.Fatalf("Validate() error = %v; want session_runner required", err)
+	}
+}
+
+func TestValidateRejectsSessionRunnerMissingImage(t *testing.T) {
+	cap := sessionRunnerCap()
+	cap.Backend.SessionRunner.Image = ""
+	cfg := &Config{
+		Identity:     Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{cap},
+	}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "backend.session_runner.image is required") {
+		t.Fatalf("Validate() error = %v; want session_runner.image required", err)
+	}
+}

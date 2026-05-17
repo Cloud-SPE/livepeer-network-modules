@@ -4,7 +4,7 @@
 
 IMAGE   ?= tztcloud/livepeer-gateway-adapters-go-test
 TAG     ?= dev
-VERSION := $(shell cat ../../livepeer-network-protocol/VERSION 2>/dev/null || echo dev)
+VERSION ?= $(shell VERSION_PREFIX="$(TAG)" FALLBACK_VERSION=dev ../../infra/build/git-version.sh)
 
 .PHONY: build test shell clean help
 

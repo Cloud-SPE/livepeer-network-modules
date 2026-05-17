@@ -10,6 +10,7 @@
 # Env:
 #   REGISTRY  default: tztcloud
 #   TAG       default: v1.2.0
+#   VERSION   default: derived from git tag/sha for binary build metadata
 #   PUSH      set to 1 to docker push after each build
 #   DEPLOY_ONLY  set to 1 to exclude local-only base/test/helper images
 #
@@ -31,6 +32,9 @@ DEPLOY_ONLY="${DEPLOY_ONLY:-0}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+
+DEFAULT_VERSION="$(VERSION_PREFIX="${TAG}" FALLBACK_VERSION="${TAG}" ./infra/build/git-version.sh)"
+VERSION="${VERSION:-${DEFAULT_VERSION}}"
 
 # ---- helpers --------------------------------------------------------------
 
@@ -196,7 +200,7 @@ total=${#SELECTED[@]}
 
 # ---- build loop -----------------------------------------------------------
 
-log "registry=${REGISTRY}  tag=${TAG}  push=${PUSH}  deploy_only=${DEPLOY_ONLY}  building ${total} image(s)"
+log "registry=${REGISTRY}  tag=${TAG}  version=${VERSION}  push=${PUSH}  deploy_only=${DEPLOY_ONLY}  building ${total} image(s)"
 
 for entry in "${SELECTED[@]}"; do
   step=$((step + 1))
@@ -204,7 +208,7 @@ for entry in "${SELECTED[@]}"; do
 
   full_tag="${REGISTRY}/${name}:${TAG}"
 
-  args=(build -t "$full_tag" -f "$dockerfile")
+  args=(build -t "$full_tag" -f "$dockerfile" --build-arg "VERSION=${VERSION}")
   [[ -n "$target" ]]     && args+=(--target "$target")
   [[ -n "$build_args" ]] && args+=("$build_args")
   args+=("$context")

@@ -3,7 +3,7 @@
 
 IMAGE   ?= tztcloud/livepeer-conformance
 TAG     ?= dev
-VERSION := $(shell cat ../VERSION 2>/dev/null || echo dev)
+VERSION ?= $(shell VERSION_PREFIX="$(TAG)" FALLBACK_VERSION=dev ../../infra/build/git-version.sh)
 TARGET  ?= broker
 
 .PHONY: build test test-compose publish clean help
@@ -42,7 +42,7 @@ publish: ## Build + push multi-arch image (requires TAG set to a real version)
 	fi
 	docker buildx build \
 		--platform linux/amd64,linux/arm64 \
-		--build-arg VERSION=$(TAG) \
+		--build-arg VERSION=$(VERSION) \
 		--push \
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \

@@ -14,8 +14,8 @@ secure-orch produces signatures; everyone else verifies them.
 
 ```go
 import (
-    "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/verify"
-    "github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/canonical"
+    "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/verify"
+    "github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/canonical"
 )
 
 // canonical bytes of the inner manifest payload

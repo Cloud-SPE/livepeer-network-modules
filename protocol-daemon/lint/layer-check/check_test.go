@@ -137,7 +137,7 @@ func TestTypesImportingInternalIsFlagged(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := `package types
-import _ "github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/config"
+import _ "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/config"
 `
 	if err := os.WriteFile(filepath.Join(pkg, "t.go"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)

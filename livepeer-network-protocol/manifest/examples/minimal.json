@@ -10,25 +10,31 @@
     },
     "capabilities": [
       {
-        "capability_id": "openai:chat-completions:llama-3-70b",
+        "capability_id": "openai:chat-completions",
         "offering_id": "vllm-h100-batch4",
         "interaction_mode": "http-stream@v1",
         "work_unit": { "name": "tokens" },
         "price_per_unit_wei": "1500000",
         "worker_url": "https://broker-a.orch.example.com",
         "extra": {
+          "openai": {
+            "model": "llama-3-70b"
+          },
           "region": "us-west-2",
           "gpu_class": "h100"
         }
       },
       {
-        "capability_id": "openai:chat-completions:gpt-4o",
+        "capability_id": "openai:chat-completions",
         "offering_id": "openai-resale",
         "interaction_mode": "http-stream@v1",
         "work_unit": { "name": "tokens" },
         "price_per_unit_wei": "8500000",
         "worker_url": "https://broker-a.orch.example.com",
         "extra": {
+          "openai": {
+            "model": "gpt-4o"
+          },
           "backend_provider": "openai",
           "region": "global"
         }

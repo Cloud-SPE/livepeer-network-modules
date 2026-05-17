@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/providers/brokerclient"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/candidates"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/candidate"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/scrape"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/providers/brokerclient"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/candidates"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/candidate"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
 func TestCandidateRoutes_NotReadyReturns503(t *testing.T) {
@@ -158,6 +158,20 @@ func primedScrapeService(t *testing.T) *scrape.Service {
 			InteractionMode: "http-stream@v1",
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "100",
+		}},
+	}, nil)
+	fc.SetHealth("http://x:1", &types.BrokerHealth{
+		BrokerStatus: "ready",
+		Capabilities: []types.BrokerHealthCapability{{
+			ID: "cap", OfferingID: "off", Status: "ready",
+			Metadata: &types.BrokerHealthMetadata{
+				Applicable:            true,
+				LastResult:            "models_probe_failed",
+				LastSuccessAt:         time.Now().UTC().Add(-3 * time.Minute),
+				LastSuccessAgeSeconds: 180,
+				ConsecutiveFailures:   2,
+				LastError:             "probe failed",
+			},
 		}},
 	}, nil)
 	svc, err := scrape.New(scrape.Config{

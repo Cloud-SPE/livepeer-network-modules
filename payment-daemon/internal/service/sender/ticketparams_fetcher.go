@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
 // TicketParamsRequest is the sender-side input to the quote-free

@@ -32,7 +32,7 @@ import (
 
 	"google.golang.org/grpc"
 
-	srpb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1"
+	srpb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1"
 )
 
 func main() {

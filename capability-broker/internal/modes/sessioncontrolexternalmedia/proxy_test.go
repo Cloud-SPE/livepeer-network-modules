@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 )
 
 // fakeBackend records every request the proxy forwards. Used to assert

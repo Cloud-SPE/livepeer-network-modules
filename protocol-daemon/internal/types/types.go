@@ -7,7 +7,7 @@ package types
 import (
 	"fmt"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 )
 
 // Mode is the daemon's operating mode. One binary, three modes.

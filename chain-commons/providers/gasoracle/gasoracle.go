@@ -9,7 +9,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 )
 
 // GasOracle is the gas-pricing abstraction.

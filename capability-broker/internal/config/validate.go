@@ -1,9 +1,11 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -40,6 +42,38 @@ var validEncoderProfiles = map[string]bool{
 	"h264-live-1080p-vaapi":   true,
 }
 
+var deprecatedOpenAICapabilityIDSuffixes = []string{
+	"openai:chat-completions:",
+	"openai:embeddings:",
+	"openai:audio-transcriptions:",
+	"openai:audio-speech:",
+	"openai:images-generations:",
+	"openai:realtime:",
+}
+
+var openAICapabilityIDsRequiringModel = map[string]struct{}{
+	"openai:chat-completions":     {},
+	"openai:embeddings":           {},
+	"openai:audio-transcriptions": {},
+	"openai:audio-speech":         {},
+	"openai:images-generations":   {},
+	"openai:realtime":             {},
+}
+
+var audioTaskByCapabilityID = map[string]string{
+	"openai:audio-transcriptions": "transcription",
+	"openai:audio-speech":         "speech",
+}
+
+var videoTaskByCapabilityID = map[string]string{
+	"video:transcode.vod": "transcode",
+	"video:transcode.abr": "abr-transcode",
+}
+
+var vtuberTaskByCapabilityID = map[string]string{
+	"livepeer:vtuber-session": "session",
+}
+
 func encoderProfileList() []string {
 	out := make([]string, 0, len(validEncoderProfiles))
 	for k := range validEncoderProfiles {
@@ -61,12 +95,37 @@ func (c *Config) Validate() error {
 	if c.Listen.Metrics == "" {
 		c.Listen.Metrics = ":9090"
 	}
+	if c.ReceiptSink.URL != "" {
+		u, err := url.Parse(c.ReceiptSink.URL)
+		if err != nil {
+			return fmt.Errorf("receipt_sink.url is invalid: %w", err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("receipt_sink.url scheme must be http or https (got %q)", u.Scheme)
+		}
+		switch c.ReceiptSink.Auth.Method {
+		case "", "none":
+		case "bearer":
+			if c.ReceiptSink.Auth.SecretRef == "" {
+				return fmt.Errorf("receipt_sink.auth.secret_ref is required when method=bearer")
+			}
+			if !strings.Contains(c.ReceiptSink.Auth.SecretRef, "://") {
+				return fmt.Errorf("receipt_sink.auth.secret_ref should be a URI-style reference (got %q)", c.ReceiptSink.Auth.SecretRef)
+			}
+		default:
+			return fmt.Errorf("receipt_sink.auth.method %q is not supported", c.ReceiptSink.Auth.Method)
+		}
+		if c.ReceiptSink.TimeoutMS < 0 {
+			return fmt.Errorf("receipt_sink.timeout_ms must be >= 0")
+		}
+	}
 
 	if len(c.Capabilities) == 0 {
 		return fmt.Errorf("capabilities: must declare at least one")
 	}
 
-	seen := make(map[string]struct{}, len(c.Capabilities))
+	seenPublished := make(map[string]int, len(c.Capabilities))
+	seenBackendsPerTuple := make(map[string]map[string]struct{}, len(c.Capabilities))
 	for i := range c.Capabilities {
 		cap := &c.Capabilities[i]
 		ctx := fmt.Sprintf("capabilities[%d]", i)
@@ -77,14 +136,19 @@ func (c *Config) Validate() error {
 		if cap.ID == "" {
 			return fmt.Errorf("%s: id is required", ctx)
 		}
+		for _, prefix := range deprecatedOpenAICapabilityIDSuffixes {
+			if strings.HasPrefix(cap.ID, prefix) {
+				return fmt.Errorf("%s: id %q uses deprecated OpenAI capability syntax; use %q and set extra.openai.model instead",
+					ctx, cap.ID, strings.TrimSuffix(prefix, ":"))
+			}
+		}
 		if cap.OfferingID == "" {
 			return fmt.Errorf("%s: offering_id is required", ctx)
 		}
-		key := cap.ID + "|" + cap.OfferingID
-		if _, dup := seen[key]; dup {
-			return fmt.Errorf("%s: duplicate (capability_id, offering_id) pair", ctx)
+		if err := validateCapabilityExtra(ctx, cap); err != nil {
+			return err
 		}
-		seen[key] = struct{}{}
+		key := cap.ID + "|" + cap.OfferingID
 
 		if !interactionModeRE.MatchString(cap.InteractionMode) {
 			return fmt.Errorf("%s: interaction_mode must match <name>@v<major> (got %q)", ctx, cap.InteractionMode)
@@ -110,6 +174,9 @@ func (c *Config) Validate() error {
 		if cap.Backend.Transport == "" {
 			return fmt.Errorf("%s: backend.transport is required", ctx)
 		}
+		if cap.Backend.ID == "" && cap.Backend.URL != "" {
+			cap.Backend.ID = cap.Backend.URL
+		}
 		switch cap.Backend.Transport {
 		case "http":
 			if cap.Backend.URL == "" {
@@ -129,8 +196,15 @@ func (c *Config) Validate() error {
 			if !validEncoderProfiles[cap.Backend.Profile] {
 				return fmt.Errorf("%s: backend.profile %q is not one of %v", ctx, cap.Backend.Profile, encoderProfileList())
 			}
+		case "session-runner":
+			if cap.Backend.SessionRunner == nil {
+				return fmt.Errorf("%s: backend.session_runner is required for transport=session-runner", ctx)
+			}
+			if strings.TrimSpace(cap.Backend.SessionRunner.Image) == "" {
+				return fmt.Errorf("%s: backend.session_runner.image is required for transport=session-runner", ctx)
+			}
 		default:
-			return fmt.Errorf("%s: backend.transport %q is not yet supported (only 'http' or 'ffmpeg-subprocess' in v0.1)", ctx, cap.Backend.Transport)
+			return fmt.Errorf("%s: backend.transport %q is not yet supported (only 'http', 'ffmpeg-subprocess', or 'session-runner' in v0.1)", ctx, cap.Backend.Transport)
 		}
 
 		switch cap.Backend.Auth.Method {
@@ -238,7 +312,200 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("%s: health.probe.config.command must be a non-empty list for command-exit-0", ctx)
 			}
 		}
+
+		if previousIndex, ok := seenPublished[key]; ok {
+			if err := validateRepeatedPublishedTuple(c.Capabilities[previousIndex], *cap, ctx); err != nil {
+				return err
+			}
+		} else {
+			seenPublished[key] = i
+		}
+		if seenBackendsPerTuple[key] == nil {
+			seenBackendsPerTuple[key] = map[string]struct{}{}
+		}
+		if cap.Backend.ID != "" {
+			if _, dup := seenBackendsPerTuple[key][cap.Backend.ID]; dup {
+				return fmt.Errorf("%s: duplicate backend.id %q under published tuple %s/%s", ctx, cap.Backend.ID, cap.ID, cap.OfferingID)
+			}
+			seenBackendsPerTuple[key][cap.Backend.ID] = struct{}{}
+		}
 	}
 
 	return nil
+}
+
+func validateRepeatedPublishedTuple(previous, current Capability, ctx string) error {
+	if previous.InteractionMode != current.InteractionMode {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same interaction_mode", ctx)
+	}
+	if previous.WorkUnit.Name != current.WorkUnit.Name {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same work_unit.name", ctx)
+	}
+	if !jsonMapsEqual(previous.WorkUnit.Extractor, current.WorkUnit.Extractor) {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same work_unit.extractor", ctx)
+	}
+	if previous.Price != current.Price {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same price", ctx)
+	}
+	if !jsonMapsEqual(previous.Extra, current.Extra) {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same extra metadata", ctx)
+	}
+	if !jsonMapsEqual(previous.Constraints, current.Constraints) {
+		return fmt.Errorf("%s: repeated published tuple must reuse the same constraints", ctx)
+	}
+	return nil
+}
+
+func jsonMapsEqual(left, right map[string]any) bool {
+	if len(left) == 0 && len(right) == 0 {
+		return true
+	}
+	leftJSON, err := stableJSON(left)
+	if err != nil {
+		return false
+	}
+	rightJSON, err := stableJSON(right)
+	if err != nil {
+		return false
+	}
+	return leftJSON == rightJSON
+}
+
+func stableJSON(v any) (string, error) {
+	normalized := normalizeForJSON(v)
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func normalizeForJSON(v any) any {
+	switch typed := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for k := range typed {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		out := make(map[string]any, len(typed))
+		for _, k := range keys {
+			out[k] = normalizeForJSON(typed[k])
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, normalizeForJSON(item))
+		}
+		return out
+	default:
+		return typed
+	}
+}
+
+func validateCapabilityExtra(ctx string, cap *Capability) error {
+	provider := strings.TrimSpace(asString(cap.Extra["provider"]))
+	if strings.HasPrefix(cap.ID, "openai:") {
+		openaiRaw, ok := cap.Extra["openai"]
+		if !ok {
+			return fmt.Errorf("%s: extra.openai is required for %s", ctx, cap.ID)
+		}
+		openaiExtra, ok := openaiRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.openai must be a map for %s", ctx, cap.ID)
+		}
+		if provider == "" {
+			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
+		}
+		if _, needsModel := openAICapabilityIDsRequiringModel[cap.ID]; needsModel {
+			model := strings.TrimSpace(asString(openaiExtra["model"]))
+			if model == "" {
+				return fmt.Errorf("%s: extra.openai.model is required for %s", ctx, cap.ID)
+			}
+		}
+		if featuresRaw, ok := cap.Extra["features"]; ok {
+			features, ok := featuresRaw.(map[string]any)
+			if !ok {
+				return fmt.Errorf("%s: extra.features must be a map for %s", ctx, cap.ID)
+			}
+			for key, value := range features {
+				if _, ok := value.(bool); !ok {
+					return fmt.Errorf("%s: extra.features.%s must be a boolean for %s", ctx, key, cap.ID)
+				}
+			}
+		}
+	}
+	if requiredTask, ok := audioTaskByCapabilityID[cap.ID]; ok {
+		if provider == "" {
+			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
+		}
+		audioRaw, ok := cap.Extra["audio"]
+		if !ok {
+			return fmt.Errorf("%s: extra.audio is required for %s", ctx, cap.ID)
+		}
+		audioExtra, ok := audioRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.audio must be a map for %s", ctx, cap.ID)
+		}
+		task := strings.TrimSpace(asString(audioExtra["task"]))
+		if task == "" {
+			return fmt.Errorf("%s: extra.audio.task is required for %s", ctx, cap.ID)
+		}
+		if task != requiredTask {
+			return fmt.Errorf("%s: extra.audio.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
+		}
+	}
+	if requiredTask, ok := videoTaskByCapabilityID[cap.ID]; ok {
+		if provider == "" {
+			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
+		}
+		videoRaw, ok := cap.Extra["video"]
+		if !ok {
+			return fmt.Errorf("%s: extra.video is required for %s", ctx, cap.ID)
+		}
+		videoExtra, ok := videoRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.video must be a map for %s", ctx, cap.ID)
+		}
+		task := strings.TrimSpace(asString(videoExtra["task"]))
+		if task == "" {
+			return fmt.Errorf("%s: extra.video.task is required for %s", ctx, cap.ID)
+		}
+		if task != requiredTask {
+			return fmt.Errorf("%s: extra.video.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
+		}
+	}
+	if requiredTask, ok := vtuberTaskByCapabilityID[cap.ID]; ok {
+		if provider == "" {
+			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
+		}
+		vtuberRaw, ok := cap.Extra["vtuber"]
+		if !ok {
+			return fmt.Errorf("%s: extra.vtuber is required for %s", ctx, cap.ID)
+		}
+		vtuberExtra, ok := vtuberRaw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.vtuber must be a map for %s", ctx, cap.ID)
+		}
+		task := strings.TrimSpace(asString(vtuberExtra["task"]))
+		if task == "" {
+			return fmt.Errorf("%s: extra.vtuber.task is required for %s", ctx, cap.ID)
+		}
+		if task != requiredTask {
+			return fmt.Errorf("%s: extra.vtuber.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
+		}
+	}
+
+	return nil
+}
+
+func asString(v any) string {
+	if v == nil {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
 }

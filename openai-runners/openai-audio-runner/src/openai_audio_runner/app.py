@@ -32,6 +32,7 @@ CAP_TRANSLATIONS = "openai-audio-translations"
 MODEL_ALIAS = "whisper-large-v3"
 
 SUPPORTED_RESPONSE_FORMATS = {"json", "text", "srt", "vtt", "verbose_json"}
+SUPPORTED_INPUT_FORMATS = ["mp3", "wav", "m4a", "flac"]
 WORK_UNITS_HEADER = "X-Livepeer-Work-Units"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -283,12 +284,26 @@ async def healthz():
 
 @app.get(f"/{CAP_TRANSCRIPTIONS}/options")
 async def transcriptions_options():
-    return {"models": [MODEL_ALIAS]}
+    return {
+        "models": [MODEL_ALIAS],
+        "task": "transcription",
+        "formats": {
+            "input": SUPPORTED_INPUT_FORMATS,
+            "output": sorted(SUPPORTED_RESPONSE_FORMATS),
+        },
+    }
 
 
 @app.get(f"/{CAP_TRANSLATIONS}/options")
 async def translations_options():
-    return {"models": [MODEL_ALIAS]}
+    return {
+        "models": [MODEL_ALIAS],
+        "task": "translation",
+        "formats": {
+            "input": SUPPORTED_INPUT_FORMATS,
+            "output": sorted(SUPPORTED_RESPONSE_FORMATS),
+        },
+    }
 
 
 if METRICS_ENABLED:

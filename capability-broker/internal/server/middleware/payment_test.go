@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
 )
 
 // fakeLiveCounter is a goroutine-safe LiveCounter for middleware tests.
@@ -48,6 +49,15 @@ func stubLookup(cap, off string) (CapabilitySpec, bool) {
 	}, true
 }
 
+type stubReceiptSink struct {
+	items []receipts.WorkReceipt
+}
+
+func (s *stubReceiptSink) UpsertWorkReceipt(_ context.Context, receipt receipts.WorkReceipt) error {
+	s.items = append(s.items, receipt)
+	return nil
+}
+
 // TestPayment_TickerDisabledFallback documents the locked decision #6:
 // `--interim-debit-interval=0` reverts to the v0.2 single-debit path.
 // No SufficientBalance is invoked; one DebitBalance(seq=1) is issued at
@@ -58,7 +68,7 @@ func TestPayment_TickerDisabledFallback(t *testing.T) {
 
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval: 0, // disabled
-	})
+	}, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(livepeerheader.WorkUnits, "42")
@@ -99,7 +109,7 @@ func TestPayment_TickerHappyPath(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       30 * time.Millisecond,
 		MinRunwayUnits: 0, // disable SufficientBalance for this fixture
-	})
+	}, nil)
 
 	lc := &fakeLiveCounter{}
 	handlerStart := make(chan struct{})
@@ -170,7 +180,7 @@ func TestPayment_InsufficientBalanceTermination(t *testing.T) {
 		Interval:            20 * time.Millisecond,
 		MinRunwayUnits:      100,
 		GraceOnInsufficient: 0,
-	})
+	}, nil)
 
 	lc := &fakeLiveCounter{}
 	handlerCtxObserved := make(chan struct{})
@@ -223,7 +233,7 @@ func TestPayment_InsufficientBalanceWithRunwayDoesNotTerminate(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       20 * time.Millisecond,
 		MinRunwayUnits: 10, // price=1 × 10 = 10 wei runway
-	})
+	}, nil)
 
 	lc := &fakeLiveCounter{}
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -262,7 +272,7 @@ func TestPayment_NoLiveCounterSkipsTicks(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       10 * time.Millisecond,
 		MinRunwayUnits: 0,
-	})
+	}, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Do NOT set LiveCounter. Sleep long enough for ≥3 ticks.
@@ -285,5 +295,41 @@ func TestPayment_NoLiveCounterSkipsTicks(t *testing.T) {
 	}
 	if s.Debits[0] != 7 {
 		t.Errorf("debit units: got %d, want 7", s.Debits[0])
+	}
+}
+
+func TestPayment_EmitsFinalReceiptWhenMetaPresent(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	sink := &stubReceiptSink{}
+
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		state := SessionStateFromContext(r.Context())
+		state.SetReceiptMeta(ReceiptMeta{
+			WorkID:           "wid-receipt",
+			RequestID:        "req-receipt",
+			CapabilityID:     "cap",
+			OfferingID:       "off",
+			MemberEthAddress: "0xabc",
+			BackendID:        "backend-a",
+		})
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := makePaidRequest("wid-receipt")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if len(sink.items) != 1 {
+		t.Fatalf("receipt count = %d, want 1", len(sink.items))
+	}
+	got := sink.items[0]
+	if got.ID != "wid-receipt" || got.Status != "final" || got.ActualUnits != 42 {
+		t.Fatalf("receipt = %#v", got)
+	}
+	if got.GatewayRevenueWei != "42" {
+		t.Fatalf("gateway revenue = %q, want 42", got.GatewayRevenueWei)
 	}
 }

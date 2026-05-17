@@ -27,8 +27,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 )
 
 // MinDepositPendingRatio: when deposit / pendingAmount ≥ this, the

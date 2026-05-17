@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	cclock "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/clock"
-	chaintest "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/clock/chaincommonsadapter"
+	cclock "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/clock"
+	chaintest "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/clock/chaincommonsadapter"
 )
 
 func TestNew_RequiresClock(t *testing.T) {

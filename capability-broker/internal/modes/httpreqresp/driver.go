@@ -14,10 +14,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
 )
 
 // Mode is the canonical mode-name@vN string for this driver.
@@ -83,6 +83,7 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 		Status:   resp.StatusCode,
 		Body:     respBody,
 		Headers:  resp.Header,
+		Trailers: resp.Trailer,
 		Duration: time.Since(start),
 	})
 	if err != nil {

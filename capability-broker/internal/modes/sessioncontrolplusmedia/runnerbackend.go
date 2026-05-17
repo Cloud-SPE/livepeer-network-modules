@@ -7,10 +7,10 @@ import (
 	"log"
 	"sync"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/runnerreport"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
-	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
-	srpb "github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/runnerreport"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/sessionrunner"
+	mediawebrtc "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/webrtc"
+	srpb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/sessionrunner/v1"
 )
 
 // Reserved IPC envelope types the broker emits at runner-side. The
@@ -42,17 +42,17 @@ type RunnerBackend struct {
 }
 
 type runnerSession struct {
-	runner    *sessionrunner.Runner
-	ipc       *sessionrunner.IPC
-	relay     *sessionrunner.EnvelopeRelay
-	mediaRel  *MediaRelay
-	mediaPC   *mediawebrtc.Relay
-	mediaIPC  *sessionrunner.MediaRelay
-	reports   *sessionrunner.WorkUnitReports
-	inbound   chan ControlEnvelope
-	outbound  chan ControlEnvelope
-	done      chan struct{}
-	cancel    context.CancelFunc
+	runner   *sessionrunner.Runner
+	ipc      *sessionrunner.IPC
+	relay    *sessionrunner.EnvelopeRelay
+	mediaRel *MediaRelay
+	mediaPC  *mediawebrtc.Relay
+	mediaIPC *sessionrunner.MediaRelay
+	reports  *sessionrunner.WorkUnitReports
+	inbound  chan ControlEnvelope
+	outbound chan ControlEnvelope
+	done     chan struct{}
+	cancel   context.CancelFunc
 }
 
 // NewRunnerBackend wraps the per-broker supervisor in a Backend the

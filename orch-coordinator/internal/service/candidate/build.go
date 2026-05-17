@@ -8,23 +8,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/scrape"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
-
-var openAICapabilityPrefixes = []string{
-	"openai:chat-completions:",
-	"openai:embeddings:",
-	"openai:audio-transcriptions:",
-	"openai:audio-speech:",
-	"openai:images-generations:",
-	"openai:realtime:",
-}
 
 // SpecVersion is the manifest spec version emitted by this coordinator.
 // Pinned to whatever the spec repo declares. Update in lockstep with
 // livepeer-network-protocol/manifest/changelog.md.
 const SpecVersion = "0.1.0"
+
+const (
+	WarningCodeMetadataNeverSucceeded = "metadata_never_succeeded"
+	WarningCodeMetadataStale          = "metadata_stale"
+	WarningCodeMetadataDegraded       = "metadata_degraded"
+	WarningCodeMetadataProbeFailed    = "metadata_probe_failed"
+)
 
 // PriceConflictError is returned when two brokers advertise the same
 // uniqueness key with different prices. Hard fail loud — the candidate
@@ -60,6 +58,14 @@ type BuildOptions struct {
 	ManifestTTL       time.Duration
 	PublicationSeq    uint64
 	CoordinatorCommit string
+	// PrevContentHash + PrevIssuedAt debounce issued_at when content
+	// has not changed. When PrevIssuedAt is non-zero and PrevContentHash
+	// equals the new build's content hash, issued_at (and expires_at)
+	// reuse the prior values so manifest_bytes stay byte-identical
+	// across scrapes — letting an operator sign and upload one
+	// candidate even if it spans multiple scrape cycles.
+	PrevContentHash string
+	PrevIssuedAt    time.Time
 }
 
 // Build assembles a candidate from a scrape snapshot. The result is
@@ -78,9 +84,22 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		return nil, err
 	}
 
+	orch := types.Orch{
+		EthAddress: strings.ToLower(strings.TrimSpace(opts.OrchEthAddress)),
+		ServiceURI: opts.ServiceURI,
+	}
+
+	contentHash, err := computeContentHash(orch, tuples)
+	if err != nil {
+		return nil, err
+	}
+
 	issuedAt := snap.WindowEnd.UTC()
 	if issuedAt.IsZero() {
 		issuedAt = time.Now().UTC()
+	}
+	if opts.PrevContentHash != "" && opts.PrevContentHash == contentHash && !opts.PrevIssuedAt.IsZero() {
+		issuedAt = opts.PrevIssuedAt.UTC()
 	}
 	expiresAt := issuedAt.Add(opts.ManifestTTL)
 
@@ -89,11 +108,8 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		PublicationSeq: opts.PublicationSeq,
 		IssuedAt:       issuedAt,
 		ExpiresAt:      expiresAt,
-		Orch: types.Orch{
-			EthAddress: strings.ToLower(strings.TrimSpace(opts.OrchEthAddress)),
-			ServiceURI: opts.ServiceURI,
-		},
-		Capabilities: tuples,
+		Orch:           orch,
+		Capabilities:   tuples,
 	}
 
 	bytes, err := canonicalManifestBytes(payload)
@@ -102,20 +118,42 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 	}
 
 	meta := types.Metadata{
-		CandidateTimestamp: issuedAt,
-		ScrapeWindowStart:  snap.WindowStart.UTC(),
-		ScrapeWindowEnd:    snap.WindowEnd.UTC(),
-		SourceBrokers:      brokerEntries(snap),
-		CoordinatorCommit:  opts.CoordinatorCommit,
-		SchemaVersion:      SpecVersion,
-		HAEndpoints:        ha,
+		CandidateTimestamp:              issuedAt,
+		ScrapeWindowStart:               snap.WindowStart.UTC(),
+		ScrapeWindowEnd:                 snap.WindowEnd.UTC(),
+		SourceBrokers:                   brokerEntries(snap),
+		MetadataWarningThresholdSeconds: int64(snap.MetadataWarningAfter / time.Second),
+		MetadataStaleThresholdSeconds:   int64(snap.MetadataStaleAfter / time.Second),
+		Warnings:                        metadataWarnings(snap),
+		TupleMetadataWarnings:           tupleMetadataWarnings(snap),
+		CoordinatorCommit:               opts.CoordinatorCommit,
+		SchemaVersion:                   SpecVersion,
+		HAEndpoints:                     ha,
 	}
 
 	return &types.Candidate{
 		ManifestBytes: bytes,
 		Manifest:      payload,
 		Metadata:      meta,
+		ContentHash:   contentHash,
 	}, nil
+}
+
+// computeContentHash returns a stable hex digest over the
+// content-bearing fields of the manifest (orch + capabilities). Used
+// to debounce issued_at: when the hash matches the prior build, the
+// canonical bytes can keep the same issued_at/expires_at and remain
+// byte-identical for signing.
+func computeContentHash(orch types.Orch, tuples []types.CapabilityTuple) (string, error) {
+	root := map[string]any{
+		"orch":         orchToMap(orch),
+		"capabilities": capsToList(tuples),
+	}
+	b, err := CanonicalBytes(root)
+	if err != nil {
+		return "", fmt.Errorf("candidate: content hash: %w", err)
+	}
+	return SHA256Hex(b), nil
 }
 
 func canonicalManifestBytes(p types.ManifestPayload) ([]byte, error) {
@@ -265,7 +303,6 @@ func aggregate(sources []types.SourceTuple) ([]types.CapabilityTuple, []types.HA
 // (capability_id, offering_id, extra, constraints). Worker URL is not
 // part of identity (Q2 lock).
 func uniquenessKey(o types.BrokerOffering) (string, error) {
-	o = normalizeOpenAIOffering(o)
 	root := map[string]any{
 		"capability_id": o.CapabilityID,
 		"offering_id":   o.OfferingID,
@@ -284,7 +321,7 @@ func uniquenessKey(o types.BrokerOffering) (string, error) {
 }
 
 func tupleFrom(s types.SourceTuple) types.CapabilityTuple {
-	offering := normalizeOpenAIOffering(s.Offering)
+	offering := s.Offering
 	return types.CapabilityTuple{
 		CapabilityID:    offering.CapabilityID,
 		OfferingID:      offering.OfferingID,
@@ -297,55 +334,141 @@ func tupleFrom(s types.SourceTuple) types.CapabilityTuple {
 	}
 }
 
-func normalizeOpenAIOffering(o types.BrokerOffering) types.BrokerOffering {
-	normalizedID, model := normalizeOpenAICapabilityID(o.CapabilityID)
-	if normalizedID == o.CapabilityID && model == "" {
-		return o
-	}
-	o.CapabilityID = normalizedID
-	if model == "" {
-		return o
-	}
-	if o.Extra == nil {
-		o.Extra = map[string]any{}
-	}
-	openaiExtra, _ := o.Extra["openai"].(map[string]any)
-	if openaiExtra == nil {
-		openaiExtra = map[string]any{}
-	}
-	if raw := strings.TrimSpace(fmt.Sprint(openaiExtra["model"])); raw == "" || raw == "<nil>" {
-		openaiExtra["model"] = model
-	}
-	o.Extra["openai"] = openaiExtra
-	return o
-}
-
-func normalizeOpenAICapabilityID(capabilityID string) (normalized string, model string) {
-	for _, prefix := range openAICapabilityPrefixes {
-		if strings.HasPrefix(capabilityID, prefix) {
-			suffix := strings.TrimSpace(strings.TrimPrefix(capabilityID, prefix))
-			if suffix == "" {
-				return strings.TrimSuffix(prefix, ":"), ""
-			}
-			return strings.TrimSuffix(prefix, ":"), suffix
-		}
-	}
-	return capabilityID, ""
-}
-
 func brokerEntries(snap scrape.Snapshot) []types.MetadataBrokerEntry {
 	out := make([]types.MetadataBrokerEntry, 0, len(snap.Brokers))
 	for _, b := range snap.Brokers {
 		out = append(out, types.MetadataBrokerEntry{
-			Name:      b.Name,
-			BaseURL:   b.BaseURL,
-			Status:    b.Freshness,
-			ScrapedAt: b.LastSuccessAt,
-			Error:     b.LastError,
+			Name:                     b.Name,
+			BaseURL:                  b.BaseURL,
+			Status:                   b.Freshness,
+			ScrapedAt:                b.LastSuccessAt,
+			Error:                    b.LastError,
+			MetadataApplicableTuples: b.MetadataApplicableTuples,
+			MetadataUnhealthyTuples:  b.MetadataUnhealthyTuples,
+			MetadataStaleTuples:      b.MetadataStaleTuples,
+			MetadataWorstAgeSeconds:  b.MetadataWorstAgeSeconds,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func metadataWarnings(snap scrape.Snapshot) []types.MetadataWarning {
+	var out []types.MetadataWarning
+	totalUnhealthy := 0
+	totalStale := 0
+	totalNeverSucceeded := 0
+	for _, b := range snap.Brokers {
+		totalUnhealthy += b.MetadataUnhealthyTuples
+		totalStale += b.MetadataStaleTuples
+		for _, h := range b.TupleHealth {
+			if h.Metadata == nil || !h.Metadata.Applicable {
+				continue
+			}
+			state, _ := types.ClassifyBrokerHealthMetadata(h.Metadata, snap.MetadataWarningAfter, snap.MetadataStaleAfter)
+			if state == types.MetadataStateNeverSucceeded {
+				totalNeverSucceeded++
+			}
+		}
+	}
+	if totalUnhealthy > 0 {
+		out = append(out, types.MetadataWarning{
+			Code:     WarningCodeMetadataDegraded,
+			Severity: "warning",
+			Message:  fmt.Sprintf("%d tuple(s) have degraded broker metadata discovery state", totalUnhealthy),
+		})
+	}
+	if totalStale > 0 {
+		out = append(out, types.MetadataWarning{
+			Code:     WarningCodeMetadataStale,
+			Severity: "warning",
+			Message:  fmt.Sprintf("%d tuple(s) have stale broker metadata discovery state", totalStale),
+		})
+	}
+	if totalNeverSucceeded > 0 {
+		out = append(out, types.MetadataWarning{
+			Code:     WarningCodeMetadataNeverSucceeded,
+			Severity: "warning",
+			Message:  fmt.Sprintf("%d tuple(s) have never completed a healthy broker metadata refresh", totalNeverSucceeded),
+		})
+	}
+	return out
+}
+
+func tupleMetadataWarnings(snap scrape.Snapshot) []types.TupleMetadataWarning {
+	out := make([]types.TupleMetadataWarning, 0)
+	seen := make(map[string]struct{})
+	brokers := make(map[string]scrape.BrokerStatus, len(snap.Brokers))
+	for _, b := range snap.Brokers {
+		brokers[b.Name] = b
+	}
+	for _, src := range snap.SourceTuples {
+		b, ok := brokers[src.BrokerName]
+		if !ok {
+			continue
+		}
+		health, ok := b.TupleHealth[brokerTupleHealthKey(src.Offering.CapabilityID, src.Offering.OfferingID)]
+		if !ok || health.Metadata == nil || !health.Metadata.Applicable {
+			continue
+		}
+		state, ageSeconds := types.ClassifyBrokerHealthMetadata(health.Metadata, snap.MetadataWarningAfter, snap.MetadataStaleAfter)
+		if state == "" || state == types.MetadataStateOK {
+			continue
+		}
+		key := src.BrokerName + "|" + src.Offering.CapabilityID + "|" + src.Offering.OfferingID + "|" + src.WorkerURL
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, types.TupleMetadataWarning{
+			Code:                  metadataWarningCode(state, health.Metadata.LastResult),
+			Severity:              "warning",
+			BrokerName:            src.BrokerName,
+			BaseURL:               src.BaseURL,
+			CapabilityID:          src.Offering.CapabilityID,
+			OfferingID:            src.Offering.OfferingID,
+			WorkerURL:             src.WorkerURL,
+			MetadataState:         state,
+			MetadataResult:        health.Metadata.LastResult,
+			MetadataError:         health.Metadata.LastError,
+			LastSuccessAgeSeconds: ageSeconds,
+			ConsecutiveFailures:   health.Metadata.ConsecutiveFailures,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.BrokerName != b.BrokerName {
+			return a.BrokerName < b.BrokerName
+		}
+		if a.CapabilityID != b.CapabilityID {
+			return a.CapabilityID < b.CapabilityID
+		}
+		if a.OfferingID != b.OfferingID {
+			return a.OfferingID < b.OfferingID
+		}
+		return a.WorkerURL < b.WorkerURL
+	})
+	return out
+}
+
+func metadataWarningCode(state, result string) string {
+	switch state {
+	case types.MetadataStateNeverSucceeded:
+		return WarningCodeMetadataNeverSucceeded
+	case types.MetadataStateStale:
+		return WarningCodeMetadataStale
+	case types.MetadataStateDegraded:
+		if !types.MetadataResultHealthy(result) {
+			return WarningCodeMetadataProbeFailed
+		}
+		return WarningCodeMetadataDegraded
+	default:
+		return WarningCodeMetadataDegraded
+	}
+}
+
+func brokerTupleHealthKey(capabilityID, offeringID string) string {
+	return capabilityID + "|" + offeringID
 }
 
 // MarshalMetadata returns the canonical metadata.json bytes (NOT

@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/config"
-	cerrors "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/errors"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/clock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/metrics"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/receipts"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/txintent"
-	chaintest "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
+	cerrors "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/receipts"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/txintent"
+	chaintest "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 )
 

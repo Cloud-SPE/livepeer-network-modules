@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/candidates"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/candidate"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/candidates"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/candidate"
 )
 
 // CandidateRoutes wires the per-candidate admin endpoints onto the

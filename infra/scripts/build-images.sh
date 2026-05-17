@@ -9,7 +9,8 @@
 #
 # Env:
 #   REGISTRY  default: tztcloud
-#   TAG       default: v1.1.0
+#   TAG       default: v1.2.0
+#   VERSION   default: derived from git tag/sha for binary build metadata
 #   PUSH      set to 1 to docker push after each build
 #   DEPLOY_ONLY  set to 1 to exclude local-only base/test/helper images
 #
@@ -19,23 +20,43 @@
 #     python-gpu-runner-base, python-gpu-media-runner-base) are built
 #     first; downstream multi-arch video runners and GPU Python runners
 #     depend on them.
-#   - Multi-target Dockerfiles (openai-runner: chat+embeddings; video
-#     transcode/abr: nvidia+intel+amd) are expanded into multiple builds.
+#   - Multi-target Dockerfiles (video transcode/abr: nvidia+intel+amd)
+#     are expanded into multiple builds.
 
 set -euo pipefail
 
-REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-v1.1.0}"
-PUSH="${PUSH:-0}"
-DEPLOY_ONLY="${DEPLOY_ONLY:-0}"
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+
+VERSION_ENV_FILE="${ROOT}/infra/build/image-versions.env"
+if [[ -f "$VERSION_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  . "$VERSION_ENV_FILE"
+fi
+
+REGISTRY="${REGISTRY:-tztcloud}"
+TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.2.0}}"
+PUSH="${PUSH:-0}"
+DEPLOY_ONLY="${DEPLOY_ONLY:-0}"
+DEFAULT_VERSION="$(VERSION_PREFIX="${TAG}" FALLBACK_VERSION="${TAG}" ./infra/build/git-version.sh)"
+VERSION="${VERSION:-${DEFAULT_VERSION}}"
 
 # ---- helpers --------------------------------------------------------------
 
 step=0
 total=0
+
+GLOBAL_BUILD_ARGS=(
+  "--build-arg=REGISTRY=${REGISTRY}"
+  "--build-arg=TAG=${TAG}"
+  "--build-arg=GO_VERSION=${GO_VERSION:-1.25.7}"
+  "--build-arg=NODE_VERSION=${NODE_VERSION:-22}"
+  "--build-arg=PYTHON_VERSION=${PYTHON_VERSION:-3.12}"
+  "--build-arg=ALPINE_VERSION=${ALPINE_VERSION:-3.20}"
+  "--build-arg=UBUNTU_VERSION=${UBUNTU_VERSION:-24.04}"
+  "--build-arg=CUDA_VERSION=${CUDA_VERSION:-12.9.1}"
+  "--build-arg=VERSION=${VERSION}"
+)
 
 log()      { printf '\033[1;34m[build]\033[0m %s\n' "$*" >&2; }
 ok()       { printf '\033[1;32m[ ok ]\033[0m %s\n' "$*" >&2; }
@@ -68,14 +89,17 @@ declare -a IMAGES=(
   "livepeer-protocol-daemon|.|protocol-daemon/Dockerfile||"
   "livepeer-service-registry-daemon|.|service-registry-daemon/Dockerfile||"
   "livepeer-orch-coordinator|.|orch-coordinator/Dockerfile||"
+  "livepeer-pool-controller|.|pool-controller/Dockerfile||"
+  "livepeer-pool-reconciler|.|pool-reconciler/Dockerfile||"
+  "livepeer-pool-payout-executor|.|pool-payout-executor/Dockerfile||"
   "livepeer-secure-orch-console|.|secure-orch-console/Dockerfile||"
   "livepeer-gateway-adapters-go|.|gateway-adapters/go/Dockerfile||"
   "livepeer-conformance|.|livepeer-network-protocol/conformance/Dockerfile||"
   "livepeer-conformance-session-runner|.|livepeer-network-protocol/conformance/runner/session-runner-stub/Dockerfile||"
 
-  # Tier 1 — Go workload runners (multi-target Dockerfile)
-  "openai-runner-chat|openai-runners/openai-runner|openai-runners/openai-runner/Dockerfile|chat|"
-  "openai-runner-embeddings|openai-runners/openai-runner|openai-runners/openai-runner/Dockerfile|embeddings|"
+  # Tier 1 — Go workload runners
+  "openai-chat-runner|openai-runners/openai-chat-runner|openai-runners/openai-chat-runner/Dockerfile||"
+  "openai-embeddings-runner|openai-runners/openai-embeddings-runner|openai-runners/openai-embeddings-runner/Dockerfile||"
 
   # Tier 2 — Node SaaS gateways (monorepo-root context, pnpm workspace)
   "livepeer-customer-portal|customer-portal|customer-portal/Dockerfile||"
@@ -96,7 +120,7 @@ declare -a IMAGES=(
 
   # Tier 5 — Heavy GPU/ML runners
   "vtuber-runner|.|vtuber-runner/Dockerfile||"
-  "rerank-runner|rerank-runner|rerank-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-runner-base:${TAG}"
+  "rerank-runner|rerank-runner|rerank-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-runner-base:${TAG}"
   "openai-audio-runner|openai-runners/openai-audio-runner|openai-runners/openai-audio-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-media-runner-base:${TAG}"
   "openai-image-generation-runner|openai-runners/openai-image-generation-runner|openai-runners/openai-image-generation-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-runner-base:${TAG}"
   "openai-tts-runner|openai-runners/openai-tts-runner|openai-runners/openai-tts-runner/Dockerfile||--build-arg=BASE_IMAGE=${REGISTRY}/python-gpu-media-runner-base:${TAG}"
@@ -196,7 +220,7 @@ total=${#SELECTED[@]}
 
 # ---- build loop -----------------------------------------------------------
 
-log "registry=${REGISTRY}  tag=${TAG}  push=${PUSH}  deploy_only=${DEPLOY_ONLY}  building ${total} image(s)"
+log "registry=${REGISTRY}  tag=${TAG}  version=${VERSION}  push=${PUSH}  deploy_only=${DEPLOY_ONLY}  building ${total} image(s)"
 
 for entry in "${SELECTED[@]}"; do
   step=$((step + 1))
@@ -205,6 +229,7 @@ for entry in "${SELECTED[@]}"; do
   full_tag="${REGISTRY}/${name}:${TAG}"
 
   args=(build -t "$full_tag" -f "$dockerfile")
+  args+=("${GLOBAL_BUILD_ARGS[@]}")
   [[ -n "$target" ]]     && args+=(--target "$target")
   [[ -n "$build_args" ]] && args+=("$build_args")
   args+=("$context")

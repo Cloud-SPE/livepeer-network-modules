@@ -10,7 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/controlws"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/controlws"
 )
 
 // nextSeq is a per-session atomic monotonic sequence counter for

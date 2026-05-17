@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package livepeer.registry.v1;
 
-option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/registry/v1;registryv1";
+option go_package = "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/registry/v1;registryv1";
 
 // ResolveMode mirrors types.ResolveMode in the Go layer. Frozen v1.
 enum ResolveMode {

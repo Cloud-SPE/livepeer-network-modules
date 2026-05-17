@@ -5,7 +5,7 @@
 // Q3-pinned: go-livepeer pinned at v0.8.10 (latest stable tag at
 // plan-0016 implementation time). Bumping the pin requires regenerating
 // the fixture and asserting bytes-equal across the bump.
-module github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/compat/fixturegen
+module github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/compat/fixturegen
 
 go 1.25.0
 

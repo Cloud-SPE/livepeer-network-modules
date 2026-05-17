@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/config"
-	cerrors "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/errors"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/clock"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/metrics"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
+	cerrors "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/clock"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/store"
 )
 
 type contextKey string

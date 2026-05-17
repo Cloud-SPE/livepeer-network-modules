@@ -15,10 +15,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/audit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/canonical"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/diff"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/protocol"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/audit"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/canonical"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/diff"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/protocol"
 )
 
 const auditPageSize = 10

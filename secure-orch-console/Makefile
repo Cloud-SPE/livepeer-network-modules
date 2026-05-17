@@ -4,7 +4,7 @@
 
 IMAGE   ?= tztcloud/livepeer-secure-orch-console
 TAG     ?= dev
-VERSION := $(shell cat ../livepeer-network-protocol/VERSION 2>/dev/null || echo dev)
+VERSION ?= $(shell VERSION_PREFIX="$(TAG)" FALLBACK_VERSION=dev ../infra/build/git-version.sh)
 
 .PHONY: build run test smoke publish clean help
 
@@ -49,7 +49,7 @@ publish: ## Build + push multi-arch image (requires TAG set to a real version)
 	fi
 	docker buildx build \
 		--platform linux/amd64,linux/arm64 \
-		--build-arg VERSION=$(TAG) \
+		--build-arg VERSION=$(VERSION) \
 		--push \
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \

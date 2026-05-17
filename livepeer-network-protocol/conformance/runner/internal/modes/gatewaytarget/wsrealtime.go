@@ -23,9 +23,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/fixtures"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/mockbackend"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/conformance/runner/internal/report"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/runner/internal/fixtures"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/runner/internal/mockbackend"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/runner/internal/report"
 )
 
 const wsRealtimeMode = "ws-realtime@v0"

@@ -25,8 +25,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
 )
 
 // Mode is the canonical mode-name@vN string for this driver.

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
-	hdr "github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go/headers"
+	hdr "github.com/Cloud-SPE/livepeer-network-modules/gateway-adapters/go/headers"
 )
 
 // BrokerError surfaces a non-2xx response from the broker. Carries the

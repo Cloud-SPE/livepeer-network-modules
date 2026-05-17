@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/candidates"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/scrape"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/candidates"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
 // Observer is a metrics hook the builder calls after each Rebuild.
@@ -26,9 +26,11 @@ type Builder struct {
 	logger   *slog.Logger
 	observer Observer
 
-	mu      sync.RWMutex
-	latest  *types.Candidate
-	lastErr error
+	mu              sync.RWMutex
+	latest          *types.Candidate
+	lastErr         error
+	lastContentHash string
+	lastIssuedAt    time.Time
 }
 
 // SetObserver attaches a metrics observer.
@@ -62,6 +64,8 @@ func (b *Builder) Rebuild() (*types.Candidate, error) {
 	snap := b.scrape.Snapshot()
 	b.mu.RLock()
 	opts := b.opts
+	opts.PrevContentHash = b.lastContentHash
+	opts.PrevIssuedAt = b.lastIssuedAt
 	b.mu.RUnlock()
 	cand, err := Build(snap, opts)
 	if err != nil {
@@ -96,6 +100,8 @@ func (b *Builder) Rebuild() (*types.Candidate, error) {
 	b.mu.Lock()
 	b.latest = cand
 	b.lastErr = nil
+	b.lastContentHash = cand.ContentHash
+	b.lastIssuedAt = cand.Manifest.IssuedAt
 	b.mu.Unlock()
 	b.emit("ok", time.Since(start))
 	return cand, nil

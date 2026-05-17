@@ -47,7 +47,7 @@ Out of scope:
 The capability identifier this request is paying for.
 
 - **Value:** opaque UTF-8 string from the orch's manifest.
-- **Example:** `Livepeer-Capability: openai:chat-completions:llama-3-70b`
+- **Example:** `Livepeer-Capability: openai:chat-completions`
 - The broker MUST reject (404 + `Livepeer-Error: capability_not_served`) any request
   whose `Livepeer-Capability` is not in the orch's currently-published
   `/registry/offerings`.
@@ -154,7 +154,7 @@ capacity status for each currently-served capability.
   RFC 7230 header-value rules).
 - **Example:**
   ```
-  Livepeer-Health-Status: {"openai:chat-completions:llama-3-70b":"available","video:transcode.live.rtmp":"saturated"}
+  Livepeer-Health-Status: {"openai:chat-completions":"available","video:transcode.live.rtmp":"saturated"}
   ```
 - Each value MUST be one of: `"available" | "saturated" | "draining" | "down"`.
 - Gateways poll this every 15-30 seconds. The full three-layer health model lives

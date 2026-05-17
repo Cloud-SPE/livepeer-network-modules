@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/logger"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/repo/audit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/repo/manifestcache"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service/publisher"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service/resolver"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/service/selection"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/audit"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/manifestcache"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/publisher"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/resolver"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/selection"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 // Server is the runtime entrypoint for the gRPC surface. It hosts

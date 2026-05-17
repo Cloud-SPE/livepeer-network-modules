@@ -13,7 +13,7 @@ in their own language; no IPC tax:
   `ws-realtime@v0`, and the control-WS surface of
   `session-control-plus-media@v0`.
 - [`go/`](./go/) — Go module
-  `github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go`.
+  `github.com/Cloud-SPE/livepeer-network-modules/gateway-adapters/go`.
   Hosts `rtmp-ingress-hls-egress@v0` (RTMP listener +
   customer→broker relay) and the WebRTC media-plane SFU pass-through
   for `session-control-plus-media@v0`.

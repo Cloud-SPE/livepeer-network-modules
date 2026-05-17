@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/audit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/candidates"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/published"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/service/candidate"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/audit"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/candidates"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/published"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/candidate"
 )
 
 func setupServer(t *testing.T) (*Server, WebDeps) {
@@ -86,6 +86,9 @@ func TestWebRoutes_RosterRenders(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
 		t.Fatalf("expected orch address in header")
+	}
+	if !strings.Contains(string(body), "meta=stale") || !strings.Contains(string(body), "models_probe_failed") {
+		t.Fatalf("expected metadata state in roster, got %s", body)
 	}
 }
 

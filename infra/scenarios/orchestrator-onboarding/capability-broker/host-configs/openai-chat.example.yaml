@@ -32,12 +32,26 @@ capabilities:
       extractor:
         type: "openai-usage"
         field: "total_tokens"
+    # Live-health probe (Layer 2). Uses the OpenAI-compatible /v1/models
+    # surface: the probe is healthy iff vLLM lists `expect_model`. Failures
+    # mark this offering `unreachable` and gateways stop routing here until
+    # vLLM recovers — without touching the signed manifest.
+    health:
+      probe:
+        type: "http-openai-model-ready"
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 2
+        healthy_after: 1
+        config:
+          url: "http://vllm_chat:8000/v1/models"
+          expect_model: "Qwen3.6-27B"
     price:
       amount_wei: "25000000"
       per_units: 1
     backend:
       transport: "http"
-      url: "http://vllm_model_runner:8000/v1/chat/completions"
+      url: "http://vllm_chat:8000/v1/chat/completions"
       auth: "none"
     extra:
       openai:
@@ -60,12 +74,23 @@ capabilities:
       extractor:
         type: "openai-usage"
         field: "total_tokens"
+    # Same backend → same probe. Both offerings die together if vLLM does.
+    health:
+      probe:
+        type: "http-openai-model-ready"
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 2
+        healthy_after: 1
+        config:
+          url: "http://vllm_chat:8000/v1/models"
+          expect_model: "Qwen3.6-27B"
     price:
       amount_wei: "25000000"
       per_units: 1
     backend:
       transport: "http"
-      url: "http://vllm_model_runner:8000/v1/chat/completions"
+      url: "http://vllm_chat:8000/v1/chat/completions"
       auth: "none"
     extra:
       openai:

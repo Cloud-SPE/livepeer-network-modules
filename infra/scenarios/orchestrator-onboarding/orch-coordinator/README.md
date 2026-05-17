@@ -22,7 +22,7 @@ this manifest.
 
 | Service           | Purpose                                              |
 | ----------------- | ---------------------------------------------------- |
-| `orch-coordinator`| Holds the signed manifest, serves it on the public endpoint, exposes an admin API for fleet management |
+| `orch-coordinator`| Holds the signed manifest, serves it on the public endpoint, exposes an admin API for fleet management, scrapes each broker's `/registry/offerings` + `/registry/health` for the roster view |
 
 ## Listeners
 
@@ -95,6 +95,13 @@ curl -s http://127.0.0.1:8080/healthz
 # Metrics
 curl -s http://127.0.0.1:9091/metrics | head
 ```
+
+Open the admin UI at `http://127.0.0.1:8080/` (use one of the
+`ORCH_COORDINATOR_ADMIN_TOKENS` you generated) and check the roster
+view — every broker listed in `coordinator-config.yaml` should show its
+live status from the broker's `/registry/health` next to its name. A
+broker reporting `stale` or carrying a health error is one the
+coordinator can't reach right now; gateways will treat it the same way.
 
 Once you publish the URL of the public endpoint to the AI Service Registry
 contract, gateways will discover your orchestrator on the next round.

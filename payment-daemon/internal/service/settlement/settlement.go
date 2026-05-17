@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/escrow"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 )
 
 // Sentinels.
@@ -232,7 +232,7 @@ func (s *Settlement) attempt(ctx context.Context, p store.PendingRedemption) err
 		}
 		return fmt.Errorf("redeem: %w", err)
 	}
-	if err := s.store.MarkRedeemed(p.Hash, txHash); err != nil {
+	if err := s.store.MarkRedeemed(p.Hash, txHash, t, s.clock.LastInitializedRound()); err != nil {
 		return fmt.Errorf("mark redeemed: %w", err)
 	}
 	logCtx.Info("redemption confirmed", "tx_hash", hex(txHash))
@@ -249,7 +249,23 @@ func (s *Settlement) expired(t *store.SignedTicket) bool {
 
 func (s *Settlement) drain(ticketHash []byte, reason string) error {
 	zero := make([]byte, 32)
-	if err := s.store.MarkRedeemed(ticketHash, zero); err != nil {
+	pend, err := s.store.PendingRedemptions()
+	if err != nil {
+		s.log.Warn("drain lookup failed", "ticket_hash", hex(ticketHash), "reason", reason, "err", err)
+		return err
+	}
+	var ticket *store.SignedTicket
+	for _, p := range pend {
+		if bytesEqual(p.Hash, ticketHash) {
+			ticket = p.Ticket
+			break
+		}
+	}
+	if ticket == nil {
+		s.log.Warn("drain missing pending ticket", "ticket_hash", hex(ticketHash), "reason", reason)
+		return fmt.Errorf("pending ticket not found")
+	}
+	if err := s.store.MarkRedeemed(ticketHash, zero, ticket, s.clock.LastInitializedRound()); err != nil {
 		s.log.Warn("drain failed", "ticket_hash", hex(ticketHash), "reason", reason, "err", err)
 		return err
 	}
@@ -292,4 +308,16 @@ func hex(b []byte) string {
 		out[2+2*i+1] = digits[v&0x0f]
 	}
 	return string(out)
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

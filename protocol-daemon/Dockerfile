@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1.7
 
+ARG GO_VERSION=1.25.7
+
 # --- builder ---
 # CGO_ENABLED=0 produces a statically-linked binary that drops straight
 # into distroless/static. go-ethereum's crypto has a pure-Go fallback;
 # `netgo,osusergo` guarantee no glibc resolver / user-lookup shims.
-FROM golang:1.25-alpine AS builder
+FROM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /src
 

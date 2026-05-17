@@ -10,7 +10,7 @@ syntax = "proto3";
 
 package livepeer.protocol.v1;
 
-option go_package = "github.com/Cloud-SPE/livepeer-network-rewrite/proto-contracts/livepeer/protocol/v1;protocolv1";
+option go_package = "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/protocol/v1;protocolv1";
 
 // Empty is the canonical zero-arg request.
 message Empty {}

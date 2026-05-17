@@ -46,7 +46,7 @@ Connection: Upgrade
 Upgrade: websocket
 Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
 Sec-WebSocket-Version: 13
-Livepeer-Capability: openai:realtime:gpt-4o-realtime
+Livepeer-Capability: openai:realtime
 Livepeer-Offering: openai-resale
 Livepeer-Payment: <base64-encoded payment envelope>
 Livepeer-Spec-Version: 0.1

@@ -3,7 +3,7 @@ package selection
 import (
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 func mkNode(id string, weight int, caps []string, models []string, tier []string, lat, lon *float64) types.ResolvedNode {

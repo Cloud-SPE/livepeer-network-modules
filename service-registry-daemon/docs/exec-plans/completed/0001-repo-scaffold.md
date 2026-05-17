@@ -48,7 +48,7 @@ Lay down the full scaffolding for `livepeer-service-registry`: directory structu
 
 ## Decisions log
 
-### 2026-04-25 — Module path `github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon`
+### 2026-04-25 — Module path `github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon`
 Mirrors `livepeer-payment-library`; makes cross-references obvious for operators running both daemons.
 
 ### 2026-04-25 — BoltDB for cache + audit log

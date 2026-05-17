@@ -73,10 +73,10 @@ type Clock struct {
 }
 
 type clockState struct {
-	round       int64
-	roundHash   []byte
-	l1BlockNum  *big.Int
-	updatedAt   time.Time
+	round      int64
+	roundHash  []byte
+	l1BlockNum *big.Int
+	updatedAt  time.Time
 }
 
 // New constructs a Clock and runs an initial sync. The refresh

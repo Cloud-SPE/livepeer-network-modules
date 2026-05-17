@@ -35,7 +35,7 @@ request:
   method: POST
   path: /v1/cap
   headers:
-    Livepeer-Capability: "openai:chat-completions:test"
+    Livepeer-Capability: "openai:chat-completions"
     Livepeer-Offering: "test-offering"
     Livepeer-Payment: "<base64-payment>"
     Livepeer-Spec-Version: "0.1"

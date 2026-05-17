@@ -14,8 +14,12 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 )
+
+type ExtraOverlaySource interface {
+	ExtraFor(capabilityID, offeringID string) map[string]any
+}
 
 // OfferingsHandler returns the configured capability list as the manifest
 // payload (sans signature and worker_url — the orch-coordinator fills in
@@ -23,9 +27,9 @@ import (
 //
 // The response shape conforms to the manifest payload at
 // livepeer-network-protocol/manifest/schema.json (#/$defs/manifest).
-func OfferingsHandler(cfg *config.Config) http.HandlerFunc {
+func OfferingsHandler(cfg *config.Config, overlays ExtraOverlaySource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		payload := buildOfferings(cfg)
+		payload := buildOfferings(cfg, overlays)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(payload)
@@ -52,12 +56,19 @@ type offeringsWorkUnit struct {
 	Name string `json:"name"`
 }
 
-func buildOfferings(cfg *config.Config) offeringsPayload {
+func buildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPayload {
 	out := offeringsPayload{
 		OrchEthAddress: cfg.Identity.OrchEthAddress,
 		Capabilities:   make([]offeringsCapabilityV1, 0, len(cfg.Capabilities)),
 	}
+	seen := map[string]struct{}{}
 	for _, c := range cfg.Capabilities {
+		key := c.ID + "|" + c.OfferingID
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		extra := mergeExtraMaps(c.Extra, overlayFor(overlays, c.ID, c.OfferingID))
 		out.Capabilities = append(out.Capabilities, offeringsCapabilityV1{
 			CapabilityID:    c.ID,
 			OfferingID:      c.OfferingID,
@@ -65,9 +76,51 @@ func buildOfferings(cfg *config.Config) offeringsPayload {
 			WorkUnit:        offeringsWorkUnit{Name: c.WorkUnit.Name},
 			PricePerUnitWei: c.Price.AmountWei,
 			PerUnits:        c.Price.PerUnits,
-			Extra:           c.Extra,
+			Extra:           extra,
 			Constraints:     c.Constraints,
 		})
+	}
+	return out
+}
+
+func overlayFor(src ExtraOverlaySource, capabilityID, offeringID string) map[string]any {
+	if src == nil {
+		return nil
+	}
+	return src.ExtraFor(capabilityID, offeringID)
+}
+
+func mergeExtraMaps(base, overlay map[string]any) map[string]any {
+	if len(base) == 0 && len(overlay) == 0 {
+		return nil
+	}
+	out := cloneMap(base)
+	if out == nil {
+		out = map[string]any{}
+	}
+	for key, value := range overlay {
+		if nestedOverlay, ok := value.(map[string]any); ok {
+			nestedBase, _ := out[key].(map[string]any)
+			out[key] = mergeExtraMaps(nestedBase, nestedOverlay)
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
+func cloneMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		nested, ok := v.(map[string]any)
+		if ok {
+			out[k] = cloneMap(nested)
+			continue
+		}
+		out[k] = v
 	}
 	return out
 }

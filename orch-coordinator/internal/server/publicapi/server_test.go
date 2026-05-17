@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/published"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/published"
 )
 
 func newSrv(t *testing.T) (*Server, *published.Store) {

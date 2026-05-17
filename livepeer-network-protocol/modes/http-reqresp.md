@@ -39,7 +39,7 @@ path keeps capability IDs URL-encoding-free; the header is the system of record.
 ```
 POST /v1/cap HTTP/1.1
 Host: broker-a.orch.example.com
-Livepeer-Capability: openai:embeddings:bge-large
+Livepeer-Capability: openai:embeddings
 Livepeer-Offering: vllm-h100
 Livepeer-Payment: <base64-encoded payment envelope>
 Livepeer-Spec-Version: 0.1

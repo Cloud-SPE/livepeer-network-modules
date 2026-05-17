@@ -6,25 +6,27 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/ffmpegprogress"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/health"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/hls"
-	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
-	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/rtmpingresshlsegress"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolexternalmedia"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolplusmedia"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/ffmpegprogress"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/encoder"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/hls"
+	mediartmp "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/rtmp"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/sessionrunner"
+	mediawebrtc "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/webrtc"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/rtmpingresshlsegress"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolexternalmedia"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolplusmedia"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
 // Options aggregates non-host-config knobs the server takes at
@@ -32,6 +34,11 @@ import (
 // interim-debit cadence) live here so they don't pollute the
 // host-config.yaml grammar — operators set them via CLI flags.
 type Options struct {
+	// MetadataRefreshInterval controls periodic stable-metadata refresh for
+	// discovery-capable offerings. Zero falls back to the broker default.
+	// Negative values disable periodic refresh after the initial bootstrap pass.
+	MetadataRefreshInterval time.Duration
+
 	// InterimDebit governs the long-running session ticker per plan
 	// 0015. Zero values are a safe disabled state (v0.2 single-debit
 	// fall-through).
@@ -101,6 +108,7 @@ type FFmpegOptions struct {
 type Server struct {
 	cfg           *config.Config
 	opts          Options
+	metadata      *metadataCatalog
 	mux           *http.ServeMux
 	srv           *http.Server
 	metricsSrv    *http.Server
@@ -109,6 +117,7 @@ type Server struct {
 	extractors    *extractors.Registry
 	backend       backend.Forwarder
 	secrets       backend.SecretResolver
+	receiptSink   receipts.Client
 	health        *health.Manager
 	rtmpStore     *rtmpingresshlsegress.Store
 	rtmpListener  *mediartmp.Listener
@@ -118,6 +127,7 @@ type Server struct {
 	extDriver     *sessioncontrolexternalmedia.Driver
 	webrtcEngine  *mediawebrtc.Engine
 	sessRunnerSup *sessionrunner.Supervisor
+	randIntn      func(int) int
 }
 
 // New constructs a Server from a validated config and registers routes. It
@@ -133,7 +143,8 @@ type Server struct {
 // fails fast if it is unreachable; the broker should not bind its paid
 // listener with no working payment surface.
 func New(cfg *config.Config, opts Options) (*Server, error) {
-	hydrateRunnerMetadata(context.Background(), cfg)
+	metadata := newMetadataCatalog()
+	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
 
 	mux := http.NewServeMux()
 	srv := &http.Server{
@@ -145,6 +156,11 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	paymentClient, err := newPaymentClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("payment client: %w", err)
+	}
+	secretResolver := backend.NewEnvSecretResolver()
+	receiptSink, err := newReceiptSink(cfg, secretResolver)
+	if err != nil {
+		return nil, fmt.Errorf("receipt sink: %w", err)
 	}
 
 	rtmpStore := rtmpingresshlsegress.NewStore()
@@ -186,22 +202,27 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	extDriver := sessioncontrolexternalmedia.New(extStore, sessioncontrolexternalmedia.DefaultConfig())
 
 	s := &Server{
-		cfg:           cfg,
-		opts:          opts,
-		mux:           mux,
-		srv:           srv,
-		payment:       paymentClient,
-		modes:         defaultModes(rtmpDriver, sessDriver, extDriver),
-		extractors:    defaultExtractors(),
-		backend:       backend.NewHTTPClient(),
-		secrets:       backend.NewEnvSecretResolver(),
-		health:        health.New(cfg),
-		rtmpStore:     rtmpStore,
-		sessStore:     sessStore,
-		sessDriver:    sessDriver,
-		extStore:      extStore,
-		extDriver:     extDriver,
-		webrtcEngine:  rtcEngine,
+		cfg:          cfg,
+		opts:         opts,
+		metadata:     metadata,
+		mux:          mux,
+		srv:          srv,
+		payment:      paymentClient,
+		modes:        defaultModes(rtmpDriver, sessDriver, extDriver),
+		extractors:   defaultExtractors(),
+		backend:      backend.NewHTTPClient(),
+		secrets:      secretResolver,
+		receiptSink:  receiptSink,
+		health:       health.New(cfg),
+		rtmpStore:    rtmpStore,
+		sessStore:    sessStore,
+		sessDriver:   sessDriver,
+		extStore:     extStore,
+		extDriver:    extDriver,
+		webrtcEngine: rtcEngine,
+		randIntn: func(n int) int {
+			return rand.New(rand.NewSource(time.Now().UnixNano())).Intn(n)
+		},
 		sessRunnerSup: runnerSup,
 	}
 
@@ -234,6 +255,14 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	s.registerRoutes()
 	s.metricsSrv = newMetricsServer(cfg.Listen.Metrics)
 	return s, nil
+}
+
+func newReceiptSink(cfg *config.Config, secrets backend.SecretResolver) (receipts.Client, error) {
+	if cfg.ReceiptSink.URL == "" {
+		return nil, nil
+	}
+	timeout := time.Duration(cfg.ReceiptSink.TimeoutMS) * time.Millisecond
+	return receipts.NewHTTPClient(cfg.ReceiptSink.URL, timeout, cfg.ReceiptSink.Auth, backend.NewAuthApplier(secrets))
 }
 
 // mediaLookup adapts the session store to mediartmp.SessionLookup
@@ -440,6 +469,9 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.health != nil {
 		go s.health.Run(ctx)
 	}
+	if s.metadata != nil {
+		go s.runMetadataRefresh(ctx, s.metadataRefreshInterval())
+	}
 
 	select {
 	case <-ctx.Done():
@@ -452,5 +484,32 @@ func (s *Server) Run(ctx context.Context) error {
 		_ = s.srv.Close()
 		_ = s.metricsSrv.Close()
 		return err
+	}
+}
+
+func (s *Server) metadataRefreshInterval() time.Duration {
+	if s.opts.MetadataRefreshInterval < 0 {
+		return 0
+	}
+	if s.opts.MetadataRefreshInterval == 0 {
+		return 5 * time.Minute
+	}
+	return s.opts.MetadataRefreshInterval
+}
+
+func (s *Server) runMetadataRefresh(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	client := &http.Client{Timeout: 2 * time.Second}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refreshMetadataCatalog(ctx, client, s.cfg, s.metadata)
+		}
 	}
 }

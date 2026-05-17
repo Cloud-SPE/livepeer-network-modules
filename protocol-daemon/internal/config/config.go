@@ -11,9 +11,9 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	chaincfg "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	chaincfg "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/types"
 )
 
 // Config is the protocol-daemon configuration.

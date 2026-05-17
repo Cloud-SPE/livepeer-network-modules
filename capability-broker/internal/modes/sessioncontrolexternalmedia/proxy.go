@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 )
 
 // ServeProxy handles /_scope/{session_id}/{path...} HTTP requests.

@@ -108,7 +108,7 @@ has no GPU dependency — multi-arch (amd64 + arm64) per OQ4.
 
 | Component | Platforms |
 |---|---|
-| `openai-runners/openai-runner` (Go proxy) | linux/amd64 + linux/arm64 |
+| `openai-runners/openai-chat-runner` (Go proxy) | linux/amd64 + linux/arm64 |
 | All other runners | linux/amd64 only |
 
 NVIDIA arm64 GPU support exists (Jetson, GH200) but isn't the default

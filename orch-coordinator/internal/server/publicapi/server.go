@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/repo/published"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/published"
 )
 
 // WellKnownPath is the manifest URL resolvers fetch.

@@ -9,9 +9,9 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 )
 
 // Driver implements one interaction mode's wire shape. Drivers are stateless

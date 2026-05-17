@@ -7,9 +7,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/providers/keystore/inmemory"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/service/receiver/validator"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/inmemory"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver/validator"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
 func makeKey(t *testing.T) *inmemory.KeyStore {

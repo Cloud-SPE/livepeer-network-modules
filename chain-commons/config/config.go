@@ -13,7 +13,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 )
 
 // Config holds every value chain-commons needs to operate.

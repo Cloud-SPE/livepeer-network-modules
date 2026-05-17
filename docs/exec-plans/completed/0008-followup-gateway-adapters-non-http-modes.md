@@ -338,7 +338,7 @@ Any leg disconnect terminates the session:
 The directory tree below is the canonical shape under the Path B lock
 (§3.1, §13 Q1). `gateway-adapters/ts/` + `gateway-adapters/go/` are
 the two halves; the Go module path is
-`github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go`
+`github.com/Cloud-SPE/livepeer-network-modules/gateway-adapters/go`
 (§13 Q3 lock — sub-module of the monorepo, matching the
 `payment-daemon/`, `capability-broker/`, `orch-coordinator/`,
 `secure-orch-console/` precedents). Reorganize `gateway-adapters/` to
@@ -555,7 +555,7 @@ split for the small number of in-tree consumers (§7).
 
 ### Q3. Go module naming
 
-**DECIDED: `github.com/Cloud-SPE/livepeer-network-rewrite/gateway-adapters/go`**
+**DECIDED: `github.com/Cloud-SPE/livepeer-network-modules/gateway-adapters/go`**
 — sub-module of the monorepo. Matches the existing
 `payment-daemon/`, `capability-broker/`, `orch-coordinator/`,
 `secure-orch-console/` Go-module precedents. Future extraction is a

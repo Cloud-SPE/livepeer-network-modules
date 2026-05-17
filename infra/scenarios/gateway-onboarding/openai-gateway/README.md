@@ -137,6 +137,40 @@ Already have sensible defaults you usually don't change:
 - `PAYMENT_KEYSTORE` / `PAYMENT_KEYSTORE_PASSWORD_FILE` — only override
   if your keystore lives somewhere other than `/opt/livepeer/`.
 
+## Route health
+
+The gateway composes three layers when picking a broker route:
+
+1. **Layer 1 (manifest)** — `service-registry-daemon` only returns
+   candidates whose orchestrator has cold-signed for the requested
+   capability.
+2. **Layer 2 (live)** — the resolver polls each broker's
+   `/registry/health` and drops offerings not currently `ready`.
+3. **Layer 3 (failure-rate)** — this gateway tracks per-route outcomes
+   and opens a short **cooldown** for a route after repeated retryable
+   failures, even if Layer 1+2 still say it's available.
+
+You only manage Layer 3 here. Two `.env` knobs:
+
+| Knob                                 | Default | Effect                                                                      |
+| ------------------------------------ | ------- | --------------------------------------------------------------------------- |
+| `LIVEPEER_ROUTE_FAILURE_THRESHOLD`   | `2`     | Consecutive retryable failures before a route enters cooldown.              |
+| `LIVEPEER_ROUTE_COOLDOWN_MS`         | `30000` | How long the route stays excluded from selection (ms) before being retried. |
+
+If a route disappears from the gateway and you don't know why, ask
+**which layer dropped it?**
+
+- Layer 1: missing or mismatched signed manifest entry (operator hasn't
+  signed for it). Fix on the orch side.
+- Layer 2: broker reports the offering as `degraded` / `unreachable` /
+  `stale` on `/registry/health`. Fix on the broker side.
+- Layer 3: this gateway opened a cooldown after recent failures. Either
+  wait it out (`LIVEPEER_ROUTE_COOLDOWN_MS`), restart the gateway, or
+  tune the threshold.
+
+See [`docs/design-docs/backend-health.md`](../../../../docs/design-docs/backend-health.md)
+for the three-layer model end to end.
+
 ## Verify
 
 ```sh

@@ -3,7 +3,7 @@ package chaintesting
 import (
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logger"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logger"
 )
 
 func TestFakeLogger_ChildAllLevels(t *testing.T) {

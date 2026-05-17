@@ -7,10 +7,10 @@ import (
 	"sync"
 	"testing"
 
-	cstorebolt "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/store/bolt"
-	chaintest "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/store"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/store/chaincommonsadapter"
+	cstorebolt "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/store/bolt"
+	chaintest "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/store/chaincommonsadapter"
 )
 
 func TestNew_RequiresStore(t *testing.T) {

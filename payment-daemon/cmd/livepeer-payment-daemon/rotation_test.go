@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/payment-daemon/internal/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 )
 
 // Plan 0017 §6 / §12 C3: keystore rotation must not perturb durable

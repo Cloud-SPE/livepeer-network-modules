@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/service-registry-daemon/internal/providers/verifier"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/verifier"
 )
 
 func TestKeystore_GenerateAndSignVerify(t *testing.T) {

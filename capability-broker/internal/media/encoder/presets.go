@@ -4,11 +4,11 @@ import "fmt"
 
 // Profile names recognised by host-config.yaml `backend.profile`.
 const (
-	ProfilePassthrough     = "passthrough"
-	ProfileLibx264_1080p   = "h264-live-1080p-libx264"
-	ProfileNVENC_1080p     = "h264-live-1080p-nvenc"
-	ProfileQSV_1080p       = "h264-live-1080p-qsv"
-	ProfileVAAPI_1080p     = "h264-live-1080p-vaapi"
+	ProfilePassthrough   = "passthrough"
+	ProfileLibx264_1080p = "h264-live-1080p-libx264"
+	ProfileNVENC_1080p   = "h264-live-1080p-nvenc"
+	ProfileQSV_1080p     = "h264-live-1080p-qsv"
+	ProfileVAAPI_1080p   = "h264-live-1080p-vaapi"
 )
 
 // Rung describes one ABR ladder step. The 5-rung 1080p ladder uses the

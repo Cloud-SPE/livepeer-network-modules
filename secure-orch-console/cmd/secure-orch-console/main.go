@@ -14,10 +14,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/audit"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/internal/signing"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/secure-orch-console/web"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/audit"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/signing"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/web"
 )
 
 var version = "dev"

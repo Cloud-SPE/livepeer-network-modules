@@ -790,7 +790,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"face_value\x18\x03 \x01(\fR\tfaceValue\x12\x1b\n" +
 	"\tqueued_at\x18\x04 \x01(\x03R\bqueuedAt\x12\x1a\n" +
-	"\battempts\x18\x05 \x01(\x05R\battemptsBrZpgithub.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1b\x06proto3"
+	"\battempts\x18\x05 \x01(\x05R\battemptsBrZpgithub.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1b\x06proto3"
 
 var (
 	file_livepeer_payments_v1_types_proto_rawDescOnce sync.Once

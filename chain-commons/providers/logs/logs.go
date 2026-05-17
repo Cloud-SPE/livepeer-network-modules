@@ -11,7 +11,7 @@ package logs
 import (
 	"context"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
 )

@@ -32,15 +32,15 @@ type Envelope struct {
 // signaling for session-control-plus-media@v0) define those constants
 // in their own package.
 const (
-	TypeSessionStarted     = "session.started"
-	TypeSessionEnd         = "session.end"
-	TypeSessionEnded       = "session.ended"
-	TypeSessionError       = "session.error"
-	TypeSessionUsageTick   = "session.usage.tick"
-	TypeSessionBalanceLow  = "session.balance.low"
+	TypeSessionStarted         = "session.started"
+	TypeSessionEnd             = "session.end"
+	TypeSessionEnded           = "session.ended"
+	TypeSessionError           = "session.error"
+	TypeSessionUsageTick       = "session.usage.tick"
+	TypeSessionBalanceLow      = "session.balance.low"
 	TypeSessionBalanceRefilled = "session.balance.refilled"
-	TypeSessionReconnected = "session.reconnected"
-	TypeSessionTopup       = "session.topup"
+	TypeSessionReconnected     = "session.reconnected"
+	TypeSessionTopup           = "session.topup"
 )
 
 // IsLifecycle reports whether the envelope type is one of the

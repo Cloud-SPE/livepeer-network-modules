@@ -18,15 +18,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/encoder"
-	mediartmp "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/rtmp"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/sessionrunner"
-	mediawebrtc "github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/media/webrtc"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes/sessioncontrolplusmedia"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/observability"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/encoder"
+	mediartmp "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/rtmp"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/sessionrunner"
+	mediawebrtc "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/webrtc"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolplusmedia"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
@@ -34,10 +34,15 @@ var version = "dev"
 
 func main() {
 	var (
-		configPath  = flag.String("config", "/etc/livepeer/host-config.yaml", "path to host-config.yaml")
-		listenAddr  = flag.String("listen", "", "HTTP listen address (overrides config)")
-		metricsAddr = flag.String("metrics", "", "Prometheus metrics listen address (overrides config)")
-		showVersion = flag.Bool("version", false, "print version and exit")
+		configPath              = flag.String("config", "/etc/livepeer/host-config.yaml", "path to host-config.yaml")
+		listenAddr              = flag.String("listen", "", "HTTP listen address (overrides config)")
+		metricsAddr             = flag.String("metrics", "", "Prometheus metrics listen address (overrides config)")
+		showVersion             = flag.Bool("version", false, "print version and exit")
+		metadataRefreshInterval = flag.Duration(
+			"metadata-refresh-interval",
+			5*time.Minute,
+			"stable metadata refresh cadence for discovery-capable offerings; negative disables periodic refresh after startup",
+		)
 
 		// Plan 0015 — interim-debit cadence flags.
 		interimDebitInterval = flag.Duration(
@@ -262,6 +267,7 @@ func main() {
 	}
 
 	srv, err := server.New(cfg, server.Options{
+		MetadataRefreshInterval: *metadataRefreshInterval,
 		InterimDebit: middleware.InterimDebitConfig{
 			Interval:            *interimDebitInterval,
 			MinRunwayUnits:      *interimDebitMinRunwayUnits,

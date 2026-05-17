@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 )
 
 func TestTicketParamsHandler_HappyPath(t *testing.T) {

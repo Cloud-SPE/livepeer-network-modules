@@ -449,7 +449,7 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\rCreatePayment\x12*.livepeer.payments.v1.CreatePaymentRequest\x1a+.livepeer.payments.v1.CreatePaymentResponse\x12k\n" +
 	"\x0eGetDepositInfo\x12+.livepeer.payments.v1.GetDepositInfoRequest\x1a,.livepeer.payments.v1.GetDepositInfoResponse\x12q\n" +
 	"\x10GetSessionDebits\x12-.livepeer.payments.v1.GetSessionDebitsRequest\x1a..livepeer.payments.v1.GetSessionDebitsResponse\x12S\n" +
-	"\x06Health\x12#.livepeer.payments.v1.HealthRequest\x1a$.livepeer.payments.v1.HealthResponseBrZpgithub.com/Cloud-SPE/livepeer-network-rewrite/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1b\x06proto3"
+	"\x06Health\x12#.livepeer.payments.v1.HealthRequest\x1a$.livepeer.payments.v1.HealthResponseBrZpgithub.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1b\x06proto3"
 
 var (
 	file_livepeer_payments_v1_payer_daemon_proto_rawDescOnce sync.Once

@@ -1,0 +1,60 @@
+# Capability Broker host-config — OpenAI Embeddings.
+#
+# Routes through openai-embeddings-runner, which counts tokens from the
+# response body and emits X-Livepeer-Work-Units as a response header.
+# Same operational shape as openai-chat-runner — works with either
+# vLLM-in-embed mode or Ollama upstreams; switch by changing
+# UPSTREAM_URL + UPSTREAM_KIND on the runner.
+#
+# Pair with:
+#   - openai-runners/compose/docker-compose.openai-embeddings-runner.yml
+#   - openai-runners/compose/docker-compose.vllm.embeddings.yml  (or .ollama.yml)
+
+identity:
+  orch_eth_address: 0xYOUR_ORCH_ADDRESS
+  label: "embeddings-broker"
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+
+capabilities:
+  - id: "openai:embeddings"
+    offering_id: "bge-large-en-v1.5"
+    interaction_mode: "http-reqresp@v0"
+    work_unit:
+      name: "tokens"
+      extractor:
+        type: "response-header"
+        header: "X-Livepeer-Work-Units"
+        default: 0
+    health:
+      probe:
+        type: "http-status"
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 2
+        healthy_after: 1
+        config:
+          url: "http://openai_embeddings_runner:8080/healthz"
+    price:
+      amount_wei: "100000"
+      per_units: 1
+    backend:
+      transport: "http"
+      url: "http://openai_embeddings_runner:8080/v1/embeddings"
+      auth: "none"
+    extra:
+      openai:
+        model: "bge-large-en-v1.5"
+      provider: "openai-embeddings-runner"
+      # served_model_name, backend_model, embedding_dimensions,
+      # max_input_tokens, pooling_mode all hydrate from the runner's
+      # /options endpoint. Set any of them here to pin a value —
+      # operator entries always win over discovered ones.
+    constraints:
+      tier: "standard"
+      gpu: "4090"

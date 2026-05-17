@@ -33,7 +33,7 @@ strings on the wire**; the daemon does arithmetic over them, nothing more.
 flowchart LR
     subgraph in["Inputs (opaque to daemon)"]
         direction TB
-        Cap["capability_id<br/>e.g. openai:chat-completions:llama-3-70b"]
+        Cap["capability_id<br/>e.g. openai:chat-completions"]
         Off["offering_id<br/>e.g. tier-a"]
         WU["work_unit name<br/>e.g. tokens / bytes / seconds / barks"]
         Price["price_per_unit_wei"]
@@ -76,7 +76,7 @@ mismatched tickets:
 
 ```
 Livepeer-Payment: <base64 payment blob>
-Livepeer-Capability: openai:chat-completions:llama-3-70b
+Livepeer-Capability: openai:chat-completions
 Livepeer-Offering: tier-a
 ```
 

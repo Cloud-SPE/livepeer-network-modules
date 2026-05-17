@@ -15,12 +15,21 @@ Thumbs.db
 *.pem
 *.key
 
+# Pool local-only configs / secrets / state
+**/*-config.local.yaml
+**/keystore.json
+**/keystore-password
+**/var/local-run/
+**/*.db
+
 # Build output (when code arrives)
 /dist/
 /build/
 /out/
 /bin/
 /protocol-daemon/bin/
+# Per-workspace build outputs (gateways, customer-portal, etc.)
+**/dist/
 
 # Compiled Go binaries (built into runner Docker images, not checked in)
 /video-runners/transcode-runner/transcode-runner
@@ -39,6 +48,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# TS test-build outputs (e.g. daydream-gateway's `pnpm test` writes here)
+**/dist-test/
+**/*.tsbuildinfo
 
 # Generated docs (keep checked-in artifacts as sources of truth; output is regen-able)
 /docs/generated/*

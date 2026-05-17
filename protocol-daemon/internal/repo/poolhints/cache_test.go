@@ -5,9 +5,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/store"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/types"
 )
 
 func TestNewValidates(t *testing.T) {

@@ -55,8 +55,8 @@ func (c Config) Validate() error {
 // Engine wraps a pion settings + media engine pair shared across all
 // per-session relays. Constructed once at server startup.
 type Engine struct {
-	api  *webrtc.API
-	cfg  Config
+	api *webrtc.API
+	cfg Config
 }
 
 // NewEngine builds the shared pion API with the configured port range

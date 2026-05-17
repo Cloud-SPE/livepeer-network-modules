@@ -10,6 +10,12 @@ Operator-facing deployment examples, organized by audience.
 - **[`gateway-onboarding/`](./gateway-onboarding/)** — gateway operator
   onboarding guide and every stack it references. Start at
   [`gateway-onboarding/README.md`](./gateway-onboarding/README.md).
+- **[`pool-orchestrator/`](./pool-orchestrator/)** — full Pool
+  public/data-plane stack: broker, coordinator, payment-daemon receiver,
+  pool-controller, pool-reconciler, and pool-payout-executor. Requires the
+  separate secure-orch/protocol host.
+- **[`pool-node/`](./pool-node/)** — Pool control-plane-only stack for
+  controller/reconciler/executor without the full broker/coordinator surface.
 - **[`archive/`](./archive/)** — earlier multi-module scenarios preserved
   for reference. Not maintained against the current onboarding flow; see
   [`archive/README.md`](./archive/README.md) for context.

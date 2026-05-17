@@ -1,7 +1,12 @@
 .PHONY: build test lint lint-custom doc-lint coverage coverage-check docker-build docker-build-version docker-push clean tidy ship-check
 
+DOCKER_REPO ?= tztcloud/livepeer-service-registry-daemon
+DOCKER_TAG  ?= dev
+VERSION ?= $(shell VERSION_PREFIX="$(DOCKER_TAG)" FALLBACK_VERSION=dev ../infra/build/git-version.sh)
+GO_LDFLAGS := -s -w -X main.version=$(VERSION)
+
 build:
-	go build -o bin/livepeer-service-registry-daemon ./cmd/livepeer-service-registry-daemon
+	go build -trimpath -ldflags '$(GO_LDFLAGS)' -o bin/livepeer-service-registry-daemon ./cmd/livepeer-service-registry-daemon
 	go build -o bin/livepeer-registry-refresh ./cmd/livepeer-registry-refresh
 
 test:
@@ -40,18 +45,15 @@ ship-check:
 tidy:
 	go mod tidy
 
-# Build context is the monorepo root because the daemon's go.mod uses
-# `replace ../chain-commons` and the Dockerfile copies the sibling tree in.
-DOCKER_REPO ?= tztcloud/livepeer-service-registry-daemon
-DOCKER_TAG  ?= dev
-
 docker-build:
-	docker build --build-arg VERSION=$(DOCKER_TAG) -t $(DOCKER_REPO):$(DOCKER_TAG) -f Dockerfile ..
+	docker build --build-arg VERSION=$(VERSION) -t $(DOCKER_REPO):$(DOCKER_TAG) -f Dockerfile ..
 
 # Stamp the build with the git short SHA — handy for CI runs where
 # `dev` would collide across builds.
 docker-build-version:
-	$(MAKE) docker-build DOCKER_TAG=$$(git rev-parse --short HEAD)
+	@DOCKER_TAG=$$(git rev-parse --short HEAD); \
+	VERSION=$$(FALLBACK_VERSION=dev ../infra/build/git-version.sh); \
+	docker build --build-arg VERSION="$$VERSION" -t $(DOCKER_REPO):$$DOCKER_TAG -f Dockerfile ..
 
 # Push DOCKER_TAG plus :latest. Override DOCKER_TAG to publish a
 # version: `make docker-push DOCKER_TAG=v3.0.1`.

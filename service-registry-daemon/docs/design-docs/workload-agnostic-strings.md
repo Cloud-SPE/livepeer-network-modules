@@ -31,7 +31,8 @@ These are reserved by convention to keep the network coherent. The registry does
 | `livepeer` | Livepeer protocol | `livepeer:transcoder/h264`, `livepeer:transcoder/hevc`, `livepeer:transcoder/av1`, `livepeer:vtuber-session` |
 | `openai` | OpenAI-compatible HTTP API surface | `openai:/v1/chat/completions`, `openai:/v1/embeddings`, `openai:/v1/images/generations`, `openai:/v1/audio/transcriptions` |
 | `huggingface` | Hugging Face inference-API style | `huggingface:text-generation`, `huggingface:image-classification` |
-| `livepeer-byoc` | Bring-Your-Own-Capability (operator-defined) | `livepeer-byoc:custom-pipeline-v3` |
+
+Operator-defined capabilities use a namespace the operator owns (e.g. `myco:custom-pipeline-v3`). The registry is workload-agnostic — any namespace works as long as consumers recognize it.
 
 A capability with no path component (e.g. `livepeer:vtuber-session`) names a streaming-session workload — the consumer establishes a long-lived session via its own protocol after `Select` returns the worker. The first such consumer is the external `livepeer-vtuber-project` (not vendored in this monorepo).
 
@@ -45,7 +46,7 @@ The capability strings used in the wild today, by source:
   this verbatim. In v3.0.1 the orch-coordinator reads the worker's
   `/registry/offerings` JSON and pre-populates proposal entries with
   these strings.
-- **go-livepeer transcoding** historically used a bitmask `Capability_*` enum (`Capability_TextToImage = 27`, etc.). The publisher MAY emit those as `livepeer-byoc:capability-{n}` for cross-compat, but the canonical form is the namespaced string per above. Consumers that need the integer form do their own mapping.
+- **go-livepeer transcoding** historically used a bitmask `Capability_*` enum (`Capability_TextToImage = 27`, etc.). The canonical form in this stack is the namespaced string per above (`livepeer:ai/text-to-image` and friends — see [`../references/capability-enum-mapping.md`](../references/capability-enum-mapping.md)). Consumers that need the integer form do their own mapping.
 
 ## Models
 

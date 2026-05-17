@@ -1,18 +1,22 @@
 package server
 
 import (
+	"context"
+	"log"
 	"net/http"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/backend"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/bytescounted"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/runnerreport"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/extractors/secondselapsed"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/modes"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/capability-broker/internal/server/middleware"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/bytescounted"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/runnerreport"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/secondselapsed"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
 // dispatch is the handler at POST /v1/cap. It runs *after* the middleware
@@ -30,8 +34,8 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	offID := r.Header.Get(livepeerheader.Offering)
 	mode := r.Header.Get(livepeerheader.Mode)
 
-	cap, found := s.lookup(capID, offID)
-	if cap == nil {
+	group, found := s.groupFor(capID, offID)
+	if group == nil || len(group.Backends) == 0 {
 		if !found {
 			livepeerheader.WriteError(w, http.StatusNotFound, livepeerheader.ErrCapabilityNotServed,
 				"capability "+capID+" is not served by this broker")
@@ -40,6 +44,39 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 				"offering "+offID+" is not served under capability "+capID)
 		}
 		return
+	}
+	cap, err := s.selectBackend(group)
+	if err != nil {
+		w.Header().Set(livepeerheader.Backoff, "30")
+		livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrCapacityExhausted,
+			"no eligible backend currently available for "+capID+"/"+offID)
+		return
+	}
+	observability.RecordBackendSelection(cap.ID, cap.OfferingID, cap.Backend.ID)
+	if state := middleware.SessionStateFromContext(r.Context()); state != nil {
+		meta := middleware.ReceiptMeta{
+			WorkID:           deriveReceiptID(r.Context()),
+			RequestID:        middleware.RequestIDFromContext(r.Context()),
+			CapabilityID:     cap.ID,
+			OfferingID:       cap.OfferingID,
+			MemberEthAddress: poolMemberEthAddress(cap),
+			BackendID:        cap.Backend.ID,
+		}
+		state.SetReceiptMeta(meta)
+		if s.receiptSink != nil && meta.WorkID != "" && meta.MemberEthAddress != "" && meta.BackendID != "" {
+			if err := s.receiptSink.UpsertWorkReceipt(r.Context(), receipts.WorkReceipt{
+				ID:               meta.WorkID,
+				RoundID:          meta.RoundID,
+				RequestID:        meta.RequestID,
+				CapabilityID:     meta.CapabilityID,
+				OfferingID:       meta.OfferingID,
+				MemberEthAddress: meta.MemberEthAddress,
+				BackendID:        meta.BackendID,
+				Status:           "stub",
+			}); err != nil {
+				slogWarnReceipt(meta.WorkID, err)
+			}
+		}
 	}
 
 	if mode != cap.InteractionMode {
@@ -138,26 +175,6 @@ func modeSupportsInterimDebit(mode string) bool {
 	}
 }
 
-// lookup returns the matching capability and a "found capability_id at all"
-// boolean (used to distinguish capability_not_served from offering_not_served).
-func (s *Server) lookup(capID, offID string) (*config.Capability, bool) {
-	if capID == "" {
-		return nil, false
-	}
-	var anyOffering bool
-	for i := range s.cfg.Capabilities {
-		c := &s.cfg.Capabilities[i]
-		if c.ID != capID {
-			continue
-		}
-		anyOffering = true
-		if c.OfferingID == offID {
-			return c, true
-		}
-	}
-	return nil, anyOffering
-}
-
 // silence "declared but not used"
 var (
 	_ = extractors.Extractor(nil)
@@ -172,4 +189,30 @@ func joinNames(names []string) string {
 		out += n
 	}
 	return out
+}
+
+func poolMemberEthAddress(cap *config.Capability) string {
+	if cap == nil {
+		return ""
+	}
+	poolExtra, _ := cap.Extra["pool"].(map[string]any)
+	memberEth, _ := poolExtra["member_eth_address"].(string)
+	return memberEth
+}
+
+func deriveReceiptID(ctx context.Context) string {
+	if state := middleware.SessionStateFromContext(ctx); state != nil {
+		if meta, ok := state.ReceiptMeta(); ok && meta.WorkID != "" {
+			return meta.WorkID
+		}
+	}
+	return middleware.RequestIDFromContext(ctx)
+}
+
+func slogWarnReceipt(workID string, err error) {
+	if workID == "" {
+		log.Printf("warning: work receipt stub emit failed: %v", err)
+		return
+	}
+	log.Printf("warning: work receipt stub emit failed work_id=%s: %v", workID, err)
 }

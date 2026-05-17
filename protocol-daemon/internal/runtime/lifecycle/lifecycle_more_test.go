@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/logger"
-	grpcrt "github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/runtime/grpc"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/protocol-daemon/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logger"
+	grpcrt "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/runtime/grpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/types"
 )
 
 // TestRun_WithListener boots the lifecycle WITH a real gRPC listener

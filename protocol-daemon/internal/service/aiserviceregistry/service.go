@@ -10,8 +10,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/services/txintent"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/txintent"
 )
 
 // Registry is the minimal AI service registry binding surface this

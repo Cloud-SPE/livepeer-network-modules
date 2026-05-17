@@ -12,8 +12,8 @@ package minter
 import (
 	"errors"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/chain"
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/rpc"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 )
 
 // Bindings is the protocol-daemon-facing surface for Minter (read-only).

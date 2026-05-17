@@ -3,7 +3,7 @@ package diff
 import (
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/orch-coordinator/internal/types"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
 func tup(capID, off, mode, price, worker string, extra map[string]any) types.CapabilityTuple {

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/providers/gasoracle/ttl"
-	chaintest "github.com/Cloud-SPE/livepeer-network-rewrite/chain-commons/testing"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/gasoracle/ttl"
+	chaintest "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
 )
 
 func TestNew_RequiresRPC(t *testing.T) {

@@ -43,6 +43,25 @@ payment_daemon:
 #     secret_ref: "env://POOL_CONTROLLER_TOKEN"
 
 capabilities:
+  # Pricing assumptions used across this file:
+  # - ETH = $2,900 planning rate (re-derive wei when ETH moves materially)
+  # - All prices below are WHOLESALE (orch ↔ gateway), in wei.
+  #   Customer-facing USD retail markup lives in the gateway service.
+  # - Each price is MARKET-ANCHORED, not cost-floor-anchored. Formula:
+  #     retail   = hyperscale_retail × (1 − workload_discount)
+  #     wholesale = retail / (1 + gateway_margin)   # gateway_margin = 30%
+  # - Workload discount varies by commoditization AND deployed GPU tier.
+  #   See "Part 3 — Market-anchored pricing" in
+  #   docs/design-docs/pricing-overview.md for the full table.
+  # - For resale offerings (proxying to OpenAI/Anthropic/etc.) the math
+  #   inverts: wholesale = upstream_cost × (1 + orch_markup). Discount
+  #   bands do not apply to resale.
+  # - Hardware tier noted per capability; re-derive if changing cards.
+  # - Cost-floor check: confirm market-anchored price clears the four-lens
+  #   floor (Part 2 of pricing-overview.md). When it does not — see the
+  #   Llama 70B note below — the workload is structurally unprofitable on
+  #   that hardware at competitive pricing.
+
   # ---- Simple HTTP request/response examples ----
   - id: "kibble:doggo-bark-counter:v1"
     offering_id: "default"
@@ -59,6 +78,7 @@ capabilities:
         healthy_after: 1
         config:
           url: "http://localhost:9000/healthz"
+    # Demo placeholder — symbolic price, not a real-world rate.
     price:
       amount_wei: "100"
       per_units: 1
@@ -85,6 +105,7 @@ capabilities:
           url: "http://localhost:9001/healthz"
           path: "$.ready"
           equals: "true"
+    # Demo placeholder — symbolic price, not a real-world rate.
     price:
       amount_wei: "10"
       per_units: 1
@@ -105,8 +126,14 @@ capabilities:
   #   work_unit:
   #     name: "jobs"
   #     extractor: { type: "request-formula", expression: "1", default: 1 }
+  #   # Market-anchored: Mux $0.024/min × 0.75 (transcoding 25% discount,
+  #   # 3090 budget tier) = $0.018/min retail → $0.0139/job wholesale at
+  #   # 30% gateway margin (1-min representative job).
+  #   # NB: per-job pricing is coarse — long or multi-rendition jobs are
+  #   # under-priced here. Switch to `megapixel_frame` work_unit when job
+  #   # size distribution is wide.
   #   price:
-  #     amount_wei: "25000000"
+  #     amount_wei: "4800000000000"  # 4.8 Twei/job
   #     per_units: 1
   #   backend:
   #     transport: "http"
@@ -140,8 +167,11 @@ capabilities:
   #   work_unit:
   #     name: "seconds"
   #     extractor: { type: "seconds-elapsed", granularity: 1 }
+  #   # Market-anchored: emerging real-time gen video, ref HeyGen-class
+  #   # $0.015/sec × 0.90 (10% discount, premium tier — Scope is H100-class)
+  #   # = $0.0135/sec retail → $0.0104/sec wholesale at 30% gateway margin.
   #   price:
-  #     amount_wei: "1500000"
+  #     amount_wei: "3600000000000"  # 3.6 Twei/sec
   #     per_units: 1
   #   backend:
   #     transport: "http"
@@ -176,8 +206,11 @@ capabilities:
   #   work_unit:
   #     name: "seconds"
   #     extractor: { type: "seconds-elapsed", granularity: 1 }
+  #   # Market-anchored: HeyGen avatar streaming ref $0.008/sec × 0.75
+  #   # (25% discount, 4090 mid-tier) = $0.006/sec retail → $0.00462/sec
+  #   # wholesale at 30% gateway margin.
   #   price:
-  #     amount_wei: "2500000"
+  #     amount_wei: "1600000000000"  # 1.6 Twei/sec
   #     per_units: 1
   #   backend:
   #     transport: "http"
@@ -205,8 +238,11 @@ capabilities:
   #   work_unit:
   #     name: "out_time_seconds"
   #     extractor: { type: "ffmpeg-progress", unit: "out_time_seconds" }
+  #   # Market-anchored: Mux $0.0004/sec × 0.75 (transcoding 25% discount,
+  #   # 3090 budget tier) = $0.0003/sec retail → $0.000231/sec wholesale at
+  #   # 30% gateway margin. Clears 3090 cost floor (~$0.15/hr per stream) by ~5×.
   #   price:
-  #     amount_wei: "1000000"
+  #     amount_wei: "80000000000"    # 80 Gwei/output-second
   #     per_units: 1
   #   backend:
   #     transport: "ffmpeg-subprocess"
@@ -226,8 +262,17 @@ capabilities:
   #   work_unit:
   #     name: "tokens"
   #     extractor: { type: "openai-usage", field: "total_tokens" }
+  #   # Market-anchored: Together.ai $0.88/M × 0.90 (LLM-open 10% discount,
+  #   # H100 premium tier) = $0.792/M retail → $0.609/M wholesale at 30%
+  #   # gateway margin = $6.09e-7 per token.
+  #   #
+  #   # WARNING — STRUCTURAL: at 250 tok/s sustained, 900K tok/hr × $6.09e-7
+  #   # = $0.55/hr revenue, vs ~$4/hr H100 cost floor. The workload only
+  #   # clears the floor at ~1,800+ tok/s aggregate (heavy vLLM batching).
+  #   # See Part 3 of pricing-overview.md for the "structurally unprofitable"
+  #   # decision tree. Consider Llama-8B or quantized 2× consumer instead.
   #   price:
-  #     amount_wei: "1500000"
+  #     amount_wei: "210000000"      # 210 Mwei/token
   #     per_units: 1
   #   backend:
   #     id: "member-west"
@@ -245,8 +290,10 @@ capabilities:
   #   work_unit:
   #     name: "tokens"
   #     extractor: { type: "openai-usage", field: "total_tokens" }
+  #   # Same offering, second pool member — must publish the SAME price as
+  #   # member-west or the pool advertises an inconsistent tuple.
   #   price:
-  #     amount_wei: "1500000"
+  #     amount_wei: "210000000"      # 210 Mwei/token (matches member-west)
   #     per_units: 1
   #   backend:
   #     id: "member-east"
@@ -266,8 +313,11 @@ capabilities:
   #   work_unit:
   #     name: "tokens"
   #     extractor: { type: "openai-usage", field: "total_tokens" }
+  #   # Dedicated H100 vLLM batch-4 — same market-anchored rate as the
+  #   # shared pool offering; differentiate via region / SLA constraints,
+  #   # not price. Same structural-floor caveat as member-west applies.
   #   price:
-  #     amount_wei: "1500000"
+  #     amount_wei: "210000000"      # 210 Mwei/token
   #     per_units: 1
   #   backend:
   #     transport: "http"
@@ -298,8 +348,13 @@ capabilities:
   #   work_unit:
   #     name: "tokens"
   #     extractor: { type: "openai-usage", field: "total_tokens" }
+  #   # Resale economics (NOT discount-anchored): orch pays OpenAI retail
+  #   # blended ~$7.75/M (70% output × $10 + 30% input × $2.50). Wholesale
+  #   # = upstream_cost × (1 + 10% orch markup) = $8.53/M. After 30%
+  #   # gateway margin, retail ≈ $11.08/M — ~11% above OpenAI direct, the
+  #   # convenience premium customers pay for routing/payments/anonymity.
   #   price:
-  #     amount_wei: "8500000"
+  #     amount_wei: "2940000000"     # 2.94 Gwei/token
   #     per_units: 1
   #   backend:
   #     transport: "http"
@@ -325,8 +380,12 @@ capabilities:
   #       fields:
   #         n: "$.n"
   #       default: 1
+  #   # Market-anchored: Replicate Lightning $0.025/image × 0.70 (image-gen
+  #   # 30% discount, 4090 mid-tier) = $0.0175/image retail → $0.01346/image
+  #   # wholesale at 30% gateway margin. Massively above 4090 cost floor —
+  #   # demand, not price, is the binding constraint here.
   #   price:
-  #     amount_wei: "25000000"
+  #     amount_wei: "4600000000000"  # 4.6 Twei/image
   #     per_units: 1
   #   backend:
   #     transport: "http"
@@ -354,8 +413,11 @@ capabilities:
   #       expression: "1"
   #       fields: {}
   #       default: 1
+  #   # Market-anchored: Cohere Rerank $0.002/req × 0.70 (rerank 30%
+  #   # discount, 4090 mid-tier) = $0.0014/req retail → $0.00108/req
+  #   # wholesale at 30% gateway margin. Clears 4090 cost floor by ~50×.
   #   price:
-  #     amount_wei: "25000000"
+  #     amount_wei: "372000000000"   # 372 Gwei/request
   #     per_units: 1
   #   backend:
   #     transport: "http"

@@ -39,20 +39,6 @@ build_gpu_media_base() {
     python-gpu-media-runner-base
 }
 
-build_go_runner() {
-  for target in chat embeddings; do
-    image="${REGISTRY}/openai-runner-${target}:${TAG}"
-    echo "==> Building ${image} (target ${target}, platforms ${PLATFORMS})"
-    docker buildx build \
-      --platform "${PLATFORMS}" \
-      --target "${target}" \
-      -t "${image}" \
-      --load \
-      -f openai-runner/Dockerfile \
-      openai-runner
-  done
-}
-
 build_chat_runner() {
   image="${REGISTRY}/openai-chat-runner:${TAG}"
   echo "==> Building ${image} (platforms ${PLATFORMS})"
@@ -105,7 +91,6 @@ case "${cmd}" in
     build_base
     build_gpu_base
     build_gpu_media_base
-    build_go_runner
     build_chat_runner
     build_embeddings_runner
     build_python_runner openai-audio-runner openai-audio-runner "${gpu_media_base_image}"
@@ -150,8 +135,6 @@ if [ "${PUSH}" = "true" ]; then
   docker push "${gpu_base_image}"
   docker push "${gpu_media_base_image}"
   for image in \
-    "${REGISTRY}/openai-runner-chat:${TAG}" \
-    "${REGISTRY}/openai-runner-embeddings:${TAG}" \
     "${REGISTRY}/openai-chat-runner:${TAG}" \
     "${REGISTRY}/openai-embeddings-runner:${TAG}" \
     "${REGISTRY}/openai-audio-runner:${TAG}" \

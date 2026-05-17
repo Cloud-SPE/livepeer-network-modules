@@ -14,7 +14,7 @@ This doc binds three components: `openai-runners/`, `rerank-runner/`,
 |---|---|---|
 | `python:3.12-slim` | `openai-runners/python-runner-base/`, `image-model-downloader`, `rerank-runner/model-downloader/` | Python 3.12 + the canonical FastAPI/pydantic/uvicorn pins. Cached once across CPU-only Python tooling. |
 | `nvidia/cuda:12.9.1-runtime-ubuntu24.04` | `openai-runners/python-gpu-runner-base/`, `openai-runners/python-gpu-media-runner-base/`, `openai-runners/openai-audio-runner/`, `openai-runners/openai-tts-runner/`, `openai-runners/openai-image-generation-runner/`, `rerank-runner/`, `video-runners/transcode-runner/` (NVIDIA runtime stage), `video-runners/abr-runner/` (NVIDIA runtime stage) | Shared CUDA runtime for Python GPU runners and NVIDIA runtime stages. Smaller than the devel image; no compiler toolchain. |
-| `golang:1.22-alpine` | `openai-runners/openai-runner/` (build stage), `video-runners/transcode-runner/` + `video-runners/abr-runner/` (go-builder stage) | Go 1.22 build environment; pure Go, no native deps. |
+| `golang:1.22-alpine` | `openai-runners/openai-chat-runner/` (build stage), `video-runners/transcode-runner/` + `video-runners/abr-runner/` (go-builder stage) | Go 1.22 build environment; pure Go, no native deps. |
 | `ubuntu:24.04` | `video-runners/codecs-builder/`, `video-runners/transcode-runner/` (Intel + AMD runtime stages), `video-runners/abr-runner/` (Intel + AMD runtime stages) | Codec build + Intel/AMD ffmpeg runtime. |
 | `nvidia/cuda:12.9.1-devel-ubuntu24.04` | `video-runners/transcode-runner/` (NVIDIA build stage), `video-runners/abr-runner/` (NVIDIA build stage) | CUDA 12.9 toolkit for compiling FFmpeg with NVENC. |
 
@@ -52,8 +52,7 @@ the caller overrides `TAG=...`.
 | Python base | `tztcloud/python-runner-base:v1.1.0` |
 | Python GPU base | `tztcloud/python-gpu-runner-base:v1.1.0` |
 | Python GPU media base | `tztcloud/python-gpu-media-runner-base:v1.1.0` |
-| OpenAI chat proxy (Go) | `tztcloud/openai-runner-chat:v1.1.0` |
-| OpenAI embeddings proxy (Go) | `tztcloud/openai-runner-embeddings:v1.1.0` |
+| OpenAI chat proxy (Go) | `tztcloud/openai-chat-runner:v1.1.0` |
 | Whisper STT | `tztcloud/openai-audio-runner:v1.1.0` |
 | Kokoro TTS | `tztcloud/openai-tts-runner:v1.1.0` |
 | Diffusers image gen | `tztcloud/openai-image-generation-runner:v1.1.0` |
@@ -71,9 +70,9 @@ the caller overrides `TAG=...`.
 Each component ships a `build.sh` script and a `Makefile`:
 
 - `openai-runners/{Makefile,build.sh}` — builds the CPU Python base,
-  the GPU Python base, the GPU Python media base, the Go proxy
-  (multi-arch buildx), the four Python runners, the model downloader,
-  and the tester. Smoke gesture validates compose configs.
+  the GPU Python base, the GPU Python media base, the streaming-aware
+  chat proxy (multi-arch buildx), the four Python runners, the model
+  downloader, and the tester. Smoke gesture validates compose configs.
 - `rerank-runner/{Makefile,build.sh}` — runner + model downloader.
 - `video-runners/{Makefile,build.sh}` — codecs-builder, both runners
   (default = NVIDIA target), tester. Intel + AMD targets are
@@ -84,8 +83,8 @@ Python or host Go install required.
 
 ## Multi-arch policy (per OQ4)
 
-Only `openai-runners/openai-runner/` (the pure-Go chat + embeddings
-proxy) ships multi-arch (linux/amd64 + linux/arm64). Every other
+Only `openai-runners/openai-chat-runner/` (the streaming-aware Go
+chat proxy) ships multi-arch (linux/amd64 + linux/arm64). Every other
 runner is amd64-only — NVIDIA arm64 GPU support exists (Jetson, GH200)
 but isn't the default operator deployment shape.
 
@@ -93,9 +92,8 @@ The Go proxy uses Docker buildx for the multi-arch build:
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
-  --target chat \
-  -t tztcloud/openai-runner-chat:v1.1.0 \
-  openai-runners/openai-runner
+  -t tztcloud/openai-chat-runner:v1.1.0 \
+  openai-runners/openai-chat-runner
 ```
 
 ## What this doc does NOT cover

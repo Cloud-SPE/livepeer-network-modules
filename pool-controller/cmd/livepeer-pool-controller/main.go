@@ -601,9 +601,22 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		Verifier: verifier,
 	})
 	adminserver.Register(mux, adminserver.Deps{
-		Repo:                state.repo,
-		WrapAuth:            func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
-		RefreshRendered:     func(source string) error { return state.RefreshRenderedFromState(source) },
+		Repo:            state.repo,
+		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
+		RefreshRendered: func(source string) error { return state.RefreshRenderedFromState(source) },
+		GetRuntimeApplyInfo: func() adminserver.RuntimeApplyInfo {
+			cfg, _, _, _ := state.Snapshot()
+			info := adminserver.RuntimeApplyInfo{Mode: "controller-refresh"}
+			if cfg == nil {
+				return info
+			}
+			info.TimeoutMS = cfg.Bootstrap.BrokerApplyTimeoutMS
+			info.CommandConfigured = len(cfg.Bootstrap.BrokerApplyCommand) > 0
+			if info.CommandConfigured {
+				info.Mode = "command"
+			}
+			return info
+		},
 		ApplyDesiredRuntime: func(desired *types.DesiredBrokerRuntime) error { return state.ApplyDesiredRuntime(desired) },
 		Verifier:            verifier,
 		GetBrokerConfig: func() []byte {

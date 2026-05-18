@@ -23,12 +23,19 @@ type Deps struct {
 	WrapAuth            func(http.HandlerFunc) http.HandlerFunc
 	RefreshRendered     func(string) error
 	GetDesiredRuntime   func() (*types.DesiredBrokerRuntime, error)
+	GetRuntimeApplyInfo func() RuntimeApplyInfo
 	ApplyDesiredRuntime func(*types.DesiredBrokerRuntime) error
 	Verifier            *backendverify.Service
 	GetBrokerConfig     func() []byte
 	GetMembersJSON      func() ([]byte, error)
 	GetOfferingsJSON    func() ([]byte, error)
 	GetStateJSON        func() ([]byte, error)
+}
+
+type RuntimeApplyInfo struct {
+	Mode              string `json:"apply_mode,omitempty"`
+	TimeoutMS         int    `json:"apply_timeout_ms,omitempty"`
+	CommandConfigured bool   `json:"apply_command_configured"`
 }
 
 type offerMutationRequest = offerservice.Mutation
@@ -75,6 +82,11 @@ type joinRequestClaimPreview = admissionreview.JoinRequestClaimPreview
 type joinRequestOfferSuggestion = admissionreview.JoinRequestOfferSuggestion
 type joinRequestPreviewView = admissionreview.JoinRequestPreviewView
 type assignmentCandidateView = admissionreview.AssignmentCandidateView
+
+type runtimeView struct {
+	runtimeservice.View
+	RuntimeApplyInfo
+}
 
 func Register(mux *http.ServeMux, deps Deps) {
 	auth := deps.WrapAuth
@@ -588,7 +600,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		applied, _ := deps.Repo.GetAppliedBrokerRuntime()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(desired, applied))
+		_ = json.NewEncoder(w).Encode(buildRuntimeView(desired, applied, deps.GetRuntimeApplyInfo))
 	}))
 	mux.HandleFunc("GET /admin/v1/broker-runtime/diff", auth(func(w http.ResponseWriter, _ *http.Request) {
 		desired, err := deps.GetDesiredRuntime()
@@ -631,7 +643,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(desired, applied))
+		_ = json.NewEncoder(w).Encode(buildRuntimeView(desired, applied, deps.GetRuntimeApplyInfo))
 	}))
 	mux.HandleFunc("POST /admin/v1/broker-runtime/mark-started", auth(func(w http.ResponseWriter, r *http.Request) {
 		desired, err := deps.GetDesiredRuntime()
@@ -656,7 +668,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(desired, applied))
+		_ = json.NewEncoder(w).Encode(buildRuntimeView(desired, applied, deps.GetRuntimeApplyInfo))
 	}))
 	mux.HandleFunc("POST /admin/v1/broker-runtime/mark-failed", auth(func(w http.ResponseWriter, r *http.Request) {
 		desired, err := deps.GetDesiredRuntime()
@@ -687,7 +699,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(desired, applied))
+		_ = json.NewEncoder(w).Encode(buildRuntimeView(desired, applied, deps.GetRuntimeApplyInfo))
 	}))
 	mux.HandleFunc("POST /admin/v1/broker-runtime/apply", auth(func(w http.ResponseWriter, r *http.Request) {
 		desired, err := deps.GetDesiredRuntime()
@@ -740,8 +752,18 @@ func Register(mux *http.ServeMux, deps Deps) {
 		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(currentDesired, applied))
+		_ = json.NewEncoder(w).Encode(buildRuntimeView(currentDesired, applied, deps.GetRuntimeApplyInfo))
 	}))
+}
+
+func buildRuntimeView(desired *types.DesiredBrokerRuntime, applied types.AppliedBrokerRuntime, infoFn func() RuntimeApplyInfo) runtimeView {
+	view := runtimeView{
+		View: runtimeservice.BuildView(desired, applied),
+	}
+	if infoFn != nil {
+		view.RuntimeApplyInfo = infoFn()
+	}
+	return view
 }
 
 func assignmentFromRequest(req assignmentMutationRequest) (types.Assignment, error) {

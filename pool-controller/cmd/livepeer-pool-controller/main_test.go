@@ -1407,7 +1407,7 @@ func TestBrokerRuntimeEndpoints(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":true`) {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":true`) || !strings.Contains(string(body), `"apply_mode":"controller-refresh"`) {
 		t.Fatalf("GET /admin/v1/broker-runtime status=%d body=%s", resp.StatusCode, string(body))
 	}
 

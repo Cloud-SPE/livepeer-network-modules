@@ -2394,6 +2394,111 @@ Acceptance bar:
 3. failed or missing broker acknowledgement is surfaced in API, UI, and audit
    history
 
+#### 22.1.1 Preferred first implementation
+
+The preferred first implementation is:
+
+1. `pool-controller` renders desired broker config
+2. the configured apply command places that config where the broker expects it
+3. the broker exposes a local/private admin reload path
+4. the broker exposes a local/private runtime-status path that reports the
+   loaded revision
+5. `pool-controller` treats apply as successful only when the broker-reported
+   loaded revision matches the desired revision
+
+This is better than treating command exit as truth because it separates:
+
+- config placement
+- broker reload attempt
+- broker-confirmed active revision
+
+#### 22.1.2 Proposed broker contract
+
+The broker should grow a private admin surface with at least:
+
+- `POST /admin/v1/runtime/reload`
+- `GET /admin/v1/runtime`
+
+Suggested `GET /admin/v1/runtime` response:
+
+```json
+{
+  "loaded_revision": "sha256-or-other-stable-revision",
+  "loaded_config_path": "/etc/livepeer/host-config.yaml",
+  "loaded_at": "2026-05-18T12:34:56Z",
+  "last_reload_started_at": "2026-05-18T12:34:54Z",
+  "last_reload_finished_at": "2026-05-18T12:34:56Z",
+  "last_reload_status": "applied",
+  "last_reload_error": ""
+}
+```
+
+Suggested `POST /admin/v1/runtime/reload` behavior:
+
+- re-read the configured `host-config.yaml`
+- validate fully before swapping runtime state
+- compute the loaded revision from the exact loaded config bytes
+- swap atomically on success
+- preserve the previous runtime if reload fails
+- update reload status/error fields regardless of success
+
+#### 22.1.3 Revision definition
+
+The revision used by `pool-controller` and the broker must be the same value
+for the same config bytes.
+
+Preferred first rule:
+
+- `revision = sha256(rendered broker YAML bytes)`
+
+This matches the controller’s current desired-state revision model and avoids
+introducing a second revision source.
+
+#### 22.1.4 Controller apply flow after broker acknowledgement exists
+
+Target controller flow:
+
+1. load current desired runtime revision
+2. run configured broker-apply command to stage config
+3. trigger broker reload
+4. poll or fetch broker runtime status
+5. mark applied only if:
+   - broker reload status is `applied`
+   - broker `loaded_revision == desired_revision`
+6. otherwise record failure with broker error/status context
+
+At that point, `applied_revision` in `pool-controller` should mean:
+
+- broker-confirmed loaded revision
+
+not merely:
+
+- controller-side apply attempt completed
+
+#### 22.1.5 Broker-side implementation notes
+
+The broker docs currently say there is no hot reload and restart is the
+operator path. `M1` therefore requires explicit broker work, not just
+controller work.
+
+That broker work should include:
+
+- loaded runtime revision tracking
+- last reload status/error tracking
+- local/private admin routes only
+- tests for:
+  - valid reload swaps runtime
+  - invalid reload preserves previous runtime
+  - runtime endpoint reports the active loaded revision
+
+#### 22.1.6 Suggested implementation sequence
+
+1. add broker runtime-status struct and loaded revision computation
+2. add broker private admin reload endpoint
+3. add broker runtime-status endpoint
+4. update controller apply command contract to call reload and check runtime
+5. update controller API/UI wording so `applied` means broker-confirmed
+
 ### 22.2 Milestone M2 — operator UX hardening
 
 Current state:

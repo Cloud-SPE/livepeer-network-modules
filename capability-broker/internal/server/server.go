@@ -120,6 +120,8 @@ type Server struct {
 	loadedConfigPath     string
 	loadedRevision       string
 	adminToken           string
+	runCtx               context.Context
+	healthCancel         context.CancelFunc
 	loadedAt             time.Time
 	lastReloadStartedAt  time.Time
 	lastReloadFinishedAt time.Time
@@ -585,9 +587,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.sessDriver != nil {
 		go s.sessDriver.RunReconnectWatchdog(ctx)
 	}
-	if s.health != nil {
-		go s.health.Run(ctx)
-	}
+	s.attachRunContext(ctx)
 	if s.metadata != nil {
 		go s.runMetadataRefresh(ctx, s.metadataRefreshInterval())
 	}
@@ -607,6 +607,29 @@ func (s *Server) Run(ctx context.Context) error {
 		_ = s.metricsSrv.Close()
 		return err
 	}
+}
+
+func (s *Server) attachRunContext(ctx context.Context) {
+	s.mu.Lock()
+	s.runCtx = ctx
+	healthMgr := s.health
+	s.mu.Unlock()
+	s.startHealthLoop(healthMgr)
+}
+
+func (s *Server) startHealthLoop(healthMgr *health.Manager) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.healthCancel != nil {
+		s.healthCancel()
+		s.healthCancel = nil
+	}
+	if s.runCtx == nil || healthMgr == nil {
+		return
+	}
+	childCtx, cancel := context.WithCancel(s.runCtx)
+	s.healthCancel = cancel
+	go healthMgr.Run(childCtx)
 }
 
 func (s *Server) metadataRefreshInterval() time.Duration {
@@ -631,7 +654,12 @@ func (s *Server) runMetadataRefresh(ctx context.Context, interval time.Duration)
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			refreshMetadataCatalog(ctx, client, s.cfg, s.metadata)
+			cfg := s.currentConfig()
+			metadata := s.currentMetadata()
+			if cfg == nil || metadata == nil {
+				continue
+			}
+			refreshMetadataCatalog(ctx, client, cfg, metadata)
 		}
 	}
 }

@@ -122,16 +122,21 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 	}
 	metadata := newMetadataCatalog()
 	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
-	healthMgr := health.New(cfg)
 	if err := validateConfigAgainstRegistries(cfg, s.modes, s.extractors); err != nil {
 		s.finishReload(startedAt, "failed", err.Error(), "", nil, nil)
 		return s.runtimeStatus(), err
 	}
+	var previousSnapshots []health.Snapshot
+	if previous := s.currentHealth(); previous != nil {
+		previousSnapshots = previous.Snapshot().Capabilities
+	}
+	healthMgr := health.NewWithSnapshots(cfg, previousSnapshots)
 	s.finishReload(startedAt, "applied", "", loadedRevision, cfg, healthMgr)
 	s.mu.Lock()
 	s.loadedConfigPath = loadedConfigPath
 	s.metadata = metadata
 	s.mu.Unlock()
+	s.startHealthLoop(healthMgr)
 	return s.runtimeStatus(), nil
 }
 

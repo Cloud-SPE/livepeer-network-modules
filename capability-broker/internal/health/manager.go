@@ -68,6 +68,14 @@ type Manager struct {
 }
 
 func New(cfg *config.Config) *Manager {
+	return NewWithSnapshots(cfg, nil)
+}
+
+func NewWithSnapshots(cfg *config.Config, previous []Snapshot) *Manager {
+	previousByKey := make(map[string]Snapshot, len(previous))
+	for _, snap := range previous {
+		previousByKey[snapshotKey(snap.ID, snap.OfferingID, snap.BackendID)] = snap
+	}
 	states := make([]*state, 0, len(cfg.Capabilities))
 	for _, cap := range cfg.Capabilities {
 		initial := Status(cap.Health.InitialStatus)
@@ -77,11 +85,29 @@ func New(cfg *config.Config) *Manager {
 		if cap.Health.Drain.Enabled || cap.Health.Probe.Type == "manual-drain" {
 			initial = StatusDraining
 		}
-		states = append(states, &state{
+		st := &state{
 			cap:    cap,
 			status: initial,
 			reason: initialReason(cap, initial),
-		})
+		}
+		if prev, ok := previousByKey[snapshotKey(cap.ID, cap.OfferingID, backendID(cap))]; ok && prev.ProbeType == cap.Health.Probe.Type {
+			st.status = prev.Status
+			if prev.Reason != "" {
+				st.reason = prev.Reason
+			}
+			st.probedAt = prev.ProbedAt
+			st.staleAfter = prev.StaleAfter
+			st.consecutiveSuccesses = prev.ConsecutiveSuccesses
+			st.consecutiveFailures = prev.ConsecutiveFailures
+			if st.reason == "" {
+				st.reason = initialReason(cap, st.status)
+			}
+		}
+		if cap.Health.Drain.Enabled || cap.Health.Probe.Type == "manual-drain" {
+			st.status = StatusDraining
+			st.reason = initialReason(cap, StatusDraining)
+		}
+		states = append(states, st)
 	}
 	return &Manager{
 		states: states,
@@ -454,6 +480,10 @@ func boundedReason(reason, fallback string) string {
 		return fallback
 	}
 	return reason
+}
+
+func snapshotKey(capabilityID, offeringID, backendID string) string {
+	return capabilityID + "|" + offeringID + "|" + backendID
 }
 
 func max(a, b int) int {

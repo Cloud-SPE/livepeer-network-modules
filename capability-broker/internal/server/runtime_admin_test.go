@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
 )
 
 func TestRuntimeStatusAndReload(t *testing.T) {
@@ -143,5 +144,88 @@ capabilities:
 	srv.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /admin/v1/runtime without auth status=%d, want 401", rec.Code)
+	}
+}
+
+func TestRuntimeReloadPreservesHealthSnapshotState(t *testing.T) {
+	if err := os.Setenv("BROKER_ADMIN_TOKEN", "secret-token"); err != nil {
+		t.Fatalf("Setenv() error = %v", err)
+	}
+	defer os.Unsetenv("BROKER_ADMIN_TOKEN")
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "host-config.yaml")
+	raw := `
+identity:
+  orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
+admin_auth:
+  method: bearer
+  secret_ref: env://BROKER_ADMIN_TOKEN
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+payment_daemon:
+  mock: true
+capabilities:
+  - id: rerank
+    offering_id: shared
+    interaction_mode: http-reqresp@v0
+    work_unit:
+      name: requests
+      extractor:
+        type: request-formula
+        expression: "1"
+    health:
+      probe:
+        type: http-status
+        interval_ms: 5000
+        timeout_ms: 1500
+        unhealthy_after: 1
+        healthy_after: 1
+        config:
+          url: http://backend-a/healthz
+    price:
+      amount_wei: "1"
+      per_units: 1
+    backend:
+      id: backend-a
+      transport: http
+      url: http://backend-a
+`
+	if err := os.WriteFile(configPath, []byte(raw), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load() error = %v", err)
+	}
+	srv, err := New(cfg, Options{ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	srv.health = health.NewWithSnapshots(cfg, []health.Snapshot{{
+		ID:                   "rerank",
+		OfferingID:           "shared",
+		BackendID:            "backend-a",
+		Status:               health.StatusReady,
+		Reason:               "probe_ok",
+		ProbeType:            "http-status",
+		ConsecutiveSuccesses: 4,
+	}})
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/runtime/reload", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	body, _ := io.ReadAll(rec.Result().Body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /admin/v1/runtime/reload status=%d body=%s", rec.Code, string(body))
+	}
+
+	snap := srv.currentHealth().Snapshot()
+	if len(snap.Capabilities) != 1 {
+		t.Fatalf("capability count = %d, want 1", len(snap.Capabilities))
+	}
+	if snap.Capabilities[0].Status != health.StatusReady || snap.Capabilities[0].ConsecutiveSuccesses != 4 {
+		t.Fatalf("health snapshot = %#v", snap.Capabilities[0])
 	}
 }

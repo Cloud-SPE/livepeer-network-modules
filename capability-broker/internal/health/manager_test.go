@@ -73,3 +73,45 @@ func TestManagerManualDrainStaysDraining(t *testing.T) {
 		t.Fatalf("status = %q, want %q", got, StatusDraining)
 	}
 }
+
+func TestManagerRestoresSnapshotsForMatchingCapabilities(t *testing.T) {
+	cfg := &config.Config{
+		Capabilities: []config.Capability{{
+			ID:         "rerank",
+			OfferingID: "shared",
+			Backend: config.Backend{
+				ID:  "backend-a",
+				URL: "http://backend-a",
+			},
+			Health: config.Health{
+				Probe: config.HealthProbe{
+					Type: "http-status",
+				},
+			},
+		}},
+	}
+
+	mgr := NewWithSnapshots(cfg, []Snapshot{{
+		ID:                   "rerank",
+		OfferingID:           "shared",
+		BackendID:            "backend-a",
+		Status:               StatusReady,
+		Reason:               "probe_ok",
+		ProbeType:            "http-status",
+		ConsecutiveSuccesses: 3,
+	}})
+
+	snap := mgr.Snapshot()
+	if len(snap.Capabilities) != 1 {
+		t.Fatalf("capability count = %d, want 1", len(snap.Capabilities))
+	}
+	if got := snap.Capabilities[0].Status; got != StatusReady {
+		t.Fatalf("status = %q, want %q", got, StatusReady)
+	}
+	if got := snap.Capabilities[0].ConsecutiveSuccesses; got != 3 {
+		t.Fatalf("consecutive successes = %d, want 3", got)
+	}
+	if got := snap.Capabilities[0].Reason; got != "probe_ok" {
+		t.Fatalf("reason = %q, want probe_ok", got)
+	}
+}

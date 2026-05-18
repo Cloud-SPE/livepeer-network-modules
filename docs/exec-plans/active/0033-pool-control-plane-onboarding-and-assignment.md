@@ -2424,6 +2424,7 @@ Suggested `GET /admin/v1/runtime` response:
 ```json
 {
   "loaded_revision": "sha256-or-other-stable-revision",
+  "last_reload_attempt_id": "reload-1716035696000000000",
   "loaded_config_path": "/etc/livepeer/host-config.yaml",
   "loaded_at": "2026-05-18T12:34:56Z",
   "last_reload_started_at": "2026-05-18T12:34:54Z",
@@ -2437,6 +2438,7 @@ Suggested `POST /admin/v1/runtime/reload` behavior:
 
 - re-read the configured `host-config.yaml`
 - validate fully before swapping runtime state
+- create a fresh reload `attempt_id`
 - compute the loaded revision from the exact loaded config bytes
 - swap atomically on success
 - preserve the previous runtime if reload fails
@@ -2463,6 +2465,7 @@ Target controller flow:
 3. trigger broker reload
 4. poll or fetch broker runtime status
 5. mark applied only if:
+   - broker `last_reload_attempt_id` matches the triggered attempt
    - broker reload status is `applied`
    - broker `loaded_revision == desired_revision`
 6. otherwise record failure with broker error/status context
@@ -2474,6 +2477,14 @@ At that point, `applied_revision` in `pool-controller` should mean:
 not merely:
 
 - controller-side apply attempt completed
+
+Manual runtime endpoints may remain in the admin API for debugging and
+break-glass workflows, but they are not the normal production operator path
+once broker admin reload is configured. The normal path is:
+
+1. `POST /admin/v1/broker-runtime/apply`
+2. broker reload attempt
+3. broker-confirmed attempt/status/revision correlation
 
 #### 22.1.5 Broker-side implementation notes
 

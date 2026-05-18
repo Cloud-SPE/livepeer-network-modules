@@ -187,6 +187,9 @@ Broker runtime apply contract:
 
 - `POST /admin/v1/broker-runtime/apply` is now the primary operator action for
   runtime convergence.
+- `GET /admin/v1/broker-runtime` and `GET /admin/v1/broker-runtime/history`
+  are the primary read surfaces for current convergence state and recent apply
+  attempts.
 - When `bootstrap.broker_apply_command` is configured, `pool-controller`
   writes the desired broker config to a temp file, executes that command, then
   re-renders desired state and refuses to mark success if the desired revision
@@ -196,6 +199,17 @@ Broker runtime apply contract:
   - `GET`s `/admin/v1/runtime`
   - requires the broker-reported `loaded_revision` to match the controller's
     desired revision before apply is considered successful
+  - requires the broker-reported `last_reload_attempt_id` to match the reload
+    attempt triggered by `pool-controller`
+- `capability-broker` now exposes broker-local reload history on
+  `GET /admin/v1/runtime`, and `pool-controller` mirrors controller-side apply
+  history on `GET /admin/v1/broker-runtime/history`.
+- Manual runtime endpoints remain available only as fallback/debug controls:
+  - `POST /admin/v1/broker-runtime/mark-started`
+  - `POST /admin/v1/broker-runtime/mark-failed`
+  - `POST /admin/v1/broker-runtime/mark-applied`
+  They are not the normal production operator path when broker admin reload is
+  configured.
 - The apply command receives:
   - `POOL_CONTROLLER_CONFIG_PATH`
   - `POOL_CONTROLLER_BROKER_CONFIG_PATH`

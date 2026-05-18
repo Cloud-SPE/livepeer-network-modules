@@ -53,6 +53,10 @@ Broker runtime admin surface:
   without requiring a broker restart.
 - `GET /admin/v1/runtime` now includes a bounded recent reload history so
   operator tooling can inspect the latest broker-local attempts directly.
+- Each reload attempt is stamped with a broker-local `attempt_id`; controller
+  apply confirmation now checks both that `loaded_revision` matches the desired
+  revision and that the broker reports the same reload attempt it just
+  triggered.
 
 When `pool_snapshot.url` is configured, the broker also polls
 `pool-controller`'s backend-selection snapshot and exposes per-backend snapshot

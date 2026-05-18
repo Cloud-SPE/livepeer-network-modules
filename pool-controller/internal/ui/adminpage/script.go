@@ -223,14 +223,22 @@ const pageScript = `
           const claimDiv = document.createElement("div");
           claimDiv.className = "check";
           const claimReasons = (claim.reasons || []).length ? claim.reasons.join("; ") : "";
+          const draftButton = (claim.active_offer_ids || []).length > 0
+            ? '<div class="row"><button data-join-draft="' + (item.backend_id || "") + '|' + claim.active_offer_ids[0] + '" class="secondary">Use First Active Offer In Assignment Draft</button></div>'
+            : "";
           claimDiv.innerHTML =
             '<strong class="' + (claim.servable ? "ok" : "warn") + '">claim</strong>' +
             '<div class="small">' + [claim.capability_id || "", claim.offering_id || "", claim.interaction_mode || ""].filter(Boolean).join(" / ") + '</div>' +
             '<div class="small">matching_offers=' + ((claim.matching_offer_ids || []).join(", ") || "none") + '</div>' +
             '<div class="small">active_offers=' + ((claim.active_offer_ids || []).join(", ") || "none") + '</div>' +
+            draftButton +
             (claimReasons ? '<div class="small">' + claimReasons + '</div>' : '');
           host.appendChild(claimDiv);
         });
+      });
+      host.querySelectorAll("[data-join-draft]").forEach(btn => btn.onclick = () => {
+        const parts = btn.dataset.joinDraft.split("|");
+        seedAssignmentDraft(parts[0] || "", parts[1] || "");
       });
       if ((preview.reasons || []).length) {
         const div = document.createElement("div");
@@ -313,6 +321,25 @@ const pageScript = `
       syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
       void refreshAssignmentDraftState();
       setStatus("Offer " + offerID + " promoted into assignment draft.", "ok");
+    }
+
+    function seedAssignmentDraft(backendID, offerID) {
+      if (backendID) {
+        $("assignmentBackendId").value = backendID;
+        $("assignmentBackendSelect").value = backendID;
+      }
+      if (offerID) {
+        $("assignmentOfferId").value = offerID;
+        $("assignmentOfferSelect").value = offerID;
+      }
+      if (backendID && offerID) {
+        $("assignmentId").value = "assign-" + backendID + "-" + offerID;
+      } else if (backendID && (!$("assignmentId").value.trim() || $("assignmentId").value.trim() === "assign-sample")) {
+        $("assignmentId").value = "assign-" + backendID;
+      }
+      syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
+      void refreshAssignmentDraftState();
+      setStatus("Assignment draft seeded from join review.", "ok");
     }
 
     async function refreshAll() {

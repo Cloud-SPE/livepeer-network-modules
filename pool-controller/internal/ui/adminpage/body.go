@@ -171,6 +171,7 @@ const pageBody = `<body>
         <label>Review Reason
           <input id="joinReviewReason" placeholder="Optional reason for approval or rejection">
         </label>
+        <div id="joinPreviewDetails" class="check-list"></div>
         <div id="joinRequests" class="card-list"></div>
       </div>
       <div class="panel">

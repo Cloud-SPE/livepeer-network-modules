@@ -85,6 +85,29 @@ type assignmentPreviewView struct {
 	MemberStatus       string               `json:"member_status,omitempty"`
 }
 
+type joinRequestPreviewRequest struct {
+	JoinRequestID string `json:"join_request_id"`
+}
+
+type joinRequestBackendPreview struct {
+	BackendID          string                   `json:"backend_id"`
+	Transport          string                   `json:"transport,omitempty"`
+	URL                string                   `json:"url,omitempty"`
+	VerificationStatus types.VerificationStatus `json:"verification_status,omitempty"`
+	VerificationError  string                   `json:"verification_error,omitempty"`
+	ClaimCount         int                      `json:"claim_count"`
+	Approavable        bool                     `json:"approvable"`
+	Reasons            []string                 `json:"reasons,omitempty"`
+}
+
+type joinRequestPreviewView struct {
+	JoinRequestID   string                      `json:"join_request_id"`
+	Status          types.JoinRequestStatus     `json:"status"`
+	Approavable     bool                        `json:"approvable"`
+	BackendPreviews []joinRequestBackendPreview `json:"backend_previews"`
+	Reasons         []string                    `json:"reasons,omitempty"`
+}
+
 func Register(mux *http.ServeMux, deps Deps) {
 	auth := deps.WrapAuth
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, _ *http.Request) {
@@ -224,6 +247,22 @@ func Register(mux *http.ServeMux, deps Deps) {
 			JoinRequests []types.JoinRequest `json:"join_requests"`
 		}{JoinRequests: items})
 	}))
+	mux.HandleFunc("POST /admin/v1/join-request-preview", auth(func(w http.ResponseWriter, r *http.Request) {
+		var req joinRequestPreviewRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		item, err := deps.Repo.GetJoinRequest(strings.TrimSpace(req.JoinRequestID))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		view := previewJoinRequest(item)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(view)
+	}))
 	mux.HandleFunc("POST /admin/v1/join-requests/", auth(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/admin/v1/join-requests/")
 		parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -260,6 +299,11 @@ func Register(mux *http.ServeMux, deps Deps) {
 				},
 			})
 		case "approve":
+			preview := previewJoinRequest(item)
+			if !preview.Approavable {
+				http.Error(w, strings.Join(preview.Reasons, "; "), http.StatusBadRequest)
+				return
+			}
 			member, backends := memberAndBackendsFromJoinRequest(item, time.Now().UTC())
 			if err := deps.Repo.PutMember(member); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -983,6 +1027,69 @@ func assignmentFromRequest(req assignmentMutationRequest) (types.Assignment, err
 		Status:          status,
 		Notes:           req.Notes,
 	}, nil
+}
+
+func previewJoinRequest(item types.JoinRequest) joinRequestPreviewView {
+	view := joinRequestPreviewView{
+		JoinRequestID:   item.ID,
+		Status:          item.Status,
+		Approavable:     true,
+		BackendPreviews: make([]joinRequestBackendPreview, 0, len(item.RequestedBackends)),
+	}
+	if item.Status != types.JoinRequestPending {
+		view.Approavable = false
+		view.Reasons = append(view.Reasons, "join request must be pending for approval")
+	}
+	if strings.TrimSpace(item.MemberEthAddress) == "" {
+		view.Approavable = false
+		view.Reasons = append(view.Reasons, "member_eth_address is required")
+	}
+	if len(item.RequestedBackends) == 0 {
+		view.Approavable = false
+		view.Reasons = append(view.Reasons, "requested_backends must contain at least one backend")
+	}
+	for _, backend := range item.RequestedBackends {
+		backendView := joinRequestBackendPreview{
+			BackendID:          backend.ID,
+			Transport:          backend.Transport,
+			URL:                backend.URL,
+			VerificationStatus: backend.VerificationStatus,
+			VerificationError:  backend.VerificationError,
+			ClaimCount:         len(backend.ClaimedCapabilities),
+			Approavable:        true,
+		}
+		if strings.TrimSpace(backend.ID) == "" {
+			backendView.Approavable = false
+			backendView.Reasons = append(backendView.Reasons, "backend id is required")
+		}
+		if strings.TrimSpace(backend.Transport) == "" {
+			backendView.Approavable = false
+			backendView.Reasons = append(backendView.Reasons, "backend transport is required")
+		}
+		if strings.TrimSpace(backend.URL) == "" {
+			backendView.Approavable = false
+			backendView.Reasons = append(backendView.Reasons, "backend url is required")
+		}
+		if backend.VerificationStatus != types.VerificationPassing {
+			backendView.Approavable = false
+			backendView.Reasons = append(backendView.Reasons, "backend verification must be passing")
+		}
+		if len(backend.ClaimedCapabilities) == 0 {
+			backendView.Approavable = false
+			backendView.Reasons = append(backendView.Reasons, "backend must claim at least one capability")
+		}
+		if !backendView.Approavable {
+			view.Approavable = false
+			if len(backendView.Reasons) > 0 {
+				view.Reasons = append(view.Reasons, backend.ID+": "+strings.Join(backendView.Reasons, "; "))
+			}
+		}
+		view.BackendPreviews = append(view.BackendPreviews, backendView)
+	}
+	if !view.Approavable && len(view.Reasons) == 0 {
+		view.Reasons = append(view.Reasons, "one or more requested backends are not approvable")
+	}
+	return view
 }
 
 func memberAndBackendsFromJoinRequest(req types.JoinRequest, now time.Time) (types.MemberRecord, []types.MemberBackend) {

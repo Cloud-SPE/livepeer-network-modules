@@ -1177,6 +1177,11 @@ func TestAdminAssignmentRejectsIncompatibleBackend(t *testing.T) {
 }
 
 func TestJoinRequestApprovalAndStatusMutations(t *testing.T) {
+	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer probe.Close()
+
 	dir := t.TempDir()
 	dataDir := filepath.Join(dir, "data")
 	configPath := filepath.Join(dir, "config.yaml")
@@ -1212,9 +1217,9 @@ func TestJoinRequestApprovalAndStatusMutations(t *testing.T) {
 	    {
 	      "id":"backend-join-1",
 	      "transport":"http",
-	      "url":"http://backend",
+	      "url":"` + probe.URL + `/v1/rerank",
 	      "auth":{"method":"none"},
-	      "health_probe":{"type":"http-status","config":{"url":"http://backend/healthz"}},
+	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
 	      "claimed_capabilities":[
 	        {"capability_id":"rerank","offering_id":"zerank-2-default","interaction_mode":"http-reqresp@v0"}
 	      ]
@@ -1241,14 +1246,54 @@ func TestJoinRequestApprovalAndStatusMutations(t *testing.T) {
 		t.Fatalf("GET /admin/v1/join-requests body=%s", string(body))
 	}
 
+	resp, err = http.Post(server.URL+"/admin/v1/join-request-preview", "application/json", bytes.NewBufferString(`{"join_request_id":"join-1"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-request-preview error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"approvable":false`) {
+		t.Fatalf("preview before refresh status=%d body=%s", resp.StatusCode, string(body))
+	}
+
 	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-1/approve", "application/json", bytes.NewBufferString(`{}`))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/join-requests/join-1/approve error = %v", err)
 	}
 	body, _ = io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "backend verification must be passing") {
+		t.Fatalf("approve before refresh status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-1/refresh", "application/json", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-requests/join-1/refresh error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"verification_status":"passing"`) {
+		t.Fatalf("refresh join-request status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/join-request-preview", "application/json", bytes.NewBufferString(`{"join_request_id":"join-1"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-request-preview after refresh error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"approvable":true`) {
+		t.Fatalf("preview after refresh status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-1/approve", "application/json", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-requests/join-1/approve after refresh error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"status":"approved"`) {
-		t.Fatalf("approve status=%d body=%s", resp.StatusCode, string(body))
+		t.Fatalf("approve after refresh status=%d body=%s", resp.StatusCode, string(body))
 	}
 
 	resp, err = http.Get(server.URL + "/admin/v1/members")
@@ -1444,6 +1489,16 @@ func TestJoinRequestVerificationAndBackendVerificationFlow(t *testing.T) {
 		t.Fatalf("refresh join-request status=%d body=%s", resp.StatusCode, string(body))
 	}
 
+	resp, err = http.Post(server.URL+"/admin/v1/join-request-preview", "application/json", bytes.NewBufferString(`{"join_request_id":"join-verify"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-request-preview error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"approvable":true`) {
+		t.Fatalf("join-request preview status=%d body=%s", resp.StatusCode, string(body))
+	}
+
 	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-verify/approve", "application/json", bytes.NewBufferString(`{}`))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/join-requests/join-verify/approve error = %v", err)
@@ -1551,6 +1606,16 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"verification_status":"passing"`) {
 		t.Fatalf("refresh join-flow status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/join-request-preview", "application/json", bytes.NewBufferString(`{"join_request_id":"join-flow"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-request-preview error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"approvable":true`) {
+		t.Fatalf("join-flow preview status=%d body=%s", resp.StatusCode, string(body))
 	}
 
 	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-flow/approve", "application/json", bytes.NewBufferString(`{}`))

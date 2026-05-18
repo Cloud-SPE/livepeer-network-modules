@@ -10,6 +10,7 @@ const pageScript = `
     let latestOffers = [];
     let latestBackends = [];
     let latestAssignmentPreview = null;
+    let latestJoinPreview = null;
 
     function auditQuery() {
       const params = new URLSearchParams();
@@ -197,6 +198,38 @@ const pageScript = `
       }
     }
 
+    function renderJoinPreview(preview) {
+      const host = $("joinPreviewDetails");
+      host.innerHTML = "";
+      latestJoinPreview = preview;
+      if (!preview) return;
+      const summary = document.createElement("div");
+      summary.className = "check";
+      summary.innerHTML =
+        '<strong class="' + (preview.approavable ? "ok" : "bad") + '">join_request</strong>' +
+        '<div class="small">id=' + (preview.join_request_id || "") + ', status=' + (preview.status || "") + ', approvable=' + String(!!preview.approavable) + '</div>';
+      host.appendChild(summary);
+      (preview.backend_previews || []).forEach(item => {
+        const div = document.createElement("div");
+        div.className = "check";
+        const reasons = (item.reasons || []).length ? item.reasons.join("; ") : "";
+        div.innerHTML =
+          '<strong class="' + (item.approavable ? "ok" : "bad") + '">' + (item.backend_id || "backend") + '</strong>' +
+          '<div class="small">' + [item.transport, item.url, item.verification_status, "claims=" + String(item.claim_count || 0)].filter(Boolean).join(" | ") + '</div>' +
+          (item.verification_error ? '<div class="small">' + item.verification_error + '</div>' : '') +
+          (reasons ? '<div class="small">' + reasons + '</div>' : '');
+        host.appendChild(div);
+      });
+      if ((preview.reasons || []).length) {
+        const div = document.createElement("div");
+        div.className = "check";
+        div.innerHTML =
+          '<strong class="warn">reasons</strong>' +
+          '<div class="small">' + preview.reasons.join("; ") + '</div>';
+        host.appendChild(div);
+      }
+    }
+
     function selectedOffer() {
       return latestOffers.find(item => item.id === $("assignmentOfferId").value.trim()) || null;
     }
@@ -339,6 +372,7 @@ const pageScript = `
           '<div class="small">backends: ' + (item.requested_backends || []).length + '</div>' +
           ((item.requested_backends || []).map(b => '<div class="small">backend ' + b.id + ': ' + (b.verification_status || "unknown") + (b.verification_error ? " (" + b.verification_error + ")" : "") + '</div>').join("")) +
           '<div class="row">' +
+            '<button data-preview-join="' + item.id + '" class="secondary">Preview</button>' +
             '<button data-refresh-join="' + item.id + '" class="secondary">Refresh Verification</button>' +
             '<button data-approve="' + item.id + '">Approve With Reason</button>' +
             '<button data-reject="' + item.id + '" class="secondary">Reject</button>' +
@@ -346,6 +380,7 @@ const pageScript = `
         );
         host.appendChild(el);
       });
+      host.querySelectorAll("[data-preview-join]").forEach(btn => btn.onclick = () => previewJoin(btn.dataset.previewJoin));
       host.querySelectorAll("[data-refresh-join]").forEach(btn => btn.onclick = () => refreshJoin(btn.dataset.refreshJoin));
       host.querySelectorAll("[data-approve]").forEach(btn => btn.onclick = () => reviewJoin(btn.dataset.approve, "approve"));
       host.querySelectorAll("[data-reject]").forEach(btn => btn.onclick = () => reviewJoin(btn.dataset.reject, "reject"));
@@ -466,9 +501,34 @@ const pageScript = `
     async function reviewJoin(id, action) {
       try {
         setStatus("Submitting join-request review...");
+        if (action === "approve") {
+          const preview = await api("/admin/v1/join-request-preview", {
+            method: "POST",
+            body: JSON.stringify({ join_request_id: id })
+          });
+          renderJoinPreview(preview);
+          if (!preview.approavable) {
+            throw new Error((preview.reasons || []).join("; ") || "join request is not approvable");
+          }
+        }
         const payload = JSON.stringify({ reason: $("joinReviewReason").value.trim() });
         await submitJSON("/admin/v1/join-requests/" + id + "/" + action, payload);
       } catch (err) {
+        setStatus(err.message, "bad");
+      }
+    }
+
+    async function previewJoin(id) {
+      try {
+        setStatus("Previewing join request...");
+        const preview = await api("/admin/v1/join-request-preview", {
+          method: "POST",
+          body: JSON.stringify({ join_request_id: id })
+        });
+        renderJoinPreview(preview);
+        setStatus("Join-request preview refreshed.", preview.approavable ? "ok" : "bad");
+      } catch (err) {
+        renderJoinPreview(null);
         setStatus(err.message, "bad");
       }
     }

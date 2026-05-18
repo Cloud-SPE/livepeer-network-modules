@@ -803,6 +803,14 @@ const pageScript = `
         setStatus(err.message, "bad");
       }
     };
+    $("applyRuntime").onclick = async () => {
+      try {
+        setStatus("Applying desired runtime...");
+        await submitJSON("/admin/v1/broker-runtime/apply", "{}");
+      } catch (err) {
+        setStatus(err.message, "bad");
+      }
+    };
     $("markApplied").onclick = async () => {
       try {
         setStatus("Marking desired revision applied...");

@@ -1421,14 +1421,14 @@ func TestBrokerRuntimeEndpoints(t *testing.T) {
 		t.Fatalf("GET /admin/v1/broker-runtime/diff status=%d body=%s", resp.StatusCode, string(body))
 	}
 
-	resp, err = http.Post(server.URL+"/admin/v1/broker-runtime/mark-applied", "application/json", bytes.NewBufferString(`{"actor":"tester"}`))
+	resp, err = http.Post(server.URL+"/admin/v1/broker-runtime/apply", "application/json", bytes.NewBufferString(`{"actor":"tester"}`))
 	if err != nil {
-		t.Fatalf("POST /admin/v1/broker-runtime/mark-applied error = %v", err)
+		t.Fatalf("POST /admin/v1/broker-runtime/apply error = %v", err)
 	}
 	body, _ = io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":false`) || !strings.Contains(string(body), `"last_apply_status":"applied"`) {
-		t.Fatalf("POST /admin/v1/broker-runtime/mark-applied status=%d body=%s", resp.StatusCode, string(body))
+		t.Fatalf("POST /admin/v1/broker-runtime/apply status=%d body=%s", resp.StatusCode, string(body))
 	}
 
 	applied, err := stateRepo.GetAppliedBrokerRuntime()
@@ -1698,14 +1698,14 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 		t.Fatalf("GET /admin/v1/broker-runtime dirty status=%d body=%s", resp.StatusCode, string(body))
 	}
 
-	resp, err = http.Post(server.URL+"/admin/v1/broker-runtime/mark-applied", "application/json", bytes.NewBufferString(`{}`))
+	resp, err = http.Post(server.URL+"/admin/v1/broker-runtime/apply", "application/json", bytes.NewBufferString(`{}`))
 	if err != nil {
-		t.Fatalf("POST /admin/v1/broker-runtime/mark-applied error = %v", err)
+		t.Fatalf("POST /admin/v1/broker-runtime/apply error = %v", err)
 	}
 	body, _ = io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":false`) || !strings.Contains(string(body), `"last_apply_status":"applied"`) {
-		t.Fatalf("mark-applied status=%d body=%s", resp.StatusCode, string(body))
+		t.Fatalf("apply status=%d body=%s", resp.StatusCode, string(body))
 	}
 }
 

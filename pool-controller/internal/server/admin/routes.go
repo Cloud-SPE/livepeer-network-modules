@@ -19,15 +19,16 @@ import (
 )
 
 type Deps struct {
-	Repo              *repo.StateRepo
-	WrapAuth          func(http.HandlerFunc) http.HandlerFunc
-	RefreshRendered   func(string) error
-	GetDesiredRuntime func() (*types.DesiredBrokerRuntime, error)
-	Verifier          *backendverify.Service
-	GetBrokerConfig   func() []byte
-	GetMembersJSON    func() ([]byte, error)
-	GetOfferingsJSON  func() ([]byte, error)
-	GetStateJSON      func() ([]byte, error)
+	Repo                *repo.StateRepo
+	WrapAuth            func(http.HandlerFunc) http.HandlerFunc
+	RefreshRendered     func(string) error
+	GetDesiredRuntime   func() (*types.DesiredBrokerRuntime, error)
+	ApplyDesiredRuntime func(*types.DesiredBrokerRuntime) error
+	Verifier            *backendverify.Service
+	GetBrokerConfig     func() []byte
+	GetMembersJSON      func() ([]byte, error)
+	GetOfferingsJSON    func() ([]byte, error)
+	GetStateJSON        func() ([]byte, error)
 }
 
 type offerMutationRequest = offerservice.Mutation
@@ -682,6 +683,53 @@ func Register(mux *http.ServeMux, deps Deps) {
 			ResourceType: "broker_runtime",
 			Details: map[string]any{
 				"error": applied.LastApplyError,
+			},
+		})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(desired, applied))
+	}))
+	mux.HandleFunc("POST /admin/v1/broker-runtime/apply", auth(func(w http.ResponseWriter, r *http.Request) {
+		desired, err := deps.GetDesiredRuntime()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var req brokerRuntimeMarkAppliedRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		now := time.Now().UTC()
+		applied, status, err := runtimeservice.Apply(deps.Repo, desired, runtimeservice.MarkRequest{
+			Revision: req.Revision,
+			Actor:    req.Actor,
+			Error:    req.Error,
+		}, now, deps.ApplyDesiredRuntime)
+		if status == "failed" {
+			_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+				Kind:         "broker_runtime_apply_failed",
+				OccurredAt:   now,
+				Actor:        req.Actor,
+				ResourceID:   desired.Revision,
+				ResourceType: "broker_runtime",
+				Details: map[string]any{
+					"error": applied.LastApplyError,
+				},
+			})
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+			Kind:         "broker_runtime_apply_succeeded",
+			OccurredAt:   now,
+			Actor:        req.Actor,
+			ResourceID:   applied.AppliedRevision,
+			ResourceType: "broker_runtime",
+			Details: map[string]any{
+				"desired_revision": desired.Revision,
+				"applied_revision": applied.AppliedRevision,
 			},
 		})
 		w.Header().Set("Content-Type", "application/json")

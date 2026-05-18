@@ -107,6 +107,26 @@ func MarkFailed(stateRepo *repo.StateRepo, desired *types.DesiredBrokerRuntime, 
 	return applied, nil
 }
 
+func Apply(stateRepo *repo.StateRepo, desired *types.DesiredBrokerRuntime, req MarkRequest, now time.Time, applyFn func(*types.DesiredBrokerRuntime) error) (types.AppliedBrokerRuntime, string, error) {
+	if _, err := MarkStarted(stateRepo, desired, now); err != nil {
+		return types.AppliedBrokerRuntime{}, "started", err
+	}
+	if applyFn != nil {
+		if err := applyFn(desired); err != nil {
+			failed, failedErr := MarkFailed(stateRepo, desired, MarkRequest{Actor: req.Actor, Error: err.Error()}, now)
+			if failedErr != nil {
+				return failed, "failed", failedErr
+			}
+			return failed, "failed", fmt.Errorf("apply failed: %w", err)
+		}
+	}
+	applied, err := MarkApplied(stateRepo, desired, req, now)
+	if err != nil {
+		return types.AppliedBrokerRuntime{}, "applied", err
+	}
+	return applied, "applied", nil
+}
+
 func revisionOf(desired *types.DesiredBrokerRuntime) string {
 	if desired == nil {
 		return ""

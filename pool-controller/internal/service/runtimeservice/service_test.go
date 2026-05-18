@@ -1,6 +1,7 @@
 package runtimeservice
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -49,5 +50,47 @@ func TestRuntimeTransitionsAndView(t *testing.T) {
 	diff := BuildDiff(desired, applied)
 	if diff["dirty"] != false {
 		t.Fatalf("BuildDiff() diff=%#v", diff)
+	}
+}
+
+func TestApplyMarksStartedAndApplied(t *testing.T) {
+	stateRepo, err := repo.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+
+	desired := &types.DesiredBrokerRuntime{Revision: "rev-2"}
+	now := time.Now().UTC()
+	called := false
+	applied, status, err := Apply(stateRepo, desired, MarkRequest{Actor: "tester"}, now, func(runtime *types.DesiredBrokerRuntime) error {
+		called = true
+		if runtime == nil || runtime.Revision != "rev-2" {
+			t.Fatalf("applyFn runtime=%#v", runtime)
+		}
+		return nil
+	})
+	if err != nil || status != "applied" || applied.AppliedRevision != "rev-2" || applied.LastApplyStatus != "applied" {
+		t.Fatalf("Apply() applied=%#v status=%q err=%v", applied, status, err)
+	}
+	if !called {
+		t.Fatalf("Apply() did not call applyFn")
+	}
+}
+
+func TestApplyMarksFailedOnCallbackError(t *testing.T) {
+	stateRepo, err := repo.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+
+	desired := &types.DesiredBrokerRuntime{Revision: "rev-3"}
+	now := time.Now().UTC()
+	applied, status, err := Apply(stateRepo, desired, MarkRequest{Actor: "tester"}, now, func(*types.DesiredBrokerRuntime) error {
+		return fmt.Errorf("reload failed")
+	})
+	if err == nil || status != "failed" || applied.LastApplyStatus != "failed" || applied.LastApplyError != "reload failed" {
+		t.Fatalf("Apply() applied=%#v status=%q err=%v", applied, status, err)
 	}
 }

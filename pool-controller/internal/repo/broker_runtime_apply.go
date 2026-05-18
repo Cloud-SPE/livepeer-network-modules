@@ -10,7 +10,7 @@ const appliedBrokerRuntimeBucket = "applied_broker_runtime"
 const appliedBrokerRuntimeKey = "current"
 
 func (r *StateRepo) PutAppliedBrokerRuntime(runtime types.AppliedBrokerRuntime) error {
-	if runtime.AppliedRevision == "" {
+	if runtime.AppliedRevision == "" && runtime.LastApplyStatus == "applied" {
 		return fmt.Errorf("applied broker runtime revision is required")
 	}
 	return putJSON(r, appliedBrokerRuntimeBucket, appliedBrokerRuntimeKey, runtime)

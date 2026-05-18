@@ -520,10 +520,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		Verifier: verifier,
 	})
 	adminserver.Register(mux, adminserver.Deps{
-		Repo:            state.repo,
-		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
-		RefreshRendered: func(source string) error { return state.RefreshRenderedFromState(source) },
-		Verifier:        verifier,
+		Repo:                state.repo,
+		WrapAuth:            func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
+		RefreshRendered:     func(source string) error { return state.RefreshRenderedFromState(source) },
+		ApplyDesiredRuntime: func(*types.DesiredBrokerRuntime) error { return nil },
+		Verifier:            verifier,
 		GetBrokerConfig: func() []byte {
 			_, rendered, _, _ := state.Snapshot()
 			return rendered

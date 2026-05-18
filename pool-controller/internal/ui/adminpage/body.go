@@ -14,6 +14,7 @@ const pageBody = `<body>
         <input id="token" type="password" placeholder="Bearer token for /admin/v1/*">
       </label>
       <button id="refresh">Refresh</button>
+      <button id="applyRuntime">Apply Desired Revision</button>
       <button id="markStarted" class="secondary">Mark Apply Started</button>
       <button id="markFailed" class="secondary">Mark Apply Failed</button>
       <button id="markApplied" class="secondary">Mark Desired Revision Applied</button>

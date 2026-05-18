@@ -163,136 +163,140 @@ type poolAggregateStatus struct {
 // HealthHandler returns the broker's normalized live-health snapshot.
 func HealthHandler(mgr *health.Manager, metadata MetadataStatusSource, pool PoolStatusSource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		snap := mgr.Snapshot()
-		statuses := make(map[string]string, len(snap.Capabilities))
-		grouped := make(map[string]*healthCapabilityStatus, len(snap.Capabilities))
-		out := healthResponse{
-			BrokerStatus: snap.BrokerStatus,
-			GeneratedAt:  snap.GeneratedAt,
-			Capabilities: make([]healthCapabilityStatus, 0, len(snap.Capabilities)),
-		}
-		for _, cap := range snap.Capabilities {
-			key := cap.ID + "|" + cap.OfferingID
-			entry, ok := grouped[key]
-			if !ok {
-				grouped[key] = &healthCapabilityStatus{
-					ID:         cap.ID,
-					OfferingID: cap.OfferingID,
-					Status:     cap.Status,
-					Reason:     cap.Reason,
-					ProbeType:  cap.ProbeType,
-					ProbedAt:   cap.ProbedAt,
-					StaleAfter: cap.StaleAfter,
-					Backends:   make([]backendStatus, 0, 1),
-				}
-				entry = grouped[key]
-				if st, ok := metadata.StatusFor(cap.ID, cap.OfferingID); ok {
-					lastSuccessAgeSeconds := 0.0
-					if st.LastSuccessAt.IsZero() {
-						lastSuccessAgeSeconds = -1
-					} else {
-						lastSuccessAgeSeconds = out.GeneratedAt.Sub(st.LastSuccessAt).Seconds()
-					}
-					entry.Metadata = &metadataStatus{
-						Provider:              st.Provider,
-						Applicable:            st.Applicable,
-						LastAttemptAt:         st.LastAttemptAt,
-						LastSuccessAt:         st.LastSuccessAt,
-						LastSuccessAgeSeconds: lastSuccessAgeSeconds,
-						LastError:             st.LastError,
-						LastResult:            st.LastResult,
-						ConsecutiveFailures:   st.ConsecutiveFailures,
-					}
-				}
-			}
-			var poolStatusValue *poolsnapshot.Status
-			if pool != nil {
-				if ps := pool.StatusFor(cap.BackendID, cap.ID, cap.OfferingID); ps.Configured {
-					poolStatusValue = &ps
-				}
-			}
-			decision := selection.DecisionFor(cap, poolStatusValue)
-			backend := backendStatus{
-				BackendID:            cap.BackendID,
-				Status:               cap.Status,
-				Reason:               cap.Reason,
-				ProbeType:            cap.ProbeType,
-				ProbedAt:             cap.ProbedAt,
-				StaleAfter:           cap.StaleAfter,
-				ConsecutiveSuccesses: cap.ConsecutiveSuccesses,
-				ConsecutiveFailures:  cap.ConsecutiveFailures,
-				SelectionEligible:    decision.Eligible,
-				SelectionWeight:      decision.Weight,
-				SelectionReason:      decision.Reason,
-			}
-			if poolStatusValue != nil {
-				ps := *poolStatusValue
-				backend.Pool = &poolStatus{
-					SnapshotStatus:                        ps.SnapshotStatus,
-					SnapshotGeneratedAt:                   ps.SnapshotGeneratedAt,
-					SnapshotFetchedAt:                     ps.SnapshotFetchedAt,
-					SnapshotAgeSeconds:                    ps.SnapshotAgeSeconds,
-					SnapshotTimeoutSeconds:                ps.SnapshotTimeoutSeconds,
-					SnapshotPollIntervalSeconds:           ps.SnapshotPollIntervalSeconds,
-					SnapshotStaleAfterSeconds:             ps.SnapshotStaleAfterSeconds,
-					SnapshotExpireAfterSeconds:            ps.SnapshotExpireAfterSeconds,
-					SnapshotCooldownDurationSeconds:       ps.SnapshotCooldownDurationSeconds,
-					SnapshotCooldownFailureTrigger:        ps.SnapshotCooldownFailureTrigger,
-					SnapshotEMAHalfLifeSeconds:            ps.SnapshotEMAHalfLifeSeconds,
-					SnapshotLatencyTargetMS:               ps.SnapshotLatencyTargetMS,
-					SnapshotRecentWindowStaleAfterSeconds: ps.SnapshotRecentWindowStaleAfterSeconds,
-					SnapshotWindowScoreWeight:             ps.SnapshotWindowScoreWeight,
-					SnapshotEMAScoreWeight:                ps.SnapshotEMAScoreWeight,
-					SnapshotWarmupModifier:                ps.SnapshotWarmupModifier,
-					SnapshotWarmupExitSamples:             ps.SnapshotWarmupExitSamples,
-					EntryFound:                            ps.EntryFound,
-					State:                                 ps.EntryState,
-					ExclusionReason:                       ps.EntryExclusionReason,
-					RoutingReason:                         ps.EntryRoutingReason,
-					SyntheticConfidence:                   ps.EntrySyntheticConfidence,
-					RealSuccessScore:                      ps.EntryRealSuccessScore,
-					RealLatencyScore:                      ps.EntryRealLatencyScore,
-					EffectiveSelectionScore:               ps.EntryEffectiveSelectionScore,
-					ConsecutiveSyntheticFailures:          ps.EntryConsecutiveSyntheticFailures,
-					CooldownUntil:                         ps.EntryCooldownUntil,
-					AutomaticWarmup:                       ps.EntryAutomaticWarmup,
-					WarmupOverride:                        ps.EntryWarmupOverride,
-					WarmupSource:                          ps.EntryWarmupSource,
-					WarmupModifier:                        ps.EntryWarmupModifier,
-					MaxShareCap:                           ps.EntryMaxShareCap,
-					RecentOutcomeCount:                    ps.EntryRecentOutcomeCount,
-					RecentRoutableOutcomeCount:            ps.EntryRecentRoutableOutcomeCount,
-					RecentBackendFailureCount:             ps.EntryRecentBackendFailureCount,
-					RecentWindowStartedAt:                 ps.EntryRecentWindowStartedAt,
-					RecentWindowEndedAt:                   ps.EntryRecentWindowEndedAt,
-					RecentWindowAgeSeconds:                ps.EntryRecentWindowAgeSeconds,
-					LastSyntheticResult:                   ps.EntryLastSyntheticResult,
-					LastSyntheticAt:                       ps.EntryLastSyntheticAt,
-					LastRealOutcomeAt:                     ps.EntryLastRealOutcomeAt,
-					LastError:                             ps.LastError,
-				}
-			}
-			entry.Backends = append(entry.Backends, backend)
-			entry.Status = aggregateStatus(entry.Backends)
-			entry.Reason = aggregateReason(entry.Backends)
-			statuses[key] = string(entry.Status)
-		}
-		for _, entry := range grouped {
-			entry.Pool = aggregatePool(entry.Backends)
-			out.Capabilities = append(out.Capabilities, *entry)
-		}
-		sort.Slice(out.Capabilities, func(i, j int) bool {
-			if out.Capabilities[i].ID != out.Capabilities[j].ID {
-				return out.Capabilities[i].ID < out.Capabilities[j].ID
-			}
-			return out.Capabilities[i].OfferingID < out.Capabilities[j].OfferingID
-		})
-		statusesJSON, _ := json.Marshal(statuses)
-		w.Header().Set(livepeerheader.HealthStatus, string(statusesJSON))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(out)
+		WriteHealthResponse(w, mgr, metadata, pool)
 	}
+}
+
+func WriteHealthResponse(w http.ResponseWriter, mgr *health.Manager, metadata MetadataStatusSource, pool PoolStatusSource) {
+	snap := mgr.Snapshot()
+	statuses := make(map[string]string, len(snap.Capabilities))
+	grouped := make(map[string]*healthCapabilityStatus, len(snap.Capabilities))
+	out := healthResponse{
+		BrokerStatus: snap.BrokerStatus,
+		GeneratedAt:  snap.GeneratedAt,
+		Capabilities: make([]healthCapabilityStatus, 0, len(snap.Capabilities)),
+	}
+	for _, cap := range snap.Capabilities {
+		key := cap.ID + "|" + cap.OfferingID
+		entry, ok := grouped[key]
+		if !ok {
+			grouped[key] = &healthCapabilityStatus{
+				ID:         cap.ID,
+				OfferingID: cap.OfferingID,
+				Status:     cap.Status,
+				Reason:     cap.Reason,
+				ProbeType:  cap.ProbeType,
+				ProbedAt:   cap.ProbedAt,
+				StaleAfter: cap.StaleAfter,
+				Backends:   make([]backendStatus, 0, 1),
+			}
+			entry = grouped[key]
+			if st, ok := metadata.StatusFor(cap.ID, cap.OfferingID); ok {
+				lastSuccessAgeSeconds := 0.0
+				if st.LastSuccessAt.IsZero() {
+					lastSuccessAgeSeconds = -1
+				} else {
+					lastSuccessAgeSeconds = out.GeneratedAt.Sub(st.LastSuccessAt).Seconds()
+				}
+				entry.Metadata = &metadataStatus{
+					Provider:              st.Provider,
+					Applicable:            st.Applicable,
+					LastAttemptAt:         st.LastAttemptAt,
+					LastSuccessAt:         st.LastSuccessAt,
+					LastSuccessAgeSeconds: lastSuccessAgeSeconds,
+					LastError:             st.LastError,
+					LastResult:            st.LastResult,
+					ConsecutiveFailures:   st.ConsecutiveFailures,
+				}
+			}
+		}
+		var poolStatusValue *poolsnapshot.Status
+		if pool != nil {
+			if ps := pool.StatusFor(cap.BackendID, cap.ID, cap.OfferingID); ps.Configured {
+				poolStatusValue = &ps
+			}
+		}
+		decision := selection.DecisionFor(cap, poolStatusValue)
+		backend := backendStatus{
+			BackendID:            cap.BackendID,
+			Status:               cap.Status,
+			Reason:               cap.Reason,
+			ProbeType:            cap.ProbeType,
+			ProbedAt:             cap.ProbedAt,
+			StaleAfter:           cap.StaleAfter,
+			ConsecutiveSuccesses: cap.ConsecutiveSuccesses,
+			ConsecutiveFailures:  cap.ConsecutiveFailures,
+			SelectionEligible:    decision.Eligible,
+			SelectionWeight:      decision.Weight,
+			SelectionReason:      decision.Reason,
+		}
+		if poolStatusValue != nil {
+			ps := *poolStatusValue
+			backend.Pool = &poolStatus{
+				SnapshotStatus:                        ps.SnapshotStatus,
+				SnapshotGeneratedAt:                   ps.SnapshotGeneratedAt,
+				SnapshotFetchedAt:                     ps.SnapshotFetchedAt,
+				SnapshotAgeSeconds:                    ps.SnapshotAgeSeconds,
+				SnapshotTimeoutSeconds:                ps.SnapshotTimeoutSeconds,
+				SnapshotPollIntervalSeconds:           ps.SnapshotPollIntervalSeconds,
+				SnapshotStaleAfterSeconds:             ps.SnapshotStaleAfterSeconds,
+				SnapshotExpireAfterSeconds:            ps.SnapshotExpireAfterSeconds,
+				SnapshotCooldownDurationSeconds:       ps.SnapshotCooldownDurationSeconds,
+				SnapshotCooldownFailureTrigger:        ps.SnapshotCooldownFailureTrigger,
+				SnapshotEMAHalfLifeSeconds:            ps.SnapshotEMAHalfLifeSeconds,
+				SnapshotLatencyTargetMS:               ps.SnapshotLatencyTargetMS,
+				SnapshotRecentWindowStaleAfterSeconds: ps.SnapshotRecentWindowStaleAfterSeconds,
+				SnapshotWindowScoreWeight:             ps.SnapshotWindowScoreWeight,
+				SnapshotEMAScoreWeight:                ps.SnapshotEMAScoreWeight,
+				SnapshotWarmupModifier:                ps.SnapshotWarmupModifier,
+				SnapshotWarmupExitSamples:             ps.SnapshotWarmupExitSamples,
+				EntryFound:                            ps.EntryFound,
+				State:                                 ps.EntryState,
+				ExclusionReason:                       ps.EntryExclusionReason,
+				RoutingReason:                         ps.EntryRoutingReason,
+				SyntheticConfidence:                   ps.EntrySyntheticConfidence,
+				RealSuccessScore:                      ps.EntryRealSuccessScore,
+				RealLatencyScore:                      ps.EntryRealLatencyScore,
+				EffectiveSelectionScore:               ps.EntryEffectiveSelectionScore,
+				ConsecutiveSyntheticFailures:          ps.EntryConsecutiveSyntheticFailures,
+				CooldownUntil:                         ps.EntryCooldownUntil,
+				AutomaticWarmup:                       ps.EntryAutomaticWarmup,
+				WarmupOverride:                        ps.EntryWarmupOverride,
+				WarmupSource:                          ps.EntryWarmupSource,
+				WarmupModifier:                        ps.EntryWarmupModifier,
+				MaxShareCap:                           ps.EntryMaxShareCap,
+				RecentOutcomeCount:                    ps.EntryRecentOutcomeCount,
+				RecentRoutableOutcomeCount:            ps.EntryRecentRoutableOutcomeCount,
+				RecentBackendFailureCount:             ps.EntryRecentBackendFailureCount,
+				RecentWindowStartedAt:                 ps.EntryRecentWindowStartedAt,
+				RecentWindowEndedAt:                   ps.EntryRecentWindowEndedAt,
+				RecentWindowAgeSeconds:                ps.EntryRecentWindowAgeSeconds,
+				LastSyntheticResult:                   ps.EntryLastSyntheticResult,
+				LastSyntheticAt:                       ps.EntryLastSyntheticAt,
+				LastRealOutcomeAt:                     ps.EntryLastRealOutcomeAt,
+				LastError:                             ps.LastError,
+			}
+		}
+		entry.Backends = append(entry.Backends, backend)
+		entry.Status = aggregateStatus(entry.Backends)
+		entry.Reason = aggregateReason(entry.Backends)
+		statuses[key] = string(entry.Status)
+	}
+	for _, entry := range grouped {
+		entry.Pool = aggregatePool(entry.Backends)
+		out.Capabilities = append(out.Capabilities, *entry)
+	}
+	sort.Slice(out.Capabilities, func(i, j int) bool {
+		if out.Capabilities[i].ID != out.Capabilities[j].ID {
+			return out.Capabilities[i].ID < out.Capabilities[j].ID
+		}
+		return out.Capabilities[i].OfferingID < out.Capabilities[j].OfferingID
+	})
+	statusesJSON, _ := json.Marshal(statuses)
+	w.Header().Set(livepeerheader.HealthStatus, string(statusesJSON))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 func aggregatePool(backends []backendStatus) *poolAggregateStatus {

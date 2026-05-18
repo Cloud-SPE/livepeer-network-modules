@@ -3,11 +3,14 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
@@ -36,6 +39,8 @@ import (
 // interim-debit cadence) live here so they don't pollute the
 // host-config.yaml grammar — operators set them via CLI flags.
 type Options struct {
+	ConfigPath string
+
 	// MetadataRefreshInterval controls periodic stable-metadata refresh for
 	// discovery-capable offerings. Zero falls back to the broker default.
 	// Negative values disable periodic refresh after the initial bootstrap pass.
@@ -108,30 +113,39 @@ type FFmpegOptions struct {
 // listener (cfg.Listen.Paid) for /v1/cap and /registry/*, and a metrics
 // listener (cfg.Listen.Metrics) for Prometheus scraping.
 type Server struct {
-	cfg           *config.Config
-	opts          Options
-	metadata      *metadataCatalog
-	mux           *http.ServeMux
-	srv           *http.Server
-	metricsSrv    *http.Server
-	payment       payment.Client
-	modes         *modes.Registry
-	extractors    *extractors.Registry
-	backend       backend.Forwarder
-	secrets       backend.SecretResolver
-	receiptSink   receipts.Client
-	poolReporter  poolreport.Client
-	poolSnapshot  *poolsnapshot.Cache
-	health        *health.Manager
-	rtmpStore     *rtmpingresshlsegress.Store
-	rtmpListener  *mediartmp.Listener
-	sessStore     *sessioncontrolplusmedia.Store
-	sessDriver    *sessioncontrolplusmedia.Driver
-	extStore      *sessioncontrolexternalmedia.Store
-	extDriver     *sessioncontrolexternalmedia.Driver
-	webrtcEngine  *mediawebrtc.Engine
-	sessRunnerSup *sessionrunner.Supervisor
-	randIntn      func(int) int
+	mu                   sync.RWMutex
+	cfg                  *config.Config
+	configPath           string
+	loadedConfigPath     string
+	loadedRevision       string
+	loadedAt             time.Time
+	lastReloadStartedAt  time.Time
+	lastReloadFinishedAt time.Time
+	lastReloadStatus     string
+	lastReloadError      string
+	opts                 Options
+	metadata             *metadataCatalog
+	mux                  *http.ServeMux
+	srv                  *http.Server
+	metricsSrv           *http.Server
+	payment              payment.Client
+	modes                *modes.Registry
+	extractors           *extractors.Registry
+	backend              backend.Forwarder
+	secrets              backend.SecretResolver
+	receiptSink          receipts.Client
+	poolReporter         poolreport.Client
+	poolSnapshot         *poolsnapshot.Cache
+	health               *health.Manager
+	rtmpStore            *rtmpingresshlsegress.Store
+	rtmpListener         *mediartmp.Listener
+	sessStore            *sessioncontrolplusmedia.Store
+	sessDriver           *sessioncontrolplusmedia.Driver
+	extStore             *sessioncontrolexternalmedia.Store
+	extDriver            *sessioncontrolexternalmedia.Driver
+	webrtcEngine         *mediawebrtc.Engine
+	sessRunnerSup        *sessionrunner.Supervisor
+	randIntn             func(int) int
 }
 
 // New constructs a Server from a validated config and registers routes. It
@@ -149,6 +163,10 @@ type Server struct {
 func New(cfg *config.Config, opts Options) (*Server, error) {
 	metadata := newMetadataCatalog()
 	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
+	loadedRevision, loadedConfigPath, err := loadRuntimeRevision(opts.ConfigPath, cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	mux := http.NewServeMux()
 	srv := &http.Server{
@@ -214,26 +232,31 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	extDriver := sessioncontrolexternalmedia.New(extStore, sessioncontrolexternalmedia.DefaultConfig())
 
 	s := &Server{
-		cfg:          cfg,
-		opts:         opts,
-		metadata:     metadata,
-		mux:          mux,
-		srv:          srv,
-		payment:      paymentClient,
-		modes:        defaultModes(rtmpDriver, sessDriver, extDriver),
-		extractors:   defaultExtractors(),
-		backend:      backend.NewHTTPClient(),
-		secrets:      secretResolver,
-		receiptSink:  receiptSink,
-		poolReporter: poolReporter,
-		poolSnapshot: poolSnapshot,
-		health:       health.New(cfg),
-		rtmpStore:    rtmpStore,
-		sessStore:    sessStore,
-		sessDriver:   sessDriver,
-		extStore:     extStore,
-		extDriver:    extDriver,
-		webrtcEngine: rtcEngine,
+		cfg:              cfg,
+		configPath:       opts.ConfigPath,
+		loadedConfigPath: loadedConfigPath,
+		loadedRevision:   loadedRevision,
+		loadedAt:         time.Now().UTC(),
+		lastReloadStatus: "startup_loaded",
+		opts:             opts,
+		metadata:         metadata,
+		mux:              mux,
+		srv:              srv,
+		payment:          paymentClient,
+		modes:            defaultModes(rtmpDriver, sessDriver, extDriver),
+		extractors:       defaultExtractors(),
+		backend:          backend.NewHTTPClient(),
+		secrets:          secretResolver,
+		receiptSink:      receiptSink,
+		poolReporter:     poolReporter,
+		poolSnapshot:     poolSnapshot,
+		health:           health.New(cfg),
+		rtmpStore:        rtmpStore,
+		sessStore:        sessStore,
+		sessDriver:       sessDriver,
+		extStore:         extStore,
+		extDriver:        extDriver,
+		webrtcEngine:     rtcEngine,
 		randIntn: func(n int) int {
 			return rand.New(rand.NewSource(time.Now().UnixNano())).Intn(n)
 		},
@@ -269,6 +292,22 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	s.registerRoutes()
 	s.metricsSrv = newMetricsServer(cfg.Listen.Metrics)
 	return s, nil
+}
+
+func loadRuntimeRevision(configPath string, cfg *config.Config) (string, string, error) {
+	if configPath != "" {
+		raw, err := os.ReadFile(configPath)
+		if err != nil {
+			return "", "", fmt.Errorf("read config %q: %w", configPath, err)
+		}
+		sum := sha256.Sum256(raw)
+		return fmt.Sprintf("%x", sum[:]), configPath, nil
+	}
+	if cfg == nil {
+		return "", "", fmt.Errorf("config is required")
+	}
+	sum := sha256.Sum256([]byte(cfg.Identity.OrchEthAddress))
+	return fmt.Sprintf("%x", sum[:]), "", nil
 }
 
 func newReceiptSink(cfg *config.Config, secrets backend.SecretResolver) (receipts.Client, error) {
@@ -436,19 +475,51 @@ func newPaymentClient(cfg *config.Config) (payment.Client, error) {
 // validateAgainstRegistries fails-fast if any configured capability
 // references an unregistered mode or extractor.
 func (s *Server) validateAgainstRegistries() error {
-	for i := range s.cfg.Capabilities {
-		c := &s.cfg.Capabilities[i]
-		if !s.modes.Has(c.InteractionMode) {
+	cfg := s.currentConfig()
+	return validateConfigAgainstRegistries(cfg, s.modes, s.extractors)
+}
+
+func validateConfigAgainstRegistries(cfg *config.Config, modeRegistry *modes.Registry, extractorRegistry *extractors.Registry) error {
+	if cfg == nil {
+		return fmt.Errorf("config is not loaded")
+	}
+	for i := range cfg.Capabilities {
+		c := &cfg.Capabilities[i]
+		if !modeRegistry.Has(c.InteractionMode) {
 			return fmt.Errorf("capability %s/%s: interaction_mode %q is not implemented by this broker (registered: %v)",
-				c.ID, c.OfferingID, c.InteractionMode, s.modes.Names())
+				c.ID, c.OfferingID, c.InteractionMode, modeRegistry.Names())
 		}
 		extractorType, _ := c.WorkUnit.Extractor["type"].(string)
-		if !s.extractors.Has(extractorType) {
+		if !extractorRegistry.Has(extractorType) {
 			return fmt.Errorf("capability %s/%s: work_unit.extractor.type %q is not implemented by this broker (registered: %v)",
-				c.ID, c.OfferingID, extractorType, s.extractors.Names())
+				c.ID, c.OfferingID, extractorType, extractorRegistry.Names())
 		}
 	}
 	return nil
+}
+
+func (s *Server) currentConfig() *config.Config {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg
+}
+
+func (s *Server) currentHealth() *health.Manager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.health
+}
+
+func (s *Server) currentMetadata() *metadataCatalog {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.metadata
+}
+
+func (s *Server) currentPoolSnapshot() *poolsnapshot.Cache {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.poolSnapshot
 }
 
 // Run starts the server in the foreground. Blocks until ctx is canceled or

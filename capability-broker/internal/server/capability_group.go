@@ -35,9 +35,13 @@ func (s *Server) groupFor(capID, offID string) (*capabilityGroup, bool) {
 	if capID == "" {
 		return nil, false
 	}
+	cfg := s.currentConfig()
+	if cfg == nil {
+		return nil, false
+	}
 	group := &capabilityGroup{}
-	for i := range s.cfg.Capabilities {
-		c := &s.cfg.Capabilities[i]
+	for i := range cfg.Capabilities {
+		c := &cfg.Capabilities[i]
 		if c.ID != capID {
 			continue
 		}
@@ -74,7 +78,11 @@ func (s *Server) selectBackend(group *capabilityGroup) (*config.Capability, erro
 	}
 	candidates := make([]backendCandidate, 0, len(group.Backends))
 	deniedReasons := map[string]int{}
-	snapshots := s.health.SnapshotsFor(group.Published.ID, group.Published.OfferingID)
+	healthMgr := s.currentHealth()
+	if healthMgr == nil {
+		return nil, fmt.Errorf("health manager is not available")
+	}
+	snapshots := healthMgr.SnapshotsFor(group.Published.ID, group.Published.OfferingID)
 	byBackend := map[string]health.Snapshot{}
 	for _, snap := range snapshots {
 		byBackend[snap.BackendID] = snap
@@ -89,8 +97,8 @@ func (s *Server) selectBackend(group *capabilityGroup) (*config.Capability, erro
 			snap = health.Snapshot{Status: health.StatusStale}
 		}
 		var poolStatus *poolsnapshot.Status
-		if s != nil && s.poolSnapshot != nil {
-			if status := s.poolSnapshot.StatusFor(backendID, group.Published.ID, group.Published.OfferingID); status.Configured {
+		if poolSnapshot := s.currentPoolSnapshot(); poolSnapshot != nil {
+			if status := poolSnapshot.StatusFor(backendID, group.Published.ID, group.Published.OfferingID); status.Configured {
 				poolStatus = &status
 			}
 		}

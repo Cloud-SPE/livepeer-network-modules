@@ -10,10 +10,12 @@ import (
 
 func (s *Server) registerRoutes() {
 	// Unpaid registry endpoints — no Livepeer-* validation, no payment.
-	s.mux.HandleFunc("GET /registry/offerings", registry.OfferingsHandler(s.cfg, s.metadata))
-	s.mux.HandleFunc("GET /registry/health", registry.HealthHandler(s.health, s.metadata, s.poolSnapshot))
+	s.mux.HandleFunc("GET /registry/offerings", s.handleOfferings)
+	s.mux.HandleFunc("GET /registry/health", s.handleRegistryHealth)
 	s.mux.HandleFunc("GET /healthz", registry.HealthzHandler())
 	s.mux.HandleFunc("POST /v1/payment/ticket-params", ticketParamsHandler(s.payment))
+	s.mux.HandleFunc("GET /admin/v1/runtime", s.handleRuntimeStatus)
+	s.mux.HandleFunc("POST /admin/v1/runtime/reload", s.handleRuntimeReload)
 
 	// LL-HLS playback served from the per-session scratch. The URL is
 	// itself a per-session bearer secret (12 random bytes hex) so

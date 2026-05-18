@@ -267,6 +267,7 @@ func main() {
 	}
 
 	srv, err := server.New(cfg, server.Options{
+		ConfigPath:              *configPath,
 		MetadataRefreshInterval: *metadataRefreshInterval,
 		InterimDebit: middleware.InterimDebitConfig{
 			Interval:            *interimDebitInterval,

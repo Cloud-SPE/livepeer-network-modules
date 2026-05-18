@@ -29,7 +29,7 @@ type ExtraOverlaySource interface {
 // livepeer-network-protocol/manifest/schema.json (#/$defs/manifest).
 func OfferingsHandler(cfg *config.Config, overlays ExtraOverlaySource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		payload := buildOfferings(cfg, overlays)
+		payload := BuildOfferings(cfg, overlays)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(payload)
@@ -56,7 +56,7 @@ type offeringsWorkUnit struct {
 	Name string `json:"name"`
 }
 
-func buildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPayload {
+func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPayload {
 	out := offeringsPayload{
 		OrchEthAddress: cfg.Identity.OrchEthAddress,
 		Capabilities:   make([]offeringsCapabilityV1, 0, len(cfg.Capabilities)),
@@ -81,6 +81,10 @@ func buildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPa
 		})
 	}
 	return out
+}
+
+func buildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPayload {
+	return BuildOfferings(cfg, overlays)
 }
 
 func overlayFor(src ExtraOverlaySource, capabilityID, offeringID string) map[string]any {

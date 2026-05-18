@@ -292,29 +292,8 @@ func Register(mux *http.ServeMux, deps Deps) {
 				},
 			})
 		case "approve":
-			offers, err := deps.Repo.ListOffers()
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			preview := admissionreview.BuildJoinRequestPreview(item, offers)
-			if !preview.Approavable {
-				http.Error(w, strings.Join(preview.Reasons, "; "), http.StatusBadRequest)
-				return
-			}
-			member, backends := memberAndBackendsFromJoinRequest(item, time.Now().UTC())
-			if err := deps.Repo.PutMember(member); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			for _, backend := range backends {
-				if err := deps.Repo.PutMemberBackend(backend); err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-			}
-			if err := deps.Repo.SetJoinRequestStatus(id, types.JoinRequestApproved, req.Reason); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+			if _, err := admissionreview.ApproveJoinRequest(deps.Repo, item, req.Reason, time.Now().UTC()); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			_ = deps.Repo.AppendAuditEvent(types.AuditEvent{Kind: "join_request_approved", OccurredAt: time.Now().UTC(), ResourceID: id, ResourceType: "join_request"})
@@ -1037,42 +1016,4 @@ func assignmentFromRequest(req assignmentMutationRequest) (types.Assignment, err
 		Status:          status,
 		Notes:           req.Notes,
 	}, nil
-}
-
-func memberAndBackendsFromJoinRequest(req types.JoinRequest, now time.Time) (types.MemberRecord, []types.MemberBackend) {
-	now = now.UTC()
-	memberID := fmt.Sprintf("member-%d", now.UnixNano())
-	payoutMode := req.PayoutMode
-	if payoutMode == "" {
-		payoutMode = "onchain"
-	}
-	member := types.MemberRecord{
-		ID:                  memberID,
-		EthAddress:          req.MemberEthAddress,
-		DisplayName:         req.DisplayName,
-		PayoutMode:          payoutMode,
-		Status:              types.MemberStatusActive,
-		SourceJoinRequestID: req.ID,
-		CreatedAt:           now,
-		UpdatedAt:           now,
-	}
-	backends := make([]types.MemberBackend, 0, len(req.RequestedBackends))
-	for _, requested := range req.RequestedBackends {
-		backends = append(backends, types.MemberBackend{
-			ID:                  requested.ID,
-			MemberID:            memberID,
-			Transport:           requested.Transport,
-			URL:                 requested.URL,
-			Auth:                requested.Auth,
-			HealthProbe:         requested.HealthProbe,
-			ClaimedCapabilities: requested.ClaimedCapabilities,
-			VerificationStatus:  requested.VerificationStatus,
-			VerificationError:   requested.VerificationError,
-			LastVerifiedAt:      requested.LastVerifiedAt,
-			Status:              types.BackendStatusActive,
-			CreatedAt:           now,
-			UpdatedAt:           now,
-		})
-	}
-	return member, backends
 }

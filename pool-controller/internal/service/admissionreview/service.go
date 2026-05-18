@@ -1,7 +1,10 @@
 package admissionreview
 
 import (
+	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
@@ -58,6 +61,30 @@ type AssignmentCandidateView struct {
 	AssignmentCount    int                       `json:"assignment_count"`
 	ActiveAssignments  int                       `json:"active_assignments"`
 	SuggestedClaims    []JoinRequestClaimPreview `json:"suggested_claims,omitempty"`
+}
+
+func ApproveJoinRequest(stateRepo *repo.StateRepo, item types.JoinRequest, reviewReason string, now time.Time) (JoinRequestPreviewView, error) {
+	offers, err := stateRepo.ListOffers()
+	if err != nil {
+		return JoinRequestPreviewView{}, err
+	}
+	preview := BuildJoinRequestPreview(item, offers)
+	if !preview.Approavable {
+		return preview, errors.New(strings.Join(preview.Reasons, "; "))
+	}
+	member, backends := materializeJoinRequest(item, now.UTC())
+	if err := stateRepo.PutMember(member); err != nil {
+		return preview, err
+	}
+	for _, backend := range backends {
+		if err := stateRepo.PutMemberBackend(backend); err != nil {
+			return preview, err
+		}
+	}
+	if err := stateRepo.SetJoinRequestStatus(item.ID, types.JoinRequestApproved, reviewReason); err != nil {
+		return preview, err
+	}
+	return preview, nil
 }
 
 func BuildJoinRequestPreview(item types.JoinRequest, offers []types.Offer) JoinRequestPreviewView {
@@ -254,4 +281,41 @@ func ListAssignmentCandidates(stateRepo *repo.StateRepo) ([]AssignmentCandidateV
 		out = append(out, candidate)
 	}
 	return out, nil
+}
+
+func materializeJoinRequest(req types.JoinRequest, now time.Time) (types.MemberRecord, []types.MemberBackend) {
+	memberID := fmt.Sprintf("member-%d", now.UnixNano())
+	payoutMode := req.PayoutMode
+	if payoutMode == "" {
+		payoutMode = "onchain"
+	}
+	member := types.MemberRecord{
+		ID:                  memberID,
+		EthAddress:          req.MemberEthAddress,
+		DisplayName:         req.DisplayName,
+		PayoutMode:          payoutMode,
+		Status:              types.MemberStatusActive,
+		SourceJoinRequestID: req.ID,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	backends := make([]types.MemberBackend, 0, len(req.RequestedBackends))
+	for _, requested := range req.RequestedBackends {
+		backends = append(backends, types.MemberBackend{
+			ID:                  requested.ID,
+			MemberID:            memberID,
+			Transport:           requested.Transport,
+			URL:                 requested.URL,
+			Auth:                requested.Auth,
+			HealthProbe:         requested.HealthProbe,
+			ClaimedCapabilities: requested.ClaimedCapabilities,
+			VerificationStatus:  requested.VerificationStatus,
+			VerificationError:   requested.VerificationError,
+			LastVerifiedAt:      requested.LastVerifiedAt,
+			Status:              types.BackendStatusActive,
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		})
+	}
+	return member, backends
 }

@@ -46,6 +46,11 @@ Broker runtime admin surface:
 - They stay disabled unless `admin_auth.method: bearer` is configured in
   `host-config.yaml`.
 - The bearer token must come from `admin_auth.secret_ref: env://...`.
+- `POST /admin/v1/runtime/reload` validates the reloaded config before swap and
+  preserves the previous runtime if reload fails.
+- Successful reloads keep matching backend health/probe state when possible and
+  resume health probing and periodic metadata refresh against the new runtime
+  without requiring a broker restart.
 
 When `pool_snapshot.url` is configured, the broker also polls
 `pool-controller`'s backend-selection snapshot and exposes per-backend snapshot

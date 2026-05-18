@@ -173,6 +173,11 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, "member id is required", http.StatusBadRequest)
 			return
 		}
+		current, err := deps.Repo.GetMember(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		var req memberStatusRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -187,6 +192,16 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+			Kind:         "member_status_updated",
+			OccurredAt:   time.Now().UTC(),
+			ResourceID:   id,
+			ResourceType: "member",
+			Details: map[string]any{
+				"from_status": current.Status,
+				"to_status":   item.Status,
+			},
+		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(item)
@@ -390,6 +405,11 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, "backend id is required", http.StatusBadRequest)
 			return
 		}
+		current, err := deps.Repo.GetMemberBackend(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		var req backendStatusRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -404,6 +424,16 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+			Kind:         "member_backend_status_updated",
+			OccurredAt:   time.Now().UTC(),
+			ResourceID:   id,
+			ResourceType: "member_backend",
+			Details: map[string]any{
+				"from_status": current.Status,
+				"to_status":   item.Status,
+			},
+		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(item)
@@ -499,6 +529,11 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, "assignment id is required", http.StatusBadRequest)
 			return
 		}
+		current, err := deps.Repo.GetAssignment(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		var req assignmentMutationRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -513,6 +548,16 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+			Kind:         "assignment_status_updated",
+			OccurredAt:   time.Now().UTC(),
+			ResourceID:   id,
+			ResourceType: "assignment",
+			Details: map[string]any{
+				"from_status": current.Status,
+				"to_status":   item.Status,
+			},
+		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(item)

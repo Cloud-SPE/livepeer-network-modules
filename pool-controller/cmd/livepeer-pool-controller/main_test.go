@@ -1352,6 +1352,26 @@ func TestJoinRequestApprovalAndStatusMutations(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"status":"disabled"`) {
 		t.Fatalf("PATCH /admin/v1/member-backends status=%d body=%s", resp.StatusCode, string(body))
 	}
+
+	resp, err = http.Get(server.URL + "/admin/v1/audit-events?resource_type=member&resource_id=" + memberID)
+	if err != nil {
+		t.Fatalf("GET member audit events error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"kind":"member_status_updated"`) || !strings.Contains(string(body), `"from_status":"active"`) || !strings.Contains(string(body), `"to_status":"suspended"`) {
+		t.Fatalf("member audit events status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Get(server.URL + "/admin/v1/audit-events?resource_type=member_backend&resource_id=backend-join-1")
+	if err != nil {
+		t.Fatalf("GET backend audit events error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"kind":"member_backend_status_updated"`) || !strings.Contains(string(body), `"from_status":"active"`) || !strings.Contains(string(body), `"to_status":"disabled"`) {
+		t.Fatalf("backend audit events status=%d body=%s", resp.StatusCode, string(body))
+	}
 }
 
 func TestBrokerRuntimeEndpoints(t *testing.T) {

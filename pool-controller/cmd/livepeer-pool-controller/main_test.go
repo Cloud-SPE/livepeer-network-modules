@@ -1620,6 +1620,13 @@ func TestApplyDesiredRuntimeConfirmsBrokerLoadedRevision(t *testing.T) {
 	if err := state.ApplyDesiredRuntime(runtimeInfo); err != nil {
 		t.Fatalf("ApplyDesiredRuntime() error = %v", err)
 	}
+	applied, err := stateRepo.GetAppliedBrokerRuntime()
+	if err != nil {
+		t.Fatalf("GetAppliedBrokerRuntime() error = %v", err)
+	}
+	if applied.BrokerLoadedRevision != runtimeInfo.Revision || applied.BrokerReloadStatus != "applied" {
+		t.Fatalf("applied = %#v", applied)
+	}
 }
 
 func TestJoinRequestVerificationAndBackendVerificationFlow(t *testing.T) {

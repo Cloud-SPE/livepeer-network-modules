@@ -16,40 +16,58 @@ type MarkRequest struct {
 }
 
 type View struct {
-	DesiredRevision     string    `json:"desired_revision,omitempty"`
-	AppliedRevision     string    `json:"applied_revision,omitempty"`
-	Dirty               bool      `json:"dirty"`
-	LastApplyStartedAt  time.Time `json:"last_apply_started_at,omitempty"`
-	LastApplyFinishedAt time.Time `json:"last_apply_finished_at,omitempty"`
-	LastApplyStatus     string    `json:"last_apply_status,omitempty"`
-	LastApplyError      string    `json:"last_apply_error,omitempty"`
-	OfferCount          int       `json:"offer_count,omitempty"`
-	MemberCount         int       `json:"member_count,omitempty"`
-	BackendCount        int       `json:"backend_count,omitempty"`
-	AssignmentCount     int       `json:"assignment_count,omitempty"`
+	DesiredRevision      string    `json:"desired_revision,omitempty"`
+	AppliedRevision      string    `json:"applied_revision,omitempty"`
+	BrokerLoadedRevision string    `json:"broker_loaded_revision,omitempty"`
+	BrokerLoadedAt       time.Time `json:"broker_loaded_at,omitempty"`
+	BrokerReloadStatus   string    `json:"broker_reload_status,omitempty"`
+	BrokerReloadError    string    `json:"broker_reload_error,omitempty"`
+	Dirty                bool      `json:"dirty"`
+	BrokerDirty          bool      `json:"broker_dirty"`
+	LastApplyStartedAt   time.Time `json:"last_apply_started_at,omitempty"`
+	LastApplyFinishedAt  time.Time `json:"last_apply_finished_at,omitempty"`
+	LastApplyStatus      string    `json:"last_apply_status,omitempty"`
+	LastApplyError       string    `json:"last_apply_error,omitempty"`
+	OfferCount           int       `json:"offer_count,omitempty"`
+	MemberCount          int       `json:"member_count,omitempty"`
+	BackendCount         int       `json:"backend_count,omitempty"`
+	AssignmentCount      int       `json:"assignment_count,omitempty"`
 }
 
 func BuildView(desired *types.DesiredBrokerRuntime, applied types.AppliedBrokerRuntime) View {
+	desiredRevision := revisionOf(desired)
+	brokerLoaded := applied.BrokerLoadedRevision
+	brokerDirty := false
+	if brokerLoaded != "" {
+		brokerDirty = desiredRevision != brokerLoaded
+	}
 	return View{
-		DesiredRevision:     revisionOf(desired),
-		AppliedRevision:     applied.AppliedRevision,
-		Dirty:               revisionOf(desired) != applied.AppliedRevision,
-		LastApplyStartedAt:  applied.LastApplyStartedAt,
-		LastApplyFinishedAt: applied.LastApplyFinishedAt,
-		LastApplyStatus:     applied.LastApplyStatus,
-		LastApplyError:      applied.LastApplyError,
-		OfferCount:          countFromDesired(desired, "offer"),
-		MemberCount:         countFromDesired(desired, "member"),
-		BackendCount:        countFromDesired(desired, "backend"),
-		AssignmentCount:     countFromDesired(desired, "assignment"),
+		DesiredRevision:      desiredRevision,
+		AppliedRevision:      applied.AppliedRevision,
+		BrokerLoadedRevision: applied.BrokerLoadedRevision,
+		BrokerLoadedAt:       applied.BrokerLoadedAt,
+		BrokerReloadStatus:   applied.BrokerReloadStatus,
+		BrokerReloadError:    applied.BrokerReloadError,
+		Dirty:                desiredRevision != applied.AppliedRevision,
+		BrokerDirty:          brokerDirty,
+		LastApplyStartedAt:   applied.LastApplyStartedAt,
+		LastApplyFinishedAt:  applied.LastApplyFinishedAt,
+		LastApplyStatus:      applied.LastApplyStatus,
+		LastApplyError:       applied.LastApplyError,
+		OfferCount:           countFromDesired(desired, "offer"),
+		MemberCount:          countFromDesired(desired, "member"),
+		BackendCount:         countFromDesired(desired, "backend"),
+		AssignmentCount:      countFromDesired(desired, "assignment"),
 	}
 }
 
 func BuildDiff(desired *types.DesiredBrokerRuntime, applied types.AppliedBrokerRuntime) map[string]any {
 	return map[string]any{
-		"desired_revision": revisionOf(desired),
-		"applied_revision": applied.AppliedRevision,
-		"dirty":            revisionOf(desired) != applied.AppliedRevision,
+		"desired_revision":       revisionOf(desired),
+		"applied_revision":       applied.AppliedRevision,
+		"broker_loaded_revision": applied.BrokerLoadedRevision,
+		"dirty":                  revisionOf(desired) != applied.AppliedRevision,
+		"broker_dirty":           applied.BrokerLoadedRevision != "" && revisionOf(desired) != applied.BrokerLoadedRevision,
 	}
 }
 
@@ -64,13 +82,13 @@ func MarkApplied(stateRepo *repo.StateRepo, desired *types.DesiredBrokerRuntime,
 	if revision != desired.Revision {
 		return types.AppliedBrokerRuntime{}, fmt.Errorf("revision must match current desired revision")
 	}
-	applied := types.AppliedBrokerRuntime{
-		DesiredRevision:     desired.Revision,
-		AppliedRevision:     revision,
-		LastApplyStartedAt:  now,
-		LastApplyFinishedAt: now,
-		LastApplyStatus:     "applied",
-	}
+	applied, _ := stateRepo.GetAppliedBrokerRuntime()
+	applied.DesiredRevision = desired.Revision
+	applied.AppliedRevision = revision
+	applied.LastApplyStartedAt = now
+	applied.LastApplyFinishedAt = now
+	applied.LastApplyStatus = "applied"
+	applied.LastApplyError = ""
 	if err := stateRepo.PutAppliedBrokerRuntime(applied); err != nil {
 		return types.AppliedBrokerRuntime{}, err
 	}

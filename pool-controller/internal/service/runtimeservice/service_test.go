@@ -53,6 +53,22 @@ func TestRuntimeTransitionsAndView(t *testing.T) {
 	}
 }
 
+func TestBuildViewTracksBrokerLoadedRevisionSeparately(t *testing.T) {
+	desired := &types.DesiredBrokerRuntime{Revision: "rev-10"}
+	applied := types.AppliedBrokerRuntime{
+		AppliedRevision:      "rev-10",
+		BrokerLoadedRevision: "rev-9",
+		BrokerReloadStatus:   "applied",
+	}
+	view := BuildView(desired, applied)
+	if view.Dirty {
+		t.Fatalf("BuildView() dirty=%v, want false", view.Dirty)
+	}
+	if !view.BrokerDirty || view.BrokerLoadedRevision != "rev-9" {
+		t.Fatalf("BuildView() view=%#v", view)
+	}
+}
+
 func TestApplyMarksStartedAndApplied(t *testing.T) {
 	stateRepo, err := repo.Open(t.TempDir())
 	if err != nil {

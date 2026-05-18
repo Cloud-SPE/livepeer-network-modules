@@ -13,10 +13,14 @@ type DesiredBrokerRuntime struct {
 }
 
 type AppliedBrokerRuntime struct {
-	DesiredRevision     string    `json:"desired_revision"`
-	AppliedRevision     string    `json:"applied_revision"`
-	LastApplyStartedAt  time.Time `json:"last_apply_started_at,omitempty"`
-	LastApplyFinishedAt time.Time `json:"last_apply_finished_at,omitempty"`
-	LastApplyStatus     string    `json:"last_apply_status,omitempty"`
-	LastApplyError      string    `json:"last_apply_error,omitempty"`
+	DesiredRevision      string    `json:"desired_revision"`
+	AppliedRevision      string    `json:"applied_revision"`
+	BrokerLoadedRevision string    `json:"broker_loaded_revision,omitempty"`
+	BrokerLoadedAt       time.Time `json:"broker_loaded_at,omitempty"`
+	BrokerReloadStatus   string    `json:"broker_reload_status,omitempty"`
+	BrokerReloadError    string    `json:"broker_reload_error,omitempty"`
+	LastApplyStartedAt   time.Time `json:"last_apply_started_at,omitempty"`
+	LastApplyFinishedAt  time.Time `json:"last_apply_finished_at,omitempty"`
+	LastApplyStatus      string    `json:"last_apply_status,omitempty"`
+	LastApplyError       string    `json:"last_apply_error,omitempty"`
 }

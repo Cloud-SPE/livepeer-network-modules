@@ -603,14 +603,18 @@ const pageScript = `
       const applyError = item.last_apply_error || "";
       host.appendChild(card(
         "<strong>Desired vs Applied</strong>" +
-        '<div class="row"><span class="pill">' + (item.dirty ? "dirty" : "converged") + '</span><span class="pill">' + (item.last_apply_status || "unapplied") + '</span></div>' +
+        '<div class="row"><span class="pill">' + (item.dirty ? "dirty" : "converged") + '</span><span class="pill">' + (item.broker_dirty ? "broker-dirty" : "broker-confirmed") + '</span><span class="pill">' + (item.last_apply_status || "unapplied") + '</span></div>' +
         '<div class="small">apply mode: ' + (item.apply_mode || "controller-refresh") + (item.apply_timeout_ms ? ' | timeout_ms=' + item.apply_timeout_ms : '') + '</div>' +
         '<div class="small">apply command configured: ' + String(!!item.apply_command_configured) + ' | broker admin configured: ' + String(!!item.broker_admin_configured) + '</div>' +
         '<div class="small">desired: <span class="mono">' + (item.desired_revision || "") + '</span></div>' +
         '<div class="small">applied: <span class="mono">' + (item.applied_revision || "") + '</span></div>' +
+        '<div class="small">broker loaded: <span class="mono">' + (item.broker_loaded_revision || "") + '</span></div>' +
         '<div class="small">offers: ' + item.offer_count + ', members: ' + item.member_count + ', backends: ' + item.backend_count + ', assignments: ' + item.assignment_count + '</div>' +
         (startedAt ? '<div class="small">last started: <span class="mono">' + startedAt + '</span></div>' : '') +
         (finishedAt ? '<div class="small">last finished: <span class="mono">' + finishedAt + '</span></div>' : '') +
+        (item.broker_loaded_at ? '<div class="small">broker loaded at: <span class="mono">' + item.broker_loaded_at + '</span></div>' : '') +
+        (item.broker_reload_status ? '<div class="small">broker reload status: ' + item.broker_reload_status + '</div>' : '') +
+        (item.broker_reload_error ? '<div class="small bad">broker reload error: ' + item.broker_reload_error + '</div>' : '') +
         (applyError ? '<div class="small bad">last error: ' + applyError + '</div>' : '')
       ));
       $("runtimeYaml").textContent = yaml;

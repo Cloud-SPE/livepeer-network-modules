@@ -513,11 +513,29 @@ func (s *runtimeState) ApplyDesiredRuntime(desired *types.DesiredBrokerRuntime) 
 			cfg.Bootstrap.BrokerAdminAuth,
 			time.Duration(cfg.Bootstrap.BrokerAdminTimeoutMS)*time.Millisecond,
 		)
-		if _, err := client.ReloadAndConfirm(current.Revision); err != nil {
+		status, err := client.ReloadAndConfirm(current.Revision)
+		if status != nil {
+			if recordErr := s.recordBrokerRuntimeStatus(status); recordErr != nil {
+				return recordErr
+			}
+		}
+		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *runtimeState) recordBrokerRuntimeStatus(status *brokeradmin.RuntimeStatus) error {
+	if status == nil || s.repo == nil {
+		return nil
+	}
+	applied, _ := s.repo.GetAppliedBrokerRuntime()
+	applied.BrokerLoadedRevision = strings.TrimSpace(status.LoadedRevision)
+	applied.BrokerLoadedAt = status.LoadedAt
+	applied.BrokerReloadStatus = strings.TrimSpace(status.LastReloadStatus)
+	applied.BrokerReloadError = strings.TrimSpace(status.LastReloadError)
+	return s.repo.PutAppliedBrokerRuntime(applied)
 }
 
 func runBrokerApplyCommand(cfg *config.Config, configPath string, desired *types.DesiredBrokerRuntime) error {

@@ -90,14 +90,27 @@ type joinRequestPreviewRequest struct {
 }
 
 type joinRequestBackendPreview struct {
-	BackendID          string                   `json:"backend_id"`
-	Transport          string                   `json:"transport,omitempty"`
-	URL                string                   `json:"url,omitempty"`
-	VerificationStatus types.VerificationStatus `json:"verification_status,omitempty"`
-	VerificationError  string                   `json:"verification_error,omitempty"`
-	ClaimCount         int                      `json:"claim_count"`
-	Approavable        bool                     `json:"approvable"`
-	Reasons            []string                 `json:"reasons,omitempty"`
+	BackendID          string                    `json:"backend_id"`
+	Transport          string                    `json:"transport,omitempty"`
+	URL                string                    `json:"url,omitempty"`
+	VerificationStatus types.VerificationStatus  `json:"verification_status,omitempty"`
+	VerificationError  string                    `json:"verification_error,omitempty"`
+	ClaimCount         int                       `json:"claim_count"`
+	Approavable        bool                      `json:"approvable"`
+	Servable           bool                      `json:"servable"`
+	ServableClaimCount int                       `json:"servable_claim_count"`
+	ClaimPreviews      []joinRequestClaimPreview `json:"claim_previews,omitempty"`
+	Reasons            []string                  `json:"reasons,omitempty"`
+}
+
+type joinRequestClaimPreview struct {
+	CapabilityID     string   `json:"capability_id"`
+	OfferingID       string   `json:"offering_id,omitempty"`
+	InteractionMode  string   `json:"interaction_mode,omitempty"`
+	MatchingOfferIDs []string `json:"matching_offer_ids,omitempty"`
+	ActiveOfferIDs   []string `json:"active_offer_ids,omitempty"`
+	Servable         bool     `json:"servable"`
+	Reasons          []string `json:"reasons,omitempty"`
 }
 
 type joinRequestPreviewView struct {
@@ -258,7 +271,12 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		view := previewJoinRequest(item)
+		offers, err := deps.Repo.ListOffers()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		view := previewJoinRequest(item, offers)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(view)
@@ -299,7 +317,12 @@ func Register(mux *http.ServeMux, deps Deps) {
 				},
 			})
 		case "approve":
-			preview := previewJoinRequest(item)
+			offers, err := deps.Repo.ListOffers()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			preview := previewJoinRequest(item, offers)
 			if !preview.Approavable {
 				http.Error(w, strings.Join(preview.Reasons, "; "), http.StatusBadRequest)
 				return
@@ -1029,7 +1052,7 @@ func assignmentFromRequest(req assignmentMutationRequest) (types.Assignment, err
 	}, nil
 }
 
-func previewJoinRequest(item types.JoinRequest) joinRequestPreviewView {
+func previewJoinRequest(item types.JoinRequest, offers []types.Offer) joinRequestPreviewView {
 	view := joinRequestPreviewView{
 		JoinRequestID:   item.ID,
 		Status:          item.Status,
@@ -1057,6 +1080,7 @@ func previewJoinRequest(item types.JoinRequest) joinRequestPreviewView {
 			VerificationError:  backend.VerificationError,
 			ClaimCount:         len(backend.ClaimedCapabilities),
 			Approavable:        true,
+			ClaimPreviews:      make([]joinRequestClaimPreview, 0, len(backend.ClaimedCapabilities)),
 		}
 		if strings.TrimSpace(backend.ID) == "" {
 			backendView.Approavable = false
@@ -1078,6 +1102,14 @@ func previewJoinRequest(item types.JoinRequest) joinRequestPreviewView {
 			backendView.Approavable = false
 			backendView.Reasons = append(backendView.Reasons, "backend must claim at least one capability")
 		}
+		for _, claim := range backend.ClaimedCapabilities {
+			claimView := previewJoinClaim(claim, offers)
+			if claimView.Servable {
+				backendView.Servable = true
+				backendView.ServableClaimCount++
+			}
+			backendView.ClaimPreviews = append(backendView.ClaimPreviews, claimView)
+		}
 		if !backendView.Approavable {
 			view.Approavable = false
 			if len(backendView.Reasons) > 0 {
@@ -1088,6 +1120,39 @@ func previewJoinRequest(item types.JoinRequest) joinRequestPreviewView {
 	}
 	if !view.Approavable && len(view.Reasons) == 0 {
 		view.Reasons = append(view.Reasons, "one or more requested backends are not approvable")
+	}
+	return view
+}
+
+func previewJoinClaim(claim types.ClaimedOffer, offers []types.Offer) joinRequestClaimPreview {
+	view := joinRequestClaimPreview{
+		CapabilityID:    claim.CapabilityID,
+		OfferingID:      claim.OfferingID,
+		InteractionMode: claim.InteractionMode,
+	}
+	for _, offer := range offers {
+		if offer.CapabilityID != claim.CapabilityID {
+			continue
+		}
+		if claim.InteractionMode != "" && offer.InteractionMode != claim.InteractionMode {
+			continue
+		}
+		if claim.OfferingID != "" && offer.OfferingID != claim.OfferingID {
+			continue
+		}
+		view.MatchingOfferIDs = append(view.MatchingOfferIDs, offer.ID)
+		if offer.Status == types.OfferStatusActive {
+			view.ActiveOfferIDs = append(view.ActiveOfferIDs, offer.ID)
+		}
+	}
+	view.Servable = len(view.ActiveOfferIDs) > 0
+	if strings.TrimSpace(claim.CapabilityID) == "" {
+		view.Reasons = append(view.Reasons, "claimed capability_id is required")
+	}
+	if len(view.MatchingOfferIDs) == 0 {
+		view.Reasons = append(view.Reasons, "no orch offer matches this claim")
+	} else if len(view.ActiveOfferIDs) == 0 {
+		view.Reasons = append(view.Reasons, "matching orch offers exist but none are active")
 	}
 	return view
 }

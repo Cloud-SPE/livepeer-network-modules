@@ -215,10 +215,22 @@ const pageScript = `
         const reasons = (item.reasons || []).length ? item.reasons.join("; ") : "";
         div.innerHTML =
           '<strong class="' + (item.approavable ? "ok" : "bad") + '">' + (item.backend_id || "backend") + '</strong>' +
-          '<div class="small">' + [item.transport, item.url, item.verification_status, "claims=" + String(item.claim_count || 0)].filter(Boolean).join(" | ") + '</div>' +
+          '<div class="small">' + [item.transport, item.url, item.verification_status, "claims=" + String(item.claim_count || 0), "servable_claims=" + String(item.servable_claim_count || 0)].filter(Boolean).join(" | ") + '</div>' +
           (item.verification_error ? '<div class="small">' + item.verification_error + '</div>' : '') +
           (reasons ? '<div class="small">' + reasons + '</div>' : '');
         host.appendChild(div);
+        (item.claim_previews || []).forEach(claim => {
+          const claimDiv = document.createElement("div");
+          claimDiv.className = "check";
+          const claimReasons = (claim.reasons || []).length ? claim.reasons.join("; ") : "";
+          claimDiv.innerHTML =
+            '<strong class="' + (claim.servable ? "ok" : "warn") + '">claim</strong>' +
+            '<div class="small">' + [claim.capability_id || "", claim.offering_id || "", claim.interaction_mode || ""].filter(Boolean).join(" / ") + '</div>' +
+            '<div class="small">matching_offers=' + ((claim.matching_offer_ids || []).join(", ") || "none") + '</div>' +
+            '<div class="small">active_offers=' + ((claim.active_offer_ids || []).join(", ") || "none") + '</div>' +
+            (claimReasons ? '<div class="small">' + claimReasons + '</div>' : '');
+          host.appendChild(claimDiv);
+        });
       });
       if ((preview.reasons || []).length) {
         const div = document.createElement("div");

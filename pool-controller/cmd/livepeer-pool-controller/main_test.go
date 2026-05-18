@@ -1614,7 +1614,11 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 	}
 	body, _ = io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"approvable":true`) {
+	if resp.StatusCode != http.StatusOK ||
+		!strings.Contains(string(body), `"approvable":true`) ||
+		!strings.Contains(string(body), `"matching_offer_ids":["rerank-zerank2"]`) ||
+		!strings.Contains(string(body), `"active_offer_ids":["rerank-zerank2"]`) ||
+		!strings.Contains(string(body), `"servable":true`) {
 		t.Fatalf("join-flow preview status=%d body=%s", resp.StatusCode, string(body))
 	}
 

@@ -188,6 +188,24 @@ const pageBody = `<body>
       </div>
       <div class="panel">
         <h2>Audit Events</h2>
+        <div class="form-grid">
+          <label>Kind
+            <input id="auditKind" placeholder="offer_created">
+          </label>
+          <label>Resource Type
+            <input id="auditResourceType" placeholder="offer">
+          </label>
+          <label>Resource ID
+            <input id="auditResourceID" placeholder="rerank-zerank2">
+          </label>
+          <label>Limit
+            <input id="auditLimit" type="number" min="1" value="20">
+          </label>
+        </div>
+        <div class="actions">
+          <button id="applyAuditFilters" class="secondary">Apply Filters</button>
+          <button id="clearAuditFilters" class="secondary">Clear Filters</button>
+        </div>
         <div id="auditEvents" class="card-list"></div>
       </div>
       <div class="panel">

@@ -11,6 +11,16 @@ const pageScript = `
     let latestBackends = [];
     let latestAssignmentPreview = null;
 
+    function auditQuery() {
+      const params = new URLSearchParams();
+      if ($("auditKind").value.trim()) params.set("kind", $("auditKind").value.trim());
+      if ($("auditResourceType").value.trim()) params.set("resource_type", $("auditResourceType").value.trim());
+      if ($("auditResourceID").value.trim()) params.set("resource_id", $("auditResourceID").value.trim());
+      if ($("auditLimit").value.trim()) params.set("limit", $("auditLimit").value.trim());
+      const qs = params.toString();
+      return qs ? "/admin/v1/audit-events?" + qs : "/admin/v1/audit-events";
+    }
+
     function tokenHeaders(includeJSON = true) {
       const headers = {};
       const token = $("token").value.trim();
@@ -264,7 +274,7 @@ const pageScript = `
       setStatus("Refreshing control-plane state...");
       try {
         const [auditEvents, offers, joinRequests, members, backends, assignments, runtime, brokerConfig] = await Promise.all([
-          api("/admin/v1/audit-events"),
+          api(auditQuery()),
           api("/admin/v1/offers"),
           api("/admin/v1/join-requests"),
           api("/admin/v1/members"),
@@ -420,9 +430,18 @@ const pageScript = `
           "<strong>" + item.kind + '</strong>' +
           '<div class="small">' + (item.resource_type || "") + ': ' + (item.resource_id || "") + '</div>' +
           '<div class="small">' + (item.occurred_at || "") + '</div>' +
-          (details ? '<div class="mono">' + details + '</div>' : '')
+          (details ? '<div class="mono">' + details + '</div>' : '') +
+          '<div class="row">' +
+            '<button data-audit-drill="' + (item.resource_type || "") + '|' + (item.resource_id || "") + '" class="secondary">Drill Down</button>' +
+          '</div>'
         );
         host.appendChild(el);
+      });
+      host.querySelectorAll("[data-audit-drill]").forEach(btn => btn.onclick = () => {
+        const parts = btn.dataset.auditDrill.split("|");
+        $("auditResourceType").value = parts[0] || "";
+        $("auditResourceID").value = parts[1] || "";
+        void refreshAll();
       });
     }
 
@@ -519,6 +538,14 @@ const pageScript = `
     }
 
     $("refresh").onclick = refreshAll;
+    $("applyAuditFilters").onclick = () => { void refreshAll(); };
+    $("clearAuditFilters").onclick = () => {
+      $("auditKind").value = "";
+      $("auditResourceType").value = "";
+      $("auditResourceID").value = "";
+      $("auditLimit").value = "20";
+      void refreshAll();
+    };
     $("assignmentOfferSelect").onchange = () => {
       if ($("assignmentOfferSelect").value) $("assignmentOfferId").value = $("assignmentOfferSelect").value;
       syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());

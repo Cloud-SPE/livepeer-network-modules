@@ -155,8 +155,18 @@ func Register(mux *http.ServeMux, deps Deps) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
 	}))
-	mux.HandleFunc("GET /admin/v1/audit-events", auth(func(w http.ResponseWriter, _ *http.Request) {
-		items, err := deps.Repo.ListAuditEvents()
+	mux.HandleFunc("GET /admin/v1/audit-events", auth(func(w http.ResponseWriter, r *http.Request) {
+		kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+		resourceType := strings.TrimSpace(r.URL.Query().Get("resource_type"))
+		resourceID := strings.TrimSpace(r.URL.Query().Get("resource_id"))
+		limit := 50
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			var parsed int
+			if _, err := fmt.Sscanf(raw, "%d", &parsed); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		items, err := deps.Repo.ListAuditEventsFiltered(kind, resourceType, resourceID, limit)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

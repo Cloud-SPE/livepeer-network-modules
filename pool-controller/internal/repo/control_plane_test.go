@@ -131,3 +131,23 @@ func TestStateRepoJoinRequestAndVerificationTransitions(t *testing.T) {
 		t.Fatalf("backend = %#v", gotBackend)
 	}
 }
+
+func TestListAuditEventsFiltered(t *testing.T) {
+	repo, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = repo.Close() }()
+
+	_ = repo.AppendAuditEvent(types.AuditEvent{ID: "a1", Kind: "offer_created", ResourceType: "offer", ResourceID: "offer-1"})
+	_ = repo.AppendAuditEvent(types.AuditEvent{ID: "a2", Kind: "offer_updated", ResourceType: "offer", ResourceID: "offer-1"})
+	_ = repo.AppendAuditEvent(types.AuditEvent{ID: "a3", Kind: "join_request_approved", ResourceType: "join_request", ResourceID: "join-1"})
+
+	items, err := repo.ListAuditEventsFiltered("offer_updated", "offer", "offer-1", 10)
+	if err != nil {
+		t.Fatalf("ListAuditEventsFiltered() error = %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "a2" {
+		t.Fatalf("items = %#v", items)
+	}
+}

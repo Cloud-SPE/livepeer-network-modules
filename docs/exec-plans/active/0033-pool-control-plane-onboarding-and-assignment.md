@@ -2553,10 +2553,22 @@ Current state:
 
 - code paths exist for the new control-plane model
 - the component README covers the broker apply command contract
+- `pool-controller/RUNBOOK.md` now covers the primary production operator path
+  for:
+  - offers / join requests / assignments
+  - broker runtime apply
+  - broker-confirmed convergence checks
+  - failure triage
+- `infra/scenarios/pool-orchestrator/README.md` now explicitly points back to
+  the control-plane runbook for the production workflow
 
 What is still missing:
 
-- end-to-end production runbooks for the new onboarding and apply model
+- a fully cross-cutting end-to-end rollout guide that binds:
+  - `pool-controller`
+  - `capability-broker`
+  - `orch-coordinator`
+  - secure-orch sign/publish
 - host/container deployment guidance for the broker apply command
 - failure-recovery playbooks for:
   - failed apply

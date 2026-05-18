@@ -96,6 +96,9 @@ docker compose \
 - This scenario is suitable for a single-host public/data-plane rollout.
 - Put TLS in front of the exposed broker and coordinator public ports before
   live traffic.
+- Treat this scenario README as the compose/bootstrap guide only. The
+  production control-plane and broker-apply workflow now lives in
+  [`pool-controller/RUNBOOK.md`](../../../pool-controller/RUNBOOK.md).
 - The generated broker config now carries `receipt_sink`, so broker-side work
   receipts flow back into `pool-controller` when configured in the
   pool-controller source config.

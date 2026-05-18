@@ -5,12 +5,91 @@
 `pool-controller` is the Pool accounting and admin source of truth. It is not
 in the request path, but it is the source of record for:
 
-- member config snapshots
+- orch-owned offers
+- join requests
+- approved members and backends
+- backend-to-offer assignments
+- desired broker runtime
 - work receipts
 - round receipts
 - payout intents
 - payout retry history
 - lease state
+
+It is also the operator control plane for broker runtime convergence when the
+Pool broker is managed through `POST /admin/v1/broker-runtime/apply`.
+
+## Production topology
+
+The Pool production shape spans two sides:
+
+- public/data-plane host:
+  - `pool-controller`
+  - `capability-broker`
+  - `orch-coordinator`
+  - `payment-daemon` receiver
+  - `pool-reconciler`
+  - `pool-payout-executor`
+- secure-orch / protocol host:
+  - `protocol-daemon`
+  - `service-registry-daemon`
+  - `secure-orch-console`
+
+`pool-controller` does not replace the secure-orch sign cycle. The normal
+publication flow remains:
+
+1. `pool-controller` manages offers, members, assignments, and broker apply
+2. `capability-broker` advertises the resulting inventory
+3. `orch-coordinator` scrapes broker offerings/health and builds the candidate
+4. secure-orch signs
+5. `orch-coordinator` publishes the signed manifest
+
+## Required production inputs
+
+Bootstrap config:
+
+- `identity.orch_eth_address`
+- durable `--data-dir`
+- `admin_auth.bearer_token_ref: env://...`
+
+Broker apply integration:
+
+- `bootstrap.broker_apply_command`:
+  stages the rendered broker YAML where the broker host expects it
+- `bootstrap.broker_apply_timeout_ms`
+- `bootstrap.broker_admin_url`
+- `bootstrap.broker_admin_auth`
+- `bootstrap.broker_admin_timeout_ms`
+
+Broker private admin surface:
+
+- `capability-broker` `admin_auth.method: bearer`
+- `capability-broker` `admin_auth.secret_ref: env://...`
+- private reachability from `pool-controller` to:
+  - `POST /admin/v1/runtime/reload`
+  - `GET /admin/v1/runtime`
+
+Secure-orch side:
+
+- separate running `protocol-daemon`
+- separate running `secure-orch-console`
+- cold orch signing key only on secure-orch
+
+## Production bring-up order
+
+1. Bring up secure-orch/protocol host first.
+2. Bring up `pool-controller` with durable storage and admin auth.
+3. Create orch-owned offers in `pool-controller`.
+4. Accept member join requests and verify backends.
+5. Create assignments from approved backends to orch-owned offers.
+6. Apply desired broker runtime through `POST /admin/v1/broker-runtime/apply`.
+7. Confirm broker convergence from:
+  - `GET /admin/v1/broker-runtime`
+  - `GET /admin/v1/broker-runtime/history`
+  - broker `GET /admin/v1/runtime`
+8. Bring up or refresh `orch-coordinator` against the broker public URL.
+9. Run the secure-orch sign/publish cycle.
+10. Run a low-risk production smoke request through the gateway path.
 
 ## Required runtime inputs
 
@@ -35,6 +114,62 @@ Compose:
 docker compose -f compose/docker-compose.yml up -d
 ```
 
+## Primary operator workflow
+
+### 1. Offer and member control plane
+
+The normal operator sequence is:
+
+1. create/update offers
+2. review join requests
+3. refresh backend verification if needed
+4. approve or reject the member
+5. assign approved backends to active offers
+
+Useful admin reads:
+
+- `GET /admin/v1/offers`
+- `GET /admin/v1/join-requests`
+- `GET /admin/v1/members`
+- `GET /admin/v1/member-backends`
+- `GET /admin/v1/assignments`
+
+### 2. Broker runtime convergence
+
+The normal production action is:
+
+- `POST /admin/v1/broker-runtime/apply`
+
+That flow now means:
+
+1. `pool-controller` renders the desired broker YAML
+2. optional apply command stages the file
+3. `pool-controller` triggers broker reload
+4. broker reports a broker-local reload `attempt_id`
+5. `pool-controller` confirms:
+   - broker reload attempt matches the triggered `attempt_id`
+   - broker `loaded_revision == desired_revision`
+
+Do not treat shell-command exit alone as proof of convergence.
+
+Primary runtime reads:
+
+- `GET /admin/v1/broker-runtime`
+- `GET /admin/v1/broker-runtime/history`
+
+Broker-side corroboration:
+
+- broker `GET /admin/v1/runtime`
+
+The manual runtime endpoints remain fallback/debug controls only:
+
+- `POST /admin/v1/broker-runtime/mark-started`
+- `POST /admin/v1/broker-runtime/mark-failed`
+- `POST /admin/v1/broker-runtime/mark-applied`
+
+Use them only when the operator intentionally needs to bypass the normal
+broker-admin apply path for investigation or break-glass handling.
+
 ## Health checks
 
 - `GET /healthz`
@@ -45,10 +180,13 @@ docker compose -f compose/docker-compose.yml up -d
 
 - `GET /admin/v1/state`
 - `GET /admin/v1/snapshots`
+- `GET /admin/v1/broker-runtime`
+- `GET /admin/v1/broker-runtime/history`
 - `GET /admin/v1/payout-intents`
 - `GET /admin/v1/member-payouts`
 - `GET /admin/v1/payout-rounds`
 - `GET /admin/v1/payout-alerts`
+- `GET /admin/v1/audit-events`
 
 ## Metrics
 
@@ -78,7 +216,29 @@ High-value Pool routing metrics now include:
 - Do not delete the BoltDB state unless you intentionally want to discard
   payout and receipt history.
 
+Broker apply failure triage:
+
+1. `GET /admin/v1/broker-runtime`
+   Check:
+   - `dirty`
+   - `broker_dirty`
+   - `broker_reload_status`
+   - `broker_reload_error`
+   - `broker_reload_attempt_id`
+2. `GET /admin/v1/broker-runtime/history`
+   Confirm the latest controller-side attempt details.
+3. broker `GET /admin/v1/runtime`
+   Confirm the broker's own latest attempt, loaded revision, and history.
+4. inspect the configured `broker_apply_command`
+   Confirm the desired YAML was staged at the correct path for the broker.
+
+If the broker loaded revision does not match the controller desired revision,
+do not publish from `orch-coordinator` until convergence is fixed.
+
+If broker reload fails but the prior broker runtime is still serving traffic,
+prefer fix-forward and re-apply over manual state edits.
+
 ## Backup scope
 
 Back up the entire `--data-dir`. That store contains the canonical Pool-side
-receipt and payout accounting history.
+receipt, control-plane, and payout accounting history.

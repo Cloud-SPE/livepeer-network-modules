@@ -1,0 +1,150 @@
+---
+plan: 0031
+title: Pool follow-up backlog
+status: active
+phase: backlog
+opened: 2026-05-18
+owner: harness
+related:
+  - "active plan 0029 — pool node design"
+  - "active plan 0030 — pool backend scoring and broker-integrated selection for OpenAI workloads"
+---
+
+# Plan 0031 — Pool follow-up backlog
+
+## 1. Purpose
+
+Pool routing/scoring for the first OpenAI-focused slice is now implemented in
+code. This backlog captures the remaining Pool work that is still open after
+the `0030` slice, grouped into:
+
+- near-term next implementation slices
+- explicit `0029` non-implemented items
+- deferred work already acknowledged by `0029` / `0030`
+
+This is a prioritization document, not a new architecture reset.
+
+## 2. Current baseline
+
+The following are already in place:
+
+- `pool-controller` backend-selection state, scoring, synthetic probes,
+  summaries, overrides, and metrics
+- `capability-broker` Pool snapshot polling, Pool-aware selection, health
+  surfaces, and request-time selection metrics
+- `orch-coordinator` compatibility with additive broker health fields such as
+  `backends[]`
+- first-slice synthetic probes for:
+  - `openai:chat-completions`
+  - `openai:embeddings`
+  - `openai:audio-*` via explicit probes plus interaction-mode fallbacks
+
+The remaining tasks below should be read as follow-up work, not missing core
+behavior from the shipped first slice.
+
+## 3. Priority order
+
+### P0 — close out first-slice plan hygiene
+
+These are low-risk cleanup items that reduce ambiguity around what has shipped.
+
+1. Update `0030` status from `phase: design` once the team agrees it has moved
+   into shipped implementation territory.
+2. Update `0029` status text so the Pool-scoring portions no longer read like
+   pending design when they are already implemented.
+3. Add a short cross-reference from `0029` to `0031` so future readers know
+   where remaining Pool work is tracked.
+
+### P1 — next capability-family expansion
+
+These are the most direct functional extensions to the shipped Pool scorer.
+
+1. Add synthetic probes for `video:transcode.abr`.
+2. Add synthetic probes for `video:live.rtmp`.
+3. Add synthetic probes for deferred session/media families only after the
+   video probe recipes stabilize:
+   - `vtuber`
+   - `daydream`
+   - other session-control workloads
+
+Why this is first:
+
+- it extends the existing scoring model without changing the control-plane
+  architecture
+- the codepaths for synthetic probing, snapshot export, broker consumption, and
+  observability already exist
+- it closes the biggest remaining functional gap between OpenAI-first Pool
+  support and broader Pool support
+
+### P2 — operator workflow and policy automation
+
+These items are explicitly called out as not implemented yet in `0029`, but
+they are the next meaningful Pool product surface after routing quality.
+
+1. Member self-service portal / wallet sign-in UX.
+2. Automated member approval workflow.
+3. Policy-driven auto-drain / auto-suspend orchestration.
+4. Multi-listener split between admin/member/public binaries if the current
+   single-process surface becomes an operational constraint.
+
+Recommended order inside this group:
+
+1. approval workflow
+2. policy-driven auto-drain / suspend
+3. member self-service UX
+4. binary/listener split
+
+Reason:
+
+- approval and policy automation affect actual Pool operations
+- UX can follow once the approval/policy state model is stable
+- binary/listener split is mostly deployment hardening, not product behavior
+
+### P3 — payout and accounting follow-up
+
+The current accounting path is usable, but there is still larger Pool economics
+work left if payout automation becomes the next bottleneck.
+
+1. Harden reconciler/executor operational runbooks and dashboards around lease
+   churn, retries, and payout failure pressure.
+2. Decide whether the current admin-plane payout flow is sufficient for the
+   expected operator scale.
+3. If not, plan the next accounting milestone explicitly:
+   - stronger payout orchestration
+   - more automated retry/suspend coupling
+   - eventual `PoolPayout` smart-contract path
+
+### P4 — deferred research / protocol-adjacent work
+
+These remain deferred unless priorities change:
+
+1. Online sampling / shadow-backend response diffing.
+2. Fully automatic member self-service approval.
+3. Member-set pricing.
+4. HA / clustered `pool-controller`.
+5. Manifest / resolver / gateway protocol changes for Pool-aware routing.
+6. Force-include override.
+7. Emergency degraded fallback routing mode.
+
+## 4. Recommended next slice
+
+If the goal is to continue Pool implementation immediately, the recommended
+next slice is:
+
+1. `video:transcode.abr` synthetic probe support
+2. `video:live.rtmp` synthetic probe support
+3. only then move to `vtuber` / `daydream` / session-control probing
+
+That keeps the next work aligned with the architecture already in place and
+extends Pool scoring to the next most important workload families without
+reopening routing contracts.
+
+## 5. Exit criteria for this backlog
+
+This backlog can be retired or split once either of these is true:
+
+1. the next concrete implementation slice gets promoted into its own numbered
+   plan, or
+2. `0029` and `0030` are both moved to completed status and the remaining Pool
+   work is small enough to live in the tech-debt tracker instead of a dedicated
+   backlog plan.

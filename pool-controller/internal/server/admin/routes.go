@@ -721,17 +721,27 @@ func Register(mux *http.ServeMux, deps Deps) {
 			currentDesired = latest
 		}
 		if status == "failed" {
+			details := map[string]any{
+				"error":            applied.LastApplyError,
+				"desired_revision": desired.Revision,
+				"current_revision": currentDesired.Revision,
+			}
+			if applied.BrokerLoadedRevision != "" {
+				details["broker_loaded_revision"] = applied.BrokerLoadedRevision
+			}
+			if applied.BrokerReloadStatus != "" {
+				details["broker_reload_status"] = applied.BrokerReloadStatus
+			}
+			if applied.BrokerReloadError != "" {
+				details["broker_reload_error"] = applied.BrokerReloadError
+			}
 			_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
 				Kind:         "broker_runtime_apply_failed",
 				OccurredAt:   now,
 				Actor:        req.Actor,
 				ResourceID:   desired.Revision,
 				ResourceType: "broker_runtime",
-				Details: map[string]any{
-					"error":            applied.LastApplyError,
-					"desired_revision": desired.Revision,
-					"current_revision": currentDesired.Revision,
-				},
+				Details:      details,
 			})
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -740,16 +750,26 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		details := map[string]any{
+			"desired_revision": currentDesired.Revision,
+			"applied_revision": applied.AppliedRevision,
+		}
+		if applied.BrokerLoadedRevision != "" {
+			details["broker_loaded_revision"] = applied.BrokerLoadedRevision
+		}
+		if applied.BrokerReloadStatus != "" {
+			details["broker_reload_status"] = applied.BrokerReloadStatus
+		}
+		if applied.BrokerReloadError != "" {
+			details["broker_reload_error"] = applied.BrokerReloadError
+		}
 		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
 			Kind:         "broker_runtime_apply_succeeded",
 			OccurredAt:   now,
 			Actor:        req.Actor,
 			ResourceID:   applied.AppliedRevision,
 			ResourceType: "broker_runtime",
-			Details: map[string]any{
-				"desired_revision": currentDesired.Revision,
-				"applied_revision": applied.AppliedRevision,
-			},
+			Details:      details,
 		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

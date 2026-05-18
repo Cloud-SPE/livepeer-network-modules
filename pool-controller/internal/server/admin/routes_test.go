@@ -32,7 +32,16 @@ func TestBrokerRuntimeApplyFailure(t *testing.T) {
 		WrapAuth:            func(next http.HandlerFunc) http.HandlerFunc { return next },
 		RefreshRendered:     func(string) error { return nil },
 		GetDesiredRuntime:   func() (*types.DesiredBrokerRuntime, error) { return desired, nil },
-		ApplyDesiredRuntime: func(*types.DesiredBrokerRuntime) error { return fmt.Errorf("reload failed") },
+		ApplyDesiredRuntime: func(*types.DesiredBrokerRuntime) error {
+			applied, _ := stateRepo.GetAppliedBrokerRuntime()
+			applied.BrokerLoadedRevision = "rev-older"
+			applied.BrokerReloadStatus = "failed"
+			applied.BrokerReloadError = "broker rejected reload"
+			if err := stateRepo.PutAppliedBrokerRuntime(applied); err != nil {
+				t.Fatalf("PutAppliedBrokerRuntime() error = %v", err)
+			}
+			return fmt.Errorf("reload failed")
+		},
 		GetBrokerConfig:     func() []byte { return []byte(desired.RenderedYAML) },
 		GetMembersJSON:      func() ([]byte, error) { return []byte(`{"members":[]}`), nil },
 		GetOfferingsJSON:    func() ([]byte, error) { return []byte(`{"offerings":[]}`), nil },
@@ -65,5 +74,9 @@ func TestBrokerRuntimeApplyFailure(t *testing.T) {
 	}
 	if len(items) == 0 || items[len(items)-1].Details["error"] != "reload failed" {
 		t.Fatalf("audit events = %#v", items)
+	}
+	last := items[len(items)-1]
+	if last.Details["broker_loaded_revision"] != "rev-older" || last.Details["broker_reload_status"] != "failed" || last.Details["broker_reload_error"] != "broker rejected reload" {
+		t.Fatalf("audit details = %#v", last.Details)
 	}
 }

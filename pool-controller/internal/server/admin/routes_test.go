@@ -80,3 +80,84 @@ func TestBrokerRuntimeApplyFailure(t *testing.T) {
 		t.Fatalf("audit details = %#v", last.Details)
 	}
 }
+
+func TestBrokerRuntimeHistory(t *testing.T) {
+	stateRepo, err := repo.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+
+	now := time.Now().UTC()
+	for _, event := range []types.AuditEvent{
+		{
+			Kind:         "broker_runtime_mark_started",
+			OccurredAt:   now.Add(-3 * time.Minute),
+			Actor:        "tester",
+			ResourceID:   "rev-1",
+			ResourceType: "broker_runtime",
+		},
+		{
+			Kind:         "broker_runtime_apply_failed",
+			OccurredAt:   now.Add(-2 * time.Minute),
+			Actor:        "tester",
+			ResourceID:   "rev-1",
+			ResourceType: "broker_runtime",
+			Details: map[string]any{
+				"desired_revision":      "rev-1",
+				"current_revision":      "rev-2",
+				"error":                 "reload failed",
+				"broker_loaded_revision": "rev-older",
+				"broker_reload_status":  "failed",
+			},
+		},
+		{
+			Kind:         "broker_runtime_apply_succeeded",
+			OccurredAt:   now.Add(-1 * time.Minute),
+			Actor:        "tester",
+			ResourceID:   "rev-2",
+			ResourceType: "broker_runtime",
+			Details: map[string]any{
+				"desired_revision":      "rev-2",
+				"applied_revision":      "rev-2",
+				"broker_loaded_revision": "rev-2",
+				"broker_reload_status":  "applied",
+			},
+		},
+		{
+			Kind:         "offer_created",
+			OccurredAt:   now,
+			ResourceID:   "offer-1",
+			ResourceType: "offer",
+		},
+	} {
+		if err := stateRepo.AppendAuditEvent(event); err != nil {
+			t.Fatalf("AppendAuditEvent() error = %v", err)
+		}
+	}
+
+	mux := http.NewServeMux()
+	Register(mux, Deps{
+		Repo:             stateRepo,
+		WrapAuth:         func(next http.HandlerFunc) http.HandlerFunc { return next },
+		GetDesiredRuntime: func() (*types.DesiredBrokerRuntime, error) { return &types.DesiredBrokerRuntime{Revision: "rev-2"}, nil },
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/admin/v1/broker-runtime/history?limit=2")
+	if err != nil {
+		t.Fatalf("GET /admin/v1/broker-runtime/history error = %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /admin/v1/broker-runtime/history status=%d body=%s", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(string(body), `"items":[`) || !strings.Contains(string(body), `"kind":"broker_runtime_apply_succeeded"`) || !strings.Contains(string(body), `"broker_loaded_revision":"rev-2"`) {
+		t.Fatalf("GET /admin/v1/broker-runtime/history body=%s", string(body))
+	}
+	if strings.Contains(string(body), `"kind":"offer_created"`) || strings.Contains(string(body), `"kind":"broker_runtime_mark_started"`) {
+		t.Fatalf("history should be filtered/limited, body=%s", string(body))
+	}
+}

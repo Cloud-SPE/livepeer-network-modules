@@ -89,6 +89,22 @@ type runtimeView struct {
 	RuntimeApplyInfo
 }
 
+type runtimeHistoryItem struct {
+	Kind                 string         `json:"kind"`
+	Status               string         `json:"status"`
+	OccurredAt           time.Time      `json:"occurred_at"`
+	Actor                string         `json:"actor,omitempty"`
+	ResourceID           string         `json:"resource_id,omitempty"`
+	DesiredRevision      string         `json:"desired_revision,omitempty"`
+	CurrentRevision      string         `json:"current_revision,omitempty"`
+	AppliedRevision      string         `json:"applied_revision,omitempty"`
+	BrokerLoadedRevision string         `json:"broker_loaded_revision,omitempty"`
+	BrokerReloadStatus   string         `json:"broker_reload_status,omitempty"`
+	BrokerReloadError    string         `json:"broker_reload_error,omitempty"`
+	Error                string         `json:"error,omitempty"`
+	Details              map[string]any `json:"details,omitempty"`
+}
+
 func Register(mux *http.ServeMux, deps Deps) {
 	auth := deps.WrapAuth
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, _ *http.Request) {
@@ -614,6 +630,26 @@ func Register(mux *http.ServeMux, deps Deps) {
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(runtimeservice.BuildDiff(desired, applied))
 	}))
+	mux.HandleFunc("GET /admin/v1/broker-runtime/history", auth(func(w http.ResponseWriter, r *http.Request) {
+		limit := 20
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			var parsed int
+			if _, err := fmt.Sscanf(raw, "%d", &parsed); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		events, err := deps.Repo.ListAuditEventsFiltered("", "broker_runtime", "", 200)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		items := buildRuntimeHistory(events, limit)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(struct {
+			Items []runtimeHistoryItem `json:"items"`
+		}{Items: items})
+	}))
 	mux.HandleFunc("POST /admin/v1/broker-runtime/mark-applied", auth(func(w http.ResponseWriter, r *http.Request) {
 		desired, err := deps.GetDesiredRuntime()
 		if err != nil {
@@ -785,6 +821,84 @@ func buildRuntimeView(desired *types.DesiredBrokerRuntime, applied types.Applied
 		view.RuntimeApplyInfo = infoFn()
 	}
 	return view
+}
+
+func buildRuntimeHistory(events []types.AuditEvent, limit int) []runtimeHistoryItem {
+	if limit <= 0 {
+		limit = 20
+	}
+	items := make([]runtimeHistoryItem, 0, limit)
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		if !isRuntimeHistoryKind(event.Kind) {
+			continue
+		}
+		item := runtimeHistoryItem{
+			Kind:       event.Kind,
+			Status:     runtimeHistoryStatus(event.Kind),
+			OccurredAt: event.OccurredAt,
+			Actor:      event.Actor,
+			ResourceID: event.ResourceID,
+			Details:    event.Details,
+		}
+		if event.Details != nil {
+			item.DesiredRevision = stringDetail(event.Details, "desired_revision")
+			item.CurrentRevision = stringDetail(event.Details, "current_revision")
+			item.AppliedRevision = stringDetail(event.Details, "applied_revision")
+			item.BrokerLoadedRevision = stringDetail(event.Details, "broker_loaded_revision")
+			item.BrokerReloadStatus = stringDetail(event.Details, "broker_reload_status")
+			item.BrokerReloadError = stringDetail(event.Details, "broker_reload_error")
+			item.Error = stringDetail(event.Details, "error")
+		}
+		if item.AppliedRevision == "" && event.Kind == "broker_runtime_mark_applied" {
+			item.AppliedRevision = event.ResourceID
+		}
+		if item.DesiredRevision == "" && (event.Kind == "broker_runtime_mark_started" || event.Kind == "broker_runtime_mark_failed") {
+			item.DesiredRevision = event.ResourceID
+		}
+		items = append(items, item)
+		if len(items) >= limit {
+			break
+		}
+	}
+	return items
+}
+
+func isRuntimeHistoryKind(kind string) bool {
+	switch kind {
+	case "broker_runtime_mark_started",
+		"broker_runtime_mark_failed",
+		"broker_runtime_mark_applied",
+		"broker_runtime_apply_failed",
+		"broker_runtime_apply_succeeded":
+		return true
+	default:
+		return false
+	}
+}
+
+func runtimeHistoryStatus(kind string) string {
+	switch kind {
+	case "broker_runtime_mark_started":
+		return "started"
+	case "broker_runtime_mark_failed", "broker_runtime_apply_failed":
+		return "failed"
+	case "broker_runtime_mark_applied", "broker_runtime_apply_succeeded":
+		return "applied"
+	default:
+		return ""
+	}
+}
+
+func stringDetail(details map[string]any, key string) string {
+	if details == nil {
+		return ""
+	}
+	value, ok := details[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func assignmentFromRequest(req assignmentMutationRequest) (types.Assignment, error) {

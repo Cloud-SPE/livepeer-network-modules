@@ -221,6 +221,11 @@ const pageBody = `<body>
         <div id="runtime" class="card-list"></div>
         <pre id="runtimeYaml"></pre>
       </div>
+      <div class="panel">
+        <h2>Broker Runtime History</h2>
+        <div class="small">Latest runtime apply and manual mark events.</div>
+        <div id="runtimeHistory" class="card-list"></div>
+      </div>
     </section>
   </div>
 `

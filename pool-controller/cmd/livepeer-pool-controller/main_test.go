@@ -160,6 +160,7 @@ members:
 		{path: "/admin/v1/broker-config", wantStatus: http.StatusOK, wantBody: "capabilities:"},
 		{path: "/admin/v1/offers", wantStatus: http.StatusOK, wantBody: `"status":"active"`},
 		{path: "/admin/v1/audit-events", wantStatus: http.StatusOK, wantBody: `"events":[`},
+		{path: "/admin/v1/broker-runtime/history", wantStatus: http.StatusOK, wantBody: `"items":[`},
 		{path: "/admin/v1/members", wantStatus: http.StatusOK, wantBody: `"secret_ref_set":true`},
 		{path: "/admin/v1/members", wantStatus: http.StatusOK, wantBody: `"status":"active"`},
 		{path: "/admin/v1/assignments", wantStatus: http.StatusOK, wantBody: `"status":"active"`},

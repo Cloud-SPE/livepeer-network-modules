@@ -13,6 +13,7 @@ const pageScript = `
     let latestJoinPreview = null;
     let latestAssignmentCandidates = [];
     let latestAuditEvents = [];
+    let latestRuntimeHistory = [];
 
     function auditQuery() {
       const params = new URLSearchParams();
@@ -377,7 +378,7 @@ const pageScript = `
     async function refreshAll() {
       setStatus("Refreshing control-plane state...");
       try {
-        const [auditEvents, offers, joinRequests, members, backends, assignmentCandidates, assignments, runtime, brokerConfig] = await Promise.all([
+        const [auditEvents, offers, joinRequests, members, backends, assignmentCandidates, assignments, runtime, runtimeHistory, brokerConfig] = await Promise.all([
           api(auditQuery()),
           api("/admin/v1/offers"),
           api("/admin/v1/join-requests"),
@@ -386,6 +387,7 @@ const pageScript = `
           api("/admin/v1/assignment-candidates"),
           api("/admin/v1/assignments"),
           api("/admin/v1/broker-runtime"),
+          api("/admin/v1/broker-runtime/history?limit=12"),
           api("/admin/v1/broker-config", { headers: tokenHeaders(false) })
         ]);
 
@@ -393,6 +395,7 @@ const pageScript = `
         latestBackends = backends.backends || [];
         latestAssignmentCandidates = assignmentCandidates.candidates || [];
         latestAuditEvents = auditEvents.events || [];
+        latestRuntimeHistory = runtimeHistory.items || [];
         syncAssignmentSelectors();
         void refreshAssignmentDraftState();
         renderAuditEvents(auditEvents.events || []);
@@ -403,6 +406,7 @@ const pageScript = `
         renderAssignmentCandidates(assignmentCandidates.candidates || []);
         renderAssignments(assignments.assignments || []);
         renderRuntime(runtime, brokerConfig);
+        renderRuntimeHistory(runtimeHistory.items || []);
         setStatus("Control-plane state refreshed.", "ok");
       } catch (err) {
         setStatus(err.message, "bad");
@@ -618,6 +622,27 @@ const pageScript = `
         (applyError ? '<div class="small bad">last error: ' + applyError + '</div>' : '')
       ));
       $("runtimeYaml").textContent = yaml;
+    }
+
+    function renderRuntimeHistory(items) {
+      const host = $("runtimeHistory");
+      host.innerHTML = "";
+      items.forEach(item => {
+        const el = card(
+          "<strong>" + (item.kind || item.status || "runtime_event") + "</strong>" +
+          '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span>' +
+          (item.broker_reload_status ? '<span class="pill">' + item.broker_reload_status + '</span>' : '') +
+          '</div>' +
+          '<div class="small">' + (item.occurred_at || "") + (item.actor ? ' | actor=' + item.actor : '') + '</div>' +
+          (item.desired_revision ? '<div class="small">desired: <span class="mono">' + item.desired_revision + '</span></div>' : '') +
+          (item.current_revision ? '<div class="small">current: <span class="mono">' + item.current_revision + '</span></div>' : '') +
+          (item.applied_revision ? '<div class="small">applied: <span class="mono">' + item.applied_revision + '</span></div>' : '') +
+          (item.broker_loaded_revision ? '<div class="small">broker loaded: <span class="mono">' + item.broker_loaded_revision + '</span></div>' : '') +
+          (item.error ? '<div class="small bad">error: ' + item.error + '</div>' : '') +
+          (item.broker_reload_error ? '<div class="small bad">broker reload error: ' + item.broker_reload_error + '</div>' : '')
+        );
+        host.appendChild(el);
+      });
     }
 
     async function submitJSON(path, payload, method = "POST") {

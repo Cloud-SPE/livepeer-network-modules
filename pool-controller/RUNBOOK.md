@@ -273,6 +273,24 @@ do not publish from `orch-coordinator` until convergence is fixed.
 If broker reload fails but the prior broker runtime is still serving traffic,
 prefer fix-forward and re-apply over manual state edits.
 
+Common operator playbooks:
+
+- desired revision drifted during apply:
+  - inspect runtime history plus recent audit events
+  - identify the mutating offer/member/assignment change
+  - re-apply only after the desired revision stabilizes
+- approved but unassigned backend:
+  - inspect `GET /admin/v1/assignment-candidates`
+  - create assignment if the backend should publish
+  - then run broker apply
+- verification or join-request rejection:
+  - inspect join preview and backend verification error details
+  - correct endpoint/probe/claim issues before retrying approval
+- suspended member or disabled backend:
+  - treat it as a routing-state change
+  - apply broker runtime again before expecting broker/coordinator visibility to
+    match
+
 ## Backup scope
 
 Back up the entire `--data-dir`. That store contains the canonical Pool-side

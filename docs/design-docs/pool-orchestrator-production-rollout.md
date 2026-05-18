@@ -333,6 +333,16 @@ If the broker did not confirm the intended attempt/revision:
   live
 - fix forward and re-apply
 
+Playbook:
+
+1. stop any publication change that depends on the failed runtime
+2. confirm the desired revision in `pool-controller`
+3. confirm the broker-local latest `attempt_id`, status, and loaded revision
+4. verify the staged file path and contents used by `broker_apply_command`
+5. correct the staging or broker config issue
+6. run `POST /admin/v1/broker-runtime/apply` again
+7. re-check controller and broker history before proceeding
+
 ### 7.2 Desired revision drifted during apply
 
 If `pool-controller` reports drift during apply:
@@ -340,6 +350,19 @@ If `pool-controller` reports drift during apply:
 - reload state from `pool-controller`
 - inspect recent offer/member/assignment mutations
 - re-run apply only after the desired runtime stabilizes
+
+Playbook:
+
+1. fetch `GET /admin/v1/broker-runtime`
+2. fetch `GET /admin/v1/broker-runtime/history`
+3. inspect recent `GET /admin/v1/audit-events` for:
+   - offer changes
+   - member/backend status changes
+   - assignment changes
+4. decide whether the newest desired revision is the intended one
+5. if yes, apply again against the new desired revision
+6. if no, revert the accidental control-plane mutation through the normal API
+   surface, then apply again
 
 ### 7.3 Member approved but unassigned
 
@@ -350,13 +373,64 @@ Action:
 - either assign the backend to an active offer
 - or leave it intentionally unpublished
 
-### 7.4 Secure-orch sign/publish blocked
+Playbook:
+
+1. inspect `GET /admin/v1/assignment-candidates`
+2. inspect backend verification status and claim-to-offer suggestions
+3. either:
+   - create an assignment and apply broker runtime
+   - or leave the backend unassigned intentionally
+4. do not expect coordinator-visible inventory change until assignment + apply
+   have both completed
+
+### 7.4 Join request rejected or verification failed
+
+This is an onboarding review outcome, not a runtime failure.
+
+Playbook:
+
+1. inspect join preview and backend verification error details
+2. confirm whether the failure is:
+   - endpoint reachability
+   - probe configuration
+   - incompatible claim shape
+   - operator policy rejection
+3. communicate the reason back to the member/operator workflow
+4. refresh verification only after the underlying backend or claim issue is
+   corrected
+
+### 7.5 Member suspended or backend disabled after publication
+
+This is an active routing change and requires runtime reconciliation.
+
+Playbook:
+
+1. change member/backend status in `pool-controller`
+2. confirm assignment and candidate state reflect the change
+3. run `POST /admin/v1/broker-runtime/apply`
+4. verify broker convergence
+5. confirm broker `/registry/health` and coordinator view reflect the new
+   routable set
+6. if the change was emergency containment, leave the member/backend suspended
+   until a new verification cycle completes
+
+### 7.6 Secure-orch sign/publish blocked
 
 If broker convergence is correct but publication is blocked:
 
 - inspect coordinator candidate and audit state
 - inspect secure-orch console diff/sign path
 - do not weaken the cold-key boundary to work around the blockage
+
+Playbook:
+
+1. confirm broker convergence first
+2. confirm coordinator candidate contains the intended tuples
+3. inspect coordinator audit/history for candidate or upload rejection
+4. inspect secure-orch console sign path and last-signed state
+5. complete the normal operator transfer/sign/upload cycle
+6. if publish remains blocked, resolve coordinator-side rejection before
+   attempting another sign cycle
 
 ## 8. Primary references
 

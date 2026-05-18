@@ -2561,20 +2561,30 @@ Current state:
   - failure triage
 - `infra/scenarios/pool-orchestrator/README.md` now explicitly points back to
   the control-plane runbook for the production workflow
-
-What is still missing:
-
-- a fully cross-cutting end-to-end rollout guide that binds:
+- `docs/design-docs/pool-orchestrator-production-rollout.md` now binds the
+  cross-cutting production sequence across:
   - `pool-controller`
   - `capability-broker`
   - `orch-coordinator`
-  - secure-orch sign/publish
-- host/container deployment guidance for the broker apply command
+  - secure-orch
+- broker-apply deployment patterns are now documented in:
+  - `pool-controller/RUNBOOK.md`
+  - `capability-broker/docs/operator-runbook.md`
+  - `docs/design-docs/pool-orchestrator-production-rollout.md`
+- explicit recovery playbooks now exist for:
+  - failed broker apply
+  - desired revision drift during apply
+  - rejected join requests / verification failures
+  - approved but unassigned backends
+  - suspended members / disabled backends
+  - secure-orch publish blockage
+
+What is still missing:
+
 - failure-recovery playbooks for:
-  - failed apply
-  - stale desired vs applied revision
-  - rejected join requests
-  - suspended members and disabled backends
+  - payout/reconcile-specific failures beyond the control-plane surface
+  - coordinator publish rejection specifics if they become a recurring operator
+    issue
 
 Required work:
 

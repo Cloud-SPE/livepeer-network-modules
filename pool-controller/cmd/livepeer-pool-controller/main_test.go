@@ -159,6 +159,7 @@ members:
 		{path: "/public/v1/member-payouts?member_eth_address=0xabc", wantStatus: http.StatusOK, wantBody: `"member_eth_address":"0xabc"`},
 		{path: "/admin/v1/broker-config", wantStatus: http.StatusOK, wantBody: "capabilities:"},
 		{path: "/admin/v1/offers", wantStatus: http.StatusOK, wantBody: `"status":"active"`},
+		{path: "/admin/v1/audit-events", wantStatus: http.StatusOK, wantBody: `"events":[`},
 		{path: "/admin/v1/members", wantStatus: http.StatusOK, wantBody: `"secret_ref_set":true`},
 		{path: "/admin/v1/members", wantStatus: http.StatusOK, wantBody: `"status":"active"`},
 		{path: "/admin/v1/assignments", wantStatus: http.StatusOK, wantBody: `"status":"active"`},

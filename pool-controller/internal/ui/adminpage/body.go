@@ -187,6 +187,10 @@ const pageBody = `<body>
         <div id="assignments" class="card-list"></div>
       </div>
       <div class="panel">
+        <h2>Audit Events</h2>
+        <div id="auditEvents" class="card-list"></div>
+      </div>
+      <div class="panel">
         <h2>Broker Runtime</h2>
         <div id="runtime" class="card-list"></div>
         <pre id="runtimeYaml"></pre>

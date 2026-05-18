@@ -263,7 +263,8 @@ const pageScript = `
     async function refreshAll() {
       setStatus("Refreshing control-plane state...");
       try {
-        const [offers, joinRequests, members, backends, assignments, runtime, brokerConfig] = await Promise.all([
+        const [auditEvents, offers, joinRequests, members, backends, assignments, runtime, brokerConfig] = await Promise.all([
+          api("/admin/v1/audit-events"),
           api("/admin/v1/offers"),
           api("/admin/v1/join-requests"),
           api("/admin/v1/members"),
@@ -277,6 +278,7 @@ const pageScript = `
         latestBackends = backends.backends || [];
         syncAssignmentSelectors();
         void refreshAssignmentDraftState();
+        renderAuditEvents(auditEvents.events || []);
         renderOffers(offers.offers || []);
         renderJoinRequests(joinRequests.join_requests || []);
         renderMembers(members.members || []);
@@ -407,6 +409,21 @@ const pageScript = `
       host.querySelectorAll("[data-assignment-draining]").forEach(btn => btn.onclick = () => patchAssignment(btn.dataset.assignmentDraining, "draining"));
       host.querySelectorAll("[data-assignment-disabled]").forEach(btn => btn.onclick = () => patchAssignment(btn.dataset.assignmentDisabled, "disabled"));
       host.querySelectorAll("[data-delete-assignment]").forEach(btn => btn.onclick = () => deleteAssignment(btn.dataset.deleteAssignment));
+    }
+
+    function renderAuditEvents(items) {
+      const host = $("auditEvents");
+      host.innerHTML = "";
+      items.slice().reverse().slice(0, 20).forEach(item => {
+        const details = item.details ? JSON.stringify(item.details) : "";
+        const el = card(
+          "<strong>" + item.kind + '</strong>' +
+          '<div class="small">' + (item.resource_type || "") + ': ' + (item.resource_id || "") + '</div>' +
+          '<div class="small">' + (item.occurred_at || "") + '</div>' +
+          (details ? '<div class="mono">' + details + '</div>' : '')
+        );
+        host.appendChild(el);
+      });
     }
 
     function renderRuntime(item, yaml) {

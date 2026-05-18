@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -154,6 +155,18 @@ func Register(mux *http.ServeMux, deps Deps) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(body)
 	}))
+	mux.HandleFunc("GET /admin/v1/audit-events", auth(func(w http.ResponseWriter, _ *http.Request) {
+		items, err := deps.Repo.ListAuditEvents()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(struct {
+			Events []types.AuditEvent `json:"events"`
+		}{Events: items})
+	}))
 	mux.HandleFunc("PATCH /admin/v1/members/", auth(func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/admin/v1/members/")
 		if id == "" {
@@ -287,10 +300,26 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err := ensureUniquePublicOffer(deps.Repo, offer); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err := deps.Repo.PutOffer(offer); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+			Kind:         "offer_created",
+			OccurredAt:   time.Now().UTC(),
+			ResourceID:   offer.ID,
+			ResourceType: "offer",
+			Details: map[string]any{
+				"capability_id":    offer.CapabilityID,
+				"offering_id":      offer.OfferingID,
+				"interaction_mode": offer.InteractionMode,
+				"status":           offer.Status,
+			},
+		})
 		if err := deps.RefreshRendered("offer-created"); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -320,10 +349,26 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err := ensureUniquePublicOffer(deps.Repo, updated); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err := deps.Repo.PutOffer(updated); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+			Kind:         "offer_updated",
+			OccurredAt:   time.Now().UTC(),
+			ResourceID:   updated.ID,
+			ResourceType: "offer",
+			Details: map[string]any{
+				"capability_id":    updated.CapabilityID,
+				"offering_id":      updated.OfferingID,
+				"interaction_mode": updated.InteractionMode,
+				"status":           updated.Status,
+			},
+		})
 		if err := deps.RefreshRendered("offer-updated"); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -817,7 +862,7 @@ func offerFromRequest(req offerMutationRequest) (types.Offer, error) {
 	if strings.TrimSpace(req.Status) != "" {
 		status = types.OfferStatus(strings.TrimSpace(req.Status))
 	}
-	return types.Offer{
+	offer := types.Offer{
 		ID:              req.ID,
 		CapabilityID:    req.CapabilityID,
 		OfferingID:      req.OfferingID,
@@ -827,7 +872,8 @@ func offerFromRequest(req offerMutationRequest) (types.Offer, error) {
 		Extra:           req.Extra,
 		Constraints:     req.Constraints,
 		Status:          status,
-	}, nil
+	}
+	return offer, validateOffer(offer)
 }
 
 func updatedOfferFromRequest(current types.Offer, req offerMutationRequest) (types.Offer, error) {
@@ -864,7 +910,46 @@ func updatedOfferFromRequest(current types.Offer, req offerMutationRequest) (typ
 	if current.Price.AmountWei == "" || current.Price.PerUnits == 0 {
 		return types.Offer{}, fmt.Errorf("price.amount_wei and price.per_units > 0 are required")
 	}
-	return current, nil
+	return current, validateOffer(current)
+}
+
+func validateOffer(offer types.Offer) error {
+	switch offer.Status {
+	case types.OfferStatusActive, types.OfferStatusDisabled:
+	default:
+		return fmt.Errorf("status must be active or disabled")
+	}
+	extractorType, _ := offer.WorkUnit.Extractor["type"].(string)
+	if strings.TrimSpace(extractorType) == "" {
+		return fmt.Errorf("work_unit.extractor.type is required")
+	}
+	amount, ok := new(big.Int).SetString(strings.TrimSpace(offer.Price.AmountWei), 10)
+	if !ok {
+		return fmt.Errorf("price.amount_wei must be a base-10 integer string")
+	}
+	if amount.Sign() <= 0 {
+		return fmt.Errorf("price.amount_wei must be > 0")
+	}
+	return nil
+}
+
+func ensureUniquePublicOffer(repo *repo.StateRepo, offer types.Offer) error {
+	if repo == nil {
+		return nil
+	}
+	items, err := repo.ListOffers()
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.ID == offer.ID {
+			continue
+		}
+		if item.CapabilityID == offer.CapabilityID && item.OfferingID == offer.OfferingID && item.InteractionMode == offer.InteractionMode {
+			return fmt.Errorf("offer %q conflicts with existing offer %q for %s/%s %s", offer.ID, item.ID, offer.CapabilityID, offer.OfferingID, offer.InteractionMode)
+		}
+	}
+	return nil
 }
 
 func assignmentFromRequest(req assignmentMutationRequest) (types.Assignment, error) {

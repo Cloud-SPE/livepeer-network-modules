@@ -180,7 +180,10 @@ func validate(cfg *Config) error {
 		}
 	}
 	if len(cfg.Members) == 0 {
-		return fmt.Errorf("members must contain at least one member")
+		if cfg.Bootstrap.ImportLegacyConfigPath != "" || cfg.Bootstrap.AutoImportLegacyConfig {
+			return nil
+		}
+		return nil
 	}
 
 	seenMembers := map[string]struct{}{}

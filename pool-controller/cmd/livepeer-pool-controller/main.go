@@ -21,7 +21,12 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	adminserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/admin"
+	memberserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/member"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/backendverify"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerrender"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/configgen"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/legacyimport"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/probes"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
@@ -43,6 +48,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "generate-broker-config":
 		return runGenerateBrokerConfig(args[1:], stdout)
+	case "import-legacy-config":
+		return runImportLegacyConfig(args[1:], stdout)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
 	case "version":
@@ -84,6 +91,43 @@ func runGenerateBrokerConfig(args []string, stdout io.Writer) error {
 	return os.WriteFile(*outputPath, rendered, 0o644)
 }
 
+func runImportLegacyConfig(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("import-legacy-config", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	configPath := fs.String("config", "", "path to legacy pool-controller config")
+	dataDir := fs.String("data-dir", "", "pool-controller data directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *configPath == "" {
+		return errors.New("--config is required")
+	}
+	if *dataDir == "" {
+		return errors.New("--data-dir is required")
+	}
+
+	cfg, err := config.LoadFile(*configPath)
+	if err != nil {
+		return err
+	}
+	stateRepo, err := repo.Open(*dataDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stateRepo.Close() }()
+
+	built, err := legacyimport.Build(cfg, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if err := legacyimport.Persist(stateRepo, built, "import-legacy-config", time.Now().UTC()); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "imported offers=%d members=%d backends=%d assignments=%d\n", len(built.Offers), len(built.Members), len(built.Backends), len(built.Assignments))
+	return nil
+}
+
 func runServe(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -109,17 +153,21 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	rendered, err := configgen.GenerateYAML(cfg)
-	if err != nil {
-		return err
-	}
 	stateRepo, err := repo.Open(*dataDir)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = stateRepo.Close() }()
+
+	if err := maybeImportLegacyConfig(stateRepo, cfg); err != nil {
+		return err
+	}
+	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	if err != nil {
+		return err
+	}
 	state := &runtimeState{configPath: *configPath, repo: stateRepo, adminToken: adminToken}
-	if err := state.Replace(cfg, rendered, "startup"); err != nil {
+	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
 		return err
 	}
 	probeCtx, cancelProbes := context.WithCancel(context.Background())
@@ -160,6 +208,64 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
+func maybeImportLegacyConfig(stateRepo *repo.StateRepo, cfg *config.Config) error {
+	if stateRepo == nil || cfg == nil || len(cfg.Members) == 0 {
+		return nil
+	}
+	built, err := legacyimport.Build(cfg, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	return legacyimport.Persist(stateRepo, built, "legacy-config-sync", time.Now().UTC())
+}
+
+func renderBrokerState(stateRepo *repo.StateRepo, cfg *config.Config) ([]byte, *types.DesiredBrokerRuntime, error) {
+	if stateRepo == nil {
+		return nil, nil, fmt.Errorf("state repo is nil")
+	}
+	offers, err := stateRepo.ListOffers()
+	if err != nil {
+		return nil, nil, err
+	}
+	members, err := stateRepo.ListMembers()
+	if err != nil {
+		return nil, nil, err
+	}
+	backends, err := stateRepo.ListMemberBackends()
+	if err != nil {
+		return nil, nil, err
+	}
+	assignments, err := stateRepo.ListAssignments()
+	if err != nil {
+		return nil, nil, err
+	}
+	result, err := brokerrender.Render(brokerrender.RenderInput{
+		Bootstrap: brokerrender.BootstrapBrokerSettings{
+			Identity:      cfg.Identity,
+			Listen:        cfg.Listen,
+			PaymentDaemon: cfg.PaymentDaemon,
+			ReceiptSink:   cfg.ReceiptSink,
+		},
+		Offers:      offers,
+		Members:     members,
+		Backends:    backends,
+		Assignments: assignments,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	runtimeInfo := &types.DesiredBrokerRuntime{
+		Revision:        result.Revision,
+		RenderedYAML:    string(result.ConfigYAML),
+		RenderedAt:      time.Now().UTC(),
+		OfferCount:      len(offers),
+		MemberCount:     len(members),
+		BackendCount:    len(backends),
+		AssignmentCount: len(assignments),
+	}
+	return result.ConfigYAML, runtimeInfo, nil
+}
+
 type runtimeState struct {
 	mu         sync.RWMutex
 	configPath string
@@ -168,11 +274,15 @@ type runtimeState struct {
 	cfg        *config.Config
 	rendered   []byte
 	latest     *repo.Snapshot
+	runtime    *types.DesiredBrokerRuntime
 }
 
-func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source string) error {
+func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source string, runtimeInfo *types.DesiredBrokerRuntime) error {
 	var latest *repo.Snapshot
 	if s.repo != nil {
+		if err := maybeImportLegacyConfig(s.repo, cfg); err != nil {
+			return err
+		}
 		repo.ApplyBackendSelectionSettings(cfg.Scoring)
 		if err := s.repo.SyncBackendSelectionStates(cfg); err != nil {
 			return fmt.Errorf("sync backend selection state: %w", err)
@@ -193,12 +303,21 @@ func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source strin
 		if err := s.repo.SaveSnapshot(snap); err != nil {
 			return err
 		}
+		if runtimeInfo != nil {
+			if err := s.repo.PutDesiredBrokerRuntime(*runtimeInfo); err != nil {
+				return err
+			}
+		}
 		latest = &snap
 	}
 	s.mu.Lock()
 	s.cfg = cfg
 	s.rendered = append([]byte(nil), rendered...)
 	s.latest = latest
+	if runtimeInfo != nil {
+		copyRuntime := *runtimeInfo
+		s.runtime = &copyRuntime
+	}
 	s.mu.Unlock()
 	if err := s.syncSelectionMetrics(); err != nil {
 		return err
@@ -206,7 +325,7 @@ func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source strin
 	return s.syncAccountingMetrics()
 }
 
-func (s *runtimeState) Snapshot() (*config.Config, []byte, *repo.Snapshot) {
+func (s *runtimeState) Snapshot() (*config.Config, []byte, *repo.Snapshot, *types.DesiredBrokerRuntime) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var latest *repo.Snapshot
@@ -214,7 +333,12 @@ func (s *runtimeState) Snapshot() (*config.Config, []byte, *repo.Snapshot) {
 		copySnap := *s.latest
 		latest = &copySnap
 	}
-	return s.cfg, append([]byte(nil), s.rendered...), latest
+	var runtimeInfo *types.DesiredBrokerRuntime
+	if s.runtime != nil {
+		copyRuntime := *s.runtime
+		runtimeInfo = &copyRuntime
+	}
+	return s.cfg, append([]byte(nil), s.rendered...), latest, runtimeInfo
 }
 
 func (s *runtimeState) BackendSelectionSnapshot() (types.BackendSelectionSnapshot, error) {
@@ -222,7 +346,7 @@ func (s *runtimeState) BackendSelectionSnapshot() (types.BackendSelectionSnapsho
 	if err != nil {
 		return types.BackendSelectionSnapshot{}, err
 	}
-	cfg, _, _ := s.Snapshot()
+	cfg, _, _, _ := s.Snapshot()
 	scoring := config.Scoring{}
 	if cfg != nil {
 		scoring = cfg.Scoring
@@ -252,7 +376,7 @@ func (s *runtimeState) BackendSelectionSummary() (backendSelectionSummaryView, e
 	if err != nil {
 		return backendSelectionSummaryView{}, err
 	}
-	cfg, _, _ := s.Snapshot()
+	cfg, _, _, _ := s.Snapshot()
 	if cfg == nil {
 		return buildBackendSelectionSummary(items, config.Scoring{}), nil
 	}
@@ -289,7 +413,7 @@ func (s *runtimeState) ApplySyntheticProbeObservation(observation types.Syntheti
 }
 
 func (s *runtimeState) RunSyntheticProbesOnce(ctx context.Context) (probes.RunSummary, error) {
-	cfg, _, _ := s.Snapshot()
+	cfg, _, _, _ := s.Snapshot()
 	if cfg == nil {
 		return probes.RunSummary{}, fmt.Errorf("config is not loaded")
 	}
@@ -326,7 +450,10 @@ func (s *runtimeState) Reload() error {
 	if err != nil {
 		return err
 	}
-	rendered, err := configgen.GenerateYAML(cfg)
+	if err := maybeImportLegacyConfig(s.repo, cfg); err != nil {
+		return err
+	}
+	rendered, runtimeInfo, err := renderBrokerState(s.repo, cfg)
 	if err != nil {
 		return err
 	}
@@ -337,11 +464,25 @@ func (s *runtimeState) Reload() error {
 	s.mu.Lock()
 	s.adminToken = token
 	s.mu.Unlock()
-	return s.Replace(cfg, rendered, "reload")
+	return s.Replace(cfg, rendered, "reload", runtimeInfo)
+}
+
+func (s *runtimeState) RefreshRenderedFromState(source string) error {
+	s.mu.RLock()
+	cfg := s.cfg
+	s.mu.RUnlock()
+	if cfg == nil {
+		return fmt.Errorf("config is not loaded")
+	}
+	rendered, runtimeInfo, err := renderBrokerState(s.repo, cfg)
+	if err != nil {
+		return err
+	}
+	return s.Replace(cfg, rendered, source, runtimeInfo)
 }
 
 func (s *runtimeState) syncSelectionMetrics() error {
-	cfg, _, _ := s.Snapshot()
+	cfg, _, _, _ := s.Snapshot()
 	if cfg == nil {
 		return nil
 	}
@@ -373,6 +514,61 @@ func (s *runtimeState) syncAccountingMetrics() error {
 
 func newServeMux(state *runtimeState) *http.ServeMux {
 	mux := http.NewServeMux()
+	verifier := backendverify.New(state.repo)
+	memberserver.Register(mux, memberserver.Deps{
+		Repo:     state.repo,
+		Verifier: verifier,
+	})
+	adminserver.Register(mux, adminserver.Deps{
+		Repo:            state.repo,
+		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
+		RefreshRendered: func(source string) error { return state.RefreshRenderedFromState(source) },
+		Verifier:        verifier,
+		GetBrokerConfig: func() []byte {
+			_, rendered, _, _ := state.Snapshot()
+			return rendered
+		},
+		GetMembersJSON: func() ([]byte, error) {
+			members, err := buildMemberViewsFromState(state.repo)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(struct {
+				Members []memberView `json:"members"`
+			}{Members: members})
+		},
+		GetOfferingsJSON: func() ([]byte, error) {
+			offerings, err := buildOfferingViewsFromState(state.repo)
+			if err != nil {
+				return nil, err
+			}
+			return json.Marshal(struct {
+				Offerings []offeringView `json:"offerings"`
+			}{Offerings: offerings})
+		},
+		GetStateJSON: func() ([]byte, error) {
+			cfg, rendered, latest, runtimeInfo := state.Snapshot()
+			scoring := config.Scoring{}
+			if cfg != nil {
+				scoring = cfg.Scoring
+			}
+			return json.Marshal(struct {
+				MemberCount   int              `json:"member_count"`
+				RenderedBytes int              `json:"rendered_bytes"`
+				Scoring       config.Scoring   `json:"scoring"`
+				Latest        *snapshotSummary `json:"latest_snapshot,omitempty"`
+			}{
+				MemberCount:   effectiveMemberCount(cfg, runtimeInfo),
+				RenderedBytes: len(rendered),
+				Scoring:       scoring,
+				Latest:        summarizeSnapshot(latest),
+			})
+		},
+		GetDesiredRuntime: func() (*types.DesiredBrokerRuntime, error) {
+			_, _, _, runtimeInfo := state.Snapshot()
+			return runtimeInfo, nil
+		},
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok\n")
@@ -382,7 +578,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		_, _ = io.WriteString(w, "ready\n")
 	})
 	mux.HandleFunc("GET /public/v1/summary", func(w http.ResponseWriter, _ *http.Request) {
-		cfg, _, _ := state.Snapshot()
+		cfg, _, _, runtimeInfo := state.Snapshot()
 		rounds, err := state.repo.ListRoundReceipts(1)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -395,13 +591,21 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		}
 		backendCount := 0
 		memberCount := 0
+		offeringCount := 0
 		scoring := config.Scoring{}
 		if cfg != nil {
-			memberCount = len(cfg.Members)
 			scoring = cfg.Scoring
+		}
+		if runtimeInfo != nil {
+			memberCount = runtimeInfo.MemberCount
+			backendCount = runtimeInfo.BackendCount
+			offeringCount = runtimeInfo.OfferCount
+		} else if cfg != nil {
+			memberCount = len(cfg.Members)
 			for _, member := range cfg.Members {
 				backendCount += len(member.Backends)
 			}
+			offeringCount = len(buildOfferingViews(cfg))
 		}
 		latestRoundID := ""
 		if len(rounds) > 0 {
@@ -418,7 +622,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		}{
 			MemberCount:       memberCount,
 			BackendCount:      backendCount,
-			OfferingCount:     len(buildOfferingViews(cfg)),
+			OfferingCount:     offeringCount,
 			LatestClosedRound: latestRoundID,
 			WorstOfferings:    buildPublicWorstOfferingViews(backendSelectionSummary.WorstOfferings, scoring.PublicWorstOfferingsLimit),
 		})
@@ -441,12 +645,16 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		}{Rounds: buildPublicRoundViews(items)})
 	})
 	mux.HandleFunc("GET /public/v1/offerings", func(w http.ResponseWriter, _ *http.Request) {
-		cfg, _, _ := state.Snapshot()
+		offerings, err := buildOfferingViewsFromState(state.repo)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(struct {
 			Offerings []offeringView `json:"offerings"`
-		}{Offerings: buildOfferingViews(cfg)})
+		}{Offerings: offerings})
 	})
 	mux.HandleFunc("GET /public/v1/member-payouts", func(w http.ResponseWriter, r *http.Request) {
 		memberEthAddress := strings.TrimSpace(r.URL.Query().Get("member_eth_address"))
@@ -498,52 +706,8 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			Intents:          buildPayoutIntentViews(items),
 		})
 	})
-	mux.HandleFunc("GET /admin/v1/broker-config", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
-		_, rendered, _ := state.Snapshot()
-		w.Header().Set("Content-Type", "application/yaml")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(rendered)
-	}))
-	mux.HandleFunc("GET /admin/v1/members", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
-		cfg, _, _ := state.Snapshot()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			Members []memberView `json:"members"`
-		}{Members: buildMemberViews(cfg)})
-	}))
-	mux.HandleFunc("GET /admin/v1/offerings", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
-		cfg, _, _ := state.Snapshot()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			Offerings []offeringView `json:"offerings"`
-		}{Offerings: buildOfferingViews(cfg)})
-	}))
-	mux.HandleFunc("GET /admin/v1/state", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
-		cfg, rendered, latest := state.Snapshot()
-		scoring := config.Scoring{}
-		memberCount := 0
-		if cfg != nil {
-			scoring = cfg.Scoring
-			memberCount = len(cfg.Members)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			MemberCount   int              `json:"member_count"`
-			RenderedBytes int              `json:"rendered_bytes"`
-			Scoring       config.Scoring   `json:"scoring"`
-			Latest        *snapshotSummary `json:"latest_snapshot,omitempty"`
-		}{
-			MemberCount:   memberCount,
-			RenderedBytes: len(rendered),
-			Scoring:       scoring,
-			Latest:        summarizeSnapshot(latest),
-		})
-	}))
 	mux.HandleFunc("GET /admin/v1/scoring-settings", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
-		cfg, _, _ := state.Snapshot()
+		cfg, _, _, _ := state.Snapshot()
 		scoring := config.Scoring{}
 		if cfg != nil {
 			scoring = cfg.Scoring
@@ -1402,7 +1566,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		cfg, rendered, latest := state.Snapshot()
+		cfg, rendered, latest, runtimeInfo := state.Snapshot()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(struct {
@@ -1411,7 +1575,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			Status        string `json:"status"`
 			SnapshotID    string `json:"snapshot_id,omitempty"`
 		}{
-			MemberCount:   len(cfg.Members),
+			MemberCount:   effectiveMemberCount(cfg, runtimeInfo),
 			RenderedBytes: len(rendered),
 			Status:        "reloaded",
 			SnapshotID:    latest.ID,
@@ -1429,7 +1593,7 @@ func runSyntheticProbeLoop(ctx context.Context, state *runtimeState, stderr io.W
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			cfg, _, _ := state.Snapshot()
+			cfg, _, _, _ := state.Snapshot()
 			if cfg == nil || !cfg.SyntheticProbes.Enabled {
 				timer.Reset(interval)
 				continue
@@ -1508,6 +1672,176 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
+func effectiveMemberCount(cfg *config.Config, runtimeInfo *types.DesiredBrokerRuntime) int {
+	if runtimeInfo != nil && runtimeInfo.MemberCount > 0 {
+		return runtimeInfo.MemberCount
+	}
+	if cfg != nil {
+		return len(cfg.Members)
+	}
+	return 0
+}
+
+func offerFromRequest(req offerMutationRequest) (types.Offer, error) {
+	req.ID = strings.TrimSpace(req.ID)
+	req.CapabilityID = strings.TrimSpace(req.CapabilityID)
+	req.OfferingID = strings.TrimSpace(req.OfferingID)
+	req.InteractionMode = strings.TrimSpace(req.InteractionMode)
+	if req.ID == "" {
+		return types.Offer{}, fmt.Errorf("id is required")
+	}
+	if req.CapabilityID == "" || req.OfferingID == "" || req.InteractionMode == "" {
+		return types.Offer{}, fmt.Errorf("capability_id, offering_id, and interaction_mode are required")
+	}
+	if req.WorkUnit.Name == "" || len(req.WorkUnit.Extractor) == 0 {
+		return types.Offer{}, fmt.Errorf("work_unit.name and work_unit.extractor are required")
+	}
+	if req.Price.AmountWei == "" || req.Price.PerUnits == 0 {
+		return types.Offer{}, fmt.Errorf("price.amount_wei and price.per_units > 0 are required")
+	}
+	status := types.OfferStatusActive
+	if strings.TrimSpace(req.Status) != "" {
+		status = types.OfferStatus(strings.TrimSpace(req.Status))
+	}
+	return types.Offer{
+		ID:              req.ID,
+		CapabilityID:    req.CapabilityID,
+		OfferingID:      req.OfferingID,
+		InteractionMode: req.InteractionMode,
+		WorkUnit:        req.WorkUnit,
+		Price:           req.Price,
+		Extra:           req.Extra,
+		Constraints:     req.Constraints,
+		Status:          status,
+	}, nil
+}
+
+func updatedOfferFromRequest(current types.Offer, req offerMutationRequest) (types.Offer, error) {
+	if strings.TrimSpace(req.CapabilityID) != "" {
+		current.CapabilityID = strings.TrimSpace(req.CapabilityID)
+	}
+	if strings.TrimSpace(req.OfferingID) != "" {
+		current.OfferingID = strings.TrimSpace(req.OfferingID)
+	}
+	if strings.TrimSpace(req.InteractionMode) != "" {
+		current.InteractionMode = strings.TrimSpace(req.InteractionMode)
+	}
+	if req.WorkUnit.Name != "" {
+		current.WorkUnit = req.WorkUnit
+	}
+	if req.Price.AmountWei != "" {
+		current.Price = req.Price
+	}
+	if req.Extra != nil {
+		current.Extra = req.Extra
+	}
+	if req.Constraints != nil {
+		current.Constraints = req.Constraints
+	}
+	if strings.TrimSpace(req.Status) != "" {
+		current.Status = types.OfferStatus(strings.TrimSpace(req.Status))
+	}
+	if current.CapabilityID == "" || current.OfferingID == "" || current.InteractionMode == "" {
+		return types.Offer{}, fmt.Errorf("capability_id, offering_id, and interaction_mode are required")
+	}
+	if current.WorkUnit.Name == "" || len(current.WorkUnit.Extractor) == 0 {
+		return types.Offer{}, fmt.Errorf("work_unit.name and work_unit.extractor are required")
+	}
+	if current.Price.AmountWei == "" || current.Price.PerUnits == 0 {
+		return types.Offer{}, fmt.Errorf("price.amount_wei and price.per_units > 0 are required")
+	}
+	return current, nil
+}
+
+func assignmentFromRequest(req assignmentMutationRequest) (types.Assignment, error) {
+	req.ID = strings.TrimSpace(req.ID)
+	req.OfferID = strings.TrimSpace(req.OfferID)
+	req.MemberBackendID = strings.TrimSpace(req.MemberBackendID)
+	if req.ID == "" {
+		return types.Assignment{}, fmt.Errorf("id is required")
+	}
+	if req.OfferID == "" || req.MemberBackendID == "" {
+		return types.Assignment{}, fmt.Errorf("offer_id and member_backend_id are required")
+	}
+	status := types.AssignmentStatusActive
+	if strings.TrimSpace(req.Status) != "" {
+		status = types.AssignmentStatus(strings.TrimSpace(req.Status))
+	}
+	return types.Assignment{
+		ID:              req.ID,
+		OfferID:         req.OfferID,
+		MemberBackendID: req.MemberBackendID,
+		Status:          status,
+		Notes:           req.Notes,
+	}, nil
+}
+
+func validateJoinRequest(req types.JoinRequest) error {
+	req.MemberEthAddress = strings.TrimSpace(req.MemberEthAddress)
+	req.PayoutMode = strings.TrimSpace(req.PayoutMode)
+	if req.MemberEthAddress == "" {
+		return fmt.Errorf("member_eth_address is required")
+	}
+	if len(req.RequestedBackends) == 0 {
+		return fmt.Errorf("requested_backends must contain at least one backend")
+	}
+	switch req.PayoutMode {
+	case "", "onchain", "manual":
+	default:
+		return fmt.Errorf("payout_mode must be onchain or manual")
+	}
+	for i, backend := range req.RequestedBackends {
+		if strings.TrimSpace(backend.ID) == "" {
+			return fmt.Errorf("requested_backends[%d].id is required", i)
+		}
+		if strings.TrimSpace(backend.Transport) == "" {
+			return fmt.Errorf("requested_backends[%d].transport is required", i)
+		}
+		if strings.TrimSpace(backend.URL) == "" {
+			return fmt.Errorf("requested_backends[%d].url is required", i)
+		}
+	}
+	return nil
+}
+
+func memberAndBackendsFromJoinRequest(req types.JoinRequest, now time.Time) (types.MemberRecord, []types.MemberBackend) {
+	now = now.UTC()
+	memberID := fmt.Sprintf("member-%d", now.UnixNano())
+	payoutMode := req.PayoutMode
+	if payoutMode == "" {
+		payoutMode = "onchain"
+	}
+	member := types.MemberRecord{
+		ID:                  memberID,
+		EthAddress:          req.MemberEthAddress,
+		DisplayName:         req.DisplayName,
+		PayoutMode:          payoutMode,
+		Status:              types.MemberStatusActive,
+		SourceJoinRequestID: req.ID,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	backends := make([]types.MemberBackend, 0, len(req.RequestedBackends))
+	for _, requested := range req.RequestedBackends {
+		backends = append(backends, types.MemberBackend{
+			ID:                  requested.ID,
+			MemberID:            memberID,
+			Transport:           requested.Transport,
+			URL:                 requested.URL,
+			Auth:                requested.Auth,
+			HealthProbe:         requested.HealthProbe,
+			ClaimedCapabilities: requested.ClaimedCapabilities,
+			VerificationStatus:  requested.VerificationStatus,
+			VerificationError:   requested.VerificationError,
+			LastVerifiedAt:      requested.LastVerifiedAt,
+			Status:              types.BackendStatusActive,
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		})
+	}
+	return member, backends
+}
+
 func resolveAdminToken(cfg *config.Config) (string, error) {
 	if token := strings.TrimSpace(cfg.AdminAuth.BearerToken); token != "" {
 		return token, nil
@@ -1577,9 +1911,11 @@ func validateBackendOutcome(outcome types.BackendOutcome) error {
 }
 
 type memberView struct {
+	ID          string              `json:"id"`
 	EthAddress  string              `json:"eth_address"`
 	DisplayName string              `json:"display_name,omitempty"`
 	PayoutMode  string              `json:"payout_mode,omitempty"`
+	Status      string              `json:"status,omitempty"`
 	Backends    []memberBackendView `json:"backends"`
 }
 
@@ -1661,32 +1997,32 @@ type backendSelectionBucketSummaryView struct {
 }
 
 type backendSelectionEntrySummaryView struct {
-	MemberEthAddress          string     `json:"member_eth_address"`
-	BackendID                 string     `json:"backend_id"`
-	CapabilityID              string     `json:"capability_id"`
-	OfferingID                string     `json:"offering_id"`
-	State                     string     `json:"state"`
-	ExclusionReason           string     `json:"exclusion_reason,omitempty"`
-	RoutingReason             string     `json:"routing_reason,omitempty"`
-	EffectiveSelectionScore   float64    `json:"effective_selection_score"`
-	SyntheticConfidence       float64    `json:"synthetic_confidence"`
-	RealSuccessScore          float64    `json:"real_success_score"`
-	RealLatencyScore          float64    `json:"real_latency_score"`
-	RecentOutcomeCount        int        `json:"recent_outcome_count"`
-	RecentRoutableOutcomeCount int       `json:"recent_routable_outcome_count"`
-	RecentBackendFailureCount int        `json:"recent_backend_failure_count"`
-	RecentWindowStartedAt     *time.Time `json:"recent_window_started_at,omitempty"`
-	RecentWindowEndedAt       *time.Time `json:"recent_window_ended_at,omitempty"`
-	RecentWindowAgeSeconds    float64    `json:"recent_window_age_seconds,omitempty"`
+	MemberEthAddress           string     `json:"member_eth_address"`
+	BackendID                  string     `json:"backend_id"`
+	CapabilityID               string     `json:"capability_id"`
+	OfferingID                 string     `json:"offering_id"`
+	State                      string     `json:"state"`
+	ExclusionReason            string     `json:"exclusion_reason,omitempty"`
+	RoutingReason              string     `json:"routing_reason,omitempty"`
+	EffectiveSelectionScore    float64    `json:"effective_selection_score"`
+	SyntheticConfidence        float64    `json:"synthetic_confidence"`
+	RealSuccessScore           float64    `json:"real_success_score"`
+	RealLatencyScore           float64    `json:"real_latency_score"`
+	RecentOutcomeCount         int        `json:"recent_outcome_count"`
+	RecentRoutableOutcomeCount int        `json:"recent_routable_outcome_count"`
+	RecentBackendFailureCount  int        `json:"recent_backend_failure_count"`
+	RecentWindowStartedAt      *time.Time `json:"recent_window_started_at,omitempty"`
+	RecentWindowEndedAt        *time.Time `json:"recent_window_ended_at,omitempty"`
+	RecentWindowAgeSeconds     float64    `json:"recent_window_age_seconds,omitempty"`
 }
 
 type backendTrafficShareView struct {
-	MemberEthAddress            string  `json:"member_eth_address"`
-	BackendID                   string  `json:"backend_id"`
-	CapabilityID                string  `json:"capability_id"`
-	OfferingID                  string  `json:"offering_id"`
-	RecentRoutableOutcomeCount  int     `json:"recent_routable_outcome_count"`
-	RecentRoutableTrafficShare  float64 `json:"recent_routable_traffic_share"`
+	MemberEthAddress           string  `json:"member_eth_address"`
+	BackendID                  string  `json:"backend_id"`
+	CapabilityID               string  `json:"capability_id"`
+	OfferingID                 string  `json:"offering_id"`
+	RecentRoutableOutcomeCount int     `json:"recent_routable_outcome_count"`
+	RecentRoutableTrafficShare float64 `json:"recent_routable_traffic_share"`
 }
 
 type publicWorstOfferingView struct {
@@ -1883,6 +2219,38 @@ type payoutIntentRequeueRequest struct {
 	IDs []string `json:"ids"`
 }
 
+type offerMutationRequest struct {
+	ID              string          `json:"id"`
+	CapabilityID    string          `json:"capability_id"`
+	OfferingID      string          `json:"offering_id"`
+	InteractionMode string          `json:"interaction_mode"`
+	WorkUnit        config.WorkUnit `json:"work_unit"`
+	Price           config.Price    `json:"price"`
+	Extra           map[string]any  `json:"extra,omitempty"`
+	Constraints     map[string]any  `json:"constraints,omitempty"`
+	Status          string          `json:"status,omitempty"`
+}
+
+type assignmentMutationRequest struct {
+	ID              string `json:"id"`
+	OfferID         string `json:"offer_id"`
+	MemberBackendID string `json:"member_backend_id"`
+	Notes           string `json:"notes,omitempty"`
+	Status          string `json:"status,omitempty"`
+}
+
+type memberStatusRequest struct {
+	Status string `json:"status"`
+}
+
+type backendStatusRequest struct {
+	Status string `json:"status"`
+}
+
+type joinRequestReviewRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
 func buildMemberViews(cfg *config.Config) []memberView {
 	if cfg == nil {
 		return nil
@@ -1958,6 +2326,145 @@ func buildOfferingViews(cfg *config.Config) []offeringView {
 		out = append(out, *view)
 	}
 	return out
+}
+
+func buildMemberViewsFromState(stateRepo *repo.StateRepo) ([]memberView, error) {
+	if stateRepo == nil {
+		return nil, nil
+	}
+	members, err := stateRepo.ListMembers()
+	if err != nil {
+		return nil, err
+	}
+	backends, err := stateRepo.ListMemberBackends()
+	if err != nil {
+		return nil, err
+	}
+	assignments, err := stateRepo.ListAssignments()
+	if err != nil {
+		return nil, err
+	}
+	offers, err := stateRepo.ListOffers()
+	if err != nil {
+		return nil, err
+	}
+	offersByID := make(map[string]types.Offer, len(offers))
+	for _, offer := range offers {
+		offersByID[offer.ID] = offer
+	}
+	assignmentsByBackend := make(map[string][]types.Assignment)
+	for _, assignment := range assignments {
+		assignmentsByBackend[assignment.MemberBackendID] = append(assignmentsByBackend[assignment.MemberBackendID], assignment)
+	}
+	backendsByMember := make(map[string][]types.MemberBackend)
+	for _, backend := range backends {
+		backendsByMember[backend.MemberID] = append(backendsByMember[backend.MemberID], backend)
+	}
+
+	out := make([]memberView, 0, len(members))
+	for _, member := range members {
+		view := memberView{
+			ID:          member.ID,
+			EthAddress:  member.EthAddress,
+			DisplayName: member.DisplayName,
+			PayoutMode:  member.PayoutMode,
+			Status:      string(member.Status),
+			Backends:    make([]memberBackendView, 0, len(backendsByMember[member.ID])),
+		}
+		memberBackends := backendsByMember[member.ID]
+		sort.Slice(memberBackends, func(i, j int) bool { return memberBackends[i].ID < memberBackends[j].ID })
+		for _, backend := range memberBackends {
+			backendView := memberBackendView{
+				ID:        backend.ID,
+				Transport: backend.Transport,
+				URL:       backend.URL,
+				Offerings: make([]memberOfferingView, 0, len(assignmentsByBackend[backend.ID])),
+			}
+			if backend.Auth.Method != "" && backend.Auth.Method != "none" {
+				backendView.Auth.Method = backend.Auth.Method
+				backendView.Auth.SecretRefSet = backend.Auth.SecretRef != ""
+			}
+			backendAssignments := assignmentsByBackend[backend.ID]
+			sort.Slice(backendAssignments, func(i, j int) bool { return backendAssignments[i].ID < backendAssignments[j].ID })
+			for _, assignment := range backendAssignments {
+				offer, ok := offersByID[assignment.OfferID]
+				if !ok {
+					continue
+				}
+				backendView.Offerings = append(backendView.Offerings, memberOfferingView{
+					CapabilityID:    offer.CapabilityID,
+					OfferingID:      offer.OfferingID,
+					InteractionMode: offer.InteractionMode,
+				})
+			}
+			view.Backends = append(view.Backends, backendView)
+		}
+		out = append(out, view)
+	}
+	return out, nil
+}
+
+func buildOfferingViewsFromState(stateRepo *repo.StateRepo) ([]offeringView, error) {
+	if stateRepo == nil {
+		return nil, nil
+	}
+	offers, err := stateRepo.ListOffers()
+	if err != nil {
+		return nil, err
+	}
+	members, err := stateRepo.ListMembers()
+	if err != nil {
+		return nil, err
+	}
+	backends, err := stateRepo.ListMemberBackends()
+	if err != nil {
+		return nil, err
+	}
+	assignments, err := stateRepo.ListAssignments()
+	if err != nil {
+		return nil, err
+	}
+	membersByID := make(map[string]types.MemberRecord, len(members))
+	for _, member := range members {
+		membersByID[member.ID] = member
+	}
+	backendsByID := make(map[string]types.MemberBackend, len(backends))
+	for _, backend := range backends {
+		backendsByID[backend.ID] = backend
+	}
+	assignmentsByOffer := make(map[string][]types.Assignment)
+	for _, assignment := range assignments {
+		assignmentsByOffer[assignment.OfferID] = append(assignmentsByOffer[assignment.OfferID], assignment)
+	}
+
+	out := make([]offeringView, 0, len(offers))
+	for _, offer := range offers {
+		view := offeringView{
+			CapabilityID:    offer.CapabilityID,
+			OfferingID:      offer.OfferingID,
+			InteractionMode: offer.InteractionMode,
+			Backends:        make([]offeringBackendView, 0, len(assignmentsByOffer[offer.ID])),
+		}
+		offerAssignments := assignmentsByOffer[offer.ID]
+		sort.Slice(offerAssignments, func(i, j int) bool { return offerAssignments[i].ID < offerAssignments[j].ID })
+		for _, assignment := range offerAssignments {
+			backend, ok := backendsByID[assignment.MemberBackendID]
+			if !ok {
+				continue
+			}
+			member := membersByID[backend.MemberID]
+			view.Backends = append(view.Backends, offeringBackendView{
+				MemberEthAddress:  member.EthAddress,
+				MemberDisplayName: member.DisplayName,
+				BackendID:         backend.ID,
+				Transport:         backend.Transport,
+				URL:               backend.URL,
+			})
+		}
+		view.BackendCount = len(view.Backends)
+		out = append(out, view)
+	}
+	return out, nil
 }
 
 func buildBackendSelectionSummary(items []types.BackendSelectionState, scoring config.Scoring) backendSelectionSummaryView {
@@ -2102,14 +2609,14 @@ func buildBackendSelectionGroupSummary(key, label string, items []types.BackendS
 	if len(items) > 0 {
 		divisor := float64(len(items))
 		out.AverageEffectiveScore /= divisor
-			out.AverageSyntheticConfidence /= divisor
-			out.AverageRealSuccessScore /= divisor
-			out.AverageRealLatencyScore /= divisor
-			out.AverageRecentOutcomeCount /= divisor
-			out.AverageRecentRoutableOutcomes /= divisor
-			out.AverageRecentBackendFailures /= divisor
-			out.AverageRecentWindowAgeSeconds /= divisor
-		}
+		out.AverageSyntheticConfidence /= divisor
+		out.AverageRealSuccessScore /= divisor
+		out.AverageRealLatencyScore /= divisor
+		out.AverageRecentOutcomeCount /= divisor
+		out.AverageRecentRoutableOutcomes /= divisor
+		out.AverageRecentBackendFailures /= divisor
+		out.AverageRecentWindowAgeSeconds /= divisor
+	}
 	sort.Slice(out.TrafficShare, func(i, j int) bool {
 		if out.TrafficShare[i].RecentRoutableTrafficShare != out.TrafficShare[j].RecentRoutableTrafficShare {
 			return out.TrafficShare[i].RecentRoutableTrafficShare > out.TrafficShare[j].RecentRoutableTrafficShare
@@ -2133,23 +2640,23 @@ func buildBackendSelectionGroupSummary(key, label string, items []types.BackendS
 
 func summarizeBackendSelectionEntry(item types.BackendSelectionState) backendSelectionEntrySummaryView {
 	return backendSelectionEntrySummaryView{
-		MemberEthAddress:          item.MemberEthAddress,
-		BackendID:                 item.BackendID,
-		CapabilityID:              item.CapabilityID,
-		OfferingID:                item.OfferingID,
-		State:                     item.State,
-		ExclusionReason:           item.ExclusionReason,
-		RoutingReason:             item.RoutingReason,
-		EffectiveSelectionScore:   item.EffectiveSelectionScore,
-		SyntheticConfidence:       item.SyntheticConfidence,
-		RealSuccessScore:          item.RealSuccessScore,
-		RealLatencyScore:          item.RealLatencyScore,
-		RecentOutcomeCount:        item.RecentOutcomeCount,
+		MemberEthAddress:           item.MemberEthAddress,
+		BackendID:                  item.BackendID,
+		CapabilityID:               item.CapabilityID,
+		OfferingID:                 item.OfferingID,
+		State:                      item.State,
+		ExclusionReason:            item.ExclusionReason,
+		RoutingReason:              item.RoutingReason,
+		EffectiveSelectionScore:    item.EffectiveSelectionScore,
+		SyntheticConfidence:        item.SyntheticConfidence,
+		RealSuccessScore:           item.RealSuccessScore,
+		RealLatencyScore:           item.RealLatencyScore,
+		RecentOutcomeCount:         item.RecentOutcomeCount,
 		RecentRoutableOutcomeCount: item.RecentRoutableOutcomeCount,
-		RecentBackendFailureCount: item.RecentBackendFailureCount,
-		RecentWindowStartedAt:     item.RecentWindowStartedAt,
-		RecentWindowEndedAt:       item.RecentWindowEndedAt,
-		RecentWindowAgeSeconds:    item.RecentWindowAgeSeconds,
+		RecentBackendFailureCount:  item.RecentBackendFailureCount,
+		RecentWindowStartedAt:      item.RecentWindowStartedAt,
+		RecentWindowEndedAt:        item.RecentWindowEndedAt,
+		RecentWindowAgeSeconds:     item.RecentWindowAgeSeconds,
 	}
 }
 

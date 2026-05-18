@@ -43,6 +43,9 @@ func Open(dir string) (*StateRepo, error) {
 		if err != nil {
 			return err
 		}
+		if err := (&StateRepo{db: db}).initControlPlaneBuckets(tx); err != nil {
+			return err
+		}
 		if err := (&StateRepo{db: db}).initBackendSelectionBuckets(tx); err != nil {
 			return err
 		}

@@ -8,7 +8,8 @@ type Config struct {
 	Scoring         Scoring         `yaml:"scoring,omitempty"`
 	PaymentDaemon   PaymentDaemon   `yaml:"payment_daemon,omitempty"`
 	ReceiptSink     ReceiptSink     `yaml:"receipt_sink,omitempty"`
-	Members         []Member        `yaml:"members"`
+	Bootstrap       Bootstrap       `yaml:"bootstrap,omitempty"`
+	Members         []Member        `yaml:"members,omitempty"`
 }
 
 type Identity struct {
@@ -59,6 +60,11 @@ type AdminAuth struct {
 	BearerTokenRef string `yaml:"bearer_token_ref,omitempty"`
 }
 
+type Bootstrap struct {
+	ImportLegacyConfigPath string `yaml:"import_legacy_config_path,omitempty"`
+	AutoImportLegacyConfig bool   `yaml:"auto_import_legacy_config,omitempty"`
+}
+
 type Member struct {
 	EthAddress  string    `yaml:"eth_address"`
 	DisplayName string    `yaml:"display_name,omitempty"`
@@ -87,13 +93,13 @@ type Offering struct {
 }
 
 type WorkUnit struct {
-	Name      string         `yaml:"name"`
-	Extractor map[string]any `yaml:"extractor"`
+	Name      string         `yaml:"name" json:"name"`
+	Extractor map[string]any `yaml:"extractor" json:"extractor"`
 }
 
 type Price struct {
-	AmountWei string `yaml:"amount_wei"`
-	PerUnits  uint64 `yaml:"per_units"`
+	AmountWei string `yaml:"amount_wei" json:"amount_wei"`
+	PerUnits  uint64 `yaml:"per_units" json:"per_units"`
 }
 
 type Health struct {

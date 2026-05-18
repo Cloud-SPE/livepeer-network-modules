@@ -8,21 +8,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
 func target(memberEthAddress, backendID, backendURL, capabilityID, interactionMode string) ProbeTarget {
 	return ProbeTarget{
-		Member: config.Member{
+		Member: ProbeMember{
 			EthAddress: memberEthAddress,
 		},
-		Backend: config.Backend{
+		Backend: ProbeBackend{
 			ID:        backendID,
 			Transport: "http",
 			URL:       backendURL,
 		},
-		Offering: config.Offering{
+		Offering: ProbeOffering{
 			CapabilityID:    capabilityID,
 			OfferingID:      "default",
 			InteractionMode: interactionMode,

@@ -94,10 +94,6 @@ func currentBackendSelectionSettings() backendSelectionSettings {
 	return backendSelectionSettingsState.value
 }
 
-func defaultBackendSelectionState(memberEthAddress string, backend config.Backend, offering config.Offering, now time.Time) types.BackendSelectionState {
-	return defaultBackendSelectionStateValues(memberEthAddress, backend.ID, offering.CapabilityID, offering.OfferingID, now)
-}
-
 func defaultBackendSelectionStateValues(memberEthAddress, backendID, capabilityID, offeringID string, now time.Time) types.BackendSelectionState {
 	return types.BackendSelectionState{
 		Key:                     backendSelectionStateKey(memberEthAddress, backendID, capabilityID, offeringID),

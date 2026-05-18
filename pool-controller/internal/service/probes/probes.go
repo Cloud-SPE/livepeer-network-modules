@@ -43,9 +43,32 @@ type ProbeResult struct {
 }
 
 type ProbeTarget struct {
-	Member   config.Member
-	Backend  config.Backend
-	Offering config.Offering
+	Member   ProbeMember
+	Backend  ProbeBackend
+	Offering ProbeOffering
+}
+
+type ProbeMember struct {
+	EthAddress string
+}
+
+type ProbeBackend struct {
+	ID        string
+	Transport string
+	URL       string
+	Auth      config.AuthConfig
+	Extra     map[string]any
+}
+
+type ProbeOffering struct {
+	CapabilityID    string
+	OfferingID      string
+	InteractionMode string
+	WorkUnit        config.WorkUnit
+	Health          config.Health
+	Price           config.Price
+	Extra           map[string]any
+	Constraints     map[string]any
 }
 
 func NewRunner(timeout time.Duration) *Runner {
@@ -111,7 +134,7 @@ func (r *Runner) RunOnceTargets(ctx context.Context, targets []ProbeTarget, appl
 	return summary, nil
 }
 
-func (r *Runner) probeOffering(ctx context.Context, member config.Member, backend config.Backend, offering config.Offering) (types.SyntheticProbeObservation, string, string, error) {
+func (r *Runner) probeOffering(ctx context.Context, member ProbeMember, backend ProbeBackend, offering ProbeOffering) (types.SyntheticProbeObservation, string, string, error) {
 	base := types.SyntheticProbeObservation{
 		MemberEthAddress: member.EthAddress,
 		BackendID:        backend.ID,
@@ -167,7 +190,7 @@ func (r *Runner) probeOffering(ctx context.Context, member config.Member, backen
 	}
 }
 
-func (r *Runner) runOpenAIAudioProbe(ctx context.Context, backend config.Backend, offering config.Offering) (bool, string, error) {
+func (r *Runner) runOpenAIAudioProbe(ctx context.Context, backend ProbeBackend, offering ProbeOffering) (bool, string, error) {
 	switch inferOpenAIAudioProbeFamily(offering) {
 	case "multipart":
 		return r.runOpenAIAudioMultipartProbe(ctx, backend, offering)
@@ -178,7 +201,7 @@ func (r *Runner) runOpenAIAudioProbe(ctx context.Context, backend config.Backend
 	}
 }
 
-func inferOpenAIAudioProbeFamily(offering config.Offering) string {
+func inferOpenAIAudioProbeFamily(offering ProbeOffering) string {
 	capabilityID := strings.TrimSpace(offering.CapabilityID)
 	switch {
 	case capabilityID == "openai:audio-transcriptions",
@@ -202,7 +225,7 @@ func inferOpenAIAudioProbeFamily(offering config.Offering) string {
 	}
 }
 
-func (r *Runner) runOpenAIJSONProbe(ctx context.Context, backend config.Backend, offering config.Offering, payload map[string]any, validate func(map[string]any) bool) (bool, string, error) {
+func (r *Runner) runOpenAIJSONProbe(ctx context.Context, backend ProbeBackend, offering ProbeOffering, payload map[string]any, validate func(map[string]any) bool) (bool, string, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return false, "", err
@@ -233,7 +256,7 @@ func (r *Runner) runOpenAIJSONProbe(ctx context.Context, backend config.Backend,
 	return true, "probe_ok", nil
 }
 
-func (r *Runner) runOpenAIAudioMultipartProbe(ctx context.Context, backend config.Backend, offering config.Offering) (bool, string, error) {
+func (r *Runner) runOpenAIAudioMultipartProbe(ctx context.Context, backend ProbeBackend, offering ProbeOffering) (bool, string, error) {
 	body, contentType, err := buildAudioMultipartBody(modelName(backend, offering))
 	if err != nil {
 		return false, "", err
@@ -265,7 +288,7 @@ func (r *Runner) runOpenAIAudioMultipartProbe(ctx context.Context, backend confi
 	return true, "probe_ok", nil
 }
 
-func (r *Runner) runOpenAISpeechProbe(ctx context.Context, backend config.Backend, offering config.Offering) (bool, string, error) {
+func (r *Runner) runOpenAISpeechProbe(ctx context.Context, backend ProbeBackend, offering ProbeOffering) (bool, string, error) {
 	raw, err := json.Marshal(map[string]any{
 		"model": modelName(backend, offering),
 		"input": "ping",
@@ -300,7 +323,7 @@ func (r *Runner) runOpenAISpeechProbe(ctx context.Context, backend config.Backen
 	return true, "probe_ok", nil
 }
 
-func (r *Runner) runVideoABRProbe(ctx context.Context, backend config.Backend) (bool, string, error) {
+func (r *Runner) runVideoABRProbe(ctx context.Context, backend ProbeBackend) (bool, string, error) {
 	target, err := videoABRPresetsURL(backend.URL)
 	if err != nil {
 		return false, "", err
@@ -388,7 +411,7 @@ func resolveSecretRef(ref string) (string, error) {
 	return ref, nil
 }
 
-func modelName(backend config.Backend, offering config.Offering) string {
+func modelName(backend ProbeBackend, offering ProbeOffering) string {
 	if value := nestedString(offering.Extra, "openai", "model"); value != "" {
 		return value
 	}

@@ -421,16 +421,16 @@ func buildSyntheticProbeTargets(offers []types.Offer, members []types.MemberReco
 			continue
 		}
 		targets = append(targets, probes.ProbeTarget{
-			Member: config.Member{
+			Member: probes.ProbeMember{
 				EthAddress: member.EthAddress,
 			},
-			Backend: config.Backend{
+			Backend: probes.ProbeBackend{
 				ID:        backend.ID,
 				Transport: backend.Transport,
 				URL:       backend.URL,
 				Auth:      backend.Auth,
 			},
-			Offering: config.Offering{
+			Offering: probes.ProbeOffering{
 				CapabilityID:    offer.CapabilityID,
 				OfferingID:      offer.OfferingID,
 				InteractionMode: offer.InteractionMode,

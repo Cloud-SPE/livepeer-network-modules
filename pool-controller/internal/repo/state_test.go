@@ -10,7 +10,28 @@ import (
 )
 
 type legacySelectionConfig struct {
-	Members []config.Member
+	Members []legacySelectionMember
+}
+
+type legacySelectionMember struct {
+	EthAddress string
+	Backends   []legacySelectionBackend
+}
+
+type legacySelectionBackend struct {
+	ID        string
+	Transport string
+	URL       string
+	Auth      config.AuthConfig
+	Offerings []legacySelectionOffering
+}
+
+type legacySelectionOffering struct {
+	CapabilityID    string
+	OfferingID      string
+	InteractionMode string
+	WorkUnit        config.WorkUnit
+	Price           config.Price
 }
 
 func syncSelectionStatesFromLegacyConfig(t *testing.T, repo *StateRepo, cfg *legacySelectionConfig) {
@@ -140,14 +161,14 @@ func TestStateRepoSyncBackendSelectionStates(t *testing.T) {
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{
+		Members: []legacySelectionMember{
 			{
 				EthAddress: "0xabc",
-				Backends: []config.Backend{
+				Backends: []legacySelectionBackend{
 					{
 						ID:        "backend-a",
 						Transport: "http",
-						Offerings: []config.Offering{
+						Offerings: []legacySelectionOffering{
 							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
 							{CapabilityID: "openai:embeddings", OfferingID: "default"},
 						},
@@ -340,14 +361,14 @@ func TestStateRepoApplyBackendOutcome(t *testing.T) {
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{
+		Members: []legacySelectionMember{
 			{
 				EthAddress: "0xabc",
-				Backends: []config.Backend{
+				Backends: []legacySelectionBackend{
 					{
 						ID:        "backend-a",
 						Transport: "http",
-						Offerings: []config.Offering{
+						Offerings: []legacySelectionOffering{
 							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
 						},
 					},
@@ -426,14 +447,14 @@ func TestStateRepoApplySyntheticProbeObservation(t *testing.T) {
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{
+		Members: []legacySelectionMember{
 			{
 				EthAddress: "0xabc",
-				Backends: []config.Backend{
+				Backends: []legacySelectionBackend{
 					{
 						ID:        "backend-a",
 						Transport: "http",
-						Offerings: []config.Offering{
+						Offerings: []legacySelectionOffering{
 							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
 						},
 					},
@@ -542,14 +563,14 @@ func TestStateRepoApplyBackendOutcomeTransitionsByEffectiveScore(t *testing.T) {
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{
+		Members: []legacySelectionMember{
 			{
 				EthAddress: "0xabc",
-				Backends: []config.Backend{
+				Backends: []legacySelectionBackend{
 					{
 						ID:        "backend-a",
 						Transport: "http",
-						Offerings: []config.Offering{
+						Offerings: []legacySelectionOffering{
 							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
 						},
 					},
@@ -636,12 +657,12 @@ func TestStateRepoApplyBackendOutcomeDriftsEMAAfterInactivity(t *testing.T) {
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{{
+		Members: []legacySelectionMember{{
 			EthAddress: "0xabc",
-			Backends: []config.Backend{{
+			Backends: []legacySelectionBackend{{
 				ID:        "backend-a",
 				Transport: "http",
-				Offerings: []config.Offering{{CapabilityID: "openai:chat-completions", OfferingID: "default"}},
+				Offerings: []legacySelectionOffering{{CapabilityID: "openai:chat-completions", OfferingID: "default"}},
 			}},
 		}},
 	}
@@ -689,12 +710,12 @@ func TestStateRepoApplyBackendOutcomeExitsWarmupAfterEnoughSamples(t *testing.T)
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{{
+		Members: []legacySelectionMember{{
 			EthAddress: "0xabc",
-			Backends: []config.Backend{{
+			Backends: []legacySelectionBackend{{
 				ID:        "backend-a",
 				Transport: "http",
-				Offerings: []config.Offering{{CapabilityID: "openai:chat-completions", OfferingID: "default"}},
+				Offerings: []legacySelectionOffering{{CapabilityID: "openai:chat-completions", OfferingID: "default"}},
 			}},
 		}},
 	}
@@ -738,14 +759,14 @@ func TestStateRepoApplyBackendOutcomePreservesManualQuarantine(t *testing.T) {
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{
+		Members: []legacySelectionMember{
 			{
 				EthAddress: "0xabc",
-				Backends: []config.Backend{
+				Backends: []legacySelectionBackend{
 					{
 						ID:        "backend-a",
 						Transport: "http",
-						Offerings: []config.Offering{
+						Offerings: []legacySelectionOffering{
 							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
 						},
 					},
@@ -792,14 +813,14 @@ func TestStateRepoApplyBackendOutcomeTransitionsStateBands(t *testing.T) {
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{
+		Members: []legacySelectionMember{
 			{
 				EthAddress: "0xabc",
-				Backends: []config.Backend{
+				Backends: []legacySelectionBackend{
 					{
 						ID:        "backend-a",
 						Transport: "http",
-						Offerings: []config.Offering{
+						Offerings: []legacySelectionOffering{
 							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
 						},
 					},
@@ -870,14 +891,14 @@ func TestStateRepoApplyBackendOutcomeOpensCooldownAfterRepeatedBackendFailures(t
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{
+		Members: []legacySelectionMember{
 			{
 				EthAddress: "0xabc",
-				Backends: []config.Backend{
+				Backends: []legacySelectionBackend{
 					{
 						ID:        "backend-a",
 						Transport: "http",
-						Offerings: []config.Offering{
+						Offerings: []legacySelectionOffering{
 							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
 						},
 					},
@@ -929,14 +950,14 @@ func TestStateRepoApplyBackendOutcomePrunesFailuresOutsideCooldownWindow(t *test
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{
+		Members: []legacySelectionMember{
 			{
 				EthAddress: "0xabc",
-				Backends: []config.Backend{
+				Backends: []legacySelectionBackend{
 					{
 						ID:        "backend-a",
 						Transport: "http",
-						Offerings: []config.Offering{
+						Offerings: []legacySelectionOffering{
 							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
 						},
 					},
@@ -994,14 +1015,14 @@ func TestStateRepoApplyBackendOutcomeDoesNotApplyImplicitTimeDecay(t *testing.T)
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{
+		Members: []legacySelectionMember{
 			{
 				EthAddress: "0xabc",
-				Backends: []config.Backend{
+				Backends: []legacySelectionBackend{
 					{
 						ID:        "backend-a",
 						Transport: "http",
-						Offerings: []config.Offering{
+						Offerings: []legacySelectionOffering{
 							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
 						},
 					},
@@ -1052,14 +1073,14 @@ func TestStateRepoSaveBackendSelectionStatePreservesOperatorOverrides(t *testing
 	defer func() { _ = repo.Close() }()
 
 	cfg := &legacySelectionConfig{
-		Members: []config.Member{
+		Members: []legacySelectionMember{
 			{
 				EthAddress: "0xabc",
-				Backends: []config.Backend{
+				Backends: []legacySelectionBackend{
 					{
 						ID:        "backend-a",
 						Transport: "http",
-						Offerings: []config.Offering{
+						Offerings: []legacySelectionOffering{
 							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
 						},
 					},

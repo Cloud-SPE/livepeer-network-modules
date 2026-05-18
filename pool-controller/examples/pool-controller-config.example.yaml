@@ -29,6 +29,11 @@ scoring:
   worst_offerings_limit: 10
   public_worst_offerings_limit: 5
 
+bootstrap:
+  broker_apply_timeout_ms: 30000
+  broker_apply_command:
+    - /usr/local/bin/livepeer-broker-apply
+
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock
 

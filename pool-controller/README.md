@@ -183,6 +183,23 @@ Current Pool limitation:
   RTMP/HLS listeners. See
   `docs/exec-plans/active/0032-pool-live-rtmp-contract-decision.md`.
 
+Broker runtime apply contract:
+
+- `POST /admin/v1/broker-runtime/apply` is now the primary operator action for
+  runtime convergence.
+- When `bootstrap.broker_apply_command` is configured, `pool-controller`
+  writes the desired broker config to a temp file, executes that command, then
+  re-renders desired state and refuses to mark success if the desired revision
+  drifted during the apply attempt.
+- The apply command receives:
+  - `POOL_CONTROLLER_CONFIG_PATH`
+  - `POOL_CONTROLLER_BROKER_CONFIG_PATH`
+  - `POOL_CONTROLLER_BROKER_DESIRED_REVISION`
+  - `POOL_CONTROLLER_BROKER_CONFIG_SHA256`
+- The rendered broker YAML is also provided on stdin.
+- `bootstrap.broker_apply_timeout_ms` controls the command timeout and defaults
+  to `30000`.
+
 Current public endpoints:
 
 - `GET /public/v1/summary`

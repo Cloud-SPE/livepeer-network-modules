@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -485,6 +487,15 @@ func (s *runtimeState) ApplyDesiredRuntime(desired *types.DesiredBrokerRuntime) 
 	if desired == nil || strings.TrimSpace(desired.Revision) == "" {
 		return fmt.Errorf("desired broker runtime is not available")
 	}
+	s.mu.RLock()
+	cfg := s.cfg
+	s.mu.RUnlock()
+	if cfg == nil {
+		return fmt.Errorf("config is not loaded")
+	}
+	if err := runBrokerApplyCommand(cfg, s.configPath, desired); err != nil {
+		return err
+	}
 	if err := s.RefreshRenderedFromState("broker-runtime-apply"); err != nil {
 		return err
 	}
@@ -494,6 +505,59 @@ func (s *runtimeState) ApplyDesiredRuntime(desired *types.DesiredBrokerRuntime) 
 	}
 	if current.Revision != desired.Revision {
 		return fmt.Errorf("desired broker runtime changed during apply: expected %s got %s", desired.Revision, current.Revision)
+	}
+	return nil
+}
+
+func runBrokerApplyCommand(cfg *config.Config, configPath string, desired *types.DesiredBrokerRuntime) error {
+	if cfg == nil || len(cfg.Bootstrap.BrokerApplyCommand) == 0 {
+		return nil
+	}
+	if desired == nil || strings.TrimSpace(desired.Revision) == "" {
+		return fmt.Errorf("desired broker runtime is not available")
+	}
+	tmpFile, err := os.CreateTemp("", "pool-controller-broker-config-*.yaml")
+	if err != nil {
+		return fmt.Errorf("create broker apply temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmpFile.WriteString(desired.RenderedYAML); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write broker apply temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close broker apply temp file: %w", err)
+	}
+	timeout := time.Duration(cfg.Bootstrap.BrokerApplyTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	args := append([]string(nil), cfg.Bootstrap.BrokerApplyCommand...)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	hash := sha256.Sum256([]byte(desired.RenderedYAML))
+	cmd.Env = append(os.Environ(),
+		"POOL_CONTROLLER_CONFIG_PATH="+configPath,
+		"POOL_CONTROLLER_BROKER_CONFIG_PATH="+tmpPath,
+		"POOL_CONTROLLER_BROKER_DESIRED_REVISION="+desired.Revision,
+		"POOL_CONTROLLER_BROKER_CONFIG_SHA256="+fmt.Sprintf("%x", hash[:]),
+	)
+	cmd.Stdin = strings.NewReader(desired.RenderedYAML)
+	output, err := cmd.CombinedOutput()
+	trimmedOutput := strings.TrimSpace(string(output))
+	if ctx.Err() == context.DeadlineExceeded {
+		if trimmedOutput != "" {
+			return fmt.Errorf("broker apply command timed out after %s: %s", timeout, trimmedOutput)
+		}
+		return fmt.Errorf("broker apply command timed out after %s", timeout)
+	}
+	if err != nil {
+		if trimmedOutput != "" {
+			return fmt.Errorf("broker apply command failed: %w: %s", err, trimmedOutput)
+		}
+		return fmt.Errorf("broker apply command failed: %w", err)
 	}
 	return nil
 }

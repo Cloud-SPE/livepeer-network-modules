@@ -84,6 +84,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Scoring.PublicWorstOfferingsLimit == 0 {
 		cfg.Scoring.PublicWorstOfferingsLimit = 5
 	}
+	if cfg.Bootstrap.BrokerApplyTimeoutMS == 0 {
+		cfg.Bootstrap.BrokerApplyTimeoutMS = 30000
+	}
 	for i := range cfg.Members {
 		if cfg.Members[i].PayoutMode == "" {
 			cfg.Members[i].PayoutMode = "onchain"
@@ -100,6 +103,15 @@ func validate(cfg *Config) error {
 	}
 	if cfg.AdminAuth.BearerTokenRef != "" && !strings.HasPrefix(cfg.AdminAuth.BearerTokenRef, "env://") {
 		return fmt.Errorf("admin_auth.bearer_token_ref must use env://")
+	}
+	if cfg.Bootstrap.BrokerApplyTimeoutMS < 0 {
+		return fmt.Errorf("bootstrap.broker_apply_timeout_ms must be >= 0")
+	}
+	for i, arg := range cfg.Bootstrap.BrokerApplyCommand {
+		cfg.Bootstrap.BrokerApplyCommand[i] = strings.TrimSpace(arg)
+		if cfg.Bootstrap.BrokerApplyCommand[i] == "" {
+			return fmt.Errorf("bootstrap.broker_apply_command[%d] must not be empty", i)
+		}
 	}
 	if cfg.SyntheticProbes.IntervalMS < 0 {
 		return fmt.Errorf("synthetic_probes.interval_ms must be >= 0")

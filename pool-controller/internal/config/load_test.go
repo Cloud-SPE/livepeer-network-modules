@@ -63,8 +63,74 @@ members:
 	if got := cfg.Scoring.PublicWorstOfferingsLimit; got != 5 {
 		t.Fatalf("Scoring.PublicWorstOfferingsLimit = %d, want 5", got)
 	}
+	if got := cfg.Bootstrap.BrokerApplyTimeoutMS; got != 30000 {
+		t.Fatalf("Bootstrap.BrokerApplyTimeoutMS = %d, want 30000", got)
+	}
 	if got := cfg.Members[0].PayoutMode; got != "onchain" {
 		t.Fatalf("PayoutMode = %q, want onchain", got)
+	}
+}
+
+func TestLoadBrokerApplyCommandValidation(t *testing.T) {
+	cfg, err := Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+bootstrap:
+  broker_apply_command:
+    - /bin/echo
+    - apply
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: b1
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: default
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor:
+                type: openai-usage
+            price:
+              amount_wei: "1"
+              per_units: 1
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := len(cfg.Bootstrap.BrokerApplyCommand); got != 2 {
+		t.Fatalf("len(Bootstrap.BrokerApplyCommand) = %d, want 2", got)
+	}
+
+	_, err = Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+bootstrap:
+  broker_apply_command:
+    - /bin/echo
+    - "   "
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: b1
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: default
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor:
+                type: openai-usage
+            price:
+              amount_wei: "1"
+              per_units: 1
+`))
+	if err == nil || !strings.Contains(err.Error(), "bootstrap.broker_apply_command[1]") {
+		t.Fatalf("Load() error = %v, want broker_apply_command validation", err)
 	}
 }
 

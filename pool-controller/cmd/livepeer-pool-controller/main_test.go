@@ -1522,6 +1522,48 @@ func TestApplyDesiredRuntimeDetectsRevisionDrift(t *testing.T) {
 	}
 }
 
+func TestApplyDesiredRuntimeRunsBrokerApplyCommand(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	configPath := filepath.Join(dir, "config.yaml")
+	outputPath := filepath.Join(dir, "applied.yaml")
+	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg := &config.Config{
+		Identity: config.Identity{OrchEthAddress: "0x123"},
+		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
+		Bootstrap: config.Bootstrap{
+			BrokerApplyCommand:   []string{"bash", "-lc", fmt.Sprintf("test -n \"$POOL_CONTROLLER_BROKER_DESIRED_REVISION\" && test -n \"$POOL_CONTROLLER_BROKER_CONFIG_SHA256\" && cat \"$POOL_CONTROLLER_BROKER_CONFIG_PATH\" > %q", outputPath)},
+			BrokerApplyTimeoutMS: 30000,
+		},
+	}
+	stateRepo, err := repo.Open(dataDir)
+	if err != nil {
+		t.Fatalf("repo.Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
+	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	if err != nil {
+		t.Fatalf("renderBrokerState() error = %v", err)
+	}
+	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+		t.Fatalf("state.Replace() error = %v", err)
+	}
+
+	if err := state.ApplyDesiredRuntime(runtimeInfo); err != nil {
+		t.Fatalf("ApplyDesiredRuntime() error = %v", err)
+	}
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", outputPath, err)
+	}
+	if string(got) != runtimeInfo.RenderedYAML {
+		t.Fatalf("applied broker config mismatch:\n got=%q\nwant=%q", string(got), runtimeInfo.RenderedYAML)
+	}
+}
+
 func TestJoinRequestVerificationAndBackendVerificationFlow(t *testing.T) {
 	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

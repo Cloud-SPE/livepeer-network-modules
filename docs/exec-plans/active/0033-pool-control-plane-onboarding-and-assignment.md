@@ -2343,3 +2343,171 @@ The slice is complete when:
 2. apply attempts are auditable
 3. drift between desired and applied state is visible in API and UI
 4. broker runtime failures do not silently disappear into logs only
+
+## 22. Remaining milestone map after Slice H
+
+The implementation now covers the core control-plane architecture:
+
+- orch-owned offers
+- join requests
+- approval and rejection
+- assignment policy
+- broker desired-state rendering from persisted entities
+- desired vs applied runtime state
+- admin API and operator UI
+
+What remains is no longer architectural correction. It is production completion.
+
+### 22.1 Milestone M1 — broker-confirmed apply contract
+
+Current state:
+
+- the controller can drive apply attempts
+- the controller can optionally run a configured broker-apply command
+- the controller can re-render desired state and fail if desired revision drifts
+
+What is still missing:
+
+- a canonical broker-side acknowledgement that a specific revision is actually
+  loaded and serving
+- a way to distinguish:
+  - command succeeded but broker did not load new config
+  - command succeeded and broker loaded the target revision
+- a durable apply-attempt history beyond the latest state
+
+Required work:
+
+- define a broker-facing apply acknowledgement contract
+- record broker-confirmed revision separately from controller-local apply start
+  and finish bookkeeping
+- decide whether acknowledgement is:
+  - synchronous command output
+  - broker HTTP callback / pollable admin surface
+  - file/socket/systemd-level local contract
+- preserve current manual and command-driven fallback paths for debugging
+
+Acceptance bar:
+
+1. the operator can tell which revision the broker itself claims is active
+2. controller-side "apply succeeded" is not treated as equivalent to
+   broker-confirmed convergence
+3. failed or missing broker acknowledgement is surfaced in API, UI, and audit
+   history
+
+### 22.2 Milestone M2 — operator UX hardening
+
+Current state:
+
+- the embedded admin UI is usable for the full onboarding and assignment flow
+- runtime status, audits, review, and assignment candidates are visible
+
+What is still missing:
+
+- stronger structured editing flows for more mutations
+- clearer page organization as the surface grows
+- better error, loading, and empty states
+- higher-signal drilldown between:
+  - offers
+  - members
+  - backends
+  - assignments
+  - runtime
+  - audit history
+
+Required work:
+
+- decide whether the embedded page remains acceptable or should be replaced by
+  a dedicated frontend build path
+- improve operator guidance around:
+  - verified but unassigned backends
+  - failed applies
+  - stalled review queues
+  - assignment conflicts
+- add richer audit and runtime summaries without forcing operators into raw JSON
+
+Acceptance bar:
+
+1. a pool operator can complete common flows without raw JSON editing
+2. failed or blocked flows have clear next-action guidance in the UI
+3. the operator surface remains understandable as pool size grows
+
+### 22.3 Milestone M3 — production rollout and runbook completion
+
+Current state:
+
+- code paths exist for the new control-plane model
+- the component README covers the broker apply command contract
+
+What is still missing:
+
+- end-to-end production runbooks for the new onboarding and apply model
+- host/container deployment guidance for the broker apply command
+- failure-recovery playbooks for:
+  - failed apply
+  - stale desired vs applied revision
+  - rejected join requests
+  - suspended members and disabled backends
+
+Required work:
+
+- update operator docs in `pool-controller/` and cross-cutting rollout docs in
+  root `docs/`
+- define the production shape for:
+  - controller host placement
+  - broker reload mechanism
+  - secrets injection
+  - backup / restore of Bolt-backed control-plane state
+- add production smoke-check steps for onboarding, assignment, and apply
+
+Acceptance bar:
+
+1. a new operator can deploy and recover the control plane from checked-in docs
+2. the broker apply command contract is documented as an operational procedure,
+   not just a code feature
+3. rollback and recovery steps are explicit
+
+### 22.4 Milestone M4 — legacy bridge removal
+
+Current state:
+
+- legacy config import and bootstrap compatibility still exist
+- some examples still reflect the migration era
+
+What is still missing:
+
+- a clear decision on when legacy config-driven state can stop being treated as
+  a supported runtime path
+- cleanup of migration-only examples and code once operators are on the new
+  model
+
+Required work:
+
+- decide the deprecation boundary for:
+  - legacy member/offering config import
+  - compatibility commands and examples
+- remove migration bridges once their operational window closes
+- keep only bootstrap-only config plus persisted control-plane state as the
+  supported path
+
+Acceptance bar:
+
+1. the supported runtime model is unambiguous
+2. migration scaffolding is either explicitly supported or explicitly removed
+3. the codebase no longer blurs live control-plane state with legacy config
+
+### 22.5 Recommended order after current implementation
+
+The recommended order from here is:
+
+1. M1 broker-confirmed apply contract
+2. M3 production rollout and runbook completion
+3. M2 operator UX hardening
+4. M4 legacy bridge removal
+
+Reasoning:
+
+- broker-confirmed convergence is the biggest remaining correctness gap
+- production rollout docs are the next operational bottleneck once apply is
+  credible
+- UI refinement matters, but it should not outrun the true runtime contract
+- legacy bridge removal should happen only after the production path is stable

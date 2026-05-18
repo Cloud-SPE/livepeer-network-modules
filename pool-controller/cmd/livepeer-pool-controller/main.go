@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -11,14 +12,17 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/configgen"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/probes"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
@@ -118,13 +122,42 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	if err := state.Replace(cfg, rendered, "startup"); err != nil {
 		return err
 	}
+	probeCtx, cancelProbes := context.WithCancel(context.Background())
+	defer cancelProbes()
+	go runSyntheticProbeLoop(probeCtx, state, stderr)
+
+	paidAddr := *listenAddr
+	if paidAddr == ":8080" && cfg.Listen.Paid != "" {
+		paidAddr = cfg.Listen.Paid
+	}
+	metricsAddr := cfg.Listen.Metrics
+	if metricsAddr == "" {
+		metricsAddr = ":9090"
+	}
 
 	srv := &http.Server{
-		Addr:    *listenAddr,
+		Addr:    paidAddr,
 		Handler: newServeMux(state),
 	}
-	_, _ = fmt.Fprintf(stdout, "listening on %s\n", *listenAddr)
-	return srv.ListenAndServe()
+	metricsSrv := newMetricsServer(metricsAddr)
+
+	errCh := make(chan error, 2)
+	go func() {
+		_, _ = fmt.Fprintf(stdout, "listening on %s\n", metricsAddr)
+		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("listen metrics: %w", err)
+		}
+	}()
+	_, _ = fmt.Fprintf(stdout, "listening on %s\n", paidAddr)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	select {
+	case err := <-errCh:
+		return err
+	default:
+		return nil
+	}
 }
 
 type runtimeState struct {
@@ -140,6 +173,10 @@ type runtimeState struct {
 func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source string) error {
 	var latest *repo.Snapshot
 	if s.repo != nil {
+		repo.ApplyBackendSelectionSettings(cfg.Scoring)
+		if err := s.repo.SyncBackendSelectionStates(cfg); err != nil {
+			return fmt.Errorf("sync backend selection state: %w", err)
+		}
 		configRaw, err := os.ReadFile(s.configPath)
 		if err != nil {
 			return fmt.Errorf("read active config for snapshot: %w", err)
@@ -159,11 +196,14 @@ func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source strin
 		latest = &snap
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.cfg = cfg
 	s.rendered = append([]byte(nil), rendered...)
 	s.latest = latest
-	return nil
+	s.mu.Unlock()
+	if err := s.syncSelectionMetrics(); err != nil {
+		return err
+	}
+	return s.syncAccountingMetrics()
 }
 
 func (s *runtimeState) Snapshot() (*config.Config, []byte, *repo.Snapshot) {
@@ -175,6 +215,110 @@ func (s *runtimeState) Snapshot() (*config.Config, []byte, *repo.Snapshot) {
 		latest = &copySnap
 	}
 	return s.cfg, append([]byte(nil), s.rendered...), latest
+}
+
+func (s *runtimeState) BackendSelectionSnapshot() (types.BackendSelectionSnapshot, error) {
+	items, err := s.repo.ListBackendSelectionStates()
+	if err != nil {
+		return types.BackendSelectionSnapshot{}, err
+	}
+	cfg, _, _ := s.Snapshot()
+	scoring := config.Scoring{}
+	if cfg != nil {
+		scoring = cfg.Scoring
+	}
+	recentWindowStaleAfterSeconds := 0.0
+	if scoring.RecentWindowStaleAfterMS > 0 {
+		recentWindowStaleAfterSeconds = float64(scoring.RecentWindowStaleAfterMS) / 1000.0
+	}
+	return types.BackendSelectionSnapshot{
+		GeneratedAt:                   time.Now().UTC(),
+		Version:                       1,
+		CooldownDurationSeconds:       float64(scoring.CooldownDurationMS) / 1000.0,
+		CooldownFailureTrigger:        scoring.CooldownFailureTrigger,
+		EMAHalfLifeSeconds:            float64(scoring.EMAHalfLifeMS) / 1000.0,
+		LatencyTargetMS:               scoring.LatencyTargetMS,
+		RecentWindowStaleAfterSeconds: recentWindowStaleAfterSeconds,
+		WindowScoreWeight:             scoring.WindowScoreWeight,
+		EMAScoreWeight:                scoring.EMAScoreWeight,
+		WarmupModifier:                scoring.WarmupModifier,
+		WarmupExitSamples:             scoring.WarmupExitSamples,
+		Entries:                       items,
+	}, nil
+}
+
+func (s *runtimeState) BackendSelectionSummary() (backendSelectionSummaryView, error) {
+	items, err := s.repo.ListBackendSelectionStates()
+	if err != nil {
+		return backendSelectionSummaryView{}, err
+	}
+	cfg, _, _ := s.Snapshot()
+	if cfg == nil {
+		return buildBackendSelectionSummary(items, config.Scoring{}), nil
+	}
+	return buildBackendSelectionSummary(items, cfg.Scoring), nil
+}
+
+func (s *runtimeState) GetBackendSelectionState(memberEthAddress, backendID, capabilityID, offeringID string) (types.BackendSelectionState, error) {
+	return s.repo.GetBackendSelectionState(memberEthAddress, backendID, capabilityID, offeringID)
+}
+
+func (s *runtimeState) SaveBackendSelectionState(item types.BackendSelectionState) error {
+	item.UpdatedAt = time.Now().UTC()
+	if err := s.repo.SaveBackendSelectionState(item); err != nil {
+		return err
+	}
+	return s.syncSelectionMetrics()
+}
+
+func (s *runtimeState) ApplyBackendOutcome(outcome types.BackendOutcome) (types.BackendSelectionState, error) {
+	item, err := s.repo.ApplyBackendOutcome(outcome)
+	if err != nil {
+		return item, err
+	}
+	observability.RecordBackendOutcomeIngest(outcome)
+	return item, s.syncSelectionMetrics()
+}
+
+func (s *runtimeState) ApplySyntheticProbeObservation(observation types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
+	item, err := s.repo.ApplySyntheticProbeObservation(observation)
+	if err != nil {
+		return item, err
+	}
+	return item, s.syncSelectionMetrics()
+}
+
+func (s *runtimeState) RunSyntheticProbesOnce(ctx context.Context) (probes.RunSummary, error) {
+	cfg, _, _ := s.Snapshot()
+	if cfg == nil {
+		return probes.RunSummary{}, fmt.Errorf("config is not loaded")
+	}
+	timeout := time.Duration(cfg.SyntheticProbes.TimeoutMS) * time.Millisecond
+	runner := probes.NewRunner(timeout)
+	startedAt := time.Now().UTC()
+	summary, err := runner.RunOnce(ctx, cfg, s.ApplySyntheticProbeObservation)
+	duration := time.Since(startedAt)
+	if err != nil {
+		observability.RecordSyntheticProbeRunSummary(nil, duration, "error")
+		return summary, err
+	}
+	results := make([]observability.ProbeResultMetric, 0, len(summary.Results))
+	for _, result := range summary.Results {
+		results = append(results, observability.NewProbeResultMetric(
+			result.CapabilityID,
+			result.OfferingID,
+			result.Status,
+			result.Reason,
+		))
+	}
+	runResult := "completed"
+	if summary.Failed > 0 && summary.Succeeded == 0 && summary.Applied == 0 {
+		runResult = "failed"
+	} else if summary.Failed > 0 {
+		runResult = "partial"
+	}
+	observability.RecordSyntheticProbeRunSummary(results, duration, runResult)
+	return summary, nil
 }
 
 func (s *runtimeState) Reload() error {
@@ -196,6 +340,37 @@ func (s *runtimeState) Reload() error {
 	return s.Replace(cfg, rendered, "reload")
 }
 
+func (s *runtimeState) syncSelectionMetrics() error {
+	cfg, _, _ := s.Snapshot()
+	if cfg == nil {
+		return nil
+	}
+	items, err := s.repo.ListBackendSelectionStates()
+	if err != nil {
+		return err
+	}
+	observability.UpdateScoringSettings(cfg.Scoring)
+	observability.UpdateBackendSelectionSnapshot(items, time.Now().UTC())
+	return nil
+}
+
+func (s *runtimeState) syncAccountingMetrics() error {
+	workReceipts, err := s.repo.ListWorkReceipts(0)
+	if err != nil {
+		return err
+	}
+	roundReceipts, err := s.repo.ListRoundReceipts(0)
+	if err != nil {
+		return err
+	}
+	payoutIntents, err := s.repo.ListPayoutIntents(0)
+	if err != nil {
+		return err
+	}
+	observability.UpdateAccountingSnapshot(workReceipts, roundReceipts, payoutIntents)
+	return nil
+}
+
 func newServeMux(state *runtimeState) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -213,8 +388,17 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		backendSelectionSummary, err := state.BackendSelectionSummary()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		backendCount := 0
+		memberCount := 0
+		scoring := config.Scoring{}
 		if cfg != nil {
+			memberCount = len(cfg.Members)
+			scoring = cfg.Scoring
 			for _, member := range cfg.Members {
 				backendCount += len(member.Backends)
 			}
@@ -226,15 +410,17 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(struct {
-			MemberCount       int    `json:"member_count"`
-			BackendCount      int    `json:"backend_count"`
-			OfferingCount     int    `json:"offering_count"`
-			LatestClosedRound string `json:"latest_closed_round,omitempty"`
+			MemberCount       int                       `json:"member_count"`
+			BackendCount      int                       `json:"backend_count"`
+			OfferingCount     int                       `json:"offering_count"`
+			LatestClosedRound string                    `json:"latest_closed_round,omitempty"`
+			WorstOfferings    []publicWorstOfferingView `json:"worst_offerings,omitempty"`
 		}{
-			MemberCount:       len(cfg.Members),
+			MemberCount:       memberCount,
 			BackendCount:      backendCount,
 			OfferingCount:     len(buildOfferingViews(cfg)),
 			LatestClosedRound: latestRoundID,
+			WorstOfferings:    buildPublicWorstOfferingViews(backendSelectionSummary.WorstOfferings, scoring.PublicWorstOfferingsLimit),
 		})
 	})
 	mux.HandleFunc("GET /public/v1/rounds", func(w http.ResponseWriter, r *http.Request) {
@@ -278,6 +464,12 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		items, err = normalizeExpiredPayoutIntentLeases(state.repo, items, time.Now().UTC())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = state.syncAccountingMetrics()
 		items = filterPayoutIntents(items, r.URL.Query().Get("round_id"), memberEthAddress, "")
 		summary := buildMemberPayoutSummaryViews(items)
 		if len(summary) == 0 {
@@ -330,16 +522,174 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 	}))
 	mux.HandleFunc("GET /admin/v1/state", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
 		cfg, rendered, latest := state.Snapshot()
+		scoring := config.Scoring{}
+		memberCount := 0
+		if cfg != nil {
+			scoring = cfg.Scoring
+			memberCount = len(cfg.Members)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(struct {
 			MemberCount   int              `json:"member_count"`
 			RenderedBytes int              `json:"rendered_bytes"`
+			Scoring       config.Scoring   `json:"scoring"`
 			Latest        *snapshotSummary `json:"latest_snapshot,omitempty"`
 		}{
-			MemberCount:   len(cfg.Members),
+			MemberCount:   memberCount,
 			RenderedBytes: len(rendered),
+			Scoring:       scoring,
 			Latest:        summarizeSnapshot(latest),
+		})
+	}))
+	mux.HandleFunc("GET /admin/v1/scoring-settings", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
+		cfg, _, _ := state.Snapshot()
+		scoring := config.Scoring{}
+		if cfg != nil {
+			scoring = cfg.Scoring
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(struct {
+			Scoring config.Scoring `json:"scoring"`
+		}{Scoring: scoring})
+	}))
+	mux.HandleFunc("GET /admin/v1/backend-selection-snapshot", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
+		snapshot, err := state.BackendSelectionSnapshot()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(snapshot)
+	}))
+	mux.HandleFunc("GET /admin/v1/backend-selection-summary", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
+		summary, err := state.BackendSelectionSummary()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(summary)
+	}))
+	mux.HandleFunc("POST /admin/v1/backend-overrides/quarantine", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
+		applyBackendSelectionOverride(state, w, r, func(item *types.BackendSelectionState, req backendOverrideRequest) error {
+			item.State = types.BackendSelectionStateQuarantined
+			item.ExclusionReason = defaultString(req.Reason, "operator_quarantine")
+			return nil
+		})
+	}))
+	mux.HandleFunc("POST /admin/v1/backend-overrides/clear-quarantine", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
+		applyBackendSelectionOverride(state, w, r, func(item *types.BackendSelectionState, _ backendOverrideRequest) error {
+			if item.State == types.BackendSelectionStateQuarantined {
+				item.State = types.BackendSelectionStateEligible
+			}
+			if item.ExclusionReason == "operator_quarantine" {
+				item.ExclusionReason = ""
+			}
+			return nil
+		})
+	}))
+	mux.HandleFunc("POST /admin/v1/backend-overrides/drain", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
+		applyBackendSelectionOverride(state, w, r, func(item *types.BackendSelectionState, req backendOverrideRequest) error {
+			item.State = types.BackendSelectionStateExcluded
+			item.ExclusionReason = defaultString(req.Reason, "operator_drain")
+			return nil
+		})
+	}))
+	mux.HandleFunc("POST /admin/v1/backend-overrides/clear-drain", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
+		applyBackendSelectionOverride(state, w, r, func(item *types.BackendSelectionState, _ backendOverrideRequest) error {
+			if item.ExclusionReason == "operator_drain" {
+				item.ExclusionReason = ""
+				if item.State == types.BackendSelectionStateExcluded {
+					item.State = types.BackendSelectionStateEligible
+				}
+			}
+			return nil
+		})
+	}))
+	mux.HandleFunc("POST /admin/v1/backend-overrides/warmup", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
+		applyBackendSelectionOverride(state, w, r, func(item *types.BackendSelectionState, req backendOverrideRequest) error {
+			if req.WarmupModifier == nil || *req.WarmupModifier < 0 {
+				return fmt.Errorf("warmup_modifier must be >= 0")
+			}
+			override := *req.WarmupModifier
+			item.WarmupOverride = &override
+			item.WarmupSource = "manual_override"
+			item.WarmupModifier = override
+			return nil
+		})
+	}))
+	mux.HandleFunc("POST /admin/v1/backend-overrides/clear-warmup", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
+		applyBackendSelectionOverride(state, w, r, func(item *types.BackendSelectionState, _ backendOverrideRequest) error {
+			item.WarmupOverride = nil
+			return nil
+		})
+	}))
+	mux.HandleFunc("POST /admin/v1/backend-overrides/max-share-cap", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
+		applyBackendSelectionOverride(state, w, r, func(item *types.BackendSelectionState, req backendOverrideRequest) error {
+			if req.MaxShareCap == nil || *req.MaxShareCap < 0 || *req.MaxShareCap > 1 {
+				return fmt.Errorf("max_share_cap must be between 0 and 1")
+			}
+			item.MaxShareCap = *req.MaxShareCap
+			return nil
+		})
+	}))
+	mux.HandleFunc("POST /admin/v1/backend-overrides/clear-max-share-cap", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
+		applyBackendSelectionOverride(state, w, r, func(item *types.BackendSelectionState, _ backendOverrideRequest) error {
+			item.MaxShareCap = 0
+			return nil
+		})
+	}))
+	mux.HandleFunc("POST /admin/v1/backend-outcomes", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
+		var outcome types.BackendOutcome
+		if err := json.NewDecoder(r.Body).Decode(&outcome); err != nil {
+			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := validateBackendOutcome(outcome); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		item, err := state.ApplyBackendOutcome(outcome)
+		if err != nil {
+			if strings.Contains(err.Error(), ": not found") {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			if strings.Contains(err.Error(), "unsupported outcome") {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(struct {
+			Status string                      `json:"status"`
+			Item   types.BackendSelectionState `json:"item"`
+		}{
+			Status: "ingested",
+			Item:   item,
+		})
+	}))
+	mux.HandleFunc("POST /admin/v1/synthetic-probes/run", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
+		summary, err := state.RunSyntheticProbesOnce(context.Background())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(struct {
+			Status  string            `json:"status"`
+			Summary probes.RunSummary `json:"summary"`
+		}{
+			Status:  "completed",
+			Summary: summary,
 		})
 	}))
 	mux.HandleFunc("GET /admin/v1/snapshots", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
@@ -404,6 +754,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		observability.RecordReceiptWrite("work", receipt.Status, 1)
+		if err := state.syncAccountingMetrics(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		items, err := state.repo.ListWorkReceipts(1)
 		if err != nil || len(items) == 0 {
 			http.Error(w, "receipt persisted but could not be reloaded", http.StatusInternalServerError)
@@ -447,6 +802,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		_ = state.syncAccountingMetrics()
 		items = filterPayoutIntents(items, r.URL.Query().Get("round_id"), r.URL.Query().Get("member_eth_address"), r.URL.Query().Get("status"))
 		format := strings.TrimSpace(r.URL.Query().Get("format"))
 		if format == "csv" {
@@ -474,6 +830,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		_ = state.syncAccountingMetrics()
 		items = filterPayoutIntents(items, r.URL.Query().Get("round_id"), r.URL.Query().Get("member_eth_address"), "")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -492,6 +849,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		_ = state.syncAccountingMetrics()
 		items = filterPayoutIntents(items, r.URL.Query().Get("round_id"), r.URL.Query().Get("member_eth_address"), "")
 		limit, err := parsePositiveIntQuery(r, "limit", 100)
 		if err != nil {
@@ -550,6 +908,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		_ = state.syncAccountingMetrics()
 		items = filterPayoutIntents(items, r.URL.Query().Get("round_id"), r.URL.Query().Get("member_eth_address"), r.URL.Query().Get("status"))
 		alerts := buildPayoutAlertViews(items, now, payoutAlertThresholds{
 			SubmittedOlderThan:  time.Duration(submittedOlderThanSeconds) * time.Second,
@@ -582,6 +941,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			return
 		}
 		if err := state.repo.SaveRoundReceipt(receipt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		observability.RecordReceiptWrite("round", "upserted", 1)
+		if err := state.syncAccountingMetrics(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -621,6 +985,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+		}
+		observability.RecordPayoutIntentAction("derive", "pending", len(intents))
+		if err := state.syncAccountingMetrics(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -674,6 +1043,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 					return
 				}
 			}
+		}
+		observability.RecordPayoutIntentAction("export", "exported", len(items))
+		if err := state.syncAccountingMetrics(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		if req.Format == "csv" {
 			writePayoutIntentCSV(w, items)
@@ -733,6 +1107,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			}
 			claimed = append(claimed, items[i])
 		}
+		observability.RecordPayoutIntentAction("claim", "leased", len(claimed))
+		if err := state.syncAccountingMetrics(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(struct {
@@ -780,6 +1159,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		}
 		if len(renewed) == 0 {
 			http.Error(w, "no leased payout intents matched renewal request", http.StatusBadRequest)
+			return
+		}
+		observability.RecordPayoutIntentAction("renew", "leased", len(renewed))
+		if err := state.syncAccountingMetrics(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -847,6 +1231,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, "no leased payout intents matched release request", http.StatusBadRequest)
 			return
 		}
+		observability.RecordPayoutIntentAction("release", "exported", len(released))
+		if err := state.syncAccountingMetrics(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(struct {
@@ -894,6 +1283,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 				return
 			}
 			requeued = append(requeued, next)
+		}
+		observability.RecordPayoutIntentAction("requeue", "pending", len(requeued))
+		if err := state.syncAccountingMetrics(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -949,6 +1343,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			}
 			updated = append(updated, next)
 		}
+		observability.RecordPayoutIntentAction("status_update", req.Status, len(updated))
+		if err := state.syncAccountingMetrics(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(struct {
@@ -980,6 +1379,11 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			return
 		}
 		if err := state.repo.SaveRoundReceipt(roundReceipt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		observability.RecordReceiptWrite("round", "closed", 1)
+		if err := state.syncAccountingMetrics(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -1016,6 +1420,35 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 	return mux
 }
 
+func runSyntheticProbeLoop(ctx context.Context, state *runtimeState, stderr io.Writer) {
+	interval := 5 * time.Second
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			cfg, _, _ := state.Snapshot()
+			if cfg == nil || !cfg.SyntheticProbes.Enabled {
+				timer.Reset(interval)
+				continue
+			}
+			if next := time.Duration(cfg.SyntheticProbes.IntervalMS) * time.Millisecond; next > 0 {
+				interval = next
+			}
+			summary, err := state.RunSyntheticProbesOnce(ctx)
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "synthetic probe run error: %v\n", err)
+				timer.Reset(interval)
+				continue
+			}
+			_, _ = fmt.Fprintf(stderr, "synthetic probe run completed: applied=%d succeeded=%d failed=%d skipped=%d\n", summary.Applied, summary.Succeeded, summary.Failed, summary.Skipped)
+			timer.Reset(interval)
+		}
+	}
+}
+
 func withAdminAuth(state *runtimeState, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		state.mu.RLock()
@@ -1032,6 +1465,47 @@ func withAdminAuth(state *runtimeState, next http.HandlerFunc) http.HandlerFunc 
 		}
 		next(w, r)
 	}
+}
+
+func applyBackendSelectionOverride(state *runtimeState, w http.ResponseWriter, r *http.Request, mutate func(*types.BackendSelectionState, backendOverrideRequest) error) {
+	var req backendOverrideRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.MemberEthAddress = strings.TrimSpace(req.MemberEthAddress)
+	req.BackendID = strings.TrimSpace(req.BackendID)
+	req.CapabilityID = strings.TrimSpace(req.CapabilityID)
+	req.OfferingID = strings.TrimSpace(req.OfferingID)
+	if req.MemberEthAddress == "" || req.BackendID == "" || req.CapabilityID == "" || req.OfferingID == "" {
+		http.Error(w, "member_eth_address, backend_id, capability_id, and offering_id are required", http.StatusBadRequest)
+		return
+	}
+
+	item, err := state.GetBackendSelectionState(req.MemberEthAddress, req.BackendID, req.CapabilityID, req.OfferingID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if err := mutate(&item, req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := state.SaveBackendSelectionState(item); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(item)
+}
+
+func defaultString(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func resolveAdminToken(cfg *config.Config) (string, error) {
@@ -1066,6 +1540,40 @@ func parsePositiveIntQuery(r *http.Request, key string, defaultValue int) (int, 
 		return 0, fmt.Errorf("%s must be a positive integer", key)
 	}
 	return value, nil
+}
+
+type backendOverrideRequest struct {
+	MemberEthAddress string   `json:"member_eth_address"`
+	BackendID        string   `json:"backend_id"`
+	CapabilityID     string   `json:"capability_id"`
+	OfferingID       string   `json:"offering_id"`
+	Reason           string   `json:"reason,omitempty"`
+	WarmupModifier   *float64 `json:"warmup_modifier,omitempty"`
+	MaxShareCap      *float64 `json:"max_share_cap,omitempty"`
+}
+
+func validateBackendOutcome(outcome types.BackendOutcome) error {
+	outcome.MemberEthAddress = strings.TrimSpace(outcome.MemberEthAddress)
+	outcome.BackendID = strings.TrimSpace(outcome.BackendID)
+	outcome.CapabilityID = strings.TrimSpace(outcome.CapabilityID)
+	outcome.OfferingID = strings.TrimSpace(outcome.OfferingID)
+	outcome.Outcome = strings.TrimSpace(outcome.Outcome)
+	if outcome.MemberEthAddress == "" || outcome.BackendID == "" || outcome.CapabilityID == "" || outcome.OfferingID == "" {
+		return fmt.Errorf("member_eth_address, backend_id, capability_id, and offering_id are required")
+	}
+	switch outcome.Outcome {
+	case types.BackendOutcomeSuccess,
+		types.BackendOutcomeBackendFailure,
+		types.BackendOutcomeCallerFailure,
+		types.BackendOutcomePolicyTermination,
+		types.BackendOutcomePaymentTermination:
+	default:
+		return fmt.Errorf("outcome must be one of success, backend_failure, caller_failure, policy_termination, payment_termination")
+	}
+	if outcome.OccurredAt != nil && outcome.OccurredAt.IsZero() {
+		return fmt.Errorf("occurred_at must be omitted or set to a valid timestamp")
+	}
+	return nil
 }
 
 type memberView struct {
@@ -1108,6 +1616,87 @@ type offeringBackendView struct {
 	BackendID         string `json:"backend_id"`
 	Transport         string `json:"transport"`
 	URL               string `json:"url,omitempty"`
+}
+
+type backendSelectionSummaryView struct {
+	GeneratedAt       time.Time                          `json:"generated_at"`
+	Total             backendSelectionBucketSummaryView  `json:"total"`
+	ByState           map[string]int                     `json:"by_state"`
+	ScoreDistribution map[string]int                     `json:"score_distribution,omitempty"`
+	TrafficShare      []backendTrafficShareView          `json:"traffic_share,omitempty"`
+	ByMember          []backendSelectionGroupSummaryView `json:"by_member"`
+	ByOffering        []backendSelectionGroupSummaryView `json:"by_offering"`
+	WorstOfferings    []backendSelectionGroupSummaryView `json:"worst_offerings"`
+	TopDegraded       []backendSelectionEntrySummaryView `json:"top_degraded"`
+	TopExcluded       []backendSelectionEntrySummaryView `json:"top_excluded"`
+}
+
+type backendSelectionGroupSummaryView struct {
+	Key                           string                            `json:"key"`
+	Label                         string                            `json:"label,omitempty"`
+	Count                         int                               `json:"count"`
+	ByState                       map[string]int                    `json:"by_state"`
+	ScoreDistribution             map[string]int                    `json:"score_distribution,omitempty"`
+	TopRoutingReasons             map[string]int                    `json:"top_routing_reasons,omitempty"`
+	TopExclusionReasons           map[string]int                    `json:"top_exclusion_reasons,omitempty"`
+	TrafficShare                  []backendTrafficShareView         `json:"traffic_share,omitempty"`
+	AverageEffectiveScore         float64                           `json:"average_effective_selection_score"`
+	AverageSyntheticConfidence    float64                           `json:"average_synthetic_confidence"`
+	AverageRealSuccessScore       float64                           `json:"average_real_success_score"`
+	AverageRealLatencyScore       float64                           `json:"average_real_latency_score"`
+	AverageRecentOutcomeCount     float64                           `json:"average_recent_outcome_count"`
+	AverageRecentRoutableOutcomes float64                           `json:"average_recent_routable_outcome_count"`
+	AverageRecentBackendFailures  float64                           `json:"average_recent_backend_failure_count"`
+	AverageRecentWindowAgeSeconds float64                           `json:"average_recent_window_age_seconds"`
+	RecentWindowStartedAt         *time.Time                        `json:"recent_window_started_at,omitempty"`
+	RecentWindowEndedAt           *time.Time                        `json:"recent_window_ended_at,omitempty"`
+	States                        backendSelectionBucketSummaryView `json:"states"`
+}
+
+type backendSelectionBucketSummaryView struct {
+	Eligible    int `json:"eligible"`
+	Degraded    int `json:"degraded"`
+	Excluded    int `json:"excluded"`
+	Quarantined int `json:"quarantined"`
+}
+
+type backendSelectionEntrySummaryView struct {
+	MemberEthAddress          string     `json:"member_eth_address"`
+	BackendID                 string     `json:"backend_id"`
+	CapabilityID              string     `json:"capability_id"`
+	OfferingID                string     `json:"offering_id"`
+	State                     string     `json:"state"`
+	ExclusionReason           string     `json:"exclusion_reason,omitempty"`
+	RoutingReason             string     `json:"routing_reason,omitempty"`
+	EffectiveSelectionScore   float64    `json:"effective_selection_score"`
+	SyntheticConfidence       float64    `json:"synthetic_confidence"`
+	RealSuccessScore          float64    `json:"real_success_score"`
+	RealLatencyScore          float64    `json:"real_latency_score"`
+	RecentOutcomeCount        int        `json:"recent_outcome_count"`
+	RecentRoutableOutcomeCount int       `json:"recent_routable_outcome_count"`
+	RecentBackendFailureCount int        `json:"recent_backend_failure_count"`
+	RecentWindowStartedAt     *time.Time `json:"recent_window_started_at,omitempty"`
+	RecentWindowEndedAt       *time.Time `json:"recent_window_ended_at,omitempty"`
+	RecentWindowAgeSeconds    float64    `json:"recent_window_age_seconds,omitempty"`
+}
+
+type backendTrafficShareView struct {
+	MemberEthAddress            string  `json:"member_eth_address"`
+	BackendID                   string  `json:"backend_id"`
+	CapabilityID                string  `json:"capability_id"`
+	OfferingID                  string  `json:"offering_id"`
+	RecentRoutableOutcomeCount  int     `json:"recent_routable_outcome_count"`
+	RecentRoutableTrafficShare  float64 `json:"recent_routable_traffic_share"`
+}
+
+type publicWorstOfferingView struct {
+	Key                          string                            `json:"key"`
+	Count                        int                               `json:"count"`
+	States                       backendSelectionBucketSummaryView `json:"states"`
+	TopRoutingReasons            map[string]int                    `json:"top_routing_reasons,omitempty"`
+	TopExclusionReasons          map[string]int                    `json:"top_exclusion_reasons,omitempty"`
+	AverageEffectiveScore        float64                           `json:"average_effective_selection_score"`
+	AverageRecentBackendFailures float64                           `json:"average_recent_backend_failure_count"`
 }
 
 type snapshotSummary struct {
@@ -1369,6 +1958,269 @@ func buildOfferingViews(cfg *config.Config) []offeringView {
 		out = append(out, *view)
 	}
 	return out
+}
+
+func buildBackendSelectionSummary(items []types.BackendSelectionState, scoring config.Scoring) backendSelectionSummaryView {
+	summary := backendSelectionSummaryView{
+		GeneratedAt:       time.Now().UTC(),
+		ByState:           map[string]int{},
+		ScoreDistribution: map[string]int{},
+		TrafficShare:      make([]backendTrafficShareView, 0),
+		ByMember:          make([]backendSelectionGroupSummaryView, 0),
+		ByOffering:        make([]backendSelectionGroupSummaryView, 0),
+		WorstOfferings:    make([]backendSelectionGroupSummaryView, 0),
+		TopDegraded:       make([]backendSelectionEntrySummaryView, 0),
+		TopExcluded:       make([]backendSelectionEntrySummaryView, 0),
+	}
+	memberGroups := map[string][]types.BackendSelectionState{}
+	offeringGroups := map[string][]types.BackendSelectionState{}
+	for _, item := range items {
+		summary.Total = accumulateBackendSelectionBucket(summary.Total, item.State)
+		summary.ByState[item.State]++
+		summary.ScoreDistribution[scoreDistributionBucket(item.EffectiveSelectionScore)]++
+		memberGroups[item.MemberEthAddress] = append(memberGroups[item.MemberEthAddress], item)
+		offeringKey := item.CapabilityID + "/" + item.OfferingID
+		offeringGroups[offeringKey] = append(offeringGroups[offeringKey], item)
+		if item.RecentRoutableOutcomeCount > 0 {
+			summary.TrafficShare = append(summary.TrafficShare, summarizeBackendTrafficShare(item, items))
+		}
+		switch item.State {
+		case types.BackendSelectionStateDegraded:
+			summary.TopDegraded = append(summary.TopDegraded, summarizeBackendSelectionEntry(item))
+		case types.BackendSelectionStateExcluded, types.BackendSelectionStateQuarantined:
+			summary.TopExcluded = append(summary.TopExcluded, summarizeBackendSelectionEntry(item))
+		}
+	}
+	for member, group := range memberGroups {
+		summary.ByMember = append(summary.ByMember, buildBackendSelectionGroupSummary(member, member, group))
+	}
+	for offering, group := range offeringGroups {
+		summary.ByOffering = append(summary.ByOffering, buildBackendSelectionGroupSummary(offering, offering, group))
+	}
+	sort.Slice(summary.ByMember, func(i, j int) bool { return summary.ByMember[i].Key < summary.ByMember[j].Key })
+	sort.Slice(summary.ByOffering, func(i, j int) bool { return summary.ByOffering[i].Key < summary.ByOffering[j].Key })
+	for _, offering := range summary.ByOffering {
+		if offering.States.Degraded == 0 && offering.States.Excluded == 0 && offering.States.Quarantined == 0 {
+			continue
+		}
+		summary.WorstOfferings = append(summary.WorstOfferings, offering)
+	}
+	sort.Slice(summary.WorstOfferings, func(i, j int) bool {
+		left := backendSelectionGroupSeverity(summary.WorstOfferings[i])
+		right := backendSelectionGroupSeverity(summary.WorstOfferings[j])
+		if left != right {
+			return left > right
+		}
+		if summary.WorstOfferings[i].AverageEffectiveScore != summary.WorstOfferings[j].AverageEffectiveScore {
+			return summary.WorstOfferings[i].AverageEffectiveScore < summary.WorstOfferings[j].AverageEffectiveScore
+		}
+		return summary.WorstOfferings[i].Key < summary.WorstOfferings[j].Key
+	})
+	sort.Slice(summary.TopDegraded, func(i, j int) bool {
+		if summary.TopDegraded[i].EffectiveSelectionScore != summary.TopDegraded[j].EffectiveSelectionScore {
+			return summary.TopDegraded[i].EffectiveSelectionScore < summary.TopDegraded[j].EffectiveSelectionScore
+		}
+		return summary.TopDegraded[i].RecentBackendFailureCount > summary.TopDegraded[j].RecentBackendFailureCount
+	})
+	sort.Slice(summary.TopExcluded, func(i, j int) bool {
+		if summary.TopExcluded[i].RecentBackendFailureCount != summary.TopExcluded[j].RecentBackendFailureCount {
+			return summary.TopExcluded[i].RecentBackendFailureCount > summary.TopExcluded[j].RecentBackendFailureCount
+		}
+		return summary.TopExcluded[i].EffectiveSelectionScore < summary.TopExcluded[j].EffectiveSelectionScore
+	})
+	sort.Slice(summary.TrafficShare, func(i, j int) bool {
+		if summary.TrafficShare[i].RecentRoutableTrafficShare != summary.TrafficShare[j].RecentRoutableTrafficShare {
+			return summary.TrafficShare[i].RecentRoutableTrafficShare > summary.TrafficShare[j].RecentRoutableTrafficShare
+		}
+		return summary.TrafficShare[i].BackendID < summary.TrafficShare[j].BackendID
+	})
+	if scoring.TopDegradedLimit > 0 && len(summary.TopDegraded) > scoring.TopDegradedLimit {
+		summary.TopDegraded = summary.TopDegraded[:scoring.TopDegradedLimit]
+	}
+	if scoring.TopExcludedLimit > 0 && len(summary.TopExcluded) > scoring.TopExcludedLimit {
+		summary.TopExcluded = summary.TopExcluded[:scoring.TopExcludedLimit]
+	}
+	if scoring.WorstOfferingsLimit > 0 && len(summary.WorstOfferings) > scoring.WorstOfferingsLimit {
+		summary.WorstOfferings = summary.WorstOfferings[:scoring.WorstOfferingsLimit]
+	}
+	return summary
+}
+
+func backendSelectionGroupSeverity(group backendSelectionGroupSummaryView) float64 {
+	return (float64(group.States.Quarantined) * 400) +
+		(float64(group.States.Excluded) * 300) +
+		(float64(group.States.Degraded) * 100) +
+		(group.AverageRecentBackendFailures * 10) +
+		((1 - group.AverageEffectiveScore) * 10)
+}
+
+func buildBackendSelectionGroupSummary(key, label string, items []types.BackendSelectionState) backendSelectionGroupSummaryView {
+	out := backendSelectionGroupSummaryView{
+		Key:                 key,
+		Label:               label,
+		Count:               len(items),
+		ByState:             map[string]int{},
+		ScoreDistribution:   map[string]int{},
+		TopRoutingReasons:   map[string]int{},
+		TopExclusionReasons: map[string]int{},
+		TrafficShare:        make([]backendTrafficShareView, 0),
+	}
+	for _, item := range items {
+		out.ByState[item.State]++
+		out.ScoreDistribution[scoreDistributionBucket(item.EffectiveSelectionScore)]++
+		out.States = accumulateBackendSelectionBucket(out.States, item.State)
+		if item.RoutingReason != "" {
+			out.TopRoutingReasons[item.RoutingReason]++
+		}
+		if item.ExclusionReason != "" {
+			out.TopExclusionReasons[item.ExclusionReason]++
+		}
+		out.AverageEffectiveScore += item.EffectiveSelectionScore
+		out.AverageSyntheticConfidence += item.SyntheticConfidence
+		out.AverageRealSuccessScore += item.RealSuccessScore
+		out.AverageRealLatencyScore += item.RealLatencyScore
+		out.AverageRecentOutcomeCount += float64(item.RecentOutcomeCount)
+		out.AverageRecentRoutableOutcomes += float64(item.RecentRoutableOutcomeCount)
+		out.AverageRecentBackendFailures += float64(item.RecentBackendFailureCount)
+		out.AverageRecentWindowAgeSeconds += item.RecentWindowAgeSeconds
+		if item.RecentRoutableOutcomeCount > 0 {
+			out.TrafficShare = append(out.TrafficShare, summarizeBackendTrafficShare(item, items))
+		}
+		if item.RecentWindowStartedAt != nil {
+			if out.RecentWindowStartedAt == nil || item.RecentWindowStartedAt.Before(*out.RecentWindowStartedAt) {
+				start := item.RecentWindowStartedAt.UTC()
+				out.RecentWindowStartedAt = &start
+			}
+		}
+		if item.RecentWindowEndedAt != nil {
+			if out.RecentWindowEndedAt == nil || item.RecentWindowEndedAt.After(*out.RecentWindowEndedAt) {
+				end := item.RecentWindowEndedAt.UTC()
+				out.RecentWindowEndedAt = &end
+			}
+		}
+	}
+	if len(items) > 0 {
+		divisor := float64(len(items))
+		out.AverageEffectiveScore /= divisor
+			out.AverageSyntheticConfidence /= divisor
+			out.AverageRealSuccessScore /= divisor
+			out.AverageRealLatencyScore /= divisor
+			out.AverageRecentOutcomeCount /= divisor
+			out.AverageRecentRoutableOutcomes /= divisor
+			out.AverageRecentBackendFailures /= divisor
+			out.AverageRecentWindowAgeSeconds /= divisor
+		}
+	sort.Slice(out.TrafficShare, func(i, j int) bool {
+		if out.TrafficShare[i].RecentRoutableTrafficShare != out.TrafficShare[j].RecentRoutableTrafficShare {
+			return out.TrafficShare[i].RecentRoutableTrafficShare > out.TrafficShare[j].RecentRoutableTrafficShare
+		}
+		return out.TrafficShare[i].BackendID < out.TrafficShare[j].BackendID
+	})
+	if len(out.TopRoutingReasons) == 0 {
+		out.TopRoutingReasons = nil
+	}
+	if len(out.TopExclusionReasons) == 0 {
+		out.TopExclusionReasons = nil
+	}
+	if len(out.ScoreDistribution) == 0 {
+		out.ScoreDistribution = nil
+	}
+	if len(out.TrafficShare) == 0 {
+		out.TrafficShare = nil
+	}
+	return out
+}
+
+func summarizeBackendSelectionEntry(item types.BackendSelectionState) backendSelectionEntrySummaryView {
+	return backendSelectionEntrySummaryView{
+		MemberEthAddress:          item.MemberEthAddress,
+		BackendID:                 item.BackendID,
+		CapabilityID:              item.CapabilityID,
+		OfferingID:                item.OfferingID,
+		State:                     item.State,
+		ExclusionReason:           item.ExclusionReason,
+		RoutingReason:             item.RoutingReason,
+		EffectiveSelectionScore:   item.EffectiveSelectionScore,
+		SyntheticConfidence:       item.SyntheticConfidence,
+		RealSuccessScore:          item.RealSuccessScore,
+		RealLatencyScore:          item.RealLatencyScore,
+		RecentOutcomeCount:        item.RecentOutcomeCount,
+		RecentRoutableOutcomeCount: item.RecentRoutableOutcomeCount,
+		RecentBackendFailureCount: item.RecentBackendFailureCount,
+		RecentWindowStartedAt:     item.RecentWindowStartedAt,
+		RecentWindowEndedAt:       item.RecentWindowEndedAt,
+		RecentWindowAgeSeconds:    item.RecentWindowAgeSeconds,
+	}
+}
+
+func summarizeBackendTrafficShare(item types.BackendSelectionState, scope []types.BackendSelectionState) backendTrafficShareView {
+	total := 0
+	for _, candidate := range scope {
+		total += candidate.RecentRoutableOutcomeCount
+	}
+	share := 0.0
+	if total > 0 {
+		share = float64(item.RecentRoutableOutcomeCount) / float64(total)
+	}
+	return backendTrafficShareView{
+		MemberEthAddress:           item.MemberEthAddress,
+		BackendID:                  item.BackendID,
+		CapabilityID:               item.CapabilityID,
+		OfferingID:                 item.OfferingID,
+		RecentRoutableOutcomeCount: item.RecentRoutableOutcomeCount,
+		RecentRoutableTrafficShare: share,
+	}
+}
+
+func scoreDistributionBucket(score float64) string {
+	switch {
+	case score < 0.10:
+		return "lt_0_10"
+	case score < 0.30:
+		return "0_10_to_0_29"
+	case score < 0.50:
+		return "0_30_to_0_49"
+	case score < 0.80:
+		return "0_50_to_0_79"
+	default:
+		return "0_80_to_1_00"
+	}
+}
+
+func buildPublicWorstOfferingViews(items []backendSelectionGroupSummaryView, limit int) []publicWorstOfferingView {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]publicWorstOfferingView, 0, len(items))
+	for _, item := range items {
+		out = append(out, publicWorstOfferingView{
+			Key:                          item.Key,
+			Count:                        item.Count,
+			States:                       item.States,
+			TopRoutingReasons:            item.TopRoutingReasons,
+			TopExclusionReasons:          item.TopExclusionReasons,
+			AverageEffectiveScore:        item.AverageEffectiveScore,
+			AverageRecentBackendFailures: item.AverageRecentBackendFailures,
+		})
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func accumulateBackendSelectionBucket(bucket backendSelectionBucketSummaryView, state string) backendSelectionBucketSummaryView {
+	switch state {
+	case types.BackendSelectionStateEligible:
+		bucket.Eligible++
+	case types.BackendSelectionStateDegraded:
+		bucket.Degraded++
+	case types.BackendSelectionStateExcluded:
+		bucket.Excluded++
+	case types.BackendSelectionStateQuarantined:
+		bucket.Quarantined++
+	}
+	return bucket
 }
 
 func summarizeSnapshot(s *repo.Snapshot) *snapshotSummary {

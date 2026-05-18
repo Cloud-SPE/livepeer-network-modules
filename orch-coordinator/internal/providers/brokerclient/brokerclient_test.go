@@ -119,3 +119,29 @@ func TestHTTPClient_FetchHealth_HappyPath(t *testing.T) {
 		t.Fatalf("metadata.last_result = %q; want enriched", got)
 	}
 }
+
+func TestHTTPClient_FetchHealth_DecodesBackendDetails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"broker_status":"ready","generated_at":"2026-05-14T00:00:00Z","capabilities":[{"id":"cap","offering_id":"off","status":"ready","backends":[{"backend_id":"http://runner:8080","status":"ready","selection_eligible":true,"selection_weight":150,"selection_reason":"eligible"}]}]}`))
+	}))
+	defer srv.Close()
+	c := New(2 * time.Second)
+	out, err := c.FetchHealth(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Capabilities) != 1 {
+		t.Fatalf("capabilities = %d; want 1", len(out.Capabilities))
+	}
+	if len(out.Capabilities[0].Backends) != 1 {
+		t.Fatalf("backends = %d; want 1", len(out.Capabilities[0].Backends))
+	}
+	backend := out.Capabilities[0].Backends[0]
+	if backend.BackendID != "http://runner:8080" {
+		t.Fatalf("backend_id = %q; want http://runner:8080", backend.BackendID)
+	}
+	if !backend.SelectionEligible || backend.SelectionWeight != 150 || backend.SelectionReason != "eligible" {
+		t.Fatalf("unexpected backend selection fields: %+v", backend)
+	}
+}

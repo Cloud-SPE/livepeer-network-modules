@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +13,10 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // fakeLiveCounter is a goroutine-safe LiveCounter for middleware tests.
@@ -51,11 +54,12 @@ func stubLookup(cap, off string) (CapabilitySpec, bool) {
 
 type stubReceiptSink struct {
 	items []receipts.WorkReceipt
+	err   error
 }
 
 func (s *stubReceiptSink) UpsertWorkReceipt(_ context.Context, receipt receipts.WorkReceipt) error {
 	s.items = append(s.items, receipt)
-	return nil
+	return s.err
 }
 
 // TestPayment_TickerDisabledFallback documents the locked decision #6:
@@ -302,6 +306,7 @@ func TestPayment_EmitsFinalReceiptWhenMetaPresent(t *testing.T) {
 	t.Parallel()
 	mock := payment.NewMock()
 	sink := &stubReceiptSink{}
+	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "success"))
 
 	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -331,5 +336,43 @@ func TestPayment_EmitsFinalReceiptWhenMetaPresent(t *testing.T) {
 	}
 	if got.GatewayRevenueWei != "42" {
 		t.Fatalf("gateway revenue = %q, want 42", got.GatewayRevenueWei)
+	}
+	after := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "success"))
+	if after != before+1 {
+		t.Fatalf("final receipt emit delta = %v; want 1", after-before)
+	}
+}
+
+func TestPayment_EmitsFinalReceiptErrorMetricWhenSinkFails(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	sink := &stubReceiptSink{err: errors.New("boom")}
+	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "error"))
+
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		state := SessionStateFromContext(r.Context())
+		state.SetReceiptMeta(ReceiptMeta{
+			WorkID:           "wid-receipt-error",
+			RequestID:        "req-receipt-error",
+			CapabilityID:     "cap",
+			OfferingID:       "off",
+			MemberEthAddress: "0xabc",
+			BackendID:        "backend-a",
+		})
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := makePaidRequest("wid-receipt-error")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if len(sink.items) != 1 {
+		t.Fatalf("receipt count = %d, want 1", len(sink.items))
+	}
+	after := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "error"))
+	if after != before+1 {
+		t.Fatalf("final receipt error emit delta = %v; want 1", after-before)
 	}
 }

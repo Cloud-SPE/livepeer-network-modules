@@ -14,6 +14,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
 )
@@ -367,7 +368,10 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 						GatewayRevenueWei: metaGatewayRevenue(meta, spec, actual),
 						Status:            "final",
 					}); err != nil {
+						observability.RecordWorkReceiptEmit("final", "error")
 						log.Printf("warning: work receipt final emit failed work_id=%s: %v", meta.WorkID, err)
+					} else {
+						observability.RecordWorkReceiptEmit("final", "success")
 					}
 				}
 			}

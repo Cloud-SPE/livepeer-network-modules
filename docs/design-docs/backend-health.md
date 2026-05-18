@@ -385,7 +385,22 @@ actually knows whether the backend can serve work now.
 Probe recipes may differ by backend type, but the broker must normalize
 them into workload-agnostic states. Neither the coordinator nor the
 resolver should learn capability-specific semantics just to answer a
-health question.
+health question. For Pool-managed tuples, `/registry/health` also carries
+per-backend `selection_eligible`, `selection_weight`, and
+`selection_reason` so operator tooling can see the final broker routing
+decision after Pool snapshot gating. When every backend for a published
+tuple is selection-blocked by Pool snapshot expiry or Pool exclusion
+state, the tuple's top-level status must also fall out of `ready`; this
+keeps resolver selection aligned with actual broker routability.
+The same Pool blocks also mirror the controller's live scorer settings,
+including cooldown thresholds, EMA half-life, latency target,
+stale-sample-window threshold, window/EMA blend weights, and warm-up
+settings, so broker health is enough to explain both the decision and the
+active control-plane knobs behind it. Broker health also mirrors the
+broker-local snapshot timing policy for that Pool control plane, including
+snapshot timeout, poll interval, stale threshold, and hard expiry, so the
+same payload answers both "what did the controller want?" and "when does the
+broker stop trusting that answer?"
 
 ### OpenAI gateway example
 

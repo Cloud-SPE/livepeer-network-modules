@@ -37,6 +37,19 @@ Receipt-sink failures are logged but do not fail paid requests.
 If `pool-controller` enables `admin_auth`, configure the matching bearer token
 on `receipt_sink.auth`.
 
+When `pool_snapshot.url` is configured, the broker also polls
+`pool-controller`'s backend-selection snapshot and exposes per-backend snapshot
+freshness / entry state plus offering-level Pool aggregates under
+`GET /registry/health`. The current Plan 0030
+slice also lets Pool snapshot state affect multi-backend selection:
+
+- `expired`, `bootstrap_pending`, and `fetch_error` snapshots fail closed
+  for Pool-managed backends
+- missing snapshot entries are ineligible
+- `excluded` and `quarantined` entry states are ineligible
+- `eligible` / `degraded` entries scale broker-local health weight by the
+  snapshot's `effective_selection_score`
+
 **This binary contains zero capability-specific code.** All workload knowledge
 lives in mode adapters and extractor implementations, both standardized in the
 spec.
@@ -138,7 +151,48 @@ The same health payload now includes metadata-level `last_success_age_seconds`
 for operators who are inspecting JSON directly instead of scraping metrics.
 When repeated published tuples are configured, the same health payload exposes a
 `backends[]` array per published capability so operator tooling can see each
-candidate backend's individual status.
+candidate backend's individual status. When `pool_snapshot.url` is configured,
+each backend may also include a `pool` object with snapshot freshness
+(`fresh`, `stale`, `expired`, `bootstrap_pending`, or `fetch_error`), cached
+timestamps, and whether the latest snapshot contained an entry for that
+backend+offering tuple. In that mode, `selection_eligible`,
+`selection_weight`, and `selection_reason` describe the broker's final
+Pool-aware routing decision, not just broker-local probe health. If every
+backend for a published tuple is blocked by Pool snapshot state or Pool
+exclusion state, the tuple-level `status`/`reason` in `/registry/health` also
+drop out of `ready` so downstream resolvers stop routing an unroutable tuple.
+When the Pool snapshot includes `routing_reason`, broker health reuses that
+controller-owned explanation for eligible/degraded/excluded Pool states; the
+broker only invents reasons for snapshot transport failures such as
+`pool_snapshot_expired` or `pool_snapshot_fetch_error`. The same `pool` blocks
+now also expose the controller-supplied scorer knobs that shape those
+decisions, including cooldown duration/trigger, EMA half-life, latency
+target, stale-sample-window threshold, window-vs-EMA weights, and warm-up
+modifier/exit samples. That makes broker `/registry/health` a read-only
+mirror of the live controller routing policy without forcing operators to
+cross-check controller admin endpoints. The same Pool blocks also expose the
+broker's own snapshot timing policy for that control plane, including
+snapshot timeout, poll interval, stale threshold, and expiry threshold, so
+one health payload explains both the controller's scoring policy and the
+broker's local freshness contract.
+
+The Prometheus surface now mirrors that Pool snapshot state too. In addition
+to the existing request and metadata families, broker `/metrics` now includes:
+
+- `livepeer_pool_snapshot_cache_status{status}`
+- `livepeer_pool_snapshot_generated_timestamp_seconds`
+- `livepeer_pool_snapshot_fetched_timestamp_seconds`
+- `livepeer_pool_snapshot_setting_seconds{setting}`
+- `livepeer_pool_snapshot_entry_state_total{capability,offering,state}`
+- `livepeer_pool_snapshot_routing_reason_total{capability,offering,routing_reason}`
+- `livepeer_pool_snapshot_automatic_warmup_total{capability,offering}`
+- `livepeer_pool_snapshot_cooldown_total{capability,offering}`
+- `livepeer_pool_snapshot_average_recent_window_age_seconds{capability,offering}`
+- `livepeer_backend_outcome_emit_total{outcome,result}`
+- `livepeer_work_receipt_emit_total{status,result}`
+- `livepeer_backend_selection_final_total{capability,offering,backend_id,reason}`
+- `livepeer_backend_selection_denied_total{capability,offering,backend_id,reason}`
+- `livepeer_backend_selection_exhausted_total{capability,offering,reason}`
 
 When the broker runs in production, mount your real `host-config.yaml` over
 `/etc/livepeer/host-config.yaml` (the default `--config` location).

@@ -169,6 +169,26 @@ then rejects in `OnPublish`.
 Plus the cross-cutting metrics from the payment middleware
 (`livepeer_payment_*`); see `payment-daemon/docs/operator-runbook.md` §8.
 
+When `pool_snapshot.url` is configured, `/metrics` also exports Pool snapshot
+control-plane gauges:
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `livepeer_pool_snapshot_cache_status` | gauge | `status` | One-hot broker view of the current snapshot cache state (`fresh`, `stale`, `expired`, `bootstrap_pending`, `fetch_error`). |
+| `livepeer_pool_snapshot_generated_timestamp_seconds` | gauge | (none) | Unix timestamp from the latest Pool snapshot document. |
+| `livepeer_pool_snapshot_fetched_timestamp_seconds` | gauge | (none) | Unix timestamp when the broker last fetched a snapshot successfully. |
+| `livepeer_pool_snapshot_setting_seconds` | gauge | `setting` | Broker-local snapshot timing settings (`timeout`, `poll_interval`, `stale_after`, `expire_after`). |
+| `livepeer_pool_snapshot_entry_state_total` | gauge | `capability,offering,state` | Current count of snapshot entries by Pool entry state. |
+| `livepeer_pool_snapshot_routing_reason_total` | gauge | `capability,offering,routing_reason` | Current count of snapshot entries by routing reason. |
+| `livepeer_pool_snapshot_automatic_warmup_total` | gauge | `capability,offering` | Current count of snapshot entries in automatic warm-up. |
+| `livepeer_pool_snapshot_cooldown_total` | gauge | `capability,offering` | Current count of snapshot entries still cooling down. |
+| `livepeer_pool_snapshot_average_recent_window_age_seconds` | gauge | `capability,offering` | Average recent-window age across snapshot entries for an offering. |
+| `livepeer_backend_outcome_emit_total` | counter | `outcome,result` | Best-effort backend outcome report attempts toward `pool-controller`, labeled by emitted outcome class and transport result. |
+| `livepeer_work_receipt_emit_total` | counter | `status,result` | Best-effort work receipt emit attempts toward `pool-controller`, labeled by receipt status (`stub` or `final`) and transport result. |
+| `livepeer_backend_selection_final_total` | counter | `capability,offering,backend_id,reason` | Final selected backend winners after broker-local health and Pool state are combined, labeled by the surviving selection reason. |
+| `livepeer_backend_selection_denied_total` | counter | `capability,offering,backend_id,reason` | Per-candidate request-time denials after broker-local health and Pool state are combined. |
+| `livepeer_backend_selection_exhausted_total` | counter | `capability,offering,reason` | Request-time failures where no backend remained eligible after final selection filtering. |
+
 ## 3. Other modes
 
 This runbook will grow per-mode sections as `0012-followup`

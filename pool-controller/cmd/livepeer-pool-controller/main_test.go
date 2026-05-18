@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,9 +14,11 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/configgen"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestRunGenerateBrokerConfigWritesToStdout(t *testing.T) {
@@ -57,19 +60,28 @@ members:
 }
 
 func TestServeHandlerExposesAdminEndpoints(t *testing.T) {
+	t.Setenv("SECRET_TOKEN", "probe-secret")
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"role": "assistant", "content": "pong"}}},
+		})
+	}))
+	defer backend.Close()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
 	dataDir := filepath.Join(dir, "data")
 	if err := os.WriteFile(path, []byte(`
 identity:
   orch_eth_address: 0x123
+synthetic_probes:
+  enabled: true
 members:
   - eth_address: 0xabc
     display_name: member-a
     backends:
       - id: b1
         transport: http
-        url: http://backend
+        url: `+backend.URL+`
         auth:
           method: bearer
           secret_ref: env://SECRET_TOKEN
@@ -148,6 +160,12 @@ members:
 		{path: "/admin/v1/members", wantStatus: http.StatusOK, wantBody: `"secret_ref_set":true`},
 		{path: "/admin/v1/offerings", wantStatus: http.StatusOK, wantBody: `"backend_count":1`},
 		{path: "/admin/v1/state", wantStatus: http.StatusOK, wantBody: `"member_count":1`},
+		{path: "/admin/v1/state", wantStatus: http.StatusOK, wantBody: `"cooldown_failure_trigger":5`},
+		{path: "/admin/v1/scoring-settings", wantStatus: http.StatusOK, wantBody: `"warmup_modifier":0.25`},
+		{path: "/admin/v1/backend-selection-snapshot", wantStatus: http.StatusOK, wantBody: `"entries":[`},
+		{path: "/admin/v1/backend-selection-snapshot", wantStatus: http.StatusOK, wantBody: `"real_success_score":0.5`},
+		{path: "/admin/v1/backend-selection-summary", wantStatus: http.StatusOK, wantBody: `"total"`},
+		{path: "/admin/v1/backend-selection-summary", wantStatus: http.StatusOK, wantBody: `"top_degraded"`},
 		{path: "/admin/v1/snapshots", wantStatus: http.StatusOK, wantBody: `"source":"startup"`},
 		{path: "/admin/v1/work-receipts", wantStatus: http.StatusOK, wantBody: `"request_id":"req-1"`},
 		{path: "/admin/v1/round-receipts", wantStatus: http.StatusOK, wantBody: `"round_id":"123"`},
@@ -171,6 +189,233 @@ members:
 		if (tc.path == "/admin/v1/members" || tc.path == "/admin/v1/state" || tc.path == "/admin/v1/snapshots") && strings.Contains(string(body), "env://SECRET_TOKEN") {
 			t.Fatalf("%s leaked secret_ref:\n%s", tc.path, string(body))
 		}
+	}
+
+	resp, err := http.Get(server.URL + "/admin/v1/backend-selection-snapshot")
+	if err != nil {
+		t.Fatalf("GET /admin/v1/backend-selection-snapshot error = %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("backend-selection-snapshot status = %d, want 200", resp.StatusCode)
+	}
+	var snapshot struct {
+		Version int `json:"version"`
+		Entries []struct {
+			MemberEthAddress        string  `json:"member_eth_address"`
+			BackendID               string  `json:"backend_id"`
+			CapabilityID            string  `json:"capability_id"`
+			OfferingID              string  `json:"offering_id"`
+			State                   string  `json:"state"`
+			SyntheticConfidence     float64 `json:"synthetic_confidence"`
+			RealSuccessScore        float64 `json:"real_success_score"`
+			RealLatencyScore        float64 `json:"real_latency_score"`
+			WarmupModifier          float64 `json:"warmup_modifier"`
+			EffectiveSelectionScore float64 `json:"effective_selection_score"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		t.Fatalf("json.Unmarshal(snapshot) error = %v\nbody=%s", err, string(body))
+	}
+	if snapshot.Version != 1 {
+		t.Fatalf("snapshot.Version = %d, want 1", snapshot.Version)
+	}
+	if len(snapshot.Entries) != 1 {
+		t.Fatalf("len(snapshot.Entries) = %d, want 1", len(snapshot.Entries))
+	}
+	entry := snapshot.Entries[0]
+	if entry.MemberEthAddress != "0xabc" || entry.BackendID != "b1" || entry.CapabilityID != "openai:chat-completions" || entry.OfferingID != "default" {
+		t.Fatalf("unexpected snapshot entry identity: %#v", entry)
+	}
+	if entry.State != "eligible" {
+		t.Fatalf("entry.State = %q, want eligible", entry.State)
+	}
+	if entry.SyntheticConfidence != 0.5 || entry.RealSuccessScore != 0.5 || entry.RealLatencyScore != 0.5 || entry.WarmupModifier != 1.0 || entry.EffectiveSelectionScore != 0.5 {
+		t.Fatalf("unexpected default snapshot scores: %#v", entry)
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/quarantine", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","reason":"manual"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/backend-overrides/quarantine error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"state":"quarantined"`) {
+		t.Fatalf("quarantine status/body = %d %s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/clear-quarantine", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/backend-overrides/clear-quarantine error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"state":"eligible"`) {
+		t.Fatalf("clear-quarantine status/body = %d %s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/warmup", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","warmup_modifier":0.25}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/backend-overrides/warmup error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"warmup_modifier":0.25`) || !strings.Contains(string(body), `"warmup_source":"manual_override"`) {
+		t.Fatalf("warmup status/body = %d %s", resp.StatusCode, string(body))
+	}
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/clear-warmup", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/backend-overrides/clear-warmup error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || strings.Contains(string(body), `"warmup_override"`) {
+		t.Fatalf("clear-warmup status/body = %d %s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/max-share-cap", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","max_share_cap":0.5}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/backend-overrides/max-share-cap error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"max_share_cap":0.5`) {
+		t.Fatalf("max-share-cap status/body = %d %s", resp.StatusCode, string(body))
+	}
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/clear-max-share-cap", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/backend-overrides/clear-max-share-cap error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"max_share_cap":0`) {
+		t.Fatalf("clear-max-share-cap status/body = %d %s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/backend-outcomes", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","outcome":"success","latency_metric_ms":700,"occurred_at":"2026-05-17T16:00:00Z"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/backend-outcomes error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("backend-outcomes status = %d, want 200: %s", resp.StatusCode, string(body))
+	}
+	var outcomeResp struct {
+		Status string `json:"status"`
+		Item   struct {
+			RealSuccessScore      float64 `json:"real_success_score"`
+			RealLatencyScore      float64 `json:"real_latency_score"`
+			LastRealOutcomeAt     string  `json:"last_real_outcome_at"`
+			RecentOutcomeCount    int     `json:"recent_outcome_count"`
+			RecentWindowStartedAt string  `json:"recent_window_started_at"`
+			RecentWindowEndedAt   string  `json:"recent_window_ended_at"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(body, &outcomeResp); err != nil {
+		t.Fatalf("json.Unmarshal(backend-outcomes) error = %v\nbody=%s", err, string(body))
+	}
+	if outcomeResp.Status != "ingested" {
+		t.Fatalf("backend-outcomes status payload = %q, want ingested", outcomeResp.Status)
+	}
+	if outcomeResp.Item.LastRealOutcomeAt != "2026-05-17T16:00:00Z" {
+		t.Fatalf("LastRealOutcomeAt = %q, want 2026-05-17T16:00:00Z", outcomeResp.Item.LastRealOutcomeAt)
+	}
+	if outcomeResp.Item.RealSuccessScore <= 0 {
+		t.Fatalf("RealSuccessScore = %v, want > 0", outcomeResp.Item.RealSuccessScore)
+	}
+	if outcomeResp.Item.RealLatencyScore <= 0 {
+		t.Fatalf("RealLatencyScore = %v, want > 0", outcomeResp.Item.RealLatencyScore)
+	}
+	if outcomeResp.Item.RecentOutcomeCount != 1 || outcomeResp.Item.RecentWindowStartedAt != "2026-05-17T16:00:00Z" || outcomeResp.Item.RecentWindowEndedAt != "2026-05-17T16:00:00Z" {
+		t.Fatalf("backend-outcomes recent window fields = %+v", outcomeResp.Item)
+	}
+
+	resp, err = http.Get(server.URL + "/admin/v1/backend-selection-summary")
+	if err != nil {
+		t.Fatalf("GET /admin/v1/backend-selection-summary error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"average_recent_outcome_count"`) || !strings.Contains(string(body), `"average_recent_window_age_seconds"`) || !strings.Contains(string(body), `"score_distribution"`) || !strings.Contains(string(body), `"traffic_share"`) {
+		t.Fatalf("backend-selection-summary initial status/body = %d %s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/backend-outcomes", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","outcome":"bad-value"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/backend-outcomes invalid error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "outcome must be one of") {
+		t.Fatalf("backend-outcomes invalid status/body = %d %s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/synthetic-probes/run", "application/json", bytes.NewBuffer(nil))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/synthetic-probes/run error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("synthetic-probes/run status = %d, want 200: %s", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(string(body), `"status":"completed"`) || !strings.Contains(string(body), `"succeeded":1`) {
+		t.Fatalf("synthetic-probes/run body unexpected: %s", string(body))
+	}
+
+	for i := 0; i < 5; i++ {
+		at := fmt.Sprintf("2026-05-17T16:%02d:00Z", 10+i)
+		resp, err = http.Post(server.URL+"/admin/v1/backend-outcomes", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","outcome":"backend_failure","occurred_at":"`+at+`"}`))
+		if err != nil {
+			t.Fatalf("POST /admin/v1/backend-outcomes backend_failure %d error = %v", i, err)
+		}
+		_, _ = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("backend-outcomes backend_failure %d status = %d", i, resp.StatusCode)
+		}
+	}
+	resp, err = http.Get(server.URL + "/admin/v1/backend-selection-summary")
+	if err != nil {
+		t.Fatalf("GET /admin/v1/backend-selection-summary after failures error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"top_excluded"`) || !strings.Contains(string(body), `"worst_offerings":[{"key":"openai:chat-completions/default"`) || !strings.Contains(string(body), `"recent_backend_failure_count":5`) || !strings.Contains(string(body), `"recent_window_started_at":"2026-05-17T16:10:00Z"`) || !strings.Contains(string(body), `"top_routing_reasons":{"manual":1}`) || !strings.Contains(string(body), `"top_exclusion_reasons":{"manual":1}`) || !strings.Contains(string(body), `"score_distribution":{"0_10_to_0_29":1}`) || !strings.Contains(string(body), `"recent_routable_traffic_share":1`) {
+		t.Fatalf("backend-selection-summary after failures status/body = %d %s", resp.StatusCode, string(body))
+	}
+	resp, err = http.Get(server.URL + "/public/v1/summary")
+	if err != nil {
+		t.Fatalf("GET public summary after failures error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("public summary after failures status = %d, want 200", resp.StatusCode)
+	}
+	var publicSummary struct {
+		WorstOfferings []struct {
+			Key                 string         `json:"key"`
+			TopRoutingReasons   map[string]int `json:"top_routing_reasons"`
+			TopExclusionReasons map[string]int `json:"top_exclusion_reasons"`
+		} `json:"worst_offerings"`
+	}
+	if err := json.Unmarshal(body, &publicSummary); err != nil {
+		t.Fatalf("json.Unmarshal(public summary after failures) error = %v\nbody=%s", err, string(body))
+	}
+	if len(publicSummary.WorstOfferings) == 0 {
+		t.Fatalf("public summary worst_offerings empty after failures: %s", string(body))
+	}
+	if publicSummary.WorstOfferings[0].Key != "openai:chat-completions/default" {
+		t.Fatalf("public summary worst_offerings[0].key = %q; want openai:chat-completions/default", publicSummary.WorstOfferings[0].Key)
+	}
+	if publicSummary.WorstOfferings[0].TopRoutingReasons["manual"] != 1 {
+		t.Fatalf("public summary top_routing_reasons = %+v; want manual=1", publicSummary.WorstOfferings[0].TopRoutingReasons)
+	}
+	if publicSummary.WorstOfferings[0].TopExclusionReasons["manual"] != 1 {
+		t.Fatalf("public summary top_exclusion_reasons = %+v; want manual=1", publicSummary.WorstOfferings[0].TopExclusionReasons)
 	}
 
 	if err := os.WriteFile(path, []byte(`
@@ -204,11 +449,11 @@ members:
 	if err != nil {
 		t.Fatalf("NewRequest(reload) error = %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("POST /admin/v1/reload error = %v", err)
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, _ = io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("reload status = %d, want 200: %s", resp.StatusCode, string(body))
@@ -773,6 +1018,101 @@ members:
 	}
 }
 
+func TestRuntimeStateSyncAccountingMetrics(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	dataDir := filepath.Join(dir, "data")
+	if err := os.WriteFile(path, []byte(`
+identity:
+  orch_eth_address: 0x123
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: b1
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: default
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor: { type: openai-usage, field: total_tokens }
+            price:
+              amount_wei: "1"
+              per_units: 1
+            extra:
+              openai: { model: llama-3-70b }
+              provider: vllm
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg, err := config.LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	rendered, err := configgen.GenerateYAML(cfg)
+	if err != nil {
+		t.Fatalf("GenerateYAML() error = %v", err)
+	}
+	stateRepo, err := repo.Open(dataDir)
+	if err != nil {
+		t.Fatalf("repo.Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+	state := &runtimeState{configPath: path, repo: stateRepo}
+	if err := state.Replace(cfg, rendered, "startup"); err != nil {
+		t.Fatalf("state.Replace() error = %v", err)
+	}
+	if err := stateRepo.SaveWorkReceipt(types.WorkReceipt{
+		ID:               "work-1",
+		RequestID:        "req-1",
+		CapabilityID:     "openai:chat-completions",
+		OfferingID:       "default",
+		MemberEthAddress: "0xabc",
+		BackendID:        "b1",
+		Status:           "final",
+	}); err != nil {
+		t.Fatalf("SaveWorkReceipt() error = %v", err)
+	}
+	if err := stateRepo.SaveRoundReceipt(types.RoundReceipt{
+		ID:               "round-1",
+		RoundID:          "123",
+		PoolRevenueWei:   "100",
+		PoolCutWei:       "10",
+		DistributableWei: "90",
+	}); err != nil {
+		t.Fatalf("SaveRoundReceipt() error = %v", err)
+	}
+	if err := stateRepo.SavePayoutIntent(types.PayoutIntent{
+		ID:                 "payout-1",
+		RoundReceiptID:     "round-1",
+		RoundID:            "123",
+		MemberEthAddress:   "0xabc",
+		DestinationAddress: "0xabc",
+		ChainID:            1,
+		Asset:              "ETH",
+		AmountWei:          "90",
+		Status:             "leased",
+	}); err != nil {
+		t.Fatalf("SavePayoutIntent() error = %v", err)
+	}
+
+	if err := state.syncAccountingMetrics(); err != nil {
+		t.Fatalf("syncAccountingMetrics() error = %v", err)
+	}
+
+	if got := testutil.ToFloat64(observability.TestWorkReceiptStatusGauge("final")); got < 1 {
+		t.Fatalf("final work receipt gauge = %v; want >= 1", got)
+	}
+	if got := testutil.ToFloat64(observability.TestRoundReceiptGauge()); got < 1 {
+		t.Fatalf("round receipt gauge = %v; want >= 1", got)
+	}
+	if got := testutil.ToFloat64(observability.TestPayoutIntentStatusGauge("leased")); got < 1 {
+		t.Fatalf("leased payout intent gauge = %v; want >= 1", got)
+	}
+}
+
 func TestServeHandlerAdminAuth(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -842,10 +1182,23 @@ members:
 	if err != nil {
 		t.Fatalf("GET public summary error = %v", err)
 	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("public summary status = %d, want 200", resp.StatusCode)
 	}
-	_ = resp.Body.Close()
+	var publicSummary struct {
+		WorstOfferings []struct {
+			Key               string         `json:"key"`
+			TopRoutingReasons map[string]int `json:"top_routing_reasons"`
+		} `json:"worst_offerings"`
+	}
+	if err := json.Unmarshal(body, &publicSummary); err != nil {
+		t.Fatalf("json.Unmarshal(public summary) error = %v\nbody=%s", err, string(body))
+	}
+	if len(publicSummary.WorstOfferings) != 0 {
+		t.Fatalf("public summary worst_offerings = %+v; want empty before unhealthy state", publicSummary.WorstOfferings)
+	}
 
 	req, err := http.NewRequest(http.MethodGet, server.URL+"/admin/v1/state", nil)
 	if err != nil {

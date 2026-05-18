@@ -18,6 +18,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolreport"
 )
 
 // Mode is the canonical mode-name@vN string for this driver.
@@ -64,6 +65,7 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 	if err != nil {
 		livepeerheader.WriteError(p.Writer, http.StatusBadGateway, livepeerheader.ErrBackendUnavailable,
 			"backend forward: "+err.Error())
+		reportOutcome(p, poolreport.OutcomeBackendFailure, time.Since(start))
 		return nil
 	}
 	defer resp.Body.Close()
@@ -72,6 +74,7 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 	if err != nil {
 		livepeerheader.WriteError(p.Writer, http.StatusBadGateway, livepeerheader.ErrBackendUnavailable,
 			"read backend body: "+err.Error())
+		reportOutcome(p, poolreport.OutcomeBackendFailure, time.Since(start))
 		return nil
 	}
 
@@ -109,7 +112,38 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 
 	p.Writer.WriteHeader(resp.StatusCode)
 	_, _ = p.Writer.Write(respBody)
+	reportOutcome(p, classifyHTTPStatus(resp.StatusCode), time.Since(start))
 	return nil
+}
+
+func classifyHTTPStatus(statusCode int) string {
+	switch {
+	case statusCode >= 500:
+		return poolreport.OutcomeBackendFailure
+	case statusCode >= 400:
+		return poolreport.OutcomeCallerFailure
+	default:
+		return poolreport.OutcomeSuccess
+	}
+}
+
+func reportOutcome(p modes.Params, outcome string, latency time.Duration) {
+	if p.PoolReporter == nil || p.Capability == nil {
+		return
+	}
+	backendID := p.Capability.Backend.ID
+	if backendID == "" {
+		backendID = p.Capability.Backend.URL
+	}
+	poolreport.ReportBestEffort(p.PoolReporter, poolreport.BackendOutcome{
+		BackendID:        backendID,
+		CapabilityID:     p.Capability.ID,
+		OfferingID:       p.Capability.OfferingID,
+		MemberEthAddress: p.MemberEthAddress,
+		Outcome:          outcome,
+		LatencyMetricMS:  latency.Milliseconds(),
+		OccurredAt:       time.Now().UTC(),
+	})
 }
 
 // shouldCopyHeader returns true if h is a backend response header the broker

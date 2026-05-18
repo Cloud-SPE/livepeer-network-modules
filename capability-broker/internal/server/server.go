@@ -25,6 +25,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolexternalmedia"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolplusmedia"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolreport"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolsnapshot"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
@@ -118,6 +120,8 @@ type Server struct {
 	backend       backend.Forwarder
 	secrets       backend.SecretResolver
 	receiptSink   receipts.Client
+	poolReporter  poolreport.Client
+	poolSnapshot  *poolsnapshot.Cache
 	health        *health.Manager
 	rtmpStore     *rtmpingresshlsegress.Store
 	rtmpListener  *mediartmp.Listener
@@ -161,6 +165,14 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	receiptSink, err := newReceiptSink(cfg, secretResolver)
 	if err != nil {
 		return nil, fmt.Errorf("receipt sink: %w", err)
+	}
+	poolReporter, err := newPoolReporter(cfg, secretResolver)
+	if err != nil {
+		return nil, fmt.Errorf("pool outcome reporter: %w", err)
+	}
+	poolSnapshot, err := poolsnapshot.New(cfg.PoolSnapshot, backend.NewAuthApplier(secretResolver))
+	if err != nil {
+		return nil, fmt.Errorf("pool snapshot: %w", err)
 	}
 
 	rtmpStore := rtmpingresshlsegress.NewStore()
@@ -213,6 +225,8 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		backend:      backend.NewHTTPClient(),
 		secrets:      secretResolver,
 		receiptSink:  receiptSink,
+		poolReporter: poolReporter,
+		poolSnapshot: poolSnapshot,
 		health:       health.New(cfg),
 		rtmpStore:    rtmpStore,
 		sessStore:    sessStore,
@@ -263,6 +277,14 @@ func newReceiptSink(cfg *config.Config, secrets backend.SecretResolver) (receipt
 	}
 	timeout := time.Duration(cfg.ReceiptSink.TimeoutMS) * time.Millisecond
 	return receipts.NewHTTPClient(cfg.ReceiptSink.URL, timeout, cfg.ReceiptSink.Auth, backend.NewAuthApplier(secrets))
+}
+
+func newPoolReporter(cfg *config.Config, secrets backend.SecretResolver) (poolreport.Client, error) {
+	if cfg == nil || cfg.PoolSnapshot.URL == "" {
+		return nil, nil
+	}
+	timeout := time.Duration(cfg.PoolSnapshot.TimeoutMS) * time.Millisecond
+	return poolreport.NewHTTPClient(cfg.PoolSnapshot.URL, timeout, cfg.PoolSnapshot.Auth, backend.NewAuthApplier(secrets))
 }
 
 // mediaLookup adapts the session store to mediartmp.SessionLookup
@@ -471,6 +493,9 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	if s.metadata != nil {
 		go s.runMetadataRefresh(ctx, s.metadataRefreshInterval())
+	}
+	if s.poolSnapshot != nil {
+		go s.poolSnapshot.Run(ctx)
 	}
 
 	select {

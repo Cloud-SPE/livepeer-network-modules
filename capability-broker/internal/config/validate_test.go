@@ -44,6 +44,81 @@ func TestValidateDefaultsHTTPHealthProbe(t *testing.T) {
 	}
 }
 
+func TestValidateDefaultsPoolSnapshotPollingConfig(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		PoolSnapshot: PoolSnapshot{
+			URL: "http://pool-controller:8080",
+		},
+		Capabilities: []Capability{{
+			ID:              "openai:chat-completions",
+			OfferingID:      "default",
+			InteractionMode: "http-stream@v0",
+			WorkUnit: WorkUnit{
+				Name:      "tokens",
+				Extractor: map[string]any{"type": "openai-usage"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8000/v1/chat/completions",
+			},
+			Extra: map[string]any{
+				"openai":   map[string]any{"model": "llama-3-70b"},
+				"provider": "vllm",
+			},
+		}},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if cfg.PoolSnapshot.TimeoutMS != 1500 {
+		t.Fatalf("pool_snapshot.timeout_ms = %d; want 1500", cfg.PoolSnapshot.TimeoutMS)
+	}
+	if cfg.PoolSnapshot.PollIntervalMS != 5000 {
+		t.Fatalf("pool_snapshot.poll_interval_ms = %d; want 5000", cfg.PoolSnapshot.PollIntervalMS)
+	}
+	if cfg.PoolSnapshot.StaleAfterMS != 15000 {
+		t.Fatalf("pool_snapshot.stale_after_ms = %d; want 15000", cfg.PoolSnapshot.StaleAfterMS)
+	}
+	if cfg.PoolSnapshot.ExpireAfterMS != 60000 {
+		t.Fatalf("pool_snapshot.expire_after_ms = %d; want 60000", cfg.PoolSnapshot.ExpireAfterMS)
+	}
+}
+
+func TestValidateRejectsPoolSnapshotWithoutURL(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		PoolSnapshot: PoolSnapshot{
+			TimeoutMS: 1000,
+		},
+		Capabilities: []Capability{{
+			ID:              "openai:chat-completions",
+			OfferingID:      "default",
+			InteractionMode: "http-stream@v0",
+			WorkUnit: WorkUnit{
+				Name:      "tokens",
+				Extractor: map[string]any{"type": "openai-usage"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8000/v1/chat/completions",
+			},
+			Extra: map[string]any{
+				"openai":   map[string]any{"model": "llama-3-70b"},
+				"provider": "vllm",
+			},
+		}},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "pool_snapshot.url is required") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestValidateRejectsDeprecatedOpenAICapabilityIDSyntax(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},

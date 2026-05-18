@@ -12,7 +12,37 @@ The first implementation slice is intentionally narrow:
 - load a Pool operator config,
 - validate member/backend/offering records,
 - deterministically render broker config for the Pool's broker,
-- persist startup/reload snapshots in BoltDB for operator inspection.
+- persist startup/reload snapshots in BoltDB for operator inspection,
+- persist backend-selection state records keyed by member/backend/offering,
+- expose a read-only admin snapshot scaffold for future Pool scoring work.
+- accept conservative backend-outcome ingests that nudge persisted real-success
+  and real-latency scores for future Pool scoring work.
+- add an opt-in synthetic probe runner scaffold for in-scope OpenAI families,
+  with concrete chat/embeddings probes and partial audio-family coverage.
+
+Current scoring boundary:
+
+- repeated `backend_failure` outcomes already use a persisted 5-minute rolling
+  window to open Pool cooldown
+- synthetic probes already enforce the 3-failure exclusion threshold
+- `real_success_score` now recomputes from a persisted 5-minute rolling window
+  of `success` vs `backend_failure` outcomes, then blends with longer-lived EMA
+  memory
+- `real_latency_score` now recomputes from a persisted 5-minute rolling window
+  of latency observations using a normalized p95-derived signal, then blends
+  with longer-lived EMA memory
+- EMA memory now uses a 24-hour half-life and drifts toward neutral `0.5`
+  between observations
+- recovered or first-probed backends re-enter with warm-up-capped weight
+- warm-up now auto-graduates after enough recent routed samples
+- manual warm-up overrides are now distinct from automatic warm-up recovery and
+  can be cleared without losing automatic state
+- the `scoring` config block now lets operators tune cooldown, EMA, latency
+  target, warm-up, and summary list limits without code changes
+- `scoring.recent_window_stale_after_ms` now controls when older real-traffic
+  windows become "stale sample window" routing reasons, and that threshold is
+  exported to brokers via the selection snapshot so broker fallback reasoning
+  stays aligned
 
 This component is not in the request data path. If `pool-controller` is down,
 the broker keeps serving the last generated config already loaded in memory.
@@ -61,14 +91,21 @@ require `Authorization: Bearer <token>`.
 For production, prefer `admin_auth.bearer_token_ref`. Literal
 `admin_auth.bearer_token` is intended for local testing only.
 
+`listen.metrics` is now active. `pool-controller` serves Prometheus metrics on
+that separate listener, defaulting to `:9090`.
+
 Current admin endpoints:
 
 - `GET /healthz`
 - `GET /readyz`
+- `GET /metrics` on the metrics listener
 - `GET /admin/v1/broker-config`
 - `GET /admin/v1/members`
 - `GET /admin/v1/offerings`
 - `GET /admin/v1/state`
+- `GET /admin/v1/scoring-settings`
+- `GET /admin/v1/backend-selection-snapshot`
+- `GET /admin/v1/backend-selection-summary`
 - `GET /admin/v1/snapshots`
 - `GET /admin/v1/work-receipts`
 - `GET /admin/v1/round-receipts`
@@ -77,6 +114,8 @@ Current admin endpoints:
 - `GET /admin/v1/payout-rounds`
 - `GET /admin/v1/payout-alerts`
 - `POST /admin/v1/work-receipts`
+- `POST /admin/v1/backend-outcomes`
+- `POST /admin/v1/synthetic-probes/run`
 - `POST /admin/v1/round-receipts`
 - `POST /admin/v1/round-close`
 - `POST /admin/v1/payout-intents/derive`
@@ -86,7 +125,53 @@ Current admin endpoints:
 - `POST /admin/v1/payout-intents/release`
 - `POST /admin/v1/payout-intents/requeue`
 - `POST /admin/v1/payout-intents/status`
+- `POST /admin/v1/backend-overrides/quarantine`
+- `POST /admin/v1/backend-overrides/clear-quarantine`
+- `POST /admin/v1/backend-overrides/drain`
+- `POST /admin/v1/backend-overrides/clear-drain`
+- `POST /admin/v1/backend-overrides/warmup`
+- `POST /admin/v1/backend-overrides/clear-warmup`
+- `POST /admin/v1/backend-overrides/max-share-cap`
+- `POST /admin/v1/backend-overrides/clear-max-share-cap`
 - `POST /admin/v1/reload`
+
+`GET /admin/v1/backend-selection-summary` rolls the current Pool routing state
+into operator-focused aggregates:
+- totals by state
+- grouped averages by member and offering
+- `worst_offerings` ranked by unhealthy state concentration and recent failure pressure
+- top degraded backends
+- top excluded/quarantined backends
+- grouped `top_routing_reasons` and `top_exclusion_reasons`
+- recent outcome / recent backend-failure counts
+- recent-window start/end timestamps and freshness
+
+`GET /admin/v1/backend-selection-snapshot` also includes a canonical
+`routing_reason` per backend+offering. This is the controller-owned
+explanation for why a backend is currently eligible, degraded, excluded,
+quarantined, or in warm-up.
+
+`GET /admin/v1/scoring-settings` is the authoritative runtime view of the
+active scorer knobs after defaults and reload have been applied.
+
+Synthetic probe behavior:
+
+- disabled by default via `synthetic_probes.enabled: false`
+- background runs only happen when explicitly enabled in config
+- `POST /admin/v1/synthetic-probes/run` can trigger a one-shot run on demand
+- current concrete probes:
+  - `openai:chat-completions`
+  - `openai:embeddings`
+- current concrete audio probes:
+  - `openai:audio-transcriptions`
+  - `openai:audio-translations`
+  - `openai:audio-speech`
+- other `openai:audio-*` subtypes now fall back to family recipes based on
+  `interaction_mode`:
+  - `http-multipart@v0` uses the transcription / translation probe recipe
+  - `http-reqresp@v0` uses the speech / TTS probe recipe
+- unsupported audio families still return skipped results with
+  `audio_probe_not_implemented`
 
 Current public endpoints:
 
@@ -94,6 +179,37 @@ Current public endpoints:
 - `GET /public/v1/rounds`
 - `GET /public/v1/offerings`
 - `GET /public/v1/member-payouts?member_eth_address=0x...`
+
+`GET /public/v1/summary` now includes a compact `worst_offerings` list so
+non-admin dashboards can surface the most unhealthy offerings without exposing
+the full admin backend-selection summary. That compact list now includes both
+`top_routing_reasons` and `top_exclusion_reasons` for each surfaced offering.
+
+`GET /admin/v1/backend-selection-summary` now also includes:
+
+- `score_distribution` buckets over `effective_selection_score`
+- `traffic_share` views derived from `recent_routable_outcome_count`
+- per-group `average_recent_routable_outcome_count`
+
+Current Prometheus metric families include:
+
+- `livepeer_pool_backend_selection_state_total{capability,offering,state}`
+- `livepeer_pool_backend_selection_routing_reason_total{capability,offering,routing_reason}`
+- `livepeer_pool_backend_selection_exclusion_reason_total{capability,offering,exclusion_reason}`
+- `livepeer_pool_backend_selection_automatic_warmup_total{capability,offering}`
+- `livepeer_pool_backend_selection_cooldown_total{capability,offering}`
+- `livepeer_pool_backend_selection_average_effective_score{capability,offering}`
+- `livepeer_pool_backend_selection_average_recent_window_age_seconds{capability,offering}`
+- `livepeer_pool_scoring_setting{setting}`
+- `livepeer_pool_backend_outcome_ingest_total{capability,offering,outcome}`
+- `livepeer_pool_synthetic_probe_runs_total{result}`
+- `livepeer_pool_synthetic_probe_run_duration_seconds{result}`
+- `livepeer_pool_synthetic_probe_results_total{capability,offering,status,reason}`
+- `livepeer_pool_work_receipt_status_total{status}`
+- `livepeer_pool_round_receipt_total`
+- `livepeer_pool_payout_intent_status_total{status}`
+- `livepeer_pool_receipt_write_total{kind,status}`
+- `livepeer_pool_payout_intent_action_total{action,status}`
 
 Current receipt-write contract:
 

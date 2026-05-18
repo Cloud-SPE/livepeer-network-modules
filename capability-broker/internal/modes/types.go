@@ -12,6 +12,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolreport"
 )
 
 // Driver implements one interaction mode's wire shape. Drivers are stateless
@@ -45,7 +46,9 @@ type Params struct {
 	// nil means the driver does not support interim debit; the
 	// middleware falls through to the v0.2 single-debit path. The
 	// HTTP-family modes that buffer-and-extract leave this nil.
-	LiveCounter extractors.LiveCounter
-	Backend     backend.Forwarder
-	Auth        *backend.AuthApplier
+	LiveCounter      extractors.LiveCounter
+	Backend          backend.Forwarder
+	Auth             *backend.AuthApplier
+	PoolReporter     poolreport.Client
+	MemberEthAddress string
 }

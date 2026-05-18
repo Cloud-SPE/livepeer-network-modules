@@ -39,6 +39,7 @@ docker compose -f compose/docker-compose.yml up -d
 
 - `GET /healthz`
 - `GET /readyz`
+- `GET /metrics` on `listen.metrics` (default `:9090`)
 
 ## High-value admin reads
 
@@ -48,6 +49,26 @@ docker compose -f compose/docker-compose.yml up -d
 - `GET /admin/v1/member-payouts`
 - `GET /admin/v1/payout-rounds`
 - `GET /admin/v1/payout-alerts`
+
+## Metrics
+
+Scrape the dedicated metrics listener, not the admin port.
+
+High-value Pool routing metrics now include:
+
+- backend selection counts by `state`
+- grouped `routing_reason` and `exclusion_reason` counts
+- automatic warm-up and cooldown counts
+- average effective selection score by offering
+- average recent-window age by offering
+- the live scorer settings currently applied after defaults and reload
+- backend outcome ingest counts by outcome class
+- synthetic probe run totals and durations
+- per-capability synthetic probe result counts by `status` and `reason`
+- persisted work-receipt counts by `status`
+- persisted payout-intent counts by `status`
+- receipt-write action counters across `work` and `round` flows
+- payout-intent action counters across derive/export/claim/renew/release/requeue/status updates
 
 ## Recovery notes
 

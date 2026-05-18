@@ -74,7 +74,10 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 				BackendID:        meta.BackendID,
 				Status:           "stub",
 			}); err != nil {
+				observability.RecordWorkReceiptEmit("stub", "error")
 				slogWarnReceipt(meta.WorkID, err)
+			} else {
+				observability.RecordWorkReceiptEmit("stub", "success")
 			}
 		}
 	}
@@ -112,13 +115,15 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = driver.Serve(r.Context(), modes.Params{
-		Writer:      w,
-		Request:     r,
-		Capability:  cap,
-		Extractor:   extractor,
-		LiveCounter: live,
-		Backend:     s.backend,
-		Auth:        backend.NewAuthApplier(s.secrets),
+		Writer:           w,
+		Request:          r,
+		Capability:       cap,
+		Extractor:        extractor,
+		LiveCounter:      live,
+		Backend:          s.backend,
+		Auth:             backend.NewAuthApplier(s.secrets),
+		PoolReporter:     s.poolReporter,
+		MemberEthAddress: poolMemberEthAddress(cap),
 	})
 }
 

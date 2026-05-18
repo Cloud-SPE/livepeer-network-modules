@@ -42,6 +42,20 @@ payment_daemon:
 #     method: "bearer"
 #     secret_ref: "env://POOL_CONTROLLER_TOKEN"
 
+# Optional read-only Pool snapshot source. When set, the broker polls
+# pool-controller's backend-selection snapshot and surfaces freshness / entry
+# status on GET /registry/health. This first slice does not alter routing yet.
+#
+# pool_snapshot:
+#   url: "http://pool-controller:8080"
+#   timeout_ms: 1500
+#   poll_interval_ms: 5000
+#   stale_after_ms: 15000
+#   expire_after_ms: 60000
+#   auth:
+#     method: "bearer"
+#     secret_ref: "env://POOL_CONTROLLER_TOKEN"
+
 capabilities:
   # Pricing assumptions used across this file:
   # - ETH = $2,900 planning rate (re-derive wei when ETH moves materially)

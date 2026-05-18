@@ -36,8 +36,97 @@ members:
 	if got := cfg.Listen.Metrics; got != ":9090" {
 		t.Fatalf("Listen.Metrics = %q, want %q", got, ":9090")
 	}
+	if got := cfg.SyntheticProbes.IntervalMS; got != 30000 {
+		t.Fatalf("SyntheticProbes.IntervalMS = %d, want 30000", got)
+	}
+	if got := cfg.SyntheticProbes.TimeoutMS; got != 3000 {
+		t.Fatalf("SyntheticProbes.TimeoutMS = %d, want 3000", got)
+	}
+	if got := cfg.Scoring.CooldownDurationMS; got != 300000 {
+		t.Fatalf("Scoring.CooldownDurationMS = %d, want 300000", got)
+	}
+	if got := cfg.Scoring.CooldownFailureTrigger; got != 5 {
+		t.Fatalf("Scoring.CooldownFailureTrigger = %d, want 5", got)
+	}
+	if got := cfg.Scoring.WarmupModifier; got != 0.25 {
+		t.Fatalf("Scoring.WarmupModifier = %v, want 0.25", got)
+	}
+	if got := cfg.Scoring.RecentWindowStaleAfterMS; got != 300000 {
+		t.Fatalf("Scoring.RecentWindowStaleAfterMS = %d, want 300000", got)
+	}
+	if got := cfg.Scoring.TopDegradedLimit; got != 10 {
+		t.Fatalf("Scoring.TopDegradedLimit = %d, want 10", got)
+	}
+	if got := cfg.Scoring.PublicWorstOfferingsLimit; got != 5 {
+		t.Fatalf("Scoring.PublicWorstOfferingsLimit = %d, want 5", got)
+	}
 	if got := cfg.Members[0].PayoutMode; got != "onchain" {
 		t.Fatalf("PayoutMode = %q, want onchain", got)
+	}
+}
+
+func TestLoadScoringWeightDefaultsFollowPartialOverride(t *testing.T) {
+	cfg, err := Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+scoring:
+  window_score_weight: 0.6
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: b1
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: default
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor: { type: openai-usage }
+            price:
+              amount_wei: "1"
+              per_units: 1
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Scoring.WindowScoreWeight; got != 0.6 {
+		t.Fatalf("Scoring.WindowScoreWeight = %v, want 0.6", got)
+	}
+	if got := cfg.Scoring.EMAScoreWeight; got != 0.4 {
+		t.Fatalf("Scoring.EMAScoreWeight = %v, want 0.4", got)
+	}
+}
+
+func TestLoadRecentWindowStaleAfterOverride(t *testing.T) {
+	cfg, err := Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+scoring:
+  recent_window_stale_after_ms: 120000
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: b1
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: default
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor: { type: openai-usage }
+            price:
+              amount_wei: "1"
+              per_units: 1
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Scoring.RecentWindowStaleAfterMS; got != 120000 {
+		t.Fatalf("Scoring.RecentWindowStaleAfterMS = %d, want 120000", got)
 	}
 }
 
@@ -222,5 +311,91 @@ members:
 `))
 	if err == nil {
 		t.Fatal("Load() error = nil, want invalid receipt sink url error")
+	}
+}
+
+func TestLoadRejectsNegativeSyntheticProbeConfig(t *testing.T) {
+	_, err := Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+synthetic_probes:
+  enabled: true
+  interval_ms: -1
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: b1
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: default
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor: { type: openai-usage }
+            price:
+              amount_wei: "1"
+              per_units: 1
+`))
+	if err == nil {
+		t.Fatal("Load() error = nil, want invalid synthetic probe interval error")
+	}
+}
+
+func TestLoadRejectsInvalidScoringWeights(t *testing.T) {
+	_, err := Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+scoring:
+  window_score_weight: 0.7
+  ema_score_weight: 0.4
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: b1
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: default
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor: { type: openai-usage }
+            price:
+              amount_wei: "1"
+              per_units: 1
+`))
+	if err == nil {
+		t.Fatal("Load() error = nil, want invalid scoring weights error")
+	}
+}
+
+func TestLoadRejectsNegativeRecentWindowStaleAfter(t *testing.T) {
+	_, err := Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+scoring:
+  recent_window_stale_after_ms: -1
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: b1
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: default
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor: { type: openai-usage }
+            price:
+              amount_wei: "1"
+              per_units: 1
+`))
+	if err == nil {
+		t.Fatal("Load() error = nil, want invalid recent window stale-after error")
 	}
 }

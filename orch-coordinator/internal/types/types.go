@@ -63,7 +63,22 @@ type BrokerHealthCapability struct {
 	StaleAfter           time.Time             `json:"stale_after,omitempty"`
 	ConsecutiveSuccesses int                   `json:"consecutive_successes,omitempty"`
 	ConsecutiveFailures  int                   `json:"consecutive_failures,omitempty"`
+	Backends             []BrokerHealthBackend `json:"backends,omitempty"`
 	Metadata             *BrokerHealthMetadata `json:"metadata,omitempty"`
+}
+
+type BrokerHealthBackend struct {
+	BackendID            string    `json:"backend_id,omitempty"`
+	Status               string    `json:"status"`
+	Reason               string    `json:"reason,omitempty"`
+	ProbeType            string    `json:"probe_type,omitempty"`
+	ProbedAt             time.Time `json:"probed_at,omitempty"`
+	StaleAfter           time.Time `json:"stale_after,omitempty"`
+	ConsecutiveSuccesses int       `json:"consecutive_successes,omitempty"`
+	ConsecutiveFailures  int       `json:"consecutive_failures,omitempty"`
+	SelectionEligible    bool      `json:"selection_eligible"`
+	SelectionWeight      int       `json:"selection_weight,omitempty"`
+	SelectionReason      string    `json:"selection_reason,omitempty"`
 }
 
 type BrokerHealthMetadata struct {

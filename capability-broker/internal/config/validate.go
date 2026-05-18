@@ -95,6 +95,58 @@ func (c *Config) Validate() error {
 	if c.Listen.Metrics == "" {
 		c.Listen.Metrics = ":9090"
 	}
+	if c.PoolSnapshot.URL != "" {
+		u, err := url.Parse(c.PoolSnapshot.URL)
+		if err != nil {
+			return fmt.Errorf("pool_snapshot.url is invalid: %w", err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("pool_snapshot.url scheme must be http or https (got %q)", u.Scheme)
+		}
+		switch c.PoolSnapshot.Auth.Method {
+		case "", "none":
+		case "bearer":
+			if c.PoolSnapshot.Auth.SecretRef == "" {
+				return fmt.Errorf("pool_snapshot.auth.secret_ref is required when method=bearer")
+			}
+			if !strings.Contains(c.PoolSnapshot.Auth.SecretRef, "://") {
+				return fmt.Errorf("pool_snapshot.auth.secret_ref should be a URI-style reference (got %q)", c.PoolSnapshot.Auth.SecretRef)
+			}
+		default:
+			return fmt.Errorf("pool_snapshot.auth.method %q is not supported", c.PoolSnapshot.Auth.Method)
+		}
+		if c.PoolSnapshot.TimeoutMS < 0 {
+			return fmt.Errorf("pool_snapshot.timeout_ms must be >= 0")
+		}
+		if c.PoolSnapshot.PollIntervalMS < 0 {
+			return fmt.Errorf("pool_snapshot.poll_interval_ms must be >= 0")
+		}
+		if c.PoolSnapshot.StaleAfterMS < 0 {
+			return fmt.Errorf("pool_snapshot.stale_after_ms must be >= 0")
+		}
+		if c.PoolSnapshot.ExpireAfterMS < 0 {
+			return fmt.Errorf("pool_snapshot.expire_after_ms must be >= 0")
+		}
+		if c.PoolSnapshot.TimeoutMS == 0 {
+			c.PoolSnapshot.TimeoutMS = 1500
+		}
+		if c.PoolSnapshot.PollIntervalMS == 0 {
+			c.PoolSnapshot.PollIntervalMS = 5000
+		}
+		if c.PoolSnapshot.StaleAfterMS == 0 {
+			c.PoolSnapshot.StaleAfterMS = 15000
+		}
+		if c.PoolSnapshot.ExpireAfterMS == 0 {
+			c.PoolSnapshot.ExpireAfterMS = 60000
+		}
+		if c.PoolSnapshot.ExpireAfterMS <= c.PoolSnapshot.StaleAfterMS {
+			return fmt.Errorf("pool_snapshot.expire_after_ms must be greater than pool_snapshot.stale_after_ms")
+		}
+	} else if c.PoolSnapshot.Auth.Method != "" || c.PoolSnapshot.Auth.SecretRef != "" ||
+		c.PoolSnapshot.TimeoutMS != 0 || c.PoolSnapshot.PollIntervalMS != 0 ||
+		c.PoolSnapshot.StaleAfterMS != 0 || c.PoolSnapshot.ExpireAfterMS != 0 {
+		return fmt.Errorf("pool_snapshot.url is required when pool_snapshot is configured")
+	}
 	if c.ReceiptSink.URL != "" {
 		u, err := url.Parse(c.ReceiptSink.URL)
 		if err != nil {

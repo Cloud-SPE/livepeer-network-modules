@@ -1,12 +1,14 @@
 package config
 
 type Config struct {
-	Identity      Identity      `yaml:"identity"`
-	AdminAuth     AdminAuth     `yaml:"admin_auth,omitempty"`
-	Listen        Listen        `yaml:"listen,omitempty"`
-	PaymentDaemon PaymentDaemon `yaml:"payment_daemon,omitempty"`
-	ReceiptSink   ReceiptSink   `yaml:"receipt_sink,omitempty"`
-	Members       []Member      `yaml:"members"`
+	Identity        Identity        `yaml:"identity"`
+	AdminAuth       AdminAuth       `yaml:"admin_auth,omitempty"`
+	Listen          Listen          `yaml:"listen,omitempty"`
+	SyntheticProbes SyntheticProbes `yaml:"synthetic_probes,omitempty"`
+	Scoring         Scoring         `yaml:"scoring,omitempty"`
+	PaymentDaemon   PaymentDaemon   `yaml:"payment_daemon,omitempty"`
+	ReceiptSink     ReceiptSink     `yaml:"receipt_sink,omitempty"`
+	Members         []Member        `yaml:"members"`
 }
 
 type Identity struct {
@@ -17,6 +19,28 @@ type Identity struct {
 type Listen struct {
 	Paid    string `yaml:"paid,omitempty"`
 	Metrics string `yaml:"metrics,omitempty"`
+}
+
+type SyntheticProbes struct {
+	Enabled    bool `yaml:"enabled,omitempty"`
+	IntervalMS int  `yaml:"interval_ms,omitempty"`
+	TimeoutMS  int  `yaml:"timeout_ms,omitempty"`
+}
+
+type Scoring struct {
+	CooldownDurationMS        int     `yaml:"cooldown_duration_ms,omitempty" json:"cooldown_duration_ms,omitempty"`
+	CooldownFailureTrigger    int     `yaml:"cooldown_failure_trigger,omitempty" json:"cooldown_failure_trigger,omitempty"`
+	EMAHalfLifeMS             int     `yaml:"ema_half_life_ms,omitempty" json:"ema_half_life_ms,omitempty"`
+	LatencyTargetMS           float64 `yaml:"latency_target_ms,omitempty" json:"latency_target_ms,omitempty"`
+	RecentWindowStaleAfterMS  int     `yaml:"recent_window_stale_after_ms,omitempty" json:"recent_window_stale_after_ms,omitempty"`
+	WindowScoreWeight         float64 `yaml:"window_score_weight,omitempty" json:"window_score_weight,omitempty"`
+	EMAScoreWeight            float64 `yaml:"ema_score_weight,omitempty" json:"ema_score_weight,omitempty"`
+	WarmupModifier            float64 `yaml:"warmup_modifier,omitempty" json:"warmup_modifier,omitempty"`
+	WarmupExitSamples         int     `yaml:"warmup_exit_samples,omitempty" json:"warmup_exit_samples,omitempty"`
+	TopDegradedLimit          int     `yaml:"top_degraded_limit,omitempty" json:"top_degraded_limit,omitempty"`
+	TopExcludedLimit          int     `yaml:"top_excluded_limit,omitempty" json:"top_excluded_limit,omitempty"`
+	WorstOfferingsLimit       int     `yaml:"worst_offerings_limit,omitempty" json:"worst_offerings_limit,omitempty"`
+	PublicWorstOfferingsLimit int     `yaml:"public_worst_offerings_limit,omitempty" json:"public_worst_offerings_limit,omitempty"`
 }
 
 type PaymentDaemon struct {

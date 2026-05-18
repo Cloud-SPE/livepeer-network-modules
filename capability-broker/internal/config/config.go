@@ -9,6 +9,7 @@ type Config struct {
 	Identity      Identity      `yaml:"identity"`
 	Listen        Listen        `yaml:"listen,omitempty"`
 	PaymentDaemon PaymentDaemon `yaml:"payment_daemon,omitempty"`
+	PoolSnapshot  PoolSnapshot  `yaml:"pool_snapshot,omitempty"`
 	ReceiptSink   ReceiptSink   `yaml:"receipt_sink,omitempty"`
 	Capabilities  []Capability  `yaml:"capabilities"`
 }
@@ -30,6 +31,18 @@ type Listen struct {
 type PaymentDaemon struct {
 	Socket string `yaml:"socket,omitempty"`
 	Mock   bool   `yaml:"mock,omitempty"`
+}
+
+// PoolSnapshot configures optional polling of pool-controller's backend
+// selection snapshot surface. When omitted, the broker keeps a no-op cache and
+// does not annotate /registry/health with Pool state.
+type PoolSnapshot struct {
+	URL            string     `yaml:"url,omitempty"`
+	Auth           AuthConfig `yaml:"auth,omitempty"`
+	TimeoutMS      int        `yaml:"timeout_ms,omitempty"`
+	PollIntervalMS int        `yaml:"poll_interval_ms,omitempty"`
+	StaleAfterMS   int        `yaml:"stale_after_ms,omitempty"`
+	ExpireAfterMS  int        `yaml:"expire_after_ms,omitempty"`
 }
 
 // ReceiptSink configures optional best-effort posting of work receipts to a

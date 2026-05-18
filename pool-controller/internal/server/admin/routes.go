@@ -12,6 +12,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/assignmentpolicy"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/backendverify"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/offerservice"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/statusservice"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ui/adminpage"
 )
@@ -176,23 +177,12 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		status := types.MemberStatus(strings.TrimSpace(req.Status))
-		switch status {
-		case types.MemberStatusActive, types.MemberStatusSuspended:
-		default:
-			http.Error(w, "status must be active or suspended", http.StatusBadRequest)
-			return
-		}
-		if err := deps.Repo.SetMemberStatus(id, status); err != nil {
+		item, err := statusservice.SetMemberStatus(deps.Repo, id, req.Status)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		if err := deps.RefreshRendered("member-status-updated"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		item, err := deps.Repo.GetMember(id)
-		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -404,23 +394,12 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		status := types.BackendStatus(strings.TrimSpace(req.Status))
-		switch status {
-		case types.BackendStatusActive, types.BackendStatusDraining, types.BackendStatusDisabled:
-		default:
-			http.Error(w, "status must be active, draining, or disabled", http.StatusBadRequest)
-			return
-		}
-		if err := deps.Repo.SetMemberBackendStatus(id, status); err != nil {
+		item, err := statusservice.SetBackendStatus(deps.Repo, id, req.Status)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		if err := deps.RefreshRendered("member-backend-status-updated"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		item, err := deps.Repo.GetMemberBackend(id)
-		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -524,23 +503,12 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		status := types.AssignmentStatus(strings.TrimSpace(req.Status))
-		switch status {
-		case types.AssignmentStatusActive, types.AssignmentStatusDraining, types.AssignmentStatusDisabled:
-		default:
-			http.Error(w, "status must be active, draining, or disabled", http.StatusBadRequest)
-			return
-		}
-		if err := deps.Repo.SetAssignmentStatus(id, status); err != nil {
+		item, err := statusservice.SetAssignmentStatus(deps.Repo, id, req.Status)
+		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		if err := deps.RefreshRendered("assignment-status-updated"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		item, err := deps.Repo.GetAssignment(id)
-		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

@@ -87,6 +87,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Bootstrap.BrokerApplyTimeoutMS == 0 {
 		cfg.Bootstrap.BrokerApplyTimeoutMS = 30000
 	}
+	if cfg.Bootstrap.BrokerAdminTimeoutMS == 0 {
+		cfg.Bootstrap.BrokerAdminTimeoutMS = 5000
+	}
 	for i := range cfg.Members {
 		if cfg.Members[i].PayoutMode == "" {
 			cfg.Members[i].PayoutMode = "onchain"
@@ -112,6 +115,30 @@ func validate(cfg *Config) error {
 		if cfg.Bootstrap.BrokerApplyCommand[i] == "" {
 			return fmt.Errorf("bootstrap.broker_apply_command[%d] must not be empty", i)
 		}
+	}
+	if cfg.Bootstrap.BrokerAdminURL != "" {
+		u, err := url.Parse(cfg.Bootstrap.BrokerAdminURL)
+		if err != nil {
+			return fmt.Errorf("bootstrap.broker_admin_url is invalid: %w", err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("bootstrap.broker_admin_url scheme must be http or https (got %q)", u.Scheme)
+		}
+		switch cfg.Bootstrap.BrokerAdminAuth.Method {
+		case "", "none":
+		case "bearer":
+			if cfg.Bootstrap.BrokerAdminAuth.SecretRef == "" {
+				return fmt.Errorf("bootstrap.broker_admin_auth.secret_ref is required when method=bearer")
+			}
+			if !strings.Contains(cfg.Bootstrap.BrokerAdminAuth.SecretRef, "://") {
+				return fmt.Errorf("bootstrap.broker_admin_auth.secret_ref should be a URI-style reference (got %q)", cfg.Bootstrap.BrokerAdminAuth.SecretRef)
+			}
+		default:
+			return fmt.Errorf("bootstrap.broker_admin_auth.method %q is not supported", cfg.Bootstrap.BrokerAdminAuth.Method)
+		}
+	}
+	if cfg.Bootstrap.BrokerAdminTimeoutMS < 0 {
+		return fmt.Errorf("bootstrap.broker_admin_timeout_ms must be >= 0")
 	}
 	if cfg.SyntheticProbes.IntervalMS < 0 {
 		return fmt.Errorf("synthetic_probes.interval_ms must be >= 0")

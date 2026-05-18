@@ -66,6 +66,9 @@ members:
 	if got := cfg.Bootstrap.BrokerApplyTimeoutMS; got != 30000 {
 		t.Fatalf("Bootstrap.BrokerApplyTimeoutMS = %d, want 30000", got)
 	}
+	if got := cfg.Bootstrap.BrokerAdminTimeoutMS; got != 5000 {
+		t.Fatalf("Bootstrap.BrokerAdminTimeoutMS = %d, want 5000", got)
+	}
 	if got := cfg.Members[0].PayoutMode; got != "onchain" {
 		t.Fatalf("PayoutMode = %q, want onchain", got)
 	}
@@ -131,6 +134,68 @@ members:
 `))
 	if err == nil || !strings.Contains(err.Error(), "bootstrap.broker_apply_command[1]") {
 		t.Fatalf("Load() error = %v, want broker_apply_command validation", err)
+	}
+}
+
+func TestLoadBrokerAdminValidation(t *testing.T) {
+	cfg, err := Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+bootstrap:
+  broker_admin_url: http://broker-admin.local
+  broker_admin_auth:
+    method: bearer
+    secret_ref: env://BROKER_ADMIN_TOKEN
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: b1
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: default
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor:
+                type: openai-usage
+            price:
+              amount_wei: "1"
+              per_units: 1
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Bootstrap.BrokerAdminURL; got != "http://broker-admin.local" {
+		t.Fatalf("Bootstrap.BrokerAdminURL = %q, want broker admin url", got)
+	}
+
+	_, err = Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+bootstrap:
+  broker_admin_url: ftp://broker-admin.local
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: b1
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: openai:chat-completions
+            offering_id: default
+            interaction_mode: http-stream@v0
+            work_unit:
+              name: tokens
+              extractor:
+                type: openai-usage
+            price:
+              amount_wei: "1"
+              per_units: 1
+`))
+	if err == nil || !strings.Contains(err.Error(), "bootstrap.broker_admin_url scheme") {
+		t.Fatalf("Load() error = %v, want broker_admin_url scheme validation", err)
 	}
 }
 

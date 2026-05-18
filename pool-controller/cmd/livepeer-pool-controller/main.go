@@ -26,6 +26,7 @@ import (
 	adminserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/admin"
 	memberserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/member"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/backendverify"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokeradmin"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerrender"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/configgen"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/legacyimport"
@@ -506,6 +507,16 @@ func (s *runtimeState) ApplyDesiredRuntime(desired *types.DesiredBrokerRuntime) 
 	if current.Revision != desired.Revision {
 		return fmt.Errorf("desired broker runtime changed during apply: expected %s got %s", desired.Revision, current.Revision)
 	}
+	if strings.TrimSpace(cfg.Bootstrap.BrokerAdminURL) != "" {
+		client := brokeradmin.New(
+			cfg.Bootstrap.BrokerAdminURL,
+			cfg.Bootstrap.BrokerAdminAuth,
+			time.Duration(cfg.Bootstrap.BrokerAdminTimeoutMS)*time.Millisecond,
+		)
+		if _, err := client.ReloadAndConfirm(current.Revision); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -610,10 +621,21 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			if cfg == nil {
 				return info
 			}
-			info.TimeoutMS = cfg.Bootstrap.BrokerApplyTimeoutMS
 			info.CommandConfigured = len(cfg.Bootstrap.BrokerApplyCommand) > 0
-			if info.CommandConfigured {
+			info.BrokerAdminConfigured = strings.TrimSpace(cfg.Bootstrap.BrokerAdminURL) != ""
+			switch {
+			case info.CommandConfigured && info.BrokerAdminConfigured:
+				info.Mode = "command+broker-admin"
+				info.TimeoutMS = cfg.Bootstrap.BrokerApplyTimeoutMS
+				if cfg.Bootstrap.BrokerAdminTimeoutMS > info.TimeoutMS {
+					info.TimeoutMS = cfg.Bootstrap.BrokerAdminTimeoutMS
+				}
+			case info.CommandConfigured:
 				info.Mode = "command"
+				info.TimeoutMS = cfg.Bootstrap.BrokerApplyTimeoutMS
+			case info.BrokerAdminConfigured:
+				info.Mode = "broker-admin"
+				info.TimeoutMS = cfg.Bootstrap.BrokerAdminTimeoutMS
 			}
 			return info
 		},

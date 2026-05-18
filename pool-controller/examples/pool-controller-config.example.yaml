@@ -33,6 +33,8 @@ bootstrap:
   broker_apply_timeout_ms: 30000
   broker_apply_command:
     - /usr/local/bin/livepeer-broker-apply
+  broker_admin_url: http://broker-admin.local
+  broker_admin_timeout_ms: 5000
 
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock

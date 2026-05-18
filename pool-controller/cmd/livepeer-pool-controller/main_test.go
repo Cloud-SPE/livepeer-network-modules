@@ -1407,7 +1407,7 @@ func TestBrokerRuntimeEndpoints(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":true`) || !strings.Contains(string(body), `"apply_mode":"controller-refresh"`) {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":true`) || !strings.Contains(string(body), `"apply_mode":"controller-refresh"`) || !strings.Contains(string(body), `"broker_admin_configured":false`) {
 		t.Fatalf("GET /admin/v1/broker-runtime status=%d body=%s", resp.StatusCode, string(body))
 	}
 
@@ -1561,6 +1561,64 @@ func TestApplyDesiredRuntimeRunsBrokerApplyCommand(t *testing.T) {
 	}
 	if string(got) != runtimeInfo.RenderedYAML {
 		t.Fatalf("applied broker config mismatch:\n got=%q\nwant=%q", string(got), runtimeInfo.RenderedYAML)
+	}
+}
+
+func TestApplyDesiredRuntimeConfirmsBrokerLoadedRevision(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	configPath := filepath.Join(dir, "config.yaml")
+	reloaded := false
+	expectedRevision := ""
+	brokerAdmin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/admin/v1/runtime/reload":
+			if r.Method != http.MethodPost {
+				t.Fatalf("reload method = %s, want POST", r.Method)
+			}
+			reloaded = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"last_reload_status":"applied"}`))
+		case "/admin/v1/runtime":
+			if !reloaded {
+				t.Fatalf("runtime status requested before reload")
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"loaded_revision":"` + expectedRevision + `","last_reload_status":"applied"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer brokerAdmin.Close()
+
+	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg := &config.Config{
+		Identity: config.Identity{OrchEthAddress: "0x123"},
+		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
+		Bootstrap: config.Bootstrap{
+			BrokerAdminURL:       brokerAdmin.URL,
+			BrokerAdminTimeoutMS: 5000,
+		},
+	}
+	stateRepo, err := repo.Open(dataDir)
+	if err != nil {
+		t.Fatalf("repo.Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
+	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	if err != nil {
+		t.Fatalf("renderBrokerState() error = %v", err)
+	}
+	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+		t.Fatalf("state.Replace() error = %v", err)
+	}
+	expectedRevision = runtimeInfo.Revision
+
+	if err := state.ApplyDesiredRuntime(runtimeInfo); err != nil {
+		t.Fatalf("ApplyDesiredRuntime() error = %v", err)
 	}
 }
 

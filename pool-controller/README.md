@@ -191,6 +191,11 @@ Broker runtime apply contract:
   writes the desired broker config to a temp file, executes that command, then
   re-renders desired state and refuses to mark success if the desired revision
   drifted during the apply attempt.
+- When `bootstrap.broker_admin_url` is configured, `pool-controller` also:
+  - `POST`s `/admin/v1/runtime/reload`
+  - `GET`s `/admin/v1/runtime`
+  - requires the broker-reported `loaded_revision` to match the controller's
+    desired revision before apply is considered successful
 - The apply command receives:
   - `POOL_CONTROLLER_CONFIG_PATH`
   - `POOL_CONTROLLER_BROKER_CONFIG_PATH`
@@ -199,6 +204,8 @@ Broker runtime apply contract:
 - The rendered broker YAML is also provided on stdin.
 - `bootstrap.broker_apply_timeout_ms` controls the command timeout and defaults
   to `30000`.
+- `bootstrap.broker_admin_timeout_ms` controls the broker admin HTTP timeout
+  and defaults to `5000`.
 
 Current public endpoints:
 

@@ -605,6 +605,7 @@ const pageScript = `
         "<strong>Desired vs Applied</strong>" +
         '<div class="row"><span class="pill">' + (item.dirty ? "dirty" : "converged") + '</span><span class="pill">' + (item.last_apply_status || "unapplied") + '</span></div>' +
         '<div class="small">apply mode: ' + (item.apply_mode || "controller-refresh") + (item.apply_timeout_ms ? ' | timeout_ms=' + item.apply_timeout_ms : '') + '</div>' +
+        '<div class="small">apply command configured: ' + String(!!item.apply_command_configured) + ' | broker admin configured: ' + String(!!item.broker_admin_configured) + '</div>' +
         '<div class="small">desired: <span class="mono">' + (item.desired_revision || "") + '</span></div>' +
         '<div class="small">applied: <span class="mono">' + (item.applied_revision || "") + '</span></div>' +
         '<div class="small">offers: ' + item.offer_count + ', members: ' + item.member_count + ', backends: ' + item.backend_count + ', assignments: ' + item.assignment_count + '</div>' +

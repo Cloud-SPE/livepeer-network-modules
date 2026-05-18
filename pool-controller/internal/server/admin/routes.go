@@ -33,9 +33,10 @@ type Deps struct {
 }
 
 type RuntimeApplyInfo struct {
-	Mode              string `json:"apply_mode,omitempty"`
-	TimeoutMS         int    `json:"apply_timeout_ms,omitempty"`
-	CommandConfigured bool   `json:"apply_command_configured"`
+	Mode                  string `json:"apply_mode,omitempty"`
+	TimeoutMS             int    `json:"apply_timeout_ms,omitempty"`
+	CommandConfigured     bool   `json:"apply_command_configured"`
+	BrokerAdminConfigured bool   `json:"broker_admin_configured"`
 }
 
 type offerMutationRequest = offerservice.Mutation

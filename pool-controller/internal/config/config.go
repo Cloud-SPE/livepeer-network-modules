@@ -61,10 +61,13 @@ type AdminAuth struct {
 }
 
 type Bootstrap struct {
-	ImportLegacyConfigPath string   `yaml:"import_legacy_config_path,omitempty"`
-	AutoImportLegacyConfig bool     `yaml:"auto_import_legacy_config,omitempty"`
-	BrokerApplyCommand     []string `yaml:"broker_apply_command,omitempty"`
-	BrokerApplyTimeoutMS   int      `yaml:"broker_apply_timeout_ms,omitempty"`
+	ImportLegacyConfigPath string     `yaml:"import_legacy_config_path,omitempty"`
+	AutoImportLegacyConfig bool       `yaml:"auto_import_legacy_config,omitempty"`
+	BrokerApplyCommand     []string   `yaml:"broker_apply_command,omitempty"`
+	BrokerApplyTimeoutMS   int        `yaml:"broker_apply_timeout_ms,omitempty"`
+	BrokerAdminURL         string     `yaml:"broker_admin_url,omitempty"`
+	BrokerAdminAuth        AuthConfig `yaml:"broker_admin_auth,omitempty"`
+	BrokerAdminTimeoutMS   int        `yaml:"broker_admin_timeout_ms,omitempty"`
 }
 
 type Member struct {

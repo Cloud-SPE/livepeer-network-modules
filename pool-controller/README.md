@@ -1,8 +1,22 @@
 # pool-controller
 
 `pool-controller` is the Pool-side control-plane component from plan 0029. It
-owns Pool member records and generates `capability-broker` `host-config.yaml`
-for the Pool's edge broker.
+owns the persisted Pool control-plane state for:
+
+- orch-owned offers
+- join requests
+- approved members and backends
+- backend-to-offer assignments
+- desired broker runtime
+
+The supported production path is:
+
+- bootstrap-only controller config
+- persisted control-plane state in BoltDB
+- broker runtime rendered from that persisted state
+
+Legacy nested `members[].backends[].offerings[]` config remains only as a
+migration bridge and should not be treated as the normal operator workflow.
 
 Operator runbook:
 - [`RUNBOOK.md`](./RUNBOOK.md)
@@ -61,7 +75,7 @@ Compose entrypoint:
 docker compose -f compose/docker-compose.yml up -d
 ```
 
-Generate broker config:
+Migration-only broker config generation from legacy nested member config:
 
 ```bash
 docker run --rm \
@@ -71,7 +85,7 @@ docker run --rm \
   --config /etc/livepeer/pool-controller.yaml
 ```
 
-Run the minimal admin server:
+Run the controller:
 
 ```bash
 docker run --rm \
@@ -258,6 +272,22 @@ Current Prometheus metric families include:
 - `livepeer_pool_payout_intent_status_total{status}`
 - `livepeer_pool_receipt_write_total{kind,status}`
 - `livepeer_pool_payout_intent_action_total{action,status}`
+
+## Migration-only compatibility commands
+
+These commands exist to help transition from the earlier config-driven Pool
+shape. They are not the normal production operator path.
+
+- `generate-broker-config`
+  - renders broker YAML directly from legacy nested `members` config
+- `import-legacy-config`
+  - imports legacy nested `members` config into persisted control-plane state
+
+Normal production operations should use:
+
+- `serve`
+- admin/member APIs
+- `POST /admin/v1/broker-runtime/apply`
 
 Current receipt-write contract:
 

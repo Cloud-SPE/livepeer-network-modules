@@ -27,6 +27,8 @@ func TestRunGenerateBrokerConfigWritesToStdout(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`
 identity:
   orch_eth_address: 0x123
+bootstrap:
+  auto_import_legacy_config: true
 members:
   - eth_address: 0xabc
     backends:
@@ -75,6 +77,8 @@ identity:
   orch_eth_address: 0x123
 synthetic_probes:
   enabled: true
+bootstrap:
+  auto_import_legacy_config: true
 members:
   - eth_address: 0xabc
     display_name: member-a
@@ -427,6 +431,8 @@ members:
 	if err := os.WriteFile(path, []byte(`
 identity:
   orch_eth_address: 0x123
+bootstrap:
+  auto_import_legacy_config: true
 members:
   - eth_address: 0xdef
     display_name: member-b
@@ -2328,6 +2334,8 @@ func TestRuntimeStateSyncAccountingMetrics(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`
 identity:
   orch_eth_address: 0x123
+bootstrap:
+  auto_import_legacy_config: true
 members:
   - eth_address: 0xabc
     backends:
@@ -2426,6 +2434,8 @@ identity:
   orch_eth_address: 0x123
 admin_auth:
   bearer_token_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
+bootstrap:
+  auto_import_legacy_config: true
 members:
   - eth_address: 0xabc
     backends:

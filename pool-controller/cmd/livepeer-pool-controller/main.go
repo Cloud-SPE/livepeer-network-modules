@@ -212,10 +212,24 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 }
 
 func maybeImportLegacyConfig(stateRepo *repo.StateRepo, cfg *config.Config) error {
-	if stateRepo == nil || cfg == nil || len(cfg.Members) == 0 {
+	if stateRepo == nil || cfg == nil {
 		return nil
 	}
-	built, err := legacyimport.Build(cfg, time.Now().UTC())
+	importCfg := cfg
+	switch {
+	case cfg.Bootstrap.ImportLegacyConfigPath != "":
+		loaded, err := config.LoadFile(cfg.Bootstrap.ImportLegacyConfigPath)
+		if err != nil {
+			return fmt.Errorf("load bootstrap.import_legacy_config_path: %w", err)
+		}
+		importCfg = loaded
+	case !cfg.Bootstrap.AutoImportLegacyConfig:
+		return nil
+	}
+	if len(importCfg.Members) == 0 {
+		return nil
+	}
+	built, err := legacyimport.Build(importCfg, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -3687,6 +3701,14 @@ func buildRoundReceiptFromCloseRequest(req roundCloseRequest, workReceipts []typ
 }
 
 func usageError(w io.Writer) error {
-	_, _ = fmt.Fprintln(w, "usage: livepeer-pool-controller <generate-broker-config|serve|version> [flags]")
+	_, _ = fmt.Fprintln(w, "usage: livepeer-pool-controller <serve|version|generate-broker-config|import-legacy-config> [flags]")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "normal production commands:")
+	_, _ = fmt.Fprintln(w, "  serve")
+	_, _ = fmt.Fprintln(w, "  version")
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "migration-only compatibility commands:")
+	_, _ = fmt.Fprintln(w, "  generate-broker-config")
+	_, _ = fmt.Fprintln(w, "  import-legacy-config")
 	return errors.New("invalid command")
 }

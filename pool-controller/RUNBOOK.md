@@ -99,6 +99,12 @@ Secure-orch side:
   - `admin_auth.bearer_token_ref: env://...` in production
   - `admin_auth.bearer_token` is acceptable only for local testing
 
+Important boundary:
+
+- the supported production config is bootstrap-only
+- legacy nested `members[].backends[].offerings[]` config is migration-only and
+  should not be used as the steady-state operator workflow
+
 ## Start
 
 ```bash
@@ -113,6 +119,28 @@ Compose:
 ```bash
 docker compose -f compose/docker-compose.yml up -d
 ```
+
+If you are migrating from a legacy config-driven Pool deployment, use the
+migration-only import path before steady-state operations:
+
+```bash
+go run ./cmd/livepeer-pool-controller import-legacy-config \
+  --config ./examples/pool-controller-config.example.yaml \
+  --data-dir ./var/pool-controller
+```
+
+After import, the normal operator path is persisted state plus the admin/member
+APIs. Do not continue treating legacy `members:` config as the live source of
+truth.
+
+If you need temporary startup-driven migration during a cutover, opt into it
+explicitly with one of:
+
+- `bootstrap.auto_import_legacy_config: true`
+- `bootstrap.import_legacy_config_path: /path/to/legacy.yaml`
+
+That compatibility path should be treated as temporary and removed after the
+persisted state is established.
 
 ## Primary operator workflow
 

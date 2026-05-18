@@ -7,7 +7,7 @@
 # Per core belief #16, NODE_VERSION is bumped to latest stable on each
 # release. Renovate / dependabot tracks this.
 
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 
 FROM node:${NODE_VERSION}-alpine AS deps
 
@@ -19,13 +19,13 @@ FROM node:${NODE_VERSION}-alpine AS test
 
 WORKDIR /src
 COPY --from=deps /src/node_modules ./node_modules
-COPY package.json tsconfig.json ./
+COPY package.json tsconfig.json tsconfig.test.json ./
 COPY src/ ./src/
 COPY test/ ./test/
 
 # Type-check + compile + run unit tests as part of the image build so
 # `make test` is just `docker build`.
-RUN npx tsc
+RUN npm test
 # sh -c so the glob expands. Node's --test takes a list of files; passing a
 # bare directory makes it try to load the directory as a single module.
-ENTRYPOINT ["sh", "-c", "node --test dist/test/*.test.js"]
+ENTRYPOINT ["sh", "-c", "node --test dist-test/test/*.test.js"]

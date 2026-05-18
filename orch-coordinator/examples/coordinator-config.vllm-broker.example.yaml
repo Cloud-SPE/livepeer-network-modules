@@ -2,9 +2,9 @@
 # one OpenAI-compatible chat-completions capability backed by vLLM.
 #
 # Pair this with:
-#   capability-broker/examples/host-config.vllm-chat.example.yaml
+#   infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai-chat.example.yaml
 # and:
-#   capability-broker/compose/docker-compose.vllm-chat.yml
+#   openai-runners/compose/docker-compose.vllm.chat.yml
 #
 # Replace `orch_eth_address` with the real orchestrator identity whose manifest
 # will be signed on secure-orch. Replace the broker `base_url` with the broker's

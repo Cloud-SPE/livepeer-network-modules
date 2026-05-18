@@ -21,7 +21,7 @@ services:
       - "${POOL_CONTROLLER_PORT:-8080}:8080"
       - "${POOL_CONTROLLER_METRICS_PORT:-9090}:9090"
     volumes:
-      - ${POOL_CONTROLLER_CONFIG:-../examples/pool-controller-config.example.yaml}:/etc/livepeer/pool-controller.yaml:ro
+      - ${POOL_CONTROLLER_CONFIG:-../examples/pool-controller-config.compose.yaml}:/etc/livepeer/pool-controller.yaml:ro
       - ${POOL_CONTROLLER_DATA_DIR:-./run/data}:/var/lib/livepeer/pool-controller
       - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
     restart: unless-stopped

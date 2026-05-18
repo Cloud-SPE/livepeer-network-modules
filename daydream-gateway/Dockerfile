@@ -2,7 +2,7 @@
 # Stage 1: install deps + compile.
 # Stage 2: minimal runtime with only the compiled JS + production deps.
 
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /repo
 
 # pnpm via corepack.
@@ -29,7 +29,7 @@ RUN pnpm -F @livepeer-network-modules/gateway-route-health build
 RUN pnpm -F @livepeer-network-modules/daydream-gateway build
 
 # Stage 2: runtime.
-FROM node:20-alpine AS runtime
+FROM node:24-alpine AS runtime
 WORKDIR /app
 RUN corepack enable
 

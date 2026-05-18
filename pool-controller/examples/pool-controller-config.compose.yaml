@@ -51,3 +51,7 @@ members:
                 config:
                   url: http://member-a-runner:8000/v1/models
                   expect_model: llama-3-70b
+            extra:
+              openai:
+                model: llama-3-70b
+              provider: vllm

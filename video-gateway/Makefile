@@ -22,10 +22,10 @@ run: build ## Run the gateway alone (for hand-curl testing). Set LIVEPEER_BROKER
 		$(IMAGE):$(TAG)
 
 smoke: build ## End-to-end Docker smoke test (gateway + postgres + redis + broker + payment-daemon)
-	@docker image inspect tztcloud/livepeer-capability-broker:v1.2.0 >/dev/null 2>&1 || \
-		(echo "broker image missing. Build it first: make -C ../capability-broker build"; exit 1)
-	@docker image inspect tztcloud/livepeer-payment-daemon:v1.2.0 >/dev/null 2>&1 || \
-		(echo "payment-daemon image missing. Build it first: make -C ../payment-daemon build"; exit 1)
+		@docker image inspect tztcloud/livepeer-capability-broker:dev >/dev/null 2>&1 || \
+			(echo "broker image missing. Build it first: make -C ../capability-broker build"; exit 1)
+		@docker image inspect tztcloud/livepeer-payment-daemon:dev >/dev/null 2>&1 || \
+			(echo "payment-daemon image missing. Build it first: make -C ../payment-daemon build"; exit 1)
 	docker compose -f compose.yaml -f compose.smoke.yaml up --abort-on-container-exit --exit-code-from video-gateway
 
 migrate: ## Run drizzle migrations against $(DATABASE_URL)

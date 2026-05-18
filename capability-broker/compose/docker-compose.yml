@@ -24,7 +24,7 @@ services:
       - "${BROKER_LISTEN_PORT:-8080}:8080"
       - "${BROKER_METRICS_PORT:-9090}:9090"
     volumes:
-      - ${BROKER_CONFIG:-./host-config.yaml}:/etc/livepeer/host-config.yaml:ro
+      - ${BROKER_CONFIG:-../examples/host-config.example.yaml}:/etc/livepeer/host-config.yaml:ro
       - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
     restart: unless-stopped
 
@@ -46,7 +46,7 @@ services:
       - "${BROKER_METRICS_PORT:-9090}:9090"
       - "${BROKER_RTMP_PORT:-1935}:1935"
     volumes:
-      - ${BROKER_CONFIG:-./host-config.yaml}:/etc/livepeer/host-config.yaml:ro
+      - ${BROKER_CONFIG:-../examples/host-config.example.yaml}:/etc/livepeer/host-config.yaml:ro
       - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
     runtime: nvidia
     restart: unless-stopped

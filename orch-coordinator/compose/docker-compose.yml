@@ -24,7 +24,7 @@ services:
       - "${COORDINATOR_PUBLIC_PORT:-8081}:8081"
       - "${COORDINATOR_METRICS_PORT:-9091}:9091"
     volumes:
-      - ${COORDINATOR_CONFIG:-./orch-coordinator.yaml}:/etc/livepeer/orch-coordinator.yaml:ro
+      - ${COORDINATOR_CONFIG:-../examples/coordinator-config.yaml}:/etc/livepeer/orch-coordinator.yaml:ro
       - coordinator-data:/srv/data
     restart: unless-stopped
     healthcheck:

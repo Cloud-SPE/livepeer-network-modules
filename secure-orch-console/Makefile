@@ -28,7 +28,6 @@ run: ## Foreground the binary against ./run/ (requires a V3 keystore at ./run/ke
 		-p 127.0.0.1:8080:8080 \
 		-v $(PWD)/run:/srv \
 		$(IMAGE):$(TAG) \
-		secure-orch-console \
 			--keystore=v3:/srv/keystore.json \
 			--keystore-password-file=/srv/password \
 			--last-signed=/srv/lib/last-signed.json \

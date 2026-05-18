@@ -16,4 +16,4 @@ reconcile:
   retry_interval_ms: 5000
 
 round_source:
-  protocol_daemon_socket: /var/run/livepeer-protocol-daemon.sock
+  protocol_daemon_socket: /var/run/livepeer/protocol.sock

@@ -5,7 +5,7 @@
 # pattern used by video-gateway. Per core belief #16, NODE_VERSION ARG
 # bumps to latest stable on each release.
 
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 
 FROM node:${NODE_VERSION}-alpine AS deps
 
@@ -34,7 +34,7 @@ RUN pnpm -F @livepeer-network-modules/customer-portal build \
  && pnpm -F @livepeer-network-modules/vtuber-gateway build \
  && pnpm --filter @livepeer-network-modules/vtuber-gateway --prod deploy /out/vtuber-gateway
 
-FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
 
 WORKDIR /app
 COPY --from=builder --chown=65532:65532 /out/vtuber-gateway/ /app/

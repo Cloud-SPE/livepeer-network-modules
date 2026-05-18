@@ -7,7 +7,7 @@
 # and dynamically loads .proto files from livepeer-network-protocol/proto/
 # at runtime (via @grpc/proto-loader).
 
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 
 FROM node:${NODE_VERSION}-alpine AS deps
 
@@ -43,7 +43,7 @@ RUN pnpm -F @livepeer-network-modules/customer-portal-shared build \
  && pnpm -F @livepeer-network-modules/openai-gateway build \
  && pnpm --filter @livepeer-network-modules/openai-gateway --prod deploy /out/openai-gateway
 
-FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
 
 WORKDIR /app
 COPY --from=builder --chown=65532:65532 /out/openai-gateway/ /app/

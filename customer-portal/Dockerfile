@@ -14,11 +14,21 @@ FROM node:${NODE_VERSION}-alpine AS builder
 
 WORKDIR /src
 COPY --from=deps /src/node_modules ./node_modules
-COPY package.json tsconfig.json ./
+COPY package.json tsconfig.json tsconfig.test.json ./
 COPY src ./src
+COPY test ./test
 COPY migrations ./migrations
 COPY README.md DESIGN.md ./
 RUN npm run build
+
+FROM node:${NODE_VERSION}-alpine AS test
+
+WORKDIR /src
+COPY --from=deps /src/node_modules ./node_modules
+COPY package.json tsconfig.json tsconfig.test.json ./
+COPY src ./src
+COPY test ./test
+RUN npm test
 
 FROM node:${NODE_VERSION}-alpine AS prod-deps
 

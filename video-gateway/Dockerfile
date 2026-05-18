@@ -5,7 +5,7 @@
 # Build context is the monorepo root because the gateway depends on the
 # customer-portal/ workspace package.
 
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 
 FROM node:${NODE_VERSION}-alpine AS deps
 
@@ -36,7 +36,7 @@ RUN pnpm -F @livepeer-network-modules/customer-portal build \
  && pnpm -F @livepeer-network-modules/video-gateway build \
  && pnpm --filter @livepeer-network-modules/video-gateway --prod deploy /out/video-gateway
 
-FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runtime
+FROM gcr.io/distroless/nodejs24-debian12:nonroot AS runtime
 
 WORKDIR /app
 COPY --from=builder --chown=65532:65532 /out/video-gateway/ /app/

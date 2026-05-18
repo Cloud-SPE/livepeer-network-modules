@@ -1049,11 +1049,12 @@ func TestAdminOfferAndAssignmentMutationEndpoints(t *testing.T) {
 		t.Fatalf("PutMember() error = %v", err)
 	}
 	if err := stateRepo.PutMemberBackend(types.MemberBackend{
-		ID:        "backend-1",
-		MemberID:  "member-1",
-		Transport: "http",
-		URL:       "http://backend",
-		Status:    types.BackendStatusActive,
+		ID:                 "backend-1",
+		MemberID:           "member-1",
+		Transport:          "http",
+		URL:                "http://backend",
+		Status:             types.BackendStatusActive,
+		VerificationStatus: types.VerificationPassing,
 		ClaimedCapabilities: []types.ClaimedOffer{{
 			CapabilityID:    "rerank",
 			OfferingID:      "zerank-2-default",
@@ -1797,6 +1798,127 @@ func TestAssignmentCandidatesEndpoint(t *testing.T) {
 		!strings.Contains(string(body), `"suggested_offer_ids":["rerank-zerank2"]`) ||
 		!strings.Contains(string(body), `"active_assignments":0`) {
 		t.Fatalf("assignment-candidates body=%s", string(body))
+	}
+}
+
+func TestAssignmentCreateRejectsDuplicateActivePair(t *testing.T) {
+	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer probe.Close()
+
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg := &config.Config{
+		Identity: config.Identity{OrchEthAddress: "0x123"},
+		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
+	}
+	stateRepo, err := repo.Open(dataDir)
+	if err != nil {
+		t.Fatalf("repo.Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
+	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	if err != nil {
+		t.Fatalf("renderBrokerState() error = %v", err)
+	}
+	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+		t.Fatalf("state.Replace() error = %v", err)
+	}
+	server := httptest.NewServer(newServeMux(state))
+	defer server.Close()
+
+	offerBody := `{
+	  "id":"rerank-zerank2",
+	  "capability_id":"rerank",
+	  "offering_id":"zerank-2-default",
+	  "interaction_mode":"http-reqresp@v0",
+	  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
+	  "price":{"amount_wei":"1","per_units":1}
+	}`
+	resp, err := http.Post(server.URL+"/admin/v1/offers", "application/json", bytes.NewBufferString(offerBody))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/offers error = %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /admin/v1/offers status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	joinBody := `{
+	  "id":"join-dup",
+	  "member_eth_address":"0xmember",
+	  "display_name":"member-a",
+	  "payout_mode":"onchain",
+	  "requested_backends":[
+	    {
+	      "id":"backend-dup",
+	      "transport":"http",
+	      "url":"` + probe.URL + `/v1/rerank",
+	      "auth":{"method":"none"},
+	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
+	      "claimed_capabilities":[
+	        {"capability_id":"rerank","offering_id":"zerank-2-default","interaction_mode":"http-reqresp@v0"}
+	      ]
+	    }
+	  ]
+	}`
+	resp, err = http.Post(server.URL+"/member/v1/join-requests", "application/json", bytes.NewBufferString(joinBody))
+	if err != nil {
+		t.Fatalf("POST /member/v1/join-requests error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /member/v1/join-requests status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-dup/refresh", "application/json", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-requests/join-dup/refresh error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("refresh join-dup status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-dup/approve", "application/json", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-requests/join-dup/approve error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve join-dup status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	assignmentBody := `{"id":"assign-dup-1","offer_id":"rerank-zerank2","member_backend_id":"backend-dup"}`
+	resp, err = http.Post(server.URL+"/admin/v1/assignments", "application/json", bytes.NewBufferString(assignmentBody))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/assignments first error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /admin/v1/assignments first status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	assignmentBody = `{"id":"assign-dup-2","offer_id":"rerank-zerank2","member_backend_id":"backend-dup"}`
+	resp, err = http.Post(server.URL+"/admin/v1/assignments", "application/json", bytes.NewBufferString(assignmentBody))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/assignments duplicate error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "active assignment already exists") {
+		t.Fatalf("POST /admin/v1/assignments duplicate status=%d body=%s", resp.StatusCode, string(body))
 	}
 }
 

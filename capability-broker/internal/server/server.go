@@ -127,6 +127,7 @@ type Server struct {
 	lastReloadFinishedAt time.Time
 	lastReloadStatus     string
 	lastReloadError      string
+	reloadHistory        []runtimeHistoryEntry
 	opts                 Options
 	metadata             *metadataCatalog
 	mux                  *http.ServeMux
@@ -171,6 +172,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	loadedAt := time.Now().UTC()
 	adminToken, err := resolveAdminToken(cfg)
 	if err != nil {
 		return nil, err
@@ -245,8 +247,14 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		loadedConfigPath: loadedConfigPath,
 		loadedRevision:   loadedRevision,
 		adminToken:       adminToken,
-		loadedAt:         time.Now().UTC(),
+		loadedAt:         loadedAt,
 		lastReloadStatus: "startup_loaded",
+		reloadHistory: []runtimeHistoryEntry{{
+			StartedAt:      loadedAt,
+			FinishedAt:     loadedAt,
+			Status:         "startup_loaded",
+			LoadedRevision: loadedRevision,
+		}},
 		opts:             opts,
 		metadata:         metadata,
 		mux:              mux,

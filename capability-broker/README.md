@@ -51,6 +51,8 @@ Broker runtime admin surface:
 - Successful reloads keep matching backend health/probe state when possible and
   resume health probing and periodic metadata refresh against the new runtime
   without requiring a broker restart.
+- `GET /admin/v1/runtime` now includes a bounded recent reload history so
+  operator tooling can inspect the latest broker-local attempts directly.
 
 When `pool_snapshot.url` is configured, the broker also polls
 `pool-controller`'s backend-selection snapshot and exposes per-backend snapshot

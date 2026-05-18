@@ -21,6 +21,15 @@ type runtimeStatusResponse struct {
 	LastReloadFinishedAt time.Time `json:"last_reload_finished_at,omitempty"`
 	LastReloadStatus     string    `json:"last_reload_status,omitempty"`
 	LastReloadError      string    `json:"last_reload_error,omitempty"`
+	History              []runtimeHistoryEntry `json:"history,omitempty"`
+}
+
+type runtimeHistoryEntry struct {
+	StartedAt      time.Time `json:"started_at,omitempty"`
+	FinishedAt     time.Time `json:"finished_at,omitempty"`
+	Status         string    `json:"status,omitempty"`
+	Error          string    `json:"error,omitempty"`
+	LoadedRevision string    `json:"loaded_revision,omitempty"`
 }
 
 func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +88,7 @@ func (s *Server) runtimeStatus() runtimeStatusResponse {
 		LastReloadFinishedAt: s.lastReloadFinishedAt,
 		LastReloadStatus:     s.lastReloadStatus,
 		LastReloadError:      s.lastReloadError,
+		History:              append([]runtimeHistoryEntry(nil), s.reloadHistory...),
 	}
 }
 
@@ -152,5 +162,22 @@ func (s *Server) finishReload(startedAt time.Time, status, reloadError, revision
 		s.health = healthMgr
 		s.loadedRevision = revision
 		s.loadedAt = s.lastReloadFinishedAt
+	}
+	s.recordReloadHistory(runtimeHistoryEntry{
+		StartedAt:      startedAt,
+		FinishedAt:     s.lastReloadFinishedAt,
+		Status:         status,
+		Error:          reloadError,
+		LoadedRevision: revision,
+	})
+}
+
+func (s *Server) recordReloadHistory(entry runtimeHistoryEntry) {
+	if entry.Status == "" {
+		return
+	}
+	s.reloadHistory = append(s.reloadHistory, entry)
+	if len(s.reloadHistory) > 10 {
+		s.reloadHistory = append([]runtimeHistoryEntry(nil), s.reloadHistory[len(s.reloadHistory)-10:]...)
 	}
 }

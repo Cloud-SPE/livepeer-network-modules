@@ -9,7 +9,7 @@
 #
 # Env:
 #   REGISTRY  default: tztcloud
-#   TAG       default: v1.2.0
+#   TAG       default: v1.3.0
 #   VERSION   default: derived from git tag/sha for binary build metadata
 #   PUSH      set to 1 to docker push after each build
 #   DEPLOY_ONLY  set to 1 to exclude local-only base/test/helper images
@@ -35,7 +35,7 @@ if [[ -f "$VERSION_ENV_FILE" ]]; then
 fi
 
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.2.0}}"
+TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.3.0}}"
 PUSH="${PUSH:-0}"
 DEPLOY_ONLY="${DEPLOY_ONLY:-0}"
 DEFAULT_VERSION="$(VERSION_PREFIX="${TAG}" FALLBACK_VERSION="${TAG}" ./infra/build/git-version.sh)"

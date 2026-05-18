@@ -17,7 +17,7 @@ if [[ -f "$VERSION_ENV_FILE" ]]; then
 fi
 
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.2.0}}"
+TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.3.0}}"
 BASE_IMAGE="${BASE_IMAGE:-${REGISTRY}/python-gpu-runner-base:${TAG}}"
 PUSH="${PUSH:-false}"
 

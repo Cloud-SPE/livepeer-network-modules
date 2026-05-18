@@ -1,5 +1,5 @@
 ARG REGISTRY=tztcloud
-ARG TAG=v1.2.0
+ARG TAG=v1.3.0
 ARG BASE_IMAGE=${REGISTRY}/python-gpu-runner-base:${TAG}
 FROM ${BASE_IMAGE} AS builder
 

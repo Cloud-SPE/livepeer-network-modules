@@ -26,7 +26,7 @@ Current canonical values:
 
 | Key | Value |
 |---|---|
-| `IMAGE_TAG_DEFAULT` | `v1.2.0` |
+| `IMAGE_TAG_DEFAULT` | `v1.3.0` |
 | `GO_VERSION` | `1.25.7` |
 | `NODE_VERSION` | `22` |
 | `PYTHON_VERSION` | `3.12` |

@@ -16,7 +16,7 @@ if [[ -f "$VERSION_ENV_FILE" ]]; then
 fi
 
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.2.0}}"
+TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.3.0}}"
 PUSH="${PUSH:-false}"
 CODECS_IMAGE="${CODECS_IMAGE:-${REGISTRY}/codecs-builder:${TAG}}"
 

@@ -67,7 +67,7 @@ Inherited from the repo root (agent-first harness pattern). Plus:
   `openai-chat-completions`, `openai-text-embeddings`,
   `openai-audio-transcriptions`, `openai-audio-translations`,
   `openai-audio-speech`, `image-generation`. One value per image.
-- **Default runner tag is v1.2.0.** Keep shared bases and downstream
+- **Default runner tag is v1.3.0.** Keep shared bases and downstream
   runner builds on the same tag unless the caller overrides `TAG=...`.
 - **No per-runner LICENSE files.** Repo-root MIT applies.
 

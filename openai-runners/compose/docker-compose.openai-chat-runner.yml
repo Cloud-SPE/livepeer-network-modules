@@ -9,7 +9,7 @@
 
 services:
   openai_chat_runner:
-    image: ${REGISTRY:-tztcloud}/openai-chat-runner:${TAG:-v1.2.0}
+    image: ${REGISTRY:-tztcloud}/openai-chat-runner:${TAG:-v1.3.0}
     container_name: openai_chat_runner
     hostname: openai_chat_runner
     environment:

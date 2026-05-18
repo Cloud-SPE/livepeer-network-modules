@@ -173,6 +173,82 @@ Required reads after apply:
 
 Do not treat apply-command exit alone as convergence.
 
+### 4.5.1 Broker apply deployment patterns
+
+The operator must choose one explicit staging pattern for
+`bootstrap.broker_apply_command`.
+
+#### Pattern A — same-host file replace
+
+Use when `pool-controller` and `capability-broker` run on the same host and the
+broker loads `host-config.yaml` from a stable on-disk path.
+
+Shape:
+
+- broker reads a fixed path such as `/etc/livepeer/host-config.yaml`
+- apply command copies `POOL_CONTROLLER_BROKER_CONFIG_PATH` to that path
+- controller then calls broker `POST /admin/v1/runtime/reload`
+
+Typical command shape:
+
+```bash
+install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /etc/livepeer/host-config.yaml
+```
+
+Use when:
+
+- host-level deployment
+- systemd-managed broker
+- compose with bind-mounted config path
+
+#### Pattern B — shared-volume container staging
+
+Use when `pool-controller` and `capability-broker` run as separate containers on
+the same machine and share a writable volume for broker config.
+
+Shape:
+
+- both containers mount the same volume
+- broker reads a stable in-container path from that volume
+- apply command writes the desired YAML into the shared volume path
+- controller then calls broker reload
+
+Typical command shape:
+
+```bash
+install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /shared/broker/host-config.yaml
+```
+
+Use when:
+
+- docker compose public/data-plane deployment
+- no host-level config-management system is in front of the containers
+
+#### Pattern C — external config-management hook
+
+Use when config staging is delegated to an external control system.
+
+Shape:
+
+- apply command is a wrapper script
+- wrapper script moves the rendered YAML into the broker’s expected config
+  location by whatever production mechanism the operator uses
+- controller still requires broker reload + broker attempt/revision confirmation
+
+This is acceptable only if the wrapper is deterministic and checked in as part
+of the deployment system of record.
+
+#### Not yet defined here
+
+This guide does not yet lock a multi-node clustered rollout controller for:
+
+- kubernetes ConfigMap rollouts
+- per-site fan-out to multiple brokers from one `pool-controller`
+- automatic broker fleet orchestration across regions
+
+For now, choose an explicit single-target broker apply mechanism and document it
+alongside the deployment.
+
 ### 4.6 Refresh coordinator state
 
 Once the broker has the intended runtime loaded:

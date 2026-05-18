@@ -19,6 +19,26 @@ Configure each listener separately at the network layer. The RTMP listener
 in particular is plaintext (no TLS); the gateway terminates customer TLS
 upstream per the locked plan-0011-followup §13 Q1 decision.
 
+## 1.1 Runtime reload in production
+
+When the broker participates in the Pool control-plane apply path:
+
+- `host-config.yaml` must live at a stable path the broker can re-read
+- broker private admin auth must be enabled
+- `GET /admin/v1/runtime` and `POST /admin/v1/runtime/reload` must be
+  reachable from `pool-controller` over a private path only
+
+The normal production sequence is:
+
+1. `pool-controller` stages a new `host-config.yaml`
+2. `pool-controller` calls broker reload
+3. broker emits a broker-local reload `attempt_id`
+4. `pool-controller` confirms:
+   - broker `last_reload_attempt_id` matches the triggered attempt
+   - broker `loaded_revision` matches the controller desired revision
+
+Do not treat file placement alone as convergence.
+
 ## 2. RTMP pipeline (mode `rtmp-ingress-hls-egress@v0`)
 
 Live RTMP → FFmpeg → LL-HLS pipeline lit up by plan 0011-followup.

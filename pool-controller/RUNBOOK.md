@@ -170,6 +170,41 @@ The manual runtime endpoints remain fallback/debug controls only:
 Use them only when the operator intentionally needs to bypass the normal
 broker-admin apply path for investigation or break-glass handling.
 
+### 2.1 Apply-command deployment patterns
+
+Choose one explicit staging pattern for `bootstrap.broker_apply_command`.
+
+#### Same-host file replace
+
+Use when broker and controller share the same host filesystem contract.
+
+Example:
+
+```bash
+install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /etc/livepeer/host-config.yaml
+```
+
+#### Shared-volume container staging
+
+Use when broker and controller are separate containers sharing a writable
+volume.
+
+Example:
+
+```bash
+install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /shared/broker/host-config.yaml
+```
+
+#### External wrapper
+
+Use when a checked-in wrapper script handles staging into the broker’s real
+config path.
+
+Regardless of pattern, success still requires broker-confirmed:
+
+- `last_reload_attempt_id`
+- `loaded_revision`
+
 ## Health checks
 
 - `GET /healthz`

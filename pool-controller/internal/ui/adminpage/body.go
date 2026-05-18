@@ -184,6 +184,11 @@ const pageBody = `<body>
         <div id="backends" class="card-list"></div>
       </div>
       <div class="panel">
+        <h2>Ready For Assignment</h2>
+        <div class="small">Approved, verified backends with no active assignments.</div>
+        <div id="assignmentCandidates" class="card-list"></div>
+      </div>
+      <div class="panel">
         <h2>Assignments</h2>
         <div id="assignments" class="card-list"></div>
       </div>

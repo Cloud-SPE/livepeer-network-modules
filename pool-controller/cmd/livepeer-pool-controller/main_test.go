@@ -1618,6 +1618,7 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 		!strings.Contains(string(body), `"approvable":true`) ||
 		!strings.Contains(string(body), `"matching_offer_ids":["rerank-zerank2"]`) ||
 		!strings.Contains(string(body), `"active_offer_ids":["rerank-zerank2"]`) ||
+		!strings.Contains(string(body), `"suggested_offer_ids":["rerank-zerank2"]`) ||
 		!strings.Contains(string(body), `"servable":true`) {
 		t.Fatalf("join-flow preview status=%d body=%s", resp.StatusCode, string(body))
 	}
@@ -1641,6 +1642,19 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("POST /admin/v1/assignments status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Get(server.URL + "/admin/v1/assignment-candidates")
+	if err != nil {
+		t.Fatalf("GET /admin/v1/assignment-candidates error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("assignment-candidates status=%d body=%s", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(string(body), `"candidates":[]`) {
+		t.Fatalf("assignment-candidates after assignment body=%s", string(body))
 	}
 
 	resp, err = http.Post(server.URL+"/admin/v1/assignment-preview", "application/json", bytes.NewBufferString(`{"offer_id":"rerank-zerank2","member_backend_id":"backend-flow"}`))
@@ -1671,6 +1685,231 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":false`) || !strings.Contains(string(body), `"last_apply_status":"applied"`) {
 		t.Fatalf("mark-applied status=%d body=%s", resp.StatusCode, string(body))
+	}
+}
+
+func TestAssignmentCandidatesEndpoint(t *testing.T) {
+	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer probe.Close()
+
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg := &config.Config{
+		Identity: config.Identity{OrchEthAddress: "0x123"},
+		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
+	}
+	stateRepo, err := repo.Open(dataDir)
+	if err != nil {
+		t.Fatalf("repo.Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
+	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	if err != nil {
+		t.Fatalf("renderBrokerState() error = %v", err)
+	}
+	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+		t.Fatalf("state.Replace() error = %v", err)
+	}
+	server := httptest.NewServer(newServeMux(state))
+	defer server.Close()
+
+	offerBody := `{
+	  "id":"rerank-zerank2",
+	  "capability_id":"rerank",
+	  "offering_id":"zerank-2-default",
+	  "interaction_mode":"http-reqresp@v0",
+	  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
+	  "price":{"amount_wei":"1","per_units":1}
+	}`
+	resp, err := http.Post(server.URL+"/admin/v1/offers", "application/json", bytes.NewBufferString(offerBody))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/offers error = %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /admin/v1/offers status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	joinBody := `{
+	  "id":"join-candidate",
+	  "member_eth_address":"0xmember",
+	  "display_name":"member-a",
+	  "payout_mode":"onchain",
+	  "requested_backends":[
+	    {
+	      "id":"backend-candidate",
+	      "transport":"http",
+	      "url":"` + probe.URL + `/v1/rerank",
+	      "auth":{"method":"none"},
+	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
+	      "claimed_capabilities":[
+	        {"capability_id":"rerank","offering_id":"zerank-2-default","interaction_mode":"http-reqresp@v0"}
+	      ]
+	    }
+	  ]
+	}`
+	resp, err = http.Post(server.URL+"/member/v1/join-requests", "application/json", bytes.NewBufferString(joinBody))
+	if err != nil {
+		t.Fatalf("POST /member/v1/join-requests error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /member/v1/join-requests status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-candidate/refresh", "application/json", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-requests/join-candidate/refresh error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("refresh join-candidate status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-candidate/approve", "application/json", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-requests/join-candidate/approve error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve join-candidate status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Get(server.URL + "/admin/v1/assignment-candidates")
+	if err != nil {
+		t.Fatalf("GET /admin/v1/assignment-candidates error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK ||
+		!strings.Contains(string(body), `"backend_id":"backend-candidate"`) ||
+		!strings.Contains(string(body), `"suggested_offer_ids":["rerank-zerank2"]`) ||
+		!strings.Contains(string(body), `"active_assignments":0`) {
+		t.Fatalf("assignment-candidates body=%s", string(body))
+	}
+}
+
+func TestJoinRequestPreviewRanksSuggestedOffers(t *testing.T) {
+	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer probe.Close()
+
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg := &config.Config{
+		Identity: config.Identity{OrchEthAddress: "0x123"},
+		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
+	}
+	stateRepo, err := repo.Open(dataDir)
+	if err != nil {
+		t.Fatalf("repo.Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
+	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	if err != nil {
+		t.Fatalf("renderBrokerState() error = %v", err)
+	}
+	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+		t.Fatalf("state.Replace() error = %v", err)
+	}
+	server := httptest.NewServer(newServeMux(state))
+	defer server.Close()
+
+	for _, offerBody := range []string{
+		`{
+		  "id":"rerank-default",
+		  "capability_id":"rerank",
+		  "offering_id":"zerank-2-default",
+		  "interaction_mode":"http-reqresp@v0",
+		  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
+		  "price":{"amount_wei":"1","per_units":1}
+		}`,
+		`{
+		  "id":"rerank-alt",
+		  "capability_id":"rerank",
+		  "offering_id":"alt-rerank",
+		  "interaction_mode":"http-reqresp@v0",
+		  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
+		  "price":{"amount_wei":"1","per_units":1}
+		}`,
+	} {
+		resp, err := http.Post(server.URL+"/admin/v1/offers", "application/json", bytes.NewBufferString(offerBody))
+		if err != nil {
+			t.Fatalf("POST /admin/v1/offers error = %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("POST /admin/v1/offers status=%d body=%s", resp.StatusCode, string(body))
+		}
+	}
+
+	joinBody := `{
+	  "id":"join-rank",
+	  "member_eth_address":"0xmember",
+	  "display_name":"member-rank",
+	  "payout_mode":"onchain",
+	  "requested_backends":[
+	    {
+	      "id":"backend-rank",
+	      "transport":"http",
+	      "url":"` + probe.URL + `/v1/rerank",
+	      "auth":{"method":"none"},
+	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
+	      "claimed_capabilities":[
+	        {"capability_id":"rerank","interaction_mode":"http-reqresp@v0"}
+	      ]
+	    }
+	  ]
+	}`
+	resp, err := http.Post(server.URL+"/member/v1/join-requests", "application/json", bytes.NewBufferString(joinBody))
+	if err != nil {
+		t.Fatalf("POST /member/v1/join-requests error = %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /member/v1/join-requests status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-rank/refresh", "application/json", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-requests/join-rank/refresh error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("refresh join-rank status=%d body=%s", resp.StatusCode, string(body))
+	}
+
+	resp, err = http.Post(server.URL+"/admin/v1/join-request-preview", "application/json", bytes.NewBufferString(`{"join_request_id":"join-rank"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/join-request-preview error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK ||
+		!strings.Contains(string(body), `"suggested_offer_ids":["rerank-alt","rerank-default"]`) ||
+		!strings.Contains(string(body), `"score":61`) ||
+		!strings.Contains(string(body), `claim allows any offering_id; exact interaction_mode; capability_id matched`) {
+		t.Fatalf("join-rank preview status=%d body=%s", resp.StatusCode, string(body))
 	}
 }
 

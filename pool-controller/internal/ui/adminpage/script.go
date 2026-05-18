@@ -11,6 +11,7 @@ const pageScript = `
     let latestBackends = [];
     let latestAssignmentPreview = null;
     let latestJoinPreview = null;
+    let latestAssignmentCandidates = [];
 
     function auditQuery() {
       const params = new URLSearchParams();
@@ -223,17 +224,28 @@ const pageScript = `
           const claimDiv = document.createElement("div");
           claimDiv.className = "check";
           const claimReasons = (claim.reasons || []).length ? claim.reasons.join("; ") : "";
-          const draftButton = (claim.active_offer_ids || []).length > 0
-            ? '<div class="row"><button data-join-draft="' + (item.backend_id || "") + '|' + claim.active_offer_ids[0] + '" class="secondary">Use First Active Offer In Assignment Draft</button></div>'
+          const suggestedOfferID = (claim.suggested_offer_ids || [])[0] || "";
+          const draftButton = suggestedOfferID
+            ? '<div class="row"><button data-join-draft="' + (item.backend_id || "") + '|' + suggestedOfferID + '" class="secondary">Use Suggested Offer In Assignment Draft</button></div>'
             : "";
           claimDiv.innerHTML =
             '<strong class="' + (claim.servable ? "ok" : "warn") + '">claim</strong>' +
             '<div class="small">' + [claim.capability_id || "", claim.offering_id || "", claim.interaction_mode || ""].filter(Boolean).join(" / ") + '</div>' +
             '<div class="small">matching_offers=' + ((claim.matching_offer_ids || []).join(", ") || "none") + '</div>' +
             '<div class="small">active_offers=' + ((claim.active_offer_ids || []).join(", ") || "none") + '</div>' +
+            '<div class="small">suggested_offers=' + ((claim.suggested_offer_ids || []).join(", ") || "none") + '</div>' +
             draftButton +
             (claimReasons ? '<div class="small">' + claimReasons + '</div>' : '');
           host.appendChild(claimDiv);
+          (claim.suggestions || []).forEach(suggestion => {
+            const suggestionDiv = document.createElement("div");
+            suggestionDiv.className = "check";
+            suggestionDiv.innerHTML =
+              '<strong class="ok">suggestion</strong>' +
+              '<div class="small">' + (suggestion.offer_id || "") + ' | score=' + String(suggestion.score || 0) + '</div>' +
+              (suggestion.reason ? '<div class="small">' + suggestion.reason + '</div>' : '');
+            host.appendChild(suggestionDiv);
+          });
         });
       });
       host.querySelectorAll("[data-join-draft]").forEach(btn => btn.onclick = () => {
@@ -345,12 +357,13 @@ const pageScript = `
     async function refreshAll() {
       setStatus("Refreshing control-plane state...");
       try {
-        const [auditEvents, offers, joinRequests, members, backends, assignments, runtime, brokerConfig] = await Promise.all([
+        const [auditEvents, offers, joinRequests, members, backends, assignmentCandidates, assignments, runtime, brokerConfig] = await Promise.all([
           api(auditQuery()),
           api("/admin/v1/offers"),
           api("/admin/v1/join-requests"),
           api("/admin/v1/members"),
           api("/admin/v1/member-backends"),
+          api("/admin/v1/assignment-candidates"),
           api("/admin/v1/assignments"),
           api("/admin/v1/broker-runtime"),
           api("/admin/v1/broker-config", { headers: tokenHeaders(false) })
@@ -358,6 +371,7 @@ const pageScript = `
 
         latestOffers = offers.offers || [];
         latestBackends = backends.backends || [];
+        latestAssignmentCandidates = assignmentCandidates.candidates || [];
         syncAssignmentSelectors();
         void refreshAssignmentDraftState();
         renderAuditEvents(auditEvents.events || []);
@@ -365,6 +379,7 @@ const pageScript = `
         renderJoinRequests(joinRequests.join_requests || []);
         renderMembers(members.members || []);
         renderBackends(backends.backends || []);
+        renderAssignmentCandidates(assignmentCandidates.candidates || []);
         renderAssignments(assignments.assignments || []);
         renderRuntime(runtime, brokerConfig);
         setStatus("Control-plane state refreshed.", "ok");
@@ -469,6 +484,40 @@ const pageScript = `
       host.querySelectorAll("[data-backend-active]").forEach(btn => btn.onclick = () => patchBackend(btn.dataset.backendActive, "active"));
       host.querySelectorAll("[data-backend-draining]").forEach(btn => btn.onclick = () => patchBackend(btn.dataset.backendDraining, "draining"));
       host.querySelectorAll("[data-backend-disabled]").forEach(btn => btn.onclick = () => patchBackend(btn.dataset.backendDisabled, "disabled"));
+    }
+
+    function renderAssignmentCandidates(items) {
+      const host = $("assignmentCandidates");
+      host.innerHTML = "";
+      items.forEach(item => {
+        const claimsHtml = (item.suggested_claims || []).map(claim => {
+          const suggested = (claim.suggested_offer_ids || [])[0] || "";
+          const button = suggested
+            ? '<button data-candidate-draft="' + item.backend_id + '|' + suggested + '" class="secondary">Use Suggested Offer</button>'
+            : "";
+          return (
+            '<div class="check">' +
+              '<strong class="' + (claim.servable ? "ok" : "warn") + '">claim</strong>' +
+              '<div class="small">' + [claim.capability_id || "", claim.offering_id || "", claim.interaction_mode || ""].filter(Boolean).join(" / ") + '</div>' +
+              '<div class="small">suggested_offers=' + ((claim.suggested_offer_ids || []).join(", ") || "none") + '</div>' +
+              ((claim.suggestions || []).map(suggestion => '<div class="small">suggestion ' + (suggestion.offer_id || "") + ' score=' + String(suggestion.score || 0) + ' ' + (suggestion.reason || "") + '</div>').join("")) +
+              (button ? '<div class="row">' + button + '</div>' : '') +
+            '</div>'
+          );
+        }).join("");
+        const el = card(
+          "<strong>" + item.backend_id + "</strong>" +
+          '<div class="row"><span class="pill">' + item.backend_status + '</span><span class="pill">' + item.verification_status + '</span><span class="pill">active_assignments=' + item.active_assignments + '</span></div>' +
+          '<div class="small">' + (item.member_display_name || item.member_eth_address || item.member_id) + '</div>' +
+          '<div class="small">total_assignments=' + item.assignment_count + '</div>' +
+          claimsHtml
+        );
+        host.appendChild(el);
+      });
+      host.querySelectorAll("[data-candidate-draft]").forEach(btn => btn.onclick = () => {
+        const parts = btn.dataset.candidateDraft.split("|");
+        seedAssignmentDraft(parts[0] || "", parts[1] || "");
+      });
     }
 
     function renderAssignments(items) {

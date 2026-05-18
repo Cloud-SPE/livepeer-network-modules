@@ -1440,6 +1440,88 @@ func TestBrokerRuntimeEndpoints(t *testing.T) {
 	}
 }
 
+func TestApplyDesiredRuntimeDetectsRevisionDrift(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cfg := &config.Config{
+		Identity: config.Identity{OrchEthAddress: "0x123"},
+		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
+	}
+	stateRepo, err := repo.Open(dataDir)
+	if err != nil {
+		t.Fatalf("repo.Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
+	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	if err != nil {
+		t.Fatalf("renderBrokerState() error = %v", err)
+	}
+	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+		t.Fatalf("state.Replace() error = %v", err)
+	}
+
+	desired := runtimeInfo
+	if err := stateRepo.PutOffer(types.Offer{
+		ID:              "offer-1",
+		CapabilityID:    "rerank",
+		OfferingID:      "zerank-2-default",
+		InteractionMode: "http-reqresp@v0",
+		WorkUnit: config.WorkUnit{
+			Name:      "requests",
+			Extractor: map[string]any{"type": "request-formula"},
+		},
+		Price: config.Price{AmountWei: "1", PerUnits: 1},
+	}); err != nil {
+		t.Fatalf("PutOffer() error = %v", err)
+	}
+	if err := stateRepo.PutMember(types.MemberRecord{
+		ID:         "member-1",
+		EthAddress: "0xmember",
+		PayoutMode: "onchain",
+		Status:     types.MemberStatusActive,
+	}); err != nil {
+		t.Fatalf("PutMember() error = %v", err)
+	}
+	if err := stateRepo.PutMemberBackend(types.MemberBackend{
+		ID:                 "backend-1",
+		MemberID:           "member-1",
+		Transport:          "http",
+		URL:                "http://backend:8080/v1/rerank",
+		Auth:               config.AuthConfig{Method: "none"},
+		VerificationStatus: types.VerificationPassing,
+		Status:             types.BackendStatusActive,
+		ClaimedCapabilities: []types.ClaimedOffer{{
+			CapabilityID:    "rerank",
+			OfferingID:      "zerank-2-default",
+			InteractionMode: "http-reqresp@v0",
+		}},
+	}); err != nil {
+		t.Fatalf("PutMemberBackend() error = %v", err)
+	}
+	if err := stateRepo.PutAssignment(types.Assignment{
+		ID:              "assignment-1",
+		OfferID:         "offer-1",
+		MemberBackendID: "backend-1",
+		Status:          types.AssignmentStatusActive,
+	}); err != nil {
+		t.Fatalf("PutAssignment() error = %v", err)
+	}
+
+	err = state.ApplyDesiredRuntime(desired)
+	if err == nil || !strings.Contains(err.Error(), "desired broker runtime changed during apply") {
+		t.Fatalf("ApplyDesiredRuntime() err=%v", err)
+	}
+	_, _, _, current := state.Snapshot()
+	if current == nil || current.Revision == desired.Revision {
+		t.Fatalf("current runtime = %#v, desired = %#v", current, desired)
+	}
+}
+
 func TestJoinRequestVerificationAndBackendVerificationFlow(t *testing.T) {
 	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

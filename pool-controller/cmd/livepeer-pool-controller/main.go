@@ -481,6 +481,23 @@ func (s *runtimeState) RefreshRenderedFromState(source string) error {
 	return s.Replace(cfg, rendered, source, runtimeInfo)
 }
 
+func (s *runtimeState) ApplyDesiredRuntime(desired *types.DesiredBrokerRuntime) error {
+	if desired == nil || strings.TrimSpace(desired.Revision) == "" {
+		return fmt.Errorf("desired broker runtime is not available")
+	}
+	if err := s.RefreshRenderedFromState("broker-runtime-apply"); err != nil {
+		return err
+	}
+	_, _, _, current := s.Snapshot()
+	if current == nil || strings.TrimSpace(current.Revision) == "" {
+		return fmt.Errorf("desired broker runtime is not available after apply refresh")
+	}
+	if current.Revision != desired.Revision {
+		return fmt.Errorf("desired broker runtime changed during apply: expected %s got %s", desired.Revision, current.Revision)
+	}
+	return nil
+}
+
 func (s *runtimeState) syncSelectionMetrics() error {
 	cfg, _, _, _ := s.Snapshot()
 	if cfg == nil {
@@ -523,7 +540,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		Repo:                state.repo,
 		WrapAuth:            func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
 		RefreshRendered:     func(source string) error { return state.RefreshRenderedFromState(source) },
-		ApplyDesiredRuntime: func(*types.DesiredBrokerRuntime) error { return nil },
+		ApplyDesiredRuntime: func(desired *types.DesiredBrokerRuntime) error { return state.ApplyDesiredRuntime(desired) },
 		Verifier:            verifier,
 		GetBrokerConfig: func() []byte {
 			_, rendered, _, _ := state.Snapshot()

@@ -703,6 +703,10 @@ func Register(mux *http.ServeMux, deps Deps) {
 			Actor:    req.Actor,
 			Error:    req.Error,
 		}, now, deps.ApplyDesiredRuntime)
+		currentDesired := desired
+		if latest, latestErr := deps.GetDesiredRuntime(); latestErr == nil && latest != nil {
+			currentDesired = latest
+		}
 		if status == "failed" {
 			_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
 				Kind:         "broker_runtime_apply_failed",
@@ -711,7 +715,9 @@ func Register(mux *http.ServeMux, deps Deps) {
 				ResourceID:   desired.Revision,
 				ResourceType: "broker_runtime",
 				Details: map[string]any{
-					"error": applied.LastApplyError,
+					"error":            applied.LastApplyError,
+					"desired_revision": desired.Revision,
+					"current_revision": currentDesired.Revision,
 				},
 			})
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -728,13 +734,13 @@ func Register(mux *http.ServeMux, deps Deps) {
 			ResourceID:   applied.AppliedRevision,
 			ResourceType: "broker_runtime",
 			Details: map[string]any{
-				"desired_revision": desired.Revision,
+				"desired_revision": currentDesired.Revision,
 				"applied_revision": applied.AppliedRevision,
 			},
 		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(desired, applied))
+		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(currentDesired, applied))
 	}))
 }
 

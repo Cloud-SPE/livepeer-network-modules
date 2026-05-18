@@ -9,7 +9,7 @@ type Config struct {
 	PaymentDaemon   PaymentDaemon   `yaml:"payment_daemon,omitempty"`
 	ReceiptSink     ReceiptSink     `yaml:"receipt_sink,omitempty"`
 	Bootstrap       Bootstrap       `yaml:"bootstrap,omitempty"`
-	Members         []Member        `yaml:"members,omitempty"`
+	Members         []LegacyMember  `yaml:"members,omitempty"`
 }
 
 type Identity struct {
@@ -68,33 +68,6 @@ type Bootstrap struct {
 	BrokerAdminURL         string     `yaml:"broker_admin_url,omitempty"`
 	BrokerAdminAuth        AuthConfig `yaml:"broker_admin_auth,omitempty"`
 	BrokerAdminTimeoutMS   int        `yaml:"broker_admin_timeout_ms,omitempty"`
-}
-
-type Member struct {
-	EthAddress  string    `yaml:"eth_address"`
-	DisplayName string    `yaml:"display_name,omitempty"`
-	PayoutMode  string    `yaml:"payout_mode,omitempty"`
-	Backends    []Backend `yaml:"backends"`
-}
-
-type Backend struct {
-	ID        string         `yaml:"id"`
-	Transport string         `yaml:"transport"`
-	URL       string         `yaml:"url,omitempty"`
-	Auth      AuthConfig     `yaml:"auth,omitempty"`
-	Offerings []Offering     `yaml:"offerings"`
-	Extra     map[string]any `yaml:"extra,omitempty"`
-}
-
-type Offering struct {
-	CapabilityID    string         `yaml:"capability_id"`
-	OfferingID      string         `yaml:"offering_id"`
-	InteractionMode string         `yaml:"interaction_mode"`
-	WorkUnit        WorkUnit       `yaml:"work_unit"`
-	Health          Health         `yaml:"health,omitempty"`
-	Price           Price          `yaml:"price"`
-	Extra           map[string]any `yaml:"extra,omitempty"`
-	Constraints     map[string]any `yaml:"constraints,omitempty"`
 }
 
 type WorkUnit struct {

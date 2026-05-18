@@ -12,6 +12,7 @@ const pageScript = `
     let latestAssignmentPreview = null;
     let latestJoinPreview = null;
     let latestAssignmentCandidates = [];
+    let latestAuditEvents = [];
 
     function auditQuery() {
       const params = new URLSearchParams();
@@ -21,6 +22,25 @@ const pageScript = `
       if ($("auditLimit").value.trim()) params.set("limit", $("auditLimit").value.trim());
       const qs = params.toString();
       return qs ? "/admin/v1/audit-events?" + qs : "/admin/v1/audit-events";
+    }
+
+    function latestStatusTransition(kind, resourceType, resourceID) {
+      const items = latestAuditEvents || [];
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (item.kind === kind && item.resource_type === resourceType && item.resource_id === resourceID) {
+          return item;
+        }
+      }
+      return null;
+    }
+
+    function transitionSummary(item) {
+      if (!item || !item.details) return "";
+      const from = item.details.from_status || "";
+      const to = item.details.to_status || "";
+      if (!from && !to) return "";
+      return from + " -> " + to;
     }
 
     function tokenHeaders(includeJSON = true) {
@@ -372,6 +392,7 @@ const pageScript = `
         latestOffers = offers.offers || [];
         latestBackends = backends.backends || [];
         latestAssignmentCandidates = assignmentCandidates.candidates || [];
+        latestAuditEvents = auditEvents.events || [];
         syncAssignmentSelectors();
         void refreshAssignmentDraftState();
         renderAuditEvents(auditEvents.events || []);
@@ -444,11 +465,13 @@ const pageScript = `
       const host = $("members");
       host.innerHTML = "";
       items.forEach(item => {
+        const transition = latestStatusTransition("member_status_updated", "member", item.id);
         const el = card(
           "<strong>" + (item.display_name || item.eth_address) + '</strong>' +
           '<div class="row"><span class="pill">' + (item.status || "active") + '</span></div>' +
           '<div class="mono">' + item.eth_address + '</div>' +
           '<div class="small">payout: ' + (item.payout_mode || "onchain") + '</div>' +
+          (transition ? '<div class="small">last status change: ' + transitionSummary(transition) + '</div>' : '') +
           '<div class="row">' +
             '<button data-member-active="' + item.id + '" class="secondary">Set Active</button>' +
             '<button data-member-suspended="' + item.id + '" class="secondary">Suspend</button>' +
@@ -464,11 +487,13 @@ const pageScript = `
       const host = $("backends");
       host.innerHTML = "";
       items.forEach(item => {
+        const transition = latestStatusTransition("member_backend_status_updated", "member_backend", item.id);
         const el = card(
           "<strong>" + item.id + '</strong>' +
           '<div class="row"><span class="pill">' + item.status + '</span><span class="pill">' + item.verification_status + '</span></div>' +
           '<div class="mono">' + item.url + '</div>' +
           '<div class="small">' + (item.verification_error || "") + '</div>' +
+          (transition ? '<div class="small">last status change: ' + transitionSummary(transition) + '</div>' : '') +
           '<div class="row">' +
             '<button data-backend-verify="' + item.id + '" class="secondary">Verify</button>' +
             '<button data-backend-promote="' + item.id + '" class="secondary">Use In Assignment Draft</button>' +
@@ -524,11 +549,13 @@ const pageScript = `
       const host = $("assignments");
       host.innerHTML = "";
       items.forEach(item => {
+        const transition = latestStatusTransition("assignment_status_updated", "assignment", item.id);
         const el = card(
           "<strong>" + item.id + '</strong>' +
           '<div class="row"><span class="pill">' + item.status + '</span></div>' +
           '<div class="small">offer: ' + item.offer_id + '</div>' +
           '<div class="small">backend: ' + item.member_backend_id + '</div>' +
+          (transition ? '<div class="small">last status change: ' + transitionSummary(transition) + '</div>' : '') +
           '<div class="row">' +
             '<button data-assignment-active="' + item.id + '" class="secondary">Set Active</button>' +
             '<button data-assignment-draining="' + item.id + '" class="secondary">Drain</button>' +

@@ -12,6 +12,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/assignmentpolicy"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/backendverify"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/offerservice"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/runtimeservice"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/statusservice"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ui/adminpage"
@@ -541,7 +542,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		applied, _ := deps.Repo.GetAppliedBrokerRuntime()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(buildBrokerRuntimeView(desired, applied))
+		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(desired, applied))
 	}))
 	mux.HandleFunc("GET /admin/v1/broker-runtime/diff", auth(func(w http.ResponseWriter, _ *http.Request) {
 		desired, err := deps.GetDesiredRuntime()
@@ -552,15 +553,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		applied, _ := deps.Repo.GetAppliedBrokerRuntime()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			DesiredRevision string `json:"desired_revision,omitempty"`
-			AppliedRevision string `json:"applied_revision,omitempty"`
-			Dirty           bool   `json:"dirty"`
-		}{
-			DesiredRevision: revisionOf(desired),
-			AppliedRevision: applied.AppliedRevision,
-			Dirty:           revisionOf(desired) != applied.AppliedRevision,
-		})
+		_ = json.NewEncoder(w).Encode(runtimeservice.BuildDiff(desired, applied))
 	}))
 	mux.HandleFunc("POST /admin/v1/broker-runtime/mark-applied", auth(func(w http.ResponseWriter, r *http.Request) {
 		desired, err := deps.GetDesiredRuntime()
@@ -568,46 +561,31 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if desired == nil || desired.Revision == "" {
-			http.Error(w, "desired broker runtime is not available", http.StatusBadRequest)
-			return
-		}
 		var req brokerRuntimeMarkAppliedRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		revision := strings.TrimSpace(req.Revision)
-		if revision == "" {
-			revision = desired.Revision
-		}
-		if revision != desired.Revision {
-			http.Error(w, "revision must match current desired revision", http.StatusBadRequest)
-			return
-		}
 		now := time.Now().UTC()
-		applied := types.AppliedBrokerRuntime{
-			DesiredRevision:     desired.Revision,
-			AppliedRevision:     revision,
-			LastApplyStartedAt:  now,
-			LastApplyFinishedAt: now,
-			LastApplyStatus:     "applied",
-		}
-		if err := deps.Repo.PutAppliedBrokerRuntime(applied); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		applied, err := runtimeservice.MarkApplied(deps.Repo, desired, runtimeservice.MarkRequest{
+			Revision: req.Revision,
+			Actor:    req.Actor,
+		}, now)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
 			Kind:         "broker_runtime_mark_applied",
 			OccurredAt:   now,
 			Actor:        req.Actor,
-			ResourceID:   revision,
+			ResourceID:   applied.AppliedRevision,
 			ResourceType: "broker_runtime",
 			Details: map[string]any{
 				"desired_revision": desired.Revision,
-				"applied_revision": revision,
+				"applied_revision": applied.AppliedRevision,
 			},
 		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(buildBrokerRuntimeView(desired, applied))
+		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(desired, applied))
 	}))
 	mux.HandleFunc("POST /admin/v1/broker-runtime/mark-started", auth(func(w http.ResponseWriter, r *http.Request) {
 		desired, err := deps.GetDesiredRuntime()
@@ -615,20 +593,12 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if desired == nil || desired.Revision == "" {
-			http.Error(w, "desired broker runtime is not available", http.StatusBadRequest)
-			return
-		}
 		var req brokerRuntimeMarkAppliedRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		now := time.Now().UTC()
-		applied, _ := deps.Repo.GetAppliedBrokerRuntime()
-		applied.DesiredRevision = desired.Revision
-		applied.LastApplyStartedAt = now
-		applied.LastApplyStatus = "started"
-		applied.LastApplyError = ""
-		if err := deps.Repo.PutAppliedBrokerRuntime(applied); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		applied, err := runtimeservice.MarkStarted(deps.Repo, desired, now)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
@@ -640,7 +610,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(buildBrokerRuntimeView(desired, applied))
+		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(desired, applied))
 	}))
 	mux.HandleFunc("POST /admin/v1/broker-runtime/mark-failed", auth(func(w http.ResponseWriter, r *http.Request) {
 		desired, err := deps.GetDesiredRuntime()
@@ -648,20 +618,15 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if desired == nil || desired.Revision == "" {
-			http.Error(w, "desired broker runtime is not available", http.StatusBadRequest)
-			return
-		}
 		var req brokerRuntimeMarkAppliedRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		now := time.Now().UTC()
-		applied, _ := deps.Repo.GetAppliedBrokerRuntime()
-		applied.DesiredRevision = desired.Revision
-		applied.LastApplyFinishedAt = now
-		applied.LastApplyStatus = "failed"
-		applied.LastApplyError = strings.TrimSpace(req.Error)
-		if err := deps.Repo.PutAppliedBrokerRuntime(applied); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		applied, err := runtimeservice.MarkFailed(deps.Repo, desired, runtimeservice.MarkRequest{
+			Actor: req.Actor,
+			Error: req.Error,
+		}, now)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
@@ -676,63 +641,8 @@ func Register(mux *http.ServeMux, deps Deps) {
 		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(buildBrokerRuntimeView(desired, applied))
+		_ = json.NewEncoder(w).Encode(runtimeservice.BuildView(desired, applied))
 	}))
-}
-
-type brokerRuntimeView struct {
-	DesiredRevision     string    `json:"desired_revision,omitempty"`
-	AppliedRevision     string    `json:"applied_revision,omitempty"`
-	Dirty               bool      `json:"dirty"`
-	LastApplyStartedAt  time.Time `json:"last_apply_started_at,omitempty"`
-	LastApplyFinishedAt time.Time `json:"last_apply_finished_at,omitempty"`
-	LastApplyStatus     string    `json:"last_apply_status,omitempty"`
-	LastApplyError      string    `json:"last_apply_error,omitempty"`
-	OfferCount          int       `json:"offer_count,omitempty"`
-	MemberCount         int       `json:"member_count,omitempty"`
-	BackendCount        int       `json:"backend_count,omitempty"`
-	AssignmentCount     int       `json:"assignment_count,omitempty"`
-}
-
-func buildBrokerRuntimeView(desired *types.DesiredBrokerRuntime, applied types.AppliedBrokerRuntime) brokerRuntimeView {
-	return brokerRuntimeView{
-		DesiredRevision:     revisionOf(desired),
-		AppliedRevision:     applied.AppliedRevision,
-		Dirty:               revisionOf(desired) != applied.AppliedRevision,
-		LastApplyStartedAt:  applied.LastApplyStartedAt,
-		LastApplyFinishedAt: applied.LastApplyFinishedAt,
-		LastApplyStatus:     applied.LastApplyStatus,
-		LastApplyError:      applied.LastApplyError,
-		OfferCount:          countFromDesired(desired, "offer"),
-		MemberCount:         countFromDesired(desired, "member"),
-		BackendCount:        countFromDesired(desired, "backend"),
-		AssignmentCount:     countFromDesired(desired, "assignment"),
-	}
-}
-
-func revisionOf(desired *types.DesiredBrokerRuntime) string {
-	if desired == nil {
-		return ""
-	}
-	return desired.Revision
-}
-
-func countFromDesired(desired *types.DesiredBrokerRuntime, kind string) int {
-	if desired == nil {
-		return 0
-	}
-	switch kind {
-	case "offer":
-		return desired.OfferCount
-	case "member":
-		return desired.MemberCount
-	case "backend":
-		return desired.BackendCount
-	case "assignment":
-		return desired.AssignmentCount
-	default:
-		return 0
-	}
 }
 
 func assignmentFromRequest(req assignmentMutationRequest) (types.Assignment, error) {

@@ -38,6 +38,7 @@ The following are already in place:
   - `openai:chat-completions`
   - `openai:embeddings`
   - `openai:audio-*` via explicit probes plus interaction-mode fallbacks
+  - `video:transcode.abr` via ABR preset-surface validation
 
 The remaining tasks below should be read as follow-up work, not missing core
 behavior from the shipped first slice.
@@ -59,13 +60,25 @@ These are low-risk cleanup items that reduce ambiguity around what has shipped.
 
 These are the most direct functional extensions to the shipped Pool scorer.
 
-1. Add synthetic probes for `video:transcode.abr`.
-2. Add synthetic probes for `video:live.rtmp`.
-3. Add synthetic probes for deferred session/media families only after the
+1. Add synthetic probes for `video:live.rtmp`.
+2. Add synthetic probes for deferred session/media families only after the
    video probe recipes stabilize:
    - `vtuber`
    - `daydream`
    - other session-control workloads
+
+`video:live.rtmp` has an architectural blocker, not just a missing probe
+recipe. The shipped live RTMP path is broker-local `ffmpeg-subprocess` plus
+broker RTMP/HLS listeners, while the Pool member model from `0029` is
+"backend runtime only, no member-side broker." `0032` now makes that
+limitation explicit and rejects Pool live RTMP offerings in config until a new
+contract exists. Before a Pool synthetic probe can exist for this family, the
+repo needs a concrete Pool member contract for remote live capacity resale,
+for example:
+
+- allow/require a member-side broker for live workloads
+- define a remote live runner transport that the Pool broker can drive
+- or explicitly defer Pool support for `video:live.rtmp`
 
 Why this is first:
 
@@ -131,8 +144,9 @@ These remain deferred unless priorities change:
 If the goal is to continue Pool implementation immediately, the recommended
 next slice is:
 
-1. `video:transcode.abr` synthetic probe support
-2. `video:live.rtmp` synthetic probe support
+1. resolve the Pool contract for remote `video:live.rtmp` beyond the explicit
+   `0032` defer/validation
+2. add `video:live.rtmp` synthetic probe support
 3. only then move to `vtuber` / `daydream` / session-control probing
 
 That keeps the next work aligned with the architecture already in place and

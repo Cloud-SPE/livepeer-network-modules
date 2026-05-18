@@ -162,6 +162,8 @@ Synthetic probe behavior:
 - current concrete probes:
   - `openai:chat-completions`
   - `openai:embeddings`
+  - `video:transcode.abr` via `GET /v1/video/transcode/abr/presets`,
+    requiring at least one declared preset
 - current concrete audio probes:
   - `openai:audio-transcriptions`
   - `openai:audio-translations`
@@ -172,6 +174,14 @@ Synthetic probe behavior:
   - `http-reqresp@v0` uses the speech / TTS probe recipe
 - unsupported audio families still return skipped results with
   `audio_probe_not_implemented`
+
+Current Pool limitation:
+
+- `video:live.rtmp` is intentionally rejected in `pool-controller` member
+  configs. The current Pool member model is backend-runtime-only, while the
+  shipped live RTMP path is broker-local `ffmpeg-subprocess` plus broker
+  RTMP/HLS listeners. See
+  `docs/exec-plans/active/0032-pool-live-rtmp-contract-decision.md`.
 
 Current public endpoints:
 

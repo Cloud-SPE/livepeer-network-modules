@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLoadDefaultsAndValidation(t *testing.T) {
 	cfg, err := Load([]byte(`
@@ -198,6 +201,35 @@ members:
 `))
 	if err == nil {
 		t.Fatal("Load() error = nil, want payout_mode validation error")
+	}
+}
+
+func TestLoadRejectsPoolLiveRTMPOffering(t *testing.T) {
+	_, err := Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+members:
+  - eth_address: 0xabc
+    backends:
+      - id: live-a
+        transport: http
+        url: http://backend
+        offerings:
+          - capability_id: video:live.rtmp
+            offering_id: default
+            interaction_mode: rtmp-ingress-hls-egress@v0
+            work_unit:
+              name: out_time_seconds
+              extractor: { type: ffmpeg-progress, unit: out_time_seconds }
+            price:
+              amount_wei: "1"
+              per_units: 1
+`))
+	if err == nil {
+		t.Fatal("Load() error = nil, want Pool live RTMP validation error")
+	}
+	if !strings.Contains(err.Error(), "unsupported Pool live RTMP topology") {
+		t.Fatalf("Load() error = %v, want Pool live RTMP validation error", err)
 	}
 }
 

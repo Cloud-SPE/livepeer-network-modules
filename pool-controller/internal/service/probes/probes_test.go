@@ -43,32 +43,32 @@ func TestRunOnceAppliesChatEmbeddingsAndAudioProbes(t *testing.T) {
 						ID:        "backend-a",
 						Transport: "http",
 						URL:       ts.URL + "/chat",
-							Offerings: []config.Offering{{
-								CapabilityID: "openai:chat-completions",
-								OfferingID:   "default",
-								InteractionMode: "http-reqresp@v0",
-							}},
-						},
+						Offerings: []config.Offering{{
+							CapabilityID:    "openai:chat-completions",
+							OfferingID:      "default",
+							InteractionMode: "http-reqresp@v0",
+						}},
+					},
 					{
 						ID:        "backend-b",
 						Transport: "http",
 						URL:       ts.URL + "/embeddings",
-							Offerings: []config.Offering{{
-								CapabilityID: "openai:embeddings",
-								OfferingID:   "default",
-								InteractionMode: "http-reqresp@v0",
-							}},
-						},
+						Offerings: []config.Offering{{
+							CapabilityID:    "openai:embeddings",
+							OfferingID:      "default",
+							InteractionMode: "http-reqresp@v0",
+						}},
+					},
 					{
 						ID:        "backend-c",
 						Transport: "http",
 						URL:       ts.URL + "/audio-transcriptions",
-							Offerings: []config.Offering{{
-								CapabilityID: "openai:audio-transcriptions",
-								OfferingID:   "default",
-								InteractionMode: "http-multipart@v0",
-							}},
-						},
+						Offerings: []config.Offering{{
+							CapabilityID:    "openai:audio-transcriptions",
+							OfferingID:      "default",
+							InteractionMode: "http-multipart@v0",
+						}},
+					},
 				},
 			},
 		},
@@ -197,6 +197,111 @@ func TestRunOnceSkipsUnsupportedAudioFamily(t *testing.T) {
 		t.Fatalf("applied callback count = %d, want 0", applied)
 	}
 	if len(summary.Results) != 1 || summary.Results[0].Reason != "audio_probe_not_implemented" {
+		t.Fatalf("results = %#v", summary.Results)
+	}
+}
+
+func TestRunOnceAppliesVideoABRProbe(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/video/transcode/abr/presets" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"presets": []map[string]any{
+				{"name": "abr-standard"},
+			},
+		})
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Members: []config.Member{
+			{
+				EthAddress: "0xabc",
+				Backends: []config.Backend{
+					{
+						ID:        "backend-video",
+						Transport: "http",
+						URL:       ts.URL + "/v1/video/transcode/abr",
+						Offerings: []config.Offering{{
+							CapabilityID:    "video:transcode.abr",
+							OfferingID:      "default",
+							InteractionMode: "http-reqresp@v0",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	applied := make([]types.SyntheticProbeObservation, 0, 1)
+	runner := NewRunner(500 * time.Millisecond)
+	summary, err := runner.RunOnce(context.Background(), cfg, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
+		applied = append(applied, obs)
+		return types.BackendSelectionState{}, nil
+	})
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if summary.Applied != 1 || summary.Succeeded != 1 || summary.Failed != 0 || summary.Skipped != 0 {
+		t.Fatalf("summary = %#v", summary)
+	}
+	if len(applied) != 1 || !applied[0].Success {
+		t.Fatalf("applied = %#v", applied)
+	}
+}
+
+func TestRunOnceFailsVideoABRProbeOnInvalidPresetResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/video/transcode/abr/presets" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"presets": []map[string]any{},
+		})
+	}))
+	defer ts.Close()
+
+	cfg := &config.Config{
+		Members: []config.Member{
+			{
+				EthAddress: "0xabc",
+				Backends: []config.Backend{
+					{
+						ID:        "backend-video",
+						Transport: "http",
+						URL:       ts.URL,
+						Offerings: []config.Offering{{
+							CapabilityID:    "video:transcode.abr",
+							OfferingID:      "default",
+							InteractionMode: "http-reqresp@v0",
+						}},
+					},
+				},
+			},
+		},
+	}
+
+	applied := make([]types.SyntheticProbeObservation, 0, 1)
+	runner := NewRunner(500 * time.Millisecond)
+	summary, err := runner.RunOnce(context.Background(), cfg, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
+		applied = append(applied, obs)
+		return types.BackendSelectionState{}, nil
+	})
+	if err != nil {
+		t.Fatalf("RunOnce() error = %v", err)
+	}
+	if summary.Applied != 1 || summary.Succeeded != 0 || summary.Failed != 1 || summary.Skipped != 0 {
+		t.Fatalf("summary = %#v", summary)
+	}
+	if len(applied) != 1 || applied[0].Success || applied[0].Result != "probe_invalid_response" {
+		t.Fatalf("applied = %#v", applied)
+	}
+	if len(summary.Results) != 1 || summary.Results[0].Reason != "probe_invalid_response" {
 		t.Fatalf("results = %#v", summary.Results)
 	}
 }

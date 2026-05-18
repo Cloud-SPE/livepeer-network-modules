@@ -251,6 +251,16 @@ func validate(cfg *Config) error {
 				if offering.Price.PerUnits == 0 {
 					return fmt.Errorf("members[%d].backends[%d].offerings[%d].price.per_units must be > 0", memberIndex, backendIndex, offeringIndex)
 				}
+				if offering.CapabilityID == "video:live.rtmp" || offering.InteractionMode == "rtmp-ingress-hls-egress@v0" {
+					return fmt.Errorf(
+						"members[%d].backends[%d].offerings[%d] uses unsupported Pool live RTMP topology (%s / %s): pool-controller currently supports backend-provider-only members, but video:live.rtmp is broker-local ffmpeg-subprocess + RTMP/HLS; see docs/exec-plans/active/0032-pool-live-rtmp-contract-decision.md",
+						memberIndex,
+						backendIndex,
+						offeringIndex,
+						offering.CapabilityID,
+						offering.InteractionMode,
+					)
+				}
 
 			}
 		}

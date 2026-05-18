@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -154,6 +155,11 @@ func (r *Runner) probeOffering(ctx context.Context, member config.Member, backen
 		base.Success = ok
 		base.Result = reason
 		return base, statusFromSuccess(ok), reason, err
+	case offering.CapabilityID == "video:transcode.abr":
+		ok, reason, err := r.runVideoABRProbe(ctx, backend)
+		base.Success = ok
+		base.Result = reason
+		return base, statusFromSuccess(ok), reason, err
 	default:
 		return base, "skipped", "capability_out_of_scope", nil
 	}
@@ -292,6 +298,40 @@ func (r *Runner) runOpenAISpeechProbe(ctx context.Context, backend config.Backen
 	return true, "probe_ok", nil
 }
 
+func (r *Runner) runVideoABRProbe(ctx context.Context, backend config.Backend) (bool, string, error) {
+	target, err := videoABRPresetsURL(backend.URL)
+	if err != nil {
+		return false, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return false, "", err
+	}
+	if err := applyBackendAuth(req, backend.Auth); err != nil {
+		return false, "", err
+	}
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return false, "probe_transport_error", nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Sprintf("probe_http_%d", resp.StatusCode), nil
+	}
+	var decoded struct {
+		Presets []struct {
+			Name string `json:"name"`
+		} `json:"presets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return false, "probe_decode_error", nil
+	}
+	if len(decoded.Presets) == 0 || strings.TrimSpace(decoded.Presets[0].Name) == "" {
+		return false, "probe_invalid_response", nil
+	}
+	return true, "probe_ok", nil
+}
+
 func buildAudioMultipartBody(model string) (*bytes.Buffer, string, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -354,6 +394,28 @@ func modelName(backend config.Backend, offering config.Offering) string {
 		return value
 	}
 	return "probe-model"
+}
+
+func videoABRPresetsURL(rawBackendURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawBackendURL))
+	if err != nil {
+		return "", fmt.Errorf("parse backend url: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("backend url must be absolute")
+	}
+	trimmedPath := strings.TrimSuffix(parsed.Path, "/")
+	switch {
+	case strings.HasSuffix(trimmedPath, "/v1/video/transcode/abr"):
+		parsed.Path = trimmedPath + "/presets"
+	case strings.HasSuffix(trimmedPath, "/v1/video/transcode/abr/presets"):
+		parsed.Path = trimmedPath
+	default:
+		parsed.Path = "/v1/video/transcode/abr/presets"
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
 }
 
 func nestedString(source map[string]any, path ...string) string {

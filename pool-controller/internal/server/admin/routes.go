@@ -65,6 +65,25 @@ type brokerRuntimeMarkAppliedRequest struct {
 	Error    string `json:"error,omitempty"`
 }
 
+type assignmentPreviewRequest struct {
+	OfferID         string `json:"offer_id"`
+	MemberBackendID string `json:"member_backend_id"`
+}
+
+type assignmentPreviewView struct {
+	Compatible         bool                 `json:"compatible"`
+	Reasons            []string             `json:"reasons,omitempty"`
+	Checks             []compat.CheckResult `json:"checks,omitempty"`
+	MatchedClaim       *types.ClaimedOffer  `json:"matched_claim,omitempty"`
+	OfferFound         bool                 `json:"offer_found"`
+	BackendFound       bool                 `json:"backend_found"`
+	MemberFound        bool                 `json:"member_found"`
+	OfferStatus        string               `json:"offer_status,omitempty"`
+	BackendStatus      string               `json:"backend_status,omitempty"`
+	VerificationStatus string               `json:"verification_status,omitempty"`
+	MemberStatus       string               `json:"member_status,omitempty"`
+}
+
 func Register(mux *http.ServeMux, deps Deps) {
 	auth := deps.WrapAuth
 	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, _ *http.Request) {
@@ -406,6 +425,67 @@ func Register(mux *http.ServeMux, deps Deps) {
 		_ = json.NewEncoder(w).Encode(struct {
 			Assignments []types.Assignment `json:"assignments"`
 		}{Assignments: assignments})
+	}))
+	mux.HandleFunc("POST /admin/v1/assignment-preview", auth(func(w http.ResponseWriter, r *http.Request) {
+		var req assignmentPreviewRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		view := assignmentPreviewView{}
+		offer, err := deps.Repo.GetOffer(strings.TrimSpace(req.OfferID))
+		if err == nil {
+			view.OfferFound = true
+			view.OfferStatus = string(offer.Status)
+		}
+		backend, err := deps.Repo.GetMemberBackend(strings.TrimSpace(req.MemberBackendID))
+		if err == nil {
+			view.BackendFound = true
+			view.BackendStatus = string(backend.Status)
+			view.VerificationStatus = string(backend.VerificationStatus)
+			member, memberErr := deps.Repo.GetMember(backend.MemberID)
+			if memberErr == nil {
+				view.MemberFound = true
+				view.MemberStatus = string(member.Status)
+			} else {
+				view.Reasons = append(view.Reasons, memberErr.Error())
+			}
+			if view.OfferFound {
+				check := compat.Check(offer, backend)
+				view.Compatible = check.Compatible
+				view.Reasons = append(view.Reasons, check.Reasons...)
+				view.Checks = append(view.Checks, check.Checks...)
+				view.MatchedClaim = check.MatchedClaim
+			}
+		}
+		if !view.OfferFound {
+			view.Reasons = append(view.Reasons, "offer not found")
+		}
+		if !view.BackendFound {
+			view.Reasons = append(view.Reasons, "backend not found")
+		}
+		if view.OfferFound && offer.Status != types.OfferStatusActive {
+			view.Reasons = append(view.Reasons, "offer must be active")
+			view.Compatible = false
+		}
+		if view.BackendFound && backend.Status != types.BackendStatusActive {
+			view.Reasons = append(view.Reasons, "backend must be active")
+			view.Compatible = false
+		}
+		if view.BackendFound && backend.VerificationStatus != types.VerificationPassing {
+			view.Reasons = append(view.Reasons, "backend verification must be passing")
+			view.Compatible = false
+		}
+		if view.MemberFound {
+			member, _ := deps.Repo.GetMember(backend.MemberID)
+			if member.Status != types.MemberStatusActive {
+				view.Reasons = append(view.Reasons, "member must be active")
+				view.Compatible = false
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(view)
 	}))
 	mux.HandleFunc("POST /admin/v1/assignments", auth(func(w http.ResponseWriter, r *http.Request) {
 		var req assignmentMutationRequest

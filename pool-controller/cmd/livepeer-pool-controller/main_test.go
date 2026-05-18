@@ -1573,6 +1573,16 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 		t.Fatalf("POST /admin/v1/assignments status=%d body=%s", resp.StatusCode, string(body))
 	}
 
+	resp, err = http.Post(server.URL+"/admin/v1/assignment-preview", "application/json", bytes.NewBufferString(`{"offer_id":"rerank-zerank2","member_backend_id":"backend-flow"}`))
+	if err != nil {
+		t.Fatalf("POST /admin/v1/assignment-preview error = %v", err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"compatible":true`) || !strings.Contains(string(body), `"checks":[`) || !strings.Contains(string(body), `"matched_claim"`) {
+		t.Fatalf("assignment-preview status=%d body=%s", resp.StatusCode, string(body))
+	}
+
 	resp, err = http.Get(server.URL + "/admin/v1/broker-runtime")
 	if err != nil {
 		t.Fatalf("GET /admin/v1/broker-runtime error = %v", err)

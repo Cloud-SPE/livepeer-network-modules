@@ -28,6 +28,9 @@ func TestCheckMatchesClaim(t *testing.T) {
 	if !got.Compatible {
 		t.Fatalf("Check() = %#v, want compatible", got)
 	}
+	if got.MatchedClaim == nil || len(got.Checks) == 0 {
+		t.Fatalf("Check() = %#v, want matched claim and checks", got)
+	}
 }
 
 func TestCheckRejectsMismatch(t *testing.T) {
@@ -43,5 +46,8 @@ func TestCheckRejectsMismatch(t *testing.T) {
 	got := Check(offer, backend)
 	if got.Compatible || len(got.Reasons) == 0 {
 		t.Fatalf("Check() = %#v, want incompatibility", got)
+	}
+	if len(got.Checks) == 0 {
+		t.Fatalf("Check() = %#v, want checks", got)
 	}
 }

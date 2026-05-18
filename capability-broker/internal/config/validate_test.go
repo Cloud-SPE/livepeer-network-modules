@@ -44,6 +44,43 @@ func TestValidateDefaultsHTTPHealthProbe(t *testing.T) {
 	}
 }
 
+func TestValidateAdminAuth(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		AdminAuth: AuthConfig{
+			Method:    "bearer",
+			SecretRef: "env://BROKER_ADMIN_TOKEN",
+		},
+		Capabilities: []Capability{{
+			ID:              "openai:chat-completions",
+			OfferingID:      "default",
+			InteractionMode: "http-stream@v0",
+			WorkUnit: WorkUnit{
+				Name:      "tokens",
+				Extractor: map[string]any{"type": "openai-usage"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				URL:       "http://backend:8000/v1/chat/completions",
+			},
+			Extra: map[string]any{
+				"openai":   map[string]any{"model": "llama-3-70b"},
+				"provider": "vllm",
+			},
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	cfg.AdminAuth.SecretRef = "vault://not-supported-here"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "admin_auth.secret_ref must use env://") {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestValidateDefaultsPoolSnapshotPollingConfig(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},

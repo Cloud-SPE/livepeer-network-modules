@@ -17,6 +17,8 @@ exposes:
 - `GET /registry/health` — live capability availability for gateway resolvers.
 - `GET /healthz` — process health.
 - `GET /metrics` — Prometheus scrape.
+- `GET /admin/v1/runtime` — private runtime status, including loaded revision.
+- `POST /admin/v1/runtime/reload` — private runtime reload endpoint.
 
 Dispatches inbound requests to backends declared in `host-config.yaml`. Reports
 work units via the offering's declared extractor. Validates payment via a
@@ -36,6 +38,14 @@ work receipts to `pool-controller`:
 Receipt-sink failures are logged but do not fail paid requests.
 If `pool-controller` enables `admin_auth`, configure the matching bearer token
 on `receipt_sink.auth`.
+
+Broker runtime admin surface:
+
+- `GET /admin/v1/runtime` and `POST /admin/v1/runtime/reload` are intended for
+  private/operator use only.
+- They stay disabled unless `admin_auth.method: bearer` is configured in
+  `host-config.yaml`.
+- The bearer token must come from `admin_auth.secret_ref: env://...`.
 
 When `pool_snapshot.url` is configured, the broker also polls
 `pool-controller`'s backend-selection snapshot and exposes per-backend snapshot

@@ -16,6 +16,13 @@ identity:
   orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
   label: "broker-a"
 
+# Optional private admin auth for runtime-status and reload endpoints.
+# When omitted, /admin/v1/runtime* stays disabled.
+#
+# admin_auth:
+#   method: bearer
+#   secret_ref: env://BROKER_ADMIN_TOKEN
+
 listen:
   paid: ":8080"
   metrics: ":9090"

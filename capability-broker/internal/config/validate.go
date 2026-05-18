@@ -95,6 +95,18 @@ func (c *Config) Validate() error {
 	if c.Listen.Metrics == "" {
 		c.Listen.Metrics = ":9090"
 	}
+	switch c.AdminAuth.Method {
+	case "", "none":
+	case "bearer":
+		if c.AdminAuth.SecretRef == "" {
+			return fmt.Errorf("admin_auth.secret_ref is required when admin_auth.method=bearer")
+		}
+		if !strings.HasPrefix(c.AdminAuth.SecretRef, "env://") {
+			return fmt.Errorf("admin_auth.secret_ref must use env:// (got %q)", c.AdminAuth.SecretRef)
+		}
+	default:
+		return fmt.Errorf("admin_auth.method %q is not supported", c.AdminAuth.Method)
+	}
 	if c.PoolSnapshot.URL != "" {
 		u, err := url.Parse(c.PoolSnapshot.URL)
 		if err != nil {

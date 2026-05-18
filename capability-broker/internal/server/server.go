@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -118,6 +119,7 @@ type Server struct {
 	configPath           string
 	loadedConfigPath     string
 	loadedRevision       string
+	adminToken           string
 	loadedAt             time.Time
 	lastReloadStartedAt  time.Time
 	lastReloadFinishedAt time.Time
@@ -164,6 +166,10 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	metadata := newMetadataCatalog()
 	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
 	loadedRevision, loadedConfigPath, err := loadRuntimeRevision(opts.ConfigPath, cfg)
+	if err != nil {
+		return nil, err
+	}
+	adminToken, err := resolveAdminToken(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +242,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		configPath:       opts.ConfigPath,
 		loadedConfigPath: loadedConfigPath,
 		loadedRevision:   loadedRevision,
+		adminToken:       adminToken,
 		loadedAt:         time.Now().UTC(),
 		lastReloadStatus: "startup_loaded",
 		opts:             opts,
@@ -308,6 +315,25 @@ func loadRuntimeRevision(configPath string, cfg *config.Config) (string, string,
 	}
 	sum := sha256.Sum256([]byte(cfg.Identity.OrchEthAddress))
 	return fmt.Sprintf("%x", sum[:]), "", nil
+}
+
+func resolveAdminToken(cfg *config.Config) (string, error) {
+	if cfg == nil {
+		return "", nil
+	}
+	switch cfg.AdminAuth.Method {
+	case "", "none":
+		return "", nil
+	case "bearer":
+		key := strings.TrimPrefix(strings.TrimSpace(cfg.AdminAuth.SecretRef), "env://")
+		value := strings.TrimSpace(os.Getenv(key))
+		if value == "" {
+			return "", fmt.Errorf("admin auth env var %q is empty", key)
+		}
+		return value, nil
+	default:
+		return "", fmt.Errorf("unsupported admin auth method %q", cfg.AdminAuth.Method)
+	}
 }
 
 func newReceiptSink(cfg *config.Config, secrets backend.SecretResolver) (receipts.Client, error) {

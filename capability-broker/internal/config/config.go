@@ -8,6 +8,7 @@ package config
 type Config struct {
 	Identity      Identity      `yaml:"identity"`
 	Listen        Listen        `yaml:"listen,omitempty"`
+	AdminAuth     AuthConfig    `yaml:"admin_auth,omitempty"`
 	PaymentDaemon PaymentDaemon `yaml:"payment_daemon,omitempty"`
 	PoolSnapshot  PoolSnapshot  `yaml:"pool_snapshot,omitempty"`
 	ReceiptSink   ReceiptSink   `yaml:"receipt_sink,omitempty"`

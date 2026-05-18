@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
@@ -44,6 +45,9 @@ func (s *Server) handleRegistryHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdminAuth(w, r) {
+		return
+	}
 	status := s.runtimeStatus()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -51,6 +55,9 @@ func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRuntimeReload(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdminAuth(w, r) {
+		return
+	}
 	status, err := s.reloadRuntime()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -73,6 +80,23 @@ func (s *Server) runtimeStatus() runtimeStatusResponse {
 		LastReloadStatus:     s.lastReloadStatus,
 		LastReloadError:      s.lastReloadError,
 	}
+}
+
+func (s *Server) requireAdminAuth(w http.ResponseWriter, r *http.Request) bool {
+	s.mu.RLock()
+	token := s.adminToken
+	s.mu.RUnlock()
+	if strings.TrimSpace(token) == "" {
+		http.NotFound(w, r)
+		return false
+	}
+	authz := strings.TrimSpace(r.Header.Get("Authorization"))
+	if authz != "Bearer "+token {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="capability-broker-admin"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
 }
 
 func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {

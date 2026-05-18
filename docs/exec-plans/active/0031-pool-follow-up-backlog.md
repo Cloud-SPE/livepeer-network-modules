@@ -24,6 +24,13 @@ the `0030` slice, grouped into:
 
 This is a prioritization document, not a new architecture reset.
 
+## 1.1 Current disposition
+
+The items in this backlog are intentionally **incomplete** as of 2026-05-18 and
+explicitly **deferred** from the current implementation workstream. Do not
+assume these slices are partially supported unless a later numbered plan or
+completed-status doc says otherwise.
+
 ## 2. Current baseline
 
 The following are already in place:
@@ -89,6 +96,8 @@ Why this is first:
 - it closes the biggest remaining functional gap between OpenAI-first Pool
   support and broader Pool support
 
+Status: incomplete and deferred.
+
 ### P2 — operator workflow and policy automation
 
 These items are explicitly called out as not implemented yet in `0029`, but
@@ -113,6 +122,8 @@ Reason:
 - UX can follow once the approval/policy state model is stable
 - binary/listener split is mostly deployment hardening, not product behavior
 
+Status: incomplete and deferred.
+
 ### P3 — payout and accounting follow-up
 
 The current accounting path is usable, but there is still larger Pool economics
@@ -127,6 +138,8 @@ work left if payout automation becomes the next bottleneck.
    - more automated retry/suspend coupling
    - eventual `PoolPayout` smart-contract path
 
+Status: incomplete and deferred.
+
 ### P4 — deferred research / protocol-adjacent work
 
 These remain deferred unless priorities change:
@@ -138,6 +151,8 @@ These remain deferred unless priorities change:
 5. Manifest / resolver / gateway protocol changes for Pool-aware routing.
 6. Force-include override.
 7. Emergency degraded fallback routing mode.
+
+Status: incomplete and deferred.
 
 ## 4. Recommended next slice
 

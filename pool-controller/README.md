@@ -15,8 +15,8 @@ The supported production path is:
 - persisted control-plane state in BoltDB
 - broker runtime rendered from that persisted state
 
-Legacy nested `members[].backends[].offerings[]` config remains only as a
-migration bridge and should not be treated as the normal operator workflow.
+Legacy nested `members[].backends[].offerings[]` config is no longer part of the
+supported controller surface.
 
 Operator runbook:
 - [`RUNBOOK.md`](./RUNBOOK.md)

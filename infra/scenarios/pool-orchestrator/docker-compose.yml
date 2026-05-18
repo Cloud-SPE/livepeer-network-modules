@@ -14,10 +14,12 @@
 #   - your secure-orch / service-registry flow stays out of this compose file
 #
 # Bring-up order:
-#   1. render broker config from pool-controller config
-#   2. copy coordinator-config.example.yaml to coordinator-config.yaml
+#   1. copy coordinator-config.example.yaml to coordinator-config.yaml
 #      and replace the broker public URL
-#   3. `docker compose up -d`
+#   2. `docker compose up -d`
+#   3. create offers, approve members, and create assignments
+#      through pool-controller
+#   4. apply desired broker runtime through pool-controller
 
 services:
   payment-daemon-receiver:

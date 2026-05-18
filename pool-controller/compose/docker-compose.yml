@@ -2,7 +2,7 @@
 # `./infra/scripts/build-images.sh pool-controller`.
 #
 # Required operator inputs:
-#   - pool-controller config YAML
+#   - bootstrap-only pool-controller config YAML
 #   - durable data dir
 #   - payment-daemon socket dir if real receiver integration is enabled
 #   - admin bearer token env var when config uses admin_auth.bearer_token_ref

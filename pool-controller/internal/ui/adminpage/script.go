@@ -598,12 +598,18 @@ const pageScript = `
     function renderRuntime(item, yaml) {
       const host = $("runtime");
       host.innerHTML = "";
+      const startedAt = item.last_apply_started_at || "";
+      const finishedAt = item.last_apply_finished_at || "";
+      const applyError = item.last_apply_error || "";
       host.appendChild(card(
         "<strong>Desired vs Applied</strong>" +
         '<div class="row"><span class="pill">' + (item.dirty ? "dirty" : "converged") + '</span><span class="pill">' + (item.last_apply_status || "unapplied") + '</span></div>' +
         '<div class="small">desired: <span class="mono">' + (item.desired_revision || "") + '</span></div>' +
         '<div class="small">applied: <span class="mono">' + (item.applied_revision || "") + '</span></div>' +
-        '<div class="small">offers: ' + item.offer_count + ', members: ' + item.member_count + ', backends: ' + item.backend_count + ', assignments: ' + item.assignment_count + '</div>'
+        '<div class="small">offers: ' + item.offer_count + ', members: ' + item.member_count + ', backends: ' + item.backend_count + ', assignments: ' + item.assignment_count + '</div>' +
+        (startedAt ? '<div class="small">last started: <span class="mono">' + startedAt + '</span></div>' : '') +
+        (finishedAt ? '<div class="small">last finished: <span class="mono">' + finishedAt + '</span></div>' : '') +
+        (applyError ? '<div class="small bad">last error: ' + applyError + '</div>' : '')
       ));
       $("runtimeYaml").textContent = yaml;
     }

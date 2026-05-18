@@ -18,6 +18,7 @@ const pageBody = `<body>
       <button id="markStarted" class="secondary">Mark Apply Started</button>
       <button id="markFailed" class="secondary">Mark Apply Failed</button>
       <button id="markApplied" class="secondary">Mark Desired Revision Applied</button>
+      <div class="small" style="flex:1 1 100%">Use Apply Desired Revision as the normal path. The manual runtime buttons remain available as fallback and debugging controls.</div>
     </section>
 
     <div id="status" class="status"></div>

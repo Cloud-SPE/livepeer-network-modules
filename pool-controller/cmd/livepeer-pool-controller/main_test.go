@@ -16,48 +16,72 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/configgen"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-func TestRunGenerateBrokerConfigWritesToStdout(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(`
-identity:
-  orch_eth_address: 0x123
-bootstrap:
-  auto_import_legacy_config: true
-members:
-  - eth_address: 0xabc
-    backends:
-      - id: b1
-        transport: http
-        url: http://backend
-        offerings:
-          - capability_id: openai:chat-completions
-            offering_id: default
-            interaction_mode: http-stream@v0
-            work_unit:
-              name: tokens
-              extractor: { type: openai-usage, field: total_tokens }
-            price:
-              amount_wei: "1"
-              per_units: 1
-            extra:
-              openai: { model: llama-3-70b }
-              provider: vllm
-`), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
+func seedSingleChatAssignment(t *testing.T, stateRepo *repo.StateRepo, memberEthAddress, displayName, backendID, backendURL string, backendAuth config.AuthConfig) {
+	t.Helper()
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	member := types.MemberRecord{
+		ID:          "member-1",
+		EthAddress:  memberEthAddress,
+		DisplayName: displayName,
+		PayoutMode:  "onchain",
+		Status:      types.MemberStatusActive,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
-
-	var stdout strings.Builder
-	if err := run([]string{"generate-broker-config", "--config", path}, &stdout, io.Discard); err != nil {
-		t.Fatalf("run() error = %v", err)
+	backend := types.MemberBackend{
+		ID:        backendID,
+		MemberID:  member.ID,
+		Transport: "http",
+		URL:       backendURL,
+		Auth:      backendAuth,
+		Status:    types.BackendStatusActive,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
-	if !strings.Contains(stdout.String(), "capabilities:") {
-		t.Fatalf("stdout missing broker config:\n%s", stdout.String())
+	offer := types.Offer{
+		ID:              "offer-1",
+		CapabilityID:    "openai:chat-completions",
+		OfferingID:      "default",
+		InteractionMode: "http-stream@v0",
+		WorkUnit: config.WorkUnit{
+			Name:      "tokens",
+			Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
+		},
+		Price: config.Price{
+			AmountWei: "1",
+			PerUnits:  1,
+		},
+		Extra: map[string]any{
+			"openai":   map[string]any{"model": "llama-3-70b"},
+			"provider": "vllm",
+		},
+		Status:    types.OfferStatusActive,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	assignment := types.Assignment{
+		ID:              "assignment-1",
+		OfferID:         offer.ID,
+		MemberBackendID: backend.ID,
+		Status:          types.AssignmentStatusActive,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := stateRepo.PutMember(member); err != nil {
+		t.Fatalf("PutMember() error = %v", err)
+	}
+	if err := stateRepo.PutMemberBackend(backend); err != nil {
+		t.Fatalf("PutMemberBackend() error = %v", err)
+	}
+	if err := stateRepo.PutOffer(offer); err != nil {
+		t.Fatalf("PutOffer() error = %v", err)
+	}
+	if err := stateRepo.PutAssignment(assignment); err != nil {
+		t.Fatalf("PutAssignment() error = %v", err)
 	}
 }
 
@@ -77,31 +101,6 @@ identity:
   orch_eth_address: 0x123
 synthetic_probes:
   enabled: true
-bootstrap:
-  auto_import_legacy_config: true
-members:
-  - eth_address: 0xabc
-    display_name: member-a
-    backends:
-      - id: b1
-        transport: http
-        url: `+backend.URL+`
-        auth:
-          method: bearer
-          secret_ref: env://SECRET_TOKEN
-        offerings:
-          - capability_id: openai:chat-completions
-            offering_id: default
-            interaction_mode: http-stream@v0
-            work_unit:
-              name: tokens
-              extractor: { type: openai-usage, field: total_tokens }
-            price:
-              amount_wei: "1"
-              per_units: 1
-            extra:
-              openai: { model: llama-3-70b }
-              provider: vllm
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -110,15 +109,19 @@ members:
 	if err != nil {
 		t.Fatalf("LoadFile() error = %v", err)
 	}
-	rendered, err := configgen.GenerateYAML(cfg)
-	if err != nil {
-		t.Fatalf("GenerateYAML() error = %v", err)
-	}
 	stateRepo, err := repo.Open(dataDir)
 	if err != nil {
 		t.Fatalf("repo.Open() error = %v", err)
 	}
 	defer func() { _ = stateRepo.Close() }()
+	seedSingleChatAssignment(t, stateRepo, "0xabc", "member-a", "b1", backend.URL, config.AuthConfig{
+		Method:    "bearer",
+		SecretRef: "env://SECRET_TOKEN",
+	})
+	rendered, _, err := renderBrokerState(stateRepo, cfg)
+	if err != nil {
+		t.Fatalf("renderBrokerState() error = %v", err)
+	}
 	state := &runtimeState{configPath: path, repo: stateRepo}
 	if err := state.Replace(cfg, rendered, "startup", nil); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)
@@ -432,28 +435,6 @@ members:
 	if err := os.WriteFile(path, []byte(`
 identity:
   orch_eth_address: 0x123
-bootstrap:
-  auto_import_legacy_config: true
-members:
-  - eth_address: 0xdef
-    display_name: member-b
-    backends:
-      - id: b2
-        transport: http
-        url: http://backend-b
-        offerings:
-          - capability_id: openai:chat-completions
-            offering_id: default
-            interaction_mode: http-stream@v0
-            work_unit:
-              name: tokens
-              extractor: { type: openai-usage, field: total_tokens }
-            price:
-              amount_wei: "1"
-              per_units: 1
-            extra:
-              openai: { model: llama-3-70b }
-              provider: vllm
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile(reload) error = %v", err)
 	}
@@ -476,16 +457,6 @@ members:
 	}
 	if !strings.Contains(string(body), `"snapshot_id":"`) {
 		t.Fatalf("reload body missing snapshot id: %s", string(body))
-	}
-
-	resp, err = http.Get(server.URL + "/admin/v1/members")
-	if err != nil {
-		t.Fatalf("GET /admin/v1/members after reload error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if !strings.Contains(string(body), "member-b") {
-		t.Fatalf("reloaded members body missing member-b:\n%s", string(body))
 	}
 
 	resp, err = http.Get(server.URL + "/admin/v1/snapshots")
@@ -2335,27 +2306,6 @@ func TestRuntimeStateSyncAccountingMetrics(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`
 identity:
   orch_eth_address: 0x123
-bootstrap:
-  auto_import_legacy_config: true
-members:
-  - eth_address: 0xabc
-    backends:
-      - id: b1
-        transport: http
-        url: http://backend
-        offerings:
-          - capability_id: openai:chat-completions
-            offering_id: default
-            interaction_mode: http-stream@v0
-            work_unit:
-              name: tokens
-              extractor: { type: openai-usage, field: total_tokens }
-            price:
-              amount_wei: "1"
-              per_units: 1
-            extra:
-              openai: { model: llama-3-70b }
-              provider: vllm
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -2363,15 +2313,16 @@ members:
 	if err != nil {
 		t.Fatalf("LoadFile() error = %v", err)
 	}
-	rendered, err := configgen.GenerateYAML(cfg)
-	if err != nil {
-		t.Fatalf("GenerateYAML() error = %v", err)
-	}
 	stateRepo, err := repo.Open(dataDir)
 	if err != nil {
 		t.Fatalf("repo.Open() error = %v", err)
 	}
 	defer func() { _ = stateRepo.Close() }()
+	seedSingleChatAssignment(t, stateRepo, "0xabc", "", "b1", "http://backend", config.AuthConfig{})
+	rendered, _, err := renderBrokerState(stateRepo, cfg)
+	if err != nil {
+		t.Fatalf("renderBrokerState() error = %v", err)
+	}
 	state := &runtimeState{configPath: path, repo: stateRepo}
 	if err := state.Replace(cfg, rendered, "startup", nil); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)
@@ -2435,27 +2386,6 @@ identity:
   orch_eth_address: 0x123
 admin_auth:
   bearer_token_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
-bootstrap:
-  auto_import_legacy_config: true
-members:
-  - eth_address: 0xabc
-    backends:
-      - id: b1
-        transport: http
-        url: http://backend
-        offerings:
-          - capability_id: openai:chat-completions
-            offering_id: default
-            interaction_mode: http-stream@v0
-            work_unit:
-              name: tokens
-              extractor: { type: openai-usage, field: total_tokens }
-            price:
-              amount_wei: "1"
-              per_units: 1
-            extra:
-              openai: { model: llama-3-70b }
-              provider: vllm
 `), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -2467,15 +2397,16 @@ members:
 	if err != nil {
 		t.Fatalf("resolveAdminToken() error = %v", err)
 	}
-	rendered, err := configgen.GenerateYAML(cfg)
-	if err != nil {
-		t.Fatalf("GenerateYAML() error = %v", err)
-	}
 	stateRepo, err := repo.Open(dataDir)
 	if err != nil {
 		t.Fatalf("repo.Open() error = %v", err)
 	}
 	defer func() { _ = stateRepo.Close() }()
+	seedSingleChatAssignment(t, stateRepo, "0xabc", "", "b1", "http://backend", config.AuthConfig{})
+	rendered, _, err := renderBrokerState(stateRepo, cfg)
+	if err != nil {
+		t.Fatalf("renderBrokerState() error = %v", err)
+	}
 	state := &runtimeState{configPath: path, repo: stateRepo, adminToken: token}
 	if err := state.Replace(cfg, rendered, "startup", nil); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)

@@ -2611,11 +2611,16 @@ Acceptance bar:
 
 Current state:
 
-- legacy config import and bootstrap compatibility still exist
-- some examples still reflect the migration era
-- several runtime codepaths still read the legacy nested
-  `members[].backends[].offerings[]` shape directly even though the supported
-  control-plane model is persisted state
+- `generate-broker-config` has been removed
+- `import-legacy-config` has been removed
+- startup auto-import and legacy resync paths have been removed
+- runtime selection/probe/summary paths now derive from persisted state rather
+  than legacy nested config
+- examples now reflect the bootstrap-only controller config shape
+- one residual bridge remains in code:
+  - `Config.Members` and the legacy nested member/backend/offering types still
+    exist as parse/types surfaces, even though they are no longer part of the
+    supported runtime workflow
 
 #### 22.4.1 Remaining concrete legacy bridges
 
@@ -2643,87 +2648,39 @@ Required end state:
 - the main runtime config no longer advertises `members:` as a supported
   control-plane input
 
-2. Startup still auto-imports and re-syncs legacy config into persisted state.
+2. Startup auto-import and legacy resync path has been removed.
 
-Files:
+Status:
 
-- `pool-controller/cmd/livepeer-pool-controller/main.go`
-- `pool-controller/internal/service/legacyimport/import.go`
+- complete
+- `serve` now starts from persisted control-plane state only
+- snapshots no longer imply legacy config resync
 
-Current issue:
+3. CLI compatibility commands have been removed.
 
-- `maybeImportLegacyConfig(...)` runs on startup/reload
-- `runtimeState.Replace(...)` still calls it
-- `serve` therefore still treats legacy YAML as a live state feeder
+Status:
 
-Required end state:
+- complete
+- `generate-broker-config` is gone
+- `import-legacy-config` is gone
+- `pool-controller` operator flow is now API/UI plus persisted state only
 
-- import is explicit and one-shot, not an automatic runtime sync path
-- `serve` starts from persisted control-plane state only
-- snapshots no longer imply “reload from legacy config then persist again”
+4. Selection/probe state has been moved off legacy config members.
 
-3. CLI compatibility commands are still present as normal controller behavior.
+Status:
 
-Files:
+- complete
+- backend selection sync and synthetic probes now use persisted offers,
+  members, backends, and assignments
 
-- `pool-controller/cmd/livepeer-pool-controller/main.go`
-- `pool-controller/internal/service/configgen/generate.go`
+5. Fallback read surfaces have been moved off legacy config-derived counts.
 
-Current issue:
+Status:
 
-- `generate-broker-config` still renders directly from legacy config members
-- `import-legacy-config` still exists
+- complete
+- persisted state is now the source for member/backend/offering summaries
 
-Required end state:
-
-- decide whether `import-legacy-config` remains temporarily as a migration
-  utility or is removed entirely
-- remove `generate-broker-config` or replace it with a state-backed export path
-- do not present legacy config rendering as the normal production path
-
-4. Selection/probe state still keys off legacy config members instead of
-   persisted assignments/backends.
-
-Files:
-
-- `pool-controller/internal/repo/backend_selection.go`
-- `pool-controller/internal/service/probes/probes.go`
-
-Current issue:
-
-- backend-selection state sync iterates `cfg.Members`
-- synthetic probe execution iterates `cfg.Members`
-- this keeps runtime selection/probe identity coupled to the legacy nested
-  config shape
-
-Required end state:
-
-- backend selection state sync uses persisted:
-  - offers
-  - members
-  - member backends
-  - assignments
-- synthetic probes run against active persisted assignments/backends, not
-  legacy config inventory
-
-5. Fallback read surfaces still use legacy config-derived counts/views.
-
-Files:
-
-- `pool-controller/cmd/livepeer-pool-controller/main.go`
-
-Current issue:
-
-- public/admin summaries still fall back to `cfg.Members` counts and helpers
-- helper builders such as `buildMemberViews(...)` and `buildOfferingViews(...)`
-  are still legacy-shaped
-
-Required end state:
-
-- persisted state is the only source for member/backend/offering summaries
-- no fallback branch depends on legacy nested config
-
-6. Examples and tests still normalize the migration-era shape.
+6. Examples and tests were still normalizing the migration-era shape.
 
 Files:
 
@@ -2731,20 +2688,12 @@ Files:
 - `pool-controller/examples/pool-controller-config.compose.yaml`
 - config/configgen/legacyimport-related tests
 
-Current issue:
+Status:
 
-- examples still teach `members:` as if it were the normal operator path
-- a large portion of tests still assume legacy config is a routine runtime
-  input
-
-Required end state:
-
-- examples become either:
-  - bootstrap-only controller examples, or
-  - explicitly migration-only examples
-- tests are split cleanly between:
-  - supported runtime behavior
-  - optional migration/import behavior
+- examples are now bootstrap-only
+- config/controller tests have been rewritten around the supported runtime path
+- the remaining follow-up here is mostly deleting no-longer-needed legacy-only
+  helper coverage rather than changing operator behavior
 
 #### 22.4.2 Recommended removal sequence
 
@@ -2752,10 +2701,9 @@ M4 should not be one giant deletion. The safer order is:
 
 1. Move selection/probe/runtime read paths off `cfg.Members`
 2. Remove startup auto-import and legacy resync from `serve` / `reload`
-3. Reduce the main `Config` contract to bootstrap-only concerns
-4. Downgrade or remove `generate-broker-config`
-5. Downgrade or remove `import-legacy-config`
-6. Rewrite examples and tests around the bootstrap + persisted-state model
+3. Reduce the main `Config` contract further if the residual legacy parse field
+   is no longer needed internally
+4. Delete any no-longer-needed legacy-only helper code/tests
 
 That order matters because it removes live runtime dependence first, then
 removes operator-facing compatibility surfaces second.
@@ -2768,9 +2716,9 @@ M4 is complete only when all of the following are true:
    `members[].backends[].offerings[]`
 2. runtime selection, probing, and summary views are derived from persisted
    control-plane state
-3. the main runtime config contract is bootstrap-only
-4. any remaining legacy import path is clearly marked migration-only and is not
-   used by normal runtime flows
+3. the supported runtime config and operator workflow are bootstrap-only plus
+   persisted control-plane state
+4. no legacy import/generation command remains in the controller surface
 5. examples and docs no longer teach legacy member YAML as the normal operator
    workflow
 

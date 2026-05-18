@@ -9,6 +9,81 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
+type legacySelectionConfig struct {
+	Members []config.Member
+}
+
+func syncSelectionStatesFromLegacyConfig(t *testing.T, repo *StateRepo, cfg *legacySelectionConfig) {
+	t.Helper()
+	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
+	offersByKey := map[string]types.Offer{}
+	offers := make([]types.Offer, 0)
+	members := make([]types.MemberRecord, 0, len(cfg.Members))
+	backends := make([]types.MemberBackend, 0)
+	assignments := make([]types.Assignment, 0)
+
+	for memberIndex, member := range cfg.Members {
+		memberID := "member-test-" + member.EthAddress
+		members = append(members, types.MemberRecord{
+			ID:         memberID,
+			EthAddress: member.EthAddress,
+			PayoutMode: "onchain",
+			Status:     types.MemberStatusActive,
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		})
+		for backendIndex, backend := range member.Backends {
+			backendID := backend.ID
+			if backendID == "" {
+				backendID = "backend-test"
+			}
+			if backendIndex > 0 || memberIndex > 0 {
+				backendID = memberID + "-" + backendID
+			}
+			backends = append(backends, types.MemberBackend{
+				ID:        backendID,
+				MemberID:  memberID,
+				Transport: backend.Transport,
+				URL:       backend.URL,
+				Auth:      backend.Auth,
+				Status:    types.BackendStatusActive,
+				CreatedAt: now,
+				UpdatedAt: now,
+			})
+			for _, offering := range backend.Offerings {
+				key := offering.CapabilityID + "|" + offering.OfferingID + "|" + offering.InteractionMode
+				offer, ok := offersByKey[key]
+				if !ok {
+					offer = types.Offer{
+						ID:              key,
+						CapabilityID:    offering.CapabilityID,
+						OfferingID:      offering.OfferingID,
+						InteractionMode: offering.InteractionMode,
+						WorkUnit:        offering.WorkUnit,
+						Price:           offering.Price,
+						Status:          types.OfferStatusActive,
+						CreatedAt:       now,
+						UpdatedAt:       now,
+					}
+					offersByKey[key] = offer
+					offers = append(offers, offer)
+				}
+				assignments = append(assignments, types.Assignment{
+					ID:              offer.ID + "|" + backendID,
+					OfferID:         offer.ID,
+					MemberBackendID: backendID,
+					Status:          types.AssignmentStatusActive,
+					CreatedAt:       now,
+					UpdatedAt:       now,
+				})
+			}
+		}
+	}
+	if err := repo.SyncBackendSelectionStatesFromEntities(offers, members, backends, assignments); err != nil {
+		t.Fatalf("SyncBackendSelectionStatesFromEntities() error = %v", err)
+	}
+}
+
 func TestStateRepoSaveAndListSnapshots(t *testing.T) {
 	repo, err := Open(t.TempDir())
 	if err != nil {
@@ -64,7 +139,7 @@ func TestStateRepoSyncBackendSelectionStates(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{
 			{
 				EthAddress: "0xabc",
@@ -82,9 +157,7 @@ func TestStateRepoSyncBackendSelectionStates(t *testing.T) {
 		},
 	}
 
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	items, err := repo.ListBackendSelectionStates()
 	if err != nil {
@@ -117,9 +190,7 @@ func TestStateRepoSyncBackendSelectionStates(t *testing.T) {
 	if err := repo.SaveBackendSelectionState(override); err != nil {
 		t.Fatalf("SaveBackendSelectionState() error = %v", err)
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates(second) error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	items, err = repo.ListBackendSelectionStates()
 	if err != nil {
@@ -268,7 +339,7 @@ func TestStateRepoApplyBackendOutcome(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{
 			{
 				EthAddress: "0xabc",
@@ -284,9 +355,7 @@ func TestStateRepoApplyBackendOutcome(t *testing.T) {
 			},
 		},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	occurredAt := time.Date(2026, 5, 17, 16, 30, 0, 0, time.UTC)
 	updated, err := repo.ApplyBackendOutcome(types.BackendOutcome{
@@ -356,7 +425,7 @@ func TestStateRepoApplySyntheticProbeObservation(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{
 			{
 				EthAddress: "0xabc",
@@ -372,9 +441,7 @@ func TestStateRepoApplySyntheticProbeObservation(t *testing.T) {
 			},
 		},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	at := time.Date(2026, 5, 17, 17, 0, 0, 0, time.UTC)
 	updated, err := repo.ApplySyntheticProbeObservation(types.SyntheticProbeObservation{
@@ -474,7 +541,7 @@ func TestStateRepoApplyBackendOutcomeTransitionsByEffectiveScore(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{
 			{
 				EthAddress: "0xabc",
@@ -490,9 +557,7 @@ func TestStateRepoApplyBackendOutcomeTransitionsByEffectiveScore(t *testing.T) {
 			},
 		},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	degraded, err := repo.GetBackendSelectionState("0xabc", "backend-a", "openai:chat-completions", "default")
 	if err != nil {
@@ -570,7 +635,7 @@ func TestStateRepoApplyBackendOutcomeDriftsEMAAfterInactivity(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{{
 			EthAddress: "0xabc",
 			Backends: []config.Backend{{
@@ -580,9 +645,7 @@ func TestStateRepoApplyBackendOutcomeDriftsEMAAfterInactivity(t *testing.T) {
 			}},
 		}},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	start := time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC)
 	updated, err := repo.ApplyBackendOutcome(types.BackendOutcome{
@@ -625,7 +688,7 @@ func TestStateRepoApplyBackendOutcomeExitsWarmupAfterEnoughSamples(t *testing.T)
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{{
 			EthAddress: "0xabc",
 			Backends: []config.Backend{{
@@ -635,9 +698,7 @@ func TestStateRepoApplyBackendOutcomeExitsWarmupAfterEnoughSamples(t *testing.T)
 			}},
 		}},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	item, err := repo.GetBackendSelectionState("0xabc", "backend-a", "openai:chat-completions", "default")
 	if err != nil {
@@ -676,7 +737,7 @@ func TestStateRepoApplyBackendOutcomePreservesManualQuarantine(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{
 			{
 				EthAddress: "0xabc",
@@ -692,9 +753,7 @@ func TestStateRepoApplyBackendOutcomePreservesManualQuarantine(t *testing.T) {
 			},
 		},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	item, err := repo.GetBackendSelectionState("0xabc", "backend-a", "openai:chat-completions", "default")
 	if err != nil {
@@ -732,7 +791,7 @@ func TestStateRepoApplyBackendOutcomeTransitionsStateBands(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{
 			{
 				EthAddress: "0xabc",
@@ -748,9 +807,7 @@ func TestStateRepoApplyBackendOutcomeTransitionsStateBands(t *testing.T) {
 			},
 		},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	item, err := repo.GetBackendSelectionState("0xabc", "backend-a", "openai:chat-completions", "default")
 	if err != nil {
@@ -812,7 +869,7 @@ func TestStateRepoApplyBackendOutcomeOpensCooldownAfterRepeatedBackendFailures(t
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{
 			{
 				EthAddress: "0xabc",
@@ -828,9 +885,7 @@ func TestStateRepoApplyBackendOutcomeOpensCooldownAfterRepeatedBackendFailures(t
 			},
 		},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	base := time.Date(2026, 5, 17, 16, 30, 0, 0, time.UTC)
 	var updated types.BackendSelectionState
@@ -873,7 +928,7 @@ func TestStateRepoApplyBackendOutcomePrunesFailuresOutsideCooldownWindow(t *test
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{
 			{
 				EthAddress: "0xabc",
@@ -889,9 +944,7 @@ func TestStateRepoApplyBackendOutcomePrunesFailuresOutsideCooldownWindow(t *test
 			},
 		},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	base := time.Date(2026, 5, 17, 16, 30, 0, 0, time.UTC)
 	oldFailures := []time.Time{
@@ -940,7 +993,7 @@ func TestStateRepoApplyBackendOutcomeDoesNotApplyImplicitTimeDecay(t *testing.T)
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{
 			{
 				EthAddress: "0xabc",
@@ -956,9 +1009,7 @@ func TestStateRepoApplyBackendOutcomeDoesNotApplyImplicitTimeDecay(t *testing.T)
 			},
 		},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	at := time.Date(2026, 5, 17, 16, 30, 0, 0, time.UTC)
 	updated, err := repo.ApplyBackendOutcome(types.BackendOutcome{
@@ -1000,7 +1051,7 @@ func TestStateRepoSaveBackendSelectionStatePreservesOperatorOverrides(t *testing
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &config.Config{
+	cfg := &legacySelectionConfig{
 		Members: []config.Member{
 			{
 				EthAddress: "0xabc",
@@ -1016,9 +1067,7 @@ func TestStateRepoSaveBackendSelectionStatePreservesOperatorOverrides(t *testing
 			},
 		},
 	}
-	if err := repo.SyncBackendSelectionStates(cfg); err != nil {
-		t.Fatalf("SyncBackendSelectionStates() error = %v", err)
-	}
+	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
 
 	item, err := repo.GetBackendSelectionState("0xabc", "backend-a", "openai:chat-completions", "default")
 	if err != nil {

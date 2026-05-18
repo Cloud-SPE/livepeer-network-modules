@@ -57,32 +57,6 @@ func NewRunner(timeout time.Duration) *Runner {
 	}
 }
 
-func (r *Runner) RunOnce(ctx context.Context, cfg *config.Config, apply ApplyFunc) (RunSummary, error) {
-	summary := RunSummary{
-		StartedAt: time.Now().UTC(),
-		Results:   make([]ProbeResult, 0),
-	}
-	defer func() {
-		summary.FinishedAt = time.Now().UTC()
-	}()
-	if cfg == nil {
-		return summary, fmt.Errorf("config is required")
-	}
-	targets := make([]ProbeTarget, 0)
-	for _, member := range cfg.Members {
-		for _, backend := range member.Backends {
-			for _, offering := range backend.Offerings {
-				targets = append(targets, ProbeTarget{
-					Member:   member,
-					Backend:  backend,
-					Offering: offering,
-				})
-			}
-		}
-	}
-	return r.RunOnceTargets(ctx, targets, apply)
-}
-
 func (r *Runner) RunOnceTargets(ctx context.Context, targets []ProbeTarget, apply ApplyFunc) (RunSummary, error) {
 	summary := RunSummary{
 		StartedAt: time.Now().UTC(),

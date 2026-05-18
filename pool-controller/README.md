@@ -75,16 +75,6 @@ Compose entrypoint:
 docker compose -f compose/docker-compose.yml up -d
 ```
 
-Migration-only broker config generation from legacy nested member config:
-
-```bash
-docker run --rm \
-  -v "$PWD/examples/pool-controller-config.example.yaml:/etc/livepeer/pool-controller.yaml:ro" \
-  tztcloud/livepeer-pool-controller:dev \
-  generate-broker-config \
-  --config /etc/livepeer/pool-controller.yaml
-```
-
 Run the controller:
 
 ```bash
@@ -274,14 +264,6 @@ Current Prometheus metric families include:
 - `livepeer_pool_payout_intent_action_total{action,status}`
 
 ## Migration-only compatibility commands
-
-These commands exist to help transition from the earlier config-driven Pool
-shape. They are not the normal production operator path.
-
-- `generate-broker-config`
-  - renders broker YAML directly from legacy nested `members` config
-- `import-legacy-config`
-  - imports legacy nested `members` config into persisted control-plane state
 
 Normal production operations should use:
 

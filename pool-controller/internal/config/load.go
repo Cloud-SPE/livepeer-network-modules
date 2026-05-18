@@ -90,7 +90,6 @@ func applyDefaults(cfg *Config) {
 	if cfg.Bootstrap.BrokerAdminTimeoutMS == 0 {
 		cfg.Bootstrap.BrokerAdminTimeoutMS = 5000
 	}
-	applyLegacyDefaults(cfg)
 }
 
 func validate(cfg *Config) error {
@@ -214,5 +213,5 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("receipt_sink.timeout_ms must be >= 0")
 		}
 	}
-	return validateLegacyMembers(cfg)
+	return nil
 }

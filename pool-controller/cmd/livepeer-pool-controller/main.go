@@ -28,8 +28,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/backendverify"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokeradmin"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerrender"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/configgen"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/legacyimport"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/probes"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
@@ -49,10 +47,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
-	case "generate-broker-config":
-		return runGenerateBrokerConfig(args[1:], stdout)
-	case "import-legacy-config":
-		return runImportLegacyConfig(args[1:], stdout)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
 	case "version":
@@ -61,74 +55,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 	default:
 		return usageError(stderr)
 	}
-}
-
-func runGenerateBrokerConfig(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("generate-broker-config", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
-	configPath := fs.String("config", "", "path to pool-controller config")
-	outputPath := fs.String("output", "", "optional output path; stdout when empty")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *configPath == "" {
-		return errors.New("--config is required")
-	}
-
-	cfg, err := config.LoadFile(*configPath)
-	if err != nil {
-		return err
-	}
-
-	rendered, err := configgen.GenerateYAML(cfg)
-	if err != nil {
-		return err
-	}
-
-	if *outputPath == "" {
-		_, err = stdout.Write(rendered)
-		return err
-	}
-
-	return os.WriteFile(*outputPath, rendered, 0o644)
-}
-
-func runImportLegacyConfig(args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("import-legacy-config", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
-	configPath := fs.String("config", "", "path to legacy pool-controller config")
-	dataDir := fs.String("data-dir", "", "pool-controller data directory")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *configPath == "" {
-		return errors.New("--config is required")
-	}
-	if *dataDir == "" {
-		return errors.New("--data-dir is required")
-	}
-
-	cfg, err := config.LoadFile(*configPath)
-	if err != nil {
-		return err
-	}
-	stateRepo, err := repo.Open(*dataDir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = stateRepo.Close() }()
-
-	built, err := legacyimport.Build(cfg, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	if err := legacyimport.Persist(stateRepo, built, "import-legacy-config", time.Now().UTC()); err != nil {
-		return err
-	}
-	_, _ = fmt.Fprintf(stdout, "imported offers=%d members=%d backends=%d assignments=%d\n", len(built.Offers), len(built.Members), len(built.Backends), len(built.Assignments))
-	return nil
 }
 
 func runServe(args []string, stdout, stderr io.Writer) error {
@@ -162,9 +88,6 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	}
 	defer func() { _ = stateRepo.Close() }()
 
-	if err := maybeImportLegacyConfig(stateRepo, cfg); err != nil {
-		return err
-	}
 	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
 	if err != nil {
 		return err
@@ -209,31 +132,6 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	default:
 		return nil
 	}
-}
-
-func maybeImportLegacyConfig(stateRepo *repo.StateRepo, cfg *config.Config) error {
-	if stateRepo == nil || cfg == nil {
-		return nil
-	}
-	importCfg := cfg
-	switch {
-	case cfg.Bootstrap.ImportLegacyConfigPath != "":
-		loaded, err := config.LoadFile(cfg.Bootstrap.ImportLegacyConfigPath)
-		if err != nil {
-			return fmt.Errorf("load bootstrap.import_legacy_config_path: %w", err)
-		}
-		importCfg = loaded
-	case !cfg.Bootstrap.AutoImportLegacyConfig:
-		return nil
-	}
-	if len(importCfg.Members) == 0 {
-		return nil
-	}
-	built, err := legacyimport.Build(importCfg, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	return legacyimport.Persist(stateRepo, built, "legacy-config-sync", time.Now().UTC())
 }
 
 func renderBrokerState(stateRepo *repo.StateRepo, cfg *config.Config) ([]byte, *types.DesiredBrokerRuntime, error) {
@@ -297,9 +195,6 @@ type runtimeState struct {
 func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source string, runtimeInfo *types.DesiredBrokerRuntime) error {
 	var latest *repo.Snapshot
 	if s.repo != nil {
-		if err := maybeImportLegacyConfig(s.repo, cfg); err != nil {
-			return err
-		}
 		repo.ApplyBackendSelectionSettings(cfg.Scoring)
 		offers, err := s.repo.ListOffers()
 		if err != nil {
@@ -553,9 +448,6 @@ func buildSyntheticProbeTargets(offers []types.Offer, members []types.MemberReco
 func (s *runtimeState) Reload() error {
 	cfg, err := config.LoadFile(s.configPath)
 	if err != nil {
-		return err
-	}
-	if err := maybeImportLegacyConfig(s.repo, cfg); err != nil {
 		return err
 	}
 	rendered, runtimeInfo, err := renderBrokerState(s.repo, cfg)
@@ -3739,14 +3631,10 @@ func buildRoundReceiptFromCloseRequest(req roundCloseRequest, workReceipts []typ
 }
 
 func usageError(w io.Writer) error {
-	_, _ = fmt.Fprintln(w, "usage: livepeer-pool-controller <serve|version|generate-broker-config|import-legacy-config> [flags]")
+	_, _ = fmt.Fprintln(w, "usage: livepeer-pool-controller <serve|version> [flags]")
 	_, _ = fmt.Fprintln(w, "")
-	_, _ = fmt.Fprintln(w, "normal production commands:")
+	_, _ = fmt.Fprintln(w, "commands:")
 	_, _ = fmt.Fprintln(w, "  serve")
 	_, _ = fmt.Fprintln(w, "  version")
-	_, _ = fmt.Fprintln(w, "")
-	_, _ = fmt.Fprintln(w, "migration-only compatibility commands:")
-	_, _ = fmt.Fprintln(w, "  generate-broker-config")
-	_, _ = fmt.Fprintln(w, "  import-legacy-config")
 	return errors.New("invalid command")
 }

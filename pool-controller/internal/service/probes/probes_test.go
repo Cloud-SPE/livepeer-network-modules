@@ -12,6 +12,24 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
+func target(memberEthAddress, backendID, backendURL, capabilityID, interactionMode string) ProbeTarget {
+	return ProbeTarget{
+		Member: config.Member{
+			EthAddress: memberEthAddress,
+		},
+		Backend: config.Backend{
+			ID:        backendID,
+			Transport: "http",
+			URL:       backendURL,
+		},
+		Offering: config.Offering{
+			CapabilityID:    capabilityID,
+			OfferingID:      "default",
+			InteractionMode: interactionMode,
+		},
+	}
+}
+
 func TestRunOnceAppliesChatEmbeddingsAndAudioProbes(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -34,49 +52,13 @@ func TestRunOnceAppliesChatEmbeddingsAndAudioProbes(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{
-		Members: []config.Member{
-			{
-				EthAddress: "0xabc",
-				Backends: []config.Backend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						URL:       ts.URL + "/chat",
-						Offerings: []config.Offering{{
-							CapabilityID:    "openai:chat-completions",
-							OfferingID:      "default",
-							InteractionMode: "http-reqresp@v0",
-						}},
-					},
-					{
-						ID:        "backend-b",
-						Transport: "http",
-						URL:       ts.URL + "/embeddings",
-						Offerings: []config.Offering{{
-							CapabilityID:    "openai:embeddings",
-							OfferingID:      "default",
-							InteractionMode: "http-reqresp@v0",
-						}},
-					},
-					{
-						ID:        "backend-c",
-						Transport: "http",
-						URL:       ts.URL + "/audio-transcriptions",
-						Offerings: []config.Offering{{
-							CapabilityID:    "openai:audio-transcriptions",
-							OfferingID:      "default",
-							InteractionMode: "http-multipart@v0",
-						}},
-					},
-				},
-			},
-		},
-	}
-
 	applied := make([]types.SyntheticProbeObservation, 0)
 	runner := NewRunner(500 * time.Millisecond)
-	summary, err := runner.RunOnce(context.Background(), cfg, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
+	summary, err := runner.RunOnceTargets(context.Background(), []ProbeTarget{
+		target("0xabc", "backend-a", ts.URL+"/chat", "openai:chat-completions", "http-reqresp@v0"),
+		target("0xabc", "backend-b", ts.URL+"/embeddings", "openai:embeddings", "http-reqresp@v0"),
+		target("0xabc", "backend-c", ts.URL+"/audio-transcriptions", "openai:audio-transcriptions", "http-multipart@v0"),
+	}, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
 		applied = append(applied, obs)
 		return types.BackendSelectionState{}, nil
 	})
@@ -113,39 +95,12 @@ func TestRunOnceInfersAudioProbeFamilyFromInteractionMode(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{
-		Members: []config.Member{
-			{
-				EthAddress: "0xabc",
-				Backends: []config.Backend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						URL:       ts.URL + "/audio-generic-multipart",
-						Offerings: []config.Offering{{
-							CapabilityID:    "openai:audio-unknown",
-							OfferingID:      "default",
-							InteractionMode: "http-multipart@v0",
-						}},
-					},
-					{
-						ID:        "backend-b",
-						Transport: "http",
-						URL:       ts.URL + "/audio-generic-speech",
-						Offerings: []config.Offering{{
-							CapabilityID:    "openai:audio-generated",
-							OfferingID:      "default",
-							InteractionMode: "http-reqresp@v0",
-						}},
-					},
-				},
-			},
-		},
-	}
-
 	applied := make([]types.SyntheticProbeObservation, 0, 2)
 	runner := NewRunner(500 * time.Millisecond)
-	summary, err := runner.RunOnce(context.Background(), cfg, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
+	summary, err := runner.RunOnceTargets(context.Background(), []ProbeTarget{
+		target("0xabc", "backend-a", ts.URL+"/audio-generic-multipart", "openai:audio-unknown", "http-multipart@v0"),
+		target("0xabc", "backend-b", ts.URL+"/audio-generic-speech", "openai:audio-generated", "http-reqresp@v0"),
+	}, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
 		applied = append(applied, obs)
 		return types.BackendSelectionState{}, nil
 	})
@@ -161,29 +116,11 @@ func TestRunOnceInfersAudioProbeFamilyFromInteractionMode(t *testing.T) {
 }
 
 func TestRunOnceSkipsUnsupportedAudioFamily(t *testing.T) {
-	cfg := &config.Config{
-		Members: []config.Member{
-			{
-				EthAddress: "0xabc",
-				Backends: []config.Backend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						URL:       "http://example.invalid/audio",
-						Offerings: []config.Offering{{
-							CapabilityID:    "openai:audio-unknown",
-							OfferingID:      "default",
-							InteractionMode: "http-stream@v0",
-						}},
-					},
-				},
-			},
-		},
-	}
-
 	applied := 0
 	runner := NewRunner(500 * time.Millisecond)
-	summary, err := runner.RunOnce(context.Background(), cfg, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
+	summary, err := runner.RunOnceTargets(context.Background(), []ProbeTarget{
+		target("0xabc", "backend-a", "http://example.invalid/audio", "openai:audio-unknown", "http-stream@v0"),
+	}, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
 		applied++
 		return types.BackendSelectionState{}, nil
 	})
@@ -216,29 +153,11 @@ func TestRunOnceAppliesVideoABRProbe(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{
-		Members: []config.Member{
-			{
-				EthAddress: "0xabc",
-				Backends: []config.Backend{
-					{
-						ID:        "backend-video",
-						Transport: "http",
-						URL:       ts.URL + "/v1/video/transcode/abr",
-						Offerings: []config.Offering{{
-							CapabilityID:    "video:transcode.abr",
-							OfferingID:      "default",
-							InteractionMode: "http-reqresp@v0",
-						}},
-					},
-				},
-			},
-		},
-	}
-
 	applied := make([]types.SyntheticProbeObservation, 0, 1)
 	runner := NewRunner(500 * time.Millisecond)
-	summary, err := runner.RunOnce(context.Background(), cfg, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
+	summary, err := runner.RunOnceTargets(context.Background(), []ProbeTarget{
+		target("0xabc", "backend-video", ts.URL+"/v1/video/transcode/abr", "video:transcode.abr", "http-reqresp@v0"),
+	}, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
 		applied = append(applied, obs)
 		return types.BackendSelectionState{}, nil
 	})
@@ -266,29 +185,11 @@ func TestRunOnceFailsVideoABRProbeOnInvalidPresetResponse(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	cfg := &config.Config{
-		Members: []config.Member{
-			{
-				EthAddress: "0xabc",
-				Backends: []config.Backend{
-					{
-						ID:        "backend-video",
-						Transport: "http",
-						URL:       ts.URL,
-						Offerings: []config.Offering{{
-							CapabilityID:    "video:transcode.abr",
-							OfferingID:      "default",
-							InteractionMode: "http-reqresp@v0",
-						}},
-					},
-				},
-			},
-		},
-	}
-
 	applied := make([]types.SyntheticProbeObservation, 0, 1)
 	runner := NewRunner(500 * time.Millisecond)
-	summary, err := runner.RunOnce(context.Background(), cfg, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
+	summary, err := runner.RunOnceTargets(context.Background(), []ProbeTarget{
+		target("0xabc", "backend-video", ts.URL, "video:transcode.abr", "http-reqresp@v0"),
+	}, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
 		applied = append(applied, obs)
 		return types.BackendSelectionState{}, nil
 	})

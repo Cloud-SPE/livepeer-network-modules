@@ -407,9 +407,10 @@ To pre-empt confusion from the older `livepeer-modules-project` codebase:
   wire and in storage. See [`payment-decoupling.md`](./payment-decoupling.md)
   for the rationale. The Go session record stores them as `string`
   (`store.go:47-71`).
-- **No `worker.yaml`.** The operator surface is
-  `capability-broker/examples/host-config.example.yaml`, owned by the
-  broker.
+- **No `worker.yaml`.** The broker-facing operator surface is either the
+  standalone broker `host-config.yaml` or, in a pool-managed rollout, the
+  `pool-controller` control plane that derives broker runtime from persisted
+  state.
 - **No catalog-driven `GetQuote` for senders.** Per-offering pricing is a
   future plan; the receiver's `GetQuote` returns `Unimplemented`
   (`receiver.go:451-453`) and `ListCapabilities` returns an empty catalog

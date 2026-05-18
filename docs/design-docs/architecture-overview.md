@@ -420,8 +420,10 @@ Rules:
 
 Boundary:
 
-- `host-config.yaml` owns operator intent: capability family, offering ID,
-  interaction mode, price, metering, backend URL, and routing constraints.
+- In a standalone broker rollout, `host-config.yaml` owns operator intent:
+  capability family, offering ID, interaction mode, price, metering, backend
+  URL, and routing constraints. In a pool-managed rollout, the analogous
+  operator intent lives in `pool-controller` persisted control-plane state.
 - Runtime discovery may validate and enrich an offering, but it does not invent
   or rewrite its market identity. The broker must not rewrite
   `extra.openai.model`, `offering_id`, `price`, or `constraints`.
@@ -692,9 +694,11 @@ adapter from this, not from any per-capability lookup table.
 
 **Operator-driven cycle:**
 
-1. Operator edits `host-config.yaml` on broker host(s).
-2. Broker re-advertises locally; orch-coordinator scrapes; coordinator builds candidate
-   manifest and exposes it for download.
+1. Operator updates the broker-facing operator surface:
+   - standalone rollout: edit `host-config.yaml` on broker host(s)
+   - pool-managed rollout: mutate `pool-controller` state and apply broker runtime
+2. Broker re-advertises locally; orch-coordinator scrapes; coordinator builds
+   candidate manifest and exposes it for download.
 3. Operator pulls candidate to secure-orch (download via console, scp, USB — operator's
    choice).
 4. `secure-orch-console` shows a **diff** of candidate vs. currently-published manifest.
@@ -716,9 +720,9 @@ sequenceDiagram
     participant Cold as cold orch keystore<br/>(HSM-backed)
     participant Chain as ServiceRegistry
 
-    Note over Op,Broker: 1. Operator edits config on worker host
-    Op->>Broker: edit host-config.yaml
-    Broker->>Broker: reload /registry/offerings
+    Note over Op,Broker: 1. Operator updates broker-facing state
+    Op->>Broker: edit host-config.yaml or apply via pool-controller
+    Broker->>Broker: reload runtime /registry/offerings
 
     Note over Coord,Broker: 2. Coordinator scrapes, builds candidate
     Coord->>Broker: GET /registry/offerings

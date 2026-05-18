@@ -299,7 +299,7 @@ Each layer corresponds to a different operator surface:
 
 | Layer | Operator action | Surface |
 |---|---|---|
-| 1 | edit `host-config.yaml` + sign cycle | secure-orch-console |
+| 1 | update broker-facing offer/runtime state + sign cycle | standalone broker YAML or `pool-controller`, plus secure-orch-console |
 | 2 | restart broker, mark drain, fix backend | broker `/admin` + container orchestration |
 | 3 | inspect dashboards, declare incident | metrics / alerting stack |
 

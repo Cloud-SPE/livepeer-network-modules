@@ -114,10 +114,10 @@ Automation must not change blast radius.
 | Requirement | Primary layer(s) addressing it |
 |---|---|
 | R1 | Whole architecture; especially L1 broker, L4 discovery, L6 payment |
-| R2 | L1 broker (backend descriptors); L3 config |
-| R3 | L3 config + reload semantics |
+| R2 | L1 broker (backend descriptors); L3 operator config/control-plane |
+| R3 | L3 operator config/control-plane + reload semantics |
 | R4 | L8 metrics |
-| R5 | L3 config (the entire surface) |
+| R5 | L3 operator surface (standalone broker YAML or pool control-plane) |
 | R6 | L5 trust spine |
 | R7 | L4 discovery (manifest schema); L6 payment (opaque names) |
 | R8 | L2 mode typology |

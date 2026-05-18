@@ -432,6 +432,76 @@ Playbook:
 6. if publish remains blocked, resolve coordinator-side rejection before
    attempting another sign cycle
 
+### 7.7 Round close stalled or missed
+
+This is a downstream accounting progression failure. Traffic may still be
+serving while accounting falls behind.
+
+Playbook:
+
+1. inspect `pool-reconciler` local state and logs
+2. confirm `protocol-daemon` round source is advancing
+3. confirm `payment-daemon` round revenue reads are healthy
+4. confirm `pool-controller` is accepting `/admin/v1/round-close`
+5. identify whether the failure is:
+   - source round detection
+   - revenue read failure
+   - round-close submission failure
+   - retry/checkpoint state stuck in failed
+6. if needed, run a one-shot manual close/prepare flow from `pool-reconciler`
+7. verify the closed round appears in `pool-controller` before resuming the
+   unattended reconciler loop
+
+### 7.8 Submitted payouts are stale
+
+This means payout execution has progressed to chain submission tracking, but the
+ intents are not resolving to `paid` or `failed` on schedule.
+
+Playbook:
+
+1. inspect `GET /admin/v1/payout-alerts`
+2. inspect `GET /admin/v1/payout-intents`
+3. inspect `pool-payout-executor` logs and local state summary
+4. confirm the payout hot wallet still has ETH for gas
+5. confirm the configured Arbitrum RPC is healthy
+6. run `confirm-submitted` or `reconcile-once` manually if needed
+7. only mark status manually if the on-chain reality is already known and the
+   operator is deliberately repairing controller state
+
+### 7.9 Failed payouts accumulating
+
+This is a payout retry/policy problem, not a broker-routing problem.
+
+Playbook:
+
+1. inspect failure reasons and retry counts in `pool-controller`
+2. separate:
+   - transient chain/RPC issues
+   - wallet balance issues
+   - invalid recipient or payload issues
+3. if failures are transient, use:
+   - `requeue-failed`
+   - or `requeue-alerted-failed`
+4. if failures are structural, correct the underlying payout issue before any
+   requeue
+5. verify requeued intents return to `exported` and are picked up cleanly by
+   the executor
+
+### 7.10 Leases stuck or near expiry
+
+This is an executor coordination issue.
+
+Playbook:
+
+1. inspect `GET /admin/v1/payout-alerts`
+2. inspect leased intents and lease owner/expiry in `pool-controller`
+3. check whether the owning executor is still healthy
+4. if the executor is healthy, prefer `renew`
+5. if the executor is dead or abandoned the work, release or let the lease
+   expire, then re-run the executor claim flow
+6. avoid starting multiple executors against the same exported set without an
+   explicit lease policy
+
 ## 8. Primary references
 
 - [`../../pool-controller/RUNBOOK.md`](../../pool-controller/RUNBOOK.md)

@@ -26,6 +26,16 @@ Implemented and validated:
 That means the remaining work is mostly operations, policy hardening, and
 longer-running validation rather than missing component plumbing.
 
+Recovery/runbook status:
+
+- control-plane, broker-apply, and publish recovery playbooks now live in
+  `docs/design-docs/pool-orchestrator-production-rollout.md`
+- payout/reconciler recovery playbooks now also live there for:
+  - stalled round close
+  - stale submitted payouts
+  - failed payout accumulation
+  - stuck or near-expiry leases
+
 ## Release checklist
 
 ### 1. Topology and persistence

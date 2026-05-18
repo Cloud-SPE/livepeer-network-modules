@@ -2578,11 +2578,14 @@ Current state:
   - approved but unassigned backends
   - suspended members / disabled backends
   - secure-orch publish blockage
+  - stalled round close
+  - stale submitted payouts
+  - failed payout accumulation
+  - stuck or near-expiry leases
 
 What is still missing:
 
 - failure-recovery playbooks for:
-  - payout/reconcile-specific failures beyond the control-plane surface
   - coordinator publish rejection specifics if they become a recurring operator
     issue
 

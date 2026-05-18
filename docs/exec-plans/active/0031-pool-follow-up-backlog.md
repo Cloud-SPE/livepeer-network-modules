@@ -8,6 +8,7 @@ owner: harness
 related:
   - "active plan 0029 — pool node design"
   - "active plan 0030 — pool backend scoring and broker-integrated selection for OpenAI workloads"
+  - "active plan 0033 — pool control plane onboarding and offer-assignment reset"
 ---
 
 # Plan 0031 — Pool follow-up backlog
@@ -102,6 +103,9 @@ Status: incomplete and deferred.
 
 These items are explicitly called out as not implemented yet in `0029`, but
 they are the next meaningful Pool product surface after routing quality.
+
+The control-plane reset for this group now has its own concrete implementation
+plan in [`0033-pool-control-plane-onboarding-and-assignment.md`](./0033-pool-control-plane-onboarding-and-assignment.md).
 
 1. Member self-service portal / wallet sign-in UX.
 2. Automated member approval workflow.

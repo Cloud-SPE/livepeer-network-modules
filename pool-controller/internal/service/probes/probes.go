@@ -42,6 +42,12 @@ type ProbeResult struct {
 	Reason           string `json:"reason,omitempty"`
 }
 
+type ProbeTarget struct {
+	Member   config.Member
+	Backend  config.Backend
+	Offering config.Offering
+}
+
 func NewRunner(timeout time.Duration) *Runner {
 	if timeout <= 0 {
 		timeout = 3 * time.Second
@@ -62,49 +68,71 @@ func (r *Runner) RunOnce(ctx context.Context, cfg *config.Config, apply ApplyFun
 	if cfg == nil {
 		return summary, fmt.Errorf("config is required")
 	}
+	targets := make([]ProbeTarget, 0)
 	for _, member := range cfg.Members {
 		for _, backend := range member.Backends {
 			for _, offering := range backend.Offerings {
-				result := ProbeResult{
-					MemberEthAddress: member.EthAddress,
-					BackendID:        backend.ID,
-					CapabilityID:     offering.CapabilityID,
-					OfferingID:       offering.OfferingID,
-				}
-				observation, status, reason, err := r.probeOffering(ctx, member, backend, offering)
-				if err != nil {
-					result.Status = "failed"
-					result.Reason = err.Error()
-					summary.Failed++
-					summary.Results = append(summary.Results, result)
-					continue
-				}
-				if status == "skipped" {
-					result.Status = status
-					result.Reason = reason
-					summary.Skipped++
-					summary.Results = append(summary.Results, result)
-					continue
-				}
-				result.Status = status
-				result.Reason = reason
-				summary.Results = append(summary.Results, result)
-				if _, err := apply(observation); err != nil {
-					summary.Failed++
-					result.Status = "failed"
-					result.Reason = err.Error()
-					summary.Results[len(summary.Results)-1] = result
-					continue
-				}
-				summary.Applied++
-				if observation.Success {
-					summary.Succeeded++
-				} else {
-					summary.Failed++
-				}
-				summary.Results[len(summary.Results)-1] = result
+				targets = append(targets, ProbeTarget{
+					Member:   member,
+					Backend:  backend,
+					Offering: offering,
+				})
 			}
 		}
+	}
+	return r.RunOnceTargets(ctx, targets, apply)
+}
+
+func (r *Runner) RunOnceTargets(ctx context.Context, targets []ProbeTarget, apply ApplyFunc) (RunSummary, error) {
+	summary := RunSummary{
+		StartedAt: time.Now().UTC(),
+		Results:   make([]ProbeResult, 0),
+	}
+	defer func() {
+		summary.FinishedAt = time.Now().UTC()
+	}()
+	for _, target := range targets {
+		member := target.Member
+		backend := target.Backend
+		offering := target.Offering
+		result := ProbeResult{
+			MemberEthAddress: member.EthAddress,
+			BackendID:        backend.ID,
+			CapabilityID:     offering.CapabilityID,
+			OfferingID:       offering.OfferingID,
+		}
+		observation, status, reason, err := r.probeOffering(ctx, member, backend, offering)
+		if err != nil {
+			result.Status = "failed"
+			result.Reason = err.Error()
+			summary.Failed++
+			summary.Results = append(summary.Results, result)
+			continue
+		}
+		if status == "skipped" {
+			result.Status = status
+			result.Reason = reason
+			summary.Skipped++
+			summary.Results = append(summary.Results, result)
+			continue
+		}
+		result.Status = status
+		result.Reason = reason
+		summary.Results = append(summary.Results, result)
+		if _, err := apply(observation); err != nil {
+			summary.Failed++
+			result.Status = "failed"
+			result.Reason = err.Error()
+			summary.Results[len(summary.Results)-1] = result
+			continue
+		}
+		summary.Applied++
+		if observation.Success {
+			summary.Succeeded++
+		} else {
+			summary.Failed++
+		}
+		summary.Results[len(summary.Results)-1] = result
 	}
 	return summary, nil
 }

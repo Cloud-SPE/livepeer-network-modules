@@ -235,9 +235,10 @@ members:
 		t.Fatalf("len(snapshot.Entries) = %d, want 1", len(snapshot.Entries))
 	}
 	entry := snapshot.Entries[0]
-	if entry.MemberEthAddress != "0xabc" || entry.BackendID != "b1" || entry.CapabilityID != "openai:chat-completions" || entry.OfferingID != "default" {
+	if entry.MemberEthAddress != "0xabc" || entry.BackendID == "" || entry.CapabilityID != "openai:chat-completions" || entry.OfferingID != "default" {
 		t.Fatalf("unexpected snapshot entry identity: %#v", entry)
 	}
+	backendID := entry.BackendID
 	if entry.State != "eligible" {
 		t.Fatalf("entry.State = %q, want eligible", entry.State)
 	}
@@ -245,7 +246,7 @@ members:
 		t.Fatalf("unexpected default snapshot scores: %#v", entry)
 	}
 
-	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/quarantine", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","reason":"manual"}`))
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/quarantine", "application/json", bytes.NewBufferString(fmt.Sprintf(`{"member_eth_address":"0xabc","backend_id":"%s","capability_id":"openai:chat-completions","offering_id":"default","reason":"manual"}`, backendID)))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/backend-overrides/quarantine error = %v", err)
 	}
@@ -255,7 +256,7 @@ members:
 		t.Fatalf("quarantine status/body = %d %s", resp.StatusCode, string(body))
 	}
 
-	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/clear-quarantine", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default"}`))
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/clear-quarantine", "application/json", bytes.NewBufferString(fmt.Sprintf(`{"member_eth_address":"0xabc","backend_id":"%s","capability_id":"openai:chat-completions","offering_id":"default"}`, backendID)))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/backend-overrides/clear-quarantine error = %v", err)
 	}
@@ -265,7 +266,7 @@ members:
 		t.Fatalf("clear-quarantine status/body = %d %s", resp.StatusCode, string(body))
 	}
 
-	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/warmup", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","warmup_modifier":0.25}`))
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/warmup", "application/json", bytes.NewBufferString(fmt.Sprintf(`{"member_eth_address":"0xabc","backend_id":"%s","capability_id":"openai:chat-completions","offering_id":"default","warmup_modifier":0.25}`, backendID)))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/backend-overrides/warmup error = %v", err)
 	}
@@ -274,7 +275,7 @@ members:
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"warmup_modifier":0.25`) || !strings.Contains(string(body), `"warmup_source":"manual_override"`) {
 		t.Fatalf("warmup status/body = %d %s", resp.StatusCode, string(body))
 	}
-	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/clear-warmup", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default"}`))
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/clear-warmup", "application/json", bytes.NewBufferString(fmt.Sprintf(`{"member_eth_address":"0xabc","backend_id":"%s","capability_id":"openai:chat-completions","offering_id":"default"}`, backendID)))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/backend-overrides/clear-warmup error = %v", err)
 	}
@@ -284,7 +285,7 @@ members:
 		t.Fatalf("clear-warmup status/body = %d %s", resp.StatusCode, string(body))
 	}
 
-	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/max-share-cap", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","max_share_cap":0.5}`))
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/max-share-cap", "application/json", bytes.NewBufferString(fmt.Sprintf(`{"member_eth_address":"0xabc","backend_id":"%s","capability_id":"openai:chat-completions","offering_id":"default","max_share_cap":0.5}`, backendID)))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/backend-overrides/max-share-cap error = %v", err)
 	}
@@ -293,7 +294,7 @@ members:
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"max_share_cap":0.5`) {
 		t.Fatalf("max-share-cap status/body = %d %s", resp.StatusCode, string(body))
 	}
-	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/clear-max-share-cap", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default"}`))
+	resp, err = http.Post(server.URL+"/admin/v1/backend-overrides/clear-max-share-cap", "application/json", bytes.NewBufferString(fmt.Sprintf(`{"member_eth_address":"0xabc","backend_id":"%s","capability_id":"openai:chat-completions","offering_id":"default"}`, backendID)))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/backend-overrides/clear-max-share-cap error = %v", err)
 	}
@@ -303,7 +304,7 @@ members:
 		t.Fatalf("clear-max-share-cap status/body = %d %s", resp.StatusCode, string(body))
 	}
 
-	resp, err = http.Post(server.URL+"/admin/v1/backend-outcomes", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","outcome":"success","latency_metric_ms":700,"occurred_at":"2026-05-17T16:00:00Z"}`))
+	resp, err = http.Post(server.URL+"/admin/v1/backend-outcomes", "application/json", bytes.NewBufferString(fmt.Sprintf(`{"member_eth_address":"0xabc","backend_id":"%s","capability_id":"openai:chat-completions","offering_id":"default","outcome":"success","latency_metric_ms":700,"occurred_at":"2026-05-17T16:00:00Z"}`, backendID)))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/backend-outcomes error = %v", err)
 	}
@@ -352,7 +353,7 @@ members:
 		t.Fatalf("backend-selection-summary initial status/body = %d %s", resp.StatusCode, string(body))
 	}
 
-	resp, err = http.Post(server.URL+"/admin/v1/backend-outcomes", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","outcome":"bad-value"}`))
+	resp, err = http.Post(server.URL+"/admin/v1/backend-outcomes", "application/json", bytes.NewBufferString(fmt.Sprintf(`{"member_eth_address":"0xabc","backend_id":"%s","capability_id":"openai:chat-completions","offering_id":"default","outcome":"bad-value"}`, backendID)))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/backend-outcomes invalid error = %v", err)
 	}
@@ -377,7 +378,7 @@ members:
 
 	for i := 0; i < 5; i++ {
 		at := fmt.Sprintf("2026-05-17T16:%02d:00Z", 10+i)
-		resp, err = http.Post(server.URL+"/admin/v1/backend-outcomes", "application/json", bytes.NewBufferString(`{"member_eth_address":"0xabc","backend_id":"b1","capability_id":"openai:chat-completions","offering_id":"default","outcome":"backend_failure","occurred_at":"`+at+`"}`))
+		resp, err = http.Post(server.URL+"/admin/v1/backend-outcomes", "application/json", bytes.NewBufferString(fmt.Sprintf(`{"member_eth_address":"0xabc","backend_id":"%s","capability_id":"openai:chat-completions","offering_id":"default","outcome":"backend_failure","occurred_at":"%s"}`, backendID, at)))
 		if err != nil {
 			t.Fatalf("POST /admin/v1/backend-outcomes backend_failure %d error = %v", i, err)
 		}

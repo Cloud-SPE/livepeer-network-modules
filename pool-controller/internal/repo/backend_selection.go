@@ -95,12 +95,16 @@ func currentBackendSelectionSettings() backendSelectionSettings {
 }
 
 func defaultBackendSelectionState(memberEthAddress string, backend config.Backend, offering config.Offering, now time.Time) types.BackendSelectionState {
+	return defaultBackendSelectionStateValues(memberEthAddress, backend.ID, offering.CapabilityID, offering.OfferingID, now)
+}
+
+func defaultBackendSelectionStateValues(memberEthAddress, backendID, capabilityID, offeringID string, now time.Time) types.BackendSelectionState {
 	return types.BackendSelectionState{
-		Key:                     backendSelectionStateKey(memberEthAddress, backend.ID, offering.CapabilityID, offering.OfferingID),
+		Key:                     backendSelectionStateKey(memberEthAddress, backendID, capabilityID, offeringID),
 		MemberEthAddress:        memberEthAddress,
-		BackendID:               backend.ID,
-		CapabilityID:            offering.CapabilityID,
-		OfferingID:              offering.OfferingID,
+		BackendID:               backendID,
+		CapabilityID:            capabilityID,
+		OfferingID:              offeringID,
 		State:                   types.BackendSelectionStateEligible,
 		SyntheticConfidence:     0.5,
 		RealSuccessScore:        0.5,
@@ -274,6 +278,118 @@ func (r *StateRepo) SyncBackendSelectionStates(cfg *config.Config) error {
 						return err
 					}
 				}
+			}
+		}
+		return nil
+	})
+}
+
+func (r *StateRepo) SyncBackendSelectionStatesFromEntities(offers []types.Offer, members []types.MemberRecord, backends []types.MemberBackend, assignments []types.Assignment) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("repo is not open")
+	}
+	now := time.Now().UTC()
+	offersByID := make(map[string]types.Offer, len(offers))
+	for _, offer := range offers {
+		offersByID[offer.ID] = offer
+	}
+	membersByID := make(map[string]types.MemberRecord, len(members))
+	for _, member := range members {
+		membersByID[member.ID] = member
+	}
+	backendsByID := make(map[string]types.MemberBackend, len(backends))
+	for _, backend := range backends {
+		backendsByID[backend.ID] = backend
+	}
+
+	type selectionIdentity struct {
+		MemberEthAddress string
+		BackendID        string
+		CapabilityID     string
+		OfferingID       string
+	}
+	items := make([]selectionIdentity, 0)
+	for _, assignment := range assignments {
+		if assignment.Status != types.AssignmentStatusActive {
+			continue
+		}
+		offer, ok := offersByID[assignment.OfferID]
+		if !ok || offer.Status != types.OfferStatusActive {
+			continue
+		}
+		backend, ok := backendsByID[assignment.MemberBackendID]
+		if !ok || backend.Status != types.BackendStatusActive {
+			continue
+		}
+		member, ok := membersByID[backend.MemberID]
+		if !ok || member.Status != types.MemberStatusActive {
+			continue
+		}
+		items = append(items, selectionIdentity{
+			MemberEthAddress: member.EthAddress,
+			BackendID:        backend.ID,
+			CapabilityID:     offer.CapabilityID,
+			OfferingID:       offer.OfferingID,
+		})
+	}
+
+	return r.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(backendSelectionStatesBucket))
+		for _, item := range items {
+			key := backendSelectionStateKey(item.MemberEthAddress, item.BackendID, item.CapabilityID, item.OfferingID)
+			if raw := b.Get([]byte(key)); raw != nil {
+				var existing types.BackendSelectionState
+				if err := json.Unmarshal(raw, &existing); err != nil {
+					return fmt.Errorf("decode backend selection state %q: %w", key, err)
+				}
+				changed := false
+				if existing.Key == "" {
+					existing.Key = key
+					changed = true
+				}
+				if existing.MemberEthAddress == "" {
+					existing.MemberEthAddress = item.MemberEthAddress
+					changed = true
+				}
+				if existing.BackendID == "" {
+					existing.BackendID = item.BackendID
+					changed = true
+				}
+				if existing.CapabilityID == "" {
+					existing.CapabilityID = item.CapabilityID
+					changed = true
+				}
+				if existing.OfferingID == "" {
+					existing.OfferingID = item.OfferingID
+					changed = true
+				}
+				if existing.State == "" {
+					existing.State = types.BackendSelectionStateEligible
+					changed = true
+				}
+				if existing.CreatedAt.IsZero() {
+					existing.CreatedAt = now
+					changed = true
+				}
+				if changed {
+					existing.UpdatedAt = now
+					next, err := json.Marshal(existing)
+					if err != nil {
+						return fmt.Errorf("marshal backend selection state %q: %w", key, err)
+					}
+					if err := b.Put([]byte(key), next); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			state := defaultBackendSelectionStateValues(item.MemberEthAddress, item.BackendID, item.CapabilityID, item.OfferingID, now)
+			next, err := json.Marshal(state)
+			if err != nil {
+				return fmt.Errorf("marshal backend selection state %q: %w", key, err)
+			}
+			if err := b.Put([]byte(key), next); err != nil {
+				return err
 			}
 		}
 		return nil

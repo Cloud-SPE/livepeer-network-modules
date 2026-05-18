@@ -133,6 +133,74 @@ func TestStateRepoSyncBackendSelectionStates(t *testing.T) {
 	}
 }
 
+func TestStateRepoSyncBackendSelectionStatesFromEntities(t *testing.T) {
+	repo, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = repo.Close() }()
+
+	offers := []types.Offer{
+		{
+			ID:              "offer-1",
+			CapabilityID:    "openai:chat-completions",
+			OfferingID:      "default",
+			InteractionMode: "http-stream@v0",
+			Status:          types.OfferStatusActive,
+		},
+		{
+			ID:              "offer-disabled",
+			CapabilityID:    "openai:embeddings",
+			OfferingID:      "default",
+			InteractionMode: "http-reqresp@v0",
+			Status:          types.OfferStatusDisabled,
+		},
+	}
+	members := []types.MemberRecord{
+		{
+			ID:         "member-1",
+			EthAddress: "0xabc",
+			Status:     types.MemberStatusActive,
+		},
+	}
+	backends := []types.MemberBackend{
+		{
+			ID:       "backend-1",
+			MemberID: "member-1",
+			Status:   types.BackendStatusActive,
+		},
+	}
+	assignments := []types.Assignment{
+		{
+			ID:              "assignment-1",
+			OfferID:         "offer-1",
+			MemberBackendID: "backend-1",
+			Status:          types.AssignmentStatusActive,
+		},
+		{
+			ID:              "assignment-disabled-offer",
+			OfferID:         "offer-disabled",
+			MemberBackendID: "backend-1",
+			Status:          types.AssignmentStatusActive,
+		},
+	}
+
+	if err := repo.SyncBackendSelectionStatesFromEntities(offers, members, backends, assignments); err != nil {
+		t.Fatalf("SyncBackendSelectionStatesFromEntities() error = %v", err)
+	}
+
+	items, err := repo.ListBackendSelectionStates()
+	if err != nil {
+		t.Fatalf("ListBackendSelectionStates() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(ListBackendSelectionStates()) = %d, want 1", len(items))
+	}
+	if items[0].MemberEthAddress != "0xabc" || items[0].BackendID != "backend-1" || items[0].CapabilityID != "openai:chat-completions" || items[0].OfferingID != "default" {
+		t.Fatalf("unexpected selection identity: %#v", items[0])
+	}
+}
+
 func TestStateRepoSaveAndListReceipts(t *testing.T) {
 	repo, err := Open(t.TempDir())
 	if err != nil {

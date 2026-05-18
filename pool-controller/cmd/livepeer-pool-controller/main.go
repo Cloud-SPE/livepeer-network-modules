@@ -301,7 +301,23 @@ func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source strin
 			return err
 		}
 		repo.ApplyBackendSelectionSettings(cfg.Scoring)
-		if err := s.repo.SyncBackendSelectionStates(cfg); err != nil {
+		offers, err := s.repo.ListOffers()
+		if err != nil {
+			return fmt.Errorf("list offers for backend selection sync: %w", err)
+		}
+		members, err := s.repo.ListMembers()
+		if err != nil {
+			return fmt.Errorf("list members for backend selection sync: %w", err)
+		}
+		backends, err := s.repo.ListMemberBackends()
+		if err != nil {
+			return fmt.Errorf("list member backends for backend selection sync: %w", err)
+		}
+		assignments, err := s.repo.ListAssignments()
+		if err != nil {
+			return fmt.Errorf("list assignments for backend selection sync: %w", err)
+		}
+		if err := s.repo.SyncBackendSelectionStatesFromEntities(offers, members, backends, assignments); err != nil {
 			return fmt.Errorf("sync backend selection state: %w", err)
 		}
 		configRaw, err := os.ReadFile(s.configPath)
@@ -312,7 +328,7 @@ func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source strin
 			ID:                 time.Now().UTC().Format(time.RFC3339Nano),
 			CreatedAt:          time.Now().UTC(),
 			Source:             source,
-			MemberCount:        len(cfg.Members),
+			MemberCount:        len(members),
 			RenderedBytes:      len(rendered),
 			ConfigYAML:         string(configRaw),
 			RenderedBrokerYAML: string(rendered),
@@ -437,7 +453,23 @@ func (s *runtimeState) RunSyntheticProbesOnce(ctx context.Context) (probes.RunSu
 	timeout := time.Duration(cfg.SyntheticProbes.TimeoutMS) * time.Millisecond
 	runner := probes.NewRunner(timeout)
 	startedAt := time.Now().UTC()
-	summary, err := runner.RunOnce(ctx, cfg, s.ApplySyntheticProbeObservation)
+	offers, err := s.repo.ListOffers()
+	if err != nil {
+		return probes.RunSummary{}, err
+	}
+	members, err := s.repo.ListMembers()
+	if err != nil {
+		return probes.RunSummary{}, err
+	}
+	backends, err := s.repo.ListMemberBackends()
+	if err != nil {
+		return probes.RunSummary{}, err
+	}
+	assignments, err := s.repo.ListAssignments()
+	if err != nil {
+		return probes.RunSummary{}, err
+	}
+	summary, err := runner.RunOnceTargets(ctx, buildSyntheticProbeTargets(offers, members, backends, assignments), s.ApplySyntheticProbeObservation)
 	duration := time.Since(startedAt)
 	if err != nil {
 		observability.RecordSyntheticProbeRunSummary(nil, duration, "error")
@@ -460,6 +492,62 @@ func (s *runtimeState) RunSyntheticProbesOnce(ctx context.Context) (probes.RunSu
 	}
 	observability.RecordSyntheticProbeRunSummary(results, duration, runResult)
 	return summary, nil
+}
+
+func buildSyntheticProbeTargets(offers []types.Offer, members []types.MemberRecord, backends []types.MemberBackend, assignments []types.Assignment) []probes.ProbeTarget {
+	offersByID := make(map[string]types.Offer, len(offers))
+	for _, offer := range offers {
+		offersByID[offer.ID] = offer
+	}
+	membersByID := make(map[string]types.MemberRecord, len(members))
+	for _, member := range members {
+		membersByID[member.ID] = member
+	}
+	backendsByID := make(map[string]types.MemberBackend, len(backends))
+	for _, backend := range backends {
+		backendsByID[backend.ID] = backend
+	}
+
+	targets := make([]probes.ProbeTarget, 0)
+	for _, assignment := range assignments {
+		if assignment.Status != types.AssignmentStatusActive {
+			continue
+		}
+		offer, ok := offersByID[assignment.OfferID]
+		if !ok || offer.Status != types.OfferStatusActive {
+			continue
+		}
+		backend, ok := backendsByID[assignment.MemberBackendID]
+		if !ok || backend.Status != types.BackendStatusActive {
+			continue
+		}
+		member, ok := membersByID[backend.MemberID]
+		if !ok || member.Status != types.MemberStatusActive {
+			continue
+		}
+		targets = append(targets, probes.ProbeTarget{
+			Member: config.Member{
+				EthAddress: member.EthAddress,
+			},
+			Backend: config.Backend{
+				ID:        backend.ID,
+				Transport: backend.Transport,
+				URL:       backend.URL,
+				Auth:      backend.Auth,
+			},
+			Offering: config.Offering{
+				CapabilityID:    offer.CapabilityID,
+				OfferingID:      offer.OfferingID,
+				InteractionMode: offer.InteractionMode,
+				WorkUnit:        offer.WorkUnit,
+				Price:           offer.Price,
+				Extra:           offer.Extra,
+				Constraints:     offer.Constraints,
+				Health:          config.Health{Probe: backend.HealthProbe},
+			},
+		})
+	}
+	return targets
 }
 
 func (s *runtimeState) Reload() error {
@@ -637,6 +725,25 @@ func (s *runtimeState) syncAccountingMetrics() error {
 	return nil
 }
 
+func countPersistedEntities(stateRepo *repo.StateRepo) (memberCount, backendCount, offerCount int, err error) {
+	if stateRepo == nil {
+		return 0, 0, 0, nil
+	}
+	members, err := stateRepo.ListMembers()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	backends, err := stateRepo.ListMemberBackends()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	offers, err := stateRepo.ListOffers()
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return len(members), len(backends), len(offers), nil
+}
+
 func newServeMux(state *runtimeState) *http.ServeMux {
 	mux := http.NewServeMux()
 	verifier := backendverify.New(state.repo)
@@ -708,7 +815,16 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 				Scoring       config.Scoring   `json:"scoring"`
 				Latest        *snapshotSummary `json:"latest_snapshot,omitempty"`
 			}{
-				MemberCount:   effectiveMemberCount(cfg, runtimeInfo),
+				MemberCount: func() int {
+					if runtimeInfo != nil && runtimeInfo.MemberCount > 0 {
+						return runtimeInfo.MemberCount
+					}
+					memberCount, _, _, err := countPersistedEntities(state.repo)
+					if err != nil {
+						return 0
+					}
+					return memberCount
+				}(),
 				RenderedBytes: len(rendered),
 				Scoring:       scoring,
 				Latest:        summarizeSnapshot(latest),
@@ -750,12 +866,12 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			memberCount = runtimeInfo.MemberCount
 			backendCount = runtimeInfo.BackendCount
 			offeringCount = runtimeInfo.OfferCount
-		} else if cfg != nil {
-			memberCount = len(cfg.Members)
-			for _, member := range cfg.Members {
-				backendCount += len(member.Backends)
+		} else {
+			memberCount, backendCount, offeringCount, err = countPersistedEntities(state.repo)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 			}
-			offeringCount = len(buildOfferingViews(cfg))
 		}
 		latestRoundID := ""
 		if len(rounds) > 0 {
@@ -1716,7 +1832,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		cfg, rendered, latest, runtimeInfo := state.Snapshot()
+		_, rendered, latest, runtimeInfo := state.Snapshot()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(struct {
@@ -1725,7 +1841,16 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			Status        string `json:"status"`
 			SnapshotID    string `json:"snapshot_id,omitempty"`
 		}{
-			MemberCount:   effectiveMemberCount(cfg, runtimeInfo),
+			MemberCount: func() int {
+				if runtimeInfo != nil && runtimeInfo.MemberCount > 0 {
+					return runtimeInfo.MemberCount
+				}
+				memberCount, _, _, err := countPersistedEntities(state.repo)
+				if err != nil {
+					return 0
+				}
+				return memberCount
+			}(),
 			RenderedBytes: len(rendered),
 			Status:        "reloaded",
 			SnapshotID:    latest.ID,
@@ -1820,16 +1945,6 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func effectiveMemberCount(cfg *config.Config, runtimeInfo *types.DesiredBrokerRuntime) int {
-	if runtimeInfo != nil && runtimeInfo.MemberCount > 0 {
-		return runtimeInfo.MemberCount
-	}
-	if cfg != nil {
-		return len(cfg.Members)
-	}
-	return 0
 }
 
 func offerFromRequest(req offerMutationRequest) (types.Offer, error) {
@@ -2399,83 +2514,6 @@ type backendStatusRequest struct {
 
 type joinRequestReviewRequest struct {
 	Reason string `json:"reason,omitempty"`
-}
-
-func buildMemberViews(cfg *config.Config) []memberView {
-	if cfg == nil {
-		return nil
-	}
-	out := make([]memberView, 0, len(cfg.Members))
-	for _, member := range cfg.Members {
-		view := memberView{
-			EthAddress:  member.EthAddress,
-			DisplayName: member.DisplayName,
-			PayoutMode:  member.PayoutMode,
-			Backends:    make([]memberBackendView, 0, len(member.Backends)),
-		}
-		for _, backend := range member.Backends {
-			backendView := memberBackendView{
-				ID:        backend.ID,
-				Transport: backend.Transport,
-				URL:       backend.URL,
-				Offerings: make([]memberOfferingView, 0, len(backend.Offerings)),
-			}
-			if backend.Auth.Method != "" && backend.Auth.Method != "none" {
-				backendView.Auth.Method = backend.Auth.Method
-				backendView.Auth.SecretRefSet = backend.Auth.SecretRef != ""
-			}
-			for _, offering := range backend.Offerings {
-				backendView.Offerings = append(backendView.Offerings, memberOfferingView{
-					CapabilityID:    offering.CapabilityID,
-					OfferingID:      offering.OfferingID,
-					InteractionMode: offering.InteractionMode,
-				})
-			}
-			view.Backends = append(view.Backends, backendView)
-		}
-		out = append(out, view)
-	}
-	return out
-}
-
-func buildOfferingViews(cfg *config.Config) []offeringView {
-	if cfg == nil {
-		return nil
-	}
-	grouped := map[string]*offeringView{}
-	order := make([]string, 0)
-	for _, member := range cfg.Members {
-		for _, backend := range member.Backends {
-			for _, offering := range backend.Offerings {
-				key := offering.CapabilityID + "\x00" + offering.OfferingID
-				view, ok := grouped[key]
-				if !ok {
-					view = &offeringView{
-						CapabilityID:    offering.CapabilityID,
-						OfferingID:      offering.OfferingID,
-						InteractionMode: offering.InteractionMode,
-						Backends:        make([]offeringBackendView, 0, 1),
-					}
-					grouped[key] = view
-					order = append(order, key)
-				}
-				view.Backends = append(view.Backends, offeringBackendView{
-					MemberEthAddress:  member.EthAddress,
-					MemberDisplayName: member.DisplayName,
-					BackendID:         backend.ID,
-					Transport:         backend.Transport,
-					URL:               backend.URL,
-				})
-			}
-		}
-	}
-	out := make([]offeringView, 0, len(order))
-	for _, key := range order {
-		view := grouped[key]
-		view.BackendCount = len(view.Backends)
-		out = append(out, *view)
-	}
-	return out
 }
 
 func buildMemberViewsFromState(stateRepo *repo.StateRepo) ([]memberView, error) {

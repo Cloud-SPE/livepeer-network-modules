@@ -36,7 +36,7 @@ there is no remote live-member contract for the Pool to target.
 ## 2. Decision
 
 For the current Pool generation, `video:live.rtmp` is explicitly unsupported in
-`pool-controller` member configs.
+the `pool-controller` member/backend admission and assignment model.
 
 `pool-controller` should reject any member offering that attempts to publish:
 

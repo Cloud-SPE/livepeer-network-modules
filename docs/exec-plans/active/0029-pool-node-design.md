@@ -203,7 +203,7 @@ is unchanged.
 |---|---|---|
 | `capability-broker/` | modified | Adds multi-backend-per-capability, per-request backend selection, per-backend metrics, synthetic-probe recipes. Reusable beyond Pool. |
 | `orch-coordinator/` | unchanged | Scrapes broker, signs manifest cycle, publishes at the well-known URL. Pool uses it identically to any other orch. |
-| `pool-controller/` | **new** | Admin UI + member directory (BoltDB), generates `host-config.yaml` for the Pool's broker, scrapes broker metrics for trust scoring, runs the payout job. **Not in the data path** — if down, gateway traffic continues. |
+| `pool-controller/` | **new** | Admin UI + persisted control-plane state (BoltDB) for offers, onboarding, backends, assignments, and desired broker runtime; also scrapes broker metrics for trust scoring and runs the payout job. **Not in the data path** — if down, gateway traffic continues. |
 | `pool-reconciler/` | **new** | Consumes round timing from `protocol-daemon`, prepares canonical round-close payloads, and submits them to `pool-controller`. Starts manual/file-driven, grows into the protocol-triggered reconciliation loop later. |
 
 **Implemented deployment topology at a glance:**
@@ -455,8 +455,8 @@ in the data path.
 operator-driven sign cycle. No new signing path. No automation past cold
 key.** Operational events flow as today:
 
-1. pool-controller regenerates broker `host-config.yaml`.
-2. Broker reloads.
+1. pool-controller updates persisted control-plane state.
+2. pool-controller applies desired broker runtime and confirms broker reload.
 3. Coordinator scrapes (existing flow).
 4. Coordinator builds candidate manifest.
 5. Operator hand-carries to secure-orch (existing).
@@ -497,9 +497,10 @@ migrations:
 - `Member.approved_at_policy_version` — version of approval policy at
   approval time (for audit).
 
-**Member self-service flow is deferred.** The current implementation is
-config-first: operators manage member records in the Pool config YAML, and
-pool-controller renders broker config and accounting state from that source.
+**Member self-service flow is deferred.** The shipped control-plane is now
+persisted-state-first: operators manage offers, members, backends, and
+assignments through API/UI, and `pool-controller` derives broker runtime and
+accounting state from that persisted state.
 
 **Module layout (carry-forward to component scaffolding):**
 
@@ -507,14 +508,14 @@ pool-controller renders broker config and accounting state from that source.
 pool-controller/
   cmd/livepeer-pool-controller/
   internal/
-    config/                      pool-controller-config.yaml grammar
-    types/                       Member, Backend, Offering, RoundReceipt, WorkReceipt, ...
+    config/                      bootstrap-only pool-controller config grammar
+    types/                       Offer, JoinRequest, MemberRecord, MemberBackend, Assignment, RoundReceipt, WorkReceipt, ...
     repo/                        BoltDB persistence
-      members/, backends/, offerings/, pricing/, rates/,
+      members/, backends/, offers/, assignments/, join_requests/, pricing/, rates/,
       receipts/, rounds/, payouts/, audit/
     service/
       registry/                  member registration + nonce challenge
-      configgen/                 host-config.yaml generator for Pool's broker
+      brokerrender/              desired broker runtime derivation from persisted state
       scrape/                    Prometheus + /registry/health scrape
       trust/                     per-member trust score (EMA)
       accounting/                per-round contribution aggregation

@@ -750,24 +750,20 @@ type Bootstrap struct {
 - do not require that shape for ordinary `serve`
 - add validation for bootstrap-only config
 
-**Implementation note:**
+**Historical note:**
 
-Prefer one of these two approaches:
+This migration note has been superseded by `M4`. The final implementation did
+not retain a separate runtime `LegacyConfig` surface; the legacy import/generate
+path was removed instead.
 
-1. keep a separate `LegacyConfig` struct in `internal/config/legacy.go`, or
-2. move current member/backend/offering structs into `internal/types/legacy_config.go`
-
-The important thing is to stop treating the legacy shape as the live runtime
-state model while still allowing import/migration.
-
-#### A3. Add an explicit import command
+#### A3. Historical migration option: explicit import command
 
 **File:** `pool-controller/cmd/livepeer-pool-controller/main.go`
 
-**Change:**
+**Outcome:**
 
-- add a command such as:
-  - `import-legacy-config`
+- this option was explored during the migration plan
+- the final `M4` cut removed `import-legacy-config` rather than preserving it
 
 **Responsibilities:**
 
@@ -1427,18 +1423,14 @@ This is the main runtime behavior change for Slice C.
 ### 16.12 Keep a compatibility facade during migration
 
 The existing code and docs refer to "broker config generation" as a controller
-surface. During migration:
+surface. This note is now historical only.
 
-- `generate-broker-config` may remain as a command
-- but it should source data from persisted state or explicit legacy import,
-  not from nested live config assumptions
+Final outcome:
 
-If temporary dual behavior is needed, it should be explicit:
-
-- `generate-broker-config --from-state`
-- `generate-broker-config --from-legacy-config`
-
-The end-state should favor `--from-state`.
+- `generate-broker-config` was removed in `M4`
+- broker runtime is now derived internally from persisted state
+- normal operator flow goes through control-plane APIs and
+  `POST /admin/v1/broker-runtime/apply`
 
 ### 16.13 Render tests to add
 

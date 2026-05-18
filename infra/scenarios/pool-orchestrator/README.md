@@ -47,22 +47,24 @@ From the repo root:
   livepeer-orch-coordinator
 ```
 
-## Render broker config
+## Prepare broker runtime
 
-`pool-controller` remains the source-of-truth config. Render the broker
-`host-config.yaml` from it before bringing up the stack:
+`pool-controller` no longer renders broker config from a nested controller YAML.
+The production path is:
 
-```bash
-mkdir -p infra/scenarios/pool-orchestrator/run
-docker run --rm \
-  -e POOL_CONTROLLER_ADMIN_TOKEN="${POOL_CONTROLLER_ADMIN_TOKEN}" \
-  -v "$PWD/pool-controller/examples/pool-controller-config.compose.yaml:/etc/livepeer/pool-controller.yaml:ro" \
-  -v "$PWD/infra/scenarios/pool-orchestrator/run:/out" \
-  tztcloud/livepeer-pool-controller:v1.2.0 \
-  generate-broker-config \
-  --config /etc/livepeer/pool-controller.yaml \
-  > infra/scenarios/pool-orchestrator/run/generated-broker-host-config.yaml
-```
+1. bootstrap `pool-controller`
+2. create offers through the control-plane
+3. approve members and backends
+4. create assignments
+5. use `POST /admin/v1/broker-runtime/apply`
+
+The controller now derives desired broker runtime from persisted state and
+confirms convergence against broker-reported runtime revision and attempt ID.
+
+See:
+
+- [`pool-controller/RUNBOOK.md`](../../pool-controller/RUNBOOK.md)
+- [`docs/design-docs/pool-orchestrator-production-rollout.md`](../../docs/design-docs/pool-orchestrator-production-rollout.md)
 
 ## Configure coordinator
 

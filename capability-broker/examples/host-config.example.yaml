@@ -1,7 +1,11 @@
 # Example host-config.yaml for the capability broker.
 #
-# This file is the operator's entire day-to-day surface. Edit, reload, re-publish
-# the manifest. Per requirement R5, no Go module written, no binary rebuilt.
+# For a standalone broker rollout, this file is the operator's day-to-day
+# runtime surface. Edit, reload, and re-publish the manifest without rebuilding
+# the broker binary.
+#
+# In a pool-managed rollout, `pool-controller` owns the canonical offer/member
+# state and stages the broker runtime artifact that the broker reloads.
 #
 # This example is intentionally conservative: it starts with simple HTTP
 # request/response capabilities and keeps more operationally involved shapes

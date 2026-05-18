@@ -2480,9 +2480,8 @@ once broker admin reload is configured. The normal path is:
 
 #### 22.1.5 Broker-side implementation notes
 
-The broker docs currently say there is no hot reload and restart is the
-operator path. `M1` therefore requires explicit broker work, not just
-controller work.
+At planning time, the broker still lacked a private reload/status surface, so
+`M1` required explicit broker work, not just controller work.
 
 That broker work should include:
 

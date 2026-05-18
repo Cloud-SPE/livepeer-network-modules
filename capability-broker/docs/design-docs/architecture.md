@@ -110,10 +110,19 @@ This boundary lets us:
 
 ## Configuration reload
 
-v0.1: no hot reload. Operator edits `host-config.yaml`, restarts the
-container.
+Current behavior: the broker exposes private runtime reload/status endpoints:
 
-A `SIGHUP` reload handler can be added in a follow-up; not in scope for v0.1.
+- `GET /admin/v1/runtime`
+- `POST /admin/v1/runtime/reload`
+
+Production flow is:
+
+1. stage a new `host-config.yaml` at the broker's configured path
+2. trigger `POST /admin/v1/runtime/reload`
+3. confirm broker-reported `loaded_revision`, `last_reload_attempt_id`, and
+   reload status
+
+If reload fails, the previous runtime stays active.
 
 ## Tests
 

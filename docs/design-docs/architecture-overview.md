@@ -614,7 +614,10 @@ Just like extractors, new probe recipe types are broker changes and
 should be rare. Day-to-day operator work is selecting and tuning existing
 recipes in YAML, not writing new code.
 
-This is the operator's entire day-to-day surface.
+For a standalone broker rollout, this YAML is the operator's day-to-day
+surface. In a pool-managed rollout, the analogous operator surface is the
+`pool-controller` control plane that derives broker runtime from persisted
+state.
 
 ## Layer 4 — Discovery (workload-agnostic registry)
 

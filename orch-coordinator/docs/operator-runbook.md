@@ -172,8 +172,10 @@ Broker entries are dropped immediately. The next candidate excludes
 that broker's tuples. `orch_coordinator_scrape_total{outcome=
 "schema_error"}` increments.
 
-Action: fix broker-side `host-config.yaml` or upgrade broker binary
-to a compatible spec version.
+Action: if the broker is managed by `pool-controller`, correct the persisted
+offer/member/assignment state and re-apply broker runtime. Otherwise, fix the
+broker-side `host-config.yaml` or upgrade the broker binary to a compatible
+spec version.
 
 ### Candidate-build price conflict
 
@@ -184,8 +186,10 @@ operator's reference point. `orch_coordinator_candidate_builds_total{
 outcome="conflict"}` increments and the error appears in the slog
 output.
 
-Action: reconcile broker `host-config.yaml` files. Two brokers may
-not advertise the same identity at different prices.
+Action: reconcile broker-advertised offer state. In a Pool rollout, fix the
+canonical offer state in `pool-controller` and re-apply broker runtime. In a
+standalone rollout, reconcile the affected broker `host-config.yaml` files.
+Two brokers may not advertise the same identity at different prices.
 
 ### Signed-manifest verify rejection
 

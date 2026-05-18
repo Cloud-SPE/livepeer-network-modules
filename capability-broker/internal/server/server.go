@@ -123,6 +123,7 @@ type Server struct {
 	runCtx               context.Context
 	healthCancel         context.CancelFunc
 	loadedAt             time.Time
+	lastReloadAttemptID  string
 	lastReloadStartedAt  time.Time
 	lastReloadFinishedAt time.Time
 	lastReloadStatus     string
@@ -248,8 +249,10 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		loadedRevision:   loadedRevision,
 		adminToken:       adminToken,
 		loadedAt:         loadedAt,
+		lastReloadAttemptID: "startup",
 		lastReloadStatus: "startup_loaded",
 		reloadHistory: []runtimeHistoryEntry{{
+			AttemptID:      "startup",
 			StartedAt:      loadedAt,
 			FinishedAt:     loadedAt,
 			Status:         "startup_loaded",

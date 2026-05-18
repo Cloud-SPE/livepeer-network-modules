@@ -531,6 +531,7 @@ func (s *runtimeState) recordBrokerRuntimeStatus(status *brokeradmin.RuntimeStat
 		return nil
 	}
 	applied, _ := s.repo.GetAppliedBrokerRuntime()
+	applied.BrokerReloadAttemptID = strings.TrimSpace(status.LastReloadAttemptID)
 	applied.BrokerLoadedRevision = strings.TrimSpace(status.LoadedRevision)
 	applied.BrokerLoadedAt = status.LoadedAt
 	applied.BrokerReloadStatus = strings.TrimSpace(status.LastReloadStatus)

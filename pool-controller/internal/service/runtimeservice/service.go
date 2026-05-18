@@ -18,6 +18,7 @@ type MarkRequest struct {
 type View struct {
 	DesiredRevision      string    `json:"desired_revision,omitempty"`
 	AppliedRevision      string    `json:"applied_revision,omitempty"`
+	BrokerReloadAttemptID string   `json:"broker_reload_attempt_id,omitempty"`
 	BrokerLoadedRevision string    `json:"broker_loaded_revision,omitempty"`
 	BrokerLoadedAt       time.Time `json:"broker_loaded_at,omitempty"`
 	BrokerReloadStatus   string    `json:"broker_reload_status,omitempty"`
@@ -44,6 +45,7 @@ func BuildView(desired *types.DesiredBrokerRuntime, applied types.AppliedBrokerR
 	return View{
 		DesiredRevision:      desiredRevision,
 		AppliedRevision:      applied.AppliedRevision,
+		BrokerReloadAttemptID: applied.BrokerReloadAttemptID,
 		BrokerLoadedRevision: applied.BrokerLoadedRevision,
 		BrokerLoadedAt:       applied.BrokerLoadedAt,
 		BrokerReloadStatus:   applied.BrokerReloadStatus,
@@ -65,6 +67,7 @@ func BuildDiff(desired *types.DesiredBrokerRuntime, applied types.AppliedBrokerR
 	return map[string]any{
 		"desired_revision":       revisionOf(desired),
 		"applied_revision":       applied.AppliedRevision,
+		"broker_reload_attempt_id": applied.BrokerReloadAttemptID,
 		"broker_loaded_revision": applied.BrokerLoadedRevision,
 		"dirty":                  revisionOf(desired) != applied.AppliedRevision,
 		"broker_dirty":           applied.BrokerLoadedRevision != "" && revisionOf(desired) != applied.BrokerLoadedRevision,

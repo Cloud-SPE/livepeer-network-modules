@@ -65,7 +65,7 @@ capabilities:
 	rec := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
 	body, _ := io.ReadAll(rec.Result().Body)
-	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"loaded_revision":"`) || !strings.Contains(string(body), `"last_reload_status":"startup_loaded"`) || !strings.Contains(string(body), `"history":[`) {
+	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"loaded_revision":"`) || !strings.Contains(string(body), `"last_reload_status":"startup_loaded"`) || !strings.Contains(string(body), `"last_reload_attempt_id":"startup"`) || !strings.Contains(string(body), `"history":[`) {
 		t.Fatalf("GET /admin/v1/runtime status=%d body=%s", rec.Code, string(body))
 	}
 
@@ -79,7 +79,7 @@ capabilities:
 	rec = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
 	body, _ = io.ReadAll(rec.Result().Body)
-	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"last_reload_status":"applied"`) || !strings.Contains(string(body), `"status":"applied"`) {
+	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"last_reload_status":"applied"`) || !strings.Contains(string(body), `"last_reload_attempt_id":"reload-`) || !strings.Contains(string(body), `"attempt_id":"reload-`) || !strings.Contains(string(body), `"status":"applied"`) {
 		t.Fatalf("POST /admin/v1/runtime/reload status=%d body=%s", rec.Code, string(body))
 	}
 
@@ -295,7 +295,7 @@ capabilities:
 	rec = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
 	body, _ = io.ReadAll(rec.Result().Body)
-	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"last_reload_status":"failed"`) || !strings.Contains(string(body), `"status":"failed"`) {
+	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"last_reload_status":"failed"`) || !strings.Contains(string(body), `"last_reload_attempt_id":"reload-`) || !strings.Contains(string(body), `"attempt_id":"reload-`) || !strings.Contains(string(body), `"status":"failed"`) {
 		t.Fatalf("GET /admin/v1/runtime after failure status=%d body=%s", rec.Code, string(body))
 	}
 }

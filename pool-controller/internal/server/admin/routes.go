@@ -98,6 +98,7 @@ type runtimeHistoryItem struct {
 	DesiredRevision      string         `json:"desired_revision,omitempty"`
 	CurrentRevision      string         `json:"current_revision,omitempty"`
 	AppliedRevision      string         `json:"applied_revision,omitempty"`
+	BrokerReloadAttemptID string        `json:"broker_reload_attempt_id,omitempty"`
 	BrokerLoadedRevision string         `json:"broker_loaded_revision,omitempty"`
 	BrokerReloadStatus   string         `json:"broker_reload_status,omitempty"`
 	BrokerReloadError    string         `json:"broker_reload_error,omitempty"`
@@ -762,6 +763,9 @@ func Register(mux *http.ServeMux, deps Deps) {
 				"desired_revision": desired.Revision,
 				"current_revision": currentDesired.Revision,
 			}
+			if applied.BrokerReloadAttemptID != "" {
+				details["broker_reload_attempt_id"] = applied.BrokerReloadAttemptID
+			}
 			if applied.BrokerLoadedRevision != "" {
 				details["broker_loaded_revision"] = applied.BrokerLoadedRevision
 			}
@@ -789,6 +793,9 @@ func Register(mux *http.ServeMux, deps Deps) {
 		details := map[string]any{
 			"desired_revision": currentDesired.Revision,
 			"applied_revision": applied.AppliedRevision,
+		}
+		if applied.BrokerReloadAttemptID != "" {
+			details["broker_reload_attempt_id"] = applied.BrokerReloadAttemptID
 		}
 		if applied.BrokerLoadedRevision != "" {
 			details["broker_loaded_revision"] = applied.BrokerLoadedRevision
@@ -845,6 +852,7 @@ func buildRuntimeHistory(events []types.AuditEvent, limit int) []runtimeHistoryI
 			item.DesiredRevision = stringDetail(event.Details, "desired_revision")
 			item.CurrentRevision = stringDetail(event.Details, "current_revision")
 			item.AppliedRevision = stringDetail(event.Details, "applied_revision")
+			item.BrokerReloadAttemptID = stringDetail(event.Details, "broker_reload_attempt_id")
 			item.BrokerLoadedRevision = stringDetail(event.Details, "broker_loaded_revision")
 			item.BrokerReloadStatus = stringDetail(event.Details, "broker_reload_status")
 			item.BrokerReloadError = stringDetail(event.Details, "broker_reload_error")

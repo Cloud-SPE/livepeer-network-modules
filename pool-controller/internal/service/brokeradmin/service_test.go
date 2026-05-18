@@ -19,13 +19,13 @@ func TestReloadAndConfirm(t *testing.T) {
 			}
 			reloaded = true
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"last_reload_status":"applied"}`))
+			_, _ = w.Write([]byte(`{"last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
 		case "/admin/v1/runtime":
 			if !reloaded {
 				t.Fatalf("runtime queried before reload")
 			}
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"loaded_revision":"rev-1","last_reload_status":"applied"}`))
+			_, _ = w.Write([]byte(`{"loaded_revision":"rev-1","last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -47,9 +47,10 @@ func TestReloadAndConfirmRejectsRevisionMismatch(t *testing.T) {
 		switch r.URL.Path {
 		case "/admin/v1/runtime/reload":
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
 		case "/admin/v1/runtime":
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"loaded_revision":"rev-2","last_reload_status":"applied"}`))
+			_, _ = w.Write([]byte(`{"loaded_revision":"rev-2","last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -59,5 +60,26 @@ func TestReloadAndConfirmRejectsRevisionMismatch(t *testing.T) {
 	client := New(srv.URL, config.AuthConfig{Method: "none"}, time.Second)
 	if _, err := client.ReloadAndConfirm("rev-1"); err == nil {
 		t.Fatal("ReloadAndConfirm() error = nil, want mismatch error")
+	}
+}
+
+func TestReloadAndConfirmRejectsAttemptMismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/admin/v1/runtime/reload":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
+		case "/admin/v1/runtime":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"loaded_revision":"rev-1","last_reload_attempt_id":"reload-2","last_reload_status":"applied"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := New(srv.URL, config.AuthConfig{Method: "none"}, time.Second)
+	if _, err := client.ReloadAndConfirm("rev-1"); err == nil {
+		t.Fatal("ReloadAndConfirm() error = nil, want attempt mismatch error")
 	}
 }

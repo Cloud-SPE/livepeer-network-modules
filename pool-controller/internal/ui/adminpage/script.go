@@ -612,6 +612,7 @@ const pageScript = `
         '<div class="small">apply command configured: ' + String(!!item.apply_command_configured) + ' | broker admin configured: ' + String(!!item.broker_admin_configured) + '</div>' +
         '<div class="small">desired: <span class="mono">' + (item.desired_revision || "") + '</span></div>' +
         '<div class="small">applied: <span class="mono">' + (item.applied_revision || "") + '</span></div>' +
+        (item.broker_reload_attempt_id ? '<div class="small">broker attempt: <span class="mono">' + item.broker_reload_attempt_id + '</span></div>' : '') +
         '<div class="small">broker loaded: <span class="mono">' + (item.broker_loaded_revision || "") + '</span></div>' +
         '<div class="small">offers: ' + item.offer_count + ', members: ' + item.member_count + ', backends: ' + item.backend_count + ', assignments: ' + item.assignment_count + '</div>' +
         (startedAt ? '<div class="small">last started: <span class="mono">' + startedAt + '</span></div>' : '') +
@@ -637,6 +638,7 @@ const pageScript = `
           (item.desired_revision ? '<div class="small">desired: <span class="mono">' + item.desired_revision + '</span></div>' : '') +
           (item.current_revision ? '<div class="small">current: <span class="mono">' + item.current_revision + '</span></div>' : '') +
           (item.applied_revision ? '<div class="small">applied: <span class="mono">' + item.applied_revision + '</span></div>' : '') +
+          (item.broker_reload_attempt_id ? '<div class="small">broker attempt: <span class="mono">' + item.broker_reload_attempt_id + '</span></div>' : '') +
           (item.broker_loaded_revision ? '<div class="small">broker loaded: <span class="mono">' + item.broker_loaded_revision + '</span></div>' : '') +
           (item.error ? '<div class="small bad">error: ' + item.error + '</div>' : '') +
           (item.broker_reload_error ? '<div class="small bad">broker reload error: ' + item.broker_reload_error + '</div>' : '')

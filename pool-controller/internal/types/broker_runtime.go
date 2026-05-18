@@ -15,6 +15,7 @@ type DesiredBrokerRuntime struct {
 type AppliedBrokerRuntime struct {
 	DesiredRevision      string    `json:"desired_revision"`
 	AppliedRevision      string    `json:"applied_revision"`
+	BrokerReloadAttemptID string   `json:"broker_reload_attempt_id,omitempty"`
 	BrokerLoadedRevision string    `json:"broker_loaded_revision,omitempty"`
 	BrokerLoadedAt       time.Time `json:"broker_loaded_at,omitempty"`
 	BrokerReloadStatus   string    `json:"broker_reload_status,omitempty"`

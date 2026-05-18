@@ -118,10 +118,11 @@ func TestBrokerRuntimeHistory(t *testing.T) {
 			ResourceID:   "rev-2",
 			ResourceType: "broker_runtime",
 			Details: map[string]any{
-				"desired_revision":      "rev-2",
-				"applied_revision":      "rev-2",
+				"desired_revision":       "rev-2",
+				"applied_revision":       "rev-2",
+				"broker_reload_attempt_id": "reload-2",
 				"broker_loaded_revision": "rev-2",
-				"broker_reload_status":  "applied",
+				"broker_reload_status":   "applied",
 			},
 		},
 		{
@@ -154,7 +155,7 @@ func TestBrokerRuntimeHistory(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /admin/v1/broker-runtime/history status=%d body=%s", resp.StatusCode, string(body))
 	}
-	if !strings.Contains(string(body), `"items":[`) || !strings.Contains(string(body), `"kind":"broker_runtime_apply_succeeded"`) || !strings.Contains(string(body), `"broker_loaded_revision":"rev-2"`) {
+	if !strings.Contains(string(body), `"items":[`) || !strings.Contains(string(body), `"kind":"broker_runtime_apply_succeeded"`) || !strings.Contains(string(body), `"broker_reload_attempt_id":"reload-2"`) || !strings.Contains(string(body), `"broker_loaded_revision":"rev-2"`) {
 		t.Fatalf("GET /admin/v1/broker-runtime/history body=%s", string(body))
 	}
 	if strings.Contains(string(body), `"kind":"offer_created"`) || strings.Contains(string(body), `"kind":"broker_runtime_mark_started"`) {

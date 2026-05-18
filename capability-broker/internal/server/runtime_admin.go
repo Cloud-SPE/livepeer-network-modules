@@ -17,6 +17,7 @@ type runtimeStatusResponse struct {
 	LoadedRevision       string    `json:"loaded_revision,omitempty"`
 	LoadedConfigPath     string    `json:"loaded_config_path,omitempty"`
 	LoadedAt             time.Time `json:"loaded_at,omitempty"`
+	LastReloadAttemptID  string    `json:"last_reload_attempt_id,omitempty"`
 	LastReloadStartedAt  time.Time `json:"last_reload_started_at,omitempty"`
 	LastReloadFinishedAt time.Time `json:"last_reload_finished_at,omitempty"`
 	LastReloadStatus     string    `json:"last_reload_status,omitempty"`
@@ -25,6 +26,7 @@ type runtimeStatusResponse struct {
 }
 
 type runtimeHistoryEntry struct {
+	AttemptID      string    `json:"attempt_id,omitempty"`
 	StartedAt      time.Time `json:"started_at,omitempty"`
 	FinishedAt     time.Time `json:"finished_at,omitempty"`
 	Status         string    `json:"status,omitempty"`
@@ -84,6 +86,7 @@ func (s *Server) runtimeStatus() runtimeStatusResponse {
 		LoadedRevision:       s.loadedRevision,
 		LoadedConfigPath:     s.loadedConfigPath,
 		LoadedAt:             s.loadedAt,
+		LastReloadAttemptID:  s.lastReloadAttemptID,
 		LastReloadStartedAt:  s.lastReloadStartedAt,
 		LastReloadFinishedAt: s.lastReloadFinishedAt,
 		LastReloadStatus:     s.lastReloadStatus,
@@ -114,7 +117,9 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 		return s.runtimeStatus(), fmt.Errorf("runtime reload requires a configured config path")
 	}
 	startedAt := time.Now().UTC()
+	attemptID := fmt.Sprintf("reload-%d", startedAt.UnixNano())
 	s.mu.Lock()
+	s.lastReloadAttemptID = attemptID
 	s.lastReloadStartedAt = startedAt
 	s.lastReloadStatus = "started"
 	s.lastReloadError = ""
@@ -122,18 +127,18 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 
 	cfg, err := config.Load(s.configPath)
 	if err != nil {
-		s.finishReload(startedAt, "failed", err.Error(), "", nil, nil)
+		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
 		return s.runtimeStatus(), err
 	}
 	loadedRevision, loadedConfigPath, err := loadRuntimeRevision(s.configPath, cfg)
 	if err != nil {
-		s.finishReload(startedAt, "failed", err.Error(), "", nil, nil)
+		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
 		return s.runtimeStatus(), err
 	}
 	metadata := newMetadataCatalog()
 	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
 	if err := validateConfigAgainstRegistries(cfg, s.modes, s.extractors); err != nil {
-		s.finishReload(startedAt, "failed", err.Error(), "", nil, nil)
+		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
 		return s.runtimeStatus(), err
 	}
 	var previousSnapshots []health.Snapshot
@@ -141,7 +146,7 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 		previousSnapshots = previous.Snapshot().Capabilities
 	}
 	healthMgr := health.NewWithSnapshots(cfg, previousSnapshots)
-	s.finishReload(startedAt, "applied", "", loadedRevision, cfg, healthMgr)
+	s.finishReload(attemptID, startedAt, "applied", "", loadedRevision, cfg, healthMgr)
 	s.mu.Lock()
 	s.loadedConfigPath = loadedConfigPath
 	s.metadata = metadata
@@ -150,9 +155,10 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 	return s.runtimeStatus(), nil
 }
 
-func (s *Server) finishReload(startedAt time.Time, status, reloadError, revision string, cfg *config.Config, healthMgr *health.Manager) {
+func (s *Server) finishReload(attemptID string, startedAt time.Time, status, reloadError, revision string, cfg *config.Config, healthMgr *health.Manager) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.lastReloadAttemptID = attemptID
 	s.lastReloadStartedAt = startedAt
 	s.lastReloadFinishedAt = time.Now().UTC()
 	s.lastReloadStatus = status
@@ -164,6 +170,7 @@ func (s *Server) finishReload(startedAt time.Time, status, reloadError, revision
 		s.loadedAt = s.lastReloadFinishedAt
 	}
 	s.recordReloadHistory(runtimeHistoryEntry{
+		AttemptID:      attemptID,
 		StartedAt:      startedAt,
 		FinishedAt:     s.lastReloadFinishedAt,
 		Status:         status,

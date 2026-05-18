@@ -1455,13 +1455,13 @@ func TestBrokerRuntimeApplyAuditIncludesBrokerConfirmation(t *testing.T) {
 			}
 			reloaded = true
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"last_reload_status":"applied"}`))
+			_, _ = w.Write([]byte(`{"last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
 		case "/admin/v1/runtime":
 			if !reloaded {
 				t.Fatalf("runtime status requested before reload")
 			}
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"loaded_revision":"` + expectedRevision + `","last_reload_status":"applied"}`))
+			_, _ = w.Write([]byte(`{"loaded_revision":"` + expectedRevision + `","last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -1655,13 +1655,13 @@ func TestApplyDesiredRuntimeConfirmsBrokerLoadedRevision(t *testing.T) {
 			}
 			reloaded = true
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"last_reload_status":"applied"}`))
+			_, _ = w.Write([]byte(`{"last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
 		case "/admin/v1/runtime":
 			if !reloaded {
 				t.Fatalf("runtime status requested before reload")
 			}
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"loaded_revision":"` + expectedRevision + `","last_reload_status":"applied"}`))
+			_, _ = w.Write([]byte(`{"loaded_revision":"` + expectedRevision + `","last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -1701,7 +1701,7 @@ func TestApplyDesiredRuntimeConfirmsBrokerLoadedRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAppliedBrokerRuntime() error = %v", err)
 	}
-	if applied.BrokerLoadedRevision != runtimeInfo.Revision || applied.BrokerReloadStatus != "applied" {
+	if applied.BrokerReloadAttemptID != "reload-1" || applied.BrokerLoadedRevision != runtimeInfo.Revision || applied.BrokerReloadStatus != "applied" {
 		t.Fatalf("applied = %#v", applied)
 	}
 }

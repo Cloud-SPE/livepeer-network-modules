@@ -31,4 +31,7 @@ type Reconcile struct {
 	StatePath     string `yaml:"state_path,omitempty"`
 	BackfillLimit int    `yaml:"backfill_limit,omitempty"`
 	RetryInterval int    `yaml:"retry_interval_ms,omitempty"`
+	// MetricsAddr is the listen address for /metrics scraping during
+	// long-running watch-rounds mode. Empty disables the listener.
+	MetricsAddr string `yaml:"metrics_addr,omitempty"`
 }

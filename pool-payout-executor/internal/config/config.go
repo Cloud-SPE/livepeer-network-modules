@@ -29,4 +29,7 @@ type Executor struct {
 	AutoRequeueFailed      bool   `yaml:"auto_requeue_failed,omitempty"`
 	MaxRetries             int    `yaml:"max_retries,omitempty"`
 	RequeueCooldownSeconds int    `yaml:"requeue_cooldown_seconds,omitempty"`
+	// MetricsAddr is the listen address for /metrics scraping during
+	// long-running reconcile-loop mode. Empty disables the listener.
+	MetricsAddr string `yaml:"metrics_addr,omitempty"`
 }

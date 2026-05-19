@@ -152,16 +152,24 @@ deferred.
 The current accounting path is usable, but there is still larger Pool economics
 work left if payout automation becomes the next bottleneck.
 
-1. Harden reconciler/executor operational runbooks and dashboards around lease
-   churn, retries, and payout failure pressure.
+1. ~~Harden reconciler/executor operational runbooks and dashboards around lease
+   churn, retries, and payout failure pressure.~~ **Shipped.** All three
+   payout components now emit Prometheus metrics covering retry pressure,
+   transaction outcomes, and reconcile-loop health. Each component's
+   RUNBOOK has a "Detecting failure pressure" section that maps signals to
+   first-step triage and (for the executor) maps controller alert kinds to
+   recovery commands. Implementation lives in
+   `pool-controller/internal/observability`,
+   `pool-reconciler/internal/observability`, and
+   `pool-payout-executor/internal/observability`.
 2. Decide whether the current admin-plane payout flow is sufficient for the
-   expected operator scale.
+   expected operator scale. **Open — depends on operator feedback.**
 3. If not, plan the next accounting milestone explicitly:
    - stronger payout orchestration
    - more automated retry/suspend coupling
    - eventual `PoolPayout` smart-contract path
 
-Status: incomplete and deferred.
+Status: item 1 shipped; items 2 and 3 remain operator-driven decisions.
 
 ### P4 — deferred research / protocol-adjacent work
 

@@ -53,14 +53,30 @@ Done:
   reports `STOPPED_AT_BUDGET` rather than `UNDERFUNDED`. Outcome coverage
   for `EXACT` / `UNDERFUNDED` / `OVERFUNDED` / `STOPPED_AT_BUDGET` lives in
   `internal/server/middleware/settlement_test.go`.
+- **Long-lived session modes** also emit settlement at their mode-native
+  terminal moments:
+  - `rtmp-ingress-hls-egress@v0` — `X-Livepeer-Settlement` response header
+    on the `POST /v1/cap/{session_id}/end` 204 close response
+    (`internal/server/rtmp.go`).
+  - `session-control-plus-media@v0` and
+    `session-control-external-media@v0` — `session.ended` control-WS
+    terminal envelope with a `SessionEndedBody { reason, settlement }`
+    JSON body carrying a base64-encoded `SettlementRecord`
+    (`internal/modes/sessioncontrolplusmedia/controlws.go` +
+    `internal/modes/sessioncontrolexternalmedia/controlws.go`).
+  - `middleware.SettlementInputs` is captured on `SessionState` at
+    session-open and snapshotted onto each driver's per-session record
+    so the close-time builder can reference it long after the
+    session-open payment middleware has returned.
 
 Remaining:
 
 - **Phase 4 (broker settlement) — remaining pieces** explicitly deferred:
-  - RTMP-ingress/HLS-egress and websocket session-control modes do not yet
-    emit settlement (would require a session-status endpoint or
-    terminal-event mechanism, per §7.3). Will be scoped as a separate
-    follow-up plan.
+  - `ws-realtime@v0` settlement is deferred: the connection close is the
+    session, HTTP trailers do not apply post-upgrade, and there is no
+    session-end control surface. Closing this gap requires either a
+    shared session-status endpoint or a synthetic close-frame protocol;
+    out of scope for the current slice.
   - `TOPPED_UP` outcome / mid-session top-up RPC is intentionally deferred
     until the explicit session model from §4.4 / §5.3 lands. The
     `GraceOnInsufficient` placeholder remains wired but unused.
@@ -630,12 +646,15 @@ For streaming/session modes, settlement metadata must be available via:
 - reject missing/invalid quote metadata in sender mode
 - regenerate committed protobuf bindings
 
-### Phase 4 — broker accounting and settlement ⏳ HTTP done, streaming/session deferred
+### Phase 4 — broker accounting and settlement ⏳ all paid modes except ws-realtime
 
 - add actual-usage settlement surfaces on paid paths
-  - ✅ HTTP unary, http-stream, http-multipart
-  - ⏳ RTMP ingress/HLS egress, websocket session-control — deferred to a
-    follow-up plan that designs the session-status surface
+  - ✅ HTTP unary, http-stream, http-multipart (response trailer)
+  - ✅ rtmp-ingress-hls-egress (close-endpoint response header)
+  - ✅ session-control-plus-media, session-control-external-media
+    (`session.ended` control-WS terminal envelope body)
+  - ⏳ ws-realtime — deferred; the connection close is the session and
+    there is no terminal control surface
 - plumb canonical billed units through mode drivers / extractors
   - ✅ canonical work unit name carried in `SettlementRecord.work_unit_name`
   - ⏳ `BilledUnits != ActualUnits` placeholder retained until a workload
@@ -647,6 +666,10 @@ For streaming/session modes, settlement metadata must be available via:
 - ensure broker-side settlement is the authoritative record returned to gateways
   - ✅ HTTP paths emit `SettlementRecord` as the `X-Livepeer-Settlement`
     response trailer
+  - ✅ RTMP emits `SettlementRecord` as the `X-Livepeer-Settlement`
+    response header on the customer close endpoint
+  - ✅ session-control modes emit `SettlementRecord` inside the
+    `session.ended` control-WS envelope body
 
 ### Phase 5 — gateway adoption ⏳ blocked on 0035
 

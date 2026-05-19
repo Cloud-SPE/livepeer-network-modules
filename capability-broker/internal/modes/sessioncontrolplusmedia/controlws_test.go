@@ -2,15 +2,22 @@ package sessioncontrolplusmedia
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/gorilla/websocket"
+	"google.golang.org/protobuf/proto"
 )
 
 func makeTimedCtx(d time.Duration) (context.Context, context.CancelFunc) {
@@ -183,6 +190,137 @@ func TestServeControlWS_BasicLifecycle(t *testing.T) {
 	}
 	if got := store.Get("sess_basic"); got != nil {
 		t.Fatalf("session.end did not tear down record: still present %v", got)
+	}
+}
+
+type stubLiveCounter struct {
+	v atomic.Uint64
+}
+
+func (s *stubLiveCounter) CurrentUnits() uint64 { return s.v.Load() }
+func (s *stubLiveCounter) Add(n uint64)         { s.v.Add(n) }
+
+func makeSessionPaymentBytes(t *testing.T, pricePerUnit int64) []byte {
+	t.Helper()
+	constraint := fmt.Sprintf(
+		"cap=cap;off=off;wu=seconds;est=%d;qid=quote-1;qv=1;cfp=%x;rfp=%x",
+		60,
+		[]byte{0xaa, 0xbb},
+		[]byte{0xcc, 0xdd},
+	)
+	pay := &pb.Payment{
+		ExpectedPrice: &pb.PriceInfo{
+			PricePerUnit:  pricePerUnit,
+			PixelsPerUnit: 1,
+			Constraint:    constraint,
+		},
+	}
+	raw, err := proto.Marshal(pay)
+	if err != nil {
+		t.Fatalf("marshal Payment: %v", err)
+	}
+	return raw
+}
+
+// TestServeControlWS_EmitsSessionEndedWithSettlement seeds a session
+// with settlement inputs and a live counter, runs the control-WS
+// upgrade, sends session.end from the client, and asserts the broker
+// emits a session.ended envelope containing a base64-encoded
+// SettlementRecord before the close frame.
+func TestServeControlWS_EmitsSessionEndedWithSettlement(t *testing.T) {
+	t.Parallel()
+	store := NewStore(StoreConfig{ReplayBufferMessages: 8})
+	cfg := DefaultControlWSConfig()
+	cfg.HeartbeatInterval = 100 * time.Millisecond
+	cfg.MissedHeartbeatThreshold = 30
+	d := New(store, cfg)
+
+	live := &stubLiveCounter{}
+	live.Add(75)
+
+	inputs := middleware.SettlementInputs{
+		PaymentBytes:   makeSessionPaymentBytes(t, 10),
+		FundedValueWei: big.NewInt(2000),
+		WorkUnit:       "seconds",
+	}
+	rec := &SessionRecord{
+		SessionID:        "sess_settle",
+		OpenedAt:         time.Now(),
+		ExpiresAt:        time.Now().Add(time.Hour),
+		LiveCounter:      live,
+		SettlementInputs: &inputs,
+	}
+	if err := store.Add(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/cap/{session_id}/control", d.ServeControlWS)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	wsURL := strings.Replace(srv.URL, "http", "ws", 1) + "/v1/cap/sess_settle/control"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Drain session.started.
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, _, err := conn.ReadMessage(); err != nil {
+		t.Fatalf("read first: %v", err)
+	}
+
+	// Trigger session.end.
+	end, _ := json.Marshal(ControlEnvelope{Type: TypeSessionEnd})
+	if err := conn.WriteMessage(websocket.TextMessage, end); err != nil {
+		t.Fatalf("write end: %v", err)
+	}
+
+	// The next text frame should be the broker's session.ended
+	// envelope carrying settlement.
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var endedEnv ControlEnvelope
+	for {
+		mt, data, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read after end: %v", err)
+		}
+		if mt != websocket.TextMessage {
+			continue
+		}
+		if err := json.Unmarshal(data, &endedEnv); err != nil {
+			t.Fatalf("decode ended envelope: %v", err)
+		}
+		if endedEnv.Type == TypeSessionEnded {
+			break
+		}
+	}
+	var body SessionEndedBody
+	if err := json.Unmarshal(endedEnv.Body, &body); err != nil {
+		t.Fatalf("decode session.ended body: %v", err)
+	}
+	if body.Reason != "session.end" {
+		t.Fatalf("body.reason = %q, want session.end", body.Reason)
+	}
+	if body.Settlement == "" {
+		t.Fatalf("body.settlement empty; expected base64-encoded SettlementRecord")
+	}
+	raw, err := base64.StdEncoding.DecodeString(body.Settlement)
+	if err != nil {
+		t.Fatalf("base64 decode settlement: %v", err)
+	}
+	var settlement pb.SettlementRecord
+	if err := proto.Unmarshal(raw, &settlement); err != nil {
+		t.Fatalf("proto unmarshal settlement: %v", err)
+	}
+	if got := settlement.GetActualUnits(); got != 75 {
+		t.Fatalf("actual_units = %d, want 75", got)
+	}
+	// 75 units * 10 wei/unit = 750; funded 2000 → OVERFUNDED
+	if got := settlement.GetOutcome(); got != pb.SettlementRecord_OVERFUNDED {
+		t.Fatalf("outcome = %v, want OVERFUNDED", got)
 	}
 }
 

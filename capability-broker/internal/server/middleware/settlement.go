@@ -15,6 +15,43 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// SettlementInputs captures everything needed to build a
+// SettlementRecord at a later point in time. Long-lived session
+// drivers (RTMP, session-control) snapshot this struct onto their
+// per-session records during Serve so they can emit settlement at
+// session-close, after the original per-request payment middleware
+// has long since returned.
+type SettlementInputs struct {
+	// PaymentBytes is the raw wire-format Payment the gateway
+	// supplied at session-open. The accepted-quote/price metadata is
+	// parsed back out of its expected_price.constraint field.
+	PaymentBytes []byte
+	// FundedValueWei is the broker-credited expected value for the
+	// session, returned by payment.Client.OpenSession at session-open.
+	FundedValueWei *big.Int
+	// WorkUnit is the canonical work-unit name for the offering. Used
+	// only when the payment's expected_price.constraint omits its own
+	// `wu=` hint (legacy/stub payments).
+	WorkUnit string
+}
+
+// BuildSettlementRecord constructs a SettlementRecord from a session's
+// inputs, the final measured units, and an optional termination reason
+// (one of the livepeerheader.Err* strings; empty for normal close).
+// Returns nil when the payment cannot be parsed or has no
+// expected_price — both indicate a stub/legacy payment that doesn't
+// support settlement.
+func BuildSettlementRecord(in SettlementInputs, actualUnits uint64, terminationReason string) *pb.SettlementRecord {
+	return buildSettlementRecord(in.PaymentBytes, in.FundedValueWei, actualUnits, in.WorkUnit, terminationReason)
+}
+
+// EncodeSettlementRecord base64-encodes a marshalled SettlementRecord
+// for transport in a single HTTP header or WebSocket terminal-event
+// field.
+func EncodeSettlementRecord(record *pb.SettlementRecord) (string, error) {
+	return encodeSettlementRecord(record)
+}
+
 func encodeSettlementRecord(record *pb.SettlementRecord) (string, error) {
 	if record == nil {
 		return "", fmt.Errorf("settlement record is nil")

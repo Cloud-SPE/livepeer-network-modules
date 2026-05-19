@@ -27,6 +27,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
 // Mode is the canonical mode-name@vN string for this driver.
@@ -126,6 +127,12 @@ func (d *Driver) Serve(_ context.Context, p modes.Params) error {
 		OpenedAt:     now,
 		ExpiresAt:    now.Add(DefaultExpiresIn),
 		LiveCounter:  p.LiveCounter,
+	}
+	if state := middleware.SessionStateFromContext(p.Request.Context()); state != nil {
+		if inputs, ok := state.SettlementInputs(); ok {
+			snapshot := inputs
+			rec.SettlementInputs = &snapshot
+		}
 	}
 	if err := d.store.Add(rec); err != nil {
 		livepeerheader.WriteError(p.Writer, http.StatusInternalServerError, livepeerheader.ErrInternalError,

@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
 // ControlWSConfig holds the broker-wide knobs for the control-WS path.
@@ -247,6 +248,17 @@ func (d *Driver) runReader(ctx context.Context, conn *websocket.Conn, rec *Sessi
 			continue
 		}
 		if env.Type == TypeSessionEnd {
+			// Emit the terminal session.ended envelope (with settlement
+			// metadata when payment context is available) BEFORE
+			// signalling shutdown. The writer's drain-on-ctx-done
+			// branch picks it up and flushes to the wire before the
+			// close frame.
+			rec.mu.Lock()
+			relay := rec.outboundForRelay
+			rec.mu.Unlock()
+			if relay != nil {
+				emitDirect(relay, buildSessionEndedEnvelope(rec, "session.end"))
+			}
 			cr.Set(websocket.CloseNormalClosure, "session.end")
 			d.tearDown(rec, "session.end")
 			cancel()
@@ -283,34 +295,56 @@ func (d *Driver) runReader(ctx context.Context, conn *websocket.Conn, rec *Sessi
 }
 
 // runWriter pumps server-emitted envelopes onto the WS, applying the
-// outbound replay buffer + backpressure window.
+// outbound replay buffer + backpressure window. On shutdown
+// (ctx.Done), it drains any queued envelopes from `out` with a short
+// deadline before exiting — this lets the reader emit a terminal
+// session.ended envelope right before requesting shutdown and trust
+// it actually reaches the wire.
 func (d *Driver) runWriter(ctx context.Context, conn *websocket.Conn, rec *SessionRecord, out <-chan ControlEnvelope, cancel context.CancelFunc, cr *closeReasonHolder) {
 	defer cancel()
 	dropAfter := d.cfg.BackpressureDropAfter
 	if dropAfter <= 0 {
 		dropAfter = 5 * time.Second
 	}
+	writeOne := func(env ControlEnvelope, deadline time.Time) bool {
+		payload, err := json.Marshal(env)
+		if err != nil {
+			return true
+		}
+		rec.replay.Append(env.Seq, payload)
+		_ = conn.SetWriteDeadline(deadline)
+		if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+			if errors.Is(err, websocket.ErrCloseSent) {
+				cr.Set(websocket.CloseNormalClosure, "")
+			} else {
+				cr.Set(websocket.ClosePolicyViolation, livepeerheader.ErrBackpressureDrop)
+			}
+			return false
+		}
+		return true
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			drainDeadline := time.Now().Add(500 * time.Millisecond)
+			for {
+				select {
+				case env, ok := <-out:
+					if !ok {
+						return
+					}
+					if !writeOne(env, drainDeadline) {
+						return
+					}
+				default:
+					return
+				}
+			}
 		case env, ok := <-out:
 			if !ok {
 				return
 			}
-			payload, err := json.Marshal(env)
-			if err != nil {
-				continue
-			}
-			rec.replay.Append(env.Seq, payload)
-			deadline := time.Now().Add(dropAfter)
-			_ = conn.SetWriteDeadline(deadline)
-			if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
-				if errors.Is(err, websocket.ErrCloseSent) {
-					cr.Set(websocket.CloseNormalClosure, "")
-				} else {
-					cr.Set(websocket.ClosePolicyViolation, livepeerheader.ErrBackpressureDrop)
-				}
+			if !writeOne(env, time.Now().Add(dropAfter)) {
 				return
 			}
 		}
@@ -372,6 +406,41 @@ func emitDirect(out chan<- ControlEnvelope, env ControlEnvelope) {
 	case out <- env:
 	default:
 		go func() { out <- env }()
+	}
+}
+
+// SessionEndedBody is the JSON body the broker writes inside the
+// terminal session.ended envelope. The settlement field carries a
+// base64-encoded SettlementRecord per plan 0034 §7.3 when payment
+// context was captured at session-open; absent for stub/legacy
+// payments.
+type SessionEndedBody struct {
+	Reason     string `json:"reason"`
+	Settlement string `json:"settlement,omitempty"`
+}
+
+// buildSessionEndedEnvelope assembles the terminal session.ended
+// envelope for a session. The envelope is always returned; settlement
+// is added only when the session has captured payment context AND the
+// record can be built.
+func buildSessionEndedEnvelope(rec *SessionRecord, reason string) ControlEnvelope {
+	body := SessionEndedBody{Reason: reason}
+	if rec.SettlementInputs != nil {
+		var actual uint64
+		if rec.LiveCounter != nil {
+			actual = rec.LiveCounter.CurrentUnits()
+		}
+		if record := middleware.BuildSettlementRecord(*rec.SettlementInputs, actual, ""); record != nil {
+			if encoded, err := middleware.EncodeSettlementRecord(record); err == nil {
+				body.Settlement = encoded
+			}
+		}
+	}
+	raw, _ := json.Marshal(body)
+	return ControlEnvelope{
+		Type: TypeSessionEnded,
+		Seq:  rec.NextSeq(),
+		Body: raw,
 	}
 }
 

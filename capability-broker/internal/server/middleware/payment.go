@@ -62,8 +62,9 @@ type InterimDebitConfig struct {
 // SessionState is intentionally goroutine-safe: the ticker reads
 // LiveCounter() concurrently with dispatch's SetLiveCounter call.
 type SessionState struct {
-	live atomic.Pointer[liveCounterHolder]
-	meta atomic.Pointer[receiptMetaHolder]
+	live       atomic.Pointer[liveCounterHolder]
+	meta       atomic.Pointer[receiptMetaHolder]
+	settlement atomic.Pointer[SettlementInputs]
 }
 
 type liveCounterHolder struct {
@@ -122,6 +123,31 @@ func (s *SessionState) ReceiptMeta() (ReceiptMeta, bool) {
 		return h.meta, true
 	}
 	return ReceiptMeta{}, false
+}
+
+// SetSettlementInputs publishes the inputs needed to build a
+// SettlementRecord later. Long-lived session drivers (RTMP,
+// session-control) snapshot these inputs onto their per-session
+// records during Serve so they can emit settlement at session-close
+// time, after the per-request payment middleware has long since
+// returned.
+func (s *SessionState) SetSettlementInputs(in SettlementInputs) {
+	if s == nil {
+		return
+	}
+	s.settlement.Store(&in)
+}
+
+// SettlementInputs returns the inputs published by the payment
+// middleware, or (zero, false) if absent.
+func (s *SessionState) SettlementInputs() (SettlementInputs, bool) {
+	if s == nil {
+		return SettlementInputs{}, false
+	}
+	if p := s.settlement.Load(); p != nil {
+		return *p, true
+	}
+	return SettlementInputs{}, false
 }
 
 type sessionStateKey struct{}
@@ -251,6 +277,11 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				RequestID:    RequestIDFromContext(ctx),
 				CapabilityID: capability,
 				OfferingID:   offering,
+			})
+			state.SetSettlementInputs(SettlementInputs{
+				PaymentBytes:   paymentBytes,
+				FundedValueWei: result.CreditedEV,
+				WorkUnit:       spec.WorkUnit,
 			})
 			handlerCtx, cancelHandler := context.WithCancel(ctx)
 			defer cancelHandler()

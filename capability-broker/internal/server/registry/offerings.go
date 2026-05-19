@@ -49,7 +49,11 @@ type offeringsCapabilityV1 struct {
 	PricePerUnitWei string            `json:"price_per_unit_wei"`
 	PerUnits        uint64            `json:"per_units"`
 	Extra           map[string]any    `json:"extra,omitempty"`
-	Constraints     map[string]any    `json:"constraints,omitempty"`
+	// Constraints is always emitted (no omitempty). Resolvers downstream
+	// hash the canonical constraints bytes; an absent block previously
+	// produced a nil constraint_fingerprint that failed request-path
+	// filtering. An empty operator config marshals as `"constraints":{}`.
+	Constraints map[string]any `json:"constraints"`
 }
 
 type offeringsWorkUnit struct {
@@ -69,6 +73,10 @@ func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPa
 		}
 		seen[key] = struct{}{}
 		extra := mergeExtraMaps(c.Extra, overlayFor(overlays, c.ID, c.OfferingID))
+		constraints := c.Constraints
+		if constraints == nil {
+			constraints = map[string]any{}
+		}
 		out.Capabilities = append(out.Capabilities, offeringsCapabilityV1{
 			CapabilityID:    c.ID,
 			OfferingID:      c.OfferingID,
@@ -77,7 +85,7 @@ func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPa
 			PricePerUnitWei: c.Price.AmountWei,
 			PerUnits:        c.Price.PerUnits,
 			Extra:           extra,
-			Constraints:     c.Constraints,
+			Constraints:     constraints,
 		})
 	}
 	return out

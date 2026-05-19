@@ -120,6 +120,7 @@ async function attemptCandidates<T>(
   }
 
   let lastError: unknown = null;
+  let lastQuoteRejection: Error | null = null;
   for (const candidate of candidates) {
     try {
       const result = await fn(candidate);
@@ -127,12 +128,42 @@ async function attemptCandidates<T>(
       return result;
     } catch (err) {
       lastError = err;
+      if (isQuoteRejection(err)) {
+        lastQuoteRejection = err instanceof Error ? err : new Error(String(err));
+      }
       routeSelector.recordOutcome(candidate, { ok: false, retryable: shouldPenalize(err) }, describeFailure(err));
       if (!shouldRetry(err)) break;
     }
   }
 
+  if (lastQuoteRejection !== null) {
+    throw new LivepeerBrokerError({
+      status: 503,
+      code: "broker_quote_rejected",
+      message: lastQuoteRejection.message,
+    });
+  }
   throw lastError;
+}
+
+// isQuoteRejection identifies dispatch failures that mean the route was
+// selected but its quote/fingerprint contract was rejected — either by
+// the payer-daemon's sender validation (`quote_ref.constraint_fingerprint
+// is empty`, `quote_ref.route_fingerprint is empty`, `quote_ref.quote_id
+// is empty`) or by a resolver that gates SelectMany on the same fields
+// (`resolver selected route missing quote fingerprints`). These are
+// distinct from "no route candidates" and should surface to the customer
+// as a separate error class so dashboards can say "the broker can't
+// quote this model" instead of "no route".
+export function isQuoteRejection(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  if (!msg) return false;
+  return (
+    msg.includes("quote_ref") ||
+    msg.includes("missing quote fingerprints") ||
+    msg.includes("constraint_fingerprint") ||
+    msg.includes("route_fingerprint")
+  );
 }
 
 function shouldRetry(err: unknown): boolean {

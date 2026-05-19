@@ -148,6 +148,62 @@ func TestRenderDeterministicRevision(t *testing.T) {
 	}
 }
 
+// TestRenderEmitsEmptyConstraintsBlock locks in the contract that the
+// rendered broker config always carries a `constraints:` key for each
+// capability, even when the operator left constraints empty. Resolvers
+// downstream fingerprint the canonical constraints bytes; an absent
+// block used to produce a nil fingerprint and a "no route candidates"
+// failure.
+func TestRenderEmitsEmptyConstraintsBlock(t *testing.T) {
+	input := RenderInput{
+		Bootstrap: BootstrapBrokerSettings{
+			Identity: config.Identity{OrchEthAddress: "0xorch"},
+		},
+		Offers: []types.Offer{{
+			ID:              "offer-1",
+			CapabilityID:    "rerank",
+			OfferingID:      "zerank-2-default",
+			InteractionMode: "http-reqresp@v0",
+			WorkUnit:        config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
+			Price:           config.Price{AmountWei: "1", PerUnits: 1},
+			Status:          types.OfferStatusActive,
+		}},
+		Members: []types.MemberRecord{{
+			ID:         "member-1",
+			EthAddress: "0xmember",
+			PayoutMode: "onchain",
+			Status:     types.MemberStatusActive,
+		}},
+		Backends: []types.MemberBackend{{
+			ID:        "backend-1",
+			MemberID:  "member-1",
+			Transport: "http",
+			URL:       "http://backend",
+			Status:    types.BackendStatusActive,
+		}},
+		Assignments: []types.Assignment{{
+			ID:              "assignment-1",
+			OfferID:         "offer-1",
+			MemberBackendID: "backend-1",
+			Status:          types.AssignmentStatusActive,
+		}},
+	}
+
+	got, err := Render(input)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(got.Model.Capabilities) != 1 {
+		t.Fatalf("len(Capabilities) = %d, want 1", len(got.Model.Capabilities))
+	}
+	if got.Model.Capabilities[0].Constraints == nil {
+		t.Fatalf("Constraints is nil; want empty map")
+	}
+	if !strings.Contains(string(got.ConfigYAML), "constraints: {}") {
+		t.Fatalf("rendered YAML missing empty constraints block: %s", string(got.ConfigYAML))
+	}
+}
+
 func TestRenderRequestFormulaIncludesEmptyFieldsMap(t *testing.T) {
 	input := RenderInput{
 		Bootstrap: BootstrapBrokerSettings{

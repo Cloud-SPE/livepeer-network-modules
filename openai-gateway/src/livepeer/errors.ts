@@ -25,6 +25,19 @@ export class LivepeerBrokerError extends Error {
   }
 }
 
+// gatewayHttpStatusFor maps a broker-side error to the HTTP status the
+// gateway should surface to the customer. Upstream 5xx is squashed to
+// 502 because from the customer's perspective the gateway's backend is
+// bad. The carve-out: `broker_quote_rejected` keeps its 503 because the
+// rejection is an explicit contract decision (resolver or payer-daemon
+// refused to quote this route), not a transient backend failure — so
+// the customer-facing semantics are "service unavailable for this
+// model", not "upstream gave us a 5xx".
+export function gatewayHttpStatusFor(err: LivepeerBrokerError): number {
+  if (err.code === "broker_quote_rejected") return err.status;
+  return err.status >= 500 ? 502 : err.status;
+}
+
 export function errorFromResponse(
   status: number,
   headers: Headers | Record<string, string | string[] | undefined>,

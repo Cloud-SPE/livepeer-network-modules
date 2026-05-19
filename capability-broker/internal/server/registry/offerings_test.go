@@ -1,6 +1,8 @@
 package registry
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
@@ -62,6 +64,39 @@ func TestBuildOfferings_MergesOverlayWithoutMutatingConfig(t *testing.T) {
 	}
 	if _, exists := baseVTuber["control_schema"]; exists {
 		t.Fatal("config extra.vtuber should not be mutated by overlay merge")
+	}
+}
+
+// TestBuildOfferings_EmitsEmptyConstraintsBlock guarantees that the
+// public /registry/offerings payload always carries a `constraints`
+// field, even when none are configured. Downstream resolvers hash the
+// canonical constraints bytes; an absent block previously produced a
+// nil constraint_fingerprint that failed request-path filtering.
+func TestBuildOfferings_EmitsEmptyConstraintsBlock(t *testing.T) {
+	cfg := &config.Config{
+		Identity: config.Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []config.Capability{{
+			ID:              "rerank",
+			OfferingID:      "zerank-2-default",
+			InteractionMode: "http-reqresp@v0",
+			WorkUnit:        config.WorkUnit{Name: "requests"},
+			Price:           config.Price{AmountWei: "1", PerUnits: 1},
+		}},
+	}
+
+	payload := buildOfferings(cfg, nil)
+	if len(payload.Capabilities) != 1 {
+		t.Fatalf("capabilities count = %d; want 1", len(payload.Capabilities))
+	}
+	if payload.Capabilities[0].Constraints == nil {
+		t.Fatal("constraints is nil; want empty map")
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"constraints":{}`) {
+		t.Fatalf("marshalled payload missing empty constraints block: %s", raw)
 	}
 }
 

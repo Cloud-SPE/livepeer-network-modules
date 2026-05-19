@@ -231,6 +231,60 @@ func TestSelectedRouteFromResolvedNode_MissingMatch(t *testing.T) {
 	}
 }
 
+// TestSelectedRouteFromResolvedNode_EmptyConstraints locks in the
+// resolver-side guarantee: even when an offering publishes no
+// constraints block, the selected route still carries a non-nil
+// deterministic ConstraintFingerprint (the canonical-JSON `{}` digest).
+// Without this, downstream payment-daemon and request-path filters that
+// require a non-empty fingerprint would reject otherwise-valid pool
+// routes.
+func TestSelectedRouteFromResolvedNode_EmptyConstraints(t *testing.T) {
+	build := func(constraints []byte) *SelectedRoute {
+		in := types.ResolvedNode{
+			URL:          "https://worker.example.com",
+			OperatorAddr: "0xabcdef0000000000000000000000000000000000",
+			Capabilities: []types.Capability{
+				{
+					Name:     "rerank",
+					WorkUnit: "request",
+					Offerings: []types.Offering{
+						{ID: "zerank-2-default", PricePerWorkUnitWei: "1", Constraints: constraints},
+					},
+				},
+			},
+		}
+		out, err := selectedRouteFromResolvedNode(in, selection.Filter{
+			Capability: "rerank",
+			Offering:   "zerank-2-default",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	absent := build(nil)
+	empty := build([]byte("{}"))
+	whitespace := build([]byte("  \n\t"))
+
+	if len(absent.ConstraintFingerprint) == 0 {
+		t.Fatalf("absent constraints produced empty fingerprint")
+	}
+	if string(absent.ConstraintFingerprint) != string(empty.ConstraintFingerprint) {
+		t.Fatalf("absent vs `{}` constraints fingerprint drift: %x vs %x",
+			absent.ConstraintFingerprint, empty.ConstraintFingerprint)
+	}
+	if string(absent.ConstraintFingerprint) != string(whitespace.ConstraintFingerprint) {
+		t.Fatalf("absent vs whitespace constraints fingerprint drift: %x vs %x",
+			absent.ConstraintFingerprint, whitespace.ConstraintFingerprint)
+	}
+
+	populated := build([]byte(`{"tier":"standard"}`))
+	if string(populated.ConstraintFingerprint) == string(absent.ConstraintFingerprint) {
+		t.Fatalf("populated constraints collided with empty-object digest")
+	}
+}
+
 func TestResolveResultToProto_NilSafe(t *testing.T) {
 	if got := resolveResultToProto(nil); got == nil {
 		t.Fatal("nil-safe expected non-nil empty proto")

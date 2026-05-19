@@ -280,11 +280,18 @@ func fingerprintRoute(r *SelectedRoute) []byte {
 	return append([]byte(nil), sum[:]...)
 }
 
+// fingerprintCanonicalJSON returns sha256 of the canonical JSON form of
+// raw. Absent or empty input canonicalizes to the empty object `{}` so
+// that "no constraints declared" has a stable, non-nil identity. Any
+// populated constraint block re-marshals through encoding/json and
+// therefore cannot canonicalize to `{}`, so the empty-object digest does
+// not collide with any real constraint set.
 func fingerprintCanonicalJSON(raw []byte) []byte {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return nil
+	canonical := canonicalJSON(raw)
+	if len(canonical) == 0 {
+		canonical = []byte("{}")
 	}
-	sum := sha256.Sum256(canonicalJSON(raw))
+	sum := sha256.Sum256(canonical)
 	return append([]byte(nil), sum[:]...)
 }
 

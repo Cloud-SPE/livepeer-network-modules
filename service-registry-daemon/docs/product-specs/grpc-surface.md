@@ -75,7 +75,11 @@ Guarantees:
 - `quote_version` is the signed manifest `publication_seq` when the
   selected route came from the orch-coordinator envelope; otherwise `0`.
 - `constraint_fingerprint` is the SHA-256 of canonicalized
-  `constraints_json`.
+  `constraints_json`. Absent or empty constraints canonicalize to `{}`
+  before hashing, so `constraint_fingerprint` is always non-empty for a
+  selectable route. A populated constraint block always re-marshals
+  through JSON canonicalization and therefore cannot collide with the
+  empty-object digest.
 - `route_fingerprint` is the SHA-256 of the selected route record
   (`eth_address`, `worker_url`, `capability`, `offering`,
   `price_per_work_unit_wei`, `work_unit`, `units_per_price`, canonical

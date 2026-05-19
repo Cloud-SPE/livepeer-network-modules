@@ -49,7 +49,10 @@ type BrokerCapability struct {
 	Price           config.Price    `yaml:"price"`
 	Backend         BrokerBackend   `yaml:"backend"`
 	Extra           map[string]any  `yaml:"extra,omitempty"`
-	Constraints     map[string]any  `yaml:"constraints,omitempty"`
+	// Constraints is always rendered (no omitempty) so that downstream
+	// resolvers can fingerprint a stable shape even when the operator
+	// declared no constraints. An empty map renders as `constraints: {}`.
+	Constraints map[string]any `yaml:"constraints"`
 }
 
 type BrokerBackend struct {
@@ -100,6 +103,10 @@ func Render(input RenderInput) (RenderResult, error) {
 			"member_backend_id":   backend.ID,
 			"payout_mode":         member.PayoutMode,
 		}
+		constraints := cloneMap(offer.Constraints)
+		if constraints == nil {
+			constraints = map[string]any{}
+		}
 		capabilities = append(capabilities, BrokerCapability{
 			ID:              offer.CapabilityID,
 			OfferingID:      offer.OfferingID,
@@ -114,7 +121,7 @@ func Render(input RenderInput) (RenderResult, error) {
 				Auth:      backend.Auth,
 			},
 			Extra:       extra,
-			Constraints: cloneMap(offer.Constraints),
+			Constraints: constraints,
 		})
 	}
 

@@ -3,7 +3,7 @@ import type { auth, billing } from "@livepeer-network-modules/customer-portal";
 import { middleware } from "@livepeer-network-modules/customer-portal";
 
 import { Capability } from "../livepeer/capabilityMap.js";
-import { LivepeerBrokerError } from "../livepeer/errors.js";
+import { LivepeerBrokerError, gatewayHttpStatusFor } from "../livepeer/errors.js";
 import { readOrSynthRequestId } from "../livepeer/requestId.js";
 import { HEADER } from "../livepeer/headers.js";
 import { resolveDefaultOffering } from "../service/offerings.js";
@@ -111,7 +111,7 @@ export function registerAudioTranscriptions(
         }
         if (err instanceof LivepeerBrokerError) {
           await reply
-            .code(err.status >= 500 ? 502 : err.status)
+            .code(gatewayHttpStatusFor(err))
             .header(HEADER.REQUEST_ID, requestId)
             .send({ error: err.code, message: err.message });
           return;

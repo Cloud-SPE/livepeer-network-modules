@@ -204,6 +204,64 @@ func TestWire_ResolveByAddress_HappyPath(t *testing.T) {
 	}
 }
 
+func TestWire_SelectMany_RequiresExactDiscoveredCapabilityKey(t *testing.T) {
+	f := newWireFixture(t)
+	f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: "https://orch.example.com:8935",
+			Capabilities: []types.Capability{
+				{
+					Name:     "openai:/v1/chat/completions",
+					WorkUnit: "token",
+					Offerings: []types.Offering{
+						{ID: "gpt-oss-20b", PricePerWorkUnitWei: "1000"},
+					},
+				},
+			},
+		},
+	})
+
+	cli := registryv1.NewResolverClient(f.clientConn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resolved, err := cli.ResolveByAddress(ctx, &registryv1.ResolveByAddressRequest{EthAddress: string(f.addr)})
+	if err != nil {
+		t.Fatalf("ResolveByAddress RPC error: %v", err)
+	}
+	if len(resolved.GetNodes()) != 1 || len(resolved.GetNodes()[0].GetCapabilities()) != 1 {
+		t.Fatalf("unexpected resolve shape: %+v", resolved.GetNodes())
+	}
+	capability := resolved.GetNodes()[0].GetCapabilities()[0].GetName()
+	offering := resolved.GetNodes()[0].GetCapabilities()[0].GetOfferings()[0].GetId()
+	if capability != "openai:/v1/chat/completions" {
+		t.Fatalf("capability = %q, want slash-form capability from discovery", capability)
+	}
+	if offering != "gpt-oss-20b" {
+		t.Fatalf("offering = %q, want gpt-oss-20b", offering)
+	}
+
+	selected, err := cli.SelectMany(ctx, &registryv1.SelectRequest{
+		Capability: capability,
+		Offering:   offering,
+	})
+	if err != nil {
+		t.Fatalf("expected exact discovered tuple to select, got %v", err)
+	}
+	if len(selected.GetRoutes()) != 1 {
+		t.Fatalf("routes = %d, want 1", len(selected.GetRoutes()))
+	}
+
+	_, err = cli.SelectMany(ctx, &registryv1.SelectRequest{
+		Capability: "openai:chat-completions",
+		Offering:   offering,
+	})
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("expected normalized capability alias to fail, got err=%v code=%v", err, status.Code(err))
+	}
+}
+
 func TestWire_ResolveByAddress_NotFound_CarriesStableCode(t *testing.T) {
 	f := newWireFixture(t)
 	cli := registryv1.NewResolverClient(f.clientConn)

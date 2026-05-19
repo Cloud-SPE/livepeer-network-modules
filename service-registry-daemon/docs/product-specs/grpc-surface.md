@@ -1,7 +1,7 @@
 ---
 title: gRPC surface — product spec
 stability: v1-stable
-last-reviewed: 2026-04-28
+last-reviewed: 2026-05-19
 ---
 
 # gRPC surface (consumer contract)
@@ -39,6 +39,10 @@ Guarantees:
 - If the on-chain `serviceURI` exists and is dial-able as a URL, AND `allow_legacy_fallback=true`, this RPC NEVER returns `not_found` — at minimum a single legacy-synthesized node is returned.
 - `nodes[]` is non-empty on success.
 - `freshness_status` is one of `fresh`, `stale_recoverable`, `stale_failing`. Consumers can choose to short-circuit on the latter.
+- `nodes[].capabilities[].name` and `nodes[].capabilities[].offerings[].id`
+  are discovery metadata, not normalized gateway aliases. Consumers must
+  treat capability IDs as opaque strings when feeding a discovered tuple
+  back into `Select` / `SelectMany`.
 
 ### Select
 
@@ -50,6 +54,12 @@ Output: one selected route (`worker_url`, `eth_address`, `capability`,
 
 Guarantees:
 - `capability` and `offering` are required.
+- `capability` and `offering` are matched case-insensitively but are
+  otherwise exact keys. The resolver does not normalize slash-form and
+  colon-form OpenAI capability IDs into a shared canonical form. If
+  discovery returned `openai:/v1/chat/completions`, callers must use
+  that exact capability string in `Select` / `SelectMany`; likewise for
+  `openai:chat-completions`.
 - Filtering remains conjunctive across `capability`, `offering`, `tier`,
   and `min_weight`.
 - If more than one candidate matches, the daemon applies the existing
@@ -81,6 +91,10 @@ Guarantees:
 - `Select.route` is always `SelectMany.routes[0]` for the same request.
 - Every returned route is payment-ready and carries the full quote-bound
   metadata needed for `CreatePayment`.
+- `ResolveByAddress` inventory tuples are only selectable when callers
+  pass the same capability/offering keys back into `SelectMany`. Route
+  visibility in discovery does not override live-health, tier, or
+  `min_weight` pruning.
 
 ### ListKnown / Refresh / GetAuditLog / Health
 

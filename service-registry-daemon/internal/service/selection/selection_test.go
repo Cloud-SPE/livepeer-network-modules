@@ -48,6 +48,20 @@ func TestApply_FilterByOffering(t *testing.T) {
 	}
 }
 
+func TestApply_DoesNotNormalizeCapabilityForms(t *testing.T) {
+	nodes := []types.ResolvedNode{
+		mkNode("slash", 50, []string{"openai:/v1/chat/completions"}, []string{"default"}, nil, nil, nil),
+	}
+	got := Apply(nodes, Filter{Capability: "openai:chat-completions", Offering: "default"})
+	if len(got) != 0 {
+		t.Fatalf("expected no match across capability forms, got %+v", got)
+	}
+	got = Apply(nodes, Filter{Capability: "openai:/v1/chat/completions", Offering: "default"})
+	if len(got) != 1 || got[0].ID != "slash" {
+		t.Fatalf("expected exact slash-form match, got %+v", got)
+	}
+}
+
 func TestApply_TierFilterAllowsUnscoped(t *testing.T) {
 	nodes := []types.ResolvedNode{
 		mkNode("a", 50, []string{"x"}, nil, []string{"prepaid"}, nil, nil),

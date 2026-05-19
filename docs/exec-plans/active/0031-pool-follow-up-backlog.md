@@ -114,16 +114,27 @@ they are the next meaningful Pool product surface after routing quality.
 The control-plane reset for this group now has its own concrete implementation
 plan in [`0033-pool-control-plane-onboarding-and-assignment.md`](./0033-pool-control-plane-onboarding-and-assignment.md).
 
-1. Member self-service portal / wallet sign-in UX.
-2. Automated member approval workflow.
-3. Policy-driven auto-drain / auto-suspend orchestration.
+1. Member self-service portal / wallet sign-in UX. **Deferred.**
+2. ~~Automated member approval workflow.~~ **Shipped.** Config-gated via
+   `policy.auto_approve_join_requests`; the policy worker auto-approves any
+   pending JoinRequest the admission-review preview already considers
+   Approvable. Implementation lives in
+   `pool-controller/internal/service/autoapprove`.
+3. ~~Policy-driven auto-drain / auto-suspend orchestration.~~ **Shipped (drain).**
+   Config-gated via `policy.auto_drain_backends`,
+   `policy.backend_failure_rate_threshold`, and `policy.backend_min_samples`;
+   the policy worker drains any active backend whose worst per-offering
+   recent failure rate exceeds the threshold. Implementation lives in
+   `pool-controller/internal/service/autodrain`. Auto-suspend (member-level)
+   is still deferred.
 4. Multi-listener split between admin/member/public binaries if the current
-   single-process surface becomes an operational constraint.
+   single-process surface becomes an operational constraint. **Deferred.**
 
 Recommended order inside this group:
 
-1. approval workflow
-2. policy-driven auto-drain / suspend
+1. ~~approval workflow~~
+2. ~~policy-driven auto-drain / suspend~~ (drain done; member-level
+   suspend still open)
 3. member self-service UX
 4. binary/listener split
 
@@ -133,7 +144,8 @@ Reason:
 - UX can follow once the approval/policy state model is stable
 - binary/listener split is mostly deployment hardening, not product behavior
 
-Status: incomplete and deferred.
+Status: items 2 and 3 (auto-drain portion) shipped; items 1 and 4 still
+deferred.
 
 ### P3 — payout and accounting follow-up
 

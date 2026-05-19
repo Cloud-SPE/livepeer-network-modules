@@ -25,6 +25,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	adminserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/admin"
 	memberserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/member"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/autoapprove"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/autodrain"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/backendverify"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokeradmin"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerrender"
@@ -99,6 +101,7 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	probeCtx, cancelProbes := context.WithCancel(context.Background())
 	defer cancelProbes()
 	go runSyntheticProbeLoop(probeCtx, state, stderr)
+	go runPolicyLoop(probeCtx, state, stderr)
 
 	paidAddr := *listenAddr
 	if paidAddr == ":8080" && cfg.Listen.Paid != "" {
@@ -1775,6 +1778,59 @@ func runSyntheticProbeLoop(ctx context.Context, state *runtimeState, stderr io.W
 				continue
 			}
 			_, _ = fmt.Fprintf(stderr, "synthetic probe run completed: applied=%d succeeded=%d failed=%d skipped=%d\n", summary.Applied, summary.Succeeded, summary.Failed, summary.Skipped)
+			timer.Reset(interval)
+		}
+	}
+}
+
+// runPolicyLoop drives the auto-approval and auto-drain policy workers.
+// Both rules are off by default; a tick is a no-op when neither flag is
+// set. The interval comes from Policy.EvaluationIntervalMS with a 60s
+// default — fast enough to react within a minute of a config flip,
+// slow enough not to thrash audit log volume.
+func runPolicyLoop(ctx context.Context, state *runtimeState, stderr io.Writer) {
+	const defaultInterval = 60 * time.Second
+	interval := defaultInterval
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			cfg, _, _, _ := state.Snapshot()
+			if cfg == nil {
+				timer.Reset(interval)
+				continue
+			}
+			if next := time.Duration(cfg.Policy.EvaluationIntervalMS) * time.Millisecond; next > 0 {
+				interval = next
+			} else {
+				interval = defaultInterval
+			}
+			stateRepo := state.repo
+			now := time.Now().UTC()
+			if cfg.Policy.AutoApproveJoinRequests {
+				summary, err := autoapprove.RunOnce(stateRepo, now)
+				if err != nil {
+					_, _ = fmt.Fprintf(stderr, "auto-approve run error: %v\n", err)
+				} else if summary.Scanned > 0 || summary.Approved > 0 {
+					_, _ = fmt.Fprintf(stderr, "auto-approve completed: scanned=%d approved=%d not_approvable=%d errored=%d\n",
+						summary.Scanned, summary.Approved, summary.NotApprovable, len(summary.ErroredIDs))
+				}
+			}
+			if cfg.Policy.AutoDrainBackends {
+				summary, err := autodrain.RunOnce(stateRepo, autodrain.Settings{
+					FailureRateThreshold: cfg.Policy.BackendFailureRateThreshold,
+					MinSamples:           cfg.Policy.BackendMinSamples,
+				}, now)
+				if err != nil {
+					_, _ = fmt.Fprintf(stderr, "auto-drain run error: %v\n", err)
+				} else if summary.Drained > 0 {
+					_, _ = fmt.Fprintf(stderr, "auto-drain completed: scanned=%d drained=%d ids=%v\n",
+						summary.Scanned, summary.Drained, summary.DrainedIDs)
+				}
+			}
 			timer.Reset(interval)
 		}
 	}

@@ -273,6 +273,44 @@ func TestWire_Select_FilterByCapability(t *testing.T) {
 	}
 }
 
+func TestWire_SelectMany_ReturnsRankedRoutes(t *testing.T) {
+	f := newWireFixture(t)
+	f.signManifestForFixture([]types.Node{
+		{ID: "n1", URL: "https://orch.example.com:8935", Capabilities: []types.Capability{{Name: "openai:/v1/chat/completions", WorkUnit: "token", Offerings: []types.Offering{{ID: "gpt-oss-20b", PricePerWorkUnitWei: "2000"}}}}},
+		{ID: "n2", URL: "https://orch.example.com:8936", Capabilities: []types.Capability{{Name: "openai:/v1/chat/completions", WorkUnit: "token", Offerings: []types.Offering{{ID: "gpt-oss-20b", PricePerWorkUnitWei: "1000"}}}}},
+	})
+	if _, err := registryv1.NewResolverClient(f.clientConn).ResolveByAddress(context.Background(),
+		&registryv1.ResolveByAddressRequest{EthAddress: string(f.addr)}); err != nil {
+		t.Fatal(err)
+	}
+	cli := registryv1.NewResolverClient(f.clientConn)
+	res, err := cli.SelectMany(context.Background(), &registryv1.SelectRequest{
+		Capability: "openai:/v1/chat/completions",
+		Offering:   "gpt-oss-20b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.GetRoutes()) != 2 {
+		t.Fatalf("routes: %d", len(res.GetRoutes()))
+	}
+	for _, route := range res.GetRoutes() {
+		if route.GetQuoteId() == "" || len(route.GetRouteFingerprint()) == 0 || route.GetUnitsPerPrice() != 1 {
+			t.Fatalf("route missing payment metadata: %+v", route)
+		}
+	}
+	selected, err := cli.Select(context.Background(), &registryv1.SelectRequest{
+		Capability: "openai:/v1/chat/completions",
+		Offering:   "gpt-oss-20b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.GetRoute().GetWorkerUrl() != res.GetRoutes()[0].GetWorkerUrl() {
+		t.Fatalf("select/selectmany drift: %s vs %s", selected.GetRoute().GetWorkerUrl(), res.GetRoutes()[0].GetWorkerUrl())
+	}
+}
+
 func TestWire_Health(t *testing.T) {
 	f := newWireFixture(t)
 	cli := healthpb.NewHealthClient(f.clientConn)

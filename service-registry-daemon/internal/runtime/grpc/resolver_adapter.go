@@ -50,6 +50,23 @@ func (a *resolverAdapter) Select(ctx context.Context, req *registryv1.SelectRequ
 	return &registryv1.SelectResult{Route: selectedRouteToProto(route)}, nil
 }
 
+func (a *resolverAdapter) SelectMany(ctx context.Context, req *registryv1.SelectRequest) (*registryv1.SelectManyResult, error) {
+	routes, err := a.srv.SelectMany(ctx, SelectRequest{
+		Capability: req.GetCapability(),
+		Offering:   req.GetOffering(),
+		Tier:       req.GetTier(),
+		MinWeight:  int(req.GetMinWeight()),
+	})
+	if err != nil {
+		return nil, errorToStatus(err)
+	}
+	out := &registryv1.SelectManyResult{Routes: make([]*registryv1.SelectedRoute, 0, len(routes))}
+	for _, route := range routes {
+		out.Routes = append(out.Routes, selectedRouteToProto(route))
+	}
+	return out, nil
+}
+
 func (a *resolverAdapter) ListKnown(ctx context.Context, _ *registryv1.ListKnownRequest) (*registryv1.ListKnownResult, error) {
 	entries, err := a.srv.ListKnown(ctx)
 	if err != nil {

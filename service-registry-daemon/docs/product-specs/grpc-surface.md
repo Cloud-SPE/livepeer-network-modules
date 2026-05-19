@@ -22,6 +22,7 @@ This is what a consumer can rely on across versions of the daemon. It's delibera
 service Resolver {
   rpc ResolveByAddress(ResolveByAddressRequest) returns (ResolveResult);
   rpc Select(SelectRequest) returns (SelectResult);
+  rpc SelectMany(SelectRequest) returns (SelectManyResult);
   rpc ListKnown(ListKnownRequest) returns (ListKnownResult);
   rpc Refresh(RefreshRequest) returns (google.protobuf.Empty);
   rpc GetAuditLog(GetAuditLogRequest) returns (AuditLogResult);
@@ -68,6 +69,18 @@ Guarantees:
 - `quote_id` is a deterministic resolver-generated identity for the
   selected route based on `eth_address`, `worker_url`, `capability`,
   `offering`, and `work_unit`.
+
+### SelectMany
+
+Input: identical to `Select`.
+Output: ordered `routes[]`, where each element has the same shape as
+`Select.route`.
+
+Guarantees:
+- `routes[]` is sorted in the same resolver order `Select` uses.
+- `Select.route` is always `SelectMany.routes[0]` for the same request.
+- Every returned route is payment-ready and carries the full quote-bound
+  metadata needed for `CreatePayment`.
 
 ### ListKnown / Refresh / GetAuditLog / Health
 

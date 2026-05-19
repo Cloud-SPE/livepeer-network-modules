@@ -11,6 +11,7 @@ option go_package = "github.com/Cloud-SPE/livepeer-network-modules/proto-contrac
 service Resolver {
   rpc ResolveByAddress(ResolveByAddressRequest) returns (ResolveResult);
   rpc Select(SelectRequest) returns (SelectResult);
+  rpc SelectMany(SelectRequest) returns (SelectManyResult);
   rpc ListKnown(ListKnownRequest) returns (ListKnownResult);
   rpc Refresh(RefreshRequest) returns (google.protobuf.Empty);
   rpc GetAuditLog(GetAuditLogRequest) returns (AuditLogResult);
@@ -44,6 +45,10 @@ message SelectRequest {
 
 message SelectResult {
   SelectedRoute route = 1;
+}
+
+message SelectManyResult {
+  repeated SelectedRoute routes = 1;
 }
 
 message SelectedRoute {

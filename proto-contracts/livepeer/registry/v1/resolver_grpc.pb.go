@@ -22,6 +22,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Resolver_ResolveByAddress_FullMethodName = "/livepeer.registry.v1.Resolver/ResolveByAddress"
 	Resolver_Select_FullMethodName           = "/livepeer.registry.v1.Resolver/Select"
+	Resolver_SelectMany_FullMethodName       = "/livepeer.registry.v1.Resolver/SelectMany"
 	Resolver_ListKnown_FullMethodName        = "/livepeer.registry.v1.Resolver/ListKnown"
 	Resolver_Refresh_FullMethodName          = "/livepeer.registry.v1.Resolver/Refresh"
 	Resolver_GetAuditLog_FullMethodName      = "/livepeer.registry.v1.Resolver/GetAuditLog"
@@ -34,6 +35,7 @@ const (
 type ResolverClient interface {
 	ResolveByAddress(ctx context.Context, in *ResolveByAddressRequest, opts ...grpc.CallOption) (*ResolveResult, error)
 	Select(ctx context.Context, in *SelectRequest, opts ...grpc.CallOption) (*SelectResult, error)
+	SelectMany(ctx context.Context, in *SelectRequest, opts ...grpc.CallOption) (*SelectManyResult, error)
 	ListKnown(ctx context.Context, in *ListKnownRequest, opts ...grpc.CallOption) (*ListKnownResult, error)
 	Refresh(ctx context.Context, in *RefreshRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetAuditLog(ctx context.Context, in *GetAuditLogRequest, opts ...grpc.CallOption) (*AuditLogResult, error)
@@ -62,6 +64,16 @@ func (c *resolverClient) Select(ctx context.Context, in *SelectRequest, opts ...
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SelectResult)
 	err := c.cc.Invoke(ctx, Resolver_Select_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *resolverClient) SelectMany(ctx context.Context, in *SelectRequest, opts ...grpc.CallOption) (*SelectManyResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SelectManyResult)
+	err := c.cc.Invoke(ctx, Resolver_SelectMany_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +126,7 @@ func (c *resolverClient) Health(ctx context.Context, in *emptypb.Empty, opts ...
 type ResolverServer interface {
 	ResolveByAddress(context.Context, *ResolveByAddressRequest) (*ResolveResult, error)
 	Select(context.Context, *SelectRequest) (*SelectResult, error)
+	SelectMany(context.Context, *SelectRequest) (*SelectManyResult, error)
 	ListKnown(context.Context, *ListKnownRequest) (*ListKnownResult, error)
 	Refresh(context.Context, *RefreshRequest) (*emptypb.Empty, error)
 	GetAuditLog(context.Context, *GetAuditLogRequest) (*AuditLogResult, error)
@@ -132,6 +145,9 @@ func (UnimplementedResolverServer) ResolveByAddress(context.Context, *ResolveByA
 }
 func (UnimplementedResolverServer) Select(context.Context, *SelectRequest) (*SelectResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method Select not implemented")
+}
+func (UnimplementedResolverServer) SelectMany(context.Context, *SelectRequest) (*SelectManyResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method SelectMany not implemented")
 }
 func (UnimplementedResolverServer) ListKnown(context.Context, *ListKnownRequest) (*ListKnownResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListKnown not implemented")
@@ -197,6 +213,24 @@ func _Resolver_Select_Handler(srv interface{}, ctx context.Context, dec func(int
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(ResolverServer).Select(ctx, req.(*SelectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Resolver_SelectMany_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SelectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ResolverServer).SelectMany(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Resolver_SelectMany_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ResolverServer).SelectMany(ctx, req.(*SelectRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -287,6 +321,10 @@ var Resolver_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Select",
 			Handler:    _Resolver_Select_Handler,
+		},
+		{
+			MethodName: "SelectMany",
+			Handler:    _Resolver_SelectMany_Handler,
 		},
 		{
 			MethodName: "ListKnown",

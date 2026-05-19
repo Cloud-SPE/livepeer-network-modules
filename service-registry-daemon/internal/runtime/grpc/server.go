@@ -82,6 +82,20 @@ func (s *Server) ResolveByAddress(ctx context.Context, req ResolveByAddressReque
 // orchestrators in the cache, ranks the matches, and returns the
 // single top route the gateway should dispatch to.
 func (s *Server) Select(ctx context.Context, req SelectRequest) (*SelectedRoute, error) {
+	routes, err := s.SelectMany(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if len(routes) == 0 {
+		return nil, fmt.Errorf("%w: no route for capability=%q offering=%q", types.ErrNotFound, req.Capability, req.Offering)
+	}
+	return routes[0], nil
+}
+
+// SelectMany runs the selection filter across all currently-known
+// orchestrators in the cache, ranks the matches, and returns all
+// payment-ready routes in resolver order for gateway-side failover.
+func (s *Server) SelectMany(ctx context.Context, req SelectRequest) ([]*SelectedRoute, error) {
 	if s.resolverSvc == nil {
 		return nil, errors.New("grpc: resolver not mounted")
 	}
@@ -120,11 +134,15 @@ func (s *Server) Select(ctx context.Context, req SelectRequest) (*SelectedRoute,
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("%w: no route for capability=%q offering=%q", types.ErrNotFound, req.Capability, req.Offering)
 	}
-	route, err := selectedRouteFromResolvedNode(matches[0], filter)
-	if err != nil {
-		return nil, err
+	routes := make([]*SelectedRoute, 0, len(matches))
+	for _, match := range matches {
+		route, err := selectedRouteFromResolvedNode(match, filter)
+		if err != nil {
+			return nil, err
+		}
+		routes = append(routes, route)
 	}
-	return route, nil
+	return routes, nil
 }
 
 // ListKnown returns all eth addresses currently in the cache, with

@@ -50,7 +50,6 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, workerURL string) (*types.Route
 	}
 	var out types.RouteHealthSnapshot
 	dec := json.NewDecoder(strings.NewReader(string(body)))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {
 		return nil, err
 	}

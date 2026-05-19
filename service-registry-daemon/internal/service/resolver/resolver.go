@@ -568,7 +568,7 @@ func (s *Service) filterLiveHealthy(ctx context.Context, nodes []types.ResolvedN
 		return nodes
 	}
 	if req.Capability != "" && req.Offering != "" {
-		out := nodes[:0]
+		out := make([]types.ResolvedNode, 0, len(nodes))
 		for _, n := range nodes {
 			if !nodeContainsTarget(n, req.Capability, req.Offering) {
 				out = append(out, n)
@@ -588,7 +588,7 @@ func (s *Service) filterLiveHealthy(ctx context.Context, nodes []types.ResolvedN
 		}
 		return out
 	}
-	out := nodes[:0]
+	out := make([]types.ResolvedNode, 0, len(nodes))
 	for _, n := range nodes {
 		pruned, ok := s.pruneNodeToLiveHealthy(ctx, n)
 		if ok {
@@ -679,6 +679,13 @@ func (s *Service) lookupLiveHealth(ctx context.Context, workerURL, capability, o
 	s.liveMu.RLock()
 	if ent, ok := s.liveCache[key]; ok && !ent.staleAfter.IsZero() && now.Before(ent.staleAfter) {
 		s.liveMu.RUnlock()
+		s.log.Debug("resolver: live health cache hit",
+			"worker_url", workerURL,
+			"capability", capability,
+			"offering", offering,
+			"status", ent.status,
+			"stale_after", ent.staleAfter,
+		)
 		return ent.status, true
 	}
 	s.liveMu.RUnlock()
@@ -688,8 +695,21 @@ func (s *Service) lookupLiveHealth(ctx context.Context, workerURL, capability, o
 		s.liveMu.Lock()
 		s.liveCache[key] = liveHealthCacheEntry{status: "stale", checkedAt: now}
 		s.liveMu.Unlock()
+		s.log.Debug("resolver: live health fetch unavailable",
+			"worker_url", workerURL,
+			"capability", capability,
+			"offering", offering,
+			"err", err,
+		)
 		return "", false
 	}
+	s.log.Debug("resolver: live health snapshot fetched",
+		"worker_url", workerURL,
+		"capability", capability,
+		"offering", offering,
+		"snapshot_tuple_count", len(snap.Capabilities),
+		"snapshot_examples", summarizeHealthCapabilities(snap.Capabilities, 5),
+	)
 	for _, cap := range snap.Capabilities {
 		if strings.EqualFold(cap.ID, capability) && strings.EqualFold(cap.OfferingID, offering) {
 			ent := liveHealthCacheEntry{
@@ -700,7 +720,23 @@ func (s *Service) lookupLiveHealth(ctx context.Context, workerURL, capability, o
 			s.liveMu.Lock()
 			s.liveCache[key] = ent
 			s.liveMu.Unlock()
+			s.log.Debug("resolver: live health tuple matched",
+				"worker_url", workerURL,
+				"capability", capability,
+				"offering", offering,
+				"status", cap.Status,
+				"stale_after", cap.StaleAfter,
+				"now", now,
+			)
 			if cap.StaleAfter.IsZero() || now.After(cap.StaleAfter) {
+				s.log.Debug("resolver: live health tuple treated as stale",
+					"worker_url", workerURL,
+					"capability", capability,
+					"offering", offering,
+					"status", cap.Status,
+					"stale_after", cap.StaleAfter,
+					"now", now,
+				)
 				return "", false
 			}
 			return cap.Status, true
@@ -709,7 +745,28 @@ func (s *Service) lookupLiveHealth(ctx context.Context, workerURL, capability, o
 	s.liveMu.Lock()
 	s.liveCache[key] = liveHealthCacheEntry{status: "stale", checkedAt: now}
 	s.liveMu.Unlock()
+	s.log.Debug("resolver: live health tuple missing from snapshot",
+		"worker_url", workerURL,
+		"capability", capability,
+		"offering", offering,
+		"snapshot_tuple_count", len(snap.Capabilities),
+		"snapshot_examples", summarizeHealthCapabilities(snap.Capabilities, 5),
+	)
 	return "", false
+}
+
+func summarizeHealthCapabilities(caps []types.RouteHealthCapability, max int) []string {
+	if len(caps) == 0 || max <= 0 {
+		return nil
+	}
+	if len(caps) < max {
+		max = len(caps)
+	}
+	out := make([]string, 0, max)
+	for _, cap := range caps[:max] {
+		out = append(out, cap.ID+"|"+cap.OfferingID+"|"+cap.Status)
+	}
+	return out
 }
 
 func summarizeNodes(nodes []types.ResolvedNode) []map[string]any {

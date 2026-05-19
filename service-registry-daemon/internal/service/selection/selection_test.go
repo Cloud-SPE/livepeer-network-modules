@@ -48,6 +48,24 @@ func TestApply_FilterByOffering(t *testing.T) {
 	}
 }
 
+func TestApply_FilterByOfferingAcrossDuplicateCapabilities(t *testing.T) {
+	nodes := []types.ResolvedNode{
+		{
+			ID:      "a",
+			Weight:  50,
+			Enabled: true,
+			Capabilities: []types.Capability{
+				{Name: "openai:chat-completions", Offerings: []types.Offering{{ID: "default"}}},
+				{Name: "openai:chat-completions", Offerings: []types.Offering{{ID: "stream"}}},
+			},
+		},
+	}
+	got := Apply(nodes, Filter{Capability: "openai:chat-completions", Offering: "stream"})
+	if len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("expected duplicate capability entries to match stream offering, got %+v", got)
+	}
+}
+
 func TestApply_DoesNotNormalizeCapabilityForms(t *testing.T) {
 	nodes := []types.ResolvedNode{
 		mkNode("slash", 50, []string{"openai:/v1/chat/completions"}, []string{"default"}, nil, nil, nil),

@@ -54,11 +54,11 @@ func matches(n types.ResolvedNode, f Filter) bool {
 		return false
 	}
 	if f.Capability != "" {
-		c, ok := findCap(n.Capabilities, f.Capability)
-		if !ok {
-			return false
-		}
-		if f.Offering != "" && !offeringPresent(c, f.Offering) {
+		if f.Offering != "" {
+			if !capabilityOfferingPresent(n.Capabilities, f.Capability, f.Offering) {
+				return false
+			}
+		} else if _, ok := findCap(n.Capabilities, f.Capability); !ok {
 			return false
 		}
 	} else if f.Offering != "" {
@@ -90,6 +90,18 @@ func findCap(caps []types.Capability, name string) (types.Capability, bool) {
 func offeringPresent(c types.Capability, id string) bool {
 	for _, o := range c.Offerings {
 		if strings.EqualFold(o.ID, id) {
+			return true
+		}
+	}
+	return false
+}
+
+func capabilityOfferingPresent(caps []types.Capability, capability, offering string) bool {
+	for _, c := range caps {
+		if !strings.EqualFold(c.Name, capability) {
+			continue
+		}
+		if offeringPresent(c, offering) {
 			return true
 		}
 	}

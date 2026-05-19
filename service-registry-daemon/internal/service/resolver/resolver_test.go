@@ -64,14 +64,14 @@ func newFixture(t *testing.T) *fixture {
 	clk := &clock.Fixed{T: time.Unix(1745000000, 0).UTC()}
 
 	svc := New(Config{
-		Chain:    c,
-		Fetcher:  fetcher,
-		Verifier: verifier.New(),
-		Cache:    cacheRepo,
-		Audit:    auditRepo,
-		Overlay:  func() *config.Overlay { return overlay },
-		Clock:    clk,
-		Recorder: rec,
+		Chain:      c,
+		Fetcher:    fetcher,
+		Verifier:   verifier.New(),
+		Cache:      cacheRepo,
+		Audit:      auditRepo,
+		Overlay:    func() *config.Overlay { return overlay },
+		Clock:      clk,
+		Recorder:   rec,
 		LiveHealth: health,
 		// rejectUnsigned default = false here
 	})
@@ -644,6 +644,212 @@ func TestResolveByAddress_PrunesLiveUnhealthyOfferingsWithoutExplicitRouteReques
 	offerings := res.Nodes[0].Capabilities[0].Offerings
 	if len(offerings) != 1 || offerings[0].ID != "healthy" {
 		t.Fatalf("expected only healthy offering to remain, got %+v", offerings)
+	}
+}
+
+func TestResolveByAddress_RequestedTupleFilteringPreservesSiblingNodes(t *testing.T) {
+	f := newFixture(t)
+	f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: "https://node-1.example.com",
+			Capabilities: []types.Capability{
+				{
+					Name:     "daydream:scope:v1",
+					WorkUnit: "sessions",
+					Offerings: []types.Offering{
+						{ID: "default", PricePerWorkUnitWei: "10"},
+					},
+				},
+				{
+					Name:     "openai:audio-speech",
+					WorkUnit: "characters",
+					Offerings: []types.Offering{
+						{ID: "kokoro", PricePerWorkUnitWei: "12"},
+					},
+				},
+			},
+		},
+		{
+			ID:  "n2",
+			URL: "https://node-2.example.com",
+			Capabilities: []types.Capability{
+				{
+					Name:     "openai:chat-completions",
+					WorkUnit: "token",
+					Offerings: []types.Offering{
+						{ID: "vllm-qwen3.6-27b-default", PricePerWorkUnitWei: "25"},
+					},
+				},
+			},
+		},
+		{
+			ID:  "n3",
+			URL: "https://node-3.example.com",
+			Capabilities: []types.Capability{
+				{
+					Name:     "video:live.rtmp",
+					WorkUnit: "seconds",
+					Offerings: []types.Offering{
+						{ID: "default", PricePerWorkUnitWei: "5"},
+					},
+				},
+			},
+		},
+	})
+	f.health.snapshots["https://node-1.example.com"] = &types.RouteHealthSnapshot{
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "daydream:scope:v1",
+				OfferingID: "default",
+				Status:     "draining",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+			{
+				ID:         "openai:audio-speech",
+				OfferingID: "kokoro",
+				Status:     "ready",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+		},
+	}
+	f.health.snapshots["https://node-2.example.com"] = &types.RouteHealthSnapshot{
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "openai:chat-completions",
+				OfferingID: "vllm-qwen3.6-27b-default",
+				Status:     "ready",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+		},
+	}
+	f.health.snapshots["https://node-3.example.com"] = &types.RouteHealthSnapshot{
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "video:live.rtmp",
+				OfferingID: "default",
+				Status:     "ready",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+		},
+	}
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{
+		Address:    f.addr,
+		Capability: "daydream:scope:v1",
+		Offering:   "default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 2 {
+		t.Fatalf("expected non-target sibling nodes to remain after filtering, got %+v", res.Nodes)
+	}
+	if res.Nodes[0].ID != "n2" || res.Nodes[1].ID != "n3" {
+		t.Fatalf("expected node order [n2 n3], got %+v", []string{res.Nodes[0].ID, res.Nodes[1].ID})
+	}
+}
+
+func TestResolveByAddress_RequestedTupleKeepsHealthyTargetNode(t *testing.T) {
+	f := newFixture(t)
+	f.signManifestForFixture([]types.Node{
+		{
+			ID:  "n1",
+			URL: "https://node-1.example.com",
+			Capabilities: []types.Capability{
+				{
+					Name:     "daydream:scope:v1",
+					WorkUnit: "sessions",
+					Offerings: []types.Offering{
+						{ID: "default", PricePerWorkUnitWei: "10"},
+					},
+				},
+				{
+					Name:     "openai:audio-speech",
+					WorkUnit: "characters",
+					Offerings: []types.Offering{
+						{ID: "kokoro", PricePerWorkUnitWei: "12"},
+					},
+				},
+			},
+		},
+		{
+			ID:  "n2",
+			URL: "https://node-2.example.com",
+			Capabilities: []types.Capability{
+				{
+					Name:     "openai:chat-completions",
+					WorkUnit: "token",
+					Offerings: []types.Offering{
+						{ID: "vllm-qwen3.6-27b-default", PricePerWorkUnitWei: "25"},
+					},
+				},
+			},
+		},
+		{
+			ID:  "n3",
+			URL: "https://node-3.example.com",
+			Capabilities: []types.Capability{
+				{
+					Name:     "video:live.rtmp",
+					WorkUnit: "seconds",
+					Offerings: []types.Offering{
+						{ID: "default", PricePerWorkUnitWei: "5"},
+					},
+				},
+			},
+		},
+	})
+	f.health.snapshots["https://node-1.example.com"] = &types.RouteHealthSnapshot{
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "daydream:scope:v1",
+				OfferingID: "default",
+				Status:     "draining",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+			{
+				ID:         "openai:audio-speech",
+				OfferingID: "kokoro",
+				Status:     "ready",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+		},
+	}
+	f.health.snapshots["https://node-2.example.com"] = &types.RouteHealthSnapshot{
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "openai:chat-completions",
+				OfferingID: "vllm-qwen3.6-27b-default",
+				Status:     "ready",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+		},
+	}
+	f.health.snapshots["https://node-3.example.com"] = &types.RouteHealthSnapshot{
+		Capabilities: []types.RouteHealthCapability{
+			{
+				ID:         "video:live.rtmp",
+				OfferingID: "default",
+				Status:     "ready",
+				StaleAfter: f.clk.Now().Add(30 * time.Second),
+			},
+		},
+	}
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{
+		Address:    f.addr,
+		Capability: "openai:audio-speech",
+		Offering:   "kokoro",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 3 {
+		t.Fatalf("expected healthy target node and siblings to remain, got %+v", res.Nodes)
+	}
+	if res.Nodes[0].ID != "n1" || res.Nodes[1].ID != "n2" || res.Nodes[2].ID != "n3" {
+		t.Fatalf("expected node order [n1 n2 n3], got %+v", []string{res.Nodes[0].ID, res.Nodes[1].ID, res.Nodes[2].ID})
 	}
 }
 

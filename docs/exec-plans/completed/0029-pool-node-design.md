@@ -1,29 +1,8 @@
 # Plan 0029 — Pool node design
 
-**Status:** active — partial implementation landed (`pool-controller/`
-scaffold + broker-config generation + broker multi-backend tuple grouping /
-selection + BoltDB-backed config snapshot persistence + receipt-write API +
-broker stub/final work-receipt producer + manual round-close API +
-`pool-reconciler/` scaffold with protocol-daemon round-source client and
-round-close preflight + payment-daemon confirmed-round-revenue read path +
-work-receipt round attribution + durable reconciler checkpoint/backfill loop +
-pool-controller payout-intent derivation/export + `pool-payout-executor/`
-scaffold with controller read/write contract + native-ETH Arbitrum executor
-commands + executor reconcile-once / reconcile-loop automation + reconciler
-integration coverage + controller member payout summary); trust-score landed
-in broker selection/health; richer member/public APIs landed; executor local
-run-history / retry-metadata persistence + local reconcile backoff + payout
-intent lease/claim semantics + renewal/release + owned-lease restart recovery
-+ partial-batch untouched-release + payout alert reporting + failed-intent
-requeue + round-level payout summaries + explicit executor requeue command +
-executor alert inspection command + explicit payout failed_at timing landed;
-executor alert-driven failed requeue command + canonical payout retry history
-landed; retry-history-based payout alerts + round-level retry churn summaries
-landed; member-level retry churn summaries landed; default-off v1 auto-requeue
-policy landed; keystore-backed live Arbitrum runtime validation landed;
-production-readiness checklist + component runbooks landed; Docker-first
-deployment manifests landed; multi-round reconciler/executor soak coverage
-landed
+**Status:** completed — the Pool node architecture from this plan is now
+implemented across `capability-broker/`, `pool-controller/`,
+`pool-reconciler/`, and `pool-payout-executor/`
 **Opened:** 2026-05-16
 **Owner:** harness
 **Branch:** `feature/pool-node-design`
@@ -35,6 +14,26 @@ landed
   [`../../design-docs/architecture-overview.md`](../../design-docs/architecture-overview.md)
 - Core beliefs:
   [`../../design-docs/core-beliefs.md`](../../design-docs/core-beliefs.md)
+
+## Completion summary
+
+This plan shipped.
+
+Delivered outcomes:
+
+- Pool-specific control plane in `pool-controller/`
+- Pool runtime rendering and broker-runtime apply workflow
+- broker multi-backend grouping and selection foundations
+- receipt ingestion, round-close derivation, and reconciler checkpointing
+- payout-intent derivation, export, lease/claim, retry, and alert flows
+- native-ETH Arbitrum executor path in `pool-payout-executor/`
+- operator/public summaries, runbooks, compose manifests, and soak coverage
+
+Follow-up slices remain tracked elsewhere, especially in:
+
+- `0030-pool-backend-scoring-and-selection.md`
+- `0031-pool-follow-up-backlog.md`
+- `0033-pool-control-plane-onboarding-and-assignment.md`
 
 ## 1. Problem statement
 

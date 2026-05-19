@@ -1,17 +1,41 @@
 ---
 plan: 0033
 title: Pool control plane onboarding and offer-assignment reset
-status: active
-phase: design
+status: completed
+phase: shipped
 opened: 2026-05-18
 owner: harness
 related:
-  - "active plan 0029 — pool node design"
+  - "completed plan 0029 — pool node design"
   - "active plan 0031 — pool follow-up backlog"
   - "completed plan 0018 — orch coordinator design"
 ---
 
 # Plan 0033 — Pool control plane onboarding and offer-assignment reset
+
+## Completion summary
+
+This plan shipped.
+
+Delivered outcomes:
+
+- orch-owned offers persisted in `pool-controller`
+- member join-request API and operator review/approval flow
+- approved member and backend persistence
+- explicit backend-to-offer assignments with status controls
+- assignment-candidate and admission-review helpers for operator workflows
+- broker runtime rendered from controller state rather than operator-edited
+  member/offer YAML
+- admin UI and API surfaces for offers, members, backends, assignments, audit,
+  and broker-runtime apply
+
+Representative landed code:
+
+- `pool-controller/internal/server/member/routes.go`
+- `pool-controller/internal/server/admin/routes.go`
+- `pool-controller/internal/service/brokerrender/render.go`
+- `pool-controller/internal/service/admissionreview/service.go`
+- `pool-controller/internal/ui/adminpage/`
 
 ## 1. Problem
 

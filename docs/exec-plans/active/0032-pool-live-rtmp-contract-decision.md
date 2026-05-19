@@ -6,8 +6,8 @@ phase: design
 opened: 2026-05-18
 owner: harness
 related:
-  - "active plan 0029 — pool node design"
-  - "active plan 0030 — pool backend scoring and broker-integrated selection for OpenAI workloads"
+  - "completed plan 0029 — pool node design"
+  - "completed plan 0030 — pool backend scoring and broker-integrated selection for OpenAI workloads"
   - "active plan 0031 — pool follow-up backlog"
 ---
 

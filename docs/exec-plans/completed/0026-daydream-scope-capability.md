@@ -1,18 +1,37 @@
 ---
 plan: 0026
 title: Daydream Scope capability — external-media interaction mode + thin gateway
-status: active
-phase: design
+status: completed
+phase: shipped
 opened: 2026-05-14
 owner: harness
 related:
   - "completed plan 0012 — session-control-plus-media driver (referenced for control-WS pattern)"
   - "completed plan 0013-vtuber — vtuber-suite migration (referenced for streaming-workload patterns)"
-  - "active plan 0024 — quote-free ticket-params flow"
-  - "active plan 0025 — per-request ticket-params broker routing"
+  - "completed plan 0024 — quote-free ticket-params flow"
+  - "completed plan 0025 — per-request ticket-params broker routing"
 ---
 
 # Plan 0026 — Daydream Scope capability — external-media interaction mode + thin gateway
+
+## Completion summary
+
+This plan shipped.
+
+Implemented surfaces:
+
+- new `session-control-external-media@v0` broker mode
+- broker lifecycle/control routes for externally owned media sessions
+- `/_scope/{session_id}/...` passthrough proxy path
+- conformance fixtures for happy-path, exhaustion, disconnect, and passthrough
+- top-level `daydream-gateway/` thin gateway component with tests and operator docs
+
+Representative landed code:
+
+- `capability-broker/internal/modes/sessioncontrolexternalmedia/driver.go`
+- `capability-broker/internal/server/routes.go`
+- `livepeer-network-protocol/conformance/fixtures/session-control-external-media/`
+- `daydream-gateway/src/`
 
 ## 1. Problem
 

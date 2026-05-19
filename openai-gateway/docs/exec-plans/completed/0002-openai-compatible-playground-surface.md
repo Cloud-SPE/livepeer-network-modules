@@ -1,5 +1,26 @@
 # 0002 OpenAI-Compatible Playground Surface
 
+## Completion summary
+
+This plan shipped.
+
+Delivered outcomes:
+
+- checked-in OpenAI surface schema in gateway code
+- catalog/model exposure of surface metadata and supported modes
+- schema-driven playground request builder
+- raw request mode for every supported capability
+- guided and raw response renderers for chat, embeddings, images, speech, and
+  transcription flows
+
+Representative landed code:
+
+- `openai-gateway/src/service/openaiSurface.ts`
+- `openai-gateway/src/service/catalog.ts`
+- `openai-gateway/src/frontend/portal/main.ts`
+- `openai-gateway/test/openai-surface.test.ts`
+- `openai-gateway/test/portal-catalog.test.ts`
+
 ## Why
 
 The current customer playground is a smoke tool, not a real OpenAI-compatible UI.
@@ -182,3 +203,6 @@ Examples:
 - Remaining hardening:
   - finer model-specific compatibility gating beyond interaction modes
   - broader frontend UI regression coverage
+
+This remaining hardening is follow-up work, not a blocker for closing the core
+playground-surface plan.

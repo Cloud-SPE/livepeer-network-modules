@@ -7,7 +7,7 @@ completed: 2026-05-11
 owner: harness
 audience: openai-gateway maintainers
 related:
-  - "active plan 0002-openai-compatible-playground-surface"
+  - "completed plan 0002-openai-compatible-playground-surface"
   - "completed plan 0022-openai-gateway-ui-parity"
   - "customer portal playground catalog"
   - "resolver-backed route selection"

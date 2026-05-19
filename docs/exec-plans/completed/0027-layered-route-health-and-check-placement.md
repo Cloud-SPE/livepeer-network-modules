@@ -8,7 +8,7 @@ owner: harness
 related:
   - "completed plan 0003 — capability broker"
   - "completed plan 0018 — orch-coordinator design"
-  - "active plan 0025 — per-request ticket-params broker routing"
+  - "completed plan 0025 — per-request ticket-params broker routing"
   - "active plan 0026 — Daydream Scope capability"
 ---
 

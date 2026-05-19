@@ -1,17 +1,39 @@
 ---
 plan: 0030
 title: Pool backend scoring and broker-integrated selection for OpenAI workloads
-status: active
-phase: design
+status: completed
+phase: shipped
 opened: 2026-05-17
 owner: harness
 related:
-  - "active plan 0029 — pool node design"
+  - "completed plan 0029 — pool node design"
   - "completed plan 0027 — layered route health and check placement"
   - "completed plan 0028 — broker health contract"
 ---
 
 # Plan 0030 — Pool backend scoring and broker-integrated selection for OpenAI workloads
+
+## Completion summary
+
+This plan shipped.
+
+Delivered outcomes:
+
+- `pool-controller` synthetic probe runner for in-scope OpenAI families
+- persisted backend+offering selection state with synthetic and real-traffic inputs
+- cooldown, warm-up, quarantine, drain, and max-share override handling
+- controller-owned backend-selection snapshot export
+- broker snapshot polling, staleness handling, and cached selection integration
+- broker request-time selection using broker-local health plus Pool state
+- additive observability in `pool-controller` and broker `/registry/health`
+
+Representative landed code:
+
+- `pool-controller/internal/service/probes/probes.go`
+- `pool-controller/internal/repo/backend_selection.go`
+- `capability-broker/internal/poolsnapshot/cache.go`
+- `capability-broker/internal/selection/decision.go`
+- `capability-broker/internal/server/registry/health.go`
 
 ## 1. Problem
 

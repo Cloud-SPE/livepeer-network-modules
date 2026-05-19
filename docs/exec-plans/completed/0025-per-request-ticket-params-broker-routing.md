@@ -1,18 +1,36 @@
 ---
 plan: 0025
 title: Per-request ticket-params broker routing for resolver-selected payments
-status: active
-phase: implementation
+status: completed
+phase: shipped
 opened: 2026-05-10
 owner: harness
 related:
-  - "active plan 0024 — quote-free ticket-params flow across gateway, broker, and payment-daemon"
+  - "completed plan 0024 — quote-free ticket-params flow across gateway, broker, and payment-daemon"
   - "completed plan 0013 — openai-gateway collapse"
   - "completed plan 0014 — wire-compat envelope + sender daemon"
   - "completed plan 0016 — chain-integrated payment-daemon — design choices"
+  - "draft plan 0035 — payer-daemon client convergence and legacy payer proto retirement"
 ---
 
 # Plan 0025 — per-request ticket-params broker routing for resolver-selected payments
+
+## Completion summary
+
+This plan shipped.
+
+Delivered outcomes:
+
+- the payer request path now carries broker-origin routing per request
+- sender mode requires `ticket_params_base_url`
+- sender ticket-params fetching is scoped to the selected broker origin
+- the intended canonical request shape now lives in
+  `livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto`
+
+This plan is now historical. The remaining work in this area is no longer
+"thread broker URL per request"; it is converging all payer-daemon clients on
+the canonical request contract and retiring the duplicate legacy payer proto.
+That follow-up is tracked in draft plan `0035`.
 
 ## 1. Problem
 

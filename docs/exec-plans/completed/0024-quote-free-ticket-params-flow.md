@@ -1,8 +1,8 @@
 ---
 plan: 0024
 title: Quote-free ticket-params flow across gateway, broker, and payment-daemon
-status: active
-phase: implementation
+status: completed
+phase: shipped
 opened: 2026-05-10
 owner: harness
 related:
@@ -13,6 +13,25 @@ related:
 ---
 
 # Plan 0024 — quote-free ticket-params flow across gateway, broker, and payment-daemon
+
+## Completion summary
+
+This plan shipped.
+
+Implemented surfaces:
+
+- `capability-broker` now exposes `POST /v1/payment/ticket-params`
+- `payment-daemon` sender mode fetches canonical payee-issued ticket params
+- broker payment middleware derives payee `work_id` from
+  `ticket_params.recipient_rand_hash`
+- sender and broker test coverage landed for the quote-free path
+
+Representative landed code:
+
+- `capability-broker/internal/server/payment_ticket_params.go`
+- `capability-broker/internal/server/middleware/workid.go`
+- `payment-daemon/internal/service/sender/ticketparams_fetcher.go`
+- `payment-daemon/internal/service/sender/quotefree_e2e_test.go`
 
 ## 1. Problem
 

@@ -265,6 +265,12 @@ func TestWire_Select_FilterByCapability(t *testing.T) {
 	if res.GetRoute().GetPricePerWorkUnitWei() != "2000" || res.GetRoute().GetWorkUnit() != "frame" {
 		t.Fatalf("pricing fields: %+v", res.GetRoute())
 	}
+	if res.GetRoute().GetUnitsPerPrice() != 1 {
+		t.Fatalf("units_per_price: %+v", res.GetRoute())
+	}
+	if res.GetRoute().GetQuoteId() == "" || len(res.GetRoute().GetRouteFingerprint()) == 0 {
+		t.Fatalf("quote metadata missing: %+v", res.GetRoute())
+	}
 }
 
 func TestWire_Health(t *testing.T) {

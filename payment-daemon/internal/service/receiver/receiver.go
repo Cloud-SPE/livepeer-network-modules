@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math/big"
 
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -442,7 +443,7 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 			FaceValue:         faceValue.Bytes(),
 			WinProb:           s.defaultWinProb.Bytes(),
 			RecipientRandHash: rrHash,
-			Seed:              []byte{},
+			Seed:              ethcommon.LeftPadBytes(r.Bytes(), 32),
 		},
 	}, nil
 }

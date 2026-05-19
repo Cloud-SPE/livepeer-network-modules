@@ -43,11 +43,12 @@ The gateway runs `payment-daemon` in `--mode=sender`.
 
 Its job is to:
 
-- accept `CreatePayment(face_value, recipient, capability, offering, expected_max_units)`
+- accept `CreatePayment(recipient, accepted_price, funding, ticket_params_base_url)`
 - resolve the recipient to a worker URL via the local `service-registry-daemon`
 - fetch canonical ticket params from the worker-side
   `/v1/payment/ticket-params` path
-- sign a wire-format `Payment` blob
+- sign a wire-format `Payment` blob whose `expected_price` reflects the
+  gateway-accepted quote basis
 
 The sender daemon is not a pricing engine. It does not decide retail price. It
 turns a gateway pricing decision into a valid ticket.
@@ -120,9 +121,14 @@ The gateway resolves through `service-registry-daemon`:
 The resolver result tells the gateway **what the host advertises for retail
 charging**, and which adapter to use.
 
-### 2. Compute the requested spend
+### 2. Compute the requested budget and accepted price basis
 
-The gateway computes a wei-denominated request amount from the resolved price:
+The gateway computes both:
+
+- the accepted unit price basis
+- the initial funded budget
+
+The funded budget is still commonly derived from:
 
 ```
 requested_face_value_wei = target_units * price_per_work_unit_wei
@@ -132,25 +138,30 @@ For request/response modes, `target_units` is usually the gateway's best
 estimate of the single request cost. For streaming modes, `target_units` is
 the amount of runway the gateway wants to pre-credit or top up.
 
-> **Naming note.** In the current quote-free protocol, the sender-side field
-> is still named `face_value`, but semantically it is the gateway's **target
-> spend request** or **requested expected value**, not necessarily the final
-> winning-ticket face value the receiver will choose.
+The important separation is:
 
-### 3. `CreatePayment` does not mean "final face value is fixed"
+- accepted price basis
+- funded budget
+- actual final usage
+
+The old "face_value-only" API was too weak because it collapsed those into one
+number.
+
+### 3. `CreatePayment` does not mean "final bill is fixed"
 
 The gateway calls:
 
 ```
-CreatePayment(face_value, recipient, capability_id, offering_id, expected_max_units)
+CreatePayment(recipient, accepted_price, funding, ticket_params_base_url)
 ```
 
 The sender daemon then:
 
-1. resolves the recipient to a worker URL via the local resolver
-2. calls the worker-side ticket-params endpoint
-3. receives receiver-chosen `TicketParams`
-4. signs a `Payment`
+1. validates the accepted quote/funding request
+2. resolves the recipient to a worker URL via the local resolver
+3. calls the worker-side ticket-params endpoint
+4. receives receiver-chosen `TicketParams`
+5. signs a `Payment`
 
 This is why the service registry matters to payment correctness: sender mode
 needs a route to the worker so it can fetch canonical ticket params for that
@@ -167,8 +178,8 @@ sequenceDiagram
 
     Shell->>SRD: Resolver.Select(capability_id, offering_id?)
     SRD-->>Shell: { worker_url, eth_address, interaction_mode,<br/>work_unit, price_per_unit_wei }
-    Shell->>Shell: compute requested face_value =<br/>target_units × price_per_unit_wei
-    Shell->>Sender: CreatePayment(face_value, recipient,<br/>capability_id, offering_id,<br/>expected_max_units)
+    Shell->>Shell: compute accepted_price + funded_value from<br/>price_per_unit_wei × estimated_units
+    Shell->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
     Sender->>SRD: resolve recipient → worker_url (local)
     SRD-->>Sender: worker_url
     Sender->>Broker: GET /v1/payment/ticket-params
@@ -179,20 +190,24 @@ sequenceDiagram
     Sender-->>Shell: payment_bytes
 ```
 
-### 4. Requested spend vs actual winning-ticket face value
+### 4. Accepted price vs funded budget vs actual winning-ticket face value
 
 These terms are **not** interchangeable.
 
 | Term | Chosen by | Meaning |
 |---|---|---|
 | `price_per_work_unit_wei` | host config (`host-config.yaml`) | published retail price for one work unit |
-| requested `face_value` in `CreatePayment(...)` | gateway | target spend / requested EV for this payment |
+| accepted price basis in `CreatePayment(...)` | gateway | the unit price / quote identity the gateway accepted |
+| funded budget in `CreatePayment(...)` | gateway | initial funded EV for this request or session window |
 | actual ticket `FaceValue` inside returned `TicketParams` | receiver daemon | winning-ticket size chosen so redemption remains truthful |
 | `win_prob` | receiver daemon | probability chosen so `FaceValue × win_prob` matches the requested spend |
 | credited EV from `ProcessPayment` | receiver daemon | expected value actually credited to the `(sender, work_id)` balance |
+| actual billed units | broker/backend | measured final usage after execution |
+| final billed value | broker settlement | `accepted unit price × billed units` |
 
-The load-bearing semantic shift: **the gateway requests a target spend; the
-receiver chooses redeemable ticket economics that match it in expectation.**
+The load-bearing semantic shift: **the gateway funds a budget against an accepted
+unit price; the receiver chooses redeemable ticket economics that match the funded
+expected value; the broker later settles against actual measured usage.**
 
 - the gateway may request a small spend amount
 - the receiver may return a **larger** winning-ticket face value
@@ -254,8 +269,8 @@ necessarily make the resulting ticket redeemable.
 For a workload author, the required sequence is:
 
 1. resolve worker + offering
-2. compute requested spend from resolved price
-3. call `CreatePayment(face_value, recipient, capability_id, offering_id, expected_max_units)`
+2. compute accepted price basis + initial funded budget from the resolved price
+3. call `CreatePayment(recipient, accepted_price, funding, ticket_params_base_url)`
 4. attach returned `payment_bytes` to the broker request
 5. fail closed if the daemon cannot mint payment
 
@@ -275,7 +290,7 @@ sequenceDiagram
     participant Backend as backend
 
     GW->>Broker: forward request<br/>+ Livepeer-Payment header
-    Broker->>Receiver: ProcessPayment(payment_bytes,<br/>expected_max_units, price_per_unit,<br/>capability_id, offering_id)
+    Broker->>Receiver: ProcessPayment(payment_bytes, work_id)
     alt ticket is winning
         Receiver->>TB: redeemWinningTicket
         TB-->>Receiver: faceValue → orch reserve
@@ -285,9 +300,10 @@ sequenceDiagram
     Receiver-->>Broker: ok (sender, credited_ev, balance)
     Broker->>Backend: forward
     Backend-->>Broker: response + raw usage signal
-    Broker->>Broker: extractor → actualUnits
-    Broker->>Receiver: ReportUsage(work_id, actualUnits)
-    Receiver-->>Broker: ok (final price = price_per_unit × actualUnits)
+    Broker->>Broker: extractor / session meter → actualUnits
+    Broker->>Receiver: DebitBalance(sender, work_id, actualUnits or delta)
+    Receiver-->>Broker: ok (updated balance)
+    Broker->>GW: response + settlement record
     Broker-->>GW: response
 ```
 

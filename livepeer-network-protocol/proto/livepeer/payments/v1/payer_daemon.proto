@@ -22,24 +22,29 @@ option go_package = "github.com/Cloud-SPE/livepeer-network-modules/livepeer-netw
 
 service PayerDaemon {
   // Create a payment blob (a `Payment` carrying one or more tickets)
-  // for a selected payee identity at a target spend.
+  // for a selected payee identity against an accepted quote and funded
+  // budget.
   //
-  // On the quote-free sender path, the daemon:
-  //   1. Resolves a worker URL for `recipient` (via the local resolver
-  //      or a configured override).
-  //   2. POSTs `(sender, recipient, face_value, capability, offering)`
-  //      to the worker's `/v1/payment/ticket-params` endpoint.
-  //   3. Receives canonical `TicketParams` back.
-  //   4. Validates against sender escrow / EV caps.
-  //   5. Signs a one-ticket `Payment`.
+  // The caller provides:
+  //   1. the accepted quote identity and unit pricing basis
+  //   2. the funded value / budget for this request or session
+  //   3. the selected broker URL for ticket-params retrieval
   //
-  // The `face_value` argument is interpreted as the caller's TARGET
-  // SPEND (expected value), not a mandatory winning-ticket size. The
-  // receiver may answer with a larger `TicketParams.face_value` plus a
-  // lower `TicketParams.win_prob` when redemption economics require a
-  // redeemable ticket. Senders MUST treat the response `TicketParams`
-  // as the source of truth and not assume the returned `face_value`
-  // equals the requested face_value.
+  // Sender mode then:
+  //   1. POSTs the request context to the broker's
+  //      `/v1/payment/ticket-params` endpoint.
+  //   2. Receives canonical `TicketParams` back.
+  //   3. Validates the funding request against sender escrow / EV caps.
+  //   4. Signs a `Payment` whose wire `expected_price` reflects the
+  //      accepted quote basis.
+  //
+  // The funded value is the caller's authorized budget, not a mandatory
+  // winning-ticket size. The receiver may answer with a larger
+  // `TicketParams.face_value` plus a lower `TicketParams.win_prob` when
+  // redemption economics require a redeemable ticket. Senders MUST
+  // treat the returned `TicketParams` as the source of truth and not
+  // assume the returned winning-ticket face value equals the funded
+  // value they requested.
   rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
 
   // Inspect the payer's current TicketBroker deposit / reserve state.
@@ -63,29 +68,22 @@ service PayerDaemon {
 }
 
 message CreatePaymentRequest {
-  // Target spend (expected value) for the request, in wei, big-endian
-  // bytes. Quote-free path; see RPC doc for semantics.
-  bytes face_value = 1;
-
   // Recipient orchestrator identity (the on-chain payee address), 20
-  // raw bytes. The daemon resolves a worker URL for this address.
-  bytes recipient = 2;
-
-  // Capability being purchased, e.g. "openai:/v1/chat/completions".
-  // Forwarded to the payee-side ticket-params endpoint so the worker
-  // can validate the request against its offered routes.
-  string capability = 3;
-
-  // Offering within the capability being purchased, e.g. a model
-  // identifier. Forwarded to the payee-side ticket-params endpoint.
-  string offering = 4;
+  // raw bytes.
+  bytes recipient = 1;
 
   // Optional per-request broker origin the sender should query for
   // `POST /v1/payment/ticket-params`. Gateway-backed resolver flows set
   // this to the selected broker URL so the ticket-params source matches
   // the payee that will validate the payment. When empty, sender mode
   // may fall back to a configured default for single-broker/dev setups.
-  string ticket_params_base_url = 5;
+  string ticket_params_base_url = 2;
+
+  // Accepted route/quote basis chosen by the gateway.
+  AcceptedPrice accepted_price = 3;
+
+  // Funding scope the gateway is authorizing for this minted payment batch.
+  FundingIntent funding = 4;
 }
 
 message CreatePaymentResponse {
@@ -95,11 +93,17 @@ message CreatePaymentResponse {
   bytes payment_bytes = 1;
 
   // Number of tickets this payment carries (for metrics / audit).
-  int32 tickets_created = 2;
+  uint32 tickets_created = 2;
 
   // Aggregate expected value (EV = face_value × win_prob) committed by
-  // this payment, in wei, big-endian bytes.
-  bytes expected_value = 3;
+  // this payment.
+  BigUInt expected_value = 3;
+
+  // Effective funded value used for the minted payment batch.
+  BigUInt funded_value_wei = 4;
+
+  // Quote identity serialized into the payment context.
+  QuoteRef accepted_quote_ref = 5;
 }
 
 message GetSessionDebitsRequest {

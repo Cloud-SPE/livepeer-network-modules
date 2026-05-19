@@ -184,8 +184,9 @@ func TestSelectedRouteToProto_NilSafe(t *testing.T) {
 
 func TestSelectedRouteFromResolvedNode(t *testing.T) {
 	in := types.ResolvedNode{
-		URL:          "https://worker.example.com",
-		OperatorAddr: "0xabcdef0000000000000000000000000000000000",
+		URL:            "https://worker.example.com",
+		OperatorAddr:   "0xabcdef0000000000000000000000000000000000",
+		PublicationSeq: 42,
 		Capabilities: []types.Capability{
 			{
 				Name:     "openai:/v1/chat/completions",
@@ -212,6 +213,12 @@ func TestSelectedRouteFromResolvedNode(t *testing.T) {
 	}
 	if string(out.Extra) != `{"family":"chat"}` || string(out.Constraints) != `{"max_context":8192}` {
 		t.Fatalf("opaque field drift: %+v", out)
+	}
+	if out.UnitsPerPrice != 1 || out.QuoteVersion != 42 {
+		t.Fatalf("quote fields drift: %+v", out)
+	}
+	if out.QuoteID == "" || len(out.ConstraintFingerprint) == 0 || len(out.RouteFingerprint) == 0 {
+		t.Fatalf("fingerprints missing: %+v", out)
 	}
 }
 

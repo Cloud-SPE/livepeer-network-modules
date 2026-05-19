@@ -44,24 +44,29 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PayerDaemonClient interface {
 	// Create a payment blob (a `Payment` carrying one or more tickets)
-	// for a selected payee identity at a target spend.
+	// for a selected payee identity against an accepted quote and funded
+	// budget.
 	//
-	// On the quote-free sender path, the daemon:
-	//  1. Resolves a worker URL for `recipient` (via the local resolver
-	//     or a configured override).
-	//  2. POSTs `(sender, recipient, face_value, capability, offering)`
-	//     to the worker's `/v1/payment/ticket-params` endpoint.
-	//  3. Receives canonical `TicketParams` back.
-	//  4. Validates against sender escrow / EV caps.
-	//  5. Signs a one-ticket `Payment`.
+	// The caller provides:
+	//  1. the accepted quote identity and unit pricing basis
+	//  2. the funded value / budget for this request or session
+	//  3. the selected broker URL for ticket-params retrieval
 	//
-	// The `face_value` argument is interpreted as the caller's TARGET
-	// SPEND (expected value), not a mandatory winning-ticket size. The
-	// receiver may answer with a larger `TicketParams.face_value` plus a
-	// lower `TicketParams.win_prob` when redemption economics require a
-	// redeemable ticket. Senders MUST treat the response `TicketParams`
-	// as the source of truth and not assume the returned `face_value`
-	// equals the requested face_value.
+	// Sender mode then:
+	//  1. POSTs the request context to the broker's
+	//     `/v1/payment/ticket-params` endpoint.
+	//  2. Receives canonical `TicketParams` back.
+	//  3. Validates the funding request against sender escrow / EV caps.
+	//  4. Signs a `Payment` whose wire `expected_price` reflects the
+	//     accepted quote basis.
+	//
+	// The funded value is the caller's authorized budget, not a mandatory
+	// winning-ticket size. The receiver may answer with a larger
+	// `TicketParams.face_value` plus a lower `TicketParams.win_prob` when
+	// redemption economics require a redeemable ticket. Senders MUST
+	// treat the returned `TicketParams` as the source of truth and not
+	// assume the returned winning-ticket face value equals the funded
+	// value they requested.
 	CreatePayment(ctx context.Context, in *CreatePaymentRequest, opts ...grpc.CallOption) (*CreatePaymentResponse, error)
 	// Inspect the payer's current TicketBroker deposit / reserve state.
 	// Read-only; the daemon does not fund escrow.
@@ -134,24 +139,29 @@ func (c *payerDaemonClient) Health(ctx context.Context, in *HealthRequest, opts 
 // for forward compatibility.
 type PayerDaemonServer interface {
 	// Create a payment blob (a `Payment` carrying one or more tickets)
-	// for a selected payee identity at a target spend.
+	// for a selected payee identity against an accepted quote and funded
+	// budget.
 	//
-	// On the quote-free sender path, the daemon:
-	//  1. Resolves a worker URL for `recipient` (via the local resolver
-	//     or a configured override).
-	//  2. POSTs `(sender, recipient, face_value, capability, offering)`
-	//     to the worker's `/v1/payment/ticket-params` endpoint.
-	//  3. Receives canonical `TicketParams` back.
-	//  4. Validates against sender escrow / EV caps.
-	//  5. Signs a one-ticket `Payment`.
+	// The caller provides:
+	//  1. the accepted quote identity and unit pricing basis
+	//  2. the funded value / budget for this request or session
+	//  3. the selected broker URL for ticket-params retrieval
 	//
-	// The `face_value` argument is interpreted as the caller's TARGET
-	// SPEND (expected value), not a mandatory winning-ticket size. The
-	// receiver may answer with a larger `TicketParams.face_value` plus a
-	// lower `TicketParams.win_prob` when redemption economics require a
-	// redeemable ticket. Senders MUST treat the response `TicketParams`
-	// as the source of truth and not assume the returned `face_value`
-	// equals the requested face_value.
+	// Sender mode then:
+	//  1. POSTs the request context to the broker's
+	//     `/v1/payment/ticket-params` endpoint.
+	//  2. Receives canonical `TicketParams` back.
+	//  3. Validates the funding request against sender escrow / EV caps.
+	//  4. Signs a `Payment` whose wire `expected_price` reflects the
+	//     accepted quote basis.
+	//
+	// The funded value is the caller's authorized budget, not a mandatory
+	// winning-ticket size. The receiver may answer with a larger
+	// `TicketParams.face_value` plus a lower `TicketParams.win_prob` when
+	// redemption economics require a redeemable ticket. Senders MUST
+	// treat the returned `TicketParams` as the source of truth and not
+	// assume the returned winning-ticket face value equals the funded
+	// value they requested.
 	CreatePayment(context.Context, *CreatePaymentRequest) (*CreatePaymentResponse, error)
 	// Inspect the payer's current TicketBroker deposit / reserve state.
 	// Read-only; the daemon does not fund escrow.

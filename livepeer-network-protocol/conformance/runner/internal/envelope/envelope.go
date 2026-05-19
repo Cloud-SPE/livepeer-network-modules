@@ -18,6 +18,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -44,10 +46,10 @@ func Mint(ctx context.Context, capability, offering string) (envelopeBase64 stri
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	resp, err := c.CreatePayment(cctx, &pb.CreatePaymentRequest{
-		FaceValue:  uint64Bytes(defaultFaceValue),
-		Recipient:  hexBytes(defaultRecipientHex),
-		Capability: capability,
-		Offering:   offering,
+		Recipient:           hexBytes(defaultRecipientHex),
+		TicketParamsBaseUrl: defaultTicketParamsBaseURL,
+		AcceptedPrice:       acceptedPrice(capability, offering),
+		Funding:             fundingIntent(defaultFaceValue),
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("payer-daemon CreatePayment: %w", err)
@@ -70,6 +72,9 @@ const (
 	// `TicketParams.face_value` plus a lower `win_prob` per the
 	// quote-free flow; the runner doesn't care.
 	defaultFaceValue uint64 = 1000
+
+	// The conformance compose stack always reaches the broker under this URL.
+	defaultTicketParamsBaseURL = "http://broker:8080"
 )
 
 // client + setup mutex for the package-level singleton. The runner
@@ -162,10 +167,10 @@ func mintEnvelope(capability, offering string) (string, error) {
 	defer cancel()
 
 	resp, err := c.CreatePayment(ctx, &pb.CreatePaymentRequest{
-		FaceValue:  uint64Bytes(defaultFaceValue),
-		Recipient:  hexBytes(defaultRecipientHex),
-		Capability: capability,
-		Offering:   offering,
+		Recipient:           hexBytes(defaultRecipientHex),
+		TicketParamsBaseUrl: defaultTicketParamsBaseURL,
+		AcceptedPrice:       acceptedPrice(capability, offering),
+		Funding:             fundingIntent(defaultFaceValue),
 	})
 	if err != nil {
 		return "", fmt.Errorf("payer-daemon CreatePayment: %w", err)
@@ -189,12 +194,7 @@ func uint64Bytes(n uint64) []byte {
 	if n == 0 {
 		return nil
 	}
-	out := make([]byte, 0, 8)
-	for n > 0 {
-		out = append([]byte{byte(n & 0xff)}, out...)
-		n >>= 8
-	}
-	return out
+	return new(big.Int).SetUint64(n).Bytes()
 }
 
 func hexBytes(s string) []byte {
@@ -217,4 +217,34 @@ func hexNibble(b byte) byte {
 		return b - 'A' + 10
 	}
 	return 0
+}
+
+func acceptedPrice(capability, offering string) *pb.AcceptedPrice {
+	return &pb.AcceptedPrice{
+		PricePerUnitWei: &pb.BigUInt{Value: uint64Bytes(defaultFaceValue)},
+		UnitsPerPrice:   1,
+		WorkUnitName:    "requests",
+		Capability:      capability,
+		Offering:        offering,
+		QuoteRef: &pb.QuoteRef{
+			QuoteId:               "conformance:" + capability + ":" + offering,
+			QuoteVersion:          1,
+			ConstraintFingerprint: digestBytes("constraint:" + capability + ":" + offering),
+			RouteFingerprint:      digestBytes("route:" + capability + ":" + offering),
+		},
+	}
+}
+
+func fundingIntent(fundedValueWei uint64) *pb.FundingIntent {
+	return &pb.FundingIntent{
+		EstimatedUnits: 1,
+		FundedValueWei: &pb.BigUInt{Value: uint64Bytes(fundedValueWei)},
+		MaxTotalUnits:  1,
+	}
+}
+
+func digestBytes(s string) []byte {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(s))
+	return new(big.Int).SetUint64(h.Sum64()).Bytes()
 }

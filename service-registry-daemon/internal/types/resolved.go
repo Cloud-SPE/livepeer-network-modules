@@ -15,6 +15,7 @@ type ResolvedNode struct {
 	WorkerEthAddress string
 	Extra            []byte
 	Capabilities     []Capability
+	PublicationSeq   uint64
 
 	// Resolver-attached:
 	Source          Source

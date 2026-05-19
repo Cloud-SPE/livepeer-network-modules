@@ -55,6 +55,11 @@ message SelectedRoute {
   string work_unit                = 6;
   bytes  extra_json               = 7;
   bytes  constraints_json         = 8;
+  string quote_id                 = 9;
+  uint64 quote_version            = 10;
+  bytes  constraint_fingerprint   = 11;
+  bytes  route_fingerprint        = 12;
+  uint64 units_per_price          = 13;
 }
 
 message ListKnownRequest {}

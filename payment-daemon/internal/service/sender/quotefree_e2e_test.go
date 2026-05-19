@@ -110,11 +110,26 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 	defer cancel()
 
 	createResp, err := payer.CreatePayment(ctx, &pb.CreatePaymentRequest{
-		FaceValue:           big.NewInt(1000).Bytes(),
 		Recipient:           recipient,
-		Capability:          "openai:chat-completions",
-		Offering:            "model-a",
 		TicketParamsBaseUrl: proxy.URL,
+		AcceptedPrice: &pb.AcceptedPrice{
+			PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
+			UnitsPerPrice:   1,
+			WorkUnitName:    "tokens",
+			Capability:      "openai:chat-completions",
+			Offering:        "model-a",
+			QuoteRef: &pb.QuoteRef{
+				QuoteId:               "quote-a",
+				QuoteVersion:          1,
+				ConstraintFingerprint: []byte{0x01},
+				RouteFingerprint:      []byte{0x02},
+			},
+		},
+		Funding: &pb.FundingIntent{
+			EstimatedUnits: 1,
+			FundedValueWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
+			MaxTotalUnits:  1,
+		},
 	})
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)

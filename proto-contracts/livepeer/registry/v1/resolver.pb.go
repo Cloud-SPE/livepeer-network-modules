@@ -304,17 +304,22 @@ func (x *SelectResult) GetRoute() *SelectedRoute {
 }
 
 type SelectedRoute struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	WorkerUrl           string                 `protobuf:"bytes,1,opt,name=worker_url,json=workerUrl,proto3" json:"worker_url,omitempty"`
-	EthAddress          string                 `protobuf:"bytes,2,opt,name=eth_address,json=ethAddress,proto3" json:"eth_address,omitempty"`
-	Capability          string                 `protobuf:"bytes,3,opt,name=capability,proto3" json:"capability,omitempty"`
-	Offering            string                 `protobuf:"bytes,4,opt,name=offering,proto3" json:"offering,omitempty"`
-	PricePerWorkUnitWei string                 `protobuf:"bytes,5,opt,name=price_per_work_unit_wei,json=pricePerWorkUnitWei,proto3" json:"price_per_work_unit_wei,omitempty"`
-	WorkUnit            string                 `protobuf:"bytes,6,opt,name=work_unit,json=workUnit,proto3" json:"work_unit,omitempty"`
-	ExtraJson           []byte                 `protobuf:"bytes,7,opt,name=extra_json,json=extraJson,proto3" json:"extra_json,omitempty"`
-	ConstraintsJson     []byte                 `protobuf:"bytes,8,opt,name=constraints_json,json=constraintsJson,proto3" json:"constraints_json,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	WorkerUrl             string                 `protobuf:"bytes,1,opt,name=worker_url,json=workerUrl,proto3" json:"worker_url,omitempty"`
+	EthAddress            string                 `protobuf:"bytes,2,opt,name=eth_address,json=ethAddress,proto3" json:"eth_address,omitempty"`
+	Capability            string                 `protobuf:"bytes,3,opt,name=capability,proto3" json:"capability,omitempty"`
+	Offering              string                 `protobuf:"bytes,4,opt,name=offering,proto3" json:"offering,omitempty"`
+	PricePerWorkUnitWei   string                 `protobuf:"bytes,5,opt,name=price_per_work_unit_wei,json=pricePerWorkUnitWei,proto3" json:"price_per_work_unit_wei,omitempty"`
+	WorkUnit              string                 `protobuf:"bytes,6,opt,name=work_unit,json=workUnit,proto3" json:"work_unit,omitempty"`
+	ExtraJson             []byte                 `protobuf:"bytes,7,opt,name=extra_json,json=extraJson,proto3" json:"extra_json,omitempty"`
+	ConstraintsJson       []byte                 `protobuf:"bytes,8,opt,name=constraints_json,json=constraintsJson,proto3" json:"constraints_json,omitempty"`
+	QuoteId               string                 `protobuf:"bytes,9,opt,name=quote_id,json=quoteId,proto3" json:"quote_id,omitempty"`
+	QuoteVersion          uint64                 `protobuf:"varint,10,opt,name=quote_version,json=quoteVersion,proto3" json:"quote_version,omitempty"`
+	ConstraintFingerprint []byte                 `protobuf:"bytes,11,opt,name=constraint_fingerprint,json=constraintFingerprint,proto3" json:"constraint_fingerprint,omitempty"`
+	RouteFingerprint      []byte                 `protobuf:"bytes,12,opt,name=route_fingerprint,json=routeFingerprint,proto3" json:"route_fingerprint,omitempty"`
+	UnitsPerPrice         uint64                 `protobuf:"varint,13,opt,name=units_per_price,json=unitsPerPrice,proto3" json:"units_per_price,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *SelectedRoute) Reset() {
@@ -401,6 +406,41 @@ func (x *SelectedRoute) GetConstraintsJson() []byte {
 		return x.ConstraintsJson
 	}
 	return nil
+}
+
+func (x *SelectedRoute) GetQuoteId() string {
+	if x != nil {
+		return x.QuoteId
+	}
+	return ""
+}
+
+func (x *SelectedRoute) GetQuoteVersion() uint64 {
+	if x != nil {
+		return x.QuoteVersion
+	}
+	return 0
+}
+
+func (x *SelectedRoute) GetConstraintFingerprint() []byte {
+	if x != nil {
+		return x.ConstraintFingerprint
+	}
+	return nil
+}
+
+func (x *SelectedRoute) GetRouteFingerprint() []byte {
+	if x != nil {
+		return x.RouteFingerprint
+	}
+	return nil
+}
+
+func (x *SelectedRoute) GetUnitsPerPrice() uint64 {
+	if x != nil {
+		return x.UnitsPerPrice
+	}
+	return 0
 }
 
 type ListKnownRequest struct {
@@ -890,7 +930,7 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\n" +
 	"min_weight\x18\x04 \x01(\x05R\tminWeight\"I\n" +
 	"\fSelectResult\x129\n" +
-	"\x05route\x18\x01 \x01(\v2#.livepeer.registry.v1.SelectedRouteR\x05route\"\xa8\x02\n" +
+	"\x05route\x18\x01 \x01(\v2#.livepeer.registry.v1.SelectedRouteR\x05route\"\xf4\x03\n" +
 	"\rSelectedRoute\x12\x1d\n" +
 	"\n" +
 	"worker_url\x18\x01 \x01(\tR\tworkerUrl\x12\x1f\n" +
@@ -904,7 +944,13 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\twork_unit\x18\x06 \x01(\tR\bworkUnit\x12\x1d\n" +
 	"\n" +
 	"extra_json\x18\a \x01(\fR\textraJson\x12)\n" +
-	"\x10constraints_json\x18\b \x01(\fR\x0fconstraintsJson\"\x12\n" +
+	"\x10constraints_json\x18\b \x01(\fR\x0fconstraintsJson\x12\x19\n" +
+	"\bquote_id\x18\t \x01(\tR\aquoteId\x12#\n" +
+	"\rquote_version\x18\n" +
+	" \x01(\x04R\fquoteVersion\x125\n" +
+	"\x16constraint_fingerprint\x18\v \x01(\fR\x15constraintFingerprint\x12+\n" +
+	"\x11route_fingerprint\x18\f \x01(\fR\x10routeFingerprint\x12&\n" +
+	"\x0funits_per_price\x18\r \x01(\x04R\runitsPerPrice\"\x12\n" +
 	"\x10ListKnownRequest\"M\n" +
 	"\x0fListKnownResult\x12:\n" +
 	"\aentries\x18\x01 \x03(\v2 .livepeer.registry.v1.KnownEntryR\aentries\"\xef\x01\n" +

@@ -273,14 +273,19 @@ type SelectRequest struct {
 // narrower than ResolvedNode on purpose: gateways get only the route
 // fields they need for dispatch, pricing, and payment.
 type SelectedRoute struct {
-	WorkerURL           string
-	EthAddress          string
-	Capability          string
-	Offering            string
-	PricePerWorkUnitWei string
-	WorkUnit            string
-	Extra               []byte
-	Constraints         []byte
+	WorkerURL             string
+	EthAddress            string
+	Capability            string
+	Offering              string
+	PricePerWorkUnitWei   string
+	WorkUnit              string
+	Extra                 []byte
+	Constraints           []byte
+	QuoteID               string
+	QuoteVersion          uint64
+	ConstraintFingerprint []byte
+	RouteFingerprint      []byte
+	UnitsPerPrice         uint64
 }
 
 // KnownEntry mirrors the proto message.

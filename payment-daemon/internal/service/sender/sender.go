@@ -16,8 +16,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"math/big"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -42,12 +44,14 @@ type Service struct {
 }
 
 type senderSession struct {
-	workID       string
-	cacheKey     string
-	ticketParams *types.TicketParams
-	nonce        uint32
-	capability   string
-	offering     string
+	workID        string
+	cacheKey      string
+	ticketParams  *types.TicketParams
+	nonce         uint32
+	acceptedPrice *types.PriceInfo
+	acceptedQuote *pb.QuoteRef
+	capability    string
+	offering      string
 }
 
 // New constructs a sender Service.
@@ -70,15 +74,13 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	if len(req.GetRecipient()) == 0 {
 		return nil, errors.New("recipient is empty")
 	}
-	if req.GetCapability() == "" {
-		return nil, errors.New("capability is empty")
-	}
-	if req.GetOffering() == "" {
-		return nil, errors.New("offering is empty")
-	}
-	faceValue, err := types.ParseFaceValue(req.GetFaceValue())
+	acceptedPrice, err := parseAcceptedPrice(req.GetAcceptedPrice())
 	if err != nil {
-		return nil, fmt.Errorf("face_value: %w", err)
+		return nil, fmt.Errorf("accepted_price: %w", err)
+	}
+	funding, err := parseFundingIntent(req.GetFunding())
+	if err != nil {
+		return nil, fmt.Errorf("funding: %w", err)
 	}
 	if s.fetcher == nil {
 		return nil, errors.New("ticket params fetcher is not configured")
@@ -101,13 +103,18 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	session, err := s.findOrOpenSession(
 		ctx,
 		req.GetRecipient(),
-		faceValue,
-		req.GetCapability(),
-		req.GetOffering(),
+		funding.fundedValueWei,
+		acceptedPrice.CapabilityName,
+		acceptedPrice.Offering,
 		req.GetTicketParamsBaseUrl(),
+		acceptedPrice.toPriceInfo(funding.estimatedUnits),
+		req.GetAcceptedPrice().GetQuoteRef(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ticket params: %w", err)
+	}
+	if len(session.ticketParams.Seed) == 0 {
+		return nil, errors.New("ticket params: seed is empty")
 	}
 
 	tsp, err := s.signOneTicket(session)
@@ -123,7 +130,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 			CreationRoundBlockHash: s.clock.LastInitializedL1BlockHash(),
 		},
 		TicketSenderParams: []*types.TicketSenderParams{tsp},
-		ExpectedPrice:      &types.PriceInfo{}, // canonical zero on quote-free path
+		ExpectedPrice:      session.acceptedPrice,
 	}
 	wire := batch.ToWirePayment()
 	bytes, err := proto.Marshal(wire)
@@ -136,16 +143,18 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 
 	s.logger.Info("payment created",
 		"work_id", session.workID,
-		"capability", req.GetCapability(),
-		"offering", req.GetOffering(),
-		"target_face_value", faceValue.String(),
+		"capability", acceptedPrice.CapabilityName,
+		"offering", acceptedPrice.Offering,
+		"funded_value_wei", funding.fundedValueWei.String(),
 		"ticket_face_value", session.ticketParams.FaceValue.String(),
 		"nonce", tsp.SenderNonce)
 
 	return &pb.CreatePaymentResponse{
-		PaymentBytes:   bytes,
-		TicketsCreated: 1,
-		ExpectedValue:  evBytes,
+		PaymentBytes:     bytes,
+		TicketsCreated:   1,
+		ExpectedValue:    &pb.BigUInt{Value: evBytes},
+		FundedValueWei:   &pb.BigUInt{Value: funding.fundedValueWei.Bytes()},
+		AcceptedQuoteRef: cloneQuoteRef(session.acceptedQuote),
 	}, nil
 }
 
@@ -174,7 +183,7 @@ func (s *Service) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthResp
 
 // ─── helpers ──────────────────────────────────────────────────────────
 
-func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceValue *big.Int, capability, offering, ticketParamsBaseURL string) (*senderSession, error) {
+func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceValue *big.Int, capability, offering, ticketParamsBaseURL string, acceptedPrice *types.PriceInfo, acceptedQuote *pb.QuoteRef) (*senderSession, error) {
 	key := sessionKey(recipient, capability, offering, faceValue, ticketParamsBaseURL)
 
 	s.mu.Lock()
@@ -197,11 +206,13 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	}
 	workID := hex.EncodeToString(params.RecipientRandHash)
 	sess := &senderSession{
-		workID:       workID,
-		cacheKey:     key,
-		ticketParams: cloneTicketParams(params),
-		capability:   capability,
-		offering:     offering,
+		workID:        workID,
+		cacheKey:      key,
+		ticketParams:  cloneTicketParams(params),
+		acceptedPrice: clonePriceInfo(acceptedPrice),
+		acceptedQuote: cloneQuoteRef(acceptedQuote),
+		capability:    capability,
+		offering:      offering,
 	}
 
 	s.mu.Lock()
@@ -211,6 +222,149 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	}
 	s.sessions[key] = sess
 	return sess, nil
+}
+
+type acceptedPriceInput struct {
+	PricePerUnitWei int64
+	UnitsPerPrice   uint64
+	WorkUnitName    string
+	QuoteRef        *pb.QuoteRef
+	CapabilityName  string
+	Offering        string
+}
+
+type fundingIntentInput struct {
+	estimatedUnits uint64
+	fundedValueWei *big.Int
+}
+
+func parseAcceptedPrice(in *pb.AcceptedPrice) (*acceptedPriceInput, error) {
+	if in == nil {
+		return nil, errors.New("accepted_price is required")
+	}
+	if strings.TrimSpace(in.GetCapability()) == "" {
+		return nil, errors.New("capability is empty")
+	}
+	if strings.TrimSpace(in.GetOffering()) == "" {
+		return nil, errors.New("offering is empty")
+	}
+	if strings.TrimSpace(in.GetWorkUnitName()) == "" {
+		return nil, errors.New("work_unit_name is empty")
+	}
+	if in.GetUnitsPerPrice() == 0 {
+		return nil, errors.New("units_per_price must be > 0")
+	}
+	pricePerUnitWei, err := parseBigUInt("price_per_unit_wei", in.GetPricePerUnitWei())
+	if err != nil {
+		return nil, err
+	}
+	if !pricePerUnitWei.IsInt64() {
+		return nil, errors.New("price_per_unit_wei exceeds wire PriceInfo int64 range")
+	}
+	if in.GetQuoteRef() == nil {
+		return nil, errors.New("quote_ref is required")
+	}
+	if strings.TrimSpace(in.GetQuoteRef().GetQuoteId()) == "" {
+		return nil, errors.New("quote_ref.quote_id is empty")
+	}
+	if len(in.GetQuoteRef().GetConstraintFingerprint()) == 0 {
+		return nil, errors.New("quote_ref.constraint_fingerprint is empty")
+	}
+	if len(in.GetQuoteRef().GetRouteFingerprint()) == 0 {
+		return nil, errors.New("quote_ref.route_fingerprint is empty")
+	}
+	if in.GetUnitsPerPrice() > uint64(1<<63-1) {
+		return nil, errors.New("units_per_price exceeds wire PriceInfo int64 range")
+	}
+
+	return &acceptedPriceInput{
+		PricePerUnitWei: pricePerUnitWei.Int64(),
+		UnitsPerPrice:   in.GetUnitsPerPrice(),
+		WorkUnitName:    strings.TrimSpace(in.GetWorkUnitName()),
+		QuoteRef:        cloneQuoteRef(in.GetQuoteRef()),
+		CapabilityName:  strings.TrimSpace(in.GetCapability()),
+		Offering:        strings.TrimSpace(in.GetOffering()),
+	}, nil
+}
+
+func (a *acceptedPriceInput) toPriceInfo(estimatedUnits uint64) *types.PriceInfo {
+	if a == nil {
+		return nil
+	}
+	return &types.PriceInfo{
+		PricePerUnit:  a.PricePerUnitWei,
+		PixelsPerUnit: int64(a.UnitsPerPrice),
+		Capability:    wireCapabilityID(a.CapabilityName),
+		Constraint:    expectedPriceConstraint(a, estimatedUnits),
+	}
+}
+
+func parseFundingIntent(in *pb.FundingIntent) (*fundingIntentInput, error) {
+	if in == nil {
+		return nil, errors.New("funding is required")
+	}
+	fundedValueWei, err := parseBigUInt("funded_value_wei", in.GetFundedValueWei())
+	if err != nil {
+		return nil, err
+	}
+	if fundedValueWei.Sign() <= 0 {
+		return nil, errors.New("funded_value_wei must be > 0")
+	}
+	if in.GetMaxTotalUnits() > 0 && in.GetEstimatedUnits() > in.GetMaxTotalUnits() {
+		return nil, errors.New("estimated_units exceeds max_total_units")
+	}
+	return &fundingIntentInput{
+		estimatedUnits: in.GetEstimatedUnits(),
+		fundedValueWei: fundedValueWei,
+	}, nil
+}
+
+func parseBigUInt(field string, in *pb.BigUInt) (*big.Int, error) {
+	if in == nil {
+		return nil, fmt.Errorf("%s is required", field)
+	}
+	if len(in.GetValue()) == 0 {
+		return nil, fmt.Errorf("%s is empty", field)
+	}
+	if len(in.GetValue()) > 32 {
+		return nil, fmt.Errorf("%s exceeds uint256 size", field)
+	}
+	return new(big.Int).SetBytes(in.GetValue()), nil
+}
+
+func wireCapabilityID(capability string) uint32 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(capability))
+	return h.Sum32()
+}
+
+func expectedPriceConstraint(in *acceptedPriceInput, estimatedUnits uint64) string {
+	ref := in.QuoteRef
+	return fmt.Sprintf("cap=%s;off=%s;wu=%s;est=%d;qid=%s;qv=%d;cfp=%x;rfp=%x",
+		url.QueryEscape(in.CapabilityName),
+		url.QueryEscape(in.Offering),
+		url.QueryEscape(in.WorkUnitName),
+		estimatedUnits,
+		url.QueryEscape(ref.GetQuoteId()),
+		ref.GetQuoteVersion(),
+		ref.GetConstraintFingerprint(),
+		ref.GetRouteFingerprint(),
+	)
+}
+
+func cloneQuoteRef(in *pb.QuoteRef) *pb.QuoteRef {
+	if in == nil {
+		return nil
+	}
+	return proto.Clone(in).(*pb.QuoteRef)
+}
+
+func clonePriceInfo(in *types.PriceInfo) *types.PriceInfo {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	return &out
 }
 
 // signOneTicket increments the session's nonce, builds a Ticket, hashes

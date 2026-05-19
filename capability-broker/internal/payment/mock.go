@@ -101,8 +101,9 @@ func (m *Mock) ProcessPayment(_ context.Context, req ProcessPaymentRequest) (*Pr
 		sess.sender = stubSenderFromPayment(req.PaymentBytes)
 	}
 	return &ProcessPaymentResult{
-		Sender:  append([]byte(nil), sess.sender...),
-		Balance: new(big.Int).Set(sess.balance),
+		Sender:     append([]byte(nil), sess.sender...),
+		CreditedEV: new(big.Int),
+		Balance:    new(big.Int).Set(sess.balance),
 	}, nil
 }
 

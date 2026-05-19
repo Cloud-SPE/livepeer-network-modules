@@ -38,6 +38,7 @@ Out of scope:
 | `Livepeer-Backoff` | response from broker | when 503 | broker | gateway |
 | `Livepeer-Work-Units` | response from broker | when applicable | broker | gateway |
 | `Livepeer-Health-Status` | response on `/registry/health` | yes (on that path) | broker | gateway resolver |
+| `Livepeer-Settlement` | response from broker | when applicable | broker | gateway |
 | `Livepeer-Error` | response from broker on error | when error | broker | gateway |
 
 ## Header reference
@@ -67,19 +68,19 @@ multiple priced tiers (different models, different SLA tiers, different hardware
 The payment envelope. Base64-encoded protobuf message
 (`livepeer.payments.v1.Payment`).
 
-The envelope contains:
+The envelope is the canonical wire-format `livepeer.payments.v1.Payment`.
 
-- `ticket` — probabilistic micropayment ticket per the existing payment-daemon
-  protocol (carried over from the suite).
-- `capability_id` — MUST match the request's `Livepeer-Capability` header.
-- `offering_id` — MUST match the request's `Livepeer-Offering` header.
-- `expected_max_units` — gateway's upper-bound estimate of work units this request
-  will consume; broker uses this for cap-and-bound debit.
+It carries:
+
+- payee-issued `ticket_params`
+- sender identity
+- per-ticket sender params
+- `expected_price` — the payer's accepted unit-pricing basis for the funded work
 
 Behavior:
 
-- Mismatch between header and envelope → broker rejects (401 + `Livepeer-Error:
-  payment_envelope_mismatch`).
+- Mismatch between the request headers and the route the broker resolves for the
+  validated payment → broker rejects (401 + `Livepeer-Error: payment_envelope_mismatch`).
 - Failed ticket validation (signature, replay, insufficient face value) → 401 +
   `Livepeer-Error: payment_invalid`.
 - The envelope's wire shape is owned by `payment-daemon`; the protobuf definition
@@ -144,6 +145,27 @@ consumed.
   `modes/<mode>.md`.
 - The gateway's payment-daemon sender uses this for reconciliation if the pre-debit
   estimate differed.
+
+### `Livepeer-Settlement`
+
+Broker-authoritative settlement record for the completed request or session window.
+
+- **Value:** base64-encoded protobuf `livepeer.payments.v1.SettlementRecord`
+- Contains, when available:
+  - accepted quote identity
+  - funded value
+  - actual units
+  - billed units
+  - billed value
+  - settlement outcome
+- For request/response flows, emitted as a response header or HTTP trailer depending on
+  when the implementation can finalize settlement relative to header commit.
+- For long-running or upgraded flows, emitted on the mode's terminal plane (HTTP
+  trailer, terminal event, or follow-up control surface).
+
+Gateways should store `Livepeer-Settlement` as the authoritative settlement record for
+the request/session rather than re-deriving settlement from local heuristics when the
+broker provides it.
 
 ### `Livepeer-Health-Status`
 

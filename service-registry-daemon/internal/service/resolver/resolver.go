@@ -45,19 +45,19 @@ import (
 
 // Service is the resolver business-logic surface used by runtime/grpc.
 type Service struct {
-	chain     chain.Chain
-	fetcher   manifestfetcher.ManifestFetcher
-	verifier  verifier.Verifier
-	cache     manifestcache.Repo
-	audit     audit.Repo
-	overlay   func() *config.Overlay // accessor so reload swaps the value atomically
-	clock     clock.Clock
-	log       logger.Logger
-	rec       metrics.Recorder
-	chainTTL  time.Duration
-	manifest  time.Duration
-	maxStale  time.Duration
-	rejectUns bool
+	chain      chain.Chain
+	fetcher    manifestfetcher.ManifestFetcher
+	verifier   verifier.Verifier
+	cache      manifestcache.Repo
+	audit      audit.Repo
+	overlay    func() *config.Overlay // accessor so reload swaps the value atomically
+	clock      clock.Clock
+	log        logger.Logger
+	rec        metrics.Recorder
+	chainTTL   time.Duration
+	manifest   time.Duration
+	maxStale   time.Duration
+	rejectUns  bool
 	liveHealth livehealthfetcher.Fetcher
 	liveMu     sync.RWMutex
 	liveCache  map[string]liveHealthCacheEntry
@@ -118,10 +118,10 @@ func New(c Config) *Service {
 		// pooled orchs. Hard-coded to MaxStale (the same window as
 		// last-good fallback) so a one-shot ResolveByAddress for an
 		// address not recently seeded still gets a fresh-enough entry.
-		chainTTL:  nonZeroDuration(c.MaxStale, 1*time.Hour),
-		manifest:  nonZeroDuration(c.CacheManifestTTL, 10*time.Minute),
-		maxStale:  nonZeroDuration(c.MaxStale, 1*time.Hour),
-		rejectUns: c.RejectUnsigned,
+		chainTTL:   nonZeroDuration(c.MaxStale, 1*time.Hour),
+		manifest:   nonZeroDuration(c.CacheManifestTTL, 10*time.Minute),
+		maxStale:   nonZeroDuration(c.MaxStale, 1*time.Hour),
+		rejectUns:  c.RejectUnsigned,
 		liveHealth: c.LiveHealth,
 		liveCache:  map[string]liveHealthCacheEntry{},
 	}
@@ -204,11 +204,12 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 	var nodes []types.ResolvedNode
 	var manifest *types.Manifest
 	var manifestSHA [32]byte
+	var publicationSeq uint64
 	var legacyURL string
 
 	switch mode {
 	case types.ModeWellKnown:
-		nodes, manifest, manifestSHA, err = s.fetchAndVerifyManifest(ctx, addr, uri)
+		nodes, manifest, manifestSHA, publicationSeq, err = s.fetchAndVerifyManifest(ctx, addr, uri)
 		if err != nil {
 			// Manifest unreachable; consider legacy fallback.
 			if req.AllowLegacyFallback && (errors.Is(err, types.ErrManifestUnavailable) || errors.Is(err, types.ErrManifestTooLarge)) {
@@ -271,6 +272,7 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 		FetchedAt:      now,
 		ChainSeenAt:    now,
 		ManifestSHA256: manifestSHA,
+		PublicationSeq: publicationSeq,
 	}
 	if manifest != nil {
 		entry.SchemaVersion = manifest.SchemaVersion
@@ -299,9 +301,9 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 
 // fetchAndVerifyManifest fetches the exact on-chain manifest URL and
 // validates the signature.
-func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddress, manifestURL string) ([]types.ResolvedNode, *types.Manifest, [32]byte, error) {
+func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddress, manifestURL string) ([]types.ResolvedNode, *types.Manifest, [32]byte, uint64, error) {
 	if manifestURL == "" {
-		return nil, nil, [32]byte{}, fmt.Errorf("%w: empty manifest URL", types.ErrManifestUnavailable)
+		return nil, nil, [32]byte{}, 0, fmt.Errorf("%w: empty manifest URL", types.ErrManifestUnavailable)
 	}
 	candidates := manifestFetchCandidates(manifestURL)
 	var lastErr error
@@ -312,7 +314,7 @@ func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddr
 			continue
 		}
 
-		manifest, canonical, sigHex, err := decodeFetchedManifest(body)
+		manifest, canonical, sigHex, publicationSeq, err := decodeFetchedManifest(body)
 		if err != nil {
 			s.rec.IncManifestVerify(metrics.OutcomeParseError)
 			s.appendAudit(addr, types.AuditSignatureInvalid, types.ModeWellKnown, "manifest parse: "+err.Error())
@@ -358,7 +360,7 @@ func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddr
 		}
 		s.rec.IncManifestVerify(metrics.OutcomeVerified)
 
-		out := projectManifest(addr, manifest)
+		out := projectManifest(addr, manifest, publicationSeq)
 		s.log.Debug("resolver: manifest projected",
 			"addr", addr,
 			"schema_version", manifest.SchemaVersion,
@@ -368,37 +370,37 @@ func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddr
 		)
 		sha := bytes32SHA256(body)
 		s.appendAudit(addr, types.AuditManifestFetched, types.ModeWellKnown, fmt.Sprintf("nodes=%d schema=%s", len(out), manifest.SchemaVersion))
-		return out, manifest, sha, nil
+		return out, manifest, sha, publicationSeq, nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("%w: no manifest fetch candidates for %q", types.ErrManifestUnavailable, manifestURL)
 	}
-	return nil, nil, [32]byte{}, lastErr
+	return nil, nil, [32]byte{}, 0, lastErr
 }
 
-func decodeFetchedManifest(body []byte) (*types.Manifest, []byte, string, error) {
+func decodeFetchedManifest(body []byte) (*types.Manifest, []byte, string, uint64, error) {
 	manifest, err := types.DecodeManifest(body)
 	if err == nil {
 		canonical, cerr := types.CanonicalBytes(manifest)
 		if cerr != nil {
-			return nil, nil, "", fmt.Errorf("%w: canonical: %w", types.ErrParse, cerr)
+			return nil, nil, "", 0, fmt.Errorf("%w: canonical: %w", types.ErrParse, cerr)
 		}
-		return manifest, canonical, manifest.Signature.Value, nil
+		return manifest, canonical, manifest.Signature.Value, 0, nil
 	}
 
 	env, compatErr := types.DecodeCoordinatorEnvelope(body)
 	if compatErr != nil {
-		return nil, nil, "", err
+		return nil, nil, "", 0, err
 	}
 	canonical, cerr := types.CoordinatorCanonicalBytes(env.Manifest)
 	if cerr != nil {
-		return nil, nil, "", fmt.Errorf("%w: canonical: %w", types.ErrParse, cerr)
+		return nil, nil, "", 0, fmt.Errorf("%w: canonical: %w", types.ErrParse, cerr)
 	}
 	compatManifest, cerr := env.ToManifest()
 	if cerr != nil {
-		return nil, nil, "", fmt.Errorf("%w: compatibility projection: %w", types.ErrParse, cerr)
+		return nil, nil, "", 0, fmt.Errorf("%w: compatibility projection: %w", types.ErrParse, cerr)
 	}
-	return compatManifest, canonical, env.Signature.Value, nil
+	return compatManifest, canonical, env.Signature.Value, env.Manifest.PublicationSeq, nil
 }
 
 // tryStaticOverlay synthesizes a result from the operator overlay alone
@@ -470,7 +472,7 @@ func (s *Service) buildResultFromEntry(ctx context.Context, e *manifestcache.Ent
 		if e.Manifest == nil {
 			return nil, fmt.Errorf("%w: cache entry mode=well-known but manifest nil", types.ErrParse)
 		}
-		nodes = projectManifest(req.Address, e.Manifest)
+		nodes = projectManifest(req.Address, e.Manifest, e.PublicationSeq)
 	case types.ModeCSV:
 		// We don't re-decode from cache; CSV-mode entries store nodes... but Entry doesn't carry them.
 		// Re-decoding from ResolvedURI is cheap; re-classify and re-decode.
@@ -526,7 +528,7 @@ func (s *Service) buildResultFromEntry(ctx context.Context, e *manifestcache.Ent
 	}, nil
 }
 
-func projectManifest(addr types.EthAddress, m *types.Manifest) []types.ResolvedNode {
+func projectManifest(addr types.EthAddress, m *types.Manifest, publicationSeq uint64) []types.ResolvedNode {
 	out := make([]types.ResolvedNode, 0, len(m.Nodes))
 	for _, n := range m.Nodes {
 		out = append(out, types.ResolvedNode{
@@ -535,6 +537,7 @@ func projectManifest(addr types.EthAddress, m *types.Manifest) []types.ResolvedN
 			WorkerEthAddress: n.WorkerEthAddress,
 			Extra:            append([]byte(nil), n.Extra...),
 			Capabilities:     append([]types.Capability(nil), n.Capabilities...),
+			PublicationSeq:   publicationSeq,
 			Source:           types.SourceManifest,
 			SignatureStatus:  types.SigVerified,
 			OperatorAddr:     addr,

@@ -96,9 +96,16 @@ func TestProcessPayment_E2E_RealSig(t *testing.T) {
 		t.Fatalf("returned recipient = %x; want %x", gotRecipient, recipient)
 	}
 	rrHash := tp.GetTicketParams().GetRecipientRandHash()
+	seed := tp.GetTicketParams().GetSeed()
 	workID := hex.EncodeToString(rrHash)
 	faceValue := new(big.Int).SetBytes(tp.GetTicketParams().GetFaceValue())
 	winProb := new(big.Int).SetBytes(tp.GetTicketParams().GetWinProb())
+	if len(seed) != 32 {
+		t.Fatalf("seed length = %d; want 32", len(seed))
+	}
+	if got := types.HashRecipientRand(new(big.Int).SetBytes(seed)); !equalBytes(got, rrHash) {
+		t.Fatalf("seed hash = %x; want recipient_rand_hash %x", got, rrHash)
+	}
 
 	// 2. Sender constructs and signs the ticket.
 	ticket := &types.Ticket{
@@ -123,7 +130,7 @@ func TestProcessPayment_E2E_RealSig(t *testing.T) {
 			FaceValue:         faceValue.Bytes(),
 			WinProb:           winProb.Bytes(),
 			RecipientRandHash: rrHash,
-			Seed:              []byte{},
+			Seed:              seed,
 		},
 		TicketSenderParams: []*pb.TicketSenderParams{{
 			SenderNonce: 1,

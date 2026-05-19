@@ -555,8 +555,8 @@ Run with `--mode=...` and a socket path; omit `--chain-rpc`:
 ./bin/livepeer-payment-daemon --mode sender   --socket /tmp/tx.sock
 ```
 
-In sender mode, every `CreatePayment(...)` request must carry
-`ticket_params_base_url`, and sender mode queries
+In sender mode, every `CreatePayment(...)` request must carry an accepted
+price basis, a funding intent, and `ticket_params_base_url`, and sender mode queries
 `POST /v1/payment/ticket-params` on that exact broker origin.
 `CreatePayment` fetches canonical payee-issued `TicketParams` there
 before signing each quote-free payment.

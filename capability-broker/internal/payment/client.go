@@ -114,6 +114,7 @@ type ProcessPaymentRequest struct {
 // sender.
 type ProcessPaymentResult struct {
 	Sender        []byte
+	CreditedEV    *big.Int
 	Balance       *big.Int
 	WinnersQueued int32
 }

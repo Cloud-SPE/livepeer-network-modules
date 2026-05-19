@@ -187,6 +187,11 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 					"capability "+capability+"/"+offering+" is not served by this broker")
 				return
 			}
+			if err := validateExpectedPriceForRequest(paymentBytes, capability, offering, spec); err != nil {
+				livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch,
+					"expected price mismatch: "+err.Error())
+				return
+			}
 
 			workID, ok := DerivePayeeWorkID(paymentBytes)
 			if !ok {
@@ -251,6 +256,7 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			defer cancelHandler()
 
 			rec := &responseRecorder{ResponseWriter: w}
+			rec.Header().Add("Trailer", livepeerheader.Settlement)
 
 			tickerDone := make(chan struct{})
 			tickerStop := make(chan struct{})
@@ -373,6 +379,14 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 					} else {
 						observability.RecordWorkReceiptEmit("final", "success")
 					}
+				}
+			}
+
+			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit); settlement != nil {
+				if encoded, err := encodeSettlementRecord(settlement); err == nil {
+					rec.Header().Set(livepeerheader.Settlement, encoded)
+				} else {
+					log.Printf("warning: settlement encode failed work_id=%s: %v", workID, err)
 				}
 			}
 		})

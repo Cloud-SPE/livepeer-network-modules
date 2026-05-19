@@ -37,27 +37,21 @@ const (
 
 type CreatePaymentRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Target spend (expected value) for the request, in wei, big-endian
-	// bytes. Quote-free path; see RPC doc for semantics.
-	FaceValue []byte `protobuf:"bytes,1,opt,name=face_value,json=faceValue,proto3" json:"face_value,omitempty"`
 	// Recipient orchestrator identity (the on-chain payee address), 20
-	// raw bytes. The daemon resolves a worker URL for this address.
-	Recipient []byte `protobuf:"bytes,2,opt,name=recipient,proto3" json:"recipient,omitempty"`
-	// Capability being purchased, e.g. "openai:/v1/chat/completions".
-	// Forwarded to the payee-side ticket-params endpoint so the worker
-	// can validate the request against its offered routes.
-	Capability string `protobuf:"bytes,3,opt,name=capability,proto3" json:"capability,omitempty"`
-	// Offering within the capability being purchased, e.g. a model
-	// identifier. Forwarded to the payee-side ticket-params endpoint.
-	Offering string `protobuf:"bytes,4,opt,name=offering,proto3" json:"offering,omitempty"`
+	// raw bytes.
+	Recipient []byte `protobuf:"bytes,1,opt,name=recipient,proto3" json:"recipient,omitempty"`
 	// Optional per-request broker origin the sender should query for
 	// `POST /v1/payment/ticket-params`. Gateway-backed resolver flows set
 	// this to the selected broker URL so the ticket-params source matches
 	// the payee that will validate the payment. When empty, sender mode
 	// may fall back to a configured default for single-broker/dev setups.
-	TicketParamsBaseUrl string `protobuf:"bytes,5,opt,name=ticket_params_base_url,json=ticketParamsBaseUrl,proto3" json:"ticket_params_base_url,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	TicketParamsBaseUrl string `protobuf:"bytes,2,opt,name=ticket_params_base_url,json=ticketParamsBaseUrl,proto3" json:"ticket_params_base_url,omitempty"`
+	// Accepted route/quote basis chosen by the gateway.
+	AcceptedPrice *AcceptedPrice `protobuf:"bytes,3,opt,name=accepted_price,json=acceptedPrice,proto3" json:"accepted_price,omitempty"`
+	// Funding scope the gateway is authorizing for this minted payment batch.
+	Funding       *FundingIntent `protobuf:"bytes,4,opt,name=funding,proto3" json:"funding,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreatePaymentRequest) Reset() {
@@ -90,32 +84,11 @@ func (*CreatePaymentRequest) Descriptor() ([]byte, []int) {
 	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *CreatePaymentRequest) GetFaceValue() []byte {
-	if x != nil {
-		return x.FaceValue
-	}
-	return nil
-}
-
 func (x *CreatePaymentRequest) GetRecipient() []byte {
 	if x != nil {
 		return x.Recipient
 	}
 	return nil
-}
-
-func (x *CreatePaymentRequest) GetCapability() string {
-	if x != nil {
-		return x.Capability
-	}
-	return ""
-}
-
-func (x *CreatePaymentRequest) GetOffering() string {
-	if x != nil {
-		return x.Offering
-	}
-	return ""
 }
 
 func (x *CreatePaymentRequest) GetTicketParamsBaseUrl() string {
@@ -125,6 +98,20 @@ func (x *CreatePaymentRequest) GetTicketParamsBaseUrl() string {
 	return ""
 }
 
+func (x *CreatePaymentRequest) GetAcceptedPrice() *AcceptedPrice {
+	if x != nil {
+		return x.AcceptedPrice
+	}
+	return nil
+}
+
+func (x *CreatePaymentRequest) GetFunding() *FundingIntent {
+	if x != nil {
+		return x.Funding
+	}
+	return nil
+}
+
 type CreatePaymentResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Wire-format `livepeer.payments.v1.Payment` bytes. The caller
@@ -132,12 +119,16 @@ type CreatePaymentResponse struct {
 	// the `Livepeer-Payment` HTTP header value, base64-encoded).
 	PaymentBytes []byte `protobuf:"bytes,1,opt,name=payment_bytes,json=paymentBytes,proto3" json:"payment_bytes,omitempty"`
 	// Number of tickets this payment carries (for metrics / audit).
-	TicketsCreated int32 `protobuf:"varint,2,opt,name=tickets_created,json=ticketsCreated,proto3" json:"tickets_created,omitempty"`
+	TicketsCreated uint32 `protobuf:"varint,2,opt,name=tickets_created,json=ticketsCreated,proto3" json:"tickets_created,omitempty"`
 	// Aggregate expected value (EV = face_value × win_prob) committed by
-	// this payment, in wei, big-endian bytes.
-	ExpectedValue []byte `protobuf:"bytes,3,opt,name=expected_value,json=expectedValue,proto3" json:"expected_value,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// this payment.
+	ExpectedValue *BigUInt `protobuf:"bytes,3,opt,name=expected_value,json=expectedValue,proto3" json:"expected_value,omitempty"`
+	// Effective funded value used for the minted payment batch.
+	FundedValueWei *BigUInt `protobuf:"bytes,4,opt,name=funded_value_wei,json=fundedValueWei,proto3" json:"funded_value_wei,omitempty"`
+	// Quote identity serialized into the payment context.
+	AcceptedQuoteRef *QuoteRef `protobuf:"bytes,5,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CreatePaymentResponse) Reset() {
@@ -177,16 +168,30 @@ func (x *CreatePaymentResponse) GetPaymentBytes() []byte {
 	return nil
 }
 
-func (x *CreatePaymentResponse) GetTicketsCreated() int32 {
+func (x *CreatePaymentResponse) GetTicketsCreated() uint32 {
 	if x != nil {
 		return x.TicketsCreated
 	}
 	return 0
 }
 
-func (x *CreatePaymentResponse) GetExpectedValue() []byte {
+func (x *CreatePaymentResponse) GetExpectedValue() *BigUInt {
 	if x != nil {
 		return x.ExpectedValue
+	}
+	return nil
+}
+
+func (x *CreatePaymentResponse) GetFundedValueWei() *BigUInt {
+	if x != nil {
+		return x.FundedValueWei
+	}
+	return nil
+}
+
+func (x *CreatePaymentResponse) GetAcceptedQuoteRef() *QuoteRef {
+	if x != nil {
+		return x.AcceptedQuoteRef
 	}
 	return nil
 }
@@ -418,20 +423,18 @@ var File_livepeer_payments_v1_payer_daemon_proto protoreflect.FileDescriptor
 
 const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\n" +
-	"'livepeer/payments/v1/payer_daemon.proto\x12\x14livepeer.payments.v1\x1a livepeer/payments/v1/types.proto\"\xc4\x01\n" +
-	"\x14CreatePaymentRequest\x12\x1d\n" +
-	"\n" +
-	"face_value\x18\x01 \x01(\fR\tfaceValue\x12\x1c\n" +
-	"\trecipient\x18\x02 \x01(\fR\trecipient\x12\x1e\n" +
-	"\n" +
-	"capability\x18\x03 \x01(\tR\n" +
-	"capability\x12\x1a\n" +
-	"\boffering\x18\x04 \x01(\tR\boffering\x123\n" +
-	"\x16ticket_params_base_url\x18\x05 \x01(\tR\x13ticketParamsBaseUrl\"\x8c\x01\n" +
+	"'livepeer/payments/v1/payer_daemon.proto\x12\x14livepeer.payments.v1\x1a livepeer/payments/v1/types.proto\"\xf4\x01\n" +
+	"\x14CreatePaymentRequest\x12\x1c\n" +
+	"\trecipient\x18\x01 \x01(\fR\trecipient\x123\n" +
+	"\x16ticket_params_base_url\x18\x02 \x01(\tR\x13ticketParamsBaseUrl\x12J\n" +
+	"\x0eaccepted_price\x18\x03 \x01(\v2#.livepeer.payments.v1.AcceptedPriceR\racceptedPrice\x12=\n" +
+	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\"\xc2\x02\n" +
 	"\x15CreatePaymentResponse\x12#\n" +
 	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x12'\n" +
-	"\x0ftickets_created\x18\x02 \x01(\x05R\x0eticketsCreated\x12%\n" +
-	"\x0eexpected_value\x18\x03 \x01(\fR\rexpectedValue\"J\n" +
+	"\x0ftickets_created\x18\x02 \x01(\rR\x0eticketsCreated\x12D\n" +
+	"\x0eexpected_value\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\rexpectedValue\x12G\n" +
+	"\x10funded_value_wei\x18\x04 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12L\n" +
+	"\x12accepted_quote_ref\x18\x05 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\"J\n" +
 	"\x17GetSessionDebitsRequest\x12\x16\n" +
 	"\x06sender\x18\x01 \x01(\fR\x06sender\x12\x17\n" +
 	"\awork_id\x18\x02 \x01(\tR\x06workId\"}\n" +
@@ -471,23 +474,32 @@ var file_livepeer_payments_v1_payer_daemon_proto_goTypes = []any{
 	(*GetSessionDebitsResponse)(nil), // 3: livepeer.payments.v1.GetSessionDebitsResponse
 	(*GetDepositInfoRequest)(nil),    // 4: livepeer.payments.v1.GetDepositInfoRequest
 	(*GetDepositInfoResponse)(nil),   // 5: livepeer.payments.v1.GetDepositInfoResponse
-	(*HealthRequest)(nil),            // 6: livepeer.payments.v1.HealthRequest
-	(*HealthResponse)(nil),           // 7: livepeer.payments.v1.HealthResponse
+	(*AcceptedPrice)(nil),            // 6: livepeer.payments.v1.AcceptedPrice
+	(*FundingIntent)(nil),            // 7: livepeer.payments.v1.FundingIntent
+	(*BigUInt)(nil),                  // 8: livepeer.payments.v1.BigUInt
+	(*QuoteRef)(nil),                 // 9: livepeer.payments.v1.QuoteRef
+	(*HealthRequest)(nil),            // 10: livepeer.payments.v1.HealthRequest
+	(*HealthResponse)(nil),           // 11: livepeer.payments.v1.HealthResponse
 }
 var file_livepeer_payments_v1_payer_daemon_proto_depIdxs = []int32{
-	0, // 0: livepeer.payments.v1.PayerDaemon.CreatePayment:input_type -> livepeer.payments.v1.CreatePaymentRequest
-	4, // 1: livepeer.payments.v1.PayerDaemon.GetDepositInfo:input_type -> livepeer.payments.v1.GetDepositInfoRequest
-	2, // 2: livepeer.payments.v1.PayerDaemon.GetSessionDebits:input_type -> livepeer.payments.v1.GetSessionDebitsRequest
-	6, // 3: livepeer.payments.v1.PayerDaemon.Health:input_type -> livepeer.payments.v1.HealthRequest
-	1, // 4: livepeer.payments.v1.PayerDaemon.CreatePayment:output_type -> livepeer.payments.v1.CreatePaymentResponse
-	5, // 5: livepeer.payments.v1.PayerDaemon.GetDepositInfo:output_type -> livepeer.payments.v1.GetDepositInfoResponse
-	3, // 6: livepeer.payments.v1.PayerDaemon.GetSessionDebits:output_type -> livepeer.payments.v1.GetSessionDebitsResponse
-	7, // 7: livepeer.payments.v1.PayerDaemon.Health:output_type -> livepeer.payments.v1.HealthResponse
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	6,  // 0: livepeer.payments.v1.CreatePaymentRequest.accepted_price:type_name -> livepeer.payments.v1.AcceptedPrice
+	7,  // 1: livepeer.payments.v1.CreatePaymentRequest.funding:type_name -> livepeer.payments.v1.FundingIntent
+	8,  // 2: livepeer.payments.v1.CreatePaymentResponse.expected_value:type_name -> livepeer.payments.v1.BigUInt
+	8,  // 3: livepeer.payments.v1.CreatePaymentResponse.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	9,  // 4: livepeer.payments.v1.CreatePaymentResponse.accepted_quote_ref:type_name -> livepeer.payments.v1.QuoteRef
+	0,  // 5: livepeer.payments.v1.PayerDaemon.CreatePayment:input_type -> livepeer.payments.v1.CreatePaymentRequest
+	4,  // 6: livepeer.payments.v1.PayerDaemon.GetDepositInfo:input_type -> livepeer.payments.v1.GetDepositInfoRequest
+	2,  // 7: livepeer.payments.v1.PayerDaemon.GetSessionDebits:input_type -> livepeer.payments.v1.GetSessionDebitsRequest
+	10, // 8: livepeer.payments.v1.PayerDaemon.Health:input_type -> livepeer.payments.v1.HealthRequest
+	1,  // 9: livepeer.payments.v1.PayerDaemon.CreatePayment:output_type -> livepeer.payments.v1.CreatePaymentResponse
+	5,  // 10: livepeer.payments.v1.PayerDaemon.GetDepositInfo:output_type -> livepeer.payments.v1.GetDepositInfoResponse
+	3,  // 11: livepeer.payments.v1.PayerDaemon.GetSessionDebits:output_type -> livepeer.payments.v1.GetSessionDebitsResponse
+	11, // 12: livepeer.payments.v1.PayerDaemon.Health:output_type -> livepeer.payments.v1.HealthResponse
+	9,  // [9:13] is the sub-list for method output_type
+	5,  // [5:9] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_livepeer_payments_v1_payer_daemon_proto_init() }

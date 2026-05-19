@@ -120,6 +120,7 @@ func (g *GRPC) ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (*
 	}
 	return &ProcessPaymentResult{
 		Sender:        resp.GetSender(),
+		CreditedEV:    new(big.Int).SetBytes(resp.GetCreditedEv()),
 		Balance:       new(big.Int).SetBytes(resp.GetBalance()),
 		WinnersQueued: resp.GetWinnersQueued(),
 	}, nil

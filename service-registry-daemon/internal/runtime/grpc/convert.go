@@ -1,6 +1,11 @@
 package grpc
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -203,12 +208,21 @@ func selectedRouteToProto(r *SelectedRoute) *registryv1.SelectedRoute {
 		Offering:            r.Offering,
 		PricePerWorkUnitWei: r.PricePerWorkUnitWei,
 		WorkUnit:            r.WorkUnit,
+		QuoteId:             r.QuoteID,
+		QuoteVersion:        r.QuoteVersion,
+		UnitsPerPrice:       r.UnitsPerPrice,
 	}
 	if len(r.Extra) > 0 {
 		out.ExtraJson = append([]byte(nil), r.Extra...)
 	}
 	if len(r.Constraints) > 0 {
 		out.ConstraintsJson = append([]byte(nil), r.Constraints...)
+	}
+	if len(r.ConstraintFingerprint) > 0 {
+		out.ConstraintFingerprint = append([]byte(nil), r.ConstraintFingerprint...)
+	}
+	if len(r.RouteFingerprint) > 0 {
+		out.RouteFingerprint = append([]byte(nil), r.RouteFingerprint...)
 	}
 	return out
 }
@@ -225,6 +239,8 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 		Offering:            offering.ID,
 		PricePerWorkUnitWei: offering.PricePerWorkUnitWei,
 		WorkUnit:            capability.WorkUnit,
+		QuoteVersion:        n.PublicationSeq,
+		UnitsPerPrice:       1,
 	}
 	if len(capability.Extra) > 0 {
 		out.Extra = append([]byte(nil), capability.Extra...)
@@ -232,7 +248,60 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 	if len(offering.Constraints) > 0 {
 		out.Constraints = append([]byte(nil), offering.Constraints...)
 	}
+	out.ConstraintFingerprint = fingerprintCanonicalJSON(out.Constraints)
+	out.QuoteID = buildQuoteID(out)
+	out.RouteFingerprint = fingerprintRoute(out)
 	return out, nil
+}
+
+func buildQuoteID(r *SelectedRoute) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		strings.ToLower(r.EthAddress),
+		r.WorkerURL,
+		r.Capability,
+		r.Offering,
+		r.WorkUnit,
+	}, "|")))
+	return "resolver:v1:" + hex.EncodeToString(sum[:])
+}
+
+func fingerprintRoute(r *SelectedRoute) []byte {
+	sum := sha256.Sum256(bytes.Join([][]byte{
+		[]byte(strings.ToLower(r.EthAddress)),
+		[]byte(r.WorkerURL),
+		[]byte(r.Capability),
+		[]byte(r.Offering),
+		[]byte(r.PricePerWorkUnitWei),
+		[]byte(r.WorkUnit),
+		[]byte(fmt.Sprintf("%d", r.UnitsPerPrice)),
+		canonicalJSON(r.Extra),
+		canonicalJSON(r.Constraints),
+	}, []byte{0}))
+	return append([]byte(nil), sum[:]...)
+}
+
+func fingerprintCanonicalJSON(raw []byte) []byte {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil
+	}
+	sum := sha256.Sum256(canonicalJSON(raw))
+	return append([]byte(nil), sum[:]...)
+}
+
+func canonicalJSON(raw []byte) []byte {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(trimmed, &v); err != nil {
+		return append([]byte(nil), trimmed...)
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return append([]byte(nil), trimmed...)
+	}
+	return out
 }
 
 func matchedCapabilityAndOffering(n types.ResolvedNode, f selection.Filter) (types.Capability, types.Offering, error) {

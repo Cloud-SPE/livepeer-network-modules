@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,7 +63,7 @@ func (fakeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*se
 		FaceValue:         new(big.Int).Set(req.FaceValue),
 		WinProb:           big.NewInt(0),
 		RecipientRandHash: []byte("0123456789abcdef0123456789abcdef"),
-		Seed:              []byte{},
+		Seed:              []byte("seed-seed-seed-seed-seed-seed-12"),
 		ExpirationBlock:   big.NewInt(123456),
 		ExpirationParams: &senderTypes.TicketExpirationParams{
 			CreationRound:          1,
@@ -87,13 +88,16 @@ func TestCreatePayment_HappyPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	resp, err := client.CreatePayment(ctx, &pb.CreatePaymentRequest{
-		FaceValue:           []byte{0x03, 0xe8}, // 1000
-		Recipient:           []byte("recipient-20-bytes!!"),
-		Capability:          "openai:/v1/chat/completions",
-		Offering:            "gpt-5",
-		TicketParamsBaseUrl: "https://broker.example.com",
-	})
+	resp, err := client.CreatePayment(ctx, makeCreatePaymentRequest(
+		[]byte("recipient-20-bytes!!"),
+		"openai:/v1/chat/completions",
+		"gpt-5",
+		"token",
+		1000,
+		1,
+		1000,
+		"https://broker.example.com",
+	))
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
 	}
@@ -119,6 +123,9 @@ func TestCreatePayment_HappyPath(t *testing.T) {
 	if len(pay.GetTicketSenderParams()) != 1 {
 		t.Errorf("ticket_sender_params count = %d; want 1", len(pay.GetTicketSenderParams()))
 	}
+	if got := pay.GetExpectedPrice(); got == nil || got.GetPricePerUnit() != 1000 || got.GetPixelsPerUnit() != 1 {
+		t.Fatalf("expected_price = %+v; want 1000 wei / 1 unit", got)
+	}
 	tsp := pay.GetTicketSenderParams()[0]
 	if got := len(tsp.GetSig()); got != 65 {
 		t.Errorf("sig length = %d; want 65 (R||S||V)", got)
@@ -135,13 +142,16 @@ func TestCreatePayment_NonceAdvances(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req := &pb.CreatePaymentRequest{
-		FaceValue:           []byte{0x03, 0xe8},
-		Recipient:           []byte("recipient-20-bytes!!"),
-		Capability:          "openai:/v1/chat/completions",
-		Offering:            "gpt-5",
-		TicketParamsBaseUrl: "https://broker.example.com",
-	}
+	req := makeCreatePaymentRequest(
+		[]byte("recipient-20-bytes!!"),
+		"openai:/v1/chat/completions",
+		"gpt-5",
+		"token",
+		1000,
+		1,
+		1000,
+		"https://broker.example.com",
+	)
 
 	first, err := client.CreatePayment(ctx, req)
 	if err != nil {
@@ -198,13 +208,16 @@ func TestCreatePayment_UsesAuthoritativeTicketFaceValue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	resp, err := client.CreatePayment(ctx, &pb.CreatePaymentRequest{
-		FaceValue:           []byte{0x03, 0xe8}, // 1000 target spend
-		Recipient:           []byte("recipient-20-bytes!!"),
-		Capability:          "openai:/v1/chat/completions",
-		Offering:            "gpt-5",
-		TicketParamsBaseUrl: "https://broker.example.com",
-	})
+	resp, err := client.CreatePayment(ctx, makeCreatePaymentRequest(
+		[]byte("recipient-20-bytes!!"),
+		"openai:/v1/chat/completions",
+		"gpt-5",
+		"token",
+		1000,
+		1,
+		1000,
+		"https://broker.example.com",
+	))
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
 	}
@@ -217,7 +230,7 @@ func TestCreatePayment_UsesAuthoritativeTicketFaceValue(t *testing.T) {
 	if gotFaceValue.Cmp(big.NewInt(5000)) != 0 {
 		t.Fatalf("ticket face_value = %s; want 5000", gotFaceValue)
 	}
-	if gotEV := new(big.Int).SetBytes(resp.GetExpectedValue()); gotEV.Cmp(big.NewInt(5000)) != 0 {
+	if gotEV := new(big.Int).SetBytes(resp.GetExpectedValue().GetValue()); gotEV.Cmp(big.NewInt(5000)) != 0 {
 		t.Fatalf("expected_value = %s; want 5000", gotEV)
 	}
 }
@@ -252,13 +265,16 @@ func TestCreatePayment_PrefersPerRequestTicketParamsBaseURL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err = client.CreatePayment(ctx, &pb.CreatePaymentRequest{
-		FaceValue:           []byte{0x03, 0xe8},
-		Recipient:           []byte("recipient-20-bytes!!"),
-		Capability:          "openai:chat-completions",
-		Offering:            "gpt-5",
-		TicketParamsBaseUrl: "https://broker-a.example.com",
-	})
+	_, err = client.CreatePayment(ctx, makeCreatePaymentRequest(
+		[]byte("recipient-20-bytes!!"),
+		"openai:chat-completions",
+		"gpt-5",
+		"token",
+		1000,
+		1,
+		1000,
+		"https://broker-a.example.com",
+	))
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
 	}
@@ -279,16 +295,26 @@ func TestCreatePayment_RejectsEmptyFields(t *testing.T) {
 		req  *pb.CreatePaymentRequest
 	}{
 		{"empty recipient", &pb.CreatePaymentRequest{
-			FaceValue: []byte{0x01}, Capability: "x", Offering: "y",
+			AcceptedPrice: baseAcceptedPrice("x", "y", "token", 1, 1),
+			Funding:       baseFunding(1, 1),
+		}},
+		{"empty accepted_price", &pb.CreatePaymentRequest{
+			Recipient: []byte("r"), Funding: baseFunding(1, 1),
+		}},
+		{"empty funding", &pb.CreatePaymentRequest{
+			Recipient: []byte("r"), AcceptedPrice: baseAcceptedPrice("x", "y", "token", 1, 1),
 		}},
 		{"empty capability", &pb.CreatePaymentRequest{
-			FaceValue: []byte{0x01}, Recipient: []byte("r"), Offering: "y",
+			Recipient: []byte("r"), AcceptedPrice: baseAcceptedPrice("", "y", "token", 1, 1), Funding: baseFunding(1, 1),
 		}},
 		{"empty offering", &pb.CreatePaymentRequest{
-			FaceValue: []byte{0x01}, Recipient: []byte("r"), Capability: "x",
+			Recipient: []byte("r"), AcceptedPrice: baseAcceptedPrice("x", "", "token", 1, 1), Funding: baseFunding(1, 1),
 		}},
-		{"empty face_value", &pb.CreatePaymentRequest{
-			Recipient: []byte("r"), Capability: "x", Offering: "y",
+		{"empty work unit", &pb.CreatePaymentRequest{
+			Recipient: []byte("r"), AcceptedPrice: baseAcceptedPrice("x", "y", "", 1, 1), Funding: baseFunding(1, 1),
+		}},
+		{"empty funded value", &pb.CreatePaymentRequest{
+			Recipient: []byte("r"), AcceptedPrice: baseAcceptedPrice("x", "y", "token", 1, 1), Funding: &pb.FundingIntent{},
 		}},
 	}
 	for _, tc := range cases {
@@ -297,6 +323,50 @@ func TestCreatePayment_RejectsEmptyFields(t *testing.T) {
 				t.Errorf("CreatePayment: want error for %s", tc.name)
 			}
 		})
+	}
+}
+
+func TestCreatePayment_RejectsEmptySeedFromFetcher(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "tx.sock")
+
+	keystore, err := devkeystore.New("")
+	if err != nil {
+		t.Fatalf("devkeystore.New: %v", err)
+	}
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, emptySeedFetcher{})
+
+	lis, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	pb.RegisterPayerDaemonServer(gs, svc)
+	go func() { _ = gs.Serve(lis) }()
+	defer gs.GracefulStop()
+
+	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	client := pb.NewPayerDaemonClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = client.CreatePayment(ctx, makeCreatePaymentRequest(
+		[]byte("recipient-20-bytes!!"),
+		"openai:chat-completions",
+		"gpt-5",
+		"token",
+		1000,
+		1,
+		1000,
+		"https://broker.example.com",
+	))
+	if err == nil || !strings.Contains(err.Error(), "seed is empty") {
+		t.Fatalf("CreatePayment error = %v; want empty-seed failure", err)
 	}
 }
 
@@ -338,6 +408,39 @@ func TestGetDepositInfo(t *testing.T) {
 	}
 }
 
+func makeCreatePaymentRequest(recipient []byte, capability, offering, workUnit string, pricePerUnitWei, unitsPerPrice, fundedValueWei uint64, baseURL string) *pb.CreatePaymentRequest {
+	return &pb.CreatePaymentRequest{
+		Recipient:           recipient,
+		TicketParamsBaseUrl: baseURL,
+		AcceptedPrice:       baseAcceptedPrice(capability, offering, workUnit, pricePerUnitWei, unitsPerPrice),
+		Funding:             baseFunding(fundedValueWei, unitsPerPrice),
+	}
+}
+
+func baseAcceptedPrice(capability, offering, workUnit string, pricePerUnitWei, unitsPerPrice uint64) *pb.AcceptedPrice {
+	return &pb.AcceptedPrice{
+		PricePerUnitWei: &pb.BigUInt{Value: new(big.Int).SetUint64(pricePerUnitWei).Bytes()},
+		UnitsPerPrice:   unitsPerPrice,
+		WorkUnitName:    workUnit,
+		Capability:      capability,
+		Offering:        offering,
+		QuoteRef: &pb.QuoteRef{
+			QuoteId:               "quote-1",
+			QuoteVersion:          1,
+			ConstraintFingerprint: []byte{0x01, 0x02, 0x03},
+			RouteFingerprint:      []byte{0x04, 0x05, 0x06},
+		},
+	}
+}
+
+func baseFunding(fundedValueWei, estimatedUnits uint64) *pb.FundingIntent {
+	return &pb.FundingIntent{
+		EstimatedUnits: estimatedUnits,
+		FundedValueWei: &pb.BigUInt{Value: new(big.Int).SetUint64(fundedValueWei).Bytes()},
+		MaxTotalUnits:  estimatedUnits,
+	}
+}
+
 type authoritativeFetcher struct{}
 
 func (authoritativeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
@@ -346,11 +449,22 @@ func (authoritativeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequ
 		FaceValue:         big.NewInt(5000),
 		WinProb:           new(big.Int).Set(senderTypes.MaxWinProb),
 		RecipientRandHash: []byte("fedcba9876543210fedcba9876543210"),
-		Seed:              []byte{},
+		Seed:              []byte("seed-seed-seed-seed-seed-seed-12"),
 		ExpirationBlock:   big.NewInt(123456),
 		ExpirationParams: &senderTypes.TicketExpirationParams{
 			CreationRound:          1,
 			CreationRoundBlockHash: make([]byte, 32),
 		},
 	}, nil
+}
+
+type emptySeedFetcher struct{}
+
+func (emptySeedFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
+	params, err := (fakeFetcher{}).Fetch(context.Background(), req)
+	if err != nil {
+		return nil, err
+	}
+	params.Seed = nil
+	return params, nil
 }

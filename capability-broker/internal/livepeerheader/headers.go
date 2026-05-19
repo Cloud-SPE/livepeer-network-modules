@@ -25,6 +25,7 @@ const (
 const (
 	Backoff      = "Livepeer-Backoff"
 	WorkUnits    = "Livepeer-Work-Units"
+	Settlement   = "Livepeer-Settlement"
 	HealthStatus = "Livepeer-Health-Status"
 	Error        = "Livepeer-Error"
 )

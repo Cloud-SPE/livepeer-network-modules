@@ -43,8 +43,9 @@ Guarantees:
 
 Input: `capability`, `offering`, optional `tier`, optional `min_weight`.
 Output: one selected route (`worker_url`, `eth_address`, `capability`,
-`offering`, `price_per_work_unit_wei`, `work_unit`, optional
-`extra_json`, optional `constraints_json`).
+`offering`, `price_per_work_unit_wei`, `work_unit`, `units_per_price`,
+`quote_id`, `quote_version`, `constraint_fingerprint`,
+`route_fingerprint`, optional `extra_json`, optional `constraints_json`).
 
 Guarantees:
 - `capability` and `offering` are required.
@@ -53,6 +54,20 @@ Guarantees:
 - If more than one candidate matches, the daemon applies the existing
   stable weight sort and returns the top-ranked route only.
 - The gateway-facing response never includes `worker_eth_address`.
+- `units_per_price` is always `1` on the current manifest-backed route
+  surface because the signed manifest already publishes normalized
+  per-work-unit pricing.
+- `quote_version` is the signed manifest `publication_seq` when the
+  selected route came from the orch-coordinator envelope; otherwise `0`.
+- `constraint_fingerprint` is the SHA-256 of canonicalized
+  `constraints_json`.
+- `route_fingerprint` is the SHA-256 of the selected route record
+  (`eth_address`, `worker_url`, `capability`, `offering`,
+  `price_per_work_unit_wei`, `work_unit`, `units_per_price`, canonical
+  `extra_json`, canonical `constraints_json`).
+- `quote_id` is a deterministic resolver-generated identity for the
+  selected route based on `eth_address`, `worker_url`, `capability`,
+  `offering`, and `work_unit`.
 
 ### ListKnown / Refresh / GetAuditLog / Health
 

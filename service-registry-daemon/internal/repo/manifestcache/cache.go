@@ -87,6 +87,7 @@ type Entry struct {
 	FetchedAt      time.Time
 	ChainSeenAt    time.Time
 	ManifestSHA256 [32]byte
+	PublicationSeq uint64
 	SchemaVersion  string
 }
 

@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 type Config struct {
 	Identity        Identity        `yaml:"identity"`
 	AdminAuth       AdminAuth       `yaml:"admin_auth,omitempty"`
@@ -99,4 +101,56 @@ type HealthProbe struct {
 type AuthConfig struct {
 	Method    string `yaml:"method,omitempty"`
 	SecretRef string `yaml:"secret_ref,omitempty"`
+}
+
+func NormalizeWorkUnit(workUnit WorkUnit) WorkUnit {
+	workUnit.Extractor = normalizeExtractorConfig(workUnit.Extractor)
+	return workUnit
+}
+
+func normalizeExtractorConfig(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := cloneAnyMap(src)
+	typ, _ := dst["type"].(string)
+	if strings.TrimSpace(typ) == "request-formula" {
+		if _, ok := dst["fields"]; !ok {
+			dst["fields"] = map[string]any{}
+		}
+	}
+	return dst
+}
+
+func cloneAnyMap(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = cloneAnyValue(v)
+	}
+	return dst
+}
+
+func cloneAnySlice(src []any) []any {
+	if src == nil {
+		return nil
+	}
+	dst := make([]any, len(src))
+	for i, v := range src {
+		dst[i] = cloneAnyValue(v)
+	}
+	return dst
+}
+
+func cloneAnyValue(v any) any {
+	switch typed := v.(type) {
+	case map[string]any:
+		return cloneAnyMap(typed)
+	case []any:
+		return cloneAnySlice(typed)
+	default:
+		return v
+	}
 }

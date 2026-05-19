@@ -1865,7 +1865,7 @@ func offerFromRequest(req offerMutationRequest) (types.Offer, error) {
 		CapabilityID:    req.CapabilityID,
 		OfferingID:      req.OfferingID,
 		InteractionMode: req.InteractionMode,
-		WorkUnit:        req.WorkUnit,
+		WorkUnit:        config.NormalizeWorkUnit(req.WorkUnit),
 		Price:           req.Price,
 		Extra:           req.Extra,
 		Constraints:     req.Constraints,
@@ -1884,7 +1884,7 @@ func updatedOfferFromRequest(current types.Offer, req offerMutationRequest) (typ
 		current.InteractionMode = strings.TrimSpace(req.InteractionMode)
 	}
 	if req.WorkUnit.Name != "" {
-		current.WorkUnit = req.WorkUnit
+		current.WorkUnit = config.NormalizeWorkUnit(req.WorkUnit)
 	}
 	if req.Price.AmountWei != "" {
 		current.Price = req.Price
@@ -1904,6 +1904,7 @@ func updatedOfferFromRequest(current types.Offer, req offerMutationRequest) (typ
 	if current.WorkUnit.Name == "" || len(current.WorkUnit.Extractor) == 0 {
 		return types.Offer{}, fmt.Errorf("work_unit.name and work_unit.extractor are required")
 	}
+	current.WorkUnit = config.NormalizeWorkUnit(current.WorkUnit)
 	if current.Price.AmountWei == "" || current.Price.PerUnits == 0 {
 		return types.Offer{}, fmt.Errorf("price.amount_wei and price.per_units > 0 are required")
 	}

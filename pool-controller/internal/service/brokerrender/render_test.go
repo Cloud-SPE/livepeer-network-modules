@@ -147,3 +147,57 @@ func TestRenderDeterministicRevision(t *testing.T) {
 		t.Fatalf("render not deterministic")
 	}
 }
+
+func TestRenderRequestFormulaIncludesEmptyFieldsMap(t *testing.T) {
+	input := RenderInput{
+		Bootstrap: BootstrapBrokerSettings{
+			Identity: config.Identity{OrchEthAddress: "0xorch"},
+		},
+		Offers: []types.Offer{{
+			ID:              "offer-1",
+			CapabilityID:    "rerank",
+			OfferingID:      "default",
+			InteractionMode: "http-reqresp@v0",
+			WorkUnit: config.WorkUnit{
+				Name: "requests",
+				Extractor: map[string]any{
+					"type":       "request-formula",
+					"expression": "1",
+				},
+			},
+			Price:  config.Price{AmountWei: "1", PerUnits: 1},
+			Status: types.OfferStatusActive,
+		}},
+		Members: []types.MemberRecord{{
+			ID:         "member-1",
+			EthAddress: "0xmember",
+			PayoutMode: "onchain",
+			Status:     types.MemberStatusActive,
+		}},
+		Backends: []types.MemberBackend{{
+			ID:        "backend-1",
+			MemberID:  "member-1",
+			Transport: "http",
+			URL:       "http://backend",
+			Status:    types.BackendStatusActive,
+		}},
+		Assignments: []types.Assignment{{
+			ID:              "assignment-1",
+			OfferID:         "offer-1",
+			MemberBackendID: "backend-1",
+			Status:          types.AssignmentStatusActive,
+		}},
+	}
+
+	got, err := Render(input)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !strings.Contains(string(got.ConfigYAML), "fields: {}") {
+		t.Fatalf("rendered YAML missing empty request-formula fields map: %s", string(got.ConfigYAML))
+	}
+	fields, ok := got.Model.Capabilities[0].WorkUnit.Extractor["fields"].(map[string]any)
+	if !ok || len(fields) != 0 {
+		t.Fatalf("rendered model fields = %#v, want empty map", got.Model.Capabilities[0].WorkUnit.Extractor["fields"])
+	}
+}

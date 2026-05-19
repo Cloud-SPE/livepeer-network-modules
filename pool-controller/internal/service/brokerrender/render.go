@@ -104,7 +104,7 @@ func Render(input RenderInput) (RenderResult, error) {
 			ID:              offer.CapabilityID,
 			OfferingID:      offer.OfferingID,
 			InteractionMode: offer.InteractionMode,
-			WorkUnit:        offer.WorkUnit,
+			WorkUnit:        config.NormalizeWorkUnit(offer.WorkUnit),
 			Health:          config.Health{Probe: backend.HealthProbe},
 			Price:           offer.Price,
 			Backend: BrokerBackend{

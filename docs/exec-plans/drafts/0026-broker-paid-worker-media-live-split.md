@@ -11,11 +11,18 @@ related:
   - "completed plan 0015 — interim-debit cadence on long-running modes"
   - "completed plan 0016 — chain-integrated payment-daemon — design choices"
   - "completed plan 0018 — orch-coordinator design"
-  - "video-gateway/docs/operator-runbook.md — current active product model"
+  - "video-gateway/docs/operator-runbook.md — current active product model (video-gateway since removed)"
 audience: broker maintainers, gateway maintainers, video operators
 ---
 
 # Plan 0026 — broker-paid / worker-media split for live video (draft)
+
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway,
+> video-gateway, vtuber-gateway, daydream-gateway) and their shared TS
+> libraries (gateway-adapters, gateway-route-health) have since been removed
+> from this repo. This plan is preserved as historical record of what shipped
+> at the time; the directories and code paths it references no longer exist
+> in the working tree.
 
 > **Draft only. Not active.** This document describes a possible future
 > live architecture in which the broker remains the payment and session
@@ -399,7 +406,7 @@ then terminate if broker connectivity does not recover.
 This draft does not authorize edits. A future active plan would likely
 touch:
 
-### `video-gateway/`
+### `video-gateway/` (now removed)
 
 - live session-open client
 - RTMP proxy / adapter flow

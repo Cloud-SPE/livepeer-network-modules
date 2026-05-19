@@ -1,9 +1,12 @@
 # livepeer-network-protocol
 
 The wire-protocol specification that the workload-agnostic supply-side rearchitecture is
-built around. **Not a code library.** Implementers conform to the specs here; reference
-implementations are opt-in and live in their own component subfolders at the monorepo
-root (`capability-broker/`, `gateway-adapters/`).
+built around. **Not a code library.** Implementers conform to the specs here; the
+broker-side reference implementation lives at the monorepo root in
+[`capability-broker/`](../capability-broker/). The previously-shipped
+TypeScript `gateway-adapters/` reference middleware was removed from
+this repo on 2026-05-19 along with the four product gateways that
+consumed it; future gateway-side implementations are out-of-repo.
 
 ## Status
 
@@ -43,12 +46,14 @@ Hybrid SemVer:
 You can implement either side (broker or gateway middleware) in any language. There is
 no required Livepeer library; the contract is the wire spec here.
 
-The reference implementations live in:
+The broker-side reference implementation lives at:
 
 - [`../capability-broker/`](../capability-broker/) — Go broker (resolution of plan 0002
   Q4).
-- [`../gateway-adapters/`](../gateway-adapters/) — TypeScript gateway middleware
-  (resolution of plan 0002 Q4).
+
+The gateway-side TypeScript reference middleware that previously lived at
+`../gateway-adapters/` was removed on 2026-05-19 along with the four
+product gateways that consumed it.
 
 ## Verifying your implementation
 

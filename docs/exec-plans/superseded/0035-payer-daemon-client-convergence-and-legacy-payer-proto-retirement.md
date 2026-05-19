@@ -13,6 +13,16 @@ related:
 
 # Plan 0035 — payer-daemon client convergence and legacy payer proto retirement
 
+> **Removal note (2026-05-19) — PLAN OBSOLETE.** The four product gateways
+> (openai-gateway, video-gateway, vtuber-gateway, daydream-gateway) and their
+> shared TS libraries (gateway-adapters, gateway-route-health) have since been
+> removed from this repo. **Every TS payer-daemon client this plan proposed to
+> migrate (§5.2) has been deleted along with the gateway that hosted it**, so
+> the migration this plan describes has no remaining surface area. The legacy
+> payer proto retirement (§5.3 / §6.3) may still be relevant and should be
+> picked up under a fresh plan if needed. This document is preserved as
+> historical record and moved to `docs/exec-plans/superseded/`.
+
 ## 1. Problem
 
 The active `payment-daemon` sender path already enforces the newer canonical
@@ -78,10 +88,10 @@ Representative code:
 
 These need review and likely migration:
 
-- `openai-gateway/src/livepeer/payment.ts`
-- `daydream-gateway/src/paymentClient.ts`
-- `vtuber-gateway/src/providers/payerDaemon.ts`
-- `video-gateway/src/livepeer/payerDaemonClient.ts`
+- `openai-gateway/src/livepeer/payment.ts` (gateway since removed)
+- `daydream-gateway/src/paymentClient.ts` (gateway since removed)
+- `vtuber-gateway/src/providers/payerDaemon.ts` (gateway since removed)
+- `video-gateway/src/livepeer/payerDaemonClient.ts` (gateway since removed)
 
 ### 5.3 Legacy payer proto to retire
 

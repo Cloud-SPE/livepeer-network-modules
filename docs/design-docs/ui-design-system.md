@@ -3,6 +3,15 @@
 **Status:** active  
 **Last updated:** 2026-05-08
 
+> **Removal note (2026-05-19).** The four product gateways (`openai-gateway`,
+> `video-gateway`, `vtuber-gateway`, `daydream-gateway`) and their shared TS
+> libraries (`gateway-adapters`, `gateway-route-health`) have been removed from
+> this repo. References below to those gateways as current UI surfaces are
+> preserved as historical context for the design system that once governed
+> them; do not treat them as descriptions of the current working tree. The
+> shared design tokens and primitives still apply to any UI shipped from this
+> repo (currently `customer-portal/frontend/shared` and `secure-orch-console`).
+
 Implementation rules for DOM structure and CSS location live in
 [`frontend-dom-and-css-invariants.md`](./frontend-dom-and-css-invariants.md). This
 document defines the visual system; the invariant doc defines the mandatory frontend
@@ -10,12 +19,12 @@ authoring model.
 
 ## Purpose
 
-The rewrite now has multiple operator and product-facing UIs:
+The rewrite has multiple operator and (historically) product-facing UIs:
 
 - `secure-orch-console`
-- `openai-gateway`
-- `video-gateway`
-- `vtuber-gateway`
+- `openai-gateway` (removed from repo)
+- `video-gateway` (removed from repo)
+- `vtuber-gateway` (removed from repo)
 - future operator surfaces around resolver / protocol / coordinator status
 
 If each surface develops its own look, the repo will drift into a pile of
@@ -72,11 +81,11 @@ The shared frontend package lives at:
 
 - `customer-portal/frontend/shared`
 
-Current adopted apps:
+Historically adopted apps:
 
-- `customer-portal`
-- `video-gateway`
-- `vtuber-gateway`
+- `customer-portal` (current)
+- `video-gateway` (since removed from repo)
+- `vtuber-gateway` (since removed from repo)
 
 Current implementation note:
 
@@ -116,11 +125,12 @@ Characteristics:
 
 ### 2. Product App
 
-Used for:
+Used for (historical; the listed gateways have been removed from this repo
+but the mode definition is retained for any future product-app surface):
 
-- `openai-gateway` portal/admin views
-- `video-gateway`
-- `vtuber-gateway`
+- `openai-gateway` portal/admin views (removed)
+- `video-gateway` (removed)
+- `vtuber-gateway` (removed)
 
 Characteristics:
 
@@ -363,7 +373,7 @@ Design cues:
 - no noisy gradients
 - clear immutable audit feel
 
-### `openai-gateway`
+### `openai-gateway` (removed from repo; historical)
 
 Tone:
 
@@ -376,7 +386,7 @@ Design cues:
 - API-key, usage, rate-card, route health
 - product-app mode
 
-### `video-gateway`
+### `video-gateway` (removed from repo; historical)
 
 Tone:
 
@@ -390,7 +400,7 @@ Design cues:
 - ingest/playback state
 - media asset tables
 
-### `vtuber-gateway`
+### `vtuber-gateway` (removed from repo; historical)
 
 Tone:
 
@@ -454,7 +464,9 @@ If this repo wants to keep frontend-sharing inside the existing shell, the minim
 acceptable alternative is:
 
 - shared tokens and primitives under `customer-portal/frontend/shared/`
-- mandatory reuse by `openai-gateway`, `video-gateway`, and `vtuber-gateway`
+- historically: mandatory reuse by `openai-gateway`, `video-gateway`, and
+  `vtuber-gateway` (those product gateways have since been removed from this
+  repo; the reuse expectation transfers to any future in-repo product UI)
 
 But the design system should be treated as a first-class cross-cutting module, not
 just a handful of helper CSS files.
@@ -495,11 +507,11 @@ Before considering a new UI screen done, check:
 - `secure-orch-console`
 - coordinator/protocol/resolver admin surfaces
 
-### Phase 3 — product surfaces
+### Phase 3 — product surfaces (historical; product gateways removed from repo)
 
-- `openai-gateway`
-- `video-gateway`
-- `vtuber-gateway`
+- `openai-gateway` (removed)
+- `video-gateway` (removed)
+- `vtuber-gateway` (removed)
 
 ### Phase 4 — polish
 
@@ -520,8 +532,10 @@ The system is working when:
 
 - all UIs share the same token source
 - buttons/cards/forms/tables/status states look related everywhere
-- `secure-orch-console`, `openai-gateway`, `video-gateway`, and `vtuber-gateway`
-  feel like products from the same organization
+- in-repo UIs (today: `secure-orch-console`, `customer-portal`; historically
+  also `openai-gateway`, `video-gateway`, and `vtuber-gateway` — those product
+  gateways have since been removed from this repo) feel like products from the
+  same organization
 - operator surfaces feel trustworthy and calm
 - customer-facing surfaces feel polished and premium without drifting away from the
   Livepeer network identity

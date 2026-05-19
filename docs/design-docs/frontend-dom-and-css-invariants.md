@@ -4,17 +4,27 @@
 **Last updated:** 2026-05-09  
 **Related:** [`./ui-design-system.md`](./ui-design-system.md), [`../references/modern-css-2026.md`](../references/modern-css-2026.md), [`../exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md`](../exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md)
 
+> **Removal note (2026-05-19).** The four product gateways (`openai-gateway`,
+> `video-gateway`, `vtuber-gateway`, `daydream-gateway`) and their shared TS
+> libraries (`gateway-adapters`, `gateway-route-health`) have been removed from
+> this repo. References below to gateway frontend directories are preserved as
+> historical context for the authoring contract that once governed those
+> surfaces; do not treat them as descriptions of the current working tree. The
+> invariant contract still applies to any browser UI that ships from this repo
+> (currently `customer-portal/frontend/shared`).
+
 ## Purpose
 
-This repo now ships multiple browser UIs:
+This repo ships browser UIs that must all obey the same frontend authoring
+contract. Historically those surfaces included:
 
-- `customer-portal/frontend/shared`
-- `openai-gateway/src/frontend/*`
-- `video-gateway/src/frontend/*`
-- `vtuber-gateway/src/frontend/*`
+- `customer-portal/frontend/shared` (current)
+- `openai-gateway/src/frontend/*` (removed from repo)
+- `video-gateway/src/frontend/*` (removed from repo)
+- `vtuber-gateway/src/frontend/*` (removed from repo)
 
-Those surfaces must obey the same frontend authoring contract. This document defines
-that contract as a cross-cutting invariant for the entire repo.
+This document defines that contract as a cross-cutting invariant for any
+browser UI that ships from this repo.
 
 The visual language still comes from [`ui-design-system.md`](./ui-design-system.md).
 This document defines the DOM, HTML, and CSS implementation rules that every UI must
@@ -123,13 +133,14 @@ That migration is now complete and the steady-state bar applies repo-wide.
 
 ## Migration order
 
-Because multiple product UIs consume the shared portal/admin package, migration order is
-fixed:
+Because multiple product UIs consumed the shared portal/admin package, the
+migration order was fixed (historical record; the product-gateway frontend
+directories below no longer exist in this repo):
 
 1. `customer-portal/frontend/shared`
-2. `openai-gateway/src/frontend/*`
-3. `video-gateway/src/frontend/*`
-4. `vtuber-gateway/src/frontend/*`
+2. `openai-gateway/src/frontend/*` (gateway since removed)
+3. `video-gateway/src/frontend/*` (gateway since removed)
+4. `vtuber-gateway/src/frontend/*` (gateway since removed)
 5. test suites and CI gates
 
 ## Review rule

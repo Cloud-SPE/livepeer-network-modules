@@ -15,13 +15,6 @@ infra/
 │   │   ├── ingress-traefik/
 │   │   ├── ingress-cloudflared/
 │   │   └── ingress-nginx/
-│   ├── gateway-onboarding/        # active gateway onboarding guide + stacks
-│   │   ├── README.md              # the gateway onboarding guide
-│   │   ├── openai-gateway/
-│   │   ├── video-gateway/
-│   │   ├── vtuber-gateway/        # PREVIEW
-│   │   ├── ingress-traefik/
-│   │   └── ingress-nginx/
 │   └── archive/                   # earlier scenarios, preserved for reference
 ├── compose/
 │   ├── docker-compose.yml         # shared services (postgres, redis, rustfs) — profile-gated
@@ -29,6 +22,10 @@ infra/
 └── scripts/
     └── build-images.sh            # builds every image in dependency order
 ```
+
+The four product gateways (openai-gateway, video-gateway, vtuber-gateway,
+daydream-gateway) and their onboarding stack were removed from this repo;
+see the root `README.md` for the post-removal shape.
 
 ## Building images
 
@@ -62,9 +59,6 @@ Defaults: `REGISTRY=tztcloud`, `TAG=v1.3.0`, `PUSH=0`.
   guide and every stack referenced by it (Secure Orch, Orch Coordinator,
   Capability Broker, three ingress options). The `README.md` at that path
   is the guide itself.
-- **`gateway-onboarding/`** — the active gateway onboarding guide and
-  every stack referenced by it (OpenAI / Video / Vtuber gateways, plus
-  Traefik and Nginx ingress).
 - **`archive/`** — earlier multi-module scenarios kept for historical
   reference. Not maintained against the current onboarding flow.
 
@@ -79,9 +73,9 @@ Each scenario directory inside contains:
 ## Shared services
 
 `infra/compose/docker-compose.yml` runs Postgres / Redis / RustFS behind
-profiles. Per-component compose files (e.g. `video-gateway/compose/`)
-expect these reachable via `${DATABASE_URL}` / `${REDIS_URL}` env vars
-and do **not** include them inline.
+profiles. Per-component compose files expect these reachable via
+`${DATABASE_URL}` / `${REDIS_URL}` env vars and do **not** include them
+inline.
 
 ```sh
 # Postgres only

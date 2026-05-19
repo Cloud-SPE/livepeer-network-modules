@@ -6,6 +6,15 @@ audience: rewrite contributors, suite operators planning a cutover
 
 # Migration from the suite
 
+> **Removal note (2026-05-19).** The four product gateways (`openai-gateway`,
+> `video-gateway`, `vtuber-gateway`, `daydream-gateway`) and their shared TS
+> libraries (`gateway-adapters`, `gateway-route-health`) have since been
+> removed from this repo. This document is a point-in-time historical
+> migration record (per the AGENTS.md convention) and is intentionally left
+> intact below; gateway directory listings carry an inline `(removed)`
+> annotation where applicable. The workload runners (`openai-runners`,
+> `video-runners`, `vtuber-runner`, `rerank-runner`) remain.
+
 This doc maps every component of the existing `livepeer-network-suite`, the
 in-scope subset of `livepeer-cloud-spe/livepeer-byoc/` (the workload-runner
 tree), the canonical top-level `livepeer-vtuber-project/`, and the prior Go
@@ -39,7 +48,7 @@ collapsed into one `capability-broker/` per
 `livepeer-video-core/` (v4.0.1 / `cd2a139`). **Partially ported.** The shells
 stay live during cutover and migrate per-workload (plan 0013 covers the OpenAI
 shell). The `core` packages (engine + adapter contracts) lose their per-mode
-hardcoding and re-emerge as `gateway-adapters/` per-mode middleware.
+hardcoding and re-emerge as `gateway-adapters/` (removed) per-mode middleware.
 
 **Suite-level operator surfaces** — `livepeer-secure-orch-console/` (v4.0.1 /
 `5d2ccc5`), `livepeer-orch-coordinator/` (v4.0.1 / `b767bfe`),
@@ -101,18 +110,18 @@ is a 13-component monorepo:
 1. `livepeer-network-protocol/` — language-neutral wire spec.
 2. `payment-daemon/` — sender + receiver ticket envelope handling.
 3. `capability-broker/` — workload-agnostic broker on the orch host.
-4. `gateway-adapters/` — TS middleware per wire-protocol mode.
+4. `gateway-adapters/` (removed) — TS middleware per wire-protocol mode.
 5. `customer-portal/` — shared SaaS-shell library (auth / billing /
    Stripe / portal+admin SPA / drizzle schema).
-6. `openai-gateway/` — OpenAI gateway (suite's openai-core + openai-shell
+6. `openai-gateway/` (removed) — OpenAI gateway (suite's openai-core + openai-shell
    collapsed; consumes shell + adapters).
-7. `vtuber-gateway/` — VTuber gateway (suite's vtuber-shell collapsed;
+7. `vtuber-gateway/` (removed) — VTuber gateway (suite's vtuber-shell collapsed;
    consumes shell + adapters).
 8. `vtuber-pipeline/` — VTuber product pipeline (Python; lifted from
    top-level `livepeer-vtuber-project/pipeline-app/`).
 9. `vtuber-runner/` — VTuber session runtime + avatar-renderer (Python +
    browser TS; lifted from `livepeer-vtuber-project/{session-runner,avatar-renderer}/`).
-10. `video-gateway/` — Video gateway (suite's video-shell + video-core
+10. `video-gateway/` (removed) — Video gateway (suite's video-shell + video-core
     collapsed; consumes shell + adapters; ships customer-side RTMP listener).
 11. `openai-runners/` — Workload runners for OpenAI capabilities
     (chat / embeddings / audio / images; from byoc tree).
@@ -128,9 +137,9 @@ Five migration briefs (the "0013 family") shipped via
 | Brief | New components | Sources collapsed | Chain-gated? |
 |---|---|---|---|
 | `0013-shell` | `customer-portal/` (new shared library) | Pattern-extracted from `livepeer-openai-gateway-core/` + `livepeer-openai-gateway/` shell + `livepeer-vtuber-gateway/` SaaS layer | No — foundation for the others |
-| `0013-openai` | `openai-gateway/` (existing reference; absorbs SaaS) | `livepeer-openai-gateway-core/` + `livepeer-openai-gateway/` | Yes (emits payments) |
-| `0013-vtuber` | `vtuber-gateway/` + `vtuber-pipeline/` + `vtuber-runner/` (3 new) | `livepeer-vtuber-gateway/` + `livepeer-vtuber-project/{pipeline-app,session-runner,avatar-renderer}/` | Mixed — gateway gates on the first production release tag; pipeline + runner can pre-ship |
-| `0013-video` | `video-gateway/` (new) | `livepeer-video-gateway/` + `livepeer-video-core/` | Yes (emits payments) |
+| `0013-openai` | `openai-gateway/` (removed) (existing reference; absorbs SaaS) | `livepeer-openai-gateway-core/` + `livepeer-openai-gateway/` | Yes (emits payments) |
+| `0013-vtuber` | `vtuber-gateway/` (removed) + `vtuber-pipeline/` + `vtuber-runner/` (3 new) | `livepeer-vtuber-gateway/` + `livepeer-vtuber-project/{pipeline-app,session-runner,avatar-renderer}/` | Mixed — gateway gates on the first production release tag; pipeline + runner can pre-ship |
+| `0013-video` | `video-gateway/` (removed) (new) | `livepeer-video-gateway/` + `livepeer-video-core/` | Yes (emits payments) |
 | `0013-runners` | `openai-runners/` + `rerank-runner/` + `video-runners/` (3 new) | `livepeer-byoc/{openai-runners,rerank-runner,transcode-runners}/` (skip `live-transcode-runner`, `gateway-proxy`, `video-generation`, `register-capabilities`, `deployment-examples`) | No — workload only |
 
 The pre-collapse plan 0013 (separate-SaaS-repo proposal) is preserved at
@@ -149,10 +158,10 @@ The pre-collapse plan 0013 (separate-SaaS-repo proposal) is preserved at
 | `livepeer-modules-project/protocol-daemon` | None displacing it — the rewrite's `secure-orch-console/` mounts the suite daemon's socket as-is | preserved | (no rewrite plan; runs the suite image) |
 | `livepeer-modules-project/chain-commons` | Provider interfaces in `payment-daemon/providers/` (Broker, KeyStore, Clock, GasPrice) backed by Arbitrum One; deliberate code copies, not a Go-module import | partially ported | plan 0016 (chain integration) |
 | `livepeer-modules-project/proto-contracts` | `livepeer-network-protocol/modes/` (spec); plus the wire-locked 5-message Payment family copied into `payment-daemon/` per plan 0014 | partially ported | plans 0002, 0014 — completed |
-| `livepeer-openai-gateway-core` (suite engine) | Folded into `openai-gateway/` per plan 0013-openai; SaaS pieces extract into `customer-portal/` per plan 0013-shell. Two-package split unwound. | being collapsed | plans 0008 — completed; 0013-openai + 0013-shell (paper) |
-| `livepeer-openai-gateway` (suite shell) | Folded into `openai-gateway/` per plan 0013-openai. Stripe/auth/portal/admin extract to `customer-portal/`. | being collapsed | plan 0013-openai (paper); plan 0013-shell (foundation) |
-| `livepeer-vtuber-gateway` | `vtuber-gateway/` per plan 0013-vtuber; SaaS surfaces consume `customer-portal/`. | being collapsed | plan 0013-vtuber (paper); plan 0012-followup (broker side); plan 0008-followup |
-| `livepeer-video-gateway` + `livepeer-video-core` | `video-gateway/` per plan 0013-video; SaaS consumes `customer-portal/`; engine merges in. | being collapsed | plan 0013-video (paper); plan 0011-followup (broker side); plan 0008-followup |
+| `livepeer-openai-gateway-core` (suite engine) | Folded into `openai-gateway/` (removed) per plan 0013-openai; SaaS pieces extract into `customer-portal/` per plan 0013-shell. Two-package split unwound. | being collapsed | plans 0008 — completed; 0013-openai + 0013-shell (paper) |
+| `livepeer-openai-gateway` (suite shell) | Folded into `openai-gateway/` (removed) per plan 0013-openai. Stripe/auth/portal/admin extract to `customer-portal/`. | being collapsed | plan 0013-openai (paper); plan 0013-shell (foundation) |
+| `livepeer-vtuber-gateway` | `vtuber-gateway/` (removed) per plan 0013-vtuber; SaaS surfaces consume `customer-portal/`. | being collapsed | plan 0013-vtuber (paper); plan 0012-followup (broker side); plan 0008-followup |
+| `livepeer-video-gateway` + `livepeer-video-core` | `video-gateway/` (removed) per plan 0013-video; SaaS consumes `customer-portal/`; engine merges in. | being collapsed | plan 0013-video (paper); plan 0011-followup (broker side); plan 0008-followup |
 | `livepeer-vtuber-project/pipeline-app` (top-level canonical) | `vtuber-pipeline/` per plan 0013-vtuber. Python + uv preserved. | being lifted | plan 0013-vtuber |
 | `livepeer-vtuber-project/session-runner` + `livepeer-vtuber-project/avatar-renderer` | `vtuber-runner/` per plan 0013-vtuber (renderer as sub-workspace). | being lifted | plan 0013-vtuber |
 | `livepeer-byoc/openai-runners/openai-runner` (Go) | `openai-runners/openai-{chat,embeddings}-runner/` per plan 0013-runners. | being lifted | plan 0013-runners |
@@ -216,15 +225,15 @@ Acceptance per product family:
 - **`customer-portal/`** (plan 0013-shell, foundation): drizzle migrations
   apply cleanly; integration smokes (auth + wallet + Stripe webhook +
   rate-limit + idempotency) green; portal/admin SPA bundles build.
-- **`openai-gateway/`** (plan 0013-openai): byte-for-byte Payment envelope
+- **`openai-gateway/`** (removed) (plan 0013-openai): byte-for-byte Payment envelope
   round-trip against the rewrite's wire-compat corpus; six paid endpoints
   (chat / chat-stream / embeddings / transcriptions / images-generations /
   speech-503) full-lifecycle including refunds; SaaS surfaces (auth, top-up,
   rate-card admin) functional; suite shell repo flagged deprecated.
-- **`vtuber-{gateway,pipeline,runner}/`** (plan 0013-vtuber): full session
+- **`vtuber-{gateway,pipeline,runner}/`** (gateway removed; pipeline + runner remain) (plan 0013-vtuber): full session
   lifecycle including session-open + control-WS + per-second metering +
   topup-mid-session; `livepeer-vtuber-project/` code absorbed into rewrite.
-- **`video-gateway/`** (plan 0013-video): live-stream + VOD lifecycles;
+- **`video-gateway/`** (removed) (plan 0013-video): live-stream + VOD lifecycles;
   customer-facing RTMP listener proxies to broker:1935; webhook delivery
   signed correctly.
 - **`{openai,rerank,video}-runners/`** (plan 0013-runners): broker-side

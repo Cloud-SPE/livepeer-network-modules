@@ -8,7 +8,8 @@
 #   - serves the resolved pool over a local unix-socket gRPC API
 #
 # Typical local pairing:
-#   - `openai-gateway` mounts `service-registry-socket` at
+#   - A consumer gateway (e.g. historically `openai-gateway`,
+#     out-of-repo as of 2026-05-19) mounts `service-registry-socket` at
 #     `/var/run/livepeer` and dials
 #     `/var/run/livepeer/service-registry.sock`
 #

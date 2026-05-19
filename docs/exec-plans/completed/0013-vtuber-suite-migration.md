@@ -20,6 +20,13 @@ audience: vtuber-product maintainers planning the suite + vtuber-project absorpt
 
 # Plan 0013-vtuber — vtuber-gateway + pipeline + runner (design)
 
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway,
+> video-gateway, vtuber-gateway, daydream-gateway) and their shared TS
+> libraries (gateway-adapters, gateway-route-health) have since been removed
+> from this repo. This plan is preserved as historical record of what shipped
+> at the time; the directories and code paths it references no longer exist
+> in the working tree.
+
 > **Paper-only design brief.** No code, no `package.json`, no
 > `pyproject.toml`, no `pnpm-workspace.yaml` edits ship from this
 > commit. Locks recorded in §14 as `DECIDED:` blocks (Q1-Q10 +
@@ -30,7 +37,7 @@ audience: vtuber-product maintainers planning the suite + vtuber-project absorpt
 Scope: **the full vtuber product family** absorbs into the rewrite as
 three new components:
 
-1. `vtuber-gateway/` — customer-facing TypeScript HTTP+WS gateway;
+1. `vtuber-gateway/` (directory since removed) — customer-facing TypeScript HTTP+WS gateway;
    absorbs `livepeer-network-suite/livepeer-vtuber-gateway/`
    (the suite-side "vtuber gateway", historically called the
    "vtuber-livepeer-bridge" in suite docs — that name is retired).
@@ -57,7 +64,7 @@ Out of scope:
 - Spec-level mode definitions — `session-control-plus-media@v0` is
   frozen at the shape plan 0012 + plan 0012-followup deliver.
 - Customer-portal shell internals — plan 0013-shell.
-- Wire-protocol middleware — `gateway-adapters/` (plans 0008 +
+- Wire-protocol middleware — `gateway-adapters/` (directory since removed; plans 0008 +
   0008-followup).
 
 The three components ship in the same monorepo, **MIT-licensed**,
@@ -178,7 +185,7 @@ customers do **not** sign up to vtuber-gateway directly.
 **Direct B2B integrators** (non-pipeline customers integrating
 vtuber-gateway directly) sign up via the gateway's own portal SPA
 and receive **per-customer** API keys — same flow as openai-gateway
-/ video-gateway. Both modes coexist.
+(directory since removed) / video-gateway (directory since removed). Both modes coexist.
 
 `vtuber-runner/` is the **workload binary** running on orch hosts.
 It pairs with the broker's `session-control-plus-media@v0` mode driver

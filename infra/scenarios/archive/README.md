@@ -6,8 +6,7 @@ maintained against it. Paths and references inside these scenarios may
 not match what ships in the active onboarding stacks.
 
 For current guidance, see
-[`../orchestrator-onboarding/`](../orchestrator-onboarding/) (and, when
-it lands, `../gateway-onboarding/`).
+[`../orchestrator-onboarding/`](../orchestrator-onboarding/).
 
 ## Contents
 
@@ -16,17 +15,16 @@ it lands, `../gateway-onboarding/`).
   plus a separately-deployed runner.
 - `video-worker-node/` — broker + payment-daemon + ABR runner with broker-
   owned RTMP/HLS.
-- `openai-gateway-manifest/` — early OpenAI gateway scenario with
-  manifest-based discovery.
-- `video-gateway/` — sender-side video gateway with Postgres + Redis +
-  RustFS, static broker mode.
-- `video-gateway-manifest/` — same in manifest/resolver mode.
-- `full-minimal-network/` — control plane + worker + OpenAI gateway in a
-  single all-in-one stack.
-
-The vtuber-gateway scenario that used to live here has moved to
-[`../gateway-onboarding/vtuber-gateway/`](../gateway-onboarding/vtuber-gateway/)
-as a preview entry alongside OpenAI + Video.
 
 Anything reusable from these stacks should be re-landed in the active
 onboarding flow rather than pulled directly from here.
+
+## Removed
+
+The previously archived `openai-gateway-manifest/`, `video-gateway/`,
+`video-gateway-manifest/`, and `full-minimal-network/` scenarios were
+tied to the four product gateways (openai, video, vtuber, daydream)
+that have been removed from this repo. See the root `README.md` for the
+post-removal repo shape.
+</content>
+</invoke>

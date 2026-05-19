@@ -6,6 +6,18 @@ audience: operators, gateway authors, payment-daemon contributors
 
 # Pricing overview
 
+> **Removal note (2026-05-19).** The four product gateways (`openai-gateway`,
+> `video-gateway`, `vtuber-gateway`, `daydream-gateway`) and their shared TS
+> libraries (`gateway-adapters`, `gateway-route-health`) have been removed from
+> this repo. References below to those gateways and libraries are preserved as
+> historical context for the architecture that once shipped — concretely, for
+> the retail-billing surfaces that read wholesale wei prices and the
+> route-health overlays that fed resolver selection — but do not treat them as
+> descriptions of the current working tree. The wholesale pricing mechanism in
+> Part 1 (payment-daemon, capability-broker, manifest schema, resolver) is
+> unaffected; the workload runners (`openai-runners`, `video-runners`,
+> `vtuber-runner`, `rerank-runner`) also remain.
+
 End-to-end map of how the Livepeer network prices work in this repo. It
 synthesises material already covered piecemeal in
 [`payment-decoupling.md`](./payment-decoupling.md),
@@ -472,11 +484,14 @@ in operator decisions and gateway-side billing code.
 ```
 ┌──────────────────┐    USD/unit     ┌─────────────────┐    wei/unit     ┌──────────────────┐
 │ End customer     │ ──────────────► │ Gateway service │ ──────────────► │ Orchestrator     │
-│ (OpenAI-style    │   retail price  │ (openai-gateway,│   wholesale     │ (capability-     │
-│  API caller)     │ ◄────────────── │  video-gateway, │   price         │  broker +        │
-│                  │   invoice/usage │  vtuber-gateway,│ ◄────────────── │  payment-daemon  │
+│ (OpenAI-style    │   retail price  │ (any out-of-    │   wholesale     │ (capability-     │
+│  API caller)     │ ◄────────────── │  repo product   │   price         │  broker +        │
+│                  │   invoice/usage │  gateway;       │ ◄────────────── │  payment-daemon  │
 │                  │                 │  customer-portal)│ wei debit       │  receiver mode)  │
 └──────────────────┘                 └─────────────────┘                 └──────────────────┘
+
+(Historically the product gateways were `openai-gateway`, `video-gateway`,
+`vtuber-gateway`, `daydream-gateway`; those have been removed from this repo.)
                                                 ▲
                                                 │ FX boundary lives here:
                                                 │  USD ←→ wei conversion
@@ -493,8 +508,9 @@ stablecoin, no USD field on the wire, no oracle inside the daemon.
 gateway's customer-facing app supports). This is where Replicate/Mux-style
 "$0.024 per minute" or "$5 per million tokens" pricing lives. Retail
 billing is implemented in the customer-facing gateway services
-(`customer-portal/`, `openai-gateway/src/service/chatBilling.ts`, the video
-and vtuber gateways), not in the wholesale daemons.
+(`customer-portal/`, and historically `openai-gateway/src/service/chatBilling.ts`
+plus the video and vtuber gateways — those product gateways have since been
+removed from this repo), not in the wholesale daemons.
 
 **The conversion boundary lives inside the gateway service**, not in the
 payment-daemon. The gateway service:
@@ -895,8 +911,9 @@ batched hyperscale economics.
 
 The gateway's economics are different in shape:
 
-- **Revenue** — retail USD billed to customers (in `openai-gateway`,
-  `video-gateway`, `vtuber-gateway`, `customer-portal`).
+- **Revenue** — retail USD billed to customers (historically in
+  `openai-gateway`, `video-gateway`, `vtuber-gateway` — all since removed from
+  this repo — and in `customer-portal`).
 - **Cost** — wholesale wei paid to orchs (via `CreatePayment` →
   `Livepeer-Payment` envelope → `DebitBalance` on receiver).
 - **Margin** — retail revenue minus wholesale cost, minus gateway infra
@@ -912,7 +929,7 @@ Operator knobs:
 | Preferred-orch list / weight bias | resolver client policy |
 | `min_weight` filter | `SelectRequest.MinWeight` |
 | Fail-closed price ceiling | gateway adapter logic (refuse to route if no orch under threshold wei/unit) |
-| Failure-rate floor | gateway-route-health to deprioritize flaky orchs |
+| Failure-rate floor | historically `gateway-route-health` (since removed from this repo) to deprioritize flaky orchs |
 
 The gateway operator profits when retail USD × actualUnits exceeds
 wholesale wei × actualUnits (converted at the gateway's planning ETH/USD
@@ -995,13 +1012,15 @@ it does, and which existing repo surfaces it would plug into.
    - Plugs into: gateway services that currently hard-code or env-var the
      rate. Out of band from `payment-daemon` deliberately.
 
-8. **Route-quality cost overlay** (`gateway-route-health` extension).
+8. **Route-quality cost overlay** (historical: `gateway-route-health` extension).
    - Inputs: existing route-health data, plus wholesale price per route.
    - Outputs: a single "$ per successful unit" metric that combines
      reliability with price, so the resolver client biases away from
      cheap-but-flaky orchs.
-   - Plugs into: `gateway-route-health/` + `service-registry-daemon`
-     selection weight feedback.
+   - Plugs into: historically `gateway-route-health/` + `service-registry-daemon`
+     selection weight feedback. `gateway-route-health` has since been removed
+     from this repo; any successor would need to re-host the route-health
+     surface out of repo.
 
 ### Cross-cutting
 
@@ -1649,8 +1668,9 @@ Three roles, none of which currently exist in the repo:
 3. **Realized-quality channel** — orchs and gateways jointly contribute
    to a shared quality registry: latency, success rate, throughput per
    offering per orch. The market clears on price + quality, not price
-   alone. Today this is partially served by `gateway-route-health`, but
-   it's gateway-local, not aggregated.
+   alone. Historically this was partially served by `gateway-route-health`
+   (since removed from this repo), but even then it was gateway-local, not
+   aggregated.
 
 ### Tooling additions (appended to Part 2's list)
 
@@ -1670,8 +1690,9 @@ Three roles, none of which currently exist in the repo:
       counts.
     - Outputs: anonymized, aggregated demand signals queryable by orchs
       ("how much unmet demand exists for offering X at price ≤ Y?").
-    - Plugs into: gateway services (`openai-gateway`, `video-gateway`,
-      etc.) + a coordinator-operated aggregator. Privacy-preserving
+    - Plugs into: gateway services (historically `openai-gateway`,
+      `video-gateway`, etc., all since removed from this repo) + a
+      coordinator-operated aggregator. Privacy-preserving
       aggregation (k-anonymity over orchs) is a design requirement.
 
 13. **LPT subsidy modeler** (`tools/lpt-subsidy`).

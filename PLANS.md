@@ -4,12 +4,18 @@ Current state of work in this repo, plus pointers to active plans.
 
 ## Current state
 
-**Suite + byoc collapse complete + first wave of follow-ups shipped.** All
-15 monorepo components are shipping with their initial production-readiness
-follow-ups landed. Protocol layer + product gateways + workload runners +
-shared SaaS shell + per-product admin / customer SPAs all on master. The
-suite, byoc, and livepeer-vtuber-project source repos are retire-ready
-pending the user's manual audit.
+**Product gateways removed.** The four product gateways (`openai-gateway`,
+`video-gateway`, `vtuber-gateway`, `daydream-gateway`) and their shared
+TS libraries (`gateway-adapters`, `gateway-route-health`) were removed
+from this repo. Anything below in this document that references those
+directories is historical record from before the removal — kept for
+provenance of what once shipped, not as a description of the current
+working tree.
+
+**Suite + byoc collapse complete + first wave of follow-ups shipped.**
+Protocol layer + workload runners + pool control plane + shared SaaS
+shell all on master. The suite, byoc, and livepeer-vtuber-project source
+repos are retire-ready pending the user's manual audit.
 
 **Repo shape: monorepo for now.** All components live as top-level subfolders;
 extraction to standalone repos is a v2 concern.

@@ -5,6 +5,13 @@
 **Owner:** harness
 **Related:** PLANS.md "Phase 4 — Real payment-daemon integration"
 
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway,
+> video-gateway, vtuber-gateway, daydream-gateway) and their shared TS
+> libraries (gateway-adapters, gateway-route-health) have since been removed
+> from this repo. This plan is preserved as historical record of what shipped
+> at the time; the directories and code paths it references no longer exist
+> in the working tree.
+
 ## Problem
 
 Until now the broker has used an in-process `payment.Mock` for the
@@ -48,7 +55,7 @@ This plan addresses both — without yet involving any chain.
 - Update the conformance runner and the OpenAI-compat gateway to mint
   real envelopes (not the literal string `"stub-payment"`).
 - Update both compose stacks (`livepeer-network-protocol/conformance`
-  and `openai-gateway`) to add `payment-daemon` as a sidecar with a
+  and `openai-gateway` (directory since removed)) to add `payment-daemon` as a sidecar with a
   shared unix-socket volume.
 - All 11 conformance fixtures and all 10 openai-gateway smoke
   assertions must continue to pass against the real daemon.

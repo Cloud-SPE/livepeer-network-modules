@@ -1,9 +1,18 @@
 # AGENTS.md — customer-portal
 
-This is `customer-portal/` — the shared SaaS-shell library for per-product
-gateways in the rewrite (`openai-gateway/`, `vtuber-gateway/`,
-`video-gateway/`). Distributed as `@livepeer-network-modules/customer-portal` via
-the pnpm workspace; consumers import factories from subpath exports.
+> **Status (2026-05-19):** The per-product gateways that originally
+> consumed this library (`openai-gateway/`, `vtuber-gateway/`,
+> `video-gateway/`, `daydream-gateway/`) have been removed from this
+> repo, along with shared TS support libs `gateway-adapters/` and
+> `gateway-route-health/`. `customer-portal` remains as a shared TS
+> library for any future SaaS consumer. The historical context below is
+> retained for source attribution and design intent.
+
+This is `customer-portal/` — the shared SaaS-shell library originally
+built for per-product gateways in the rewrite (historically
+`openai-gateway/`, `vtuber-gateway/`, `video-gateway/`). Distributed as
+`@livepeer-network-modules/customer-portal` via the pnpm workspace;
+consumers import factories from subpath exports.
 
 The plan brief is
 [`../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md).
@@ -127,7 +136,9 @@ explicit user instruction (plan brief §5). Source paths:
 
 ## What lives elsewhere
 
-- Per-product gateway briefs: `0013-openai`, `0013-vtuber`, `0013-video`.
-- Wire-protocol middleware: `gateway-adapters/` (plan 0008 + followup).
+- Per-product gateway briefs: `0013-openai`, `0013-vtuber`, `0013-video`
+  (historical; the gateways themselves are out-of-repo as of 2026-05-19).
+- Wire-protocol middleware: `gateway-adapters/` (plan 0008 + followup;
+  out-of-repo as of 2026-05-19).
 - Chain-side payment: `payment-daemon/` (plans 0014, 0016).
 - Multi-tenant operator console: `secure-orch-console/` (plan 0019).

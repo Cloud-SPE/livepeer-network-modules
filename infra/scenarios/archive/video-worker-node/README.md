@@ -13,10 +13,10 @@ expects:
 - `video:transcode.abr`
 - `video:live.rtmp`
 
-`transcode-runner` is intentionally not included here. The current
-`video-gateway` product model routes offline video work through
-`video:transcode.abr`, and live ingest is handled inside the broker's
-`rtmp-ingress-hls-egress@v0` mode rather than a separate live runner.
+`transcode-runner` is intentionally not included here. Offline video
+work flows through `video:transcode.abr`, and live ingest is handled
+inside the broker's `rtmp-ingress-hls-egress@v0` mode rather than a
+separate live runner.
 
 ## Bring-up
 

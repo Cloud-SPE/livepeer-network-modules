@@ -4,9 +4,9 @@ Canonical Protobuf definitions for the Livepeer-Network protocol.
 
 These files are the source of truth for the bytes on the wire. Generated
 language bindings live next to their consumers (e.g. Go bindings under
-`payment-daemon/internal/proto/`, hand-rolled TypeScript encoders under
-`openai-gateway/src/livepeer/`); the `.proto` files in this folder are what
-those bindings track.
+`payment-daemon/internal/proto/`; TypeScript encoders historically lived
+in an OpenAI-protocol gateway that is out-of-repo as of 2026-05-19); the
+`.proto` files in this folder are what those bindings track.
 
 ## Layout
 

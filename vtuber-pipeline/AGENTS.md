@@ -3,9 +3,9 @@
 This is `vtuber-pipeline/` — the Python SaaS pipeline for the Livepeer
 vtuber product. Three console-script binaries: `pipeline-mock-youtube`
 (chat source), `pipeline-streams` (session orchestrator), `pipeline-egress`
-(RTMP push worker). Pipeline calls `vtuber-gateway/` as a single
-meta-customer (one shared API key per deployment); pipeline bills its
-own customers internally.
+(RTMP push worker). Pipeline calls an upstream vtuber gateway
+(out-of-repo as of 2026-05-19) as a single meta-customer (one shared API
+key per deployment); pipeline bills its own customers internally.
 
 Component-local agent map. Repo-root [`../AGENTS.md`](../AGENTS.md) is
 the cross-cutting map. The migration brief is plan
@@ -19,9 +19,10 @@ Inherited from the repo root. Plus:
   canonical TS lock is documented in plan 0013-vtuber §6.2. Pipeline
   is Python because the upstream pipeline-app is Python and a TS port
   buys nothing.
-- **Pipeline is a meta-customer of `vtuber-gateway/`.** Per OQ4 lock:
-  one shared `LIVEPEER_VTUBER_GATEWAY_API_KEY` per deployment;
-  pipeline-app's customers never see vtuber-gateway directly.
+- **Pipeline is a meta-customer of its upstream vtuber gateway
+  (out-of-repo as of 2026-05-19).** Per OQ4 lock: one shared
+  `LIVEPEER_VTUBER_GATEWAY_API_KEY` per deployment; pipeline-app's
+  customers never see the vtuber gateway directly.
 - **No "bridge" terminology anywhere.** Symbols are `HTTPGatewayClient`,
   `GatewayClient`, `GatewayError`, `GatewaySessionOpenResult`,
   `gateway_session_id`. Env-var names are `STREAMS_GATEWAY_*`. The
@@ -44,7 +45,7 @@ vtuber-pipeline/
   compose.yaml
   src/vtuber_pipeline/
     mock_youtube/         ← chat-source provider
-    streams/              ← streams orchestrator (calls vtuber-gateway)
+    streams/              ← streams orchestrator (calls upstream vtuber gateway, out-of-repo as of 2026-05-19)
     egress/               ← ffmpeg RTMP push
   tests/
 ```

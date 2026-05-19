@@ -51,8 +51,8 @@ validated by the broker-side `payment-daemon/`. The runner sees only:
   listener + FFmpeg pipeline + LL-HLS server replace it (per plan
   0011-followup). `transcode-core/live.go` may carry residual helpers
   used by VOD; audit post-port.
-- **Customer auth + billing.** Lives in `customer-portal/` and
-  `video-gateway/`.
+- **Customer auth + billing.** Lives in `customer-portal/` and the
+  upstream video gateway (out-of-repo as of 2026-05-19).
 - **Payment validation.** Broker-side.
 - **Capability advertisement.** Orch-coordinator scrapes broker
   `/registry/offerings`; the runner is only the workload backend.

@@ -17,6 +17,8 @@ audience: vtuber-gateway maintainers, vtuber-pipeline maintainers
 
 # Plan 0013-vtuber-followup — Phase 4 wire-through + M6 reconnect + bridge-* purge
 
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway, video-gateway, vtuber-gateway, daydream-gateway) and their shared TS libraries (gateway-adapters, gateway-route-health) have since been removed from this repo. This plan is preserved as historical record of what shipped at the time; the directories and code paths it references no longer exist in the working tree.
+
 > **Implementation followup.** Plan 0013-vtuber landed the scaffold,
 > schema, peppered HMAC bearer, live-only relay, and 503 stubs at the
 > route layer. This brief wires the stubs to real implementations,

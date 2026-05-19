@@ -62,6 +62,10 @@ Guarantees:
   `openai:chat-completions`.
 - Filtering remains conjunctive across `capability`, `offering`, `tier`,
   and `min_weight`.
+- A single node may publish multiple entries with the same capability
+  name and different offerings. Selection matches across all
+  capability/offering tuples on the node; consumers must not assume
+  capability names are unique within `nodes[].capabilities[]`.
 - If more than one candidate matches, the daemon applies the existing
   stable weight sort and returns the top-ranked route only.
 - The gateway-facing response never includes `worker_eth_address`.
@@ -91,6 +95,12 @@ Guarantees:
 - `Select.route` is always `SelectMany.routes[0]` for the same request.
 - Every returned route is payment-ready and carries the full quote-bound
   metadata needed for `CreatePayment`.
+- Request-scoped route readiness is derived from the worker's
+  `/registry/health` response when available. That health payload is an
+  additive surface: brokers may add new fields over time, and resolver
+  implementations must continue decoding the fields needed for route
+  selection (`id`, `offering_id`, `status`, `stale_after`) rather than
+  rejecting the response because of unrelated extra fields.
 - `ResolveByAddress` inventory tuples are only selectable when callers
   pass the same capability/offering keys back into `SelectMany`. Route
   visibility in discovery does not override live-health, tier, or

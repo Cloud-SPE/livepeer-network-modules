@@ -89,9 +89,9 @@ func TestBytes_ManifestRoundTrip(t *testing.T) {
 		},
 		"capabilities": []any{
 			map[string]any{
-				"capability_id":      "openai:chat-completions:llama-3-70b",
+				"capability_id":      "openai:chat-completions",
 				"offering_id":        "vllm-h100-batch4",
-				"interaction_mode":   "http-stream@v1",
+				"interaction_mode":   "http-stream@v0",
 				"work_unit":          map[string]any{"name": "tokens"},
 				"price_per_unit_wei": "1500000",
 				"worker_url":         "https://broker-a.example.com",

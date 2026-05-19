@@ -77,11 +77,12 @@ dictates which.
 
 ## Payment lifecycle
 
-Same as `http-reqresp`: estimate → debit-up-front → forward to backend → compute
-`actualUnits` from the response (or from the upload size) via the offering's
-extractor → reconcile → close. Per-request, no long-lived state.
+Same as `http-reqresp`: estimate → mint funded payment → forward to backend →
+compute `actualUnits` from the response (or from the upload size) via the
+offering's extractor → emit settlement / close. Per-request, no long-lived
+state.
 
-The estimate (`expected_max_units`) is typically derived from the request — e.g.:
+The gateway-side estimate is typically derived from the request — e.g.:
 
 - For Whisper-shaped capabilities: estimate = `audio_duration_seconds` (read from
   the multipart file's headers/metadata pre-upload, or via a quick probe).
@@ -106,7 +107,8 @@ The broker:
 The gateway:
 
 - Builds the multipart body per the capability's expectations.
-- Estimates `expected_max_units` from the file metadata or other request fields.
+- Estimates usage from the file metadata or other request fields before minting
+  the funded payment.
 - Same envelope/header rules as `http-reqresp`.
 
 ## Body size

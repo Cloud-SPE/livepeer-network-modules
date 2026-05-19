@@ -144,8 +144,8 @@ The gateway:
   protocol.
 - Reads the `Livepeer-Work-Units` **trailer** when the response stream ends; uses
   it for the customer USD ledger debit.
-- Falls back to `expected_max_units` if the trailer is absent (mid-stream
-  disconnect).
+- Falls back to gateway-local estimation only if the trailer is absent (e.g.
+  mid-stream disconnect).
 
 ## Timeouts
 

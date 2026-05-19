@@ -147,7 +147,7 @@ The sender:
 1. Validates inputs and queries the broker for sender deposit/reserve state
    (`sender.go:90-99`).
 2. Finds or opens a cached session keyed by `(recipient, capability,
-   offering, target spend, ticket-params base URL)` (`sender.go:101-111`).
+   offering, funded value, ticket-params base URL)` (`sender.go:103-112`).
 3. Fetches authoritative `TicketParams` from the broker over HTTP at
    `/v1/payment/ticket-params` (`sender.go:5-10` package comment, plus
    `findOrOpenSession` at `sender.go:177-205`). The receiver decides the
@@ -173,7 +173,7 @@ headers — see
 | `Livepeer-Capability` | request → broker | capability id (opaque string), `livepeer-headers.md:45-53` |
 | `Livepeer-Offering` | request → broker | offering id (opaque string), `livepeer-headers.md:55-63` |
 | `Livepeer-Payment` | request → broker | base64 protobuf `Payment` envelope, `livepeer-headers.md:65-86` |
-| `Livepeer-Mode` | request → broker | interaction mode id, e.g. `http-stream@v1` |
+| `Livepeer-Mode` | request → broker | interaction mode id, e.g. `http-stream@v0` |
 | `Livepeer-Work-Units` | response from broker | `actualUnits` after extraction, `livepeer-headers.md:132-…` |
 | `Livepeer-Error` | response on error | machine-readable code such as `insufficient_balance` |
 
@@ -369,7 +369,7 @@ message SelectedRoute {
 
 [`livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto):
 
-- `CreatePayment(face_value, recipient, capability, offering, expected_max_units, ticket_params_base_url)` — implemented at `sender.go:69-150`.
+- `CreatePayment(recipient, ticket_params_base_url, accepted_price, funding)` — implemented at `sender.go:73-158`.
 
 ### Wire-compat payment types
 
@@ -501,9 +501,9 @@ payment-daemon. The gateway service:
 
 1. Quotes the customer in USD (retail).
 2. Looks up the resolved orch's wholesale `price_per_work_unit_wei`.
-3. Computes the wei face value it is willing to spend
-   (`target_units × price_per_work_unit_wei`).
-4. Calls `PayerDaemon.CreatePayment(face_value, ...)`.
+3. Computes the accepted quote basis plus funded budget it is willing to spend
+   (`target_units × price_per_work_unit_wei`, plus quote identity).
+4. Calls `PayerDaemon.CreatePayment(recipient, accepted_price, funding, ticket_params_base_url)`.
 
 The daemon never sees USD. The gateway operator is responsible for the FX
 rate it uses when bridging. There is no daemon-level ETH/USD oracle and no

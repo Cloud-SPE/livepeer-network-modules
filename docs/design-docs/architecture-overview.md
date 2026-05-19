@@ -204,7 +204,7 @@ sequenceDiagram
     GW->>Broker: POST /v1/cap<br/>Livepeer-Capability: <id><br/>Livepeer-Offering: <id><br/>Livepeer-Payment: ticket<br/>Authorization: Bearer <session>?
     Broker->>Cfg: lookup (capability_id, offering_id)
     Cfg-->>Broker: { interaction_mode, work_unit, extractor,<br/>price, backend descriptor }
-    Broker->>PD: ProcessPayment(payment_bytes, expected_max_units,<br/>price_per_unit, capability_id, offering_id)
+    Broker->>PD: ProcessPayment(payment_bytes, work_id)
     PD-->>Broker: ok (sender, credited_ev, balance)
 
     Broker->>Backend: forward (transport from descriptor)
@@ -766,8 +766,9 @@ the daemon does the arithmetic `price_wei = price_per_unit_wei × actualUnits`. 
 capabilities with custom work units (`barks`, `pixel-seconds`, anything) work without
 trunk changes.
 
-The `Livepeer-Payment` header gains `(capability_id, offering_id, expected_max_units)`
-so the receiver can refuse mismatched routing.
+The `Livepeer-Payment` header remains the wire-format payment envelope while
+`Livepeer-Capability` and `Livepeer-Offering` carry the routed tuple so the
+broker can refuse mismatched routing.
 
 ### Per-request payment (`http-reqresp` / `http-stream` / `http-multipart`)
 
@@ -785,10 +786,10 @@ sequenceDiagram
     participant TB as TicketBroker<br/>(chain)
     participant Backend as backend
 
-    GW->>Sender: CreatePayment(face_value, recipient,<br/>capability_id, offering_id,<br/>expected_max_units)
+    GW->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
     Sender-->>GW: signed ticket
     GW->>Broker: forward request<br/>+ Livepeer-Payment header
-    Broker->>Receiver: ProcessPayment(payment_bytes,<br/>expected_max_units, price_per_unit,<br/>capability_id, offering_id)
+    Broker->>Receiver: ProcessPayment(payment_bytes, work_id)
     alt ticket is winning
         Receiver->>TB: redeemWinningTicket
         TB-->>Receiver: faceValue credited to orch reserve
@@ -822,7 +823,7 @@ sequenceDiagram
     participant Backend as backend<br/>(session-runner / FFmpeg / …)
 
     Note over GW,Backend: 1. Open — single ticket bootstraps the session balance
-    GW->>Sender: CreatePayment(face_value, recipient,<br/>capability_id, offering_id)
+    GW->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
     Sender-->>GW: ticket
     GW->>Broker: POST .../sessions/start<br/>+ Livepeer-Payment
     Broker->>Receiver: OpenSession(payment_bytes, work_id,<br/>capability_id, offering_id)
@@ -839,7 +840,7 @@ sequenceDiagram
         Receiver-->>Broker: ok / low-runway warning
         Broker-->>GW: session.usage.tick
         alt low runway
-            GW->>Sender: CreatePayment(top_up, recipient,<br/>capability_id, offering_id)
+            GW->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
             Sender-->>GW: ticket
             GW->>Broker: TopUp(work_id, payment_bytes)
             Broker->>Receiver: CreditBalance(sender, work_id, payment_bytes)
@@ -985,7 +986,8 @@ market's view of itself.
   response.
 - `payment-daemon`: opaque capability/work-unit names; arithmetic only.
 - Coordinator UX: capability-as-roster-entry.
-- `Livepeer-Payment` header: includes `(capability_id, offering_id, expected_max_units)`.
+- `Livepeer-Payment` header stays wire-compat; routed capability/offering live in
+  sibling Livepeer headers.
 
 ### Preserves (sacred)
 

@@ -4,9 +4,9 @@
 // v0.2 architectural shift: the runner no longer hand-rolls Payment
 // proto bytes. Instead it dials a sender-mode payment-daemon co-located
 // in the conformance compose stack and calls
-// `PayerDaemon.CreatePayment(face_value, recipient, capability,
-// offering)`. The daemon returns the wire-format Payment bytes; this
-// package base64-encodes them for the HTTP header.
+// `PayerDaemon.CreatePayment(recipient, ticket_params_base_url,
+// accepted_price, funding)`. The daemon returns the wire-format
+// Payment bytes; this package base64-encodes them for the HTTP header.
 //
 // The daemon dependency makes the runner the FIRST end-to-end
 // integration of the new wire-compat sender path. The OpenAI-compat

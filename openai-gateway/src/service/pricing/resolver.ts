@@ -10,7 +10,7 @@ import {
   rateForTier,
 } from './lookup.js';
 import type { ImageQuality, RateCardSnapshot } from './types.js';
-import { Capability, normalizeCapabilityId } from '../../livepeer/capabilityMap.js';
+import { Capability } from '../../livepeer/capabilityMap.js';
 
 type RateCardResolver = billing.RateCardResolver;
 type ResolveResult = Awaited<ReturnType<RateCardResolver['resolve']>>;
@@ -50,7 +50,7 @@ function resolveCapability(
   offering: string,
 ): ResolveResult {
   const model = offering;
-  switch (normalizeCapabilityId(capability)) {
+  switch (capability) {
     case Capability.ChatCompletions: {
       const tier = resolveChatTier(snapshot, model);
       if (!tier) return null;

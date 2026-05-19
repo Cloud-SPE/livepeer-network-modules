@@ -62,7 +62,7 @@ is low.
 | OpenSession with empty ticket | `InvalidArgument: ticket is empty` |
 | OpenSession with capability_id mismatch | `InvalidArgument: capability_id mismatch` |
 | OpenSession with offering_id mismatch | `InvalidArgument: offering_id mismatch` |
-| OpenSession with expected_max_units == 0 | `InvalidArgument: expected_max_units must be > 0` |
+| CreatePayment / OpenSession with missing accepted price or funding | `InvalidArgument` / request validation failure |
 | Debit / Reconcile / Close on unknown session | `NotFound: session not found` |
 | Debit / Reconcile after Close | `FailedPrecondition: session is closed` |
 | BoltDB write fails | `Internal: <bolt error>` |

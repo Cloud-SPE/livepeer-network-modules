@@ -92,7 +92,7 @@ The spec-wide SemVer the gateway is speaking.
 
 - **Value:** `<major>.<minor>` or `<major>.<minor>.<patch>`. Receivers MUST validate
   only the major version; minor and patch are non-breaking by definition.
-- **Example:** `Livepeer-Spec-Version: 1.0`
+- **Example:** `Livepeer-Spec-Version: 0.1`
 - The broker MUST reject (505 + `Livepeer-Error: spec_version_unsupported`) any
   request with a major version it does not implement.
 
@@ -101,7 +101,7 @@ The spec-wide SemVer the gateway is speaking.
 The interaction mode + major version the gateway is using to wrap this request.
 
 - **Value:** `<mode-name>@v<major>` (per Q2 hybrid SemVer).
-- **Example:** `Livepeer-Mode: http-stream@v1`
+- **Example:** `Livepeer-Mode: http-stream@v0`
 - The broker MUST reject (505 + `Livepeer-Error: mode_unsupported`) if it does not
   implement that mode + major version for the named capability.
 - Why this is a header (not just derived from the manifest): self-describing

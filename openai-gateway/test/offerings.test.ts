@@ -46,7 +46,17 @@ defaults:
   );
   assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:embeddings' }), 'e');
   assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:audio-speech' }), null);
-  assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:/v1/embeddings' }), 'e');
+  assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:/v1/embeddings' }), null);
+});
+
+test('resolveDefaultOffering falls back to legacy config keys for modern capabilities only', () => {
+  const cfg = parseOfferingsYaml(`
+defaults:
+  "openai:/v1/embeddings":
+    default: legacy-e
+`);
+  assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:embeddings' }), 'legacy-e');
+  assert.equal(resolveDefaultOffering(cfg, { capability: 'openai:/v1/embeddings' }), 'legacy-e');
 });
 
 test('loadOfferingsFromDisk returns empty defaults when file is absent', () => {

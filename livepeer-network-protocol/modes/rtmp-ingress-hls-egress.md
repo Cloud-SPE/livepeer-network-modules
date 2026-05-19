@@ -129,8 +129,8 @@ Either:
 
 Same shape as `ws-realtime`:
 
-1. Gateway estimates `expected_max_units` for the **whole session** (e.g.,
-   1 hour × frames-per-second × frame-megapixels).
+1. Gateway estimates session usage and mints initial funded runway from the
+   accepted quote basis (for example, from expected duration × workload density).
 2. Initial debit at session-open covers `runway_min_seconds`.
 3. Broker debits at `cadence_seconds` (default 5) using `ffmpeg-progress` or
    `seconds-elapsed` extractor.

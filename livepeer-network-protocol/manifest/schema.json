@@ -94,7 +94,7 @@
         "interaction_mode": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]*@v[0-9]+$",
-          "description": "Mode name + major version (per Q2 hybrid SemVer), e.g. 'http-stream@v1'. Mode names live in modes/<mode>.md."
+          "description": "Mode name + major version (per Q2 hybrid SemVer), e.g. 'http-stream@v0'. Mode names live in modes/<mode>.md."
         },
         "work_unit": { "$ref": "#/$defs/work_unit" },
         "price_per_unit_wei": {

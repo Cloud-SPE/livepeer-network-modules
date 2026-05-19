@@ -90,9 +90,9 @@ Livepeer-Request-Id: 550e8400-e29b-41d4-a716-446655440000
 
 **Interim-debit + final reconcile** — the key difference from HTTP modes.
 
-1. Gateway estimates `expected_max_units` (an upper bound for the *whole session*,
-   not a per-request bound).
-2. Gateway includes it in `Livepeer-Payment` envelope on the upgrade request.
+1. Gateway estimates whole-session usage and mints initial funded runway from
+   the accepted quote basis.
+2. Gateway includes the funded `Livepeer-Payment` envelope on the upgrade request.
 3. Broker validates ticket; opens session; debits a configurable initial slice
    (default: enough for `runway_min_seconds` worth of cadence ticks at the
    maximum advertised price).

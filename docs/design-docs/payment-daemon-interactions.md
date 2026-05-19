@@ -95,7 +95,7 @@ flowchart LR
     Adapter --> SRDg
     Adapter --> Sender
     Sender -.->|"unix socket"| SRDg
-    Sender -.->|"GET /v1/payment/ticket-params"| Broker
+    Sender -.->|"POST /v1/payment/ticket-params"| Broker
     Adapter ==>|"HTTPS / WS / RTMP +<br/>Livepeer-Payment header"| Broker
     Broker -.->|"unix socket"| Receiver
     Receiver -->|"redeemWinningTicket"| Chain
@@ -182,7 +182,7 @@ sequenceDiagram
     Shell->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
     Sender->>SRD: resolve recipient → worker_url (local)
     SRD-->>Sender: worker_url
-    Sender->>Broker: GET /v1/payment/ticket-params
+    Sender->>Broker: POST /v1/payment/ticket-params
     Broker->>Receiver: derive canonical params<br/>(face_value, win_prob)
     Receiver-->>Broker: TicketParams
     Broker-->>Sender: TicketParams

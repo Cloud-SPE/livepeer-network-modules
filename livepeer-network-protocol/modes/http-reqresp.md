@@ -98,20 +98,18 @@ Content-Type: application/json
 
 Single-debit with post-Serve reconciliation:
 
-1. **Gateway estimates** `expected_max_units` (upper bound) for this request based on
-   its workload knowledge.
-2. **Gateway** includes `expected_max_units` in the `Livepeer-Payment` envelope.
+1. **Gateway estimates** units for this request based on its workload knowledge.
+2. **Gateway** mints a funded `Livepeer-Payment` envelope through sender-side
+   `CreatePayment(recipient, accepted_price, funding, ticket_params_base_url)`.
 3. **Broker validates** the ticket; `payment-daemon` (receiver) opens a session.
-4. **Broker debits** `expected_max_units` up front against the session balance.
-5. **Broker forwards** the (Livepeer-stripped, backend-auth-injected) request to the
+4. **Broker forwards** the (Livepeer-stripped, backend-auth-injected) request to the
    backend; awaits the response.
-6. **Broker computes** `actualUnits` from the backend's response via the offering's
+5. **Broker computes** `actualUnits` from the backend's response via the offering's
    declared extractor (a host-config concern; see
    [`../extractors/`](../extractors/)).
-7. **Broker reports** `Livepeer-Work-Units: <actualUnits>` in the response headers.
-8. **Broker calls** `payment-daemon.Reconcile(actualUnits)` — refunds the difference
-   when actual was less than estimated.
-9. **Broker calls** `payment-daemon.CloseSession()`.
+6. **Broker reports** `Livepeer-Work-Units: <actualUnits>` in the response headers.
+7. **Broker emits** `Livepeer-Settlement` when settlement metadata is available.
+8. **Broker calls** `payment-daemon.CloseSession()`.
 
 Steps 3–9 are per-request; no long-lived session state. Each request opens and closes
 its own session.
@@ -143,8 +141,9 @@ its own session.
 
 1. Receive a customer request via the gateway's customer-facing protocol.
 2. Select a route via `Resolver.Select(capability_id, offering_id, ...)`.
-3. Estimate `expected_max_units` from the request shape (workload-specific).
-4. Build the `Livepeer-Payment` envelope through `payment-daemon` (sender).
+3. Estimate units from the request shape (workload-specific).
+4. Build the `Livepeer-Payment` envelope through `payment-daemon` (sender) using
+   the accepted quote basis and funded budget.
 5. Set the five required Livepeer-* request headers + optional
    `Livepeer-Request-Id`.
 6. Issue `POST <worker_url>/v1/cap` with the body unchanged.
@@ -188,7 +187,7 @@ The broker SHOULD expose Prometheus metrics for this mode. Suggested names (per 
 - `livepeer_mode_requests_total{mode="http-reqresp",capability,offering,outcome}` — counter.
 - `livepeer_mode_request_duration_seconds{mode="http-reqresp",capability,offering}` — histogram.
 - `livepeer_mode_work_units_total{mode="http-reqresp",capability,offering}` — counter (sum of `actualUnits`).
-- `livepeer_mode_estimate_overshoot_units{mode="http-reqresp",capability,offering}` — histogram (`expected_max_units − actualUnits`, for tuning gateway estimates).
+- `livepeer_mode_estimate_overshoot_units{mode="http-reqresp",capability,offering}` — histogram (gateway estimate error vs `actualUnits`, for tuning gateway estimates).
 
 Demand visibility is fed by these surfaces (see
 [core belief #1 / requirement R10](../../docs/design-docs/core-beliefs.md)).
@@ -212,8 +211,9 @@ The conformance suite tests, at minimum:
 - 503 + `Livepeer-Backoff` round-trip when broker capacity is exhausted.
 - Backend 5xx or timeout → broker returns 502 + `backend_unavailable` + full refund.
 - Forwarding: broker strips `Livepeer-*` and injects declared backend auth.
-- Reconciliation: `actualUnits ≤ expected_max_units` always; refund triggered when
-  `actual < estimate`.
+- Reconciliation: final usage and billed value are derived from broker-authoritative
+  settlement / extraction, not from a fixed estimate serialized inside the
+  payment envelope.
 
 Fixtures live under `conformance/fixtures/http-reqresp/*.yaml`.
 

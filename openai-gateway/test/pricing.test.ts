@@ -224,6 +224,12 @@ test('createRateCardResolver routes capability + offering through the lookup tab
   const miss = await resolver.resolve({ capability: 'openai:embeddings', offering: 'no-such' });
   assert.equal(miss, null);
 
+  const legacyCap = await resolver.resolve({
+    capability: 'openai:/v1/chat/completions',
+    offering: 'model-small',
+  });
+  assert.equal(legacyCap, null);
+
   const unknownCap = await resolver.resolve({ capability: 'unknown', offering: 'tts-1' });
   assert.equal(unknownCap, null);
 });

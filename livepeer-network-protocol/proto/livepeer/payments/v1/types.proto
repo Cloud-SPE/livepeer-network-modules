@@ -155,9 +155,9 @@ message OfferingPrice {
 
 // CapabilityEntry is one row of the daemon's capability catalog.
 message CapabilityEntry {
-  // Capability string in the canonical form `openai:<uri-path>` for
-  // the OpenAI module family; other modules use their own domain
-  // prefix (e.g. `transcoding:...`). Opaque to the daemon.
+  // Capability string as published by the worker / broker. Opaque to
+  // the daemon; callers should not assume slash-form and colon-form
+  // OpenAI IDs are interchangeable.
   string capability = 1;
 
   // Work-unit identifier for observability ("token", "audio_second",

@@ -30,9 +30,10 @@ openai-gateway/
 1. OpenAI client POSTs to `http://gateway:3000/v1/chat/completions`
    with `{model, messages, stream: false}`.
 2. Fastify routes to `chat-completions.ts` handler.
-3. Handler reads `body.model`, builds capability ID
-   `openai:chat-completions:<model>`. Picks `offering = "default"` and
-   mode `http-reqresp@v0` (because stream=false).
+3. Handler reads `body.model`, uses base capability ID
+   `openai:chat-completions`, and resolves the concrete offering from route
+   selection / operator defaults. Picks mode `http-reqresp@v0`
+   (because stream=false).
 4. Handler calls `httpReqresp.send({ brokerUrl, capability, offering, paymentBlob, body, contentType })`.
 5. The send function builds the five required Livepeer-* request headers
    plus optional Livepeer-Request-Id, POSTs to `<brokerUrl>/v1/cap` via

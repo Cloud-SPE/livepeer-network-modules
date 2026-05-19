@@ -19,10 +19,10 @@ This is the "first adopter" reference for the wire spec.
 
 | OpenAI endpoint | Capability template | Mode |
 |---|---|---|
-| `POST /v1/chat/completions` (stream: false) | `openai:chat-completions:<model>` | `http-reqresp@v0` |
-| `POST /v1/chat/completions` (stream: true) | `openai:chat-completions:<model>` | `http-stream@v0` |
-| `POST /v1/embeddings` | `openai:embeddings:<model>` | `http-reqresp@v0` |
-| `POST /v1/audio/transcriptions` | `openai:audio-transcriptions:<model>` | `http-multipart@v0` |
+| `POST /v1/chat/completions` (stream: false) | `openai:chat-completions` | `http-reqresp@v0` |
+| `POST /v1/chat/completions` (stream: true) | `openai:chat-completions` | `http-stream@v0` |
+| `POST /v1/embeddings` | `openai:embeddings` | `http-reqresp@v0` |
+| `POST /v1/audio/transcriptions` | `openai:audio-transcriptions` | `http-multipart@v0` |
 
 The model is read from the JSON request body (chat/embeddings) or from
 the `model` form-field (audio). The capability template is interpolated

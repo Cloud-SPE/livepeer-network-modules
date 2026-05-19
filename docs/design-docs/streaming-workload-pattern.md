@@ -123,7 +123,7 @@ Responsibilities:
 
 - mint wire-format payment blobs
 - encapsulate payee ticket-params lookup and ticket signing
-- expose `CreatePayment(face_value, recipient, capability_id, offering_id, expected_max_units)`
+- expose `CreatePayment(recipient, accepted_price, funding, ticket_params_base_url)`
 
 It does **not** own the long-lived session meter.
 
@@ -199,7 +199,7 @@ sequenceDiagram
     Cust->>GW: open session
     GW->>SRD: Resolver.Select(capability_id, offering_id?)
     SRD-->>GW: { worker_url, eth_address, mode, work_unit,<br/>price_per_unit_wei }
-    GW->>Sender: CreatePayment(face_value, recipient,<br/>capability_id, offering_id,<br/>expected_max_units)
+    GW->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
     Sender-->>GW: payment_bytes
     GW->>Broker: session.open + Livepeer-Payment
     Broker->>Receiver: OpenSession(payment_bytes, work_id,<br/>capability_id, offering_id)
@@ -225,7 +225,7 @@ sequenceDiagram
         Broker-->>GW: session.balance.low
         opt customer initiates top-up
             Cust->>GW: topup
-            GW->>Sender: CreatePayment(top_up, recipient,<br/>capability_id, offering_id)
+            GW->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
             Sender-->>GW: payment_bytes
             GW->>Broker: session.topup(work_id, payment_bytes)
             Broker->>Receiver: ProcessPayment(payment_bytes, work_id)
@@ -262,10 +262,10 @@ The gateway resolves a worker and offering. Required resolved data:
 
 ### 2. Open
 
-The gateway computes an initial pre-credit amount in wei and calls
-`CreatePayment(face_value, recipient, capability_id, offering_id,
-expected_max_units)`, then calls the broker's session-open endpoint with the
-returned payment blob in the `Livepeer-Payment` header.
+The gateway computes the accepted price basis plus an initial funded budget and
+calls `CreatePayment(recipient, accepted_price, funding,
+ticket_params_base_url)`, then calls the broker's session-open endpoint with
+the returned payment blob in the `Livepeer-Payment` header.
 
 The broker:
 
@@ -332,8 +332,8 @@ Recommended defaults: **min runway = 30 seconds**, **grace = 60 seconds**.
 Topup is customer-initiated at the gateway. The gateway:
 
 1. verifies the commercial session is still eligible for topup
-2. computes topup `face_value`
-3. calls `CreatePayment(face_value, recipient, capability_id, offering_id, expected_max_units)`
+2. computes the top-up funding budget and accepted quote basis
+3. calls `CreatePayment(recipient, accepted_price, funding, ticket_params_base_url)`
 4. forwards the resulting payment blob to the broker topup endpoint
 
 The broker:

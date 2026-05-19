@@ -18,6 +18,8 @@ export const LegacyCapabilityAlias = {
   'openai:/v1/realtime': Capability.Realtime,
 } as const satisfies Record<string, CapabilityId>;
 
-export function normalizeCapabilityId(value: string): string {
-  return LegacyCapabilityAlias[value as keyof typeof LegacyCapabilityAlias] ?? value;
+export function legacyAliasesForCapability(value: string): string[] {
+  return Object.entries(LegacyCapabilityAlias)
+    .filter(([, canonical]) => canonical === value)
+    .map(([legacy]) => legacy);
 }

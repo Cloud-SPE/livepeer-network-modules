@@ -5,8 +5,10 @@
 //   - CreatePayment fetches quote-free payee-issued TicketParams over
 //     HTTP from the broker's `/v1/payment/ticket-params` endpoint.
 //   - The sender caches sessions by (recipient, capability, offering,
-//     requested target spend) so repeated calls reuse the same
-//     recipient_rand_hash and nonce stream.
+//     requested funded value, ticket-params base URL) so repeated calls
+//     reuse the same recipient_rand_hash and nonce stream.
+//   - Accepted quote metadata is refreshed on every CreatePayment call
+//     even when the nonce stream is reused from an existing session.
 //   - Each payment is signed against the authoritative TicketParams
 //     returned by the payee, not against a locally fabricated copy.
 package sender
@@ -188,6 +190,8 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 
 	s.mu.Lock()
 	if sess, ok := s.sessions[key]; ok {
+		sess.acceptedPrice = clonePriceInfo(acceptedPrice)
+		sess.acceptedQuote = cloneQuoteRef(acceptedQuote)
 		s.mu.Unlock()
 		return sess, nil
 	}

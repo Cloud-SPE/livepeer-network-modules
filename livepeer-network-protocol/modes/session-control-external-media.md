@@ -143,7 +143,8 @@ under load.
 
 Same shape as `session-control-plus-media@v0` (interim debit + reconcile):
 
-1. Gateway estimates `expected_max_units` for the whole session.
+1. Gateway estimates session usage and mints initial funded runway from the
+   accepted quote basis.
 2. Initial debit at session-open covers `runway_min_seconds`.
 3. Broker debits at `cadence_seconds` (default 5).
 4. Balance-low → `session.balance.low` control event.

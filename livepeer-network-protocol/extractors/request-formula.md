@@ -89,8 +89,8 @@ Computation: `(1024 * 1024 * 50) / 1000000 = 52.4288` → floor → `actualUnits
 
 The unit count is known up-front. There's no need to wait for the backend's
 response. This makes `request-formula` cheaper to evaluate (no body parsing on
-the response path) and gives `expected_max_units == actualUnits` in the common
-case (no reconciliation drift).
+the response path) and often lets the gateway's upfront estimate equal
+`actualUnits` exactly (no estimate drift).
 
 ## Versioning
 

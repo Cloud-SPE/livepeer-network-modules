@@ -85,9 +85,12 @@ request matches `(capability_id, offering_id)` declared in the
 `CreatePayment` call. If they drift, the receiver refuses. This is the
 "refuse mismatched routing" hard rule from the architecture overview.
 
-The payment blob itself also gains `expected_max_units` so the receiver can
-sanity-check that the sender at least believed the request could fit inside
-the requested face value.
+The payment blob stays wire-compatible. Routing checks moved to the
+combination of:
+
+- `Livepeer-Capability`
+- `Livepeer-Offering`
+- wire `Payment.expected_price`
 
 See [`../../livepeer-network-protocol/headers/livepeer-headers.md`](../../livepeer-network-protocol/headers/livepeer-headers.md)
 for the wire-level spec.
@@ -97,23 +100,20 @@ for the wire-level spec.
 Before (suite):
 
 ```
-CreatePayment(face_value, recipient, Capability, Offering)
-// Capability / Offering were proto enums
+CreatePayment(recipient, accepted_price, funding, ticket_params_base_url)
+// accepted_price carries quote identity + unit pricing basis
 ProcessPayment(payment_bytes, work_id)
 ```
 
 After (rewrite):
 
 ```
-CreatePayment(face_value, recipient,
-              capability_id /* string */,
-              offering_id   /* string */,
-              expected_max_units)
+CreatePayment(recipient,
+              accepted_price,
+              funding,
+              ticket_params_base_url)
 ProcessPayment(payment_bytes,
-               expected_max_units,
-               price_per_unit_wei,
-               capability_id /* string */,
-               offering_id   /* string */)
+               work_id)
 ```
 
 Anything that was an enum on the daemon API is now a string. Anything new is
@@ -173,7 +173,8 @@ Suite-era code that hard-codes capability or work-unit enums needs to:
 1. Replace enum constants with string constants at the call sites.
 2. Carry `capability_id` and `offering_id` through any code path that
    currently destructures the enum.
-3. Add `expected_max_units` to every `CreatePayment` call site.
+3. Replace face-value-only `CreatePayment` calls with the accepted-price +
+   funding request contract.
 4. Update the `Livepeer-Payment` header construction to include the
    `Livepeer-Capability` and `Livepeer-Offering` siblings.
 5. Update the receiver path to compare strings instead of enum values when

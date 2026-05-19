@@ -179,6 +179,73 @@ func TestCreatePayment_NonceAdvances(t *testing.T) {
 	}
 }
 
+func TestCreatePayment_ReusedSessionRefreshesAcceptedQuoteMetadata(t *testing.T) {
+	client, cleanup := stand(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	firstReq := makeCreatePaymentRequest(
+		[]byte("recipient-20-bytes!!"),
+		"openai:chat-completions",
+		"gpt-5",
+		"token",
+		1000,
+		1,
+		1000,
+		"https://broker.example.com",
+	)
+	firstReq.AcceptedPrice.QuoteRef.QuoteId = "quote-a"
+	firstReq.Funding.EstimatedUnits = 10
+	firstReq.Funding.MaxTotalUnits = 10
+
+	secondReq := makeCreatePaymentRequest(
+		[]byte("recipient-20-bytes!!"),
+		"openai:chat-completions",
+		"gpt-5",
+		"token",
+		1000,
+		1,
+		1000,
+		"https://broker.example.com",
+	)
+	secondReq.AcceptedPrice.QuoteRef.QuoteId = "quote-b"
+	secondReq.AcceptedPrice.QuoteRef.QuoteVersion = 7
+	secondReq.Funding.EstimatedUnits = 20
+	secondReq.Funding.MaxTotalUnits = 20
+
+	first, err := client.CreatePayment(ctx, firstReq)
+	if err != nil {
+		t.Fatalf("CreatePayment 1: %v", err)
+	}
+	second, err := client.CreatePayment(ctx, secondReq)
+	if err != nil {
+		t.Fatalf("CreatePayment 2: %v", err)
+	}
+
+	if got := second.GetAcceptedQuoteRef().GetQuoteId(); got != "quote-b" {
+		t.Fatalf("accepted_quote_ref.quote_id = %q; want quote-b", got)
+	}
+	if got := second.GetAcceptedQuoteRef().GetQuoteVersion(); got != 7 {
+		t.Fatalf("accepted_quote_ref.quote_version = %d; want 7", got)
+	}
+
+	var p1, p2 pb.Payment
+	if err := proto.Unmarshal(first.GetPaymentBytes(), &p1); err != nil {
+		t.Fatalf("decode first payment: %v", err)
+	}
+	if err := proto.Unmarshal(second.GetPaymentBytes(), &p2); err != nil {
+		t.Fatalf("decode second payment: %v", err)
+	}
+	if p1.GetTicketSenderParams()[0].GetSenderNonce()+1 != p2.GetTicketSenderParams()[0].GetSenderNonce() {
+		t.Fatalf("nonce stream was not reused across quote refresh: %d -> %d", p1.GetTicketSenderParams()[0].GetSenderNonce(), p2.GetTicketSenderParams()[0].GetSenderNonce())
+	}
+	if got := p2.GetExpectedPrice().GetConstraint(); !strings.Contains(got, "qid=quote-b") || !strings.Contains(got, "est=20") {
+		t.Fatalf("expected_price.constraint = %q; want refreshed quote/estimate metadata", got)
+	}
+}
+
 func TestCreatePayment_UsesAuthoritativeTicketFaceValue(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "tx.sock")

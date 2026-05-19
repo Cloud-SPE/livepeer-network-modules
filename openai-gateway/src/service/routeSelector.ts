@@ -5,7 +5,6 @@ import type { FastifyRequest } from "fastify";
 
 import type { Config } from "../config.js";
 import { HEADER } from "../livepeer/headers.js";
-import { normalizeCapabilityId } from "../livepeer/capabilityMap.js";
 import { RouteHealthTracker, type RouteHealthMetrics, type RouteHealthSnapshot, type RouteOutcome } from "./routeHealth.js";
 
 const RESOLVER_PROTO_FILES = [
@@ -186,7 +185,7 @@ export function createRouteSelector(cfg: Config): RouteSelector {
       const hints = readSelectionHints(input.request);
       const requestedModel = input.offering.trim();
       const matches = snapshot.candidates.filter((candidate) => {
-        if (candidate.capability !== normalizeCapabilityId(input.capability)) return false;
+        if (candidate.capability !== input.capability) return false;
         if (input.interactionMode && candidate.interactionMode && candidate.interactionMode !== input.interactionMode) {
           return false;
         }
@@ -293,7 +292,7 @@ export function collectResolvedResults(
   return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
 }
 
-function flattenResolveResult(resolved: ResolveResult): RouteCandidate[] {
+export function flattenResolveResult(resolved: ResolveResult): RouteCandidate[] {
   const out: RouteCandidate[] = [];
   for (const node of resolved.nodes ?? []) {
     if (!node.enabled || !node.url) continue;
@@ -304,7 +303,7 @@ function flattenResolveResult(resolved: ResolveResult): RouteCandidate[] {
       for (const offering of capability.offerings ?? []) {
         out.push({
           brokerUrl: node.url,
-          capability: normalizeCapabilityId(stripCapabilityModelSuffix(capability.name)),
+          capability: capability.name,
           offering: offering.id,
           model,
           interactionMode: inferInteractionMode(mergedExtra),
@@ -333,12 +332,6 @@ function inferInteractionMode(extra: JsonValue | null): string | null {
   if (!isJsonObject(extra)) return null;
   const mode = extra["interaction_mode"];
   return typeof mode === "string" && mode.trim().length > 0 ? mode.trim() : null;
-}
-
-function stripCapabilityModelSuffix(capabilityName: string): string {
-  const suffix = capabilityModelSuffix(capabilityName);
-  if (!suffix) return capabilityName;
-  return capabilityName.slice(0, -(suffix.length + 1));
 }
 
 function capabilityModelSuffix(capabilityName: string): string {

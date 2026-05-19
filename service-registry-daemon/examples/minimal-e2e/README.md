@@ -19,7 +19,7 @@ You should see logs showing:
 - A signed manifest with three nodes (two AI, one transcoding).
 - A resolver call that returns all three with `signature_status: signed-verified`.
 - A `Select(capability="livepeer:transcoder/h264", offering="h264-main")` call returning one explicit selected route.
-- A `Select(capability="openai:/v1/chat/completions", offering="gpt-oss-20b")` call returning one explicit selected route.
+- A `Select(capability="openai:chat-completions", offering="gpt-oss-20b")` call returning one explicit selected route.
 
 ## What this demonstrates
 

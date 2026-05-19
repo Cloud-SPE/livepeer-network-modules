@@ -1,7 +1,7 @@
 ---
 title: Manifest schema
 status: accepted
-last-reviewed: 2026-05-01
+last-reviewed: 2026-05-19
 ---
 
 # Manifest schema
@@ -46,7 +46,7 @@ Capabilities are intentionally a **flat list of opaque strings** with optional s
 
 ```jsonc
 {
-  "name": "openai:/v1/chat/completions",      // required, opaque string
+  "name": "openai:chat-completions",          // required, opaque string
   "work_unit": "token",                       // optional, opaque string
   "offerings": [                              // optional, may be empty
     {

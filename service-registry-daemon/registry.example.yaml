@@ -13,7 +13,7 @@ overlay:
         url: "https://internal-orch.example.com:8935"
         weight: 50
         capabilities:
-          - name: "openai:/v1/chat/completions"
+          - name: "openai:chat-completions"
             work_unit: token
             offerings:
               - id: "gpt-oss-20b"

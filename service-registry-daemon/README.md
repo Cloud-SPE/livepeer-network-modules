@@ -112,8 +112,8 @@ A single Go program that builds + signs a manifest with two AI nodes and one tra
 Operator address: 0x3ecb9b37a1fded7ce5e21dd90ca8a81879491016
 Signed manifest: 1071 bytes, sig=0x40992373db2c...
 Resolve: mode=well-known nodes=3
-  - ai-east @ https://ai-east.example.com:8935 sig=signed-verified caps=[openai:/v1/chat/completions openai:/v1/embeddings]
-  - ai-west @ https://ai-west.example.com:8935 sig=signed-verified caps=[openai:/v1/chat/completions]
+  - ai-east @ https://ai-east.example.com:8935 sig=signed-verified caps=[openai:chat-completions openai:embeddings]
+  - ai-west @ https://ai-west.example.com:8935 sig=signed-verified caps=[openai:chat-completions]
   - transcoder-1 @ https://orch.example.com:8935 sig=signed-verified caps=[livepeer:transcoder/h264]
 Select(transcoder/h264, h264-main): worker=https://orch.example.com:8935 recipient=0x3ecb9b37a1fded7ce5e21dd90ca8a81879491016 price=2000/frame
 Select(chat/completions, gpt-oss-20b): worker=https://ai-east.example.com:8935 recipient=0x3ecb9b37a1fded7ce5e21dd90ca8a81879491016 price=1000/token
@@ -153,7 +153,7 @@ For the full mental model — **component map, publish/resolve sequence diagrams
 
 - **Explicit resolver registry order** — each resolver deployment reads a primary `--service-registry-address` and may optionally fall back to `--ai-service-registry-address` when the primary registry has no pointer. The returned on-chain `serviceURI` is treated as the manifest URL to fetch. See [`docs/design-docs/serviceuri-modes.md`](docs/design-docs/serviceuri-modes.md).
 - **Signed claims, recovered against chain identity** — every manifest is signed `eth-personal-sign` over canonical bytes. The resolver recovers the signer and verifies it matches the eth address whose `serviceURI` pointed us there. Mismatch is rejected with `signature_mismatch` and never cached. See [`docs/design-docs/signature-scheme.md`](docs/design-docs/signature-scheme.md).
-- **Workload-agnostic capability namespace** — `openai:/v1/chat/completions`, `livepeer:transcoder/h264`, `myco:custom-pipeline-v3` are all opaque to the daemon. No code change needed to ship a new capability type. See [`docs/design-docs/workload-agnostic-strings.md`](docs/design-docs/workload-agnostic-strings.md).
+- **Workload-agnostic capability namespace** — `openai:chat-completions`, `livepeer:transcoder/h264`, `myco:custom-pipeline-v3` are all opaque to the daemon. No code change needed to ship a new capability type. See [`docs/design-docs/workload-agnostic-strings.md`](docs/design-docs/workload-agnostic-strings.md).
 - **Static overlay as policy authority** — the on-chain manifest is canonical for what the operator advertises; operator-curated `nodes.yaml` is canonical for what the consumer accepts (`enabled`, `tier_allowed`, `weight`, `unsigned_allowed`). Augment, don't replace. SIGHUP / fsnotify hot-reload. See [`docs/design-docs/static-overlay.md`](docs/design-docs/static-overlay.md).
 - **Last-good fallback with audit trail** — refresh failures don't evict the cache. Resolver returns the last-good entry with `freshness_status: stale_failing` so consumers can apply their own circuit-breaker policy. Every cache transition is logged to a queryable audit bucket. See [`docs/design-docs/resolver-cache.md`](docs/design-docs/resolver-cache.md).
 - **Boundary-validating decoder** — JSON enters the system through exactly one function (`types.DecodeManifest`), which enforces schema, eth-address case, URL scheme, signature shape, duplicate-id checks. A custom lint (`lint/no-unverified-manifest`) flags any other code that tries to `json.Unmarshal` into a `*types.Manifest`.

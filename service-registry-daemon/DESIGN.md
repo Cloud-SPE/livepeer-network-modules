@@ -9,7 +9,7 @@ A standalone service-registry daemon that decouples orchestrator/worker discover
 
 Apps talk to the daemon over a local unix-socket gRPC. Apps never need to dial Ethereum, parse `serviceURI`, or know anything about the manifest format.
 
-This is workload-agnostic. A capability is an opaque string. The same daemon serves transcoding (`livepeer:transcoder/h264`), AI inference (`openai:/v1/chat/completions`), and anything not yet imagined.
+This is workload-agnostic. A capability is an opaque string. The same daemon serves transcoding (`livepeer:transcoder/h264`), AI inference (`openai:chat-completions`), and anything not yet imagined.
 
 ## Why it exists
 

@@ -1,7 +1,7 @@
 ---
 title: Core beliefs
 status: accepted
-last-reviewed: 2026-05-01
+last-reviewed: 2026-05-19
 ---
 
 # Core beliefs
@@ -18,7 +18,7 @@ Anything not in-repo doesn't exist. Slack threads, Google Docs, and tribal knowl
 
 ## 3. The registry is workload-agnostic
 
-A capability is an opaque string. The registry does not know what `livepeer:transcoder/h264`, `openai:/v1/chat/completions`, or `myco:my-future-thing/v3` mean. There is no AI service, no transcoding service, no openai service. There is one service: capability advertisement. The data inside is opaque to the daemon. Adding a new workload type must require zero code changes in this repo — only documentation and consumer-side parsing.
+A capability is an opaque string. The registry does not know what `livepeer:transcoder/h264`, `openai:chat-completions`, or `myco:my-future-thing/v3` mean. There is no AI service, no transcoding service, no openai service. There is one service: capability advertisement. The data inside is opaque to the daemon. Adding a new workload type must require zero code changes in this repo — only documentation and consumer-side parsing.
 
 ## 4. Backwards compatibility is non-negotiable
 

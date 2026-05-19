@@ -1,7 +1,7 @@
 ---
 title: Static overlay
 status: verified
-last-reviewed: 2026-04-28
+last-reviewed: 2026-05-19
 ---
 
 # Static overlay
@@ -22,8 +22,8 @@ overlay:
       - id: "side-channel-1"
         url: "https://internal.example.com:8935"
         capabilities:
-          - name: "openai:/v1/embeddings"
-            models:
+          - name: "openai:embeddings"
+            offerings:
               - id: "text-embedding-3-small"
                 price_per_work_unit_wei: "100"
         tier_allowed: [prepaid]

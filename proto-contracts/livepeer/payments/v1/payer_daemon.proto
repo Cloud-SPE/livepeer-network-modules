@@ -34,7 +34,7 @@ message CreatePaymentRequest {
   // service-registry-daemon resolver.
   bytes recipient = 2;
 
-  // Capability being purchased, e.g. "openai:/v1/chat/completions". Sender
+  // Capability being purchased, e.g. "openai:chat-completions". Sender
   // mode forwards this to the payee-side ticket-params endpoint so the worker
   // can validate the request against its offered routes.
   string capability = 3;

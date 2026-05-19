@@ -1,7 +1,7 @@
 ---
 title: Worker `/registry/offerings` endpoint
 status: verified
-last-reviewed: 2026-04-29
+last-reviewed: 2026-05-19
 ---
 
 # Worker `/registry/offerings` endpoint
@@ -52,7 +52,7 @@ Content-Type: application/json
   "worker_eth_address": "0x1234...abcd",   // OPTIONAL — orch-internal only
   "capabilities": [
     {
-      "name": "openai:/v1/chat/completions",
+      "name": "openai:chat-completions",
       "work_unit": "token",
       "offerings": [
         {

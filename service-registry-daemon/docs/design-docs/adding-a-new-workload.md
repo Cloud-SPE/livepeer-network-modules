@@ -1,7 +1,7 @@
 ---
 title: Adding a new workload to the suite
 status: verified
-last-reviewed: 2026-04-29
+last-reviewed: 2026-05-19
 ---
 
 # Adding a new workload to the suite
@@ -35,8 +35,8 @@ No coordinator change, no daemon change, no proto regen.
 The capability is an **opaque string** the registry never interprets. Convention
 (per [`workload-agnostic-strings.md`](workload-agnostic-strings.md)):
 
-- `<vendor>:<api-path>` for established API shapes — e.g.
-  `openai:/v1/chat/completions`, `openai:/v1/audio/transcriptions`.
+- `<vendor>:<operation>` for established API shapes — e.g.
+  `openai:chat-completions`, `openai:audio-transcriptions`.
 - `livepeer:<workload>/<variant>` for native Livepeer workloads — e.g.
   `livepeer:transcoder/h264`, `livepeer:vtuber-session`.
 - `<your-org>:<workload>` for new workloads. Pick a stable identifier that

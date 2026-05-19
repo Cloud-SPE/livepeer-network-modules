@@ -1,7 +1,7 @@
 ---
 title: Workload-agnostic capability strings
 status: accepted
-last-reviewed: 2026-04-26
+last-reviewed: 2026-05-19
 ---
 
 # Workload-agnostic capability strings
@@ -14,13 +14,13 @@ The single biggest design constraint of this repo (core-beliefs §3) is that add
 
 ## Convention
 
-`{namespace}:{path-or-name}[/{qualifier}]`
+`{namespace}:{operation}[-{variant}]`
 
 Three parts:
 
 - `namespace` — short identifier for the protocol/family. Examples: `livepeer`, `openai`, `myco`.
-- `path-or-name` — operation identifier within the namespace. URL-safe, lower-case, may contain slashes for hierarchy.
-- `qualifier` (optional) — version, codec, profile.
+- `operation` — operation identifier within the namespace. Lower-case, stable, machine-friendly.
+- `variant` (optional) — extra qualifier when the capability itself, not the offering, needs disambiguation.
 
 ## Reserved namespaces
 
@@ -29,7 +29,7 @@ These are reserved by convention to keep the network coherent. The registry does
 | Namespace | Owner | Examples |
 |---|---|---|
 | `livepeer` | Livepeer protocol | `livepeer:transcoder/h264`, `livepeer:transcoder/hevc`, `livepeer:transcoder/av1`, `livepeer:vtuber-session` |
-| `openai` | OpenAI-compatible HTTP API surface | `openai:/v1/chat/completions`, `openai:/v1/embeddings`, `openai:/v1/images/generations`, `openai:/v1/audio/transcriptions` |
+| `openai` | OpenAI-compatible HTTP API surface | `openai:chat-completions`, `openai:embeddings`, `openai:images-generations`, `openai:audio-transcriptions` |
 | `huggingface` | Hugging Face inference-API style | `huggingface:text-generation`, `huggingface:image-classification` |
 
 Operator-defined capabilities use a namespace the operator owns (e.g. `myco:custom-pipeline-v3`). The registry is workload-agnostic — any namespace works as long as consumers recognize it.
@@ -42,10 +42,14 @@ Anyone may publish a manifest with any string. Consumers ignore strings they don
 
 The capability strings used in the wild today, by source:
 
-- **openai-worker-node** uses `openai:/v1/<endpoint>` form. We adopt
-  this verbatim. In v3.0.1 the orch-coordinator reads the worker's
-  `/registry/offerings` JSON and pre-populates proposal entries with
-  these strings.
+- **Current capability-broker / orch-coordinator examples in this repo** use
+  colon-form OpenAI capability IDs such as `openai:chat-completions`,
+  `openai:embeddings`, and `openai:audio-transcriptions`. Gateways and
+  resolvers should treat the published string as opaque and reuse it exactly.
+- **Older bridge / worker examples** in this repo and adjacent repos may still
+  show slash-form IDs like `openai:/v1/chat/completions`. Treat those as
+  historical examples or compatibility-test inputs, not the preferred current
+  shape.
 - **go-livepeer transcoding** historically used a bitmask `Capability_*` enum (`Capability_TextToImage = 27`, etc.). The canonical form in this stack is the namespaced string per above (`livepeer:ai/text-to-image` and friends — see [`../references/capability-enum-mapping.md`](../references/capability-enum-mapping.md)). Consumers that need the integer form do their own mapping.
 
 ## Models

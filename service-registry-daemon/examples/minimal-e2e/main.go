@@ -61,12 +61,12 @@ func run() error {
 				URL: "https://ai-east.example.com:8935",
 				Capabilities: []types.Capability{
 					{
-						Name:      "openai:/v1/chat/completions",
+						Name:      "openai:chat-completions",
 						WorkUnit:  "token",
 						Offerings: []types.Offering{{ID: "gpt-oss-20b", PricePerWorkUnitWei: "1000"}},
 					},
 					{
-						Name:      "openai:/v1/embeddings",
+						Name:      "openai:embeddings",
 						WorkUnit:  "token",
 						Offerings: []types.Offering{{ID: "text-embedding-3-small", PricePerWorkUnitWei: "900"}},
 					},
@@ -77,7 +77,7 @@ func run() error {
 				URL: "https://ai-west.example.com:8935",
 				Capabilities: []types.Capability{
 					{
-						Name:      "openai:/v1/chat/completions",
+						Name:      "openai:chat-completions",
 						WorkUnit:  "token",
 						Offerings: []types.Offering{{ID: "gpt-oss-20b", PricePerWorkUnitWei: "1100"}},
 					},
@@ -150,7 +150,7 @@ func run() error {
 
 	// Select chat route.
 	chat, _ := srv.Select(ctx, grpc.SelectRequest{
-		Capability: "openai:/v1/chat/completions",
+		Capability: "openai:chat-completions",
 		Offering:   "gpt-oss-20b",
 	})
 	fmt.Printf("Select(chat/completions, gpt-oss-20b): worker=%s recipient=%s price=%s/%s\n",

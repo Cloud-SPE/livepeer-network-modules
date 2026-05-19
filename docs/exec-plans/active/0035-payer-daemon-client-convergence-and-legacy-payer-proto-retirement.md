@@ -1,8 +1,8 @@
 ---
 plan: 0035
 title: Payer-daemon client convergence and legacy payer proto retirement
-status: draft
-phase: design
+status: active
+phase: implementation
 opened: 2026-05-19
 owner: harness
 related:
@@ -12,6 +12,20 @@ related:
 ---
 
 # Plan 0035 — payer-daemon client convergence and legacy payer proto retirement
+
+## 0. Urgency note (added 2026-05-19)
+
+This plan was originally filed as a draft for incremental cleanup, but the
+canonical sender-mode `payment-daemon` server now **requires**
+`AcceptedPrice` and `FundingIntent` on every `CreatePayment` call (see
+`payment-daemon/internal/service/sender/sender.go` validation). All four
+active TS gateway clients (§5.2) still construct the legacy
+`face_value + capability + offering` shape and will fail at request validation
+the moment they point at the canonical server.
+
+The migration is therefore **load-bearing**, not optional cleanup — it
+unblocks Phase 5 of [0034](./0034-priced-funding-and-final-usage-settlement.md).
+Promoted from `drafts/` to `active/`.
 
 ## 1. Problem
 
@@ -76,12 +90,17 @@ Representative code:
 
 ### 5.2 Active or likely-active stale client paths
 
-These need review and likely migration:
+All four still construct the legacy
+`face_value + recipient + capability + offering` shape and need migration to
+`accepted_price + funding`:
 
-- `openai-gateway/src/livepeer/payment.ts`
-- `daydream-gateway/src/paymentClient.ts`
-- `vtuber-gateway/src/providers/payerDaemon.ts`
-- `video-gateway/src/livepeer/payerDaemonClient.ts`
+- `openai-gateway/src/livepeer/payment.ts` — gRPC client, legacy fields
+- `daydream-gateway/src/paymentClient.ts` — gRPC client, legacy fields
+- `vtuber-gateway/src/providers/payerDaemon.ts` — gRPC client, legacy fields
+- `video-gateway/src/livepeer/payerDaemonClient.ts` — **HTTP REST** posting
+  to `/v1/payments` rather than gRPC; additional decision needed on
+  whether to bring it onto the gRPC client or keep an HTTP shim that
+  itself constructs the canonical shape
 
 ### 5.3 Legacy payer proto to retire
 

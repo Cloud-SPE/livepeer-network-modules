@@ -9,6 +9,7 @@ related:
   - "completed plan 0029 — pool node design"
   - "completed plan 0030 — pool backend scoring and broker-integrated selection for OpenAI workloads"
   - "completed plan 0033 — pool control plane onboarding and offer-assignment reset"
+  - "completed plan 0032 — pool live RTMP contract decision"
 ---
 
 # Plan 0031 — Pool follow-up backlog
@@ -57,12 +58,18 @@ behavior from the shipped first slice.
 
 These are low-risk cleanup items that reduce ambiguity around what has shipped.
 
-1. Update `0030` status from `phase: design` once the team agrees it has moved
-   into shipped implementation territory.
-2. Update `0029` status text so the Pool-scoring portions no longer read like
-   pending design when they are already implemented.
-3. Add a short cross-reference from `0029` to `0031` so future readers know
-   where remaining Pool work is tracked.
+1. ~~Update `0030` status from `phase: design` once the team agrees it has moved
+   into shipped implementation territory.~~ **Done** — 0030 is `phase: shipped`.
+2. ~~Update `0029` status text so the Pool-scoring portions no longer read like
+   pending design when they are already implemented.~~ **Done** — 0029 status
+   already reads "completed — the Pool node architecture from this plan is now
+   implemented…".
+3. ~~Add a short cross-reference from `0029` to `0031` so future readers know
+   where remaining Pool work is tracked.~~ **Done** — 0031 cross-references
+   0029, 0030, 0032, 0033 in frontmatter; 0029 links back to 0031 as the
+   follow-up backlog.
+
+P0 is closed. Remaining work begins at P1.
 
 ### P1 — next capability-family expansion
 

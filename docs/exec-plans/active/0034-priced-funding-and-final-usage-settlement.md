@@ -2,7 +2,7 @@
 plan: 0034
 title: Priced funding and final-usage settlement across gateway, broker, and payment-daemon
 status: active
-phase: design
+phase: implementation
 opened: 2026-05-19
 owner: harness
 related:
@@ -15,6 +15,47 @@ related:
 ---
 
 # Plan 0034 — priced funding and final-usage settlement across gateway, broker, and payment-daemon
+
+## 0. Implementation status (added 2026-05-19)
+
+The contract redesign in this plan is **partially shipped**. Phases 1–3 are
+substantially landed via commit `17dbaf2 registry+pool+gateway: always-on
+constraint fingerprint + broker_quote_rejected` and `17dbaf2 payments: carry
+accepted quote through funding and settlement`. The §1 problem description
+below is preserved for historical context but is no longer the current
+state of the code.
+
+Done:
+
+- Canonical `CreatePaymentRequest` now carries `accepted_price` (with
+  `QuoteRef`) and `funding` instead of face-value-only.
+  See `livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto`.
+- New canonical messages `QuoteRef`, `AcceptedPrice`, `FundingIntent`, and
+  `SettlementRecord` defined in `livepeer-network-protocol/proto/livepeer/payments/v1/types.proto`.
+- Sender-mode `payment-daemon` populates `Payment.expected_price` from the
+  accepted quote basis. See `payment-daemon/internal/service/sender/sender.go`
+  (`expected_price` is no longer canonical-zero on the quote-free path).
+- Sender validates the incoming quote/funding metadata and rejects incoherent
+  requests.
+- Conformance runner constructs the canonical request shape.
+- Broker emits `broker_quote_rejected` when the incoming payment's quote
+  identity disagrees with the resolver's view, closing the validation loop
+  described in §6.3.
+
+Remaining:
+
+- **Phase 4 (broker settlement)** — settlement record emission on paid HTTP
+  paths and streaming/session surfaces; stop/top-up policy plumbing.
+- **Phase 5 (gateway adoption)** — the four TS gateway clients
+  (`openai-gateway`, `daydream-gateway`, `vtuber-gateway`, `video-gateway`)
+  still construct the legacy face-value request shape and will fail against
+  the canonical sender. Migration is tracked in
+  [`0035-payer-daemon-client-convergence-and-legacy-payer-proto-retirement.md`](./0035-payer-daemon-client-convergence-and-legacy-payer-proto-retirement.md).
+- **Phase 6 (cutover)** — depends on Phase 5; also depends on retiring the
+  duplicate legacy proto at `proto-contracts/livepeer/payments/v1/payer_daemon.proto`.
+
+The success criteria in §10 should be re-evaluated against this status when
+this plan moves toward completed.
 
 ## 1. Problem
 
@@ -547,14 +588,14 @@ For streaming/session modes, settlement metadata must be available via:
 
 ## 8. Execution
 
-### Phase 1 — immediate correctness fix
+### Phase 1 — immediate correctness fix ✅ done
 
 - fix current sender-mode `expected_price` population so newly minted payments stop
   serializing zero-valued price info when the necessary quote data is available
 - ship seed-correctness fixes and any other blocking wire bugs independently of the
   larger contract redesign
 
-### Phase 2 — contract design
+### Phase 2 — contract design ✅ done
 
 - define canonical quote/funding/usage vocabulary in the protocol docs
 - define how `PriceInfo` maps to gateway-facing quote structures
@@ -562,28 +603,28 @@ For streaming/session modes, settlement metadata must be available via:
 - decide how constraint/version fingerprints are represented
 - choose canonical numeric wire types for counts and money-like fields
 
-### Phase 3 — proto and daemon changes
+### Phase 3 — proto and daemon changes ✅ done
 
 - extend `CreatePaymentRequest`
 - populate `Payment.expected_price` from accepted quote data
 - reject missing/invalid quote metadata in sender mode
 - regenerate committed protobuf bindings
 
-### Phase 4 — broker accounting and settlement
+### Phase 4 — broker accounting and settlement ⏳ in progress
 
 - add actual-usage settlement surfaces on paid paths
 - plumb canonical billed units through mode drivers / extractors
 - make stop/top-up policy explicit for long-lived flows
 - ensure broker-side settlement is the authoritative record returned to gateways
 
-### Phase 5 — gateway adoption
+### Phase 5 — gateway adoption ⏳ blocked on 0035
 
 - persist accepted quote metadata per request/session
 - pass quote + funding metadata into `CreatePayment`
 - consume and store settlement metadata
 - update retail billing and retry logic around underfund / overfund / topped-up flows
 
-### Phase 6 — cutover
+### Phase 6 — cutover ⏳ blocked on Phase 5
 
 - switch all callers to the quote-aware `CreatePayment`
 - require broker settlement responses on paid execution paths

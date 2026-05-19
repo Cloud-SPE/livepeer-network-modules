@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/poolscope"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/backendverify"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
@@ -126,6 +127,11 @@ func validateJoinRequest(req types.JoinRequest) error {
 		}
 		if strings.TrimSpace(backend.URL) == "" {
 			return fmt.Errorf("requested_backends[%d].url is required", i)
+		}
+		for j, claim := range backend.ClaimedCapabilities {
+			if err := poolscope.EnsureSupportedClaim(claim.CapabilityID, claim.InteractionMode); err != nil {
+				return fmt.Errorf("requested_backends[%d].claimed_capabilities[%d]: %w", i, j, err)
+			}
 		}
 	}
 	return nil

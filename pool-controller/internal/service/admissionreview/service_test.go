@@ -1,6 +1,7 @@
 package admissionreview
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -72,5 +73,23 @@ func TestBuildJoinRequestPreviewAndApprove(t *testing.T) {
 	members, err := stateRepo.ListMembers()
 	if err != nil || len(members) != 1 {
 		t.Fatalf("ListMembers() members=%d err=%v", len(members), err)
+	}
+}
+
+func TestBuildJoinClaimPreviewFlagsOutOfPoolScope(t *testing.T) {
+	view := BuildJoinClaimPreview(types.ClaimedOffer{
+		CapabilityID:    "video:live.rtmp",
+		OfferingID:      "live-default",
+		InteractionMode: "rtmp-ingress-hls-egress@v0",
+	}, nil)
+	if view.Servable {
+		t.Fatalf("expected non-servable preview, got %#v", view)
+	}
+	joined := strings.Join(view.Reasons, "; ")
+	if !strings.Contains(joined, "video:live.rtmp") {
+		t.Fatalf("preview.Reasons missing capability reference: %q", joined)
+	}
+	if !strings.Contains(joined, "0032") {
+		t.Fatalf("preview.Reasons missing 0032 cite: %q", joined)
 	}
 }

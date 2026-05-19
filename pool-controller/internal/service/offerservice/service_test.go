@@ -43,3 +43,52 @@ func TestCreateAndUpdateOffer(t *testing.T) {
 		t.Fatalf("duplicate Create() err = %v", err)
 	}
 }
+
+func TestCreateRejectsOutOfPoolScopeOffers(t *testing.T) {
+	stateRepo, err := repo.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer func() { _ = stateRepo.Close() }()
+
+	cases := []struct {
+		name            string
+		capabilityID    string
+		interactionMode string
+		wantSubstring   string
+	}{
+		{
+			name:            "video live rtmp capability",
+			capabilityID:    "video:live.rtmp",
+			interactionMode: "http-reqresp@v0",
+			wantSubstring:   "video:live.rtmp",
+		},
+		{
+			name:            "rtmp ingress hls egress interaction mode",
+			capabilityID:    "video:transcode.abr",
+			interactionMode: "rtmp-ingress-hls-egress@v0",
+			wantSubstring:   "rtmp-ingress-hls-egress@v0",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Create(stateRepo, Mutation{
+				ID:              "offer-" + tc.name,
+				CapabilityID:    tc.capabilityID,
+				OfferingID:      "any",
+				InteractionMode: tc.interactionMode,
+				WorkUnit:        config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
+				Price:           config.Price{AmountWei: "1", PerUnits: 1},
+			})
+			if err == nil {
+				t.Fatalf("Create() expected rejection, got nil error")
+			}
+			if !strings.Contains(err.Error(), tc.wantSubstring) {
+				t.Fatalf("Create() err = %q, missing %q", err.Error(), tc.wantSubstring)
+			}
+			if !strings.Contains(err.Error(), "0032") {
+				t.Fatalf("Create() err = %q, expected reference to plan 0032", err.Error())
+			}
+		})
+	}
+}

@@ -1,8 +1,8 @@
 ---
 plan: 0032
 title: Pool live RTMP contract decision
-status: active
-phase: design
+status: completed
+phase: shipped
 opened: 2026-05-18
 owner: harness
 related:
@@ -67,22 +67,33 @@ future directions include:
 
 Those are follow-up design tasks, not part of this decision.
 
-## 5. Implementation
+## 5. Implementation status
 
-`pool-controller` config validation now rejects:
+Shipped (as of 2026-05-19):
 
-- `video:live.rtmp`
-- `rtmp-ingress-hls-egress@v0`
-
-in member/backend/offering records, with an error that explains the current
-Pool limitation.
-
-Docs should point operators at `0032` when they try to use Pool for live RTMP.
+- **Operator docs**: `pool-controller/README.md` documents the limitation and
+  links to this plan.
+- **Probe-layer behavior**: `pool-controller/internal/service/probes/probes.go`
+  returns `capability_out_of_scope` for `video:live.rtmp`, so the workload is
+  unsupported by the scoring path.
+- **Explicit config-level rejection**: `pool-controller/internal/poolscope`
+  codifies the rejected `capability_id` and `interaction_mode` strings and
+  exposes `EnsureSupportedClaim`. The check is wired into:
+  - `internal/service/offerservice` — admin-side offer create/update
+  - `internal/server/member` — member join-request submission
+  - `internal/service/admissionreview` — operator-facing join-claim preview
+  Each rejection error cites this plan.
+- **Tests**: `poolscope_test.go` covers the helper directly; each wired
+  surface has a regression test asserting both the string match and the
+  plan citation.
 
 ## 6. Exit criteria
 
 This plan can move to completed when:
 
-1. validation is in place
-2. operator docs mention the limitation
-3. `0031` points at this plan instead of carrying the blocker only as a note
+1. explicit validation rejects the two strings in member/backend/offering
+   records with a clear error — **done**
+2. operator docs mention the limitation — **done**
+3. `0031` points at this plan — **done** (frontmatter `related:` and body)
+
+All exit criteria met. Plan is ready to move to `completed/`.

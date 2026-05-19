@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/poolscope"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
@@ -123,6 +124,9 @@ func updatedOfferFromMutation(current types.Offer, req Mutation) (types.Offer, e
 }
 
 func validateOffer(offer types.Offer) error {
+	if err := poolscope.EnsureSupportedClaim(offer.CapabilityID, offer.InteractionMode); err != nil {
+		return err
+	}
 	switch offer.Status {
 	case types.OfferStatusActive, types.OfferStatusDisabled:
 	default:

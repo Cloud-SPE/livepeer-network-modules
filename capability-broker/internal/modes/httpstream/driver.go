@@ -104,8 +104,10 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 
 	// Declare the trailer BEFORE WriteHeader. Go's http server will use
 	// chunked transfer encoding (no Content-Length) and append the trailer
-	// after the body when we set its value below.
-	p.Writer.Header().Set("Trailer", livepeerheader.WorkUnits)
+	// after the body when we set its value below. Use Add so any
+	// Trailer values already declared by upstream middleware (e.g. the
+	// payment middleware's X-Livepeer-Settlement trailer) survive.
+	p.Writer.Header().Add("Trailer", livepeerheader.WorkUnits)
 
 	for k, vs := range resp.Header {
 		if shouldCopyHeader(k) {

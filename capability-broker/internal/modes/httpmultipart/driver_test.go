@@ -43,6 +43,48 @@ func (s outcomeSink) ReportBackendOutcome(_ context.Context, outcome poolreport.
 	return nil
 }
 
+// TestServePreservesUpstreamTrailerDeclarations confirms the multipart
+// driver does not clobber any Trailer header declared by upstream
+// middleware. The payment middleware declares Trailer:
+// X-Livepeer-Settlement before this driver runs; that declaration must
+// survive so the settlement trailer is emitted after the body.
+func TestServePreservesUpstreamTrailerDeclarations(t *testing.T) {
+	d := New()
+	w := httptest.NewRecorder()
+	const upstreamTrailer = "X-Livepeer-Settlement"
+	w.Header().Add("Trailer", upstreamTrailer)
+	req := httptest.NewRequest(http.MethodPost, "/v1/cap", bytes.NewBufferString(`body`))
+	err := d.Serve(context.Background(), modes.Params{
+		Writer:  w,
+		Request: req,
+		Capability: &config.Capability{
+			ID:         "openai:audio-transcription",
+			OfferingID: "shared",
+			Backend:    config.Backend{ID: "backend-a", URL: "http://backend-a"},
+		},
+		Extractor: stubExtractor{units: 3},
+		Backend: stubForwarder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Serve() error = %v", err)
+	}
+	declared := w.Header().Values("Trailer")
+	found := false
+	for _, v := range declared {
+		if v == upstreamTrailer {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("upstream-declared trailer %q lost; got Trailer=%v", upstreamTrailer, declared)
+	}
+}
+
 func TestServeReportsCallerFailureForFourHundred(t *testing.T) {
 	d := New()
 	w := httptest.NewRecorder()

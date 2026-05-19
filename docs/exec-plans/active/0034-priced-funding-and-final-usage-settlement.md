@@ -41,11 +41,31 @@ Done:
 - Broker emits `broker_quote_rejected` when the incoming payment's quote
   identity disagrees with the resolver's view, closing the validation loop
   described in §6.3.
+- Broker emits `SettlementRecord` as the `X-Livepeer-Settlement` trailer
+  on all HTTP-shaped paid paths (`http-reqresp@v0`, `http-stream@v0`,
+  `http-multipart@v0`). See
+  `capability-broker/internal/server/middleware/settlement.go` and
+  `payment.go`. The `http-stream` driver previously clobbered the
+  middleware's trailer declaration; that is fixed with a regression test
+  in `internal/modes/httpstream/driver_test.go`.
+- Termination-reason plumbing: when the interim-debit ticker terminates a
+  session for insufficient balance, the resulting `SettlementRecord` now
+  reports `STOPPED_AT_BUDGET` rather than `UNDERFUNDED`. Outcome coverage
+  for `EXACT` / `UNDERFUNDED` / `OVERFUNDED` / `STOPPED_AT_BUDGET` lives in
+  `internal/server/middleware/settlement_test.go`.
 
 Remaining:
 
-- **Phase 4 (broker settlement)** — settlement record emission on paid HTTP
-  paths and streaming/session surfaces; stop/top-up policy plumbing.
+- **Phase 4 (broker settlement) — remaining pieces** explicitly deferred:
+  - RTMP-ingress/HLS-egress and websocket session-control modes do not yet
+    emit settlement (would require a session-status endpoint or
+    terminal-event mechanism, per §7.3). Will be scoped as a separate
+    follow-up plan.
+  - `TOPPED_UP` outcome / mid-session top-up RPC is intentionally deferred
+    until the explicit session model from §4.4 / §5.3 lands. The
+    `GraceOnInsufficient` placeholder remains wired but unused.
+  - `BilledUnits != ActualUnits` placeholder retained — no shipped workload
+    needs the distinction yet.
 - **Phase 5 (gateway adoption)** — the four TS gateway clients
   (`openai-gateway`, `daydream-gateway`, `vtuber-gateway`, `video-gateway`)
   still construct the legacy face-value request shape and will fail against
@@ -610,12 +630,23 @@ For streaming/session modes, settlement metadata must be available via:
 - reject missing/invalid quote metadata in sender mode
 - regenerate committed protobuf bindings
 
-### Phase 4 — broker accounting and settlement ⏳ in progress
+### Phase 4 — broker accounting and settlement ⏳ HTTP done, streaming/session deferred
 
 - add actual-usage settlement surfaces on paid paths
+  - ✅ HTTP unary, http-stream, http-multipart
+  - ⏳ RTMP ingress/HLS egress, websocket session-control — deferred to a
+    follow-up plan that designs the session-status surface
 - plumb canonical billed units through mode drivers / extractors
+  - ✅ canonical work unit name carried in `SettlementRecord.work_unit_name`
+  - ⏳ `BilledUnits != ActualUnits` placeholder retained until a workload
+    needs the distinction
 - make stop/top-up policy explicit for long-lived flows
+  - ✅ stop-at-budget: ticker-driven terminations emit
+    `STOPPED_AT_BUDGET`
+  - ⏳ top-up: deferred with the explicit session model
 - ensure broker-side settlement is the authoritative record returned to gateways
+  - ✅ HTTP paths emit `SettlementRecord` as the `X-Livepeer-Settlement`
+    response trailer
 
 ### Phase 5 — gateway adoption ⏳ blocked on 0035
 

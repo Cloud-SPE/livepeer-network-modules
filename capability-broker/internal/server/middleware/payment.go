@@ -355,8 +355,10 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			//    balance, record the cause for any post-mortem
 			//    observability. Trailer-style Livepeer-Error emission is
 			//    a future plan-0015 follow-up; the v0.1 cut logs at WARN.
+			var terminationReasonValue string
 			if reason := terminationReason.Load(); reason != nil {
-				log.Printf("warning: interim-debit terminated work_id=%s reason=%s", workID, *reason)
+				terminationReasonValue = *reason
+				log.Printf("warning: interim-debit terminated work_id=%s reason=%s", workID, terminationReasonValue)
 			}
 
 			if receiptSink != nil && actual > 0 {
@@ -382,7 +384,7 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				}
 			}
 
-			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit); settlement != nil {
+			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue); settlement != nil {
 				if encoded, err := encodeSettlementRecord(settlement); err == nil {
 					rec.Header().Set(livepeerheader.Settlement, encoded)
 				} else {

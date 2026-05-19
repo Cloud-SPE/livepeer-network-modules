@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -25,7 +26,7 @@ func encodeSettlementRecord(record *pb.SettlementRecord) (string, error) {
 	return base64.StdEncoding.EncodeToString(raw), nil
 }
 
-func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualUnits uint64, currentWorkUnit string) *pb.SettlementRecord {
+func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualUnits uint64, currentWorkUnit string, terminationReason string) *pb.SettlementRecord {
 	var pay pb.Payment
 	if err := proto.Unmarshal(paymentBytes, &pay); err != nil {
 		return nil
@@ -54,6 +55,12 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 		outcome = pb.SettlementRecord_UNDERFUNDED
 	case 1:
 		outcome = pb.SettlementRecord_OVERFUNDED
+	}
+	// A budget-driven termination takes precedence over the funded/billed
+	// comparison: the session stopped because runway was exhausted, not
+	// because the gateway happened to over- or under-fund the request.
+	if terminationReason == livepeerheader.ErrInsufficientBalance {
+		outcome = pb.SettlementRecord_STOPPED_AT_BUDGET
 	}
 
 	workUnit := meta.workUnitName

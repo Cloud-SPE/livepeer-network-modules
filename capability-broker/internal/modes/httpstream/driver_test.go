@@ -43,6 +43,57 @@ func (s outcomeSink) ReportBackendOutcome(_ context.Context, outcome poolreport.
 	return nil
 }
 
+// TestServePreservesUpstreamTrailerDeclarations confirms the driver
+// appends its Livepeer-Work-Units trailer to whatever Trailer header
+// upstream middleware already declared (e.g. the payment middleware's
+// X-Livepeer-Settlement trailer). A previous version used Header().Set
+// which clobbered the upstream declaration and silently dropped the
+// settlement trailer.
+func TestServePreservesUpstreamTrailerDeclarations(t *testing.T) {
+	d := New()
+	w := httptest.NewRecorder()
+	// Simulate the payment middleware declaring its trailer before the
+	// driver runs.
+	const upstreamTrailer = "X-Livepeer-Settlement"
+	w.Header().Add("Trailer", upstreamTrailer)
+	req := httptest.NewRequest(http.MethodPost, "/v1/cap", bytes.NewBufferString(`{"prompt":"hi"}`))
+	err := d.Serve(context.Background(), modes.Params{
+		Writer:  w,
+		Request: req,
+		Capability: &config.Capability{
+			ID:         "openai:chat-completions",
+			OfferingID: "shared",
+			Backend:    config.Backend{ID: "backend-a", URL: "http://backend-a"},
+		},
+		Extractor: stubExtractor{units: 7},
+		Backend: stubForwarder{resp: &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Serve() error = %v", err)
+	}
+	declared := w.Header().Values("Trailer")
+	hasUpstream := false
+	hasWorkUnits := false
+	for _, v := range declared {
+		if v == upstreamTrailer {
+			hasUpstream = true
+		}
+		if v == "Livepeer-Work-Units" {
+			hasWorkUnits = true
+		}
+	}
+	if !hasUpstream {
+		t.Fatalf("upstream-declared trailer %q lost; got Trailer=%v", upstreamTrailer, declared)
+	}
+	if !hasWorkUnits {
+		t.Fatalf("driver-declared Livepeer-Work-Units trailer missing; got Trailer=%v", declared)
+	}
+}
+
 func TestServeReportsBackendFailureForFiveHundred(t *testing.T) {
 	d := New()
 	w := httptest.NewRecorder()

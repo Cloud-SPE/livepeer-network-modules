@@ -187,7 +187,7 @@ capabilities:
   # longer broker-local but the gateway still talks to the broker for open,
   # top-up, status, and end.
   #
-  # - id: "livepeer:transcode/live-rtmp-hls-abr"
+  # - id: "video:transcode.live"
   #   offering_id: "default"
   #   interaction_mode: "live-session-remote-runner@v0"
   #   work_unit:
@@ -214,6 +214,10 @@ capabilities:
   #   constraints:
   #     tier: "standard"
   #     gpu_vendor: "NVIDIA"
+  #
+  # To advertise the gateway-owned ingest topology alongside this one,
+  # reuse id: "video:transcode.live" with a distinct offering_id such as
+  # "gateway-ingest" and interaction_mode: "live-session-gateway-ingest@v0".
 
   # ---- VTuber session runtime (session-control-plus-media) ----
   #

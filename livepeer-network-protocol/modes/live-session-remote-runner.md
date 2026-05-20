@@ -221,7 +221,7 @@ equivalent operator-configured mechanism.
 {
   "broker_session_id": "bsess_01jv6f6w0rpk6n6k7e2f1v9r9a",
   "work_id": "3f8a1dd7-4cf1-4f4b-b7b3-bbdf819e63b4",
-  "capability_id": "livepeer:transcode/live-rtmp-hls-abr",
+  "capability_id": "video:transcode.live",
   "offering_id": "default",
   "session_params": {
     "name": "launch-stream"

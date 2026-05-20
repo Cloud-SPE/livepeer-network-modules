@@ -849,9 +849,28 @@ func TestValidateRejectsSessionRunnerMissingImage(t *testing.T) {
 
 func remoteLiveRunnerCap() Capability {
 	return Capability{
-		ID:              "livepeer:transcode/live-rtmp-hls-abr",
+		ID:              "video:transcode.live",
 		OfferingID:      "default",
 		InteractionMode: "live-session-remote-runner@v0",
+		WorkUnit: WorkUnit{
+			Name:      "output_seconds",
+			Extractor: map[string]any{"type": "seconds-elapsed"},
+		},
+		Price: Price{AmountWei: "1", PerUnits: 1},
+		Backend: Backend{
+			Transport: "remote-live-runner",
+			LiveRunner: &LiveRunnerBackend{
+				BaseURL: "https://runner.example.com",
+			},
+		},
+	}
+}
+
+func gatewayIngestCap() Capability {
+	return Capability{
+		ID:              "video:transcode.live",
+		OfferingID:      "gateway-ingest",
+		InteractionMode: "live-session-gateway-ingest@v0",
 		WorkUnit: WorkUnit{
 			Name:      "output_seconds",
 			Extractor: map[string]any{"type": "seconds-elapsed"},
@@ -891,6 +910,32 @@ func TestValidateRejectsRemoteLiveRunnerMissingBlock(t *testing.T) {
 
 func TestValidateRejectsLiveSessionRemoteRunnerWithNonRunnerTransport(t *testing.T) {
 	cap := remoteLiveRunnerCap()
+	cap.Backend = Backend{
+		Transport: "http",
+		URL:       "http://runner.example.com",
+	}
+	cfg := &Config{
+		Identity:     Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{cap},
+	}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "requires backend.transport=remote-live-runner") {
+		t.Fatalf("Validate() error = %v; want mode/transport pairing error", err)
+	}
+}
+
+func TestValidateAcceptsGatewayIngestRunnerTransport(t *testing.T) {
+	cfg := &Config{
+		Identity:     Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{gatewayIngestCap()},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestValidateRejectsGatewayIngestWithNonRunnerTransport(t *testing.T) {
+	cap := gatewayIngestCap()
 	cap.Backend = Backend{
 		Transport: "http",
 		URL:       "http://runner.example.com",

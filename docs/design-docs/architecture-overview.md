@@ -243,7 +243,7 @@ The fixed wire contracts. Capabilities pick one. Initial set:
 | `ws-realtime` | bidirectional WebSocket | `openai:realtime`, vtuber `/control` |
 | `rtmp-ingress-hls-egress` | RTMP in → HLS manifest+segments out | `video:live.rtmp` |
 | `session-control-plus-media` | HTTP session-open → broker-managed long-lived media/runtime plane | `livepeer:vtuber-session` |
-| `live-session-remote-runner` | HTTP session-open -> broker authority + remote runner-owned live RTMP/HLS runtime | `livepeer:transcode/live-rtmp-hls-abr` |
+| `live-session-remote-runner` | HTTP session-open -> broker authority + remote runner-owned live RTMP/HLS runtime | `video:transcode.live` |
 
 Each mode is implemented once in the broker, once in the gateway. **New capability
 under an existing mode = zero code.** New mode = one adapter on each side.

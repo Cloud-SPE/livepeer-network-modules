@@ -80,6 +80,8 @@ type liveRunnerStub struct {
 	createCalls   int
 	deleteCalls   int
 	lastDeleteRaw map[string]any
+	lastCreateReq liveRunnerCreateRequest
+	createResp    *liveRunnerCreateResponse
 }
 
 func newLiveRunnerStub(t *testing.T) (*liveRunnerStub, *httptest.Server) {
@@ -92,15 +94,28 @@ func newLiveRunnerStub(t *testing.T) (*liveRunnerStub, *httptest.Server) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode create request: %v", err)
 			}
+			stub.lastCreateReq = req
 			if req.BrokerCallbacks.EventURL == "" || req.BrokerCallbacks.AuthToken == "" {
 				t.Fatalf("missing broker callback fields: %+v", req.BrokerCallbacks)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(liveRunnerCreateResponse{
+			resp := liveRunnerCreateResponse{
 				RunnerSessionID: "rsess_test",
 				State:           "ready",
 				CreatedAt:       "2026-05-20T19:11:57Z",
-				Media: liveRunnerMedia{
+			}
+			if stub.createResp != nil {
+				resp = *stub.createResp
+			}
+			if req.IngestAccept != nil || req.OutputCredential != nil {
+				if stub.createResp == nil && resp.PrivateIngestURL == "" {
+					resp.PrivateIngestURL = "rtmp://198.51.100.42:19350/live/gws_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+				}
+				if stub.createResp == nil && resp.ExpiresAt == "" {
+					resp.ExpiresAt = "2026-05-20T22:10:00Z"
+				}
+			} else if stub.createResp == nil && resp.Media.Ingest.RTMPURL == "" && resp.Media.Playback.HLSURL == "" {
+				resp.Media = liveRunnerMedia{
 					Ingest: struct {
 						RTMPURL   string `json:"rtmp_url"`
 						StreamKey string `json:"stream_key,omitempty"`
@@ -113,8 +128,9 @@ func newLiveRunnerStub(t *testing.T) (*liveRunnerStub, *httptest.Server) {
 					}{
 						HLSURL: "https://playback.example.com/live/rsess_test/master.m3u8",
 					},
-				},
-			})
+				}
+			}
+			_ = json.NewEncoder(w).Encode(resp)
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/video/live/sessions/rsess_test":
 			stub.deleteCalls++
 			var raw map[string]any
@@ -140,30 +156,56 @@ func newLiveRunnerTestServer(t *testing.T, creditWei int64, minRunwayUnits uint6
 	t.Helper()
 	runnerStub, runnerHTTP := newLiveRunnerStub(t)
 	cfg := &config.Config{
-		Capabilities: []config.Capability{{
-			ID:              "livepeer:transcode/live-rtmp-hls-abr",
-			OfferingID:      "default",
-			InteractionMode: "live-session-remote-runner@v0",
-			WorkUnit: config.WorkUnit{
-				Name: "output_seconds",
-				Extractor: map[string]any{
-					"type":        "seconds-elapsed",
-					"granularity": 1,
+		Capabilities: []config.Capability{
+			{
+				ID:              "video:transcode.live",
+				OfferingID:      "default",
+				InteractionMode: "live-session-remote-runner@v0",
+				WorkUnit: config.WorkUnit{
+					Name: "output_seconds",
+					Extractor: map[string]any{
+						"type":        "seconds-elapsed",
+						"granularity": 1,
+					},
 				},
-			},
-			Price: config.Price{
-				AmountWei: "1",
-				PerUnits:  1,
-			},
-			Backend: config.Backend{
-				ID:        "runner-a",
-				Transport: remoteLiveRunnerTransport,
-				LiveRunner: &config.LiveRunnerBackend{
-					BaseURL: runnerHTTP.URL,
+				Price: config.Price{
+					AmountWei: "1",
+					PerUnits:  1,
 				},
+				Backend: config.Backend{
+					ID:        "runner-a",
+					Transport: remoteLiveRunnerTransport,
+					LiveRunner: &config.LiveRunnerBackend{
+						BaseURL: runnerHTTP.URL,
+					},
+				},
+				Health: config.Health{InitialStatus: "ready"},
 			},
-			Health: config.Health{InitialStatus: "ready"},
-		}},
+			{
+				ID:              "video:transcode.live",
+				OfferingID:      "gateway-ingest",
+				InteractionMode: "live-session-gateway-ingest@v0",
+				WorkUnit: config.WorkUnit{
+					Name: "output_seconds",
+					Extractor: map[string]any{
+						"type":        "seconds-elapsed",
+						"granularity": 1,
+					},
+				},
+				Price: config.Price{
+					AmountWei: "1",
+					PerUnits:  1,
+				},
+				Backend: config.Backend{
+					ID:        "runner-b",
+					Transport: remoteLiveRunnerTransport,
+					LiveRunner: &config.LiveRunnerBackend{
+						BaseURL: runnerHTTP.URL,
+					},
+				},
+				Health: config.Health{InitialStatus: "ready"},
+			},
+		},
 	}
 	paymentClient := newCreditingPaymentClient(creditWei)
 	srv := &Server{
@@ -188,14 +230,22 @@ func newLiveRunnerTestServer(t *testing.T, creditWei int64, minRunwayUnits uint6
 
 func liveOpen(t *testing.T, httpSrv *httptest.Server) liveSessionOpenResponse {
 	t.Helper()
-	body := `{"gateway_session_id":"gw-123","session_params":{"name":"launch-stream"}}`
+	return liveOpenWithRequest(t, httpSrv,
+		"video:transcode.live",
+		"default",
+		"live-session-remote-runner@v0",
+		`{"gateway_session_id":"gw-123","session_params":{"name":"launch-stream"}}`)
+}
+
+func liveOpenWithRequest(t *testing.T, httpSrv *httptest.Server, capabilityID, offeringID, mode, body string) liveSessionOpenResponse {
+	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, httpSrv.URL+"/v1/cap", bytes.NewBufferString(body))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set(livepeerheader.Capability, "livepeer:transcode/live-rtmp-hls-abr")
-	req.Header.Set(livepeerheader.Offering, "default")
-	req.Header.Set(livepeerheader.Mode, "live-session-remote-runner@v0")
+	req.Header.Set(livepeerheader.Capability, capabilityID)
+	req.Header.Set(livepeerheader.Offering, offeringID)
+	req.Header.Set(livepeerheader.Mode, mode)
 	req.Header.Set(livepeerheader.SpecVersion, "0.1")
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("dummy-payment")))
 	req.Header.Set(livepeerheader.RequestID, "req-open")
@@ -366,6 +416,142 @@ func TestRemoteLiveRunnerFailureClosesPaymentState(t *testing.T) {
 	}
 	if sessions := paymentClient.Sessions(); len(sessions) != 1 || !sessions[0].Closed {
 		t.Fatalf("payment session not closed: %+v", sessions)
+	}
+}
+
+func TestGatewayIngestOpenAndStatusOmitBrokerOwnedMedia(t *testing.T) {
+	srv, _, runnerStub, httpSrv := newLiveRunnerTestServer(t, 10, 2)
+	openResp := liveOpenWithRequest(t, httpSrv,
+		"video:transcode.live",
+		"gateway-ingest",
+		"live-session-gateway-ingest@v0",
+		`{"gateway_session_id":"gw-456","session_params":{"name":"launch-stream"},"output_credential":{"endpoint":"https://s3-dev.xode.app","region":"us-east-1","bucket":"lvp-video-ingest","key_prefix":"live-out/084357a5/6d8f4a4d/","access_key_id":"AKIAxxxxxxxxxxxxxxxxxx","secret_access_key":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","session_token":"FwoGZXIvYXdzEN...","expires_at":"2026-05-20T22:10:00Z"},"ingest_accept":{"stream_key":"gws_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`)
+	if openResp.PrivateIngestURL == "" || openResp.Media != nil || openResp.GatewaySessionID != "" {
+		t.Fatalf("unexpected gateway-ingest open response: %+v", openResp)
+	}
+	if runnerStub.lastCreateReq.OutputCredential == nil || runnerStub.lastCreateReq.IngestAccept == nil {
+		t.Fatalf("runner create request missing gateway-ingest fields: %+v", runnerStub.lastCreateReq)
+	}
+	if runnerStub.lastCreateReq.IngestAccept.StreamKey != "gws_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" {
+		t.Fatalf("unexpected runner stream key: %+v", runnerStub.lastCreateReq.IngestAccept)
+	}
+
+	readyPayload := `{"broker_session_id":"` + openResp.BrokerSessionID + `","runner_session_id":"` + openResp.RunnerSessionID + `","event_id":"evt-ready","sequence":1,"event_type":"session.ready","event_time":"2026-05-20T19:12:08Z","state":"ready","usage":{"unit":"output_seconds","delta":0,"total":0},"details":{}}`
+	publishPayload := `{"broker_session_id":"` + openResp.BrokerSessionID + `","runner_session_id":"` + openResp.RunnerSessionID + `","event_id":"evt-pub","sequence":2,"event_type":"session.publish_started","event_time":"2026-05-20T19:12:09Z","state":"publishing","usage":{"unit":"output_seconds","delta":0,"total":0},"details":{}}`
+	for _, payload := range []string{readyPayload, publishPayload} {
+		req, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/internal/v1/live/events", bytes.NewBufferString(payload))
+		req.Header.Set("Authorization", "Bearer "+mustCallbackToken(t, srv, openResp.BrokerSessionID))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("event request: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("event status=%d", resp.StatusCode)
+		}
+	}
+
+	statusResp, err := http.Get(httpSrv.URL + "/v1/cap/" + openResp.BrokerSessionID)
+	if err != nil {
+		t.Fatalf("status request: %v", err)
+	}
+	defer statusResp.Body.Close()
+	var status liveSessionStatusResponse
+	if err := json.NewDecoder(statusResp.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.Media != nil || status.State != "publishing" || status.StartedAt == nil || status.LastHeartbeatAt == nil {
+		t.Fatalf("unexpected gateway-ingest status: %+v", status)
+	}
+}
+
+func TestGatewayIngestRequiresOutputCredentialAndStreamKey(t *testing.T) {
+	_, _, _, httpSrv := newLiveRunnerTestServer(t, 10, 2)
+	req, err := http.NewRequest(http.MethodPost, httpSrv.URL+"/v1/cap", bytes.NewBufferString(`{"gateway_session_id":"gw-456","session_params":{"name":"launch-stream"}}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set(livepeerheader.Capability, "video:transcode.live")
+	req.Header.Set(livepeerheader.Offering, "gateway-ingest")
+	req.Header.Set(livepeerheader.Mode, "live-session-gateway-ingest@v0")
+	req.Header.Set(livepeerheader.SpecVersion, "0.1")
+	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("dummy-payment")))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d want=%d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestGatewayIngestRequiresPrivateIngestURLFromRunner(t *testing.T) {
+	_, _, runnerStub, httpSrv := newLiveRunnerTestServer(t, 10, 2)
+	runnerStub.createResp = &liveRunnerCreateResponse{
+		RunnerSessionID: "rsess_test",
+		State:           "ready",
+		CreatedAt:       "2026-05-20T19:11:57Z",
+	}
+	req, err := http.NewRequest(http.MethodPost, httpSrv.URL+"/v1/cap", bytes.NewBufferString(`{"gateway_session_id":"gw-456","session_params":{"name":"launch-stream"},"output_credential":{"endpoint":"https://s3-dev.xode.app","region":"us-east-1","bucket":"lvp-video-ingest","key_prefix":"live-out/084357a5/6d8f4a4d/","access_key_id":"AKIAxxxxxxxxxxxxxxxxxx","secret_access_key":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","session_token":"FwoGZXIvYXdzEN...","expires_at":"2026-05-20T22:10:00Z"},"ingest_accept":{"stream_key":"gws_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set(livepeerheader.Capability, "video:transcode.live")
+	req.Header.Set(livepeerheader.Offering, "gateway-ingest")
+	req.Header.Set(livepeerheader.Mode, "live-session-gateway-ingest@v0")
+	req.Header.Set(livepeerheader.SpecVersion, "0.1")
+	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("dummy-payment")))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status=%d want=%d", resp.StatusCode, http.StatusBadGateway)
+	}
+}
+
+func TestGatewayIngestStatusPreservesUploadingAndStalledStates(t *testing.T) {
+	srv, _, _, httpSrv := newLiveRunnerTestServer(t, 10, 2)
+	openResp := liveOpenWithRequest(t, httpSrv,
+		"video:transcode.live",
+		"gateway-ingest",
+		"live-session-gateway-ingest@v0",
+		`{"gateway_session_id":"gw-456","session_params":{"name":"launch-stream"},"output_credential":{"endpoint":"https://s3-dev.xode.app","region":"us-east-1","bucket":"lvp-video-ingest","key_prefix":"live-out/084357a5/6d8f4a4d/","access_key_id":"AKIAxxxxxxxxxxxxxxxxxx","secret_access_key":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","session_token":"FwoGZXIvYXdzEN...","expires_at":"2026-05-20T22:10:00Z"},"ingest_accept":{"stream_key":"gws_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}`)
+
+	for _, payload := range []string{
+		`{"broker_session_id":"` + openResp.BrokerSessionID + `","runner_session_id":"` + openResp.RunnerSessionID + `","event_id":"evt-pub","sequence":1,"event_type":"session.publish_started","event_time":"2026-05-20T19:12:09Z","state":"publishing","usage":{"unit":"output_seconds","delta":0,"total":0},"details":{}}`,
+		`{"broker_session_id":"` + openResp.BrokerSessionID + `","runner_session_id":"` + openResp.RunnerSessionID + `","event_id":"evt-up","sequence":2,"event_type":"session.upload.healthy","event_time":"2026-05-20T19:12:10Z","state":"uploading","usage":{"unit":"output_seconds","delta":0,"total":0},"details":{}}`,
+		`{"broker_session_id":"` + openResp.BrokerSessionID + `","runner_session_id":"` + openResp.RunnerSessionID + `","event_id":"evt-stop","sequence":3,"event_type":"session.publish_stopped","event_time":"2026-05-20T19:12:11Z","state":"stalled","usage":{"unit":"output_seconds","delta":0,"total":0},"details":{}}`,
+	} {
+		req, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/internal/v1/live/events", bytes.NewBufferString(payload))
+		req.Header.Set("Authorization", "Bearer "+mustCallbackToken(t, srv, openResp.BrokerSessionID))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("event request: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("event status=%d", resp.StatusCode)
+		}
+	}
+
+	statusResp, err := http.Get(httpSrv.URL + "/v1/cap/" + openResp.BrokerSessionID)
+	if err != nil {
+		t.Fatalf("status request: %v", err)
+	}
+	defer statusResp.Body.Close()
+	var status liveSessionStatusResponse
+	if err := json.NewDecoder(statusResp.Body).Decode(&status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.State != "stalled" || status.Media != nil {
+		t.Fatalf("unexpected status after stalled transition: %+v", status)
 	}
 }
 

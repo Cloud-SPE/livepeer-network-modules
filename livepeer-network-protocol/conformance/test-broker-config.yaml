@@ -273,7 +273,7 @@ capabilities:
         startup_timeout: "10s"
 
   # ---- fixtures/live-session-remote-runner/happy-path.yaml (plan 0026) ----
-  - id: "livepeer:transcode/live-rtmp-hls-abr"
+  - id: "video:transcode.live"
     offering_id: "default"
     interaction_mode: "live-session-remote-runner@v0"
     work_unit:
@@ -291,8 +291,8 @@ capabilities:
         base_url: "http://mock-live-runner:8080"
 
   # ---- fixtures/live-session-remote-runner/topup-status-end.yaml ----
-  - id: "livepeer:transcode/live-rtmp-hls-abr-topup"
-    offering_id: "default"
+  - id: "video:transcode.live"
+    offering_id: "topup"
     interaction_mode: "live-session-remote-runner@v0"
     work_unit:
       name: "output_seconds"
@@ -309,8 +309,8 @@ capabilities:
         base_url: "http://mock-live-runner:8080"
 
   # ---- fixtures/live-session-remote-runner/balance-exhausted.yaml ----
-  - id: "livepeer:transcode/live-rtmp-hls-abr-insufficient"
-    offering_id: "default"
+  - id: "video:transcode.live"
+    offering_id: "insufficient"
     interaction_mode: "live-session-remote-runner@v0"
     work_unit:
       name: "output_seconds"
@@ -327,9 +327,27 @@ capabilities:
         base_url: "http://mock-live-runner:8080"
 
   # ---- fixtures/live-session-remote-runner/runner-failure.yaml ----
-  - id: "livepeer:transcode/live-rtmp-hls-abr-runner-failure"
-    offering_id: "default"
+  - id: "video:transcode.live"
+    offering_id: "runner-failure"
     interaction_mode: "live-session-remote-runner@v0"
+    work_unit:
+      name: "output_seconds"
+      extractor:
+        type: "seconds-elapsed"
+        granularity: 1
+    price:
+      amount_wei: "1"
+      per_units: 1
+    backend:
+      transport: "remote-live-runner"
+      auth: "none"
+      live_runner:
+        base_url: "http://mock-live-runner:8080"
+
+  # ---- fixtures/live-session-gateway-ingest/*.yaml ----
+  - id: "video:transcode.live"
+    offering_id: "gateway-ingest"
+    interaction_mode: "live-session-gateway-ingest@v0"
     work_unit:
       name: "output_seconds"
       extractor:

@@ -218,6 +218,8 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		ReplayBufferBytes:    sessCfg.ReplayBufferBytes,
 	})
 	sessDriver := sessioncontrolplusmedia.New(sessStore, sessCfg)
+	extStore := sessioncontrolexternalmedia.NewStore()
+	extDriver := sessioncontrolexternalmedia.New(extStore, sessioncontrolexternalmedia.DefaultConfig())
 
 	rtcCfg := opts.WebRTC
 	if rtcCfg.UDPPortMin == 0 {
@@ -265,7 +267,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		mux:              mux,
 		srv:              srv,
 		payment:          paymentClient,
-		modes:            defaultModes(rtmpDriver, sessDriver),
+		modes:            defaultModes(rtmpDriver, sessDriver, extDriver),
 		extractors:       defaultExtractors(),
 		backend:          backend.NewHTTPClient(),
 		secrets:          secretResolver,
@@ -276,8 +278,8 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		rtmpStore:        rtmpStore,
 		sessStore:        sessStore,
 		sessDriver:       sessDriver,
-		extStore:         nil,
-		extDriver:        nil,
+		extStore:         extStore,
+		extDriver:        extDriver,
 		liveRunnerStore:  liveRunnerStore,
 		liveRunnerClient: liveRunnerClient,
 		webrtcEngine:     rtcEngine,

@@ -217,8 +217,10 @@ func (c *Config) Validate() error {
 		if !interactionModeRE.MatchString(cap.InteractionMode) {
 			return fmt.Errorf("%s: interaction_mode must match <name>@v<major> (got %q)", ctx, cap.InteractionMode)
 		}
-		if cap.InteractionMode == "live-session-remote-runner@v0" && cap.Backend.Transport != "remote-live-runner" {
-			return fmt.Errorf("%s: interaction_mode live-session-remote-runner@v0 requires backend.transport=remote-live-runner", ctx)
+		if (cap.InteractionMode == "live-session-remote-runner@v0" ||
+			cap.InteractionMode == "live-session-gateway-ingest@v0") &&
+			cap.Backend.Transport != "remote-live-runner" {
+			return fmt.Errorf("%s: interaction_mode %s requires backend.transport=remote-live-runner", ctx, cap.InteractionMode)
 		}
 
 		if cap.WorkUnit.Name == "" {

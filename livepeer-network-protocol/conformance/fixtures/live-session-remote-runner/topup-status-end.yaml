@@ -9,8 +9,8 @@ description: |
 
 setup:
   capability:
-    id: livepeer:transcode/live-rtmp-hls-abr-topup
-    offering_id: default
+    id: video:transcode.live
+    offering_id: topup
     interaction_mode: live-session-remote-runner@v0
     work_unit:
       name: output_seconds
@@ -28,8 +28,8 @@ request:
   method: POST
   path: /v1/cap
   headers:
-    Livepeer-Capability: livepeer:transcode/live-rtmp-hls-abr-topup
-    Livepeer-Offering: default
+    Livepeer-Capability: video:transcode.live
+    Livepeer-Offering: topup
     Livepeer-Payment: <runner-generated-payment-blob>
     Livepeer-Spec-Version: "0.1"
     Livepeer-Mode: live-session-remote-runner@v0

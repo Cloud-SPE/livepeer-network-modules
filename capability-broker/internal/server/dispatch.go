@@ -173,6 +173,8 @@ func modeSupportsInterimDebit(mode string) bool {
 		return true
 	case "live-session-remote-runner@v0":
 		return true
+	case "live-session-gateway-ingest@v0":
+		return true
 	case "rtmp-ingress-hls-egress@v0":
 		return true
 	default:

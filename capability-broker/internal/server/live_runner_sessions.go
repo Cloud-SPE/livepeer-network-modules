@@ -23,12 +23,17 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/livesessiongatewayingest"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolexternalmedia"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
 const remoteLiveRunnerTransport = "remote-live-runner"
+
+func isLiveRunnerMode(mode string) bool {
+	return mode == sessioncontrolexternalmedia.Mode || mode == livesessiongatewayingest.Mode
+}
 
 type liveRunnerSessionStore struct {
 	mu       sync.RWMutex
@@ -47,6 +52,7 @@ type liveRunnerSession struct {
 	Sender           []byte
 	CallbackToken    string
 	RequestID        string
+	Mode             string
 
 	State              string
 	CloseReason        *string
@@ -66,6 +72,7 @@ type liveRunnerSession struct {
 	InitialStreamKey string
 	IngestRTMPURL    string
 	PlaybackHLSURL   string
+	PrivateIngestURL string
 
 	Backend config.Backend
 }
@@ -96,12 +103,14 @@ type liveRunnerBackendClient struct {
 }
 
 type liveRunnerCreateRequest struct {
-	BrokerSessionID string                 `json:"broker_session_id"`
-	WorkID          string                 `json:"work_id"`
-	CapabilityID    string                 `json:"capability_id"`
-	OfferingID      string                 `json:"offering_id"`
-	SessionParams   map[string]any         `json:"session_params"`
-	BrokerCallbacks liveRunnerCallbacksReq `json:"broker_callbacks"`
+	BrokerSessionID  string                 `json:"broker_session_id"`
+	WorkID           string                 `json:"work_id"`
+	CapabilityID     string                 `json:"capability_id"`
+	OfferingID       string                 `json:"offering_id"`
+	SessionParams    map[string]any         `json:"session_params"`
+	OutputCredential *liveOutputCredential  `json:"output_credential,omitempty"`
+	IngestAccept     *liveIngestAccept      `json:"ingest_accept,omitempty"`
+	BrokerCallbacks  liveRunnerCallbacksReq `json:"broker_callbacks"`
 }
 
 type liveRunnerCallbacksReq struct {
@@ -110,10 +119,12 @@ type liveRunnerCallbacksReq struct {
 }
 
 type liveRunnerCreateResponse struct {
-	RunnerSessionID string          `json:"runner_session_id"`
-	State           string          `json:"state"`
-	Media           liveRunnerMedia `json:"media"`
-	CreatedAt       string          `json:"created_at"`
+	RunnerSessionID  string          `json:"runner_session_id"`
+	State            string          `json:"state"`
+	Media            liveRunnerMedia `json:"media"`
+	PrivateIngestURL string          `json:"private_ingest_url,omitempty"`
+	CreatedAt        string          `json:"created_at"`
+	ExpiresAt        string          `json:"expires_at,omitempty"`
 }
 
 type liveRunnerMedia struct {
@@ -209,17 +220,34 @@ func (c *liveRunnerBackendClient) DeleteSession(ctx context.Context, sess *liveR
 }
 
 type liveSessionOpenRequest struct {
-	GatewaySessionID string         `json:"gateway_session_id"`
-	SessionParams    map[string]any `json:"session_params"`
+	GatewaySessionID string                `json:"gateway_session_id"`
+	SessionParams    map[string]any        `json:"session_params"`
+	OutputCredential *liveOutputCredential `json:"output_credential,omitempty"`
+	IngestAccept     *liveIngestAccept     `json:"ingest_accept,omitempty"`
+}
+
+type liveOutputCredential struct {
+	Endpoint        string `json:"endpoint"`
+	Region          string `json:"region"`
+	Bucket          string `json:"bucket"`
+	KeyPrefix       string `json:"key_prefix"`
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+	SessionToken    string `json:"session_token"`
+	ExpiresAt       string `json:"expires_at"`
+}
+
+type liveIngestAccept struct {
+	StreamKey string `json:"stream_key"`
 }
 
 type liveSessionOpenResponse struct {
-	GatewaySessionID string `json:"gateway_session_id"`
+	GatewaySessionID string `json:"gateway_session_id,omitempty"`
 	BrokerSessionID  string `json:"broker_session_id"`
 	RunnerSessionID  string `json:"runner_session_id"`
 	WorkID           string `json:"work_id"`
 	State            string `json:"state"`
-	Media            struct {
+	Media            *struct {
 		Ingest struct {
 			RTMPURL   string `json:"rtmp_url"`
 			StreamKey string `json:"stream_key,omitempty"`
@@ -227,8 +255,9 @@ type liveSessionOpenResponse struct {
 		Playback struct {
 			HLSURL string `json:"hls_url"`
 		} `json:"playback"`
-	} `json:"media"`
-	Control struct {
+	} `json:"media,omitempty"`
+	PrivateIngestURL string `json:"private_ingest_url,omitempty"`
+	Control          struct {
 		TopupURL  string `json:"topup_url"`
 		StatusURL string `json:"status_url"`
 		EndURL    string `json:"end_url"`
@@ -256,14 +285,14 @@ type liveSessionStatusResponse struct {
 	RunnerSessionID  string `json:"runner_session_id"`
 	WorkID           string `json:"work_id"`
 	State            string `json:"state"`
-	Media            struct {
+	Media            *struct {
 		Ingest struct {
 			RTMPURL string `json:"rtmp_url"`
 		} `json:"ingest"`
 		Playback struct {
 			HLSURL string `json:"hls_url"`
 		} `json:"playback"`
-	} `json:"media"`
+	} `json:"media,omitempty"`
 	StartedAt       *string `json:"started_at"`
 	LastHeartbeatAt *string `json:"last_heartbeat_at"`
 	EndedAt         *string `json:"ended_at"`
@@ -352,7 +381,7 @@ func (s *Server) isRemoteLiveOpenRequest(r *http.Request) bool {
 	if r.Method != http.MethodPost {
 		return false
 	}
-	if r.Header.Get(livepeerheader.Mode) != sessioncontrolexternalmedia.Mode {
+	if !isLiveRunnerMode(r.Header.Get(livepeerheader.Mode)) {
 		return false
 	}
 	capID := r.Header.Get(livepeerheader.Capability)
@@ -407,7 +436,8 @@ func (s *Server) liveOpenSession(w http.ResponseWriter, r *http.Request) {
 		livepeerheader.WriteBadRequest(w, "missing required header: "+livepeerheader.SpecVersion)
 		return
 	}
-	if r.Header.Get(livepeerheader.Mode) != sessioncontrolexternalmedia.Mode {
+	mode := r.Header.Get(livepeerheader.Mode)
+	if !isLiveRunnerMode(mode) {
 		livepeerheader.WriteError(w, http.StatusHTTPVersionNotSupported, livepeerheader.ErrModeUnsupported, "unsupported mode for remote live runner open")
 		return
 	}
@@ -449,6 +479,12 @@ func (s *Server) liveOpenSession(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.GatewaySessionID) == "" {
 		livepeerheader.WriteBadRequest(w, "gateway_session_id is required")
 		return
+	}
+	if mode == livesessiongatewayingest.Mode {
+		if err := validateGatewayIngestOpenRequest(req); err != nil {
+			livepeerheader.WriteBadRequest(w, err.Error())
+			return
+		}
 	}
 	if req.SessionParams == nil {
 		req.SessionParams = map[string]any{}
@@ -492,11 +528,13 @@ func (s *Server) liveOpenSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	runnerResp, err := s.liveRunnerClient.CreateSession(r.Context(), cap, liveRunnerCreateRequest{
-		BrokerSessionID: brokerSessionID,
-		WorkID:          workID,
-		CapabilityID:    capID,
-		OfferingID:      offID,
-		SessionParams:   req.SessionParams,
+		BrokerSessionID:  brokerSessionID,
+		WorkID:           workID,
+		CapabilityID:     capID,
+		OfferingID:       offID,
+		SessionParams:    req.SessionParams,
+		OutputCredential: req.OutputCredential,
+		IngestAccept:     req.IngestAccept,
 		BrokerCallbacks: liveRunnerCallbacksReq{
 			EventURL:  baseURL + "/internal/v1/live/events",
 			AuthToken: callbackToken,
@@ -507,9 +545,18 @@ func (s *Server) liveOpenSession(w http.ResponseWriter, r *http.Request) {
 		livepeerheader.WriteError(w, http.StatusBadGateway, livepeerheader.ErrBackendUnavailable, "create runner session: "+err.Error())
 		return
 	}
+	if err := validateRunnerCreateResponse(mode, runnerResp); err != nil {
+		_ = s.payment.CloseSession(r.Context(), paymentResult.Sender, workID)
+		livepeerheader.WriteError(w, http.StatusBadGateway, livepeerheader.ErrBackendUnavailable, "runner create session response: "+err.Error())
+		return
+	}
 
 	expiresAt := time.Now().UTC().Add(time.Hour)
-	if createdAt, err := time.Parse(time.RFC3339, runnerResp.CreatedAt); err == nil && !createdAt.IsZero() {
+	if runnerResp.ExpiresAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, runnerResp.ExpiresAt); err == nil && !parsed.IsZero() {
+			expiresAt = parsed.UTC()
+		}
+	} else if createdAt, err := time.Parse(time.RFC3339, runnerResp.CreatedAt); err == nil && !createdAt.IsZero() {
 		expiresAt = createdAt.UTC().Add(time.Hour)
 	}
 	sess := &liveRunnerSession{
@@ -522,6 +569,7 @@ func (s *Server) liveOpenSession(w http.ResponseWriter, r *http.Request) {
 		Sender:           append([]byte(nil), paymentResult.Sender...),
 		CallbackToken:    callbackToken,
 		RequestID:        middleware.RequestIDFromContext(r.Context()),
+		Mode:             mode,
 		State:            runnerResp.State,
 		ExpiresAt:        expiresAt,
 		CreatedAt:        time.Now().UTC(),
@@ -529,6 +577,7 @@ func (s *Server) liveOpenSession(w http.ResponseWriter, r *http.Request) {
 		InitialStreamKey: runnerResp.Media.Ingest.StreamKey,
 		IngestRTMPURL:    runnerResp.Media.Ingest.RTMPURL,
 		PlaybackHLSURL:   runnerResp.Media.Playback.HLSURL,
+		PrivateIngestURL: runnerResp.PrivateIngestURL,
 		Backend:          cap.Backend,
 	}
 	if err := s.liveRunnerStore.Add(sess); err != nil {
@@ -538,16 +587,29 @@ func (s *Server) liveOpenSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := liveSessionOpenResponse{
-		GatewaySessionID: req.GatewaySessionID,
-		BrokerSessionID:  brokerSessionID,
-		RunnerSessionID:  runnerResp.RunnerSessionID,
-		WorkID:           workID,
-		State:            runnerResp.State,
-		ExpiresAt:        expiresAt.Format(time.RFC3339),
+		BrokerSessionID: brokerSessionID,
+		RunnerSessionID: runnerResp.RunnerSessionID,
+		WorkID:          workID,
+		State:           runnerResp.State,
+		ExpiresAt:       expiresAt.Format(time.RFC3339),
 	}
-	resp.Media.Ingest.RTMPURL = runnerResp.Media.Ingest.RTMPURL
-	resp.Media.Ingest.StreamKey = runnerResp.Media.Ingest.StreamKey
-	resp.Media.Playback.HLSURL = runnerResp.Media.Playback.HLSURL
+	if mode == sessioncontrolexternalmedia.Mode {
+		resp.GatewaySessionID = req.GatewaySessionID
+		resp.Media = &struct {
+			Ingest struct {
+				RTMPURL   string `json:"rtmp_url"`
+				StreamKey string `json:"stream_key,omitempty"`
+			} `json:"ingest"`
+			Playback struct {
+				HLSURL string `json:"hls_url"`
+			} `json:"playback"`
+		}{}
+		resp.Media.Ingest.RTMPURL = runnerResp.Media.Ingest.RTMPURL
+		resp.Media.Ingest.StreamKey = runnerResp.Media.Ingest.StreamKey
+		resp.Media.Playback.HLSURL = runnerResp.Media.Playback.HLSURL
+	} else {
+		resp.PrivateIngestURL = runnerResp.PrivateIngestURL
+	}
 	resp.Control.TopupURL = baseURL + "/v1/cap/" + brokerSessionID + "/topup"
 	resp.Control.StatusURL = baseURL + "/v1/cap/" + brokerSessionID
 	resp.Control.EndURL = baseURL + "/v1/cap/" + brokerSessionID + "/end"
@@ -630,8 +692,18 @@ func (s *Server) liveGetSession(w http.ResponseWriter, r *http.Request) {
 		EndedAt:          sessionTimeString(sess.EndedAt),
 		CloseReason:      sess.CloseReason,
 	}
-	resp.Media.Ingest.RTMPURL = sess.IngestRTMPURL
-	resp.Media.Playback.HLSURL = sess.PlaybackHLSURL
+	if sess.Mode == sessioncontrolexternalmedia.Mode {
+		resp.Media = &struct {
+			Ingest struct {
+				RTMPURL string `json:"rtmp_url"`
+			} `json:"ingest"`
+			Playback struct {
+				HLSURL string `json:"hls_url"`
+			} `json:"playback"`
+		}{}
+		resp.Media.Ingest.RTMPURL = sess.IngestRTMPURL
+		resp.Media.Playback.HLSURL = sess.PlaybackHLSURL
+	}
 	sess.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
@@ -712,10 +784,39 @@ func (s *Server) liveRunnerEvents(w http.ResponseWriter, r *http.Request) {
 		if sess.State == "" {
 			sess.State = "publishing"
 		}
+	case "session.ready":
+		sess.LastHeartbeatAt = &eventTime
+		if sess.State == "" || sess.State == "provisioning" {
+			sess.State = "ready"
+		}
+	case "session.publish_started":
+		sess.StartedAt = &eventTime
+		sess.LastHeartbeatAt = &eventTime
+		if req.State == "" {
+			sess.State = "publishing"
+		}
+	case "session.publish_stopped":
+		sess.LastHeartbeatAt = &eventTime
+		if req.State == "" {
+			sess.State = "stalled"
+		}
 	case "session.heartbeat":
 		sess.LastHeartbeatAt = &eventTime
 	case "session.usage.tick":
 		sess.LastHeartbeatAt = &eventTime
+	case "session.upload.healthy":
+		sess.LastHeartbeatAt = &eventTime
+		if req.State == "" && sess.State == "publishing" {
+			sess.State = "uploading"
+		}
+	case "session.upload.failed":
+		sess.LastHeartbeatAt = &eventTime
+		shouldFinalize = true
+		if req.CloseReason != nil {
+			finalizeReason = *req.CloseReason
+		} else {
+			finalizeReason = "output_upload_failed"
+		}
 	case "session.failed":
 		sess.LastHeartbeatAt = &eventTime
 		shouldFinalize = true
@@ -826,6 +927,61 @@ func (s *Server) finalizeLiveRunnerSession(ctx context.Context, sess *liveRunner
 		CloseReason:     sess.CloseReason,
 		EndedAt:         sessionTimeString(sess.EndedAt),
 	}, nil
+}
+
+func validateGatewayIngestOpenRequest(req liveSessionOpenRequest) error {
+	if req.OutputCredential == nil {
+		return errors.New("output_credential is required")
+	}
+	if req.IngestAccept == nil {
+		return errors.New("ingest_accept is required")
+	}
+	required := map[string]string{
+		"output_credential.endpoint":          req.OutputCredential.Endpoint,
+		"output_credential.region":            req.OutputCredential.Region,
+		"output_credential.bucket":            req.OutputCredential.Bucket,
+		"output_credential.key_prefix":        req.OutputCredential.KeyPrefix,
+		"output_credential.access_key_id":     req.OutputCredential.AccessKeyID,
+		"output_credential.secret_access_key": req.OutputCredential.SecretAccessKey,
+		"output_credential.session_token":     req.OutputCredential.SessionToken,
+		"output_credential.expires_at":        req.OutputCredential.ExpiresAt,
+		"ingest_accept.stream_key":            req.IngestAccept.StreamKey,
+	}
+	for field, value := range required {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s is required", field)
+		}
+	}
+	return nil
+}
+
+func validateRunnerCreateResponse(mode string, resp *liveRunnerCreateResponse) error {
+	if resp == nil {
+		return errors.New("missing response")
+	}
+	if strings.TrimSpace(resp.RunnerSessionID) == "" {
+		return errors.New("runner_session_id is required")
+	}
+	if strings.TrimSpace(resp.State) == "" {
+		return errors.New("state is required")
+	}
+	switch mode {
+	case livesessiongatewayingest.Mode:
+		if strings.TrimSpace(resp.PrivateIngestURL) == "" {
+			return errors.New("private_ingest_url is required for gateway-ingest mode")
+		}
+	case sessioncontrolexternalmedia.Mode:
+		if strings.TrimSpace(resp.Media.Ingest.RTMPURL) == "" {
+			return errors.New("media.ingest.rtmp_url is required for remote-runner mode")
+		}
+		if strings.TrimSpace(resp.Media.Ingest.StreamKey) == "" {
+			return errors.New("media.ingest.stream_key is required for remote-runner mode")
+		}
+		if strings.TrimSpace(resp.Media.Playback.HLSURL) == "" {
+			return errors.New("media.playback.hls_url is required for remote-runner mode")
+		}
+	}
+	return nil
 }
 
 func middlewareMapClientErr(err error) (int, string) {

@@ -2,8 +2,8 @@
 # Per core belief #15: every gesture is a docker invocation.
 
 IMAGE   ?= tztcloud/livepeer-conformance
-TAG     ?= dev
-VERSION ?= $(shell VERSION_PREFIX="$(TAG)" FALLBACK_VERSION=dev ../../infra/build/git-version.sh)
+TAG     ?= v1.3.2
+VERSION ?= $(shell VERSION_PREFIX="$(TAG)" FALLBACK_VERSION=v1.3.2 ../../infra/build/git-version.sh)
 TARGET  ?= broker
 
 .PHONY: build test test-compose publish clean help
@@ -29,15 +29,15 @@ test: ## Run conformance against $(URL); set TARGET=broker|gateway, MODES to fil
 		$(if $(MODES),--modes $(MODES),)
 
 test-compose: build ## Run the full conformance stack (broker + runner + payment-daemon) and propagate exit code
-	@docker image inspect tztcloud/livepeer-capability-broker:dev >/dev/null 2>&1 || \
+	@docker image inspect tztcloud/livepeer-capability-broker:v1.3.2 >/dev/null 2>&1 || \
 		(echo "broker image missing. Build it first: make -C ../../capability-broker build"; exit 1)
-	@docker image inspect tztcloud/livepeer-payment-daemon:dev >/dev/null 2>&1 || \
+	@docker image inspect tztcloud/livepeer-payment-daemon:v1.3.2 >/dev/null 2>&1 || \
 		(echo "payment-daemon image missing. Build it first: make -C ../../payment-daemon build"; exit 1)
 	docker compose -f compose.yaml up --abort-on-container-exit --exit-code-from runner
 
 publish: ## Build + push multi-arch image (requires TAG set to a real version)
 	@if [ "$(TAG)" = "dev" ]; then \
-		echo "set TAG to a real version before publishing (e.g. make publish TAG=0.1.0)"; \
+		echo "set TAG to a real version before publishing (e.g. make publish TAG=v1.3.2)"; \
 		exit 1; \
 	fi
 	docker buildx build \

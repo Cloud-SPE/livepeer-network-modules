@@ -11,7 +11,7 @@ loading and assertion logic in the runner are TODO.
 |---|---|
 | [`Dockerfile`](./Dockerfile) | Multi-stage build for the runner image. Distroless final stage; fixtures baked in. |
 | [`Makefile`](./Makefile) | `make build / test / test-compose / publish / clean / help`. Per core belief #15 — no host toolchain required. |
-| [`compose.yaml`](./compose.yaml) | Self-test stack (runner + mock-backend + sample broker). Sample broker is commented out until plan 0003 ships `tztcloud/livepeer-capability-broker:dev`. |
+| [`compose.yaml`](./compose.yaml) | Self-test stack (runner + mock-backend + sample broker) pinned to the current release-tagged images. |
 | [`runner/`](./runner/) | Go source for the runner binary. Currently a flag-parsing stub; fixture loading + assertions are TODO. |
 | [`fixtures/`](./fixtures/) | Per-mode fixture folders (currently empty). Format documented in [`fixtures/README.md`](./fixtures/README.md). |
 

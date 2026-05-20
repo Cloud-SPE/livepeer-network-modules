@@ -1,21 +1,16 @@
-# Happy-path conformance fixture for live-session-remote-runner@v0.
-#
-# Verifies session-open returns broker + runner identifiers and media/control
-# coordinates for a remote live runner backend.
-
 name: happy-path
-mode: live-session-remote-runner@v0
+mode: live-session-gateway-ingest@v0
 spec_version: "0.1"
 description: |
-  Session-open POST -> success response containing gateway_session_id,
-  broker_session_id, runner_session_id, work_id, media.ingest.rtmp_url,
-  media.ingest.stream_key, media.playback.hls_url, and broker control URLs.
+  Session-open returns broker_session_id, runner_session_id, work_id,
+  private_ingest_url, broker control URLs, and expires_at for a
+  gateway-owned ingest session.
 
 setup:
   capability:
     id: video:transcode.live
-    offering_id: default
-    interaction_mode: live-session-remote-runner@v0
+    offering_id: gateway-ingest
+    interaction_mode: live-session-gateway-ingest@v0
     work_unit:
       name: output_seconds
       extractor:
@@ -33,13 +28,13 @@ request:
   path: /v1/cap
   headers:
     Livepeer-Capability: video:transcode.live
-    Livepeer-Offering: default
+    Livepeer-Offering: gateway-ingest
     Livepeer-Payment: <runner-generated-payment-blob>
     Livepeer-Spec-Version: "0.1"
-    Livepeer-Mode: live-session-remote-runner@v0
+    Livepeer-Mode: live-session-gateway-ingest@v0
     Content-Type: application/json
   body: |
-    {"gateway_session_id":"gw-123","session_params":{"name":"launch-stream"}}
+    {"gateway_session_id":"gw-123","session_params":{"name":"launch-stream"},"output_credential":{"endpoint":"https://s3-dev.xode.app","region":"us-east-1","bucket":"lvp-video-ingest","key_prefix":"live-out/gw-123/","access_key_id":"AKIAxxxxxxxxxxxxxxxxxx","secret_access_key":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","session_token":"FwoGZXIvYXdzEN...","expires_at":"2026-05-20T22:10:00Z"},"ingest_accept":{"stream_key":"gws_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}
 
 backend_response:
   status: 0
@@ -50,13 +45,10 @@ response_expect:
   headers_present:
     - Livepeer-Request-Id
   body_fields_present:
-    - gateway_session_id
     - broker_session_id
     - runner_session_id
     - work_id
-    - media.ingest.rtmp_url
-    - media.ingest.stream_key
-    - media.playback.hls_url
+    - private_ingest_url
     - control.topup_url
     - control.status_url
     - control.end_url

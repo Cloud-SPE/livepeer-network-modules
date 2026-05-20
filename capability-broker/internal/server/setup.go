@@ -15,7 +15,9 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/httpmultipart"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/httpreqresp"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/httpstream"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/livesessiongatewayingest"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/rtmpingresshlsegress"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolexternalmedia"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolplusmedia"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/wsrealtime"
 )
@@ -23,7 +25,7 @@ import (
 // defaultModes returns the registry pre-populated with the v0.1 driver
 // set. The rtmp-ingress driver is constructed by the caller because it
 // holds session state shared with the broker's RTMP listener.
-func defaultModes(rtmpDriver *rtmpingresshlsegress.Driver, sessDriver *sessioncontrolplusmedia.Driver) *modes.Registry {
+func defaultModes(rtmpDriver *rtmpingresshlsegress.Driver, sessDriver *sessioncontrolplusmedia.Driver, extDriver *sessioncontrolexternalmedia.Driver) *modes.Registry {
 	r := modes.NewRegistry()
 	r.Register(httpreqresp.New())   // plan 0003
 	r.Register(httpstream.New())    // plan 0006
@@ -31,6 +33,8 @@ func defaultModes(rtmpDriver *rtmpingresshlsegress.Driver, sessDriver *sessionco
 	r.Register(wsrealtime.New())    // plan 0010
 	r.Register(rtmpDriver)          // plan 0011-followup
 	r.Register(sessDriver)          // plan 0012 + 0012-followup
+	r.Register(extDriver)           // plan 0012 + live remote-runner registration
+	r.Register(livesessiongatewayingest.New())
 	return r
 }
 

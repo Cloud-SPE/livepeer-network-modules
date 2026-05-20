@@ -235,6 +235,12 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			// Always close the session, even on early-return paths below.
 			defer func() { _ = client.CloseSession(ctx, result.Sender, workID) }()
 
+			if result.TicketsRejected > 0 && result.DominantRejection == payment.PaymentRejectionReasonInvalidRecipientRand {
+				livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid,
+					"process payment: INVALID_RECIPIENT_RAND")
+				return
+			}
+
 			// 3. Set up interim-debit ticker. The dispatch layer publishes
 			//    the LiveCounter via the SessionState we attach to the
 			//    request context; the ticker polls it on each tick.

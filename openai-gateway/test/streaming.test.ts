@@ -110,6 +110,8 @@ test('streaming chat: chunks pass through unbuffered', async (t) => {
     brokerUrl: `http://127.0.0.1:${brokerAddr.port}`,
     resolverSocket: null,
     recipientHex: '0x1111111111111111111111111111111111111111',
+    staticPricePerWorkUnitWei: '42',
+    staticWorkUnit: 'token',
     listenPort: 0,
     databaseUrl: 'postgres://test:test@localhost:5432/test',
     authPepper: 'test-pepper',

@@ -19,6 +19,8 @@ export interface Config {
   brokerUrl: string | null;
   resolverSocket: string | null;
   recipientHex: string | null;
+  staticPricePerWorkUnitWei?: string | null;
+  staticWorkUnit?: string | null;
   listenPort: number;
   databaseUrl: string;
   authPepper: string;
@@ -63,6 +65,8 @@ export function loadConfig(): Config {
     brokerUrl: brokerUrl ?? null,
     resolverSocket,
     recipientHex: process.env["LIVEPEER_RECIPIENT_HEX"]?.trim() ?? null,
+    staticPricePerWorkUnitWei: process.env["LIVEPEER_STATIC_PRICE_PER_WORK_UNIT_WEI"]?.trim() ?? null,
+    staticWorkUnit: process.env["LIVEPEER_STATIC_WORK_UNIT"]?.trim() ?? null,
     listenPort,
     databaseUrl: requiredEnv("DATABASE_URL"),
     authPepper: process.env["CUSTOMER_PORTAL_AUTH_PEPPER"] ?? "dev-openai-gateway-pepper",

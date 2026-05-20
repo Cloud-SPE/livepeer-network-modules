@@ -9,9 +9,21 @@ A reference TypeScript Fastify service that:
    (capability ID, offering, mode, headers).
 3. Selects a broker either from static config or through
    `service-registry-daemon`.
-4. Mints payments through the local payer-daemon.
+4. Mints payments through the local payer-daemon with an explicit
+   accepted-price basis, funding intent, and deterministic route/constraint
+   fingerprints.
 5. Forwards via Livepeer middleware to the selected capability-broker.
 6. Returns the broker's response to the OpenAI client.
+
+When the broker/payee reports `INVALID_RECIPIENT_RAND`, the gateway
+reports that outcome back to the payer-daemon, retries payment minting
+exactly once, and then replays the broker call with the fresh `work_id`.
+
+Static broker mode is now an explicit compatibility path, not a
+quote-free shortcut. It requires operator-supplied
+`LIVEPEER_STATIC_PRICE_PER_WORK_UNIT_WEI` and `LIVEPEER_STATIC_WORK_UNIT`
+so the gateway can still satisfy the payer-daemon's
+`accepted_price` contract without a resolver.
 
 This is the "first adopter" reference for the wire spec.
 

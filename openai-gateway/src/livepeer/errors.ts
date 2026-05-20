@@ -25,6 +25,12 @@ export class LivepeerBrokerError extends Error {
   }
 }
 
+export function isInvalidRecipientRandPaymentError(err: unknown): err is LivepeerBrokerError {
+  if (!(err instanceof LivepeerBrokerError)) return false;
+  if (err.code !== "payment_invalid") return false;
+  return err.responseBody.includes("INVALID_RECIPIENT_RAND") || err.message.includes("INVALID_RECIPIENT_RAND");
+}
+
 // gatewayHttpStatusFor maps a broker-side error to the HTTP status the
 // gateway should surface to the customer. Upstream 5xx is squashed to
 // 502 because from the customer's perspective the gateway's backend is

@@ -6,6 +6,8 @@ import { loadConfig } from "../src/config.js";
 test("loadConfig accepts OPENAI_GATEWAY_ADMIN_TOKENS", () => {
   const env = withEnv({
     LIVEPEER_BROKER_URL: "https://broker.example.com",
+    LIVEPEER_STATIC_PRICE_PER_WORK_UNIT_WEI: "42",
+    LIVEPEER_STATIC_WORK_UNIT: "token",
     DATABASE_URL: "postgres://postgres:postgres@localhost:5432/openai_gateway",
     OPENAI_DEFAULT_OFFERING_PER_CAPABILITY: fixtureOfferingsPath(),
     OPENAI_GATEWAY_ADMIN_TOKENS: "token-a, token-b",
@@ -13,6 +15,8 @@ test("loadConfig accepts OPENAI_GATEWAY_ADMIN_TOKENS", () => {
   try {
     const cfg = loadConfig();
     assert.deepEqual(cfg.adminTokens, ["token-a", "token-b"]);
+    assert.equal(cfg.staticPricePerWorkUnitWei, "42");
+    assert.equal(cfg.staticWorkUnit, "token");
   } finally {
     env.restore();
   }
@@ -21,6 +25,8 @@ test("loadConfig accepts OPENAI_GATEWAY_ADMIN_TOKENS", () => {
 test("loadConfig returns an empty admin token list when OPENAI_GATEWAY_ADMIN_TOKENS is unset", () => {
   const env = withEnv({
     LIVEPEER_BROKER_URL: "https://broker.example.com",
+    LIVEPEER_STATIC_PRICE_PER_WORK_UNIT_WEI: "42",
+    LIVEPEER_STATIC_WORK_UNIT: "token",
     DATABASE_URL: "postgres://postgres:postgres@localhost:5432/openai_gateway",
     OPENAI_DEFAULT_OFFERING_PER_CAPABILITY: fixtureOfferingsPath(),
   });
@@ -40,6 +46,8 @@ function withEnv(next: Record<string, string>): { restore: () => void } {
   const previous = new Map<string, string | undefined>();
   for (const key of [
     "LIVEPEER_BROKER_URL",
+    "LIVEPEER_STATIC_PRICE_PER_WORK_UNIT_WEI",
+    "LIVEPEER_STATIC_WORK_UNIT",
     "LIVEPEER_RESOLVER_SOCKET",
     "DATABASE_URL",
     "OPENAI_DEFAULT_OFFERING_PER_CAPABILITY",

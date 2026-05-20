@@ -20,6 +20,8 @@ services:
   gateway:
     environment:
       LIVEPEER_BROKER_URL: "http://broker:8080"
+      LIVEPEER_STATIC_PRICE_PER_WORK_UNIT_WEI: "42"
+      LIVEPEER_STATIC_WORK_UNIT: "token"
       LIVEPEER_PAYER_DAEMON_SOCKET: "/var/run/livepeer/payer-daemon.sock"
       PORT: "3000"
       OPENAI_AUDIO_SPEECH_ENABLED: "false"

@@ -136,6 +136,8 @@ test('realtime: customer ws bridges to broker via ws-realtime adapter with canon
     brokerUrl: broker.url,
     resolverSocket: null,
     recipientHex: '0x1111111111111111111111111111111111111111',
+    staticPricePerWorkUnitWei: '42',
+    staticWorkUnit: 'token',
     listenPort: 0,
     databaseUrl: 'postgres://test:test@localhost:5432/test',
     authPepper: 'test-pepper',

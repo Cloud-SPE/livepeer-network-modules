@@ -6,7 +6,7 @@ import { modes } from "@tztcloud/livepeer-gateway-middleware";
 
 import { Capability } from "../livepeer/capabilityMap.js";
 import { LivepeerBrokerError } from "../livepeer/errors.js";
-import { buildPayment } from "../livepeer/payment.js";
+import { withReportedRotationRetry } from "../livepeer/payment.js";
 import { readOrSynthRequestId } from "../livepeer/requestId.js";
 import { resolveDefaultOffering } from "../service/offerings.js";
 import { selectRealtimeCandidate } from "../service/routeDispatch.js";
@@ -40,21 +40,25 @@ export const registerRealtime: FastifyPluginAsync<{ cfg: Config; routeSelector: 
           capability,
           offering,
         );
-        const paymentBlob = await buildPayment({
+        const broker = await withReportedRotationRetry({
           capabilityId: capability,
           offeringId: candidate.offering,
           recipientHex: candidate.ethAddress,
           brokerUrl: candidate.brokerUrl,
-        });
-
-        const broker = await modes.wsRealtime.connect(
-          { url: candidate.brokerUrl },
-          {
-            capability,
-            offering: candidate.offering,
-            paymentBlob,
-            requestId,
-          },
+          pricePerUnitWei: candidate.pricePerWorkUnitWei,
+          workUnit: candidate.workUnit,
+          routeFingerprintSource: candidate,
+          constraintFingerprintSource: candidate.constraints,
+        }, (paymentBlob) =>
+          modes.wsRealtime.connect(
+            { url: candidate.brokerUrl },
+            {
+              capability,
+              offering: candidate.offering,
+              paymentBlob,
+              requestId,
+            },
+          ),
         );
 
         broker.onMessage((data, isBinary) => {

@@ -3,7 +3,7 @@ import { LivepeerBrokerError } from "../livepeer/errors.js";
 import * as httpMultipart from "../livepeer/http-multipart.js";
 import * as httpReqresp from "../livepeer/http-reqresp.js";
 import * as httpStream from "../livepeer/http-stream.js";
-import { buildPayment } from "../livepeer/payment.js";
+import { withReportedRotationRetry } from "../livepeer/payment.js";
 
 interface DispatchCommon {
   routeSelector: RouteSelector;
@@ -34,20 +34,26 @@ export async function dispatchReqresp(opts: ReqRespDispatch): Promise<httpReqres
     opts.routeSelector,
     { capability: opts.capability, offering: opts.offering, interactionMode: opts.interactionMode, request: opts.request },
     async (candidate) =>
-      httpReqresp.send({
-        brokerUrl: candidate.brokerUrl,
-        capability: opts.capability,
-        offering: candidate.offering,
-        paymentBlob: await buildPayment({
+      withReportedRotationRetry({
           capabilityId: opts.capability,
           offeringId: candidate.offering,
           recipientHex: candidate.ethAddress,
           brokerUrl: candidate.brokerUrl,
-        }),
-        body: opts.body,
-        contentType: opts.contentType,
-        requestId: opts.requestId,
-      }),
+          pricePerUnitWei: candidate.pricePerWorkUnitWei,
+          workUnit: candidate.workUnit,
+          routeFingerprintSource: candidate,
+          constraintFingerprintSource: candidate.constraints,
+        }, (paymentBlob) =>
+          httpReqresp.send({
+            brokerUrl: candidate.brokerUrl,
+            capability: opts.capability,
+            offering: candidate.offering,
+            paymentBlob,
+            body: opts.body,
+            contentType: opts.contentType,
+            requestId: opts.requestId,
+          }),
+        ),
   );
 }
 
@@ -56,20 +62,26 @@ export async function dispatchMultipart(opts: MultipartDispatch): Promise<httpMu
     opts.routeSelector,
     { capability: opts.capability, offering: opts.offering, interactionMode: opts.interactionMode, request: opts.request },
     async (candidate) =>
-      httpMultipart.send({
-        brokerUrl: candidate.brokerUrl,
-        capability: opts.capability,
-        offering: candidate.offering,
-        paymentBlob: await buildPayment({
+      withReportedRotationRetry({
           capabilityId: opts.capability,
           offeringId: candidate.offering,
           recipientHex: candidate.ethAddress,
           brokerUrl: candidate.brokerUrl,
-        }),
-        body: opts.body,
-        contentType: opts.contentType,
-        requestId: opts.requestId,
-      }),
+          pricePerUnitWei: candidate.pricePerWorkUnitWei,
+          workUnit: candidate.workUnit,
+          routeFingerprintSource: candidate,
+          constraintFingerprintSource: candidate.constraints,
+        }, (paymentBlob) =>
+          httpMultipart.send({
+            brokerUrl: candidate.brokerUrl,
+            capability: opts.capability,
+            offering: candidate.offering,
+            paymentBlob,
+            body: opts.body,
+            contentType: opts.contentType,
+            requestId: opts.requestId,
+          }),
+        ),
   );
 }
 
@@ -78,20 +90,26 @@ export async function dispatchStream(opts: StreamDispatch): Promise<httpStream.S
     opts.routeSelector,
     { capability: opts.capability, offering: opts.offering, interactionMode: opts.interactionMode, request: opts.request },
     async (candidate) =>
-      httpStream.sendStreaming({
-        brokerUrl: candidate.brokerUrl,
-        capability: opts.capability,
-        offering: candidate.offering,
-        paymentBlob: await buildPayment({
+      withReportedRotationRetry({
           capabilityId: opts.capability,
           offeringId: candidate.offering,
           recipientHex: candidate.ethAddress,
           brokerUrl: candidate.brokerUrl,
-        }),
-        body: opts.body,
-        contentType: opts.contentType,
-        requestId: opts.requestId,
-      }),
+          pricePerUnitWei: candidate.pricePerWorkUnitWei,
+          workUnit: candidate.workUnit,
+          routeFingerprintSource: candidate,
+          constraintFingerprintSource: candidate.constraints,
+        }, (paymentBlob) =>
+          httpStream.sendStreaming({
+            brokerUrl: candidate.brokerUrl,
+            capability: opts.capability,
+            offering: candidate.offering,
+            paymentBlob,
+            body: opts.body,
+            contentType: opts.contentType,
+            requestId: opts.requestId,
+          }),
+        ),
   );
 }
 

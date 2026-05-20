@@ -29,7 +29,8 @@ Each endpoint:
    speech).
 4. Selects a worker either from a static broker URL or via
    `service-registry-daemon`.
-5. Mints a `Livepeer-Payment` envelope via the local payer-daemon.
+5. Mints a `Livepeer-Payment` envelope via the local payer-daemon using
+   accepted-price and funding metadata for the selected route.
 6. Forwards to the selected broker via inlined Livepeer client.
 7. Returns the broker's response to the OpenAI client.
 
@@ -120,6 +121,15 @@ rewrite:
 
 Start from
 [compose/.env.manifest-resolver.example](./compose/.env.manifest-resolver.example).
+
+Static single-broker mode now needs explicit price metadata in addition
+to `LIVEPEER_BROKER_URL`:
+
+- `LIVEPEER_STATIC_PRICE_PER_WORK_UNIT_WEI`
+- `LIVEPEER_STATIC_WORK_UNIT`
+
+Without those, the gateway cannot populate the payer-daemon's
+`accepted_price` contract for `CreatePayment`.
 
 When the shell is enabled, the same host serves:
 

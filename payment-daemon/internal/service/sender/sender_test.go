@@ -6,11 +6,15 @@ import (
 	"net"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
@@ -81,6 +85,33 @@ func (f *recordingFetcher) Fetch(_ context.Context, req sender.TicketParamsReque
 	return (&fakeFetcher{}).Fetch(context.Background(), req)
 }
 
+type rotatingFetcher struct {
+	mu    sync.Mutex
+	count int
+}
+
+func (f *rotatingFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.count++
+	hash := []byte("0123456789abcdef0123456789abcde1")
+	if f.count > 1 {
+		hash = []byte("0123456789abcdef0123456789abcde2")
+	}
+	return &senderTypes.TicketParams{
+		Recipient:         append([]byte(nil), req.Recipient...),
+		FaceValue:         new(big.Int).Set(req.FaceValue),
+		WinProb:           big.NewInt(0),
+		RecipientRandHash: hash,
+		Seed:              []byte("seed-seed-seed-seed-seed-seed-12"),
+		ExpirationBlock:   big.NewInt(123456),
+		ExpirationParams: &senderTypes.TicketExpirationParams{
+			CreationRound:          1,
+			CreationRoundBlockHash: make([]byte, 32),
+		},
+	}, nil
+}
+
 func TestCreatePayment_HappyPath(t *testing.T) {
 	client, cleanup := stand(t)
 	defer cleanup()
@@ -103,6 +134,9 @@ func TestCreatePayment_HappyPath(t *testing.T) {
 	}
 	if resp.GetTicketsCreated() != 1 {
 		t.Errorf("tickets_created = %d; want 1", resp.GetTicketsCreated())
+	}
+	if resp.GetWorkId() == "" {
+		t.Fatal("work_id is empty")
 	}
 	if len(resp.GetPaymentBytes()) == 0 {
 		t.Fatal("payment_bytes is empty")
@@ -243,6 +277,104 @@ func TestCreatePayment_ReusedSessionRefreshesAcceptedQuoteMetadata(t *testing.T)
 	}
 	if got := p2.GetExpectedPrice().GetConstraint(); !strings.Contains(got, "qid=quote-b") || !strings.Contains(got, "est=20") {
 		t.Fatalf("expected_price.constraint = %q; want refreshed quote/estimate metadata", got)
+	}
+}
+
+func TestReportPaymentResult_InvalidRecipientRandEvictsSessionAndReturnsAborted(t *testing.T) {
+	dir := t.TempDir()
+	sockPath := filepath.Join(dir, "tx.sock")
+
+	keystore, err := devkeystore.New("")
+	if err != nil {
+		t.Fatalf("devkeystore.New: %v", err)
+	}
+	fetcher := &rotatingFetcher{}
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher)
+
+	lis, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	pb.RegisterPayerDaemonServer(gs, svc)
+	go func() { _ = gs.Serve(lis) }()
+	defer gs.GracefulStop()
+
+	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	client := pb.NewPayerDaemonClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req := makeCreatePaymentRequest(
+		[]byte("recipient-20-bytes!!"),
+		"video:transcode.abr",
+		"default",
+		"token",
+		1000,
+		1,
+		1000,
+		"https://broker.example.com",
+	)
+	first, err := client.CreatePayment(ctx, req)
+	if err != nil {
+		t.Fatalf("CreatePayment 1: %v", err)
+	}
+	_, err = client.ReportPaymentResult(ctx, &pb.ReportPaymentResultRequest{
+		WorkId:          first.GetWorkId(),
+		Capability:      "video:transcode.abr",
+		Offering:        "default",
+		RejectionReason: pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND,
+	})
+	if status.Code(err) != codes.Aborted {
+		t.Fatalf("ReportPaymentResult status = %v; want Aborted (err=%v)", status.Code(err), err)
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		t.Fatalf("status.FromError(%v) failed", err)
+	}
+	var (
+		gotInfo  *errdetails.ErrorInfo
+		gotRetry *errdetails.RetryInfo
+	)
+	for _, detail := range st.Details() {
+		switch d := detail.(type) {
+		case *errdetails.ErrorInfo:
+			gotInfo = d
+		case *errdetails.RetryInfo:
+			gotRetry = d
+		}
+	}
+	if gotInfo == nil || gotInfo.GetReason() != "INVALID_RECIPIENT_RAND" {
+		t.Fatalf("ErrorInfo = %+v; want INVALID_RECIPIENT_RAND", gotInfo)
+	}
+	if gotInfo.GetMetadata()["old_work_id"] != first.GetWorkId() {
+		t.Fatalf("old_work_id metadata = %q; want %q", gotInfo.GetMetadata()["old_work_id"], first.GetWorkId())
+	}
+	if gotRetry == nil {
+		t.Fatal("RetryInfo missing")
+	}
+
+	second, err := client.CreatePayment(ctx, req)
+	if err != nil {
+		t.Fatalf("CreatePayment 2: %v", err)
+	}
+	if second.GetWorkId() == first.GetWorkId() {
+		t.Fatalf("work_id reused after invalidation: %q", second.GetWorkId())
+	}
+	var p1, p2 pb.Payment
+	if err := proto.Unmarshal(first.GetPaymentBytes(), &p1); err != nil {
+		t.Fatalf("decode first payment: %v", err)
+	}
+	if err := proto.Unmarshal(second.GetPaymentBytes(), &p2); err != nil {
+		t.Fatalf("decode second payment: %v", err)
+	}
+	if p2.GetTicketSenderParams()[0].GetSenderNonce() != 1 {
+		t.Fatalf("sender nonce after invalidation = %d; want 1", p2.GetTicketSenderParams()[0].GetSenderNonce())
 	}
 }
 

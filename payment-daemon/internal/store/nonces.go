@@ -73,6 +73,24 @@ func randHex(recipientRand *big.Int) []byte {
 	return []byte(hex.EncodeToString(recipientRand.Bytes()))
 }
 
+func deleteNonceLedger(bucket *bolt.Bucket, recipientRand *big.Int) error {
+	if bucket == nil || recipientRand == nil {
+		return nil
+	}
+	prefix := append(randHex(recipientRand), 0x00)
+	var keys [][]byte
+	c := bucket.Cursor()
+	for k, _ := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, _ = c.Next() {
+		keys = append(keys, append([]byte(nil), k...))
+	}
+	for _, k := range keys {
+		if err := bucket.Delete(k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func hasPrefix(b, prefix []byte) bool {
 	if len(b) < len(prefix) {
 		return false

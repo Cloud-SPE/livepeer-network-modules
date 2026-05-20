@@ -127,8 +127,10 @@ type CreatePaymentResponse struct {
 	FundedValueWei *BigUInt `protobuf:"bytes,4,opt,name=funded_value_wei,json=fundedValueWei,proto3" json:"funded_value_wei,omitempty"`
 	// Quote identity serialized into the payment context.
 	AcceptedQuoteRef *QuoteRef `protobuf:"bytes,5,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Work-id bound to this minted payment (hex recipient_rand_hash).
+	WorkId        string `protobuf:"bytes,6,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreatePaymentResponse) Reset() {
@@ -196,6 +198,121 @@ func (x *CreatePaymentResponse) GetAcceptedQuoteRef() *QuoteRef {
 	return nil
 }
 
+func (x *CreatePaymentResponse) GetWorkId() string {
+	if x != nil {
+		return x.WorkId
+	}
+	return ""
+}
+
+type ReportPaymentResultRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Work-id of the minted payment whose result is being reported.
+	WorkId string `protobuf:"bytes,1,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	// Route metadata for observability / retry detail.
+	Capability string `protobuf:"bytes,2,opt,name=capability,proto3" json:"capability,omitempty"`
+	Offering   string `protobuf:"bytes,3,opt,name=offering,proto3" json:"offering,omitempty"`
+	// Rejection reason observed by the payee. UNSPECIFIED means the
+	// payment was accepted and requires no sender-side action.
+	RejectionReason PaymentRejectionReason `protobuf:"varint,4,opt,name=rejection_reason,json=rejectionReason,proto3,enum=livepeer.payments.v1.PaymentRejectionReason" json:"rejection_reason,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ReportPaymentResultRequest) Reset() {
+	*x = ReportPaymentResultRequest{}
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportPaymentResultRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportPaymentResultRequest) ProtoMessage() {}
+
+func (x *ReportPaymentResultRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportPaymentResultRequest.ProtoReflect.Descriptor instead.
+func (*ReportPaymentResultRequest) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ReportPaymentResultRequest) GetWorkId() string {
+	if x != nil {
+		return x.WorkId
+	}
+	return ""
+}
+
+func (x *ReportPaymentResultRequest) GetCapability() string {
+	if x != nil {
+		return x.Capability
+	}
+	return ""
+}
+
+func (x *ReportPaymentResultRequest) GetOffering() string {
+	if x != nil {
+		return x.Offering
+	}
+	return ""
+}
+
+func (x *ReportPaymentResultRequest) GetRejectionReason() PaymentRejectionReason {
+	if x != nil {
+		return x.RejectionReason
+	}
+	return PaymentRejectionReason_PAYMENT_REJECTION_REASON_UNSPECIFIED
+}
+
+type ReportPaymentResultResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportPaymentResultResponse) Reset() {
+	*x = ReportPaymentResultResponse{}
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportPaymentResultResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportPaymentResultResponse) ProtoMessage() {}
+
+func (x *ReportPaymentResultResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportPaymentResultResponse.ProtoReflect.Descriptor instead.
+func (*ReportPaymentResultResponse) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{3}
+}
+
 type GetSessionDebitsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Sender ETH address (20 raw bytes), echoed from the payment envelope.
@@ -210,7 +327,7 @@ type GetSessionDebitsRequest struct {
 
 func (x *GetSessionDebitsRequest) Reset() {
 	*x = GetSessionDebitsRequest{}
-	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[2]
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -222,7 +339,7 @@ func (x *GetSessionDebitsRequest) String() string {
 func (*GetSessionDebitsRequest) ProtoMessage() {}
 
 func (x *GetSessionDebitsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[2]
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -235,7 +352,7 @@ func (x *GetSessionDebitsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionDebitsRequest.ProtoReflect.Descriptor instead.
 func (*GetSessionDebitsRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{2}
+	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *GetSessionDebitsRequest) GetSender() []byte {
@@ -270,7 +387,7 @@ type GetSessionDebitsResponse struct {
 
 func (x *GetSessionDebitsResponse) Reset() {
 	*x = GetSessionDebitsResponse{}
-	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[3]
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -282,7 +399,7 @@ func (x *GetSessionDebitsResponse) String() string {
 func (*GetSessionDebitsResponse) ProtoMessage() {}
 
 func (x *GetSessionDebitsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[3]
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -295,7 +412,7 @@ func (x *GetSessionDebitsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSessionDebitsResponse.ProtoReflect.Descriptor instead.
 func (*GetSessionDebitsResponse) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{3}
+	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *GetSessionDebitsResponse) GetTotalWorkUnits() uint64 {
@@ -327,7 +444,7 @@ type GetDepositInfoRequest struct {
 
 func (x *GetDepositInfoRequest) Reset() {
 	*x = GetDepositInfoRequest{}
-	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[4]
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -339,7 +456,7 @@ func (x *GetDepositInfoRequest) String() string {
 func (*GetDepositInfoRequest) ProtoMessage() {}
 
 func (x *GetDepositInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[4]
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -352,7 +469,7 @@ func (x *GetDepositInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDepositInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetDepositInfoRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{4}
+	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{6}
 }
 
 type GetDepositInfoResponse struct {
@@ -370,7 +487,7 @@ type GetDepositInfoResponse struct {
 
 func (x *GetDepositInfoResponse) Reset() {
 	*x = GetDepositInfoResponse{}
-	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[5]
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -382,7 +499,7 @@ func (x *GetDepositInfoResponse) String() string {
 func (*GetDepositInfoResponse) ProtoMessage() {}
 
 func (x *GetDepositInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[5]
+	mi := &file_livepeer_payments_v1_payer_daemon_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -395,7 +512,7 @@ func (x *GetDepositInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDepositInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetDepositInfoResponse) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{5}
+	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetDepositInfoResponse) GetDeposit() []byte {
@@ -428,13 +545,22 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\trecipient\x18\x01 \x01(\fR\trecipient\x123\n" +
 	"\x16ticket_params_base_url\x18\x02 \x01(\tR\x13ticketParamsBaseUrl\x12J\n" +
 	"\x0eaccepted_price\x18\x03 \x01(\v2#.livepeer.payments.v1.AcceptedPriceR\racceptedPrice\x12=\n" +
-	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\"\xc2\x02\n" +
+	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\"\xdb\x02\n" +
 	"\x15CreatePaymentResponse\x12#\n" +
 	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x12'\n" +
 	"\x0ftickets_created\x18\x02 \x01(\rR\x0eticketsCreated\x12D\n" +
 	"\x0eexpected_value\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\rexpectedValue\x12G\n" +
 	"\x10funded_value_wei\x18\x04 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12L\n" +
-	"\x12accepted_quote_ref\x18\x05 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\"J\n" +
+	"\x12accepted_quote_ref\x18\x05 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12\x17\n" +
+	"\awork_id\x18\x06 \x01(\tR\x06workId\"\xca\x01\n" +
+	"\x1aReportPaymentResultRequest\x12\x17\n" +
+	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1e\n" +
+	"\n" +
+	"capability\x18\x02 \x01(\tR\n" +
+	"capability\x12\x1a\n" +
+	"\boffering\x18\x03 \x01(\tR\boffering\x12W\n" +
+	"\x10rejection_reason\x18\x04 \x01(\x0e2,.livepeer.payments.v1.PaymentRejectionReasonR\x0frejectionReason\"\x1d\n" +
+	"\x1bReportPaymentResultResponse\"J\n" +
 	"\x17GetSessionDebitsRequest\x12\x16\n" +
 	"\x06sender\x18\x01 \x01(\fR\x06sender\x12\x17\n" +
 	"\awork_id\x18\x02 \x01(\tR\x06workId\"}\n" +
@@ -447,9 +573,10 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\x16GetDepositInfoResponse\x12\x18\n" +
 	"\adeposit\x18\x01 \x01(\fR\adeposit\x12\x18\n" +
 	"\areserve\x18\x02 \x01(\fR\areserve\x12%\n" +
-	"\x0ewithdraw_round\x18\x03 \x01(\x03R\rwithdrawRound2\xac\x03\n" +
+	"\x0ewithdraw_round\x18\x03 \x01(\x03R\rwithdrawRound2\xa8\x04\n" +
 	"\vPayerDaemon\x12h\n" +
-	"\rCreatePayment\x12*.livepeer.payments.v1.CreatePaymentRequest\x1a+.livepeer.payments.v1.CreatePaymentResponse\x12k\n" +
+	"\rCreatePayment\x12*.livepeer.payments.v1.CreatePaymentRequest\x1a+.livepeer.payments.v1.CreatePaymentResponse\x12z\n" +
+	"\x13ReportPaymentResult\x120.livepeer.payments.v1.ReportPaymentResultRequest\x1a1.livepeer.payments.v1.ReportPaymentResultResponse\x12k\n" +
 	"\x0eGetDepositInfo\x12+.livepeer.payments.v1.GetDepositInfoRequest\x1a,.livepeer.payments.v1.GetDepositInfoResponse\x12q\n" +
 	"\x10GetSessionDebits\x12-.livepeer.payments.v1.GetSessionDebitsRequest\x1a..livepeer.payments.v1.GetSessionDebitsResponse\x12S\n" +
 	"\x06Health\x12#.livepeer.payments.v1.HealthRequest\x1a$.livepeer.payments.v1.HealthResponseBrZpgithub.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1b\x06proto3"
@@ -466,40 +593,46 @@ func file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP() []byte {
 	return file_livepeer_payments_v1_payer_daemon_proto_rawDescData
 }
 
-var file_livepeer_payments_v1_payer_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_livepeer_payments_v1_payer_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_livepeer_payments_v1_payer_daemon_proto_goTypes = []any{
-	(*CreatePaymentRequest)(nil),     // 0: livepeer.payments.v1.CreatePaymentRequest
-	(*CreatePaymentResponse)(nil),    // 1: livepeer.payments.v1.CreatePaymentResponse
-	(*GetSessionDebitsRequest)(nil),  // 2: livepeer.payments.v1.GetSessionDebitsRequest
-	(*GetSessionDebitsResponse)(nil), // 3: livepeer.payments.v1.GetSessionDebitsResponse
-	(*GetDepositInfoRequest)(nil),    // 4: livepeer.payments.v1.GetDepositInfoRequest
-	(*GetDepositInfoResponse)(nil),   // 5: livepeer.payments.v1.GetDepositInfoResponse
-	(*AcceptedPrice)(nil),            // 6: livepeer.payments.v1.AcceptedPrice
-	(*FundingIntent)(nil),            // 7: livepeer.payments.v1.FundingIntent
-	(*BigUInt)(nil),                  // 8: livepeer.payments.v1.BigUInt
-	(*QuoteRef)(nil),                 // 9: livepeer.payments.v1.QuoteRef
-	(*HealthRequest)(nil),            // 10: livepeer.payments.v1.HealthRequest
-	(*HealthResponse)(nil),           // 11: livepeer.payments.v1.HealthResponse
+	(*CreatePaymentRequest)(nil),        // 0: livepeer.payments.v1.CreatePaymentRequest
+	(*CreatePaymentResponse)(nil),       // 1: livepeer.payments.v1.CreatePaymentResponse
+	(*ReportPaymentResultRequest)(nil),  // 2: livepeer.payments.v1.ReportPaymentResultRequest
+	(*ReportPaymentResultResponse)(nil), // 3: livepeer.payments.v1.ReportPaymentResultResponse
+	(*GetSessionDebitsRequest)(nil),     // 4: livepeer.payments.v1.GetSessionDebitsRequest
+	(*GetSessionDebitsResponse)(nil),    // 5: livepeer.payments.v1.GetSessionDebitsResponse
+	(*GetDepositInfoRequest)(nil),       // 6: livepeer.payments.v1.GetDepositInfoRequest
+	(*GetDepositInfoResponse)(nil),      // 7: livepeer.payments.v1.GetDepositInfoResponse
+	(*AcceptedPrice)(nil),               // 8: livepeer.payments.v1.AcceptedPrice
+	(*FundingIntent)(nil),               // 9: livepeer.payments.v1.FundingIntent
+	(*BigUInt)(nil),                     // 10: livepeer.payments.v1.BigUInt
+	(*QuoteRef)(nil),                    // 11: livepeer.payments.v1.QuoteRef
+	(PaymentRejectionReason)(0),         // 12: livepeer.payments.v1.PaymentRejectionReason
+	(*HealthRequest)(nil),               // 13: livepeer.payments.v1.HealthRequest
+	(*HealthResponse)(nil),              // 14: livepeer.payments.v1.HealthResponse
 }
 var file_livepeer_payments_v1_payer_daemon_proto_depIdxs = []int32{
-	6,  // 0: livepeer.payments.v1.CreatePaymentRequest.accepted_price:type_name -> livepeer.payments.v1.AcceptedPrice
-	7,  // 1: livepeer.payments.v1.CreatePaymentRequest.funding:type_name -> livepeer.payments.v1.FundingIntent
-	8,  // 2: livepeer.payments.v1.CreatePaymentResponse.expected_value:type_name -> livepeer.payments.v1.BigUInt
-	8,  // 3: livepeer.payments.v1.CreatePaymentResponse.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	9,  // 4: livepeer.payments.v1.CreatePaymentResponse.accepted_quote_ref:type_name -> livepeer.payments.v1.QuoteRef
-	0,  // 5: livepeer.payments.v1.PayerDaemon.CreatePayment:input_type -> livepeer.payments.v1.CreatePaymentRequest
-	4,  // 6: livepeer.payments.v1.PayerDaemon.GetDepositInfo:input_type -> livepeer.payments.v1.GetDepositInfoRequest
-	2,  // 7: livepeer.payments.v1.PayerDaemon.GetSessionDebits:input_type -> livepeer.payments.v1.GetSessionDebitsRequest
-	10, // 8: livepeer.payments.v1.PayerDaemon.Health:input_type -> livepeer.payments.v1.HealthRequest
-	1,  // 9: livepeer.payments.v1.PayerDaemon.CreatePayment:output_type -> livepeer.payments.v1.CreatePaymentResponse
-	5,  // 10: livepeer.payments.v1.PayerDaemon.GetDepositInfo:output_type -> livepeer.payments.v1.GetDepositInfoResponse
-	3,  // 11: livepeer.payments.v1.PayerDaemon.GetSessionDebits:output_type -> livepeer.payments.v1.GetSessionDebitsResponse
-	11, // 12: livepeer.payments.v1.PayerDaemon.Health:output_type -> livepeer.payments.v1.HealthResponse
-	9,  // [9:13] is the sub-list for method output_type
-	5,  // [5:9] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	8,  // 0: livepeer.payments.v1.CreatePaymentRequest.accepted_price:type_name -> livepeer.payments.v1.AcceptedPrice
+	9,  // 1: livepeer.payments.v1.CreatePaymentRequest.funding:type_name -> livepeer.payments.v1.FundingIntent
+	10, // 2: livepeer.payments.v1.CreatePaymentResponse.expected_value:type_name -> livepeer.payments.v1.BigUInt
+	10, // 3: livepeer.payments.v1.CreatePaymentResponse.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	11, // 4: livepeer.payments.v1.CreatePaymentResponse.accepted_quote_ref:type_name -> livepeer.payments.v1.QuoteRef
+	12, // 5: livepeer.payments.v1.ReportPaymentResultRequest.rejection_reason:type_name -> livepeer.payments.v1.PaymentRejectionReason
+	0,  // 6: livepeer.payments.v1.PayerDaemon.CreatePayment:input_type -> livepeer.payments.v1.CreatePaymentRequest
+	2,  // 7: livepeer.payments.v1.PayerDaemon.ReportPaymentResult:input_type -> livepeer.payments.v1.ReportPaymentResultRequest
+	6,  // 8: livepeer.payments.v1.PayerDaemon.GetDepositInfo:input_type -> livepeer.payments.v1.GetDepositInfoRequest
+	4,  // 9: livepeer.payments.v1.PayerDaemon.GetSessionDebits:input_type -> livepeer.payments.v1.GetSessionDebitsRequest
+	13, // 10: livepeer.payments.v1.PayerDaemon.Health:input_type -> livepeer.payments.v1.HealthRequest
+	1,  // 11: livepeer.payments.v1.PayerDaemon.CreatePayment:output_type -> livepeer.payments.v1.CreatePaymentResponse
+	3,  // 12: livepeer.payments.v1.PayerDaemon.ReportPaymentResult:output_type -> livepeer.payments.v1.ReportPaymentResultResponse
+	7,  // 13: livepeer.payments.v1.PayerDaemon.GetDepositInfo:output_type -> livepeer.payments.v1.GetDepositInfoResponse
+	5,  // 14: livepeer.payments.v1.PayerDaemon.GetSessionDebits:output_type -> livepeer.payments.v1.GetSessionDebitsResponse
+	14, // 15: livepeer.payments.v1.PayerDaemon.Health:output_type -> livepeer.payments.v1.HealthResponse
+	11, // [11:16] is the sub-list for method output_type
+	6,  // [6:11] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_livepeer_payments_v1_payer_daemon_proto_init() }
@@ -514,7 +647,7 @@ func file_livepeer_payments_v1_payer_daemon_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_livepeer_payments_v1_payer_daemon_proto_rawDesc), len(file_livepeer_payments_v1_payer_daemon_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

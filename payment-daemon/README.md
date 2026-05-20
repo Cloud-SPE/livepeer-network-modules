@@ -7,15 +7,18 @@ Runs on both sides of a paid request:
   `Payment` envelopes, tracks per-sender balances, and (post chain
   integration) redeems winning tickets on-chain. The capability-broker
   talks to this daemon over a unix socket via the `PayeeDaemon` gRPC
-  service.
+  service. Operator-only maintenance calls use the co-mounted
+  `PayeeAdmin` gRPC service on the same socket.
 - **`--mode=sender`** — gateway-side. Mints `Payment` envelopes for the
   paying app. Gateways and the conformance runner talk to this daemon
-  over a unix socket via the `PayerDaemon` gRPC service.
+  over a unix socket via the `PayerDaemon` gRPC service. Callers may
+  later report payee-side rejection outcomes back to the daemon so it
+  can invalidate stale cached sessions.
 
 Wire format and gRPC contracts at [`../livepeer-network-protocol/proto/livepeer/payments/v1/`](../livepeer-network-protocol/proto/livepeer/payments/v1/).
 Operational reading: [`docs/operator-runbook.md`](./docs/operator-runbook.md).
 
-## Status (v0.2 — wire-compat + sender, chain stubbed)
+## Status (pre-1.0 — sender + receiver + restart-stable sessions)
 
 - Both `sender` and `receiver` modes wire up. One binary, mode chosen
   at boot.
@@ -24,12 +27,24 @@ Operational reading: [`docs/operator-runbook.md`](./docs/operator-runbook.md).
   envelopes from this daemon decode against go-livepeer's `pm/`.
 - Receiver sessions persist to BoltDB
   (`/var/lib/livepeer/payment-daemon/sessions.db`).
-- **Cryptography is stubbed.** Sender signs with a deterministic
-  dev-mode key (no chain RPC, no real keystore). Receiver accepts any
-  well-formed `Payment` bytes and credits zero EV.
-- **Chain integration deferred.** No Arbitrum, no go-ethereum, no real
-  redemption submissions. Provider interfaces are in place; plan 0016
-  swaps in real chain implementations behind them.
+- `GetTicketParams` is restart-stable for an open
+  `(sender, recipient, capability, offering)` session. Repeated calls
+  reuse the same `recipient_rand_hash` until the session is closed or
+  reset.
+- Receiver-side `ProcessPayment` returns machine-readable per-ticket
+  status (`TicketStatus`, `tickets_rejected`, `dominant_rejection`) so
+  callers can distinguish invalid-recipient-rand from replay or
+  signature failures.
+- Sender-side `CreatePayment` returns the minted `work_id`, and
+  `ReportPaymentResult` lets a caller report
+  `INVALID_RECIPIENT_RAND` back to the daemon. The daemon evicts the
+  stale cached session and returns `codes.Aborted` with retry details.
+- `PayeeAdmin.ResetSession` gives operators an explicit session-rotation
+  surface instead of relying on daemon restarts.
+- **Chain integration is available when `--chain-rpc` is set.** In dev
+  mode the daemon still uses fake chain providers and a deterministic
+  key; in production mode it validates against real chain state and runs
+  the redemption pipeline.
 
 Anything in [`docs/operator-runbook.md`](./docs/operator-runbook.md)
 that talks about real funds, real gas, or real redemption is
@@ -56,6 +71,7 @@ Flags:
 |---|---|---|
 | `--socket` | `/var/run/livepeer/payment-daemon.sock` | unix socket the gRPC server listens on |
 | `--db` | `/var/lib/livepeer/payment-daemon/sessions.db` | BoltDB session ledger path |
+| `--payee-admin-token` | empty | bearer token for receiver-only `PayeeAdmin` methods; falls back to `PAYEE_DAEMON_ADMIN_TOKEN` when unset |
 
 The socket and DB paths are designed to be mounted as docker volumes shared
 with the broker container.
@@ -74,6 +90,7 @@ with the broker container.
                  │  payment-daemon container    │
                  │  (this binary)               │
                  │  ─────────────────────────── │
+                 │  PayeeDaemon + PayeeAdmin    │
                  │  BoltDB sessions.db          │
                  └──────────────────────────────┘
 ```

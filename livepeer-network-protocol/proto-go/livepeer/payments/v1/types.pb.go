@@ -32,6 +32,67 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// PaymentRejectionReason is the machine-readable reason a payee daemon
+// rejected a ticket in ProcessPayment. UNSPECIFIED means the ticket was
+// accepted.
+type PaymentRejectionReason int32
+
+const (
+	PaymentRejectionReason_PAYMENT_REJECTION_REASON_UNSPECIFIED            PaymentRejectionReason = 0
+	PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND PaymentRejectionReason = 1
+	PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_REPLAY           PaymentRejectionReason = 2
+	PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_CAP_REACHED      PaymentRejectionReason = 3
+	PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_SIGNATURE      PaymentRejectionReason = 4
+	PaymentRejectionReason_PAYMENT_REJECTION_REASON_OTHER                  PaymentRejectionReason = 5
+)
+
+// Enum value maps for PaymentRejectionReason.
+var (
+	PaymentRejectionReason_name = map[int32]string{
+		0: "PAYMENT_REJECTION_REASON_UNSPECIFIED",
+		1: "PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND",
+		2: "PAYMENT_REJECTION_REASON_NONCE_REPLAY",
+		3: "PAYMENT_REJECTION_REASON_NONCE_CAP_REACHED",
+		4: "PAYMENT_REJECTION_REASON_INVALID_SIGNATURE",
+		5: "PAYMENT_REJECTION_REASON_OTHER",
+	}
+	PaymentRejectionReason_value = map[string]int32{
+		"PAYMENT_REJECTION_REASON_UNSPECIFIED":            0,
+		"PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND": 1,
+		"PAYMENT_REJECTION_REASON_NONCE_REPLAY":           2,
+		"PAYMENT_REJECTION_REASON_NONCE_CAP_REACHED":      3,
+		"PAYMENT_REJECTION_REASON_INVALID_SIGNATURE":      4,
+		"PAYMENT_REJECTION_REASON_OTHER":                  5,
+	}
+)
+
+func (x PaymentRejectionReason) Enum() *PaymentRejectionReason {
+	p := new(PaymentRejectionReason)
+	*p = x
+	return p
+}
+
+func (x PaymentRejectionReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PaymentRejectionReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_livepeer_payments_v1_types_proto_enumTypes[0].Descriptor()
+}
+
+func (PaymentRejectionReason) Type() protoreflect.EnumType {
+	return &file_livepeer_payments_v1_types_proto_enumTypes[0]
+}
+
+func (x PaymentRejectionReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PaymentRejectionReason.Descriptor instead.
+func (PaymentRejectionReason) EnumDescriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{0}
+}
+
 type SettlementRecord_SettlementOutcome int32
 
 const (
@@ -74,11 +135,11 @@ func (x SettlementRecord_SettlementOutcome) String() string {
 }
 
 func (SettlementRecord_SettlementOutcome) Descriptor() protoreflect.EnumDescriptor {
-	return file_livepeer_payments_v1_types_proto_enumTypes[0].Descriptor()
+	return file_livepeer_payments_v1_types_proto_enumTypes[1].Descriptor()
 }
 
 func (SettlementRecord_SettlementOutcome) Type() protoreflect.EnumType {
-	return &file_livepeer_payments_v1_types_proto_enumTypes[0]
+	return &file_livepeer_payments_v1_types_proto_enumTypes[1]
 }
 
 func (x SettlementRecord_SettlementOutcome) Number() protoreflect.EnumNumber {
@@ -561,9 +622,9 @@ func (x *OfferingPrice) GetPriceInfo() *PriceInfo {
 // CapabilityEntry is one row of the daemon's capability catalog.
 type CapabilityEntry struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Capability string in the canonical form `openai:<uri-path>` for
-	// the OpenAI module family; other modules use their own domain
-	// prefix (e.g. `transcoding:...`). Opaque to the daemon.
+	// Capability string as published by the worker / broker. Opaque to
+	// the daemon; callers should not assume slash-form and colon-form
+	// OpenAI IDs are interchangeable.
 	Capability string `protobuf:"bytes,1,opt,name=capability,proto3" json:"capability,omitempty"`
 	// Work-unit identifier for observability ("token", "audio_second",
 	// "image_step_megapixel", "character", ...). The daemon treats work
@@ -1092,6 +1153,76 @@ func (x *SettlementRecord) GetBreakdown() map[string]string {
 	return nil
 }
 
+// TicketStatus reports the payee daemon's disposition for one ticket
+// inside a ProcessPayment batch.
+type TicketStatus struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	SenderNonce     uint32                 `protobuf:"varint,1,opt,name=sender_nonce,json=senderNonce,proto3" json:"sender_nonce,omitempty"`
+	RejectionReason PaymentRejectionReason `protobuf:"varint,2,opt,name=rejection_reason,json=rejectionReason,proto3,enum=livepeer.payments.v1.PaymentRejectionReason" json:"rejection_reason,omitempty"`
+	CreditedEv      []byte                 `protobuf:"bytes,3,opt,name=credited_ev,json=creditedEv,proto3" json:"credited_ev,omitempty"`
+	WasWinning      bool                   `protobuf:"varint,4,opt,name=was_winning,json=wasWinning,proto3" json:"was_winning,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *TicketStatus) Reset() {
+	*x = TicketStatus{}
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TicketStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TicketStatus) ProtoMessage() {}
+
+func (x *TicketStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TicketStatus.ProtoReflect.Descriptor instead.
+func (*TicketStatus) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *TicketStatus) GetSenderNonce() uint32 {
+	if x != nil {
+		return x.SenderNonce
+	}
+	return 0
+}
+
+func (x *TicketStatus) GetRejectionReason() PaymentRejectionReason {
+	if x != nil {
+		return x.RejectionReason
+	}
+	return PaymentRejectionReason_PAYMENT_REJECTION_REASON_UNSPECIFIED
+}
+
+func (x *TicketStatus) GetCreditedEv() []byte {
+	if x != nil {
+		return x.CreditedEv
+	}
+	return nil
+}
+
+func (x *TicketStatus) GetWasWinning() bool {
+	if x != nil {
+		return x.WasWinning
+	}
+	return false
+}
+
 // PendingRedemption describes one ticket queued for on-chain redemption.
 // Returned by ListPendingRedemptions for operator observability.
 type PendingRedemption struct {
@@ -1111,7 +1242,7 @@ type PendingRedemption struct {
 
 func (x *PendingRedemption) Reset() {
 	*x = PendingRedemption{}
-	mi := &file_livepeer_payments_v1_types_proto_msgTypes[14]
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1123,7 +1254,7 @@ func (x *PendingRedemption) String() string {
 func (*PendingRedemption) ProtoMessage() {}
 
 func (x *PendingRedemption) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_types_proto_msgTypes[14]
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1136,7 +1267,7 @@ func (x *PendingRedemption) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PendingRedemption.ProtoReflect.Descriptor instead.
 func (*PendingRedemption) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{14}
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *PendingRedemption) GetTicketHash() []byte {
@@ -1263,7 +1394,14 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"OVERFUNDED\x10\x03\x12\x15\n" +
 	"\x11STOPPED_AT_BUDGET\x10\x04\x12\r\n" +
-	"\tTOPPED_UP\x10\x05\"\xa4\x01\n" +
+	"\tTOPPED_UP\x10\x05\"\xcc\x01\n" +
+	"\fTicketStatus\x12!\n" +
+	"\fsender_nonce\x18\x01 \x01(\rR\vsenderNonce\x12W\n" +
+	"\x10rejection_reason\x18\x02 \x01(\x0e2,.livepeer.payments.v1.PaymentRejectionReasonR\x0frejectionReason\x12\x1f\n" +
+	"\vcredited_ev\x18\x03 \x01(\fR\n" +
+	"creditedEv\x12\x1f\n" +
+	"\vwas_winning\x18\x04 \x01(\bR\n" +
+	"wasWinning\"\xa4\x01\n" +
 	"\x11PendingRedemption\x12\x1f\n" +
 	"\vticket_hash\x18\x01 \x01(\fR\n" +
 	"ticketHash\x12\x16\n" +
@@ -1271,7 +1409,14 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"face_value\x18\x03 \x01(\fR\tfaceValue\x12\x1b\n" +
 	"\tqueued_at\x18\x04 \x01(\x03R\bqueuedAt\x12\x1a\n" +
-	"\battempts\x18\x05 \x01(\x05R\battemptsBrZpgithub.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1b\x06proto3"
+	"\battempts\x18\x05 \x01(\x05R\battempts*\xa6\x02\n" +
+	"\x16PaymentRejectionReason\x12(\n" +
+	"$PAYMENT_REJECTION_REASON_UNSPECIFIED\x10\x00\x123\n" +
+	"/PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND\x10\x01\x12)\n" +
+	"%PAYMENT_REJECTION_REASON_NONCE_REPLAY\x10\x02\x12.\n" +
+	"*PAYMENT_REJECTION_REASON_NONCE_CAP_REACHED\x10\x03\x12.\n" +
+	"*PAYMENT_REJECTION_REASON_INVALID_SIGNATURE\x10\x04\x12\"\n" +
+	"\x1ePAYMENT_REJECTION_REASON_OTHER\x10\x05BrZpgithub.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1b\x06proto3"
 
 var (
 	file_livepeer_payments_v1_types_proto_rawDescOnce sync.Once
@@ -1285,48 +1430,51 @@ func file_livepeer_payments_v1_types_proto_rawDescGZIP() []byte {
 	return file_livepeer_payments_v1_types_proto_rawDescData
 }
 
-var file_livepeer_payments_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_livepeer_payments_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_livepeer_payments_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_livepeer_payments_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_livepeer_payments_v1_types_proto_goTypes = []any{
-	(SettlementRecord_SettlementOutcome)(0), // 0: livepeer.payments.v1.SettlementRecord.SettlementOutcome
-	(*PriceInfo)(nil),                       // 1: livepeer.payments.v1.PriceInfo
-	(*TicketParams)(nil),                    // 2: livepeer.payments.v1.TicketParams
-	(*TicketSenderParams)(nil),              // 3: livepeer.payments.v1.TicketSenderParams
-	(*TicketExpirationParams)(nil),          // 4: livepeer.payments.v1.TicketExpirationParams
-	(*Payment)(nil),                         // 5: livepeer.payments.v1.Payment
-	(*OfferingPrice)(nil),                   // 6: livepeer.payments.v1.OfferingPrice
-	(*CapabilityEntry)(nil),                 // 7: livepeer.payments.v1.CapabilityEntry
-	(*HealthRequest)(nil),                   // 8: livepeer.payments.v1.HealthRequest
-	(*HealthResponse)(nil),                  // 9: livepeer.payments.v1.HealthResponse
-	(*BigUInt)(nil),                         // 10: livepeer.payments.v1.BigUInt
-	(*QuoteRef)(nil),                        // 11: livepeer.payments.v1.QuoteRef
-	(*AcceptedPrice)(nil),                   // 12: livepeer.payments.v1.AcceptedPrice
-	(*FundingIntent)(nil),                   // 13: livepeer.payments.v1.FundingIntent
-	(*SettlementRecord)(nil),                // 14: livepeer.payments.v1.SettlementRecord
-	(*PendingRedemption)(nil),               // 15: livepeer.payments.v1.PendingRedemption
-	nil,                                     // 16: livepeer.payments.v1.SettlementRecord.BreakdownEntry
+	(PaymentRejectionReason)(0),             // 0: livepeer.payments.v1.PaymentRejectionReason
+	(SettlementRecord_SettlementOutcome)(0), // 1: livepeer.payments.v1.SettlementRecord.SettlementOutcome
+	(*PriceInfo)(nil),                       // 2: livepeer.payments.v1.PriceInfo
+	(*TicketParams)(nil),                    // 3: livepeer.payments.v1.TicketParams
+	(*TicketSenderParams)(nil),              // 4: livepeer.payments.v1.TicketSenderParams
+	(*TicketExpirationParams)(nil),          // 5: livepeer.payments.v1.TicketExpirationParams
+	(*Payment)(nil),                         // 6: livepeer.payments.v1.Payment
+	(*OfferingPrice)(nil),                   // 7: livepeer.payments.v1.OfferingPrice
+	(*CapabilityEntry)(nil),                 // 8: livepeer.payments.v1.CapabilityEntry
+	(*HealthRequest)(nil),                   // 9: livepeer.payments.v1.HealthRequest
+	(*HealthResponse)(nil),                  // 10: livepeer.payments.v1.HealthResponse
+	(*BigUInt)(nil),                         // 11: livepeer.payments.v1.BigUInt
+	(*QuoteRef)(nil),                        // 12: livepeer.payments.v1.QuoteRef
+	(*AcceptedPrice)(nil),                   // 13: livepeer.payments.v1.AcceptedPrice
+	(*FundingIntent)(nil),                   // 14: livepeer.payments.v1.FundingIntent
+	(*SettlementRecord)(nil),                // 15: livepeer.payments.v1.SettlementRecord
+	(*TicketStatus)(nil),                    // 16: livepeer.payments.v1.TicketStatus
+	(*PendingRedemption)(nil),               // 17: livepeer.payments.v1.PendingRedemption
+	nil,                                     // 18: livepeer.payments.v1.SettlementRecord.BreakdownEntry
 }
 var file_livepeer_payments_v1_types_proto_depIdxs = []int32{
-	4,  // 0: livepeer.payments.v1.TicketParams.expiration_params:type_name -> livepeer.payments.v1.TicketExpirationParams
-	2,  // 1: livepeer.payments.v1.Payment.ticket_params:type_name -> livepeer.payments.v1.TicketParams
-	4,  // 2: livepeer.payments.v1.Payment.expiration_params:type_name -> livepeer.payments.v1.TicketExpirationParams
-	3,  // 3: livepeer.payments.v1.Payment.ticket_sender_params:type_name -> livepeer.payments.v1.TicketSenderParams
-	1,  // 4: livepeer.payments.v1.Payment.expected_price:type_name -> livepeer.payments.v1.PriceInfo
-	1,  // 5: livepeer.payments.v1.OfferingPrice.price_info:type_name -> livepeer.payments.v1.PriceInfo
-	6,  // 6: livepeer.payments.v1.CapabilityEntry.offerings:type_name -> livepeer.payments.v1.OfferingPrice
-	10, // 7: livepeer.payments.v1.AcceptedPrice.price_per_unit_wei:type_name -> livepeer.payments.v1.BigUInt
-	11, // 8: livepeer.payments.v1.AcceptedPrice.quote_ref:type_name -> livepeer.payments.v1.QuoteRef
-	10, // 9: livepeer.payments.v1.FundingIntent.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	11, // 10: livepeer.payments.v1.SettlementRecord.accepted_quote_ref:type_name -> livepeer.payments.v1.QuoteRef
-	10, // 11: livepeer.payments.v1.SettlementRecord.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	10, // 12: livepeer.payments.v1.SettlementRecord.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	0,  // 13: livepeer.payments.v1.SettlementRecord.outcome:type_name -> livepeer.payments.v1.SettlementRecord.SettlementOutcome
-	16, // 14: livepeer.payments.v1.SettlementRecord.breakdown:type_name -> livepeer.payments.v1.SettlementRecord.BreakdownEntry
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	5,  // 0: livepeer.payments.v1.TicketParams.expiration_params:type_name -> livepeer.payments.v1.TicketExpirationParams
+	3,  // 1: livepeer.payments.v1.Payment.ticket_params:type_name -> livepeer.payments.v1.TicketParams
+	5,  // 2: livepeer.payments.v1.Payment.expiration_params:type_name -> livepeer.payments.v1.TicketExpirationParams
+	4,  // 3: livepeer.payments.v1.Payment.ticket_sender_params:type_name -> livepeer.payments.v1.TicketSenderParams
+	2,  // 4: livepeer.payments.v1.Payment.expected_price:type_name -> livepeer.payments.v1.PriceInfo
+	2,  // 5: livepeer.payments.v1.OfferingPrice.price_info:type_name -> livepeer.payments.v1.PriceInfo
+	7,  // 6: livepeer.payments.v1.CapabilityEntry.offerings:type_name -> livepeer.payments.v1.OfferingPrice
+	11, // 7: livepeer.payments.v1.AcceptedPrice.price_per_unit_wei:type_name -> livepeer.payments.v1.BigUInt
+	12, // 8: livepeer.payments.v1.AcceptedPrice.quote_ref:type_name -> livepeer.payments.v1.QuoteRef
+	11, // 9: livepeer.payments.v1.FundingIntent.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	12, // 10: livepeer.payments.v1.SettlementRecord.accepted_quote_ref:type_name -> livepeer.payments.v1.QuoteRef
+	11, // 11: livepeer.payments.v1.SettlementRecord.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	11, // 12: livepeer.payments.v1.SettlementRecord.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	1,  // 13: livepeer.payments.v1.SettlementRecord.outcome:type_name -> livepeer.payments.v1.SettlementRecord.SettlementOutcome
+	18, // 14: livepeer.payments.v1.SettlementRecord.breakdown:type_name -> livepeer.payments.v1.SettlementRecord.BreakdownEntry
+	0,  // 15: livepeer.payments.v1.TicketStatus.rejection_reason:type_name -> livepeer.payments.v1.PaymentRejectionReason
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_livepeer_payments_v1_types_proto_init() }
@@ -1339,8 +1487,8 @@ func file_livepeer_payments_v1_types_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_livepeer_payments_v1_types_proto_rawDesc), len(file_livepeer_payments_v1_types_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   16,
+			NumEnums:      2,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

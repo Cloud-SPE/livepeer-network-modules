@@ -12,6 +12,17 @@ import (
 	"math/big"
 )
 
+type PaymentRejectionReason int32
+
+const (
+	PaymentRejectionReasonUnspecified          PaymentRejectionReason = 0
+	PaymentRejectionReasonInvalidRecipientRand PaymentRejectionReason = 1
+	PaymentRejectionReasonNonceReplay          PaymentRejectionReason = 2
+	PaymentRejectionReasonNonceCapReached      PaymentRejectionReason = 3
+	PaymentRejectionReasonInvalidSignature     PaymentRejectionReason = 4
+	PaymentRejectionReasonOther                PaymentRejectionReason = 5
+)
+
 // Client is the broker's PayeeDaemon adapter. The middleware drives a
 // session lifecycle:
 //
@@ -113,10 +124,20 @@ type ProcessPaymentRequest struct {
 // ProcessPaymentResult is what the daemon returns after sealing the
 // sender.
 type ProcessPaymentResult struct {
-	Sender        []byte
-	CreditedEV    *big.Int
-	Balance       *big.Int
-	WinnersQueued int32
+	Sender            []byte
+	CreditedEV        *big.Int
+	Balance           *big.Int
+	WinnersQueued     int32
+	TicketStatus      []TicketStatus
+	TicketsRejected   int32
+	DominantRejection PaymentRejectionReason
+}
+
+type TicketStatus struct {
+	SenderNonce     uint32
+	RejectionReason PaymentRejectionReason
+	CreditedEV      *big.Int
+	WasWinning      bool
 }
 
 // DebitBalanceRequest captures one post-handler debit.

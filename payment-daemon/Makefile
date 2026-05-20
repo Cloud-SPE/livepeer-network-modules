@@ -54,9 +54,10 @@ proto: ## Regenerate Go bindings from the proto sources (requires protoc on host
 		-I=$(PROTO_SRC) \
 		--go_out=paths=source_relative:$(PROTO_OUT) \
 		--go-grpc_out=paths=source_relative:$(PROTO_OUT) \
-		$(PROTO_SRC)/livepeer/payments/v1/types.proto \
-		$(PROTO_SRC)/livepeer/payments/v1/payee_daemon.proto \
-		$(PROTO_SRC)/livepeer/payments/v1/payer_daemon.proto
+	$(PROTO_SRC)/livepeer/payments/v1/types.proto \
+	$(PROTO_SRC)/livepeer/payments/v1/payee_admin.proto \
+	$(PROTO_SRC)/livepeer/payments/v1/payee_daemon.proto \
+	$(PROTO_SRC)/livepeer/payments/v1/payer_daemon.proto
 
 publish: ## Build + push multi-arch image (requires TAG set to a real version)
 	@if [ "$(TAG)" = "dev" ]; then \

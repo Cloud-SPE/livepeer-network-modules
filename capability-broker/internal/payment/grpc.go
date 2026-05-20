@@ -118,11 +118,23 @@ func (g *GRPC) ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	ticketStatus := make([]TicketStatus, 0, len(resp.GetTicketStatus()))
+	for _, st := range resp.GetTicketStatus() {
+		ticketStatus = append(ticketStatus, TicketStatus{
+			SenderNonce:     st.GetSenderNonce(),
+			RejectionReason: PaymentRejectionReason(st.GetRejectionReason()),
+			CreditedEV:      new(big.Int).SetBytes(st.GetCreditedEv()),
+			WasWinning:      st.GetWasWinning(),
+		})
+	}
 	return &ProcessPaymentResult{
-		Sender:        resp.GetSender(),
-		CreditedEV:    new(big.Int).SetBytes(resp.GetCreditedEv()),
-		Balance:       new(big.Int).SetBytes(resp.GetBalance()),
-		WinnersQueued: resp.GetWinnersQueued(),
+		Sender:            resp.GetSender(),
+		CreditedEV:        new(big.Int).SetBytes(resp.GetCreditedEv()),
+		Balance:           new(big.Int).SetBytes(resp.GetBalance()),
+		WinnersQueued:     resp.GetWinnersQueued(),
+		TicketStatus:      ticketStatus,
+		TicketsRejected:   resp.GetTicketsRejected(),
+		DominantRejection: PaymentRejectionReason(resp.GetDominantRejection()),
 	}, nil
 }
 

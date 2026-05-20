@@ -29,6 +29,13 @@ architectural.
 > against this daemon**, and **do not point a v0.2 daemon at production
 > traffic that expects redeemable tickets**.
 
+> **Upgrade note for the persistent TicketParams session index.** The
+> first receiver release that persists `GetTicketParams` sessions across
+> restart adds a new BoltDB index and does not reconstruct pre-existing
+> in-flight sender/payee sessions. Drain paid traffic before upgrading a
+> receiver to that release. After the upgrade, newly-opened sessions
+> become restart-stable.
+
 ---
 
 ## 1. Two modes, one binary
@@ -50,6 +57,10 @@ switch modes at runtime, you restart the binary.
 Calls to the wrong service surface return gRPC `Unimplemented`. A
 sender-mode daemon does not expose `PayeeDaemon.ProcessPayment`; a
 receiver-mode daemon does not expose `PayerDaemon.CreatePayment`.
+
+Receiver mode also mounts the operator-only `PayeeAdmin` service on the
+same socket. `ResetSession` requires `Authorization: Bearer <token>`
+matching `--payee-admin-token` or `PAYEE_DAEMON_ADMIN_TOKEN`.
 
 ---
 
@@ -339,6 +350,11 @@ so the same seed cannot collide across senders. Rotating
 hash and forces a re-quote on the sender side. **Do not rotate
 arbitrarily** — rotating is a session reset and costs the sender a
 quote round-trip.
+
+Operator-initiated rotation uses `PayeeAdmin.ResetSession(sender,
+recipient, capability, offering)`. Reset closes the old session, drops
+its nonce ledger, and makes the next `GetTicketParams` mint a fresh
+`work_id`.
 
 ### Nonce-replay window
 

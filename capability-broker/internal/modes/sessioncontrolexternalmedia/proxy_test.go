@@ -83,7 +83,7 @@ func TestServeProxy_ForwardsAndStripsLivepeerHeaders(t *testing.T) {
 	req.Header.Set(livepeerheader.Capability, "daydream:scope:v1")
 	req.Header.Set(livepeerheader.Offering, "default")
 	req.Header.Set(livepeerheader.Payment, "<payment>")
-	req.Header.Set(livepeerheader.Mode, "session-control-external-media@v0")
+	req.Header.Set(livepeerheader.Mode, "live-session-remote-runner@v0")
 	req.Header.Set(livepeerheader.SpecVersion, "0.1")
 	req.Header.Set("X-Custom-Header", "preserved")
 

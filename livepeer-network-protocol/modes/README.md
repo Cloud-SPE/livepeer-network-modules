@@ -11,9 +11,9 @@ One spec per interaction mode. The initial six (resolution of plan 0002):
 
 Added later:
 
-- [`session-control-external-media.md`](./session-control-external-media.md) — HTTP session-open → broker reverse-proxy to long-lived multi-session backend that owns its own media plane. **Accepted 2026-05-14.**
+- [`live-session-remote-runner.md`](./live-session-remote-runner.md) — broker-owned live session authority with a remote runner-owned RTMP/HLS media runtime. **Accepted 2026-05-20.**
 
-**Status:** initial six plus the external-media variant accepted. To propose
+**Status:** initial six plus the remote live-runner variant accepted. To propose
 another, see [`../PROCESS.md`](../PROCESS.md).
 
 Each mode has its own SemVer (per Q2 hybrid SemVer). Mode files declare their version

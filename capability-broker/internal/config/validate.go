@@ -217,6 +217,9 @@ func (c *Config) Validate() error {
 		if !interactionModeRE.MatchString(cap.InteractionMode) {
 			return fmt.Errorf("%s: interaction_mode must match <name>@v<major> (got %q)", ctx, cap.InteractionMode)
 		}
+		if cap.InteractionMode == "live-session-remote-runner@v0" && cap.Backend.Transport != "remote-live-runner" {
+			return fmt.Errorf("%s: interaction_mode live-session-remote-runner@v0 requires backend.transport=remote-live-runner", ctx)
+		}
 
 		if cap.WorkUnit.Name == "" {
 			return fmt.Errorf("%s: work_unit.name is required", ctx)
@@ -267,8 +270,22 @@ func (c *Config) Validate() error {
 			if strings.TrimSpace(cap.Backend.SessionRunner.Image) == "" {
 				return fmt.Errorf("%s: backend.session_runner.image is required for transport=session-runner", ctx)
 			}
+		case "remote-live-runner":
+			if cap.Backend.LiveRunner == nil {
+				return fmt.Errorf("%s: backend.live_runner is required for transport=remote-live-runner", ctx)
+			}
+			if strings.TrimSpace(cap.Backend.LiveRunner.BaseURL) == "" {
+				return fmt.Errorf("%s: backend.live_runner.base_url is required for transport=remote-live-runner", ctx)
+			}
+			u, err := url.Parse(cap.Backend.LiveRunner.BaseURL)
+			if err != nil {
+				return fmt.Errorf("%s: backend.live_runner.base_url is invalid: %w", ctx, err)
+			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return fmt.Errorf("%s: backend.live_runner.base_url scheme must be http or https (got %q)", ctx, u.Scheme)
+			}
 		default:
-			return fmt.Errorf("%s: backend.transport %q is not yet supported (only 'http', 'ffmpeg-subprocess', or 'session-runner' in v0.1)", ctx, cap.Backend.Transport)
+			return fmt.Errorf("%s: backend.transport %q is not yet supported (only 'http', 'ffmpeg-subprocess', 'session-runner', or 'remote-live-runner' in v0.1)", ctx, cap.Backend.Transport)
 		}
 
 		switch cap.Backend.Auth.Method {

@@ -16,9 +16,8 @@ Examples mapped to interaction modes:
 - `session-control-plus-media` — vtuber sessions with a separate media plane,
   realtime AI pipelines (broker spawns the per-session backend +
   relays media via pion-webrtc)
-- `session-control-external-media` — long-lived multi-session backends
-  that own their own media plane (e.g. Daydream Scope via Cloudflare
-  TURN); broker brokers control + payment but never touches media
+- `live-session-remote-runner` — broker-authoritative live sessions where a
+  remote runner owns RTMP ingest, FFmpeg, and HLS output
 - `rtmp-ingress-hls-egress` — live video sessions
 
 This doc is intentionally cross-cutting. It binds the gateway shell, the

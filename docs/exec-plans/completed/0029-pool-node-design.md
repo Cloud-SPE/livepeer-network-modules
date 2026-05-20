@@ -106,7 +106,7 @@ preserved.
 (`rtmp-ingress-hls-egress`, `ws-realtime`,
 `session-control-plus-media`) where Pool-edge bandwidth is significant,
 revisit a per-mode passthrough analogous to
-`session-control-external-media` (architecture-overview.md:180) once
+`live-session-remote-runner` (architecture-overview.md:180) once
 traffic profiles are known. Not v1 scope.
 
 ### 2026-05-16 — Fork 2: Member is a backend provider, no broker / no payment-daemon

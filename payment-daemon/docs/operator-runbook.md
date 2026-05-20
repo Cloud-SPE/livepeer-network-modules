@@ -449,7 +449,7 @@ When `SufficientBalance` returns `sufficient=false`:
    accumulated between the last tick and the cancellation point (so the
    daemon's ledger matches the bytes/seconds actually shipped).
 4. `CloseSession` runs.
-5. The connection closes gateway-side. For ws-realtime, the runner sees
+5. The connection closes gateway-side. For ws-realtime, the backend sees
    a server-side close. For other long-running modes, the gateway sees
    the body terminate; where the protocol allows it, the broker emits
    `Livepeer-Error: insufficient_balance` as a trailer.
@@ -639,17 +639,17 @@ captures the operator-facing knobs and failure modes.
 ### 11.1. Container-runtime prereq
 
 Docker daemon must be running on the broker host with image registry
-credentials configured for the operator's runner image. The broker's
+credentials configured for the operator's session-backend image. The broker's
 `--container-runtime` flag defaults to `docker`; the alternative
 `process` runtime is debug-only and bypasses the runtime entirely.
 
 ### 11.2. Image management
 
-Operator pulls the runner image; the broker does not vendor it. Pin to
+Operator pulls the session-backend image; the broker does not vendor it. Pin to
 a digest in production. Rotation = push new image + update
 `host-config.yaml`'s `capabilities[].backend.session_runner.image` +
 SIGHUP the broker. The `--session-control-max-concurrent-sessions` cap
-governs how many runners can run simultaneously per broker host.
+governs how many session backends can run simultaneously per broker host.
 
 ### 11.3. WebRTC firewall
 
@@ -666,15 +666,15 @@ candidates.
 
 ### 11.4. Resource sizing
 
-Per-session sizing depends on the runner image. The reference vtuber
-session-runner needs ~ 2 GiB RAM + 2 CPU per session; capacity formula
+Per-session sizing depends on the backend image. The historical vtuber
+session backend needed ~ 2 GiB RAM + 2 CPU per session; capacity formula
 is `--session-control-max-concurrent-sessions x per-session sizing`.
 Set `capabilities[].backend.session_runner.resources` to enforce per
 session.
 
 ### 11.5. Common failure modes
 
-- **Runner crashed.** Check the broker logs for `runner_crashed` /
+- **Session backend crashed.** Check the broker logs for `runner_crashed` /
   `runner_oom`. OOM means raising `resources.memory`; missing env or
   pull failure means registry credentials.
 - **Control-WS keeps disconnecting.** Most often NAT or firewall on the

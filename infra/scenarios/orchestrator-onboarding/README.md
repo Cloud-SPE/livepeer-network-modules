@@ -24,7 +24,7 @@ flavor that matches your hosts.
                                             ▼
    ┌────────────────────────────────────────────────────┐
    │  Capability Broker(s) — one per data center / rig  │
-   │  + payment-daemon + workload runners (vLLM, etc.)  │
+   │  + payment-daemon + backend workloads (vLLM, etc.) │
    └────────────────────────────────────────────────────┘
 ```
 
@@ -34,7 +34,7 @@ Three host roles, plus one ingress proxy on every public-facing host:
 | -------------------- | -------------------------------------------------------------- | ---------------- | -------------- |
 | **Secure Orch**      | `protocol-daemon`, `service-registry-daemon`, `secure-orch-console` | No           | Cold orch key  |
 | **Orch Coordinator** | `orch-coordinator` (+ ingress)                                 | Yes (HTTPS only) | None           |
-| **Capability Broker**| `capability-broker`, `payment-daemon-receiver` (+ ingress + workload runners) | Yes (HTTPS only) | Hot payment wallet (one per broker box) |
+| **Capability Broker**| `capability-broker`, `payment-daemon-receiver` (+ ingress + backend workloads) | Yes (HTTPS only) | Hot payment wallet (one per broker box) |
 
 Add one Capability Broker host per data center / home rig. The other two
 roles are single-host.
@@ -147,28 +147,24 @@ by hardware. Reference host-configs live under
 
 | Variant                                              | Status      | Capability                                                          |
 | ---------------------------------------------------- | ----------- | ------------------------------------------------------------------- |
-| [`openai-audio.example.yaml`](./capability-broker/host-configs/openai-audio.example.yaml) | Stable      | `openai:audio-transcriptions` (Whisper) + `openai:audio-speech` (Kokoro) |
 | [`openai-chat.example.yaml`](./capability-broker/host-configs/openai-chat.example.yaml)   | Stable      | `openai:chat-completions` (vLLM, stream + reqresp paired offerings) |
-| [`preview/video-transcode.example.yaml`](./capability-broker/host-configs/preview/video-transcode.example.yaml) | **Preview** | `video:transcode.vod` (NVIDIA) — gateway integration not yet shipped; do not advertise on live network |
 
-The workload runners (Whisper, Kokoro, vLLM, etc.) live alongside the
-broker on the same Docker network, OR on separate boxes the broker
-proxies to. Either way, the broker reaches them via the `backend.url`
-field in `host-config.yaml`. Reference runner composes for the OpenAI
-stacks ship under `openai-runners/compose/`.
+The backend workloads (vLLM, external APIs, local media services, etc.)
+live alongside the broker on the same Docker network, OR on separate
+boxes the broker proxies to. Either way, the broker reaches them via the
+`backend.url` field in `host-config.yaml`.
 
-**Work-unit extractors.** The example host-configs demonstrate four
+**Work-unit extractors.** The example host-configs demonstrate multiple
 extraction patterns, one per `extractor.type`:
 
-- `response-header` — runner reports work units in a response header
-  (Whisper: seconds of audio)
+- `response-header` — backend reports work units in a response header
+  (for example, seconds of audio)
 - `request-formula` with a JSONPath expression — count something on the
-  inbound request (Kokoro: input characters)
-- `request-formula` with literal `1` — per-job billing (preview transcode)
+  inbound request
 - `openai-usage` — read `total_tokens` straight from the OpenAI usage
   block (vLLM chat)
 
-Pick whichever your runner can support; mix freely.
+Pick whichever your backend can support; mix freely.
 
 **Health probes.** Each capability also declares a `health.probe` block.
 The broker probes the backend on cadence and exposes the result on
@@ -178,7 +174,7 @@ paid traffic and skip offerings that are `unreachable`, `degraded`, or
 selection without forcing a fresh sign cycle on your manifest. The
 example host-configs ship probes that fit each backend
 (`http-openai-model-ready` for vLLM, `http-status` against `/healthz`
-for the audio runners). See the capability-broker scenario README for
+for the backend). See the capability-broker scenario README for
 the full probe-type table and
 [`docs/design-docs/backend-health.md`](../../../docs/design-docs/backend-health.md)
 for the three-layer model (manifest / live / failure-rate).

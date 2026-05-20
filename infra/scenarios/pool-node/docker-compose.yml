@@ -14,7 +14,7 @@
 
 services:
   pool-controller:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-controller:${TAG:-v1.3.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-controller:${TAG:-v1.3.1}
     command:
       - serve
       - --config=/etc/livepeer/pool-controller.yaml
@@ -32,7 +32,7 @@ services:
     restart: unless-stopped
 
   pool-reconciler:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-reconciler:${TAG:-v1.3.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-reconciler:${TAG:-v1.3.1}
     depends_on:
       - pool-controller
     command:
@@ -47,7 +47,7 @@ services:
     restart: unless-stopped
 
   pool-payout-executor:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-payout-executor:${TAG:-v1.3.0}
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-payout-executor:${TAG:-v1.3.1}
     depends_on:
       - pool-controller
     command:

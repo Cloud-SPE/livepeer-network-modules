@@ -1,12 +1,10 @@
 # Plan 0023 — strict frontend DOM and CSS invariants
 
-> **Removal note (2026-05-19).** The four product gateways (openai-gateway, video-gateway, vtuber-gateway, daydream-gateway) and their shared TS libraries (gateway-adapters, gateway-route-health) have since been removed from this repo. This plan is preserved as historical record of what shipped at the time; the directories and code paths it references no longer exist in the working tree.
-
 **Status:** completed  
 **Opened:** 2026-05-09  
 **Completed:** 2026-05-09  
 **Owner:** harness  
-**Related:** `customer-portal/`, `openai-gateway/`, `video-gateway/`, `vtuber-gateway/`, [`../../design-docs/frontend-dom-and-css-invariants.md`](../../design-docs/frontend-dom-and-css-invariants.md), [`../../design-docs/ui-design-system.md`](../../design-docs/ui-design-system.md), [`../../references/modern-css-2026.md`](../../references/modern-css-2026.md)
+**Related:** `customer-portal/`, `secure-orch-console/`, [`../../design-docs/frontend-dom-and-css-invariants.md`](../../design-docs/frontend-dom-and-css-invariants.md), [`../../design-docs/ui-design-system.md`](../../design-docs/ui-design-system.md), [`../../references/modern-css-2026.md`](../../references/modern-css-2026.md)
 
 ## Closeout
 
@@ -66,18 +64,11 @@ Representative files:
 - `customer-portal/frontend/shared/src/components/portal-button.ts`
 - `customer-portal/frontend/shared/src/components/portal-data-table.ts`
 
-### 2.2 Product UIs add additional direct violations
+### 2.2 Consumer UIs add additional direct violations
 
-OpenAI admin and portal screens currently contain many inline style attributes and
-non-semantic wrappers.
-
-Representative files:
-
-- `openai-gateway/src/frontend/admin/main.ts`
-- `openai-gateway/src/frontend/portal/main.ts`
-
-Video and vtuber UIs are less style-heavy in their page logic, but they still inherit
-shadow-DOM and CSS-in-TS architecture from the current model.
+Consumer-facing screens currently contain additional inline style
+attributes and non-semantic wrappers on top of the shared-package
+violations.
 
 Representative files:
 

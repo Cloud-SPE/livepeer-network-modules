@@ -50,18 +50,9 @@ own `AGENTS.md` for component-specific guidance. The root-level `docs/` holds on
 Current top-level components include `livepeer-network-protocol/`,
 `capability-broker/`, `payment-daemon/`, `orch-coordinator/`,
 `secure-orch-console/`, `protocol-daemon/`, `service-registry-daemon/`,
-`chain-commons/`, and `proto-contracts/`. Workload runners
-(`openai-runners/`, `video-runners/`, `vtuber-runner/`, `rerank-runner/`)
-and pool components (`pool-controller/`, `pool-reconciler/`,
-`pool-payout-executor/`) are also top-level. Additional components still
+`chain-commons/`, `proto-contracts/`, `pool-controller/`,
+`pool-reconciler/`, and `pool-payout-executor/`. Additional components still
 land as top-level subfolders as the rewrite expands.
-
-The four product gateways (openai-gateway, video-gateway, vtuber-gateway,
-daydream-gateway) and their shared TS libraries (gateway-adapters,
-gateway-route-health) were removed from this repo. Gateway implementations
-that re-land in the future will be greenfield against the current
-capability-broker contract; do not look at git history of the removed
-gateways as a template.
 
 ## Doing work in this repo
 

@@ -10,7 +10,7 @@ Capability names are opaque to the registry. The daemon does not parse, route on
 
 ## Why opaque?
 
-The single biggest design constraint of this repo (core-beliefs §3) is that adding a new workload type — a new AI runner, a new transcoding profile, a new something-else-entirely — must require zero code changes here. If the registry knew what "transcoding" was, every new transcoding profile would need a code update. By treating capabilities as opaque strings, we push interpretation to the consumer where it belongs.
+The single biggest design constraint of this repo (core-beliefs §3) is that adding a new workload type — a new AI backend, a new transcoding profile, a new something-else-entirely — must require zero code changes here. If the registry knew what "transcoding" was, every new transcoding profile would need a code update. By treating capabilities as opaque strings, we push interpretation to the consumer where it belongs.
 
 ## Convention
 

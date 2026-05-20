@@ -1,8 +1,0 @@
-__pycache__
-*.pyc
-.git
-.gitignore
-*.md
-.env
-.venv
-node_modules

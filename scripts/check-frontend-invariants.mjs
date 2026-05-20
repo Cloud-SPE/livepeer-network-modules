@@ -5,9 +5,6 @@ import process from "node:process";
 const repoRoot = process.cwd();
 const baselinePath = path.join(repoRoot, "scripts", "frontend-invariants-allowlist.json");
 
-// NOTE (2026-05-19): the per-product gateways (openai-gateway,
-// video-gateway, vtuber-gateway, daydream-gateway) have been removed
-// from this repo, so their frontend roots are no longer scanned here.
 const frontendRoots = [
   "customer-portal/frontend",
 ];

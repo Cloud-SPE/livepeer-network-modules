@@ -15,8 +15,8 @@ caller restarts and component extraction.
 
 ## Boundaries
 
-- **Inbound, sender mode:** `PayerDaemon` gRPC over a unix socket. The
-  gateway or conformance runner calls `CreatePayment`,
+- **Inbound, sender mode:** `PayerDaemon` gRPC over a unix socket. A
+  sender-side client or the conformance runner calls `CreatePayment`,
   `ReportPaymentResult`, `GetDepositInfo`, and `Health`.
 - **Inbound, receiver mode:** `PayeeDaemon` plus operator-only
   `PayeeAdmin` gRPC over a unix socket. The broker calls

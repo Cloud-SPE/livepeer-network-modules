@@ -3,8 +3,7 @@
 #
 # Pair this with:
 #   infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai-chat.example.yaml
-# and:
-#   openai-runners/compose/docker-compose.vllm.chat.yml
+# and a reachable vLLM deployment behind the broker's `backend.url`.
 #
 # Replace `orch_eth_address` with the real orchestrator identity whose manifest
 # will be signed on secure-orch. Replace the broker `base_url` with the broker's

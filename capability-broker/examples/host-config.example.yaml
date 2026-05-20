@@ -12,6 +12,10 @@
 # (RTMP, long-lived streaming, third-party API resale) commented out until the
 # operator is ready to wire the required backend infrastructure.
 #
+# Some commented examples below reference workload binaries that used to live
+# in this repo. Those component trees were removed on 2026-05-20; keep the
+# examples only as contract-shape references when wiring your own backends.
+#
 # The current broker binary ships multiple mode drivers and extractors. The
 # commented entries below are examples of real supported shapes, not placeholders
 # for future plans.
@@ -143,8 +147,8 @@ capabilities:
   # out-of-repo as of 2026-05-19) ----
   # The current video product model routes all offline video work through
   # `video:transcode.abr`, including one-rendition jobs. The gateway talks
-  # directly to the runner API when `extra.abr_runner_url` (or one of the
-  # other worker URL hints) is present in the published manifest.
+  # directly to the backend API when `extra.abr_backend_url` (or one of the
+  # other backend URL hints) is present in the published manifest.
   #
   # - id: "video:transcode.abr"
   #   offering_id: "default"
@@ -163,13 +167,13 @@ capabilities:
   #     per_units: 1
   #   backend:
   #     transport: "http"
-  #     url: "http://abr-runner:8080/v1/video/transcode/abr"
+  #     url: "http://video_transcode_backend:8080/v1/video/transcode/abr"
   #     auth: "none"
   #   extra:
-  #     provider: "abr-runner"
+  #     provider: "video-transcode-backend"
   #     video:
   #       task: "abr-transcode"
-  #     abr_runner_url: "http://abr-runner:8080"
+  #     abr_backend_url: "http://video_transcode_backend:8080"
   #     # Optional stable fields like video.presets, video.codecs,
   #     # video.packaging, and video.hardware.gpu_vendor may be
   #     # auto-hydrated from GET /v1/video/transcode/abr/presets.
@@ -242,10 +246,10 @@ capabilities:
   #     per_units: 1
   #   backend:
   #     transport: "http"
-  #     url: "http://vtuber-runner:8080/api/sessions/start"
+  #     url: "http://session_backend:8080/api/sessions/start"
   #     auth: "none"
   #   extra:
-  #     provider: "vtuber-runner"
+  #     provider: "session-backend"
   #     vtuber:
   #       task: "session"
   #     # Optional stable fields like vtuber.control_schema,
@@ -417,12 +421,12 @@ capabilities:
   #     per_units: 1
   #   backend:
   #     transport: "http"
-  #     url: "http://openai_image_gen_runner:8080/v1/images/generations"
+  #     url: "http://image_generation_backend:8080/v1/images/generations"
   #     auth: "none"
   #   extra:
   #     openai:
   #       model: "SG161222/RealVisXL_V4.0_Lightning"
-  #     provider: "openai-image-generation-runner"
+  #     provider: "image-generation-backend"
   #     served_model_name: "SG161222/RealVisXL_V4.0_Lightning"
   #     backend_model: "SG161222/RealVisXL_V4.0_Lightning"
   #   constraints:
@@ -433,7 +437,7 @@ capabilities:
   #   offering_id: "zerank-2-default"
   #   interaction_mode: "http-reqresp@v0"
   #   work_unit:
-  #     # rerank-runner does not emit a usage field today, so the broker
+  #     # This backend does not emit a usage field today, so the broker
   #     # meters this capability as one priced request per call.
   #     name: "requests"
   #     extractor:
@@ -449,12 +453,12 @@ capabilities:
   #     per_units: 1
   #   backend:
   #     transport: "http"
-  #     # If the broker shares a Docker network with the runner, use the
+  #     # If the broker shares a Docker network with the backend, use the
   #     # container DNS name. Host-run brokers can use 127.0.0.1:8080 instead.
-  #     url: "http://rerank_runner:8080/v1/rerank"
+  #     url: "http://rerank_backend:8080/v1/rerank"
   #     auth: "none"
   #   extra:
-  #     provider: "rerank-runner"
+  #     provider: "rerank-backend"
   #     model: "zeroentropy/zerank-2"
   #   constraints:
   #     gpu_vendor: "NVIDIA"

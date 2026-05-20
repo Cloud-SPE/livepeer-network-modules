@@ -108,13 +108,6 @@ Current components:
 - `chain-commons/` — shared chain/RPC/txintent support used by protocol-daemon
 - `proto-contracts/` — generated protobuf bindings shared by daemon surfaces
 - `pool-controller/`, `pool-reconciler/`, `pool-payout-executor/` — Pool control plane (admission, scoring, payout)
-- `openai-runners/`, `video-runners/`, `vtuber-runner/`, `rerank-runner/` — workload runners
-
-The four product gateways (`openai-gateway`, `video-gateway`, `vtuber-gateway`,
-`daydream-gateway`) and their shared TS libraries (`gateway-adapters`,
-`gateway-route-health`) were **removed** from this repo on 2026-05-19.
-Future gateway implementations will be greenfield against the current
-capability-broker contract.
 
 Components can be **extracted to standalone repos later** once they stabilize and have
 independent release cadences. The monorepo isn't a permanent shape; it's the cheapest

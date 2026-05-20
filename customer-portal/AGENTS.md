@@ -1,39 +1,25 @@
 # AGENTS.md — customer-portal
 
-> **Status (2026-05-19):** The per-product gateways that originally
-> consumed this library (`openai-gateway/`, `vtuber-gateway/`,
-> `video-gateway/`, `daydream-gateway/`) have been removed from this
-> repo, along with shared TS support libs `gateway-adapters/` and
-> `gateway-route-health/`. `customer-portal` remains as a shared TS
-> library for any future SaaS consumer. The historical context below is
-> retained for source attribution and design intent.
-
-This is `customer-portal/` — the shared SaaS-shell library originally
-built for per-product gateways in the rewrite (historically
-`openai-gateway/`, `vtuber-gateway/`, `video-gateway/`). Distributed as
+This is `customer-portal/` — the shared SaaS-shell library distributed as
 `@livepeer-network-modules/customer-portal` via the pnpm workspace;
 consumers import factories from subpath exports.
-
-The plan brief is
-[`../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md).
-Read §4, §5, §7, §13, §14 before making structural changes.
 
 ## Operating principles
 
 Inherited from the repo root. Plus:
 
-- **Library code, not a service.** Imported by per-product gateways into
+- **Library code, not a service.** Imported by consumer services into
   their Fastify app. The Dockerfile is for the test/build environment,
   not production deployment (per core belief #15).
 - **One workspace package.** Q1 + Q2 locks: single shared shell, no
   OSS-vs-SaaS split, no separate `-core` engine.
-- **Per-product isolation.** OQ3 lock: each gateway brings its own
+- **Consumer isolation.** Each deployment brings its own
   Postgres / Redis / Stripe creds / API-key pepper. The shell never
   hardcodes credentials and never assumes shared state.
 - **No default `RateCardResolver` impl.** OQ2 lock: per-product gateway
   always wires its own pricing.
-- **Schema namespace `app.*`.** Q6 lock: shell owns `app.*`; per-product
-  schemas live alongside (`openai.*`, `vtuber.*`, `media.*`).
+- **Schema namespace `app.*`.** The shell owns `app.*`; consumer-owned
+  schemas live alongside it.
 
 ## Where to look
 
@@ -95,50 +81,11 @@ is complete.
   references in code comments.
 - **Suite-source attribution** lives in commit messages and this file
   (below), per repo-root AGENTS.md lines 62-66.
-- **The shell exposes interfaces; per-product gateways implement them.**
+- **The shell exposes interfaces; consuming services implement them.**
   `Wallet`, `AuthResolver`, `AdminAuthResolver`, `RateLimiter`,
   `RateCardResolver`, `StripeClient`.
 
-## Suite-source attribution
-
-This package ports code from the suite (`livepeer-network-suite/`) under
-explicit user instruction (plan brief §5). Source paths:
-
-- `livepeer-openai-gateway/packages/livepeer-openai-gateway/src/repo/schema.ts`
-  — drizzle schema (excluding `rate_card_*` and `retail_price_*` tables;
-  those stay in per-product gateways per Q7 lock).
-- `livepeer-openai-gateway/packages/livepeer-openai-gateway/migrations/0000_app_init.sql`
-  — initial `app.*` schema migration.
-- `livepeer-openai-gateway/packages/livepeer-openai-gateway/migrations/0003_idempotency_requests.sql`
-  — idempotency table migration (renumbered to `0001_idempotency_requests.sql`).
-- `livepeer-openai-gateway/packages/livepeer-openai-gateway/src/service/auth/{keys,authenticate,cache}.ts`
-  — API-key generation/hashing/verification + TTL cache.
-- `livepeer-openai-gateway/packages/livepeer-openai-gateway/src/service/billing/{wallet,reservations,topups}.ts`
-  — Wallet impl + reservation CRUD + top-up credit logic.
-- `livepeer-openai-gateway/packages/livepeer-openai-gateway/src/repo/{customers,apiKeys,reservations,topups,stripeWebhookEvents,adminAuditEvents}.ts`
-  — drizzle queries.
-- `livepeer-openai-gateway/packages/livepeer-openai-gateway/src/runtime/http/billing/topup.ts`
-  — Checkout-session route helper.
-- `livepeer-openai-gateway/packages/livepeer-openai-gateway/src/runtime/http/stripe/webhook.ts`
-  — Stripe webhook handler.
-- `livepeer-openai-gateway/packages/livepeer-openai-gateway/src/providers/stripe.ts` +
-  `src/providers/stripe/sdk.ts` — `StripeClient` interface + SDK impl.
-- `livepeer-openai-gateway-core/src/runtime/http/middleware/{auth,rateLimit}.ts`
-  — Fastify pre-handlers.
-- `livepeer-openai-gateway-core/src/service/admin/basicAuthResolver.ts`
-  — operator basic-auth resolver.
-- `livepeer-openai-gateway-core/src/interfaces/{wallet,caller,authResolver,rateLimiter,adminAuthResolver}.ts`
-  — interface shapes.
-- `livepeer-openai-gateway/frontend/{shared,portal,admin}/`
-  — initial frontend source port. The rewrite kept the shared-shell product scope while
-  later migrating the implementation to the repo-standard light-DOM + external-CSS
-  architecture.
-
 ## What lives elsewhere
 
-- Per-product gateway briefs: `0013-openai`, `0013-vtuber`, `0013-video`
-  (historical; the gateways themselves are out-of-repo as of 2026-05-19).
-- Wire-protocol middleware: `gateway-adapters/` (plan 0008 + followup;
-  out-of-repo as of 2026-05-19).
 - Chain-side payment: `payment-daemon/` (plans 0014, 0016).
 - Multi-tenant operator console: `secure-orch-console/` (plan 0019).

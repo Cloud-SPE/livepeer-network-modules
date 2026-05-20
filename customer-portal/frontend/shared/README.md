@@ -10,11 +10,6 @@ This package is the shared design-system and browser utility layer for:
 - `secure-orch-console` and other future operator-tool browser UIs
 - any future SaaS consumer that embeds `customer-portal`
 
-> Historical note (2026-05-19): originally also consumed by per-product
-> gateways (`openai-gateway/`, `vtuber-gateway/`, `video-gateway/`,
-> `daydream-gateway/`), all of which have since been removed from this
-> repo.
-
 It provides:
 
 - global Livepeer-branded tokens and page chrome
@@ -79,7 +74,7 @@ Current UI primitives:
 - Use `portal-metric-tile` for small summary metrics at page or hero level.
 
 If a needed pattern repeats across apps, promote it into this package instead of
-copying markup and CSS into each gateway.
+copying markup and CSS into each consumer app.
 
 ## Reference
 

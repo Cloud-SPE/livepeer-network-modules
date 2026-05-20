@@ -9,8 +9,8 @@ Runs on both sides of a paid request:
   talks to this daemon over a unix socket via the `PayeeDaemon` gRPC
   service. Operator-only maintenance calls use the co-mounted
   `PayeeAdmin` gRPC service on the same socket.
-- **`--mode=sender`** — gateway-side. Mints `Payment` envelopes for the
-  paying app. Gateways and the conformance runner talk to this daemon
+- **`--mode=sender`** — sender-side. Mints `Payment` envelopes for the
+  paying app. Sender clients and the conformance runner talk to this daemon
   over a unix socket via the `PayerDaemon` gRPC service. Callers may
   later report payee-side rejection outcomes back to the daemon so it
   can invalidate stale cached sessions.

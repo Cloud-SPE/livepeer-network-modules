@@ -3,15 +3,6 @@
 **Status:** active  
 **Last updated:** 2026-05-08
 
-> **Removal note (2026-05-19).** The four product gateways (`openai-gateway`,
-> `video-gateway`, `vtuber-gateway`, `daydream-gateway`) and their shared TS
-> libraries (`gateway-adapters`, `gateway-route-health`) have been removed from
-> this repo. References below to those gateways as current UI surfaces are
-> preserved as historical context for the design system that once governed
-> them; do not treat them as descriptions of the current working tree. The
-> shared design tokens and primitives still apply to any UI shipped from this
-> repo (currently `customer-portal/frontend/shared` and `secure-orch-console`).
-
 Implementation rules for DOM structure and CSS location live in
 [`frontend-dom-and-css-invariants.md`](./frontend-dom-and-css-invariants.md). This
 document defines the visual system; the invariant doc defines the mandatory frontend
@@ -19,12 +10,10 @@ authoring model.
 
 ## Purpose
 
-The rewrite has multiple operator and (historically) product-facing UIs:
+The rewrite has multiple operator and customer-facing UIs:
 
+- `customer-portal`
 - `secure-orch-console`
-- `openai-gateway` (removed from repo)
-- `video-gateway` (removed from repo)
-- `vtuber-gateway` (removed from repo)
 - future operator surfaces around resolver / protocol / coordinator status
 
 If each surface develops its own look, the repo will drift into a pile of
@@ -81,12 +70,6 @@ The shared frontend package lives at:
 
 - `customer-portal/frontend/shared`
 
-Historically adopted apps:
-
-- `customer-portal` (current)
-- `video-gateway` (since removed from repo)
-- `vtuber-gateway` (since removed from repo)
-
 Current implementation note:
 
 - the shared and product UIs now follow the light-DOM + external-CSS invariant
@@ -125,12 +108,10 @@ Characteristics:
 
 ### 2. Product App
 
-Used for (historical; the listed gateways have been removed from this repo
-but the mode definition is retained for any future product-app surface):
+Used for:
 
-- `openai-gateway` portal/admin views (removed)
-- `video-gateway` (removed)
-- `vtuber-gateway` (removed)
+- `customer-portal`
+- any future customer-facing app surface
 
 Characteristics:
 

@@ -31,7 +31,7 @@ The first implementation slice is intentionally narrow:
 - expose a read-only admin snapshot scaffold for future Pool scoring work.
 - accept conservative backend-outcome ingests that nudge persisted real-success
   and real-latency scores for future Pool scoring work.
-- add an opt-in synthetic probe runner scaffold for in-scope OpenAI families,
+- add an opt-in synthetic probe scaffold for in-scope OpenAI families,
   with concrete chat/embeddings probes and partial audio-family coverage.
 
 Current scoring boundary:

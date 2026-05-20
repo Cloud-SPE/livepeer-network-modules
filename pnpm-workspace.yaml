@@ -4,4 +4,3 @@ packages:
   - "customer-portal/frontend/shared"
   - "customer-portal/frontend/portal"
   - "customer-portal/frontend/admin"
-  - "vtuber-runner/avatar-renderer"

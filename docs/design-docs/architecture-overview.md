@@ -4,6 +4,12 @@ The eight-layer sketch. This is the **at-a-glance** view; deep dives go in their
 design-docs. Full provenance lives in
 [`../references/2026-05-06-architecture-conversation.md`](../references/2026-05-06-architecture-conversation.md).
 
+> **Removal note (2026-05-20).** The named gateway and runner product
+> families that originally instantiated some examples in this document have
+> been removed from the working tree. The mode contracts, broker/payment
+> relationships, and `sessionrunner` protocol described here remain part of
+> the repo; specific backend family examples are historical.
+
 ## Shape in one sentence
 
 A single workload-agnostic process per orch host — the **capability broker** — that owns
@@ -519,7 +525,7 @@ extra:
 
 ```yaml
 extra:
-  provider: "transcode-runner"
+  provider: "video-transcode-backend"
   video:
     task: "transcode"
     presets: ["h264-1080p", "hevc-1080p"]
@@ -552,7 +558,7 @@ schema versions, not live session availability:
 
 ```yaml
 extra:
-  provider: "vtuber-runner"
+  provider: "session-backend"
   vtuber:
     task: "session"
     control_schema: "vtuber-control/v1"
@@ -568,7 +574,7 @@ Stable:
 
 - control/media schema identifiers
 - supported session features
-- runner family
+- backend family
 
 Live only:
 
@@ -579,7 +585,7 @@ Live only:
 
 #### New families
 
-Any new runner family should define four things before implementation:
+Any new backend family should define four things before implementation:
 
 1. the base `capability_id`
 2. the minimal stable `extra.<family>` schema
@@ -879,16 +885,13 @@ See [`./payment-decoupling.md`](./payment-decoupling.md).
 **Gateway code is per-mode, not per-capability.** New capability under an existing mode
 lights up automatically once the manifest carries it.
 
-**Gateway health policy is shared, not forked.** The gateways reuse the
-workspace package
-[`../../gateway-route-health/`](../../gateway-route-health/) for cooldown
-tracking, cumulative counters, summary generation, and Prometheus-style
-rendering so OpenAI, video, VTuber, and Daydream all apply the same Layer 3
-policy shape.
+**Client-side health policy is shared, not forked.** Client implementations
+should reuse one cooldown-tracking policy surface so Layer 3 health stays
+consistent across products.
 
 ```mermaid
 flowchart TD
-    Cust["customer request"] --> Shell["gateway shell<br/>(OpenAI / video / vtuber / …)"]
+    Cust["customer request"] --> Shell["client shell"]
     Shell --> Auth["AuthResolver<br/>(bearer → customer + balance)"]
     Auth --> Resolve["Resolver.Select(capability_id,<br/>offering_id?, tier?, min_weight?)"]
     Resolve --> Tuple["route tuple<br/>{ worker_url, eth_address,<br/>interaction_mode, work_unit,<br/>price_per_unit, extra }"]

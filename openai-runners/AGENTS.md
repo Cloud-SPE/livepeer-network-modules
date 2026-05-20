@@ -79,4 +79,4 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 - `capability-broker/` — the orch-side dispatcher that forwards requests
   to runners (broker is the client; runners are the servers).
 - Customer auth / billing / ledger — `customer-portal/` + per-product
-  gateways (e.g. `openai-gateway/`).
+  gateways (out-of-repo as of 2026-05-19; historically `openai-gateway/`).

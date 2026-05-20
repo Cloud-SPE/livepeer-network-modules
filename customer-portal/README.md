@@ -1,10 +1,17 @@
 # `@livepeer-network-modules/customer-portal`
 
+> **Status (2026-05-19):** The per-product gateways that originally
+> consumed this library (`openai-gateway/`, `vtuber-gateway/`,
+> `video-gateway/`, `daydream-gateway/`) have been removed from this
+> repo. `customer-portal` itself is preserved as a shared TS library
+> for any future SaaS consumer; references to specific gateway packages
+> below are historical context.
+
 Shared SaaS-shell library for per-product Livepeer rewrite gateways.
 Provides API-key auth, customer ledger, Stripe top-ups, operator admin
 engine, Fastify pre-handlers, and a Lit + RxJS widget catalog. Each
-per-product gateway (`openai-gateway/`, `vtuber-gateway/`,
-`video-gateway/`) embeds this package and configures its own Postgres,
+per-product gateway (historically `openai-gateway/`, `vtuber-gateway/`,
+`video-gateway/`) embedded this package and configured its own Postgres,
 Redis, Stripe credentials, and API-key pepper.
 
 This is a **library**, not a deployed service. The Docker image is a

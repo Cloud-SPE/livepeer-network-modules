@@ -18,6 +18,8 @@ audience: rewrite contributors authoring SaaS-shell components
 
 # Plan 0013-shell — customer-portal shared SaaS shell library (design)
 
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway, video-gateway, vtuber-gateway, daydream-gateway) and their shared TS libraries (gateway-adapters, gateway-route-health) have since been removed from this repo. This plan is preserved as historical record of what shipped at the time; the directories and code paths it references no longer exist in the working tree.
+
 > **Paper-only design brief.** No code, no `package.json`, no
 > `pnpm-workspace.yaml` edits ship from this commit. Output: pinned
 > decisions for the implementing agent across the openai-, vtuber-,

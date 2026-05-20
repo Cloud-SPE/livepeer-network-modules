@@ -45,11 +45,14 @@ func main() {
 	modes.Register(rtmpingresshlsegress.New())
 	modes.Register(sessioncontrolplusmedia.New())
 
-	// Gateway-target drivers exercise gateway-adapters middleware
-	// directly. The non-HTTP modes shipped under plan 0008-followup; the
-	// HTTP family is unchanged from plan 0008 (no gateway-target driver
-	// needed because the gateway forwards to the broker which is
-	// already verified by the broker-target drivers above).
+	// Gateway-target drivers exercise out-of-repo gateway middleware
+	// against the wire spec. Historically these targeted the in-repo
+	// `gateway-adapters/` reference middleware, which was removed on
+	// 2026-05-19 along with the four product gateways; the drivers
+	// remain so external gateway implementations can still run the
+	// conformance suite. The HTTP family has no gateway-target driver
+	// because the gateway forwards to the broker, which is already
+	// verified by the broker-target drivers above.
 	modes.RegisterFor(modes.TargetGateway, gatewaytarget.NewWSRealtime())
 	modes.RegisterFor(modes.TargetGateway, gatewaytarget.NewRTMPIngressHLSEgress())
 	modes.RegisterFor(modes.TargetGateway, gatewaytarget.NewSessionControlPlusMedia())

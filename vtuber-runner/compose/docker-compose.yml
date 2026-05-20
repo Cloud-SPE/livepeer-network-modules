@@ -2,9 +2,10 @@
 # `./infra/scripts/build-images.sh vtuber-runner`.
 #
 # Headless chromium renderer + Python session-runner FastAPI service.
-# Worker side of the vtuber pipeline — vtuber-gateway dispatches
-# session-start RPCs to this on :8080. Each session calls back to a
-# customer-supplied OpenAI-compat gateway for LLM + TTS.
+# Worker side of the vtuber pipeline — an upstream vtuber gateway
+# (out-of-repo as of 2026-05-19) dispatches session-start RPCs to this
+# on :8080. Each session calls back to a customer-supplied OpenAI-compat
+# gateway for LLM + TTS.
 
 services:
   vtuber-runner:

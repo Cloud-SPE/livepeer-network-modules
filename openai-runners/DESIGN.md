@@ -71,8 +71,8 @@ base across Go runners.
 ## What stays out of this component
 
 - **Customer auth + billing.** Lives in `customer-portal/` and per-product
-  gateways (e.g. `openai-gateway/`). Runners are blind to customer
-  identity.
+  gateways (out-of-repo as of 2026-05-19; historically `openai-gateway/`).
+  Runners are blind to customer identity.
 - **Payment validation.** Broker-side `payment-daemon/` validates
   `Livepeer-Payment` envelopes; the runner sees only fully-authenticated
   requests.
@@ -81,5 +81,5 @@ base across Go runners.
   sidecar, no register-capabilities binary.
 - **Mode dispatch + extractor logic.** Lives in `capability-broker/`.
   Runners see only HTTP requests at their declared endpoint.
-- **Wire-protocol middleware.** `gateway-adapters/` is gateway-side; no
-  runner-side import.
+- **Wire-protocol middleware.** Historically `gateway-adapters/` was
+  gateway-side (out-of-repo as of 2026-05-19); never a runner-side import.

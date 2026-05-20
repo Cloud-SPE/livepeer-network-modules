@@ -1,5 +1,7 @@
 # Plan 0021 — VTuber session top-up via control-WS refill
 
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway, video-gateway, vtuber-gateway, daydream-gateway) and their shared TS libraries (gateway-adapters, gateway-route-health) have since been removed from this repo. This plan is preserved as historical record of what shipped at the time; the directories and code paths it references no longer exist in the working tree.
+
 **Status:** completed  
 **Opened:** 2026-05-08  
 **Owner:** harness  

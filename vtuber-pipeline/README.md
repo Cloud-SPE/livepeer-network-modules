@@ -6,15 +6,16 @@ console-script binaries from a single Python package:
 - `pipeline-mock-youtube` — chat-source worker (mock; replaced by a
   real YouTube provider in production via config flag).
 - `pipeline-streams` — streams orchestrator. Customer-facing API for
-  starting/stopping vtuber broadcasts; opens a session on
-  `vtuber-gateway/` per stream.
+  starting/stopping vtuber broadcasts; opens a session on an upstream
+  vtuber gateway (out-of-repo as of 2026-05-19) per stream.
 - `pipeline-egress` — RTMP push worker. Receives chunked-POST bodies,
   pipes through ffmpeg, pushes to a downstream RTMP URL.
 
-The pipeline calls `vtuber-gateway/` as a single **meta-customer** (one
-shared `LIVEPEER_VTUBER_GATEWAY_API_KEY` per deployment); pipeline-app
-bills its own customers internally and does not propagate per-customer
-keys to the gateway.
+The pipeline calls its upstream vtuber gateway (out-of-repo as of
+2026-05-19) as a single **meta-customer** (one shared
+`LIVEPEER_VTUBER_GATEWAY_API_KEY` per deployment); pipeline-app bills its
+own customers internally and does not propagate per-customer keys to the
+gateway.
 
 ## Quick start
 

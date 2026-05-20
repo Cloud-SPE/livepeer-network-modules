@@ -19,6 +19,8 @@ audience: workload-runner maintainers planning the byoc-tree absorption
 
 # Plan 0013-runners — workload-binary migration (design)
 
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway, video-gateway, vtuber-gateway, daydream-gateway) and their shared TS libraries (gateway-adapters, gateway-route-health) have since been removed from this repo. This plan is preserved as historical record of what shipped at the time; the directories and code paths it references no longer exist in the working tree.
+
 > **Paper-only design brief.** No code, no `Dockerfile` edits, no
 > `go.mod` / `pyproject.toml` edits ship from this commit. Locks
 > recorded in §14 as `DECIDED:` blocks. **Not chain-gated** —

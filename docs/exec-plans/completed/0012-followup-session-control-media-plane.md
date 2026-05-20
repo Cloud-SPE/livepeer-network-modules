@@ -17,6 +17,13 @@ audience: capability-broker maintainers, vtuber-session integrators, orch operat
 
 # Plan 0012-followup — session-control-plus-media control-WS + media-plane provisioning (design)
 
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway,
+> video-gateway, vtuber-gateway, daydream-gateway) and their shared TS
+> libraries (gateway-adapters, gateway-route-health) have since been removed
+> from this repo. This plan is preserved as historical record of what shipped
+> at the time; the directories and code paths it references no longer exist
+> in the working tree.
+
 > **Scope of this document.** Pure-paper design of the **control-WS lifecycle**, the
 > **media-plane provisioning** machinery, and the **session-runner subprocess
 > orchestration** that complete the `session-control-plus-media@v0` mode driver. **No
@@ -398,7 +405,7 @@ WS handler at
 `session-runner/src/session_runner/service/{control_ws.py,control_dispatcher.py}`;
 the pytrickle egress at `session-runner/src/session_runner/service/trickle_sink.py`;
 and the suite-side gateway at
-`livepeer-cloud-spe/livepeer-network-suite/livepeer-vtuber-gateway/` (migrates
+`livepeer-cloud-spe/livepeer-network-suite/livepeer-vtuber-gateway/` (directory since removed; migrates
 separately under plan 0008-followup).
 
 ### 7.1. What migrates

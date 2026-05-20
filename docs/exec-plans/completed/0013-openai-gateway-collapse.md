@@ -18,6 +18,13 @@ audience: openai-gateway maintainers planning the suite-shell absorption
 
 # Plan 0013-openai — openai-gateway absorbs SaaS shell (design)
 
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway,
+> video-gateway, vtuber-gateway, daydream-gateway) and their shared TS
+> libraries (gateway-adapters, gateway-route-health) have since been removed
+> from this repo. This plan is preserved as historical record of what shipped
+> at the time; the directories and code paths it references no longer exist
+> in the working tree.
+
 > **Paper-only design brief.** No code, no `package.json`, no
 > migrations ship from this commit. This brief replaces the
 > superseded `0013-suite-openai-gateway-migration-brief.md` (now at
@@ -31,11 +38,11 @@ Scope: **collapse the suite's two-package OpenAI gateway** —
 `livepeer-network-suite/livepeer-openai-gateway-core/` (engine, npm
 package `@cloudspe/livepeer-openai-gateway-core@4.0.1`) +
 `livepeer-network-suite/livepeer-openai-gateway/` (Cloud-SPE shell)
-— **into the rewrite's existing `openai-gateway/` component**, layering
+— **into the rewrite's existing `openai-gateway/` component** (directory since removed), layering
 SaaS surfaces (auth, billing, Stripe, portal, admin) on top of the
 protocol-only reference impl from completed plan 0009. The SaaS layer
 imports from `customer-portal/` (this brief's foundation, plan
-0013-shell). The wire layer imports from `gateway-adapters/` (plans
+0013-shell). The wire layer imports from `gateway-adapters/` (directory since removed; plans
 0008 + 0008-followup). No code is duplicated across components.
 
 This brief is **chain-gated**: it emits payments via `payment-daemon/`

@@ -3,6 +3,14 @@
 **Date:** 2026-05-17  
 **Status:** active baseline + first consolidation pass landed
 
+> **Removal note (2026-05-19).** The four product gateways (`openai-gateway`,
+> `video-gateway`, `vtuber-gateway`, `daydream-gateway`) and their shared TS
+> libraries (`gateway-adapters`, `gateway-route-health`) have been removed from
+> this repo. References below are preserved as historical context for the
+> architecture that once shipped; do not treat them as descriptions of the
+> current working tree. The workload runners (`openai-runners`, `video-runners`,
+> `vtuber-runner`, `rerank-runner`) remain.
+
 ## Purpose
 
 Record the current Docker/image platform across the monorepo, identify
@@ -61,13 +69,15 @@ Notes:
 |---|---|
 | Most gateways / portals | `node:${NODE_VERSION}-alpine` builder stages |
 | Node runtimes | `gcr.io/distroless/nodejs22-debian12:nonroot` where adopted |
-| Legacy exceptions | `daydream-gateway` and `vtuber-runner` still use `node:20*` directly |
+| Legacy exceptions | `vtuber-runner` still uses `node:20*` directly (historically `daydream-gateway` did as well; that gateway has since been removed from the repo) |
 
 Notes:
 
 - The canonical target is Node 22.
-- `daydream-gateway` and `vtuber-runner` are explicit drift points and should
-  be treated as compatibility exceptions until validated on Node 22.
+- `vtuber-runner` is the remaining explicit drift point and should be treated
+  as a compatibility exception until validated on Node 22. (`daydream-gateway`
+  was historically a drift point as well but has since been removed from this
+  repo.)
 
 ### Python CPU images
 
@@ -203,8 +213,8 @@ The first consolidation pass parameterized their shared version literals, but
    - likely either a shared `ffmpeg-platform-base` Dockerfile or a more
      opinionated `codecs-builder` split
 2. Revisit legacy Node 20 images:
-   - `daydream-gateway`
-   - `vtuber-runner`
+   - `vtuber-runner` (`daydream-gateway` was also on this list historically but
+     has since been removed from the repo)
 3. Add CI linting that rejects new ad hoc base-version literals outside the
    central manifest flow.
 

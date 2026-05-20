@@ -69,8 +69,8 @@ Two patterns are both valid (see network-suite plan 0003 §Decision 3):
 - **Manifest-embedded pricing.** Orch publishes
   `offerings[].price_per_work_unit_wei` in the signed manifest. Gateways read
   it as the wholesale price input to routing (then add margin to compute
-  customer-facing prices). Default for direct workloads (vtuber-gateway
-  pattern).
+  customer-facing prices). Default for direct workloads (historical
+  vtuber-gateway pattern; that gateway is out-of-repo as of 2026-05-19).
 - **Bridge-mediated pricing.** Orch leaves `price_per_work_unit_wei` empty;
   customer-facing prices live on a separate bridge that fronts the workers
   (openai-livepeer-bridge pattern). Note: in v3.0.1 the openai-bridge
@@ -109,8 +109,9 @@ OpenAI-compatible API, vtuber session endpoint, RTMP/HLS streaming). It runs
 a co-located `service-registry-daemon` (resolver mode) sidecar to discover
 orchestrators and a `payment-daemon` (sender mode) to mint payment tickets.
 
-Templated by `livepeer-openai-gateway`, `livepeer-vtuber-gateway`,
-`livepeer-video-gateway`. Optional — a workload can run without a bridge if
+Historically templated by `livepeer-openai-gateway`,
+`livepeer-vtuber-gateway`, `livepeer-video-gateway` (all out-of-repo as
+of 2026-05-19). Optional — a workload can run without a bridge if
 gateways speak the workload's API directly to workers.
 
 ### 6. Drop into archetype A

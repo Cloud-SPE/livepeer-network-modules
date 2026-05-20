@@ -7,9 +7,13 @@ Shared frontend primitives for Livepeer rewrite UIs.
 This package is the shared design-system and browser utility layer for:
 
 - `customer-portal`
-- `video-gateway`
-- `vtuber-gateway`
-- future browser UIs in `openai-gateway`, `secure-orch-console`, and operator tools
+- `secure-orch-console` and other future operator-tool browser UIs
+- any future SaaS consumer that embeds `customer-portal`
+
+> Historical note (2026-05-19): originally also consumed by per-product
+> gateways (`openai-gateway/`, `vtuber-gateway/`, `video-gateway/`,
+> `daydream-gateway/`), all of which have since been removed from this
+> repo.
 
 It provides:
 

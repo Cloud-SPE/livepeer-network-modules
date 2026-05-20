@@ -19,6 +19,13 @@ audience: video-gateway maintainers planning the suite shell + video-core engine
 
 # Plan 0013-video — video-gateway absorbs shell + engine (design)
 
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway,
+> video-gateway, vtuber-gateway, daydream-gateway) and their shared TS
+> libraries (gateway-adapters, gateway-route-health) have since been removed
+> from this repo. This plan is preserved as historical record of what shipped
+> at the time; the directories and code paths it references no longer exist
+> in the working tree.
+
 > **Paper-only design brief.** No code, no `package.json`, no
 > migrations ship from this commit. Locks recorded in §14 as
 > `DECIDED:` blocks; user walks remaining open questions before
@@ -27,7 +34,7 @@ audience: video-gateway maintainers planning the suite shell + video-core engine
 ## 1. Status and scope
 
 Scope: **the video product family** absorbs into one rewrite component
-`video-gateway/`. Two suite repos collapse:
+`video-gateway/` (directory since removed). Two suite repos collapse:
 
 1. `livepeer-network-suite/livepeer-video-gateway/` — Cloud-SPE shell
    (apps/api Fastify gateway + web-ui admin SPA + apps/playback-origin
@@ -40,7 +47,7 @@ Scope: **the video product family** absorbs into one rewrite component
 
 The collapse mirrors `0013-openai` exactly: one OSS-MIT package
 (`video-gateway/`), depends on `customer-portal/` for SaaS surfaces,
-depends on `gateway-adapters/` for wire protocol middleware (HTTP
+depends on `gateway-adapters/` (directory since removed) for wire protocol middleware (HTTP
 modes for VOD; `rtmp-ingress-hls-egress@v0` for live).
 
 Chain-gating: this brief **emits payments**, gates on plan 0016

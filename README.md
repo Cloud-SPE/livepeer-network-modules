@@ -107,11 +107,14 @@ Current components:
 - `service-registry-daemon/` — consumer-side resolver for on-chain orch discovery + manifest fetch/verify/cache
 - `chain-commons/` — shared chain/RPC/txintent support used by protocol-daemon
 - `proto-contracts/` — generated protobuf bindings shared by daemon surfaces
-- `gateway-route-health/` — shared Layer 3 route-health tracker used by gateways
+- `pool-controller/`, `pool-reconciler/`, `pool-payout-executor/` — Pool control plane (admission, scoring, payout)
+- `openai-runners/`, `video-runners/`, `vtuber-runner/`, `rerank-runner/` — workload runners
 
-Planned or still-expanding areas:
-
-- `gateway-adapters/` — per-mode middleware (Go and TS reference impls)
+The four product gateways (`openai-gateway`, `video-gateway`, `vtuber-gateway`,
+`daydream-gateway`) and their shared TS libraries (`gateway-adapters`,
+`gateway-route-health`) were **removed** from this repo on 2026-05-19.
+Future gateway implementations will be greenfield against the current
+capability-broker contract.
 
 Components can be **extracted to standalone repos later** once they stabilize and have
 independent release cadences. The monorepo isn't a permanent shape; it's the cheapest
@@ -123,9 +126,8 @@ Cross-cutting design lives at the repo root in `docs/`. Per-component design liv
 ## Workspace packages
 
 The JS/TS parts of the repo use a root `pnpm` workspace. Shared packages such as
-`customer-portal/`, `customer-portal/frontend/shared/`, and
-`gateway-route-health/` are consumed via `workspace:*` dependencies by the
-gateway packages.
+`customer-portal/` and `customer-portal/frontend/shared/` are consumed via
+`workspace:*` dependencies by other workspace packages.
 
 When adding a new shared JS/TS package:
 

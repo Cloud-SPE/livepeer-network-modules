@@ -9,6 +9,7 @@ related:
   - "completed plan 0029 — pool node design"
   - "completed plan 0030 — pool backend scoring and broker-integrated selection for OpenAI workloads"
   - "completed plan 0033 — pool control plane onboarding and offer-assignment reset"
+  - "completed plan 0032 — pool live RTMP contract decision"
 ---
 
 # Plan 0031 — Pool follow-up backlog
@@ -57,12 +58,18 @@ behavior from the shipped first slice.
 
 These are low-risk cleanup items that reduce ambiguity around what has shipped.
 
-1. Update `0030` status from `phase: design` once the team agrees it has moved
-   into shipped implementation territory.
-2. Update `0029` status text so the Pool-scoring portions no longer read like
-   pending design when they are already implemented.
-3. Add a short cross-reference from `0029` to `0031` so future readers know
-   where remaining Pool work is tracked.
+1. ~~Update `0030` status from `phase: design` once the team agrees it has moved
+   into shipped implementation territory.~~ **Done** — 0030 is `phase: shipped`.
+2. ~~Update `0029` status text so the Pool-scoring portions no longer read like
+   pending design when they are already implemented.~~ **Done** — 0029 status
+   already reads "completed — the Pool node architecture from this plan is now
+   implemented…".
+3. ~~Add a short cross-reference from `0029` to `0031` so future readers know
+   where remaining Pool work is tracked.~~ **Done** — 0031 cross-references
+   0029, 0030, 0032, 0033 in frontmatter; 0029 links back to 0031 as the
+   follow-up backlog.
+
+P0 is closed. Remaining work begins at P1.
 
 ### P1 — next capability-family expansion
 
@@ -107,16 +114,27 @@ they are the next meaningful Pool product surface after routing quality.
 The control-plane reset for this group now has its own concrete implementation
 plan in [`0033-pool-control-plane-onboarding-and-assignment.md`](./0033-pool-control-plane-onboarding-and-assignment.md).
 
-1. Member self-service portal / wallet sign-in UX.
-2. Automated member approval workflow.
-3. Policy-driven auto-drain / auto-suspend orchestration.
+1. Member self-service portal / wallet sign-in UX. **Deferred.**
+2. ~~Automated member approval workflow.~~ **Shipped.** Config-gated via
+   `policy.auto_approve_join_requests`; the policy worker auto-approves any
+   pending JoinRequest the admission-review preview already considers
+   Approvable. Implementation lives in
+   `pool-controller/internal/service/autoapprove`.
+3. ~~Policy-driven auto-drain / auto-suspend orchestration.~~ **Shipped (drain).**
+   Config-gated via `policy.auto_drain_backends`,
+   `policy.backend_failure_rate_threshold`, and `policy.backend_min_samples`;
+   the policy worker drains any active backend whose worst per-offering
+   recent failure rate exceeds the threshold. Implementation lives in
+   `pool-controller/internal/service/autodrain`. Auto-suspend (member-level)
+   is still deferred.
 4. Multi-listener split between admin/member/public binaries if the current
-   single-process surface becomes an operational constraint.
+   single-process surface becomes an operational constraint. **Deferred.**
 
 Recommended order inside this group:
 
-1. approval workflow
-2. policy-driven auto-drain / suspend
+1. ~~approval workflow~~
+2. ~~policy-driven auto-drain / suspend~~ (drain done; member-level
+   suspend still open)
 3. member self-service UX
 4. binary/listener split
 
@@ -126,23 +144,32 @@ Reason:
 - UX can follow once the approval/policy state model is stable
 - binary/listener split is mostly deployment hardening, not product behavior
 
-Status: incomplete and deferred.
+Status: items 2 and 3 (auto-drain portion) shipped; items 1 and 4 still
+deferred.
 
 ### P3 — payout and accounting follow-up
 
 The current accounting path is usable, but there is still larger Pool economics
 work left if payout automation becomes the next bottleneck.
 
-1. Harden reconciler/executor operational runbooks and dashboards around lease
-   churn, retries, and payout failure pressure.
+1. ~~Harden reconciler/executor operational runbooks and dashboards around lease
+   churn, retries, and payout failure pressure.~~ **Shipped.** All three
+   payout components now emit Prometheus metrics covering retry pressure,
+   transaction outcomes, and reconcile-loop health. Each component's
+   RUNBOOK has a "Detecting failure pressure" section that maps signals to
+   first-step triage and (for the executor) maps controller alert kinds to
+   recovery commands. Implementation lives in
+   `pool-controller/internal/observability`,
+   `pool-reconciler/internal/observability`, and
+   `pool-payout-executor/internal/observability`.
 2. Decide whether the current admin-plane payout flow is sufficient for the
-   expected operator scale.
+   expected operator scale. **Open — depends on operator feedback.**
 3. If not, plan the next accounting milestone explicitly:
    - stronger payout orchestration
    - more automated retry/suspend coupling
    - eventual `PoolPayout` smart-contract path
 
-Status: incomplete and deferred.
+Status: item 1 shipped; items 2 and 3 remain operator-driven decisions.
 
 ### P4 — deferred research / protocol-adjacent work
 

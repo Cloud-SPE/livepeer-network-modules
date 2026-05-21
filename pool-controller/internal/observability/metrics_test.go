@@ -183,6 +183,43 @@ func TestUpdateAccountingSnapshot(t *testing.T) {
 	}
 }
 
+func TestUpdateAccountingSnapshotRetryAndFailureMetrics(t *testing.T) {
+	failedAt := time.Now().Add(-2 * time.Hour)
+	UpdateAccountingSnapshot(
+		nil,
+		nil,
+		[]types.PayoutIntent{
+			{ID: "p-1", Status: "paid", RetryCount: 0},
+			{ID: "p-2", Status: "leased", RetryCount: 2},
+			{ID: "p-3", Status: "failed", RetryCount: 5, FailedAt: failedAt},
+			{ID: "p-4", Status: "paid", RetryCount: 1, FailedAt: time.Now().Add(-24 * time.Hour)}, // failed-then-paid: not unresolved
+		},
+	)
+	if got := testutil.ToFloat64(payoutIntentRetryCountMax); got != 5 {
+		t.Fatalf("retry_count_max = %v; want 5", got)
+	}
+	if got := testutil.ToFloat64(payoutIntentWithRetriesTotal); got != 3 {
+		t.Fatalf("with_retries_total = %v; want 3", got)
+	}
+	failedAge := testutil.ToFloat64(payoutIntentFailedAgeSecondsMax)
+	if failedAge < 7100 || failedAge > 7300 {
+		t.Fatalf("failed_age_seconds_max = %v; want ~7200 (2h)", failedAge)
+	}
+}
+
+func TestUpdateAccountingSnapshotZerosWhenNoIntents(t *testing.T) {
+	UpdateAccountingSnapshot(nil, nil, nil)
+	if got := testutil.ToFloat64(payoutIntentRetryCountMax); got != 0 {
+		t.Fatalf("retry_count_max = %v; want 0", got)
+	}
+	if got := testutil.ToFloat64(payoutIntentWithRetriesTotal); got != 0 {
+		t.Fatalf("with_retries_total = %v; want 0", got)
+	}
+	if got := testutil.ToFloat64(payoutIntentFailedAgeSecondsMax); got != 0 {
+		t.Fatalf("failed_age_seconds_max = %v; want 0", got)
+	}
+}
+
 func TestRecordReceiptWriteAndPayoutIntentAction(t *testing.T) {
 	receiptBefore := testutil.ToFloat64(receiptWriteTotal.WithLabelValues("work", "final"))
 	RecordReceiptWrite("work", "final", 2)

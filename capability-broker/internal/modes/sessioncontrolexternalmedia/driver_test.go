@@ -3,14 +3,22 @@ package sessioncontrolexternalmedia
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestServeSessionOpen_HappyPath(t *testing.T) {
@@ -108,6 +116,143 @@ func TestServeSessionOpen_RejectsNonPOST(t *testing.T) {
 	_ = d.Serve(context.Background(), modes.Params{Writer: w, Request: req, Capability: cap})
 	if w.Result().StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("non-POST should 405; got %d", w.Result().StatusCode)
+	}
+}
+
+type stubLiveCounter struct {
+	v atomic.Uint64
+}
+
+func (s *stubLiveCounter) CurrentUnits() uint64 { return s.v.Load() }
+func (s *stubLiveCounter) Add(n uint64)         { s.v.Add(n) }
+
+func makeSessionPaymentBytes(t *testing.T, pricePerUnit int64) []byte {
+	t.Helper()
+	constraint := fmt.Sprintf(
+		"cap=cap;off=off;wu=seconds;est=%d;qid=quote-1;qv=1;cfp=%x;rfp=%x",
+		60,
+		[]byte{0xaa, 0xbb},
+		[]byte{0xcc, 0xdd},
+	)
+	pay := &pb.Payment{
+		ExpectedPrice: &pb.PriceInfo{
+			PricePerUnit:  pricePerUnit,
+			PixelsPerUnit: 1,
+			Constraint:    constraint,
+		},
+	}
+	raw, err := proto.Marshal(pay)
+	if err != nil {
+		t.Fatalf("marshal Payment: %v", err)
+	}
+	return raw
+}
+
+// TestEmitSessionEndedIncludesSettlement seeds a SessionRecord with
+// payment context + live counter, attaches an outbound channel, and
+// asserts emitSessionEnded writes a session.ended envelope whose body
+// carries a base64-encoded SettlementRecord reflecting the live
+// counter's final value.
+func TestEmitSessionEndedIncludesSettlement(t *testing.T) {
+	d := New(NewStore(), DefaultConfig())
+
+	live := &stubLiveCounter{}
+	live.Add(50)
+
+	inputs := middleware.SettlementInputs{
+		PaymentBytes:   makeSessionPaymentBytes(t, 10),
+		FundedValueWei: big.NewInt(2000),
+		WorkUnit:       "seconds",
+	}
+	rec := &SessionRecord{
+		SessionID:        "sess_ext_settle",
+		OpenedAt:         time.Now(),
+		ExpiresAt:        time.Now().Add(time.Hour),
+		LiveCounter:      live,
+		SettlementInputs: &inputs,
+	}
+
+	out := make(chan outboundEvent, 4)
+	rec.SetOutbound(out)
+
+	d.emitSessionEnded(rec, "session.end")
+
+	select {
+	case ev := <-out:
+		// The marshaled controlws.Envelope { Type, Seq, Body } —
+		// we decode the body and confirm settlement is populated.
+		var env struct {
+			Type string          `json:"type"`
+			Body json.RawMessage `json:"body"`
+		}
+		if err := json.Unmarshal(ev.Body, &env); err != nil {
+			t.Fatalf("unmarshal envelope: %v", err)
+		}
+		if env.Type != "session.ended" {
+			t.Fatalf("envelope type = %q, want session.ended", env.Type)
+		}
+		var body SessionEndedBody
+		if err := json.Unmarshal(env.Body, &body); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
+		if body.Reason != "session.end" {
+			t.Fatalf("body.reason = %q", body.Reason)
+		}
+		if body.Settlement == "" {
+			t.Fatalf("body.settlement empty; want base64-encoded SettlementRecord")
+		}
+		raw, err := base64.StdEncoding.DecodeString(body.Settlement)
+		if err != nil {
+			t.Fatalf("base64 decode: %v", err)
+		}
+		var settlement pb.SettlementRecord
+		if err := proto.Unmarshal(raw, &settlement); err != nil {
+			t.Fatalf("proto unmarshal: %v", err)
+		}
+		if got := settlement.GetActualUnits(); got != 50 {
+			t.Fatalf("actual_units = %d, want 50", got)
+		}
+		// 50 * 10 = 500; funded 2000 → OVERFUNDED
+		if got := settlement.GetOutcome(); got != pb.SettlementRecord_OVERFUNDED {
+			t.Fatalf("outcome = %v, want OVERFUNDED", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for session.ended outbound event")
+	}
+}
+
+func TestEmitSessionEndedWithoutSettlementInputs(t *testing.T) {
+	d := New(NewStore(), DefaultConfig())
+	rec := &SessionRecord{
+		SessionID: "sess_ext_no_settle",
+		OpenedAt:  time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	out := make(chan outboundEvent, 4)
+	rec.SetOutbound(out)
+
+	d.emitSessionEnded(rec, "expired")
+	select {
+	case ev := <-out:
+		var env struct {
+			Type string          `json:"type"`
+			Body json.RawMessage `json:"body"`
+		}
+		if err := json.Unmarshal(ev.Body, &env); err != nil {
+			t.Fatalf("unmarshal envelope: %v", err)
+		}
+		var body SessionEndedBody
+		if err := json.Unmarshal(env.Body, &body); err != nil {
+			t.Fatalf("unmarshal body: %v", err)
+		}
+		if body.Reason != "expired" {
+			t.Fatalf("body.reason = %q", body.Reason)
+		}
+		if body.Settlement != "" {
+			t.Fatalf("settlement should be empty for stub payment; got %q", body.Settlement)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out")
 	}
 }
 

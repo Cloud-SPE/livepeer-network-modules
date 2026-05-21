@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/controlws"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
 // nextSeq is a per-session atomic monotonic sequence counter for
@@ -213,10 +214,33 @@ func (d *Driver) emitUsageTick(rec *SessionRecord, units uint64) {
 	d.emitLifecycle(rec, controlws.TypeSessionUsageTick, body)
 }
 
-// emitSessionEnded emits a terminal session.ended frame with a reason.
+// emitSessionEnded emits a terminal session.ended frame. The body
+// carries the close reason and — when payment context was captured at
+// session-open — a base64-encoded SettlementRecord per plan 0034
+// §7.3 (SessionEndedBody schema).
 func (d *Driver) emitSessionEnded(rec *SessionRecord, reason string) {
-	body, _ := json.Marshal(map[string]any{"reason": reason})
-	d.emitLifecycle(rec, controlws.TypeSessionEnded, body)
+	body := SessionEndedBody{Reason: reason}
+	if rec.SettlementInputs != nil {
+		var actual uint64
+		if rec.LiveCounter != nil {
+			actual = rec.LiveCounter.CurrentUnits()
+		}
+		if record := middleware.BuildSettlementRecord(*rec.SettlementInputs, actual, ""); record != nil {
+			if encoded, err := middleware.EncodeSettlementRecord(record); err == nil {
+				body.Settlement = encoded
+			}
+		}
+	}
+	payload, _ := json.Marshal(body)
+	d.emitLifecycle(rec, controlws.TypeSessionEnded, payload)
+}
+
+// SessionEndedBody is the JSON body the broker writes inside the
+// terminal session.ended envelope. Mirrors
+// sessioncontrolplusmedia.SessionEndedBody.
+type SessionEndedBody struct {
+	Reason     string `json:"reason"`
+	Settlement string `json:"settlement,omitempty"`
 }
 
 // emitLifecycle marshals a control envelope with the next monotonic

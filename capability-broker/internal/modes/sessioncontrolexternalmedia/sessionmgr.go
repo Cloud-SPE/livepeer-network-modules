@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
 // SessionRecord is the per-session state the broker keeps from
@@ -65,6 +66,14 @@ type SessionRecord struct {
 	// middleware. Populated by Driver.Serve at session-open from the
 	// configured extractor.
 	LiveCounter extractors.LiveCounter
+
+	// SettlementInputs is the payment context captured at session-open.
+	// teardown reads this back at terminal-state time, combines it
+	// with the final LiveCounter units, and emits a SettlementRecord
+	// inside the session.ended control envelope (plan 0034 §7.3).
+	// nil when the gateway sent a legacy/stub payment whose
+	// expected_price.constraint is unparseable.
+	SettlementInputs *middleware.SettlementInputs
 
 	// Cancel tears down all per-session goroutines. Driver-owned.
 	Cancel context.CancelFunc

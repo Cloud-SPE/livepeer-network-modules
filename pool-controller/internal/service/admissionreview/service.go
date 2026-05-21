@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/poolscope"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"slices"
@@ -164,6 +165,10 @@ func BuildJoinClaimPreview(claim types.ClaimedOffer, offers []types.Offer) JoinR
 		CapabilityID:    claim.CapabilityID,
 		OfferingID:      claim.OfferingID,
 		InteractionMode: claim.InteractionMode,
+	}
+	if err := poolscope.EnsureSupportedClaim(claim.CapabilityID, claim.InteractionMode); err != nil {
+		view.Reasons = append(view.Reasons, err.Error())
+		return view
 	}
 	for _, offer := range offers {
 		if offer.CapabilityID != claim.CapabilityID {

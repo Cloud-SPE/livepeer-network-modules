@@ -14,7 +14,10 @@ import (
 	"sync"
 	"time"
 
+	"net/http"
+
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-reconciler/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-reconciler/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-reconciler/internal/paymentdaemon"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-reconciler/internal/poolcontroller"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-reconciler/internal/protocoldaemon"
@@ -180,6 +183,21 @@ func runWatchRounds(args []string, stdout io.Writer) error {
 	}
 	defer func() { _ = stateRepo.Close() }()
 	enc := json.NewEncoder(stdout)
+	if addr := cfg.Reconcile.MetricsAddr; addr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", observability.NewMetricsHandler())
+		srv := &http.Server{Addr: addr, Handler: mux}
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				_ = enc.Encode(map[string]any{
+					"type":   "metrics_listener",
+					"status": "error",
+					"error":  err.Error(),
+				})
+			}
+		}()
+		defer func() { _ = srv.Close() }()
+	}
 	var opMu sync.Mutex
 	if err := backfillClosedRounds(context.Background(), cfg, protocolClient, controllerClient, stateRepo, enc, &opMu); err != nil {
 		return err
@@ -547,6 +565,7 @@ func retryPendingRounds(
 		if !record.LastAttemptAt.IsZero() && time.Since(record.LastAttemptAt) < retryAfter {
 			continue
 		}
+		observability.RecordPendingRoundRetry()
 		result, err := attemptRoundClose(ctx, cfg, controllerClient, stateRepo, record.RoundID)
 		if err != nil {
 			if err := enc.Encode(map[string]any{
@@ -574,6 +593,11 @@ func attemptRoundClose(
 	stateRepo *repo.StateRepo,
 	explicitRoundID uint64,
 ) (map[string]any, error) {
+	start := time.Now()
+	outcome := observability.OutcomeFailed
+	defer func() {
+		observability.RecordRoundClose(outcome, time.Since(start).Seconds())
+	}()
 	req, err := prepareRoundCloseRequest(ctx, cfg, explicitRoundID)
 	if err != nil {
 		return nil, err
@@ -600,6 +624,7 @@ func attemptRoundClose(
 	if err := stateRepo.MarkClosed(roundID); err != nil {
 		return nil, err
 	}
+	outcome = observability.OutcomeClosed
 	return map[string]any{
 		"closed_round":       roundID,
 		"status":             "closed",

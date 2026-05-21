@@ -250,8 +250,33 @@ High-value Pool routing metrics now include:
 - per-capability synthetic probe result counts by `status` and `reason`
 - persisted work-receipt counts by `status`
 - persisted payout-intent counts by `status`
+- persisted payout-intent retry pressure: `livepeer_pool_payout_intent_retry_count_max`,
+  `livepeer_pool_payout_intent_with_retries_total`
+- oldest unresolved payout failure age:
+  `livepeer_pool_payout_intent_failed_age_seconds_max`
 - receipt-write action counters across `work` and `round` flows
 - payout-intent action counters across derive/export/claim/renew/release/requeue/status updates
+
+## Detecting payout retry churn and failure pressure
+
+Three Prometheus gauges expose payout-execution health beyond raw status counts.
+Operators should alert on the third (failed-age) and watch the first two as
+leading signals.
+
+| Symptom on dashboard | Likely cause | First step |
+|---|---|---|
+| `livepeer_pool_payout_intent_with_retries_total` sustained > 5% of total intents | Executor hitting transient RPC / gas errors and requeuing | Check `pool-payout-executor` logs for transaction-failure reasons; tune `max_retries` / `requeue_cooldown_seconds` if storms keep repeating |
+| `livepeer_pool_payout_intent_retry_count_max` ≥ executor `max_retries` | A specific intent has exhausted retries and likely sits in `failed` | `GET /admin/v1/payout-intents?status=failed` and inspect `failure_reason`; decide between manual requeue and member suspend |
+| `livepeer_pool_payout_intent_failed_age_seconds_max` > 3600 (1h) | An intent has been in a failure state for too long without operator action | Same as above; the gauge stays > 0 until status moves out of `failed` / `stale_failed` / `requeue_failed` / `lease_expired` |
+| All three rising together | Executor lease churn or a systemic on-chain issue (e.g. gas spike) | Suspend the executor's batch loop, inspect the chain, then resume |
+
+Useful admin reads while triaging:
+
+- `GET /admin/v1/payout-intents?status=failed&since=…` — failed intents with
+  reasons and retry counts
+- `GET /admin/v1/payout-alerts` — controller-derived alert summaries (see
+  `pool-payout-executor` RUNBOOK for response playbooks)
+- `GET /admin/v1/payout-rounds?with_alerts=true` — round-level failure pressure
 
 ## Recovery notes
 

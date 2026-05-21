@@ -12,8 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"net/http"
+
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/config"
 	ethclientx "github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/ethclient"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/poolcontroller"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/repo"
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -441,10 +444,23 @@ func runReconcileLoop(args []string, stdout io.Writer) error {
 	if stateRepo != nil {
 		defer stateRepo.Close()
 	}
+	if addr := cfg.Executor.MetricsAddr; addr != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", observability.NewMetricsHandler())
+		srv := &http.Server{Addr: addr, Handler: mux}
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				_, _ = fmt.Fprintf(stdout, "{\"type\":\"metrics_listener\",\"status\":\"error\",\"error\":%q}\n", err.Error())
+			}
+		}()
+		defer func() { _ = srv.Close() }()
+	}
 	results := make([]reconcileOnceResult, 0)
 	runCount := 0
 	for {
+		iterStart := time.Now()
 		result, err := reconcileOnce(context.Background(), cfg, stateRepo, confirmOpts, failedOpts, sendOpts, *dryRun)
+		recordReconcileMetrics(result, err, time.Since(iterStart))
 		if stateRepo != nil {
 			if persistErr := persistReconcileState(stateRepo, result, err); persistErr != nil {
 				return persistErr
@@ -565,6 +581,24 @@ type reconcileOnceResult struct {
 	Confirm     confirmSubmittedResult `json:"confirm"`
 	AutoRequeue autoRequeueResult      `json:"auto_requeue"`
 	Dispatch    sendNativeBatchResult  `json:"dispatch"`
+}
+
+// recordReconcileMetrics writes per-iteration counters and the
+// per-action outcome tallies from a reconcileOnceResult into the
+// observability collectors. Best-effort: a nil result or zero-length
+// actions slice is a safe no-op.
+func recordReconcileMetrics(result reconcileOnceResult, runErr error, dur time.Duration) {
+	outcome := "success"
+	if runErr != nil {
+		outcome = "error"
+	}
+	observability.RecordReconcileIteration(outcome, dur.Seconds())
+	for _, action := range result.Confirm.Actions {
+		observability.RecordTransactionConfirmed(action.Status)
+	}
+	for _, action := range result.Dispatch.Actions {
+		observability.RecordTransactionSubmitted(action.Status)
+	}
 }
 
 func reconcileOnce(ctx context.Context, cfg *config.Config, stateRepo *repo.StateRepo, confirmOpts, failedOpts, sendOpts poolcontroller.ListPayoutIntentsOptions, dryRun bool) (reconcileOnceResult, error) {

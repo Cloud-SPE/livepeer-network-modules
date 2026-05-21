@@ -62,8 +62,9 @@ type InterimDebitConfig struct {
 // SessionState is intentionally goroutine-safe: the ticker reads
 // LiveCounter() concurrently with dispatch's SetLiveCounter call.
 type SessionState struct {
-	live atomic.Pointer[liveCounterHolder]
-	meta atomic.Pointer[receiptMetaHolder]
+	live       atomic.Pointer[liveCounterHolder]
+	meta       atomic.Pointer[receiptMetaHolder]
+	settlement atomic.Pointer[SettlementInputs]
 }
 
 type liveCounterHolder struct {
@@ -122,6 +123,31 @@ func (s *SessionState) ReceiptMeta() (ReceiptMeta, bool) {
 		return h.meta, true
 	}
 	return ReceiptMeta{}, false
+}
+
+// SetSettlementInputs publishes the inputs needed to build a
+// SettlementRecord later. Long-lived session drivers (RTMP,
+// session-control) snapshot these inputs onto their per-session
+// records during Serve so they can emit settlement at session-close
+// time, after the per-request payment middleware has long since
+// returned.
+func (s *SessionState) SetSettlementInputs(in SettlementInputs) {
+	if s == nil {
+		return
+	}
+	s.settlement.Store(&in)
+}
+
+// SettlementInputs returns the inputs published by the payment
+// middleware, or (zero, false) if absent.
+func (s *SessionState) SettlementInputs() (SettlementInputs, bool) {
+	if s == nil {
+		return SettlementInputs{}, false
+	}
+	if p := s.settlement.Load(); p != nil {
+		return *p, true
+	}
+	return SettlementInputs{}, false
 }
 
 type sessionStateKey struct{}
@@ -258,6 +284,11 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				CapabilityID: capability,
 				OfferingID:   offering,
 			})
+			state.SetSettlementInputs(SettlementInputs{
+				PaymentBytes:   paymentBytes,
+				FundedValueWei: result.CreditedEV,
+				WorkUnit:       spec.WorkUnit,
+			})
 			handlerCtx, cancelHandler := context.WithCancel(ctx)
 			defer cancelHandler()
 
@@ -361,8 +392,10 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			//    balance, record the cause for any post-mortem
 			//    observability. Trailer-style Livepeer-Error emission is
 			//    a future plan-0015 follow-up; the v0.1 cut logs at WARN.
+			var terminationReasonValue string
 			if reason := terminationReason.Load(); reason != nil {
-				log.Printf("warning: interim-debit terminated work_id=%s reason=%s", workID, *reason)
+				terminationReasonValue = *reason
+				log.Printf("warning: interim-debit terminated work_id=%s reason=%s", workID, terminationReasonValue)
 			}
 
 			if receiptSink != nil && actual > 0 {
@@ -388,7 +421,7 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				}
 			}
 
-			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit); settlement != nil {
+			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue); settlement != nil {
 				if encoded, err := encodeSettlementRecord(settlement); err == nil {
 					rec.Header().Set(livepeerheader.Settlement, encoded)
 				} else {

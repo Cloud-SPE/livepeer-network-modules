@@ -263,6 +263,41 @@ Current Prometheus metric families include:
 - `livepeer_pool_receipt_write_total{kind,status}`
 - `livepeer_pool_payout_intent_action_total{action,status}`
 
+## Operator-workflow policy automation
+
+The policy worker runs alongside the synthetic-probe loop and evaluates
+opt-in automation rules on every `policy.evaluation_interval_ms` tick
+(default 60s). Both rules are off by default; flipping them on in
+`policy:` requires no restart in normal operation — the worker reads
+the current snapshot each tick.
+
+```yaml
+policy:
+  auto_approve_join_requests: true
+  auto_drain_backends: true
+  backend_failure_rate_threshold: 0.5
+  backend_min_samples: 20
+  evaluation_interval_ms: 60000
+```
+
+- `auto_approve_join_requests` — when on, the worker auto-approves any
+  pending `JoinRequest` whose admission-review preview already says
+  `Approvable`. The reason recorded on the request and on the audit
+  event is `auto-approved by policy`. Audit kind:
+  `join_request_auto_approved`.
+- `auto_drain_backends` — when on, the worker transitions any backend
+  in `BackendStatusActive` whose worst per-offering recent failure rate
+  (`recent_backend_failure_count / recent_routable_outcome_count`)
+  exceeds `backend_failure_rate_threshold` to `BackendStatusDraining`.
+  `backend_min_samples` gates the rule on a minimum number of routable
+  outcomes in the window so brand-new or quiet backends are not drained
+  on a single bad sample. Audit kind: `backend_auto_drained` with
+  `failure_rate` and `failure_rate_threshold` in the details.
+
+Auto-disable (member-level suspend) is **not** automated; the worker
+only drains backends. An operator must decide whether to keep a
+drained backend out or re-enable it.
+
 ## Migration-only compatibility commands
 
 Normal production operations should use:

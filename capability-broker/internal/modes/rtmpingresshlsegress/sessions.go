@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
 // SessionRecord is the in-memory state the broker keeps per open session.
@@ -45,6 +46,14 @@ type SessionRecord struct {
 	// LastPacketAt is updated by the RTMP handler on every audio /
 	// video tag. Read by the idle-timeout watchdog.
 	LastPacketAt time.Time
+
+	// SettlementInputs is the payment context the broker captured at
+	// session-open. The customer-close handler (rtmpCloseSession)
+	// reads this back, combines it with the final LiveCounter units,
+	// and emits a SettlementRecord as the X-Livepeer-Settlement
+	// response header on the 204 close response. nil for stub/legacy
+	// payments whose expected_price.constraint cannot be parsed.
+	SettlementInputs *middleware.SettlementInputs
 }
 
 // Store holds the broker's open RTMP sessions. v0.1 is in-memory and

@@ -2,6 +2,7 @@ package observability
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,6 +91,21 @@ var (
 		Name: "livepeer_pool_payout_intent_status_total",
 		Help: "Current count of persisted payout intents by status.",
 	}, []string{"status"})
+
+	payoutIntentRetryCountMax = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "livepeer_pool_payout_intent_retry_count_max",
+		Help: "Maximum retry_count observed across persisted payout intents. Indicates retry-storm pressure when sustained > 1.",
+	})
+
+	payoutIntentWithRetriesTotal = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "livepeer_pool_payout_intent_with_retries_total",
+		Help: "Count of persisted payout intents with retry_count > 0.",
+	})
+
+	payoutIntentFailedAgeSecondsMax = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "livepeer_pool_payout_intent_failed_age_seconds_max",
+		Help: "Age in seconds of the oldest payout intent currently in a failure status. Zero when no intent is failed.",
+	})
 
 	receiptWriteTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "livepeer_pool_receipt_write_total",
@@ -214,9 +230,43 @@ func UpdateAccountingSnapshot(workReceipts []types.WorkReceipt, roundReceipts []
 	for _, receipt := range workReceipts {
 		workReceiptStatusTotal.WithLabelValues(metricLabel(receipt.Status)).Inc()
 	}
+
+	var (
+		maxRetryCount   uint64
+		withRetries     int
+		oldestFailedAge float64
+		now             = time.Now()
+	)
 	for _, intent := range payoutIntents {
 		payoutIntentStatusTotal.WithLabelValues(metricLabel(intent.Status)).Inc()
+		if intent.RetryCount > maxRetryCount {
+			maxRetryCount = intent.RetryCount
+		}
+		if intent.RetryCount > 0 {
+			withRetries++
+		}
+		if !intent.FailedAt.IsZero() && isUnresolvedFailureStatus(intent.Status) {
+			if age := now.Sub(intent.FailedAt).Seconds(); age > oldestFailedAge {
+				oldestFailedAge = age
+			}
+		}
 	}
+	payoutIntentRetryCountMax.Set(float64(maxRetryCount))
+	payoutIntentWithRetriesTotal.Set(float64(withRetries))
+	payoutIntentFailedAgeSecondsMax.Set(oldestFailedAge)
+}
+
+// isUnresolvedFailureStatus identifies payout-intent statuses where a
+// FailedAt timestamp still represents an open operator concern. A
+// payment that was failed once but later requeued and paid is no
+// longer "unresolved"; only intents whose current status is itself a
+// failure-bucket should contribute to the failed-age gauge.
+func isUnresolvedFailureStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "stale_failed", "requeue_failed", "lease_expired":
+		return true
+	}
+	return false
 }
 
 func RecordReceiptWrite(kind, status string, count int) {

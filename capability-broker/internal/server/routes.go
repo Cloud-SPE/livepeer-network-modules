@@ -41,10 +41,19 @@ func (s *Server) registerRoutes() {
 		middleware.Payment(s.payment, s.capabilityLookup(), s.opts.InterimDebit, s.receiptSink),
 	)
 
-	// POST /v1/cap — http-reqresp / http-stream / http-multipart /
-	//                rtmp-ingress-hls-egress / session-control-plus-media
-	//                (the latter two are session-open phase in v0.1).
-	s.mux.Handle("POST /v1/cap", paidChain(http.HandlerFunc(s.dispatch)))
+	// POST /v1/cap — either the standard paid-mode dispatcher or the
+	// remote live-runner session-open contract, depending on the selected
+	// backend transport for live-session-remote-runner@v0.
+	s.mux.Handle("POST /v1/cap", middleware.Chain(
+		middleware.Recover,
+		middleware.RequestID,
+		middleware.Metrics,
+	)(s.dispatchCapPost(func(next http.Handler) http.Handler {
+		return middleware.Chain(
+			middleware.Headers,
+			middleware.Payment(s.payment, s.capabilityLookup(), s.opts.InterimDebit, s.receiptSink),
+		)(next)
+	})))
 
 	// GET /v1/cap — ws-realtime upgrade. Same dispatcher handles the
 	// (method, mode) selection; the ws-realtime driver upgrades the
@@ -56,17 +65,20 @@ func (s *Server) registerRoutes() {
 	// Unpaid: the session was already paid for at session-open, and
 	// the URL path is a per-session bearer secret. 404 on unknown
 	// session id; 204 on a successful tear-down.
-	s.mux.HandleFunc("POST /v1/cap/{session_id}/end", s.rtmpCloseSession)
+	s.mux.HandleFunc("POST /v1/cap/{session_id}/end", s.dispatchCapEnd)
+	s.mux.HandleFunc("POST /v1/cap/{session_id}/topup", s.liveTopupSession)
+	s.mux.HandleFunc("GET /v1/cap/{session_id}", s.liveGetSession)
+	s.mux.HandleFunc("POST /internal/v1/live/events", s.liveRunnerEvents)
 
 	// GET /v1/cap/{session_id}/control — session-control-plus-media OR
-	// session-control-external-media control-WebSocket upgrade. Unpaid:
+	// live-session-remote-runner control-WebSocket upgrade. Unpaid:
 	// the URL path is the per-session bearer (Q1 lock — path-id-only
 	// auth). The dispatcher routes by session-store ownership.
 	if s.sessDriver != nil || s.extDriver != nil {
 		s.mux.HandleFunc("GET /v1/cap/{session_id}/control", s.dispatchControlWS)
 	}
 
-	// /_scope/{session_id}/{path...} — session-control-external-media
+	// /_scope/{session_id}/{path...} — live-session-remote-runner
 	// reverse-proxy plane. Forwards customer (gateway) traffic to the
 	// workload backend's HTTP API. Unpaid: the session id is the
 	// bearer. The driver's proxy handler authorises against the live

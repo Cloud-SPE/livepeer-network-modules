@@ -121,6 +121,13 @@ func validateExpectedPriceForRequest(paymentBytes []byte, capability, offering s
 	return nil
 }
 
+// ValidateExpectedPriceForRequest exposes the payment/header cross-check used
+// by the paid middleware so non-middleware session routes can enforce the
+// same expected-price contract.
+func ValidateExpectedPriceForRequest(paymentBytes []byte, capability, offering string, spec CapabilitySpec) error {
+	return validateExpectedPriceForRequest(paymentBytes, capability, offering, spec)
+}
+
 type expectedPriceMeta struct {
 	capability            string
 	offering              string

@@ -40,7 +40,7 @@
         }
       },
       {
-        "capability_id": "video:transcode.live.rtmp",
+        "capability_id": "video:transcode.live",
         "offering_id": "h264-1080p30",
         "interaction_mode": "rtmp-ingress-hls-egress@v1",
         "work_unit": { "name": "video-frame-megapixel" },

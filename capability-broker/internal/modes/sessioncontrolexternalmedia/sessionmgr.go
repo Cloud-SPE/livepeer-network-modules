@@ -1,6 +1,6 @@
 // Package sessioncontrolexternalmedia implements the
-// session-control-external-media@v0 interaction-mode driver per
-// livepeer-network-protocol/modes/session-control-external-media.md
+// live-session-remote-runner@v0 interaction-mode driver per
+// livepeer-network-protocol/modes/live-session-remote-runner.md
 // (plan 0026).
 //
 // The driver owns three surfaces:

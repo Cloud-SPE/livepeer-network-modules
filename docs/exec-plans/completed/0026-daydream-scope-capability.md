@@ -22,7 +22,7 @@ This plan shipped.
 
 Implemented surfaces:
 
-- new `session-control-external-media@v0` broker mode
+- new `live-session-remote-runner@v0` broker mode
 - broker lifecycle/control routes for externally owned media sessions
 - `/_scope/{session_id}/...` passthrough proxy path
 - conformance fixtures for happy-path, exhaustion, disconnect, and passthrough
@@ -32,7 +32,7 @@ Representative landed code:
 
 - `capability-broker/internal/modes/sessioncontrolexternalmedia/driver.go`
 - `capability-broker/internal/server/routes.go`
-- `livepeer-network-protocol/conformance/fixtures/session-control-external-media/`
+- `livepeer-network-protocol/conformance/fixtures/live-session-remote-runner/`
 - `daydream-gateway/src/`
 
 ## 1. Problem
@@ -106,7 +106,7 @@ Three Docker networks isolate Scope's surfaces:
 
 ### 4.1 New interaction mode spec
 
-Add `livepeer-network-protocol/modes/session-control-external-media.md`.
+Add `livepeer-network-protocol/modes/live-session-remote-runner.md`.
 
 Delta from `session-control-plus-media@v0`:
 
@@ -145,7 +145,7 @@ Delta from `session-control-plus-media@v0`:
 
 ### 4.2 Conformance fixtures
 
-Add under `livepeer-network-protocol/conformance/fixtures/session-control-external-media/`:
+Add under `livepeer-network-protocol/conformance/fixtures/live-session-remote-runner/`:
 
 - `happy-path.yaml` — open, tick for N seconds, graceful close, ledger
   reconciles.
@@ -168,7 +168,7 @@ Add `capability-broker/internal/modes/sessioncontrolexternalmedia/`. Reuses:
 
 New code:
 
-- `driver.go` — implements `modes.Driver` for `session-control-external-media@v0`.
+- `driver.go` — implements `modes.Driver` for `live-session-remote-runner@v0`.
 - `proxy.go` — the `/_scope/<session_id>/*` HTTP reverse proxy with the
   session-start / session-stop short-circuits and the broker's seconds-elapsed
   clock attached to first-contact.
@@ -182,7 +182,7 @@ matching the file's opt-in convention):
 ```yaml
 # - id: "daydream:scope:v1"
 #   offering_id: "default"
-#   interaction_mode: "session-control-external-media@v0"
+#   interaction_mode: "live-session-remote-runner@v0"
 #   work_unit:
 #     name: "seconds"
 #     extractor: { type: "seconds-elapsed", granularity: 1 }
@@ -305,7 +305,7 @@ Add `daydream-gateway/docs/operator-runbook.md` covering:
 ### 4.10 Cross-cutting docs
 
 - Add a row in `docs/design-docs/streaming-workload-pattern.md`'s mode-mapping
-  table for `session-control-external-media`.
+  table for `live-session-remote-runner`.
 - Index the new mode in `livepeer-network-protocol/modes/README.md`.
 - Add a row in root `AGENTS.md` "Where to look" pointing at this plan
   while it is active.
@@ -314,9 +314,9 @@ Add `daydream-gateway/docs/operator-runbook.md` covering:
 
 ### `livepeer-network-protocol/`
 
-- `modes/session-control-external-media.md` (new)
+- `modes/live-session-remote-runner.md` (new)
 - `modes/README.md` (index)
-- `conformance/fixtures/session-control-external-media/*.yaml` (new)
+- `conformance/fixtures/live-session-remote-runner/*.yaml` (new)
 - `conformance/test-broker-config.yaml` (add capability fixtures)
 
 ### `capability-broker/`

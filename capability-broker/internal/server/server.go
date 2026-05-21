@@ -149,6 +149,8 @@ type Server struct {
 	sessDriver           *sessioncontrolplusmedia.Driver
 	extStore             *sessioncontrolexternalmedia.Store
 	extDriver            *sessioncontrolexternalmedia.Driver
+	liveRunnerStore      *liveRunnerSessionStore
+	liveRunnerClient     *liveRunnerBackendClient
 	webrtcEngine         *mediawebrtc.Engine
 	sessRunnerSup        *sessionrunner.Supervisor
 	randIntn             func(int) int
@@ -216,6 +218,8 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		ReplayBufferBytes:    sessCfg.ReplayBufferBytes,
 	})
 	sessDriver := sessioncontrolplusmedia.New(sessStore, sessCfg)
+	extStore := sessioncontrolexternalmedia.NewStore()
+	extDriver := sessioncontrolexternalmedia.New(extStore, sessioncontrolexternalmedia.DefaultConfig())
 
 	rtcCfg := opts.WebRTC
 	if rtcCfg.UDPPortMin == 0 {
@@ -239,18 +243,18 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	runnerBackend := sessioncontrolplusmedia.NewRunnerBackend(runnerSup, resolver, rtcEngine, sessStore)
 	sessDriver.SetBackend(runnerBackend)
 
-	extStore := sessioncontrolexternalmedia.NewStore()
-	extDriver := sessioncontrolexternalmedia.New(extStore, sessioncontrolexternalmedia.DefaultConfig())
+	liveRunnerStore := newLiveRunnerSessionStore()
+	liveRunnerClient := newLiveRunnerBackendClient()
 
 	s := &Server{
-		cfg:              cfg,
-		configPath:       opts.ConfigPath,
-		loadedConfigPath: loadedConfigPath,
-		loadedRevision:   loadedRevision,
-		adminToken:       adminToken,
-		loadedAt:         loadedAt,
+		cfg:                 cfg,
+		configPath:          opts.ConfigPath,
+		loadedConfigPath:    loadedConfigPath,
+		loadedRevision:      loadedRevision,
+		adminToken:          adminToken,
+		loadedAt:            loadedAt,
 		lastReloadAttemptID: "startup",
-		lastReloadStatus: "startup_loaded",
+		lastReloadStatus:    "startup_loaded",
 		reloadHistory: []runtimeHistoryEntry{{
 			AttemptID:      "startup",
 			StartedAt:      loadedAt,
@@ -276,6 +280,8 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		sessDriver:       sessDriver,
 		extStore:         extStore,
 		extDriver:        extDriver,
+		liveRunnerStore:  liveRunnerStore,
+		liveRunnerClient: liveRunnerClient,
 		webrtcEngine:     rtcEngine,
 		randIntn: func(n int) int {
 			return rand.New(rand.NewSource(time.Now().UnixNano())).Intn(n)

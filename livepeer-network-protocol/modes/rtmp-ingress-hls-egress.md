@@ -36,7 +36,7 @@ Delta document. Inherits header semantics from
 ```
 POST /v1/cap HTTP/1.1
 Host: broker-a.orch.example.com
-Livepeer-Capability: video:transcode.live.rtmp
+Livepeer-Capability: video:transcode.live
 Livepeer-Offering: h264-1080p30
 Livepeer-Payment: <base64-encoded payment envelope>
 Livepeer-Spec-Version: 0.1

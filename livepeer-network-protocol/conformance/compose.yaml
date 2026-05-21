@@ -13,11 +13,11 @@
 #                     controls the response per-fixture. Talks to
 #                     payment-daemon (receiver) over the same shared
 #                     volume.
-#   payment-daemon  — tztcloud/livepeer-payment-daemon:dev in
+#   payment-daemon  — tztcloud/livepeer-payment-daemon:v1.3.2 in
 #                     `--mode=receiver`. Validates incoming Payment
 #                     bytes (stub validation in v0.2), tracks per-
 #                     (sender, work_id) balances in BoltDB.
-#   payer-daemon    — tztcloud/livepeer-payment-daemon:dev in
+#   payer-daemon    — tztcloud/livepeer-payment-daemon:v1.3.2 in
 #                     `--mode=sender`. Mints Payment envelopes for the
 #                     runner. Same image, same binary, different mode.
 #
@@ -32,7 +32,7 @@
 
 services:
   payment-daemon:
-    image: tztcloud/livepeer-payment-daemon:dev
+    image: tztcloud/livepeer-payment-daemon:v1.3.2
     networks: [conformance]
     volumes:
       - livepeer-payment:/var/run/livepeer
@@ -43,7 +43,7 @@ services:
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
 
   payer-daemon:
-    image: tztcloud/livepeer-payment-daemon:dev
+    image: tztcloud/livepeer-payment-daemon:v1.3.2
     networks: [conformance]
     volumes:
       - livepeer-payment:/var/run/livepeer
@@ -52,7 +52,7 @@ services:
       - --socket=/var/run/livepeer/payer-daemon.sock
 
   broker:
-    image: tztcloud/livepeer-capability-broker:dev
+    image: tztcloud/livepeer-capability-broker:v1.3.2
     depends_on: [payment-daemon]
     networks: [conformance]
     volumes:
@@ -81,7 +81,7 @@ services:
       - --hls-scratch-dir=/var/lib/livepeer/rtmp-hls
 
   runner:
-    image: tztcloud/livepeer-conformance:dev
+    image: tztcloud/livepeer-conformance:v1.3.2
     depends_on: [broker, payer-daemon]
     networks: [conformance]
     volumes:

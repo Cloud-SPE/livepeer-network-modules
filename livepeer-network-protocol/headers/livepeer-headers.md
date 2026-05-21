@@ -176,7 +176,7 @@ capacity status for each currently-served capability.
   RFC 7230 header-value rules).
 - **Example:**
   ```
-  Livepeer-Health-Status: {"openai:chat-completions":"available","video:transcode.live.rtmp":"saturated"}
+  Livepeer-Health-Status: {"openai:chat-completions":"available","video:transcode.live":"saturated"}
   ```
 - Each value MUST be one of: `"available" | "saturated" | "draining" | "down"`.
 - Gateways poll this every 15-30 seconds. The full three-layer health model lives

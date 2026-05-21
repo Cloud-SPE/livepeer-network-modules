@@ -241,7 +241,7 @@ Specs in [`livepeer-network-protocol/modes/`](../../livepeer-network-protocol/mo
 - `ws-realtime@v0` — bidirectional WebSocket, per-cadence debit
 - `rtmp-ingress-hls-egress@v0` — RTMP in, HLS out, session-metered
 - `session-control-plus-media@v0` — broker-managed media plane
-- `session-control-external-media@v0` — broker reverse-proxies to external media
+- `live-session-remote-runner@v0` — broker-authoritative live session with a remote runner-owned media runtime
 
 Pricing math is identical across modes; modes only differ in *when* the
 broker can extract `actualUnits` and call `DebitBalance`.

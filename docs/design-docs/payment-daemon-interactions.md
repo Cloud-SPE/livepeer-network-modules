@@ -49,6 +49,10 @@ Its job is to:
   `/v1/payment/ticket-params` path
 - sign a wire-format `Payment` blob whose `expected_price` reflects the
   gateway-accepted quote basis
+- return the minted `work_id` (`hex(recipient_rand_hash)`) so callers can
+  key their own session state explicitly
+- accept payee-side rejection feedback via `ReportPaymentResult` and
+  invalidate stale cached sessions on `INVALID_RECIPIENT_RAND`
 
 The sender daemon is not a pricing engine. It does not decide retail price. It
 turns a gateway pricing decision into a valid ticket.
@@ -64,13 +68,21 @@ Its job is to:
 - publish capability / offering prices from `host-config.yaml`
 - synthesize truthful ticket params for the incoming payment request
 - validate `Payment` blobs with `ProcessPayment`
+- report structured per-ticket rejection status from `ProcessPayment`
 - credit and debit per-session balance (for streaming modes)
 - redeem winning tickets on-chain
+- expose operator-only `PayeeAdmin.ResetSession` for deliberate session
+  rotation
 
 The receiver daemon is both:
 
 - the cryptographic authority for payee-issued ticket params, and
 - the runtime allowance store for receiver-side balances
+
+For an open `(sender, recipient, capability, offering)` session,
+repeated `GetTicketParams` calls reuse the same `recipient_rand_hash`,
+including across receiver restarts. Rotation happens only after an
+explicit close/reset.
 
 ```mermaid
 flowchart LR
@@ -187,8 +199,25 @@ sequenceDiagram
     Receiver-->>Broker: TicketParams
     Broker-->>Sender: TicketParams
     Sender->>Sender: sign Payment blob
-    Sender-->>Shell: payment_bytes
+    Sender-->>Shell: payment_bytes + work_id
 ```
+
+### 3.1 Rejection feedback loop
+
+`CreatePayment` and `ProcessPayment` are separated by the caller and the
+broker, so the sender daemon cannot directly observe a later payee-side
+ticket rejection. The recovery loop is therefore explicit:
+
+1. broker / caller submits the minted payment
+2. receiver `ProcessPayment` returns structured `TicketStatus`
+3. if the dominant reason is `INVALID_RECIPIENT_RAND`, the caller
+   reports that outcome to `PayerDaemon.ReportPaymentResult`
+4. sender invalidates the cached session and returns `codes.Aborted`
+   with retry details
+5. caller retries exactly once and receives a fresh `work_id`
+
+This preserves `work_id` as explicit caller-visible state instead of
+silently swapping session identity inside the daemon.
 
 ### 4. Accepted price vs funded budget vs actual winning-ticket face value
 

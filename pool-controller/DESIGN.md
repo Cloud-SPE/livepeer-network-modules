@@ -22,7 +22,7 @@ Initial implementation scope for plan 0029:
 8. Expose a conservative backend-outcome ingest API that updates persisted
    backend-selection records with real-traffic timestamps and persisted
    rolling-window / EMA-backed scoring updates.
-9. Add an opt-in synthetic probe runner scaffold that discovers in-scope
+9. Add an opt-in synthetic probe scaffold that discovers in-scope
    OpenAI offerings from config, executes concrete chat/embeddings probes plus
    partial audio-family probes, explicitly skips unsupported audio subtypes,
    and writes synthetic-confidence observations back into persisted

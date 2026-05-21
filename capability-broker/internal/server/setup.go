@@ -15,6 +15,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/httpmultipart"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/httpreqresp"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/httpstream"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/livesessiongatewayingest"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/rtmpingresshlsegress"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolexternalmedia"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolplusmedia"
@@ -32,7 +33,8 @@ func defaultModes(rtmpDriver *rtmpingresshlsegress.Driver, sessDriver *sessionco
 	r.Register(wsrealtime.New())    // plan 0010
 	r.Register(rtmpDriver)          // plan 0011-followup
 	r.Register(sessDriver)          // plan 0012 + 0012-followup
-	r.Register(extDriver)           // plan 0026
+	r.Register(extDriver)           // plan 0012 + live remote-runner registration
+	r.Register(livesessiongatewayingest.New())
 	return r
 }
 

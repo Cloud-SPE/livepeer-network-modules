@@ -13,6 +13,7 @@ fixtures/
 ├── http-reqresp/
 ├── http-stream/
 ├── http-multipart/
+├── live-session-gateway-ingest/
 ├── ws-realtime/
 ├── rtmp-ingress-hls-egress/
 └── session-control-plus-media/

@@ -40,20 +40,27 @@ func (s *Server) groupFor(capID, offID string) (*capabilityGroup, bool) {
 		return nil, false
 	}
 	group := &capabilityGroup{}
+	var fallback *config.Capability
 	for i := range cfg.Capabilities {
 		c := &cfg.Capabilities[i]
 		if c.ID != capID {
 			continue
 		}
-		if group.Published == nil {
-			group.Published = c
+		if fallback == nil {
+			fallback = c
 		}
 		if c.OfferingID == offID {
+			if group.Published == nil {
+				group.Published = c
+			}
 			group.Backends = append(group.Backends, c)
 		}
 	}
-	if group.Published == nil {
+	if fallback == nil {
 		return nil, false
+	}
+	if group.Published == nil {
+		group.Published = fallback
 	}
 	if len(group.Backends) == 0 {
 		return &capabilityGroup{Published: group.Published}, true

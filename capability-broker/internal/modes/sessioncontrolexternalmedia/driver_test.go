@@ -258,7 +258,7 @@ func TestEmitSessionEndedWithoutSettlementInputs(t *testing.T) {
 
 func TestMode_IsCanonical(t *testing.T) {
 	d := New(NewStore(), DefaultConfig())
-	if d.Mode() != "session-control-external-media@v0" {
+	if d.Mode() != "live-session-remote-runner@v0" {
 		t.Fatalf("Mode(): got %q", d.Mode())
 	}
 }

@@ -6,15 +6,10 @@
 
 ## Purpose
 
-This repo now ships multiple browser UIs:
-
-- `customer-portal/frontend/shared`
-- `openai-gateway/src/frontend/*`
-- `video-gateway/src/frontend/*`
-- `vtuber-gateway/src/frontend/*`
-
-Those surfaces must obey the same frontend authoring contract. This document defines
-that contract as a cross-cutting invariant for the entire repo.
+This repo ships browser UIs that must all obey the same frontend
+authoring contract. Today that contract applies to shared UI packages
+such as `customer-portal/frontend/shared` and to any future browser UI
+that lands in this repo.
 
 The visual language still comes from [`ui-design-system.md`](./ui-design-system.md).
 This document defines the DOM, HTML, and CSS implementation rules that every UI must
@@ -120,17 +115,6 @@ The repo-wide steady state is:
 Temporary migration allowlists were permitted only during
 [`0023-strict-frontend-dom-and-css-invariants.md`](../exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md).
 That migration is now complete and the steady-state bar applies repo-wide.
-
-## Migration order
-
-Because multiple product UIs consume the shared portal/admin package, migration order is
-fixed:
-
-1. `customer-portal/frontend/shared`
-2. `openai-gateway/src/frontend/*`
-3. `video-gateway/src/frontend/*`
-4. `vtuber-gateway/src/frontend/*`
-5. test suites and CI gates
 
 ## Review rule
 

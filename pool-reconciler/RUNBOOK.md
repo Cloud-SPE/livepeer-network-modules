@@ -86,4 +86,4 @@ If `reconcile.metrics_addr` is empty, the listener is not started.
 ## Backup scope
 
 Back up the BoltDB file at `reconcile.state_path`. It is not accounting truth,
-but it is the job-runner checkpoint used for backfill and retry behavior.
+but it is the job checkpoint used for backfill and retry behavior.

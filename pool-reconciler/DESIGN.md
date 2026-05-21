@@ -30,5 +30,5 @@ The current round-close producer contract is:
    to `pool-controller`.
 
 The reconciler's BoltDB state is intentionally narrow: it stores per-round
-attempt counts, last error, and closed checkpoints. It is a local job-runner
+attempt counts, last error, and closed checkpoints. It is a local job
 checkpoint, not a source of accounting truth.

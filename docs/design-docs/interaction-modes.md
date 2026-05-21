@@ -40,7 +40,7 @@ small fixed typology instead.
 | `ws-realtime@v0` | bidirectional WebSocket session | realtime OpenAI-style sessions, control streams |
 | `rtmp-ingress-hls-egress@v0` | RTMP ingest → LL-HLS playback | live video |
 | `session-control-plus-media@v0` | HTTP session open + broker-managed control/media runtime | VTuber-style session runtimes |
-| `session-control-external-media@v0` | HTTP session open + broker-managed control/payment, external media plane | Daydream Scope |
+| `live-session-remote-runner@v0` | HTTP session open + broker-managed control/payment + remote runner-owned RTMP/HLS runtime | remote live transcoding |
 
 ## Mode responsibilities
 
@@ -158,7 +158,7 @@ Typical fit:
 - VTuber session workloads
 - future broker-hosted interactive runtimes
 
-### `session-control-external-media@v0`
+### `live-session-remote-runner@v0`
 
 Use when the broker owns payment and session authority, but the workload keeps
 its own external media plane.
@@ -166,14 +166,14 @@ its own external media plane.
 Properties:
 
 - broker still validates payment and meters the live session
-- session-open returns broker-hosted control URLs plus a broker-mediated
-  passthrough URL into the workload's native API
+- session-open returns broker-owned session coordinates while the media runtime
+  stays external to the broker
 - media does not flow through the broker
 
 Typical fit:
 
-- Daydream Scope
-- future long-lived runtimes with their own TURN/WebRTC/media stack
+- remote live RTMP/HLS runners where the broker remains the payment authority
+- live transcoding runtimes that report usage/state back to the broker
 
 ## How a new capability picks a mode
 

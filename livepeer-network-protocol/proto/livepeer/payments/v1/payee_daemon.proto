@@ -30,11 +30,17 @@ service PayeeDaemon {
   // the payer checks against when billing.
   rpc GetQuote(GetQuoteRequest) returns (GetQuoteResponse);
 
-  // Return canonical payee-issued TicketParams for an exact (sender,
-  // recipient, face-value) tuple. This is the v3 quote-free
-  // replacement for the cryptographic half of the old quote flow:
-  // pricing comes from manifest / resolver, while the payee still
-  // owns recipientRandHash and expiry generation.
+  // Return canonical payee-issued TicketParams for a sender/payee
+  // session. This is the v3 quote-free replacement for the
+  // cryptographic half of the old quote flow: pricing comes from
+  // manifest / resolver, while the payee still owns
+  // recipientRandHash and expiry generation.
+  //
+  // The same open session MUST return the same TicketParams when the
+  // caller repeats the same (sender, recipient, capability, offering)
+  // request, including across payee-daemon restarts. A fresh
+  // recipientRandHash is minted only after the prior session has been
+  // explicitly closed or reset.
   rpc GetTicketParams(GetTicketParamsRequest) returns (GetTicketParamsResponse);
 
   // Return the daemon's full configured capability catalog. Drives
@@ -205,6 +211,17 @@ message ProcessPaymentResponse {
   // Number of tickets in this payment that were identified as winners
   // and queued for on-chain redemption.
   int32 winners_queued = 4;
+
+  // Per-ticket validation / credit result, in the same order as the
+  // input payment's `ticket_sender_params`.
+  repeated TicketStatus ticket_status = 5;
+
+  // Number of tickets rejected from this payment.
+  int32 tickets_rejected = 6;
+
+  // Dominant rejection reason across the rejected tickets. UNSPECIFIED
+  // when no tickets were rejected.
+  PaymentRejectionReason dominant_rejection = 7;
 }
 
 message DebitBalanceRequest {

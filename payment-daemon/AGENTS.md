@@ -40,7 +40,7 @@ cmd/livepeer-payment-daemon/   — entrypoint (flag parsing + boot)
 internal/
   proto/livepeer/payments/v1/  — generated gRPC bindings (committed)
   server/                      — grpc.Server lifecycle + listener
-  service/                     — PayeeDaemon RPC implementation
+  service/                     — PayerDaemon / PayeeDaemon / PayeeAdmin RPC implementation
   store/                       — BoltDB session ledger
 ```
 

@@ -7,9 +7,8 @@ Shared frontend primitives for Livepeer rewrite UIs.
 This package is the shared design-system and browser utility layer for:
 
 - `customer-portal`
-- `video-gateway`
-- `vtuber-gateway`
-- future browser UIs in `openai-gateway`, `secure-orch-console`, and operator tools
+- `secure-orch-console` and other future operator-tool browser UIs
+- any future SaaS consumer that embeds `customer-portal`
 
 It provides:
 
@@ -75,7 +74,7 @@ Current UI primitives:
 - Use `portal-metric-tile` for small summary metrics at page or hero level.
 
 If a needed pattern repeats across apps, promote it into this package instead of
-copying markup and CSS into each gateway.
+copying markup and CSS into each consumer app.
 
 ## Reference
 

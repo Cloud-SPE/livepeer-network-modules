@@ -11,6 +11,11 @@
 //	                            that opened it. Lets OpenSession be
 //	                            idempotent before the sender is sealed
 //	                            on first ProcessPayment.
+//	bucket "ticket_session_index" — keyed by stable
+//	                            (sender, recipient, capability,
+//	                            offering); value is the current open
+//	                            work_id. Lets GetTicketParams reuse the
+//	                            same recipientRand across restarts.
 //
 // Sessions are sealed to a sender on the first successful
 // ProcessPayment. OpenSession sets `sender == nil`; ProcessPayment
@@ -32,6 +37,7 @@ const (
 	sessionsBucket  = "sessions"
 	debitSeqsBucket = "debit_seqs"
 	capIndexBucket  = "capability_index"
+	ticketIdxBucket = "ticket_session_index"
 
 	// Plan 0016 buckets — owned by store, consumed by receiver +
 	// settlement via the helper methods further down this file.
@@ -48,6 +54,7 @@ const metaNextSeq = "next_seq"
 type Session struct {
 	WorkID              string    `json:"work_id"`
 	Sender              []byte    `json:"sender,omitempty"` // nil until first ProcessPayment seals it
+	Recipient           []byte    `json:"recipient,omitempty"`
 	Capability          string    `json:"capability"`
 	Offering            string    `json:"offering"`
 	PricePerWorkUnitWei string    `json:"price_per_work_unit_wei"` // big.Int decimal string
@@ -87,6 +94,16 @@ type Store struct {
 	db *bolt.DB
 }
 
+// TicketSessionKey identifies the receiver-issued sender/payee session
+// that GetTicketParams should reuse for the lifetime of an open
+// session.
+type TicketSessionKey struct {
+	Sender     []byte
+	Recipient  []byte
+	Capability string
+	Offering   string
+}
+
 // Open creates or opens the BoltDB file at path and ensures buckets
 // exist.
 func Open(path string) (*Store, error) {
@@ -96,7 +113,7 @@ func Open(path string) (*Store, error) {
 	}
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for _, name := range []string{
-			sessionsBucket, debitSeqsBucket, capIndexBucket,
+			sessionsBucket, debitSeqsBucket, capIndexBucket, ticketIdxBucket,
 			noncesBucket,
 			redemptionsPending, redemptionsByHash, redemptionsRedeemed, redemptionsMeta,
 		} {
@@ -170,6 +187,121 @@ func (s *Store) OpenSession(seed Session) (sess *Session, alreadyOpen bool, err 
 		sess = &seed
 	}
 	return sess, alreadyOpen, nil
+}
+
+// GetOrCreateTicketSession returns the open receiver-issued session for
+// this stable sender/recipient/capability/offering identity. Closed or
+// stale indexed sessions are discarded and replaced with a fresh one.
+func (s *Store) GetOrCreateTicketSession(key TicketSessionKey, seed Session) (sess *Session, alreadyOpen bool, err error) {
+	if seed.WorkID == "" {
+		return nil, false, errors.New("work_id is required")
+	}
+	seed.Sender = append([]byte(nil), key.Sender...)
+	seed.Recipient = append([]byte(nil), key.Recipient...)
+	seed.Capability = key.Capability
+	seed.Offering = key.Offering
+	seed.OpenedAt = time.Now().UTC()
+	if seed.BalanceWei == "" {
+		seed.BalanceWei = "0"
+	}
+
+	indexKey := ticketSessionIndexKey(key)
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		idx := tx.Bucket([]byte(ticketIdxBucket))
+		sessions := tx.Bucket([]byte(sessionsBucket))
+		capIdx := tx.Bucket([]byte(capIndexBucket))
+
+		if workID := idx.Get(indexKey); workID != nil {
+			raw := sessions.Get(compositeKey(key.Sender, string(workID)))
+			if raw == nil {
+				if err := idx.Delete(indexKey); err != nil {
+					return err
+				}
+			} else {
+				var found Session
+				if err := json.Unmarshal(raw, &found); err != nil {
+					return fmt.Errorf("unmarshal indexed session: %w", err)
+				}
+				if found.Closed {
+					if err := idx.Delete(indexKey); err != nil {
+						return err
+					}
+				} else {
+					sess = &found
+					alreadyOpen = true
+					return nil
+				}
+			}
+		}
+
+		raw, err := json.Marshal(seed)
+		if err != nil {
+			return fmt.Errorf("marshal: %w", err)
+		}
+		if err := sessions.Put(compositeKey(key.Sender, seed.WorkID), raw); err != nil {
+			return err
+		}
+		if err := capIdx.Put([]byte(seed.WorkID), append([]byte(nil), key.Sender...)); err != nil {
+			return err
+		}
+		if err := idx.Put(indexKey, []byte(seed.WorkID)); err != nil {
+			return err
+		}
+		sess = &seed
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return sess, alreadyOpen, nil
+}
+
+// ResetTicketSession closes the active stable-identity ticket session,
+// drops its nonce ledger, and removes the active index so the next
+// GetTicketParams call mints a fresh work_id.
+func (s *Store) ResetTicketSession(key TicketSessionKey) (oldWorkID string, reset bool, err error) {
+	indexKey := ticketSessionIndexKey(key)
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		idx := tx.Bucket([]byte(ticketIdxBucket))
+		workID := idx.Get(indexKey)
+		if workID == nil {
+			return nil
+		}
+		oldWorkID = string(workID)
+		sessions := tx.Bucket([]byte(sessionsBucket))
+		raw := sessions.Get(compositeKey(key.Sender, oldWorkID))
+		if raw == nil {
+			return idx.Delete(indexKey)
+		}
+		var sess Session
+		if err := json.Unmarshal(raw, &sess); err != nil {
+			return fmt.Errorf("unmarshal indexed session: %w", err)
+		}
+		sess.Closed = true
+		sess.ClosedAt = time.Now().UTC()
+		updated, err := json.Marshal(sess)
+		if err != nil {
+			return fmt.Errorf("marshal: %w", err)
+		}
+		if err := sessions.Put(compositeKey(key.Sender, oldWorkID), updated); err != nil {
+			return err
+		}
+		if err := idx.Delete(indexKey); err != nil {
+			return err
+		}
+		if sess.RecipientRand != "" {
+			randInt, ok := new(big.Int).SetString(sess.RecipientRand, 10)
+			if !ok {
+				return errors.New("session rand corrupt")
+			}
+			if err := deleteNonceLedger(tx.Bucket([]byte(noncesBucket)), randInt); err != nil {
+				return err
+			}
+		}
+		reset = true
+		return nil
+	})
+	return oldWorkID, reset, err
 }
 
 // SealSender patches the sender onto a session that was opened with
@@ -319,13 +451,38 @@ func (s *Store) GetBalance(sender []byte, workID string) (*big.Int, error) {
 
 // CloseSession marks the session closed.
 func (s *Store) CloseSession(sender []byte, workID string) (alreadyClosed bool, err error) {
-	err = s.mutate(sender, workID, func(sess *Session) error {
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		composite := compositeKey(sender, workID)
+		bucket := tx.Bucket([]byte(sessionsBucket))
+		raw := bucket.Get(composite)
+		if raw == nil {
+			return ErrNotFound
+		}
+		var sess Session
+		if err := json.Unmarshal(raw, &sess); err != nil {
+			return fmt.Errorf("unmarshal: %w", err)
+		}
 		if sess.Closed {
 			alreadyClosed = true
 			return nil
 		}
 		sess.Closed = true
 		sess.ClosedAt = time.Now().UTC()
+		updated, err := json.Marshal(sess)
+		if err != nil {
+			return fmt.Errorf("marshal: %w", err)
+		}
+		if err := bucket.Put(composite, updated); err != nil {
+			return err
+		}
+		if len(sess.Sender) > 0 && len(sess.Recipient) > 0 {
+			return tx.Bucket([]byte(ticketIdxBucket)).Delete(ticketSessionIndexKey(TicketSessionKey{
+				Sender:     sess.Sender,
+				Recipient:  sess.Recipient,
+				Capability: sess.Capability,
+				Offering:   sess.Offering,
+			}))
+		}
 		return nil
 	})
 	return alreadyClosed, err
@@ -440,6 +597,20 @@ func compositeKey(sender []byte, workID string) []byte {
 	out = append(out, sender...)
 	out = append(out, ':')
 	out = append(out, []byte(workID)...)
+	return out
+}
+
+func ticketSessionIndexKey(key TicketSessionKey) []byte {
+	out := make([]byte, 0, len(key.Sender)+len(key.Recipient)+len(key.Capability)+len(key.Offering)+4)
+	out = append(out, byte(len(key.Sender)))
+	out = append(out, key.Sender...)
+	out = append(out, ':')
+	out = append(out, byte(len(key.Recipient)))
+	out = append(out, key.Recipient...)
+	out = append(out, ':')
+	out = append(out, []byte(key.Capability)...)
+	out = append(out, ':')
+	out = append(out, []byte(key.Offering)...)
 	return out
 }
 

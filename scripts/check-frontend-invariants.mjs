@@ -7,9 +7,6 @@ const baselinePath = path.join(repoRoot, "scripts", "frontend-invariants-allowli
 
 const frontendRoots = [
   "customer-portal/frontend",
-  "openai-gateway/src/frontend",
-  "video-gateway/src/frontend",
-  "vtuber-gateway/src/frontend",
 ];
 
 const skipDirs = new Set([

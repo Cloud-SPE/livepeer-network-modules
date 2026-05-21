@@ -10,13 +10,18 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 )
@@ -39,6 +44,10 @@ type Server struct {
 	grpcServer *grpc.Server
 }
 
+type ReceiverAdminConfig struct {
+	Token string
+}
+
 // NewSender constructs a Server registered with PayerDaemon (sender
 // mode). PayeeDaemon RPCs are not mounted; calls to them return
 // UNIMPLEMENTED.
@@ -53,12 +62,15 @@ func NewSender(svc pb.PayerDaemonServer, socketPath string, logger *slog.Logger)
 
 // NewReceiver constructs a Server registered with PayeeDaemon (receiver
 // mode). PayerDaemon RPCs are not mounted.
-func NewReceiver(svc pb.PayeeDaemonServer, socketPath string, logger *slog.Logger) *Server {
+func NewReceiver(svc pb.PayeeDaemonServer, admin pb.PayeeAdminServer, adminCfg ReceiverAdminConfig, socketPath string, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	gs := grpc.NewServer()
+	gs := grpc.NewServer(grpc.UnaryInterceptor(receiverAdminAuthInterceptor(adminCfg.Token)))
 	pb.RegisterPayeeDaemonServer(gs, svc)
+	if admin != nil {
+		pb.RegisterPayeeAdminServer(gs, admin)
+	}
 	return &Server{socketPath: socketPath, logger: logger, grpcServer: gs}
 }
 
@@ -88,5 +100,26 @@ func (s *Server) GracefulStop() {
 	s.grpcServer.GracefulStop()
 	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.logger.Warn("remove socket on stop", "err", err)
+	}
+}
+
+func receiverAdminAuthInterceptor(token string) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		if !strings.HasPrefix(info.FullMethod, "/livepeer.payments.v1.PayeeAdmin/") {
+			return handler(ctx, req)
+		}
+		if strings.TrimSpace(token) == "" {
+			return nil, status.Error(codes.PermissionDenied, "payee admin token is not configured")
+		}
+		md, _ := metadata.FromIncomingContext(ctx)
+		authz := ""
+		if vals := md.Get("authorization"); len(vals) > 0 {
+			authz = vals[0]
+		}
+		want := "Bearer " + token
+		if authz != want {
+			return nil, status.Error(codes.PermissionDenied, "invalid payee admin token")
+		}
+		return handler(ctx, req)
 	}
 }

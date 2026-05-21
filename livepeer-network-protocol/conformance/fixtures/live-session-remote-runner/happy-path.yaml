@@ -1,0 +1,63 @@
+# Happy-path conformance fixture for live-session-remote-runner@v0.
+#
+# Verifies session-open returns broker + runner identifiers and media/control
+# coordinates for a remote live runner backend.
+
+name: happy-path
+mode: live-session-remote-runner@v0
+spec_version: "0.1"
+description: |
+  Session-open POST -> success response containing gateway_session_id,
+  broker_session_id, runner_session_id, work_id, media.ingest.rtmp_url,
+  media.ingest.stream_key, media.playback.hls_url, and broker control URLs.
+
+setup:
+  capability:
+    id: video:transcode.live
+    offering_id: default
+    interaction_mode: live-session-remote-runner@v0
+    work_unit:
+      name: output_seconds
+      extractor:
+        type: seconds-elapsed
+        granularity: 1
+    price:
+      amount_wei: "1"
+      per_units: 1
+    backend:
+      transport: remote-live-runner
+      url: http://mock-live-runner:8080
+
+request:
+  method: POST
+  path: /v1/cap
+  headers:
+    Livepeer-Capability: video:transcode.live
+    Livepeer-Offering: default
+    Livepeer-Payment: <runner-generated-payment-blob>
+    Livepeer-Spec-Version: "0.1"
+    Livepeer-Mode: live-session-remote-runner@v0
+    Content-Type: application/json
+  body: |
+    {"gateway_session_id":"gw-123","session_params":{"name":"launch-stream"}}
+
+backend_response:
+  status: 0
+  body: ""
+
+response_expect:
+  status: 200
+  headers_present:
+    - Livepeer-Request-Id
+  body_fields_present:
+    - gateway_session_id
+    - broker_session_id
+    - runner_session_id
+    - work_id
+    - media.ingest.rtmp_url
+    - media.ingest.stream_key
+    - media.playback.hls_url
+    - control.topup_url
+    - control.status_url
+    - control.end_url
+    - expires_at

@@ -3,8 +3,8 @@
 # required.
 
 IMAGE   ?= tztcloud/livepeer-capability-broker
-TAG     ?= dev
-VERSION ?= $(shell VERSION_PREFIX="$(TAG)" FALLBACK_VERSION=dev ../infra/build/git-version.sh)
+TAG     ?= v1.3.2
+VERSION ?= $(shell VERSION_PREFIX="$(TAG)" FALLBACK_VERSION=v1.3.2 ../infra/build/git-version.sh)
 
 .PHONY: build run dev smoke publish clean help
 
@@ -30,7 +30,7 @@ smoke: ## End-to-end Docker smoke test (mock backend + broker + assertions)
 
 publish: ## Build + push multi-arch image (requires TAG set to a real version)
 	@if [ "$(TAG)" = "dev" ]; then \
-		echo "set TAG to a real version before publishing (e.g. make publish TAG=0.1.0)"; \
+		echo "set TAG to a real version before publishing (e.g. make publish TAG=v1.3.2)"; \
 		exit 1; \
 	fi
 	docker buildx build \

@@ -28,7 +28,11 @@ import (
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // Service implements pb.PayerDaemonServer.
@@ -41,8 +45,9 @@ type Service struct {
 	logger   *slog.Logger
 	fetcher  TicketParamsFetcher
 
-	mu       sync.Mutex
-	sessions map[string]*senderSession // keyed by recipient/capability/offering/target-spend tuple
+	mu          sync.Mutex
+	sessions    map[string]*senderSession // keyed by recipient/capability/offering/target-spend tuple
+	workIDIndex map[string]string         // work_id -> session cache key
 }
 
 type senderSession struct {
@@ -62,12 +67,13 @@ func New(keystore providers.KeyStore, broker providers.Broker, clock providers.C
 		logger = slog.Default()
 	}
 	return &Service{
-		keystore: keystore,
-		broker:   broker,
-		clock:    clock,
-		logger:   logger,
-		fetcher:  fetcher,
-		sessions: map[string]*senderSession{},
+		keystore:    keystore,
+		broker:      broker,
+		clock:       clock,
+		logger:      logger,
+		fetcher:     fetcher,
+		sessions:    map[string]*senderSession{},
+		workIDIndex: map[string]string{},
 	}
 }
 
@@ -157,7 +163,44 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		ExpectedValue:    &pb.BigUInt{Value: evBytes},
 		FundedValueWei:   &pb.BigUInt{Value: funding.fundedValueWei.Bytes()},
 		AcceptedQuoteRef: cloneQuoteRef(session.acceptedQuote),
+		WorkId:           session.workID,
 	}, nil
+}
+
+// ReportPaymentResult applies payee-side feedback to sender session state.
+func (s *Service) ReportPaymentResult(_ context.Context, req *pb.ReportPaymentResultRequest) (*pb.ReportPaymentResultResponse, error) {
+	if strings.TrimSpace(req.GetWorkId()) == "" {
+		return nil, errors.New("work_id is empty")
+	}
+	if req.GetRejectionReason() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND {
+		return &pb.ReportPaymentResultResponse{}, nil
+	}
+
+	evicted := s.evictSessionByWorkID(req.GetWorkId())
+	s.logger.Warn("sender session invalidated from payee rejection",
+		"work_id", req.GetWorkId(),
+		"capability", req.GetCapability(),
+		"offering", req.GetOffering(),
+		"rejection_reason", req.GetRejectionReason().String(),
+		"evicted", evicted)
+
+	st := grpcstatus.New(codes.Aborted, "payment session rotated; retry exactly once")
+	withDetails, err := st.WithDetails(
+		&errdetails.ErrorInfo{
+			Reason: "INVALID_RECIPIENT_RAND",
+			Domain: "payments.livepeer.org",
+			Metadata: map[string]string{
+				"old_work_id": req.GetWorkId(),
+				"capability":  req.GetCapability(),
+				"offering":    req.GetOffering(),
+			},
+		},
+		&errdetails.RetryInfo{RetryDelay: durationpb.New(0)},
+	)
+	if err != nil {
+		return nil, st.Err()
+	}
+	return nil, withDetails.Err()
 }
 
 // GetDepositInfo implements pb.PayerDaemonServer.
@@ -222,10 +265,24 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if existing, ok := s.sessions[key]; ok {
+		s.workIDIndex[existing.workID] = key
 		return existing, nil
 	}
 	s.sessions[key] = sess
+	s.workIDIndex[sess.workID] = key
 	return sess, nil
+}
+
+func (s *Service) evictSessionByWorkID(workID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key, ok := s.workIDIndex[workID]
+	if !ok {
+		return false
+	}
+	delete(s.workIDIndex, workID)
+	delete(s.sessions, key)
+	return true
 }
 
 type acceptedPriceInput struct {

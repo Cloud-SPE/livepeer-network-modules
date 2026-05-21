@@ -26,7 +26,7 @@ load-bearing decisions.
 | What frontend DOM/CSS rules apply repo-wide? | [`docs/design-docs/frontend-dom-and-css-invariants.md`](./docs/design-docs/frontend-dom-and-css-invariants.md) |
 | What are the supply-side requirements we're designing against? | [`docs/design-docs/requirements.md`](./docs/design-docs/requirements.md) |
 | What's the proposed architecture at a glance? | [`docs/design-docs/architecture-overview.md`](./docs/design-docs/architecture-overview.md) |
-| How do the gateway, broker, and `payment-daemon` interact? | [`docs/design-docs/payment-daemon-interactions.md`](./docs/design-docs/payment-daemon-interactions.md) |
+| How do gateway-shaped clients, broker, and `payment-daemon` interact? | [`docs/design-docs/payment-daemon-interactions.md`](./docs/design-docs/payment-daemon-interactions.md) |
 | How do long-lived / streaming sessions work end-to-end? | [`docs/design-docs/streaming-workload-pattern.md`](./docs/design-docs/streaming-workload-pattern.md) |
 | What changed in `payment-daemon` vs the suite? | [`docs/design-docs/payment-decoupling.md`](./docs/design-docs/payment-decoupling.md) |
 | Which "health" surface answers a given routing question? | [`docs/design-docs/backend-health.md`](./docs/design-docs/backend-health.md) |
@@ -49,10 +49,10 @@ own `AGENTS.md` for component-specific guidance. The root-level `docs/` holds on
 
 Current top-level components include `livepeer-network-protocol/`,
 `capability-broker/`, `payment-daemon/`, `orch-coordinator/`,
-`secure-orch-console/`, `protocol-daemon/`,
-`service-registry-daemon/`, `chain-commons/`, `proto-contracts/`, and
-`daydream-gateway/`. Additional components still land as top-level
-subfolders as the rewrite expands.
+`secure-orch-console/`, `protocol-daemon/`, `service-registry-daemon/`,
+`chain-commons/`, `proto-contracts/`, `pool-controller/`,
+`pool-reconciler/`, and `pool-payout-executor/`. Additional components still
+land as top-level subfolders as the rewrite expands.
 
 ## Doing work in this repo
 

@@ -11,8 +11,7 @@ related:
   - "completed plan 0015 — interim-debit cadence on long-running modes"
   - "completed plan 0016 — chain-integrated payment-daemon — design choices"
   - "completed plan 0018 — orch-coordinator design"
-  - "video-gateway/docs/operator-runbook.md — current active product model"
-audience: broker maintainers, gateway maintainers, video operators
+audience: broker maintainers, client maintainers, video operators
 ---
 
 # Plan 0026 — broker-paid / worker-media split for live video (draft)
@@ -26,7 +25,7 @@ audience: broker maintainers, gateway maintainers, video operators
 
 The shipped live path is broker-native:
 
-1. gateway opens `video:live.rtmp` at the broker,
+1. client opens `video:live.rtmp` at the broker,
 2. broker validates payment,
 3. broker accepts RTMP directly,
 4. broker runs `ffmpeg`,
@@ -53,7 +52,7 @@ transcoding need a split design:
 
 For every live session:
 
-1. the gateway pays and opens the session against the broker,
+1. the client pays and opens the session against the broker,
 2. the broker chooses the worker and remains the billing authority,
 3. the worker accepts media only for broker-authorized sessions,
 4. the worker reports usage and lifecycle state back to the broker,
@@ -69,7 +68,7 @@ endpoint.
 
 Control plane:
 
-- gateway ↔ broker
+- client ↔ broker
 - worker ↔ broker
 
 Media plane:
@@ -399,7 +398,7 @@ then terminate if broker connectivity does not recover.
 This draft does not authorize edits. A future active plan would likely
 touch:
 
-### `video-gateway/`
+### Client integration layer
 
 - live session-open client
 - RTMP proxy / adapter flow
@@ -413,7 +412,7 @@ touch:
 - worker checkpoint / close endpoints
 - interim-debit integration against worker-reported deltas
 
-### `video-runners/` or new live worker component
+### Worker media component
 
 - live ingress bind endpoint
 - RTMP listener

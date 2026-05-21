@@ -19,7 +19,7 @@ hosts can use Traefik, others can use Cloudflare Tunnel.
 | --------------------- | ------------------------------------------------- | -------------------------- | -------------- |
 | `secure-orch-host`    | Secure Orch                                       | _none_                     | No             |
 | `coordinator-host`    | `ingress-cloudflared` + `orch-coordinator`        | `coordinator.example.com`  | Yes            |
-| `broker-host-1`       | `ingress-cloudflared` + `capability-broker` (+ workload runners) | `broker-a.example.com`     | Yes            |
+| `broker-host-1`       | `ingress-cloudflared` + `capability-broker` (+ backend workloads) | `broker-a.example.com`     | Yes            |
 | `broker-host-N`       | …                                                 | …                          | Yes            |
 
 Each box runs an independent cloudflared with its own tunnel token. Hostname

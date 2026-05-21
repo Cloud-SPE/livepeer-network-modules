@@ -1,7 +1,7 @@
 // Package controlws defines the shared control-WS envelope and lifecycle
 // frame vocabulary used by every interaction-mode driver that runs a
 // long-lived control WebSocket (currently session-control-plus-media@v0
-// and session-control-external-media@v0).
+// and live-session-remote-runner@v0).
 //
 // The intent is a single source of truth for the lifecycle frame names
 // across modes, so a frame parser written against this package's

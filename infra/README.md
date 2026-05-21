@@ -15,13 +15,6 @@ infra/
 │   │   ├── ingress-traefik/
 │   │   ├── ingress-cloudflared/
 │   │   └── ingress-nginx/
-│   ├── gateway-onboarding/        # active gateway onboarding guide + stacks
-│   │   ├── README.md              # the gateway onboarding guide
-│   │   ├── openai-gateway/
-│   │   ├── video-gateway/
-│   │   ├── vtuber-gateway/        # PREVIEW
-│   │   ├── ingress-traefik/
-│   │   └── ingress-nginx/
 │   └── archive/                   # earlier scenarios, preserved for reference
 ├── compose/
 │   ├── docker-compose.yml         # shared services (postgres, redis, rustfs) — profile-gated
@@ -32,14 +25,11 @@ infra/
 
 ## Building images
 
-The script pulls **no** images — it builds everything from source in
-dependency order. Tier 0 (`codecs-builder`, `python-runner-base`,
-`python-gpu-runner-base`, `python-gpu-media-runner-base`) lands first so
-the multi-arch video runners, CPU Python tooling, and GPU Python runners
-can `FROM` them.
+The script pulls **no** images — it builds the deployable components that
+still live in this repo from source in dependency order.
 
 ```sh
-# Build everything as tztcloud/<name>:v1.3.0
+# Build everything as tztcloud/<name>:v1.3.1
 ./infra/scripts/build-images.sh
 
 # Build a single component (substring match)
@@ -52,7 +42,7 @@ REGISTRY=ghcr.io/myorg TAG=2026.5.7 ./infra/scripts/build-images.sh
 PUSH=1 REGISTRY=ghcr.io/myorg TAG=2026.5.7 ./infra/scripts/build-images.sh
 ```
 
-Defaults: `REGISTRY=tztcloud`, `TAG=v1.3.0`, `PUSH=0`.
+Defaults: `REGISTRY=tztcloud`, `TAG=v1.3.1`, `PUSH=0`.
 
 ## Scenario stacks
 
@@ -62,11 +52,8 @@ Defaults: `REGISTRY=tztcloud`, `TAG=v1.3.0`, `PUSH=0`.
   guide and every stack referenced by it (Secure Orch, Orch Coordinator,
   Capability Broker, three ingress options). The `README.md` at that path
   is the guide itself.
-- **`gateway-onboarding/`** — the active gateway onboarding guide and
-  every stack referenced by it (OpenAI / Video / Vtuber gateways, plus
-  Traefik and Nginx ingress).
-- **`archive/`** — earlier multi-module scenarios kept for historical
-  reference. Not maintained against the current onboarding flow.
+- **`archive/`** — earlier multi-module scenarios kept for reference and
+  not maintained.
 
 Each scenario directory inside contains:
 
@@ -79,9 +66,9 @@ Each scenario directory inside contains:
 ## Shared services
 
 `infra/compose/docker-compose.yml` runs Postgres / Redis / RustFS behind
-profiles. Per-component compose files (e.g. `video-gateway/compose/`)
-expect these reachable via `${DATABASE_URL}` / `${REDIS_URL}` env vars
-and do **not** include them inline.
+profiles. Per-component compose files expect these reachable via
+`${DATABASE_URL}` / `${REDIS_URL}` env vars and do **not** include them
+inline.
 
 ```sh
 # Postgres only

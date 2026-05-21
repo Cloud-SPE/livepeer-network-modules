@@ -6,9 +6,9 @@
 #   docker compose -f infra/compose/docker-compose.yml --profile pg up -d
 #   docker compose -f infra/compose/docker-compose.yml --profile pg --profile redis up -d
 #
-# Per-component compose files (e.g. video-gateway/compose/docker-compose.yml)
-# expect Postgres at the env-configured DATABASE_URL; defaults assume the
-# postgres service below. Override DATABASE_URL / REDIS_URL for prod.
+# Per-component compose files expect Postgres at the env-configured
+# DATABASE_URL; defaults assume the postgres service below. Override
+# DATABASE_URL / REDIS_URL for prod.
 
 services:
   postgres:

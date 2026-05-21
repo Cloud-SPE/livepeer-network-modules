@@ -36,7 +36,7 @@ overlay file differs.
 | --------------------- | ------------------------------------------------- | -------------------------- | -------------- |
 | `secure-orch-host`    | Secure Orch                                       | _none_                     | None (no inbound internet) |
 | `coordinator-host`    | `ingress-nginx` + `orch-coordinator`              | `coordinator.example.com`  | Inbound :80/:443 required  |
-| `broker-host-1`       | `ingress-nginx` + `capability-broker` (+ workload runners) | `broker-a.example.com`     | Inbound :80/:443 required  |
+| `broker-host-1`       | `ingress-nginx` + `capability-broker` (+ backend workloads) | `broker-a.example.com`     | Inbound :80/:443 required  |
 | `broker-host-N`       | …                                                 | …                          | …              |
 
 Each host runs an independent nginx-proxy + acme-companion pair. Each

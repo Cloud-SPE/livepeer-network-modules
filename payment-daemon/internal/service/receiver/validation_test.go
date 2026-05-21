@@ -21,15 +21,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
-// chainStand is like stand but lets the caller pin the recipient address
-// (so the in-memory key signing the ticket on the test side maps to a
-// session whose recipient matches).
-func chainStand(t *testing.T, recipient []byte) (pb.PayeeDaemonClient, *store.Store, func()) {
+func chainStandAtPaths(t *testing.T, dbPath, sockPath string, recipient []byte) (pb.PayeeDaemonClient, *store.Store, func()) {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "rx.db")
-	sockPath := filepath.Join(dir, "rx.sock")
-
 	st, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
@@ -37,7 +30,7 @@ func chainStand(t *testing.T, recipient []byte) (pb.PayeeDaemonClient, *store.St
 	svc := receiver.New(st, receiver.Config{
 		Recipient:        recipient,
 		DefaultFaceValue: big.NewInt(1_000_000),
-		DefaultWinProb:   types.MaxWinProb, // every ticket wins → exercise the queueing path
+		DefaultWinProb:   types.MaxWinProb,
 	}, nil)
 
 	lis, err := net.Listen("unix", sockPath)
@@ -58,6 +51,162 @@ func chainStand(t *testing.T, recipient []byte) (pb.PayeeDaemonClient, *store.St
 		_ = st.Close()
 	}
 	return pb.NewPayeeDaemonClient(conn), st, cleanup
+}
+
+// chainStand is like stand but lets the caller pin the recipient address
+// (so the in-memory key signing the ticket on the test side maps to a
+// session whose recipient matches).
+func chainStand(t *testing.T, recipient []byte) (pb.PayeeDaemonClient, *store.Store, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "rx.db")
+	sockPath := filepath.Join(dir, "rx.sock")
+	return chainStandAtPaths(t, dbPath, sockPath, recipient)
+}
+
+func signPayment(t *testing.T, signer *inmemory.KeyStore, recipient []byte, params *pb.TicketParams, nonce uint32) []byte {
+	t.Helper()
+	ticket := &types.Ticket{
+		Recipient:         recipient,
+		Sender:            signer.Address(),
+		FaceValue:         new(big.Int).SetBytes(params.GetFaceValue()),
+		WinProb:           new(big.Int).SetBytes(params.GetWinProb()),
+		SenderNonce:       nonce,
+		RecipientRandHash: params.GetRecipientRandHash(),
+	}
+	sig, err := signer.Sign(ticket.Hash())
+	if err != nil {
+		t.Fatalf("sign ticket: %v", err)
+	}
+	payment := &pb.Payment{
+		Sender:           signer.Address(),
+		ExpirationParams: &pb.TicketExpirationParams{},
+		TicketParams: &pb.TicketParams{
+			Recipient:         append([]byte(nil), params.GetRecipient()...),
+			FaceValue:         append([]byte(nil), params.GetFaceValue()...),
+			WinProb:           append([]byte(nil), params.GetWinProb()...),
+			RecipientRandHash: append([]byte(nil), params.GetRecipientRandHash()...),
+			Seed:              append([]byte(nil), params.GetSeed()...),
+		},
+		TicketSenderParams: []*pb.TicketSenderParams{{
+			SenderNonce: nonce,
+			Sig:         sig,
+		}},
+	}
+	raw, err := proto.Marshal(payment)
+	if err != nil {
+		t.Fatalf("marshal payment: %v", err)
+	}
+	return raw
+}
+
+func TestGetTicketParams_IsIdempotentForOpenSession(t *testing.T) {
+	priv, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := inmemory.New(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient := bytes20(0xab)
+	client, _, cleanup := chainStand(t, recipient)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req := &pb.GetTicketParamsRequest{
+		Sender:     signer.Address(),
+		Recipient:  recipient,
+		FaceValue:  big.NewInt(1234).Bytes(),
+		Capability: "video:transcode.abr",
+		Offering:   "default",
+	}
+	first, err := client.GetTicketParams(ctx, req)
+	if err != nil {
+		t.Fatalf("first GetTicketParams: %v", err)
+	}
+	second, err := client.GetTicketParams(ctx, req)
+	if err != nil {
+		t.Fatalf("second GetTicketParams: %v", err)
+	}
+	if !equalBytes(first.GetTicketParams().GetRecipientRandHash(), second.GetTicketParams().GetRecipientRandHash()) {
+		t.Fatalf("recipient rand hash rotated inside open session: first=%x second=%x", first.GetTicketParams().GetRecipientRandHash(), second.GetTicketParams().GetRecipientRandHash())
+	}
+	if !equalBytes(first.GetTicketParams().GetSeed(), second.GetTicketParams().GetSeed()) {
+		t.Fatalf("seed rotated inside open session: first=%x second=%x", first.GetTicketParams().GetSeed(), second.GetTicketParams().GetSeed())
+	}
+}
+
+func TestGetTicketParams_PersistsAcrossReceiverRestart(t *testing.T) {
+	priv, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := inmemory.New(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipient := bytes20(0xab)
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "rx.db")
+	sockPath := filepath.Join(dir, "rx.sock")
+
+	client, _, cleanup := chainStandAtPaths(t, dbPath, sockPath, recipient)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req := &pb.GetTicketParamsRequest{
+		Sender:     signer.Address(),
+		Recipient:  recipient,
+		FaceValue:  big.NewInt(1234).Bytes(),
+		Capability: "video:transcode.abr",
+		Offering:   "default",
+	}
+	first, err := client.GetTicketParams(ctx, req)
+	if err != nil {
+		t.Fatalf("first GetTicketParams: %v", err)
+	}
+	firstWorkID := hex.EncodeToString(first.GetTicketParams().GetRecipientRandHash())
+	firstPayment := signPayment(t, signer, recipient, first.GetTicketParams(), 1)
+	resp, err := client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		PaymentBytes: firstPayment,
+		WorkId:       firstWorkID,
+	})
+	if err != nil {
+		t.Fatalf("first ProcessPayment: %v", err)
+	}
+	if got := new(big.Int).SetBytes(resp.GetCreditedEv()); got.Sign() <= 0 {
+		t.Fatalf("first credited_ev = %s; want > 0", got)
+	}
+	cleanup()
+
+	client, _, cleanup = chainStandAtPaths(t, dbPath, sockPath, recipient)
+	defer cleanup()
+
+	second, err := client.GetTicketParams(ctx, req)
+	if err != nil {
+		t.Fatalf("second GetTicketParams after restart: %v", err)
+	}
+	if !equalBytes(first.GetTicketParams().GetRecipientRandHash(), second.GetTicketParams().GetRecipientRandHash()) {
+		t.Fatalf("recipient rand hash changed across restart: first=%x second=%x", first.GetTicketParams().GetRecipientRandHash(), second.GetTicketParams().GetRecipientRandHash())
+	}
+	secondWorkID := hex.EncodeToString(second.GetTicketParams().GetRecipientRandHash())
+	if firstWorkID != secondWorkID {
+		t.Fatalf("work_id changed across restart: first=%s second=%s", firstWorkID, secondWorkID)
+	}
+	secondPayment := signPayment(t, signer, recipient, second.GetTicketParams(), 2)
+	resp, err = client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		PaymentBytes: secondPayment,
+		WorkId:       secondWorkID,
+	})
+	if err != nil {
+		t.Fatalf("second ProcessPayment after restart: %v", err)
+	}
+	if got := new(big.Int).SetBytes(resp.GetCreditedEv()); got.Sign() <= 0 {
+		t.Fatalf("second credited_ev = %s; want > 0", got)
+	}
 }
 
 // TestProcessPayment_E2E_RealSig exercises the full validation pipeline:
@@ -225,6 +374,18 @@ func TestProcessPayment_RejectsBadSig(t *testing.T) {
 	if got := new(big.Int).SetBytes(resp.GetCreditedEv()); got.Sign() != 0 {
 		t.Errorf("CreditedEv = %s; want 0 (bad sig)", got)
 	}
+	if resp.GetTicketsRejected() != 1 {
+		t.Fatalf("TicketsRejected = %d; want 1", resp.GetTicketsRejected())
+	}
+	if resp.GetDominantRejection() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_SIGNATURE {
+		t.Fatalf("DominantRejection = %v; want INVALID_SIGNATURE", resp.GetDominantRejection())
+	}
+	if len(resp.GetTicketStatus()) != 1 {
+		t.Fatalf("TicketStatus count = %d; want 1", len(resp.GetTicketStatus()))
+	}
+	if resp.GetTicketStatus()[0].GetRejectionReason() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_SIGNATURE {
+		t.Fatalf("ticket rejection reason = %v; want INVALID_SIGNATURE", resp.GetTicketStatus()[0].GetRejectionReason())
+	}
 }
 
 // TestProcessPayment_NonceReplayDropped: same nonce twice → second is
@@ -277,6 +438,69 @@ func TestProcessPayment_NonceReplayDropped(t *testing.T) {
 	})
 	if second.GetWinnersQueued() != 0 {
 		t.Errorf("replay WinnersQueued = %d; want 0 (nonce replay)", second.GetWinnersQueued())
+	}
+}
+
+func TestProcessPayment_InvalidRecipientRandReported(t *testing.T) {
+	priv, _ := crypto.GenerateKey()
+	signer, _ := inmemory.New(priv)
+	sender := signer.Address()
+	recipient := bytes20(0xab)
+
+	client, _, cleanup := chainStand(t, recipient)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	tp, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+		Sender: sender, Recipient: recipient, Capability: "x", Offering: "y",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := tp.GetTicketParams()
+	badHash := append([]byte(nil), params.GetRecipientRandHash()...)
+	badHash[len(badHash)-1] ^= 0xff
+	ticket := &types.Ticket{
+		Recipient:         recipient,
+		Sender:            sender,
+		FaceValue:         new(big.Int).SetBytes(params.GetFaceValue()),
+		WinProb:           new(big.Int).SetBytes(params.GetWinProb()),
+		SenderNonce:       1,
+		RecipientRandHash: badHash,
+	}
+	sig, _ := signer.Sign(ticket.Hash())
+	payment := &pb.Payment{
+		Sender:           sender,
+		ExpirationParams: &pb.TicketExpirationParams{},
+		TicketParams: &pb.TicketParams{
+			Recipient:         recipient,
+			FaceValue:         append([]byte(nil), params.GetFaceValue()...),
+			WinProb:           append([]byte(nil), params.GetWinProb()...),
+			RecipientRandHash: badHash,
+			Seed:              append([]byte(nil), params.GetSeed()...),
+		},
+		TicketSenderParams: []*pb.TicketSenderParams{{SenderNonce: 1, Sig: sig}},
+	}
+	raw, _ := proto.Marshal(payment)
+	resp, err := client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		PaymentBytes: raw,
+		WorkId:       hex.EncodeToString(params.GetRecipientRandHash()),
+	})
+	if err != nil {
+		t.Fatalf("ProcessPayment: %v", err)
+	}
+	if resp.GetTicketsRejected() != 1 {
+		t.Fatalf("TicketsRejected = %d; want 1", resp.GetTicketsRejected())
+	}
+	if resp.GetDominantRejection() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND {
+		t.Fatalf("DominantRejection = %v; want INVALID_RECIPIENT_RAND", resp.GetDominantRejection())
+	}
+	if len(resp.GetTicketStatus()) != 1 {
+		t.Fatalf("TicketStatus count = %d; want 1", len(resp.GetTicketStatus()))
+	}
+	if resp.GetTicketStatus()[0].GetRejectionReason() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND {
+		t.Fatalf("ticket rejection reason = %v; want INVALID_RECIPIENT_RAND", resp.GetTicketStatus()[0].GetRejectionReason())
 	}
 }
 

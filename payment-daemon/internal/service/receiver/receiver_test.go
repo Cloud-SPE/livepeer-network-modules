@@ -2,6 +2,7 @@ package receiver_test
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"net"
 	"path/filepath"
@@ -11,10 +12,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/server"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 )
@@ -60,6 +63,34 @@ func stand(t *testing.T) (pb.PayeeDaemonClient, *store.Store, func()) {
 		_ = st.Close()
 	}
 	return pb.NewPayeeDaemonClient(conn), st, cleanup
+}
+
+func standWithAdmin(t *testing.T, token string) (pb.PayeeDaemonClient, pb.PayeeAdminClient, *store.Store, func()) {
+	t.Helper()
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "rx.db")
+	sockPath := filepath.Join(dir, "rx.sock")
+
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	svc := receiver.New(st, receiver.Config{Recipient: bytes20(0xaa)}, nil)
+	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: token}, sockPath, nil)
+	go func() { _ = srv.Serve() }()
+
+	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	cleanup := func() {
+		_ = conn.Close()
+		srv.GracefulStop()
+		_ = st.Close()
+	}
+	return pb.NewPayeeDaemonClient(conn), pb.NewPayeeAdminClient(conn), st, cleanup
 }
 
 // stubPayment builds a wire-compat Payment proto with the given sender
@@ -358,4 +389,85 @@ func TestHealth(t *testing.T) {
 	if resp.GetStatus() != "ok" {
 		t.Errorf("status = %q; want ok", resp.GetStatus())
 	}
+}
+
+func TestResetSession_AdminTokenRequired(t *testing.T) {
+	_, admin, _, cleanup := standWithAdmin(t, "secret-token")
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := admin.ResetSession(ctx, &pb.ResetSessionRequest{
+		Sender:     bytes20(0x01),
+		Recipient:  bytes20(0xaa),
+		Capability: "video:transcode.abr",
+		Offering:   "default",
+	})
+	if got := status.Code(err); got != codes.PermissionDenied {
+		t.Fatalf("ResetSession status = %v; want PermissionDenied (err=%v)", got, err)
+	}
+}
+
+func TestResetSession_RotatesStableSessionAndDropsNonceLedger(t *testing.T) {
+	payee, admin, st, cleanup := standWithAdmin(t, "secret-token")
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	mdCtx := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer secret-token"))
+
+	req := &pb.GetTicketParamsRequest{
+		Sender:     bytes20(0x01),
+		Recipient:  bytes20(0xaa),
+		FaceValue:  big.NewInt(1234).Bytes(),
+		Capability: "video:transcode.abr",
+		Offering:   "default",
+	}
+	first, err := payee.GetTicketParams(ctx, req)
+	if err != nil {
+		t.Fatalf("first GetTicketParams: %v", err)
+	}
+	oldRand := new(big.Int).SetBytes(first.GetTicketParams().GetSeed())
+	_ = st.RecordNonce(oldRand, 77)
+
+	resp, err := admin.ResetSession(mdCtx, &pb.ResetSessionRequest{
+		Sender:     bytes20(0x01),
+		Recipient:  bytes20(0xaa),
+		Capability: "video:transcode.abr",
+		Offering:   "default",
+	})
+	if err != nil {
+		t.Fatalf("ResetSession: %v", err)
+	}
+	if !resp.GetReset_() {
+		t.Fatal("reset=false; want true")
+	}
+	if resp.GetOldWorkId() == "" {
+		t.Fatal("old_work_id is empty")
+	}
+	second, err := payee.GetTicketParams(ctx, req)
+	if err != nil {
+		t.Fatalf("second GetTicketParams: %v", err)
+	}
+	if string(second.GetTicketParams().GetRecipientRandHash()) == string(first.GetTicketParams().GetRecipientRandHash()) {
+		t.Fatal("recipient rand hash did not rotate after reset")
+	}
+	sess, err := st.Get(bytes20(0x01), hexString(first.GetTicketParams().GetRecipientRandHash()))
+	if err != nil {
+		t.Fatalf("load old session: %v", err)
+	}
+	if !sess.Closed {
+		t.Fatal("old session not marked closed")
+	}
+	seen, err := st.NonceSeen(oldRand, 77)
+	if err != nil {
+		t.Fatalf("NonceSeen: %v", err)
+	}
+	if seen {
+		t.Fatal("old nonce ledger still present after reset")
+	}
+}
+
+func hexString(b []byte) string {
+	return fmt.Sprintf("%x", b)
 }

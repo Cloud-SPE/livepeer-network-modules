@@ -1,17 +1,15 @@
 # `@livepeer-network-modules/customer-portal`
 
-Shared SaaS-shell library for per-product Livepeer rewrite gateways.
-Provides API-key auth, customer ledger, Stripe top-ups, operator admin
-engine, Fastify pre-handlers, and a Lit + RxJS widget catalog. Each
-per-product gateway (`openai-gateway/`, `vtuber-gateway/`,
-`video-gateway/`) embeds this package and configures its own Postgres,
+Shared SaaS-shell library for Livepeer rewrite consumers. Provides
+API-key auth, customer ledger, Stripe top-ups, operator admin engine,
+Fastify pre-handlers, and a Lit + RxJS widget catalog. Historical
+consumers can embed the same package and supply their own Postgres,
 Redis, Stripe credentials, and API-key pepper.
 
 This is a **library**, not a deployed service. The Docker image is a
 slim artifact/import-check image for packaging hygiene, not a long-running
 runtime. See
-[`AGENTS.md`](./AGENTS.md) and the plan brief at
-[`../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md).
+[`AGENTS.md`](./AGENTS.md).
 
 ## Subpath exports
 
@@ -22,7 +20,7 @@ runtime. See
 | `@livepeer-network-modules/customer-portal/payment` | Stripe checkout + webhook |
 | `@livepeer-network-modules/customer-portal/middleware` | Fastify pre-handlers |
 | `@livepeer-network-modules/customer-portal/admin` | Operator admin engine |
-| `@livepeer-network-modules/customer-portal/db` | drizzle pgSchema, migrations runner |
+| `@livepeer-network-modules/customer-portal/db` | drizzle pgSchema, migration utilities |
 | `@livepeer-network-modules/customer-portal/registry` | Service-registry hooks (placeholder) |
 
 ## Build

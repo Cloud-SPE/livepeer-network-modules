@@ -16,6 +16,8 @@ related:
 
 # Plan 0036 — Resolver constraint-fingerprint hardening + pool publishing defaults + broker-quote-rejected surface
 
+> **Removal note (2026-05-19).** The four product gateways (openai-gateway, video-gateway, vtuber-gateway, daydream-gateway) and their shared TS libraries (gateway-adapters, gateway-route-health) have since been removed from this repo. This plan is preserved as historical record of what shipped at the time; the directories and code paths it references no longer exist in the working tree.
+
 ## Completion summary
 
 This plan shipped on 2026-05-19, same day as opening.

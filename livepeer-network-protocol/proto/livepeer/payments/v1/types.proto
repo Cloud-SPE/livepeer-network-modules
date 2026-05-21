@@ -238,6 +238,27 @@ message SettlementRecord {
   map<string, string> breakdown = 9;
 }
 
+// PaymentRejectionReason is the machine-readable reason a payee daemon
+// rejected a ticket in ProcessPayment. UNSPECIFIED means the ticket was
+// accepted.
+enum PaymentRejectionReason {
+  PAYMENT_REJECTION_REASON_UNSPECIFIED = 0;
+  PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND = 1;
+  PAYMENT_REJECTION_REASON_NONCE_REPLAY = 2;
+  PAYMENT_REJECTION_REASON_NONCE_CAP_REACHED = 3;
+  PAYMENT_REJECTION_REASON_INVALID_SIGNATURE = 4;
+  PAYMENT_REJECTION_REASON_OTHER = 5;
+}
+
+// TicketStatus reports the payee daemon's disposition for one ticket
+// inside a ProcessPayment batch.
+message TicketStatus {
+  uint32 sender_nonce = 1;
+  PaymentRejectionReason rejection_reason = 2;
+  bytes credited_ev = 3;
+  bool was_winning = 4;
+}
+
 // PendingRedemption describes one ticket queued for on-chain redemption.
 // Returned by ListPendingRedemptions for operator observability.
 message PendingRedemption {

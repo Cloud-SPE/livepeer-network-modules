@@ -26,6 +26,7 @@ import (
 // Service implements pb.PayeeDaemonServer.
 type Service struct {
 	pb.UnimplementedPayeeDaemonServer
+	pb.UnimplementedPayeeAdminServer
 
 	store     *store.Store
 	logger    *slog.Logger
@@ -184,13 +185,18 @@ func (s *Service) ProcessPayment(_ context.Context, req *pb.ProcessPaymentReques
 
 	credited := big.NewInt(0)
 	var winnersQueued int32
+	var ticketStatus []*pb.TicketStatus
+	var ticketsRejected int32
+	dominantRejection := pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_UNSPECIFIED
 	if recipientRand != nil && pay.GetTicketParams() != nil {
-		c, w, err := s.validateAndCredit(&pay, sess, recipientRand)
+		c, w, statuses, err := s.validateAndCredit(&pay, sess, recipientRand)
 		if err != nil {
 			return nil, err
 		}
 		credited = c
 		winnersQueued = int32(w)
+		ticketStatus = statuses
+		ticketsRejected, dominantRejection = summarizeTicketStatus(statuses)
 	}
 
 	balance, err := s.store.CreditBalance(pay.GetSender(), req.GetWorkId(), credited)
@@ -207,10 +213,13 @@ func (s *Service) ProcessPayment(_ context.Context, req *pb.ProcessPaymentReques
 		"balance_wei", balance.String())
 
 	return &pb.ProcessPaymentResponse{
-		Sender:        pay.GetSender(),
-		CreditedEv:    credited.Bytes(),
-		Balance:       balance.Bytes(),
-		WinnersQueued: winnersQueued,
+		Sender:            pay.GetSender(),
+		CreditedEv:        credited.Bytes(),
+		Balance:           balance.Bytes(),
+		WinnersQueued:     winnersQueued,
+		TicketStatus:      ticketStatus,
+		TicketsRejected:   ticketsRejected,
+		DominantRejection: dominantRejection,
 	}, nil
 }
 
@@ -220,9 +229,10 @@ func (s *Service) ProcessPayment(_ context.Context, req *pb.ProcessPaymentReques
 // and queues winners for redemption. Per-ticket failures are logged but
 // do not fail the entire payment — sender hostility / single-ticket
 // corruption shouldn't poison legitimate tickets in the same batch.
-func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipientRand *big.Int) (*big.Int, uint32, error) {
+func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipientRand *big.Int) (*big.Int, uint32, []*pb.TicketStatus, error) {
 	creditTotal := new(big.Int)
 	winners := uint32(0)
+	statuses := make([]*pb.TicketStatus, 0, len(pay.GetTicketSenderParams()))
 
 	tp := pay.GetTicketParams()
 	exp := pay.GetExpirationParams()
@@ -237,6 +247,9 @@ func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipi
 	}
 
 	for _, tsp := range pay.GetTicketSenderParams() {
+		ticketStatus := &pb.TicketStatus{
+			SenderNonce: tsp.GetSenderNonce(),
+		}
 		ticket := &types.Ticket{
 			Recipient:         tp.GetRecipient(),
 			Sender:            pay.GetSender(),
@@ -248,6 +261,8 @@ func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipi
 			CreationRoundHash: expHash,
 		}
 		if err := validator.Validate(s.recipient, ticket, tsp.GetSig(), recipientRand); err != nil {
+			ticketStatus.RejectionReason = validationErrorReason(err)
+			statuses = append(statuses, ticketStatus)
 			s.logger.Warn("invalid ticket; skipping",
 				"work_id", sess.WorkID,
 				"nonce", tsp.GetSenderNonce(),
@@ -256,26 +271,32 @@ func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipi
 		}
 		if err := s.store.RecordNonce(recipientRand, tsp.GetSenderNonce()); err != nil {
 			if errors.Is(err, store.ErrNonceAlreadySeen) {
+				ticketStatus.RejectionReason = pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_REPLAY
+				statuses = append(statuses, ticketStatus)
 				s.logger.Warn("nonce replay; skipping",
 					"work_id", sess.WorkID,
 					"nonce", tsp.GetSenderNonce())
 				continue
 			}
 			if errors.Is(err, store.ErrTooManyNonces) {
+				ticketStatus.RejectionReason = pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_CAP_REACHED
+				statuses = append(statuses, ticketStatus)
 				s.logger.Warn("nonce cap reached; skipping ticket and remaining batch",
 					"work_id", sess.WorkID,
 					"nonce", tsp.GetSenderNonce())
-				return creditTotal, winners, nil
+				return creditTotal, winners, statuses, nil
 			}
-			return nil, 0, status.Errorf(codes.Internal, "record nonce: %v", err)
+			return nil, 0, nil, status.Errorf(codes.Internal, "record nonce: %v", err)
 		}
 		// EV credit: face_value × win_prob / 2^256, integer floor.
 		ev := types.EV(faceValue, winProb)
 		if ev != nil {
 			num := new(big.Int).Quo(ev.Num(), ev.Denom())
 			creditTotal.Add(creditTotal, num)
+			ticketStatus.CreditedEv = num.Bytes()
 		}
 		if validator.IsWinning(ticket, tsp.GetSig(), recipientRand) {
+			ticketStatus.WasWinning = true
 			st := &store.SignedTicket{
 				Recipient:         ticket.Recipient,
 				Sender:            ticket.Sender,
@@ -290,7 +311,7 @@ func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipi
 			}
 			enqueued, err := s.store.EnqueueRedemption(ticket.Hash(), st)
 			if err != nil {
-				return nil, 0, status.Errorf(codes.Internal, "enqueue redemption: %v", err)
+				return nil, 0, nil, status.Errorf(codes.Internal, "enqueue redemption: %v", err)
 			}
 			if enqueued {
 				winners++
@@ -300,8 +321,42 @@ func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipi
 					"face_value_wei", faceValue.String())
 			}
 		}
+		statuses = append(statuses, ticketStatus)
 	}
-	return creditTotal, winners, nil
+	return creditTotal, winners, statuses, nil
+}
+
+func validationErrorReason(err error) pb.PaymentRejectionReason {
+	switch {
+	case errors.Is(err, validator.ErrInvalidRecipientRand):
+		return pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND
+	case errors.Is(err, validator.ErrInvalidSignature):
+		return pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_SIGNATURE
+	default:
+		return pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_OTHER
+	}
+}
+
+func summarizeTicketStatus(statuses []*pb.TicketStatus) (int32, pb.PaymentRejectionReason) {
+	if len(statuses) == 0 {
+		return 0, pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_UNSPECIFIED
+	}
+	counts := map[pb.PaymentRejectionReason]int32{}
+	var rejected int32
+	dominant := pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_UNSPECIFIED
+	var dominantCount int32
+	for _, st := range statuses {
+		if st.GetRejectionReason() == pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_UNSPECIFIED {
+			continue
+		}
+		rejected++
+		counts[st.GetRejectionReason()]++
+		if counts[st.GetRejectionReason()] > dominantCount {
+			dominant = st.GetRejectionReason()
+			dominantCount = counts[st.GetRejectionReason()]
+		}
+	}
+	return rejected, dominant
 }
 
 // DebitBalance subtracts (work_units × price) from the balance.
@@ -385,16 +440,54 @@ func (s *Service) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (
 	return &pb.CloseSessionResponse{Outcome: outcome}, nil
 }
 
-// GetTicketParams issues a fresh recipient-rand secret, derives the
-// work_id (hex of the rand-hash), opens an idempotent session bound to
-// (sender, capability, offering), and returns the authoritative
-// TicketParams. The rand preimage stays in the receiver's store and is
-// revealed only when redeeming a winning ticket on-chain.
+// ResetSession forcibly rotates the active sender/payee session keyed
+// by the stable sender/recipient/capability/offering identity.
+func (s *Service) ResetSession(_ context.Context, req *pb.ResetSessionRequest) (*pb.ResetSessionResponse, error) {
+	if len(req.GetSender()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "sender is empty")
+	}
+	if got := req.GetRecipient(); len(got) != 0 && !equalBytes(got, s.recipient) {
+		return nil, status.Error(codes.InvalidArgument, "recipient mismatch")
+	}
+	if req.GetCapability() == "" {
+		return nil, status.Error(codes.InvalidArgument, "capability is empty")
+	}
+	if req.GetOffering() == "" {
+		return nil, status.Error(codes.InvalidArgument, "offering is empty")
+	}
+	oldWorkID, reset, err := s.store.ResetTicketSession(store.TicketSessionKey{
+		Sender:     req.GetSender(),
+		Recipient:  s.recipient,
+		Capability: req.GetCapability(),
+		Offering:   req.GetOffering(),
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "reset session: %v", err)
+	}
+	if reset {
+		s.logger.Warn("session reset",
+			"old_work_id", oldWorkID,
+			"sender_hex", hex.EncodeToString(req.GetSender()),
+			"capability", req.GetCapability(),
+			"offering", req.GetOffering())
+	}
+	return &pb.ResetSessionResponse{
+		Reset_:    reset,
+		OldWorkId: oldWorkID,
+	}, nil
+}
+
+// GetTicketParams reuses or mints the receiver-side recipient-rand
+// secret for the stable (sender, recipient, capability, offering)
+// identity, derives the work_id (hex of the rand-hash), and returns the
+// authoritative TicketParams. The rand preimage stays in the receiver's
+// store and is revealed only when redeeming a winning ticket on-chain.
 //
-// Idempotency: the same (sender, capability, offering) triple
-// re-issuing within the lifetime of an open session reuses the
-// existing rand. Re-issuing after the session has been closed
-// generates a fresh rand (and thus a fresh work_id).
+// Idempotency: the same stable identity re-issuing within the lifetime
+// of an open session reuses the existing rand, including across daemon
+// restarts because the active session mapping lives in BoltDB.
+// Re-issuing after the session has been closed generates a fresh rand
+// (and thus a fresh work_id).
 func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequest) (*pb.GetTicketParamsResponse, error) {
 	if len(req.GetSender()) != 20 {
 		return nil, status.Error(codes.InvalidArgument, "sender must be 20 bytes")
@@ -423,10 +516,13 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 		faceValue = new(big.Int).SetBytes(got)
 	}
 
-	_, _, err = s.store.OpenSession(store.Session{
+	sess, _, err := s.store.GetOrCreateTicketSession(store.TicketSessionKey{
+		Sender:     req.GetSender(),
+		Recipient:  s.recipient,
+		Capability: req.GetCapability(),
+		Offering:   req.GetOffering(),
+	}, store.Session{
 		WorkID:              workID,
-		Capability:          req.GetCapability(),
-		Offering:            req.GetOffering(),
 		PricePerWorkUnitWei: "0",
 		WorkUnit:            "ticket",
 		RecipientRand:       r.String(),
@@ -437,13 +533,26 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 		return nil, status.Errorf(codes.Internal, "open session: %v", err)
 	}
 
+	recipientRand, ok := new(big.Int).SetString(sess.RecipientRand, 10)
+	if !ok {
+		return nil, status.Error(codes.Internal, "session rand corrupt")
+	}
+	faceValue, ok = new(big.Int).SetString(sess.FaceValueWei, 10)
+	if !ok {
+		return nil, status.Error(codes.Internal, "session face value corrupt")
+	}
+	winProb, ok := new(big.Int).SetString(sess.WinProb, 10)
+	if !ok {
+		return nil, status.Error(codes.Internal, "session win prob corrupt")
+	}
+
 	return &pb.GetTicketParamsResponse{
 		TicketParams: &pb.TicketParams{
 			Recipient:         append([]byte(nil), s.recipient...),
 			FaceValue:         faceValue.Bytes(),
-			WinProb:           s.defaultWinProb.Bytes(),
-			RecipientRandHash: rrHash,
-			Seed:              ethcommon.LeftPadBytes(r.Bytes(), 32),
+			WinProb:           winProb.Bytes(),
+			RecipientRandHash: types.HashRecipientRand(recipientRand),
+			Seed:              ethcommon.LeftPadBytes(recipientRand.Bytes(), 32),
 		},
 	}, nil
 }

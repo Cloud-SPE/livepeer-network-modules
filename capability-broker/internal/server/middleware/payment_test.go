@@ -62,6 +62,28 @@ func (s *stubReceiptSink) UpsertWorkReceipt(_ context.Context, receipt receipts.
 	return s.err
 }
 
+type invalidRecipientRandClient struct {
+	*payment.Mock
+}
+
+func (c *invalidRecipientRandClient) ProcessPayment(_ context.Context, req payment.ProcessPaymentRequest) (*payment.ProcessPaymentResult, error) {
+	if req.WorkID == "" {
+		return nil, errors.New("work_id is empty")
+	}
+	return &payment.ProcessPaymentResult{
+		Sender:            []byte("01234567890123456789"),
+		CreditedEV:        new(big.Int),
+		Balance:           new(big.Int),
+		TicketsRejected:   1,
+		DominantRejection: payment.PaymentRejectionReasonInvalidRecipientRand,
+		TicketStatus: []payment.TicketStatus{{
+			SenderNonce:     1,
+			RejectionReason: payment.PaymentRejectionReasonInvalidRecipientRand,
+			CreditedEV:      new(big.Int),
+		}},
+	}, nil
+}
+
 // TestPayment_TickerDisabledFallback documents the locked decision #6:
 // `--interim-debit-interval=0` reverts to the v0.2 single-debit path.
 // No SufficientBalance is invoked; one DebitBalance(seq=1) is issued at
@@ -300,6 +322,47 @@ func TestPayment_NoLiveCounterSkipsTicks(t *testing.T) {
 	if s.Debits[0] != 7 {
 		t.Errorf("debit units: got %d, want 7", s.Debits[0])
 	}
+}
+
+func TestPayment_InvalidRecipientRandReturnsPaymentInvalid(t *testing.T) {
+	t.Parallel()
+
+	client := &invalidRecipientRandClient{Mock: payment.NewMock()}
+	mw := Payment(client, stubLookup, InterimDebitConfig{Interval: 0}, nil)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := makePaidRequest("wid-invalid-rand")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if called {
+		t.Fatal("handler should not run when ticket params are invalidated")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want 401; body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get(livepeerheader.Error); got != livepeerheader.ErrPaymentInvalid {
+		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrPaymentInvalid)
+	}
+	if body := rec.Body.String(); body == "" || !contains(body, "INVALID_RECIPIENT_RAND") {
+		t.Fatalf("body = %q; want INVALID_RECIPIENT_RAND marker", body)
+	}
+}
+
+func contains(s, needle string) bool {
+	return len(needle) == 0 || (len(s) >= len(needle) && func() bool {
+		for i := 0; i+len(needle) <= len(s); i++ {
+			if s[i:i+len(needle)] == needle {
+				return true
+			}
+		}
+		return false
+	}())
 }
 
 func TestPayment_EmitsFinalReceiptWhenMetaPresent(t *testing.T) {

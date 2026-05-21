@@ -6,6 +6,18 @@ audience: operators, gateway authors, payment-daemon contributors
 
 # Pricing overview
 
+> **Removal note (2026-05-19).** The four product gateways (`openai-gateway`,
+> `video-gateway`, `vtuber-gateway`, `daydream-gateway`) and their shared TS
+> libraries (`gateway-adapters`, `gateway-route-health`) have been removed from
+> this repo. References below to those gateways and libraries are preserved as
+> historical context for the architecture that once shipped — concretely, for
+> the retail-billing surfaces that read wholesale wei prices and the
+> route-health overlays that fed resolver selection — but do not treat them as
+> descriptions of the current working tree. The wholesale pricing mechanism in
+> Part 1 (payment-daemon, capability-broker, manifest schema, resolver) is
+> unaffected; the runner product families formerly referenced here were
+> removed from the repo on 2026-05-20.
+
 End-to-end map of how the Livepeer network prices work in this repo. It
 synthesises material already covered piecemeal in
 [`payment-decoupling.md`](./payment-decoupling.md),
@@ -229,7 +241,7 @@ Specs in [`livepeer-network-protocol/modes/`](../../livepeer-network-protocol/mo
 - `ws-realtime@v0` — bidirectional WebSocket, per-cadence debit
 - `rtmp-ingress-hls-egress@v0` — RTMP in, HLS out, session-metered
 - `session-control-plus-media@v0` — broker-managed media plane
-- `session-control-external-media@v0` — broker reverse-proxies to external media
+- `live-session-remote-runner@v0` — broker-authoritative live session with a remote runner-owned media runtime
 
 Pricing math is identical across modes; modes only differ in *when* the
 broker can extract `actualUnits` and call `DebitBalance`.
@@ -472,11 +484,12 @@ in operator decisions and gateway-side billing code.
 ```
 ┌──────────────────┐    USD/unit     ┌─────────────────┐    wei/unit     ┌──────────────────┐
 │ End customer     │ ──────────────► │ Gateway service │ ──────────────► │ Orchestrator     │
-│ (OpenAI-style    │   retail price  │ (openai-gateway,│   wholesale     │ (capability-     │
-│  API caller)     │ ◄────────────── │  video-gateway, │   price         │  broker +        │
-│                  │   invoice/usage │  vtuber-gateway,│ ◄────────────── │  payment-daemon  │
+│ (OpenAI-style    │   retail price  │ (any out-of-    │   wholesale     │ (capability-     │
+│  API caller)     │ ◄────────────── │  repo product   │   price         │  broker +        │
+│                  │   invoice/usage │  gateway;       │ ◄────────────── │  payment-daemon  │
 │                  │                 │  customer-portal)│ wei debit       │  receiver mode)  │
 └──────────────────┘                 └─────────────────┘                 └──────────────────┘
+
                                                 ▲
                                                 │ FX boundary lives here:
                                                 │  USD ←→ wei conversion
@@ -489,15 +502,14 @@ in Part 1 of this doc operates here: `price_per_work_unit_wei` is the
 orchestrator's wholesale advertised price, denominated in wei. No
 stablecoin, no USD field on the wire, no oracle inside the daemon.
 
-**Retail layer** — customer ↔ gateway — is **USD** (or whatever the
-gateway's customer-facing app supports). This is where Replicate/Mux-style
+**Retail layer** — customer ↔ client — is **USD** (or whatever the
+client's customer-facing app supports). This is where Replicate/Mux-style
 "$0.024 per minute" or "$5 per million tokens" pricing lives. Retail
-billing is implemented in the customer-facing gateway services
-(`customer-portal/`, `openai-gateway/src/service/chatBilling.ts`, the video
-and vtuber gateways), not in the wholesale daemons.
+billing is implemented in the customer-facing service layer
+(`customer-portal/` or another consumer service), not in the wholesale daemons.
 
-**The conversion boundary lives inside the gateway service**, not in the
-payment-daemon. The gateway service:
+**The conversion boundary lives inside the client service**, not in the
+payment-daemon. The client service:
 
 1. Quotes the customer in USD (retail).
 2. Looks up the resolved orch's wholesale `price_per_work_unit_wei`.
@@ -895,8 +907,8 @@ batched hyperscale economics.
 
 The gateway's economics are different in shape:
 
-- **Revenue** — retail USD billed to customers (in `openai-gateway`,
-  `video-gateway`, `vtuber-gateway`, `customer-portal`).
+- **Revenue** — retail USD billed to customers in the client service
+  layer.
 - **Cost** — wholesale wei paid to orchs (via `CreatePayment` →
   `Livepeer-Payment` envelope → `DebitBalance` on receiver).
 - **Margin** — retail revenue minus wholesale cost, minus gateway infra
@@ -906,23 +918,23 @@ Operator knobs:
 
 | Knob | Where |
 |---|---|
-| Retail USD price per unit | customer-facing gateway service |
+| Retail USD price per unit | customer-facing client service |
 | Per-customer rate cards / tiers | customer-portal billing |
-| ETH/USD planning rate | gateway service config (must be re-derived as ETH moves) |
+| ETH/USD planning rate | client service config (must be re-derived as ETH moves) |
 | Preferred-orch list / weight bias | resolver client policy |
 | `min_weight` filter | `SelectRequest.MinWeight` |
 | Fail-closed price ceiling | gateway adapter logic (refuse to route if no orch under threshold wei/unit) |
-| Failure-rate floor | gateway-route-health to deprioritize flaky orchs |
+| Failure-rate floor | client-side route-health layer to deprioritize flaky orchs |
 
-The gateway operator profits when retail USD × actualUnits exceeds
-wholesale wei × actualUnits (converted at the gateway's planning ETH/USD
+The client operator profits when retail USD × actualUnits exceeds
+wholesale wei × actualUnits (converted at the client's planning ETH/USD
 rate) plus per-request infra cost. Because the conversion isn't enforced
-anywhere in the protocol, this is purely gateway-operator accounting.
+anywhere in the protocol, this is purely client-operator accounting.
 
-**ETH volatility risk lives at the gateway boundary**, not at the orch.
-If the gateway sells a unit at $5 retail when ETH = $3,500 (paying ~1.43
+**ETH volatility risk lives at the client boundary**, not at the orch.
+If the client sells a unit at $5 retail when ETH = $3,500 (paying ~1.43
 × 10¹⁵ wei to the orch), and ETH then rises to $5,000, that same wei
-costs $7.15 — wiping the margin. Gateways either:
+costs $7.15 — wiping the margin. Clients either:
 
 - repriced retail dynamically (per-request ETH lookup), or
 - repriced in USD per billing period (accept short-term ETH drift), or
@@ -992,15 +1004,15 @@ it does, and which existing repo surfaces it would plug into.
    - Inputs: chain or off-chain price feed.
    - Outputs: an authoritative ETH/USD rate that gateway services read at
      pricing time, with audit-friendly logs.
-   - Plugs into: gateway services that currently hard-code or env-var the
+   - Plugs into: client services that currently hard-code or env-var the
      rate. Out of band from `payment-daemon` deliberately.
 
-8. **Route-quality cost overlay** (`gateway-route-health` extension).
+8. **Route-quality cost overlay**.
    - Inputs: existing route-health data, plus wholesale price per route.
    - Outputs: a single "$ per successful unit" metric that combines
      reliability with price, so the resolver client biases away from
      cheap-but-flaky orchs.
-   - Plugs into: `gateway-route-health/` + `service-registry-daemon`
+   - Plugs into: a route-health layer + `service-registry-daemon`
      selection weight feedback.
 
 ### Cross-cutting
@@ -1641,16 +1653,15 @@ Three roles, none of which currently exist in the repo:
    a third party, or trustlessly via on-chain commitments + signed
    manifest scrapes.
 
-2. **Demand signal channel** — gateways can opt-in publish anonymized
+2. **Demand signal channel** — clients can opt-in publish anonymized
    demand telemetry: "we have 500 req/min unmet for `openai:chat-completions`
    / `llama-3.3-70b-h100` at a wholesale ceiling of $0.70/M." Orchs use
    this to decide whether to spin up capacity or raise prices.
 
-3. **Realized-quality channel** — orchs and gateways jointly contribute
+3. **Realized-quality channel** — orchs and clients jointly contribute
    to a shared quality registry: latency, success rate, throughput per
    offering per orch. The market clears on price + quality, not price
-   alone. Today this is partially served by `gateway-route-health`, but
-   it's gateway-local, not aggregated.
+   alone.
 
 ### Tooling additions (appended to Part 2's list)
 
@@ -1665,13 +1676,13 @@ Three roles, none of which currently exist in the repo:
       layer. The orch-coordinator could host this as a community service.
 
 12. **Demand signal API** (`tools/demand-signal`).
-    - Inputs: gateway-side request volume per offering per time window,
+    - Inputs: client-side request volume per offering per time window,
       retail price at which demand was observed, success / rejection
       counts.
     - Outputs: anonymized, aggregated demand signals queryable by orchs
       ("how much unmet demand exists for offering X at price ≤ Y?").
-    - Plugs into: gateway services (`openai-gateway`, `video-gateway`,
-      etc.) + a coordinator-operated aggregator. Privacy-preserving
+    - Plugs into: client services + a coordinator-operated aggregator.
+      Privacy-preserving
       aggregation (k-anonymity over orchs) is a design requirement.
 
 13. **LPT subsidy modeler** (`tools/lpt-subsidy`).

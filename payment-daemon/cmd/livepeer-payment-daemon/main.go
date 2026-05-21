@@ -58,6 +58,7 @@ func main() {
 		mode                  = flag.String("mode", "", "required: 'sender' or 'receiver'")
 		socketPath            = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
 		dbPath                = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB session ledger path (receiver only)")
+		payeeAdminToken       = flag.String("payee-admin-token", "", "Bearer token required for receiver-only PayeeAdmin RPCs. Empty disables authenticated admin access.")
 		chainRPC              = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers and signing key are fakes.")
 		devKeyHex             = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
 		keystorePath          = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc is set.")
@@ -114,11 +115,16 @@ func main() {
 		"mode", *mode,
 		"socket", *socketPath,
 		"chain", chainStatus(*chainRPC))
+	adminToken := *payeeAdminToken
+	if adminToken == "" {
+		adminToken = os.Getenv("PAYEE_DAEMON_ADMIN_TOKEN")
+	}
 
 	cfg := bootConfig{
 		mode:                  *mode,
 		socketPath:            *socketPath,
 		dbPath:                *dbPath,
+		payeeAdminToken:       adminToken,
 		chainRPC:              *chainRPC,
 		devKeyHex:             *devKeyHex,
 		keystorePath:          *keystorePath,
@@ -153,6 +159,7 @@ type bootConfig struct {
 	mode                  string
 	socketPath            string
 	dbPath                string
+	payeeAdminToken       string
 	chainRPC              string
 	devKeyHex             string
 	keystorePath          string
@@ -279,7 +286,7 @@ func runReceiver(logger *slog.Logger, cfg bootConfig) error {
 	}
 
 	svc := receiver.New(st, receiver.Config{Recipient: recipient}, logger.With("component", "receiver"))
-	srv := server.NewReceiver(svc, cfg.socketPath, logger.With("component", "grpc"))
+	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: cfg.payeeAdminToken}, cfg.socketPath, logger.With("component", "grpc"))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

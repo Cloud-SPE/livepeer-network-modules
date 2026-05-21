@@ -17,8 +17,9 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
-// Mode is the canonical mode-name@vN string for this driver.
-const Mode = "session-control-external-media@v0"
+// Mode is the canonical mode-name@vN string for the broker-owned live session
+// contract with a remote runner media plane.
+const Mode = "live-session-remote-runner@v0"
 
 // DefaultExpiresIn is the no-attach deadline window. Matches
 // session-control-plus-media@v0.
@@ -67,7 +68,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// Driver implements modes.Driver for session-control-external-media@v0.
+// Driver implements modes.Driver for live-session-remote-runner@v0.
 // It hosts:
 //   - POST /v1/cap                            (modes.Driver.Serve)
 //   - GET  /v1/cap/{session_id}/control       (Driver.ServeControlWS)

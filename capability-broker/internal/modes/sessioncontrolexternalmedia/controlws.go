@@ -151,7 +151,7 @@ func (d *Driver) runReader(ctx context.Context, conn *websocket.Conn, rec *Sessi
 				// Capability-defined frames are not
 				// permitted in this mode.
 				cr.Set(websocket.ClosePolicyViolation,
-					"only lifecycle frames permitted on session-control-external-media@v0 control-WS")
+					"only lifecycle frames permitted on live-session-remote-runner@v0 control-WS")
 				return
 			}
 			// Other lifecycle types are server-emitted; the

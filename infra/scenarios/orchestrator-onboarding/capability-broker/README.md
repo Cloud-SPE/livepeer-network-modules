@@ -93,15 +93,13 @@ Example host-configs live in [`host-configs/`](./host-configs/). Copy one
 to `/opt/livepeer/host-config.yaml` (or wherever `BROKER_CONFIG` points)
 and edit:
 
-| Variant                                              | Status  | Capability                                                  | Pair with runner compose                                  |
-| ---------------------------------------------------- | ------- | ----------------------------------------------------------- | --------------------------------------------------------- |
-| [`openai-audio.example.yaml`](./host-configs/openai-audio.example.yaml) | Stable  | `openai:audio-transcriptions` (Whisper) + `openai:audio-speech` (Kokoro) | `openai-runners/compose/docker-compose.audio.yml`         |
-| [`openai-chat.example.yaml`](./host-configs/openai-chat.example.yaml)   | Stable  | `openai:chat-completions` (vLLM, paired stream + reqresp)                 | `openai-runners/compose/docker-compose.vllm.chat.yml`     |
-| [`preview/video-transcode.example.yaml`](./host-configs/preview/video-transcode.example.yaml) | **Preview** | `video:transcode.vod` (NVIDIA transcode runner, per-job billing)         | _gateway not yet published_                               |
+| Variant                                            | Status | Capability                                          | Pair with |
+| -------------------------------------------------- | ------ | --------------------------------------------------- | --------- |
+| [`openai-chat.example.yaml`](./host-configs/openai-chat.example.yaml) | Stable | `openai:chat-completions` (vLLM, paired stream + reqresp) | your vLLM deployment |
 
-The runner containers must be reachable from the broker via the
-`backend.url` host names in the host-config. Either run them in the same
-compose project (so they share the default network) or attach both stacks
+The backend service must be reachable from the broker via the
+`backend.url` host names in the host-config. Either run it in the same
+compose project (so it shares the default network) or attach both stacks
 to the same Docker network.
 
 ### Preview variants
@@ -114,13 +112,10 @@ matching gateway release is published.
 
 ### Notes on the example host-configs
 
-- **Four work-unit extractors are demonstrated across the variants.**
-  Whisper reports duration via a response header (`response-header`);
-  Kokoro counts input characters from a private request field
-  (`request-formula` with a JSONPath expression); vLLM chat reads
-  `total_tokens` from the OpenAI `usage` block (`openai-usage`); the
-  preview transcode variant uses `request-formula` with a literal `1` for
-  per-job billing. Use whichever pattern your runner can support.
+- **The example host-config demonstrates multiple work-unit extractor
+  shapes.** The included chat variant uses `openai-usage`; other broker
+  deployments can use `response-header`, `request-formula`, or other
+  extractors as long as the backend contract supports them.
 - **Each capability declares a `health.probe`.** The probe runs on
   cadence and feeds the broker's `/registry/health` surface. If a probe
   fails enough times in a row the offering is reported `unreachable` and
@@ -161,7 +156,7 @@ health:
     unhealthy_after: 2         # consecutive failures → unreachable
     healthy_after: 1           # consecutive successes → ready
     config:
-      url: http://runner:8080/healthz   # type-specific config
+      url: http://backend:8080/healthz  # type-specific config
 ```
 
 If you omit `health.probe` entirely on an `http`-transport capability,

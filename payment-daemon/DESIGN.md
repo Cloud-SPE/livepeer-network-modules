@@ -2,83 +2,139 @@
 
 ## Why a separate process
 
-In production this daemon will hold the orchestrator's warm signing key
-and own the chain-integrated redemption pipeline (probabilistic-
-micropayment ticket validation, Arbitrum interaction, cold-key escalation).
-Embedding any of that inside the broker would couple the broker's release
-cadence and process lifecycle to chain operations and key handling — both
-of which need a separate trust boundary.
+`payment-daemon` exists to keep payment-session state, ticket signing,
+ticket validation, and chain-facing redemption logic out of the broker
+and the gateway. That separation is load-bearing for two reasons:
 
-v0.1 contains none of that, but the architectural separation lands here so
-the rest of the system (broker, conformance, gateway) is built against the
-out-of-process boundary from day one.
+- the receiver-side daemon owns warm key material and the redemption
+  pipeline
+- the sender-side daemon owns the payer's nonce stream and session cache
+
+Both sides need stable lifecycle and explicit contracts that survive
+caller restarts and component extraction.
 
 ## Boundaries
 
-- **Inbound:** gRPC over a unix socket. The broker is the only caller in
-  v0.1. The socket's filesystem permissions are the trust boundary; in
-  Docker, the shared volume between broker + daemon containers is what
-  realizes that.
-- **Outbound:** none in v0.1. Future: chain RPC (Arbitrum), maybe a
-  metrics scrape endpoint.
-- **State:** BoltDB file at a configured path. Single-writer (this
-  process). The daemon owns its file lock and refuses to start if the
-  file is locked by another process.
+- **Inbound, sender mode:** `PayerDaemon` gRPC over a unix socket. A
+  sender-side client or the conformance runner calls `CreatePayment`,
+  `ReportPaymentResult`, `GetDepositInfo`, and `Health`.
+- **Inbound, receiver mode:** `PayeeDaemon` plus operator-only
+  `PayeeAdmin` gRPC over a unix socket. The broker calls
+  `GetTicketParams`, `OpenSession`, `ProcessPayment`, debit/balance
+  methods, and `Health`. Operators use `PayeeAdmin.ResetSession`.
+- **Outbound, sender mode:** HTTP `POST /v1/payment/ticket-params`
+  against the selected broker URL to fetch authoritative payee-issued
+  `TicketParams`.
+- **Outbound, receiver mode:** optional Arbitrum JSON-RPC when
+  `--chain-rpc` is set.
+- **State:** BoltDB on receiver side only. Sender-side sessions remain
+  process-local memory.
 
-## RPCs
+## Load-bearing session contracts
 
-See [`../livepeer-network-protocol/proto/livepeer/payments/v1/payee_daemon.proto`](../livepeer-network-protocol/proto/livepeer/payments/v1/payee_daemon.proto).
+### Sender-side minted-payment sessions
 
-The session lifecycle: `OpenSession → Debit* → Reconcile → CloseSession`.
-`Health` is out-of-band and called once at broker boot.
+Sender mode caches sessions by stable route/funding identity:
 
-## BoltDB layout
+- recipient
+- capability
+- offering
+- funded value / target spend
+- ticket-params base URL
 
-One bucket: `sessions`. Keys are session IDs (16-byte hex). Values are
-JSON-encoded session records:
+Each cached session owns:
 
-```go
-type Session struct {
-    ID            string    `json:"id"`
-    CapabilityID  string    `json:"capability_id"`
-    OfferingID    string    `json:"offering_id"`
-    Ticket        []byte    `json:"ticket"`        // opaque
-    EstimatedMax  uint64    `json:"estimated_max"` // from envelope
-    OpenedAt      time.Time `json:"opened_at"`
-    Debits        []uint64  `json:"debits"`
-    ActualUnits   *uint64   `json:"actual_units"`  // nil until Reconcile
-    Closed        bool      `json:"closed"`
-    ClosedAt      time.Time `json:"closed_at"`
-}
-```
+- the authoritative `TicketParams`
+- the monotonic sender nonce stream
+- the current `work_id = hex(recipient_rand_hash)`
 
-JSON over gob/binary because human-readable when debugging and the volume
-is low.
+`CreatePayment` returns that `work_id` to the caller.
+
+### Receiver-side payee-issued sessions
+
+Receiver mode persists a stable index keyed by:
+
+- sender
+- recipient
+- capability
+- offering
+
+That index points to the currently-open `work_id`. The consequence is:
+
+- repeated `GetTicketParams` for an open session return the same
+  `recipient_rand_hash`
+- daemon restart does not rotate the session
+- explicit close/reset is what rotates session state
+
+This is the contract the sender cache is built around.
+
+## Rejection feedback loop
+
+`ProcessPayment` is the payee-side truth source for ticket validity. It
+returns:
+
+- per-ticket `TicketStatus`
+- `tickets_rejected`
+- `dominant_rejection`
+
+The important rejection for sender recovery is
+`INVALID_RECIPIENT_RAND`.
+
+Because `CreatePayment` and `ProcessPayment` happen in different
+components, the sender cannot observe that rejection synchronously.
+`PayerDaemon.ReportPaymentResult` closes that loop:
+
+1. payee/broker observes `INVALID_RECIPIENT_RAND`
+2. caller reports the outcome to the sender daemon
+3. sender evicts the stale cached session
+4. sender returns `codes.Aborted` with structured retry detail
+5. caller retries exactly once and gets a fresh `work_id`
+
+This avoids silent `work_id` swaps while keeping invalidation precise.
+
+## Operator reset surface
+
+Receiver mode exposes `PayeeAdmin.ResetSession(sender, recipient,
+capability, offering)`.
+
+Reset semantics:
+
+- close the current open session for that stable identity
+- delete the active stable-key index entry
+- drop the old session's nonce ledger
+- require the next `GetTicketParams` to mint a fresh `recipientRand`
+  and `work_id`
+
+This is the deliberate rotation mechanism. Restart is not.
+
+## Storage model
+
+Receiver-side BoltDB owns:
+
+- session records keyed by `(sender, work_id)` or unsealed placeholders
+- debit idempotency keys
+- nonce ledger keyed by `(recipientRand, senderNonce)`
+- redemption queue / redeemed-ticket metadata
+- stable ticket-session index keyed by
+  `(sender, recipient, capability, offering)`
+
+The store package is the only owner of these buckets.
 
 ## Failure modes
 
-| Caller mistake | Response |
-|---|---|
-| OpenSession with empty ticket | `InvalidArgument: ticket is empty` |
-| OpenSession with capability_id mismatch | `InvalidArgument: capability_id mismatch` |
-| OpenSession with offering_id mismatch | `InvalidArgument: offering_id mismatch` |
-| CreatePayment / OpenSession with missing accepted price or funding | `InvalidArgument` / request validation failure |
-| Debit / Reconcile / Close on unknown session | `NotFound: session not found` |
-| Debit / Reconcile after Close | `FailedPrecondition: session is closed` |
-| BoltDB write fails | `Internal: <bolt error>` |
+| Surface | Failure | Expected behavior |
+|---|---|---|
+| `GetTicketParams` | repeated call for open session | same `work_id`, same `recipient_rand_hash` |
+| `ProcessPayment` | bad signature / replay / stale rand | gRPC OK with structured rejection status; invalid tickets credit zero EV |
+| `ReportPaymentResult` | `INVALID_RECIPIENT_RAND` | sender evicts cache and returns `codes.Aborted` with retry detail |
+| `ResetSession` | missing / bad admin token | `PermissionDenied` |
+| receiver restart | open session exists | stable session survives; next `GetTicketParams` reuses it |
 
-The broker maps these back to Livepeer error codes
-(`payment_invalid` / `payment_envelope_mismatch` / `internal_error`).
+## What is deliberately not here
 
-## What's deliberately NOT here
-
-- **Sender-side gRPC.** v0.1 ships only the receiver. Gateways encode
-  envelopes locally using the generated bindings (Go) or a small
-  hand-rolled encoder (TS).
-- **Chain integration.** `Ticket` is opaque bytes, not parsed.
-- **Warm-key handling.** No key material is read or held.
-- **Interim-debit cadence.** The gRPC surface allows multiple `Debit`
-  calls per session, but v0.1 callers issue exactly one.
-
-Each of these is its own follow-up plan; the wire format and gRPC surface
-in this plan are forward-compatible with all of them.
+- HTTP auth / operator UI around admin methods; today the guard is a
+  bearer token on the unix-socket gRPC surface
+- automatic sender-side retries inside `CreatePayment`; callers own the
+  retry because `work_id` identity is caller-visible state
+- persistent sender-side session cache; current design keeps sender
+  state in memory and relies on explicit feedback for invalidation

@@ -47,6 +47,12 @@ service PayerDaemon {
   // value they requested.
   rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
 
+  // Report the payee-side outcome for a previously-minted payment. The
+  // payer daemon uses this to invalidate cached session state when the
+  // payee reports a machine-readable rejection such as
+  // INVALID_RECIPIENT_RAND.
+  rpc ReportPaymentResult(ReportPaymentResultRequest) returns (ReportPaymentResultResponse);
+
   // Inspect the payer's current TicketBroker deposit / reserve state.
   // Read-only; the daemon does not fund escrow.
   rpc GetDepositInfo(GetDepositInfoRequest) returns (GetDepositInfoResponse);
@@ -104,7 +110,25 @@ message CreatePaymentResponse {
 
   // Quote identity serialized into the payment context.
   QuoteRef accepted_quote_ref = 5;
+
+  // Work-id bound to this minted payment (hex recipient_rand_hash).
+  string work_id = 6;
 }
+
+message ReportPaymentResultRequest {
+  // Work-id of the minted payment whose result is being reported.
+  string work_id = 1;
+
+  // Route metadata for observability / retry detail.
+  string capability = 2;
+  string offering = 3;
+
+  // Rejection reason observed by the payee. UNSPECIFIED means the
+  // payment was accepted and requires no sender-side action.
+  PaymentRejectionReason rejection_reason = 4;
+}
+
+message ReportPaymentResultResponse {}
 
 message GetSessionDebitsRequest {
   // Sender ETH address (20 raw bytes), echoed from the payment envelope.

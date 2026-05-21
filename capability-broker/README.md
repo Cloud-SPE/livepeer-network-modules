@@ -88,7 +88,7 @@ for the canonical summary, and the design brief at
 Per repo-root core belief #15, every gesture is Docker-first.
 
 ```bash
-make build               # build tztcloud/livepeer-capability-broker:dev
+make build               # build tztcloud/livepeer-capability-broker:v1.3.2
 make run                 # run with examples/host-config.example.yaml
 make help                # show all targets
 ```
@@ -125,12 +125,11 @@ backends, the broker probes `GET /v1/models`. When the configured
 `features.*` fields in `/registry/offerings`. Operator-declared values still
 win; discovery fills gaps only.
 
-The same overlay pattern also applies to current audio, video, and vtuber
-runner families:
-
-- audio runners enrich `extra.audio.*` from `GET /openai-audio-*/options`
-- video runners enrich `extra.video.*` from `GET /v1/video/transcode*/presets`
-- `vtuber-runner` enriches `extra.vtuber.*` from `GET /options`
+The same overlay pattern also applies to backend families that expose a
+stable metadata or options surface. Historical in-repo examples included
+audio, video, and vtuber workload binaries; those component trees have been
+removed, but the broker-side discovery pattern remains available for any
+backend that still exposes the corresponding contract.
 
 The broker refreshes eligible metadata periodically while running. Per-offering
 refresh status and the last discovery result are exposed on

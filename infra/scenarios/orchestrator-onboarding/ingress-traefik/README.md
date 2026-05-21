@@ -13,8 +13,8 @@ For a typical orchestrator deployment:
 | -------------------------- | ----------------------------------------------- | -------------------------- | -------------------------------------------------- |
 | `secure-orch-host`         | Secure Orch                                     | _none_                     | No Traefik. No inbound internet. Outbound RPC only.|
 | `coordinator-host`         | `ingress-traefik` + `orch-coordinator`          | `coordinator.example.com`  | Serves `.well-known/livepeer-registry.json` to gateways.|
-| `broker-host-1`            | `ingress-traefik` + `capability-broker` (+ workload runners) | `broker-a.example.com` | One broker per data center / rig.                  |
-| `broker-host-2`            | `ingress-traefik` + `capability-broker` (+ workload runners) | `broker-b.example.com` | Add as many as you have data centers.              |
+| `broker-host-1`            | `ingress-traefik` + `capability-broker` (+ backend workloads) | `broker-a.example.com` | One broker per data center / rig.                  |
+| `broker-host-2`            | `ingress-traefik` + `capability-broker` (+ backend workloads) | `broker-b.example.com` | Add as many as you have data centers.              |
 | `broker-host-N`            | …                                               | …                          | Same pattern repeats per location.                 |
 
 On every box that runs Traefik:

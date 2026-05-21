@@ -5,9 +5,8 @@
 #   - http-reqresp@v0  for gateways that want a single buffered response
 #
 # Same backend, same model, same price — different gateway integration paths.
-# Pair this with a vLLM runner reachable from the broker. See
-# openai-runners/compose/docker-compose.vllm.chat.yml for a reference
-# runner deployment.
+# Pair this with any reachable vLLM deployment behind the broker's
+# `backend.url` targets below.
 
 identity:
   orch_eth_address: 0xYOUR_ORCH_ADDRESS

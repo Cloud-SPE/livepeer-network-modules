@@ -93,6 +93,8 @@ Rules:
 
 - `output_credential` is the short-lived object-storage credential the runner
   uses to PUT manifests and media under `key_prefix`.
+- `output_credential.session_token` is required and carries the gateway-issued
+  session credential the runner uses when signing object-storage PUTs.
 - `ingest_accept.stream_key` is the credential the gateway presents when it
   opens the private RTMP publish to the runner.
 

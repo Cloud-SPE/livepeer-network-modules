@@ -16,13 +16,18 @@ package httpstream
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/openaiusage"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolreport"
@@ -53,6 +58,7 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 			"read request body: "+err.Error())
 		return nil
 	}
+	body = maybeInjectOpenAIStreamUsage(body, p.Request.Header, p.Capability, p.Extractor)
 
 	outHeaders := backend.StripLivepeerHeaders(p.Request.Header)
 	if p.Auth != nil {
@@ -186,4 +192,34 @@ func reportOutcome(p modes.Params, outcome string, latency time.Duration) {
 		LatencyMetricMS:  latency.Milliseconds(),
 		OccurredAt:       time.Now().UTC(),
 	})
+}
+
+func maybeInjectOpenAIStreamUsage(body []byte, headers http.Header, cap *config.Capability, ext extractors.Extractor) []byte {
+	if cap == nil || ext == nil {
+		return body
+	}
+	if cap.ID != "openai:chat-completions" || ext.Name() != openaiusage.Name {
+		return body
+	}
+	contentType := strings.ToLower(headers.Get("Content-Type"))
+	if contentType != "" && !strings.Contains(contentType, "application/json") {
+		return body
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		log.Printf("openai-usage: request body not JSON; cannot inject stream_options.include_usage: %v", err)
+		return body
+	}
+	streamOptions, _ := payload["stream_options"].(map[string]any)
+	if streamOptions == nil {
+		streamOptions = map[string]any{}
+	}
+	streamOptions["include_usage"] = true
+	payload["stream_options"] = streamOptions
+	rewritten, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("openai-usage: request rewrite failed; cannot inject stream_options.include_usage: %v", err)
+		return body
+	}
+	return rewritten
 }

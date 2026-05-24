@@ -27,6 +27,7 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 |---|---|
 | What is this component? | [`README.md`](./README.md) |
 | Operator-grade runbook (economics, gas, escrow, redemption, hot/cold wallet, dev mode) | [`docs/operator-runbook.md`](./docs/operator-runbook.md) |
+| How to reason about payout rate, payout cadence, and simulations | [`docs/payout-modeling-guide.md`](./docs/payout-modeling-guide.md) |
 | Wire-format spec the daemon implements | [`../livepeer-network-protocol/proto/livepeer/payments/v1/`](../livepeer-network-protocol/proto/livepeer/payments/v1/) |
 | Wire-compat byte-for-byte contract with go-livepeer | [`../livepeer-network-protocol/docs/wire-compat.md`](../livepeer-network-protocol/docs/wire-compat.md) |
 | Architectural overview | [`DESIGN.md`](./DESIGN.md) |

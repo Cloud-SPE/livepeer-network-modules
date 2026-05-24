@@ -18,6 +18,7 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [frontend-dom-and-css-invariants.md](./frontend-dom-and-css-invariants.md) | active | Repo-wide frontend implementation contract: light DOM only, semantic HTML only, no inline CSS, styling only from checked-in CSS files |
 | [pool-node-production-readiness.md](./pool-node-production-readiness.md) | active | Cross-cutting production gate for the Pool stack: persistence, secrets, retry policy, alerting, privacy, and live runtime validation |
 | [pool-orchestrator-production-rollout.md](./pool-orchestrator-production-rollout.md) | active | Cross-cutting operator rollout path for the Pool-based orch: controller, broker apply, coordinator publish, and secure-orch sign cycle |
+| [pool-overlay-flows.md](./pool-overlay-flows.md) | active | Sequence + state diagrams for the three pool-specific flows: member signup, payout cycle, and work routing / worker selection |
 
 Stubs (to be written as we drill in):
 

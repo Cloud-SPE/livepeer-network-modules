@@ -126,35 +126,41 @@ The JSONL file remains the operator-visible append-only artifact.
 
 ## 5. Phases
 
-### Phase 1 — auth/session baseline
+### Phase 1 — auth/session baseline ✅ shipped
 
-- Add `SECURE_ORCH_ADMIN_TOKENS`
-- Add login/logout pages
-- Add single-session cookie auth
-- Require actor at login
-- Record actor on all audit writes
+- ~~Add `SECURE_ORCH_ADMIN_TOKENS`~~ — parsed in `cmd/secure-orch-console/main.go`
+- ~~Add login/logout pages~~ — `web/templates/login.html`, handlers in `web/handlers.go`
+- ~~Add single-session cookie auth~~ — enforced in `web/server.go`
+- ~~Require actor at login~~ — captured at login handler
+- ~~Record actor on all audit writes~~ — `audit.Event.Actor` populated on every append
 
-### Phase 2 — protocol read surface
+### Phase 2 — protocol read surface ✅ shipped
 
-- Add protocol-daemon client
-- Add authenticated status view
-- Show round/reward/registration/wallet state
-- Show `ServiceRegistry` and `AIServiceRegistry` pointers
+- ~~Add protocol-daemon client~~ — `internal/protocol/client.go`
+- ~~Add authenticated status view~~ — wired behind `requireAuth` in `web/server.go`
+- ~~Show round/reward/registration/wallet state~~
+- ~~Show `ServiceRegistry` and `AIServiceRegistry` pointers~~
 
-### Phase 3 — protocol write surface
+### Phase 3 — protocol write surface ✅ shipped
 
-- Add typed-confirm actions:
-  - force-init
-  - force-reward
-  - set-service-uri
-  - set-ai-service-uri
-- Audit all action attempts and outcomes
+- ~~Add typed-confirm actions: force-init, force-reward, set-service-uri,
+  set-ai-service-uri~~ — handlers in `web/handlers.go`
+- ~~Audit all action attempts and outcomes~~
 
-### Phase 4 — audit browse/export
+### Phase 4 — audit browse/export ⏳ partial
 
-- Add queryable audit store
-- Add audit list API
-- Add export endpoints
+Shipped:
+
+- ~~Add queryable audit store~~ — paginated cursor-based `audit.ReadPage`
+  backs `GET /audit` (`web/handlers.go`); JSONL store with rotation in
+  `internal/audit/audit.go`
+
+Remaining:
+
+- Add audit list API (JSON over HTTP, not just the rendered HTML page)
+- Add export endpoints (CSV / JSONL download for operator off-box review)
+- Decide whether richer query filters (by actor / kind / time range) are part
+  of this phase or a follow-up
 
 ## 6. Risks / constraints
 

@@ -1,0 +1,25 @@
+version: 1
+name: "OpenAI Chat - Qwen3 8B"
+eth_usd: 3500
+seed: 42
+simulation:
+  hours: 168
+  trials: 250
+offerings:
+  - name: "qwen3-8b-chat"
+    capability_id: "openai:chat-completions"
+    offering_id: "qwen3:8b"
+    interaction: "http-reqresp@v0"
+    work_unit: "tokens"
+    price:
+      amount_wei: "2000000000000"
+      per_units: 1000
+    payout:
+      face_value_wei: "50000000000000000"
+    workload:
+      units_per_hour: 720000
+      requests_per_hour: 360
+      units_per_request: 2000
+      target_revenue_per_hour_usd: 2.5
+    gateway:
+      estimated_units_multiplier: 1.15

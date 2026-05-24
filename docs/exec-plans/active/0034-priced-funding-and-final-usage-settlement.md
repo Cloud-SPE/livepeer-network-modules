@@ -82,13 +82,29 @@ Remaining:
     `GraceOnInsufficient` placeholder remains wired but unused.
   - `BilledUnits != ActualUnits` placeholder retained — no shipped workload
     needs the distinction yet.
-- **Phase 5 (gateway adoption)** — the four TS gateway clients
-  (`openai-gateway`, `daydream-gateway`, `vtuber-gateway`, `video-gateway`)
-  still construct the legacy face-value request shape and will fail against
-  the canonical sender. Migration is tracked in
-  [`0035-payer-daemon-client-convergence-and-legacy-payer-proto-retirement.md`](./0035-payer-daemon-client-convergence-and-legacy-payer-proto-retirement.md).
-- **Phase 6 (cutover)** — depends on Phase 5; also depends on retiring the
-  duplicate legacy proto at `proto-contracts/livepeer/payments/v1/payer_daemon.proto`.
+
+- **Phase 5 (gateway adoption) — closed; no longer applies to this repo.**
+  The four TS gateway clients (`openai-gateway`, `daydream-gateway`,
+  `vtuber-gateway`, `video-gateway`) and the gateway-side shared libs
+  (`gateway-adapters`, `gateway-route-health`) were removed from the working
+  tree in commits `9f1760c` ("Remove four product gateways and gateway-side
+  shared libraries") and `9ad9898` ("Remove runner components and scrub
+  references"). The follow-up plan that tracked client migration
+  (`0035-payer-daemon-client-convergence-and-legacy-payer-proto-retirement.md`)
+  was added in `bdeffb3` and deleted in `9ad9898` as part of the same scrub.
+  Any future gateway client that adopts the canonical sender contract lives
+  outside this repo and is not gated by this plan.
+
+- **Phase 6 (cutover) — narrowed to legacy-proto retirement.** With the four
+  gateway clients no longer present in-repo, the original Phase 5-gated
+  cutover is moot. The one cutover task still actionable here is retiring
+  the duplicate legacy proto at
+  `proto-contracts/livepeer/payments/v1/payer_daemon.proto` in favor of the
+  canonical
+  `livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto`.
+  Remaining in-repo callers of the legacy copy live in
+  `pool-reconciler/internal/paymentdaemon/client.go` and its tests; migrating
+  them is the only blocker to deleting the duplicate.
 
 The success criteria in §10 should be re-evaluated against this status when
 this plan moves toward completed.
@@ -671,18 +687,28 @@ For streaming/session modes, settlement metadata must be available via:
   - ✅ session-control modes emit `SettlementRecord` inside the
     `session.ended` control-WS envelope body
 
-### Phase 5 — gateway adoption ⏳ blocked on 0035
+### Phase 5 — gateway adoption ✖ closed (gateways removed from repo)
 
-- persist accepted quote metadata per request/session
-- pass quote + funding metadata into `CreatePayment`
-- consume and store settlement metadata
-- update retail billing and retry logic around underfund / overfund / topped-up flows
+The four TS gateway clients this phase targeted were removed in commits
+`9f1760c` and `9ad9898`. Per-request quote/funding/settlement adoption is the
+responsibility of whatever gateway code now lives outside this repo and is
+no longer tracked by this plan.
 
-### Phase 6 — cutover ⏳ blocked on Phase 5
+### Phase 6 — narrowed to legacy-proto retirement ⏳
 
-- switch all callers to the quote-aware `CreatePayment`
-- require broker settlement responses on paid execution paths
-- make gateway reconciliation depend on settlement records rather than local inference
+The original cutover steps (switch all callers to quote-aware `CreatePayment`,
+require broker settlement on paid paths, make reconciliation depend on
+settlement records) are either already in force on the in-repo paid paths
+(Phase 4) or covered by out-of-repo gateway adopters (Phase 5, closed).
+
+Remaining in this repo:
+
+- migrate `pool-reconciler/internal/paymentdaemon/client.go` (plus the two
+  associated tests) off
+  `proto-contracts/livepeer/payments/v1/payer_daemon.proto` and onto the
+  canonical `livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto`
+- delete `proto-contracts/livepeer/payments/v1/payer_daemon.proto` (and its
+  generated bindings) once the migration above lands
 
 ## 9. Non-goals
 

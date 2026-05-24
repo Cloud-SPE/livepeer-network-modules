@@ -40,6 +40,7 @@ func run(args []string) error {
 		auditLogPath         = fs.String("audit-log", "/var/log/secure-orch/audit.log.jsonl", "Append-only JSONL audit log")
 		auditRotateSize      = fs.Int64("audit-rotate-size", audit.DefaultRotateSize, "Audit log size threshold for rotation, in bytes (0 disables)")
 		listen               = fs.String("listen", "127.0.0.1:8080", "HTTP listen address (explicit host:port required)")
+		coordinatorURL       = fs.String("coordinator-url", "", "Optional orch-coordinator base URL used for operator cross-links")
 		showVer              = fs.Bool("version", false, "Print version and exit")
 	)
 	if err := fs.Parse(args); err != nil {
@@ -64,8 +65,14 @@ func run(args []string) error {
 		Listen:          *listen,
 		ProtocolSocket:  strings.TrimSpace(os.Getenv("PROTOCOL_DAEMON_SOCKET")),
 		AdminTokens:     parseCSVEnv("SECURE_ORCH_ADMIN_TOKENS"),
+		CoordinatorURL:  *coordinatorURL,
+		Version:         version,
 	}
 	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	cfg.CoordinatorURL, err = config.NormalizeBaseURL(cfg.CoordinatorURL)
+	if err != nil {
 		return err
 	}
 

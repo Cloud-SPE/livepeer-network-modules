@@ -23,7 +23,7 @@
 
 services:
   payment-daemon-receiver:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.3.1}
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.3.3}
     command:
       - --mode=receiver
       - --socket=/var/run/livepeer/payment-daemon.sock
@@ -42,7 +42,7 @@ services:
     restart: unless-stopped
 
   capability-broker:
-    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.3.1}
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.3.3}
     depends_on:
       payment-daemon-receiver:
         condition: service_started
@@ -62,7 +62,7 @@ services:
     restart: unless-stopped
 
   orch-coordinator:
-    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.3.1}
+    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.3.3}
     environment:
       ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS:-}
     command:
@@ -83,7 +83,7 @@ services:
     restart: unless-stopped
 
   pool-controller:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-controller:${TAG:-v1.3.1}
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-controller:${TAG:-v1.3.3}
     command:
       - serve
       - --config=/etc/livepeer/pool-controller.yaml
@@ -101,7 +101,7 @@ services:
     restart: unless-stopped
 
   pool-reconciler:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-reconciler:${TAG:-v1.3.1}
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-reconciler:${TAG:-v1.3.3}
     depends_on:
       - pool-controller
     command:
@@ -116,7 +116,7 @@ services:
     restart: unless-stopped
 
   pool-payout-executor:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-payout-executor:${TAG:-v1.3.1}
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-payout-executor:${TAG:-v1.3.3}
     depends_on:
       - pool-controller
     command:

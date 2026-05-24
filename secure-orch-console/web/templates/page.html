@@ -1,7 +1,108 @@
 {{define "page.html"}}{{template "base" .}}{{end}}
 
+{{define "overview-content"}}
+<section class="summary">
+  <p class="eyebrow">Secure orch</p>
+  <h1>Overview</h1>
+  <p class="path">Cold-key review station for protocol inspection, candidate verification, and explicit manifest signing.</p>
+</section>
+
+<section class="message-card message-card-{{.CycleStage}}">
+  <h2>{{.CycleTitle}}</h2>
+  <p>{{.CycleNote}}</p>
+</section>
+
+<section class="metric-grid">
+  <article class="metric-card">
+    <p class="metric-label">Protocol daemon</p>
+    <p class="metric-value">{{if .ProtocolConfigured}}{{if .ProtocolReachable}}Connected{{else}}Configured{{end}}{{else}}Not configured{{end}}</p>
+    <p class="metric-sub">{{if .ProtocolConfigured}}Use Protocol status for live daemon details.{{else}}Set a protocol-daemon socket to enable status and write actions.{{end}}</p>
+  </article>
+  <article class="metric-card">
+    <p class="metric-label">Candidate review</p>
+    <p class="metric-value">{{if .HasCandidate}}Ready{{else}}Waiting{{end}}</p>
+    <p class="metric-sub">{{if .HasCandidate}}Loaded {{.CandidateLoadedAt}} from <code>{{.CandidateSource}}</code>.{{else}}Upload a candidate manifest to begin review and signing.{{end}}</p>
+  </article>
+  <article class="metric-card">
+    <p class="metric-label">Last signed publication</p>
+    <p class="metric-value">{{if .HasLastSigned}}#{{.LastSignedSummary.PublicationSeq}}{{else}}None yet{{end}}</p>
+    <p class="metric-sub">{{if .HasLastSigned}}Stored at <code>{{.LastSignedPath}}</code>.{{else}}The first successful sign writes <code>{{.LastSignedPath}}</code>.{{end}}</p>
+  </article>
+</section>
+
+<section>
+  <h2>Signing workflow</h2>
+  <div class="workflow-grid">
+    <article class="status-card">
+      <h3>1. Inspect protocol state</h3>
+      <p class="path">Check wallet, reward status, and registry state before touching the next publication.</p>
+      <a href="/protocol-status" class="navlink">Open protocol status</a>
+    </article>
+    <article class="status-card">
+      <h3>2. Review candidate diff</h3>
+      <p class="path">Upload a candidate, compare it against the last signed manifest, and verify the canonical hash.</p>
+      <a href="/manifests" class="navlink">Open manifest review</a>
+    </article>
+    <article class="status-card">
+      <h3>3. Confirm sensitive actions</h3>
+      <p class="path">Typed confirmation remains required for protocol mutations and for the final tap-to-sign gesture.</p>
+      <a href="/protocol-actions" class="navlink">Open protocol actions</a>
+    </article>
+  </div>
+</section>
+
+{{if .HasCandidate}}
+<section>
+  <h2>Candidate identity</h2>
+  <dl class="meta">
+    <dt>publication_seq</dt><dd>{{.CandidateSeq}}</dd>
+    <dt>orch.eth_address</dt><dd><span class="copy-inline"><code>{{.CandidateEthAddress}}</code><button type="button" class="copy-button" data-copy-value="{{.CandidateEthAddress}}">Copy</button></span></dd>
+    <dt>source</dt><dd><code>{{.CandidateSource}}</code></dd>
+    <dt>loaded_at</dt><dd>{{.CandidateLoadedAt}}</dd>
+    <dt>canonical_sha256</dt><dd><span class="copy-inline"><code>{{.CandidateCanonHash}}</code><button type="button" class="copy-button" data-copy-value="{{.CandidateCanonHash}}">Copy</button></span></dd>
+  </dl>
+</section>
+
+{{if .CycleEvents}}
+<section id="review-timeline">
+  <h2>Review timeline</h2>
+  <div class="timeline">
+    {{range .CycleEvents}}
+    <article class="timeline-item" id="{{.Anchor}}">
+      <div class="timeline-head">
+        <span class="badge audit-{{.Kind}}">{{.Kind}}</span>
+        <span class="path">{{.At}}</span>
+      </div>
+      {{if .Actor}}<p class="path">actor {{.Actor}}</p>{{end}}
+      {{if .Note}}<p class="path">{{.Note}}</p>{{end}}
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+{{if .ReconcileSteps}}
+<section>
+  <h2>Cross-surface checklist</h2>
+  <div class="checklist">
+    {{range .ReconcileSteps}}
+    <article class="checklist-item">
+      <div class="timeline-head">
+        <strong>{{.Label}}</strong>
+        <span class="badge checkpoint-{{.Status}}">{{.Status}}</span>
+      </div>
+      <p class="path">{{.Note}}{{if .Href}} <a href="{{.Href}}" class="inline-link">Open evidence</a>{{end}}</p>
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+{{end}}
+{{end}}
+
 {{define "protocol-status-content"}}
 <section class="summary">
+  <p class="eyebrow">Secure orch</p>
   <h1>Protocol status</h1>
   <p class="path">Read-only status from the connected protocol-daemon.</p>
 </section>
@@ -26,6 +127,7 @@
 
 {{define "protocol-actions-content"}}
 <section class="summary">
+  <p class="eyebrow">Secure orch</p>
   <h1>Protocol actions</h1>
   <p class="path">Write actions go through protocol-daemon and require full typed confirmation.</p>
 </section>
@@ -115,16 +217,124 @@
 
 {{define "manifests-content"}}
 <section class="summary">
+  <p class="eyebrow">Secure orch</p>
   <h1>Manifests</h1>
   <p class="path">Load, diff, sign, and download the operator-reviewed manifest envelope.</p>
 </section>
+
+<section class="message-card message-card-{{.CycleStage}}">
+  <h2>{{.CycleTitle}}</h2>
+  <p>{{.CycleNote}}</p>
+</section>
+
+<section class="workflow-banner">
+  <div class="workflow-step">
+    <strong>1. Load candidate</strong>
+    <span>{{if .Candidate}}Candidate uploaded and canonicalized.{{else}}Upload the next candidate manifest from orch-coordinator.{{end}}</span>
+  </div>
+  <div class="workflow-step">
+    <strong>2. Review diff</strong>
+    <span>{{if .Candidate}}Confirm publication sequence, orch identity, and tuple drift before signing.{{else}}Diff becomes available after upload.{{end}}</span>
+  </div>
+  <div class="workflow-step">
+    <strong>3. Sign explicitly</strong>
+    <span>Typed confirmation and the tap-to-sign gesture remain mandatory.</span>
+  </div>
+</section>
+
+<section class="message-card message-card-{{.ReviewState}}">
+  <h2>{{.ReviewTitle}}</h2>
+  <p>{{.ReviewMessage}}</p>
+</section>
+
+{{if .Candidate}}
+<section>
+  <h2>Hand-carry identity</h2>
+  <p class="path">Match these fields against the candidate you downloaded from orch-coordinator before you sign.</p>
+  <dl class="meta">
+    <dt>publication_seq</dt><dd>{{.Candidate.PublicationSeq}}</dd>
+    <dt>orch.eth_address</dt><dd><span class="copy-inline"><code>{{.Candidate.EthAddress}}</code><button type="button" class="copy-button" data-copy-value="{{.Candidate.EthAddress}}">Copy</button></span></dd>
+    <dt>source</dt><dd><code>{{.Candidate.SourceName}}</code></dd>
+    <dt>canonical_sha256</dt><dd><span class="copy-inline"><code>{{.Candidate.CanonHash}}</code><button type="button" class="copy-button" data-copy-value="{{.Candidate.CanonHash}}">Copy</button></span></dd>
+  </dl>
+</section>
+
+{{if .CycleEvents}}
+<section id="review-timeline">
+  <h2>Review timeline</h2>
+  <div class="timeline">
+    {{range .CycleEvents}}
+    <article class="timeline-item" id="{{.Anchor}}">
+      <div class="timeline-head">
+        <span class="badge audit-{{.Kind}}">{{.Kind}}</span>
+        <span class="path">{{.At}}</span>
+      </div>
+      {{if .Actor}}<p class="path">actor {{.Actor}}</p>{{end}}
+      {{if .Note}}<p class="path">{{.Note}}</p>{{end}}
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+{{if .ReconcileSteps}}
+<section>
+  <h2>Cross-surface checklist</h2>
+  <div class="checklist">
+    {{range .ReconcileSteps}}
+    <article class="checklist-item">
+      <div class="timeline-head">
+        <strong>{{.Label}}</strong>
+        <span class="badge checkpoint-{{.Status}}">{{.Status}}</span>
+      </div>
+      <p class="path">{{.Note}}{{if .Href}} <a href="{{.Href}}" class="inline-link">Open evidence</a>{{end}}</p>
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+{{end}}
+
+{{if .Candidate}}
+{{if or (not .Candidate.Diff.Header.SeqMonotonic) (not .Candidate.Diff.Header.EthAddressStable) .Candidate.Diff.Removed .Candidate.Diff.Changed}}
+<section>
+  <h2>Review attention points</h2>
+  <div class="alert-list">
+    {{if not .Candidate.Diff.Header.SeqMonotonic}}
+    <article class="alert-item alert-error">
+      <strong>publication_seq is non-monotonic</strong>
+      <span>Resolver verification will reject this manifest until the sequence increases. <a href="#header-publication-seq" class="alert-link">Jump to header check</a></span>
+    </article>
+    {{end}}
+    {{if not .Candidate.Diff.Header.EthAddressStable}}
+    <article class="alert-item alert-warn">
+      <strong>orch identity changed</strong>
+      <span>Current candidate advertises a different <code>orch.eth_address</code> than the last signed manifest. <a href="#header-orch-eth-address" class="alert-link">Jump to header check</a></span>
+    </article>
+    {{end}}
+    {{range .Candidate.Diff.Removed}}
+    <article class="alert-item alert-warn">
+      <strong>tuple removed</strong>
+      <span><code>{{.CapabilityID}}</code> / <code>{{.OfferingID}}</code> will disappear from the next signed manifest. <a href="#{{anchorID "removed" .CapabilityID .OfferingID}}" class="alert-link">Jump to tuple</a></span>
+    </article>
+    {{end}}
+    {{range .Candidate.Diff.Changed}}
+    <article class="alert-item alert-info">
+      <strong>tuple changed</strong>
+      <span><code>{{.CapabilityID}}</code> / <code>{{.OfferingID}}</code> differs from the last signed manifest and needs operator review. <a href="#{{anchorID "changed" .CapabilityID .OfferingID}}" class="alert-link">Jump to tuple</a></span>
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+{{end}}
 
 <section class="last-signed">
   <h2>Last signed manifest</h2>
   {{if .HasLastSigned}}
     <dl class="meta">
       <dt>publication_seq</dt><dd>{{.LastSignedSummary.PublicationSeq}}</dd>
-      <dt>orch.eth_address</dt><dd><code>{{.LastSignedSummary.EthAddress | lower}}</code></dd>
+      <dt>orch.eth_address</dt><dd><span class="copy-inline"><code>{{.LastSignedSummary.EthAddress | lower}}</code><button type="button" class="copy-button" data-copy-value="{{.LastSignedSummary.EthAddress | lower}}">Copy</button></span></dd>
       <dt>issued_at</dt><dd>{{.LastSignedSummary.IssuedAt}}</dd>
       <dt>expires_at</dt><dd>{{.LastSignedSummary.ExpiresAt}}</dd>
       <dt>capabilities</dt><dd>{{.LastSignedSummary.CapabilityCount}}</dd>
@@ -158,6 +368,7 @@
 
 {{define "audit-content"}}
 <section class="summary">
+  <p class="eyebrow">Secure orch</p>
   <h1>Audit</h1>
   <p class="path">Recent operator events from <code>{{.AuditPath}}</code>.</p>
 </section>
@@ -181,9 +392,9 @@
         <dt>at</dt><dd>{{.At}}</dd>
         <dt>kind</dt><dd><code>{{.Kind}}</code></dd>
         {{if .Actor}}<dt>actor</dt><dd><code>{{.Actor}}</code></dd>{{end}}
-        {{if .EthAddress}}<dt>eth_address</dt><dd><code>{{.EthAddress}}</code></dd>{{end}}
+        {{if .EthAddress}}<dt>eth_address</dt><dd><span class="copy-inline"><code>{{.EthAddress}}</code><button type="button" class="copy-button" data-copy-value="{{.EthAddress}}">Copy</button></span></dd>{{end}}
         {{if .PublicationSeq}}<dt>publication_seq</dt><dd><code>{{.PublicationSeq}}</code></dd>{{end}}
-        {{if .CanonHash}}<dt>canonical_sha256</dt><dd><code>{{.CanonHash}}</code></dd>{{end}}
+        {{if .CanonHash}}<dt>canonical_sha256</dt><dd><span class="copy-inline"><code>{{.CanonHash}}</code><button type="button" class="copy-button" data-copy-value="{{.CanonHash}}">Copy</button></span></dd>{{end}}
         {{if .Note}}<dt>note</dt><dd>{{.Note}}</dd>{{end}}
       </dl>
       {{if .Fields}}
@@ -222,18 +433,36 @@
 <section class="diff">
   <h2>Candidate diff</h2>
   <p class="source">loaded {{.Candidate.LoadedAt}} from <code>{{.Candidate.SourceName}}</code></p>
-  <p class="canon">canonical sha256: <code>{{.Candidate.CanonHash}}</code></p>
+  <p class="canon">canonical sha256: <span class="copy-inline"><code>{{.Candidate.CanonHash}}</code><button type="button" class="copy-button" data-copy-value="{{.Candidate.CanonHash}}">Copy</button></span></p>
+  <div class="metric-grid compact-grid">
+    <article class="metric-card">
+      <p class="metric-label">Added</p>
+      <p class="metric-value">{{len $d.Added}}</p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Removed</p>
+      <p class="metric-value">{{len $d.Removed}}</p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Changed</p>
+      <p class="metric-value">{{len $d.Changed}}</p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Unchanged</p>
+      <p class="metric-value">{{len $d.Unchanged}}</p>
+    </article>
+  </div>
   <div class="header-card">
-    <div>
+    <div id="header-publication-seq">
       <span class="label">publication_seq</span>
       {{if $d.Header.BeforeSeq}}<code>{{$d.Header.BeforeSeq}}</code> &rarr; {{end}}
       <code class="{{if not $d.Header.SeqMonotonic}}warn{{end}}">{{$d.Header.AfterSeq}}</code>
       {{if not $d.Header.SeqMonotonic}}<strong class="warn">non-monotonic - resolver will reject</strong>{{end}}
     </div>
-    <div>
+    <div id="header-orch-eth-address">
       <span class="label">orch.eth_address</span>
-      {{if $d.Header.BeforeEthAddress}}<code>{{$d.Header.BeforeEthAddress | lower}}</code> &rarr; {{end}}
-      <code class="{{if not $d.Header.EthAddressStable}}warn{{end}}">{{$d.Header.AfterEthAddress | lower}}</code>
+      {{if $d.Header.BeforeEthAddress}}<span class="copy-inline"><code>{{$d.Header.BeforeEthAddress | lower}}</code><button type="button" class="copy-button" data-copy-value="{{$d.Header.BeforeEthAddress | lower}}">Copy</button></span> &rarr; {{end}}
+      <span class="copy-inline"><code class="{{if not $d.Header.EthAddressStable}}warn{{end}}">{{$d.Header.AfterEthAddress | lower}}</code><button type="button" class="copy-button" data-copy-value="{{$d.Header.AfterEthAddress | lower}}">Copy</button></span>
       {{if not $d.Header.EthAddressStable}}<strong class="warn">eth_address changed - rotation must precede this</strong>{{end}}
     </div>
     <div>
@@ -268,7 +497,7 @@
   <h3 class="removed">Removed</h3>
   <ul class="tuples">
     {{range $d.Removed}}
-    <li class="rem"><code>{{.CapabilityID}}</code> / <code>{{.OfferingID}}</code><pre>{{prettyJSON .Fields}}</pre></li>
+    <li class="rem" id="{{anchorID "removed" .CapabilityID .OfferingID}}"><code>{{.CapabilityID}}</code> / <code>{{.OfferingID}}</code><pre>{{prettyJSON .Fields}}</pre></li>
     {{end}}
   </ul>
   {{end}}
@@ -277,7 +506,7 @@
   <h3 class="changed">Changed</h3>
   <ul class="tuples">
     {{range $d.Changed}}
-    <li class="chg">
+    <li class="chg" id="{{anchorID "changed" .CapabilityID .OfferingID}}">
       <code>{{.CapabilityID}}</code> / <code>{{.OfferingID}}</code>
       <div class="side-by-side">
         <div><h4>before</h4><pre>{{prettyJSON .Before}}</pre></div>
@@ -304,7 +533,7 @@
   <h2>Tap to sign</h2>
   <p>
     To confirm, type the last 4 hex chars of the signer address
-    (<code class="signer-address">{{.SignerAddress | lower}}</code>):
+    (<span class="copy-inline"><code class="signer-address">{{.SignerAddress | lower}}</code><button type="button" class="copy-button" data-copy-value="{{.SignerAddress | lower}}">Copy</button></span>):
   </p>
   <form action="/sign" method="post">
     <label for="confirm_last4">Last 4 hex chars:</label>

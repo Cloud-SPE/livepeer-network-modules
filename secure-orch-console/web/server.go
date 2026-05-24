@@ -86,7 +86,7 @@ func New(cfg config.Config, signer signing.Signer, log *audit.Log, logger *slog.
 		mux:          http.NewServeMux(),
 		maxUpload:    8 << 20,
 		templates:    tmpls,
-		staticAssets: staticHandler(),
+		staticAssets: staticHandler(cfg.Version),
 	}
 	s.routes()
 	return s, nil
@@ -139,6 +139,7 @@ func (s *Server) Addr() string {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.requireAuth(s.handleIndex))
+	s.mux.HandleFunc("GET /overview", s.requireAuth(s.handleOverviewPage))
 	s.mux.HandleFunc("GET /protocol-status", s.requireAuth(s.handleProtocolStatusPage))
 	s.mux.HandleFunc("GET /protocol-actions", s.requireAuth(s.handleProtocolActionsPage))
 	s.mux.HandleFunc("GET /manifests", s.requireAuth(s.handleManifestsPage))

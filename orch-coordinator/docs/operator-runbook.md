@@ -7,6 +7,7 @@ livepeer-orch-coordinator \
   --config=/etc/livepeer/orch-coordinator.yaml \
   --data-dir=/srv/data \
   --listen=:8080 \
+  --secure-orch-url=http://secure-orch-laptop:8080 \
   --public-listen=:8081 \
   --metrics-listen=:9091
 ```
@@ -25,7 +26,7 @@ The three listeners are intentionally separate:
 
 When `ORCH_COORDINATOR_ADMIN_TOKENS` is set, the `--listen` admin surface
 requires login. Operators submit an admin token plus `actor`; the UI keeps a
-single active session, with a 12-hour absolute timeout and a 30-minute
+single active session, with a 4-hour absolute timeout and a 30-minute
 idle timeout, and upload audit events record that actor. Expired
 sessions are released automatically on the next request or login
 attempt.
@@ -33,6 +34,9 @@ attempt.
 When running the published container image, use `/srv/data`. The image is
 built to run as `nonroot` and pre-owns that path so Docker named volumes are
 initialized with writable ownership.
+
+`--secure-orch-url` is optional; when set, the coordinator checklist can jump
+directly to the secure-orch review timeline for the current hand-carry cycle.
 
 ## Dev mode
 

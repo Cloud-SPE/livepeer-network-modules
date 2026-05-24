@@ -98,6 +98,39 @@ random_field: 1
 	}
 }
 
+func TestNormalizeOptionalBaseURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "trim trailing slash", in: "https://secure.example.com/", want: "https://secure.example.com"},
+		{name: "path preserved", in: "https://secure.example.com/console/", want: "https://secure.example.com/console"},
+		{name: "reject scheme", in: "ftp://secure.example.com", wantErr: "scheme"},
+		{name: "reject query", in: "https://secure.example.com/?x=1", wantErr: "query"},
+		{name: "reject fragment", in: "https://secure.example.com/#x", wantErr: "fragment"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NormalizeOptionalBaseURL(tc.in)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func qstr(s string) string {
 	return "\"" + s + "\""
 }

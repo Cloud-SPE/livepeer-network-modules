@@ -1,6 +1,8 @@
 {{define "content"}}
 <section class="summary">
+  <p class="eyebrow">Orch coordinator</p>
   <h1>Roster</h1>
+  <p class="muted">Inspect broker health, review drift against the published manifest, and prepare the next signed publish.</p>
   {{if .RefreshFlash}}
   <p class="upload-flash upload-{{.RefreshFlash.Outcome}}">
     <strong>{{.RefreshFlash.Outcome}}</strong>
@@ -23,7 +25,7 @@
     <summary>{{len .BrokerStatus}} broker(s)</summary>
     <ul>
     {{range .BrokerStatus}}
-      <li class="broker-{{.Freshness}}">
+      <li class="broker-{{.Freshness}}" id="broker-{{anchorID .Name}}">
         <strong>{{.Name}}</strong> — scrape={{.Freshness}} live={{.LiveStatus}} ({{.BaseURL}})
         {{if gt .MetadataApplicableTuples 0}}
         <span> · metadata={{.MetadataApplicableTuples}} tuple(s)</span>
@@ -46,13 +48,107 @@
       {{range .DriftKinds}}<option value="{{.}}" {{if eq . $.Filter.DriftKind}}selected{{end}}>{{.}}</option>{{end}}
     </select>
     <button type="submit">Filter</button>
+    <a href="/roster" class="ghost-link">Clear</a>
   </form>
   <form method="post" action="/refresh-roster" class="refresh">
     <button type="submit">Refresh roster</button>
   </form>
 </section>
 
+<section class="message-card message-card-{{.CycleStage}}">
+  <h2>{{.CycleTitle}}</h2>
+  <p>{{.CycleNote}}</p>
+</section>
+
+<section class="message-card message-card-{{.PublishState}}">
+  <h2>{{.PublishTitle}}</h2>
+  <p>{{.PublishNote}}</p>
+</section>
+
+{{if or .RiskItems .BrokerAlerts}}
+<section>
+  <h2>Attention points</h2>
+  <div class="alert-list">
+    {{range .RiskItems}}
+    <article class="alert-item alert-warn">
+      <strong>Drift review</strong>
+      <span>{{.Message}} <a href="{{.Href}}" class="alert-link">Jump to row</a></span>
+    </article>
+    {{end}}
+    {{range .BrokerAlerts}}
+    <article class="alert-item alert-info">
+      <strong>Broker health</strong>
+      <span>{{.Message}} <a href="{{.Href}}" class="alert-link">Jump to broker</a></span>
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+<section class="workflow-banner">
+  <div class="workflow-step">
+    <strong>1. Refresh broker state</strong>
+    <span>Scrape the latest offerings and rebuild the candidate snapshot.</span>
+  </div>
+  <div class="workflow-step">
+    <strong>2. Review drift</strong>
+    <span>Use the roster and candidate diff to confirm what the next publish would change.</span>
+  </div>
+  <div class="workflow-step">
+    <strong>3. Publish signed manifest</strong>
+    <span>Upload the secure-orch-signed manifest to verify identity and atomically publish it.</span>
+  </div>
+</section>
+
+{{if .HasCandidateIdentity}}
+<section>
+  <h2>Candidate identity</h2>
+  <p class="muted">Match these values in secure-orch after upload so the same candidate is being reviewed and signed.</p>
+  <dl class="meta">
+    <dt>publication_seq</dt><dd>{{.CandidateSeq}}</dd>
+    <dt>orch.eth_address</dt><dd><span class="copy-inline"><code>{{.CandidateEthAddress}}</code><button type="button" class="copy-button" data-copy-value="{{.CandidateEthAddress}}">Copy</button></span></dd>
+    <dt>canonical_sha256</dt><dd><span class="copy-inline"><code>{{.CandidateCanonHash}}</code><button type="button" class="copy-button" data-copy-value="{{.CandidateCanonHash}}">Copy</button></span></dd>
+  </dl>
+</section>
+{{end}}
+
+{{if .CycleEvents}}
+<section id="cycle-timeline">
+  <h2>Cycle timeline</h2>
+  <div class="timeline">
+    {{range .CycleEvents}}
+    <article class="timeline-item" id="{{.Anchor}}">
+      <div class="timeline-head">
+        <span class="badge audit-{{.Outcome}}">{{.Outcome}}</span>
+        <span class="muted">{{.At}}</span>
+      </div>
+      {{if .Actor}}<p class="muted">actor {{.Actor}}</p>{{end}}
+      {{if .Note}}<p class="muted">{{.Note}}</p>{{end}}
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+{{if .ReconcileSteps}}
+<section>
+  <h2>Cross-surface checklist</h2>
+  <div class="checklist">
+    {{range .ReconcileSteps}}
+    <article class="checklist-item">
+      <div class="timeline-head">
+        <strong>{{.Label}}</strong>
+        <span class="badge checkpoint-{{.Status}}">{{.Status}}</span>
+      </div>
+      <p class="muted">{{.Note}}{{if .Href}} <a href="{{.Href}}" class="inline-link">Open evidence</a>{{end}}</p>
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
 <section class="roster">
+  <div class="table-wrap">
   <table>
     <thead>
       <tr>
@@ -67,8 +163,8 @@
     </thead>
     <tbody>
     {{range .Rows}}
-      <tr class="drift-{{.Drift}}">
-        <td><strong>{{.CapabilityID}}</strong><br><small>{{.OfferingID}}</small></td>
+      <tr class="drift-{{.Drift}}" id="row-{{anchorID .CapabilityID .OfferingID}}">
+        <td><strong>{{.CapabilityID}}</strong><br><small>{{.OfferingID}}</small><br><a href="/diff#diff-row-{{anchorID .CapabilityID .OfferingID}}" class="inline-link">Open in diff</a></td>
         <td>{{.InteractionMode}}</td>
         <td>{{.PriceWei}}{{if and (ne .OldPriceWei "") (ne .OldPriceWei .PriceWei)}}<br><small class="was">was {{.OldPriceWei}}</small>{{end}}</td>
         <td>
@@ -82,7 +178,7 @@
             </span>
           {{end}}
         </td>
-        <td class="worker"><code>{{.WorkerURL}}</code></td>
+        <td class="worker"><span class="copy-inline"><code>{{.WorkerURL}}</code><button type="button" class="copy-button" data-copy-value="{{.WorkerURL}}">Copy</button></span></td>
         <td>{{if .Published}}yes{{else}}no{{end}}</td>
         <td><span class="badge drift-{{.Drift}}">{{.Drift}}</span></td>
       </tr>
@@ -91,6 +187,7 @@
     {{end}}
     </tbody>
   </table>
+  </div>
 </section>
 
 <section class="upload">

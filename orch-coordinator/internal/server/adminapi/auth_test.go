@@ -66,4 +66,34 @@ func TestAuthManager_RejectsConcurrentLiveSession(t *testing.T) {
 	if _, err := auth.login("token-a", "bob"); !errors.Is(err, errSessionAlreadyActive) {
 		t.Fatalf("second login err = %v; want %v", err, errSessionAlreadyActive)
 	}
+	if err := errSessionAlreadyActive; err == nil || !errors.Is(err, errSessionAlreadyActive) {
+		t.Fatal("expected stable sentinel error")
+	}
+	if got := errSessionAlreadyActive.Error(); got == "" || got == "another operator session is already active" {
+		t.Fatalf("expected clearer live-session message, got %q", got)
+	}
+}
+
+func TestAuthManager_LoginReapsIdleExpiredSessionWithoutOldCookie(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC)
+	auth := newAuthManager([]string{"token-a"})
+	auth.now = func() time.Time { return now }
+
+	if _, err := auth.login("token-a", "alice"); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(sessionIdleTTL + time.Second)
+	sessionID, err := auth.login("token-a", "bob")
+	if err != nil {
+		t.Fatalf("expired session should not block fresh login: %v", err)
+	}
+	if sessionID == "" {
+		t.Fatal("expected session id")
+	}
+	if auth.current == nil || auth.current.actor != "bob" {
+		t.Fatalf("expected bob session to replace expired slot, got %+v", auth.current)
+	}
 }

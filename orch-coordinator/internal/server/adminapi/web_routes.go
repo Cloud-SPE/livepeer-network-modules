@@ -1,13 +1,19 @@
 package adminapi
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/published"
@@ -28,6 +34,7 @@ type WebDeps struct {
 	Audit          *audit.Log
 	Receive        *receive.Service
 	OrchEthAddress string
+	SecureOrchURL  string
 	Version        string
 }
 
@@ -41,14 +48,14 @@ func (s *Server) WebRoutes(deps WebDeps) error {
 	if err != nil {
 		return fmt.Errorf("adminapi: assets sub: %w", err)
 	}
-	s.mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assets))))
+	s.mux.Handle("GET /assets/", http.StripPrefix("/assets/", versionedAssetHandler(assets, deps.Version)))
 	s.mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
 		if s.auth == nil {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
 		renderPage(w, pages["login"], loginPage{
-			pageHeader: pageHeader{Title: "Operator login"},
+			pageHeader: pageHeader{Title: "Operator login", Version: deps.Version},
 			Error:      "",
 		})
 	})
@@ -64,7 +71,7 @@ func (s *Server) WebRoutes(deps WebDeps) error {
 		sessionID, err := s.auth.login(r.PostForm.Get("admin_token"), r.PostForm.Get("actor"))
 		if err != nil {
 			renderPage(w, pages["login"], loginPage{
-				pageHeader: pageHeader{Title: "Operator login"},
+				pageHeader: pageHeader{Title: "Operator login", Version: deps.Version},
 				Error:      err.Error(),
 			})
 			return
@@ -92,6 +99,9 @@ func (s *Server) WebRoutes(deps WebDeps) error {
 			http.NotFound(w, r)
 			return
 		}
+		renderPage(w, pages["overview"], buildOverviewPage(deps, r))
+	}))
+	s.mux.HandleFunc("GET /roster", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		renderPage(w, pages["roster"], buildRosterPage(deps, r))
 	}))
 	s.mux.HandleFunc("GET /diff", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
@@ -137,13 +147,32 @@ func loadTemplates() (map[string]*template.Template, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read layout: %w", err)
 	}
+	funcs := template.FuncMap{
+		"anchorID": func(parts ...string) string {
+			var b strings.Builder
+			for i, part := range parts {
+				if i > 0 {
+					b.WriteByte('-')
+				}
+				for _, r := range strings.ToLower(part) {
+					switch {
+					case unicode.IsLetter(r), unicode.IsDigit(r):
+						b.WriteRune(r)
+					default:
+						b.WriteByte('-')
+					}
+				}
+			}
+			return b.String()
+		},
+	}
 	out := make(map[string]*template.Template)
-	for _, page := range []string{"roster", "diff", "audit", "login"} {
+	for _, page := range []string{"overview", "roster", "diff", "audit", "login"} {
 		body, err := fs.ReadFile(web.FS, "templates/"+page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", page, err)
 		}
-		t, err := template.New(page).Parse(string(layout))
+		t, err := template.New(page).Funcs(funcs).Parse(string(layout))
 		if err != nil {
 			return nil, fmt.Errorf("parse layout for %s: %w", page, err)
 		}
@@ -155,8 +184,46 @@ func loadTemplates() (map[string]*template.Template, error) {
 	return out, nil
 }
 
+var zeroTime time.Time
+
+func versionedAssetHandler(fsys fs.FS, version string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+		if name == "." || name == "/" {
+			http.NotFound(w, r)
+			return
+		}
+		body, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		sum := sha256.Sum256(body)
+		etag := fmt.Sprintf("\"%x\"", sum[:])
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", assetCacheControl(version))
+		if ctype := mime.TypeByExtension(path.Ext(name)); ctype != "" {
+			w.Header().Set("Content-Type", ctype)
+		}
+		http.ServeContent(w, r, name, zeroTime, bytes.NewReader(body))
+	})
+}
+
+func assetCacheControl(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" || version == "dev" {
+		return "no-cache"
+	}
+	return "public, max-age=31536000, immutable"
+}
+
 type pageHeader struct {
 	Title          string
+	ActivePage     string
 	OrchEthAddress string
 	Version        string
 	Actor          string
@@ -164,13 +231,53 @@ type pageHeader struct {
 
 type rosterPage struct {
 	pageHeader
-	Rows         []roster.Row
-	BrokerStatus []scrape.BrokerStatus
-	DriftCounts  map[string]int
-	DriftKinds   []string
-	Filter       roster.Filter
-	UploadFlash  *uploadFlash
-	RefreshFlash *actionFlash
+	Rows                 []roster.Row
+	BrokerStatus         []scrape.BrokerStatus
+	DriftCounts          map[string]int
+	DriftKinds           []string
+	Filter               roster.Filter
+	UploadFlash          *uploadFlash
+	RefreshFlash         *actionFlash
+	PublishState         string
+	PublishTitle         string
+	PublishNote          string
+	RiskItems            []alertItem
+	BrokerAlerts         []alertItem
+	CandidateSeq         uint64
+	CandidateEthAddress  string
+	CandidateCanonHash   string
+	HasCandidateIdentity bool
+	CycleStage           string
+	CycleTitle           string
+	CycleNote            string
+	CycleEvents          []cycleEventView
+	ReconcileSteps       []checkpointStepView
+}
+
+type overviewPage struct {
+	pageHeader
+	TotalRows           int
+	PublishedRows       int
+	BrokerCount         int
+	DriftCounts         map[string]int
+	CandidateSeq        uint64
+	CandidateEthAddress string
+	CandidateCanonHash  string
+	HasCandidate        bool
+	PublishedSeq        uint64
+	HasPublished        bool
+	LatestAuditOutcome  string
+	LatestAuditAt       string
+	PublishState        string
+	PublishTitle        string
+	PublishNote         string
+	RiskItems           []alertItem
+	BrokerAlerts        []alertItem
+	CycleStage          string
+	CycleTitle          string
+	CycleNote           string
+	CycleEvents         []cycleEventView
+	ReconcileSteps      []checkpointStepView
 }
 
 type diffPage struct {
@@ -200,6 +307,88 @@ type actionFlash struct {
 	Message string
 }
 
+type alertItem struct {
+	Message string
+	Href    string
+}
+
+type cycleEventView struct {
+	Anchor  string
+	Outcome string
+	At      string
+	Actor   string
+	Note    string
+}
+
+type checkpointStepView struct {
+	Label  string
+	Status string
+	Note   string
+	Href   string
+}
+
+func buildOverviewPage(deps WebDeps, r *http.Request) overviewPage {
+	cand := getCandidatePayload(deps)
+	pub := readPublishedPayload(deps)
+	var snap scrape.Snapshot
+	if deps.Scrape != nil {
+		snap = deps.Scrape.Snapshot()
+	}
+	view, _ := roster.BuildView(deps.OrchEthAddress, cand, pub, snap)
+	if view == nil {
+		view = &roster.View{OrchEthAddress: deps.OrchEthAddress, DriftCounts: map[string]int{}}
+	}
+	var events []audit.Event
+	if deps.Audit != nil {
+		events, _ = deps.Audit.Recent(20)
+	}
+	out := overviewPage{
+		pageHeader: pageHeader{
+			Title:          "Overview",
+			ActivePage:     "overview",
+			OrchEthAddress: deps.OrchEthAddress,
+			Version:        deps.Version,
+			Actor:          actorFromRequest(r),
+		},
+		TotalRows:   len(view.Rows),
+		BrokerCount: len(view.BrokerStatus),
+		DriftCounts: view.DriftCounts,
+	}
+	for _, row := range view.Rows {
+		if row.Published {
+			out.PublishedRows++
+		}
+	}
+	if cand != nil {
+		out.HasCandidate = true
+		out.CandidateSeq = cand.PublicationSeq
+		out.CandidateEthAddress = cand.Orch.EthAddress
+		out.CandidateCanonHash = manifestCanonicalHash(cand)
+	}
+	if pub != nil {
+		out.HasPublished = true
+		out.PublishedSeq = pub.PublicationSeq
+	}
+	if len(events) > 0 {
+		out.LatestAuditOutcome = string(events[0].Outcome)
+		out.LatestAuditAt = events[0].At.UTC().Format(time.RFC3339)
+	}
+	out.PublishState, out.PublishTitle, out.PublishNote = assessPublishReadiness(view, out.HasCandidate, out.HasPublished)
+	out.RiskItems = collectDriftAlerts(view.Rows)
+	out.BrokerAlerts = collectBrokerAlerts(view.BrokerStatus)
+	out.CycleStage, out.CycleTitle, out.CycleNote = assessCoordinatorCycle(
+		out.HasCandidate,
+		out.CandidateSeq,
+		out.HasPublished,
+		out.PublishedSeq,
+		downloadedCandidate(events, out.CandidateCanonHash),
+		signedReturned(events, out.CandidateCanonHash),
+	)
+	out.CycleEvents = cycleTimeline(events, out.CandidateCanonHash)
+	out.ReconcileSteps = coordinatorChecklist(out.CandidateCanonHash, events, out.CycleEvents, deps.SecureOrchURL)
+	return out
+}
+
 func buildRosterPage(deps WebDeps, r *http.Request) rosterPage {
 	cand := getCandidatePayload(deps)
 	pub := readPublishedPayload(deps)
@@ -227,21 +416,323 @@ func buildRosterPage(deps WebDeps, r *http.Request) rosterPage {
 	if len(out.DriftCounts) == 0 {
 		out.DriftCounts = view.DriftCounts
 	}
-	return rosterPage{
+	publishState, publishTitle, publishNote := assessPublishReadiness(view, cand != nil, pub != nil)
+	page := rosterPage{
 		pageHeader: pageHeader{
 			Title:          "Roster",
+			ActivePage:     "roster",
 			OrchEthAddress: deps.OrchEthAddress,
 			Version:        deps.Version,
 			Actor:          actorFromRequest(r),
 		},
-		Rows:         out.Rows,
-		BrokerStatus: view.BrokerStatus,
-		DriftCounts:  out.DriftCounts,
-		DriftKinds:   driftKinds,
-		Filter:       filter,
-		UploadFlash:  readUploadFlash(r),
-		RefreshFlash: readRefreshFlash(r),
+		Rows:                 out.Rows,
+		BrokerStatus:         view.BrokerStatus,
+		DriftCounts:          out.DriftCounts,
+		DriftKinds:           driftKinds,
+		Filter:               filter,
+		UploadFlash:          readUploadFlash(r),
+		RefreshFlash:         readRefreshFlash(r),
+		PublishState:         publishState,
+		PublishTitle:         publishTitle,
+		PublishNote:          publishNote,
+		RiskItems:            collectDriftAlerts(out.Rows),
+		BrokerAlerts:         collectBrokerAlerts(view.BrokerStatus),
+		HasCandidateIdentity: cand != nil,
 	}
+	if cand != nil {
+		page.CandidateSeq = cand.PublicationSeq
+		page.CandidateEthAddress = cand.Orch.EthAddress
+		page.CandidateCanonHash = manifestCanonicalHash(cand)
+	}
+	var events []audit.Event
+	if deps.Audit != nil {
+		events, _ = deps.Audit.Recent(20)
+	}
+	publishedSeq := uint64(0)
+	if pub != nil {
+		publishedSeq = pub.PublicationSeq
+	}
+	page.CycleStage, page.CycleTitle, page.CycleNote = assessCoordinatorCycle(
+		cand != nil,
+		page.CandidateSeq,
+		pub != nil,
+		publishedSeq,
+		downloadedCandidate(events, page.CandidateCanonHash),
+		signedReturned(events, page.CandidateCanonHash),
+	)
+	page.CycleEvents = cycleTimeline(events, page.CandidateCanonHash)
+	page.ReconcileSteps = coordinatorChecklist(page.CandidateCanonHash, events, page.CycleEvents, deps.SecureOrchURL)
+	return page
+}
+
+func assessPublishReadiness(view *roster.View, hasCandidate, hasPublished bool) (state, title, note string) {
+	if !hasCandidate {
+		return "warn", "Candidate not built", "Refresh the roster and rebuild the candidate before carrying anything to secure-orch."
+	}
+	if view == nil || len(view.Rows) == 0 {
+		return "warn", "No roster rows", "The candidate currently contains no capability tuples. Verify broker availability before continuing."
+	}
+	hasBrokerIssue := false
+	for _, broker := range view.BrokerStatus {
+		if broker.Freshness != "ok" || broker.LastError != "" || broker.HealthError != "" {
+			hasBrokerIssue = true
+			break
+		}
+	}
+	changed := 0
+	for kind, count := range view.DriftCounts {
+		if kind != diff.DriftNone {
+			changed += count
+		}
+	}
+	if changed == 0 && hasPublished {
+		return "warn", "No-op publish", "The current candidate does not change the published manifest. Review whether a hand-carry sign cycle is still necessary."
+	}
+	if view.DriftCounts[diff.DriftRemoved] > 0 {
+		return "warn", "Destructive drift present", "One or more tuples would be removed on the next publish. Review the candidate diff carefully before carrying it to secure-orch."
+	}
+	if hasBrokerIssue {
+		return "warn", "Broker health needs review", "The candidate exists, but one or more brokers are stale or reporting health issues. Review roster details before the next publish."
+	}
+	if !hasPublished {
+		return "ok", "Ready for first publish", "The candidate is built and no published manifest exists yet. Carry the candidate to secure-orch for the initial sign cycle."
+	}
+	return "ok", "Ready for secure-orch review", "Candidate and broker state look healthy enough for operator review. Continue with candidate diff inspection, then hand-carry to secure-orch."
+}
+
+func assessCoordinatorCycle(hasCandidate bool, candidateSeq uint64, hasPublished bool, publishedSeq uint64, downloaded, returned bool) (state, title, note string) {
+	switch {
+	case hasCandidate && !hasPublished:
+		if returned {
+			return "warn", "Signed manifest returned", "A signed manifest came back from secure-orch for this candidate, but no publish is live yet. Review the audit trail for publish acceptance or failure."
+		}
+		if downloaded {
+			return "warn", "Initial candidate downloaded", "The initial candidate tarball was downloaded from coordinator. The next step is secure-orch review, signing, and upload back here."
+		}
+		return "warn", "Initial candidate awaiting secure-orch", "A candidate exists locally and no manifest is published yet. Download it, carry it to secure-orch, then return the signed result here."
+	case hasCandidate && candidateSeq > publishedSeq:
+		if returned {
+			return "warn", "Signed manifest returned", "A signed manifest for the newer candidate was uploaded back to coordinator. Check whether publish acceptance succeeded or whether follow-up is needed."
+		}
+		if downloaded {
+			return "warn", "Awaiting signed return", "This candidate has been downloaded from coordinator and is now waiting on secure-orch signing and upload back to coordinator."
+		}
+		return "warn", "Awaiting secure-orch return", "The candidate is newer than the published manifest. The current stage is secure-orch review, signing, and upload back to coordinator."
+	case hasCandidate && hasPublished && candidateSeq == publishedSeq:
+		return "ok", "Current candidate already published", "The current candidate identity matches the published manifest. No pending hand-carry return is visible."
+	case hasPublished:
+		return "info", "Published state only", "A manifest is published, but there is no current candidate in the coordinator view."
+	default:
+		return "info", "Coordinator idle", "No candidate or published manifest is available yet."
+	}
+}
+
+func downloadedCandidate(events []audit.Event, manifestHash string) bool {
+	if manifestHash == "" {
+		return false
+	}
+	for _, event := range events {
+		if event.Outcome == audit.OutcomeCandidateDownloaded && event.ManifestSHA256 == manifestHash {
+			return true
+		}
+	}
+	return false
+}
+
+func signedReturned(events []audit.Event, manifestHash string) bool {
+	if manifestHash == "" {
+		return false
+	}
+	for _, event := range events {
+		if event.Outcome == audit.OutcomeSignedReturned && event.ManifestSHA256 == manifestHash {
+			return true
+		}
+	}
+	return false
+}
+
+func cycleTimeline(events []audit.Event, manifestHash string) []cycleEventView {
+	if manifestHash == "" {
+		return nil
+	}
+	out := make([]cycleEventView, 0, 8)
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		if event.ManifestSHA256 != manifestHash {
+			continue
+		}
+		out = append(out, cycleEventView{
+			Anchor:  fmt.Sprintf("cycle-%d", len(out)+1),
+			Outcome: string(event.Outcome),
+			At:      event.At.UTC().Format(time.RFC3339),
+			Actor:   event.Actor,
+			Note:    event.Note,
+		})
+		if len(out) >= 8 {
+			break
+		}
+	}
+	return out
+}
+
+func coordinatorChecklist(manifestHash string, events []audit.Event, timeline []cycleEventView, secureOrchURL string) []checkpointStepView {
+	hasDownload := downloadedCandidate(events, manifestHash)
+	hasReturned := signedReturned(events, manifestHash)
+	hasAccepted := acceptedCandidate(events, manifestHash)
+	return []checkpointStepView{
+		{Label: "1. Candidate downloaded", Status: checkpointStatus(hasDownload), Note: "Recorded in coordinator when candidate.tar.gz is downloaded.", Href: timelineHref(timeline, string(audit.OutcomeCandidateDownloaded))},
+		{Label: "2. Candidate loaded on secure-orch", Status: "remote", Note: remoteChecklistNote("Tracked on secure-orch after the upload reaches the cold-key host.", "--secure-orch-url", secureOrchURL), Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")},
+		{Label: "3. Diff reviewed on secure-orch", Status: "remote", Note: remoteChecklistNote("Tracked on secure-orch when the operator opens the candidate diff.", "--secure-orch-url", secureOrchURL), Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")},
+		{Label: "4. Manifest signed on secure-orch", Status: "remote", Note: remoteChecklistNote("Tracked on secure-orch when sign and write_signed complete.", "--secure-orch-url", secureOrchURL), Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")},
+		{Label: "5. Signed manifest returned", Status: checkpointStatus(hasReturned), Note: "Recorded in coordinator when the signed manifest is uploaded back.", Href: timelineHref(timeline, string(audit.OutcomeSignedReturned))},
+		{Label: "6. Manifest published", Status: checkpointStatus(hasAccepted), Note: "Recorded in coordinator when publish acceptance completes.", Href: timelineHref(timeline, string(audit.OutcomeAccepted))},
+	}
+}
+
+func acceptedCandidate(events []audit.Event, manifestHash string) bool {
+	if manifestHash == "" {
+		return false
+	}
+	for _, event := range events {
+		if event.Outcome == audit.OutcomeAccepted && event.ManifestSHA256 == manifestHash {
+			return true
+		}
+	}
+	return false
+}
+
+func checkpointStatus(done bool) string {
+	if done {
+		return "done"
+	}
+	return "pending"
+}
+
+func timelineHref(events []cycleEventView, outcomes ...string) string {
+	for _, event := range events {
+		for _, outcome := range outcomes {
+			if event.Outcome == outcome && event.Anchor != "" {
+				return "#" + event.Anchor
+			}
+		}
+	}
+	return ""
+}
+
+func remoteEvidenceHref(baseURL, suffix string) string {
+	if strings.TrimSpace(baseURL) == "" {
+		return ""
+	}
+	return strings.TrimRight(baseURL, "/") + suffix
+}
+
+func remoteChecklistNote(baseNote, flagName, baseURL string) string {
+	if strings.TrimSpace(baseURL) == "" {
+		return baseNote + " Set " + flagName + " to enable a direct jump to the peer console."
+	}
+	return baseNote + " Match canonical_sha256 on arrival before continuing the hand-carry cycle."
+}
+
+func collectDriftAlerts(rows []roster.Row) []alertItem {
+	alerts := make([]alertItem, 0)
+	for _, row := range rows {
+		switch row.Drift {
+		case diff.DriftRemoved:
+			alerts = append(alerts, alertItem{
+				Message: row.CapabilityID + " / " + row.OfferingID + " will be removed on the next publish.",
+				Href:    "/diff#diff-row-" + anchorID(row.CapabilityID, row.OfferingID),
+			})
+		case diff.DriftPriceChanged:
+			alerts = append(alerts, alertItem{
+				Message: row.CapabilityID + " / " + row.OfferingID + " changed price from " + row.OldPriceWei + " to " + row.NewPriceWei + ".",
+				Href:    "/diff#diff-row-" + anchorID(row.CapabilityID, row.OfferingID),
+			})
+		case diff.DriftModeChanged:
+			alerts = append(alerts, alertItem{
+				Message: row.CapabilityID + " / " + row.OfferingID + " changed interaction mode.",
+				Href:    "/diff#diff-row-" + anchorID(row.CapabilityID, row.OfferingID),
+			})
+		case diff.DriftWorkerChanged:
+			alerts = append(alerts, alertItem{
+				Message: row.CapabilityID + " / " + row.OfferingID + " now points to a different worker URL.",
+				Href:    "/diff#diff-row-" + anchorID(row.CapabilityID, row.OfferingID),
+			})
+		}
+		if len(alerts) >= 6 {
+			break
+		}
+	}
+	return alerts
+}
+
+func collectBrokerAlerts(brokers []scrape.BrokerStatus) []alertItem {
+	alerts := make([]alertItem, 0)
+	for _, broker := range brokers {
+		switch {
+		case broker.Freshness != scrape.FreshnessOK:
+			alerts = append(alerts, alertItem{
+				Message: broker.Name + " is " + broker.Freshness + " and needs review before the next publish.",
+				Href:    "#broker-" + anchorID(broker.Name),
+			})
+		case broker.HealthError != "":
+			alerts = append(alerts, alertItem{
+				Message: broker.Name + " health check failed: " + broker.HealthError,
+				Href:    "#broker-" + anchorID(broker.Name),
+			})
+		case broker.LastError != "":
+			alerts = append(alerts, alertItem{
+				Message: broker.Name + " scrape error: " + broker.LastError,
+				Href:    "#broker-" + anchorID(broker.Name),
+			})
+		case broker.MetadataUnhealthyTuples > 0:
+			alerts = append(alerts, alertItem{
+				Message: broker.Name + " reports " + fmt.Sprintf("%d", broker.MetadataUnhealthyTuples) + " unhealthy tuple(s).",
+				Href:    "#broker-" + anchorID(broker.Name),
+			})
+		case broker.MetadataStaleTuples > 0:
+			alerts = append(alerts, alertItem{
+				Message: broker.Name + " reports " + fmt.Sprintf("%d", broker.MetadataStaleTuples) + " stale tuple(s).",
+				Href:    "#broker-" + anchorID(broker.Name),
+			})
+		}
+		if len(alerts) >= 6 {
+			break
+		}
+	}
+	return alerts
+}
+
+func anchorID(parts ...string) string {
+	var b strings.Builder
+	for i, part := range parts {
+		if i > 0 {
+			b.WriteByte('-')
+		}
+		for _, r := range strings.ToLower(part) {
+			switch {
+			case unicode.IsLetter(r), unicode.IsDigit(r):
+				b.WriteRune(r)
+			default:
+				b.WriteByte('-')
+			}
+		}
+	}
+	return b.String()
+}
+
+func manifestCanonicalHash(m *types.ManifestPayload) string {
+	if m == nil {
+		return ""
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return ""
+	}
+	canon, err := candidate.CanonicalBytesFromJSON(raw)
+	if err != nil {
+		return ""
+	}
+	return candidate.SHA256Hex(canon)
 }
 
 func buildDiffPage(deps WebDeps, r *http.Request) diffPage {
@@ -252,7 +743,7 @@ func buildDiffPage(deps WebDeps, r *http.Request) diffPage {
 		res = &diff.Result{Counts: map[string]int{}}
 	}
 	return diffPage{
-		pageHeader:  pageHeader{Title: "Diff", OrchEthAddress: deps.OrchEthAddress, Version: deps.Version, Actor: actorFromRequest(r)},
+		pageHeader:  pageHeader{Title: "Diff", ActivePage: "diff", OrchEthAddress: deps.OrchEthAddress, Version: deps.Version, Actor: actorFromRequest(r)},
 		Rows:        res.Rows,
 		DriftCounts: res.Counts,
 	}
@@ -261,7 +752,7 @@ func buildDiffPage(deps WebDeps, r *http.Request) diffPage {
 func buildAuditPage(deps WebDeps, r *http.Request) auditPage {
 	events, _ := deps.Audit.Recent(50)
 	return auditPage{
-		pageHeader: pageHeader{Title: "Audit", OrchEthAddress: deps.OrchEthAddress, Version: deps.Version, Actor: actorFromRequest(r)},
+		pageHeader: pageHeader{Title: "Audit", ActivePage: "audit", OrchEthAddress: deps.OrchEthAddress, Version: deps.Version, Actor: actorFromRequest(r)},
 		Events:     events,
 	}
 }
@@ -325,7 +816,7 @@ func redirectUploadFeedback(w http.ResponseWriter, r *http.Request, outcome, mes
 	if publicationSeq > 0 {
 		q.Set("upload_publication_seq", fmt.Sprintf("%d", publicationSeq))
 	}
-	http.Redirect(w, r, "/?"+q.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, "/roster?"+q.Encode(), http.StatusSeeOther)
 }
 
 func readRefreshFlash(r *http.Request) *actionFlash {
@@ -342,5 +833,5 @@ func redirectRefreshFeedback(w http.ResponseWriter, r *http.Request, outcome, me
 	q := make(url.Values)
 	q.Set("refresh_outcome", outcome)
 	q.Set("refresh_message", message)
-	http.Redirect(w, r, "/?"+q.Encode(), http.StatusSeeOther)
+	http.Redirect(w, r, "/roster?"+q.Encode(), http.StatusSeeOther)
 }

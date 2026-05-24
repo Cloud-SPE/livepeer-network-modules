@@ -200,8 +200,33 @@ func (s *Service) receiveInnerFrom(body []byte, uploader UploaderIdentity) (*Res
 	}
 
 	if err := s.publish(body); err != nil {
+		if _, appendErr := s.audit.Append(audit.Event{
+			At:              now,
+			Outcome:         audit.OutcomeSignedReturned,
+			Actor:           uploader.Actor,
+			Uploader:        uploader.Name,
+			SignatureSHA256: sigHash,
+			ManifestSHA256:  manifestHash,
+			PublicationSeq:  sm.Manifest.PublicationSeq,
+			Note:            "signed manifest returned from secure-orch",
+		}); appendErr != nil {
+			return nil, fmt.Errorf("audit append signed_returned: %w", appendErr)
+		}
 		s.recordFailure(audit.OutcomePublishFailed, uploader, manifestHash, sigHash, sm.Manifest.PublicationSeq, err.Error())
 		return nil, &VerifyError{Code: audit.OutcomePublishFailed, Msg: err.Error()}
+	}
+
+	if _, err := s.audit.Append(audit.Event{
+		At:              now,
+		Outcome:         audit.OutcomeSignedReturned,
+		Actor:           uploader.Actor,
+		Uploader:        uploader.Name,
+		SignatureSHA256: sigHash,
+		ManifestSHA256:  manifestHash,
+		PublicationSeq:  sm.Manifest.PublicationSeq,
+		Note:            "signed manifest returned from secure-orch",
+	}); err != nil {
+		return nil, fmt.Errorf("audit append signed_returned: %w", err)
 	}
 
 	if _, err := s.audit.Append(audit.Event{

@@ -1,0 +1,146 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Orch coordinator</p>
+  <h1>Overview</h1>
+  <p class="muted">LAN-side publish coordinator for broker scrape health, candidate assembly, and signed-manifest publication.</p>
+</section>
+
+<section class="message-card message-card-{{.CycleStage}}">
+  <h2>{{.CycleTitle}}</h2>
+  <p>{{.CycleNote}}</p>
+</section>
+
+<section class="message-card message-card-{{.PublishState}}">
+  <h2>{{.PublishTitle}}</h2>
+  <p>{{.PublishNote}}</p>
+</section>
+
+{{if or .RiskItems .BrokerAlerts}}
+<section>
+  <h2>Attention points</h2>
+  <div class="alert-list">
+    {{range .RiskItems}}
+    <article class="alert-item alert-warn">
+      <strong>Drift review</strong>
+      <span>{{.Message}} <a href="{{.Href}}" class="alert-link">Jump to item</a></span>
+    </article>
+    {{end}}
+    {{range .BrokerAlerts}}
+    <article class="alert-item alert-info">
+      <strong>Broker health</strong>
+      <span>{{.Message}} <a href="{{.Href}}" class="alert-link">Jump to broker</a></span>
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+<section class="metric-grid">
+  <article class="metric-card">
+    <p class="metric-label">Candidate roster rows</p>
+    <p class="metric-value">{{.TotalRows}}</p>
+    <p class="metric-sub">{{if .HasCandidate}}Current candidate publication_seq {{.CandidateSeq}}.{{else}}No candidate has been built yet.{{end}}</p>
+  </article>
+  <article class="metric-card">
+    <p class="metric-label">Published rows</p>
+    <p class="metric-value">{{.PublishedRows}}</p>
+    <p class="metric-sub">{{if .HasPublished}}Published manifest publication_seq {{.PublishedSeq}}.{{else}}No manifest is currently published.{{end}}</p>
+  </article>
+  <article class="metric-card">
+    <p class="metric-label">Broker coverage</p>
+    <p class="metric-value">{{.BrokerCount}}</p>
+    <p class="metric-sub">Tracked broker(s) contributing to the current candidate view.</p>
+  </article>
+</section>
+
+{{if .HasCandidate}}
+<section>
+  <h2>Candidate identity</h2>
+  <p class="muted">Verify these fields after upload in secure-orch before completing the sign step.</p>
+  <dl class="meta">
+    <dt>publication_seq</dt><dd>{{.CandidateSeq}}</dd>
+    <dt>orch.eth_address</dt><dd><span class="copy-inline"><code>{{.CandidateEthAddress}}</code><button type="button" class="copy-button" data-copy-value="{{.CandidateEthAddress}}">Copy</button></span></dd>
+    <dt>canonical_sha256</dt><dd><span class="copy-inline"><code>{{.CandidateCanonHash}}</code><button type="button" class="copy-button" data-copy-value="{{.CandidateCanonHash}}">Copy</button></span></dd>
+  </dl>
+</section>
+{{end}}
+
+{{if .CycleEvents}}
+<section id="cycle-timeline">
+  <h2>Cycle timeline</h2>
+  <div class="timeline">
+    {{range .CycleEvents}}
+    <article class="timeline-item" id="{{.Anchor}}">
+      <div class="timeline-head">
+        <span class="badge audit-{{.Outcome}}">{{.Outcome}}</span>
+        <span class="muted">{{.At}}</span>
+      </div>
+      {{if .Actor}}<p class="muted">actor {{.Actor}}</p>{{end}}
+      {{if .Note}}<p class="muted">{{.Note}}</p>{{end}}
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+{{if .ReconcileSteps}}
+<section>
+  <h2>Cross-surface checklist</h2>
+  <div class="checklist">
+    {{range .ReconcileSteps}}
+    <article class="checklist-item">
+      <div class="timeline-head">
+        <strong>{{.Label}}</strong>
+        <span class="badge checkpoint-{{.Status}}">{{.Status}}</span>
+      </div>
+      <p class="muted">{{.Note}}{{if .Href}} <a href="{{.Href}}" class="inline-link">Open evidence</a>{{end}}</p>
+    </article>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+<section>
+  <h2>Drift snapshot</h2>
+  <div class="badges">
+    {{range $kind, $n := .DriftCounts}}
+      {{if gt $n 0}}<span class="badge drift-{{$kind}}">{{$kind}}: {{$n}}</span>{{end}}
+    {{end}}
+    {{if not .DriftCounts}}<span class="badge drift-none">none: 0</span>{{end}}
+  </div>
+  <p class="muted">Use the roster to inspect per-capability health and use the candidate diff before carrying anything to secure-orch.</p>
+</section>
+
+<section>
+  <h2>Publish workflow</h2>
+  <div class="workflow-grid">
+    <article class="step-card">
+      <h3>1. Review roster health</h3>
+      <p class="muted">Check broker freshness, tuple metadata, and which capabilities would change on the next publish.</p>
+      <a href="/roster" class="navlink">Open roster</a>
+    </article>
+    <article class="step-card">
+      <h3>2. Carry the candidate for signing</h3>
+      <p class="muted">Download the candidate tarball and move it to secure-orch for authoritative diff review and signing.</p>
+      <a href="/candidate.tar.gz" class="navlink">Download candidate</a>
+    </article>
+    <article class="step-card">
+      <h3>3. Upload the signed result</h3>
+      <p class="muted">Return the cold-key-signed manifest here, verify the signature, and atomically swap the published file.</p>
+      <a href="/audit" class="navlink">Review publish audit</a>
+    </article>
+  </div>
+</section>
+
+<section>
+  <h2>Latest publish activity</h2>
+  {{if .LatestAuditOutcome}}
+  <dl class="meta">
+    <dt>outcome</dt><dd><span class="badge audit-{{.LatestAuditOutcome}}">{{.LatestAuditOutcome}}</span></dd>
+    <dt>at</dt><dd>{{.LatestAuditAt}}</dd>
+  </dl>
+  {{else}}
+  <p class="muted">No publish or upload audit events recorded yet.</p>
+  {{end}}
+</section>
+{{end}}

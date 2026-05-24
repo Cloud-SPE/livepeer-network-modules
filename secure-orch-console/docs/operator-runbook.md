@@ -22,7 +22,7 @@ deployment-layer choice (plan 0019 §9.3 / §13 Q6).
 If `SECURE_ORCH_ADMIN_TOKENS` is configured, the operator must log in
 with an admin token and actor string before using the UI. The actor is
 recorded into audit events. The UI permits one active operator session
-at a time, with a 12-hour absolute timeout and a 30-minute idle
+at a time, with a 4-hour absolute timeout and a 30-minute idle
 timeout. Expired sessions are released automatically on the next
 request or login attempt.
 
@@ -46,13 +46,16 @@ secure-orch-console \
   --last-signed=/var/lib/secure-orch/last-signed.json \
   --audit-log=/var/log/secure-orch/audit.log.jsonl \
   --audit-rotate-size=104857600 \
+  --coordinator-url=http://10.0.0.5:8080 \
   --listen=127.0.0.1:8080
 ```
 
 The keystore selector is `v3:<path>`. The password is read from a file
 to avoid TTY-echo footguns; alternatively set
 `LIVEPEER_KEYSTORE_PASSWORD` in the environment. The console refuses
-to start if `--listen` is not an explicit `host:port`.
+to start if `--listen` is not an explicit `host:port`. `--coordinator-url`
+is optional; when set, the review checklist can jump straight back to the
+matching coordinator timeline section during the hand-carry cycle.
 
 ## Sign cycle
 

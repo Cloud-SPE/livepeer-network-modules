@@ -3,41 +3,76 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} - secure-orch console</title>
-  <link rel="stylesheet" href="/static/console.css">
+  <script>
+    (() => {
+      try {
+        const theme = localStorage.getItem("operator-theme");
+        if (theme === "light") {
+          document.documentElement.dataset.theme = "light";
+        }
+      } catch (_) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/console.css?v={{.AssetVersion}}">
+  <script src="/static/console.js?v={{.AssetVersion}}" defer></script>
 </head>
 <body>
-<header>
-  <nav>
-    <a href="/protocol-status" class="brand">secure-orch-console</a>
-    <span class="orch">{{.SignerAddress | lower}}</span>
-    <a href="/protocol-status" class="navlink {{if eq .ActivePage "protocol-status"}}current{{end}}">Protocol status</a>
-    <a href="/protocol-actions" class="navlink {{if eq .ActivePage "protocol-actions"}}current{{end}}">Protocol actions</a>
-    <a href="/manifests" class="navlink {{if eq .ActivePage "manifests"}}current{{end}}">Manifests</a>
-    <a href="/audit" class="navlink {{if eq .ActivePage "audit"}}current{{end}}">Audit</a>
-    {{if .Actor}}
-    <span class="actor">actor {{.Actor}}</span>
-    <form action="/logout" method="post" class="logout">
-      <button type="submit">Logout</button>
-    </form>
+<div class="shell">
+  <header class="shell-topbar">
+    <div class="row">
+      <button type="button" class="hamburger" data-sidebar-toggle aria-label="Toggle navigation">
+        <span></span><span></span><span></span>
+      </button>
+      <a href="/overview" class="brand">secure-orch console</a>
+    </div>
+    <div class="row shell-meta">
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch color theme">Light mode</button>
+      <span class="identity-chip">signer <code>{{.SignerAddress | lower}}</code></span>
+      {{if .Actor}}<span class="identity-chip">actor {{.Actor}}</span>{{end}}
+      {{if .Actor}}
+      <form action="/logout" method="post" class="logout">
+        <button type="submit" class="ghost-button">Logout</button>
+      </form>
+      {{end}}
+    </div>
+  </header>
+
+  <div class="shell-sidebar-backdrop" data-sidebar-backdrop hidden></div>
+  <aside class="shell-sidebar" data-sidebar>
+    <div class="sidebar-section">Operations</div>
+    <nav class="sidebar-nav" aria-label="secure-orch pages">
+      <a href="/overview" class="sidebar-item {{if eq .ActivePage "overview"}}active{{end}}">Overview</a>
+      <a href="/protocol-status" class="sidebar-item {{if eq .ActivePage "protocol-status"}}active{{end}}">Protocol status</a>
+      <a href="/protocol-actions" class="sidebar-item {{if eq .ActivePage "protocol-actions"}}active{{end}}">Protocol actions</a>
+      <a href="/manifests" class="sidebar-item {{if eq .ActivePage "manifests"}}active{{end}}">Manifest review</a>
+      <a href="/audit" class="sidebar-item {{if eq .ActivePage "audit"}}active{{end}}">Audit trail</a>
+    </nav>
+    <section class="sidebar-note">
+      <h2>Cold-key posture</h2>
+      <p>Keep secure-orch loopback-bound and reach it through <code>ssh -L</code>.</p>
+    </section>
+  </aside>
+
+  <main class="shell-content">
+    {{if eq .ActivePage "overview"}}
+    {{template "overview-content" .}}
+    {{else if eq .ActivePage "protocol-status"}}
+    {{template "protocol-status-content" .}}
+    {{else if eq .ActivePage "protocol-actions"}}
+    {{template "protocol-actions-content" .}}
+    {{else if eq .ActivePage "manifests"}}
+    {{template "manifests-content" .}}
+    {{else if eq .ActivePage "audit"}}
+    {{template "audit-content" .}}
     {{end}}
-  </nav>
-</header>
-<main>
-{{if eq .ActivePage "protocol-status"}}
-{{template "protocol-status-content" .}}
-{{else if eq .ActivePage "protocol-actions"}}
-{{template "protocol-actions-content" .}}
-{{else if eq .ActivePage "manifests"}}
-{{template "manifests-content" .}}
-{{else if eq .ActivePage "audit"}}
-{{template "audit-content" .}}
-{{end}}
-</main>
-<footer>
-  <span>secure-orch cold-key console</span>
-  <span>Recommended posture: keep secure-orch loopback-bound and use <code>ssh -L</code>.</span>
-</footer>
+    <footer class="page-footer">
+      <span>secure-orch cold-key console</span>
+      <span>Explicit review and typed confirmation remain required for every signing action.</span>
+    </footer>
+  </main>
+</div>
 </body>
 </html>
 {{end}}

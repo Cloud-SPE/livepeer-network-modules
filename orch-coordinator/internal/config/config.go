@@ -130,17 +130,30 @@ func validateBaseURL(s string) error {
 	if s == "" {
 		return errors.New("required")
 	}
+	_, err := NormalizeOptionalBaseURL(s)
+	return err
+}
+
+func NormalizeOptionalBaseURL(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
 	u, err := url.Parse(s)
 	if err != nil {
-		return fmt.Errorf("parse %q: %w", s, err)
+		return "", fmt.Errorf("parse %q: %w", s, err)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("scheme must be http or https, got %q", u.Scheme)
+		return "", fmt.Errorf("scheme must be http or https, got %q", u.Scheme)
 	}
 	if u.Host == "" {
-		return errors.New("host is required")
+		return "", errors.New("host is required")
 	}
-	return nil
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("query and fragment are not allowed")
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	return u.String(), nil
 }
 
 func isHexDigit(c rune) bool {

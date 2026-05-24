@@ -246,17 +246,23 @@ func TestUpload_AuthActorRecordedInAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := false
+	foundReturned := false
 	for _, event := range events {
-		if event.Outcome != audit.OutcomeAccepted {
-			continue
+		if event.Outcome == audit.OutcomeSignedReturned {
+			foundReturned = true
 		}
-		if event.Actor != "operator2" {
-			t.Fatalf("actor = %q, want operator2", event.Actor)
+		if event.Outcome == audit.OutcomeAccepted {
+			if event.Actor != "operator2" {
+				t.Fatalf("actor = %q, want operator2", event.Actor)
+			}
+			if event.Uploader != "operator2" {
+				t.Fatalf("uploader = %q, want operator2", event.Uploader)
+			}
+			found = true
 		}
-		if event.Uploader != "operator2" {
-			t.Fatalf("uploader = %q, want operator2", event.Uploader)
-		}
-		found = true
+	}
+	if !foundReturned {
+		t.Fatal("expected signed_returned audit event")
 	}
 	if !found {
 		t.Fatal("expected accepted audit event")
@@ -329,6 +335,9 @@ func TestUpload_UIRouteRedirectsBackToRoster(t *testing.T) {
 	if !strings.Contains(loc, "upload_outcome=accepted") {
 		t.Fatalf("unexpected redirect %q", loc)
 	}
+	if !strings.HasPrefix(loc, "/roster?") {
+		t.Fatalf("expected roster redirect, got %q", loc)
+	}
 }
 
 func TestUpload_RosterRendersUploadFlash(t *testing.T) {
@@ -367,7 +376,7 @@ func TestUpload_RosterRendersUploadFlash(t *testing.T) {
 	}
 	loginResp.Body.Close()
 
-	resp, err := client.Get("http://" + srv.Addr() + "/?upload_message=candidate+drift&upload_outcome=drift_rejected")
+	resp, err := client.Get("http://" + srv.Addr() + "/roster?upload_message=candidate+drift&upload_outcome=drift_rejected")
 	if err != nil {
 		t.Fatal(err)
 	}

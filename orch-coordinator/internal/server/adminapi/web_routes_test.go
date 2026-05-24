@@ -22,6 +22,10 @@ func setupServer(t *testing.T) (*Server, WebDeps) {
 }
 
 func setupServerWithTokens(t *testing.T, adminTokens []string) (*Server, WebDeps) {
+	return setupServerWithOptions(t, adminTokens, "")
+}
+
+func setupServerWithOptions(t *testing.T, adminTokens []string, secureOrchURL string) (*Server, WebDeps) {
 	t.Helper()
 	dir := t.TempDir()
 	store, err := candidates.New(filepath.Join(dir, "c"), 0)
@@ -56,6 +60,7 @@ func setupServerWithTokens(t *testing.T, adminTokens []string) (*Server, WebDeps
 		Published:      pubStore,
 		Audit:          auditLog,
 		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SecureOrchURL:  secureOrchURL,
 		Version:        "test",
 	}
 	if err := srv.WebRoutes(deps); err != nil {
@@ -67,7 +72,7 @@ func setupServerWithTokens(t *testing.T, adminTokens []string) (*Server, WebDeps
 	return srv, deps
 }
 
-func TestWebRoutes_RosterRenders(t *testing.T) {
+func TestWebRoutes_OverviewRenders(t *testing.T) {
 	srv, _ := setupServer(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -81,14 +86,56 @@ func TestWebRoutes_RosterRenders(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	if !strings.Contains(string(body), "Roster") {
-		t.Fatalf("expected Roster heading, got %s", body)
+	if !strings.Contains(string(body), "Overview") {
+		t.Fatalf("expected Overview heading, got %s", body)
 	}
 	if !strings.Contains(string(body), "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
 		t.Fatalf("expected orch address in header")
 	}
+	if !strings.Contains(string(body), "Candidate roster rows") {
+		t.Fatalf("expected overview metrics, got %s", body)
+	}
+	if !strings.Contains(string(body), "data-theme-toggle") {
+		t.Fatalf("expected theme toggle, got %s", body)
+	}
+}
+
+func TestWebRoutes_RosterRenders(t *testing.T) {
+	srv, _ := setupServer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+	resp, err := http.Get("http://" + srv.Addr() + "/roster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "Roster") {
+		t.Fatalf("expected Roster heading, got %s", body)
+	}
 	if !strings.Contains(string(body), "meta=stale") || !strings.Contains(string(body), "models_probe_failed") {
 		t.Fatalf("expected metadata state in roster, got %s", body)
+	}
+}
+
+func TestWebRoutes_RosterRendersSecureOrchCrossLink(t *testing.T) {
+	srv, _ := setupServerWithOptions(t, nil, "https://secure.example.com/")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+	resp, err := http.Get("http://" + srv.Addr() + "/roster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	page := string(body)
+	if !strings.Contains(page, "https://secure.example.com/manifests#review-timeline") {
+		t.Fatalf("expected secure-orch cross-link, got %s", page)
 	}
 }
 
@@ -140,6 +187,27 @@ func TestWebRoutes_AssetsServed(t *testing.T) {
 	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/css") {
 		t.Fatalf("content-type: %s", ct)
 	}
+	if got := resp.Header.Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("cache-control: %q", got)
+	}
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("missing etag")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "http://"+srv.Addr()+"/assets/style.css?v=test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("If-None-Match", etag)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d", resp.StatusCode)
+	}
 }
 
 func TestWebRoutes_AuthLoginRequired(t *testing.T) {
@@ -177,8 +245,8 @@ func TestWebRoutes_AuthLoginRequired(t *testing.T) {
 	if loginResp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d", loginResp.StatusCode)
 	}
-	if got := loginResp.Header.Get("Set-Cookie"); !strings.Contains(got, "Max-Age=43200") {
-		t.Fatalf("expected 12h session cookie, got %q", got)
+	if got := loginResp.Header.Get("Set-Cookie"); !strings.Contains(got, "Max-Age=14400") {
+		t.Fatalf("expected 4h session cookie, got %q", got)
 	}
 
 	resp, err = client.Get("http://" + srv.Addr() + "/")
@@ -189,6 +257,9 @@ func TestWebRoutes_AuthLoginRequired(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "actor operator1") {
 		t.Fatalf("expected actor banner, got %s", body)
+	}
+	if !strings.Contains(string(body), "Overview") {
+		t.Fatalf("expected overview after login, got %s", body)
 	}
 }
 

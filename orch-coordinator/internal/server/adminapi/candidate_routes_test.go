@@ -14,6 +14,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/providers/brokerclient"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/candidates"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/candidate"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
@@ -36,7 +37,7 @@ func TestCandidateRoutes_NotReadyReturns503(t *testing.T) {
 	}
 
 	srv := New("127.0.0.1:0", slog.Default(), nil)
-	srv.CandidateRoutes(builder, store)
+	srv.CandidateRoutes(builder, store, nil)
 	if _, err := srv.Listen(); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +74,12 @@ func TestCandidateRoutes_ReturnsJSONAndTarballAfterBuild(t *testing.T) {
 	}
 
 	srv := New("127.0.0.1:0", slog.Default(), nil)
-	srv.CandidateRoutes(builder, store)
+	log, err := audit.Open(t.TempDir() + "/audit.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	srv.CandidateRoutes(builder, store, log)
 	if _, err := srv.Listen(); err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +113,79 @@ func TestCandidateRoutes_ReturnsJSONAndTarballAfterBuild(t *testing.T) {
 				t.Fatalf("tarball members = %#v, want manifest.json and metadata.json", seen)
 			}
 		}
+	}
+}
+
+func TestCandidateRoutes_TarballDownloadAppendsAudit(t *testing.T) {
+	dir := t.TempDir()
+	store, err := candidates.New(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scrapeSvc := primedScrapeService(t)
+	builder, err := candidate.NewBuilder(scrapeSvc, store, candidate.BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    time.Hour,
+	}, slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	log, err := audit.Open(t.TempDir() + "/audit.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	srv := New("127.0.0.1:0", slog.Default(), []string{"admin-token"})
+	srv.CandidateRoutes(builder, store, log)
+	if _, err := srv.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	req, err := http.NewRequest(http.MethodGet, "http://"+srv.Addr()+"/candidate.tar.gz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SetBasicAuth("", "")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: func() string {
+		id, err := srv.auth.login("admin-token", "operator1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}()})
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	events, err := log.Recent(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Outcome == audit.OutcomeCandidateDownloaded {
+			found = true
+			if event.Actor != "operator1" {
+				t.Fatalf("actor=%q", event.Actor)
+			}
+			if event.ManifestSHA256 == "" {
+				t.Fatal("expected manifest hash on download event")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected candidate download audit event")
 	}
 }
 

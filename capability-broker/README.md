@@ -88,7 +88,7 @@ for the canonical summary, and the design brief at
 Per repo-root core belief #15, every gesture is Docker-first.
 
 ```bash
-make build               # build tztcloud/livepeer-capability-broker:v1.3.2
+make build               # build tztcloud/livepeer-capability-broker:v1.3.3
 make run                 # run with examples/host-config.example.yaml
 make help                # show all targets
 ```

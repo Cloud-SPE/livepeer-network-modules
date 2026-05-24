@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"strings"
 )
 
@@ -21,6 +22,8 @@ type Config struct {
 	Listen          string
 	ProtocolSocket  string
 	AdminTokens     []string
+	CoordinatorURL  string
+	Version         string
 }
 
 // Keystore selects the V3 JSON keystore backing the signer.
@@ -66,7 +69,32 @@ func (c Config) Validate() error {
 	if err := ValidateListenAddr(c.Listen); err != nil {
 		return err
 	}
+	if _, err := NormalizeBaseURL(c.CoordinatorURL); err != nil {
+		return fmt.Errorf("config: --coordinator-url: %w", err)
+	}
 	return nil
+}
+
+func NormalizeBaseURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("scheme must be http or https, got %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return "", errors.New("host is required")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("query and fragment are not allowed")
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	return u.String(), nil
 }
 
 // ValidateListenAddr confirms that --listen is an explicit host:port

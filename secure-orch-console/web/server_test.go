@@ -31,6 +31,10 @@ func newHarness(t *testing.T, listen string) (*Server, string, func()) {
 }
 
 func newHarnessWithTokens(t *testing.T, listen string, adminTokens []string) (*Server, string, func()) {
+	return newHarnessWithConfig(t, config.Config{Listen: listen, AdminTokens: adminTokens})
+}
+
+func newHarnessWithConfig(t *testing.T, cfg config.Config) (*Server, string, func()) {
 	t.Helper()
 	root := t.TempDir()
 	lastSigned := filepath.Join(root, "lib", "last-signed.json")
@@ -44,12 +48,11 @@ func newHarnessWithTokens(t *testing.T, listen string, adminTokens []string) (*S
 		log.Close()
 		t.Fatal(err)
 	}
-	cfg := config.Config{
-		LastSignedPath:  lastSigned,
-		AuditLogPath:    auditPath,
-		AuditRotateSize: audit.DefaultRotateSize,
-		Listen:          listen,
-		AdminTokens:     adminTokens,
+	cfg.LastSignedPath = lastSigned
+	cfg.AuditLogPath = auditPath
+	cfg.AuditRotateSize = audit.DefaultRotateSize
+	if cfg.Listen == "" {
+		cfg.Listen = "127.0.0.1:0"
 	}
 	srv, err := New(cfg, signer, log, nil)
 	if err != nil {
@@ -173,15 +176,18 @@ func TestServer_HealthAndIndex(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	if resp.Request.URL.Path != "/protocol-status" {
-		t.Fatalf("expected protocol status page, got %s", resp.Request.URL.Path)
+	if resp.Request.URL.Path != "/overview" {
+		t.Fatalf("expected overview page, got %s", resp.Request.URL.Path)
 	}
 	page, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(page), "Protocol status") {
+	if !strings.Contains(string(page), "Overview") {
 		t.Fatalf("page missing title: %q", page)
 	}
 	if !strings.Contains(string(page), strings.ToLower(srv.signer.Address().String())) {
 		t.Fatalf("page missing signer addr")
+	}
+	if !strings.Contains(string(page), "data-theme-toggle") {
+		t.Fatalf("page missing theme toggle")
 	}
 }
 
@@ -204,6 +210,54 @@ func TestServer_UnknownPath404(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("got %d", resp.StatusCode)
+	}
+}
+
+func TestServer_StaticAssetsSetETagAndCacheHeaders(t *testing.T) {
+	srv, _, cleanup := newHarnessWithConfig(t, config.Config{
+		Listen:  "127.0.0.1:0",
+		Version: "v1.3.3",
+	})
+	defer cleanup()
+	if _, err := srv.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+	if err := waitFor("http://" + srv.Addr() + "/healthz"); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "http://"+srv.Addr()+"/static/console.css?v=v1.3.3", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if got := resp.Header.Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Fatalf("cache-control = %q", got)
+	}
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("missing etag")
+	}
+
+	req, err = http.NewRequest(http.MethodGet, "http://"+srv.Addr()+"/static/console.css?v=v1.3.3", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("If-None-Match", etag)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d", resp.StatusCode)
 	}
 }
 
@@ -333,6 +387,38 @@ func TestServer_AcceptsTarball(t *testing.T) {
 	}
 }
 
+func TestServer_ManifestsRendersCoordinatorCrossLink(t *testing.T) {
+	srv, _, cleanup := newHarnessWithConfig(t, config.Config{
+		Listen:         "127.0.0.1:0",
+		CoordinatorURL: "https://coord.example.com",
+	})
+	defer cleanup()
+	if _, err := srv.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+	if err := waitFor("http://" + srv.Addr() + "/healthz"); err != nil {
+		t.Fatal(err)
+	}
+	url := "http://" + srv.Addr()
+	addr := strings.ToLower(srv.signer.Address().String())
+	manifest := `{"manifest":{"spec_version":"0.2.0","publication_seq":1,"orch":{"eth_address":"` + addr + `"},"capabilities":[]}}`
+	uploadCandidate(t, url, "manifest.json", []byte(manifest))
+
+	resp, err := http.Get(url + "/manifests")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	page := string(body)
+	if !strings.Contains(page, "https://coord.example.com/roster#cycle-timeline") {
+		t.Fatalf("missing coordinator cross-link: %s", page)
+	}
+}
+
 func TestServer_DiscardCandidate(t *testing.T) {
 	srv, _, cleanup := newHarness(t, "127.0.0.1:0")
 	defer cleanup()
@@ -414,8 +500,8 @@ func TestServer_AuthLoginAndActorAudit(t *testing.T) {
 	if loginResp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d", loginResp.StatusCode)
 	}
-	if got := loginResp.Header.Get("Set-Cookie"); !strings.Contains(got, "Max-Age=43200") {
-		t.Fatalf("expected 12h session cookie, got %q", got)
+	if got := loginResp.Header.Get("Set-Cookie"); !strings.Contains(got, "Max-Age=14400") {
+		t.Fatalf("expected 4h session cookie, got %q", got)
 	}
 
 	addr := strings.ToLower(srv.signer.Address().String())

@@ -29,14 +29,16 @@ const (
 type Outcome string
 
 const (
-	OutcomeAccepted         Outcome = "accepted"
-	OutcomeSchemaInvalid    Outcome = "schema_invalid"
-	OutcomeSigInvalid       Outcome = "sig_invalid"
-	OutcomeIdentityMismatch Outcome = "identity_mismatch"
-	OutcomeDriftRejected    Outcome = "drift_rejected"
-	OutcomeWindowInvalid    Outcome = "window_invalid"
-	OutcomeRollbackRejected Outcome = "rollback_rejected"
-	OutcomePublishFailed    Outcome = "publish_failed"
+	OutcomeCandidateDownloaded Outcome = "candidate_downloaded"
+	OutcomeSignedReturned      Outcome = "signed_returned"
+	OutcomeAccepted            Outcome = "accepted"
+	OutcomeSchemaInvalid       Outcome = "schema_invalid"
+	OutcomeSigInvalid          Outcome = "sig_invalid"
+	OutcomeIdentityMismatch    Outcome = "identity_mismatch"
+	OutcomeDriftRejected       Outcome = "drift_rejected"
+	OutcomeWindowInvalid       Outcome = "window_invalid"
+	OutcomeRollbackRejected    Outcome = "rollback_rejected"
+	OutcomePublishFailed       Outcome = "publish_failed"
 )
 
 // Event is one audit record.

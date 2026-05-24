@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/candidates"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/candidate"
 )
@@ -18,7 +19,7 @@ import (
 //
 // commits 3+ append /diff, /roster, /admin/signed-manifest, and the
 // web UI routes against the same mux.
-func (s *Server) CandidateRoutes(builder *candidate.Builder, store *candidates.Store) {
+func (s *Server) CandidateRoutes(builder *candidate.Builder, store *candidates.Store, auditLog *audit.Log) {
 	s.mux.HandleFunc("GET /candidate.json", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		setCandidateHeaders(w)
 		if cand := builder.Latest(); cand != nil {
@@ -52,6 +53,20 @@ func (s *Server) CandidateRoutes(builder *candidate.Builder, store *candidates.S
 		}
 		w.Header().Set("Content-Type", "application/gzip")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"candidate.tar.gz\"")
+		if auditLog != nil {
+			if cand := builder.Latest(); cand != nil {
+				if _, appendErr := auditLog.Append(audit.Event{
+					Outcome:        audit.OutcomeCandidateDownloaded,
+					Actor:          actorFromRequest(r),
+					Uploader:       actorFromRequest(r),
+					ManifestSHA256: candidate.SHA256Hex(cand.ManifestBytes),
+					PublicationSeq: cand.Manifest.PublicationSeq,
+					Note:           "candidate tarball downloaded",
+				}); appendErr != nil {
+					s.logger.Warn("audit append failed", "err", appendErr)
+				}
+			}
+		}
 		_, _ = w.Write(body)
 	}))
 }

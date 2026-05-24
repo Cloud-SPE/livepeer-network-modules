@@ -1,5 +1,6 @@
 {{define "content"}}
 <section class="summary">
+  <p class="eyebrow">Orch coordinator</p>
   <h1>Diff — candidate vs published</h1>
   <p class="muted">Advisory diff. The authoritative diff (candidate vs last-signed) lives in <code>secure-orch-console</code>.</p>
   <div class="badges">
@@ -9,7 +10,23 @@
   </div>
 </section>
 
+<section class="metric-grid">
+  <article class="metric-card">
+    <p class="metric-label">Added</p>
+    <p class="metric-value">{{index .DriftCounts "added"}}</p>
+  </article>
+  <article class="metric-card">
+    <p class="metric-label">Removed</p>
+    <p class="metric-value">{{index .DriftCounts "removed"}}</p>
+  </article>
+  <article class="metric-card">
+    <p class="metric-label">Price or mode drift</p>
+    <p class="metric-value">{{index .DriftCounts "price_changed"}} / {{index .DriftCounts "mode_changed"}}</p>
+  </article>
+</section>
+
 <section class="diff">
+  <div class="table-wrap">
   <table>
     <thead>
       <tr>
@@ -21,18 +38,18 @@
     </thead>
     <tbody>
     {{range .Rows}}
-      <tr class="drift-{{.Drift}}">
-        <td><strong>{{.CapabilityID}}</strong><br><small>{{.OfferingID}}</small></td>
+      <tr class="drift-{{.Drift}}" id="diff-row-{{anchorID .CapabilityID .OfferingID}}">
+        <td><strong>{{.CapabilityID}}</strong><br><small>{{.OfferingID}}</small><br><a href="/roster#row-{{anchorID .CapabilityID .OfferingID}}" class="inline-link">Back to roster row</a></td>
         <td><span class="badge drift-{{.Drift}}">{{.Drift}}</span></td>
         <td>
           {{if .OldPriceWei}}price={{.OldPriceWei}}<br>{{end}}
           {{if .OldMode}}mode={{.OldMode}}<br>{{end}}
-          {{if .OldWorkerURL}}worker={{.OldWorkerURL}}{{end}}
+          {{if .OldWorkerURL}}worker=<span class="copy-inline"><code>{{.OldWorkerURL}}</code><button type="button" class="copy-button" data-copy-value="{{.OldWorkerURL}}">Copy</button></span>{{end}}
         </td>
         <td>
           {{if .NewPriceWei}}price={{.NewPriceWei}}<br>{{end}}
           {{if .NewMode}}mode={{.NewMode}}<br>{{end}}
-          {{if .NewWorkerURL}}worker={{.NewWorkerURL}}{{end}}
+          {{if .NewWorkerURL}}worker=<span class="copy-inline"><code>{{.NewWorkerURL}}</code><button type="button" class="copy-button" data-copy-value="{{.NewWorkerURL}}">Copy</button></span>{{end}}
         </td>
       </tr>
     {{else}}
@@ -40,5 +57,6 @@
     {{end}}
     </tbody>
   </table>
+  </div>
 </section>
 {{end}}

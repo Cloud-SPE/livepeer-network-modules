@@ -92,3 +92,36 @@ func TestConfigValidate(t *testing.T) {
 		t.Fatal("expected negative rotate-size rejection")
 	}
 }
+
+func TestNormalizeBaseURL(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "trim trailing slash", in: "https://coord.example.com/", want: "https://coord.example.com"},
+		{name: "path preserved", in: "https://coord.example.com/admin/", want: "https://coord.example.com/admin"},
+		{name: "reject scheme", in: "ftp://coord.example.com", wantErr: "scheme"},
+		{name: "reject query", in: "https://coord.example.com/?x=1", wantErr: "query"},
+		{name: "reject fragment", in: "https://coord.example.com/#x", wantErr: "fragment"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NormalizeBaseURL(tc.in)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}

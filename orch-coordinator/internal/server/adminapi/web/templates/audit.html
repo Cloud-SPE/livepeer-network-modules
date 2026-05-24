@@ -1,10 +1,12 @@
 {{define "content"}}
 <section class="summary">
+  <p class="eyebrow">Orch coordinator</p>
   <h1>Audit log</h1>
   <p class="muted">Last {{len .Events}} publish + upload events.</p>
 </section>
 
 <section class="audit">
+  <div class="table-wrap">
   <table>
     <thead>
       <tr>
@@ -27,7 +29,7 @@
         <td>{{.Actor}}</td>
         <td>{{.Uploader}}</td>
         <td>{{.PublicationSeq}}</td>
-        <td class="hash"><code>{{.ManifestSHA256}}</code></td>
+        <td class="hash"><span class="copy-inline"><code>{{.ManifestSHA256}}</code><button type="button" class="copy-button" data-copy-value="{{.ManifestSHA256}}">Copy</button></span></td>
         <td>{{.Note}}</td>
       </tr>
     {{else}}
@@ -35,5 +37,6 @@
     {{end}}
     </tbody>
   </table>
+  </div>
 </section>
 {{end}}

@@ -14,13 +14,13 @@ import (
 const sessionCookieName = "orch_coordinator_session"
 
 const (
-	sessionAbsoluteTTL = 12 * time.Hour
+	sessionAbsoluteTTL = 4 * time.Hour
 	sessionIdleTTL     = 30 * time.Minute
 )
 
 type actorContextKey struct{}
 
-var errSessionAlreadyActive = errors.New("another operator session is already active")
+var errSessionAlreadyActive = errors.New("another live operator session is already active; wait for idle timeout or log out from the active browser")
 
 type authManager struct {
 	mu      sync.Mutex
@@ -68,6 +68,7 @@ func (a *authManager) login(token, actor string) (string, error) {
 	if _, ok := a.tokens[token]; !ok {
 		return "", errors.New("invalid admin token")
 	}
+	a.reapExpiredLocked()
 	if a.current != nil {
 		return "", errSessionAlreadyActive
 	}
@@ -97,16 +98,23 @@ func (a *authManager) actor(sessionID string) (string, bool) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.reapExpiredLocked()
 	if a.current == nil || a.current.id != sessionID {
 		return "", false
 	}
 	now := a.now()
-	if now.Sub(a.current.createdAt) >= sessionAbsoluteTTL || now.Sub(a.current.lastSeenAt) >= sessionIdleTTL {
-		a.current = nil
-		return "", false
-	}
 	a.current.lastSeenAt = now
 	return a.current.actor, true
+}
+
+func (a *authManager) reapExpiredLocked() {
+	if a == nil || a.current == nil {
+		return
+	}
+	now := a.now()
+	if now.Sub(a.current.createdAt) >= sessionAbsoluteTTL || now.Sub(a.current.lastSeenAt) >= sessionIdleTTL {
+		a.current = nil
+	}
 }
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {

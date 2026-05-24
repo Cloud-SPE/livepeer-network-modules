@@ -46,8 +46,9 @@ func main() {
 		publicListen  = flag.String("public-listen", ":8081", "resolver-facing listener; serves only GET /.well-known/livepeer-registry.json")
 		metricsListen = flag.String("metrics-listen", ":9091", "Prometheus metrics listener")
 
-		configPath = flag.String("config", "/etc/livepeer/orch-coordinator.yaml", "path to coordinator-config.yaml")
-		dataDir    = flag.String("data-dir", "/var/lib/livepeer/orch-coordinator", "filesystem root for candidate snapshots, audit log, and the published manifest")
+		configPath    = flag.String("config", "/etc/livepeer/orch-coordinator.yaml", "path to coordinator-config.yaml")
+		dataDir       = flag.String("data-dir", "/var/lib/livepeer/orch-coordinator", "filesystem root for candidate snapshots, audit log, and the published manifest")
+		secureOrchURL = flag.String("secure-orch-url", "", "Optional secure-orch console base URL used for operator cross-links")
 
 		scrapeInterval  = flag.Duration("scrape-interval", 30*time.Second, "broker poll cadence")
 		scrapeTimeout   = flag.Duration("scrape-timeout", 5*time.Second, "per-broker scrape timeout")
@@ -75,6 +76,7 @@ func main() {
 		metricsListen:   *metricsListen,
 		configPath:      *configPath,
 		dataDir:         *dataDir,
+		secureOrchURL:   *secureOrchURL,
 		adminTokens:     parseCSVEnv("ORCH_COORDINATOR_ADMIN_TOKENS"),
 		scrapeInterval:  *scrapeInterval,
 		scrapeTimeout:   *scrapeTimeout,
@@ -100,6 +102,7 @@ type bootConfig struct {
 	metricsListen   string
 	configPath      string
 	dataDir         string
+	secureOrchURL   string
 	adminTokens     []string
 	scrapeInterval  time.Duration
 	scrapeTimeout   time.Duration
@@ -131,6 +134,10 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	loaded, err := loadCoordinatorConfig(cfg)
 	if err != nil {
 		return &configError{err: err}
+	}
+	cfg.secureOrchURL, err = config.NormalizeOptionalBaseURL(cfg.secureOrchURL)
+	if err != nil {
+		return &configError{err: fmt.Errorf("--secure-orch-url: %w", err)}
 	}
 
 	logger.Info("livepeer-orch-coordinator starting",
@@ -209,7 +216,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	receiveSvc.SetObserver(mreg)
 
 	admin := adminapi.New(cfg.listenAddr, logger.With("component", "adminapi"), cfg.adminTokens)
-	admin.CandidateRoutes(builder, candStore)
+	admin.CandidateRoutes(builder, candStore, auditLog)
 	admin.UploadRoutes(receiveSvc)
 	if err := admin.WebRoutes(adminapi.WebDeps{
 		Builder:        builder,
@@ -218,6 +225,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 		Audit:          auditLog,
 		Receive:        receiveSvc,
 		OrchEthAddress: loaded.EthAddress(),
+		SecureOrchURL:  cfg.secureOrchURL,
 		Version:        version,
 	}); err != nil {
 		return fmt.Errorf("admin web routes: %w", err)

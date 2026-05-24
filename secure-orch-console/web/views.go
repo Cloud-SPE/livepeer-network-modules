@@ -8,6 +8,27 @@ type pageView struct {
 	ContentTemplate string
 	Actor           string
 	SignerAddress   string
+	AssetVersion    string
+}
+
+type overviewPageView struct {
+	pageView
+	ProtocolConfigured  bool
+	ProtocolReachable   bool
+	HasCandidate        bool
+	CandidateLoadedAt   string
+	CandidateSource     string
+	CandidateSeq        uint64
+	CandidateEthAddress string
+	CandidateCanonHash  string
+	LastSignedPath      string
+	HasLastSigned       bool
+	LastSignedSummary   envelopeSummary
+	CycleStage          string
+	CycleTitle          string
+	CycleNote           string
+	CycleEvents         []cycleEventView
+	ReconcileSteps      []checkpointStepView
 }
 
 type protocolStatusPageView struct {
@@ -29,6 +50,14 @@ type manifestsPageView struct {
 	LastSignedSummary envelopeSummary
 	Candidate         *candidateView
 	CandidateError    string
+	ReviewState       string
+	ReviewTitle       string
+	ReviewMessage     string
+	CycleStage        string
+	CycleTitle        string
+	CycleNote         string
+	CycleEvents       []cycleEventView
+	ReconcileSteps    []checkpointStepView
 }
 
 type auditPageView struct {
@@ -45,15 +74,18 @@ type auditPageView struct {
 }
 
 type loginView struct {
-	AuthEnabled bool
-	Error       string
+	AuthEnabled  bool
+	Error        string
+	AssetVersion string
 }
 
 type candidateView struct {
-	LoadedAt   string
-	SourceName string
-	CanonHash  string
-	Diff       *diff.Result
+	LoadedAt       string
+	SourceName     string
+	PublicationSeq uint64
+	EthAddress     string
+	CanonHash      string
+	Diff           *diff.Result
 }
 
 type envelopeSummary struct {
@@ -108,4 +140,19 @@ type auditEventView struct {
 	CanonHash      string
 	Note           string
 	Fields         string
+}
+
+type cycleEventView struct {
+	Anchor string
+	Kind   string
+	At     string
+	Actor  string
+	Note   string
+}
+
+type checkpointStepView struct {
+	Label  string
+	Status string
+	Note   string
+	Href   string
 }

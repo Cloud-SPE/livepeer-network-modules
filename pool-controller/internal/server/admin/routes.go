@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strings"
 	"time"
@@ -15,12 +16,13 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/runtimeservice"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/statusservice"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ui/adminpage"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ui/web"
 )
 
 type Deps struct {
 	Repo                *repo.StateRepo
 	WrapAuth            func(http.HandlerFunc) http.HandlerFunc
+	Session             *SessionAuth
 	RefreshRendered     func(string) error
 	GetDesiredRuntime   func() (*types.DesiredBrokerRuntime, error)
 	GetRuntimeApplyInfo func() RuntimeApplyInfo
@@ -108,11 +110,91 @@ type runtimeHistoryItem struct {
 
 func Register(mux *http.ServeMux, deps Deps) {
 	auth := deps.WrapAuth
-	mux.HandleFunc("GET /admin", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(adminpage.HTML())
+
+	pages, err := loadTemplates()
+	if err != nil {
+		// Templates are embedded, so a load failure is a programming error.
+		panic(fmt.Sprintf("admin: load templates: %v", err))
+	}
+	assets, err := fs.Sub(web.FS, "assets")
+	if err != nil {
+		panic(fmt.Sprintf("admin: assets sub: %v", err))
+	}
+	mux.Handle("GET /admin/assets/", http.StripPrefix("/admin/assets/", versionedAssetHandler(assets, uiVersion)))
+
+	// requireSession gates the operator UI pages when login is enabled (an
+	// admin token is configured). In open mode it is a pass-through.
+	requireSession := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if deps.Session == nil || !deps.Session.Enabled() {
+				next(w, r)
+				return
+			}
+			cookie, err := r.Cookie(SessionCookieName)
+			if err != nil {
+				http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+				return
+			}
+			actor, ok := deps.Session.Actor(cookie.Value)
+			if !ok {
+				clearSessionCookie(w)
+				http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+				return
+			}
+			next(w, withActor(r, actor))
+		}
+	}
+
+	mux.HandleFunc("GET /admin/login", func(w http.ResponseWriter, r *http.Request) {
+		if deps.Session == nil || !deps.Session.Enabled() {
+			http.Redirect(w, r, "/admin", http.StatusSeeOther)
+			return
+		}
+		if cookie, err := r.Cookie(SessionCookieName); err == nil {
+			if _, ok := deps.Session.Actor(cookie.Value); ok {
+				http.Redirect(w, r, "/admin", http.StatusSeeOther)
+				return
+			}
+		}
+		renderLogin(w, pages["login"], loginPageData{Version: uiVersion}, http.StatusOK)
 	})
+	mux.HandleFunc("POST /admin/login", func(w http.ResponseWriter, r *http.Request) {
+		if deps.Session == nil || !deps.Session.Enabled() {
+			http.Redirect(w, r, "/admin", http.StatusSeeOther)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			renderLogin(w, pages["login"], loginPageData{Version: uiVersion, Error: "could not parse form"}, http.StatusBadRequest)
+			return
+		}
+		id, err := deps.Session.Login(r.PostForm.Get("admin_token"), r.PostForm.Get("actor"))
+		if err != nil {
+			renderLogin(w, pages["login"], loginPageData{Version: uiVersion, Error: err.Error()}, http.StatusUnauthorized)
+			return
+		}
+		setSessionCookie(w, id)
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	})
+	mux.HandleFunc("POST /admin/logout", func(w http.ResponseWriter, r *http.Request) {
+		if cookie, err := r.Cookie(SessionCookieName); err == nil && deps.Session != nil {
+			deps.Session.Logout(cookie.Value)
+		}
+		clearSessionCookie(w)
+		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+	})
+
+	uiPage := func(page, title string) http.HandlerFunc {
+		return requireSession(func(w http.ResponseWriter, r *http.Request) {
+			renderPage(w, pages[page], pageHeader{Title: title, ActivePage: page, Version: uiVersion, Actor: actorFromRequest(r)})
+		})
+	}
+	mux.HandleFunc("GET /admin", uiPage("overview", "Overview"))
+	mux.HandleFunc("GET /admin/offers", uiPage("offers", "Offers"))
+	mux.HandleFunc("GET /admin/join-requests", uiPage("join-requests", "Join requests"))
+	mux.HandleFunc("GET /admin/members", uiPage("members", "Members & backends"))
+	mux.HandleFunc("GET /admin/assignments", uiPage("assignments", "Assignments"))
+	mux.HandleFunc("GET /admin/broker-runtime", uiPage("broker-runtime", "Broker runtime"))
+	mux.HandleFunc("GET /admin/audit", uiPage("audit", "Audit"))
 	mux.HandleFunc("GET /admin/v1/broker-config", auth(func(w http.ResponseWriter, _ *http.Request) {
 		if deps.GetBrokerConfig == nil {
 			http.Error(w, "broker config reader is not configured", http.StatusInternalServerError)

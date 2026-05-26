@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operator login — pool-controller</title>
+<script>
+(() => {
+  try {
+    const theme = localStorage.getItem("operator-theme");
+    if (theme === "light") {
+      document.documentElement.dataset.theme = "light";
+    }
+  } catch (_) {}
+})();
+</script>
+<link rel="stylesheet" href="/admin/assets/style.css?v={{.Version}}">
+<link rel="stylesheet" href="/admin/assets/pool.css?v={{.Version}}">
+</head>
+<body>
+<main class="auth-page">
+  <section class="auth-card">
+    <p class="eyebrow">Pool control plane</p>
+    <h1>Operator login</h1>
+    <p class="muted">Enter the pool-controller admin token and an operator actor identity to start a session.</p>
+    {{if .Error}}<p class="message message-error">{{.Error}}</p>{{end}}
+    <form action="/admin/login" method="post" class="login-form">
+      <label for="admin_token">Admin token</label>
+      <input type="password" id="admin_token" name="admin_token" autocomplete="current-password" required>
+      <label for="actor">Actor</label>
+      <input type="text" id="actor" name="actor" autocomplete="username" required>
+      <button type="submit" class="primary-button">Start session</button>
+    </form>
+  </section>
+</main>
+</body>
+</html>

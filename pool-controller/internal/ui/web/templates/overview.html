@@ -1,0 +1,34 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Pool Control Plane</p>
+  <h1>Overview</h1>
+  <p class="muted">Operator console for the pool control plane: offers, join requests, members and backends, assignments, and broker runtime. Nothing is published until an approved backend is assigned to an orch-owned offer.</p>
+</section>
+
+<section>
+  <h2>Control-plane snapshot</h2>
+  <div class="metric-grid">
+    <article class="metric-card">
+      <p class="metric-label">Offers</p>
+      <p class="metric-value"><span id="ovOffers">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Members</p>
+      <p class="metric-value"><span id="ovMembers">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Backends</p>
+      <p class="metric-value"><span id="ovBackends">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Assignments</p>
+      <p class="metric-value"><span id="ovAssignments">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Broker runtime</p>
+      <p class="metric-value"><span id="ovRuntime">—</span></p>
+    </article>
+  </div>
+  <p class="muted">Paste an admin token in the topbar to populate these metrics, then use the left navigation to drive each task surface.</p>
+</section>
+{{end}}

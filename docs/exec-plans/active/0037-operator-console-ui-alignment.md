@@ -90,3 +90,41 @@ This plan is complete when:
 - both UIs use the same visual token vocabulary and component primitives
 - navigation, forms, status messaging, and tables feel obviously related
 - the changes remain compliant with repo-wide frontend DOM and CSS invariants
+
+## 5. Extension — pool-controller admin console
+
+The `pool-controller` admin UI is brought into the same operator-console family
+as a follow-on slice. It previously shipped as a single server-built page
+(inline `<style>` + one client script) under `internal/ui/adminpage`.
+
+Scope of this extension:
+
+- Adopt the shared design system: `internal/ui/web/assets/style.css` is the
+  same token-based stylesheet used by `orch-coordinator`, with a small
+  `pool.css` companion that maps the pool console's existing component classes
+  (cards, pills, preview checks, control-plane forms) onto the shared tokens.
+- Adopt the shared shell + multi-page navigation: a `layout.html` shell
+  (topbar + sidebar nav with active states + content + footer + theme toggle +
+  mobile drawer) and one page per task — Overview, Offers, Join requests,
+  Members & backends, Assignments, Broker runtime, Audit — served via the same
+  `html/template` + `go:embed` asset architecture (`internal/ui/web`).
+
+Auth — same login model as the trust-spine consoles:
+
+- `pool-controller` adopts the same **session login** flow: `GET/POST
+  /admin/login` takes an **admin token + actor**, validates the token, enforces
+  a single active operator session, and issues a `pool_controller_session`
+  cookie; `POST /admin/logout` clears it. The shell shows the actor chip and a
+  logout control, matching `secure-orch-console` and `orch-coordinator`.
+- The operator UI pages (`/admin`, `/admin/offers`, …) require a live session
+  (redirect to `/admin/login` otherwise). When no admin token is configured,
+  auth is disabled and the UI stays open, matching prior open-mode behavior.
+
+Deliberate differences, preserved on purpose:
+
+- The existing client-side `/admin/v1/*` fetch logic is retained (made
+  page-aware) rather than re-implemented as server-rendered page models. To
+  make that work under the session, the `/admin/v1/*` auth wrapper accepts
+  **either** a valid session cookie (used by the browser) **or** the admin
+  bearer token (used by scripts/automation), so existing token-based callers
+  keep working.

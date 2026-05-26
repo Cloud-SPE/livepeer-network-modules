@@ -95,6 +95,11 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	state := &runtimeState{configPath: *configPath, repo: stateRepo, adminToken: adminToken}
+	state.session = adminserver.NewSessionAuth(func() string {
+		state.mu.RLock()
+		defer state.mu.RUnlock()
+		return state.adminToken
+	})
 	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
 		return err
 	}
@@ -189,6 +194,7 @@ type runtimeState struct {
 	configPath string
 	repo       *repo.StateRepo
 	adminToken string
+	session    *adminserver.SessionAuth
 	cfg        *config.Config
 	rendered   []byte
 	latest     *repo.Snapshot
@@ -649,6 +655,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 	adminserver.Register(mux, adminserver.Deps{
 		Repo:            state.repo,
 		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
+		Session:         state.session,
 		RefreshRendered: func(source string) error { return state.RefreshRenderedFromState(source) },
 		GetRuntimeApplyInfo: func() adminserver.RuntimeApplyInfo {
 			cfg, _, _, _ := state.Snapshot()
@@ -1840,17 +1847,28 @@ func withAdminAuth(state *runtimeState, next http.HandlerFunc) http.HandlerFunc 
 	return func(w http.ResponseWriter, r *http.Request) {
 		state.mu.RLock()
 		token := state.adminToken
+		session := state.session
 		state.mu.RUnlock()
 		if token == "" {
 			next(w, r)
 			return
 		}
 		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		if strings.HasPrefix(auth, "Bearer ") && strings.TrimPrefix(auth, "Bearer ") == token {
+			next(w, r)
 			return
 		}
-		next(w, r)
+		// Browser operators authenticate via the login session cookie rather
+		// than a pasted bearer token.
+		if session != nil {
+			if cookie, err := r.Cookie(adminserver.SessionCookieName); err == nil {
+				if _, ok := session.Actor(cookie.Value); ok {
+					next(w, r)
+					return
+				}
+			}
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	}
 }
 

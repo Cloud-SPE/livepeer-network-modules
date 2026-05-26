@@ -1,0 +1,24 @@
+{{define "content"}}
+<section>
+  <h2>Runtime Controls</h2>
+  <div class="actions">
+    <button id="applyRuntime">Apply Desired Revision</button>
+    <button id="markStarted" class="secondary">Mark Apply Started</button>
+    <button id="markFailed" class="secondary">Mark Apply Failed</button>
+    <button id="markApplied" class="secondary">Mark Desired Revision Applied</button>
+  </div>
+  <div class="small">Use Apply Desired Revision as the normal path. The manual runtime buttons remain available as fallback and debugging controls.</div>
+</section>
+
+<section>
+  <h2>Broker Runtime</h2>
+  <div id="runtime" class="card-list"></div>
+  <pre id="runtimeYaml"></pre>
+</section>
+
+<section>
+  <h2>Broker Runtime History</h2>
+  <div class="small">Latest runtime apply and manual mark events.</div>
+  <div id="runtimeHistory" class="card-list"></div>
+</section>
+{{end}}

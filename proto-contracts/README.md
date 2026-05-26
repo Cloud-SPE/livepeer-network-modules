@@ -4,9 +4,12 @@ Canonical protobuf contracts for in-monorepo wire surfaces.
 
 This module owns the `.proto` files and generated Go stubs for:
 
-- `livepeer/payments/v1`
 - `livepeer/registry/v1`
 - `livepeer/protocol/v1`
+
+The `livepeer/payments/v1` contracts are owned by
+`livepeer-network-protocol/proto-go` (the canonical payments surface); this
+module no longer carries a duplicate copy.
 
 Every in-monorepo producer and consumer imports generated code from here.
 External sibling repos can continue vendoring independently until their own

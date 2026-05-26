@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/payments/v1"
+	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"google.golang.org/grpc"
 )
 

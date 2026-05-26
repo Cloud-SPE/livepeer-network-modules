@@ -16,7 +16,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-reconciler/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-reconciler/internal/types"
-	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/payments/v1"
+	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	protocolv1 "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/protocol/v1"
 	"google.golang.org/grpc"
 )

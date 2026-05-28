@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 )
@@ -57,6 +58,9 @@ type Config struct {
 
 	// Logger receives structured events. Nil = slog.Default().
 	Logger *slog.Logger
+
+	// Recorder receives redemption metrics. Nil = a no-op recorder.
+	Recorder metrics.Recorder
 }
 
 // Settlement is the queue-and-redeem service.
@@ -68,6 +72,7 @@ type Settlement struct {
 	escrow   *escrow.Escrow
 	cfg      Config
 	log      *slog.Logger
+	metrics  metrics.Recorder
 
 	stop chan struct{}
 }
@@ -84,6 +89,10 @@ func New(st *store.Store, broker providers.Broker, gasPrice providers.GasPrice, 
 	if logger == nil {
 		logger = slog.Default()
 	}
+	rec := cfg.Recorder
+	if rec == nil {
+		rec = metrics.NewNoop()
+	}
 	return &Settlement{
 		store:    st,
 		broker:   broker,
@@ -92,6 +101,7 @@ func New(st *store.Store, broker providers.Broker, gasPrice providers.GasPrice, 
 		escrow:   esc,
 		cfg:      cfg,
 		log:      logger.With("component", "settlement"),
+		metrics:  rec,
 		stop:     make(chan struct{}),
 	}
 }
@@ -111,6 +121,7 @@ func (s *Settlement) Run(ctx context.Context, interval time.Duration) {
 		case <-s.stop:
 			return
 		case <-t.C:
+			s.metrics.SetCurrentRound(s.clock.LastInitializedRound())
 			rctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 			_, _ = s.RedeemNext(rctx)
 			cancel()
@@ -136,11 +147,35 @@ func (s *Settlement) RedeemNext(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list pending: %w", err)
 	}
+	s.metrics.SetRedemptionQueueDepth(len(pend))
 	if len(pend) == 0 {
 		return nil, nil
 	}
 	p := pend[0]
-	return p.Hash, s.attempt(ctx, p)
+	start := time.Now()
+	err = s.attempt(ctx, p)
+	s.metrics.ObserveRedemption(time.Since(start))
+	s.metrics.IncRedemption(redemptionResultLabel(err))
+	return p.Hash, err
+}
+
+// redemptionResultLabel maps an attempt() error to a bounded metric
+// label.
+func redemptionResultLabel(err error) string {
+	switch {
+	case err == nil:
+		return metrics.RedeemRedeemed
+	case errors.Is(err, ErrTicketExpired):
+		return metrics.RedeemExpired
+	case errors.Is(err, ErrTicketUsed):
+		return metrics.RedeemAlreadyUsed
+	case errors.Is(err, ErrFaceValueTooLow):
+		return metrics.RedeemFaceValueTooLow
+	case errors.Is(err, ErrInsufficientFunds):
+		return metrics.RedeemInsufficientFund
+	default:
+		return metrics.RedeemTxError
+	}
 }
 
 func (s *Settlement) attempt(ctx context.Context, p store.PendingRedemption) error {
@@ -179,6 +214,7 @@ func (s *Settlement) attempt(ctx context.Context, p store.PendingRedemption) err
 	if gp == nil {
 		gp = new(big.Int)
 	}
+	s.metrics.SetGasPriceWei(metrics.WeiToFloat(gp))
 	txCost := new(big.Int).Mul(big.NewInt(int64(s.cfg.RedeemGas)), gp)
 
 	if t.FaceValue.Cmp(txCost) <= 0 {
@@ -221,8 +257,10 @@ func (s *Settlement) attempt(ctx context.Context, p store.PendingRedemption) err
 		CreationRound:     t.CreationRound,
 		CreationRoundHash: t.CreationRoundHash,
 	}
+	s.metrics.IncRedemptionTx(metrics.TxSubmitted)
 	txHash, err := s.broker.RedeemWinningTicket(ctx, bt, t.Sig, t.RecipientRand)
 	if err != nil {
+		s.metrics.IncRedemptionTx(metrics.TxFailed)
 		// Tx revert / contract refusal classified as "creationRound
 		// does not have a block hash" maps to expired.
 		if strings.Contains(err.Error(), "creationRound does not have a block hash") {
@@ -232,6 +270,7 @@ func (s *Settlement) attempt(ctx context.Context, p store.PendingRedemption) err
 		}
 		return fmt.Errorf("redeem: %w", err)
 	}
+	s.metrics.IncRedemptionTx(metrics.TxConfirmed)
 	if err := s.store.MarkRedeemed(p.Hash, txHash, t, s.clock.LastInitializedRound()); err != nil {
 		return fmt.Errorf("mark redeemed: %w", err)
 	}

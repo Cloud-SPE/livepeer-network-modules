@@ -77,7 +77,7 @@ func standWithAdmin(t *testing.T, token string) (pb.PayeeDaemonClient, pb.PayeeA
 		t.Fatalf("store.Open: %v", err)
 	}
 	svc := receiver.New(st, receiver.Config{Recipient: bytes20(0xaa)}, nil)
-	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: token}, sockPath, nil)
+	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: token}, sockPath, nil, nil)
 	go func() { _ = srv.Serve() }()
 
 	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))

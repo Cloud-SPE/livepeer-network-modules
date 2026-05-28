@@ -24,9 +24,11 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
@@ -44,6 +46,7 @@ type Service struct {
 	clock    providers.Clock
 	logger   *slog.Logger
 	fetcher  TicketParamsFetcher
+	metrics  metrics.Recorder
 
 	mu          sync.Mutex
 	sessions    map[string]*senderSession // keyed by recipient/capability/offering/target-spend tuple
@@ -61,10 +64,13 @@ type senderSession struct {
 	offering      string
 }
 
-// New constructs a sender Service.
-func New(keystore providers.KeyStore, broker providers.Broker, clock providers.Clock, logger *slog.Logger, fetcher TicketParamsFetcher) *Service {
+// New constructs a sender Service. rec may be nil (no-op metrics).
+func New(keystore providers.KeyStore, broker providers.Broker, clock providers.Clock, logger *slog.Logger, fetcher TicketParamsFetcher, rec metrics.Recorder) *Service {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if rec == nil {
+		rec = metrics.NewNoop()
 	}
 	return &Service{
 		keystore:    keystore,
@@ -72,13 +78,21 @@ func New(keystore providers.KeyStore, broker providers.Broker, clock providers.C
 		clock:       clock,
 		logger:      logger,
 		fetcher:     fetcher,
+		metrics:     rec,
 		sessions:    map[string]*senderSession{},
 		workIDIndex: map[string]string{},
 	}
 }
 
 // CreatePayment implements pb.PayerDaemonServer.
-func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentRequest) (*pb.CreatePaymentResponse, error) {
+func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentRequest) (resp *pb.CreatePaymentResponse, err error) {
+	defer func() {
+		if err != nil {
+			s.metrics.IncPaymentCreated(metrics.ResultError)
+		} else {
+			s.metrics.IncPaymentCreated(metrics.ResultOK)
+		}
+	}()
 	if len(req.GetRecipient()) == 0 {
 		return nil, errors.New("recipient is empty")
 	}
@@ -104,6 +118,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	if err != nil {
 		return nil, fmt.Errorf("get sender info: %w", err)
 	}
+	s.recordSenderFunds(info)
 	if err := validateSenderInfo(info, s.clock.LastInitializedRound()); err != nil {
 		return nil, fmt.Errorf("sender validation: %w", err)
 	}
@@ -209,6 +224,7 @@ func (s *Service) GetDepositInfo(ctx context.Context, _ *pb.GetDepositInfoReques
 	if err != nil {
 		return nil, err
 	}
+	s.recordSenderFunds(info)
 	out := &pb.GetDepositInfoResponse{
 		WithdrawRound: info.WithdrawRound,
 	}
@@ -228,6 +244,17 @@ func (s *Service) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthResp
 
 // ─── helpers ──────────────────────────────────────────────────────────
 
+// recordSenderFunds updates the on-chain deposit/reserve gauges.
+func (s *Service) recordSenderFunds(info *providers.SenderInfo) {
+	if info == nil {
+		return
+	}
+	s.metrics.SetSenderDepositWei(metrics.WeiToFloat(info.Deposit))
+	if info.Reserve != nil {
+		s.metrics.SetSenderReserveWei(metrics.WeiToFloat(info.Reserve.FundsRemaining))
+	}
+}
+
 func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceValue *big.Int, capability, offering, ticketParamsBaseURL string, acceptedPrice *types.PriceInfo, acceptedQuote *pb.QuoteRef) (*senderSession, error) {
 	key := sessionKey(recipient, capability, offering, faceValue, ticketParamsBaseURL)
 
@@ -240,6 +267,7 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	}
 	s.mu.Unlock()
 
+	fetchStart := time.Now()
 	params, err := s.fetcher.Fetch(ctx, TicketParamsRequest{
 		BaseURL:    ticketParamsBaseURL,
 		Sender:     append([]byte(nil), s.keystore.Address()...),
@@ -248,9 +276,12 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 		Capability: capability,
 		Offering:   offering,
 	})
+	s.metrics.ObserveTicketParamsFetch(time.Since(fetchStart))
 	if err != nil {
+		s.metrics.IncTicketParamsFetch(metrics.ResultError)
 		return nil, err
 	}
+	s.metrics.IncTicketParamsFetch(metrics.ResultOK)
 	workID := hex.EncodeToString(params.RecipientRandHash)
 	sess := &senderSession{
 		workID:        workID,
@@ -270,6 +301,7 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	}
 	s.sessions[key] = sess
 	s.workIDIndex[sess.workID] = key
+	s.metrics.SetSenderSessions(len(s.sessions))
 	return sess, nil
 }
 
@@ -282,6 +314,7 @@ func (s *Service) evictSessionByWorkID(workID string) bool {
 	}
 	delete(s.workIDIndex, workID)
 	delete(s.sessions, key)
+	s.metrics.SetSenderSessions(len(s.sessions))
 	return true
 }
 
@@ -451,6 +484,7 @@ func (s *Service) signOneTicket(session *senderSession) (*types.TicketSenderPara
 	if err != nil {
 		return nil, err
 	}
+	s.metrics.IncTicketSigned()
 	return &types.TicketSenderParams{SenderNonce: nonce, Sig: sig}, nil
 }
 

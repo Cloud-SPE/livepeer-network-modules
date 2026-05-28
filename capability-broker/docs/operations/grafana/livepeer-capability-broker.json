@@ -1,0 +1,132 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus instance scraping the livepeer-capability-broker",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
+    {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"},
+    {"type": "panel", "id": "stat", "name": "Stat", "version": ""},
+    {"type": "panel", "id": "timeseries", "name": "Time series", "version": ""}
+  ],
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["livepeer", "capability-broker"],
+  "templating": {
+    "list": [
+      {"name": "DS_PROMETHEUS", "type": "datasource", "query": "prometheus", "current": {}, "hide": 0},
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "${DS_PROMETHEUS}",
+        "query": "label_values(livepeer_mode_requests_total, job)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {"text": "All", "value": "$__all"}
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "Livepeer Capability Broker",
+  "uid": "livepeer-capability-broker",
+  "panels": [
+    {"type": "row", "title": "Paid requests", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}, "id": 1, "panels": []},
+    {
+      "type": "timeseries", "title": "Request rate by capability/offering", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 1}, "id": 2,
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "targets": [{"expr": "sum by (capability,offering) (rate(livepeer_mode_requests_total{job=~\"$job\"}[5m]))", "legendFormat": "{{capability}}/{{offering}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries", "title": "Error ratio (non-success outcomes)", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 1}, "id": 3,
+      "fieldConfig": {"defaults": {"unit": "percentunit", "max": 1}, "overrides": []},
+      "targets": [{"expr": "sum(rate(livepeer_mode_requests_total{job=~\"$job\",outcome!=\"success\"}[5m])) / clamp_min(sum(rate(livepeer_mode_requests_total{job=~\"$job\"}[5m])), 1e-9)", "legendFormat": "error ratio", "refId": "A"}]
+    },
+    {
+      "type": "timeseries", "title": "Request p99 latency + work units/s", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 1}, "id": 4,
+      "targets": [
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(livepeer_mode_request_duration_seconds_bucket{job=~\"$job\"}[5m])))", "legendFormat": "p99 latency (s)", "refId": "A"},
+        {"expr": "sum(rate(livepeer_mode_work_units_total{job=~\"$job\"}[5m]))", "legendFormat": "work units/s", "refId": "B"}
+      ]
+    },
+    {"type": "row", "title": "Payment-daemon client", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 8}, "id": 10, "panels": []},
+    {
+      "type": "timeseries", "title": "RPC rate by method", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 9}, "id": 11,
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "targets": [{"expr": "sum by (method) (rate(livepeer_payment_client_requests_total{job=~\"$job\"}[5m]))", "legendFormat": "{{method}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries", "title": "RPC error ratio + p99 latency", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 9}, "id": 12,
+      "targets": [
+        {"expr": "sum(rate(livepeer_payment_client_requests_total{job=~\"$job\",result!=\"ok\"}[5m])) / clamp_min(sum(rate(livepeer_payment_client_requests_total{job=~\"$job\"}[5m])), 1e-9)", "legendFormat": "error ratio", "refId": "A"},
+        {"expr": "histogram_quantile(0.99, sum by (le,method) (rate(livepeer_payment_client_request_duration_seconds_bucket{job=~\"$job\"}[5m])))", "legendFormat": "p99 {{method}} (s)", "refId": "B"}
+      ]
+    },
+    {
+      "type": "timeseries", "title": "In-flight RPCs by method", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 9}, "id": 13,
+      "targets": [{"expr": "sum by (method) (livepeer_payment_client_in_flight{job=~\"$job\"})", "legendFormat": "{{method}}", "refId": "A"}]
+    },
+    {"type": "row", "title": "Backend selection", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 16}, "id": 20, "panels": []},
+    {
+      "type": "timeseries", "title": "Final selections by reason", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 17}, "id": 21,
+      "targets": [{"expr": "sum by (reason) (rate(livepeer_backend_selection_final_total{job=~\"$job\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries", "title": "Candidate denials by reason", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 17}, "id": 22,
+      "targets": [{"expr": "sum by (reason) (rate(livepeer_backend_selection_denied_total{job=~\"$job\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries", "title": "Selection exhausted (no backend)", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 17}, "id": 23,
+      "targets": [{"expr": "sum by (capability,offering,reason) (rate(livepeer_backend_selection_exhausted_total{job=~\"$job\"}[5m]))", "legendFormat": "{{capability}}/{{offering}} {{reason}}", "refId": "A"}]
+    },
+    {"type": "row", "title": "Registry serving + pool snapshot", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}, "id": 30, "panels": []},
+    {
+      "type": "timeseries", "title": "Registry scrapes by endpoint/code", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 25}, "id": 31,
+      "targets": [{"expr": "sum by (endpoint,code) (rate(livepeer_broker_registry_scrape_total{job=~\"$job\"}[5m]))", "legendFormat": "{{endpoint}} {{code}}", "refId": "A"}]
+    },
+    {
+      "type": "stat", "title": "Published offerings", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 4, "x": 8, "y": 25}, "id": 32,
+      "targets": [{"expr": "max(livepeer_broker_registry_published_offerings{job=~\"$job\"})", "refId": "A"}]
+    },
+    {
+      "type": "timeseries", "title": "Pool snapshot entries by state", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 25}, "id": 33,
+      "targets": [{"expr": "sum by (state) (livepeer_pool_snapshot_entry_state_total{job=~\"$job\"})", "legendFormat": "{{state}}", "refId": "A"}]
+    },
+    {"type": "row", "title": "Metadata discovery + outcome emits", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 32}, "id": 40, "panels": []},
+    {
+      "type": "timeseries", "title": "Metadata refresh rate by result", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 33}, "id": 41,
+      "targets": [{"expr": "sum by (result) (rate(livepeer_metadata_refresh_total{job=~\"$job\"}[5m]))", "legendFormat": "{{result}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries", "title": "Backend outcome emits by result", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 33}, "id": 42,
+      "targets": [{"expr": "sum by (outcome,result) (rate(livepeer_backend_outcome_emit_total{job=~\"$job\"}[5m]))", "legendFormat": "{{outcome}}/{{result}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries", "title": "Work receipt emits by result", "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 33}, "id": 43,
+      "targets": [{"expr": "sum by (status,result) (rate(livepeer_work_receipt_emit_total{job=~\"$job\"}[5m]))", "legendFormat": "{{status}}/{{result}}", "refId": "A"}]
+    }
+  ]
+}

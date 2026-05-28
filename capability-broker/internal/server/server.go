@@ -505,15 +505,19 @@ func newPaymentClient(cfg *config.Config) (payment.Client, error) {
 	switch {
 	case cfg.PaymentDaemon.Mock:
 		log.Printf("payment client: in-process Mock (payment_daemon.mock=true)")
-		return payment.NewMock(), nil
+		return payment.WithMetrics(payment.NewMock()), nil
 	case cfg.PaymentDaemon.Socket != "":
 		log.Printf("payment client: gRPC unix socket %s", cfg.PaymentDaemon.Socket)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return payment.NewGRPC(ctx, cfg.PaymentDaemon.Socket)
+		client, err := payment.NewGRPC(ctx, cfg.PaymentDaemon.Socket)
+		if err != nil {
+			return nil, err
+		}
+		return payment.WithMetrics(client), nil
 	default:
 		log.Printf("payment client: in-process Mock (no payment_daemon configured)")
-		return payment.NewMock(), nil
+		return payment.WithMetrics(payment.NewMock()), nil
 	}
 }
 

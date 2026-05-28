@@ -88,7 +88,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, sender.NewHTTPTicketParamsFetcher())
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, sender.NewHTTPTicketParamsFetcher(), nil)
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {

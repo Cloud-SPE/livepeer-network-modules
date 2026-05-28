@@ -10,8 +10,8 @@ import (
 
 func (s *Server) registerRoutes() {
 	// Unpaid registry endpoints — no Livepeer-* validation, no payment.
-	s.mux.HandleFunc("GET /registry/offerings", s.handleOfferings)
-	s.mux.HandleFunc("GET /registry/health", s.handleRegistryHealth)
+	s.mux.HandleFunc("GET /registry/offerings", instrumentRegistryScrape("offerings", s.handleOfferings))
+	s.mux.HandleFunc("GET /registry/health", instrumentRegistryScrape("health", s.handleRegistryHealth))
 	s.mux.HandleFunc("GET /healthz", registry.HealthzHandler())
 	s.mux.HandleFunc("POST /v1/payment/ticket-params", ticketParamsHandler(s.payment))
 	s.mux.HandleFunc("GET /admin/v1/runtime", s.handleRuntimeStatus)

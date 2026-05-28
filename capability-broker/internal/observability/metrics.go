@@ -14,6 +14,7 @@ package observability
 
 import (
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -70,6 +71,44 @@ var (
 		Name: "livepeer_work_receipt_emit_total",
 		Help: "Total best-effort work receipt emits toward pool-controller, labeled by receipt status and result.",
 	}, []string{"status", "result"})
+
+	paymentClientRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "livepeer_payment_client_requests_total",
+		Help: "Total payment-daemon client RPCs issued by the broker, labeled by method and result (\"ok\" or the gRPC status code).",
+	}, []string{"method", "result"})
+
+	paymentClientRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "livepeer_payment_client_request_duration_seconds",
+		Help:    "Wall-clock duration of payment-daemon client RPCs issued by the broker, labeled by method.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"method"})
+
+	paymentClientInFlight = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "livepeer_payment_client_in_flight",
+		Help: "In-flight payment-daemon client RPCs issued by the broker, labeled by method.",
+	}, []string{"method"})
+
+	brokerRegistryScrapeTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "livepeer_broker_registry_scrape_total",
+		Help: "Total scrapes of the broker's unpaid registry endpoints, labeled by endpoint and HTTP status code.",
+	}, []string{"endpoint", "code"})
+
+	brokerRegistryScrapeDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "livepeer_broker_registry_scrape_duration_seconds",
+		Help:    "Wall-clock duration of broker registry endpoint scrapes, labeled by endpoint.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"endpoint"})
+
+	brokerRegistryPayloadBytes = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "livepeer_broker_registry_payload_bytes",
+		Help:    "Response payload size in bytes for broker registry endpoint scrapes, labeled by endpoint.",
+		Buckets: prometheus.ExponentialBuckets(256, 2, 12),
+	}, []string{"endpoint"})
+
+	brokerRegistryPublishedOfferings = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "livepeer_broker_registry_published_offerings",
+		Help: "Number of distinct (capability, offering) pairs the broker currently publishes at /registry/offerings.",
+	})
 
 	metadataRefreshTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "livepeer_metadata_refresh_total",
@@ -222,6 +261,46 @@ func RecordBackendOutcomeEmit(outcome, result string) {
 
 func RecordWorkReceiptEmit(status, result string) {
 	workReceiptEmitTotal.WithLabelValues(metricLabelValue(status), metricLabelValue(result)).Inc()
+}
+
+// StartPaymentClientCall marks one payment-daemon client RPC as in-flight and
+// returns a completion closure. The caller invokes the closure exactly once
+// with the result label ("ok" or the gRPC status code), which records the
+// total, observes the duration, and clears the in-flight gauge.
+func StartPaymentClientCall(method string) func(result string) {
+	method = metricLabelValue(method)
+	paymentClientInFlight.WithLabelValues(method).Inc()
+	start := time.Now()
+	return func(result string) {
+		paymentClientInFlight.WithLabelValues(method).Dec()
+		paymentClientRequestsTotal.WithLabelValues(method, metricLabelValue(result)).Inc()
+		paymentClientRequestDuration.WithLabelValues(method).Observe(time.Since(start).Seconds())
+	}
+}
+
+func TestPaymentClientRequestsCounter(method, result string) prometheus.Counter {
+	return paymentClientRequestsTotal.WithLabelValues(metricLabelValue(method), metricLabelValue(result))
+}
+
+// RecordRegistryScrape emits one scrape of an unpaid registry endpoint
+// ("offerings" or "health"). payloadBytes < 0 means the size was not captured.
+func RecordRegistryScrape(endpoint string, statusCode int, durationSeconds float64, payloadBytes int) {
+	endpoint = metricLabelValue(endpoint)
+	brokerRegistryScrapeTotal.WithLabelValues(endpoint, strconv.Itoa(statusCode)).Inc()
+	brokerRegistryScrapeDuration.WithLabelValues(endpoint).Observe(durationSeconds)
+	if payloadBytes >= 0 {
+		brokerRegistryPayloadBytes.WithLabelValues(endpoint).Observe(float64(payloadBytes))
+	}
+}
+
+// SetPublishedOfferings updates the gauge of currently published
+// (capability, offering) pairs.
+func SetPublishedOfferings(n int) {
+	brokerRegistryPublishedOfferings.Set(float64(n))
+}
+
+func TestRegistryScrapeCounter(endpoint string, statusCode int) prometheus.Counter {
+	return brokerRegistryScrapeTotal.WithLabelValues(metricLabelValue(endpoint), strconv.Itoa(statusCode))
 }
 
 func TestBackendOutcomeEmitCounter(outcome, result string) prometheus.Counter {

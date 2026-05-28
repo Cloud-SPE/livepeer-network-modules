@@ -209,6 +209,25 @@ control-plane gauges:
 | `livepeer_backend_selection_denied_total` | counter | `capability,offering,backend_id,reason` | Per-candidate request-time denials after broker-local health and Pool state are combined. |
 | `livepeer_backend_selection_exhausted_total` | counter | `capability,offering,reason` | Request-time failures where no backend remained eligible after final selection filtering. |
 
+The broker also instruments its two external dependency surfaces. Payment-daemon
+client RPCs (every call the broker makes over the unix socket):
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `livepeer_payment_client_requests_total` | counter | `method,result` | Payment-daemon RPCs issued by the broker. `method` is the RPC (`open_session`, `process_payment`, `debit_balance`, `sufficient_balance`, `get_balance`, `close_session`, `get_ticket_params`); `result` is `ok` or the gRPC status code (e.g. `Unavailable`). |
+| `livepeer_payment_client_request_duration_seconds` | histogram | `method` | Wall-clock duration of payment-daemon client RPCs. |
+| `livepeer_payment_client_in_flight` | gauge | `method` | Currently in-flight payment-daemon client RPCs. |
+
+Unpaid registry endpoint serving (these sit outside the paid middleware chain, so
+they are not covered by `livepeer_mode_*`):
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `livepeer_broker_registry_scrape_total` | counter | `endpoint,code` | Scrapes of `/registry/offerings` and `/registry/health`. `endpoint` is `offerings` or `health`; `code` is the terminal HTTP status. |
+| `livepeer_broker_registry_scrape_duration_seconds` | histogram | `endpoint` | Wall-clock duration of registry endpoint scrapes. |
+| `livepeer_broker_registry_payload_bytes` | histogram | `endpoint` | Response payload size in bytes. |
+| `livepeer_broker_registry_published_offerings` | gauge | (none) | Distinct `(capability, offering)` pairs currently published at `/registry/offerings`. |
+
 ## 3. Other modes
 
 This runbook will grow per-mode sections as `0012-followup`

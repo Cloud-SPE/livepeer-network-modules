@@ -40,6 +40,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devkeystore"
 	gasprice "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/gasprice/onchain"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/inmemory"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/jsonfile"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/server"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow"
@@ -77,6 +78,8 @@ func main() {
 		validityWindowRounds       = flag.Int64("validity-window", 2, "Drop tickets whose CreationRound is more than this many rounds behind LastInitializedRound.")
 		clockRefreshInterval       = flag.Duration("clock-refresh-interval", 30*time.Second, "Cadence of RoundsManager + BondingManager polling.")
 		gasPriceRefreshInterval    = flag.Duration("gasprice-refresh-interval", 5*time.Second, "Cadence of eth_gasPrice polling.")
+
+		metricsListen = flag.String("metrics-listen", "", "host:port for the Prometheus /metrics HTTP listener; empty (default) disables it.")
 
 		showVer = flag.Bool("version", false, "print version and exit")
 	)
@@ -143,6 +146,7 @@ func main() {
 		validityWindowRounds:    *validityWindowRounds,
 		clockRefreshInterval:    *clockRefreshInterval,
 		gasPriceRefreshInterval: *gasPriceRefreshInterval,
+		metricsListen:           *metricsListen,
 	}
 	if err := run(logger, cfg); err != nil {
 		var cfgErr *configError
@@ -178,6 +182,7 @@ type bootConfig struct {
 	validityWindowRounds    int64
 	clockRefreshInterval    time.Duration
 	gasPriceRefreshInterval time.Duration
+	metricsListen           string
 }
 
 type configError struct{ err error }
@@ -190,11 +195,19 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 		return fmt.Errorf("prepare socket dir: %w", err)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Build the metrics Recorder. Prometheus when --metrics-listen is set,
+	// otherwise a zero-cost Noop. The recorder threads through the gRPC
+	// server (interceptor) and the domain services.
+	rec := newRecorder(ctx, logger, cfg)
+
 	switch cfg.mode {
 	case "sender":
-		return runSender(logger, cfg)
+		return runSender(ctx, logger, cfg, rec)
 	case "receiver":
-		return runReceiver(logger, cfg)
+		return runReceiver(ctx, logger, cfg, rec)
 	default:
 		return fmt.Errorf("unknown --mode %q (expected 'sender' or 'receiver')", cfg.mode)
 	}
@@ -203,7 +216,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 // runSender boots a sender-mode daemon. Sender uses the broker
 // read-only (GetSenderInfo only) and never submits transactions, so
 // TxSigner / GasPrice can stay nil for that path.
-func runSender(logger *slog.Logger, cfg bootConfig) error {
+func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec metrics.Recorder) error {
 	keystore, err := buildKeyStore(logger, cfg)
 	if err != nil {
 		return err
@@ -219,7 +232,6 @@ func runSender(logger *slog.Logger, cfg bootConfig) error {
 		clock = devclock.New()
 		gp = providers.NewDevGasPrice()
 	} else {
-		ctx := context.Background()
 		client, addrs, err := dialAndResolve(ctx, logger, cfg)
 		if err != nil {
 			return err
@@ -245,6 +257,7 @@ func runSender(logger *slog.Logger, cfg bootConfig) error {
 		oc.Start(ctx)
 		clock = oc
 	}
+	broker = providers.NewMeteredBroker(broker, rec)
 
 	svc := sender.New(
 		keystore,
@@ -252,15 +265,16 @@ func runSender(logger *slog.Logger, cfg bootConfig) error {
 		clock,
 		logger.With("component", "sender"),
 		sender.NewHTTPTicketParamsFetcher(),
+		rec,
 	)
-	srv := server.NewSender(svc, cfg.socketPath, logger.With("component", "grpc"))
-	return runServer(logger, srv)
+	srv := server.NewSender(svc, cfg.socketPath, rec, logger.With("component", "grpc"))
+	return runServerWithCtx(ctx, logger, srv)
 }
 
 // runReceiver boots a receiver-mode daemon and lights up the full
 // settlement pipeline (broker + escrow + settlement) when --chain-rpc
 // is set.
-func runReceiver(logger *slog.Logger, cfg bootConfig) error {
+func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec metrics.Recorder) error {
 	keystore, err := buildKeyStore(logger, cfg)
 	if err != nil {
 		return err
@@ -285,11 +299,8 @@ func runReceiver(logger *slog.Logger, cfg bootConfig) error {
 		}
 	}
 
-	svc := receiver.New(st, receiver.Config{Recipient: recipient}, logger.With("component", "receiver"))
-	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: cfg.payeeAdminToken}, cfg.socketPath, logger.With("component", "grpc"))
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	svc := receiver.New(st, receiver.Config{Recipient: recipient, Recorder: rec}, logger.With("component", "receiver"))
+	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: cfg.payeeAdminToken}, cfg.socketPath, rec, logger.With("component", "grpc"))
 
 	if cfg.chainRPC != "" {
 		client, addrs, err := dialAndResolve(ctx, logger, cfg)
@@ -337,6 +348,7 @@ func runReceiver(logger *slog.Logger, cfg bootConfig) error {
 		if err != nil {
 			return fmt.Errorf("build broker: %w", err)
 		}
+		meteredBroker := providers.NewMeteredBroker(broker, rec)
 
 		// Preflight: fail fast if signing wallet has no ETH for gas.
 		bal, err := client.BalanceAt(ctx, ethcommon.BytesToAddress(keystore.Address()), nil)
@@ -349,15 +361,16 @@ func runReceiver(logger *slog.Logger, cfg bootConfig) error {
 			logger.Info("signing wallet ETH balance", "wei", bal.String())
 		}
 
-		esc := escrow.New(broker, oc, escrow.Config{Claimant: recipient})
+		esc := escrow.New(meteredBroker, oc, escrow.Config{Claimant: recipient, Recorder: rec})
 		if err := esc.Rebuild(st); err != nil {
 			return fmt.Errorf("escrow rebuild: %w", err)
 		}
 
-		set := settlement.New(st, broker, gp, oc, esc, settlement.Config{
+		set := settlement.New(st, meteredBroker, gp, oc, esc, settlement.Config{
 			RedeemGas:      cfg.redeemGas,
 			ValidityWindow: cfg.validityWindowRounds,
 			Logger:         logger,
+			Recorder:       rec,
 		})
 		go set.Run(ctx, cfg.redemptionInterval)
 		defer set.Stop()
@@ -494,12 +507,6 @@ func orchHexOrEmpty(orchHex string) string {
 		return "(empty — defaults to signer)"
 	}
 	return "0x" + orchHex
-}
-
-func runServer(logger *slog.Logger, srv *server.Server) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	return runServerWithCtx(ctx, logger, srv)
 }
 
 func runServerWithCtx(ctx context.Context, logger *slog.Logger, srv *server.Server) error {

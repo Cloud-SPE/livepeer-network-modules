@@ -18,6 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver/validator"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
@@ -30,6 +31,7 @@ type Service struct {
 
 	store     *store.Store
 	logger    *slog.Logger
+	metrics   metrics.Recorder
 	recipient []byte // 20-byte ETH address this daemon receives as
 
 	// defaultFaceValue / defaultWinProb size newly-issued ticket
@@ -55,6 +57,9 @@ type Config struct {
 	// DefaultWinProb is the win-probability embedded in newly-issued
 	// TicketParams. Nil = ~1/1024 (a sensible default from the runbook).
 	DefaultWinProb *big.Int
+
+	// Recorder receives domain metrics. Nil = a no-op recorder.
+	Recorder metrics.Recorder
 }
 
 // New constructs a receiver Service backed by the given store.
@@ -71,9 +76,14 @@ func New(st *store.Store, cfg Config, logger *slog.Logger) *Service {
 		// 1/1024 of MaxWinProb.
 		winProb = new(big.Int).Quo(types.MaxWinProb, big.NewInt(1024))
 	}
+	rec := cfg.Recorder
+	if rec == nil {
+		rec = metrics.NewNoop()
+	}
 	return &Service{
 		store:            st,
 		logger:           logger,
+		metrics:          rec,
 		recipient:        append([]byte(nil), cfg.Recipient...),
 		defaultFaceValue: faceValue,
 		defaultWinProb:   winProb,
@@ -124,6 +134,9 @@ func (s *Service) OpenSession(_ context.Context, req *pb.OpenSessionRequest) (*p
 	outcome := pb.OpenSessionResponse_OUTCOME_OPENED
 	if alreadyOpen {
 		outcome = pb.OpenSessionResponse_OUTCOME_ALREADY_OPEN
+		s.metrics.IncSessionEvent(metrics.SessionAlreadyOpen)
+	} else {
+		s.metrics.IncSessionEvent(metrics.SessionOpened)
 	}
 	s.logger.Info("session opened",
 		"work_id", req.GetWorkId(),
@@ -203,6 +216,8 @@ func (s *Service) ProcessPayment(_ context.Context, req *pb.ProcessPaymentReques
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "credit balance: %v", err)
 	}
+
+	s.recordPaymentMetrics(ticketStatus, winnersQueued, credited)
 
 	s.logger.Info("payment processed",
 		"work_id", req.GetWorkId(),
@@ -326,6 +341,42 @@ func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipi
 	return creditTotal, winners, statuses, nil
 }
 
+// recordPaymentMetrics emits per-ticket accept/reject, winning-ticket,
+// and credited-EV metrics for one processed payment.
+func (s *Service) recordPaymentMetrics(statuses []*pb.TicketStatus, winnersQueued int32, credited *big.Int) {
+	for _, st := range statuses {
+		if st.GetRejectionReason() == pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_UNSPECIFIED {
+			s.metrics.IncTicket(metrics.TicketAccepted)
+			continue
+		}
+		s.metrics.IncTicket(metrics.TicketRejected)
+		s.metrics.IncTicketRejected(rejectionReasonLabel(st.GetRejectionReason()))
+	}
+	for i := int32(0); i < winnersQueued; i++ {
+		s.metrics.IncWinningTicket()
+	}
+	if credited != nil && credited.Sign() > 0 {
+		s.metrics.AddCreditedEVGwei(metrics.WeiToGwei(credited))
+	}
+}
+
+// rejectionReasonLabel maps a proto rejection reason to a bounded metric
+// label.
+func rejectionReasonLabel(r pb.PaymentRejectionReason) string {
+	switch r {
+	case pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND:
+		return metrics.ReasonInvalidRecipientRand
+	case pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_REPLAY:
+		return metrics.ReasonNonceReplay
+	case pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_CAP_REACHED:
+		return metrics.ReasonNonceCap
+	case pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_SIGNATURE:
+		return metrics.ReasonInvalidSignature
+	default:
+		return metrics.ReasonOther
+	}
+}
+
 func validationErrorReason(err error) pb.PaymentRejectionReason {
 	switch {
 	case errors.Is(err, validator.ErrInvalidRecipientRand):
@@ -373,8 +424,11 @@ func (s *Service) DebitBalance(_ context.Context, req *pb.DebitBalanceRequest) (
 	}
 	balance, err := s.store.DebitBalance(req.GetSender(), req.GetWorkId(), req.GetWorkUnits(), req.GetDebitSeq())
 	if err != nil {
+		s.metrics.IncDebit(metrics.ResultError)
 		return nil, mapStoreErr(err)
 	}
+	s.metrics.IncDebit(metrics.ResultOK)
+	s.metrics.AddWorkUnitsDebited(float64(req.GetWorkUnits()))
 	return &pb.DebitBalanceResponse{Balance: balance.Bytes()}, nil
 }
 
@@ -436,6 +490,8 @@ func (s *Service) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (
 	outcome := pb.CloseSessionResponse_OUTCOME_CLOSED
 	if alreadyClosed {
 		outcome = pb.CloseSessionResponse_OUTCOME_ALREADY_CLOSED
+	} else {
+		s.metrics.IncSessionEvent(metrics.SessionClosed)
 	}
 	return &pb.CloseSessionResponse{Outcome: outcome}, nil
 }

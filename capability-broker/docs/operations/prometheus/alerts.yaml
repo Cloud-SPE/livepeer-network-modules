@@ -1,0 +1,92 @@
+# Prometheus alert rules for the capability-broker's dependency surfaces.
+#
+# Scope: the broker's payment-daemon client calls and its unpaid registry
+# endpoint serving (plan 0038, workstream A). The broker's request/backend/
+# pool-snapshot metrics are documented in docs/operator-runbook.md §2.8;
+# add rules for those separately as their SLOs are defined.
+#
+# Severity tiers:
+#   page   — wake someone up (paid traffic impact)
+#   ticket — investigate during business hours
+#
+# Install: drop where Prometheus scans rule_files; reload with POST /-/reload.
+# Validate: promtool check rules alerts.yaml
+
+groups:
+  - name: livepeer-broker-payment-client-critical
+    interval: 30s
+    rules:
+      - alert: BrokerPaymentClientErrorRateHigh
+        expr: |
+          (
+            sum(rate(livepeer_payment_client_requests_total{result!="ok"}[5m]))
+            /
+            clamp_min(sum(rate(livepeer_payment_client_requests_total[5m])), 1e-9)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: page
+          service: livepeer-capability-broker
+        annotations:
+          summary: "Broker→payment-daemon RPC error rate >5% for 10m"
+          description: |
+            The broker's calls to the payment-daemon are failing. Paid
+            requests depend on ProcessPayment / DebitBalance, so sustained
+            errors mean revenue loss and rejected traffic. Break down:
+              topk(5, sum by (method,result) (rate(livepeer_payment_client_requests_total{result!="ok"}[1h])))
+            A result of "Unavailable" usually means the daemon is down or
+            the unix socket is gone — check the payment-daemon itself.
+
+  - name: livepeer-broker-payment-client-warning
+    interval: 1m
+    rules:
+      - alert: BrokerPaymentClientLatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, method) (rate(livepeer_payment_client_request_duration_seconds_bucket[5m]))
+          ) > 0.5
+        for: 15m
+        labels:
+          severity: ticket
+          service: livepeer-capability-broker
+        annotations:
+          summary: "Broker→payment-daemon RPC p99 >500ms for 15m"
+          description: |
+            Payment-daemon RPCs are slow at the tail, adding latency to the
+            paid request path. The daemon is unix-socket-local, so p99>500ms
+            points at daemon-side contention (BoltDB, chain calls during
+            ProcessPayment) rather than the network.
+
+  - name: livepeer-broker-registry-warning
+    interval: 1m
+    rules:
+      - alert: BrokerRegistryScrapeErrors
+        expr: |
+          sum(rate(livepeer_broker_registry_scrape_total{code=~"5.."}[5m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          service: livepeer-capability-broker
+        annotations:
+          summary: "Broker registry endpoints returning 5xx for 10m"
+          description: |
+            /registry/offerings or /registry/health is erroring. The
+            orch-coordinator scrapes these to compose the signed manifest;
+            sustained 5xx means the broker's offerings stop propagating.
+            Common cause: runtime config not loaded (500 "runtime config is
+            not loaded") or the health manager unavailable.
+
+      - alert: BrokerPublishesNoOfferings
+        expr: |
+          max_over_time(livepeer_broker_registry_published_offerings[15m]) == 0
+        for: 15m
+        labels:
+          severity: ticket
+          service: livepeer-capability-broker
+        annotations:
+          summary: "Broker is publishing zero offerings for 15m"
+          description: |
+            /registry/offerings has returned an empty capability list for
+            15m. If this broker is expected to advertise capabilities, its
+            host-config has no (or all-deduplicated) capabilities, or a
+            reload wiped them. Downstream resolvers will not route to it.

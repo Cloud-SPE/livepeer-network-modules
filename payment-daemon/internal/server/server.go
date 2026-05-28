@@ -17,6 +17,9 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -24,6 +27,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 )
 
 // ErrStopped is returned by Serve after a graceful shutdown.
@@ -50,23 +54,26 @@ type ReceiverAdminConfig struct {
 
 // NewSender constructs a Server registered with PayerDaemon (sender
 // mode). PayeeDaemon RPCs are not mounted; calls to them return
-// UNIMPLEMENTED.
-func NewSender(svc pb.PayerDaemonServer, socketPath string, logger *slog.Logger) *Server {
+// UNIMPLEMENTED. rec may be nil (no metrics).
+func NewSender(svc pb.PayerDaemonServer, socketPath string, rec metrics.Recorder, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	gs := grpc.NewServer()
+	gs := grpc.NewServer(grpc.UnaryInterceptor(metricsInterceptor(metrics.RoleSender, rec)))
 	pb.RegisterPayerDaemonServer(gs, svc)
 	return &Server{socketPath: socketPath, logger: logger, grpcServer: gs}
 }
 
 // NewReceiver constructs a Server registered with PayeeDaemon (receiver
-// mode). PayerDaemon RPCs are not mounted.
-func NewReceiver(svc pb.PayeeDaemonServer, admin pb.PayeeAdminServer, adminCfg ReceiverAdminConfig, socketPath string, logger *slog.Logger) *Server {
+// mode). PayerDaemon RPCs are not mounted. rec may be nil (no metrics).
+func NewReceiver(svc pb.PayeeDaemonServer, admin pb.PayeeAdminServer, adminCfg ReceiverAdminConfig, socketPath string, rec metrics.Recorder, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	gs := grpc.NewServer(grpc.UnaryInterceptor(receiverAdminAuthInterceptor(adminCfg.Token)))
+	gs := grpc.NewServer(grpc.ChainUnaryInterceptor(
+		metricsInterceptor(metrics.RoleReceiver, rec),
+		receiverAdminAuthInterceptor(adminCfg.Token),
+	))
 	pb.RegisterPayeeDaemonServer(gs, svc)
 	if admin != nil {
 		pb.RegisterPayeeAdminServer(gs, admin)
@@ -101,6 +108,57 @@ func (s *Server) GracefulStop() {
 	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.logger.Warn("remove socket on stop", "err", err)
 	}
+}
+
+// metricsInterceptor records per-RPC count, latency, and the in-flight
+// gauge for the given role. A nil Recorder yields a passthrough.
+func metricsInterceptor(role string, rec metrics.Recorder) grpc.UnaryServerInterceptor {
+	if rec == nil {
+		return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+			return handler(ctx, req)
+		}
+	}
+	table := newInFlightTable()
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		method := shortMethod(info.FullMethod)
+		c := table.get(info.FullMethod)
+		rec.SetGRPCInFlight(role, method, int(c.Add(1)))
+		start := time.Now()
+		resp, err := handler(ctx, req)
+		rec.ObserveGRPC(role, method, time.Since(start))
+		rec.IncGRPCRequest(role, method, status.Code(err).String())
+		rec.SetGRPCInFlight(role, method, int(c.Add(-1)))
+		return resp, err
+	}
+}
+
+// shortMethod turns "/livepeer.payments.v1.PayeeDaemon/ProcessPayment"
+// into "ProcessPayment".
+func shortMethod(full string) string {
+	if i := strings.LastIndex(full, "/"); i >= 0 {
+		return full[i+1:]
+	}
+	return full
+}
+
+// inFlightTable tracks per-FullMethod live request counts so the
+// interceptor can set the in-flight gauge without unbounded growth.
+type inFlightTable struct {
+	mu     sync.Mutex
+	counts map[string]*atomic.Int64
+}
+
+func newInFlightTable() *inFlightTable { return &inFlightTable{counts: map[string]*atomic.Int64{}} }
+
+func (t *inFlightTable) get(key string) *atomic.Int64 {
+	t.mu.Lock()
+	c, ok := t.counts[key]
+	if !ok {
+		c = &atomic.Int64{}
+		t.counts[key] = c
+	}
+	t.mu.Unlock()
+	return c
 }
 
 func receiverAdminAuthInterceptor(token string) grpc.UnaryServerInterceptor {

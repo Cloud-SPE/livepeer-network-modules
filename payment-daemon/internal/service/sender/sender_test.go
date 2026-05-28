@@ -37,7 +37,7 @@ func stand(t *testing.T) (pb.PayerDaemonClient, func()) {
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{})
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{}, nil)
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -289,7 +289,7 @@ func TestReportPaymentResult_InvalidRecipientRandEvictsSessionAndReturnsAborted(
 		t.Fatalf("devkeystore.New: %v", err)
 	}
 	fetcher := &rotatingFetcher{}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher, nil)
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -386,7 +386,7 @@ func TestCreatePayment_UsesAuthoritativeTicketFaceValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, authoritativeFetcher{})
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, authoritativeFetcher{}, nil)
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -443,7 +443,7 @@ func TestCreatePayment_PrefersPerRequestTicketParamsBaseURL(t *testing.T) {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
 	fetcher := &recordingFetcher{}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher, nil)
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -533,7 +533,7 @@ func TestCreatePayment_RejectsEmptySeedFromFetcher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, emptySeedFetcher{})
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, emptySeedFetcher{}, nil)
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {

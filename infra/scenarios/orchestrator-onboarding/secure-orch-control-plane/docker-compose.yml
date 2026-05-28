@@ -57,6 +57,12 @@ services:
       - --service-registry-address=${SERVICE_REGISTRY_ADDRESS:-}
       - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS:-0x04C0b249740175999E5BF5c9ac1dA92431EF34C5}
       - --discovery=${DISCOVERY_MODE:-chain}
+      # Prometheus listener. The published port above is inert without this
+      # flag (empty --metrics-listen disables the listener). Exposes the full
+      # livepeer_registry_* catalog; see docs/operations/metrics.md.
+      - --metrics-listen=:${REGISTRY_METRICS_PORT:-9095}
+      - --log-level=${LOG_LEVEL:-info}
+      - --log-format=${LOG_FORMAT:-json}
     ports:
       - "${REGISTRY_METRICS_PORT:-9095}:${REGISTRY_METRICS_PORT:-9095}"
     volumes:

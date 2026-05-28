@@ -504,34 +504,63 @@ CloseSession) are all surfaced through the broker's existing
 ## 8. Observability
 
 The daemon exposes a Prometheus `/metrics` HTTP endpoint when started
-with `--metrics-listen=:9092` (or any other host:port). Empty means
-metrics are off and the in-process recorder is a no-op (zero overhead).
+with `--metrics-listen=:9092` (or any other host:port). Empty (the
+default) means metrics are off and the in-process recorder is a no-op
+(zero overhead). When disabled, `/metrics` returns 404 so a scrape
+target pointed at the wrong daemon fails loudly rather than returning an
+empty body. All metrics use the `livepeer_payment_*` namespace; the
+standard `go_*` and `process_*` collectors come for free.
 
-Per-mode metrics surface (when implemented; v0.2 scaffolds the
-recorder; plan 0016 wires real counters):
+All label values are bounded by construction. Per the cross-cutting
+cardinality rule, **no metric is ever labeled by sender address,
+work_id, ticket hash, or nonce.**
+
+**gRPC (both modes):**
+- `livepeer_payment_grpc_requests_total{role,method,code}` (counter) — completed RPCs; `role` ∈ {receiver, sender}, `code` is the gRPC status.
+- `livepeer_payment_grpc_request_duration_seconds{role,method}` (histogram).
+- `livepeer_payment_grpc_in_flight_requests{role,method}` (gauge).
+
+**Receiver — payment processing:**
+- `livepeer_payment_sessions_total{event}` (counter) — event ∈ {opened, already_open, closed}.
+- `livepeer_payment_tickets_total{result}` (counter) — result ∈ {accepted, rejected}.
+- `livepeer_payment_tickets_rejected_total{reason}` (counter) — reason ∈ {invalid_recipient_rand, nonce_replay, nonce_cap, invalid_signature, other}.
+- `livepeer_payment_winning_tickets_total` (counter) — winners queued for redemption.
+- `livepeer_payment_credited_ev_gwei_total` (counter) — cumulative credited EV (gwei, to avoid wei float-precision loss).
+- `livepeer_payment_debits_total{result}` (counter) — DebitBalance calls; result ∈ {ok, error}.
+- `livepeer_payment_work_units_debited_total` (counter).
+
+**Receiver — settlement / redemption loop:**
+- `livepeer_payment_redemptions_total{result}` (counter) — result ∈ {redeemed, expired, already_used, face_value_too_low, insufficient_funds, tx_error}.
+- `livepeer_payment_redemption_duration_seconds` (histogram).
+- `livepeer_payment_redemption_queue_depth` (gauge) — pending winners queued locally.
+- `livepeer_payment_redemption_tx_total{result}` (counter) — result ∈ {submitted, confirmed, failed}.
+- `livepeer_payment_gas_price_wei` (gauge) — last gas price the loop observed.
+- `livepeer_payment_current_round` (gauge) — last-initialized Livepeer round.
+
+**Receiver — escrow:**
+- `livepeer_payment_escrow_pending_float_wei` (gauge) — total pending float across senders.
+- `livepeer_payment_tracked_senders` (gauge).
+- `livepeer_payment_escrow_rebuilds_total` (counter).
+
+**Chain provider (both modes, via the metered Broker):**
+- `livepeer_payment_chain_reads_total{method,result}` (counter) — method ∈ {get_sender_info, is_used_ticket}.
+- `livepeer_payment_chain_read_duration_seconds{method}` (histogram).
+- `livepeer_payment_chain_writes_total{method,result}` (counter) — method = redeem_winning_ticket.
+- `livepeer_payment_chain_last_success_timestamp_seconds` (gauge) — staleness signal for chain connectivity.
 
 **Sender:**
-- `livepeer_payment_session_started_total` (counter) — sessions opened.
-- `livepeer_payment_ticket_created_total{outcome}` (counter) — tickets
-  signed; outcome ∈ {success, validation_failed, escrow_empty}.
-- `livepeer_payment_ticket_ev_wei` (histogram) — per-ticket EV.
-- `livepeer_payment_sender_deposit_wei` (gauge) — last-observed deposit.
-- `livepeer_payment_sender_reserve_wei` (gauge) — last-observed reserve.
+- `livepeer_payment_payments_created_total{result}` (counter) — CreatePayment outcomes.
+- `livepeer_payment_tickets_signed_total` (counter).
+- `livepeer_payment_ticketparams_fetches_total{result}` (counter) — HTTP ticket-params fetches from the broker.
+- `livepeer_payment_ticketparams_fetch_duration_seconds` (histogram).
+- `livepeer_payment_sender_sessions` (gauge) — cached sender sessions.
+- `livepeer_payment_sender_deposit_wei` / `livepeer_payment_sender_reserve_wei` (gauge) — last-observed on-chain funds.
 
-**Receiver:**
-- `livepeer_payment_session_opened_total` (counter)
-- `livepeer_payment_processed_total{outcome}` (counter) — outcome ∈
-  {accepted, rejected_signature, rejected_nonce, rejected_expired,
-  rejected_price}.
-- `livepeer_payment_balance_wei{sender}` (gauge) — per-sender balance.
-- `livepeer_payment_pending_redemptions_total` (gauge) — current queue
-  depth.
-- `livepeer_payment_redemption_attempt_total{outcome}` (counter) —
-  outcome ∈ {confirmed, failed_gas, failed_revert, expired}.
-- `livepeer_payment_pending_face_value_wei` (gauge) — total face_value
-  pending redemption.
+**Daemon-level:**
+- `livepeer_payment_build_info{version,mode,go_version}` (gauge, value 1).
+- `livepeer_payment_uptime_seconds` (gauge).
 
-**Broker (interim-debit cadence — plan 0015):**
+**Broker (interim-debit cadence — plan 0015; emitted by the broker, not this daemon):**
 - `livepeer_payment_interim_debit_total{outcome}` (counter) — interim
   DebitBalance call results from the broker's per-session ticker;
   outcome ∈ {success, retried, terminal_failure}. `retried` means the
@@ -543,11 +572,6 @@ recorder; plan 0016 wires real counters):
   {balance_insufficient, handler_complete, ctx_cancelled}.
   `balance_insufficient` rates trending up indicate gateway
   operators are sizing initial payments below their session length.
-
-Cardinality is bounded by `--metrics-max-series-per-metric` (default
-10000). New label combinations beyond the cap are dropped silently
-(existing combinations continue to update); the daemon logs `metric
-cardinality cap exceeded` once per metric on first hit.
 
 ### Logging
 

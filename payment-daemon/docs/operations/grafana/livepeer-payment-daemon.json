@@ -1,0 +1,230 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Prometheus instance scraping the livepeer-payment-daemon",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
+    {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"},
+    {"type": "panel", "id": "stat", "name": "Stat", "version": ""},
+    {"type": "panel", "id": "timeseries", "name": "Time series", "version": ""}
+  ],
+  "annotations": {"list": []},
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["livepeer", "payment-daemon"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "${DS_PROMETHEUS}",
+        "query": "label_values(livepeer_payment_uptime_seconds, job)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {"text": "All", "value": "$__all"}
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "",
+  "title": "Livepeer Payment Daemon",
+  "uid": "livepeer-payment-daemon",
+  "panels": [
+    {
+      "type": "row",
+      "title": "Overview",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Uptime",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "id": 2,
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "targets": [{"expr": "max(livepeer_payment_uptime_seconds{job=~\"$job\"})", "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "Build",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 4, "w": 6, "x": 4, "y": 1},
+      "id": 3,
+      "options": {"reduceOptions": {"fields": "/^version$/", "calcs": ["lastNotNull"]}, "textMode": "name"},
+      "targets": [{"expr": "livepeer_payment_build_info{job=~\"$job\"}", "format": "table", "instant": true, "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "Chain last success age",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 4, "w": 4, "x": 10, "y": 1},
+      "id": 4,
+      "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 300}]}}, "overrides": []},
+      "targets": [{"expr": "time() - max(livepeer_payment_chain_last_success_timestamp_seconds{job=~\"$job\"})", "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "Redemption queue depth",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 4, "w": 4, "x": 14, "y": 1},
+      "id": 5,
+      "targets": [{"expr": "max(livepeer_payment_redemption_queue_depth{job=~\"$job\"})", "refId": "A"}]
+    },
+    {
+      "type": "stat",
+      "title": "Current round",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 4, "w": 4, "x": 18, "y": 1},
+      "id": 6,
+      "targets": [{"expr": "max(livepeer_payment_current_round{job=~\"$job\"})", "refId": "A"}]
+    },
+    {
+      "type": "row",
+      "title": "gRPC",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "id": 10,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "gRPC request rate by method",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 6},
+      "id": 11,
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "targets": [{"expr": "sum by (role,method) (rate(livepeer_payment_grpc_requests_total{job=~\"$job\"}[5m]))", "legendFormat": "{{role}}/{{method}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "gRPC error ratio + p99 latency",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 6},
+      "id": 12,
+      "targets": [
+        {"expr": "sum(rate(livepeer_payment_grpc_requests_total{job=~\"$job\",code!=\"OK\"}[5m])) / clamp_min(sum(rate(livepeer_payment_grpc_requests_total{job=~\"$job\"}[5m])), 1e-9)", "legendFormat": "error ratio", "refId": "A"},
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(livepeer_payment_grpc_request_duration_seconds_bucket{job=~\"$job\"}[5m])))", "legendFormat": "p99 latency (s)", "refId": "B"}
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Receiver — payments",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 13},
+      "id": 20,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Tickets accepted vs rejected",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 14},
+      "id": 21,
+      "targets": [{"expr": "sum by (result) (rate(livepeer_payment_tickets_total{job=~\"$job\"}[5m]))", "legendFormat": "{{result}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Ticket rejections by reason",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 14},
+      "id": 22,
+      "targets": [{"expr": "sum by (reason) (rate(livepeer_payment_tickets_rejected_total{job=~\"$job\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Winning tickets + credited EV (gwei)",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 14},
+      "id": 23,
+      "targets": [
+        {"expr": "sum(rate(livepeer_payment_winning_tickets_total{job=~\"$job\"}[5m]))", "legendFormat": "winners/s", "refId": "A"},
+        {"expr": "sum(rate(livepeer_payment_credited_ev_gwei_total{job=~\"$job\"}[5m]))", "legendFormat": "credited gwei/s", "refId": "B"}
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Settlement + escrow",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 21},
+      "id": 30,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Redemption outcomes",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 22},
+      "id": 31,
+      "targets": [{"expr": "sum by (result) (rate(livepeer_payment_redemptions_total{job=~\"$job\"}[15m]))", "legendFormat": "{{result}}", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Gas price (wei)",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 22},
+      "id": 32,
+      "targets": [{"expr": "max(livepeer_payment_gas_price_wei{job=~\"$job\"})", "legendFormat": "gas price", "refId": "A"}]
+    },
+    {
+      "type": "timeseries",
+      "title": "Escrow pending float + tracked senders",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 22},
+      "id": 33,
+      "targets": [
+        {"expr": "max(livepeer_payment_escrow_pending_float_wei{job=~\"$job\"})", "legendFormat": "pending float (wei)", "refId": "A"},
+        {"expr": "max(livepeer_payment_tracked_senders{job=~\"$job\"})", "legendFormat": "tracked senders", "refId": "B"}
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Chain + sender",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 29},
+      "id": 40,
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Chain reads/writes by method",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 30},
+      "id": 41,
+      "targets": [
+        {"expr": "sum by (method,result) (rate(livepeer_payment_chain_reads_total{job=~\"$job\"}[5m]))", "legendFormat": "read {{method}} {{result}}", "refId": "A"},
+        {"expr": "sum by (method,result) (rate(livepeer_payment_chain_writes_total{job=~\"$job\"}[5m]))", "legendFormat": "write {{method}} {{result}}", "refId": "B"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Sender — payments, signs, ticket-params",
+      "datasource": "${DS_PROMETHEUS}",
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 30},
+      "id": 42,
+      "targets": [
+        {"expr": "sum by (result) (rate(livepeer_payment_payments_created_total{job=~\"$job\"}[5m]))", "legendFormat": "payments {{result}}", "refId": "A"},
+        {"expr": "sum(rate(livepeer_payment_tickets_signed_total{job=~\"$job\"}[5m]))", "legendFormat": "signed/s", "refId": "B"},
+        {"expr": "sum by (result) (rate(livepeer_payment_ticketparams_fetches_total{job=~\"$job\"}[5m]))", "legendFormat": "params {{result}}", "refId": "C"}
+      ]
+    }
+  ]
+}

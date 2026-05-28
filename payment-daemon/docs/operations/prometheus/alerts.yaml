@@ -1,0 +1,169 @@
+# Prometheus alert rules for the livepeer-payment-daemon.
+#
+# Severity tiers:
+#   page   — wake someone up (funds at risk / availability)
+#   ticket — investigate during business hours
+#
+# Tune thresholds before applying; defaults err on the side of "loud
+# enough to be useful". The chain-dependent rules (redemption, chain
+# staleness) only fire for receiver-mode daemons with --chain-rpc set;
+# in dev mode those series stay flat.
+#
+# Install:
+#   1. Drop this file where Prometheus scans rule_files,
+#      e.g. /etc/prometheus/rules.d/livepeer-payment.yaml
+#   2. prometheus.yml:
+#        rule_files:
+#          - rules.d/livepeer-payment.yaml
+#   3. Reload: POST /-/reload
+#
+# Validate: promtool check rules alerts.yaml
+
+groups:
+  # =====================================================================
+  # CRITICAL — page on these
+  # =====================================================================
+  - name: livepeer-payment-critical
+    interval: 30s
+    rules:
+      - alert: PaymentDaemonDown
+        expr: up{job=~".*payment.*"} == 0
+        for: 2m
+        labels:
+          severity: page
+          service: livepeer-payment-daemon
+        annotations:
+          summary: "payment-daemon unreachable to Prometheus for 2m"
+          description: |
+            Prometheus cannot scrape the daemon's /metrics endpoint.
+            Check the process, the --metrics-listen port, and host health.
+            If receiver-mode is down, the broker's ProcessPayment /
+            DebitBalance calls are failing — paid traffic is rejected.
+
+      - alert: PaymentChainRPCStale
+        expr: |
+          (time() - max(livepeer_payment_chain_last_success_timestamp_seconds)) > 300
+        for: 1m
+        labels:
+          severity: page
+          service: livepeer-payment-daemon
+        annotations:
+          summary: "No successful chain interaction in 5 minutes"
+          description: |
+            The metered Broker has not completed a chain read/write in 5+
+            minutes. Winning-ticket redemptions stall and escrow ceilings
+            go stale. Likely: chain RPC down, wrong --chain-rpc, or
+            rate-limit exhaustion.
+
+      - alert: PaymentRedemptionTxFailureSpike
+        expr: |
+          sum(rate(livepeer_payment_redemption_tx_total{result="failed"}[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: page
+          service: livepeer-payment-daemon
+        annotations:
+          summary: "Redemption transactions failing >0.05/s for 10m"
+          description: |
+            Submitted redeemWinningTicket transactions are reverting or
+            erroring. Winnings are not being collected. Check signing-wallet
+            ETH balance (gas), chain RPC health, and daemon logs for the
+            redeem error. Compare with livepeer_payment_redemptions_total
+            by result for the terminal classification.
+
+      - alert: PaymentGRPCErrorRateHigh
+        expr: |
+          (
+            sum(rate(livepeer_payment_grpc_requests_total{code!="OK"}[5m]))
+            /
+            clamp_min(sum(rate(livepeer_payment_grpc_requests_total[5m])), 1e-9)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: page
+          service: livepeer-payment-daemon
+        annotations:
+          summary: "gRPC error rate >5% for 10m"
+          description: |
+            More than 5% of RPCs return non-OK. Break down by method/code:
+              topk(5, sum by (role,method,code) (rate(livepeer_payment_grpc_requests_total{code!="OK"}[1h])))
+
+  # =====================================================================
+  # WARNING — ticket-worthy
+  # =====================================================================
+  - name: livepeer-payment-warning
+    interval: 1m
+    rules:
+      - alert: PaymentRedemptionQueueGrowing
+        expr: |
+          min_over_time(livepeer_payment_redemption_queue_depth[30m]) > 20
+        for: 30m
+        labels:
+          severity: ticket
+          service: livepeer-payment-daemon
+        annotations:
+          summary: "Redemption queue depth has stayed above 20 for 30m"
+          description: |
+            Winning tickets are queuing faster than the redemption loop
+            drains them, or the loop is wedged. Inspect
+            livepeer_payment_redemptions_total by result — a high
+            insufficient_funds rate means senders are under-funded;
+            tx_error means chain trouble. Consider --redemption-interval.
+
+      - alert: PaymentRedemptionDropRateHigh
+        expr: |
+          (
+            sum(rate(livepeer_payment_redemptions_total{result=~"face_value_too_low|insufficient_funds|tx_error"}[15m]))
+            /
+            clamp_min(sum(rate(livepeer_payment_redemptions_total[15m])), 1e-9)
+          ) > 0.25
+        for: 30m
+        labels:
+          severity: ticket
+          service: livepeer-payment-daemon
+        annotations:
+          summary: "Over 25% of redemptions are dropped/failing for 30m"
+          description: |
+            A large fraction of winners are not being collected.
+            Break down: sum by (result) (rate(livepeer_payment_redemptions_total[15m])).
+            face_value_too_low → gas price too high vs face value;
+            insufficient_funds → sender escrow under-funded;
+            tx_error → chain submission failures.
+
+      - alert: PaymentTicketRejectionSpike
+        expr: |
+          (
+            sum(rate(livepeer_payment_tickets_total{result="rejected"}[10m]))
+            /
+            clamp_min(sum(rate(livepeer_payment_tickets_total[10m])), 1e-9)
+          ) > 0.1
+        for: 15m
+        labels:
+          severity: ticket
+          service: livepeer-payment-daemon
+        annotations:
+          summary: "Ticket rejection rate >10% for 15m"
+          description: |
+            Break down by reason:
+              sum by (reason) (rate(livepeer_payment_tickets_rejected_total[10m]))
+            invalid_signature / invalid_recipient_rand → sender/session
+            desync or a hostile sender; nonce_replay / nonce_cap → sender
+            reusing nonces or exceeding the per-session cap.
+
+      - alert: PaymentTicketParamsFetchFailing
+        expr: |
+          (
+            sum(rate(livepeer_payment_ticketparams_fetches_total{result="error"}[10m]))
+            /
+            clamp_min(sum(rate(livepeer_payment_ticketparams_fetches_total[10m])), 1e-9)
+          ) > 0.1
+        for: 15m
+        labels:
+          severity: ticket
+          service: livepeer-payment-daemon
+        annotations:
+          summary: "Sender ticket-params fetches failing >10% for 15m"
+          description: |
+            The sender daemon cannot fetch payee-issued ticket params from
+            the broker's /v1/payment/ticket-params endpoint. Check broker
+            reachability and the configured ticket-params base URL.

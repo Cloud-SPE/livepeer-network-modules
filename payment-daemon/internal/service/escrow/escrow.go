@@ -28,6 +28,7 @@ import (
 	"sync"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 )
 
@@ -45,13 +46,17 @@ type Config struct {
 	// Claimant is the receiver's claim address (orch identity / hot
 	// signer). Used to subtract claimed-by-us from reserveAlloc.
 	Claimant []byte
+
+	// Recorder receives escrow gauge metrics. Nil = a no-op recorder.
+	Recorder metrics.Recorder
 }
 
 // Escrow is the off-chain accounting service.
 type Escrow struct {
-	broker providers.Broker
-	clock  providers.Clock
-	cfg    Config
+	broker  providers.Broker
+	clock   providers.Clock
+	cfg     Config
+	metrics metrics.Recorder
 
 	mu      sync.Mutex
 	pending map[string]*big.Int // hex(senderAddr) -> pending wei
@@ -59,12 +64,32 @@ type Escrow struct {
 
 // New constructs an Escrow.
 func New(broker providers.Broker, clock providers.Clock, cfg Config) *Escrow {
+	rec := cfg.Recorder
+	if rec == nil {
+		rec = metrics.NewNoop()
+	}
 	return &Escrow{
 		broker:  broker,
 		clock:   clock,
 		cfg:     cfg,
+		metrics: rec,
 		pending: map[string]*big.Int{},
 	}
+}
+
+// refreshGaugesLocked recomputes the aggregate pending-float and
+// tracked-sender gauges. Caller must hold e.mu.
+func (e *Escrow) refreshGaugesLocked() {
+	total := new(big.Int)
+	tracked := 0
+	for _, v := range e.pending {
+		if v != nil && v.Sign() > 0 {
+			tracked++
+			total.Add(total, v)
+		}
+	}
+	e.metrics.SetEscrowPendingFloatWei(metrics.WeiToFloat(total))
+	e.metrics.SetTrackedSenders(tracked)
 }
 
 // MaxFloat returns the max face_value safely committable to a single
@@ -115,6 +140,7 @@ func (e *Escrow) SubFloat(sender []byte, amount *big.Int) {
 	defer e.mu.Unlock()
 	p := e.getPendingLocked(sender)
 	p.Add(p, amount)
+	e.refreshGaugesLocked()
 }
 
 // AddFloat releases `amount` of pending for the sender. Returns
@@ -131,6 +157,7 @@ func (e *Escrow) AddFloat(sender []byte, amount *big.Int) error {
 		return ErrPendingUnderflow
 	}
 	p.Sub(p, amount)
+	e.refreshGaugesLocked()
 	return nil
 }
 
@@ -146,6 +173,7 @@ func (e *Escrow) Rebuild(st *store.Store) error {
 	if err != nil {
 		return fmt.Errorf("escrow rebuild: %w", err)
 	}
+	e.metrics.IncEscrowRebuild()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, p := range pend {
@@ -160,6 +188,7 @@ func (e *Escrow) Rebuild(st *store.Store) error {
 		}
 		v.Add(v, p.Ticket.FaceValue)
 	}
+	e.refreshGaugesLocked()
 	return nil
 }
 

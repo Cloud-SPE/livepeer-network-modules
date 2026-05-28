@@ -10,6 +10,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/registry"
 )
 
@@ -41,6 +42,7 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := registry.BuildOfferings(cfg, s.currentMetadata())
+	observability.SetPublishedOfferings(len(payload.Capabilities))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(payload)

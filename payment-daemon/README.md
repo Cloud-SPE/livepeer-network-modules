@@ -17,6 +17,8 @@ Runs on both sides of a paid request:
 
 Wire format and gRPC contracts at [`../livepeer-network-protocol/proto/livepeer/payments/v1/`](../livepeer-network-protocol/proto/livepeer/payments/v1/).
 Operational reading: [`docs/operator-runbook.md`](./docs/operator-runbook.md).
+Payout planning: [`docs/payout-modeling-guide.md`](./docs/payout-modeling-guide.md).
+Simulation inputs: [`scenarios/`](./scenarios/).
 
 ## Status (pre-1.0 — sender + receiver + restart-stable sessions)
 
@@ -61,6 +63,13 @@ make build      # build dev image locally
 make run        # foreground; sock at ./run/payment-daemon.sock
 make test       # in-container go test ./...
 make publish TAG=0.1.0   # multi-arch push (requires real TAG)
+```
+
+Scenario compose:
+
+```sh
+docker compose -f compose/docker-compose.scenario.yml --profile sim up payout-sim
+docker compose -f compose/docker-compose.scenario.yml --profile sender --profile receiver up -d
 ```
 
 ## Configuration

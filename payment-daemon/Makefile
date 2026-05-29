@@ -10,7 +10,7 @@ VERSION ?= $(shell VERSION_PREFIX="$(TAG)" FALLBACK_VERSION=dev ../infra/build/g
 PROTO_SRC := ../livepeer-network-protocol/proto
 PROTO_OUT := ../livepeer-network-protocol/proto-go
 
-.PHONY: build run dev test lint proto publish clean help
+.PHONY: build run dev test lint proto sim publish clean help
 
 build: ## Build dev image locally
 	docker build \
@@ -58,6 +58,13 @@ proto: ## Regenerate Go bindings from the proto sources (requires protoc on host
 	$(PROTO_SRC)/livepeer/payments/v1/payee_admin.proto \
 	$(PROTO_SRC)/livepeer/payments/v1/payee_daemon.proto \
 	$(PROTO_SRC)/livepeer/payments/v1/payer_daemon.proto
+
+sim: ## Run the payout simulator (SCENARIO=payment-daemon/scenarios/openai-chat-qwen3-8b.yaml FORMAT=text)
+	@if [ -z "$(SCENARIO)" ]; then \
+		echo "set SCENARIO=path/to/scenario.yaml"; \
+		exit 1; \
+	fi
+	go run ./cmd/payout-sim --scenario $(SCENARIO) --format $${FORMAT:-text}
 
 publish: ## Build + push multi-arch image (requires TAG set to a real version)
 	@if [ "$(TAG)" = "dev" ]; then \

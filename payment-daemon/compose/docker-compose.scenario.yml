@@ -1,0 +1,74 @@
+# Scenario-oriented compose for payment-daemon economics work.
+#
+# This stack is intentionally split into:
+# - receiver: real receiver-mode daemon
+# - sender:   real sender-mode daemon
+# - payout-sim: scenario runner for pricing / payout assumptions
+#
+# Today `payout-sim` is an economics simulator. It does not yet drive the
+# sender/receiver sockets. Use this compose to:
+# - keep sender + receiver boot parameters reproducible
+# - run scenario YAMLs in-container against the same image build
+# - prepare for the forthcoming on-chain `payment-e2e` driver
+#
+# Usage:
+#   docker compose -f payment-daemon/compose/docker-compose.scenario.yml --profile sim up payout-sim
+#   docker compose -f payment-daemon/compose/docker-compose.scenario.yml --profile sender --profile receiver up -d
+#   docker compose -f payment-daemon/compose/docker-compose.scenario.yml --profile sender --profile receiver --profile sim up
+
+services:
+  receiver:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-dev}
+    profiles: [receiver]
+    command:
+      - --mode=receiver
+      - --socket=/var/run/livepeer/payment-daemon.sock
+      - --db=/var/lib/livepeer/payment-daemon/sessions.db
+      - --chain-rpc=${CHAIN_RPC:-}
+      - --keystore-path=/etc/livepeer/receiver-keystore.json
+      - --keystore-password-file=/etc/livepeer/receiver-keystore-password
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
+      - --redeem-gas=${REDEEM_GAS:-500000}
+      - --redemption-interval=${REDEMPTION_INTERVAL:-30s}
+      - --redemption-confirmations=${REDEMPTION_CONFIRMATIONS:-4}
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_RECEIVER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - payment-daemon-run:/var/run/livepeer
+      - payment-daemon-db:/var/lib/livepeer/payment-daemon
+      - ${RECEIVER_KEYSTORE_PATH:-./run/receiver-keystore.json}:/etc/livepeer/receiver-keystore.json:ro
+      - ${RECEIVER_KEYSTORE_PASSWORD_FILE:-./run/receiver-keystore-password}:/etc/livepeer/receiver-keystore-password:ro
+    restart: unless-stopped
+
+  sender:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-dev}
+    profiles: [sender]
+    command:
+      - --mode=sender
+      - --socket=/var/run/livepeer/payer-daemon.sock
+      - --chain-rpc=${CHAIN_RPC:-}
+      - --keystore-path=/etc/livepeer/sender-keystore.json
+      - --keystore-password-file=/etc/livepeer/sender-keystore-password
+    environment:
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_SENDER_KEYSTORE_PASSWORD:-}
+    volumes:
+      - payment-daemon-run:/var/run/livepeer
+      - ${SENDER_KEYSTORE_PATH:-./run/sender-keystore.json}:/etc/livepeer/sender-keystore.json:ro
+      - ${SENDER_KEYSTORE_PASSWORD_FILE:-./run/sender-keystore-password}:/etc/livepeer/sender-keystore-password:ro
+    restart: unless-stopped
+
+  payout-sim:
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-dev}
+    profiles: [sim]
+    entrypoint: ["/usr/local/bin/payout-sim"]
+    command:
+      - --scenario=/scenarios/${SCENARIO_FILE:-openai-chat-qwen3-8b.yaml}
+      - --format=${SIM_FORMAT:-text}
+    volumes:
+      - ../scenarios:/scenarios:ro
+      - payment-daemon-run:/var/run/livepeer
+    restart: "no"
+
+volumes:
+  payment-daemon-run: {}
+  payment-daemon-db: {}

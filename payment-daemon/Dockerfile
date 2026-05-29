@@ -31,6 +31,13 @@ RUN cd payment-daemon && CGO_ENABLED=0 GOOS=linux \
         -o /out/livepeer-payment-daemon \
         ./cmd/livepeer-payment-daemon
 
+RUN cd payment-daemon && CGO_ENABLED=0 GOOS=linux \
+    go build \
+        -trimpath \
+        -ldflags="-s -w" \
+        -o /out/payout-sim \
+        ./cmd/payout-sim
+
 # Pre-create the runtime data + socket directories so Docker named volumes
 # mounted at these paths inherit the nonroot ownership rather than the
 # default root-owned-empty-dir behavior.
@@ -51,6 +58,7 @@ RUN cd payment-daemon && go test ./...
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /out/livepeer-payment-daemon /usr/local/bin/livepeer-payment-daemon
+COPY --from=builder /out/payout-sim /usr/local/bin/payout-sim
 
 # nonroot UID is 65532 in distroless; --chown carries through. These dirs
 # are the canonical mount points for the BoltDB ledger and the unix socket.

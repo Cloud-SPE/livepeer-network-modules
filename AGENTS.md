@@ -27,6 +27,7 @@ load-bearing decisions.
 | What are the supply-side requirements we're designing against? | [`docs/design-docs/requirements.md`](./docs/design-docs/requirements.md) |
 | What's the proposed architecture at a glance? | [`docs/design-docs/architecture-overview.md`](./docs/design-docs/architecture-overview.md) |
 | How do gateway-shaped clients, broker, and `payment-daemon` interact? | [`docs/design-docs/payment-daemon-interactions.md`](./docs/design-docs/payment-daemon-interactions.md) |
+| What do the pool-specific flows (signup / payout / routing) look like? | [`docs/design-docs/pool-overlay-flows.md`](./docs/design-docs/pool-overlay-flows.md) |
 | How do long-lived / streaming sessions work end-to-end? | [`docs/design-docs/streaming-workload-pattern.md`](./docs/design-docs/streaming-workload-pattern.md) |
 | What changed in `payment-daemon` vs the suite? | [`docs/design-docs/payment-decoupling.md`](./docs/design-docs/payment-decoupling.md) |
 | Which "health" surface answers a given routing question? | [`docs/design-docs/backend-health.md`](./docs/design-docs/backend-health.md) |

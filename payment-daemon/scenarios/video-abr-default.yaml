@@ -1,0 +1,25 @@
+version: 1
+name: "Video ABR - Default"
+eth_usd: 3500
+seed: 99
+simulation:
+  hours: 168
+  trials: 250
+offerings:
+  - name: "video-abr-default"
+    capability_id: "video:transcode.abr"
+    offering_id: "default"
+    interaction: "http-reqresp@v0"
+    work_unit: "jobs"
+    price:
+      amount_wei: "4800000000000"
+      per_units: 1
+    payout:
+      face_value_wei: "50000000000000000"
+    workload:
+      units_per_hour: 12
+      requests_per_hour: 12
+      units_per_request: 1
+      target_revenue_per_hour_usd: 1.0
+    gateway:
+      estimated_units_multiplier: 1.0

@@ -1,0 +1,53 @@
+{{define "content"}}
+<section>
+  <h2>Offer Editor</h2>
+  <div class="small" id="offerEditorState">Creating a new offer.</div>
+  <div class="form-grid">
+    <label>Offer ID
+      <input id="offerId" value="rerank-zerank2">
+    </label>
+    <label>Capability ID
+      <input id="offerCapability" value="rerank">
+    </label>
+    <label>Offering ID
+      <input id="offerOffering" value="zerank-2-default">
+    </label>
+    <label>Interaction Mode
+      <input id="offerInteraction" value="http-reqresp@v0">
+    </label>
+    <label>Work Unit
+      <input id="offerWorkUnitName" value="requests">
+    </label>
+    <label>Extractor Type
+      <input id="offerExtractorType" value="request-formula">
+    </label>
+    <label>Extractor Expression
+      <input id="offerExtractorExpression" value="1">
+    </label>
+    <label>Amount Wei
+      <input id="offerAmountWei" value="372000000000">
+    </label>
+    <label>Per Units
+      <input id="offerPerUnits" type="number" min="1" value="1">
+    </label>
+  </div>
+  <div class="actions">
+    <button id="createOffer">Create Offer</button>
+    <button id="updateOffer" class="secondary">Update Offer</button>
+    <button id="resetOfferForm" class="secondary">Reset Form</button>
+    <button id="syncOfferPayload" class="secondary">Refresh JSON</button>
+  </div>
+  <details>
+    <summary>Advanced JSON</summary>
+    <label>Offer JSON
+      <textarea id="offerPayload"></textarea>
+    </label>
+    <button id="submitOfferRaw" class="secondary">Submit Raw JSON</button>
+  </details>
+</section>
+
+<section>
+  <h2>Offers</h2>
+  <div id="offers" class="card-list"></div>
+</section>
+{{end}}

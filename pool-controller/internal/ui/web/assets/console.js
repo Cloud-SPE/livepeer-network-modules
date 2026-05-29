@@ -1,14 +1,12 @@
-package adminpage
-
-const pageScriptOpen = `
-  <script>
-`
-
-const pageScript = `
     const $ = (id) => document.getElementById(id);
+    const on = (id, ev, fn) => { const el = $(id); if (el) el.addEventListener(ev, fn); };
+    const val = (id) => { const el = $(id); return el ? el.value.trim() : ""; };
     const statusEl = $("status");
     let latestOffers = [];
+    let latestMembers = [];
     let latestBackends = [];
+    let latestAssignments = [];
+    let latestRuntime = null;
     let latestAssignmentPreview = null;
     let latestJoinPreview = null;
     let latestAssignmentCandidates = [];
@@ -17,10 +15,10 @@ const pageScript = `
 
     function auditQuery() {
       const params = new URLSearchParams();
-      if ($("auditKind").value.trim()) params.set("kind", $("auditKind").value.trim());
-      if ($("auditResourceType").value.trim()) params.set("resource_type", $("auditResourceType").value.trim());
-      if ($("auditResourceID").value.trim()) params.set("resource_id", $("auditResourceID").value.trim());
-      if ($("auditLimit").value.trim()) params.set("limit", $("auditLimit").value.trim());
+      if (val("auditKind")) params.set("kind", val("auditKind"));
+      if (val("auditResourceType")) params.set("resource_type", val("auditResourceType"));
+      if (val("auditResourceID")) params.set("resource_id", val("auditResourceID"));
+      if (val("auditLimit")) params.set("limit", val("auditLimit"));
       const qs = params.toString();
       return qs ? "/admin/v1/audit-events?" + qs : "/admin/v1/audit-events";
     }
@@ -44,16 +42,18 @@ const pageScript = `
       return from + " -> " + to;
     }
 
+    // The operator session cookie authenticates /admin/v1 calls; same-origin
+    // fetches send it automatically, so no Authorization header is needed.
     function tokenHeaders(includeJSON = true) {
       const headers = {};
-      const token = $("token").value.trim();
-      if (token) headers["Authorization"] = "Bearer " + token;
       if (includeJSON) headers["Content-Type"] = "application/json";
       return headers;
     }
 
     function setStatus(msg, cls = "") {
-      statusEl.className = "status " + cls;
+      if (!statusEl) return;
+      statusEl.hidden = false;
+      statusEl.className = "message" + (cls === "bad" || cls === "error" ? " message-error" : "");
       statusEl.textContent = msg;
     }
 
@@ -173,6 +173,7 @@ const pageScript = `
     function syncAssignmentSelectors() {
       const offerSelect = $("assignmentOfferSelect");
       const backendSelect = $("assignmentBackendSelect");
+      if (!offerSelect || !backendSelect) return;
       offerSelect.innerHTML = '<option value="">Select an offer</option>';
       backendSelect.innerHTML = '<option value="">Select a backend</option>';
       latestOffers.forEach(item => {
@@ -191,6 +192,7 @@ const pageScript = `
 
     function renderAssignmentPreview(preview) {
       const host = $("assignmentPreviewDetails");
+      if (!host) return;
       host.innerHTML = "";
       if (!preview) return;
       const checks = preview.checks || [];
@@ -222,6 +224,7 @@ const pageScript = `
 
     function renderJoinPreview(preview) {
       const host = $("joinPreviewDetails");
+      if (!host) return;
       host.innerHTML = "";
       latestJoinPreview = preview;
       if (!preview) return;
@@ -284,14 +287,15 @@ const pageScript = `
     }
 
     function selectedOffer() {
-      return latestOffers.find(item => item.id === $("assignmentOfferId").value.trim()) || null;
+      return latestOffers.find(item => item.id === val("assignmentOfferId")) || null;
     }
 
     function selectedBackend() {
-      return latestBackends.find(item => item.id === $("assignmentBackendId").value.trim()) || null;
+      return latestBackends.find(item => item.id === val("assignmentBackendId")) || null;
     }
 
     async function refreshAssignmentDraftState() {
+      if (!$("assignmentDraftState")) return;
       const offer = selectedOffer();
       const backend = selectedBackend();
       const el = $("assignmentDraftState");
@@ -375,6 +379,22 @@ const pageScript = `
       setStatus("Assignment draft seeded from join review.", "ok");
     }
 
+    function runtimeSummary(item) {
+      if (!item) return "—";
+      const state = item.dirty ? "dirty" : "converged";
+      const applyStatus = item.last_apply_status || "unapplied";
+      return state + " / " + applyStatus;
+    }
+
+    function renderOverview() {
+      const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+      set("ovOffers", (latestOffers || []).length);
+      set("ovMembers", (latestMembers || []).length);
+      set("ovBackends", (latestBackends || []).length);
+      set("ovAssignments", (latestAssignments || []).length);
+      set("ovRuntime", runtimeSummary(latestRuntime));
+    }
+
     async function refreshAll() {
       setStatus("Refreshing control-plane state...");
       try {
@@ -392,7 +412,10 @@ const pageScript = `
         ]);
 
         latestOffers = offers.offers || [];
+        latestMembers = members.members || [];
         latestBackends = backends.backends || [];
+        latestAssignments = assignments.assignments || [];
+        latestRuntime = runtime;
         latestAssignmentCandidates = assignmentCandidates.candidates || [];
         latestAuditEvents = auditEvents.events || [];
         latestRuntimeHistory = runtimeHistory.items || [];
@@ -407,6 +430,7 @@ const pageScript = `
         renderAssignments(assignments.assignments || []);
         renderRuntime(runtime, brokerConfig);
         renderRuntimeHistory(runtimeHistory.items || []);
+        renderOverview();
         setStatus("Control-plane state refreshed.", "ok");
       } catch (err) {
         setStatus(err.message, "bad");
@@ -415,6 +439,7 @@ const pageScript = `
 
     function renderOffers(items) {
       const host = $("offers");
+      if (!host) return;
       host.innerHTML = "";
       items.forEach(item => {
         const el = card(
@@ -442,6 +467,7 @@ const pageScript = `
 
     function renderJoinRequests(items) {
       const host = $("joinRequests");
+      if (!host) return;
       host.innerHTML = "";
       items.forEach(item => {
         const el = card(
@@ -467,6 +493,7 @@ const pageScript = `
 
     function renderMembers(items) {
       const host = $("members");
+      if (!host) return;
       host.innerHTML = "";
       items.forEach(item => {
         const transition = latestStatusTransition("member_status_updated", "member", item.id);
@@ -489,6 +516,7 @@ const pageScript = `
 
     function renderBackends(items) {
       const host = $("backends");
+      if (!host) return;
       host.innerHTML = "";
       items.forEach(item => {
         const transition = latestStatusTransition("member_backend_status_updated", "member_backend", item.id);
@@ -517,6 +545,7 @@ const pageScript = `
 
     function renderAssignmentCandidates(items) {
       const host = $("assignmentCandidates");
+      if (!host) return;
       host.innerHTML = "";
       items.forEach(item => {
         const claimsHtml = (item.suggested_claims || []).map(claim => {
@@ -551,6 +580,7 @@ const pageScript = `
 
     function renderAssignments(items) {
       const host = $("assignments");
+      if (!host) return;
       host.innerHTML = "";
       items.forEach(item => {
         const transition = latestStatusTransition("assignment_status_updated", "assignment", item.id);
@@ -577,6 +607,7 @@ const pageScript = `
 
     function renderAuditEvents(items) {
       const host = $("auditEvents");
+      if (!host) return;
       host.innerHTML = "";
       items.slice().reverse().slice(0, 20).forEach(item => {
         const details = item.details ? JSON.stringify(item.details) : "";
@@ -593,14 +624,15 @@ const pageScript = `
       });
       host.querySelectorAll("[data-audit-drill]").forEach(btn => btn.onclick = () => {
         const parts = btn.dataset.auditDrill.split("|");
-        $("auditResourceType").value = parts[0] || "";
-        $("auditResourceID").value = parts[1] || "";
+        if ($("auditResourceType")) $("auditResourceType").value = parts[0] || "";
+        if ($("auditResourceID")) $("auditResourceID").value = parts[1] || "";
         void refreshAll();
       });
     }
 
     function renderRuntime(item, yaml) {
       const host = $("runtime");
+      if (!host) return;
       host.innerHTML = "";
       const startedAt = item.last_apply_started_at || "";
       const finishedAt = item.last_apply_finished_at || "";
@@ -622,11 +654,12 @@ const pageScript = `
         (item.broker_reload_error ? '<div class="small bad">broker reload error: ' + item.broker_reload_error + '</div>' : '') +
         (applyError ? '<div class="small bad">last error: ' + applyError + '</div>' : '')
       ));
-      $("runtimeYaml").textContent = yaml;
+      if ($("runtimeYaml")) $("runtimeYaml").textContent = yaml;
     }
 
     function renderRuntimeHistory(items) {
       const host = $("runtimeHistory");
+      if (!host) return;
       host.innerHTML = "";
       items.forEach(item => {
         const el = card(
@@ -665,7 +698,7 @@ const pageScript = `
             throw new Error((preview.reasons || []).join("; ") || "join request is not approvable");
           }
         }
-        const payload = JSON.stringify({ reason: $("joinReviewReason").value.trim() });
+        const payload = JSON.stringify({ reason: val("joinReviewReason") });
         await submitJSON("/admin/v1/join-requests/" + id + "/" + action, payload);
       } catch (err) {
         setStatus(err.message, "bad");
@@ -751,56 +784,56 @@ const pageScript = `
       }
     }
 
-    $("refresh").onclick = refreshAll;
-    $("applyAuditFilters").onclick = () => { void refreshAll(); };
-    $("clearAuditFilters").onclick = () => {
-      $("auditKind").value = "";
-      $("auditResourceType").value = "";
-      $("auditResourceID").value = "";
-      $("auditLimit").value = "20";
+    on("refresh", "click", () => { void refreshAll(); });
+    on("applyAuditFilters", "click", () => { void refreshAll(); });
+    on("clearAuditFilters", "click", () => {
+      if ($("auditKind")) $("auditKind").value = "";
+      if ($("auditResourceType")) $("auditResourceType").value = "";
+      if ($("auditResourceID")) $("auditResourceID").value = "";
+      if ($("auditLimit")) $("auditLimit").value = "20";
       void refreshAll();
-    };
-    $("assignmentOfferSelect").onchange = () => {
+    });
+    on("assignmentOfferSelect", "change", () => {
       if ($("assignmentOfferSelect").value) $("assignmentOfferId").value = $("assignmentOfferSelect").value;
       syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
       void refreshAssignmentDraftState();
-    };
-    $("assignmentBackendSelect").onchange = () => {
+    });
+    on("assignmentBackendSelect", "change", () => {
       if ($("assignmentBackendSelect").value) $("assignmentBackendId").value = $("assignmentBackendSelect").value;
       syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
       void refreshAssignmentDraftState();
-    };
-    $("syncOfferPayload").onclick = () => syncPayloadTextarea("offerPayload", offerPayloadFromForm());
-    $("syncJoinPayload").onclick = () => syncPayloadTextarea("joinPayload", joinPayloadFromForm());
-    $("syncAssignmentPayload").onclick = () => syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
-    $("createOffer").onclick = async () => {
+    });
+    on("syncOfferPayload", "click", () => syncPayloadTextarea("offerPayload", offerPayloadFromForm()));
+    on("syncJoinPayload", "click", () => syncPayloadTextarea("joinPayload", joinPayloadFromForm()));
+    on("syncAssignmentPayload", "click", () => syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm()));
+    on("createOffer", "click", async () => {
       try {
         setStatus("Creating offer...");
         await submitJSON("/admin/v1/offers", syncPayloadTextarea("offerPayload", offerPayloadFromForm()));
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
-    $("updateOffer").onclick = async () => {
+    });
+    on("updateOffer", "click", async () => {
       try {
-        const id = $("offerId").value.trim();
+        const id = val("offerId");
         if (!id) throw new Error("Offer ID is required");
         setStatus("Updating offer...");
         await submitJSON("/admin/v1/offers/" + encodeURIComponent(id), syncPayloadTextarea("offerPayload", offerPayloadFromForm()), "PATCH");
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
-    $("resetOfferForm").onclick = () => resetOfferForm();
-    $("submitOfferRaw").onclick = async () => {
+    });
+    on("resetOfferForm", "click", () => resetOfferForm());
+    on("submitOfferRaw", "click", async () => {
       try {
         setStatus("Submitting raw offer JSON...");
         await submitJSON("/admin/v1/offers", $("offerPayload").value);
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
-    $("submitJoin").onclick = async () => {
+    });
+    on("submitJoin", "click", async () => {
       try {
         setStatus("Submitting join request...");
         await api("/member/v1/join-requests", {
@@ -812,8 +845,8 @@ const pageScript = `
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
-    $("submitJoinRaw").onclick = async () => {
+    });
+    on("submitJoinRaw", "click", async () => {
       try {
         setStatus("Submitting raw join JSON...");
         await api("/member/v1/join-requests", {
@@ -825,48 +858,48 @@ const pageScript = `
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
-    $("createAssignment").onclick = async () => {
+    });
+    on("createAssignment", "click", async () => {
       try {
         setStatus("Creating assignment...");
         await submitJSON("/admin/v1/assignments", syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm()));
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
-    $("submitAssignmentRaw").onclick = async () => {
+    });
+    on("submitAssignmentRaw", "click", async () => {
       try {
         setStatus("Submitting raw assignment JSON...");
         await submitJSON("/admin/v1/assignments", $("assignmentPayload").value);
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
-    $("applyRuntime").onclick = async () => {
+    });
+    on("applyRuntime", "click", async () => {
       try {
         setStatus("Applying desired runtime...");
         await submitJSON("/admin/v1/broker-runtime/apply", "{}");
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
-    $("markApplied").onclick = async () => {
+    });
+    on("markApplied", "click", async () => {
       try {
         setStatus("Marking desired revision applied...");
         await submitJSON("/admin/v1/broker-runtime/mark-applied", "{}");
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
-    $("markStarted").onclick = async () => {
+    });
+    on("markStarted", "click", async () => {
       try {
         setStatus("Marking apply started...");
         await submitJSON("/admin/v1/broker-runtime/mark-started", "{}");
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
-    $("markFailed").onclick = async () => {
+    });
+    on("markFailed", "click", async () => {
       try {
         const error = window.prompt("Apply failure reason", "reload failed") || "";
         setStatus("Marking apply failed...");
@@ -874,17 +907,10 @@ const pageScript = `
       } catch (err) {
         setStatus(err.message, "bad");
       }
-    };
+    });
 
-    resetOfferForm();
-    syncPayloadTextarea("joinPayload", joinPayloadFromForm());
-    syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
+    if ($("offerId")) resetOfferForm();
+    if ($("joinPayload")) syncPayloadTextarea("joinPayload", joinPayloadFromForm());
+    if ($("assignmentPayload")) syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
     void refreshAssignmentDraftState();
     refreshAll();
-`
-
-const pageEnd = `
-  </script>
-</body>
-</html>
-`

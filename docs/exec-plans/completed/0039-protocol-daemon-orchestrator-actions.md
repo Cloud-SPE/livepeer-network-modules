@@ -191,8 +191,9 @@ the active-set / stake snapshot is finalized before any stake leaves.
   `keccak256("LivepeerGovernor")`. Writes `castVote(proposalId, support)` /
   `castVoteWithReason(proposalId, support, reason)`; **support 0=Against
   1=For 2=Abstain**. proposalId = decimal string → uint256. Safety reads
-  (all present on the binding): `State`, `HasVoted`, `ProposalDeadline`,
-  `ProposalSnapshot`, `GetVotes`, `Quorum`, `ProposalVotes`, `Clock`.
+  (as built on the binding): `State`, `HasVoted`, `ProposalDeadline`,
+  `ProposalSnapshot`, `GetVotes`. (`Quorum`/`ProposalVotes`/`Clock` were
+  scoped here originally but not built; add them for a richer panel.)
 
 ### 3.6 gRPC surface (`proto-contracts/livepeer/protocol/v1/protocol.proto`)
 

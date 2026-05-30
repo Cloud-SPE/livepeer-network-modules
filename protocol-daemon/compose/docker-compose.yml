@@ -35,6 +35,8 @@ services:
       - --eth-urls=${ETH_URLS}
       - --chain-id=${CHAIN_ID:-42161}
       - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      # LivepeerGovernor (treasury) contract for proposal voting; empty = disabled.
+      - --treasury-address=${PROTOCOL_TREASURY_ADDRESS:-}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
       # Required for reward / both modes — the orchestrator's on-chain

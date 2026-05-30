@@ -89,6 +89,23 @@ func (s *Server) handleProtocolActionsPage(w http.ResponseWriter, r *http.Reques
 		ProtocolActionFeedback: protocolActionFeedbackFromRequest(r),
 		TxIntentLookup:         buildTxIntentLookupView(r.Context(), s.protocol, r.URL.Query().Get("tx_intent_id")),
 	}
+	if s.protocol != nil {
+		if cfg, err := s.protocol.GetConfig(r.Context()); err != nil {
+			view.OperationalConfigError = err.Error()
+		} else {
+			view.OperationalConfig = &operationalConfigView{
+				RoundInitEnabled:      cfg.RoundInitEnabled,
+				RewardEnabled:         cfg.RewardEnabled,
+				RewardBeforeTransfer:  cfg.RewardBeforeTransfer,
+				TransferBondEnabled:   cfg.TransferBondEnabled,
+				TransferBondReceiver:  cfg.TransferBondReceiver,
+				TransferBondMinRetain: cfg.TransferBondMinRetain,
+				WithdrawFeesEnabled:   cfg.WithdrawFeesEnabled,
+				WithdrawFeesReceiver:  cfg.WithdrawFeesReceiver,
+				WithdrawFeesThreshold: cfg.WithdrawFeesThreshold,
+			}
+		}
+	}
 	if err := s.templates.render(w, "page.html", view); err != nil {
 		s.logger.Warn("render protocol actions", "err", err)
 	}
@@ -382,6 +399,7 @@ func buildProtocolStatusView(snapshot protocol.Snapshot, confirmAddress string) 
 				{"last_round", fmt.Sprintf("%d", snapshot.Round.Value.LastRound)},
 				{"last_error", snapshot.Round.Value.LastError},
 				{"current_round_initialized", fmt.Sprintf("%v", snapshot.Round.Value.CurrentRoundInitialized)},
+				{"current_round_locked", fmt.Sprintf("%v", snapshot.Round.Value.CurrentRoundLocked)},
 				{"last_intent_id", snapshot.Round.Value.LastIntentID},
 			},
 		},

@@ -47,6 +47,10 @@ message RoundStatus {
   bytes last_intent_id = 2;
   string last_error = 3;
   bool current_round_initialized = 4;
+
+  // current_round_locked reports whether the current round is within its
+  // lock window (the gate for transfer-bond / withdraw-fees automation).
+  bool current_round_locked = 5;
 }
 
 // RewardStatus is the reward service's most recent observation.
@@ -138,7 +142,61 @@ message SkipReason {
     CODE_ALREADY_REWARDED    = 1; // tinfo.LastRewardRound >= round
     CODE_TRANSCODER_INACTIVE = 2; // !tinfo.IsActiveAtRound(round)
     CODE_ROUND_INITIALIZED   = 3; // round.Initialized — applies to ForceInitializeRound
+
+    // Bonding-admin (transfer-bond / withdraw-fees) skip codes.
+    CODE_ROUND_NOT_LOCKED    = 10; // round not in its lock window
+    CODE_NOTHING_TO_TRANSFER = 11; // pendingStake <= configured retain
+    CODE_BELOW_FEE_THRESHOLD = 12; // pendingFees < configured threshold
+    CODE_REWARD_NOT_CALLED   = 13; // reward-before-transfer guard: reward unconfirmed
+    CODE_ACTION_DISABLED     = 14; // the action is disabled in operational config
   }
+}
+
+// OperationalConfig is the daemon's runtime-editable policy: which
+// automated behaviors are on, and the receivers/thresholds for the
+// round-locked fund-movement actions. Amounts are operator-facing decimal
+// strings (LPT / ETH); addresses are 0x-hex strings. Edited via SetConfig.
+message OperationalConfig {
+  bool round_init_enabled = 1;
+  bool reward_enabled = 2;
+  bool reward_before_transfer = 3;
+
+  bool transfer_bond_enabled = 4;
+  string transfer_bond_receiver = 5;    // 0x-hex address
+  string transfer_bond_min_retain = 6;  // decimal LPT
+
+  bool withdraw_fees_enabled = 7;
+  string withdraw_fees_receiver = 8;    // 0x-hex address
+  string withdraw_fees_threshold = 9;   // decimal ETH
+}
+
+// SetTranscoderRequest sets the orchestrator's reward cut and fee cut.
+// Both are percentages meaning "what the orchestrator keeps" (the daemon
+// converts to ppm and flips fee_cut into the contract's fee_share).
+message SetTranscoderRequest {
+  string reward_cut = 1; // percent, e.g. "10" or "95.5"
+  string fee_cut = 2;    // percent, e.g. "10" or "95.5"
+}
+
+// CastVoteRequest votes on a treasury (LivepeerGovernor) proposal.
+message CastVoteRequest {
+  string proposal_id = 1; // decimal uint256
+  uint32 support = 2;     // OZ GovernorCountingSimple: 0=Against 1=For 2=Abstain
+  string reason = 3;      // optional; empty -> castVote, else castVoteWithReason
+}
+
+// GetTreasuryProposalRequest asks for the pre-vote safety snapshot.
+message GetTreasuryProposalRequest {
+  string proposal_id = 1; // decimal uint256
+}
+
+// TreasuryProposal is the pre-vote safety snapshot for a proposal.
+message TreasuryProposal {
+  string state = 1;       // "Active" | "Defeated" | ...
+  uint64 deadline = 2;    // proposal deadline (timepoint)
+  uint64 snapshot = 3;    // voting-power snapshot timepoint
+  bool has_voted = 4;     // whether the daemon wallet already voted
+  bytes voting_power = 5; // big-endian unsigned; power at snapshot
 }
 
 // TxIntentSnapshot mirrors chain-commons.txintent.TxIntent for the wire.
@@ -211,4 +269,29 @@ service ProtocolDaemon {
 
   // Health returns the daemon's health snapshot. Always implemented.
   rpc Health(Empty) returns (HealthStatus);
+
+  // GetConfig returns the daemon's current operational config.
+  rpc GetConfig(Empty) returns (OperationalConfig);
+
+  // SetConfig validates and persists a new operational config, returning
+  // the stored (normalized) result. Edits take effect on the next round.
+  rpc SetConfig(OperationalConfig) returns (OperationalConfig);
+
+  // SetTranscoder submits a transcoder(rewardCut, feeShare) tx from the
+  // operator's reward-cut / fee-cut percentages.
+  rpc SetTranscoder(SetTranscoderRequest) returns (TxIntentRef);
+
+  // ForceTransferBond triggers the round-locked transfer-bond handler
+  // immediately (same gate + idempotency as the automation).
+  rpc ForceTransferBond(Empty) returns (ForceOutcome);
+
+  // ForceWithdrawFees triggers the round-locked withdraw-fees handler
+  // immediately (same gate + idempotency as the automation).
+  rpc ForceWithdrawFees(Empty) returns (ForceOutcome);
+
+  // CastVote votes on a treasury proposal.
+  rpc CastVote(CastVoteRequest) returns (TxIntentRef);
+
+  // GetTreasuryProposal returns the pre-vote safety snapshot for a proposal.
+  rpc GetTreasuryProposal(GetTreasuryProposalRequest) returns (TreasuryProposal);
 }

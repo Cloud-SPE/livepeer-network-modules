@@ -631,6 +631,10 @@ func (s *stubRoundClockSrc) SubscribeRounds(_ context.Context) (<-chan chain.Rou
 	return s.rounds, nil
 }
 
+func (s *stubRoundClockSrc) Current(_ context.Context) (chain.Round, error) {
+	return chain.Round{}, nil
+}
+
 func TestStreamRoundEvents(t *testing.T) {
 	rmAddr := common.HexToAddress("0x000000000000000000000000000000000000FA01")
 	rs := newRoundInitSvc(t, rmAddr)

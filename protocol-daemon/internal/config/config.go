@@ -33,6 +33,12 @@ type Config struct {
 	// for AI-specific serviceURI publication and status reads.
 	AIServiceRegistryAddress chain.Address
 
+	// TreasuryAddress is the LivepeerGovernor (OpenZeppelin Governor)
+	// contract used for treasury proposal voting. The chain-commons
+	// controller does not resolve it, so operators supply it explicitly
+	// (like AIServiceRegistryAddress). Zero = treasury voting RPCs disabled.
+	TreasuryAddress chain.Address
+
 	// InitJitter is a maximum random delay introduced before submitting an
 	// initializeRound call. Used to avoid collisions when fleets of
 	// orchestrators all run a round-init daemon. Default 0 (no jitter).

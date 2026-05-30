@@ -41,6 +41,22 @@ type protocolActionsPageView struct {
 	ProtocolStatus         *protocolStatusView
 	ProtocolActionFeedback *protocolActionFeedbackView
 	TxIntentLookup         *txIntentLookupView
+	OperationalConfig      *operationalConfigView
+	OperationalConfigError string
+}
+
+// operationalConfigView mirrors protocol.OperationalConfig for the config
+// form (string amounts, hex addresses).
+type operationalConfigView struct {
+	RoundInitEnabled      bool
+	RewardEnabled         bool
+	RewardBeforeTransfer  bool
+	TransferBondEnabled   bool
+	TransferBondReceiver  string
+	TransferBondMinRetain string
+	WithdrawFeesEnabled   bool
+	WithdrawFeesReceiver  string
+	WithdrawFeesThreshold string
 }
 
 type manifestsPageView struct {

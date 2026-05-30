@@ -10,6 +10,19 @@ Round initialization (`RoundsManager.initializeRound`), reward calling
 orchestrator. Built fresh on `chain-commons`. Three modes:
 `round-init`, `reward`, `both`.
 
+Also exposes orchestrator self-service actions (plan 0039), all signed by
+the daemon's hot wallet (which must BE the orchestrator address): set
+reward/fee cut, transfer bonded LPT, withdraw ETH fees
+(`internal/service/bondingadmin/`), and treasury proposal voting
+(`internal/service/governor/` + `internal/providers/treasury/`).
+Transfer-bond / withdraw-fees are round-**locked** automated loops driven
+off the round + L1-block streams (`internal/runtime/lifecycle/
+lockedactions.go`). Automation enable/disable + receivers/thresholds are
+runtime operational config (`internal/repo/opconfig/`, edited via
+`GetConfig`/`SetConfig` from secure-orch-console), NOT CLI flags. Every
+write routes through a gate-read + `eth_call` dry-run + durable-idempotent
+`txintent.Submit`.
+
 ## Layer rule
 
 ```

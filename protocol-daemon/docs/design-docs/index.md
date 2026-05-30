@@ -15,5 +15,4 @@ Reward eligibility, positional-hints caching, and observability are documented i
 ## How this fits with the monorepo
 
 - Cross-module invariants in [`monorepo/docs/design-docs/core-beliefs.md`](../../../docs/design-docs/core-beliefs.md) apply to every module; this module's `core-beliefs.md` only adds module-specific clauses on top.
-- Conventions for metrics naming and TCP ports live in [`monorepo/docs/conventions/`](../../../docs/conventions/).
-- The chain-commons library this module consumes is documented at [`monorepo/docs/design-docs/chain-commons-api.md`](../../../docs/design-docs/chain-commons-api.md).
+- The chain-commons library this module consumes (providers, services, and the metrics/port conventions it carries) is documented at [`chain-commons/README.md`](../../../chain-commons/README.md).

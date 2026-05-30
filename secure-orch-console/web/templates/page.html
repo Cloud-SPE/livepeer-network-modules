@@ -270,6 +270,31 @@
 </section>
 {{end}}
 
+{{with .TreasuryProposal}}
+<section class="tx-intent">
+  <h2>Treasury proposal — pre-vote check</h2>
+  <p class="path">Look up a proposal before casting a vote: confirm it is Active, you have not already voted, and your wallet had voting power at the snapshot.</p>
+  <form action="/protocol-actions" method="get" class="protocol-form">
+    <label for="treasury_proposal_id">Proposal ID</label>
+    <input type="text" id="treasury_proposal_id" name="treasury_proposal_id" value="{{.Query}}" placeholder="decimal proposal id" autocomplete="off">
+    <button type="submit">Look up proposal</button>
+  </form>
+  {{if .Error}}
+  <p class="warn">{{.Error}}</p>
+  {{end}}
+  {{if .Result}}
+  <section class="status-card tx-intent-result">
+    <h3>Proposal status</h3>
+    <dl class="meta">
+      {{range .Result.Rows}}
+        <dt>{{index . 0}}</dt><dd><code>{{index . 1}}</code></dd>
+      {{end}}
+    </dl>
+  </section>
+  {{end}}
+</section>
+{{end}}
+
 {{if .TxIntentLookup}}
 <section class="tx-intent">
   <h2>Tx intent lookup</h2>

@@ -88,6 +88,7 @@ func (s *Server) handleProtocolActionsPage(w http.ResponseWriter, r *http.Reques
 		ProtocolStatus:         s.protocolStatusView(r),
 		ProtocolActionFeedback: protocolActionFeedbackFromRequest(r),
 		TxIntentLookup:         buildTxIntentLookupView(r.Context(), s.protocol, r.URL.Query().Get("tx_intent_id")),
+		TreasuryProposal:       buildTreasuryProposalView(r.Context(), s.protocol, r.URL.Query().Get("treasury_proposal_id")),
 	}
 	if s.protocol != nil {
 		if cfg, err := s.protocol.GetConfig(r.Context()); err != nil {
@@ -491,6 +492,37 @@ func buildTxIntentLookupView(ctx context.Context, client *protocol.Client, query
 			{"failed_class", intent.FailedClass},
 			{"failed_code", intent.FailedCode},
 			{"failed_message", intent.FailedMessage},
+		},
+	}
+	return view
+}
+
+// buildTreasuryProposalView fetches the pre-vote safety snapshot for the
+// proposal id in the query (?treasury_proposal_id=). Mirrors the tx-intent
+// lookup: empty query renders just the input form, an error surfaces the
+// message, and a hit renders the state/deadline/has-voted/voting-power rows
+// the operator should review before casting a vote.
+func buildTreasuryProposalView(ctx context.Context, client *protocol.Client, query string) *treasuryProposalView {
+	trimmed := strings.TrimSpace(query)
+	if client == nil && trimmed == "" {
+		return nil
+	}
+	view := &treasuryProposalView{Query: trimmed}
+	if client == nil || trimmed == "" {
+		return view
+	}
+	prop, err := client.GetTreasuryProposal(ctx, trimmed)
+	if err != nil {
+		view.Error = err.Error()
+		return view
+	}
+	view.Result = &treasuryProposalResultView{
+		Rows: [][2]string{
+			{"state", prop.State},
+			{"deadline", fmt.Sprintf("%d", prop.Deadline)},
+			{"snapshot", fmt.Sprintf("%d", prop.Snapshot)},
+			{"already_voted", fmt.Sprintf("%v", prop.HasVoted)},
+			{"voting_power", prop.VotingPower},
 		},
 	}
 	return view

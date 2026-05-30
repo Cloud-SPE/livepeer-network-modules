@@ -155,3 +155,45 @@ func TestNewValidates(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestNewValidatesEachField(t *testing.T) {
+	gov := &fakeGov{}
+	tx := &fakeTx{}
+	caller := &fakeCaller{}
+	addr := chain.Address{0x11}
+
+	cases := []struct {
+		name string
+		cfg  Config
+	}{
+		{"no governor", Config{TxIntent: tx, Caller: caller, OrchAddress: addr, GasLimit: 1}},
+		{"no txintent", Config{Governor: gov, Caller: caller, OrchAddress: addr, GasLimit: 1}},
+		{"no caller", Config{Governor: gov, TxIntent: tx, OrchAddress: addr, GasLimit: 1}},
+		{"no orch", Config{Governor: gov, TxIntent: tx, Caller: caller, GasLimit: 1}},
+		{"no gaslimit", Config{Governor: gov, TxIntent: tx, Caller: caller, OrchAddress: addr}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := New(c.cfg); err == nil {
+				t.Fatalf("expected validation error for %s", c.name)
+			}
+		})
+	}
+}
+
+func TestCastVoteRejectsBadProposalID(t *testing.T) {
+	s := newService(t, &fakeGov{}, &fakeTx{}, &fakeCaller{})
+	if _, err := s.CastVote(context.Background(), nil, treasury.VoteFor, ""); err == nil {
+		t.Fatal("expected error for nil proposalID")
+	}
+	if _, err := s.CastVote(context.Background(), big.NewInt(-1), treasury.VoteFor, ""); err == nil {
+		t.Fatal("expected error for negative proposalID")
+	}
+}
+
+func TestProposalRequiresID(t *testing.T) {
+	s := newService(t, &fakeGov{}, &fakeTx{}, &fakeCaller{})
+	if _, err := s.Proposal(context.Background(), nil); err == nil {
+		t.Fatal("expected error for nil proposalID")
+	}
+}

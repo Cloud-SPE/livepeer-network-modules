@@ -34,9 +34,12 @@ const (
 // Valid reports whether the support value is one of the three choices.
 func (s VoteSupport) Valid() bool { return s <= VoteAbstain }
 
-// ProposalState mirrors OpenZeppelin IGovernor.ProposalState.
+// ProposalState mirrors OpenZeppelin IGovernor.ProposalState. The values
+// (0..7) match the on-chain enum returned by governor.state().
 type ProposalState uint8
 
+// ProposalState values, matching the OZ IGovernor.ProposalState enum
+// (0..7) returned by governor.state().
 const (
 	StatePending ProposalState = iota
 	StateActive
@@ -148,7 +151,9 @@ func (b *Bindings) State(ctx context.Context, proposalID *big.Int) (ProposalStat
 	if err != nil {
 		return 0, err
 	}
-	return ProposalState(out.Uint64()), nil
+	// state() returns the OZ ProposalState enum (0..7); mask to the byte
+	// the enum occupies so the narrowing conversion is provably bounded.
+	return ProposalState(out.Uint64() & 0xff), nil //nolint:gosec // G115: masked to uint8 range
 }
 
 // ProposalDeadline calls governor.proposalDeadline(proposalId) — the last

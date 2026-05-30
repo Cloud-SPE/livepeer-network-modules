@@ -393,14 +393,22 @@ func decodeKey(b []byte) uint64 {
 }
 
 func TestObserveOnlyDoesNotSubmit(t *testing.T) {
-	rm := &fakeRM{initialized: false}
-	tx := &fakeTx{}
-	svc := newSvc(t, rm, tx)
+	rm := &stubRoundsManager{addr: common.HexToAddress("0x000000000000000000000000000000000000FA01"), initialized: false}
+	sub := newStubSubmitter()
+	svc, err := New(Config{
+		RoundsManager: rm,
+		TxIntent:      sub,
+		GasLimit:      1_000_000,
+		Enabled:       func() bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := svc.observe(context.Background(), chain.Round{Number: 7}); err != nil {
 		t.Fatal(err)
 	}
-	if len(tx.submitted) != 0 {
-		t.Errorf("observe should not submit, got %d", len(tx.submitted))
+	if len(sub.submitted) != 0 {
+		t.Errorf("observe should not submit, got %d", len(sub.submitted))
 	}
 	if svc.Status().LastRound != 7 {
 		t.Errorf("status not refreshed: round=%d", svc.Status().LastRound)
@@ -408,12 +416,12 @@ func TestObserveOnlyDoesNotSubmit(t *testing.T) {
 }
 
 func TestForceInitializeIgnoresDisabledToggle(t *testing.T) {
-	rm := &fakeRM{initialized: false}
-	tx := &fakeTx{id: txintent.IntentID{0x09}}
+	rm := &stubRoundsManager{addr: common.HexToAddress("0x000000000000000000000000000000000000FA01"), initialized: false}
+	sub := newStubSubmitter()
 	s, err := New(Config{
 		RoundsManager: rm,
-		TxIntent:      tx,
-		GasLimit:      100000,
+		TxIntent:      sub,
+		GasLimit:      1_000_000,
 		Enabled:       func() bool { return false },
 	})
 	if err != nil {
@@ -426,7 +434,7 @@ func TestForceInitializeIgnoresDisabledToggle(t *testing.T) {
 	if res.Skip != nil {
 		t.Fatalf("force should submit, got skip %+v", res.Skip)
 	}
-	if len(tx.submitted) != 1 {
-		t.Errorf("force should submit even when disabled, got %d", len(tx.submitted))
+	if len(sub.submitted) != 1 {
+		t.Errorf("force should submit even when disabled, got %d", len(sub.submitted))
 	}
 }

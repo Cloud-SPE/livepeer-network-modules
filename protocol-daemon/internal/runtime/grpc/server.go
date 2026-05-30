@@ -139,13 +139,20 @@ const (
 	// SkipCodeRoundInitialized — round already initialized on-chain.
 	SkipCodeRoundInitialized SkipCode = 3
 
-	// Bonding-admin skip codes (mirror bondingadmin.SkipCode* and the
-	// proto SkipReason_Code values).
-	SkipCodeRoundNotLocked    SkipCode = 10
+	// SkipCodeRoundNotLocked — round not in its lock window.
+	SkipCodeRoundNotLocked SkipCode = 10
+
+	// SkipCodeNothingToTransfer — pendingStake at or below the retain.
 	SkipCodeNothingToTransfer SkipCode = 11
+
+	// SkipCodeBelowFeeThreshold — pendingFees below the configured threshold.
 	SkipCodeBelowFeeThreshold SkipCode = 12
-	SkipCodeRewardNotCalled   SkipCode = 13
-	SkipCodeActionDisabled    SkipCode = 14
+
+	// SkipCodeRewardNotCalled — reward-before-transfer guard: reward unconfirmed.
+	SkipCodeRewardNotCalled SkipCode = 13
+
+	// SkipCodeActionDisabled — the action is disabled in operational config.
+	SkipCodeActionDisabled SkipCode = 14
 )
 
 // SkipReason mirrors proto.SkipReason. Returned inside ForceOutcome

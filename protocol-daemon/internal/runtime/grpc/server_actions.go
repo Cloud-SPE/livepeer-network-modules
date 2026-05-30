@@ -124,10 +124,12 @@ func (s *Server) CastVote(ctx context.Context, req CastVoteRequest) (TxIntentRef
 	if !ok {
 		return TxIntentRef{}, fmt.Errorf("%w: proposal_id must be a decimal integer", ErrInvalidArgument)
 	}
-	support := treasury.VoteSupport(req.Support)
-	if !support.Valid() {
+	// Range-check before the narrowing cast so the uint32→uint8 conversion
+	// is provably safe (0/1/2 are the only valid support values).
+	if req.Support > uint32(treasury.VoteAbstain) {
 		return TxIntentRef{}, fmt.Errorf("%w: support must be 0 (Against), 1 (For), or 2 (Abstain)", ErrInvalidArgument)
 	}
+	support := treasury.VoteSupport(req.Support)
 	id, err := s.governor.CastVote(ctx, pid, support, req.Reason)
 	if err != nil {
 		return TxIntentRef{}, err

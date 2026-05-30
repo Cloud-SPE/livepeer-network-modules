@@ -69,6 +69,8 @@ type Caller interface {
 // SkipCode is a stable machine identifier for why an action did not submit.
 type SkipCode uint32
 
+// Skip codes. Numeric values mirror protocolv1.SkipReason_Code (10-14) so
+// the gRPC convert layer is a one-line cast; keep them in sync.
 const (
 	SkipCodeUnspecified       SkipCode = 0
 	SkipCodeRoundNotLocked    SkipCode = 10

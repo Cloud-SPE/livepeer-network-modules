@@ -26,6 +26,7 @@ func pbRoundStatusFrom(r RoundStatus) *protocolv1.RoundStatus {
 		LastRound:               r.LastRound,
 		LastError:               r.LastError,
 		CurrentRoundInitialized: r.CurrentRoundInitialized,
+		CurrentRoundLocked:      r.CurrentRoundLocked,
 	}
 	if len(r.LastIntentID) > 0 {
 		out.LastIntentId = append([]byte(nil), r.LastIntentID...)

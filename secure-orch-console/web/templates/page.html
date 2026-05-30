@@ -182,8 +182,88 @@
         <button type="submit">Set AI service URI</button>
       </form>
     </section>
+    <section class="status-card">
+      <h3>Set reward &amp; fee cut</h3>
+      <p class="path">Percentages = what the orchestrator keeps.</p>
+      <form action="/protocol/set-transcoder" method="post" class="protocol-form">
+        <label for="reward_cut">Reward cut %</label>
+        <input type="text" id="reward_cut" name="reward_cut" placeholder="10" autocomplete="off" required>
+        <label for="fee_cut">Fee cut %</label>
+        <input type="text" id="fee_cut" name="fee_cut" placeholder="95.5" autocomplete="off" required>
+        <label for="set_transcoder_confirmation">Typed confirmation</label>
+        <input type="text" id="set_transcoder_confirmation" name="typed_confirmation" placeholder="{{.ProtocolStatus.ConfirmAddress}}" autocomplete="off" required>
+        <button type="submit">Set reward &amp; fee cut</button>
+      </form>
+    </section>
+    <section class="status-card">
+      <h3>Force transfer bond</h3>
+      <p class="path">Round-locked; uses the configured receiver and retain.</p>
+      <form action="/protocol/force-transfer-bond" method="post" class="protocol-form">
+        <label for="force_transfer_confirmation">Typed confirmation</label>
+        <input type="text" id="force_transfer_confirmation" name="typed_confirmation" placeholder="{{.ProtocolStatus.ConfirmAddress}}" autocomplete="off" required>
+        <button type="submit">Force transfer bond</button>
+      </form>
+    </section>
+    <section class="status-card">
+      <h3>Force withdraw fees</h3>
+      <p class="path">Round-locked; uses the configured receiver and threshold.</p>
+      <form action="/protocol/force-withdraw-fees" method="post" class="protocol-form">
+        <label for="force_withdraw_confirmation">Typed confirmation</label>
+        <input type="text" id="force_withdraw_confirmation" name="typed_confirmation" placeholder="{{.ProtocolStatus.ConfirmAddress}}" autocomplete="off" required>
+        <button type="submit">Force withdraw fees</button>
+      </form>
+    </section>
+    <section class="status-card">
+      <h3>Cast treasury vote</h3>
+      <form action="/protocol/cast-vote" method="post" class="protocol-form">
+        <label for="proposal_id">Proposal ID</label>
+        <input type="text" id="proposal_id" name="proposal_id" placeholder="decimal proposal id" autocomplete="off" required>
+        <label for="support">Support</label>
+        <select id="support" name="support">
+          <option value="1">For</option>
+          <option value="0">Against</option>
+          <option value="2">Abstain</option>
+        </select>
+        <label for="vote_reason">Reason (optional)</label>
+        <input type="text" id="vote_reason" name="reason" placeholder="optional reason" autocomplete="off">
+        <label for="cast_vote_confirmation">Typed confirmation</label>
+        <input type="text" id="cast_vote_confirmation" name="typed_confirmation" placeholder="{{.ProtocolStatus.ConfirmAddress}}" autocomplete="off" required>
+        <button type="submit">Cast vote</button>
+      </form>
+    </section>
   </div>
 </section>
+
+{{if .OperationalConfigError}}
+<section class="message-card message-card-error">
+  <h2>Operational config unavailable</h2>
+  <p>{{.OperationalConfigError}}</p>
+</section>
+{{end}}
+{{with .OperationalConfig}}
+<section class="protocol-actions">
+  <h2>Operational config</h2>
+  <p class="path">Automation toggles and fund-movement receivers/thresholds. Changes take effect next round. Confirm by typing the signer address.</p>
+  <form action="/protocol/set-config" method="post" class="protocol-form">
+    <label><input type="checkbox" name="round_init_enabled" {{if .RoundInitEnabled}}checked{{end}}> Auto round-init</label>
+    <label><input type="checkbox" name="reward_enabled" {{if .RewardEnabled}}checked{{end}}> Auto reward</label>
+    <label><input type="checkbox" name="reward_before_transfer" {{if .RewardBeforeTransfer}}checked{{end}}> Reward before transfer</label>
+    <label><input type="checkbox" name="transfer_bond_enabled" {{if .TransferBondEnabled}}checked{{end}}> Auto transfer bond</label>
+    <label for="transfer_bond_receiver">Transfer receiver</label>
+    <input type="text" id="transfer_bond_receiver" name="transfer_bond_receiver" value="{{.TransferBondReceiver}}" placeholder="0x… LPT receiver" autocomplete="off">
+    <label for="transfer_bond_min_retain">Min retain (LPT)</label>
+    <input type="text" id="transfer_bond_min_retain" name="transfer_bond_min_retain" value="{{.TransferBondMinRetain}}" placeholder="1" autocomplete="off">
+    <label><input type="checkbox" name="withdraw_fees_enabled" {{if .WithdrawFeesEnabled}}checked{{end}}> Auto withdraw fees</label>
+    <label for="withdraw_fees_receiver">Fee receiver</label>
+    <input type="text" id="withdraw_fees_receiver" name="withdraw_fees_receiver" value="{{.WithdrawFeesReceiver}}" placeholder="0x… ETH receiver" autocomplete="off">
+    <label for="withdraw_fees_threshold">Withdraw threshold (ETH)</label>
+    <input type="text" id="withdraw_fees_threshold" name="withdraw_fees_threshold" value="{{.WithdrawFeesThreshold}}" placeholder="0.03" autocomplete="off">
+    <label for="set_config_confirmation">Typed confirmation</label>
+    <input type="text" id="set_config_confirmation" name="typed_confirmation" placeholder="signer address to confirm" autocomplete="off" required>
+    <button type="submit">Save config</button>
+  </form>
+</section>
+{{end}}
 {{else}}
 <section>
   <p class="empty">Protocol-daemon socket is not configured.</p>

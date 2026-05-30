@@ -300,6 +300,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 			Clock:          deps.Clock,
 			OrchAddress:    orch,
 			GasLimit:       cfg.Chain.GasLimit,
+			Enabled:        func() bool { return cfgStore.Get().RewardEnabled },
 			Logger:         clog,
 		})
 		if err != nil {

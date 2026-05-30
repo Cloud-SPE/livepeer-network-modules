@@ -607,3 +607,36 @@ func (s *stubRoundClock) SubscribeL1Blocks(_ context.Context) (<-chan chain.Bloc
 func (s *stubRoundClock) Current(_ context.Context) (chain.Round, error) {
 	return chain.Round{}, nil
 }
+
+func TestRewardObserveOnlyDoesNotSubmit(t *testing.T) {
+	bm := &stubBondingManager{
+		addr: chain.Address{0xBE},
+		transcoder: bondingmanager.TranscoderInfo{
+			Address:         chain.Address{0x01},
+			Active:          true,
+			LastRewardRound: 3,
+		},
+	}
+	sub := newStubSubmitter()
+	s, err := New(Config{
+		BondingManager: bm,
+		TxIntent:       sub,
+		Cache:          newCache(t),
+		OrchAddress:    chain.Address{0x01},
+		GasLimit:       1_000_000,
+		Enabled:        func() bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.observe(context.Background(), chain.Round{Number: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sub.submitted) != 0 {
+		t.Errorf("observe should not submit, got %d", len(sub.submitted))
+	}
+	st := s.Status()
+	if st.LastEligibility == nil || !st.LastEligibility.Eligible {
+		t.Errorf("expected eligibility recorded as eligible, got %+v", st.LastEligibility)
+	}
+}

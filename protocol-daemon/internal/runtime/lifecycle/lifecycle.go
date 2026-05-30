@@ -28,6 +28,12 @@ type Config struct {
 	RoundClock roundclock.Clock
 	Listener   *grpcrt.Listener // nil → no gRPC listener (used by tests / dry-runs)
 	Logger     logger.Logger
+
+	// LockedActions + LockReader drive the round-locked transfer-bond and
+	// withdraw-fees automation. Both nil → the locked-action runner is not
+	// started (e.g. BondingManager address unresolved, or tests).
+	LockedActions LockedActions
+	LockReader    LockReader
 }
 
 // Run kicks off the configured services and blocks until ctx is cancelled
@@ -47,7 +53,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	var wg sync.WaitGroup
-	errs := make(chan error, 3)
+	errs := make(chan error, 4)
 
 	if cfg.Mode.HasRoundInit() {
 		wg.Add(1)
@@ -73,6 +79,15 @@ func Run(ctx context.Context, cfg Config) error {
 			defer wg.Done()
 			if err := cfg.Listener.Serve(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				errs <- fmt.Errorf("grpc: %w", err)
+			}
+		}()
+	}
+	if cfg.LockedActions != nil && cfg.LockReader != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := runLockedActions(ctx, cfg.RoundClock, cfg.LockedActions, cfg.LockReader, cfg.Logger); err != nil && !errors.Is(err, context.Canceled) {
+				errs <- fmt.Errorf("locked-actions: %w", err)
 			}
 		}()
 	}

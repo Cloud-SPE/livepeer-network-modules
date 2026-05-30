@@ -391,3 +391,42 @@ func decodeKey(b []byte) uint64 {
 	}
 	return v
 }
+
+func TestObserveOnlyDoesNotSubmit(t *testing.T) {
+	rm := &fakeRM{initialized: false}
+	tx := &fakeTx{}
+	svc := newSvc(t, rm, tx)
+	if err := svc.observe(context.Background(), chain.Round{Number: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if len(tx.submitted) != 0 {
+		t.Errorf("observe should not submit, got %d", len(tx.submitted))
+	}
+	if svc.Status().LastRound != 7 {
+		t.Errorf("status not refreshed: round=%d", svc.Status().LastRound)
+	}
+}
+
+func TestForceInitializeIgnoresDisabledToggle(t *testing.T) {
+	rm := &fakeRM{initialized: false}
+	tx := &fakeTx{id: txintent.IntentID{0x09}}
+	s, err := New(Config{
+		RoundsManager: rm,
+		TxIntent:      tx,
+		GasLimit:      100000,
+		Enabled:       func() bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.TryInitialize(context.Background(), chain.Round{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skip != nil {
+		t.Fatalf("force should submit, got skip %+v", res.Skip)
+	}
+	if len(tx.submitted) != 1 {
+		t.Errorf("force should submit even when disabled, got %d", len(tx.submitted))
+	}
+}

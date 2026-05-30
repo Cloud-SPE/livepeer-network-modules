@@ -54,6 +54,15 @@ type Config struct {
 	Logger        logger.Logger
 	Metrics       metrics.Recorder
 
+	// Enabled reports whether the automatic round-init submit is on. Read
+	// fresh each round so an operator toggling the persisted config takes
+	// effect on the next round. When nil, automatic submit is always on
+	// (preserves pre-config behavior). When it returns false the Run loop
+	// runs observe-only: it still reads on-chain state and updates Status
+	// (so GetRoundStatus stays live) but does not submit. The operator-
+	// triggered Force path (TryInitialize) ignores this and always submits.
+	Enabled func() bool
+
 	// Random source for jitter. Allows deterministic tests.
 	Rand *rand.Rand
 }
@@ -140,6 +149,20 @@ func (s *Service) Run(ctx context.Context, rc roundclock.Clock) error {
 			if !ok {
 				return nil
 			}
+			// Observe-only when the automatic submit is toggled off:
+			// refresh Status from chain but never submit. Force still works.
+			if s.cfg.Enabled != nil && !s.cfg.Enabled() {
+				if err := s.observe(ctx, r); err != nil {
+					s.recordError(r, err)
+					if s.cfg.Logger != nil {
+						s.cfg.Logger.Warn("round-init observe failed",
+							logger.Uint64("round", uint64(r.Number)),
+							logger.Err(err),
+						)
+					}
+				}
+				continue
+			}
 			if err := s.tryInitialize(ctx, r); err != nil {
 				s.recordError(r, err)
 				s.metricsCounter("livepeer_protocol_round_init_total",
@@ -162,6 +185,26 @@ func (s *Service) Run(ctx context.Context, rc roundclock.Clock) error {
 // is the zero ForceResult.
 func (s *Service) TryInitialize(ctx context.Context, round chain.Round) (ForceResult, error) {
 	return s.tryInitializeForce(ctx, round)
+}
+
+// observe refreshes Status for a round without submitting. Used by the Run
+// loop when automatic round-init is toggled off so GetRoundStatus stays
+// live while the daemon does not initialize rounds itself.
+func (s *Service) observe(ctx context.Context, round chain.Round) error {
+	initialized, err := s.cfg.RoundsManager.CurrentRoundInitialized(ctx)
+	if err != nil {
+		return fmt.Errorf("currentRoundInitialized: %w", err)
+	}
+	s.recordObservation(round, initialized, nil)
+	s.metricsCounter("livepeer_protocol_round_init_total",
+		metrics.Labels{"outcome": "observed"}, 1)
+	if s.cfg.Logger != nil {
+		s.cfg.Logger.Debug("round-init observe-only (auto-submit disabled)",
+			logger.Uint64("round", uint64(round.Number)),
+			logger.String("initialized", fmt.Sprintf("%v", initialized)),
+		)
+	}
+	return nil
 }
 
 // tryInitialize handles one Round event from the Run loop. Returns nil

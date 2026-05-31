@@ -9,7 +9,7 @@
 
 services:
   pool-controller:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-controller:${TAG:-v1.3.3}
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-controller:${TAG:-v1.4.0}
     command:
       - serve
       - --config=/etc/livepeer/pool-controller.yaml

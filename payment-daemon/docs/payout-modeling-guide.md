@@ -1,7 +1,7 @@
 ---
 title: payment-daemon — payout modeling guide
 status: accepted
-last-reviewed: 2026-05-23
+last-reviewed: 2026-06-03
 audience: orchestrator operators, gateway operators, pricing / economics work
 ---
 
@@ -23,6 +23,65 @@ The right questions are:
 The ticket system is probabilistic. A single ticket is not promised to
 win ahead of time. What the system preserves is expected value over many
 tickets and many requests.
+
+## Quick workflow: setting prices with the simulator
+
+Use the simulator as a pricing worksheet. The workflow is:
+
+1. Pick a redeemable ticket face value.
+2. Pick the target expected payout cadence.
+3. Enter expected workload volume.
+4. Enter measured hardware throughput and all-in hourly cost.
+5. Run the simulator.
+6. Set the receiver price to the larger of:
+   - payout-cadence floor
+   - hardware break-even floor
+7. Set the sender max ticket face value and funded-value guard to match
+   the policy.
+
+For the current OpenAI pricing scenario, the shared policy is:
+
+```yaml
+payout_policy:
+  target_face_value_wei: "5400000000000000"    # 0.0054 ETH
+  sender_max_face_value_wei: "5400000000000000"
+  target_hours_per_win: 24
+  gas_price_wei: "40000000"
+  redeem_gas: 500000
+```
+
+With `ETH/USD = 1990`, that means every offering needs to generate:
+
+```text
+5,400,000,000,000,000 wei / 24h
+= 225,000,000,000,000 wei/hour
+~= $0.44775/hour
+```
+
+The receiver publishes `price.amount_wei` and `price.per_units`.
+The sender uses those same prices to compute how much expected value it
+is willing to fund. The sender must reject receiver ticket params when:
+
+```text
+requested_ticket_ev_sum > sender_funded_value
+```
+
+For the current scenario, cadence break-even prices are:
+
+| Offering | `amount_wei` | `per_units` | Unit price |
+|---|---:|---:|---:|
+| `qwen3.6-35b-a3b-fp8-default` | `300000000000` | `1000` | `300000000 wei/token` |
+| `vllm-qwen3-coder-30b-stream` | `600000000000` | `1000` | `600000000 wei/token` |
+| `vllm-qwen3.6-27b-stream` | `696774194000` | `1000` | `696774194 wei/token` |
+| `qwen3-8b-chat` | `300000000000` | `1000` | `300000000 wei/token` |
+| `FLUX.1-dev` | `18750000000000` | `1` | `18750000000000 wei/image` |
+| `kokoro` | `937500000000` | `1` | `937500000000 wei/request` |
+| `video-abr-default` | `18750000000000` | `1` | `18750000000000 wei/job` |
+
+These are not guaranteed profitable prices for every GPU. They only hit
+the selected payout cadence at the configured volume. If the hardware
+table shows negative profit for a GPU, raise price, raise volume, lower
+cost, or use that GPU for a different offering.
 
 ## 1. The four numbers that matter
 
@@ -161,7 +220,260 @@ This is why:
 - session funding or batched runway is usually the right model for long
   or low-priced workloads
 
-## 7. The recommended conversation structure
+### Practical target: `0.0054 ETH`
+
+For current receiver-side redemption assumptions, a useful target
+winning payout is:
+
+```text
+F = 0.0054 ETH = 5,400,000,000,000,000 wei
+```
+
+With:
+
+```text
+gas_price = 40,000,000 wei
+redeem_gas = 500,000
+redemption_cost = 20,000,000,000,000 wei
+```
+
+that gives:
+
+```text
+face_value / redemption_cost = 270x
+```
+
+This is large enough that the receiver is not trying to redeem dust, but
+it is not the sender's spend limit. The sender's spend limit is expected
+value.
+
+## 7. Sender and receiver must agree on EV, not just face value
+
+The receiver can ask for ticket parameters, but the sender must enforce
+what it is willing to pay before signing.
+
+For a request:
+
+```text
+request_ev = units * price_per_unit
+```
+
+For a ticket:
+
+```text
+ticket_ev = face_value * win_prob / 2^256
+```
+
+The invariant is:
+
+```text
+sum(ticket_ev for request) <= sender_funded_value_for_request
+```
+
+That is the guardrail that prevents the receiver from extracting more
+value than the sender agreed to send. A high face value is fine if the
+win probability is lowered so EV stays within the sender's funded value.
+
+Example:
+
+```text
+request_ev = 251,150,000,000 wei
+face_value = 5,400,000,000,000,000 wei
+win odds ~= 1 in 21,500
+```
+
+The winning payout is much larger than the request value, but the
+expected value is still about the request value. This is the intended
+probabilistic-payment shape.
+
+## 8. Hardware profitability mental model
+
+The simulator has three layers. Keep them separate.
+
+### Layer A: sender spend
+
+The sender decides the most expected value it is willing to fund:
+
+```text
+funded_value = estimated_units * price_per_unit
+```
+
+The sender should reject ticket params where:
+
+```text
+ticket_ev_sum > funded_value
+```
+
+This protects gateways from a receiver asking for more value than the
+gateway intended to send.
+
+### Layer B: receiver payout cadence
+
+The receiver cares about when redeemable wins arrive:
+
+```text
+expected_wins_per_hour = revenue_per_hour / face_value
+expected_hours_per_win = face_value / revenue_per_hour
+```
+
+For planning windows:
+
+```text
+expected_wins_1d = expected_wins_per_hour * 24
+expected_wins_7d = expected_wins_per_hour * 168
+```
+
+Short windows are noisy. `expected_wins_1d = 0.5` does not mean half a
+ticket arrives. It means the long-run expectation is one win every two
+days, and many one-day windows will have zero redemptions.
+
+### Layer C: hardware economics
+
+The orchestrator decides whether the workload pays for the GPU:
+
+```text
+revenue_per_hour = measured_units_per_hour * price_per_unit
+profit_per_hour = revenue_per_hour - all_in_hardware_cost_per_hour
+```
+
+Use all-in hourly cost:
+
+- cloud rental or amortized capex
+- power
+- host CPU / RAM / disk
+- network
+- operator margin or overhead
+
+The key hardware questions are:
+
+- `expected_payout_1d >= hardware_cost_1d`
+- `expected_payout_7d >= hardware_cost_7d`
+- `expected_wins_7d` is high enough that variance is tolerable
+
+If expected profit is positive but `expected_wins_7d` is near zero, the
+price may be economically fair in expectation but operationally too
+lumpy. Fix that with more aggregation, a lower face value for that lane,
+or higher traffic volume.
+
+### What operators should enter
+
+For each offering and GPU class, operators should enter:
+
+```yaml
+hardware:
+  - name: "RTX 4090"
+    units_per_hour: 650000
+    hourly_cost_usd: 0.55
+```
+
+`units_per_hour` must be measured for the exact model and serving mode.
+A `4090` running a small batch-friendly image model and a `4090` running
+a long-context chat model are different economic objects.
+
+### Break-even pricing rule
+
+For a receiver, the price should clear both hardware cost and payout
+cadence.
+
+For chat, first convert raw token traffic into billable units. Input and
+output tokens do not have to cost the same. A practical starting point is:
+
+```text
+billable_tokens_per_day =
+  input_tokens_per_day + output_tokens_per_day * output_weight
+```
+
+Use `output_weight = 1` only if input and output are equally expensive.
+For hosted LLM inference, output is usually more expensive because it
+consumes decode time, so a weight such as `2` or `3` is often a clearer
+starting point than pretending all tokens are identical.
+
+Example simulator input:
+
+```yaml
+work_unit: "tokens"
+workload:
+  requests_per_hour: 360
+  token_mix:
+    input_tokens_per_day: 6000000
+    output_tokens_per_day: 4000000
+    output_weight: 3
+```
+
+The simulator derives:
+
+```text
+billable_tokens_per_day = 6,000,000 + 4,000,000 * 3
+                        = 18,000,000
+billable_tokens_per_hour = 750,000
+billable_tokens_per_request = 750,000 / 360 ~= 2,083
+```
+
+Hardware break-even:
+
+```text
+hardware_floor_per_unit = hardware_cost_per_hour / measured_units_per_hour
+```
+
+Payout-cadence break-even:
+
+```text
+cadence_floor_per_unit = face_value / (target_hours_per_win * expected_units_per_hour)
+```
+
+Use the larger value:
+
+```text
+price_per_unit = max(hardware_floor_per_unit, cadence_floor_per_unit)
+```
+
+If the orchestrator does not want markup yet, stop there. That is
+break-even. Later, add margin:
+
+```text
+price_per_unit = break_even_price_per_unit * (1 + margin_pct)
+```
+
+Volume improves margin when the hardware cost is mostly fixed. If the
+same GPU serves more units per hour, then:
+
+```text
+hardware_cost_per_unit = hardware_cost_per_hour / units_per_hour
+```
+
+falls as volume rises. If the published price stays constant, the
+operator margin per unit rises. If the market requires lower prices at
+higher volume, the simulator should be used to find the new break-even.
+
+Example with `ETH/USD = 1990`, `face_value = 0.0054 ETH`, and
+`target_hours_per_win = 24`:
+
+```text
+required_revenue_per_hour = 5,400,000,000,000,000 wei / 24
+                          = 225,000,000,000,000 wei/hour
+                          ~= $0.44775/hour
+```
+
+For `FLUX` at `12 images/hour`:
+
+```text
+price_per_image = 225,000,000,000,000 / 12
+                = 18,750,000,000,000 wei/image
+                ~= $0.0373/image
+```
+
+For `Kokoro` at `240 requests/hour`:
+
+```text
+price_per_request = 225,000,000,000,000 / 240
+                  = 937,500,000,000 wei/request
+                  ~= $0.00187/request
+```
+
+Those are not markup prices. They are break-even prices for the chosen
+ticket face value, expected volume, and 24-hour payout-cadence target.
+
+## 9. The recommended conversation structure
 
 When discussing payout behavior with operators, use this sequence.
 
@@ -216,7 +528,7 @@ This gives the operator the practical answer they care about:
 - "At this workload and price, how often should money actually hit the
   chain?"
 
-## 8. Worked examples
+## 10. Worked examples
 
 ### Example A: busy orch
 
@@ -272,7 +584,7 @@ Interpretation:
 
 - halving price roughly doubled expected wait time between wins
 
-## 9. What this model does and does not prove
+## 11. What this model does and does not prove
 
 This model is good for:
 
@@ -289,7 +601,7 @@ This model does not prove:
 
 Variance matters. Low traffic means noisy outcomes.
 
-## 10. Simulation before chain integration
+## 12. Simulation before chain integration
 
 Yes, a simulation is the right next step before relying on a real
 integration harness for pricing decisions.
@@ -352,11 +664,82 @@ The simulator emits:
 - configured revenue per hour
 - target hourly-revenue price floor
 - fairness ratio (`configured / floor`)
+- winning ticket face value
+- expected value per request and per ticket
+- win probability and approximate odds
 - expected wins per hour
 - expected time between wins
 - gateway estimated units and funded value guidance
+- gateway funding / request EV ratio
+- estimated redemption cost and face-value margin
+- optional hardware profitability tables:
+  - expected payout over 1 day and 7 days
+  - hardware cost over 1 day and 7 days
+  - expected profit over 1 day and 7 days
+  - expected wins over 1 day and 7 days
+  - break-even units/hour for each GPU profile
 - Monte Carlo p50 / p90 / p99 wait time between wins
 - a starter `host-config.yaml` snippet
+
+### How to turn simulator output into settings
+
+Use these report fields as the decision surface:
+
+| Report field | Meaning | Action |
+|---|---|---|
+| `Target price floor` | minimum unit price for the configured payout cadence | receiver should not price below this unless it accepts slower payouts |
+| `amount_wei` / `per_units` in the snippet | concrete price config derived from the scenario | copy to receiver offering config and sender price expectations |
+| `Configured revenue/hour` | expected value generated by the configured workload and price | compare to target revenue/hour and hardware cost/hour |
+| `Fairness ratio` | configured price divided by target floor | `1.00x` hits cadence target; below `1.00x` is underpriced for that target |
+| `Expected hours/win` | average wait for a redeemable winning ticket | use for operator payout expectations |
+| `Volume multiplier for target cadence` | how much more volume or price is needed | values above `1.00x` mean the offering misses the cadence target |
+| `Gateway funding / request EV` | sender-funded value divided by requested ticket EV | must be `>= 1.00x`; otherwise the sender should reject or top up |
+| hardware `Profit/hr` | GPU economics at the configured unit price | must be non-negative for the target hardware unless break-even is intentionally deferred |
+| hardware `Break-even units/hr` | required throughput for that GPU at the current price | if measured throughput is lower, raise price or do not route that workload there |
+
+The receiver-side price-setting rule is:
+
+```text
+cadence_price = face_value / (target_hours_per_win * billable_units_per_hour)
+hardware_price = hardware_cost_per_hour / measured_units_per_hour
+receiver_price = max(cadence_price, hardware_price)
+```
+
+For YAML prices:
+
+```text
+amount_wei = receiver_price * per_units
+```
+
+Example for chat:
+
+```text
+receiver_price = 300,000,000 wei/token
+per_units = 1000
+amount_wei = 300,000,000,000
+```
+
+Example receiver offering config:
+
+```yaml
+price:
+  amount_wei: "300000000000"
+  per_units: 1000
+```
+
+The sender should use the same unit price to decide how much value it is
+willing to fund, but it should independently enforce:
+
+```text
+sender_max_face_value_wei >= requested_face_value_wei
+funded_value_wei >= requested_ticket_ev_sum
+```
+
+This keeps both sides equitable:
+
+- receiver gets a price that matches its cost and payout-cadence target
+- sender never signs tickets worth more expected value than it intended
+  to pay
 
 Use it to compare:
 
@@ -366,8 +749,48 @@ Use it to compare:
 - gateway-side spend:
   - "if I use this price and this estimated-unit policy, what budget do
     I mint per request or per session top-up?"
+- receiver-side redeemability:
+  - "is the winning face value comfortably above gas?"
+- sender-side safety:
+  - "does the requested ticket EV fit inside the funded value I intended
+    to send?"
+- receiver-side hardware economics:
+  - "does this model and price pay for a 3090 / 4090 / A100 / H100 style
+    deployment over 1-day and 7-day windows?"
 
-## 11. Why we still need the real integration
+### Multi-offering ticket-sizing scenario
+
+Use the multi-offering scenario when explaining why different job types
+can share a winning payout but have different payout cadence:
+
+```sh
+go run ./cmd/payout-sim \
+  --scenario ./scenarios/openai-multi-offering-ticket-sizing.yaml \
+  --format markdown \
+  --chart-out ./scenarios/openai-multi-offering-ticket-sizing.svg
+```
+
+That scenario uses:
+
+```yaml
+payout_policy:
+  target_face_value_wei: "5400000000000000"
+  sender_max_face_value_wei: "5400000000000000"
+  target_hours_per_win: 24
+  gas_price_wei: "40000000"
+  redeem_gas: 500000
+```
+
+The chart is a communication artifact, not a protocol dependency. It is
+useful in reviews because it shows:
+
+- one shared redeemable winning payout
+- the target payout cadence for that face value
+- how much more volume or revenue each offering needs to hit that target
+- which workloads are not economically viable under the configured price
+  and face value
+
+## 13. Why we still need the real integration
 
 Simulation is necessary but not sufficient.
 
@@ -383,7 +806,7 @@ A real integration harness is still needed to validate:
 Use simulation for economics exploration.
 Use the integration harness for protocol truth.
 
-## 12. Suggested operator summary
+## 14. Suggested operator summary
 
 If you need a short explanation for a design review or operator call,
 use this:
@@ -394,6 +817,8 @@ use this:
 - increasing workload speeds payout cadence
 - increasing face value makes payout lumpier but keeps redemption
   economic
+- sender-side safety comes from validating ticket EV against the sender's
+  funded value before signing
 - low-volume orchs are variance-dominated even when pricing is correct
 
 That is the right mental model for payout planning in this system.

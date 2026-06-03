@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="700" viewBox="0 0 1120 700">
+<rect width="100%" height="100%" fill="#f8fafc"/>
+<text x="270" y="36" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="700" fill="#111827">OpenAI Multi-Offering Ticket Sizing</text>
+<text x="270" y="62" font-family="Inter, Arial, sans-serif" font-size="13" fill="#475569">Viability against target payout cadence. Bars show how much more volume/revenue is needed at the configured price.</text>
+<text x="270" y="84" font-family="Inter, Arial, sans-serif" font-size="13" fill="#475569">Target: one 0.0054 ETH winning payout every 24 hours.</text>
+<line x1="270" y1="86" x2="1050" y2="86" stroke="#cbd5e1" stroke-width="1"/>
+<line x1="270" y1="82" x2="270" y2="90" stroke="#cbd5e1" stroke-width="1"/>
+<text x="270" y="76" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#64748b">1x</text>
+<line x1="1050" y1="82" x2="1050" y2="90" stroke="#cbd5e1" stroke-width="1"/>
+<text x="1050" y="76" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="middle" fill="#64748b">10x</text>
+<text x="1050" y="76" font-family="Inter, Arial, sans-serif" font-size="11" text-anchor="end" fill="#64748b">max 10x</text>
+<text x="252" y="122" font-family="Inter, Arial, sans-serif" font-size="13" text-anchor="end" fill="#111827">qwen3.6-35b-a3b-fp8-default</text>
+<rect x="270" y="104" width="3" height="24" rx="4" fill="#059669"/>
+<text x="283" y="121" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="start" fill="#111827">1.0x volume needed - viable</text>
+<text x="270" y="149" font-family="Inter, Arial, sans-serif" font-size="11" fill="#475569">now: 1.0 days/win; required: 750000.00 tokens/hr or $0.4477/hr</text>
+<text x="252" y="210" font-family="Inter, Arial, sans-serif" font-size="13" text-anchor="end" fill="#111827">vllm-qwen3-coder-30b-stream</text>
+<rect x="270" y="192" width="3" height="24" rx="4" fill="#059669"/>
+<text x="283" y="209" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="start" fill="#111827">1.0x volume needed - viable</text>
+<text x="270" y="237" font-family="Inter, Arial, sans-serif" font-size="11" fill="#475569">now: 1.0 days/win; required: 375000.00 tokens/hr or $0.4477/hr</text>
+<text x="252" y="298" font-family="Inter, Arial, sans-serif" font-size="13" text-anchor="end" fill="#111827">vllm-qwen3.6-27b-stream</text>
+<rect x="270" y="280" width="3" height="24" rx="4" fill="#059669"/>
+<text x="283" y="297" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="start" fill="#111827">1.0x volume needed - viable</text>
+<text x="270" y="325" font-family="Inter, Arial, sans-serif" font-size="11" fill="#475569">now: 24.0 hr/win; required: 322916.67 tokens/hr or $0.4477/hr</text>
+<text x="252" y="386" font-family="Inter, Arial, sans-serif" font-size="13" text-anchor="end" fill="#111827">FLUX.1-dev image</text>
+<rect x="270" y="368" width="3" height="24" rx="4" fill="#059669"/>
+<text x="283" y="385" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="start" fill="#111827">1.0x volume needed - viable</text>
+<text x="270" y="413" font-family="Inter, Arial, sans-serif" font-size="11" fill="#475569">now: 1.0 days/win; required: 12.00 images/hr or $0.4477/hr</text>
+<text x="252" y="474" font-family="Inter, Arial, sans-serif" font-size="13" text-anchor="end" fill="#111827">kokoro audio speech</text>
+<rect x="270" y="456" width="3" height="24" rx="4" fill="#059669"/>
+<text x="283" y="473" font-family="Inter, Arial, sans-serif" font-size="12" text-anchor="start" fill="#111827">1.0x volume needed - viable</text>
+<text x="270" y="501" font-family="Inter, Arial, sans-serif" font-size="11" fill="#475569">now: 1.0 days/win; required: 240.00 requests/hr or $0.4477/hr</text>
+<text x="270" y="638" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">Policy</text>
+<text x="270" y="660" font-family="Inter, Arial, sans-serif" font-size="12" fill="#475569">winning face value: 5400000000000000 wei; redemption margin: 270.0x; sender guard: funded request EV must cover requested EV.</text>
+</svg>

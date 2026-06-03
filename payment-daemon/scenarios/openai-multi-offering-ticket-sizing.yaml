@@ -1,0 +1,144 @@
+version: 1
+name: "OpenAI Multi-Offering Ticket Sizing"
+eth_usd: 1990
+seed: 20260603
+simulation:
+  hours: 168
+  trials: 500
+payout_policy:
+  # 0.0054 ETH. This is the winning-ticket payout, not per-request EV.
+  target_face_value_wei: "5400000000000000"
+  sender_max_face_value_wei: "5400000000000000"
+  target_hours_per_win: 24
+  # With the 0.0054 ETH face value and 24h target cadence, every offering
+  # should produce 225,000,000,000,000 wei/hour ~= $0.44775/hour in expected
+  # value before any markup.
+  # Example receiver-side gas assumptions from June 2026 metrics:
+  # 40,000,000 wei gas price x 500,000 redeem gas = 20,000,000,000,000 wei.
+  gas_price_wei: "40000000"
+  redeem_gas: 500000
+offerings:
+  - name: "qwen3.6-35b-a3b-fp8-default"
+    capability_id: "openai:chat-completions"
+    offering_id: "qwen3.6-35b-a3b-fp8-default"
+    interaction: "http-stream@v0"
+    work_unit: "tokens"
+    price:
+      # Cadence break-even:
+      # 5,400,000,000,000,000 wei / 24h / 750,000 billable tokens/hour
+      # = 300,000,000 wei/token.
+      amount_wei: "300000000000"
+      per_units: 1000
+    workload:
+      # Chat pricing uses billable tokens, not raw requests. Here output tokens
+      # are weighted 3x to account for slower/more expensive generation.
+      # billable/day = 6M input + 4M output * 3 = 18M tokens/day.
+      requests_per_hour: 360
+      token_mix:
+        input_tokens_per_day: 6000000
+        output_tokens_per_day: 4000000
+        output_weight: 3
+      target_revenue_per_hour_usd: 0.44775
+    gateway:
+      estimated_units_multiplier: 1.15
+    # Example hardware assumptions only. Replace units_per_hour with measured
+    # throughput for this exact model and hourly_cost_usd with all-in cost:
+    # lease or amortized capex + power + host overhead.
+    hardware:
+      - name: "RTX 3090"
+        units_per_hour: 450000
+        hourly_cost_usd: 0.35
+      - name: "RTX 4090"
+        units_per_hour: 650000
+        hourly_cost_usd: 0.55
+      - name: "RTX 5090"
+        units_per_hour: 850000
+        hourly_cost_usd: 0.75
+      - name: "RTX 6000 Ada"
+        units_per_hour: 550000
+        hourly_cost_usd: 0.95
+      - name: "RTX 6000 Pro"
+        units_per_hour: 750000
+        hourly_cost_usd: 1.10
+      - name: "A100 80GB"
+        units_per_hour: 900000
+        hourly_cost_usd: 2.00
+      - name: "H100"
+        units_per_hour: 1800000
+        hourly_cost_usd: 3.50
+
+  - name: "vllm-qwen3-coder-30b-stream"
+    capability_id: "openai:chat-completions"
+    offering_id: "vllm-qwen3-coder-30b-stream"
+    interaction: "http-stream@v0"
+    work_unit: "tokens"
+    price:
+      # 5,400,000,000,000,000 wei / 24h / 375,000 billable tokens/hour
+      # = 600,000,000 wei/token.
+      amount_wei: "600000000000"
+      per_units: 1000
+    workload:
+      requests_per_hour: 180
+      token_mix:
+        input_tokens_per_day: 3000000
+        output_tokens_per_day: 2000000
+        output_weight: 3
+      target_revenue_per_hour_usd: 0.44775
+    gateway:
+      estimated_units_multiplier: 1.15
+
+  - name: "vllm-qwen3.6-27b-stream"
+    capability_id: "openai:chat-completions"
+    offering_id: "vllm-qwen3.6-27b-stream"
+    interaction: "http-stream@v0"
+    work_unit: "tokens"
+    price:
+      # 5,400,000,000,000,000 wei / 24h / 322,916.67 billable tokens/hour
+      # ~= 696,774,194 wei/token.
+      amount_wei: "696774194000"
+      per_units: 1000
+    workload:
+      requests_per_hour: 150
+      token_mix:
+        input_tokens_per_day: 2500000
+        output_tokens_per_day: 1750000
+        output_weight: 3
+      target_revenue_per_hour_usd: 0.44775
+    gateway:
+      estimated_units_multiplier: 1.15
+
+  - name: "FLUX.1-dev image"
+    capability_id: "openai:images-generations"
+    offering_id: "black-forest-labs/FLUX.1-dev"
+    interaction: "http-reqresp@v0"
+    work_unit: "images"
+    price:
+      # Break-even for one 0.0054 ETH expected win/day at 12 images/hour:
+      # 5,400,000,000,000,000 wei / 24h / 12 images = 18,750,000,000,000 wei/image.
+      amount_wei: "18750000000000"
+      per_units: 1
+    workload:
+      units_per_hour: 12
+      requests_per_hour: 12
+      units_per_request: 1
+      target_revenue_per_hour_usd: 0.44775
+    gateway:
+      estimated_units_multiplier: 1.0
+
+  - name: "kokoro audio speech"
+    capability_id: "openai:audio-speech"
+    offering_id: "kokoro"
+    interaction: "http-reqresp@v0"
+    work_unit: "requests"
+    price:
+      # Break-even for one 0.0054 ETH expected win/day at 240 requests/hour:
+      # 5,400,000,000,000,000 wei / 24h / 240 requests = 937,500,000,000 wei/request.
+      amount_wei: "937500000000"
+      per_units: 1
+    workload:
+      units_per_hour: 240
+      requests_per_hour: 240
+      units_per_request: 1
+      target_revenue_per_hour_usd: 0.44775
+    gateway:
+      estimated_units_multiplier: 1.0

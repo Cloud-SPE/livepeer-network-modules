@@ -22,7 +22,7 @@
 
 services:
   protocol-daemon:
-    image: ${REGISTRY:-tztcloud}/livepeer-protocol-daemon:${TAG:-v1.3.3}
+    image: ${REGISTRY:-tztcloud}/livepeer-protocol-daemon:${TAG:-v1.4.0}
     restart: unless-stopped
 
     command:
@@ -35,6 +35,8 @@ services:
       - --eth-urls=${ETH_URLS}
       - --chain-id=${CHAIN_ID:-42161}
       - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      # LivepeerGovernor (treasury) contract for proposal voting; empty = disabled.
+      - --treasury-address=${PROTOCOL_TREASURY_ADDRESS:-}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
       # Required for reward / both modes — the orchestrator's on-chain
@@ -48,7 +50,8 @@ services:
       # you run multiple protocol-daemons that might race for the
       # round-init slot — single-orchestrator deployments leave this 0.
       # - --init-jitter=${INIT_JITTER:-0s}
-      # Optional: gas limit for round-init / reward txs (default 1M).
+      # Optional: gas limit for all on-chain txs — round-init, reward,
+      # transcoder, transfer-bond, withdraw-fees, treasury vote (default 1M).
       # - --gas-limit=${GAS_LIMIT:-1000000}
       # Logging — recommend json for production log aggregators.
       - --log-level=${LOG_LEVEL:-info}

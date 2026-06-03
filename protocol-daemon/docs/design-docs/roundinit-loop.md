@@ -36,6 +36,18 @@ sequenceDiagram
   TI-->>RI: (intent reaches terminal state)
 ```
 
+## Enable / disable (runtime)
+
+Automatic round-init is gated by the `RoundInitEnabled` operational-config
+toggle (persisted in BoltDB, edited from the secure-orch console via
+`SetConfig`; **not** a CLI flag). It defaults to **disabled** and is read
+fresh each round, so a change takes effect on the next round.
+
+When disabled, the service runs *observe-only*: on each `Round` event it
+reads `currentRoundInitialized` and records the observation so
+`GetRoundStatus` stays live, but submits no transaction. The operator
+`ForceInitializeRound` RPC always submits, regardless of the toggle.
+
 ## Idempotency proof
 
 `KeyParams = round.Number.Bytes()`. Submitting the same `(Kind="InitializeRound", KeyParams=N+1)` twice computes the same `IntentID = sha256("InitializeRound" || 0x00 || N+1)`. The chain-commons `txintent.Manager.Submit` flow:

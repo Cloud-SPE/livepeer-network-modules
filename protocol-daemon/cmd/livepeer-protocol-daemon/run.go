@@ -43,10 +43,14 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/providers/bondingmanager"
 	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/providers/roundsmanager"
 	srprovider "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/providers/serviceregistry"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/providers/treasury"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/repo/opconfig"
 	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/repo/poolhints"
 	grpcrt "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/runtime/grpc"
 	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/runtime/lifecycle"
 	aisrservice "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/aiserviceregistry"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/bondingadmin"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/governor"
 	orchstatussvc "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/orchstatus"
 	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/preflight"
 	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/reward"
@@ -72,11 +76,12 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	chainID := fs.Uint64("chain-id", 42161, "expected chain ID; default Arbitrum One")
 	controllerAddr := fs.String("controller-address", "0xD8E8328501E9645d16Cf49539efC04f734606ee4", "Livepeer Controller contract address; default Arbitrum One")
 	aiServiceRegistryAddr := fs.String("ai-service-registry-address", "0x04C0b249740175999E5BF5c9ac1dA92431EF34C5", "AI service registry contract address; default supplied deployment")
+	treasuryAddr := fs.String("treasury-address", "", "LivepeerGovernor (treasury) contract address; empty = treasury voting disabled")
 	keystorePath := fs.String("keystore-path", "", "V3 JSON keystore file (required in non-dev mode)")
 	keystorePasswordFile := fs.String("keystore-password-file", "", "file containing keystore password; alternative: LIVEPEER_KEYSTORE_PASSWORD env var")
 	orchAddress := fs.String("orch-address", "", "orchestrator on-chain address; required in reward / both modes")
 
-	gasLimit := fs.Uint64("gas-limit", 1_000_000, "gas limit for round-init and reward txs")
+	gasLimit := fs.Uint64("gas-limit", 1_000_000, "gas limit for all on-chain txs (round-init, reward, transcoder, transfer-bond, withdraw-fees, treasury vote, service-URI)")
 	minBalanceWei := fs.String("min-balance-wei", "5000000000000000", "preflight: refuse to start when wallet balance is below this (wei, decimal)")
 	initJitter := fs.Duration("init-jitter", 0, "max random delay before initializeRound; 0 = disabled")
 
@@ -113,6 +118,9 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	}
 	if *aiServiceRegistryAddr != "" {
 		cfg.AIServiceRegistryAddress = common.HexToAddress(*aiServiceRegistryAddr)
+	}
+	if *treasuryAddr != "" {
+		cfg.TreasuryAddress = common.HexToAddress(*treasuryAddr)
 	}
 	cfg.Chain = chaincfg.Default()
 	cfg.Chain.ChainID = chain.ChainID(*chainID)
@@ -218,6 +226,22 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 		return 1
 	}
 
+	// Operational config store (BoltDB-persisted; defaults on first boot).
+	// Owns the runtime toggles + receivers/thresholds the console edits.
+	cfgStore, err := opconfig.New(deps.Store)
+	if err != nil {
+		clog.Error("operational config store", logger.Err(err))
+		return 1
+	}
+
+	// Orchestrator address used by every BondingManager write (the daemon
+	// hot wallet must BE the orchestrator). Falls back to the keystore
+	// address in dev mode.
+	orchAddr := cfg.OrchAddress
+	if orchAddr == (chain.Address{}) {
+		orchAddr = deps.Keystore.Address()
+	}
+
 	// Build round-init service if needed.
 	var roundInitSvc *roundinit.Service
 	if cfg.Mode.HasRoundInit() {
@@ -237,6 +261,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 			Clock:         deps.Clock,
 			GasLimit:      cfg.Chain.GasLimit,
 			InitJitter:    cfg.InitJitter,
+			Enabled:       func() bool { return cfgStore.Get().RoundInitEnabled },
 			Logger:        clog,
 		})
 		if err != nil {
@@ -275,12 +300,75 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 			Clock:          deps.Clock,
 			OrchAddress:    orch,
 			GasLimit:       cfg.Chain.GasLimit,
+			Enabled:        func() bool { return cfgStore.Get().RewardEnabled },
 			Logger:         clog,
 		})
 		if err != nil {
 			clog.Error("reward service", logger.Err(err))
 			return 1
 		}
+	}
+
+	// Bonding-admin (set shares, transfer bond, withdraw fees) + the
+	// round-locked automation. Available whenever BondingManager +
+	// RoundsManager resolve — independent of --mode. The hot wallet must be
+	// the orchestrator address for these writes to take effect on-chain.
+	var bondingAdminSvc *bondingadmin.Service
+	var lockRM *roundsmanager.Bindings
+	bmAddr := deps.Controller.Addresses().BondingManager
+	rmAddr := deps.Controller.Addresses().RoundsManager
+	if bmAddr != (chain.Address{}) && rmAddr != (chain.Address{}) {
+		adminBM, err := bondingmanager.New(deps.RPC, bmAddr)
+		if err != nil {
+			clog.Error("bondingadmin bondingmanager bindings", logger.Err(err))
+			return 1
+		}
+		lockRM, err = roundsmanager.New(deps.RPC, rmAddr)
+		if err != nil {
+			clog.Error("bondingadmin roundsmanager bindings", logger.Err(err))
+			return 1
+		}
+		bondingAdminSvc, err = bondingadmin.New(bondingadmin.Config{
+			BondingManager: adminBM,
+			RoundsManager:  lockRM,
+			TxIntent:       txm,
+			Caller:         deps.RPC,
+			Config:         cfgStore,
+			OrchAddress:    orchAddr,
+			GasLimit:       cfg.Chain.GasLimit,
+			Logger:         clog,
+		})
+		if err != nil {
+			clog.Error("bondingadmin service", logger.Err(err))
+			return 1
+		}
+	} else {
+		clog.Warn("BondingManager/RoundsManager address not resolved; bonding-admin actions disabled")
+	}
+
+	// Governor (treasury proposal voting). Address is operator-supplied
+	// since the controller does not resolve LivepeerGovernor.
+	var governorSvc *governor.Service
+	if cfg.TreasuryAddress != (chain.Address{}) {
+		gov, err := treasury.New(deps.RPC, cfg.TreasuryAddress)
+		if err != nil {
+			clog.Error("treasury bindings", logger.Err(err))
+			return 1
+		}
+		governorSvc, err = governor.New(governor.Config{
+			Governor:    gov,
+			TxIntent:    txm,
+			Caller:      deps.RPC,
+			OrchAddress: orchAddr,
+			GasLimit:    cfg.Chain.GasLimit,
+			Logger:      clog,
+		})
+		if err != nil {
+			clog.Error("governor service", logger.Err(err))
+			return 1
+		}
+	} else {
+		clog.Warn("treasury address not configured; treasury voting RPCs disabled")
 	}
 
 	var serviceRegistrySvc *srservice.Service
@@ -353,6 +441,21 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 		clog.Warn("AI service registry address not configured; AI service registry RPCs disabled")
 	}
 
+	// Interface locals so an unbuilt service is a true nil interface (not a
+	// typed nil), letting the gRPC handlers report Unimplemented cleanly.
+	var grpcBondingAdmin grpcrt.BondingAdmin
+	var grpcGovernor grpcrt.GovernorVoter
+	var grpcLockReader grpcrt.LockReader
+	if bondingAdminSvc != nil {
+		grpcBondingAdmin = bondingAdminSvc
+	}
+	if governorSvc != nil {
+		grpcGovernor = governorSvc
+	}
+	if lockRM != nil {
+		grpcLockReader = lockRM
+	}
+
 	// gRPC server + unix-socket listener.
 	nativeSrv, err := grpcrt.New(grpcrt.Config{
 		Mode:       cfg.Mode,
@@ -366,6 +469,11 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 		AIOrch:     aiOrchStatusSvc,
 		Tx:         txm,
 		RC:         deps.RoundClock,
+
+		ConfigStore:  cfgStore,
+		BondingAdmin: grpcBondingAdmin,
+		Governor:     grpcGovernor,
+		LockReader:   grpcLockReader,
 	})
 	if err != nil {
 		clog.Error("grpc server build", logger.Err(err))
@@ -383,13 +491,22 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	}
 
 	// Lifecycle: run the configured services + listener. Blocks until ctx is cancelled.
+	// Locked-action automation runner: only when bonding-admin built.
+	var lcLockedActions lifecycle.LockedActions
+	var lcLockReader lifecycle.LockReader
+	if bondingAdminSvc != nil && lockRM != nil {
+		lcLockedActions = bondingAdminSvc
+		lcLockReader = lockRM
+	}
 	if err := lifecycle.Run(ctx, lifecycle.Config{
-		Mode:       cfg.Mode,
-		RoundInit:  roundInitSvc,
-		Reward:     rewardSvc,
-		RoundClock: deps.RoundClock,
-		Listener:   lis,
-		Logger:     clog,
+		Mode:          cfg.Mode,
+		RoundInit:     roundInitSvc,
+		Reward:        rewardSvc,
+		RoundClock:    deps.RoundClock,
+		Listener:      lis,
+		Logger:        clog,
+		LockedActions: lcLockedActions,
+		LockReader:    lcLockReader,
 	}); err != nil {
 		clog.Error("lifecycle", logger.Err(err))
 		return 1

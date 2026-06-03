@@ -60,8 +60,34 @@ operator login with admin token + actor identity and records the actor
 into audit events. The login is a single active session with a 4-hour
 absolute timeout and a 30-minute idle timeout.
 
-When `PROTOCOL_DAEMON_SOCKET` is set, the console also renders a
-protocol status panel using the local `protocol-daemon` unix socket.
+## Protocol actions (via protocol-daemon)
+
+When `PROTOCOL_DAEMON_SOCKET` is set, the console also talks to the local
+`protocol-daemon` over its unix socket and exposes a **Protocol actions**
+page: a live status panel plus operator-driven write actions —
+
+- Force initialize round / force reward call
+- Set reward & fee cut (`transcoder`)
+- Force transfer bonded LPT / force withdraw ETH fees (round-locked)
+- Cast a treasury proposal vote, with a pre-vote lookup panel (proposal
+  state, deadline, whether you've already voted, voting power at snapshot)
+- Set Service Registry / AI Service Registry URI
+- An **Operational config** form: the automation toggles (auto round-init,
+  auto reward, auto transfer-bond, auto withdraw-fees, reward-before-
+  transfer) plus the fund-movement receivers/thresholds, persisted in the
+  daemon and applied next round.
+
+**These are NOT cold-key actions.** The console never signs them and never
+sends the cold key. It issues a session-authenticated gRPC request (gated
+by the typed-confirmation gesture and recorded in the audit log); the
+**protocol-daemon signs the transaction with its own keystore** (the
+orchestrator's hot key). The cold key is used *only* for manifest signing.
+
+**Treasury voting requires daemon setup.** The cast-vote and pre-vote
+lookup only work if the protocol-daemon was started with `--treasury-address`
+(the LivepeerGovernor contract). Without it the daemon returns
+`Unimplemented` and the treasury panel surfaces that error. See
+[`../protocol-daemon/docs/operator-runbook.md`](../protocol-daemon/docs/operator-runbook.md).
 
 ## Image
 

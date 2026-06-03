@@ -56,7 +56,7 @@ docker-build-version:
 	docker build --build-arg VERSION="$$VERSION" -t $(DOCKER_REPO):$$DOCKER_TAG -f Dockerfile ..
 
 # Push DOCKER_TAG plus :latest. Override DOCKER_TAG to publish a
-# version: `make docker-push DOCKER_TAG=v3.0.1`.
+# version: `make docker-push DOCKER_TAG=v1.4.0`.
 docker-push:
 	docker push $(DOCKER_REPO):$(DOCKER_TAG)
 	docker tag $(DOCKER_REPO):$(DOCKER_TAG) $(DOCKER_REPO):latest

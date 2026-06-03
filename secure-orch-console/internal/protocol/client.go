@@ -69,6 +69,7 @@ type Round struct {
 	LastRound               uint64
 	LastError               string
 	CurrentRoundInitialized bool
+	CurrentRoundLocked      bool
 	LastIntentID            string
 }
 
@@ -138,6 +139,7 @@ func (c *Client) Snapshot(ctx context.Context) Snapshot {
 			LastRound:               resp.GetLastRound(),
 			LastError:               resp.GetLastError(),
 			CurrentRoundInitialized: resp.GetCurrentRoundInitialized(),
+			CurrentRoundLocked:      resp.GetCurrentRoundLocked(),
 			LastIntentID:            fmt.Sprintf("%x", resp.GetLastIntentId()),
 		}, nil
 	})
@@ -262,6 +264,150 @@ func (c *Client) GetTxIntent(ctx context.Context, id string) (TxIntent, error) {
 		ConfirmedAt:   formatUnixNano(resp.GetConfirmedAtUnixNano()),
 		AttemptCount:  resp.GetAttemptCount(),
 	}, nil
+}
+
+// OperationalConfig mirrors protocolv1.OperationalConfig. Amounts are
+// decimal strings (LPT / ETH); addresses are 0x-hex.
+type OperationalConfig struct {
+	RoundInitEnabled      bool
+	RewardEnabled         bool
+	RewardBeforeTransfer  bool
+	TransferBondEnabled   bool
+	TransferBondReceiver  string
+	TransferBondMinRetain string
+	WithdrawFeesEnabled   bool
+	WithdrawFeesReceiver  string
+	WithdrawFeesThreshold string
+}
+
+// TreasuryProposal mirrors protocolv1.TreasuryProposal — the pre-vote
+// safety snapshot the console shows before a CastVote.
+type TreasuryProposal struct {
+	State       string
+	Deadline    uint64
+	Snapshot    uint64
+	HasVoted    bool
+	VotingPower string
+}
+
+// GetConfig reads the daemon's operational config.
+func (c *Client) GetConfig(ctx context.Context) (OperationalConfig, error) {
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := c.rpc.GetConfig(callCtx, &protocolv1.Empty{})
+	if err != nil {
+		return OperationalConfig{}, err
+	}
+	return opConfigFromProto(resp), nil
+}
+
+// SetConfig writes the daemon's operational config, returning the stored
+// (normalized) result.
+func (c *Client) SetConfig(ctx context.Context, cfg OperationalConfig) (OperationalConfig, error) {
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := c.rpc.SetConfig(callCtx, opConfigToProto(cfg))
+	if err != nil {
+		return OperationalConfig{}, err
+	}
+	return opConfigFromProto(resp), nil
+}
+
+// SetTranscoder sets the orchestrator's reward cut and fee cut (both
+// percentages meaning "what the orchestrator keeps").
+func (c *Client) SetTranscoder(ctx context.Context, rewardCut, feeCut string) (string, error) {
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := c.rpc.SetTranscoder(callCtx, &protocolv1.SetTranscoderRequest{
+		RewardCut: rewardCut,
+		FeeCut:    feeCut,
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", resp.GetId()), nil
+}
+
+// ForceTransferBond triggers the round-locked transfer-bond handler now.
+func (c *Client) ForceTransferBond(ctx context.Context) (ForceActionOutcome, error) {
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := c.rpc.ForceTransferBond(callCtx, &protocolv1.Empty{})
+	if err != nil {
+		return ForceActionOutcome{}, err
+	}
+	return decodeForceOutcome(resp), nil
+}
+
+// ForceWithdrawFees triggers the round-locked withdraw-fees handler now.
+func (c *Client) ForceWithdrawFees(ctx context.Context) (ForceActionOutcome, error) {
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := c.rpc.ForceWithdrawFees(callCtx, &protocolv1.Empty{})
+	if err != nil {
+		return ForceActionOutcome{}, err
+	}
+	return decodeForceOutcome(resp), nil
+}
+
+// CastVote votes on a treasury proposal. reason is optional.
+func (c *Client) CastVote(ctx context.Context, proposalID string, support uint32, reason string) (string, error) {
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := c.rpc.CastVote(callCtx, &protocolv1.CastVoteRequest{
+		ProposalId: proposalID,
+		Support:    support,
+		Reason:     reason,
+	})
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", resp.GetId()), nil
+}
+
+// GetTreasuryProposal reads the pre-vote safety snapshot for a proposal.
+func (c *Client) GetTreasuryProposal(ctx context.Context, proposalID string) (TreasuryProposal, error) {
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	resp, err := c.rpc.GetTreasuryProposal(callCtx, &protocolv1.GetTreasuryProposalRequest{ProposalId: proposalID})
+	if err != nil {
+		return TreasuryProposal{}, err
+	}
+	return TreasuryProposal{
+		State:       resp.GetState(),
+		Deadline:    resp.GetDeadline(),
+		Snapshot:    resp.GetSnapshot(),
+		HasVoted:    resp.GetHasVoted(),
+		VotingPower: bytesToBig(resp.GetVotingPower()).String(),
+	}, nil
+}
+
+func opConfigFromProto(p *protocolv1.OperationalConfig) OperationalConfig {
+	return OperationalConfig{
+		RoundInitEnabled:      p.GetRoundInitEnabled(),
+		RewardEnabled:         p.GetRewardEnabled(),
+		RewardBeforeTransfer:  p.GetRewardBeforeTransfer(),
+		TransferBondEnabled:   p.GetTransferBondEnabled(),
+		TransferBondReceiver:  p.GetTransferBondReceiver(),
+		TransferBondMinRetain: p.GetTransferBondMinRetain(),
+		WithdrawFeesEnabled:   p.GetWithdrawFeesEnabled(),
+		WithdrawFeesReceiver:  p.GetWithdrawFeesReceiver(),
+		WithdrawFeesThreshold: p.GetWithdrawFeesThreshold(),
+	}
+}
+
+func opConfigToProto(c OperationalConfig) *protocolv1.OperationalConfig {
+	return &protocolv1.OperationalConfig{
+		RoundInitEnabled:      c.RoundInitEnabled,
+		RewardEnabled:         c.RewardEnabled,
+		RewardBeforeTransfer:  c.RewardBeforeTransfer,
+		TransferBondEnabled:   c.TransferBondEnabled,
+		TransferBondReceiver:  c.TransferBondReceiver,
+		TransferBondMinRetain: c.TransferBondMinRetain,
+		WithdrawFeesEnabled:   c.WithdrawFeesEnabled,
+		WithdrawFeesReceiver:  c.WithdrawFeesReceiver,
+		WithdrawFeesThreshold: c.WithdrawFeesThreshold,
+	}
 }
 
 func unary[T any](ctx context.Context, fn func(context.Context) (T, error)) Field[T] {

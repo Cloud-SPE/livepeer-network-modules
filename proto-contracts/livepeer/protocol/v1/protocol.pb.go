@@ -36,21 +36,37 @@ const (
 	SkipReason_CODE_ALREADY_REWARDED    SkipReason_Code = 1 // tinfo.LastRewardRound >= round
 	SkipReason_CODE_TRANSCODER_INACTIVE SkipReason_Code = 2 // !tinfo.IsActiveAtRound(round)
 	SkipReason_CODE_ROUND_INITIALIZED   SkipReason_Code = 3 // round.Initialized — applies to ForceInitializeRound
+	// Bonding-admin (transfer-bond / withdraw-fees) skip codes.
+	SkipReason_CODE_ROUND_NOT_LOCKED    SkipReason_Code = 10 // round not in its lock window
+	SkipReason_CODE_NOTHING_TO_TRANSFER SkipReason_Code = 11 // pendingStake <= configured retain
+	SkipReason_CODE_BELOW_FEE_THRESHOLD SkipReason_Code = 12 // pendingFees < configured threshold
+	SkipReason_CODE_REWARD_NOT_CALLED   SkipReason_Code = 13 // reward-before-transfer guard: reward unconfirmed
+	SkipReason_CODE_ACTION_DISABLED     SkipReason_Code = 14 // the action is disabled in operational config
 )
 
 // Enum value maps for SkipReason_Code.
 var (
 	SkipReason_Code_name = map[int32]string{
-		0: "CODE_UNSPECIFIED",
-		1: "CODE_ALREADY_REWARDED",
-		2: "CODE_TRANSCODER_INACTIVE",
-		3: "CODE_ROUND_INITIALIZED",
+		0:  "CODE_UNSPECIFIED",
+		1:  "CODE_ALREADY_REWARDED",
+		2:  "CODE_TRANSCODER_INACTIVE",
+		3:  "CODE_ROUND_INITIALIZED",
+		10: "CODE_ROUND_NOT_LOCKED",
+		11: "CODE_NOTHING_TO_TRANSFER",
+		12: "CODE_BELOW_FEE_THRESHOLD",
+		13: "CODE_REWARD_NOT_CALLED",
+		14: "CODE_ACTION_DISABLED",
 	}
 	SkipReason_Code_value = map[string]int32{
 		"CODE_UNSPECIFIED":         0,
 		"CODE_ALREADY_REWARDED":    1,
 		"CODE_TRANSCODER_INACTIVE": 2,
 		"CODE_ROUND_INITIALIZED":   3,
+		"CODE_ROUND_NOT_LOCKED":    10,
+		"CODE_NOTHING_TO_TRANSFER": 11,
+		"CODE_BELOW_FEE_THRESHOLD": 12,
+		"CODE_REWARD_NOT_CALLED":   13,
+		"CODE_ACTION_DISABLED":     14,
 	}
 )
 
@@ -284,8 +300,11 @@ type RoundStatus struct {
 	LastIntentId            []byte                 `protobuf:"bytes,2,opt,name=last_intent_id,json=lastIntentId,proto3" json:"last_intent_id,omitempty"`
 	LastError               string                 `protobuf:"bytes,3,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
 	CurrentRoundInitialized bool                   `protobuf:"varint,4,opt,name=current_round_initialized,json=currentRoundInitialized,proto3" json:"current_round_initialized,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// current_round_locked reports whether the current round is within its
+	// lock window (the gate for transfer-bond / withdraw-fees automation).
+	CurrentRoundLocked bool `protobuf:"varint,5,opt,name=current_round_locked,json=currentRoundLocked,proto3" json:"current_round_locked,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *RoundStatus) Reset() {
@@ -342,6 +361,13 @@ func (x *RoundStatus) GetLastError() string {
 func (x *RoundStatus) GetCurrentRoundInitialized() bool {
 	if x != nil {
 		return x.CurrentRoundInitialized
+	}
+	return false
+}
+
+func (x *RoundStatus) GetCurrentRoundLocked() bool {
+	if x != nil {
+		return x.CurrentRoundLocked
 	}
 	return false
 }
@@ -975,6 +1001,356 @@ func (x *SkipReason) GetCode() SkipReason_Code {
 	return SkipReason_CODE_UNSPECIFIED
 }
 
+// OperationalConfig is the daemon's runtime-editable policy: which
+// automated behaviors are on, and the receivers/thresholds for the
+// round-locked fund-movement actions. Amounts are operator-facing decimal
+// strings (LPT / ETH); addresses are 0x-hex strings. Edited via SetConfig.
+type OperationalConfig struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	RoundInitEnabled      bool                   `protobuf:"varint,1,opt,name=round_init_enabled,json=roundInitEnabled,proto3" json:"round_init_enabled,omitempty"`
+	RewardEnabled         bool                   `protobuf:"varint,2,opt,name=reward_enabled,json=rewardEnabled,proto3" json:"reward_enabled,omitempty"`
+	RewardBeforeTransfer  bool                   `protobuf:"varint,3,opt,name=reward_before_transfer,json=rewardBeforeTransfer,proto3" json:"reward_before_transfer,omitempty"`
+	TransferBondEnabled   bool                   `protobuf:"varint,4,opt,name=transfer_bond_enabled,json=transferBondEnabled,proto3" json:"transfer_bond_enabled,omitempty"`
+	TransferBondReceiver  string                 `protobuf:"bytes,5,opt,name=transfer_bond_receiver,json=transferBondReceiver,proto3" json:"transfer_bond_receiver,omitempty"`      // 0x-hex address
+	TransferBondMinRetain string                 `protobuf:"bytes,6,opt,name=transfer_bond_min_retain,json=transferBondMinRetain,proto3" json:"transfer_bond_min_retain,omitempty"` // decimal LPT
+	WithdrawFeesEnabled   bool                   `protobuf:"varint,7,opt,name=withdraw_fees_enabled,json=withdrawFeesEnabled,proto3" json:"withdraw_fees_enabled,omitempty"`
+	WithdrawFeesReceiver  string                 `protobuf:"bytes,8,opt,name=withdraw_fees_receiver,json=withdrawFeesReceiver,proto3" json:"withdraw_fees_receiver,omitempty"`    // 0x-hex address
+	WithdrawFeesThreshold string                 `protobuf:"bytes,9,opt,name=withdraw_fees_threshold,json=withdrawFeesThreshold,proto3" json:"withdraw_fees_threshold,omitempty"` // decimal ETH
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *OperationalConfig) Reset() {
+	*x = OperationalConfig{}
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OperationalConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OperationalConfig) ProtoMessage() {}
+
+func (x *OperationalConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OperationalConfig.ProtoReflect.Descriptor instead.
+func (*OperationalConfig) Descriptor() ([]byte, []int) {
+	return file_livepeer_protocol_v1_protocol_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *OperationalConfig) GetRoundInitEnabled() bool {
+	if x != nil {
+		return x.RoundInitEnabled
+	}
+	return false
+}
+
+func (x *OperationalConfig) GetRewardEnabled() bool {
+	if x != nil {
+		return x.RewardEnabled
+	}
+	return false
+}
+
+func (x *OperationalConfig) GetRewardBeforeTransfer() bool {
+	if x != nil {
+		return x.RewardBeforeTransfer
+	}
+	return false
+}
+
+func (x *OperationalConfig) GetTransferBondEnabled() bool {
+	if x != nil {
+		return x.TransferBondEnabled
+	}
+	return false
+}
+
+func (x *OperationalConfig) GetTransferBondReceiver() string {
+	if x != nil {
+		return x.TransferBondReceiver
+	}
+	return ""
+}
+
+func (x *OperationalConfig) GetTransferBondMinRetain() string {
+	if x != nil {
+		return x.TransferBondMinRetain
+	}
+	return ""
+}
+
+func (x *OperationalConfig) GetWithdrawFeesEnabled() bool {
+	if x != nil {
+		return x.WithdrawFeesEnabled
+	}
+	return false
+}
+
+func (x *OperationalConfig) GetWithdrawFeesReceiver() string {
+	if x != nil {
+		return x.WithdrawFeesReceiver
+	}
+	return ""
+}
+
+func (x *OperationalConfig) GetWithdrawFeesThreshold() string {
+	if x != nil {
+		return x.WithdrawFeesThreshold
+	}
+	return ""
+}
+
+// SetTranscoderRequest sets the orchestrator's reward cut and fee cut.
+// Both are percentages meaning "what the orchestrator keeps" (the daemon
+// converts to ppm and flips fee_cut into the contract's fee_share).
+type SetTranscoderRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RewardCut     string                 `protobuf:"bytes,1,opt,name=reward_cut,json=rewardCut,proto3" json:"reward_cut,omitempty"` // percent, e.g. "10" or "95.5"
+	FeeCut        string                 `protobuf:"bytes,2,opt,name=fee_cut,json=feeCut,proto3" json:"fee_cut,omitempty"`          // percent, e.g. "10" or "95.5"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetTranscoderRequest) Reset() {
+	*x = SetTranscoderRequest{}
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetTranscoderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetTranscoderRequest) ProtoMessage() {}
+
+func (x *SetTranscoderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetTranscoderRequest.ProtoReflect.Descriptor instead.
+func (*SetTranscoderRequest) Descriptor() ([]byte, []int) {
+	return file_livepeer_protocol_v1_protocol_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *SetTranscoderRequest) GetRewardCut() string {
+	if x != nil {
+		return x.RewardCut
+	}
+	return ""
+}
+
+func (x *SetTranscoderRequest) GetFeeCut() string {
+	if x != nil {
+		return x.FeeCut
+	}
+	return ""
+}
+
+// CastVoteRequest votes on a treasury (LivepeerGovernor) proposal.
+type CastVoteRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ProposalId    string                 `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"` // decimal uint256
+	Support       uint32                 `protobuf:"varint,2,opt,name=support,proto3" json:"support,omitempty"`                        // OZ GovernorCountingSimple: 0=Against 1=For 2=Abstain
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`                           // optional; empty -> castVote, else castVoteWithReason
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CastVoteRequest) Reset() {
+	*x = CastVoteRequest{}
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CastVoteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CastVoteRequest) ProtoMessage() {}
+
+func (x *CastVoteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CastVoteRequest.ProtoReflect.Descriptor instead.
+func (*CastVoteRequest) Descriptor() ([]byte, []int) {
+	return file_livepeer_protocol_v1_protocol_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *CastVoteRequest) GetProposalId() string {
+	if x != nil {
+		return x.ProposalId
+	}
+	return ""
+}
+
+func (x *CastVoteRequest) GetSupport() uint32 {
+	if x != nil {
+		return x.Support
+	}
+	return 0
+}
+
+func (x *CastVoteRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// GetTreasuryProposalRequest asks for the pre-vote safety snapshot.
+type GetTreasuryProposalRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ProposalId    string                 `protobuf:"bytes,1,opt,name=proposal_id,json=proposalId,proto3" json:"proposal_id,omitempty"` // decimal uint256
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTreasuryProposalRequest) Reset() {
+	*x = GetTreasuryProposalRequest{}
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTreasuryProposalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTreasuryProposalRequest) ProtoMessage() {}
+
+func (x *GetTreasuryProposalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTreasuryProposalRequest.ProtoReflect.Descriptor instead.
+func (*GetTreasuryProposalRequest) Descriptor() ([]byte, []int) {
+	return file_livepeer_protocol_v1_protocol_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *GetTreasuryProposalRequest) GetProposalId() string {
+	if x != nil {
+		return x.ProposalId
+	}
+	return ""
+}
+
+// TreasuryProposal is the pre-vote safety snapshot for a proposal.
+type TreasuryProposal struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`                                // "Active" | "Defeated" | ...
+	Deadline      uint64                 `protobuf:"varint,2,opt,name=deadline,proto3" json:"deadline,omitempty"`                         // proposal deadline (timepoint)
+	Snapshot      uint64                 `protobuf:"varint,3,opt,name=snapshot,proto3" json:"snapshot,omitempty"`                         // voting-power snapshot timepoint
+	HasVoted      bool                   `protobuf:"varint,4,opt,name=has_voted,json=hasVoted,proto3" json:"has_voted,omitempty"`         // whether the daemon wallet already voted
+	VotingPower   []byte                 `protobuf:"bytes,5,opt,name=voting_power,json=votingPower,proto3" json:"voting_power,omitempty"` // big-endian unsigned; power at snapshot
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TreasuryProposal) Reset() {
+	*x = TreasuryProposal{}
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TreasuryProposal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TreasuryProposal) ProtoMessage() {}
+
+func (x *TreasuryProposal) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TreasuryProposal.ProtoReflect.Descriptor instead.
+func (*TreasuryProposal) Descriptor() ([]byte, []int) {
+	return file_livepeer_protocol_v1_protocol_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *TreasuryProposal) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *TreasuryProposal) GetDeadline() uint64 {
+	if x != nil {
+		return x.Deadline
+	}
+	return 0
+}
+
+func (x *TreasuryProposal) GetSnapshot() uint64 {
+	if x != nil {
+		return x.Snapshot
+	}
+	return 0
+}
+
+func (x *TreasuryProposal) GetHasVoted() bool {
+	if x != nil {
+		return x.HasVoted
+	}
+	return false
+}
+
+func (x *TreasuryProposal) GetVotingPower() []byte {
+	if x != nil {
+		return x.VotingPower
+	}
+	return nil
+}
+
 // TxIntentSnapshot mirrors chain-commons.txintent.TxIntent for the wire.
 type TxIntentSnapshot struct {
 	state                 protoimpl.MessageState `protogen:"open.v1"`
@@ -994,7 +1370,7 @@ type TxIntentSnapshot struct {
 
 func (x *TxIntentSnapshot) Reset() {
 	*x = TxIntentSnapshot{}
-	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[15]
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1006,7 +1382,7 @@ func (x *TxIntentSnapshot) String() string {
 func (*TxIntentSnapshot) ProtoMessage() {}
 
 func (x *TxIntentSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[15]
+	mi := &file_livepeer_protocol_v1_protocol_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1019,7 +1395,7 @@ func (x *TxIntentSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TxIntentSnapshot.ProtoReflect.Descriptor instead.
 func (*TxIntentSnapshot) Descriptor() ([]byte, []int) {
-	return file_livepeer_protocol_v1_protocol_proto_rawDescGZIP(), []int{15}
+	return file_livepeer_protocol_v1_protocol_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *TxIntentSnapshot) GetId() []byte {
@@ -1112,14 +1488,15 @@ const file_livepeer_protocol_v1_protocol_proto_rawDesc = "" +
 	"\x06length\x18\x04 \x01(\x04R\x06length\x12 \n" +
 	"\vinitialized\x18\x05 \x01(\bR\vinitialized\x12\x1d\n" +
 	"\n" +
-	"block_hash\x18\x06 \x01(\fR\tblockHash\"\xad\x01\n" +
+	"block_hash\x18\x06 \x01(\fR\tblockHash\"\xdf\x01\n" +
 	"\vRoundStatus\x12\x1d\n" +
 	"\n" +
 	"last_round\x18\x01 \x01(\x04R\tlastRound\x12$\n" +
 	"\x0elast_intent_id\x18\x02 \x01(\fR\flastIntentId\x12\x1d\n" +
 	"\n" +
 	"last_error\x18\x03 \x01(\tR\tlastError\x12:\n" +
-	"\x19current_round_initialized\x18\x04 \x01(\bR\x17currentRoundInitialized\"\xcc\x02\n" +
+	"\x19current_round_initialized\x18\x04 \x01(\bR\x17currentRoundInitialized\x120\n" +
+	"\x14current_round_locked\x18\x05 \x01(\bR\x12currentRoundLocked\"\xcc\x02\n" +
 	"\fRewardStatus\x12\x1d\n" +
 	"\n" +
 	"last_round\x18\x01 \x01(\x04R\tlastRound\x12!\n" +
@@ -1157,16 +1534,50 @@ const file_livepeer_protocol_v1_protocol_proto_rawDesc = "" +
 	"\fForceOutcome\x12A\n" +
 	"\tsubmitted\x18\x01 \x01(\v2!.livepeer.protocol.v1.TxIntentRefH\x00R\tsubmitted\x12<\n" +
 	"\askipped\x18\x02 \x01(\v2 .livepeer.protocol.v1.SkipReasonH\x00R\askippedB\t\n" +
-	"\aoutcome\"\xd2\x01\n" +
+	"\aoutcome\"\xe0\x02\n" +
 	"\n" +
 	"SkipReason\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x129\n" +
-	"\x04code\x18\x02 \x01(\x0e2%.livepeer.protocol.v1.SkipReason.CodeR\x04code\"q\n" +
+	"\x04code\x18\x02 \x01(\x0e2%.livepeer.protocol.v1.SkipReason.CodeR\x04code\"\xfe\x01\n" +
 	"\x04Code\x12\x14\n" +
 	"\x10CODE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CODE_ALREADY_REWARDED\x10\x01\x12\x1c\n" +
 	"\x18CODE_TRANSCODER_INACTIVE\x10\x02\x12\x1a\n" +
-	"\x16CODE_ROUND_INITIALIZED\x10\x03\"\xfe\x02\n" +
+	"\x16CODE_ROUND_INITIALIZED\x10\x03\x12\x19\n" +
+	"\x15CODE_ROUND_NOT_LOCKED\x10\n" +
+	"\x12\x1c\n" +
+	"\x18CODE_NOTHING_TO_TRANSFER\x10\v\x12\x1c\n" +
+	"\x18CODE_BELOW_FEE_THRESHOLD\x10\f\x12\x1a\n" +
+	"\x16CODE_REWARD_NOT_CALLED\x10\r\x12\x18\n" +
+	"\x14CODE_ACTION_DISABLED\x10\x0e\"\xe3\x03\n" +
+	"\x11OperationalConfig\x12,\n" +
+	"\x12round_init_enabled\x18\x01 \x01(\bR\x10roundInitEnabled\x12%\n" +
+	"\x0ereward_enabled\x18\x02 \x01(\bR\rrewardEnabled\x124\n" +
+	"\x16reward_before_transfer\x18\x03 \x01(\bR\x14rewardBeforeTransfer\x122\n" +
+	"\x15transfer_bond_enabled\x18\x04 \x01(\bR\x13transferBondEnabled\x124\n" +
+	"\x16transfer_bond_receiver\x18\x05 \x01(\tR\x14transferBondReceiver\x127\n" +
+	"\x18transfer_bond_min_retain\x18\x06 \x01(\tR\x15transferBondMinRetain\x122\n" +
+	"\x15withdraw_fees_enabled\x18\a \x01(\bR\x13withdrawFeesEnabled\x124\n" +
+	"\x16withdraw_fees_receiver\x18\b \x01(\tR\x14withdrawFeesReceiver\x126\n" +
+	"\x17withdraw_fees_threshold\x18\t \x01(\tR\x15withdrawFeesThreshold\"N\n" +
+	"\x14SetTranscoderRequest\x12\x1d\n" +
+	"\n" +
+	"reward_cut\x18\x01 \x01(\tR\trewardCut\x12\x17\n" +
+	"\afee_cut\x18\x02 \x01(\tR\x06feeCut\"d\n" +
+	"\x0fCastVoteRequest\x12\x1f\n" +
+	"\vproposal_id\x18\x01 \x01(\tR\n" +
+	"proposalId\x12\x18\n" +
+	"\asupport\x18\x02 \x01(\rR\asupport\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"=\n" +
+	"\x1aGetTreasuryProposalRequest\x12\x1f\n" +
+	"\vproposal_id\x18\x01 \x01(\tR\n" +
+	"proposalId\"\xa0\x01\n" +
+	"\x10TreasuryProposal\x12\x14\n" +
+	"\x05state\x18\x01 \x01(\tR\x05state\x12\x1a\n" +
+	"\bdeadline\x18\x02 \x01(\x04R\bdeadline\x12\x1a\n" +
+	"\bsnapshot\x18\x03 \x01(\x04R\bsnapshot\x12\x1b\n" +
+	"\thas_voted\x18\x04 \x01(\bR\bhasVoted\x12!\n" +
+	"\fvoting_power\x18\x05 \x01(\fR\vvotingPower\"\xfe\x02\n" +
 	"\x10TxIntentSnapshot\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x16\n" +
@@ -1179,7 +1590,7 @@ const file_livepeer_protocol_v1_protocol_proto_rawDesc = "" +
 	"\x19last_updated_at_unix_nano\x18\b \x01(\x04R\x15lastUpdatedAtUnixNano\x123\n" +
 	"\x16confirmed_at_unix_nano\x18\t \x01(\x04R\x13confirmedAtUnixNano\x12#\n" +
 	"\rattempt_count\x18\n" +
-	" \x01(\rR\fattemptCount2\xfc\t\n" +
+	" \x01(\rR\fattemptCount2\x81\x0f\n" +
 	"\x0eProtocolDaemon\x12P\n" +
 	"\x0eGetRoundStatus\x12\x1b.livepeer.protocol.v1.Empty\x1a!.livepeer.protocol.v1.RoundStatus\x12R\n" +
 	"\x0fGetRewardStatus\x12\x1b.livepeer.protocol.v1.Empty\x1a\".livepeer.protocol.v1.RewardStatus\x12W\n" +
@@ -1194,7 +1605,14 @@ const file_livepeer_protocol_v1_protocol_proto_rawDesc = "" +
 	"\x10GetWalletBalance\x12\x1b.livepeer.protocol.v1.Empty\x1a).livepeer.protocol.v1.WalletBalanceStatus\x12X\n" +
 	"\vGetTxIntent\x12!.livepeer.protocol.v1.TxIntentRef\x1a&.livepeer.protocol.v1.TxIntentSnapshot\x12T\n" +
 	"\x11StreamRoundEvents\x12\x1b.livepeer.protocol.v1.Empty\x1a .livepeer.protocol.v1.RoundEvent0\x01\x12I\n" +
-	"\x06Health\x12\x1b.livepeer.protocol.v1.Empty\x1a\".livepeer.protocol.v1.HealthStatusB_Z]github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/protocol/v1;protocolv1b\x06proto3"
+	"\x06Health\x12\x1b.livepeer.protocol.v1.Empty\x1a\".livepeer.protocol.v1.HealthStatus\x12Q\n" +
+	"\tGetConfig\x12\x1b.livepeer.protocol.v1.Empty\x1a'.livepeer.protocol.v1.OperationalConfig\x12]\n" +
+	"\tSetConfig\x12'.livepeer.protocol.v1.OperationalConfig\x1a'.livepeer.protocol.v1.OperationalConfig\x12^\n" +
+	"\rSetTranscoder\x12*.livepeer.protocol.v1.SetTranscoderRequest\x1a!.livepeer.protocol.v1.TxIntentRef\x12T\n" +
+	"\x11ForceTransferBond\x12\x1b.livepeer.protocol.v1.Empty\x1a\".livepeer.protocol.v1.ForceOutcome\x12T\n" +
+	"\x11ForceWithdrawFees\x12\x1b.livepeer.protocol.v1.Empty\x1a\".livepeer.protocol.v1.ForceOutcome\x12T\n" +
+	"\bCastVote\x12%.livepeer.protocol.v1.CastVoteRequest\x1a!.livepeer.protocol.v1.TxIntentRef\x12o\n" +
+	"\x13GetTreasuryProposal\x120.livepeer.protocol.v1.GetTreasuryProposalRequest\x1a&.livepeer.protocol.v1.TreasuryProposalB_Z]github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/protocol/v1;protocolv1b\x06proto3"
 
 var (
 	file_livepeer_protocol_v1_protocol_proto_rawDescOnce sync.Once
@@ -1209,25 +1627,30 @@ func file_livepeer_protocol_v1_protocol_proto_rawDescGZIP() []byte {
 }
 
 var file_livepeer_protocol_v1_protocol_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_livepeer_protocol_v1_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_livepeer_protocol_v1_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_livepeer_protocol_v1_protocol_proto_goTypes = []any{
-	(SkipReason_Code)(0),              // 0: livepeer.protocol.v1.SkipReason.Code
-	(*Empty)(nil),                     // 1: livepeer.protocol.v1.Empty
-	(*HealthStatus)(nil),              // 2: livepeer.protocol.v1.HealthStatus
-	(*RoundEvent)(nil),                // 3: livepeer.protocol.v1.RoundEvent
-	(*RoundStatus)(nil),               // 4: livepeer.protocol.v1.RoundStatus
-	(*RewardStatus)(nil),              // 5: livepeer.protocol.v1.RewardStatus
-	(*TxIntentRef)(nil),               // 6: livepeer.protocol.v1.TxIntentRef
-	(*SetServiceURIRequest)(nil),      // 7: livepeer.protocol.v1.SetServiceURIRequest
-	(*SetAIServiceURIRequest)(nil),    // 8: livepeer.protocol.v1.SetAIServiceURIRequest
-	(*OnChainServiceURIStatus)(nil),   // 9: livepeer.protocol.v1.OnChainServiceURIStatus
-	(*OnChainAIServiceURIStatus)(nil), // 10: livepeer.protocol.v1.OnChainAIServiceURIStatus
-	(*RegistrationStatus)(nil),        // 11: livepeer.protocol.v1.RegistrationStatus
-	(*AIRegistrationStatus)(nil),      // 12: livepeer.protocol.v1.AIRegistrationStatus
-	(*WalletBalanceStatus)(nil),       // 13: livepeer.protocol.v1.WalletBalanceStatus
-	(*ForceOutcome)(nil),              // 14: livepeer.protocol.v1.ForceOutcome
-	(*SkipReason)(nil),                // 15: livepeer.protocol.v1.SkipReason
-	(*TxIntentSnapshot)(nil),          // 16: livepeer.protocol.v1.TxIntentSnapshot
+	(SkipReason_Code)(0),               // 0: livepeer.protocol.v1.SkipReason.Code
+	(*Empty)(nil),                      // 1: livepeer.protocol.v1.Empty
+	(*HealthStatus)(nil),               // 2: livepeer.protocol.v1.HealthStatus
+	(*RoundEvent)(nil),                 // 3: livepeer.protocol.v1.RoundEvent
+	(*RoundStatus)(nil),                // 4: livepeer.protocol.v1.RoundStatus
+	(*RewardStatus)(nil),               // 5: livepeer.protocol.v1.RewardStatus
+	(*TxIntentRef)(nil),                // 6: livepeer.protocol.v1.TxIntentRef
+	(*SetServiceURIRequest)(nil),       // 7: livepeer.protocol.v1.SetServiceURIRequest
+	(*SetAIServiceURIRequest)(nil),     // 8: livepeer.protocol.v1.SetAIServiceURIRequest
+	(*OnChainServiceURIStatus)(nil),    // 9: livepeer.protocol.v1.OnChainServiceURIStatus
+	(*OnChainAIServiceURIStatus)(nil),  // 10: livepeer.protocol.v1.OnChainAIServiceURIStatus
+	(*RegistrationStatus)(nil),         // 11: livepeer.protocol.v1.RegistrationStatus
+	(*AIRegistrationStatus)(nil),       // 12: livepeer.protocol.v1.AIRegistrationStatus
+	(*WalletBalanceStatus)(nil),        // 13: livepeer.protocol.v1.WalletBalanceStatus
+	(*ForceOutcome)(nil),               // 14: livepeer.protocol.v1.ForceOutcome
+	(*SkipReason)(nil),                 // 15: livepeer.protocol.v1.SkipReason
+	(*OperationalConfig)(nil),          // 16: livepeer.protocol.v1.OperationalConfig
+	(*SetTranscoderRequest)(nil),       // 17: livepeer.protocol.v1.SetTranscoderRequest
+	(*CastVoteRequest)(nil),            // 18: livepeer.protocol.v1.CastVoteRequest
+	(*GetTreasuryProposalRequest)(nil), // 19: livepeer.protocol.v1.GetTreasuryProposalRequest
+	(*TreasuryProposal)(nil),           // 20: livepeer.protocol.v1.TreasuryProposal
+	(*TxIntentSnapshot)(nil),           // 21: livepeer.protocol.v1.TxIntentSnapshot
 }
 var file_livepeer_protocol_v1_protocol_proto_depIdxs = []int32{
 	6,  // 0: livepeer.protocol.v1.ForceOutcome.submitted:type_name -> livepeer.protocol.v1.TxIntentRef
@@ -1247,22 +1670,36 @@ var file_livepeer_protocol_v1_protocol_proto_depIdxs = []int32{
 	6,  // 14: livepeer.protocol.v1.ProtocolDaemon.GetTxIntent:input_type -> livepeer.protocol.v1.TxIntentRef
 	1,  // 15: livepeer.protocol.v1.ProtocolDaemon.StreamRoundEvents:input_type -> livepeer.protocol.v1.Empty
 	1,  // 16: livepeer.protocol.v1.ProtocolDaemon.Health:input_type -> livepeer.protocol.v1.Empty
-	4,  // 17: livepeer.protocol.v1.ProtocolDaemon.GetRoundStatus:output_type -> livepeer.protocol.v1.RoundStatus
-	5,  // 18: livepeer.protocol.v1.ProtocolDaemon.GetRewardStatus:output_type -> livepeer.protocol.v1.RewardStatus
-	14, // 19: livepeer.protocol.v1.ProtocolDaemon.ForceInitializeRound:output_type -> livepeer.protocol.v1.ForceOutcome
-	14, // 20: livepeer.protocol.v1.ProtocolDaemon.ForceRewardCall:output_type -> livepeer.protocol.v1.ForceOutcome
-	6,  // 21: livepeer.protocol.v1.ProtocolDaemon.SetServiceURI:output_type -> livepeer.protocol.v1.TxIntentRef
-	6,  // 22: livepeer.protocol.v1.ProtocolDaemon.SetAIServiceURI:output_type -> livepeer.protocol.v1.TxIntentRef
-	9,  // 23: livepeer.protocol.v1.ProtocolDaemon.GetOnChainServiceURI:output_type -> livepeer.protocol.v1.OnChainServiceURIStatus
-	10, // 24: livepeer.protocol.v1.ProtocolDaemon.GetOnChainAIServiceURI:output_type -> livepeer.protocol.v1.OnChainAIServiceURIStatus
-	11, // 25: livepeer.protocol.v1.ProtocolDaemon.IsRegistered:output_type -> livepeer.protocol.v1.RegistrationStatus
-	12, // 26: livepeer.protocol.v1.ProtocolDaemon.IsAIRegistered:output_type -> livepeer.protocol.v1.AIRegistrationStatus
-	13, // 27: livepeer.protocol.v1.ProtocolDaemon.GetWalletBalance:output_type -> livepeer.protocol.v1.WalletBalanceStatus
-	16, // 28: livepeer.protocol.v1.ProtocolDaemon.GetTxIntent:output_type -> livepeer.protocol.v1.TxIntentSnapshot
-	3,  // 29: livepeer.protocol.v1.ProtocolDaemon.StreamRoundEvents:output_type -> livepeer.protocol.v1.RoundEvent
-	2,  // 30: livepeer.protocol.v1.ProtocolDaemon.Health:output_type -> livepeer.protocol.v1.HealthStatus
-	17, // [17:31] is the sub-list for method output_type
-	3,  // [3:17] is the sub-list for method input_type
+	1,  // 17: livepeer.protocol.v1.ProtocolDaemon.GetConfig:input_type -> livepeer.protocol.v1.Empty
+	16, // 18: livepeer.protocol.v1.ProtocolDaemon.SetConfig:input_type -> livepeer.protocol.v1.OperationalConfig
+	17, // 19: livepeer.protocol.v1.ProtocolDaemon.SetTranscoder:input_type -> livepeer.protocol.v1.SetTranscoderRequest
+	1,  // 20: livepeer.protocol.v1.ProtocolDaemon.ForceTransferBond:input_type -> livepeer.protocol.v1.Empty
+	1,  // 21: livepeer.protocol.v1.ProtocolDaemon.ForceWithdrawFees:input_type -> livepeer.protocol.v1.Empty
+	18, // 22: livepeer.protocol.v1.ProtocolDaemon.CastVote:input_type -> livepeer.protocol.v1.CastVoteRequest
+	19, // 23: livepeer.protocol.v1.ProtocolDaemon.GetTreasuryProposal:input_type -> livepeer.protocol.v1.GetTreasuryProposalRequest
+	4,  // 24: livepeer.protocol.v1.ProtocolDaemon.GetRoundStatus:output_type -> livepeer.protocol.v1.RoundStatus
+	5,  // 25: livepeer.protocol.v1.ProtocolDaemon.GetRewardStatus:output_type -> livepeer.protocol.v1.RewardStatus
+	14, // 26: livepeer.protocol.v1.ProtocolDaemon.ForceInitializeRound:output_type -> livepeer.protocol.v1.ForceOutcome
+	14, // 27: livepeer.protocol.v1.ProtocolDaemon.ForceRewardCall:output_type -> livepeer.protocol.v1.ForceOutcome
+	6,  // 28: livepeer.protocol.v1.ProtocolDaemon.SetServiceURI:output_type -> livepeer.protocol.v1.TxIntentRef
+	6,  // 29: livepeer.protocol.v1.ProtocolDaemon.SetAIServiceURI:output_type -> livepeer.protocol.v1.TxIntentRef
+	9,  // 30: livepeer.protocol.v1.ProtocolDaemon.GetOnChainServiceURI:output_type -> livepeer.protocol.v1.OnChainServiceURIStatus
+	10, // 31: livepeer.protocol.v1.ProtocolDaemon.GetOnChainAIServiceURI:output_type -> livepeer.protocol.v1.OnChainAIServiceURIStatus
+	11, // 32: livepeer.protocol.v1.ProtocolDaemon.IsRegistered:output_type -> livepeer.protocol.v1.RegistrationStatus
+	12, // 33: livepeer.protocol.v1.ProtocolDaemon.IsAIRegistered:output_type -> livepeer.protocol.v1.AIRegistrationStatus
+	13, // 34: livepeer.protocol.v1.ProtocolDaemon.GetWalletBalance:output_type -> livepeer.protocol.v1.WalletBalanceStatus
+	21, // 35: livepeer.protocol.v1.ProtocolDaemon.GetTxIntent:output_type -> livepeer.protocol.v1.TxIntentSnapshot
+	3,  // 36: livepeer.protocol.v1.ProtocolDaemon.StreamRoundEvents:output_type -> livepeer.protocol.v1.RoundEvent
+	2,  // 37: livepeer.protocol.v1.ProtocolDaemon.Health:output_type -> livepeer.protocol.v1.HealthStatus
+	16, // 38: livepeer.protocol.v1.ProtocolDaemon.GetConfig:output_type -> livepeer.protocol.v1.OperationalConfig
+	16, // 39: livepeer.protocol.v1.ProtocolDaemon.SetConfig:output_type -> livepeer.protocol.v1.OperationalConfig
+	6,  // 40: livepeer.protocol.v1.ProtocolDaemon.SetTranscoder:output_type -> livepeer.protocol.v1.TxIntentRef
+	14, // 41: livepeer.protocol.v1.ProtocolDaemon.ForceTransferBond:output_type -> livepeer.protocol.v1.ForceOutcome
+	14, // 42: livepeer.protocol.v1.ProtocolDaemon.ForceWithdrawFees:output_type -> livepeer.protocol.v1.ForceOutcome
+	6,  // 43: livepeer.protocol.v1.ProtocolDaemon.CastVote:output_type -> livepeer.protocol.v1.TxIntentRef
+	20, // 44: livepeer.protocol.v1.ProtocolDaemon.GetTreasuryProposal:output_type -> livepeer.protocol.v1.TreasuryProposal
+	24, // [24:45] is the sub-list for method output_type
+	3,  // [3:24] is the sub-list for method input_type
 	3,  // [3:3] is the sub-list for extension type_name
 	3,  // [3:3] is the sub-list for extension extendee
 	0,  // [0:3] is the sub-list for field type_name
@@ -1283,7 +1720,7 @@ func file_livepeer_protocol_v1_protocol_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_livepeer_protocol_v1_protocol_proto_rawDesc), len(file_livepeer_protocol_v1_protocol_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   16,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

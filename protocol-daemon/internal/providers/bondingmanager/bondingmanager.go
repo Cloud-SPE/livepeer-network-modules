@@ -20,8 +20,22 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 )
 
-// Reward-side selector. Read-only selectors live in chain-commons.
-var selectorRewardWithHint = crypto.Keccak256([]byte("rewardWithHint(address,address)"))[:4]
+// Write-side selectors. Read-only selectors live in chain-commons.
+var (
+	selectorRewardWithHint = crypto.Keccak256([]byte("rewardWithHint(address,address)"))[:4]
+	selectorTranscoder     = crypto.Keccak256([]byte("transcoder(uint256,uint256)"))[:4]
+	selectorTransferBond   = crypto.Keccak256([]byte("transferBond(address,uint256,address,address,address,address)"))[:4]
+	selectorWithdrawFees   = crypto.Keccak256([]byte("withdrawFees(address,uint256)"))[:4]
+)
+
+// Read selectors used by the action flows (pendingStake/pendingFees/
+// getDelegator). The reward-eligibility reads live in chain-commons; these
+// are the bonding-admin-specific reads.
+var (
+	selectorPendingStake = crypto.Keccak256([]byte("pendingStake(address,uint256)"))[:4]
+	selectorPendingFees  = crypto.Keccak256([]byte("pendingFees(address,uint256)"))[:4]
+	selectorGetDelegator = crypto.Keccak256([]byte("getDelegator(address)"))[:4]
+)
 
 // EventReward is the topic0 for the Reward(address indexed transcoder,
 // uint256 amount) event. Used by the receipt-log decoder.
@@ -30,9 +44,14 @@ var EventReward = crypto.Keccak256Hash([]byte("Reward(address,uint256)"))
 // Bindings is the protocol-daemon-facing surface for BondingManager.
 // It embeds the chain-commons read-only binding (so Address,
 // GetTranscoder, IsActiveTranscoder, GetFirstTranscoderInPool,
-// GetNextTranscoderInPool are promoted) and adds reward-flow methods.
+// GetNextTranscoderInPool are promoted) and adds reward-flow methods plus
+// the bonding-admin calldata builders and reads (set-shares, transfer-bond,
+// withdraw-fees). It retains the rpc + addr so the admin reads can issue
+// their own eth_calls.
 type Bindings struct {
 	*ccbm.Bindings
+	rpc  rpc.RPC
+	addr chain.Address
 }
 
 // New constructs Bindings for the contract at addr. Delegates input
@@ -42,7 +61,7 @@ func New(r rpc.RPC, addr chain.Address) (*Bindings, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Bindings{Bindings: inner}, nil
+	return &Bindings{Bindings: inner, rpc: r, addr: addr}, nil
 }
 
 // PackRewardWithHint returns the calldata for BondingManager.rewardWithHint(prev, next).

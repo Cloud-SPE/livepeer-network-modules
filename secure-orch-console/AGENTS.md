@@ -55,10 +55,25 @@ internal/
   diff/                     — candidate-vs-last-signed structural diff
   audit/                    — rolling JSONL audit log with size-based rotation
   config/                   — operator config (keystore path, last-signed path, listen, audit log)
-web/                        — Go HTTP server + embedded HTML/CSS templates
-                              (handles candidate upload, diff render, sign confirm)
+  protocol/                 — gRPC client to the local protocol-daemon unix
+                              socket (status reads + the orchestrator write
+                              actions: set cut/share, transfer-bond,
+                              withdraw-fees, treasury vote, GetConfig/SetConfig)
+web/                        — Go HTTP server + embedded HTML/CSS templates.
+                              handlers.go = manifest upload/diff/sign;
+                              handlers_orchactions.go = session-gated POST
+                              handlers for the protocol-daemon actions +
+                              operational-config form
 testdata/                   — canonical-bytes fixtures
 ```
+
+The protocol/config/vote actions are **hot-key**: the console only sends a
+session-authenticated gRPC request over the unix socket (gated by the typed-
+confirmation gesture + audit log); the **protocol-daemon signs** with the
+orchestrator's keystore. The cold key (`internal/signing/`) is for manifest
+canonical bytes only and never signs chain transactions. Treasury voting
+requires the daemon to be started with `--treasury-address` or it returns
+`Unimplemented`.
 
 Manifest transport is HTTP-only via the web UI; there is no inbox or
 outbox spool dir. Operators upload candidates as a multipart form;

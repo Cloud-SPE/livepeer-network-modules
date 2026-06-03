@@ -41,6 +41,13 @@ const (
 	ProtocolDaemon_GetTxIntent_FullMethodName            = "/livepeer.protocol.v1.ProtocolDaemon/GetTxIntent"
 	ProtocolDaemon_StreamRoundEvents_FullMethodName      = "/livepeer.protocol.v1.ProtocolDaemon/StreamRoundEvents"
 	ProtocolDaemon_Health_FullMethodName                 = "/livepeer.protocol.v1.ProtocolDaemon/Health"
+	ProtocolDaemon_GetConfig_FullMethodName              = "/livepeer.protocol.v1.ProtocolDaemon/GetConfig"
+	ProtocolDaemon_SetConfig_FullMethodName              = "/livepeer.protocol.v1.ProtocolDaemon/SetConfig"
+	ProtocolDaemon_SetTranscoder_FullMethodName          = "/livepeer.protocol.v1.ProtocolDaemon/SetTranscoder"
+	ProtocolDaemon_ForceTransferBond_FullMethodName      = "/livepeer.protocol.v1.ProtocolDaemon/ForceTransferBond"
+	ProtocolDaemon_ForceWithdrawFees_FullMethodName      = "/livepeer.protocol.v1.ProtocolDaemon/ForceWithdrawFees"
+	ProtocolDaemon_CastVote_FullMethodName               = "/livepeer.protocol.v1.ProtocolDaemon/CastVote"
+	ProtocolDaemon_GetTreasuryProposal_FullMethodName    = "/livepeer.protocol.v1.ProtocolDaemon/GetTreasuryProposal"
 )
 
 // ProtocolDaemonClient is the client API for ProtocolDaemon service.
@@ -89,6 +96,24 @@ type ProtocolDaemonClient interface {
 	StreamRoundEvents(ctx context.Context, in *Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RoundEvent], error)
 	// Health returns the daemon's health snapshot. Always implemented.
 	Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthStatus, error)
+	// GetConfig returns the daemon's current operational config.
+	GetConfig(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*OperationalConfig, error)
+	// SetConfig validates and persists a new operational config, returning
+	// the stored (normalized) result. Edits take effect on the next round.
+	SetConfig(ctx context.Context, in *OperationalConfig, opts ...grpc.CallOption) (*OperationalConfig, error)
+	// SetTranscoder submits a transcoder(rewardCut, feeShare) tx from the
+	// operator's reward-cut / fee-cut percentages.
+	SetTranscoder(ctx context.Context, in *SetTranscoderRequest, opts ...grpc.CallOption) (*TxIntentRef, error)
+	// ForceTransferBond triggers the round-locked transfer-bond handler
+	// immediately (same gate + idempotency as the automation).
+	ForceTransferBond(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ForceOutcome, error)
+	// ForceWithdrawFees triggers the round-locked withdraw-fees handler
+	// immediately (same gate + idempotency as the automation).
+	ForceWithdrawFees(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ForceOutcome, error)
+	// CastVote votes on a treasury proposal.
+	CastVote(ctx context.Context, in *CastVoteRequest, opts ...grpc.CallOption) (*TxIntentRef, error)
+	// GetTreasuryProposal returns the pre-vote safety snapshot for a proposal.
+	GetTreasuryProposal(ctx context.Context, in *GetTreasuryProposalRequest, opts ...grpc.CallOption) (*TreasuryProposal, error)
 }
 
 type protocolDaemonClient struct {
@@ -248,6 +273,76 @@ func (c *protocolDaemonClient) Health(ctx context.Context, in *Empty, opts ...gr
 	return out, nil
 }
 
+func (c *protocolDaemonClient) GetConfig(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*OperationalConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OperationalConfig)
+	err := c.cc.Invoke(ctx, ProtocolDaemon_GetConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *protocolDaemonClient) SetConfig(ctx context.Context, in *OperationalConfig, opts ...grpc.CallOption) (*OperationalConfig, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OperationalConfig)
+	err := c.cc.Invoke(ctx, ProtocolDaemon_SetConfig_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *protocolDaemonClient) SetTranscoder(ctx context.Context, in *SetTranscoderRequest, opts ...grpc.CallOption) (*TxIntentRef, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TxIntentRef)
+	err := c.cc.Invoke(ctx, ProtocolDaemon_SetTranscoder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *protocolDaemonClient) ForceTransferBond(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ForceOutcome, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ForceOutcome)
+	err := c.cc.Invoke(ctx, ProtocolDaemon_ForceTransferBond_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *protocolDaemonClient) ForceWithdrawFees(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ForceOutcome, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ForceOutcome)
+	err := c.cc.Invoke(ctx, ProtocolDaemon_ForceWithdrawFees_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *protocolDaemonClient) CastVote(ctx context.Context, in *CastVoteRequest, opts ...grpc.CallOption) (*TxIntentRef, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TxIntentRef)
+	err := c.cc.Invoke(ctx, ProtocolDaemon_CastVote_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *protocolDaemonClient) GetTreasuryProposal(ctx context.Context, in *GetTreasuryProposalRequest, opts ...grpc.CallOption) (*TreasuryProposal, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TreasuryProposal)
+	err := c.cc.Invoke(ctx, ProtocolDaemon_GetTreasuryProposal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ProtocolDaemonServer is the server API for ProtocolDaemon service.
 // All implementations should embed UnimplementedProtocolDaemonServer
 // for forward compatibility.
@@ -294,6 +389,24 @@ type ProtocolDaemonServer interface {
 	StreamRoundEvents(*Empty, grpc.ServerStreamingServer[RoundEvent]) error
 	// Health returns the daemon's health snapshot. Always implemented.
 	Health(context.Context, *Empty) (*HealthStatus, error)
+	// GetConfig returns the daemon's current operational config.
+	GetConfig(context.Context, *Empty) (*OperationalConfig, error)
+	// SetConfig validates and persists a new operational config, returning
+	// the stored (normalized) result. Edits take effect on the next round.
+	SetConfig(context.Context, *OperationalConfig) (*OperationalConfig, error)
+	// SetTranscoder submits a transcoder(rewardCut, feeShare) tx from the
+	// operator's reward-cut / fee-cut percentages.
+	SetTranscoder(context.Context, *SetTranscoderRequest) (*TxIntentRef, error)
+	// ForceTransferBond triggers the round-locked transfer-bond handler
+	// immediately (same gate + idempotency as the automation).
+	ForceTransferBond(context.Context, *Empty) (*ForceOutcome, error)
+	// ForceWithdrawFees triggers the round-locked withdraw-fees handler
+	// immediately (same gate + idempotency as the automation).
+	ForceWithdrawFees(context.Context, *Empty) (*ForceOutcome, error)
+	// CastVote votes on a treasury proposal.
+	CastVote(context.Context, *CastVoteRequest) (*TxIntentRef, error)
+	// GetTreasuryProposal returns the pre-vote safety snapshot for a proposal.
+	GetTreasuryProposal(context.Context, *GetTreasuryProposalRequest) (*TreasuryProposal, error)
 }
 
 // UnimplementedProtocolDaemonServer should be embedded to have
@@ -344,6 +457,27 @@ func (UnimplementedProtocolDaemonServer) StreamRoundEvents(*Empty, grpc.ServerSt
 }
 func (UnimplementedProtocolDaemonServer) Health(context.Context, *Empty) (*HealthStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
+}
+func (UnimplementedProtocolDaemonServer) GetConfig(context.Context, *Empty) (*OperationalConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetConfig not implemented")
+}
+func (UnimplementedProtocolDaemonServer) SetConfig(context.Context, *OperationalConfig) (*OperationalConfig, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetConfig not implemented")
+}
+func (UnimplementedProtocolDaemonServer) SetTranscoder(context.Context, *SetTranscoderRequest) (*TxIntentRef, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetTranscoder not implemented")
+}
+func (UnimplementedProtocolDaemonServer) ForceTransferBond(context.Context, *Empty) (*ForceOutcome, error) {
+	return nil, status.Error(codes.Unimplemented, "method ForceTransferBond not implemented")
+}
+func (UnimplementedProtocolDaemonServer) ForceWithdrawFees(context.Context, *Empty) (*ForceOutcome, error) {
+	return nil, status.Error(codes.Unimplemented, "method ForceWithdrawFees not implemented")
+}
+func (UnimplementedProtocolDaemonServer) CastVote(context.Context, *CastVoteRequest) (*TxIntentRef, error) {
+	return nil, status.Error(codes.Unimplemented, "method CastVote not implemented")
+}
+func (UnimplementedProtocolDaemonServer) GetTreasuryProposal(context.Context, *GetTreasuryProposalRequest) (*TreasuryProposal, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTreasuryProposal not implemented")
 }
 func (UnimplementedProtocolDaemonServer) testEmbeddedByValue() {}
 
@@ -610,6 +744,132 @@ func _ProtocolDaemon_Health_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ProtocolDaemon_GetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProtocolDaemonServer).GetConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProtocolDaemon_GetConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProtocolDaemonServer).GetConfig(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProtocolDaemon_SetConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OperationalConfig)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProtocolDaemonServer).SetConfig(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProtocolDaemon_SetConfig_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProtocolDaemonServer).SetConfig(ctx, req.(*OperationalConfig))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProtocolDaemon_SetTranscoder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetTranscoderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProtocolDaemonServer).SetTranscoder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProtocolDaemon_SetTranscoder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProtocolDaemonServer).SetTranscoder(ctx, req.(*SetTranscoderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProtocolDaemon_ForceTransferBond_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProtocolDaemonServer).ForceTransferBond(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProtocolDaemon_ForceTransferBond_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProtocolDaemonServer).ForceTransferBond(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProtocolDaemon_ForceWithdrawFees_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProtocolDaemonServer).ForceWithdrawFees(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProtocolDaemon_ForceWithdrawFees_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProtocolDaemonServer).ForceWithdrawFees(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProtocolDaemon_CastVote_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CastVoteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProtocolDaemonServer).CastVote(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProtocolDaemon_CastVote_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProtocolDaemonServer).CastVote(ctx, req.(*CastVoteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ProtocolDaemon_GetTreasuryProposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetTreasuryProposalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ProtocolDaemonServer).GetTreasuryProposal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ProtocolDaemon_GetTreasuryProposal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ProtocolDaemonServer).GetTreasuryProposal(ctx, req.(*GetTreasuryProposalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ProtocolDaemon_ServiceDesc is the grpc.ServiceDesc for ProtocolDaemon service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -668,6 +928,34 @@ var ProtocolDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Health",
 			Handler:    _ProtocolDaemon_Health_Handler,
+		},
+		{
+			MethodName: "GetConfig",
+			Handler:    _ProtocolDaemon_GetConfig_Handler,
+		},
+		{
+			MethodName: "SetConfig",
+			Handler:    _ProtocolDaemon_SetConfig_Handler,
+		},
+		{
+			MethodName: "SetTranscoder",
+			Handler:    _ProtocolDaemon_SetTranscoder_Handler,
+		},
+		{
+			MethodName: "ForceTransferBond",
+			Handler:    _ProtocolDaemon_ForceTransferBond_Handler,
+		},
+		{
+			MethodName: "ForceWithdrawFees",
+			Handler:    _ProtocolDaemon_ForceWithdrawFees_Handler,
+		},
+		{
+			MethodName: "CastVote",
+			Handler:    _ProtocolDaemon_CastVote_Handler,
+		},
+		{
+			MethodName: "GetTreasuryProposal",
+			Handler:    _ProtocolDaemon_GetTreasuryProposal_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

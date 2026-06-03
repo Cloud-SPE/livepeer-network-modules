@@ -1,8 +1,12 @@
 # protocol-daemon
 
 A standalone daemon that handles Livepeer’s chain-side orchestrator responsibilities:
-round initialization, reward calling, and on-chain `ServiceRegistry` /
-`AIServiceRegistry` pointer writes. Built on [`chain-commons`](../chain-commons) — the
+round initialization, reward calling, on-chain `ServiceRegistry` /
+`AIServiceRegistry` pointer writes, and the orchestrator self-service actions —
+setting reward/fee cut (`transcoder`), transferring bonded LPT (`transferBond`),
+withdrawing ETH fees (`withdrawFees`), and treasury proposal voting. The daemon
+signs every one of these with its own keystore (which must be the orchestrator
+address). Built on [`chain-commons`](../chain-commons) — the
 durable transaction state machine, multi-RPC failover, Controller-resolved addresses,
 and reorg-aware confirmation tracking are all reused from the shared library.
 
@@ -87,10 +91,10 @@ Stands up `chain-commons.testing.FakeRPC` + `FakeReceipts`, wires both `round-in
 
 - `internal/types/` — pure data: `Mode`, `RewardEligibility`, `PoolHints`, error codes
 - `internal/config/` — validated daemon config (extends `chain-commons.config.Config`)
-- `internal/providers/{bondingmanager,roundsmanager,minter}/` — ABI-bound thin wrappers over `chain-commons.providers.rpc`
-- `internal/repo/poolhints/` — BoltDB cache of computed `(prev, next)` hints, keyed by round
-- `internal/service/{roundinit,reward,orchstatus,preflight}/` — the protocol logic
-- `internal/runtime/{grpc,metrics,lifecycle}/` — gRPC over unix socket, opt-in Prometheus listener, signal handling
+- `internal/providers/{bondingmanager,roundsmanager,minter,serviceregistry,aiserviceregistry,treasury}/` — ABI-bound thin wrappers over `chain-commons.providers.rpc` (`treasury` = LivepeerGovernor for proposal voting)
+- `internal/repo/{poolhints,opconfig}/` — BoltDB: positional-hint cache + runtime operational config
+- `internal/service/{roundinit,reward,bondingadmin,governor,serviceregistry,aiserviceregistry,orchstatus,preflight}/` — the protocol logic (`bondingadmin` = set cut/share, transfer-bond, withdraw-fees; `governor` = treasury voting)
+- `internal/runtime/{grpc,metrics,lifecycle}/` — gRPC over unix socket, opt-in Prometheus listener, signal handling (`lifecycle/lockedactions.go` = round-locked transfer-bond / withdraw-fees automation)
 - `cmd/livepeer-protocol-daemon/` — flags, dev/prod dispatch, provider construction
 
 The layering is enforced by the per-module `lint/layer-check/`. `internal/service/*` may not import `github.com/ethereum/*` or `bbolt` directly — those go through `internal/providers/` and `chain-commons.providers.*`.
@@ -105,7 +109,7 @@ The layering is enforced by the per-module `lint/layer-check/`. `internal/servic
 - **Pool-hint cache.** Walking the transcoder pool linked list is multiple `eth_call`s. Cached by round in BoltDB; same-round invocations after the first are a fast path.
 - **Multi-RPC by default.** `--eth-urls` accepts a comma-separated list; `chain-commons.providers.rpc.multi` does primary/backup failover with circuit breakers.
 - **Preflight at startup.** Chain-id verification, Controller resolution + `CodeAt` checks for `RoundsManager` and `BondingManager`, keystore decryption, min-balance gate. A misconfigured daemon fails loudly before the gRPC socket opens.
-- **Off-by-default Prometheus.** `--metrics-listen=:9094` (per [`docs/conventions/ports.md`](../docs/conventions/ports.md)) opts in. `livepeer_protocol_*` namespace per [`docs/conventions/metrics.md`](../docs/conventions/metrics.md).
+- **Off-by-default Prometheus.** `--metrics-listen=:9094` (recommended port) opts in. Metrics use the `livepeer_protocol_*` namespace.
 - **75% per-package coverage gate.** Enforced via `lint/coverage-gate/` (matches `payment-daemon`).
 
 ## gRPC surface
@@ -125,8 +129,22 @@ service ProtocolDaemon {
   rpc GetTxIntent(TxIntentRef) returns (TxIntentSnapshot);
   rpc StreamRoundEvents(Empty) returns (stream RoundEvent);
   rpc Health(Empty) returns (HealthStatus);
+
+  // Orchestrator actions + runtime operational config (plan 0039).
+  rpc GetConfig(Empty) returns (OperationalConfig);
+  rpc SetConfig(OperationalConfig) returns (OperationalConfig);
+  rpc SetTranscoder(SetTranscoderRequest) returns (TxIntentRef);   // reward/fee cut
+  rpc ForceTransferBond(Empty) returns (ForceOutcome);             // round-locked
+  rpc ForceWithdrawFees(Empty) returns (ForceOutcome);             // round-locked
+  rpc CastVote(CastVoteRequest) returns (TxIntentRef);             // treasury
+  rpc GetTreasuryProposal(GetTreasuryProposalRequest) returns (TreasuryProposal);
 }
 ```
+
+`GetRoundStatus` also reports `current_round_locked`. Automation
+enable/disable and the fund-movement receivers/thresholds are runtime
+operational config (`GetConfig`/`SetConfig`), not CLI flags — see the
+operator runbook.
 
 Mode-specific RPCs (`GetRoundStatus`, `ForceInitializeRound`) and
 (`GetRewardStatus`, `ForceRewardCall`) return `Unimplemented` when

@@ -22,9 +22,12 @@ var selectorInitializeRound = crypto.Keccak256([]byte("initializeRound()"))[:4]
 // Bindings is the protocol-daemon-facing surface for RoundsManager.
 // It embeds the chain-commons read-only binding (so Address,
 // CurrentRound, CurrentRoundInitialized are promoted) and adds the
-// write-side calldata packer.
+// write-side calldata packer plus the lock-window reads (locks.go).
+// It retains rpc + addr so the lock reads can issue their own eth_calls.
 type Bindings struct {
 	*ccrm.Bindings
+	rpc  rpc.RPC
+	addr chain.Address
 }
 
 // New constructs a Bindings. Delegates input validation to chain-commons.
@@ -33,7 +36,7 @@ func New(r rpc.RPC, addr chain.Address) (*Bindings, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Bindings{Bindings: inner}, nil
+	return &Bindings{Bindings: inner, rpc: r, addr: addr}, nil
 }
 
 // PackInitializeRound returns the calldata for RoundsManager.initializeRound().

@@ -44,18 +44,29 @@ livepeer-protocol-daemon \
   --controller-address=0xD8E8328501E9645d16Cf49539efC04f734606ee4 \
   --keystore-path=/etc/livepeer/keystore.json \
   --keystore-password-file=/etc/livepeer/keystore-password \
-  --orch-address=0xYOUR_COLD_ORCH_ADDRESS \
+  --orch-address=0xYOUR_ORCH_ADDRESS \
+  --treasury-address=0xLIVEPEER_GOVERNOR_ADDRESS \
   --metrics-listen=:9094
 ```
 
 Required inputs:
 
-- a V3 JSON keystore
+- a V3 JSON keystore — **this must be the orchestrator's own key.** Every
+  protocol tx (reward, transcoder/cut-share, transferBond, withdrawFees,
+  treasury vote) acts on `msg.sender`, so the daemon signs as the
+  orchestrator itself. The signing wallet must equal `--orch-address`.
 - the keystore password, via `--keystore-password-file` or `LIVEPEER_KEYSTORE_PASSWORD`
 - `--eth-urls`
 - `--orch-address` for `reward` and `both`
 - writable state at `--store-path`
 - writable unix-socket directory for `--socket`
+
+Optional but required *for treasury voting*:
+
+- `--treasury-address` — the LivepeerGovernor contract. It is **not**
+  auto-resolved from the controller; you must supply it. Without it,
+  `CastVote` and `GetTreasuryProposal` return `Unimplemented` and the
+  console's treasury panel errors with that message.
 
 ## 3. What it talks to
 
@@ -93,7 +104,6 @@ Local component-level compose:
 Example env file:
 
 - `protocol-daemon/compose/.env.example`
-- `protocol-daemon/compose/.env.useast-coordinator.example`
 
 The published image build is wired into:
 
@@ -108,9 +118,8 @@ like:
 https://useast-coordinator.example.com/.well-known/livepeer-registry.json
 ```
 
-The provided example env file records that explicitly:
-
-- `protocol-daemon/compose/.env.useast-coordinator.example`
+Set that URL via `SetServiceURI` once the daemon is running (see
+`compose/.env.example` for the deployment-side variables).
 
 ## 6. Metrics and health
 
@@ -183,3 +192,38 @@ Do not point the chain-side service URI at:
 - a LAN-only coordinator URL if external consumers need to resolve it
 
 Point it at the public `orch-coordinator` manifest URL instead.
+
+## 9. Orchestrator actions & operational config
+
+The daemon performs orchestrator self-service actions that all sign with the
+daemon's hot keystore wallet. **This wallet must BE the orchestrator's
+registered/bonded address** — every action sets or moves `msg.sender`'s own
+state (`transcoder`, `transferBond`, `withdrawFees`, `reward`,
+`initializeRound`, and governor votes).
+
+Actions (gRPC RPCs, also surfaced in secure-orch-console):
+
+| Action | RPC | Notes |
+|---|---|---|
+| Set reward/fee cut | `SetTranscoder` | percentages = what the orch keeps; `fee_cut` flips to on-chain `feeShare = 100% − fee_cut` |
+| Transfer bonded LPT | `ForceTransferBond` + auto loop | round-**locked**; transfers `pendingStake − retain` |
+| Withdraw ETH fees | `ForceWithdrawFees` + auto loop | round-**locked**; withdraws `pendingFees` when `≥ threshold` |
+| Vote on treasury proposal | `CastVote` (+ `GetTreasuryProposal`) | manual; needs `--treasury-address` |
+
+**Operational config** (runtime, persisted in BoltDB, edited from the
+console via `GetConfig`/`SetConfig`) replaces the old `--auto-*` flags:
+
+- `round_init_enabled` (default **off**), `reward_enabled` (default **on**)
+- `transfer_bond_enabled` / `withdraw_fees_enabled` (default **off**; cannot
+  be enabled without a receiver address) + receiver + min-retain / threshold
+  (operator-friendly decimal LPT / ETH)
+- `reward_before_transfer` (default **on**): skip auto transfer for a round
+  until that round's `reward()` has confirmed.
+
+First boot stamps these defaults. **Behavior change:** round-init no longer
+auto-runs by default; enable it from the console. Config edits take effect on
+the **next** round; the current/in-flight round is never re-fired (durable
+per-round idempotency key). Every write is gated on the fresh authoritative
+round state and pre-flighted with an `eth_call` dry-run before any gas is
+spent. `--treasury-address` sets the LivepeerGovernor contract (empty =
+treasury voting disabled).

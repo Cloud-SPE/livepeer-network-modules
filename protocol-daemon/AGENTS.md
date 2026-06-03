@@ -10,6 +10,19 @@ Round initialization (`RoundsManager.initializeRound`), reward calling
 orchestrator. Built fresh on `chain-commons`. Three modes:
 `round-init`, `reward`, `both`.
 
+Also exposes orchestrator self-service actions (plan 0039), all signed by
+the daemon's hot wallet (which must BE the orchestrator address): set
+reward/fee cut, transfer bonded LPT, withdraw ETH fees
+(`internal/service/bondingadmin/`), and treasury proposal voting
+(`internal/service/governor/` + `internal/providers/treasury/`).
+Transfer-bond / withdraw-fees are round-**locked** automated loops driven
+off the round + L1-block streams (`internal/runtime/lifecycle/
+lockedactions.go`). Automation enable/disable + receivers/thresholds are
+runtime operational config (`internal/repo/opconfig/`, edited via
+`GetConfig`/`SetConfig` from secure-orch-console), NOT CLI flags. Every
+write routes through a gate-read + `eth_call` dry-run + durable-idempotent
+`txintent.Submit`.
+
 ## Layer rule
 
 ```
@@ -20,10 +33,10 @@ cmd/ → runtime/ → service/ → repo/ → providers/ → types/
 
 - `internal/types/`: pure data, no I/O imports.
 - `internal/config/`: validated config, embeds `chain-commons.config.Config`.
-- `internal/providers/{bondingmanager,roundsmanager,minter}/`: ABI bindings — only place `github.com/ethereum/*` is allowed.
-- `internal/repo/poolhints/`: BoltDB cache — uses `chain-commons.providers.store`, never raw `bbolt`.
-- `internal/service/{roundinit,reward,preflight}/`: business logic — never imports go-ethereum directly.
-- `internal/runtime/{grpc,metrics,lifecycle}/`: gRPC server, Prometheus listener, signal handling.
+- `internal/providers/{bondingmanager,roundsmanager,minter,serviceregistry,aiserviceregistry,treasury}/`: ABI bindings — only place `github.com/ethereum/*` is allowed. (`treasury` binds the LivepeerGovernor for proposal voting.)
+- `internal/repo/{poolhints,opconfig}/`: BoltDB state — uses `chain-commons.providers.store`, never raw `bbolt`. (`opconfig` persists the runtime operational config.)
+- `internal/service/{roundinit,reward,bondingadmin,governor,serviceregistry,aiserviceregistry,orchstatus,preflight}/`: business logic — never imports go-ethereum directly. (`bondingadmin` = set cut/share, transfer-bond, withdraw-fees; `governor` = treasury voting.)
+- `internal/runtime/{grpc,metrics,lifecycle}/`: gRPC server, Prometheus listener, signal handling. (`lifecycle/lockedactions.go` drives the round-locked transfer-bond / withdraw-fees automation off the round + L1-block streams.)
 - `cmd/livepeer-protocol-daemon/`: thin entry point — flags, dispatch, provider wiring.
 
 Enforced by `lint/layer-check/`. Don't reach across layers; route through providers.
@@ -48,7 +61,11 @@ Enforced by `lint/layer-check/`. Don't reach across layers; route through provid
 | Tune positional-hint walking | `internal/service/reward/hints.go` + `internal/repo/poolhints/cache.go` |
 | Add a new metric | `internal/runtime/metrics/names.go` (constant) → emitter site → `docs/design-docs/observability.md` |
 | Bump preflight | `internal/service/preflight/preflight.go` |
-| Add a config flag | `cmd/livepeer-protocol-daemon/run.go` (flag def) → `internal/config/config.go` (struct field + validation) |
+| Add a start-time (infra) flag | `cmd/livepeer-protocol-daemon/run.go` (flag def) → `internal/config/config.go` (struct field + validation) |
+| Add a runtime operational-config field | `internal/types/opconfig.go` (struct + `Default`/`Validate`) → `internal/repo/opconfig/store.go` (persist) → `proto.../protocol.proto` `OperationalConfig` → `internal/runtime/grpc/{server_actions,adapter_actions}.go` → secure-orch-console config form |
+| Add an orchestrator action (set cut/share, transfer, withdraw) | `internal/providers/bondingmanager/actions.go` (calldata) → `internal/service/bondingadmin/service.go` (gate + dry-run + `txintent`) → `internal/runtime/grpc/server_actions.go` (RPC) → console form |
+| Tune treasury voting | `internal/providers/treasury/treasury.go` + `internal/service/governor/service.go` |
+| Tune the round-locked automation trigger | `internal/runtime/lifecycle/lockedactions.go` |
 
 ## Tests
 

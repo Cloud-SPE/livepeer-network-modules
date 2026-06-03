@@ -18,7 +18,10 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/roundclock"
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/txintent"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/providers/treasury"
 	aiserviceregistrysvc "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/aiserviceregistry"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/bondingadmin"
+	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/governor"
 	orchstatussvc "github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/orchstatus"
 	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/reward"
 	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/roundinit"
@@ -62,6 +65,7 @@ type RoundStatus struct {
 	LastIntentID            []byte
 	LastError               string
 	CurrentRoundInitialized bool
+	CurrentRoundLocked      bool
 }
 
 // RewardStatus mirrors proto.RewardStatus.
@@ -134,6 +138,21 @@ const (
 
 	// SkipCodeRoundInitialized — round already initialized on-chain.
 	SkipCodeRoundInitialized SkipCode = 3
+
+	// SkipCodeRoundNotLocked — round not in its lock window.
+	SkipCodeRoundNotLocked SkipCode = 10
+
+	// SkipCodeNothingToTransfer — pendingStake at or below the retain.
+	SkipCodeNothingToTransfer SkipCode = 11
+
+	// SkipCodeBelowFeeThreshold — pendingFees below the configured threshold.
+	SkipCodeBelowFeeThreshold SkipCode = 12
+
+	// SkipCodeRewardNotCalled — reward-before-transfer guard: reward unconfirmed.
+	SkipCodeRewardNotCalled SkipCode = 13
+
+	// SkipCodeActionDisabled — the action is disabled in operational config.
+	SkipCodeActionDisabled SkipCode = 14
 )
 
 // SkipReason mirrors proto.SkipReason. Returned inside ForceOutcome
@@ -165,13 +184,40 @@ type TxIntentSnapshot struct {
 	AttemptCount          uint32
 }
 
-// RoundClockSource is the subset of roundclock.Clock the streaming RPC uses.
+// RoundClockSource is the subset of roundclock.Clock the streaming RPC and
+// the force-action handlers use (Current supplies the round for
+// ForceTransferBond / ForceWithdrawFees).
 type RoundClockSource interface {
 	SubscribeRounds(ctx context.Context) (<-chan chain.Round, error)
+	Current(ctx context.Context) (chain.Round, error)
 }
 
 // Compile-time: chain-commons RoundClock satisfies RoundClockSource.
 var _ RoundClockSource = (roundclock.Clock)(nil)
+
+// ConfigStore reads and writes the daemon's operational config.
+type ConfigStore interface {
+	Get() types.OperationalConfig
+	Set(cfg types.OperationalConfig) (types.OperationalConfig, error)
+}
+
+// BondingAdmin is the bonding-admin service surface the handlers call.
+type BondingAdmin interface {
+	SetTranscoder(ctx context.Context, rewardCutPPM, feeSharePPM uint64) (bondingadmin.ActionResult, error)
+	TransferBond(ctx context.Context, round chain.Round) (bondingadmin.ActionResult, error)
+	WithdrawFees(ctx context.Context, round chain.Round) (bondingadmin.ActionResult, error)
+}
+
+// GovernorVoter is the governor service surface the handlers call.
+type GovernorVoter interface {
+	CastVote(ctx context.Context, proposalID *big.Int, support treasury.VoteSupport, reason string) (txintent.IntentID, error)
+	Proposal(ctx context.Context, proposalID *big.Int) (governor.ProposalInfo, error)
+}
+
+// LockReader supplies the current-round-locked flag for RoundStatus.
+type LockReader interface {
+	CurrentRoundLocked(ctx context.Context) (bool, error)
+}
 
 // TxIntentReader is the subset of chain-commons.txintent.Manager used here.
 type TxIntentReader interface {
@@ -193,6 +239,11 @@ type Server struct {
 
 	tx TxIntentReader
 	rc RoundClockSource
+
+	cfgStore     ConfigStore
+	bondingAdmin BondingAdmin
+	governor     GovernorVoter
+	lockReader   LockReader
 }
 
 // Config wires Server dependencies.
@@ -209,6 +260,11 @@ type Config struct {
 	AIOrch     *orchstatussvc.Service
 	Tx         TxIntentReader
 	RC         RoundClockSource
+
+	ConfigStore  ConfigStore
+	BondingAdmin BondingAdmin
+	Governor     GovernorVoter
+	LockReader   LockReader
 }
 
 // New constructs a Server. Mode-specific services are required if the
@@ -235,6 +291,11 @@ func New(cfg Config) (*Server, error) {
 		aiOrch:     cfg.AIOrch,
 		tx:         cfg.Tx,
 		rc:         cfg.RC,
+
+		cfgStore:     cfg.ConfigStore,
+		bondingAdmin: cfg.BondingAdmin,
+		governor:     cfg.Governor,
+		lockReader:   cfg.LockReader,
 	}, nil
 }
 
@@ -249,7 +310,7 @@ func (s *Server) Health(_ context.Context, _ struct{}) (HealthStatus, error) {
 }
 
 // GetRoundStatus implements the round-status RPC.
-func (s *Server) GetRoundStatus(_ context.Context, _ struct{}) (RoundStatus, error) {
+func (s *Server) GetRoundStatus(ctx context.Context, _ struct{}) (RoundStatus, error) {
 	if !s.mode.HasRoundInit() {
 		return RoundStatus{}, ErrUnimplemented
 	}
@@ -261,6 +322,11 @@ func (s *Server) GetRoundStatus(_ context.Context, _ struct{}) (RoundStatus, err
 	}
 	if st.LastIntent != nil {
 		out.LastIntentID = st.LastIntent[:]
+	}
+	if s.lockReader != nil {
+		if locked, err := s.lockReader.CurrentRoundLocked(ctx); err == nil {
+			out.CurrentRoundLocked = locked
+		}
 	}
 	return out, nil
 }

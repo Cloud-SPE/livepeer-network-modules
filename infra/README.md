@@ -29,7 +29,7 @@ The script pulls **no** images — it builds the deployable components that
 still live in this repo from source in dependency order.
 
 ```sh
-# Build everything as tztcloud/<name>:v1.3.3
+# Build everything as tztcloud/<name>:v1.4.0
 ./infra/scripts/build-images.sh
 
 # Build a single component (substring match)
@@ -42,7 +42,7 @@ REGISTRY=ghcr.io/myorg TAG=2026.5.7 ./infra/scripts/build-images.sh
 PUSH=1 REGISTRY=ghcr.io/myorg TAG=2026.5.7 ./infra/scripts/build-images.sh
 ```
 
-Defaults: `REGISTRY=tztcloud`, `TAG=v1.3.3`, `PUSH=0`.
+Defaults: `REGISTRY=tztcloud`, `TAG=v1.4.0`, `PUSH=0`.
 
 ## Scenario stacks
 

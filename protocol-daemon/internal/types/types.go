@@ -102,6 +102,24 @@ const (
 	ErrCodeRewardEventDecode    = "reward.event_decode_failed"
 	ErrCodeRewardPoolWalkFailed = "reward.pool_walk_failed"
 
+	// Bonding-admin (set shares, transfer bond, withdraw fees).
+	ErrCodeBondingAdminSubmitFailed = "bondingadmin.submit_failed"
+	ErrCodeBondingAdminDryRunFailed = "bondingadmin.dry_run_failed"
+	ErrCodeRoundNotLocked           = "bondingadmin.round_not_locked"
+	ErrCodeNothingToTransfer        = "bondingadmin.nothing_to_transfer"
+	ErrCodeBelowFeeThreshold        = "bondingadmin.below_fee_threshold"
+	ErrCodeRewardNotCalled          = "bondingadmin.reward_not_called"
+
+	// Governor (treasury voting).
+	ErrCodeGovernorSubmitFailed = "governor.submit_failed"
+	ErrCodeGovernorDryRunFailed = "governor.dry_run_failed"
+	ErrCodeAlreadyVoted         = "governor.already_voted"
+	ErrCodeVotingClosed         = "governor.voting_closed"
+	ErrCodeNoVotingPower        = "governor.no_voting_power"
+
+	// Operational config.
+	ErrCodeOpConfigInvalid = "opconfig.invalid"
+
 	// Preflight.
 	ErrCodePreflightChainID         = "preflight.chain_id_mismatch"
 	ErrCodePreflightControllerEmpty = "preflight.controller_addr_empty"

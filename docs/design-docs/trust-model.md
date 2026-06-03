@@ -44,9 +44,9 @@ flowchart LR
         TB["TicketBroker"]
     end
 
-    COLD -- "sign manifests +<br/>protocol-daemon txs" --> SOC
+    COLD -- "sign manifests" --> SOC
     SOC -.->|"signed manifest<br/>(out-of-band)"| OC
-    PRD -.->|"initializeRound,<br/>rewardWithHint"| chain
+    PRD -.->|"initializeRound, reward,<br/>transcoder, transferBond,<br/>withdrawFees, treasury vote<br/>(signed by orch key on the daemon)"| chain
 
     Broker -.->|"GET /registry/offerings"| OC
     OC --> SREG
@@ -55,20 +55,43 @@ flowchart LR
     Note1["Boundaries crossed by:<br/>• manifests (yes)<br/>• cold-key material (NEVER)<br/>• inbound connections to cold zone (NEVER)"]
 ```
 
-Three identity-bearing keys in the system, each with a tightly-scoped role:
+Identity-bearing keys in the system, each with a tightly-scoped role:
 
 | Key | Where it lives | What it signs | What it must never sign |
 |---|---|---|---|
-| **Cold orch key** | HSM, firewalled `secure-orch` | manifest canonical bytes; protocol-daemon txs (`initializeRound`, `rewardWithHint`) | naked transactions; tickets |
-| **Hot signer wallet** | receiver `payment-daemon` on worker-orch | ticket-redemption gas txs | manifests; protocol-daemon txs |
-| **Operator console bearer** | secure-orch-console (LAN auth) | nothing on-chain — gates access to the sign UI | anything cryptographic |
+| **Cold manifest key** | HSM / firewalled `secure-orch`, held by `secure-orch-console` | manifest canonical bytes only | any on-chain transaction |
+| **Orchestrator signing key** | `protocol-daemon` keystore (`--keystore-path`) | protocol-daemon txs: `initializeRound`, `reward`/`rewardWithHint`, `transcoder` (reward/fee cut), `transferBond`, `withdrawFees`, treasury `castVote` | manifests |
+| **Ticket signer wallet** | receiver `payment-daemon` on worker-orch | ticket-redemption gas txs | manifests; protocol-daemon txs |
+| **Operator console bearer** | secure-orch-console (LAN auth) | nothing on-chain — gates access to the sign UI and issues session-authenticated gRPC requests to the daemon | anything cryptographic |
 
-The cold key never moves. The hot wallet is operationally expendable —
+**Why the orchestrator key is daemon-controlled, not cold.** The
+BondingManager / RoundsManager / treasury calls act on `msg.sender`, so the
+signer of `reward` / `transcoder` / `transferBond` / `withdrawFees` /
+`castVote` **must be the registered orchestrator address itself** — there is
+no delegation path. And these actions are *automated* (per-round reward,
+round-locked transfer/withdraw), so the key must be available to the daemon
+**without a human in the loop**. A manual cold/HSM-tap-per-tx key cannot do
+that. Therefore the orchestrator key is an operationally-hot signer the
+daemon owns: today a V3 JSON keystore opened from `--keystore-path` and used
+by `chain-commons.services.txintent`'s processor (`processor.go`
+`keystore.SignTx`). The `chain-commons.providers.keystore.Keystore`
+interface (`Address`/`Sign`/`SignTx`) is the abstraction, so a
+non-interactive cloud-KMS or auto-signing-HSM backend can replace the file
+later **without changing any service code** — but it must still sign
+unattended. The cold manifest key is a *different* key for a *different*
+job (capability publication) and never signs chain transactions.
+
+The orchestrator key is operationally hot. Compromise of the daemon host
+exposes it — scope it to a wallet whose only privilege is orchestrator
+operation (round-init/reward/cut-share/transfer/withdraw/vote), keep it on
+the firewalled secure-orch host, and rotate via the on-chain transcoder
+identity if breached. The cold manifest key never moves. The ticket signer
+wallet is operationally expendable —
 compromise costs the value of in-flight tickets only, because:
 
-- the orch's on-chain identity (recipient of `TicketBroker.faceValue`) is
-  the **cold** key's address
-- the hot wallet only pays gas; it is not the recipient
+- the orch's on-chain identity (recipient of `TicketBroker.faceValue` and
+  rewards) is the **orchestrator** key's address
+- the ticket signer wallet only pays redemption gas; it is not the recipient
 
 This is the "hot / cold identity split" — see
 [`payment-daemon-interactions.md`](./payment-daemon-interactions.md) §
@@ -191,7 +214,8 @@ These hold for every published manifest, by construction:
 
 | Attack | Defended by | Notes |
 |---|---|---|
-| Attacker steals hot signer wallet | hot / cold identity split | At worst they pay gas for someone else's ticket redemptions; recipient address is cold-key-controlled, so payouts still go to the orch. |
+| Attacker steals ticket signer wallet | hot / cold identity split | At worst they pay gas for someone else's ticket redemptions; the recipient address is the orchestrator key's, so payouts still go to the orch. |
+| Attacker steals the orchestrator signing key (protocol-daemon host) | least-privilege scoping of that key + firewalled secure-orch host | They can call orchestrator ops (round-init/reward/cut-share/transferBond/withdrawFees/vote) as the orch — including transferring bond/fees to the configured receivers. Mitigation: the key's only privilege is orchestrator operation, the daemon binds a loopback/LAN unix socket, and the on-chain transcoder identity can be rotated. This is the cost of unattended automation; it is NOT the manifest cold key, which remains uncompromised. |
 | Attacker compromises orch-coordinator host | double verification | Tampered manifests fail resolver-side signature check. Worst-case attack is denial-of-service (stop hosting), not impersonation. |
 | Attacker compromises a worker-orch broker | manifest gating + receiver-side checks | The broker has no cold key. It can't add itself to a manifest; resolvers won't see it. It can degrade or refuse traffic, but it can't impersonate offerings the orch hasn't signed for. |
 | Attacker MITMs manifest fetch | double verification + canonical bytes | Modified bytes invalidate the signature. |

@@ -67,6 +67,14 @@ type Config struct {
 	OrchAddress chain.Address
 	GasLimit    uint64
 
+	// Enabled reports whether the automatic per-round reward call is on.
+	// Read fresh each round so a persisted-config toggle takes effect on
+	// the next round. When nil, automatic reward is always on (preserves
+	// pre-config behavior). When it returns false the Run loop runs
+	// observe-only: it refreshes eligibility into Status but does not
+	// submit. The operator Force path (TryReward) ignores this.
+	Enabled func() bool
+
 	Logger  logger.Logger
 	Metrics metrics.Recorder
 
@@ -165,6 +173,18 @@ func (s *Service) Run(ctx context.Context, rc roundclock.Clock) error {
 			if !ok {
 				return nil
 			}
+			if s.cfg.Enabled != nil && !s.cfg.Enabled() {
+				if err := s.observe(ctx, r); err != nil {
+					s.recordError(r, err)
+					if s.cfg.Logger != nil {
+						s.cfg.Logger.Warn("reward observe failed",
+							logger.Uint64("round", uint64(r.Number)),
+							logger.Err(err),
+						)
+					}
+				}
+				continue
+			}
 			if err := s.tryReward(ctx, r); err != nil {
 				s.recordError(r, err)
 				s.metricsCounter("livepeer_protocol_reward_total",
@@ -186,6 +206,32 @@ func (s *Service) Run(ctx context.Context, rc roundclock.Clock) error {
 // zero ForceResult.
 func (s *Service) TryReward(ctx context.Context, round chain.Round) (ForceResult, error) {
 	return s.tryRewardForce(ctx, round)
+}
+
+// observe refreshes eligibility into Status without submitting. Used by the
+// Run loop when automatic reward is toggled off so GetRewardStatus stays
+// live while the daemon does not call reward itself.
+func (s *Service) observe(ctx context.Context, round chain.Round) error {
+	tinfo, err := s.cfg.BondingManager.GetTranscoder(ctx, s.cfg.OrchAddress)
+	if err != nil {
+		return fmt.Errorf("getTranscoder: %w", err)
+	}
+	elig := types.RewardEligibility{
+		OrchestratorAddress: s.cfg.OrchAddress,
+		Round:               round.Number,
+		Active:              tinfo.IsActiveAtRound(round.Number),
+		LastRewardRound:     tinfo.LastRewardRound,
+	}
+	elig.Eligible = elig.Active && tinfo.LastRewardRound < round.Number
+	if elig.Eligible {
+		elig.Reason = "eligible (auto-reward disabled)"
+	} else {
+		elig.Reason = "auto-reward disabled"
+	}
+	s.recordSkip(round, elig)
+	s.metricsCounter("livepeer_protocol_reward_total",
+		metrics.Labels{"outcome": "observed"}, 1)
+	return nil
 }
 
 // tryReward handles one round driven by the Run loop. Returns nil on

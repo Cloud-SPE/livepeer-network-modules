@@ -391,3 +391,50 @@ func decodeKey(b []byte) uint64 {
 	}
 	return v
 }
+
+func TestObserveOnlyDoesNotSubmit(t *testing.T) {
+	rm := &stubRoundsManager{addr: common.HexToAddress("0x000000000000000000000000000000000000FA01"), initialized: false}
+	sub := newStubSubmitter()
+	svc, err := New(Config{
+		RoundsManager: rm,
+		TxIntent:      sub,
+		GasLimit:      1_000_000,
+		Enabled:       func() bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.observe(context.Background(), chain.Round{Number: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sub.submitted) != 0 {
+		t.Errorf("observe should not submit, got %d", len(sub.submitted))
+	}
+	if svc.Status().LastRound != 7 {
+		t.Errorf("status not refreshed: round=%d", svc.Status().LastRound)
+	}
+}
+
+func TestForceInitializeIgnoresDisabledToggle(t *testing.T) {
+	rm := &stubRoundsManager{addr: common.HexToAddress("0x000000000000000000000000000000000000FA01"), initialized: false}
+	sub := newStubSubmitter()
+	s, err := New(Config{
+		RoundsManager: rm,
+		TxIntent:      sub,
+		GasLimit:      1_000_000,
+		Enabled:       func() bool { return false },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.TryInitialize(context.Background(), chain.Round{Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skip != nil {
+		t.Fatalf("force should submit, got skip %+v", res.Skip)
+	}
+	if len(sub.submitted) != 1 {
+		t.Errorf("force should submit even when disabled, got %d", len(sub.submitted))
+	}
+}

@@ -29,8 +29,8 @@ as code lands.
 ## Build (from parent `conformance/` directory)
 
 ```bash
-make build         # builds tztcloud/livepeer-conformance:v1.3.3
-docker run --rm tztcloud/livepeer-conformance:v1.3.3 --version
+make build         # builds tztcloud/livepeer-conformance:v1.4.0
+docker run --rm tztcloud/livepeer-conformance:v1.4.0 --version
 ```
 
 ## Adding a mode driver (when implementation begins)

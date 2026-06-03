@@ -41,6 +41,36 @@ type protocolActionsPageView struct {
 	ProtocolStatus         *protocolStatusView
 	ProtocolActionFeedback *protocolActionFeedbackView
 	TxIntentLookup         *txIntentLookupView
+	TreasuryProposal       *treasuryProposalView
+	OperationalConfig      *operationalConfigView
+	OperationalConfigError string
+}
+
+// treasuryProposalView is the pre-vote safety snapshot shown before a
+// CastVote: proposal state, voting window, whether the daemon wallet has
+// already voted, and its voting power at the snapshot.
+type treasuryProposalView struct {
+	Query  string
+	Result *treasuryProposalResultView
+	Error  string
+}
+
+type treasuryProposalResultView struct {
+	Rows [][2]string
+}
+
+// operationalConfigView mirrors protocol.OperationalConfig for the config
+// form (string amounts, hex addresses).
+type operationalConfigView struct {
+	RoundInitEnabled      bool
+	RewardEnabled         bool
+	RewardBeforeTransfer  bool
+	TransferBondEnabled   bool
+	TransferBondReceiver  string
+	TransferBondMinRetain string
+	WithdrawFeesEnabled   bool
+	WithdrawFeesReceiver  string
+	WithdrawFeesThreshold string
 }
 
 type manifestsPageView struct {

@@ -103,7 +103,7 @@ Current components:
 - `payment-daemon/` — receiver + sender, decoupled from capability/work-unit enums
 - `orch-coordinator/` — manifest candidate builder + publisher host
 - `secure-orch-console/` — cold-key diff-and-sign console
-- `protocol-daemon/` — round init, reward, and on-chain service-URI daemon
+- `protocol-daemon/` — chain-side orchestrator daemon: round init, reward, service-URI writes, plus orchestrator self-service actions (set reward/fee cut, transfer bonded LPT, withdraw ETH fees, treasury voting)
 - `service-registry-daemon/` — consumer-side resolver for on-chain orch discovery + manifest fetch/verify/cache
 - `chain-commons/` — shared chain/RPC/txintent support used by protocol-daemon
 - `proto-contracts/` — generated protobuf bindings shared by daemon surfaces

@@ -140,6 +140,61 @@ func TestSelectBackendUsesWeightedPickFunction(t *testing.T) {
 	}
 }
 
+func TestSelectBackendSkipsBackendAtMaxInFlight(t *testing.T) {
+	cfg := &config.Config{
+		Capabilities: []config.Capability{
+			{
+				ID:         "openai:chat-completions",
+				OfferingID: "shared",
+				Backend:    config.Backend{ID: "backend-a", URL: "http://a", MaxInFlight: 1},
+				Health:     config.Health{InitialStatus: "ready"},
+			},
+			{
+				ID:         "openai:chat-completions",
+				OfferingID: "shared",
+				Backend:    config.Backend{ID: "backend-b", URL: "http://b", MaxInFlight: 1},
+				Health:     config.Health{InitialStatus: "ready"},
+			},
+		},
+	}
+	s := &Server{
+		cfg:             cfg,
+		health:          health.New(cfg),
+		backendInFlight: map[string]int{"backend-a": 1},
+	}
+
+	group, ok := s.groupFor("openai:chat-completions", "shared")
+	if !ok {
+		t.Fatal("groupFor() = not found, want found")
+	}
+	selected, err := s.selectBackend(group)
+	if err != nil {
+		t.Fatalf("selectBackend() error = %v", err)
+	}
+	if got := selected.Backend.ID; got != "backend-b" {
+		t.Fatalf("selected backend = %q, want backend-b", got)
+	}
+}
+
+func TestReserveBackendHonorsMaxInFlightAndReleases(t *testing.T) {
+	cap := &config.Capability{
+		Backend: config.Backend{ID: "backend-a", MaxInFlight: 1},
+	}
+	s := &Server{backendInFlight: map[string]int{}}
+
+	release, ok := s.reserveBackend(cap)
+	if !ok {
+		t.Fatal("first reserveBackend() = false, want true")
+	}
+	if _, ok := s.reserveBackend(cap); ok {
+		t.Fatal("second reserveBackend() = true, want false while backend is full")
+	}
+	release()
+	if _, ok := s.reserveBackend(cap); !ok {
+		t.Fatal("reserveBackend() after release = false, want true")
+	}
+}
+
 func TestSelectBackendRespectsPoolExcludedState(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{

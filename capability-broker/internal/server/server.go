@@ -33,6 +33,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolsnapshot"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
 )
 
 // Options aggregates non-host-config knobs the server takes at
@@ -138,6 +139,8 @@ type Server struct {
 	modes                *modes.Registry
 	extractors           *extractors.Registry
 	backend              backend.Forwarder
+	workerRegistry       *workerconn.Registry
+	backendInFlight      map[string]int
 	secrets              backend.SecretResolver
 	receiptSink          receipts.Client
 	poolReporter         poolreport.Client
@@ -245,6 +248,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 
 	liveRunnerStore := newLiveRunnerSessionStore()
 	liveRunnerClient := newLiveRunnerBackendClient()
+	workerRegistry := workerconn.NewRegistry()
 
 	s := &Server{
 		cfg:                 cfg,
@@ -269,7 +273,9 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		payment:          paymentClient,
 		modes:            defaultModes(rtmpDriver, sessDriver, extDriver),
 		extractors:       defaultExtractors(),
-		backend:          backend.NewHTTPClient(),
+		backend:          workerconn.NewForwarder(backend.NewHTTPClient(), workerRegistry),
+		workerRegistry:   workerRegistry,
+		backendInFlight:  make(map[string]int),
 		secrets:          secretResolver,
 		receiptSink:      receiptSink,
 		poolReporter:     poolReporter,
@@ -574,7 +580,7 @@ func (s *Server) currentPoolSnapshot() *poolsnapshot.Cache {
 // Run starts the server in the foreground. Blocks until ctx is canceled or
 // any listener errors; performs graceful shutdown on cancellation.
 func (s *Server) Run(ctx context.Context) error {
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 	go func() {
 		log.Printf("listening on %s (paid)", s.cfg.Listen.Paid)
 		if err := s.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -603,6 +609,15 @@ func (s *Server) Run(ctx context.Context) error {
 			IdleTimeout:   s.opts.RTMP.IdleTimeout,
 			CheckInterval: time.Second,
 		})
+	}
+	if strings.TrimSpace(s.cfg.Listen.WorkerQUIC) != "" {
+		go func() {
+			if err := s.runWorkerQUIC(ctx, s.cfg.Listen.WorkerQUIC); err != nil {
+				errCh <- fmt.Errorf("listen worker quic: %w", err)
+				return
+			}
+			errCh <- nil
+		}()
 	}
 
 	if s.sessDriver != nil {

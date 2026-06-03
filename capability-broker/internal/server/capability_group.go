@@ -95,9 +95,12 @@ func (s *Server) selectBackend(group *capabilityGroup) (*config.Capability, erro
 		byBackend[snap.BackendID] = snap
 	}
 	for _, cap := range group.Backends {
-		backendID := cap.Backend.ID
-		if backendID == "" {
-			backendID = cap.Backend.URL
+		backendID := backendIDForCapability(cap)
+		if cap.Backend.MaxInFlight > 0 && s.currentBackendInFlight(backendID) >= cap.Backend.MaxInFlight {
+			const reason = "max_in_flight_reached"
+			observability.RecordBackendSelectionDenied(cap.ID, cap.OfferingID, backendID, reason)
+			deniedReasons[reason]++
+			continue
 		}
 		snap, ok := byBackend[backendID]
 		if !ok {
@@ -122,10 +125,7 @@ func (s *Server) selectBackend(group *capabilityGroup) (*config.Capability, erro
 		return nil, fmt.Errorf("no healthy backend candidates")
 	}
 	if len(candidates) == 1 {
-		backendID := candidates[0].cap.Backend.ID
-		if backendID == "" {
-			backendID = candidates[0].cap.Backend.URL
-		}
+		backendID := backendIDForCapability(candidates[0].cap)
 		observability.RecordBackendSelectionFinal(group.Published.ID, group.Published.OfferingID, backendID, candidates[0].reason)
 		return candidates[0].cap, nil
 	}
@@ -141,22 +141,26 @@ func (s *Server) selectBackend(group *capabilityGroup) (*config.Capability, erro
 	pick := pickFn(total)
 	for _, c := range candidates {
 		if pick < c.weight {
-			backendID := c.cap.Backend.ID
-			if backendID == "" {
-				backendID = c.cap.Backend.URL
-			}
+			backendID := backendIDForCapability(c.cap)
 			observability.RecordBackendSelectionFinal(group.Published.ID, group.Published.OfferingID, backendID, c.reason)
 			return c.cap, nil
 		}
 		pick -= c.weight
 	}
 	last := candidates[len(candidates)-1]
-	backendID := last.cap.Backend.ID
-	if backendID == "" {
-		backendID = last.cap.Backend.URL
-	}
+	backendID := backendIDForCapability(last.cap)
 	observability.RecordBackendSelectionFinal(group.Published.ID, group.Published.OfferingID, backendID, last.reason)
 	return last.cap, nil
+}
+
+func backendIDForCapability(cap *config.Capability) string {
+	if cap == nil {
+		return ""
+	}
+	if cap.Backend.ID != "" {
+		return cap.Backend.ID
+	}
+	return cap.Backend.URL
 }
 
 func backendSelectionWeight(snap health.Snapshot) int {

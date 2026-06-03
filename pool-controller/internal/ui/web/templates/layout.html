@@ -45,6 +45,7 @@
     <div class="sidebar-section">Pool control plane</div>
     <nav class="sidebar-nav" aria-label="pool-controller pages">
       <a href="/admin" class="sidebar-item {{if eq .ActivePage "overview"}}active{{end}}">Overview</a>
+      <a href="/admin/pool" class="sidebar-item {{if eq .ActivePage "pool"}}active{{end}}">Pool</a>
       <a href="/admin/offers" class="sidebar-item {{if eq .ActivePage "offers"}}active{{end}}">Offers</a>
       <a href="/admin/join-requests" class="sidebar-item {{if eq .ActivePage "join-requests"}}active{{end}}">Join requests</a>
       <a href="/admin/members" class="sidebar-item {{if eq .ActivePage "members"}}active{{end}}">Members &amp; backends</a>
@@ -54,7 +55,7 @@
     </nav>
     <section class="sidebar-note">
       <h2>Control plane</h2>
-      <p>Nothing is published until an approved backend is assigned to an orch-owned offer.</p>
+      <p>Members run outbound workers; the operator controls templates, certification, routing, and payout approval.</p>
     </section>
   </aside>
 

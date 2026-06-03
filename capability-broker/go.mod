@@ -44,6 +44,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
+	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/sirupsen/logrus v1.7.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/wlynxg/anet v0.0.3 // indirect

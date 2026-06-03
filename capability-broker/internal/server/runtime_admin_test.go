@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
 )
@@ -90,6 +92,33 @@ capabilities:
 	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"offering_id":"new-shared"`) {
 		t.Fatalf("GET /registry/offerings status=%d body=%s", rec.Code, string(body))
 	}
+
+	if err := srv.workerRegistry.Register("worker-backend-a", runtimeAdminStubForwarder{}); err != nil {
+		t.Fatalf("worker registry Register() error = %v", err)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/admin/v1/worker-sessions", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	body, _ = io.ReadAll(rec.Result().Body)
+	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"worker-backend-a"`) {
+		t.Fatalf("GET /admin/v1/worker-sessions status=%d body=%s", rec.Code, string(body))
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/admin/v1/worker-sessions/worker-backend-a/kill", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	body, _ = io.ReadAll(rec.Result().Body)
+	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"status":"killed"`) {
+		t.Fatalf("POST /admin/v1/worker-sessions/{id}/kill status=%d body=%s", rec.Code, string(body))
+	}
+}
+
+type runtimeAdminStubForwarder struct{}
+
+func (runtimeAdminStubForwarder) Forward(context.Context, backend.ForwardRequest) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok"))}, nil
 }
 
 func TestRuntimeAdminRequiresAuth(t *testing.T) {

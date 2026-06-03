@@ -34,13 +34,19 @@ func TestHTTPClientUpsertWorkReceipt(t *testing.T) {
 	t.Setenv("RECEIPT_SINK_TOKEN", "top-secret")
 
 	err = client.UpsertWorkReceipt(context.Background(), WorkReceipt{
-		ID:               "work-1",
-		RequestID:        "req-1",
-		CapabilityID:     "openai:chat-completions",
-		OfferingID:       "shared",
-		MemberEthAddress: "0xabc",
-		BackendID:        "backend-a",
-		Status:           "stub",
+		ID:                   "work-1",
+		RequestID:            "req-1",
+		CapabilityID:         "openai:chat-completions",
+		OfferingID:           "shared",
+		MemberEthAddress:     "0xabc",
+		BackendID:            "backend-a",
+		HostEnrollmentID:     "host-1",
+		HardwareUnitID:       "gpu-1",
+		GPUUUID:              "GPU-1",
+		TemplateID:           "chat-4090",
+		AcceptedWorkUnits:    42,
+		AttributedRevenueWei: "1234",
+		Status:               "stub",
 	})
 	if err != nil {
 		t.Fatalf("UpsertWorkReceipt() error = %v", err)
@@ -50,5 +56,8 @@ func TestHTTPClientUpsertWorkReceipt(t *testing.T) {
 	}
 	if gotReceipt.ID != "work-1" || gotReceipt.Status != "stub" {
 		t.Fatalf("receipt = %#v", gotReceipt)
+	}
+	if gotReceipt.HostEnrollmentID != "host-1" || gotReceipt.HardwareUnitID != "gpu-1" || gotReceipt.TemplateID != "chat-4090" || gotReceipt.AttributedRevenueWei != "1234" {
+		t.Fatalf("pool attribution fields were not preserved: %#v", gotReceipt)
 	}
 }

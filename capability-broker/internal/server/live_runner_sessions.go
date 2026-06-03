@@ -74,7 +74,8 @@ type liveRunnerSession struct {
 	PlaybackHLSURL   string
 	PrivateIngestURL string
 
-	Backend config.Backend
+	Backend         config.Backend
+	CapacityRelease func()
 }
 
 func newLiveRunnerSessionStore() *liveRunnerSessionStore {
@@ -453,6 +454,17 @@ func (s *Server) liveOpenSession(w http.ResponseWriter, r *http.Request) {
 		livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrCapacityExhausted, "no eligible backend currently available for "+capID+"/"+offID)
 		return
 	}
+	releaseBackend, reserved := s.reserveBackend(cap)
+	if !reserved {
+		livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrCapacityExhausted, "selected backend is at max in-flight capacity")
+		return
+	}
+	capacityHeldBySession := false
+	defer func() {
+		if !capacityHeldBySession {
+			releaseBackend()
+		}
+	}()
 	if cap.Backend.Transport != remoteLiveRunnerTransport {
 		livepeerheader.WriteError(w, http.StatusHTTPVersionNotSupported, livepeerheader.ErrModeUnsupported, "selected backend is not a remote live runner")
 		return
@@ -579,12 +591,14 @@ func (s *Server) liveOpenSession(w http.ResponseWriter, r *http.Request) {
 		PlaybackHLSURL:   runnerResp.Media.Playback.HLSURL,
 		PrivateIngestURL: runnerResp.PrivateIngestURL,
 		Backend:          cap.Backend,
+		CapacityRelease:  releaseBackend,
 	}
 	if err := s.liveRunnerStore.Add(sess); err != nil {
 		_ = s.payment.CloseSession(r.Context(), paymentResult.Sender, workID)
 		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError, "session store: "+err.Error())
 		return
 	}
+	capacityHeldBySession = true
 
 	resp := liveSessionOpenResponse{
 		BrokerSessionID: brokerSessionID,
@@ -910,8 +924,13 @@ func (s *Server) finalizeLiveRunnerSession(ctx context.Context, sess *liveRunner
 	sender := append([]byte(nil), sess.Sender...)
 	needClosePayment := !sess.PaymentClosed
 	sess.PaymentClosed = true
+	releaseBackend := sess.CapacityRelease
+	sess.CapacityRelease = nil
 	sess.mu.Unlock()
 
+	if releaseBackend != nil {
+		releaseBackend()
+	}
 	if terminateRunner {
 		_, _ = s.liveRunnerClient.DeleteSession(ctx, sess, reason, s.secrets)
 	}

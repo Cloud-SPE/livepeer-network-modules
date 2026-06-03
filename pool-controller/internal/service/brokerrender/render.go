@@ -19,11 +19,16 @@ type BootstrapBrokerSettings struct {
 }
 
 type RenderInput struct {
-	Bootstrap   BootstrapBrokerSettings
-	Offers      []types.Offer
-	Members     []types.MemberRecord
-	Backends    []types.MemberBackend
-	Assignments []types.Assignment
+	Bootstrap           BootstrapBrokerSettings
+	Offers              []types.Offer
+	Members             []types.MemberRecord
+	Backends            []types.MemberBackend
+	Assignments         []types.Assignment
+	PoolMembers         []types.PoolMember
+	HostEnrollments     []types.HostEnrollment
+	HardwareUnits       []types.HardwareUnit
+	Templates           []types.TemplateCatalogEntry
+	TemplateAssignments []types.TemplateAssignment
 }
 
 type RenderResult struct {
@@ -56,10 +61,17 @@ type BrokerCapability struct {
 }
 
 type BrokerBackend struct {
-	ID        string            `yaml:"id,omitempty"`
-	Transport string            `yaml:"transport"`
-	URL       string            `yaml:"url,omitempty"`
-	Auth      config.AuthConfig `yaml:"auth,omitempty"`
+	ID                      string            `yaml:"id,omitempty"`
+	Transport               string            `yaml:"transport"`
+	URL                     string            `yaml:"url,omitempty"`
+	Auth                    config.AuthConfig `yaml:"auth,omitempty"`
+	HostEnrollmentID        string            `yaml:"host_enrollment_id,omitempty"`
+	HardwareUnitID          string            `yaml:"hardware_unit_id,omitempty"`
+	GPUUUID                 string            `yaml:"gpu_uuid,omitempty"`
+	TemplateID              string            `yaml:"template_id,omitempty"`
+	WorkerSessionCredential string            `yaml:"worker_session_credential,omitempty"`
+	MaxInFlight             int               `yaml:"max_in_flight,omitempty"`
+	QueueLimit              int               `yaml:"queue_limit,omitempty"`
 }
 
 func Render(input RenderInput) (RenderResult, error) {
@@ -74,6 +86,23 @@ func Render(input RenderInput) (RenderResult, error) {
 	backendsByID := make(map[string]types.MemberBackend, len(input.Backends))
 	for _, backend := range input.Backends {
 		backendsByID[backend.ID] = backend
+	}
+	poolMembersByID := make(map[string]types.PoolMember, len(input.PoolMembers))
+	for _, member := range input.PoolMembers {
+		poolMembersByID[member.ID] = member
+		poolMembersByID[member.EthAddress] = member
+	}
+	enrollmentsByID := make(map[string]types.HostEnrollment, len(input.HostEnrollments))
+	for _, enrollment := range input.HostEnrollments {
+		enrollmentsByID[enrollment.ID] = enrollment
+	}
+	hardwareByID := make(map[string]types.HardwareUnit, len(input.HardwareUnits))
+	for _, hardware := range input.HardwareUnits {
+		hardwareByID[hardware.ID] = hardware
+	}
+	templatesByID := make(map[string]types.TemplateCatalogEntry, len(input.Templates))
+	for _, template := range input.Templates {
+		templatesByID[template.ID] = template
 	}
 
 	capabilities := make([]BrokerCapability, 0)
@@ -124,6 +153,79 @@ func Render(input RenderInput) (RenderResult, error) {
 			Constraints: constraints,
 		})
 	}
+	for _, assignment := range input.TemplateAssignments {
+		if assignment.State != types.TemplateAssignmentActive && assignment.State != types.TemplateAssignmentProbationary {
+			continue
+		}
+		template, ok := templatesByID[assignment.TemplateID]
+		if !ok || template.Status != types.TemplateStatusActive {
+			continue
+		}
+		maxInFlight := assignment.MaxInFlight
+		if maxInFlight == 0 {
+			maxInFlight = template.MaxInFlightDefault
+		}
+		queueLimit := assignment.QueueLimit
+		if queueLimit == 0 {
+			queueLimit = template.QueueLimitDefault
+		}
+		offer, ok := activeOfferForTemplate(offersByID, template)
+		if !ok {
+			continue
+		}
+		hardware, ok := hardwareByID[assignment.HardwareUnitID]
+		if !ok || (hardware.State != types.HardwareUnitActive && hardware.State != types.HardwareUnitProbationary) {
+			continue
+		}
+		enrollment, ok := enrollmentsByID[assignment.HostEnrollmentID]
+		if !ok || enrollment.Status == types.HostEnrollmentRevoked || enrollment.Status == types.HostEnrollmentRetired {
+			continue
+		}
+		member, ok := poolMembersByID[assignment.MemberEthAddress]
+		if !ok || member.Status != types.MemberStatusActive {
+			continue
+		}
+		extra := cloneMap(offer.Extra)
+		if extra == nil {
+			extra = map[string]any{}
+		}
+		extra["pool"] = map[string]any{
+			"member_eth_address":  member.EthAddress,
+			"host_enrollment_id":  enrollment.ID,
+			"hardware_unit_id":    hardware.ID,
+			"gpu_uuid":            hardware.GPUUUID,
+			"template_id":         template.ID,
+			"template_assignment": assignment.ID,
+			"payout_mode":         member.PayoutMode,
+		}
+		constraints := cloneMap(offer.Constraints)
+		if constraints == nil {
+			constraints = map[string]any{}
+		}
+		capabilities = append(capabilities, BrokerCapability{
+			ID:              offer.CapabilityID,
+			OfferingID:      offer.OfferingID,
+			InteractionMode: offer.InteractionMode,
+			WorkUnit:        config.NormalizeWorkUnit(offer.WorkUnit),
+			Health:          config.Health{},
+			Price:           offer.Price,
+			Backend: BrokerBackend{
+				ID:                      assignment.ID,
+				Transport:               "http",
+				URL:                     "worker://" + assignment.ID,
+				Auth:                    config.AuthConfig{Method: "none"},
+				HostEnrollmentID:        enrollment.ID,
+				HardwareUnitID:          hardware.ID,
+				GPUUUID:                 hardware.GPUUUID,
+				TemplateID:              template.ID,
+				WorkerSessionCredential: enrollment.BrokerSessionCredential,
+				MaxInFlight:             maxInFlight,
+				QueueLimit:              queueLimit,
+			},
+			Extra:       extra,
+			Constraints: constraints,
+		})
+	}
 
 	sort.Slice(capabilities, func(i, j int) bool {
 		left := capabilities[i]
@@ -163,6 +265,18 @@ func Render(input RenderInput) (RenderResult, error) {
 		Revision:   hex.EncodeToString(sum[:]),
 		Model:      model,
 	}, nil
+}
+
+func activeOfferForTemplate(offersByID map[string]types.Offer, template types.TemplateCatalogEntry) (types.Offer, bool) {
+	for _, offer := range offersByID {
+		if offer.Status != types.OfferStatusActive {
+			continue
+		}
+		if offer.CapabilityID == template.CapabilityID && offer.OfferingID == template.OfferingID && offer.InteractionMode == template.InteractionMode {
+			return offer, true
+		}
+	}
+	return types.Offer{}, false
 }
 
 func cloneMap(src map[string]any) map[string]any {

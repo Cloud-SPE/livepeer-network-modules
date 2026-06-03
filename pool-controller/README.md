@@ -1,22 +1,34 @@
 # pool-controller
 
-`pool-controller` is the Pool-side control-plane component from plan 0029. It
+`pool-controller` is the Pool-side control-plane component. The current Pool
+path is the connected-worker replacement from
+`docs/exec-plans/active/0040-pool-template-connected-worker-reset.md`: members
+sign in with an ETH wallet, download a generated compose bundle, and connect
+outbound to the Pool broker. Pool members do not run a broker or
+`payment-daemon`.
+
+It
 owns the persisted Pool control-plane state for:
 
 - orch-owned offers
-- join requests
-- approved members and backends
-- backend-to-offer assignments
+- wallet-authenticated pool members
+- host enrollments and enrollment credentials
+- GPU hardware inventory
+- template catalog and template-to-hardware assignments
+- certification runs
+- accepted work receipts, settlement windows, payout batches, and payout intents
 - desired broker runtime
 
 The supported production path is:
 
 - bootstrap-only controller config
 - persisted control-plane state in BoltDB
-- broker runtime rendered from that persisted state
+- broker runtime rendered from connected-worker assignments
 
-Legacy nested `members[].backends[].offerings[]` config is no longer part of the
-supported controller surface.
+Legacy nested `members[].backends[].offerings[]` config and join-request
+onboarding are no longer the supported Pool path. Older compatibility surfaces
+may remain while salvageable code is retired, but the connected-worker model is
+the source of truth for new work.
 
 Operator runbook:
 - [`RUNBOOK.md`](./RUNBOOK.md)
@@ -117,6 +129,14 @@ Current admin endpoints:
 - `GET /admin/v1/member-payouts`
 - `GET /admin/v1/payout-rounds`
 - `GET /admin/v1/payout-alerts`
+- `GET /admin/v1/pool-members`
+- `GET /admin/v1/host-enrollments`
+- `GET /admin/v1/hardware-units`
+- `GET /admin/v1/template-catalog`
+- `GET /admin/v1/template-assignments`
+- `GET /admin/v1/certification-runs`
+- `GET /admin/v1/settlement-windows`
+- `GET /admin/v1/payout-batches`
 - `POST /admin/v1/work-receipts`
 - `POST /admin/v1/backend-outcomes`
 - `POST /admin/v1/synthetic-probes/run`
@@ -137,7 +157,20 @@ Current admin endpoints:
 - `POST /admin/v1/backend-overrides/clear-warmup`
 - `POST /admin/v1/backend-overrides/max-share-cap`
 - `POST /admin/v1/backend-overrides/clear-max-share-cap`
+- `POST /admin/v1/template-assignments/{id}/certification/start`
+- `POST /admin/v1/certification-runs/{id}/complete`
+- `POST /admin/v1/host-enrollments/{id}/revoke`
+- `POST /admin/v1/settlement-windows/close`
+- `POST /admin/v1/payout-batches/{id}/approve`
 - `POST /admin/v1/reload`
+
+Current member endpoints:
+
+- `POST /member/v1/auth/nonce`
+- `POST /member/v1/auth/verify`
+- `POST /member/v1/enrollments`
+- `GET /member/v1/enrollments/{id}/bundle`
+- `POST /member/v1/enrollments/{id}/hardware`
 
 `GET /admin/v1/backend-selection-summary` rolls the current Pool routing state
 into operator-focused aggregates:
@@ -179,13 +212,16 @@ Synthetic probe behavior:
 - unsupported audio families still return skipped results with
   `audio_probe_not_implemented`
 
-Current Pool limitation:
+Current Pool media limitation:
 
-- `video:live.rtmp` is intentionally rejected in `pool-controller` member
-  configs. The current Pool member model is backend-runtime-only, while the
-  shipped live RTMP path is broker-local `ffmpeg-subprocess` plus broker
-  RTMP/HLS listeners. See
-  `docs/exec-plans/active/0032-pool-live-rtmp-contract-decision.md`.
+- HTTP request/response, HTTP streaming, and HTTP multipart templates can run
+  through connected workers.
+- WebSocket, RTMP, and remote-runner drivers remain broker-supported, but Pool
+  acceptance tests should only exercise them once a template family requires
+  them.
+- WebRTC media-plane workloads need a separate ICE/TURN design before Pool
+  worker support; UDP/SRTP is not solved by the connected-worker byte-stream
+  tunnel.
 
 Broker runtime apply contract:
 

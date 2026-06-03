@@ -162,6 +162,26 @@ func renderBrokerState(stateRepo *repo.StateRepo, cfg *config.Config) ([]byte, *
 	if err != nil {
 		return nil, nil, err
 	}
+	poolMembers, err := stateRepo.ListPoolMembers()
+	if err != nil {
+		return nil, nil, err
+	}
+	hostEnrollments, err := stateRepo.ListHostEnrollments()
+	if err != nil {
+		return nil, nil, err
+	}
+	hardwareUnits, err := stateRepo.ListHardwareUnits()
+	if err != nil {
+		return nil, nil, err
+	}
+	templates, err := stateRepo.ListTemplateCatalogEntries()
+	if err != nil {
+		return nil, nil, err
+	}
+	templateAssignments, err := stateRepo.ListTemplateAssignments()
+	if err != nil {
+		return nil, nil, err
+	}
 	result, err := brokerrender.Render(brokerrender.RenderInput{
 		Bootstrap: brokerrender.BootstrapBrokerSettings{
 			Identity:      cfg.Identity,
@@ -169,10 +189,15 @@ func renderBrokerState(stateRepo *repo.StateRepo, cfg *config.Config) ([]byte, *
 			PaymentDaemon: cfg.PaymentDaemon,
 			ReceiptSink:   cfg.ReceiptSink,
 		},
-		Offers:      offers,
-		Members:     members,
-		Backends:    backends,
-		Assignments: assignments,
+		Offers:              offers,
+		Members:             members,
+		Backends:            backends,
+		Assignments:         assignments,
+		PoolMembers:         poolMembers,
+		HostEnrollments:     hostEnrollments,
+		HardwareUnits:       hardwareUnits,
+		Templates:           templates,
+		TemplateAssignments: templateAssignments,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -735,6 +760,14 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		GetDesiredRuntime: func() (*types.DesiredBrokerRuntime, error) {
 			_, _, _, runtimeInfo := state.Snapshot()
 			return runtimeInfo, nil
+		},
+		KillWorkerSession: func(backendID string) error {
+			cfg, _, _, _ := state.Snapshot()
+			if cfg == nil || strings.TrimSpace(cfg.Bootstrap.BrokerAdminURL) == "" {
+				return nil
+			}
+			client := brokeradmin.New(cfg.Bootstrap.BrokerAdminURL, cfg.Bootstrap.BrokerAdminAuth, time.Duration(cfg.Bootstrap.BrokerAdminTimeoutMS)*time.Millisecond)
+			return client.KillWorkerSession(backendID)
 		},
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {

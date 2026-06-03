@@ -16,6 +16,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /v1/payment/ticket-params", ticketParamsHandler(s.payment))
 	s.mux.HandleFunc("GET /admin/v1/runtime", s.handleRuntimeStatus)
 	s.mux.HandleFunc("POST /admin/v1/runtime/reload", s.handleRuntimeReload)
+	s.mux.HandleFunc("GET /admin/v1/worker-sessions", s.handleWorkerSessions)
+	s.mux.HandleFunc("POST /admin/v1/worker-sessions/{backend_id}/kill", s.handleWorkerSessionKill)
+	s.mux.HandleFunc("GET /internal/v1/worker/session", s.handleWorkerSession)
 
 	// LL-HLS playback served from the per-session scratch. The URL is
 	// itself a per-session bearer secret (12 random bytes hex) so

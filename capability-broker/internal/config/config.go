@@ -23,8 +23,9 @@ type Identity struct {
 
 // Listen declares the broker's bind addresses. If omitted, defaults are used.
 type Listen struct {
-	Paid    string `yaml:"paid,omitempty"`    // default ":8080"
-	Metrics string `yaml:"metrics,omitempty"` // default ":9090"
+	Paid       string `yaml:"paid,omitempty"`        // default ":8080"
+	Metrics    string `yaml:"metrics,omitempty"`     // default ":9090"
+	WorkerQUIC string `yaml:"worker_quic,omitempty"` // optional UDP listener for connected workers
 }
 
 // PaymentDaemon describes how to reach the co-located payment-daemon. v0.1
@@ -112,10 +113,17 @@ type Price struct {
 
 // Backend describes how the broker forwards a request to the upstream backend.
 type Backend struct {
-	ID        string     `yaml:"id,omitempty"`
-	Transport string     `yaml:"transport"`
-	URL       string     `yaml:"url,omitempty"`
-	Auth      AuthConfig `yaml:"auth,omitempty"`
+	ID                      string     `yaml:"id,omitempty"`
+	Transport               string     `yaml:"transport"`
+	URL                     string     `yaml:"url,omitempty"`
+	Auth                    AuthConfig `yaml:"auth,omitempty"`
+	HostEnrollmentID        string     `yaml:"host_enrollment_id,omitempty"`
+	HardwareUnitID          string     `yaml:"hardware_unit_id,omitempty"`
+	GPUUUID                 string     `yaml:"gpu_uuid,omitempty"`
+	TemplateID              string     `yaml:"template_id,omitempty"`
+	WorkerSessionCredential string     `yaml:"worker_session_credential,omitempty"`
+	MaxInFlight             int        `yaml:"max_in_flight,omitempty"`
+	QueueLimit              int        `yaml:"queue_limit,omitempty"`
 	// Profile names the encoder preset for transport=ffmpeg-subprocess.
 	// One of: passthrough | h264-live-1080p-nvenc |
 	// h264-live-1080p-qsv | h264-live-1080p-vaapi |

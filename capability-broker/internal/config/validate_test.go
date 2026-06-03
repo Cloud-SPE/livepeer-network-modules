@@ -44,6 +44,41 @@ func TestValidateDefaultsHTTPHealthProbe(t *testing.T) {
 	}
 }
 
+func TestValidateAllowsWorkerVirtualBackendURL(t *testing.T) {
+	cfg := &Config{
+		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+		Capabilities: []Capability{{
+			ID:              "openai:chat-completions",
+			OfferingID:      "default",
+			InteractionMode: "http-stream@v0",
+			WorkUnit: WorkUnit{
+				Name:      "tokens",
+				Extractor: map[string]any{"type": "openai-usage"},
+			},
+			Price: Price{AmountWei: "1", PerUnits: 1},
+			Backend: Backend{
+				Transport: "http",
+				ID:        "host-1-gpu-0-chat",
+				URL:       "worker://host-1-gpu-0-chat/v1/chat/completions",
+			},
+			Health: Health{
+				Probe: HealthProbe{
+					Type:   "http-status",
+					Config: map[string]any{"url": "worker://host-1-gpu-0-chat/healthz"},
+				},
+			},
+			Extra: map[string]any{
+				"openai":   map[string]any{"model": "llama-3-70b"},
+				"provider": "vllm",
+			},
+		}},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
 func TestValidateAdminAuth(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},

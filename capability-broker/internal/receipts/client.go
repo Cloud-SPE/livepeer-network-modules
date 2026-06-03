@@ -15,18 +15,24 @@ import (
 )
 
 type WorkReceipt struct {
-	ID                string    `json:"id"`
-	CreatedAt         time.Time `json:"created_at,omitempty"`
-	RoundID           string    `json:"round_id,omitempty"`
-	RequestID         string    `json:"request_id"`
-	CapabilityID      string    `json:"capability_id"`
-	OfferingID        string    `json:"offering_id"`
-	MemberEthAddress  string    `json:"member_eth_address"`
-	BackendID         string    `json:"backend_id"`
-	ExpectedMaxUnits  uint64    `json:"expected_max_units,omitempty"`
-	ActualUnits       uint64    `json:"actual_units,omitempty"`
-	GatewayRevenueWei string    `json:"gateway_revenue_wei,omitempty"`
-	Status            string    `json:"status"`
+	ID                   string    `json:"id"`
+	CreatedAt            time.Time `json:"created_at,omitempty"`
+	RoundID              string    `json:"round_id,omitempty"`
+	RequestID            string    `json:"request_id"`
+	CapabilityID         string    `json:"capability_id"`
+	OfferingID           string    `json:"offering_id"`
+	MemberEthAddress     string    `json:"member_eth_address"`
+	BackendID            string    `json:"backend_id"`
+	HostEnrollmentID     string    `json:"host_enrollment_id,omitempty"`
+	HardwareUnitID       string    `json:"hardware_unit_id,omitempty"`
+	GPUUUID              string    `json:"gpu_uuid,omitempty"`
+	TemplateID           string    `json:"template_id,omitempty"`
+	ExpectedMaxUnits     uint64    `json:"expected_max_units,omitempty"`
+	ActualUnits          uint64    `json:"actual_units,omitempty"`
+	AcceptedWorkUnits    uint64    `json:"accepted_work_units,omitempty"`
+	GatewayRevenueWei    string    `json:"gateway_revenue_wei,omitempty"`
+	AttributedRevenueWei string    `json:"attributed_revenue_wei,omitempty"`
+	Status               string    `json:"status"`
 }
 
 type Client interface {

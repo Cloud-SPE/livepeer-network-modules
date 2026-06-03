@@ -243,6 +243,12 @@ func (c *Config) Validate() error {
 		if cap.Backend.Transport == "" {
 			return fmt.Errorf("%s: backend.transport is required", ctx)
 		}
+		if cap.Backend.MaxInFlight < 0 {
+			return fmt.Errorf("%s: backend.max_in_flight must be >= 0", ctx)
+		}
+		if cap.Backend.QueueLimit < 0 {
+			return fmt.Errorf("%s: backend.queue_limit must be >= 0", ctx)
+		}
 		if cap.Backend.ID == "" && cap.Backend.URL != "" {
 			cap.Backend.ID = cap.Backend.URL
 		}
@@ -255,8 +261,8 @@ func (c *Config) Validate() error {
 			if err != nil {
 				return fmt.Errorf("%s: backend.url is invalid: %w", ctx, err)
 			}
-			if u.Scheme != "http" && u.Scheme != "https" {
-				return fmt.Errorf("%s: backend.url scheme must be http or https (got %q)", ctx, u.Scheme)
+			if u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "worker" {
+				return fmt.Errorf("%s: backend.url scheme must be http, https, or worker (got %q)", ctx, u.Scheme)
 			}
 		case "ffmpeg-subprocess":
 			if cap.Backend.Profile == "" {

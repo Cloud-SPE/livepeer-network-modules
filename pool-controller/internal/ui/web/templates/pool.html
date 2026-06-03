@@ -1,0 +1,73 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Connected Pool</p>
+  <h1>Pool</h1>
+  <p class="muted">Signup, host enrollments, hardware inventory, template assignments, certification runs, and payout windows for outbound-only pool members.</p>
+</section>
+
+<section>
+  <h2>Connected-pool snapshot</h2>
+  <div class="metric-grid">
+    <article class="metric-card">
+      <p class="metric-label">Pool members</p>
+      <p class="metric-value"><span id="poolMemberCount">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Host enrollments</p>
+      <p class="metric-value"><span id="poolEnrollmentCount">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Hardware units</p>
+      <p class="metric-value"><span id="poolHardwareCount">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Template assignments</p>
+      <p class="metric-value"><span id="poolAssignmentCount">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Open payout windows</p>
+      <p class="metric-value"><span id="poolWindowCount">—</span></p>
+    </article>
+  </div>
+</section>
+
+<section class="grid-2">
+  <div>
+    <h2>Members</h2>
+    <div id="poolMembers" class="stack"></div>
+  </div>
+  <div>
+    <h2>Enrollments</h2>
+    <div id="poolEnrollments" class="stack"></div>
+  </div>
+</section>
+
+<section>
+  <h2>Hardware</h2>
+  <div id="poolHardware" class="card-list"></div>
+</section>
+
+<section class="grid-2">
+  <div>
+    <h2>Template catalog</h2>
+    <div id="poolTemplates" class="stack"></div>
+  </div>
+  <div>
+    <h2>Assignments</h2>
+    <div id="poolAssignments" class="stack"></div>
+  </div>
+</section>
+
+<section class="grid-2">
+  <div>
+    <h2>Certification</h2>
+    <div id="poolCertificationRuns" class="stack"></div>
+  </div>
+  <div>
+    <h2>Payout windows</h2>
+    <div id="poolSettlementWindows" class="stack"></div>
+    <h2>Payout batches</h2>
+    <div id="poolPayoutBatches" class="stack"></div>
+  </div>
+</section>
+{{end}}

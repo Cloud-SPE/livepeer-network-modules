@@ -44,18 +44,29 @@ livepeer-protocol-daemon \
   --controller-address=0xD8E8328501E9645d16Cf49539efC04f734606ee4 \
   --keystore-path=/etc/livepeer/keystore.json \
   --keystore-password-file=/etc/livepeer/keystore-password \
-  --orch-address=0xYOUR_COLD_ORCH_ADDRESS \
+  --orch-address=0xYOUR_ORCH_ADDRESS \
+  --treasury-address=0xLIVEPEER_GOVERNOR_ADDRESS \
   --metrics-listen=:9094
 ```
 
 Required inputs:
 
-- a V3 JSON keystore
+- a V3 JSON keystore — **this must be the orchestrator's own key.** Every
+  protocol tx (reward, transcoder/cut-share, transferBond, withdrawFees,
+  treasury vote) acts on `msg.sender`, so the daemon signs as the
+  orchestrator itself. The signing wallet must equal `--orch-address`.
 - the keystore password, via `--keystore-password-file` or `LIVEPEER_KEYSTORE_PASSWORD`
 - `--eth-urls`
 - `--orch-address` for `reward` and `both`
 - writable state at `--store-path`
 - writable unix-socket directory for `--socket`
+
+Optional but required *for treasury voting*:
+
+- `--treasury-address` — the LivepeerGovernor contract. It is **not**
+  auto-resolved from the controller; you must supply it. Without it,
+  `CastVote` and `GetTreasuryProposal` return `Unimplemented` and the
+  console's treasury panel errors with that message.
 
 ## 3. What it talks to
 
@@ -93,7 +104,6 @@ Local component-level compose:
 Example env file:
 
 - `protocol-daemon/compose/.env.example`
-- `protocol-daemon/compose/.env.useast-coordinator.example`
 
 The published image build is wired into:
 
@@ -108,9 +118,8 @@ like:
 https://useast-coordinator.example.com/.well-known/livepeer-registry.json
 ```
 
-The provided example env file records that explicitly:
-
-- `protocol-daemon/compose/.env.useast-coordinator.example`
+Set that URL via `SetServiceURI` once the daemon is running (see
+`compose/.env.example` for the deployment-side variables).
 
 ## 6. Metrics and health
 

@@ -1,8 +1,12 @@
 # protocol-daemon
 
 A standalone daemon that handles Livepeer’s chain-side orchestrator responsibilities:
-round initialization, reward calling, and on-chain `ServiceRegistry` /
-`AIServiceRegistry` pointer writes. Built on [`chain-commons`](../chain-commons) — the
+round initialization, reward calling, on-chain `ServiceRegistry` /
+`AIServiceRegistry` pointer writes, and the orchestrator self-service actions —
+setting reward/fee cut (`transcoder`), transferring bonded LPT (`transferBond`),
+withdrawing ETH fees (`withdrawFees`), and treasury proposal voting. The daemon
+signs every one of these with its own keystore (which must be the orchestrator
+address). Built on [`chain-commons`](../chain-commons) — the
 durable transaction state machine, multi-RPC failover, Controller-resolved addresses,
 and reorg-aware confirmation tracking are all reused from the shared library.
 
@@ -105,7 +109,7 @@ The layering is enforced by the per-module `lint/layer-check/`. `internal/servic
 - **Pool-hint cache.** Walking the transcoder pool linked list is multiple `eth_call`s. Cached by round in BoltDB; same-round invocations after the first are a fast path.
 - **Multi-RPC by default.** `--eth-urls` accepts a comma-separated list; `chain-commons.providers.rpc.multi` does primary/backup failover with circuit breakers.
 - **Preflight at startup.** Chain-id verification, Controller resolution + `CodeAt` checks for `RoundsManager` and `BondingManager`, keystore decryption, min-balance gate. A misconfigured daemon fails loudly before the gRPC socket opens.
-- **Off-by-default Prometheus.** `--metrics-listen=:9094` (per [`docs/conventions/ports.md`](../docs/conventions/ports.md)) opts in. `livepeer_protocol_*` namespace per [`docs/conventions/metrics.md`](../docs/conventions/metrics.md).
+- **Off-by-default Prometheus.** `--metrics-listen=:9094` (recommended port) opts in. Metrics use the `livepeer_protocol_*` namespace.
 - **75% per-package coverage gate.** Enforced via `lint/coverage-gate/` (matches `payment-daemon`).
 
 ## gRPC surface

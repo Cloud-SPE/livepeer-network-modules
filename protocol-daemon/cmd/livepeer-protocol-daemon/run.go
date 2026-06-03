@@ -81,7 +81,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	keystorePasswordFile := fs.String("keystore-password-file", "", "file containing keystore password; alternative: LIVEPEER_KEYSTORE_PASSWORD env var")
 	orchAddress := fs.String("orch-address", "", "orchestrator on-chain address; required in reward / both modes")
 
-	gasLimit := fs.Uint64("gas-limit", 1_000_000, "gas limit for round-init and reward txs")
+	gasLimit := fs.Uint64("gas-limit", 1_000_000, "gas limit for all on-chain txs (round-init, reward, transcoder, transfer-bond, withdraw-fees, treasury vote, service-URI)")
 	minBalanceWei := fs.String("min-balance-wei", "5000000000000000", "preflight: refuse to start when wallet balance is below this (wei, decimal)")
 	initJitter := fs.Duration("init-jitter", 0, "max random delay before initializeRound; 0 = disabled")
 

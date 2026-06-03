@@ -50,7 +50,8 @@ services:
       # you run multiple protocol-daemons that might race for the
       # round-init slot — single-orchestrator deployments leave this 0.
       # - --init-jitter=${INIT_JITTER:-0s}
-      # Optional: gas limit for round-init / reward txs (default 1M).
+      # Optional: gas limit for all on-chain txs — round-init, reward,
+      # transcoder, transfer-bond, withdraw-fees, treasury vote (default 1M).
       # - --gas-limit=${GAS_LIMIT:-1000000}
       # Logging — recommend json for production log aggregators.
       - --log-level=${LOG_LEVEL:-info}

@@ -34,8 +34,8 @@ only secure-orch produces signatures.
 
 ## Sign cycle
 
-The operator-driven cycle (plan 0019 §7) is the only path that emits
-a signature:
+The operator-driven cycle (plan 0019 §7) is the only path that uses the
+**cold key** to produce a signature:
 
 1. Operator uploads a candidate manifest via the web form.
 2. Console renders the structural diff against `last-signed.json`.
@@ -46,7 +46,15 @@ a signature:
    returns it to the operator as a download.
 6. Operator uploads the signed envelope to the coordinator.
 
-No automation. No daemon. The console has no scheduler.
+The console itself runs no scheduler and the cold key signs nothing but
+manifests. It does, however, act as a **remote control** for the local
+`protocol-daemon`: the Protocol-actions page issues session-gated gRPC
+requests (set cut/share, transfer-bond, withdraw-fees, treasury vote,
+operational-config edits) over the daemon's unix socket. Those on-chain
+transactions are signed by the **daemon's** keystore (the orchestrator's
+hot key), never by the cold key here — so the cold-key trust boundary
+above is unchanged. Automation (per-round reward, round-locked
+transfer/withdraw) is the daemon's scheduler, not the console's.
 
 ## Canonicalization
 

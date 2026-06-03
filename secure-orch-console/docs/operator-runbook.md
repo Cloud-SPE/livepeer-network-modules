@@ -79,6 +79,33 @@ matching coordinator timeline section during the hand-carry cycle.
    coordinator double-verifies, then publishes at
    `/.well-known/livepeer-registry.json`.
 
+## Protocol actions
+
+When the console is started with a `protocol-daemon` unix socket
+(`PROTOCOL_DAEMON_SOCKET`), the **Protocol actions** page lets the operator
+drive the daemon's on-chain orchestrator operations and edit its automation
+config. Available actions: force initialize-round / reward, set reward & fee
+cut, force transfer bonded LPT, force withdraw ETH fees, cast a treasury
+proposal vote (with a pre-vote lookup panel), set Service/AI-Service-Registry
+URI, and an **Operational config** form (the auto-* toggles + fund-movement
+receivers/thresholds; changes apply next round).
+
+Trust boundary — important: **these are not cold-key operations.** The
+console does not sign them and never sends the cold key. It makes a
+session-authenticated gRPC call over the unix socket, gated by the same
+typed-confirmation gesture (type the full signer address) and recorded in
+the audit log. The **protocol-daemon signs the transaction with its own
+keystore** — the orchestrator's hot key, which must equal the registered
+orchestrator address. The cold key on this host is used *only* for manifest
+signing.
+
+Treasury voting prerequisite: the cast-vote and pre-vote lookup work only if
+the protocol-daemon was started with `--treasury-address` (the
+LivepeerGovernor contract). Without it the daemon returns `Unimplemented`
+and the treasury panel shows that error — fix it on the daemon side, not in
+the console. See
+[`../../protocol-daemon/docs/operator-runbook.md`](../../protocol-daemon/docs/operator-runbook.md).
+
 ## Recovery
 
 If the operator signed a wrong candidate but caught the mistake before

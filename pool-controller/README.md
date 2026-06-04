@@ -260,6 +260,13 @@ Broker runtime apply contract:
   to `30000`.
 - `bootstrap.broker_admin_timeout_ms` controls the broker admin HTTP timeout
   and defaults to `5000`.
+- `listen.worker_quic` is rendered into the broker host config as
+  `listen.worker_quic`; the controller itself does not bind that UDP listener.
+- `bootstrap.public_controller_url`, `bootstrap.public_broker_url`, and
+  `bootstrap.public_broker_quic_addr` are copied into downloaded member bundles
+  as `POOL_CONTROLLER_URL`, `POOL_BROKER_URL`, and `POOL_BROKER_QUIC_ADDR`.
+  Set these when the public member signup URL and public broker URL are not the
+  same origin, or when connected workers should use QUIC.
 
 Current public endpoints:
 

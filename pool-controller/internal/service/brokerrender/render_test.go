@@ -12,6 +12,7 @@ func TestRenderUsesActiveAssignmentsOnly(t *testing.T) {
 	input := RenderInput{
 		Bootstrap: BootstrapBrokerSettings{
 			Identity: config.Identity{OrchEthAddress: "0xorch"},
+			Listen:   config.Listen{WorkerQUIC: ":8443"},
 		},
 		Offers: []types.Offer{{
 			ID:              "offer-1",
@@ -62,6 +63,7 @@ func TestRenderConnectedTemplateAssignments(t *testing.T) {
 	input := RenderInput{
 		Bootstrap: BootstrapBrokerSettings{
 			Identity: config.Identity{OrchEthAddress: "0xorch"},
+			Listen:   config.Listen{WorkerQUIC: ":8443"},
 		},
 		Offers: []types.Offer{{
 			ID:              "offer-chat",
@@ -123,6 +125,7 @@ func TestRenderConnectedTemplateAssignments(t *testing.T) {
 		"template_id: chat-4090",
 		"max_in_flight: 2",
 		"queue_limit: 4",
+		"worker_quic: :8443",
 	} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("rendered YAML missing %q:\n%s", want, raw)

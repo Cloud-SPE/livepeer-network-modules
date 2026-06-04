@@ -23,26 +23,26 @@
 
 services:
   payment-daemon-receiver:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-payment-daemon:${TAG}
     command:
       - --mode=receiver
       - --socket=/var/run/livepeer/payment-daemon.sock
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
-      - --chain-rpc=${CHAIN_RPC:-}
+      - --chain-rpc=${CHAIN_RPC}
       - --orch-address=${ORCH_ADDRESS:?set ORCH_ADDRESS}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
-      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
-      - --redeem-gas=${REDEEM_GAS:-500000}
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT}
+      - --redeem-gas=${REDEEM_GAS}
     volumes:
       - ${PAYMENT_KEYSTORE}:/etc/livepeer/keystore.json:ro
       - ${PAYMENT_KEYSTORE_PASSWORD_FILE}:/etc/livepeer/keystore-password:ro
-      - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${LIVEPEER_SOCKET_DIR}:/var/run/livepeer
       - payment-daemon-db:/var/lib/livepeer/payment-daemon
     restart: unless-stopped
 
   capability-broker:
-    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-capability-broker:${TAG}
     depends_on:
       payment-daemon-receiver:
         condition: service_started
@@ -51,85 +51,86 @@ services:
       - --listen=:8080
       - --metrics=:9090
     environment:
-      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
-      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:-}
+      LOG_LEVEL: ${BROKER_LOG_LEVEL}
+      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN}
     ports:
-      - "${BROKER_PUBLIC_BIND:-0.0.0.0}:${BROKER_LISTEN_PORT:-8082}:8080"
-      - "${BROKER_METRICS_BIND:-127.0.0.1}:${BROKER_METRICS_PORT:-9092}:9090"
+      - "${BROKER_PUBLIC_BIND}:${BROKER_LISTEN_PORT}:8080"
+      - "${BROKER_WORKER_QUIC_BIND}:${BROKER_WORKER_QUIC_PORT}:8443/udp"
+      - "${BROKER_METRICS_BIND}:${BROKER_METRICS_PORT}:9090"
     volumes:
-      - ${POOL_BROKER_CONFIG:-./run/generated-broker-host-config.yaml}:/etc/livepeer/host-config.yaml:ro
-      - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${POOL_BROKER_CONFIG}:/etc/livepeer/host-config.yaml:ro
+      - ${LIVEPEER_SOCKET_DIR}:/var/run/livepeer
     restart: unless-stopped
 
   orch-coordinator:
-    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-orch-coordinator:${TAG}
     environment:
-      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS:-}
+      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS}
     command:
       - --config=/etc/livepeer/orch-coordinator.yaml
       - --data-dir=/srv/data
       - --listen=:8080
       - --public-listen=:8081
       - --metrics-listen=:9091
-      - --log-level=${COORDINATOR_LOG_LEVEL:-info}
-      - --log-format=${COORDINATOR_LOG_FORMAT:-text}
+      - --log-level=${COORDINATOR_LOG_LEVEL}
+      - --log-format=${COORDINATOR_LOG_FORMAT}
     ports:
-      - "${COORDINATOR_LISTEN_PORT:-8080}:8080"
-      - "${COORDINATOR_PUBLIC_PORT:-8081}:8081"
-      - "${COORDINATOR_METRICS_PORT:-9091}:9091"
+      - "${COORDINATOR_LISTEN_PORT}:8080"
+      - "${COORDINATOR_PUBLIC_PORT}:8081"
+      - "${COORDINATOR_METRICS_PORT}:9091"
     volumes:
-      - ${COORDINATOR_CONFIG:-./coordinator-config.yaml}:/etc/livepeer/orch-coordinator.yaml:ro
+      - ${COORDINATOR_CONFIG}:/etc/livepeer/orch-coordinator.yaml:ro
       - coordinator-data:/srv/data
     restart: unless-stopped
 
   pool-controller:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-controller:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-pool-controller:${TAG}
     command:
       - serve
       - --config=/etc/livepeer/pool-controller.yaml
       - --data-dir=/var/lib/livepeer/pool-controller
       - --listen=:8080
     environment:
-      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:-}
+      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN}
     ports:
-      - "${POOL_CONTROLLER_PORT:-8080}:8080"
-      - "${POOL_CONTROLLER_METRICS_PORT:-9090}:9090"
+      - "${POOL_CONTROLLER_PORT}:8080"
+      - "${POOL_CONTROLLER_METRICS_PORT}:9090"
     volumes:
-      - ${POOL_CONTROLLER_CONFIG:-../../../pool-controller/examples/pool-controller-config.compose.yaml}:/etc/livepeer/pool-controller.yaml:ro
-      - ${POOL_CONTROLLER_DATA_DIR:-./run/pool-controller}:/var/lib/livepeer/pool-controller
-      - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${POOL_CONTROLLER_CONFIG}:/etc/livepeer/pool-controller.yaml:ro
+      - ${POOL_CONTROLLER_DATA_DIR}:/var/lib/livepeer/pool-controller
+      - ${LIVEPEER_SOCKET_DIR}:/var/run/livepeer
     restart: unless-stopped
 
   pool-reconciler:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-reconciler:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-pool-reconciler:${TAG}
     depends_on:
       - pool-controller
     command:
       - watch-rounds
       - --config=/etc/livepeer/pool-reconciler.yaml
     environment:
-      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:-}
+      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN}
     volumes:
-      - ${POOL_RECONCILER_CONFIG:-../../../pool-reconciler/examples/pool-reconciler-config.compose.yaml}:/etc/livepeer/pool-reconciler.yaml:ro
-      - ${POOL_RECONCILER_STATE_DIR:-./run/pool-reconciler}:/var/lib/livepeer
-      - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${POOL_RECONCILER_CONFIG}:/etc/livepeer/pool-reconciler.yaml:ro
+      - ${POOL_RECONCILER_STATE_DIR}:/var/lib/livepeer
+      - ${LIVEPEER_SOCKET_DIR}:/var/run/livepeer
     restart: unless-stopped
 
   pool-payout-executor:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-payout-executor:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-pool-payout-executor:${TAG}
     depends_on:
       - pool-controller
     command:
       - reconcile-loop
       - --config=/etc/livepeer/pool-payout-executor.yaml
-      - --interval-ms=${POOL_PAYOUT_EXECUTOR_INTERVAL_MS:-5000}
+      - --interval-ms=${POOL_PAYOUT_EXECUTOR_INTERVAL_MS}
     environment:
-      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:-}
+      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN}
     volumes:
-      - ${POOL_PAYOUT_EXECUTOR_CONFIG:-../../../pool-payout-executor/examples/pool-payout-executor-config.compose.yaml}:/etc/livepeer/pool-payout-executor.yaml:ro
-      - ${POOL_PAYOUT_EXECUTOR_KEYSTORE:-../../../pool-payout-executor/examples/keystore.json}:/etc/livepeer/keystore.json:ro
-      - ${POOL_PAYOUT_EXECUTOR_KEYSTORE_PASSWORD_FILE:-../../../pool-payout-executor/examples/keystore-password}:/etc/livepeer/keystore-password:ro
-      - ${POOL_PAYOUT_EXECUTOR_STATE_DIR:-./run/pool-payout-executor}:/var/lib/livepeer
+      - ${POOL_PAYOUT_EXECUTOR_CONFIG}:/etc/livepeer/pool-payout-executor.yaml:ro
+      - ${POOL_PAYOUT_EXECUTOR_KEYSTORE}:/etc/livepeer/keystore.json:ro
+      - ${POOL_PAYOUT_EXECUTOR_KEYSTORE_PASSWORD_FILE}:/etc/livepeer/keystore-password:ro
+      - ${POOL_PAYOUT_EXECUTOR_STATE_DIR}:/var/lib/livepeer
     restart: unless-stopped
 
 volumes:

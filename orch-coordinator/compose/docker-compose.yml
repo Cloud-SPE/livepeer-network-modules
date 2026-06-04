@@ -8,23 +8,23 @@
 
 services:
   orch-coordinator:
-    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-orch-coordinator:${TAG}
     environment:
-      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS:-}
+      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS}
     command:
       - --config=/etc/livepeer/orch-coordinator.yaml
       - --data-dir=/srv/data
       - --listen=:8080
       - --public-listen=:8081
       - --metrics-listen=:9091
-      - --log-level=${COORDINATOR_LOG_LEVEL:-info}
-      - --log-format=${COORDINATOR_LOG_FORMAT:-text}
+      - --log-level=${COORDINATOR_LOG_LEVEL}
+      - --log-format=${COORDINATOR_LOG_FORMAT}
     ports:
-      - "${COORDINATOR_LISTEN_PORT:-8080}:8080"
-      - "${COORDINATOR_PUBLIC_PORT:-8081}:8081"
-      - "${COORDINATOR_METRICS_PORT:-9091}:9091"
+      - "${COORDINATOR_LISTEN_PORT}:8080"
+      - "${COORDINATOR_PUBLIC_PORT}:8081"
+      - "${COORDINATOR_METRICS_PORT}:9091"
     volumes:
-      - ${COORDINATOR_CONFIG:-../examples/coordinator-config.yaml}:/etc/livepeer/orch-coordinator.yaml:ro
+      - ${COORDINATOR_CONFIG}:/etc/livepeer/orch-coordinator.yaml:ro
       - coordinator-data:/srv/data
     restart: unless-stopped
     healthcheck:

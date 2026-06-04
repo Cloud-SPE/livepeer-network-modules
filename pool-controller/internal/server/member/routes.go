@@ -15,10 +15,13 @@ import (
 )
 
 type Deps struct {
-	Repo       *repo.StateRepo
-	Verifier   *backendverify.Service
-	Enrollment *memberenrollment.Service
-	Sessions   *SessionAuth
+	Repo                 *repo.StateRepo
+	Verifier             *backendverify.Service
+	Enrollment           *memberenrollment.Service
+	Sessions             *SessionAuth
+	PublicControllerURL  string
+	PublicBrokerURL      string
+	PublicBrokerQUICAddr string
 }
 
 func Register(mux *http.ServeMux, deps Deps) {
@@ -139,12 +142,13 @@ func Register(mux *http.ServeMux, deps Deps) {
 		assignments := listEnrollmentAssignments(deps.Repo, enrollment.ID)
 		templates, _ := deps.Repo.ListTemplateCatalogEntries()
 		body, err := memberenrollment.RenderBundleZip(memberenrollment.BundleInput{
-			ControllerURL: requestBaseURL(r),
-			BrokerURL:     requestBaseURL(r),
-			Enrollment:    enrollment,
-			Token:         token,
-			Assignments:   assignments,
-			Templates:     templates,
+			ControllerURL:  defaultString(deps.PublicControllerURL, requestBaseURL(r)),
+			BrokerURL:      defaultString(deps.PublicBrokerURL, requestBaseURL(r)),
+			BrokerQUICAddr: strings.TrimSpace(deps.PublicBrokerQUICAddr),
+			Enrollment:     enrollment,
+			Token:          token,
+			Assignments:    assignments,
+			Templates:      templates,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -377,6 +381,14 @@ func requestBaseURL(r *http.Request) string {
 		host = forwardedHost
 	}
 	return scheme + "://" + host
+}
+
+func defaultString(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value
+	}
+	return fallback
 }
 
 func listEnrollmentAssignments(stateRepo *repo.StateRepo, enrollmentID string) []types.TemplateAssignment {

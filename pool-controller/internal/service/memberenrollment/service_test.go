@@ -90,10 +90,11 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 	}
 
 	raw, err := RenderBundleZip(BundleInput{
-		ControllerURL: "http://controller",
-		BrokerURL:     "https://broker",
-		Enrollment:    created.Enrollment,
-		Token:         created.Token,
+		ControllerURL:  "http://controller",
+		BrokerURL:      "https://broker",
+		BrokerQUICAddr: "broker.example.com:8443",
+		Enrollment:     created.Enrollment,
+		Token:          created.Token,
 		Assignments: []types.TemplateAssignment{{
 			ID:         "assign-chat-1",
 			TemplateID: "chat-4090",
@@ -126,6 +127,9 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 	envBody := zipFileBody(t, zr, ".env")
 	if !bytes.Contains(envBody, []byte("POOL_ENROLLMENT_TOKEN_FILE=/run/livepeer/enrollment-token")) {
 		t.Fatalf(".env missing token file: %s", string(envBody))
+	}
+	if !bytes.Contains(envBody, []byte("POOL_BROKER_QUIC_ADDR=broker.example.com:8443")) {
+		t.Fatalf(".env missing broker quic addr: %s", string(envBody))
 	}
 	if !bytes.Contains(envBody, []byte("POOL_BROKER_SESSION_CREDENTIAL=")) || !bytes.Contains(envBody, []byte("POOL_WORKER_BACKENDS=assign-chat-1=http://chat-runner:9000")) {
 		t.Fatalf(".env missing broker session fields: %s", string(envBody))

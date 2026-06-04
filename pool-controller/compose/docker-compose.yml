@@ -9,19 +9,19 @@
 
 services:
   pool-controller:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-controller:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-pool-controller:${TAG}
     command:
       - serve
       - --config=/etc/livepeer/pool-controller.yaml
       - --data-dir=/var/lib/livepeer/pool-controller
       - --listen=:8080
     environment:
-      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:-}
+      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN}
     ports:
-      - "${POOL_CONTROLLER_PORT:-8080}:8080"
-      - "${POOL_CONTROLLER_METRICS_PORT:-9090}:9090"
+      - "${POOL_CONTROLLER_PORT}:8080"
+      - "${POOL_CONTROLLER_METRICS_PORT}:9090"
     volumes:
-      - ${POOL_CONTROLLER_CONFIG:-../examples/pool-controller-config.compose.yaml}:/etc/livepeer/pool-controller.yaml:ro
-      - ${POOL_CONTROLLER_DATA_DIR:-./run/data}:/var/lib/livepeer/pool-controller
-      - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${POOL_CONTROLLER_CONFIG}:/etc/livepeer/pool-controller.yaml:ro
+      - ${POOL_CONTROLLER_DATA_DIR}:/var/lib/livepeer/pool-controller
+      - ${LIVEPEER_SOCKET_DIR}:/var/run/livepeer
     restart: unless-stopped

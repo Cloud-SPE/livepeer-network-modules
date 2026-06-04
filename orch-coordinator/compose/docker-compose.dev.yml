@@ -12,9 +12,9 @@
 services:
   # Synthetic-fixture mode for smoke tests. No config file required.
   orch-coordinator-dev:
-    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-orch-coordinator:${TAG}
     environment:
-      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS:-}
+      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS}
     command:
       - --dev
       - --listen=:8080
@@ -22,9 +22,9 @@ services:
       - --metrics-listen=:9091
       - --log-level=debug
     ports:
-      - "${COORDINATOR_LISTEN_PORT:-8080}:8080"
-      - "${COORDINATOR_PUBLIC_PORT:-8081}:8081"
-      - "${COORDINATOR_METRICS_PORT:-9091}:9091"
+      - "${COORDINATOR_LISTEN_PORT}:8080"
+      - "${COORDINATOR_PUBLIC_PORT}:8081"
+      - "${COORDINATOR_METRICS_PORT}:9091"
 
 volumes:
   coordinator-data: {}

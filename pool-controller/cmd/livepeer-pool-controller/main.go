@@ -673,9 +673,19 @@ func countPersistedEntities(stateRepo *repo.StateRepo) (memberCount, backendCoun
 func newServeMux(state *runtimeState) *http.ServeMux {
 	mux := http.NewServeMux()
 	verifier := backendverify.New(state.repo)
+	cfg, _, _, _ := state.Snapshot()
+	var publicControllerURL, publicBrokerURL, publicBrokerQUICAddr string
+	if cfg != nil {
+		publicControllerURL = cfg.Bootstrap.PublicControllerURL
+		publicBrokerURL = cfg.Bootstrap.PublicBrokerURL
+		publicBrokerQUICAddr = cfg.Bootstrap.PublicBrokerQUICAddr
+	}
 	memberserver.Register(mux, memberserver.Deps{
-		Repo:     state.repo,
-		Verifier: verifier,
+		Repo:                 state.repo,
+		Verifier:             verifier,
+		PublicControllerURL:  publicControllerURL,
+		PublicBrokerURL:      publicBrokerURL,
+		PublicBrokerQUICAddr: publicBrokerQUICAddr,
 	})
 	adminserver.Register(mux, adminserver.Deps{
 		Repo:            state.repo,

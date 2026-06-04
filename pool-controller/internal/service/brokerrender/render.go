@@ -39,10 +39,16 @@ type RenderResult struct {
 
 type BrokerConfig struct {
 	Identity      config.Identity      `yaml:"identity"`
-	Listen        config.Listen        `yaml:"listen,omitempty"`
+	Listen        BrokerListen         `yaml:"listen,omitempty"`
 	PaymentDaemon config.PaymentDaemon `yaml:"payment_daemon,omitempty"`
 	ReceiptSink   config.ReceiptSink   `yaml:"receipt_sink,omitempty"`
 	Capabilities  []BrokerCapability   `yaml:"capabilities"`
+}
+
+type BrokerListen struct {
+	Paid       string `yaml:"paid,omitempty"`
+	Metrics    string `yaml:"metrics,omitempty"`
+	WorkerQUIC string `yaml:"worker_quic,omitempty"`
 }
 
 type BrokerCapability struct {
@@ -249,8 +255,12 @@ func Render(input RenderInput) (RenderResult, error) {
 	})
 
 	model := BrokerConfig{
-		Identity:      input.Bootstrap.Identity,
-		Listen:        input.Bootstrap.Listen,
+		Identity: input.Bootstrap.Identity,
+		Listen: BrokerListen{
+			Paid:       input.Bootstrap.Listen.Paid,
+			Metrics:    input.Bootstrap.Listen.Metrics,
+			WorkerQUIC: input.Bootstrap.Listen.WorkerQUIC,
+		},
 		PaymentDaemon: input.Bootstrap.PaymentDaemon,
 		ReceiptSink:   input.Bootstrap.ReceiptSink,
 		Capabilities:  capabilities,

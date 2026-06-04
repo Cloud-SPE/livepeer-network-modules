@@ -24,8 +24,8 @@
 services:
   orch-coordinator:
     ports:
-      - "${COORDINATOR_ADMIN_BIND:-127.0.0.1}:${COORDINATOR_LISTEN_PORT:-8080}:8080"
-      - "${COORDINATOR_METRICS_BIND:-127.0.0.1}:${COORDINATOR_METRICS_PORT:-9091}:9091"
+      - "${COORDINATOR_ADMIN_BIND}:${COORDINATOR_LISTEN_PORT}:8080"
+      - "${COORDINATOR_METRICS_BIND}:${COORDINATOR_METRICS_PORT}:9091"
     networks:
       - default
       - ingress

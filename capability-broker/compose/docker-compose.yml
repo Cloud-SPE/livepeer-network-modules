@@ -13,40 +13,40 @@
 
 services:
   capability-broker:
-    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-capability-broker:${TAG}
     command:
       - --config=/etc/livepeer/host-config.yaml
       - --listen=:8080
       - --metrics=:9090
     environment:
-      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
+      LOG_LEVEL: ${BROKER_LOG_LEVEL}
     ports:
-      - "${BROKER_LISTEN_PORT:-8080}:8080"
-      - "${BROKER_METRICS_PORT:-9090}:9090"
+      - "${BROKER_LISTEN_PORT}:8080"
+      - "${BROKER_METRICS_PORT}:9090"
     volumes:
-      - ${BROKER_CONFIG:-../examples/host-config.example.yaml}:/etc/livepeer/host-config.yaml:ro
-      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${BROKER_CONFIG}:/etc/livepeer/host-config.yaml:ro
+      - ${PAYMENT_DAEMON_SOCKET_DIR}:/var/run/livepeer
     restart: unless-stopped
 
   # Opt-in RTMP listener for rtmp-ingress-hls-egress@v0 mode.
   # Enable with `--profile rtmp`. Maps :1935 + GPU device passthrough.
   capability-broker-rtmp:
-    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-capability-broker:${TAG}
     profiles: [rtmp]
     command:
       - --config=/etc/livepeer/host-config.yaml
       - --listen=:8080
       - --metrics=:9090
       - --rtmp-listen-addr=:1935
-      - --encoder=${BROKER_ENCODER:-auto}
+      - --encoder=${BROKER_ENCODER}
     environment:
-      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
+      LOG_LEVEL: ${BROKER_LOG_LEVEL}
     ports:
-      - "${BROKER_LISTEN_PORT:-8080}:8080"
-      - "${BROKER_METRICS_PORT:-9090}:9090"
-      - "${BROKER_RTMP_PORT:-1935}:1935"
+      - "${BROKER_LISTEN_PORT}:8080"
+      - "${BROKER_METRICS_PORT}:9090"
+      - "${BROKER_RTMP_PORT}:1935"
     volumes:
-      - ${BROKER_CONFIG:-../examples/host-config.example.yaml}:/etc/livepeer/host-config.yaml:ro
-      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${BROKER_CONFIG}:/etc/livepeer/host-config.yaml:ro
+      - ${PAYMENT_DAEMON_SOCKET_DIR}:/var/run/livepeer
     runtime: nvidia
     restart: unless-stopped

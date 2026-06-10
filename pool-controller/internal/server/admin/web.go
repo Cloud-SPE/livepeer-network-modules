@@ -22,6 +22,7 @@ const uiVersion = "dev"
 // uiPages lists the operator-UI content templates, keyed by ActivePage.
 var uiPages = []string{
 	"overview",
+	"pool",
 	"offers",
 	"join-requests",
 	"members",

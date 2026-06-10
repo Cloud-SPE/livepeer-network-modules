@@ -25,6 +25,11 @@ type RPC interface {
 	PendingCallContract(ctx context.Context, msg ethereum.CallMsg) ([]byte, error)
 	CodeAt(ctx context.Context, addr chain.Address, blockNumber *big.Int) ([]byte, error)
 
+	// EstimateGas simulates msg and returns the gas it would consume. Used to
+	// size a transaction's gas limit from the live pool state rather than a
+	// static config value.
+	EstimateGas(ctx context.Context, msg ethereum.CallMsg) (uint64, error)
+
 	// Transaction submission and tracking.
 	SendTransaction(ctx context.Context, tx *types.Transaction) error
 	TransactionByHash(ctx context.Context, hash chain.TxHash) (*types.Transaction, bool, error)

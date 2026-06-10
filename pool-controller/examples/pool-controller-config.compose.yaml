@@ -8,6 +8,7 @@ admin_auth:
 listen:
   paid: ":8080"
   metrics: ":9090"
+  worker_quic: ":8443"
 
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock
@@ -18,3 +19,8 @@ receipt_sink:
   auth:
     method: bearer
     secret_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
+
+bootstrap:
+  public_controller_url: https://pool.example.com
+  public_broker_url: https://pool.example.com
+  public_broker_quic_addr: pool.example.com:8443

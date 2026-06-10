@@ -83,6 +83,10 @@ type ReceiptMeta struct {
 	OfferingID       string
 	MemberEthAddress string
 	BackendID        string
+	HostEnrollmentID string
+	HardwareUnitID   string
+	GPUUUID          string
+	TemplateID       string
 	ExpectedMaxUnits uint64
 }
 
@@ -400,18 +404,25 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 
 			if receiptSink != nil && actual > 0 {
 				if meta, ok := state.ReceiptMeta(); ok {
+					revenue := metaGatewayRevenue(meta, spec, actual)
 					if err := receiptSink.UpsertWorkReceipt(ctx, receipts.WorkReceipt{
-						ID:                meta.WorkID,
-						RoundID:           meta.RoundID,
-						RequestID:         meta.RequestID,
-						CapabilityID:      meta.CapabilityID,
-						OfferingID:        meta.OfferingID,
-						MemberEthAddress:  meta.MemberEthAddress,
-						BackendID:         meta.BackendID,
-						ExpectedMaxUnits:  meta.ExpectedMaxUnits,
-						ActualUnits:       actual,
-						GatewayRevenueWei: metaGatewayRevenue(meta, spec, actual),
-						Status:            "final",
+						ID:                   meta.WorkID,
+						RoundID:              meta.RoundID,
+						RequestID:            meta.RequestID,
+						CapabilityID:         meta.CapabilityID,
+						OfferingID:           meta.OfferingID,
+						MemberEthAddress:     meta.MemberEthAddress,
+						BackendID:            meta.BackendID,
+						HostEnrollmentID:     meta.HostEnrollmentID,
+						HardwareUnitID:       meta.HardwareUnitID,
+						GPUUUID:              meta.GPUUUID,
+						TemplateID:           meta.TemplateID,
+						ExpectedMaxUnits:     meta.ExpectedMaxUnits,
+						ActualUnits:          actual,
+						AcceptedWorkUnits:    actual,
+						GatewayRevenueWei:    revenue,
+						AttributedRevenueWei: revenue,
+						Status:               "final",
 					}); err != nil {
 						observability.RecordWorkReceiptEmit("final", "error")
 						log.Printf("warning: work receipt final emit failed work_id=%s: %v", meta.WorkID, err)

@@ -12,8 +12,10 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/admissionreview"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/assignmentpolicy"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/backendverify"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/certification"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/offerservice"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/runtimeservice"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/settlement"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/statusservice"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ui/web"
@@ -32,6 +34,7 @@ type Deps struct {
 	GetMembersJSON      func() ([]byte, error)
 	GetOfferingsJSON    func() ([]byte, error)
 	GetStateJSON        func() ([]byte, error)
+	KillWorkerSession   func(string) error
 }
 
 type RuntimeApplyInfo struct {
@@ -92,20 +95,20 @@ type runtimeView struct {
 }
 
 type runtimeHistoryItem struct {
-	Kind                 string         `json:"kind"`
-	Status               string         `json:"status"`
-	OccurredAt           time.Time      `json:"occurred_at"`
-	Actor                string         `json:"actor,omitempty"`
-	ResourceID           string         `json:"resource_id,omitempty"`
-	DesiredRevision      string         `json:"desired_revision,omitempty"`
-	CurrentRevision      string         `json:"current_revision,omitempty"`
-	AppliedRevision      string         `json:"applied_revision,omitempty"`
-	BrokerReloadAttemptID string        `json:"broker_reload_attempt_id,omitempty"`
-	BrokerLoadedRevision string         `json:"broker_loaded_revision,omitempty"`
-	BrokerReloadStatus   string         `json:"broker_reload_status,omitempty"`
-	BrokerReloadError    string         `json:"broker_reload_error,omitempty"`
-	Error                string         `json:"error,omitempty"`
-	Details              map[string]any `json:"details,omitempty"`
+	Kind                  string         `json:"kind"`
+	Status                string         `json:"status"`
+	OccurredAt            time.Time      `json:"occurred_at"`
+	Actor                 string         `json:"actor,omitempty"`
+	ResourceID            string         `json:"resource_id,omitempty"`
+	DesiredRevision       string         `json:"desired_revision,omitempty"`
+	CurrentRevision       string         `json:"current_revision,omitempty"`
+	AppliedRevision       string         `json:"applied_revision,omitempty"`
+	BrokerReloadAttemptID string         `json:"broker_reload_attempt_id,omitempty"`
+	BrokerLoadedRevision  string         `json:"broker_loaded_revision,omitempty"`
+	BrokerReloadStatus    string         `json:"broker_reload_status,omitempty"`
+	BrokerReloadError     string         `json:"broker_reload_error,omitempty"`
+	Error                 string         `json:"error,omitempty"`
+	Details               map[string]any `json:"details,omitempty"`
 }
 
 func Register(mux *http.ServeMux, deps Deps) {
@@ -189,6 +192,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 		})
 	}
 	mux.HandleFunc("GET /admin", uiPage("overview", "Overview"))
+	mux.HandleFunc("GET /admin/pool", uiPage("pool", "Pool"))
 	mux.HandleFunc("GET /admin/offers", uiPage("offers", "Offers"))
 	mux.HandleFunc("GET /admin/join-requests", uiPage("join-requests", "Join requests"))
 	mux.HandleFunc("GET /admin/members", uiPage("members", "Members & backends"))
@@ -203,6 +207,212 @@ func Register(mux *http.ServeMux, deps Deps) {
 		w.Header().Set("Content-Type", "application/yaml")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(deps.GetBrokerConfig())
+	}))
+	mux.HandleFunc("GET /admin/v1/pool-members", auth(func(w http.ResponseWriter, _ *http.Request) {
+		items, err := deps.Repo.ListPoolMembers()
+		writeAdminJSON(w, struct {
+			PoolMembers []types.PoolMember `json:"pool_members"`
+		}{PoolMembers: items}, err)
+	}))
+	mux.HandleFunc("GET /admin/v1/host-enrollments", auth(func(w http.ResponseWriter, _ *http.Request) {
+		items, err := deps.Repo.ListHostEnrollments()
+		writeAdminJSON(w, struct {
+			HostEnrollments []types.HostEnrollment `json:"host_enrollments"`
+		}{HostEnrollments: items}, err)
+	}))
+	mux.HandleFunc("POST /admin/v1/host-enrollments/{id}/revoke", auth(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.PathValue("id"))
+		if id == "" {
+			http.Error(w, "host enrollment id is required", http.StatusBadRequest)
+			return
+		}
+		enrollment, err := deps.Repo.RevokeHostEnrollment(id, "operator_revoke", time.Now().UTC())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		killed := killEnrollmentAssignments(deps.Repo, id, deps.KillWorkerSession)
+		writeAdminJSON(w, struct {
+			Enrollment types.HostEnrollment `json:"enrollment"`
+			Killed     []string             `json:"killed_worker_sessions,omitempty"`
+		}{Enrollment: enrollment, Killed: killed}, nil)
+	}))
+	mux.HandleFunc("GET /admin/v1/hardware-units", auth(func(w http.ResponseWriter, _ *http.Request) {
+		items, err := deps.Repo.ListHardwareUnits()
+		writeAdminJSON(w, struct {
+			HardwareUnits []types.HardwareUnit `json:"hardware_units"`
+		}{HardwareUnits: items}, err)
+	}))
+	mux.HandleFunc("GET /admin/v1/template-catalog", auth(func(w http.ResponseWriter, _ *http.Request) {
+		items, err := deps.Repo.ListTemplateCatalogEntries()
+		writeAdminJSON(w, struct {
+			Templates []types.TemplateCatalogEntry `json:"templates"`
+		}{Templates: items}, err)
+	}))
+	mux.HandleFunc("POST /admin/v1/template-catalog", auth(func(w http.ResponseWriter, r *http.Request) {
+		var item types.TemplateCatalogEntry
+		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		now := time.Now().UTC()
+		if item.CreatedAt.IsZero() {
+			item.CreatedAt = now
+		}
+		item.UpdatedAt = now
+		if item.Status == "" {
+			item.Status = types.TemplateStatusActive
+		}
+		if err := deps.Repo.PutTemplateCatalogEntry(item); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeAdminJSON(w, item, nil)
+	}))
+	mux.HandleFunc("GET /admin/v1/template-assignments", auth(func(w http.ResponseWriter, _ *http.Request) {
+		items, err := deps.Repo.ListTemplateAssignments()
+		writeAdminJSON(w, struct {
+			Assignments []types.TemplateAssignment `json:"assignments"`
+		}{Assignments: items}, err)
+	}))
+	mux.HandleFunc("POST /admin/v1/template-assignments", auth(func(w http.ResponseWriter, r *http.Request) {
+		var item types.TemplateAssignment
+		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		now := time.Now().UTC()
+		if item.CreatedAt.IsZero() {
+			item.CreatedAt = now
+		}
+		item.UpdatedAt = now
+		if item.State == "" {
+			item.State = types.TemplateAssignmentPending
+		}
+		if item.Role == "" {
+			item.Role = types.TemplateAssignmentPrimary
+		}
+		if err := deps.Repo.PutTemplateAssignment(item); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeAdminJSON(w, item, nil)
+	}))
+	mux.HandleFunc("POST /admin/v1/template-assignments/{id}/certification/start", auth(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.PathValue("id"))
+		run, err := certification.New(deps.Repo).StartAssignmentCertification(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeAdminJSON(w, run, nil)
+	}))
+	mux.HandleFunc("GET /admin/v1/certification-runs", auth(func(w http.ResponseWriter, _ *http.Request) {
+		items, err := deps.Repo.ListCertificationRuns()
+		writeAdminJSON(w, struct {
+			CertificationRuns []types.CertificationRun `json:"certification_runs"`
+		}{CertificationRuns: items}, err)
+	}))
+	mux.HandleFunc("POST /admin/v1/certification-runs/{id}/complete", auth(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Passed        bool                        `json:"passed"`
+			Results       []types.CertificationResult `json:"results,omitempty"`
+			FailureReason string                      `json:"failure_reason,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		run, err := certification.New(deps.Repo).CompleteRun(certification.CompleteRequest{
+			RunID:         strings.TrimSpace(r.PathValue("id")),
+			Passed:        req.Passed,
+			Results:       req.Results,
+			FailureReason: req.FailureReason,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeAdminJSON(w, run, nil)
+	}))
+	mux.HandleFunc("GET /admin/v1/settlement-windows", auth(func(w http.ResponseWriter, _ *http.Request) {
+		items, err := deps.Repo.ListSettlementWindows()
+		writeAdminJSON(w, struct {
+			SettlementWindows []types.SettlementWindow `json:"settlement_windows"`
+		}{SettlementWindows: items}, err)
+	}))
+	mux.HandleFunc("POST /admin/v1/settlement-windows/close", auth(func(w http.ResponseWriter, r *http.Request) {
+		var req settlement.CloseRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		window, batch, err := settlement.New(deps.Repo).CloseWindow(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeAdminJSON(w, struct {
+			Window types.SettlementWindow `json:"window"`
+			Batch  types.PayoutBatch      `json:"batch"`
+		}{Window: window, Batch: batch}, nil)
+	}))
+	mux.HandleFunc("GET /admin/v1/payout-batches", auth(func(w http.ResponseWriter, _ *http.Request) {
+		items, err := deps.Repo.ListPayoutBatches()
+		writeAdminJSON(w, struct {
+			PayoutBatches []types.PayoutBatch `json:"payout_batches"`
+		}{PayoutBatches: items}, err)
+	}))
+	mux.HandleFunc("POST /admin/v1/payout-batches/{id}/approve", auth(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.PathValue("id"))
+		if id == "" {
+			http.Error(w, "batch id is required", http.StatusBadRequest)
+			return
+		}
+		batch, err := deps.Repo.GetPayoutBatch(id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if batch.Status != types.PayoutBatchPendingApproval {
+			http.Error(w, "only pending_approval payout batches can be approved", http.StatusBadRequest)
+			return
+		}
+		now := time.Now().UTC()
+		actor := strings.TrimSpace(actorFromRequest(r))
+		if actor == "" {
+			actor = "operator"
+		}
+		intents := materializePayoutIntents(batch, now)
+		for _, intent := range intents {
+			if err := deps.Repo.SavePayoutIntent(intent); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		batch.Status = types.PayoutBatchApproved
+		batch.ApprovedBy = actor
+		batch.ApprovedAt = now
+		batch.UpdatedAt = now
+		if err := deps.Repo.PutPayoutBatch(batch); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+			Kind:         "payout_batch_approved",
+			OccurredAt:   now,
+			Actor:        actor,
+			ResourceID:   batch.ID,
+			ResourceType: "payout_batch",
+			Details: map[string]any{
+				"settlement_window_id": batch.SettlementWindowID,
+				"payout_intents":       len(intents),
+			},
+		})
+		writeAdminJSON(w, struct {
+			Batch   types.PayoutBatch    `json:"batch"`
+			Intents []types.PayoutIntent `json:"intents"`
+		}{Batch: batch, Intents: intents}, nil)
 	}))
 	mux.HandleFunc("GET /admin/v1/members", auth(func(w http.ResponseWriter, _ *http.Request) {
 		if deps.GetMembersJSON == nil {
@@ -989,6 +1199,67 @@ func stringDetail(details map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func writeAdminJSON(w http.ResponseWriter, value any, err error) {
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func materializePayoutIntents(batch types.PayoutBatch, now time.Time) []types.PayoutIntent {
+	intents := make([]types.PayoutIntent, 0, len(batch.LineItems))
+	for i, line := range batch.LineItems {
+		if strings.TrimSpace(line.AmountWei) == "" || strings.TrimSpace(line.AmountWei) == "0" {
+			continue
+		}
+		id := fmt.Sprintf("payout-%s-%04d", batch.ID, i)
+		destination := strings.TrimSpace(line.DestinationAddress)
+		if destination == "" {
+			destination = line.MemberEthAddress
+		}
+		intents = append(intents, types.PayoutIntent{
+			ID:                 id,
+			CreatedAt:          now,
+			RoundReceiptID:     batch.SettlementWindowID,
+			RoundID:            batch.SettlementWindowID,
+			MemberEthAddress:   line.MemberEthAddress,
+			DestinationAddress: destination,
+			ChainID:            42161,
+			Asset:              "native_eth",
+			AmountWei:          line.AmountWei,
+			Status:             "exported",
+			ExportedAt:         now,
+		})
+	}
+	return intents
+}
+
+func killEnrollmentAssignments(stateRepo *repo.StateRepo, enrollmentID string, kill func(string) error) []string {
+	if stateRepo == nil || kill == nil {
+		return nil
+	}
+	units, err := stateRepo.ListHardwareUnitsByEnrollment(enrollmentID)
+	if err != nil {
+		return nil
+	}
+	var killed []string
+	for _, unit := range units {
+		assignments, err := stateRepo.ListTemplateAssignmentsByHardwareUnit(unit.ID)
+		if err != nil {
+			continue
+		}
+		for _, assignment := range assignments {
+			if err := kill(assignment.ID); err == nil {
+				killed = append(killed, assignment.ID)
+			}
+		}
+	}
+	return killed
 }
 
 func assignmentFromRequest(req assignmentMutationRequest) (types.Assignment, error) {

@@ -52,7 +52,7 @@ Current top-level components include `livepeer-network-protocol/`,
 `capability-broker/`, `payment-daemon/`, `orch-coordinator/`,
 `secure-orch-console/`, `protocol-daemon/`, `service-registry-daemon/`,
 `chain-commons/`, `proto-contracts/`, `pool-controller/`,
-`pool-reconciler/`, and `pool-payout-executor/`. Additional components still
+`pool-reconciler/`, `pool-payout-executor/`, and `pool-member-agent/`. Additional components still
 land as top-level subfolders as the rewrite expands.
 
 ## Doing work in this repo

@@ -12,6 +12,14 @@
     let latestAssignmentCandidates = [];
     let latestAuditEvents = [];
     let latestRuntimeHistory = [];
+    let latestPoolMembers = [];
+    let latestHostEnrollments = [];
+    let latestHardwareUnits = [];
+    let latestTemplateCatalog = [];
+    let latestTemplateAssignments = [];
+    let latestCertificationRuns = [];
+    let latestSettlementWindows = [];
+    let latestPayoutBatches = [];
 
     function auditQuery() {
       const params = new URLSearchParams();
@@ -389,16 +397,142 @@
     function renderOverview() {
       const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
       set("ovOffers", (latestOffers || []).length);
-      set("ovMembers", (latestMembers || []).length);
-      set("ovBackends", (latestBackends || []).length);
-      set("ovAssignments", (latestAssignments || []).length);
+      set("ovMembers", (latestPoolMembers || []).length);
+      set("ovBackends", (latestHardwareUnits || []).length);
+      set("ovAssignments", (latestTemplateAssignments || []).length);
       set("ovRuntime", runtimeSummary(latestRuntime));
+    }
+
+    function renderConnectedPool() {
+      const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+      set("poolMemberCount", latestPoolMembers.length);
+      set("poolEnrollmentCount", latestHostEnrollments.length);
+      set("poolHardwareCount", latestHardwareUnits.length);
+      set("poolAssignmentCount", latestTemplateAssignments.length);
+      set("poolWindowCount", latestSettlementWindows.filter(item => item.status === "open" || item.status === "closing" || item.status === "pending_approval").length);
+      renderSimpleCards("poolMembers", latestPoolMembers, item =>
+        "<strong>" + (item.eth_address || item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + (item.payout_mode || "eth") + '</span></div>' +
+        '<div class="small">' + (item.contact || item.display_name || "") + '</div>'
+      );
+      renderSimpleCards("poolEnrollments", latestHostEnrollments, item =>
+        "<strong>" + item.id + "</strong>" +
+        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span></div>' +
+        '<div class="small">' + (item.host_label || "unlabeled host") + '</div>' +
+        '<div class="mono">' + (item.member_eth_address || "") + '</div>' +
+        ((item.status === "active" || item.status === "pending") ? '<div class="row"><button class="secondary" data-enrollment-revoke="' + item.id + '">Revoke</button></div>' : "")
+      );
+      const enrollmentHost = $("poolEnrollments");
+      if (enrollmentHost) {
+        enrollmentHost.querySelectorAll("[data-enrollment-revoke]").forEach(btn => btn.onclick = async () => {
+          try {
+            setStatus("Revoking host enrollment...");
+            await api("/admin/v1/host-enrollments/" + btn.dataset.enrollmentRevoke + "/revoke", { method: "POST", body: "{}" });
+            await refreshAll();
+          } catch (err) {
+            setStatus(err.message, "bad");
+          }
+        });
+      }
+      renderSimpleCards("poolHardware", latestHardwareUnits, item =>
+        "<strong>" + (item.gpu_model || item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + (item.state || "unknown") + '</span><span class="pill">' + (item.gpu_uuid || "no uuid") + '</span></div>' +
+        '<div class="small">host ' + (item.enrollment_id || "") + '</div>'
+      );
+      renderSimpleCards("poolTemplates", latestTemplateCatalog, item =>
+        "<strong>" + item.id + "</strong>" +
+        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + (item.interaction_mode || "") + '</span></div>' +
+        '<div class="small">' + (item.capability_id || "") + " / " + (item.offering_id || "") + '</div>'
+      );
+      renderSimpleCards("poolAssignments", latestTemplateAssignments, item =>
+        "<strong>" + item.id + "</strong>" +
+        '<div class="row"><span class="pill">' + (item.state || "unknown") + '</span><span class="pill">' + (item.role || "primary") + '</span></div>' +
+        '<div class="small">' + (item.template_id || "") + " on " + (item.hardware_unit_id || "") + '</div>' +
+        ((item.state === "pending" || item.state === "throttled") ? '<div class="row"><button class="secondary" data-cert-start="' + item.id + '">Start certification</button></div>' : "")
+      );
+      const assignmentHost = $("poolAssignments");
+      if (assignmentHost) {
+        assignmentHost.querySelectorAll("[data-cert-start]").forEach(btn => btn.onclick = async () => {
+          try {
+            setStatus("Starting certification...");
+            await api("/admin/v1/template-assignments/" + btn.dataset.certStart + "/certification/start", { method: "POST", body: "{}" });
+            await refreshAll();
+          } catch (err) {
+            setStatus(err.message, "bad");
+          }
+        });
+      }
+      renderSimpleCards("poolCertificationRuns", latestCertificationRuns, item =>
+        "<strong>" + item.id + "</strong>" +
+        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + (item.execution_path || "") + '</span></div>' +
+        '<div class="small">' + (item.assignment_id || "") + '</div>' +
+        (item.status === "running" ? '<div class="row"><button class="secondary" data-cert-pass="' + item.id + '">Pass</button><button class="secondary" data-cert-fail="' + item.id + '">Fail</button></div>' : "")
+      );
+      const certHost = $("poolCertificationRuns");
+      if (certHost) {
+        certHost.querySelectorAll("[data-cert-pass]").forEach(btn => btn.onclick = async () => {
+          try {
+            setStatus("Completing certification...");
+            await api("/admin/v1/certification-runs/" + btn.dataset.certPass + "/complete", { method: "POST", body: JSON.stringify({ passed: true }) });
+            await refreshAll();
+          } catch (err) {
+            setStatus(err.message, "bad");
+          }
+        });
+        certHost.querySelectorAll("[data-cert-fail]").forEach(btn => btn.onclick = async () => {
+          try {
+            const failure_reason = window.prompt("Failure reason", "smoke failed") || "smoke failed";
+            setStatus("Failing certification...");
+            await api("/admin/v1/certification-runs/" + btn.dataset.certFail + "/complete", { method: "POST", body: JSON.stringify({ passed: false, failure_reason }) });
+            await refreshAll();
+          } catch (err) {
+            setStatus(err.message, "bad");
+          }
+        });
+      }
+      renderSimpleCards("poolSettlementWindows", latestSettlementWindows, item =>
+        "<strong>" + item.id + "</strong>" +
+        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">scale ' + (item.settlement_scale_ppm || 0) + ' ppm</span></div>' +
+        '<div class="small">attributed ' + (item.attributed_revenue_wei || "0") + " / confirmed " + (item.confirmed_revenue_wei || "0") + '</div>'
+      );
+      renderSimpleCards("poolPayoutBatches", latestPayoutBatches, item =>
+        "<strong>" + item.id + "</strong>" +
+        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + ((item.line_items || []).length) + ' rows</span></div>' +
+        '<div class="small">total ' + (item.total_amount_wei || "0") + '</div>' +
+        (item.status === "pending_approval" ? '<div class="row"><button class="secondary" data-payout-approve="' + item.id + '">Approve</button></div>' : "")
+      );
+      const payoutHost = $("poolPayoutBatches");
+      if (payoutHost) {
+        payoutHost.querySelectorAll("[data-payout-approve]").forEach(btn => btn.onclick = async () => {
+          try {
+            setStatus("Approving payout batch...");
+            await api("/admin/v1/payout-batches/" + btn.dataset.payoutApprove + "/approve", { method: "POST", body: "{}" });
+            await refreshAll();
+          } catch (err) {
+            setStatus(err.message, "bad");
+          }
+        });
+      }
+    }
+
+    function renderSimpleCards(hostID, items, render) {
+      const host = $(hostID);
+      if (!host) return;
+      host.innerHTML = "";
+      if (!items || !items.length) {
+        const empty = document.createElement("div");
+        empty.className = "card";
+        empty.innerHTML = '<span class="muted">No records</span>';
+        host.appendChild(empty);
+        return;
+      }
+      items.forEach(item => host.appendChild(card(render(item))));
     }
 
     async function refreshAll() {
       setStatus("Refreshing control-plane state...");
       try {
-        const [auditEvents, offers, joinRequests, members, backends, assignmentCandidates, assignments, runtime, runtimeHistory, brokerConfig] = await Promise.all([
+        const [auditEvents, offers, joinRequests, members, backends, assignmentCandidates, assignments, runtime, runtimeHistory, brokerConfig, poolMembers, hostEnrollments, hardwareUnits, templateCatalog, templateAssignments, certificationRuns, settlementWindows, payoutBatches] = await Promise.all([
           api(auditQuery()),
           api("/admin/v1/offers"),
           api("/admin/v1/join-requests"),
@@ -408,13 +542,29 @@
           api("/admin/v1/assignments"),
           api("/admin/v1/broker-runtime"),
           api("/admin/v1/broker-runtime/history?limit=12"),
-          api("/admin/v1/broker-config", { headers: tokenHeaders(false) })
+          api("/admin/v1/broker-config", { headers: tokenHeaders(false) }),
+          api("/admin/v1/pool-members"),
+          api("/admin/v1/host-enrollments"),
+          api("/admin/v1/hardware-units"),
+          api("/admin/v1/template-catalog"),
+          api("/admin/v1/template-assignments"),
+          api("/admin/v1/certification-runs"),
+          api("/admin/v1/settlement-windows"),
+          api("/admin/v1/payout-batches")
         ]);
 
         latestOffers = offers.offers || [];
         latestMembers = members.members || [];
         latestBackends = backends.backends || [];
         latestAssignments = assignments.assignments || [];
+        latestPoolMembers = poolMembers.pool_members || [];
+        latestHostEnrollments = hostEnrollments.host_enrollments || [];
+        latestHardwareUnits = hardwareUnits.hardware_units || [];
+        latestTemplateCatalog = templateCatalog.templates || [];
+        latestTemplateAssignments = templateAssignments.assignments || [];
+        latestCertificationRuns = certificationRuns.certification_runs || [];
+        latestSettlementWindows = settlementWindows.settlement_windows || [];
+        latestPayoutBatches = payoutBatches.payout_batches || [];
         latestRuntime = runtime;
         latestAssignmentCandidates = assignmentCandidates.candidates || [];
         latestAuditEvents = auditEvents.events || [];
@@ -430,6 +580,7 @@
         renderAssignments(assignments.assignments || []);
         renderRuntime(runtime, brokerConfig);
         renderRuntimeHistory(runtimeHistory.items || []);
+        renderConnectedPool();
         renderOverview();
         setStatus("Control-plane state refreshed.", "ok");
       } catch (err) {

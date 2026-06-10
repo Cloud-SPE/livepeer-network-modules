@@ -2,7 +2,7 @@
 <section class="summary">
   <p class="eyebrow">Pool Control Plane</p>
   <h1>Overview</h1>
-  <p class="muted">Operator console for the pool control plane: offers, join requests, members and backends, assignments, and broker runtime. Nothing is published until an approved backend is assigned to an orch-owned offer.</p>
+  <p class="muted">Operator console for the pool control plane: connected members, host enrollments, GPU inventory, templates, certification, payout windows, and broker runtime.</p>
 </section>
 
 <section>
@@ -13,15 +13,15 @@
       <p class="metric-value"><span id="ovOffers">—</span></p>
     </article>
     <article class="metric-card">
-      <p class="metric-label">Members</p>
+      <p class="metric-label">Pool members</p>
       <p class="metric-value"><span id="ovMembers">—</span></p>
     </article>
     <article class="metric-card">
-      <p class="metric-label">Backends</p>
+      <p class="metric-label">Hardware units</p>
       <p class="metric-value"><span id="ovBackends">—</span></p>
     </article>
     <article class="metric-card">
-      <p class="metric-label">Assignments</p>
+      <p class="metric-label">Template assignments</p>
       <p class="metric-value"><span id="ovAssignments">—</span></p>
     </article>
     <article class="metric-card">
@@ -29,6 +29,6 @@
       <p class="metric-value"><span id="ovRuntime">—</span></p>
     </article>
   </div>
-  <p class="muted">Paste an admin token in the topbar to populate these metrics, then use the left navigation to drive each task surface.</p>
+  <p class="muted">Use Pool for member enrollment and assignment state, Offers for the public workload catalog, and Broker runtime for published config convergence.</p>
 </section>
 {{end}}

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -135,6 +136,21 @@ func validate(cfg *Config) error {
 	if cfg.Bootstrap.BrokerAdminTimeoutMS < 0 {
 		return fmt.Errorf("bootstrap.broker_admin_timeout_ms must be >= 0")
 	}
+	if cfg.Bootstrap.PublicControllerURL != "" {
+		if err := validateHTTPURL("bootstrap.public_controller_url", cfg.Bootstrap.PublicControllerURL); err != nil {
+			return err
+		}
+	}
+	if cfg.Bootstrap.PublicBrokerURL != "" {
+		if err := validateHTTPURL("bootstrap.public_broker_url", cfg.Bootstrap.PublicBrokerURL); err != nil {
+			return err
+		}
+	}
+	if cfg.Bootstrap.PublicBrokerQUICAddr != "" {
+		if err := validateHostPort("bootstrap.public_broker_quic_addr", cfg.Bootstrap.PublicBrokerQUICAddr); err != nil {
+			return err
+		}
+	}
 	if cfg.SyntheticProbes.IntervalMS < 0 {
 		return fmt.Errorf("synthetic_probes.interval_ms must be >= 0")
 	}
@@ -212,6 +228,31 @@ func validate(cfg *Config) error {
 		if cfg.ReceiptSink.TimeoutMS < 0 {
 			return fmt.Errorf("receipt_sink.timeout_ms must be >= 0")
 		}
+	}
+	return nil
+}
+
+func validateHTTPURL(field, raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("%s is invalid: %w", field, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%s scheme must be http or https (got %q)", field, u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%s host is required", field)
+	}
+	return nil
+}
+
+func validateHostPort(field, raw string) error {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("%s must be host:port: %w", field, err)
+	}
+	if strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
+		return fmt.Errorf("%s must include host and port", field)
 	}
 	return nil
 }

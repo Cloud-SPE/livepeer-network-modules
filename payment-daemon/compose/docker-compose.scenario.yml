@@ -18,52 +18,52 @@
 
 services:
   receiver:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-dev}
+    image: ${REGISTRY}/livepeer-payment-daemon:${TAG}
     profiles: [receiver]
     command:
       - --mode=receiver
       - --socket=/var/run/livepeer/payment-daemon.sock
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
-      - --chain-rpc=${CHAIN_RPC:-}
+      - --chain-rpc=${CHAIN_RPC}
       - --keystore-path=/etc/livepeer/receiver-keystore.json
       - --keystore-password-file=/etc/livepeer/receiver-keystore-password
-      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
-      - --redeem-gas=${REDEEM_GAS:-500000}
-      - --redemption-interval=${REDEMPTION_INTERVAL:-30s}
-      - --redemption-confirmations=${REDEMPTION_CONFIRMATIONS:-4}
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT}
+      - --redeem-gas=${REDEEM_GAS}
+      - --redemption-interval=${REDEMPTION_INTERVAL}
+      - --redemption-confirmations=${REDEMPTION_CONFIRMATIONS}
     environment:
-      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_RECEIVER_KEYSTORE_PASSWORD:-}
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_RECEIVER_KEYSTORE_PASSWORD}
     volumes:
       - payment-daemon-run:/var/run/livepeer
       - payment-daemon-db:/var/lib/livepeer/payment-daemon
-      - ${RECEIVER_KEYSTORE_PATH:-./run/receiver-keystore.json}:/etc/livepeer/receiver-keystore.json:ro
-      - ${RECEIVER_KEYSTORE_PASSWORD_FILE:-./run/receiver-keystore-password}:/etc/livepeer/receiver-keystore-password:ro
+      - ${RECEIVER_KEYSTORE_PATH}:/etc/livepeer/receiver-keystore.json:ro
+      - ${RECEIVER_KEYSTORE_PASSWORD_FILE}:/etc/livepeer/receiver-keystore-password:ro
     restart: unless-stopped
 
   sender:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-dev}
+    image: ${REGISTRY}/livepeer-payment-daemon:${TAG}
     profiles: [sender]
     command:
       - --mode=sender
       - --socket=/var/run/livepeer/payer-daemon.sock
-      - --chain-rpc=${CHAIN_RPC:-}
+      - --chain-rpc=${CHAIN_RPC}
       - --keystore-path=/etc/livepeer/sender-keystore.json
       - --keystore-password-file=/etc/livepeer/sender-keystore-password
     environment:
-      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_SENDER_KEYSTORE_PASSWORD:-}
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_SENDER_KEYSTORE_PASSWORD}
     volumes:
       - payment-daemon-run:/var/run/livepeer
-      - ${SENDER_KEYSTORE_PATH:-./run/sender-keystore.json}:/etc/livepeer/sender-keystore.json:ro
-      - ${SENDER_KEYSTORE_PASSWORD_FILE:-./run/sender-keystore-password}:/etc/livepeer/sender-keystore-password:ro
+      - ${SENDER_KEYSTORE_PATH}:/etc/livepeer/sender-keystore.json:ro
+      - ${SENDER_KEYSTORE_PASSWORD_FILE}:/etc/livepeer/sender-keystore-password:ro
     restart: unless-stopped
 
   payout-sim:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-dev}
+    image: ${REGISTRY}/livepeer-payment-daemon:${TAG}
     profiles: [sim]
     entrypoint: ["/usr/local/bin/payout-sim"]
     command:
-      - --scenario=/scenarios/${SCENARIO_FILE:-openai-chat-qwen3-8b.yaml}
-      - --format=${SIM_FORMAT:-text}
+      - --scenario=/scenarios/${SCENARIO_FILE}
+      - --format=${SIM_FORMAT}
     volumes:
       - ../scenarios:/scenarios:ro
       - payment-daemon-run:/var/run/livepeer

@@ -93,6 +93,38 @@ bootstrap:
 	}
 }
 
+func TestLoadPublicPoolURLsAndWorkerQUIC(t *testing.T) {
+	cfg, err := Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+listen:
+  worker_quic: ":8443"
+bootstrap:
+  public_controller_url: https://pool.example.com
+  public_broker_url: https://broker.example.com
+  public_broker_quic_addr: broker.example.com:8443
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Listen.WorkerQUIC; got != ":8443" {
+		t.Fatalf("Listen.WorkerQUIC = %q, want :8443", got)
+	}
+	if got := cfg.Bootstrap.PublicBrokerQUICAddr; got != "broker.example.com:8443" {
+		t.Fatalf("Bootstrap.PublicBrokerQUICAddr = %q, want broker.example.com:8443", got)
+	}
+
+	_, err = Load([]byte(`
+identity:
+  orch_eth_address: 0x123
+bootstrap:
+  public_broker_quic_addr: broker.example.com
+`))
+	if err == nil || !strings.Contains(err.Error(), "bootstrap.public_broker_quic_addr") {
+		t.Fatalf("Load() error = %v, want public broker quic addr validation", err)
+	}
+}
+
 func TestLoadScoringWeightDefaultsFollowPartialOverride(t *testing.T) {
 	cfg, err := Load([]byte(`
 identity:

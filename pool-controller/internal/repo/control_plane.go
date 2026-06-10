@@ -10,12 +10,21 @@ import (
 )
 
 const (
-	offersBucket         = "offers"
-	joinRequestsBucket   = "join_requests"
-	membersBucket        = "members"
-	memberBackendsBucket = "member_backends"
-	assignmentsBucket    = "assignments"
-	auditEventsBucket    = "audit_events"
+	offersBucket              = "offers"
+	joinRequestsBucket        = "join_requests"
+	membersBucket             = "members"
+	memberBackendsBucket      = "member_backends"
+	assignmentsBucket         = "assignments"
+	auditEventsBucket         = "audit_events"
+	poolMembersBucket         = "pool_members_v2"
+	memberNoncesBucket        = "member_nonces"
+	hostEnrollmentsBucket     = "host_enrollments"
+	hardwareUnitsBucket       = "hardware_units"
+	templateCatalogBucket     = "template_catalog"
+	templateAssignmentsBucket = "template_assignments"
+	certificationRunsBucket   = "certification_runs"
+	settlementWindowsBucket   = "settlement_windows"
+	payoutBatchesBucket       = "payout_batches"
 )
 
 func (r *StateRepo) initControlPlaneBuckets(tx *bolt.Tx) error {
@@ -26,6 +35,15 @@ func (r *StateRepo) initControlPlaneBuckets(tx *bolt.Tx) error {
 		memberBackendsBucket,
 		assignmentsBucket,
 		auditEventsBucket,
+		poolMembersBucket,
+		memberNoncesBucket,
+		hostEnrollmentsBucket,
+		hardwareUnitsBucket,
+		templateCatalogBucket,
+		templateAssignmentsBucket,
+		certificationRunsBucket,
+		settlementWindowsBucket,
+		payoutBatchesBucket,
 		desiredBrokerRuntimeBucket,
 		appliedBrokerRuntimeBucket,
 	} {

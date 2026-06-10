@@ -67,6 +67,32 @@ func (c *Client) ReloadAndConfirm(desiredRevision string) (*RuntimeStatus, error
 	return status, nil
 }
 
+func (c *Client) KillWorkerSession(backendID string) error {
+	if c == nil || c.baseURL == "" {
+		return nil
+	}
+	backendID = strings.TrimSpace(backendID)
+	if backendID == "" {
+		return fmt.Errorf("backend id is required")
+	}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, c.baseURL+"/admin/v1/worker-sessions/"+backendID+"/kill", nil)
+	if err != nil {
+		return err
+	}
+	if err := applyAuth(req, c.auth); err != nil {
+		return err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("broker worker-session kill request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("broker worker-session kill request returned status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *Client) postReload() (*RuntimeStatus, error) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, c.baseURL+"/admin/v1/runtime/reload", nil)
 	if err != nil {

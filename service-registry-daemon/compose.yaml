@@ -18,7 +18,7 @@ services:
     # in .env to upgrade). For local development, comment out `image:`
     # and uncomment the `build:` block below — context is the monorepo
     # root because the daemon's go.mod uses `replace ../chain-commons`.
-    image: tztcloud/livepeer-service-registry-daemon:${REGISTRY_IMAGE_TAG:-v1.4.0}
+    image: tztcloud/livepeer-service-registry-daemon:${REGISTRY_IMAGE_TAG}
     # build:
     #   context: ..
     #   dockerfile: service-registry-daemon/Dockerfile
@@ -32,7 +32,7 @@ services:
       - --socket=/var/run/livepeer/service-registry.sock
       - --store-path=/var/lib/livepeer/registry-cache.db
       - --chain-rpc=${CHAIN_RPC}
-      - --chain-id=${CHAIN_ID:-42161}
+      - --chain-id=${CHAIN_ID}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
       # Optional: cold orch identity distinct from the keystore's signing
@@ -46,8 +46,8 @@ services:
       # ServiceRegistry writes now live in protocol-daemon. Publisher
       # mode here is manifest-signing only.
       # Logging — recommend json for production log aggregators.
-      - --log-level=${LOG_LEVEL:-info}
-      - --log-format=${LOG_FORMAT:-json}
+      - --log-level=${LOG_LEVEL}
+      - --log-format=${LOG_FORMAT}
       # Prometheus listener — set METRICS_PORT empty in .env to disable.
       # The daemon's recommended port is 9091 per
       # docs/conventions/ports.md (livepeer-modules-project monorepo).
@@ -56,7 +56,7 @@ services:
     # Uncomment to expose the metrics port to the host. Bind to
     # 127.0.0.1 when scraping from a Prometheus on the same host.
     # ports:
-    #   - "127.0.0.1:${METRICS_PORT:-9091}:${METRICS_PORT:-9091}"
+    #   - "127.0.0.1:${METRICS_PORT}:${METRICS_PORT}"
 
     volumes:
       # Keystore + password: read-only bind mounts. Operator produces

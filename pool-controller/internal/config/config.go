@@ -20,8 +20,9 @@ type Identity struct {
 }
 
 type Listen struct {
-	Paid    string `yaml:"paid,omitempty"`
-	Metrics string `yaml:"metrics,omitempty"`
+	Paid       string `yaml:"paid,omitempty"`
+	Metrics    string `yaml:"metrics,omitempty"`
+	WorkerQUIC string `yaml:"worker_quic,omitempty"`
 }
 
 type SyntheticProbes struct {
@@ -92,6 +93,9 @@ type Bootstrap struct {
 	BrokerAdminURL       string     `yaml:"broker_admin_url,omitempty"`
 	BrokerAdminAuth      AuthConfig `yaml:"broker_admin_auth,omitempty"`
 	BrokerAdminTimeoutMS int        `yaml:"broker_admin_timeout_ms,omitempty"`
+	PublicControllerURL  string     `yaml:"public_controller_url,omitempty"`
+	PublicBrokerURL      string     `yaml:"public_broker_url,omitempty"`
+	PublicBrokerQUICAddr string     `yaml:"public_broker_quic_addr,omitempty"`
 }
 
 type WorkUnit struct {

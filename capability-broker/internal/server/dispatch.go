@@ -52,6 +52,14 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 			"no eligible backend currently available for "+capID+"/"+offID)
 		return
 	}
+	releaseBackend, reserved := s.reserveBackend(cap)
+	if !reserved {
+		w.Header().Set(livepeerheader.Backoff, "5")
+		livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrCapacityExhausted,
+			"selected backend is at max in-flight capacity")
+		return
+	}
+	defer releaseBackend()
 	observability.RecordBackendSelection(cap.ID, cap.OfferingID, cap.Backend.ID)
 	if state := middleware.SessionStateFromContext(r.Context()); state != nil {
 		meta := middleware.ReceiptMeta{
@@ -61,6 +69,10 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 			OfferingID:       cap.OfferingID,
 			MemberEthAddress: poolMemberEthAddress(cap),
 			BackendID:        cap.Backend.ID,
+			HostEnrollmentID: cap.Backend.HostEnrollmentID,
+			HardwareUnitID:   cap.Backend.HardwareUnitID,
+			GPUUUID:          cap.Backend.GPUUUID,
+			TemplateID:       cap.Backend.TemplateID,
 		}
 		state.SetReceiptMeta(meta)
 		if s.receiptSink != nil && meta.WorkID != "" && meta.MemberEthAddress != "" && meta.BackendID != "" {
@@ -72,6 +84,10 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 				OfferingID:       meta.OfferingID,
 				MemberEthAddress: meta.MemberEthAddress,
 				BackendID:        meta.BackendID,
+				HostEnrollmentID: meta.HostEnrollmentID,
+				HardwareUnitID:   meta.HardwareUnitID,
+				GPUUUID:          meta.GPUUUID,
+				TemplateID:       meta.TemplateID,
 				Status:           "stub",
 			}); err != nil {
 				observability.RecordWorkReceiptEmit("stub", "error")

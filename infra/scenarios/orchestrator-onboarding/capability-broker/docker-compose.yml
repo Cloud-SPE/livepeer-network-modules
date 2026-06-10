@@ -21,30 +21,30 @@
 
 services:
   payment-daemon-receiver:
-    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-payment-daemon:${PAYMENT_TAG}
     container_name: payment-daemon-receiver
     hostname: payment-daemon-receiver
     command:
       - --mode=receiver
       - --socket=/var/run/livepeer/payment-daemon.sock
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
-      - --chain-rpc=${CHAIN_RPC:-}
+      - --chain-rpc=${CHAIN_RPC}
       - --orch-address=${ORCH_ADDRESS:?set ORCH_ADDRESS to the cold/on-chain orch identity}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
-      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
-      - --redeem-gas=${REDEEM_GAS:-500000}
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT}
+      - --redeem-gas=${REDEEM_GAS}
     environment:
-      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD}
     volumes:
-      - ${PAYMENT_KEYSTORE:-/opt/livepeer/payment-keystore.json}:/etc/livepeer/keystore.json:ro
-      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-/opt/livepeer/payment-keystore-password}:/etc/livepeer/keystore-password:ro
+      - ${PAYMENT_KEYSTORE}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE}:/etc/livepeer/keystore-password:ro
       - livepeer-run:/var/run/livepeer
       - payment-daemon-db:/var/lib/livepeer/payment-daemon
     restart: unless-stopped
 
   capability-broker:
-    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-capability-broker:${TAG}
     container_name: capability-broker
     hostname: capability-broker
     command:
@@ -52,16 +52,16 @@ services:
       - --listen=:8080
       - --metrics=:9090
     environment:
-      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
+      LOG_LEVEL: ${BROKER_LOG_LEVEL}
     ports:
       # Public broker endpoint. Gateways resolve your manifest from the
       # orch-coordinator, find this URL there, and call it directly. Put a
       # TLS-terminating reverse proxy in front of this in production.
-      - "${BROKER_PUBLIC_BIND:-0.0.0.0}:${BROKER_LISTEN_PORT:-8080}:8080"
+      - "${BROKER_PUBLIC_BIND}:${BROKER_LISTEN_PORT}:8080"
       # Metrics — keep private.
-      - "${BROKER_METRICS_BIND:-127.0.0.1}:${BROKER_METRICS_PORT:-9090}:9090"
+      - "${BROKER_METRICS_BIND}:${BROKER_METRICS_PORT}:9090"
     volumes:
-      - ${BROKER_CONFIG:-/opt/livepeer/host-config.yaml}:/etc/livepeer/host-config.yaml:ro
+      - ${BROKER_CONFIG}:/etc/livepeer/host-config.yaml:ro
       - livepeer-run:/var/run/livepeer
     restart: unless-stopped
     depends_on:

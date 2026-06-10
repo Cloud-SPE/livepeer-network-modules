@@ -71,6 +71,28 @@ slice also lets Pool snapshot state affect multi-backend selection:
 - `eligible` / `degraded` entries scale broker-local health weight by the
   snapshot's `effective_selection_score`
 
+For connected Pool workers, `pool-controller` renders backend URLs as
+`worker://{template_assignment_id}`. The broker treats those as virtual
+backends reached through an outbound worker session instead of dialing a public
+member URL. Worker sessions are authenticated with the rendered
+`backend.worker_session_credential` and expose assigned local runner services
+through either:
+
+- `listen.worker_quic` over QUIC, preferred for multiplexed streaming and large
+  multipart bodies; or
+- `GET /internal/v1/worker/session` over WebSocket as the egress-friendly
+  fallback.
+
+The runtime admin surface also exposes connected-worker operations:
+
+- `GET /admin/v1/worker-sessions`
+- `POST /admin/v1/worker-sessions/{backend_id}/kill`
+
+Per-backend `max_in_flight` is enforced before dispatch. For long-lived
+remote-runner sessions, the capacity slot is held until session finalization.
+`queue_limit` is rendered for policy visibility and future queueing, but v1
+dispatch currently fail-fasts when no eligible capacity is available.
+
 **This binary contains zero capability-specific code.** All workload knowledge
 lives in mode adapters and extractor implementations, both standardized in the
 spec.

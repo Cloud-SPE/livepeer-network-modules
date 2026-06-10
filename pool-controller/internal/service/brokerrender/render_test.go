@@ -12,6 +12,7 @@ func TestRenderUsesActiveAssignmentsOnly(t *testing.T) {
 	input := RenderInput{
 		Bootstrap: BootstrapBrokerSettings{
 			Identity: config.Identity{OrchEthAddress: "0xorch"},
+			Listen:   config.Listen{WorkerQUIC: ":8443"},
 		},
 		Offers: []types.Offer{{
 			ID:              "offer-1",
@@ -55,6 +56,80 @@ func TestRenderUsesActiveAssignmentsOnly(t *testing.T) {
 	}
 	if !strings.Contains(string(got.ConfigYAML), "member_eth_address") {
 		t.Fatalf("rendered YAML missing pool metadata: %s", string(got.ConfigYAML))
+	}
+}
+
+func TestRenderConnectedTemplateAssignments(t *testing.T) {
+	input := RenderInput{
+		Bootstrap: BootstrapBrokerSettings{
+			Identity: config.Identity{OrchEthAddress: "0xorch"},
+			Listen:   config.Listen{WorkerQUIC: ":8443"},
+		},
+		Offers: []types.Offer{{
+			ID:              "offer-chat",
+			CapabilityID:    "openai:chat-completions",
+			OfferingID:      "default",
+			InteractionMode: "http-stream@v0",
+			WorkUnit:        config.WorkUnit{Name: "tokens", Extractor: map[string]any{"type": "response-header"}},
+			Price:           config.Price{AmountWei: "1", PerUnits: 1},
+			Status:          types.OfferStatusActive,
+		}},
+		PoolMembers: []types.PoolMember{{
+			ID:         "0xmember",
+			EthAddress: "0xmember",
+			PayoutMode: "eth",
+			Status:     types.MemberStatusActive,
+		}},
+		HostEnrollments: []types.HostEnrollment{{
+			ID:                      "host-1",
+			MemberEthAddress:        "0xmember",
+			BrokerSessionCredential: "worker-secret",
+			Status:                  types.HostEnrollmentActive,
+		}},
+		HardwareUnits: []types.HardwareUnit{{
+			ID:               "gpu-1",
+			EnrollmentID:     "host-1",
+			MemberEthAddress: "0xmember",
+			GPUUUID:          "GPU-1",
+			State:            types.HardwareUnitActive,
+		}},
+		Templates: []types.TemplateCatalogEntry{{
+			ID:                 "chat-4090",
+			CapabilityID:       "openai:chat-completions",
+			OfferingID:         "default",
+			InteractionMode:    "http-stream@v0",
+			MaxInFlightDefault: 2,
+			QueueLimitDefault:  4,
+			Status:             types.TemplateStatusActive,
+		}},
+		TemplateAssignments: []types.TemplateAssignment{{
+			ID:               "assign-chat-1",
+			HardwareUnitID:   "gpu-1",
+			HostEnrollmentID: "host-1",
+			MemberEthAddress: "0xmember",
+			TemplateID:       "chat-4090",
+			State:            types.TemplateAssignmentActive,
+		}},
+	}
+	got, err := Render(input)
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	raw := string(got.ConfigYAML)
+	for _, want := range []string{
+		"worker://assign-chat-1",
+		"worker_session_credential: worker-secret",
+		"host_enrollment_id: host-1",
+		"hardware_unit_id: gpu-1",
+		"gpu_uuid: GPU-1",
+		"template_id: chat-4090",
+		"max_in_flight: 2",
+		"queue_limit: 4",
+		"worker_quic: :8443",
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("rendered YAML missing %q:\n%s", want, raw)
+		}
 	}
 }
 

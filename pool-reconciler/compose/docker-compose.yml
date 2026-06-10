@@ -8,14 +8,14 @@
 
 services:
   pool-reconciler:
-    image: ${REGISTRY:-tztcloud}/livepeer-pool-reconciler:${TAG:-v1.4.0}
+    image: ${REGISTRY}/livepeer-pool-reconciler:${TAG}
     command:
       - watch-rounds
       - --config=/etc/livepeer/pool-reconciler.yaml
     environment:
-      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:-}
+      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN}
     volumes:
-      - ${POOL_RECONCILER_CONFIG:-../examples/pool-reconciler-config.compose.yaml}:/etc/livepeer/pool-reconciler.yaml:ro
-      - ${POOL_RECONCILER_STATE_DIR:-./run/data}:/var/lib/livepeer
-      - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      - ${POOL_RECONCILER_CONFIG}:/etc/livepeer/pool-reconciler.yaml:ro
+      - ${POOL_RECONCILER_STATE_DIR}:/var/lib/livepeer
+      - ${LIVEPEER_SOCKET_DIR}:/var/run/livepeer
     restart: unless-stopped

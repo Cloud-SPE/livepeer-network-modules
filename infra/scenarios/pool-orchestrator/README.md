@@ -12,6 +12,7 @@ It includes:
 - `orch-coordinator`
 - `pool-reconciler`
 - `pool-payout-executor`
+- `pool-member-agent` image build support for downloaded member bundles
 
 It does **not** include the cold/protocol host. You still need the separate
 secure-orch side to run:
@@ -40,6 +41,7 @@ From the repo root:
 ```bash
 ./infra/scripts/build-images.sh \
   livepeer-pool-controller \
+  livepeer-pool-member-agent \
   livepeer-pool-reconciler \
   livepeer-pool-payout-executor \
   livepeer-capability-broker \
@@ -104,3 +106,7 @@ docker compose \
 - The broker runtime artifact applied by `pool-controller` carries
   `receipt_sink`, so broker-side work receipts flow back into
   `pool-controller` when configured in controller state/bootstrap config.
+- The compose file exposes broker worker QUIC on UDP
+  `${BROKER_WORKER_QUIC_PORT:-8443}`. Set `listen.worker_quic: ":8443"` and
+  `bootstrap.public_broker_quic_addr: "<public-host>:8443"` in the controller
+  config to put QUIC into generated broker config and member bundles.

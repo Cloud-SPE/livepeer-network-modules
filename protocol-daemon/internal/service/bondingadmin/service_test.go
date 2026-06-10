@@ -21,13 +21,18 @@ type fakeBM struct {
 	pendingFees  *big.Int
 	lastReward   chain.RoundNumber
 	packErr      error
+	hintErr      error
+	oldHints     bondingmanager.TranscoderPoolHints
+	newHints     bondingmanager.TranscoderPoolHints
+	packedHints  [4]chain.Address
 }
 
 func (f *fakeBM) Address() chain.Address { return chain.Address{0xBE} }
 func (f *fakeBM) PackTranscoder(_, _ uint64) ([]byte, error) {
 	return []byte{0x01, 0x02, 0x03, 0x04}, f.packErr
 }
-func (f *fakeBM) PackTransferBond(_ chain.Address, _ *big.Int, _, _, _, _ chain.Address) ([]byte, error) {
+func (f *fakeBM) PackTransferBond(_ chain.Address, _ *big.Int, oldPrev, oldNext, newPrev, newNext chain.Address) ([]byte, error) {
+	f.packedHints = [4]chain.Address{oldPrev, oldNext, newPrev, newNext}
 	return []byte{0x05, 0x06, 0x07, 0x08}, f.packErr
 }
 func (f *fakeBM) PackWithdrawFees(_ chain.Address, _ *big.Int) ([]byte, error) {
@@ -42,6 +47,12 @@ func (f *fakeBM) PendingFees(_ context.Context, _ chain.Address, _ chain.RoundNu
 func (f *fakeBM) GetTranscoder(_ context.Context, _ chain.Address) (bondingmanager.TranscoderInfo, error) {
 	return bondingmanager.TranscoderInfo{LastRewardRound: f.lastReward}, nil
 }
+func (f *fakeBM) TransferBondHints(_ context.Context, _ chain.Address, _ *big.Int) (bondingmanager.TranscoderPoolHints, bondingmanager.TranscoderPoolHints, error) {
+	if f.hintErr != nil {
+		return bondingmanager.TranscoderPoolHints{}, bondingmanager.TranscoderPoolHints{}, f.hintErr
+	}
+	return f.oldHints, f.newHints, nil
+}
 
 type fakeRM struct {
 	initialized bool
@@ -52,9 +63,10 @@ func (f *fakeRM) CurrentRoundInitialized(_ context.Context) (bool, error) { retu
 func (f *fakeRM) CurrentRoundLocked(_ context.Context) (bool, error)      { return f.locked, nil }
 
 type fakeTx struct {
-	submitted int
-	lastKind  string
-	err       error
+	submitted    int
+	lastKind     string
+	lastGasLimit uint64
+	err          error
 }
 
 func (f *fakeTx) Submit(_ context.Context, p txintent.Params) (txintent.IntentID, error) {
@@ -63,7 +75,23 @@ func (f *fakeTx) Submit(_ context.Context, p txintent.Params) (txintent.IntentID
 	}
 	f.submitted++
 	f.lastKind = p.Kind
+	f.lastGasLimit = p.GasLimit
 	return txintent.IntentID{0x01}, nil
+}
+
+// fakeEstimatingCaller is a Caller that also implements the optional
+// gasEstimator capability, so submitGuarded sizes gas from the estimate.
+type fakeEstimatingCaller struct {
+	fakeCaller
+	estimate    uint64
+	estimateErr error
+}
+
+func (f *fakeEstimatingCaller) EstimateGas(_ context.Context, _ ethereum.CallMsg) (uint64, error) {
+	if f.estimateErr != nil {
+		return 0, f.estimateErr
+	}
+	return f.estimate, nil
 }
 
 type fakeCaller struct {
@@ -282,5 +310,92 @@ func TestNewValidates(t *testing.T) {
 	_, err := New(Config{})
 	if err == nil {
 		t.Fatal("expected validation error on empty config")
+	}
+}
+
+func TestTransferBondPassesComputedHints(t *testing.T) {
+	tx := &fakeTx{}
+	bm := &fakeBM{
+		pendingStake: big.NewInt(1000),
+		oldHints:     bondingmanager.TranscoderPoolHints{PosPrev: chain.Address{0xA1}, PosNext: chain.Address{0xA2}},
+		newHints:     bondingmanager.TranscoderPoolHints{PosPrev: chain.Address{0xB1}, PosNext: chain.Address{0xB2}},
+	}
+	s := newService(t, bm, &fakeRM{initialized: true, locked: true}, tx, &fakeCaller{}, fakeConfig{enabledTransfer()})
+	if _, err := s.TransferBond(context.Background(), chain.Round{Number: 5}); err != nil {
+		t.Fatal(err)
+	}
+	want := [4]chain.Address{{0xA1}, {0xA2}, {0xB1}, {0xB2}}
+	if bm.packedHints != want {
+		t.Errorf("packed hints = %v, want %v", bm.packedHints, want)
+	}
+}
+
+func TestTransferBondFallsBackToZeroHintsOnError(t *testing.T) {
+	tx := &fakeTx{}
+	bm := &fakeBM{
+		pendingStake: big.NewInt(1000),
+		hintErr:      errors.New("rpc down"),
+		// hints set but should be ignored because hintErr is returned
+		oldHints: bondingmanager.TranscoderPoolHints{PosPrev: chain.Address{0xA1}},
+	}
+	s := newService(t, bm, &fakeRM{initialized: true, locked: true}, tx, &fakeCaller{}, fakeConfig{enabledTransfer()})
+	if _, err := s.TransferBond(context.Background(), chain.Round{Number: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if bm.packedHints != ([4]chain.Address{}) {
+		t.Errorf("expected zero hints on hint error, got %v", bm.packedHints)
+	}
+	if tx.submitted != 1 {
+		t.Errorf("expected submit despite hint failure, got %d", tx.submitted)
+	}
+}
+
+func TestGasEstimateRaisesLimitAboveFloor(t *testing.T) {
+	tx := &fakeTx{}
+	// estimate 2_000_000 -> +50% = 3_000_000, above the 1_000_000 floor.
+	caller := &fakeEstimatingCaller{estimate: 2_000_000}
+	s := newService(t, &fakeBM{pendingStake: big.NewInt(1000)}, &fakeRM{initialized: true, locked: true}, tx, caller, fakeConfig{enabledTransfer()})
+	if _, err := s.TransferBond(context.Background(), chain.Round{Number: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if tx.lastGasLimit != 3_000_000 {
+		t.Errorf("gas limit = %d, want 3_000_000", tx.lastGasLimit)
+	}
+}
+
+func TestGasEstimateFlooredToConfig(t *testing.T) {
+	tx := &fakeTx{}
+	// estimate 400_000 -> +50% = 600_000, below the 1_000_000 floor.
+	caller := &fakeEstimatingCaller{estimate: 400_000}
+	s := newService(t, &fakeBM{pendingStake: big.NewInt(1000)}, &fakeRM{initialized: true, locked: true}, tx, caller, fakeConfig{enabledTransfer()})
+	if _, err := s.TransferBond(context.Background(), chain.Round{Number: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if tx.lastGasLimit != 1_000_000 {
+		t.Errorf("gas limit = %d, want 1_000_000 (config floor)", tx.lastGasLimit)
+	}
+}
+
+func TestGasEstimateErrorFallsBackToConfig(t *testing.T) {
+	tx := &fakeTx{}
+	caller := &fakeEstimatingCaller{estimateErr: errors.New("estimate failed")}
+	s := newService(t, &fakeBM{pendingStake: big.NewInt(1000)}, &fakeRM{initialized: true, locked: true}, tx, caller, fakeConfig{enabledTransfer()})
+	if _, err := s.TransferBond(context.Background(), chain.Round{Number: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if tx.lastGasLimit != 1_000_000 {
+		t.Errorf("gas limit = %d, want 1_000_000 (config fallback)", tx.lastGasLimit)
+	}
+}
+
+func TestGasLimitStaticWhenCallerCannotEstimate(t *testing.T) {
+	tx := &fakeTx{}
+	// fakeCaller does not implement gasEstimator -> static config gas limit.
+	s := newService(t, &fakeBM{pendingStake: big.NewInt(1000)}, &fakeRM{initialized: true, locked: true}, tx, &fakeCaller{}, fakeConfig{enabledTransfer()})
+	if _, err := s.TransferBond(context.Background(), chain.Round{Number: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if tx.lastGasLimit != 1_000_000 {
+		t.Errorf("gas limit = %d, want 1_000_000", tx.lastGasLimit)
 	}
 }

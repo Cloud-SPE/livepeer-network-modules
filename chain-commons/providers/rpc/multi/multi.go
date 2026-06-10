@@ -438,6 +438,16 @@ func (m *MultiRPC) CodeAt(ctx context.Context, addr chain.Address, blockNumber *
 	return out, err
 }
 
+func (m *MultiRPC) EstimateGas(ctx context.Context, msg ethereum.CallMsg) (uint64, error) {
+	var out uint64
+	err := m.call(ctx, "EstimateGas", func(c *ethclient.Client) error {
+		var err error
+		out, err = c.EstimateGas(ctx, msg)
+		return err
+	})
+	return out, err
+}
+
 func (m *MultiRPC) SendTransaction(ctx context.Context, tx *types.Transaction) error {
 	return m.call(ctx, "SendTransaction", func(c *ethclient.Client) error {
 		return c.SendTransaction(ctx, tx)

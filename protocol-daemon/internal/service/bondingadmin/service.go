@@ -41,6 +41,15 @@ type BondingManager interface {
 	PendingStake(ctx context.Context, addr chain.Address, endRound chain.RoundNumber) (*big.Int, error)
 	PendingFees(ctx context.Context, addr chain.Address, endRound chain.RoundNumber) (*big.Int, error)
 	GetTranscoder(ctx context.Context, addr chain.Address) (bondingmanager.TranscoderInfo, error)
+	TransferBondHints(ctx context.Context, orch chain.Address, amount *big.Int) (oldHints, newHints bondingmanager.TranscoderPoolHints, err error)
+}
+
+// gasEstimator is the optional capability submitGuarded uses to size the gas
+// limit from a simulation instead of a static config value. The production
+// Caller (the multi-RPC client) implements it; test fakes that don't simply
+// fall back to the configured GasLimit.
+type gasEstimator interface {
+	EstimateGas(ctx context.Context, call ethereum.CallMsg) (uint64, error)
 }
 
 // RoundsManager is the subset of the rounds provider this service reads for
@@ -200,9 +209,22 @@ func (s *Service) TransferBond(ctx context.Context, round chain.Round) (ActionRe
 			Code:   SkipCodeNothingToTransfer,
 		}}, nil
 	}
+	// Compute SortedDoublyLL position hints so the on-chain pool reposition is
+	// O(1) instead of a full active-set scan. Hints are an optimization, not a
+	// correctness requirement: on failure we fall back to zero hints and let
+	// gas estimation size the (more expensive) full-scan transfer.
+	oldHints, newHints, err := s.cfg.BondingManager.TransferBondHints(ctx, s.cfg.OrchAddress, transferable)
+	if err != nil {
+		if s.cfg.Logger != nil {
+			s.cfg.Logger.Warn("transferBond hint computation failed; using zero hints",
+				logger.String("err_code", types.ErrCodeBondingAdminHintFailed),
+				logger.Err(err))
+		}
+		oldHints, newHints = bondingmanager.TranscoderPoolHints{}, bondingmanager.TranscoderPoolHints{}
+	}
 	calldata, err := s.cfg.BondingManager.PackTransferBond(
 		cfg.TransferBond.Receiver, transferable,
-		chain.Address{}, chain.Address{}, chain.Address{}, chain.Address{})
+		oldHints.PosPrev, oldHints.PosNext, newHints.PosPrev, newHints.PosNext)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -282,13 +304,14 @@ func (s *Service) submitGuarded(ctx context.Context, kind string, keyParams, cal
 		}
 		return ActionResult{}, fmt.Errorf("%s: %w", types.ErrCodeBondingAdminDryRunFailed, err)
 	}
+	gasLimit := s.gasLimitFor(ctx, kind, to, calldata)
 	id, err := s.cfg.TxIntent.Submit(ctx, txintent.Params{
 		Kind:      kind,
 		KeyParams: keyParams,
 		To:        to,
 		CallData:  calldata,
 		Value:     new(big.Int),
-		GasLimit:  s.cfg.GasLimit,
+		GasLimit:  gasLimit,
 		Metadata:  metadata,
 	})
 	if err != nil {
@@ -300,4 +323,35 @@ func (s *Service) submitGuarded(ctx context.Context, kind string, keyParams, cal
 			logger.String("intent_id", id.Hex()))
 	}
 	return ActionResult{IntentID: id}, nil
+}
+
+// gasLimitFor picks the gas limit for a submit. When the Caller can estimate
+// gas it simulates the exact calldata and applies 50% headroom (covering
+// SortedDoublyLL hint drift between estimate and mine); the configured
+// GasLimit acts as a floor so estimation can only ever raise the ceiling,
+// never lower it below the operator's configured value. If estimation is
+// unavailable or fails, the configured GasLimit is used unchanged.
+func (s *Service) gasLimitFor(ctx context.Context, kind string, to chain.Address, calldata []byte) uint64 {
+	est, ok := s.cfg.Caller.(gasEstimator)
+	if !ok {
+		return s.cfg.GasLimit
+	}
+	used, err := est.EstimateGas(ctx, ethereum.CallMsg{
+		From: s.cfg.OrchAddress,
+		To:   &to,
+		Data: calldata,
+	})
+	if err != nil {
+		if s.cfg.Logger != nil {
+			s.cfg.Logger.Warn("bondingadmin gas estimate failed; using configured GasLimit",
+				logger.String("kind", kind),
+				logger.Err(err))
+		}
+		return s.cfg.GasLimit
+	}
+	buffered := used + used/2
+	if buffered > s.cfg.GasLimit {
+		return buffered
+	}
+	return s.cfg.GasLimit
 }

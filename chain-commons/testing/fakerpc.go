@@ -33,6 +33,7 @@ type FakeRPC struct {
 	CallContractFunc        func(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
 	PendingCallContractFunc func(ctx context.Context, msg ethereum.CallMsg) ([]byte, error)
 	CodeAtFunc              func(ctx context.Context, addr chain.Address, blockNumber *big.Int) ([]byte, error)
+	EstimateGasFunc         func(ctx context.Context, msg ethereum.CallMsg) (uint64, error)
 
 	SendTransactionFunc    func(ctx context.Context, tx *types.Transaction) error
 	TransactionByHashFunc  func(ctx context.Context, hash chain.TxHash) (*types.Transaction, bool, error)
@@ -51,9 +52,10 @@ type FakeRPC struct {
 	ChainIDFunc          func(ctx context.Context) (chain.ChainID, error)
 
 	// Defaults used when a func is nil.
-	DefaultChainID chain.ChainID
-	DefaultBalance *big.Int
-	DefaultNonce   uint64
+	DefaultChainID     chain.ChainID
+	DefaultBalance     *big.Int
+	DefaultNonce       uint64
+	DefaultGasEstimate uint64
 
 	// Fault injection state.
 	injectedErrors map[string][]error
@@ -176,6 +178,20 @@ func (r *FakeRPC) CodeAt(ctx context.Context, addr chain.Address, blockNumber *b
 	}
 	// Default: contract code "exists" so preflight passes.
 	return []byte{0x60, 0x60, 0x60, 0x40}, nil
+}
+
+// EstimateGas implements rpc.RPC.
+func (r *FakeRPC) EstimateGas(ctx context.Context, msg ethereum.CallMsg) (uint64, error) {
+	if err := r.nextInjectedError("EstimateGas"); err != nil {
+		return 0, err
+	}
+	if err := r.maybeLatency(ctx); err != nil {
+		return 0, err
+	}
+	if r.EstimateGasFunc != nil {
+		return r.EstimateGasFunc(ctx, msg)
+	}
+	return r.DefaultGasEstimate, nil
 }
 
 // SendTransaction implements rpc.RPC.

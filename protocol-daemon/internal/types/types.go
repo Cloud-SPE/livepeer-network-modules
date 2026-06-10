@@ -105,6 +105,7 @@ const (
 	// Bonding-admin (set shares, transfer bond, withdraw fees).
 	ErrCodeBondingAdminSubmitFailed = "bondingadmin.submit_failed"
 	ErrCodeBondingAdminDryRunFailed = "bondingadmin.dry_run_failed"
+	ErrCodeBondingAdminHintFailed   = "bondingadmin.hint_failed"
 	ErrCodeRoundNotLocked           = "bondingadmin.round_not_locked"
 	ErrCodeNothingToTransfer        = "bondingadmin.nothing_to_transfer"
 	ErrCodeBelowFeeThreshold        = "bondingadmin.below_fee_threshold"

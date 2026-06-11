@@ -7,10 +7,13 @@
 package openaiusage
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 )
@@ -44,18 +47,16 @@ func (e *Extractor) Extract(ctx context.Context, req *extractors.Request, resp *
 		log.Printf("openai-usage: empty response body; using 0")
 		return 0, nil
 	}
-	var parsed struct {
-		Usage map[string]any `json:"usage"`
-	}
-	if err := json.Unmarshal(resp.Body, &parsed); err != nil {
-		log.Printf("openai-usage: response body not JSON (%v); using 0", err)
+	usage, ok, err := parseUsageObject(resp.Body)
+	if err != nil {
+		log.Printf("openai-usage: response body not JSON/SSE (%v); using 0", err)
 		return 0, nil
 	}
-	if parsed.Usage == nil {
+	if !ok {
 		log.Printf("openai-usage: response has no 'usage' object; using 0")
 		return 0, nil
 	}
-	v, ok := parsed.Usage[e.field]
+	v, ok := usage[e.field]
 	if !ok {
 		log.Printf("openai-usage: usage.%s absent; using 0", e.field)
 		return 0, nil
@@ -66,6 +67,68 @@ func (e *Extractor) Extract(ctx context.Context, req *extractors.Request, resp *
 		return 0, nil
 	}
 	return n, nil
+}
+
+func parseUsageObject(body []byte) (map[string]any, bool, error) {
+	var parsed struct {
+		Usage map[string]any `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		usage, ok := parseUsageFromSSE(body)
+		if ok {
+			return usage, true, nil
+		}
+		return nil, false, err
+	}
+	if parsed.Usage == nil {
+		return nil, false, nil
+	}
+	return parsed.Usage, true, nil
+}
+
+func parseUsageFromSSE(body []byte) (map[string]any, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	var eventData []string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasSuffix(line, "\r") {
+			line = strings.TrimSuffix(line, "\r")
+		}
+		if line == "" {
+			if usage, ok := parseUsageFromSSEEvent(eventData); ok {
+				return usage, true
+			}
+			eventData = eventData[:0]
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			eventData = append(eventData, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if usage, ok := parseUsageFromSSEEvent(eventData); ok {
+		return usage, true
+	}
+	return nil, false
+}
+
+func parseUsageFromSSEEvent(dataLines []string) (map[string]any, bool) {
+	if len(dataLines) == 0 {
+		return nil, false
+	}
+	payload := strings.TrimSpace(strings.Join(dataLines, "\n"))
+	if payload == "" || payload == "[DONE]" {
+		return nil, false
+	}
+	var parsed struct {
+		Usage map[string]any `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
+		return nil, false
+	}
+	if parsed.Usage == nil {
+		return nil, false
+	}
+	return parsed.Usage, true
 }
 
 func toNonNegativeInt(v any) (uint64, error) {

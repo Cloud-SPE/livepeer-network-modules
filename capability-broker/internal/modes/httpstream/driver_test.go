@@ -3,6 +3,7 @@ package httpstream
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,10 +18,16 @@ import (
 )
 
 type stubForwarder struct {
-	resp *http.Response
+	resp     *http.Response
+	gotBody  []byte
+	gotHdrs  http.Header
 }
 
-func (s stubForwarder) Forward(context.Context, backend.ForwardRequest) (*http.Response, error) {
+func (s *stubForwarder) Forward(_ context.Context, req backend.ForwardRequest) (*http.Response, error) {
+	if req.Body != nil {
+		s.gotBody, _ = io.ReadAll(req.Body)
+	}
+	s.gotHdrs = req.Headers.Clone()
 	return s.resp, nil
 }
 
@@ -66,7 +73,7 @@ func TestServePreservesUpstreamTrailerDeclarations(t *testing.T) {
 			Backend:    config.Backend{ID: "backend-a", URL: "http://backend-a"},
 		},
 		Extractor: stubExtractor{units: 7},
-		Backend: stubForwarder{resp: &http.Response{
+		Backend: &stubForwarder{resp: &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     make(http.Header),
 			Body:       io.NopCloser(bytes.NewBufferString(`{"ok":true}`)),
@@ -108,7 +115,7 @@ func TestServeReportsBackendFailureForFiveHundred(t *testing.T) {
 			Backend:    config.Backend{ID: "backend-a", URL: "http://backend-a"},
 		},
 		Extractor:        stubExtractor{units: 42},
-		Backend:          stubForwarder{resp: &http.Response{StatusCode: http.StatusInternalServerError, Header: make(http.Header), Body: io.NopCloser(bytes.NewBufferString(`oops`))}},
+		Backend:          &stubForwarder{resp: &http.Response{StatusCode: http.StatusInternalServerError, Header: make(http.Header), Body: io.NopCloser(bytes.NewBufferString(`oops`))}},
 		PoolReporter:     outcomeSink{ch: reported},
 		MemberEthAddress: "0xabc",
 	})
@@ -123,4 +130,47 @@ func TestServeReportsBackendFailureForFiveHundred(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for outcome report")
 	}
+}
+
+func TestServeInjectsOpenAIStreamUsage(t *testing.T) {
+	d := New()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/cap", bytes.NewBufferString(`{"model":"qwen","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	fwd := &stubForwarder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewBufferString(`data: {"usage":{"total_tokens":7}}`)),
+	}}
+	err := d.Serve(context.Background(), modes.Params{
+		Writer:  w,
+		Request: req,
+		Capability: &config.Capability{
+			ID:              "openai:chat-completions",
+			OfferingID:      "shared",
+			InteractionMode: Mode,
+			Backend:         config.Backend{ID: "backend-a", URL: "http://backend-a"},
+		},
+		Extractor: openAIUsageExtractor{},
+		Backend:   fwd,
+	})
+	if err != nil {
+		t.Fatalf("Serve() error = %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(fwd.gotBody, &payload); err != nil {
+		t.Fatalf("forwarded body is not JSON: %v", err)
+	}
+	streamOptions, _ := payload["stream_options"].(map[string]any)
+	if streamOptions == nil || streamOptions["include_usage"] != true {
+		t.Fatalf("stream_options.include_usage not injected; got %#v", payload["stream_options"])
+	}
+}
+
+type openAIUsageExtractor struct{}
+
+func (openAIUsageExtractor) Name() string { return "openai-usage" }
+
+func (openAIUsageExtractor) Extract(context.Context, *extractors.Request, *extractors.Response) (uint64, error) {
+	return 7, nil
 }

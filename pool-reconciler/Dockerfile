@@ -4,11 +4,13 @@ FROM golang:${GO_VERSION} AS base
 WORKDIR /src
 
 COPY proto-contracts/go.mod ./proto-contracts/
+COPY livepeer-network-protocol/proto-go/go.mod ./livepeer-network-protocol/proto-go/
 COPY pool-reconciler/go.mod pool-reconciler/go.sum ./pool-reconciler/
 WORKDIR /src/pool-reconciler
 RUN go mod download
 
 COPY proto-contracts/ /src/proto-contracts/
+COPY livepeer-network-protocol/proto-go/ /src/livepeer-network-protocol/proto-go/
 COPY pool-reconciler/ ./
 
 FROM base AS test

@@ -1,6 +1,9 @@
 package types
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestBrokerOfferings_Validate_HappyPath(t *testing.T) {
 	b := &BrokerOfferings{
@@ -55,5 +58,20 @@ func TestParseSignedManifest_RejectsTrailingData(t *testing.T) {
 	raw := []byte(`{"manifest":{"spec_version":"0.1.0","publication_seq":0,"issued_at":"2026-05-06T00:00:00Z","expires_at":"2026-05-07T00:00:00Z","orch":{"eth_address":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"capabilities":[]},"signature":{"algorithm":"secp256k1","value":"0xab"}}{}`)
 	if _, err := ParseSignedManifest(raw); err == nil {
 		t.Fatal("expected trailing-data error")
+	}
+}
+
+func TestClassifyBrokerHealthMetadata_AlreadyConfiguredIsHealthy(t *testing.T) {
+	state, age := ClassifyBrokerHealthMetadata(&BrokerHealthMetadata{
+		Applicable:            true,
+		LastSuccessAt:         time.Now().UTC(),
+		LastSuccessAgeSeconds: 17,
+		LastResult:            "already_configured",
+	}, time.Minute, 5*time.Minute)
+	if state != MetadataStateOK {
+		t.Fatalf("state = %q; want %q", state, MetadataStateOK)
+	}
+	if age != 17 {
+		t.Fatalf("age = %v; want 17", age)
 	}
 }

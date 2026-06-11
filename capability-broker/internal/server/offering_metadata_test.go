@@ -434,7 +434,7 @@ func TestRefreshMetadataCatalog_VTuberProbeFailureSetsSpecificResult(t *testing.
 	}
 }
 
-func TestRefreshMetadataCatalog_AudioEmptySetsSpecificResult(t *testing.T) {
+func TestRefreshMetadataCatalog_AudioAlreadyConfiguredIsHealthy(t *testing.T) {
 	t.Parallel()
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -476,8 +476,14 @@ func TestRefreshMetadataCatalog_AudioEmptySetsSpecificResult(t *testing.T) {
 	if !ok {
 		t.Fatal("expected metadata refresh status")
 	}
-	if status.LastResult != "audio_options_empty" {
-		t.Fatalf("last_result = %q; want audio_options_empty", status.LastResult)
+	if status.LastResult != "already_configured" {
+		t.Fatalf("last_result = %q; want already_configured", status.LastResult)
+	}
+	if status.LastSuccessAt.IsZero() {
+		t.Fatal("last_success_at should be populated")
+	}
+	if status.ConsecutiveFailures != 0 {
+		t.Fatalf("consecutive_failures = %d; want 0", status.ConsecutiveFailures)
 	}
 }
 

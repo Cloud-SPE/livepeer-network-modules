@@ -147,7 +147,7 @@ func (b *BrokerHealth) Validate() error {
 
 func MetadataResultHealthy(result string) bool {
 	switch result {
-	case "enriched", "empty":
+	case "enriched", "empty", "already_configured":
 		return true
 	default:
 		return false

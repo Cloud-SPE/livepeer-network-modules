@@ -272,7 +272,7 @@ func nextMetadataLastSuccessAt(status registry.MetadataStatus, ok bool, attempte
 
 func metadataRefreshResultHealthy(result string) bool {
 	switch result {
-	case "enriched", "empty":
+	case "enriched", "empty", "already_configured":
 		return true
 	default:
 		return false
@@ -487,6 +487,9 @@ func discoverAudioMetadata(ctx context.Context, client *http.Client, cap *config
 		}
 		discovered := discoveredAudioOptionsExtra(cap.Extra, payload)
 		if len(discovered) == 0 {
+			if hasConfiguredAudioOptions(cap.Extra) {
+				return nil, true, provider, "already_configured", nil
+			}
 			return nil, true, provider, "audio_options_empty", nil
 		}
 		return discovered, true, provider, "enriched", nil
@@ -859,6 +862,14 @@ func discoveredAudioOptionsExtra(base map[string]any, payload openAIAudioOptions
 		discovered["audio"] = audio
 	}
 	return discovered
+}
+
+func hasConfiguredAudioOptions(extra map[string]any) bool {
+	audio := nestedMap(extra, "audio")
+	if strings.TrimSpace(asString(audio["task"])) == "" {
+		return false
+	}
+	return nestedKeyExists(extra, "audio", "formats")
 }
 
 func discoveredVideoTranscodeExtra(base map[string]any, payload videoTranscodePresetsResponse) map[string]any {

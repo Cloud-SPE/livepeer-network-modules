@@ -50,10 +50,13 @@ func main() {
 		dataDir       = flag.String("data-dir", "/var/lib/livepeer/orch-coordinator", "filesystem root for candidate snapshots, audit log, and the published manifest")
 		secureOrchURL = flag.String("secure-orch-url", "", "Optional secure-orch console base URL used for operator cross-links")
 
-		scrapeInterval  = flag.Duration("scrape-interval", 30*time.Second, "broker poll cadence")
-		scrapeTimeout   = flag.Duration("scrape-timeout", 5*time.Second, "per-broker scrape timeout")
-		freshnessWindow = flag.Duration("freshness-window", 150*time.Second, "drop-stale-tuples threshold (default 5 × scrape-interval)")
-		manifestTTL     = flag.Duration("manifest-ttl", 24*time.Hour, "expires_at = issued_at + manifest_ttl")
+		scrapeInterval   = flag.Duration("scrape-interval", 30*time.Second, "broker poll cadence")
+		scrapeTimeout    = flag.Duration("scrape-timeout", 5*time.Second, "per-broker scrape timeout")
+		freshnessWindow  = flag.Duration("freshness-window", 150*time.Second, "drop-stale-tuples threshold (default 5 × scrape-interval)")
+		manifestTTL      = flag.Duration("manifest-ttl", 24*time.Hour, "expires_at = issued_at + manifest_ttl")
+		renewalThreshold = flag.Duration("renewal-threshold", 0, "refresh an unchanged candidate's issued_at/expires_at for re-signing once its remaining validity drops below this; 0 = manifest-ttl/3")
+
+		agentTokenFile = flag.String("agent-token-file", "", "path to a file holding the secure-orch agent bearer token; grants the agent access to candidate download and signed-manifest upload (empty = agent bearer disabled)")
 
 		dev      = flag.Bool("dev", false, "dev mode: synthetic fake-broker fixtures; loud DEV MODE banner")
 		logLevel = flag.String("log-level", "info", "slog level: debug|info|warn|error")
@@ -71,18 +74,20 @@ func main() {
 	logger := buildLogger(*logLevel, *logFmt)
 
 	cfg := bootConfig{
-		listenAddr:      *listenAddr,
-		publicListen:    *publicListen,
-		metricsListen:   *metricsListen,
-		configPath:      *configPath,
-		dataDir:         *dataDir,
-		secureOrchURL:   *secureOrchURL,
-		adminTokens:     parseCSVEnv("ORCH_COORDINATOR_ADMIN_TOKENS"),
-		scrapeInterval:  *scrapeInterval,
-		scrapeTimeout:   *scrapeTimeout,
-		freshnessWindow: *freshnessWindow,
-		manifestTTL:     *manifestTTL,
-		dev:             *dev,
+		listenAddr:       *listenAddr,
+		publicListen:     *publicListen,
+		metricsListen:    *metricsListen,
+		configPath:       *configPath,
+		dataDir:          *dataDir,
+		secureOrchURL:    *secureOrchURL,
+		adminTokens:      parseCSVEnv("ORCH_COORDINATOR_ADMIN_TOKENS"),
+		agentTokenFile:   *agentTokenFile,
+		scrapeInterval:   *scrapeInterval,
+		scrapeTimeout:    *scrapeTimeout,
+		freshnessWindow:  *freshnessWindow,
+		manifestTTL:      *manifestTTL,
+		renewalThreshold: *renewalThreshold,
+		dev:              *dev,
 	}
 
 	if err := run(logger, cfg); err != nil {
@@ -97,18 +102,20 @@ func main() {
 }
 
 type bootConfig struct {
-	listenAddr      string
-	publicListen    string
-	metricsListen   string
-	configPath      string
-	dataDir         string
-	secureOrchURL   string
-	adminTokens     []string
-	scrapeInterval  time.Duration
-	scrapeTimeout   time.Duration
-	freshnessWindow time.Duration
-	manifestTTL     time.Duration
-	dev             bool
+	listenAddr       string
+	publicListen     string
+	metricsListen    string
+	configPath       string
+	dataDir          string
+	secureOrchURL    string
+	adminTokens      []string
+	agentTokenFile   string
+	scrapeInterval   time.Duration
+	scrapeTimeout    time.Duration
+	freshnessWindow  time.Duration
+	manifestTTL      time.Duration
+	renewalThreshold time.Duration
+	dev              bool
 }
 
 type configError struct{ err error }
@@ -194,6 +201,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 		ManifestTTL:       ttl,
 		PublicationSeq:    nextPublicationSeq,
 		CoordinatorCommit: version,
+		RenewalThreshold:  cfg.renewalThreshold,
 	}, logger.With("component", "candidate"))
 	if err != nil {
 		return fmt.Errorf("candidate builder: %w", err)
@@ -216,6 +224,14 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	receiveSvc.SetObserver(mreg)
 
 	admin := adminapi.New(cfg.listenAddr, logger.With("component", "adminapi"), cfg.adminTokens)
+	if cfg.agentTokenFile != "" {
+		token, err := readAgentToken(cfg.agentTokenFile)
+		if err != nil {
+			return &configError{err: err}
+		}
+		admin.SetAgentToken(token)
+		logger.Info("agent bearer token loaded", "file", cfg.agentTokenFile)
+	}
 	admin.CandidateRoutes(builder, candStore, auditLog)
 	admin.UploadRoutes(receiveSvc)
 	if err := admin.WebRoutes(adminapi.WebDeps{
@@ -267,6 +283,21 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	<-ctx.Done()
 	logger.Info("shutdown signal received")
 	return nil
+}
+
+// readAgentToken loads the agent bearer token from a file (a file,
+// not a CLI literal, so the token never lands in process listings —
+// plan 0042 §5.2).
+func readAgentToken(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("--agent-token-file: %w", err)
+	}
+	token := strings.TrimSpace(string(body))
+	if token == "" {
+		return "", fmt.Errorf("--agent-token-file: %s is empty", path)
+	}
+	return token, nil
 }
 
 func parseCSVEnv(name string) []string {

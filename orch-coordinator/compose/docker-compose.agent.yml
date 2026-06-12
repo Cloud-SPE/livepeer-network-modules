@@ -1,0 +1,31 @@
+# Overlay: accept the plan 0042 sign-cycle agent.
+#
+# Layer on top of docker-compose.yml when a secure-orch console runs
+# --agent against this coordinator. Adds the agent bearer credential
+# (candidate download + signed-manifest upload) and the renewal
+# threshold that refreshes an unchanged candidate's window for
+# re-signing before the published manifest expires.
+#
+# Prerequisite: ./run/agent-token — the SAME file the console mounts
+# via --coordinator-token-file. Generate with `openssl rand -hex 32`.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.agent.yml up -d
+
+services:
+  orch-coordinator:
+    # NOTE: compose overlays replace `command` wholesale, so the base
+    # flags are restated here. Keep in sync with docker-compose.yml.
+    command:
+      - --config=/etc/livepeer/orch-coordinator.yaml
+      - --data-dir=/srv/data
+      - --listen=:8080
+      - --public-listen=:8081
+      - --metrics-listen=:9091
+      - --log-level=${COORDINATOR_LOG_LEVEL}
+      - --log-format=${COORDINATOR_LOG_FORMAT}
+      # --- sign-cycle agent support (plan 0042) ---
+      - --agent-token-file=/etc/livepeer/agent-token
+      - --renewal-threshold=${COORDINATOR_RENEWAL_THRESHOLD:-0}
+    volumes:
+      - ${COORDINATOR_AGENT_TOKEN_FILE:-./run/agent-token}:/etc/livepeer/agent-token:ro

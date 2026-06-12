@@ -66,6 +66,39 @@ You must set these in `.env` before bring-up:
   `SECURE_ORCH_*` vars) — only if your keystore lives somewhere other than
   `/opt/livepeer/`
 
+## Optional: automated sign cycle (agent mode)
+
+Layer `docker-compose.agent.yml` on top to replace the hand-carry sign
+cycle with the plan 0042 agent: the console pulls candidates from the
+coordinator, auto-signs inside your sign-policy envelope (phase 1:
+content-identical renewals only), holds everything else for review on
+the Manifests page, and pushes signed manifests back. Outbound-only —
+the host's no-inbound posture is unchanged.
+
+```sh
+# One-time setup
+openssl rand -hex 32 > /opt/livepeer/agent-token   # also mount on the coordinator
+cp secure-orch-console/examples/sign-policy.json /opt/livepeer/sign-policy.json
+$EDITOR infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/.env
+# set COORDINATOR_URL, COORDINATOR_PUBLIC_URL, AGENT_TOKEN_FILE,
+# SIGN_POLICY_FILE, and (recommended) ALERT_WEBHOOK_URL
+
+docker compose   -f infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/docker-compose.yml   -f infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/docker-compose.agent.yml   --env-file infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/.env   up -d
+```
+
+The coordinator host needs the matching overlay
+(`infra/scenarios/orchestrator-onboarding/orch-coordinator/docker-compose.agent.yml`)
+with the same token file. See
+`secure-orch-console/docs/operator-runbook.md` § "Agent mode" for the
+policy envelope, the two-week burn-in procedure, kill switches, and the
+mandatory manifest-expiry alert.
+
+Kill switch (pauses pull and sign, audited):
+
+```sh
+docker compose exec secure-orch-console touch /var/lib/secure-orch/agent.pause
+```
+
 ## Verify
 
 ```sh
@@ -77,4 +110,7 @@ curl -s http://127.0.0.1:9095/metrics | head
 
 # secure-orch-console health
 curl -s http://127.0.0.1:8081/healthz
+
+# agent liveness (agent overlay only): polls counters + expiry gauge
+curl -s http://127.0.0.1:8081/metrics | grep secure_orch_agent
 ```

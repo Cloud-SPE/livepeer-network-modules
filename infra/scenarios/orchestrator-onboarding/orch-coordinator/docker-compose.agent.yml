@@ -1,0 +1,43 @@
+# Overlay: accept the plan 0042 sign-cycle agent on this coordinator.
+#
+# Layer this on top of docker-compose.yml (it composes with the ingress
+# overlays too) when the secure-orch host runs `--agent`. Adds the agent
+# bearer credential that admits the agent on GET /candidate.json,
+# GET /candidate.tar.gz, and POST /admin/signed-manifest, and sets the
+# renewal threshold that refreshes an unchanged candidate's window for
+# re-signing before the published manifest expires.
+#
+# Prerequisite: /opt/livepeer/agent-token on this host — the SAME token
+# file the secure-orch console mounts via --coordinator-token-file.
+# Generate once with `openssl rand -hex 32`.
+#
+# The admin listener stays private (loopback by default). The agent
+# reaches it from the secure-orch host over your LAN/VPN — adjust
+# COORDINATOR_ADMIN_BIND accordingly, but never expose :8080 to the
+# public internet.
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/orchestrator-onboarding/orch-coordinator/docker-compose.yml \
+#     -f infra/scenarios/orchestrator-onboarding/orch-coordinator/docker-compose.agent.yml \
+#     --env-file infra/scenarios/orchestrator-onboarding/orch-coordinator/.env \
+#     up -d
+
+services:
+  orch-coordinator:
+    # NOTE: compose overlays replace `command` wholesale, so the base
+    # flags are restated here. Keep in sync with docker-compose.yml.
+    command:
+      - --config=/etc/livepeer/orch-coordinator.yaml
+      - --data-dir=/srv/data
+      - --listen=:8080
+      - --public-listen=:8081
+      - --metrics-listen=:9091
+      - --log-level=${COORDINATOR_LOG_LEVEL}
+      - --log-format=${COORDINATOR_LOG_FORMAT}
+      - --scrape-interval=${COORDINATOR_SCRAPE_INTERVAL}
+      # --- sign-cycle agent support (plan 0042) ---
+      - --agent-token-file=/etc/livepeer/agent-token
+      - --renewal-threshold=${COORDINATOR_RENEWAL_THRESHOLD:-0}
+    volumes:
+      - ${COORDINATOR_AGENT_TOKEN_FILE}:/etc/livepeer/agent-token:ro

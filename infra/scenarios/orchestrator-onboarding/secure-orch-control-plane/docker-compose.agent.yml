@@ -1,0 +1,54 @@
+# Overlay: enable the plan 0042 sign-cycle agent on secure-orch-console.
+#
+# Layer this on top of docker-compose.yml to replace the hand-carry sign
+# cycle with the outbound-only agent: the console pulls candidates from
+# orch-coordinator, auto-signs inside the sign-policy envelope, holds
+# everything else for operator review, and pushes signed manifests back.
+# The hand-carry flow stays available as the fallback.
+#
+# Prerequisites (create BEFORE bring-up; the console refuses to boot on a
+# missing/invalid policy):
+#   /opt/livepeer/agent-token        — shared bearer; generate with
+#                                      `openssl rand -hex 32`, mount the SAME
+#                                      file on the coordinator host via its
+#                                      --agent-token-file
+#   /opt/livepeer/sign-policy.json   — copy from
+#                                      secure-orch-console/examples/sign-policy.json
+#                                      (phase-1 defaults: renewals only)
+#
+# The inbound posture of this host is unchanged: the agent adds no
+# listener; all transport is initiated from here. Allowlist outbound to
+# the two coordinator ports in your egress firewall.
+#
+# Kill switch from the host:
+#   docker compose exec secure-orch-console touch /var/lib/secure-orch/agent.pause
+#
+# Usage:
+#   docker compose \
+#     -f infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/docker-compose.yml \
+#     -f infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/docker-compose.agent.yml \
+#     --env-file infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/.env \
+#     up -d
+
+services:
+  secure-orch-console:
+    # NOTE: compose overlays replace `command` wholesale, so the base
+    # flags are restated here. Keep in sync with docker-compose.yml.
+    command:
+      - --keystore=v3:/var/lib/secure-orch/keystore.json
+      - --keystore-password-file=/etc/secure-orch/password
+      - --last-signed=/var/lib/secure-orch/last-signed.json
+      - --audit-log=/var/log/secure-orch/audit.log.jsonl
+      - --audit-rotate-size=104857600
+      - --listen=${SECURE_ORCH_LISTEN}
+      # --- agent mode (plan 0042) ---
+      - --agent
+      - --coordinator-url=${COORDINATOR_URL:?set COORDINATOR_URL to the coordinator admin base URL}
+      - --coordinator-public-url=${COORDINATOR_PUBLIC_URL:?set COORDINATOR_PUBLIC_URL to the coordinator public base URL}
+      - --coordinator-token-file=/etc/secure-orch/agent-token
+      - --agent-policy=/etc/secure-orch/sign-policy.json
+      - --agent-poll-interval=${AGENT_POLL_INTERVAL:-60s}
+      - --alert-webhook-url=${ALERT_WEBHOOK_URL:-}
+    volumes:
+      - ${AGENT_TOKEN_FILE}:/etc/secure-orch/agent-token:ro
+      - ${SIGN_POLICY_FILE}:/etc/secure-orch/sign-policy.json:ro

@@ -78,6 +78,7 @@ type manifestsPageView struct {
 	LastSignedPath    string
 	HasLastSigned     bool
 	LastSignedSummary envelopeSummary
+	Held              *heldItemView
 	Candidate         *candidateView
 	CandidateError    string
 	ReviewState       string
@@ -107,6 +108,25 @@ type loginView struct {
 	AuthEnabled  bool
 	Error        string
 	AssetVersion string
+}
+
+// heldItemView renders the agent's held-for-operator candidate
+// (plan 0042 §8 "Pending changes").
+type heldItemView struct {
+	ETag           string
+	Class          string
+	HeldAt         string
+	PublicationSeq uint64
+	CanonHash      string
+	WouldAutoSign  bool
+	Findings       []heldFindingView
+}
+
+type heldFindingView struct {
+	Class  string
+	Code   string
+	Tuple  string
+	Detail string
 }
 
 type candidateView struct {

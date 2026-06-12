@@ -430,8 +430,16 @@ new trust-model amendment, not a config change.
    TTL flag); a published seq *ahead* of last-signed is logged loudly
    and never pushed over; the rate-limit latch clears on process
    restart (operator Clear gesture lands with the item-5 UI).
-5. **Console: held queue UI + agent push-after-approve** (§8) —
-   reuses diff renderer and confirm-gesture flow.
+5. ✅ **Console: held queue UI + agent push-after-approve** (§8) —
+   manifests page gains a "Pending changes held by the agent" card
+   (class, findings, shadow would_auto_sign note) with a
+   load-for-review action that stashes the held candidate into the
+   *existing* diff + confirm-gesture flow, applying seq discipline
+   at load time so the operator signs exactly what the agent would
+   have. Signing a held candidate clears the slot, audits
+   operator_approve, and redirects (no download) — the agent's
+   reconcile rule pushes the new last-signed on its next cycle, so
+   push-after-approve needs no extra transport code.
 6. **Audit + metrics + webhook** (§9) — including the mandatory
    seconds-to-expiry alert wiring.
 7. **Docs in the same PRs:** trust-model invariant amendment (§3),

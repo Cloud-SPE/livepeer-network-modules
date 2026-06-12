@@ -79,6 +79,7 @@ func run(args []string) error {
 		AdminTokens:     parseCSVEnv("SECURE_ORCH_ADMIN_TOKENS"),
 		CoordinatorURL:  *coordinatorURL,
 		Version:         version,
+		AgentHeldDir:    *agentHeldDir,
 	}
 	if err := cfg.Validate(); err != nil {
 		return err

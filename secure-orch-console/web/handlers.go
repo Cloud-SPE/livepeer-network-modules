@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/agent"
 	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/canonical"
 	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/diff"
@@ -126,6 +127,15 @@ func (s *Server) handleManifestsPage(w http.ResponseWriter, r *http.Request) {
 	if last != nil {
 		view.LastSignedSummary = summarizeEnvelope(last)
 	}
+	if s.held != nil {
+		item, _, heldErr := s.held.Current()
+		switch {
+		case heldErr != nil:
+			s.logger.Warn("read held queue", "err", heldErr)
+		case item != nil:
+			view.Held = heldItemViewFrom(item)
+		}
+	}
 	s.mu.Lock()
 	cand := s.candidate
 	s.mu.Unlock()
@@ -172,6 +182,30 @@ func (s *Server) handleManifestsPage(w http.ResponseWriter, r *http.Request) {
 	if err := s.templates.render(w, "page.html", view); err != nil {
 		s.logger.Warn("render manifests", "err", err)
 	}
+}
+
+func heldItemViewFrom(item *agent.HeldItem) *heldItemView {
+	hv := &heldItemView{
+		ETag:           item.ETag,
+		Class:          item.Class,
+		HeldAt:         item.HeldAt.Format(time.RFC3339),
+		PublicationSeq: item.PublicationSeq,
+		CanonHash:      item.CanonicalSHA256,
+		WouldAutoSign:  item.ShadowAutoSign,
+	}
+	for _, f := range item.Findings {
+		tuple := f.CapabilityID
+		if f.OfferingID != "" {
+			tuple += " / " + f.OfferingID
+		}
+		hv.Findings = append(hv.Findings, heldFindingView{
+			Class:  f.ClassName,
+			Code:   f.Code,
+			Tuple:  tuple,
+			Detail: f.Detail,
+		})
+	}
+	return hv
 }
 
 func publicationSeqValue(manifestBytes []byte) uint64 {
@@ -625,6 +659,61 @@ func (s *Server) handleDiscard(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/manifests", http.StatusSeeOther)
 }
 
+// handleHeldLoad moves the agent's held candidate into the existing
+// review flow (plan 0042 §8): the diff renderer and confirm-gesture
+// sign flow take over unchanged. Sequence discipline is applied at
+// load time so the operator reviews and signs exactly the bytes the
+// agent would have signed.
+func (s *Server) handleHeldLoad(w http.ResponseWriter, r *http.Request) {
+	if s.held == nil {
+		s.fail(w, r, http.StatusNotFound, "held queue", errors.New("agent held queue is not configured"))
+		return
+	}
+	item, candBytes, err := s.held.Current()
+	if err != nil {
+		s.fail(w, r, http.StatusInternalServerError, "read held queue", err)
+		return
+	}
+	if item == nil {
+		s.fail(w, r, http.StatusNotFound, "held queue", errors.New("no held candidate"))
+		return
+	}
+	last, err := loadLastSigned(s.cfg.LastSignedPath)
+	if err != nil {
+		s.fail(w, r, http.StatusInternalServerError, "load last-signed", err)
+		return
+	}
+	updated, _, err := agent.ApplySeqDiscipline(candBytes, last)
+	if err != nil {
+		s.fail(w, r, http.StatusBadRequest, "held candidate", err)
+		return
+	}
+	canon, err := canonicalManifestBytes(updated)
+	if err != nil {
+		s.fail(w, r, http.StatusBadRequest, "canonicalize held candidate", err)
+		return
+	}
+	s.mu.Lock()
+	s.candidate = &stashedCandidate{
+		bytes:      updated,
+		loadedAt:   time.Now().UTC(),
+		canonHash:  canonical.SHA256Hex(canon),
+		sourceName: "agent-held " + item.ETag,
+		heldETag:   item.ETag,
+	}
+	s.mu.Unlock()
+	if appendErr := s.audit.Append(audit.Event{
+		Kind:       audit.KindLoadCandidate,
+		Actor:      actorFromRequest(r),
+		EthAddress: s.signer.Address().String(),
+		CanonHash:  canonical.SHA256Hex(canon),
+		Note:       "loaded from agent held queue (" + item.Class + ")",
+	}); appendErr != nil {
+		s.logger.Warn("audit append failed", "err", appendErr)
+	}
+	http.Redirect(w, r, "/manifests", http.StatusSeeOther)
+}
+
 func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		s.fail(w, r, http.StatusBadRequest, "parse form", err)
@@ -704,6 +793,32 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.candidate = nil
 	s.mu.Unlock()
+
+	if cand.heldETag != "" {
+		// Operator approval of an agent-held candidate (plan 0042
+		// §8): clear the held slot and let the agent's reconcile rule
+		// push the new last-signed — no manual download/re-upload.
+		if s.held != nil {
+			if err := s.held.Clear(); err != nil {
+				s.logger.Warn("clear held queue", "err", err)
+			}
+		}
+		approveEvent := audit.Event{
+			Kind:       audit.KindOperatorApprove,
+			Actor:      actorFromRequest(r),
+			EthAddress: s.signer.Address().String(),
+			CanonHash:  canonHash,
+			Fields:     map[string]any{"etag": cand.heldETag},
+		}
+		if seq != nil {
+			approveEvent.Seq = seq
+		}
+		if appendErr := s.audit.Append(approveEvent); appendErr != nil {
+			s.logger.Warn("audit append failed", "err", appendErr)
+		}
+		http.Redirect(w, r, "/manifests", http.StatusSeeOther)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", `attachment; filename="signed.json"`)

@@ -15,12 +15,26 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// signCandidate signs the candidate manifest with sequence
-// discipline (plan 0042 §6 step 6): the cold side owns the canonical
-// seq, so the signed seq is max(candidate seq, last-signed seq + 1) —
-// never reused, never decreased. Returns the envelope bytes and the
-// seq actually signed.
-func signCandidate(manifestBytes []byte, lastSignedSeq *uint64, signer signing.Signer) ([]byte, uint64, error) {
+// ApplySeqDiscipline rewrites the candidate's publication_seq per
+// plan 0042 §6 step 6: the cold side owns the canonical seq, so the
+// signed seq is max(candidate seq, last-signed seq + 1) — never
+// reused, never decreased. lastSignedEnvelope may be nil (first sign
+// cycle). Returns the updated manifest bytes and the resolved seq.
+// Shared with the console's held-queue approve flow so an operator
+// approval signs exactly what the agent would have.
+func ApplySeqDiscipline(manifestBytes, lastSignedEnvelope []byte) ([]byte, uint64, error) {
+	var lastSeq *uint64
+	if lastSignedEnvelope != nil {
+		seq, _, err := envelopeSeqAndHash(lastSignedEnvelope)
+		if err != nil {
+			return nil, 0, fmt.Errorf("agent: last-signed: %w", err)
+		}
+		lastSeq = &seq
+	}
+	return applySeqDiscipline(manifestBytes, lastSeq)
+}
+
+func applySeqDiscipline(manifestBytes []byte, lastSignedSeq *uint64) ([]byte, uint64, error) {
 	var inner map[string]any
 	if err := json.Unmarshal(manifestBytes, &inner); err != nil {
 		return nil, 0, fmt.Errorf("agent: decode candidate manifest: %w", err)
@@ -33,6 +47,24 @@ func signCandidate(manifestBytes []byte, lastSignedSeq *uint64, signer signing.S
 		seq = *lastSignedSeq + 1
 	}
 	inner["publication_seq"] = seq
+	out, err := json.Marshal(inner)
+	if err != nil {
+		return nil, 0, fmt.Errorf("agent: marshal manifest: %w", err)
+	}
+	return out, seq, nil
+}
+
+// signCandidate signs the candidate manifest with sequence
+// discipline applied. Returns the envelope bytes and the seq signed.
+func signCandidate(manifestBytes []byte, lastSignedSeq *uint64, signer signing.Signer) ([]byte, uint64, error) {
+	updated, seq, err := applySeqDiscipline(manifestBytes, lastSignedSeq)
+	if err != nil {
+		return nil, 0, err
+	}
+	var inner map[string]any
+	if err := json.Unmarshal(updated, &inner); err != nil {
+		return nil, 0, fmt.Errorf("agent: decode candidate manifest: %w", err)
+	}
 
 	canon, err := canonical.Bytes(inner)
 	if err != nil {

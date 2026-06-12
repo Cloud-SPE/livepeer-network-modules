@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/agent"
 	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/canonical"
 	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/config"
@@ -39,6 +40,10 @@ type Server struct {
 	templates    *templateSet
 	staticAssets http.Handler
 
+	// held is the plan 0042 agent held queue; nil when the console
+	// runs without an agent held dir configured.
+	held *agent.HeldQueue
+
 	mu        sync.Mutex
 	candidate *stashedCandidate
 }
@@ -48,6 +53,10 @@ type stashedCandidate struct {
 	loadedAt   time.Time
 	canonHash  string
 	sourceName string
+	// heldETag is non-empty when the candidate was loaded from the
+	// agent's held queue; signing it is an operator approval — the
+	// held slot clears and the agent pushes (no manual download).
+	heldETag string
 }
 
 // New builds a Server.
@@ -87,6 +96,9 @@ func New(cfg config.Config, signer signing.Signer, log *audit.Log, logger *slog.
 		maxUpload:    8 << 20,
 		templates:    tmpls,
 		staticAssets: staticHandler(cfg.Version),
+	}
+	if cfg.AgentHeldDir != "" {
+		s.held = &agent.HeldQueue{Dir: cfg.AgentHeldDir}
 	}
 	s.routes()
 	return s, nil
@@ -150,6 +162,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /candidate", s.requireAuth(s.handleCandidate))
 	s.mux.HandleFunc("POST /discard", s.requireAuth(s.handleDiscard))
 	s.mux.HandleFunc("POST /sign", s.requireAuth(s.handleSign))
+	s.mux.HandleFunc("POST /held/load", s.requireAuth(s.handleHeldLoad))
 	s.mux.HandleFunc("POST /protocol/force-init", s.requireAuth(s.handleProtocolForceInit))
 	s.mux.HandleFunc("POST /protocol/force-reward", s.requireAuth(s.handleProtocolForceReward))
 	s.mux.HandleFunc("POST /protocol/set-service-uri", s.requireAuth(s.handleProtocolSetServiceURI))

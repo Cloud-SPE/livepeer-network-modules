@@ -352,6 +352,32 @@
   <p>{{.ReviewMessage}}</p>
 </section>
 
+{{if .Held}}
+<section class="message-card message-card-warn">
+  <h2>Pending changes held by the agent</h2>
+  <p>The sign-cycle agent classified this candidate as <strong>{{.Held.Class}}</strong> and held it for your review.{{if .Held.WouldAutoSign}} Policy would auto-sign this change once <code>auto_sign.benign</code> is enabled (shadow mode).{{end}}</p>
+  <dl class="meta">
+    <dt>held_at</dt><dd>{{.Held.HeldAt}}</dd>
+    <dt>publication_seq</dt><dd>{{.Held.PublicationSeq}}</dd>
+    <dt>etag</dt><dd><code>{{.Held.ETag}}</code></dd>
+    <dt>canonical_sha256</dt><dd><span class="copy-inline"><code>{{.Held.CanonHash}}</code><button type="button" class="copy-button" data-copy-value="{{.Held.CanonHash}}">Copy</button></span></dd>
+  </dl>
+  {{if .Held.Findings}}
+  <div class="alert-list">
+    {{range .Held.Findings}}
+    <article class="alert-item alert-warn">
+      <strong>{{.Code}}{{if .Tuple}} &mdash; {{.Tuple}}{{end}}</strong>
+      <span>{{.Detail}} ({{.Class}})</span>
+    </article>
+    {{end}}
+  </div>
+  {{end}}
+  <form method="post" action="/held/load">
+    <button type="submit">Load for review &amp; sign</button>
+  </form>
+</section>
+{{end}}
+
 {{if .Candidate}}
 <section>
   <h2>Hand-carry identity</h2>

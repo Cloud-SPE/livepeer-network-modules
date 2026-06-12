@@ -32,6 +32,32 @@ const (
 	KindRotate         Kind = "rotate"
 )
 
+// Agent event kinds (plan 0042 §9). Each carries ETag, canonical
+// SHA-256, seq, classification, and policy hash in Fields where
+// applicable. 304 polls are deliberately NOT audited — they are
+// metrics, not decisions.
+const (
+	KindAgentStart       Kind = "agent_start"
+	KindAgentStop        Kind = "agent_stop"
+	KindCandidatePulled  Kind = "candidate_pulled"
+	KindNoOp             Kind = "no_op"
+	KindClassified       Kind = "classified"
+	KindAutoSign         Kind = "auto_sign"
+	KindWouldAutoSign    Kind = "would_auto_sign"
+	KindHeld             Kind = "held"
+	KindHeldSuperseded   Kind = "held_superseded"
+	KindRefused          Kind = "refused"
+	KindOperatorApprove  Kind = "operator_approve"
+	KindPushAttempt      Kind = "push_attempt"
+	KindPublishConfirmed Kind = "publish_confirmed"
+	KindPublishFailed    Kind = "publish_failed"
+	KindPolicyLoaded     Kind = "policy_loaded"
+	KindPolicyInvalid    Kind = "policy_invalid"
+	KindRateLimitPause   Kind = "rate_limit_pause"
+	KindAgentPaused      Kind = "agent_paused"
+	KindAgentResumed     Kind = "agent_resumed"
+)
+
 // Event is one audit record. Required: At, Kind. Everything else is
 // kind-specific.
 type Event struct {

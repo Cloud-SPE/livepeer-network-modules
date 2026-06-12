@@ -413,9 +413,23 @@ new trust-model amendment, not a config change.
    highest-class-wins. Q1/Q2 proposals implemented as proposed:
    price decreases bounded by the same pct; allowlist is an explicit
    suffix list with dot-boundary matching.
-4. **Console: agent loop** (§6, §8) — pull/debounce/sign/push/confirm
-   state machine; crash-recovery test (last-signed ahead of
-   published → resume push); kill-switch tests.
+4. ✅ **Console: agent loop** (§6, §8) — `internal/agent`:
+   pull/debounce/sign/push/confirm state machine behind a `--agent`
+   daemon mode (`--coordinator-public-url`,
+   `--coordinator-token-file`, `--agent-policy`, `--agent-held-dir`,
+   `--agent-pause-file`, `--agent-poll-interval`). Push reconcile is
+   the crash-recovery rule: last-signed (written atomically before
+   first push) ahead of published → resume push; the post-sign push
+   rides the same rule. Tested against a fake coordinator: renewal
+   auto-sign with seq discipline, no-op, hold + supersede, shadow
+   would_auto_sign + phase-2 flip, forbidden refusal, stability-
+   window reset, crash recovery, push-failure audit+alert, pause
+   file, fail-closed policy, rate-limit latch (degrades to hold).
+   Implementation notes: the renewal clock derives TTL from the
+   last-signed manifest's own issued_at→expires_at span (no agent
+   TTL flag); a published seq *ahead* of last-signed is logged loudly
+   and never pushed over; the rate-limit latch clears on process
+   restart (operator Clear gesture lands with the item-5 UI).
 5. **Console: held queue UI + agent push-after-approve** (§8) —
    reuses diff renderer and confirm-gesture flow.
 6. **Audit + metrics + webhook** (§9) — including the mandatory

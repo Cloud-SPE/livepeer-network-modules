@@ -14,7 +14,7 @@
 
 services:
   service-registry-daemon:
-    # Pin to a published tag (default v1.4.0 — bump REGISTRY_IMAGE_TAG
+    # Pin to a published tag (default v1.4.1 — bump REGISTRY_IMAGE_TAG
     # in .env to upgrade). For local development, comment out `image:`
     # and uncomment the `build:` block below — context is the monorepo
     # root because the daemon's go.mod uses `replace ../chain-commons`.

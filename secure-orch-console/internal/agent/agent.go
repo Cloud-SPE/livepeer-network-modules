@@ -59,12 +59,18 @@ type Agent struct {
 	// sleep is ctx-aware; injected so push-backoff tests don't wait.
 	sleep func(ctx context.Context, d time.Duration)
 
+	metrics *Metrics
+
 	rl             *policy.RateLimiter
 	rlMax          int
 	policyHash     string
 	policyInvalid  bool
 	pauseSeen      bool
 	rlPauseAudited bool
+	expiryWarned   bool
+
+	publishedIssued time.Time
+	publishedExpiry time.Time
 
 	lastETag     string
 	pending      *Candidate
@@ -88,14 +94,15 @@ func New(cfg Config, client *Client, signer signing.Signer, log *audit.Log, logg
 		alert = func(string, map[string]any) {}
 	}
 	return &Agent{
-		cfg:    cfg,
-		client: client,
-		signer: signer,
-		log:    log,
-		logger: logger,
-		held:   &HeldQueue{Dir: cfg.HeldDir},
-		alert:  alert,
-		now:    time.Now,
+		cfg:     cfg,
+		client:  client,
+		signer:  signer,
+		log:     log,
+		logger:  logger,
+		held:    &HeldQueue{Dir: cfg.HeldDir},
+		alert:   alert,
+		metrics: NewMetrics(),
+		now:     time.Now,
 		sleep: func(ctx context.Context, d time.Duration) {
 			t := time.NewTimer(d)
 			defer t.Stop()
@@ -110,7 +117,11 @@ func New(cfg Config, client *Client, signer signing.Signer, log *audit.Log, logg
 // Run loops until ctx is canceled.
 func (a *Agent) Run(ctx context.Context) {
 	a.audit(audit.Event{Kind: audit.KindAgentStart, Note: "agent loop starting"})
-	defer a.audit(audit.Event{Kind: audit.KindAgentStop})
+	a.alert("agent_start", nil)
+	defer func() {
+		a.audit(audit.Event{Kind: audit.KindAgentStop})
+		a.alert("agent_stop", nil)
+	}()
 	for {
 		a.Cycle(ctx)
 		jitter := time.Duration(rand.Int63n(int64(a.cfg.PollInterval)/5+1)) - a.cfg.PollInterval/10
@@ -135,6 +146,44 @@ func (a *Agent) Cycle(ctx context.Context) {
 	a.reconcilePush(ctx)
 	a.pull(ctx)
 	a.maybeHandle(ctx, pol)
+	a.updateGauges()
+	a.checkExpiryWarning(pol)
+}
+
+// updateGauges refreshes the per-cycle gauges (§9).
+func (a *Agent) updateGauges() {
+	depth := 0
+	if item, _, err := a.held.Current(); err == nil && item != nil {
+		depth = 1
+	}
+	a.metrics.SetHeldDepth(depth)
+	if !a.publishedExpiry.IsZero() {
+		a.metrics.SetPublishedExpiry(a.publishedExpiry)
+	}
+}
+
+// checkExpiryWarning is the self-contained half of the §9 hard
+// requirement: when the published manifest has burned through half
+// the renewal buffer without a successful re-publish, fire the
+// webhook once per crossing. The Prometheus gauge backs the
+// operator's own alerting; this makes the warning reach the webhook
+// even without a scrape stack.
+func (a *Agent) checkExpiryWarning(pol policy.Policy) {
+	if a.publishedExpiry.IsZero() || !a.publishedExpiry.After(a.publishedIssued) {
+		return
+	}
+	ttl := a.publishedExpiry.Sub(a.publishedIssued)
+	warnAt := time.Duration(pol.RenewalThresholdFraction * float64(ttl) / 2)
+	remaining := a.publishedExpiry.Sub(a.now())
+	if remaining < warnAt {
+		if !a.expiryWarned {
+			a.expiryWarned = true
+			a.logger.Error("agent: published manifest nearing expiry without re-publish", "remaining", remaining)
+			a.alert("manifest_expiry_warning", map[string]any{"remaining_seconds": int64(remaining.Seconds())})
+		}
+		return
+	}
+	a.expiryWarned = false
 }
 
 // checkPaused implements kill switch #1 and audits the transitions.
@@ -202,6 +251,7 @@ func (a *Agent) reconcilePush(ctx context.Context) {
 		return
 	case pub.PublicationSeq == seq && pub.CanonicalSHA256 == sha:
 		a.confirmedSeq = &seq
+		a.publishedIssued, a.publishedExpiry = pub.IssuedAt, pub.ExpiresAt
 		return
 	case pub.PublicationSeq > seq:
 		// Published is ahead of our last-signed — someone else
@@ -224,6 +274,8 @@ func (a *Agent) pushWithRetry(ctx context.Context, envelope []byte, seq uint64, 
 			if cErr == nil && pub.PublicationSeq == seq && pub.CanonicalSHA256 == sha {
 				a.audit(audit.Event{Kind: audit.KindPublishConfirmed, Seq: &seq, CanonHash: sha})
 				a.confirmedSeq = &seq
+				a.publishedIssued, a.publishedExpiry = pub.IssuedAt, pub.ExpiresAt
+				a.metrics.RecordPublishConfirm(a.now())
 				return true
 			}
 			if cErr != nil {
@@ -247,14 +299,19 @@ func (a *Agent) pushWithRetry(ctx context.Context, envelope []byte, seq uint64, 
 func (a *Agent) pull(ctx context.Context) {
 	cand, err := a.client.FetchCandidate(ctx, a.lastETag)
 	if err != nil {
-		if !errors.Is(err, ErrNoCandidate) {
+		if errors.Is(err, ErrNoCandidate) {
+			a.metrics.IncPoll(PollNoCandidate)
+		} else {
+			a.metrics.IncPoll(PollError)
 			a.logger.Warn("agent: fetch candidate", "err", err)
 		}
 		return
 	}
 	if cand == nil {
+		a.metrics.IncPoll(PollNotModified)
 		return
 	}
+	a.metrics.IncPoll(PollPulled)
 	a.lastETag = cand.ETag
 	seq := cand.PublicationSeq
 	a.audit(audit.Event{Kind: audit.KindCandidatePulled, Seq: &seq, CanonHash: cand.CanonicalSHA256, Fields: map[string]any{"etag": cand.ETag}})
@@ -302,6 +359,7 @@ func (a *Agent) handle(ctx context.Context, cand *Candidate, pol policy.Policy) 
 	}
 	cls := policy.Classify(d, in)
 	dec := policy.Decide(cls, pol)
+	a.metrics.IncDecision(dec.Action.String())
 
 	seq := cand.PublicationSeq
 	base := map[string]any{"etag": cand.ETag, "class": cls.Class.String(), "action": dec.Action.String(), "findings": len(cls.Findings)}
@@ -405,6 +463,10 @@ func (a *Agent) hold(cand *Candidate, cls policy.Classification, dec policy.Deci
 	}
 	a.alert("held", map[string]any{"etag": cand.ETag, "class": item.Class, "publication_seq": seq})
 }
+
+// Metrics exposes the agent's Prometheus surface for the console's
+// /metrics route.
+func (a *Agent) Metrics() *Metrics { return a.metrics }
 
 // Held exposes the held queue (the console UI's "Pending changes"
 // view reads it; the approve flow clears it).

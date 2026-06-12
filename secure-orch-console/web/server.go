@@ -43,6 +43,10 @@ type Server struct {
 	// held is the plan 0042 agent held queue; nil when the console
 	// runs without an agent held dir configured.
 	held *agent.HeldQueue
+	// metricsHandler serves the agent's Prometheus exposition on the
+	// loopback listener (constraint #1 rules out a separate metrics
+	// listener); nil when no agent runs.
+	metricsHandler http.Handler
 
 	mu        sync.Mutex
 	candidate *stashedCandidate
@@ -173,12 +177,25 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /protocol/cast-vote", s.requireAuth(s.handleProtocolCastVote))
 	s.mux.HandleFunc("POST /protocol/set-config", s.requireAuth(s.handleProtocolSetConfig))
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", s.staticAssets))
 	s.mux.HandleFunc("/", http.NotFound)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok\n"))
+}
+
+// SetMetricsHandler installs the agent's metrics exposition. Call
+// before Listen.
+func (s *Server) SetMetricsHandler(h http.Handler) { s.metricsHandler = h }
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.metricsHandler == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.metricsHandler.ServeHTTP(w, r)
 }
 
 // CanonicalSHA256 is exposed so cmd/secure-orch-console can hash

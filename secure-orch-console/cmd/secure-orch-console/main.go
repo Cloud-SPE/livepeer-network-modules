@@ -54,6 +54,7 @@ func run(args []string) error {
 		agentHeldDir         = fs.String("agent-held-dir", "/var/lib/secure-orch/held", "Directory for the held-for-operator candidate slot")
 		agentPauseFile       = fs.String("agent-pause-file", "/var/lib/secure-orch/agent.pause", "Kill switch: this file's presence pauses agent pull and sign")
 		agentPollInterval    = fs.Duration("agent-poll-interval", 60*time.Second, "Agent conditional-GET poll cadence (±10% jitter)")
+		alertWebhookURL      = fs.String("alert-webhook-url", "", "Optional outbound webhook for agent alerts (held, forbidden, publish/policy failure, rate-limit pause, expiry warning); best-effort, audit log is the system of record")
 	)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -133,10 +134,12 @@ func run(args []string) error {
 			heldDir:              *agentHeldDir,
 			pauseFile:            *agentPauseFile,
 			pollInterval:         *agentPollInterval,
+			alertWebhookURL:      *alertWebhookURL,
 		}, signer, auditLog, logger.With("component", "agent"))
 		if err != nil {
 			return err
 		}
+		srv.SetMetricsHandler(ag.Metrics().Handler())
 		go ag.Run(ctx)
 		logger.Info("agent loop started", "coordinator", cfg.CoordinatorURL, "policy", *agentPolicyPath)
 	}
@@ -164,6 +167,7 @@ type agentBoot struct {
 	heldDir              string
 	pauseFile            string
 	pollInterval         time.Duration
+	alertWebhookURL      string
 }
 
 func buildAgent(b agentBoot, signer signing.Signer, auditLog *audit.Log, logger *slog.Logger) (*agent.Agent, error) {
@@ -205,7 +209,7 @@ func buildAgent(b agentBoot, signer signing.Signer, auditLog *audit.Log, logger 
 		HeldDir:        b.heldDir,
 		PauseFile:      b.pauseFile,
 		PollInterval:   b.pollInterval,
-	}, client, signer, auditLog, logger, nil), nil
+	}, client, signer, auditLog, logger, agent.NewWebhookAlert(b.alertWebhookURL, logger)), nil
 }
 
 func loadSigner(ks config.Keystore) (*signing.Keystore, error) {

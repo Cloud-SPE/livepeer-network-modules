@@ -121,6 +121,10 @@ func (c *Client) PushSigned(ctx context.Context, envelope []byte) error {
 type Published struct {
 	PublicationSeq  uint64
 	CanonicalSHA256 string
+	// IssuedAt/ExpiresAt feed the expiry gauge and warning; zero when
+	// unparseable.
+	IssuedAt  time.Time
+	ExpiresAt time.Time
 }
 
 // ErrNotPublished is returned while the public route serves nothing.
@@ -152,7 +156,15 @@ func (c *Client) FetchPublished(ctx context.Context) (Published, error) {
 	if err != nil {
 		return Published{}, fmt.Errorf("agent: published manifest: %w", err)
 	}
-	return Published{PublicationSeq: seq, CanonicalSHA256: sha}, nil
+	pub := Published{PublicationSeq: seq, CanonicalSHA256: sha}
+	issuedStr, expiresStr := expirySplit(body)
+	if t, err := time.Parse(time.RFC3339Nano, issuedStr); err == nil {
+		pub.IssuedAt = t
+	}
+	if t, err := time.Parse(time.RFC3339Nano, expiresStr); err == nil {
+		pub.ExpiresAt = t
+	}
+	return pub, nil
 }
 
 func (c *Client) authorize(req *http.Request) {

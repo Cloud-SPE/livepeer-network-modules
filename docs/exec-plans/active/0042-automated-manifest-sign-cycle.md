@@ -440,8 +440,22 @@ new trust-model amendment, not a config change.
    operator_approve, and redirects (no download) — the agent's
    reconcile rule pushes the new last-signed on its next cycle, so
    push-after-approve needs no extra transport code.
-6. **Audit + metrics + webhook** (§9) — including the mandatory
-   seconds-to-expiry alert wiring.
+6. ✅ **Audit + metrics + webhook** (§9) — audit kinds landed with
+   item 4. Prometheus exposition (hand-rolled text format — the cold
+   host takes no client-library dependency) served at `GET /metrics`
+   on the console's existing loopback listener (constraint #1 rules
+   out a separate metrics listener): poll outcomes, decision
+   counters, held-queue depth, last-publish-confirm timestamp, and
+   seconds-to-expiry of the published manifest.
+   `--alert-webhook-url` wires the best-effort outbound webhook
+   (generic JSON with a Slack-compatible `text` field, Q4 proposal)
+   for held / forbidden / publish_failed / policy_invalid /
+   rate_limit_pause / agent start/stop. The mandatory expiry alert is
+   self-contained: when the published manifest burns through half
+   the renewal buffer without a re-publish, the agent fires
+   `manifest_expiry_warning` once per crossing — operators without a
+   scrape stack still get paged; the gauge backs Prometheus alerting
+   on top.
 7. **Docs in the same PRs:** trust-model invariant amendment (§3),
    operator-runbook rewrite (agent mode, policy file, burn-in
    procedure, kill switches), tech-debt entry for the long-poll

@@ -1,0 +1,18 @@
+{
+  "policy_version": 1,
+  "auto_sign": {
+    "renewal": true,
+    "benign": false
+  },
+  "benign_bounds": {
+    "price_delta_max_pct": 10,
+    "allow_tuple_removal": true,
+    "worker_url_domain_allowlist": ["workers.example-orch.net"]
+  },
+  "rate_limit": {
+    "max_auto_signs_per_hour": 4,
+    "on_breach": "pause"
+  },
+  "stability_window_seconds": 300,
+  "renewal_threshold_fraction": 0.3333
+}

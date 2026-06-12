@@ -42,18 +42,22 @@ type ChangedTuple struct {
 
 // HeaderChange surfaces top-of-screen metadata. The diff highlights
 // publication_seq monotonicity and orch.eth_address stability per
-// plan 0019 §6.2.
+// plan 0019 §6.2, plus spec_version stability for the plan 0042
+// classifier (a spec_version change is forbidden-class).
 type HeaderChange struct {
-	BeforeSeq        *uint64 `json:"before_publication_seq,omitempty"`
-	AfterSeq         uint64  `json:"after_publication_seq"`
-	SeqMonotonic     bool    `json:"publication_seq_monotonic"`
-	BeforeEthAddress string  `json:"before_eth_address,omitempty"`
-	AfterEthAddress  string  `json:"after_eth_address"`
-	EthAddressStable bool    `json:"eth_address_stable"`
-	BeforeIssuedAt   string  `json:"before_issued_at,omitempty"`
-	AfterIssuedAt    string  `json:"after_issued_at"`
-	BeforeExpiresAt  string  `json:"before_expires_at,omitempty"`
-	AfterExpiresAt   string  `json:"after_expires_at"`
+	BeforeSeq         *uint64 `json:"before_publication_seq,omitempty"`
+	AfterSeq          uint64  `json:"after_publication_seq"`
+	SeqMonotonic      bool    `json:"publication_seq_monotonic"`
+	BeforeEthAddress  string  `json:"before_eth_address,omitempty"`
+	AfterEthAddress   string  `json:"after_eth_address"`
+	EthAddressStable  bool    `json:"eth_address_stable"`
+	BeforeSpecVersion string  `json:"before_spec_version,omitempty"`
+	AfterSpecVersion  string  `json:"after_spec_version"`
+	SpecVersionStable bool    `json:"spec_version_stable"`
+	BeforeIssuedAt    string  `json:"before_issued_at,omitempty"`
+	AfterIssuedAt     string  `json:"after_issued_at"`
+	BeforeExpiresAt   string  `json:"before_expires_at,omitempty"`
+	AfterExpiresAt    string  `json:"after_expires_at"`
 }
 
 // Compute computes the structural diff between the inner manifest
@@ -167,6 +171,7 @@ func header(before, after map[string]any) HeaderChange {
 	if after != nil {
 		h.AfterSeq = readUint64(after, "publication_seq")
 		h.AfterEthAddress = readEthAddress(after)
+		h.AfterSpecVersion, _ = after["spec_version"].(string)
 		h.AfterIssuedAt, _ = after["issued_at"].(string)
 		h.AfterExpiresAt, _ = after["expires_at"].(string)
 	}
@@ -174,13 +179,16 @@ func header(before, after map[string]any) HeaderChange {
 		seq := readUint64(before, "publication_seq")
 		h.BeforeSeq = &seq
 		h.BeforeEthAddress = readEthAddress(before)
+		h.BeforeSpecVersion, _ = before["spec_version"].(string)
 		h.BeforeIssuedAt, _ = before["issued_at"].(string)
 		h.BeforeExpiresAt, _ = before["expires_at"].(string)
 		h.SeqMonotonic = h.AfterSeq > seq
 		h.EthAddressStable = h.AfterEthAddress == h.BeforeEthAddress
+		h.SpecVersionStable = h.AfterSpecVersion == h.BeforeSpecVersion
 	} else {
 		h.SeqMonotonic = true
 		h.EthAddressStable = true
+		h.SpecVersionStable = true
 	}
 	return h
 }

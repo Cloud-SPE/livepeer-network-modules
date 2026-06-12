@@ -402,9 +402,17 @@ new trust-model amendment, not a config change.
    three agent routes, `--renewal-threshold` builder rule + tests
    proving bytes refresh inside the renewal window, debounce again
    after the refresh (one-shot), and stay idempotent outside it.
-3. **Console: classifier + policy engine** (§7) — pure functions over
-   the existing differ output; table-driven tests per class including
-   the no-op rule and highest-class-wins.
+3. ✅ **Console: classifier + policy engine** (§7) —
+   `internal/policy`: strict fail-closed policy file
+   (schema at `docs/sign-policy.schema.json`, example at
+   `examples/sign-policy.json`, file-hash for audit), classifier over
+   the differ output (differ gained spec_version stability),
+   `Decide` mapping classes through the dials (with
+   `would_auto_sign` shadow flag), latching rate limiter.
+   Table-driven tests per class including the no-op rule and
+   highest-class-wins. Q1/Q2 proposals implemented as proposed:
+   price decreases bounded by the same pct; allowlist is an explicit
+   suffix list with dot-boundary matching.
 4. **Console: agent loop** (§6, §8) — pull/debounce/sign/push/confirm
    state machine; crash-recovery test (last-signed ahead of
    published → resume push); kill-switch tests.

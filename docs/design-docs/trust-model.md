@@ -196,16 +196,31 @@ These hold for every published manifest, by construction:
 
 1. **The cold key signed it.** The receiver-side `payment-daemon` and every
    resolver re-check this; the chain anchors the identity.
-2. **The operator saw the diff.** secure-orch-console renders candidate-vs-
-   current-published diff before exposing the Sign action; the operator
-   confirms intent on the changes, not on the whole manifest.
+2. **The operator saw the diff — or authored the policy that graded it.**
+   For every critical change, secure-orch-console renders the
+   candidate-vs-current-published diff before exposing the Sign action;
+   the operator confirms intent on the changes, not on the whole
+   manifest. For the auto-signed classes (plan 0042), this invariant is
+   class-scoped: the operator saw and authored the sign policy, and sees
+   the audit trail of every decision the agent took inside it.
 3. **The orch-coordinator did not author the content.** It can only host
-   what the operator signs. A compromised coordinator can drop manifests
-   or serve stale ones, but cannot insert new capabilities, new prices, or
-   new backend URLs.
-4. **There is no automated sign path.** Every manifest publication is a
-   discrete operator action. Automation lives in console UX (diffing,
-   one-click sign, clear status), not in the trust boundary.
+   what the cold key signs. A compromised coordinator can drop manifests
+   or serve stale ones, but cannot insert new capabilities or new backend
+   URLs. With the plan 0042 agent enabled this weakens only to the
+   bounded extent of the policy envelope: content-identical renewals
+   (zero new content), and — when the operator flips the phase-2 dial —
+   benign changes within explicit operator-authored bounds (price delta
+   percentage, worker-URL domain allowlist, tuple removal), rate-limited
+   per hour.
+4. **There is no unbounded automated sign path.** The cold key signs
+   without an operator only inside a policy envelope the operator
+   authored and the audit log records: content-identical renewals
+   always; benign content changes only within explicit bounds (price
+   delta, domain allowlist, rate limit); everything else is held for a
+   discrete operator action. Identity (`eth_address`) and `spec_version`
+   changes are never auto-signed — that dial does not exist in the
+   policy schema. (Amended by plan 0042; the original invariant read
+   "there is no automated sign path".)
 5. **Revocation is supersession.** There is no separate revoke step — the
    operator signs a new manifest that omits the no-longer-offered
    capability, and resolvers pick it up on the next round refresh.
@@ -220,13 +235,17 @@ These hold for every published manifest, by construction:
 | Attacker compromises a worker-orch broker | manifest gating + receiver-side checks | The broker has no cold key. It can't add itself to a manifest; resolvers won't see it. It can degrade or refuse traffic, but it can't impersonate offerings the orch hasn't signed for. |
 | Attacker MITMs manifest fetch | double verification + canonical bytes | Modified bytes invalidate the signature. |
 | Operator signs the wrong thing | diff UI on secure-orch-console | Friction-reduction work goes into diffing and clear presentation, never into removing the sign step. |
+| Attacker compromises the coordinator and feeds the sign agent | policy envelope + rate limit + audit (plan 0042) | Worst case per auto-signed class: renewals keep the operator's own already-approved content alive (zero new capability, price, or URL); phase-2 benign signs drift price within the configured % bound or move worker URLs within the domain allowlist, capped per hour. Critical and forbidden classes always hold or refuse. A sign burst trips the rate-limit pause — the loudest available compromise signal. |
 | Cold key compromise | OPERATIONAL — outside the system | Cold-key compromise means the orch is compromised. The protocol can't prevent this; the operator's job is to make it not happen (HSM, physical access controls, etc.). |
 
 ## What's deferred
 
-- **Automated transport** of manifests from secure-orch to coordinator.
-  Hand-carry (scp / USB / console upload) is fine for v1 — the bottleneck
-  is signing, not transport.
+- ~~**Automated transport** of manifests from secure-orch to
+  coordinator.~~ Shipped by plan 0042: an outbound-only agent on the
+  secure host pulls candidates, classifies them against the operator's
+  sign policy, auto-signs within the envelope (invariant #4), and pushes
+  signed manifests back. Hand-carry remains available as the fallback
+  path.
 - **Manifest versioning beyond supersession.** No timestamps, no nonces.
   The latest signed manifest wins. If versioned histories become valuable
   for audit, they belong in the coordinator's storage layer, not in the

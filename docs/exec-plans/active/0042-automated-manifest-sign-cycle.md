@@ -2,7 +2,7 @@
 plan: 0042
 title: Automated manifest sign cycle (secure-orch agent)
 status: active
-phase: planning
+phase: implemented (burn-in pending)
 opened: 2026-06-10
 owner: harness
 related:
@@ -15,7 +15,9 @@ audience: secure-orch operators, orch-coordinator maintainers, trust-model revie
 
 # Plan 0042 — automated manifest sign cycle (secure-orch agent)
 
-**Status:** active (planning). Automates the manifest sign cycle between the
+**Status:** active — implementation complete on `feat/manifest-sign-agent`
+(work items 1–8 ✅); remaining: phase-1 burn-in (§10) and the phase-2
+dial decision. Automates the manifest sign cycle between the
 firewalled secure-orch host and the public orch-coordinator, replacing
 the hand-carry loop (download candidate → SSH tunnel → upload → diff →
 sign → download → re-upload) with an outbound-only agent on the secure
@@ -55,14 +57,14 @@ In scope:
    agent-side work).
 3. ✅ A renewal-window rule in the coordinator's candidate builder so
    expiring manifests produce a fresh-window candidate (§5.3; shipped).
-4. An **agent daemon mode in `secure-orch-console`** (not a new
+4. ✅ An **agent daemon mode in `secure-orch-console`** (not a new
    component): pull loop, stability debounce, change classifier,
    policy engine, auto-sign, held-for-operator queue, push,
-   publish confirmation, kill switch (§6–§8).
-5. New audit event kinds and outbound webhook alerts (§9).
-6. Trust-model doc amendment in the same PR series (§3) — per the
+   publish confirmation, kill switch (§6–§8; shipped).
+5. ✅ New audit event kinds and outbound webhook alerts (§9; shipped).
+6. ✅ Trust-model doc amendment in the same PR series (§3) — per the
    repo's doc-gardening rule, the invariant changes in the same PR
-   that changes the behavior.
+   series that changes the behavior (shipped).
 
 Out of scope:
 
@@ -86,7 +88,7 @@ invariants*):
 > **There is no automated sign path.** Every manifest publication is a
 > discrete operator action.
 
-Replacement wording (to land in the same PR series):
+Replacement wording (✅ landed in `docs/design-docs/trust-model.md`):
 
 > **There is no unbounded automated sign path.** The cold key signs
 > without an operator only inside a policy envelope the operator
@@ -456,14 +458,20 @@ new trust-model amendment, not a config change.
    `manifest_expiry_warning` once per crossing — operators without a
    scrape stack still get paged; the gauge backs Prometheus alerting
    on top.
-7. **Docs in the same PRs:** trust-model invariant amendment (§3),
-   operator-runbook rewrite (agent mode, policy file, burn-in
-   procedure, kill switches), tech-debt entry for the long-poll
-   follow-up if measurement warrants it.
-8. **End-to-end test:** fake coordinator + real console agent in a
-   harness: candidate change → debounce → hold → approve → push →
-   publish-confirm; renewal path; forbidden-class refusal; rate-limit
-   pause.
+7. ✅ **Docs in the same PRs:** trust-model invariant #4 amended per
+   §3 (with class-scoped #2/#3 wording, a hostile-coordinator row in
+   the threat table, and the deferred automated-transport item marked
+   shipped); secure-orch operator runbook gained the agent-mode
+   section (boot, policy + burn-in, held queue, kill switches,
+   metrics + mandatory expiry alert); tech-debt entries filed for the
+   rate-limit clear gesture and the conditional long-poll follow-up.
+8. ✅ **End-to-end test:** fake coordinator + real console agent in a
+   harness (internal/agent/agent_test.go): renewal auto-sign →
+   push → publish-confirm with seq discipline; candidate change →
+   debounce → hold → supersede; operator approve via the web flow
+   (web/held_test.go) with the agent reconcile push; forbidden-class
+   refusal; rate-limit pause; crash recovery; pause file; fail-closed
+   policy.
 
 ## 12. Open questions (defaults proposed, decide before phase 2)
 

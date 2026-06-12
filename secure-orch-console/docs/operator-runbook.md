@@ -79,6 +79,128 @@ matching coordinator timeline section during the hand-carry cycle.
    coordinator double-verifies, then publishes at
    `/.well-known/livepeer-registry.json`.
 
+## Agent mode (plan 0042) — automated sign cycle
+
+`--agent` replaces the hand-carry loop above with an outbound-only
+agent: the console pulls candidates from the coordinator, classifies
+them against your sign policy, auto-signs inside the policy envelope,
+holds everything else for your review, and pushes signed manifests
+back. The hand-carry flow stays available as the fallback.
+
+### Boot
+
+```
+secure-orch-console \
+  --keystore=v3:/etc/secure-orch/cold.json \
+  --keystore-password-file=/etc/secure-orch/cold.pass \
+  --agent \
+  --coordinator-url=https://coordinator.lan:8080 \
+  --coordinator-public-url=https://coordinator.example.net:8081 \
+  --coordinator-token-file=/etc/secure-orch/agent-token \
+  --agent-policy=/etc/secure-orch/sign-policy.json \
+  --alert-webhook-url=https://hooks.example.net/secure-orch
+```
+
+- `--coordinator-url` is the coordinator's admin listener (candidate
+  pull + signed-manifest push). The token in
+  `--coordinator-token-file` must match the coordinator's
+  `--agent-token-file`.
+- `--coordinator-public-url` is the resolver-facing listener; the
+  agent confirms every publish by re-fetching
+  `/.well-known/livepeer-registry.json` and matching seq + canonical
+  hash.
+- The console refuses to boot if the policy file does not validate —
+  a bad policy at boot is a config error, not a runtime pause.
+- All transport is initiated from this host. The agent adds no
+  listener; the secure-orch inbound posture is unchanged.
+
+Hardening: pin the coordinator's TLS certificate at the OS trust
+layer, and add an egress firewall rule allowlisting only the two
+coordinator host:ports. The bearer token only keeps anonymous traffic
+off the coordinator's endpoints — the manifest signature remains the
+real content authentication in both directions.
+
+### Sign policy
+
+The policy file (`--agent-policy`, strict JSON, schema at
+[`docs/sign-policy.schema.json`](./sign-policy.schema.json), example
+at [`examples/sign-policy.json`](../examples/sign-policy.json))
+is the entire trust envelope. It is reloaded at every cycle; a parse
+or validation failure **pauses all auto-signing** (fail closed — there
+is no fallback to a previous or default policy) and fires the
+`policy_invalid` alert. Every load is audited with the file's SHA-256.
+
+Candidate classes and dispositions:
+
+| Class | Meaning | Phase 1 | Phase 2 |
+|---|---|---|---|
+| `renewal` | content identical, remaining validity below threshold | auto-sign | auto-sign |
+| `benign` | every change within `benign_bounds` | hold + `would_auto_sign` shadow audit | auto-sign |
+| `critical` | any change beyond the bounds | hold + alert | hold + alert |
+| `forbidden` | `eth_address` or `spec_version` changed | refuse + alert | refuse + alert |
+
+### Burn-in procedure (phase 1 → phase 2)
+
+Run phase 1 (`auto_sign.benign: false`) for at least two weeks. Review
+the audit log: every manual approval that carries a `would_auto_sign`
+shadow event is calibration evidence that the policy would have signed
+it for you. If a `would_auto_sign` appears on a change you hesitated
+over, tighten `benign_bounds` before flipping. The phase-2 flip is one
+line — `"benign": true` — and takes effect on the next cycle, no
+restart.
+
+### Held queue
+
+Held candidates appear on the **Manifests** page as a "Pending
+changes" card with the classification findings. "Load for review"
+drops the candidate into the normal diff + tap-to-sign flow; signing
+it clears the slot, audits `operator_approve`, and the agent pushes
+the result on its next cycle — no download / re-upload. A newer
+candidate superseding a held one replaces it (audited as
+`held_superseded`), so you always review the latest diff.
+
+### Kill switches
+
+Any one suffices; all are audited:
+
+1. `touch /var/lib/secure-orch/agent.pause` — pauses pull **and**
+   sign; works over a plain SSH session with the console down.
+   Remove the file to resume.
+2. Policy `auto_sign.{renewal,benign}: false` — stops signing, keeps
+   pulling/classifying/alerting (shadow mode).
+3. Rate-limit breach auto-pause — more than
+   `max_auto_signs_per_hour` auto-sign attempts in a sliding hour
+   latches a pause on all auto-signing. A sign burst is the loudest
+   available signal that the coordinator side is misbehaving:
+   investigate before clearing. The latch clears on console restart
+   (an in-console clear gesture is tracked as tech debt).
+
+### Metrics and the expiry alert
+
+`GET /metrics` on the console listener (same SSH tunnel as the UI)
+exposes poll outcomes, decision counts, held-queue depth, the
+last-publish-confirm timestamp, and
+`secure_orch_agent_published_manifest_expiry_seconds`.
+
+**Wiring an alert on manifest expiry is a phase-1 requirement, not
+optional.** A rate-limit pause stops renewals too, and with a 24 h
+manifest TTL an unnoticed pause can let the published manifest
+expire. Two layers ship:
+
+1. Built-in: the agent fires the `manifest_expiry_warning` webhook
+   once per crossing when the published manifest has burned through
+   half the renewal buffer without a re-publish.
+2. If you run Prometheus, alert on the gauge as well, e.g.:
+
+   ```yaml
+   - alert: SecureOrchManifestExpiringSoon
+     expr: secure_orch_agent_published_manifest_expiry_seconds < 14400
+     for: 10m
+   ```
+
+The webhook (`--alert-webhook-url`) is best-effort by contract; the
+audit log is the system of record.
+
 ## Protocol actions
 
 When the console is started with a `protocol-daemon` unix socket

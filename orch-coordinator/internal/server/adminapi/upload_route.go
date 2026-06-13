@@ -21,8 +21,13 @@ const MaxUploadBytes = 1 << 20
 // admin mux.
 //
 //	POST /admin/signed-manifest    multipart/form-data with field "manifest"
+//
+// The route admits the secure-orch agent's bearer token alongside the
+// operator session (plan 0042 §5.2) — the agent pushes signed
+// manifests on the operator's behalf; the manifest signature is the
+// real content authentication.
 func (s *Server) UploadRoutes(rec *receive.Service) {
-	s.mux.HandleFunc("POST /admin/signed-manifest", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc("POST /admin/signed-manifest", s.requireAuthOrAgent(func(w http.ResponseWriter, r *http.Request) {
 		res, outcome, msg, status := receiveUpload(rec, r)
 		if status != http.StatusOK || res == nil {
 			httpJSON(w, status, map[string]any{

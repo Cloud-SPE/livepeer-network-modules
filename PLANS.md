@@ -72,9 +72,20 @@ What does not exist yet:
 
 ## Active plans
 
-**None.** Implementation backlog is empty.
+Live in [`docs/exec-plans/active/`](./docs/exec-plans/active/):
 
-The `docs/exec-plans/active/` directory is empty; future plans land here.
+- **0031 — Pool follow-up backlog**
+- **0034 — Priced funding and final-usage settlement** across gateway,
+  broker, and payment-daemon
+- **0037 — Operator console UX alignment** (shared shell + design
+  language for secure-orch-console and orch-coordinator)
+- **0038 — Metrics coverage** for payment-daemon,
+  service-registry-daemon, and the broker's dependency surfaces
+- **0040 — Pool template onboarding and connected-worker reset**
+- **0042 — Automated manifest sign cycle** (secure-orch agent) —
+  replaces the hand-carry manifest loop with an outbound-only agent on
+  the secure host; amends trust-model sign-cycle invariant #4
+
 The three deferred follow-ups listed above are candidates for the next
 plan dispatch when the user picks them up.
 

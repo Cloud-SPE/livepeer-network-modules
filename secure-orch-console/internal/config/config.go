@@ -24,6 +24,10 @@ type Config struct {
 	AdminTokens     []string
 	CoordinatorURL  string
 	Version         string
+	// AgentHeldDir is the plan 0042 held-queue directory; when set,
+	// the manifests page surfaces the agent's held-for-operator
+	// candidate for one-click review + sign.
+	AgentHeldDir string
 }
 
 // Keystore selects the V3 JSON keystore backing the signer.

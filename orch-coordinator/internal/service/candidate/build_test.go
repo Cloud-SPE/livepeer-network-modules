@@ -488,3 +488,110 @@ func TestUniquenessKey_StableAcrossExtraOrder(t *testing.T) {
 		t.Fatalf("expected extra to appear in key, got %s", a)
 	}
 }
+
+func TestBuild_RenewalWindowRefreshesIssuedAtWhenContentUnchanged(t *testing.T) {
+	first := sampleSnap()
+	opts := BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+		PublicationSeq: 7,
+	}
+	c1, err := Build(first, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Window advances 17h: remaining validity (7h) is below the
+	// default renewal threshold (TTL/3 = 8h), so the debounce must
+	// yield to a fresh window even though content is unchanged.
+	second := sampleSnap()
+	second.WindowStart = first.WindowEnd.Add(17*time.Hour - 30*time.Second)
+	second.WindowEnd = first.WindowEnd.Add(17 * time.Hour)
+
+	opts.PrevContentHash = c1.ContentHash
+	opts.PrevIssuedAt = c1.Manifest.IssuedAt
+	c2, err := Build(second, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c2.Manifest.IssuedAt.Equal(second.WindowEnd) {
+		t.Fatalf("issued_at not refreshed in renewal window: got %s want %s", c2.Manifest.IssuedAt, second.WindowEnd)
+	}
+	if bytes.Equal(c1.ManifestBytes, c2.ManifestBytes) {
+		t.Fatal("renewal must produce fresh signable bytes")
+	}
+	if c2.ContentHash != c1.ContentHash {
+		t.Fatal("renewal must not change the content hash")
+	}
+}
+
+func TestBuild_RenewalRefreshIsOneShot(t *testing.T) {
+	first := sampleSnap()
+	opts := BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+		PublicationSeq: 7,
+	}
+	c1, err := Build(first, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second := sampleSnap()
+	second.WindowStart = first.WindowEnd.Add(17*time.Hour - 30*time.Second)
+	second.WindowEnd = first.WindowEnd.Add(17 * time.Hour)
+	opts.PrevContentHash = c1.ContentHash
+	opts.PrevIssuedAt = c1.Manifest.IssuedAt
+	c2, err := Build(second, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The scrape after the renewal refresh debounces to the renewed
+	// issued_at: candidate bytes stay stable while the sign cycle is
+	// in flight, instead of churning every scrape.
+	third := sampleSnap()
+	third.WindowStart = second.WindowEnd
+	third.WindowEnd = second.WindowEnd.Add(60 * time.Second)
+	opts.PrevContentHash = c2.ContentHash
+	opts.PrevIssuedAt = c2.Manifest.IssuedAt
+	c3, err := Build(third, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c3.Manifest.IssuedAt.Equal(c2.Manifest.IssuedAt) {
+		t.Fatalf("renewed issued_at must debounce again: c2=%s c3=%s", c2.Manifest.IssuedAt, c3.Manifest.IssuedAt)
+	}
+	if !bytes.Equal(c2.ManifestBytes, c3.ManifestBytes) {
+		t.Fatal("manifest bytes churned after renewal refresh")
+	}
+}
+
+func TestBuild_ExplicitRenewalThresholdKeepsDebounce(t *testing.T) {
+	first := sampleSnap()
+	opts := BuildOptions{
+		OrchEthAddress:   "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:      24 * time.Hour,
+		PublicationSeq:   7,
+		RenewalThreshold: time.Hour,
+	}
+	c1, err := Build(first, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 17h in, remaining validity is 7h — above the explicit 1h
+	// threshold, so the debounce holds.
+	second := sampleSnap()
+	second.WindowStart = first.WindowEnd.Add(17*time.Hour - 30*time.Second)
+	second.WindowEnd = first.WindowEnd.Add(17 * time.Hour)
+	opts.PrevContentHash = c1.ContentHash
+	opts.PrevIssuedAt = c1.Manifest.IssuedAt
+	c2, err := Build(second, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c2.Manifest.IssuedAt.Equal(c1.Manifest.IssuedAt) {
+		t.Fatalf("debounce should hold above explicit threshold: c1=%s c2=%s", c1.Manifest.IssuedAt, c2.Manifest.IssuedAt)
+	}
+}

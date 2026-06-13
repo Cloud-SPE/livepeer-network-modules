@@ -1,14 +1,23 @@
 ---
-status: draft
+plan: 0042
+title: Automated manifest sign cycle (secure-orch agent)
+status: active
+phase: implemented (burn-in pending)
 opened: 2026-06-10
 owner: harness
-related: plan 0018 (orch-coordinator design, completed), plan 0019 (secure-orch trust spine design, completed), docs/design-docs/trust-model.md, secure-orch-console/docs/operator-runbook.md
+related:
+  - "completed plan 0018 — orch-coordinator design"
+  - "completed plan 0019 — secure-orch trust spine design"
+  - "docs/design-docs/trust-model.md"
+  - "secure-orch-console/docs/operator-runbook.md"
 audience: secure-orch operators, orch-coordinator maintainers, trust-model reviewers
 ---
 
 # Plan 0042 — automated manifest sign cycle (secure-orch agent)
 
-**Status:** draft. Automates the manifest sign cycle between the
+**Status:** active — implementation complete on `feat/manifest-sign-agent`
+(work items 1–8 ✅); remaining: phase-1 burn-in (§10) and the phase-2
+dial decision. Automates the manifest sign cycle between the
 firewalled secure-orch host and the public orch-coordinator, replacing
 the hand-carry loop (download candidate → SSH tunnel → upload → diff →
 sign → download → re-upload) with an outbound-only agent on the secure
@@ -40,20 +49,22 @@ These are non-negotiable and shape everything below:
 
 In scope:
 
-1. `GET /admin/candidate/latest` on orch-coordinator with
-   `ETag`/`If-None-Match` conditional-fetch semantics (§5.1).
-2. Bearer-token auth on the coordinator's signed-manifest receive
-   endpoint, with mTLS as documented hardening (§5.2).
-3. A renewal-window rule in the coordinator's candidate builder so
-   expiring manifests produce a fresh-window candidate (§5.3).
-4. An **agent daemon mode in `secure-orch-console`** (not a new
+1. ✅ `ETag`/`If-None-Match` conditional-fetch semantics on the
+   coordinator's existing candidate routes (§5.1; shipped).
+2. ✅ Bearer-token auth admitting the agent on candidate download +
+   signed-manifest receive, with mTLS as documented hardening (§5.2;
+   shipped — TLS pinning/mTLS remain runbook hardening for the
+   agent-side work).
+3. ✅ A renewal-window rule in the coordinator's candidate builder so
+   expiring manifests produce a fresh-window candidate (§5.3; shipped).
+4. ✅ An **agent daemon mode in `secure-orch-console`** (not a new
    component): pull loop, stability debounce, change classifier,
    policy engine, auto-sign, held-for-operator queue, push,
-   publish confirmation, kill switch (§6–§8).
-5. New audit event kinds and outbound webhook alerts (§9).
-6. Trust-model doc amendment in the same PR series (§3) — per the
+   publish confirmation, kill switch (§6–§8; shipped).
+5. ✅ New audit event kinds and outbound webhook alerts (§9; shipped).
+6. ✅ Trust-model doc amendment in the same PR series (§3) — per the
    repo's doc-gardening rule, the invariant changes in the same PR
-   that changes the behavior.
+   series that changes the behavior (shipped).
 
 Out of scope:
 
@@ -77,7 +88,7 @@ invariants*):
 > **There is no automated sign path.** Every manifest publication is a
 > discrete operator action.
 
-Replacement wording (to land in the same PR series):
+Replacement wording (✅ landed in `docs/design-docs/trust-model.md`):
 
 > **There is no unbounded automated sign path.** The cold key signs
 > without an operator only inside a policy envelope the operator
@@ -144,11 +155,16 @@ audit trail.
 
 ## 5. orch-coordinator changes
 
-### 5.1 `GET /admin/candidate/latest`
+### 5.1 Conditional fetch on the candidate routes — ✅ shipped
 
-New admin-API route serving the latest built candidate tarball
-(same payload the existing download produces: `manifest.json` +
-`metadata.json`).
+**Decided (closes former Q5):** no new `/admin/candidate/latest`
+endpoint. The ETag/`If-None-Match` semantics landed on the *existing*
+`GET /candidate.json` and `GET /candidate.tar.gz` routes — one
+endpoint surface, so the human download path and the agent path
+cannot drift apart. The agent polls `/candidate.tar.gz` (the same
+payload the hand-carry download produces: `manifest.json` +
+`metadata.json`). 304 polls are not audited; only full tarball
+downloads append the existing download audit event.
 
 - **ETag = SHA-256 of the candidate's canonical `manifest.json`
   bytes** (the full payload, including `issued_at`/`expires_at`/
@@ -166,7 +182,7 @@ New admin-API route serving the latest built candidate tarball
   timeout lapses). Plain conditional GET is cheap enough to ship
   first; measure before adding held connections.
 
-### 5.2 Auth on the receive path
+### 5.2 Auth on the receive path — ✅ shipped (coordinator side)
 
 `POST /admin/signed-manifest` (and the web-form twin) currently rides
 the optional operator admin token. Add a dedicated **agent bearer
@@ -174,6 +190,12 @@ token** (separate credential from the human operator token, so it can
 be rotated independently and identified in audit):
 
 - Coordinator flag/env: `--agent-token-file` (file, not CLI literal).
+  Implementation note: the bearer admits the agent on the two
+  candidate GET routes *and* the signed-manifest POST — the operator
+  login is a single-session cookie flow, so a cookie-holding agent
+  would lock the human out. Bearer-admitted requests audit as actor
+  `agent`; a presented-but-wrong bearer is a hard 401, never a
+  fall-through to the login flow.
 - Agent flag: `--coordinator-token-file`.
 - The manifest signature remains the real content authentication —
   the five-step verify pipeline is unchanged. The bearer only keeps
@@ -185,18 +207,32 @@ be rotated independently and identified in audit):
   v1 (it is a client-side check, cheap); full mTLS is config the
   runbook documents.
 
-### 5.3 Renewal-window rule in the builder
+### 5.3 Renewal-window rule in the builder — ✅ shipped
 
 The builder's `issued_at` debounce keeps candidate bytes identical
 while content is unchanged — correct for idempotence, wrong for
 renewals: a manifest must be re-signed before `expires_at` even when
-nothing changed. Add one rule to
-`orch-coordinator/internal/service/candidate/builder.go`:
+nothing changed. One rule, implemented in
+`orch-coordinator/internal/service/candidate/build.go`
+(`--renewal-threshold` flag, default 1/3 of `--manifest-ttl`):
 
-> If the currently-published manifest's remaining validity is below
-> `renewal_threshold` (default: 1/3 of `--manifest-ttl`), the next
-> rebuild refreshes `issued_at`/`expires_at` to the current scrape
-> window even when the content hash is unchanged.
+> If the **debounced candidate's** remaining validity
+> (`PrevIssuedAt + ManifestTTL − scrape-window end`) is below
+> `renewal_threshold`, the next rebuild refreshes
+> `issued_at`/`expires_at` to the current scrape window even when the
+> content hash is unchanged.
+
+**Refinement over the draft:** the draft keyed the rule on the
+*published* manifest's remaining validity. That would churn the
+candidate's bytes (and ETag) on every scrape from the moment the
+window opened until the sign cycle completed — defeating the agent's
+stability debounce exactly when it matters. Keying on the debounced
+candidate's own expiry makes the refresh one-shot: the renewed
+`issued_at` immediately debounces again for a full
+`TTL − threshold`, so the candidate is stable while the agent
+debounces, signs, and pushes. The two clocks track each other because
+the candidate's debounced `issued_at` is the published `issued_at`
+after every successful publish.
 
 That moves the candidate's full-bytes ETag → the agent pulls →
 classifies as *renewal* → auto-signs. No new endpoint, no agent-side
@@ -331,6 +367,12 @@ counters for poll/304/200 instead, alongside gauges for held-queue
 depth, time-since-last-publish-confirm, and seconds-to-expiry of the
 published manifest (the page-the-operator metric if the loop wedges).
 
+**Wiring an operator alert on seconds-to-expiry is a phase-1
+requirement, not optional.** A rate-limit breach pauses *all*
+auto-signing including renewals (§7), and with the default 24 h
+`--manifest-ttl` an unnoticed pause can let the published manifest
+expire. The gauge alone is not the mitigation; the alert on it is.
+
 ## 10. Phasing
 
 **Phase 1 — one build, conservative dial.** Everything in §5–§9
@@ -354,29 +396,82 @@ new trust-model amendment, not a config change.
 
 ## 11. Work breakdown
 
-1. **Coordinator: candidate endpoint + ETag** (§5.1) — new admin
-   route, full-bytes hash plumbed from the builder, tests for
-   304/200/503 semantics.
-2. **Coordinator: agent bearer + renewal-window rule** (§5.2, §5.3) —
-   token file plumbing, builder rule + tests proving bytes refresh
-   inside the renewal window and stay idempotent outside it.
-3. **Console: classifier + policy engine** (§7) — pure functions over
-   the existing differ output; table-driven tests per class including
-   the no-op rule and highest-class-wins.
-4. **Console: agent loop** (§6, §8) — pull/debounce/sign/push/confirm
-   state machine; crash-recovery test (last-signed ahead of
-   published → resume push); kill-switch tests.
-5. **Console: held queue UI + agent push-after-approve** (§8) —
-   reuses diff renderer and confirm-gesture flow.
-6. **Audit + metrics + webhook** (§9).
-7. **Docs in the same PRs:** trust-model invariant amendment (§3),
-   operator-runbook rewrite (agent mode, policy file, burn-in
-   procedure, kill switches), tech-debt entry for the long-poll
-   follow-up if measurement warrants it.
-8. **End-to-end test:** fake coordinator + real console agent in a
-   harness: candidate change → debounce → hold → approve → push →
-   publish-confirm; renewal path; forbidden-class refusal; rate-limit
-   pause.
+1. ✅ **Coordinator: candidate routes + ETag** (§5.1) — conditional
+   GET on the existing routes, full-bytes hash, tests for 304/200/503
+   (+ Retry-After) semantics, 304-not-audited.
+2. ✅ **Coordinator: agent bearer + renewal-window rule** (§5.2,
+   §5.3) — `--agent-token-file` plumbing, `requireAuthOrAgent` on the
+   three agent routes, `--renewal-threshold` builder rule + tests
+   proving bytes refresh inside the renewal window, debounce again
+   after the refresh (one-shot), and stay idempotent outside it.
+3. ✅ **Console: classifier + policy engine** (§7) —
+   `internal/policy`: strict fail-closed policy file
+   (schema at `docs/sign-policy.schema.json`, example at
+   `examples/sign-policy.json`, file-hash for audit), classifier over
+   the differ output (differ gained spec_version stability),
+   `Decide` mapping classes through the dials (with
+   `would_auto_sign` shadow flag), latching rate limiter.
+   Table-driven tests per class including the no-op rule and
+   highest-class-wins. Q1/Q2 proposals implemented as proposed:
+   price decreases bounded by the same pct; allowlist is an explicit
+   suffix list with dot-boundary matching.
+4. ✅ **Console: agent loop** (§6, §8) — `internal/agent`:
+   pull/debounce/sign/push/confirm state machine behind a `--agent`
+   daemon mode (`--coordinator-public-url`,
+   `--coordinator-token-file`, `--agent-policy`, `--agent-held-dir`,
+   `--agent-pause-file`, `--agent-poll-interval`). Push reconcile is
+   the crash-recovery rule: last-signed (written atomically before
+   first push) ahead of published → resume push; the post-sign push
+   rides the same rule. Tested against a fake coordinator: renewal
+   auto-sign with seq discipline, no-op, hold + supersede, shadow
+   would_auto_sign + phase-2 flip, forbidden refusal, stability-
+   window reset, crash recovery, push-failure audit+alert, pause
+   file, fail-closed policy, rate-limit latch (degrades to hold).
+   Implementation notes: the renewal clock derives TTL from the
+   last-signed manifest's own issued_at→expires_at span (no agent
+   TTL flag); a published seq *ahead* of last-signed is logged loudly
+   and never pushed over; the rate-limit latch clears on process
+   restart (operator Clear gesture lands with the item-5 UI).
+5. ✅ **Console: held queue UI + agent push-after-approve** (§8) —
+   manifests page gains a "Pending changes held by the agent" card
+   (class, findings, shadow would_auto_sign note) with a
+   load-for-review action that stashes the held candidate into the
+   *existing* diff + confirm-gesture flow, applying seq discipline
+   at load time so the operator signs exactly what the agent would
+   have. Signing a held candidate clears the slot, audits
+   operator_approve, and redirects (no download) — the agent's
+   reconcile rule pushes the new last-signed on its next cycle, so
+   push-after-approve needs no extra transport code.
+6. ✅ **Audit + metrics + webhook** (§9) — audit kinds landed with
+   item 4. Prometheus exposition (hand-rolled text format — the cold
+   host takes no client-library dependency) served at `GET /metrics`
+   on the console's existing loopback listener (constraint #1 rules
+   out a separate metrics listener): poll outcomes, decision
+   counters, held-queue depth, last-publish-confirm timestamp, and
+   seconds-to-expiry of the published manifest.
+   `--alert-webhook-url` wires the best-effort outbound webhook
+   (generic JSON with a Slack-compatible `text` field, Q4 proposal)
+   for held / forbidden / publish_failed / policy_invalid /
+   rate_limit_pause / agent start/stop. The mandatory expiry alert is
+   self-contained: when the published manifest burns through half
+   the renewal buffer without a re-publish, the agent fires
+   `manifest_expiry_warning` once per crossing — operators without a
+   scrape stack still get paged; the gauge backs Prometheus alerting
+   on top.
+7. ✅ **Docs in the same PRs:** trust-model invariant #4 amended per
+   §3 (with class-scoped #2/#3 wording, a hostile-coordinator row in
+   the threat table, and the deferred automated-transport item marked
+   shipped); secure-orch operator runbook gained the agent-mode
+   section (boot, policy + burn-in, held queue, kill switches,
+   metrics + mandatory expiry alert); tech-debt entries filed for the
+   rate-limit clear gesture and the conditional long-poll follow-up.
+8. ✅ **End-to-end test:** fake coordinator + real console agent in a
+   harness (internal/agent/agent_test.go): renewal auto-sign →
+   push → publish-confirm with seq discipline; candidate change →
+   debounce → hold → supersede; operator approve via the web flow
+   (web/held_test.go) with the agent reconcile push; forbidden-class
+   refusal; rate-limit pause; crash recovery; pause file; fail-closed
+   policy.
 
 ## 12. Open questions (defaults proposed, decide before phase 2)
 
@@ -391,3 +486,6 @@ new trust-model amendment, not a config change.
    Validate against the production TTL value.
 4. Webhook target — operator's existing alerting stack? Determines
    payload format (proposed: generic JSON, Slack-compatible).
+5. ~~Endpoint shape~~ — **decided + shipped**: ETag/`If-None-Match`
+   semantics landed on the existing `GET /candidate.json` and
+   `GET /candidate.tar.gz` routes; no new endpoint (§5.1).

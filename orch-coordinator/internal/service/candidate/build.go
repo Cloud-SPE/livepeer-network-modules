@@ -66,6 +66,16 @@ type BuildOptions struct {
 	// candidate even if it spans multiple scrape cycles.
 	PrevContentHash string
 	PrevIssuedAt    time.Time
+	// RenewalThreshold bounds the debounce (plan 0042 §5.3): when the
+	// debounced candidate's remaining validity (PrevIssuedAt +
+	// ManifestTTL − scrape-window end) drops below this, the build
+	// refreshes issued_at/expires_at to the current window even though
+	// content is unchanged, producing fresh signable bytes so the
+	// manifest can be re-signed before it expires. The refresh is
+	// one-shot: the renewed issued_at debounces again for a full
+	// TTL−threshold, keeping the candidate bytes stable while the sign
+	// cycle is in flight. Zero or negative means ManifestTTL/3.
+	RenewalThreshold time.Duration
 }
 
 // Build assembles a candidate from a scrape snapshot. The result is
@@ -99,7 +109,14 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		issuedAt = time.Now().UTC()
 	}
 	if opts.PrevContentHash != "" && opts.PrevContentHash == contentHash && !opts.PrevIssuedAt.IsZero() {
-		issuedAt = opts.PrevIssuedAt.UTC()
+		threshold := opts.RenewalThreshold
+		if threshold <= 0 {
+			threshold = opts.ManifestTTL / 3
+		}
+		prevExpiry := opts.PrevIssuedAt.UTC().Add(opts.ManifestTTL)
+		if prevExpiry.Sub(issuedAt) >= threshold {
+			issuedAt = opts.PrevIssuedAt.UTC()
+		}
 	}
 	expiresAt := issuedAt.Add(opts.ManifestTTL)
 

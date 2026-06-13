@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/docs/sign-policy.schema.json",
+  "title": "secure-orch sign policy (plan 0042 §7)",
+  "description": "Operator-authored policy envelope for the secure-orch agent's auto-sign decisions. Strict: unknown fields fail validation; a parse or schema failure pauses auto-signing (fail closed).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "policy_version",
+    "auto_sign",
+    "benign_bounds",
+    "rate_limit",
+    "stability_window_seconds",
+    "renewal_threshold_fraction"
+  ],
+  "properties": {
+    "policy_version": {
+      "const": 1
+    },
+    "auto_sign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["renewal", "benign"],
+      "properties": {
+        "renewal": {
+          "type": "boolean",
+          "description": "Auto-sign content-identical renewals. Phase-1 default: true."
+        },
+        "benign": {
+          "type": "boolean",
+          "description": "Auto-sign benign changes within benign_bounds. Phase-1 default: false (held + would_auto_sign shadow audit); phase 2 flips this to true."
+        }
+      }
+    },
+    "benign_bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["price_delta_max_pct", "allow_tuple_removal", "worker_url_domain_allowlist"],
+      "properties": {
+        "price_delta_max_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Price changes in either direction within this percentage are benign. Decreases are bounded too: a fat-fingered 99% cut holds for review."
+        },
+        "allow_tuple_removal": {
+          "type": "boolean",
+          "description": "Treat a disappearing (capability_id, offering_id) tuple as benign — removal reduces exposure."
+        },
+        "worker_url_domain_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$",
+            "description": "Explicit lower-case domain suffix; matches a host equal to the entry or ending in '.'+entry. No wildcards."
+          },
+          "description": "A changed worker_url is benign only when its host matches an entry."
+        }
+      }
+    },
+    "rate_limit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_auto_signs_per_hour", "on_breach"],
+      "properties": {
+        "max_auto_signs_per_hour": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Sliding 1-hour cap on auto-signs. An unbounded rate is not expressible."
+        },
+        "on_breach": {
+          "const": "pause",
+          "description": "Breaching the cap stops ALL auto-signing (renewals included) until the operator clears it."
+        }
+      }
+    },
+    "stability_window_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How long a pulled candidate's ETag must stay unchanged before the agent acts on it."
+    },
+    "renewal_threshold_fraction": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1,
+      "description": "Fraction of the manifest TTL below which an unchanged candidate classifies as renewal. Keep aligned with the coordinator's --renewal-threshold (both default to 1/3)."
+    }
+  }
+}

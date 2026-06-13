@@ -31,6 +31,24 @@ idle timeout, and upload audit events record that actor. Expired
 sessions are released automatically on the next request or login
 attempt.
 
+`--agent-token-file` (plan 0042) enables the secure-orch agent's bearer
+credential: a file holding a single token that grants `Authorization:
+Bearer <token>` access to exactly three routes — `GET /candidate.json`,
+`GET /candidate.tar.gz`, and `POST /admin/signed-manifest`. It is a
+separate credential from the operator admin tokens so it can be rotated
+independently, and it bypasses the single-session login so the agent
+never locks out a human operator. Audit events from bearer-admitted
+requests record actor `agent`. The bearer only keeps anonymous traffic
+off the endpoints; the manifest signature remains the real content
+authentication. Keep the file readable only by the coordinator process
+(mode `0600`).
+
+`--renewal-threshold` (plan 0042) controls when an unchanged candidate
+gets a fresh `issued_at`/`expires_at` so it can be re-signed before the
+published manifest expires. Default `0` means one third of the manifest
+TTL. With the default 24 h TTL, an unchanged candidate's window
+refreshes once its remaining validity drops below 8 h.
+
 When running the published container image, use `/srv/data`. The image is
 built to run as `nonroot` and pre-owns that path so Docker named volumes are
 initialized with writable ownership.
@@ -93,6 +111,12 @@ seen on that broker.
 | GET  | `/candidate.json`        | JCS-canonical manifest bytes (the cold-key inputs) |
 | GET  | `/candidate.tar.gz`      | Packaged candidate (manifest.json + metadata.json) |
 | POST | `/admin/signed-manifest` | Upload a cold-key-signed manifest (multipart or JSON) |
+
+Both candidate routes return an `ETag` over the candidate's canonical
+manifest bytes and honor `If-None-Match` with `304 Not Modified`, so
+the secure-orch agent can poll them at ~zero cost (plan 0042 §5.1).
+Before the first build they return `503` with `Retry-After`. A `304`
+poll is not an audit event; only full tarball downloads are audited.
 
 Web UI routes (`/`, `/diff`, `/audit`) land in plan 0018 commit 6.
 

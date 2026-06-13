@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/agent"
 	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/canonical"
 	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/config"
@@ -39,6 +40,14 @@ type Server struct {
 	templates    *templateSet
 	staticAssets http.Handler
 
+	// held is the plan 0042 agent held queue; nil when the console
+	// runs without an agent held dir configured.
+	held *agent.HeldQueue
+	// metricsHandler serves the agent's Prometheus exposition on the
+	// loopback listener (constraint #1 rules out a separate metrics
+	// listener); nil when no agent runs.
+	metricsHandler http.Handler
+
 	mu        sync.Mutex
 	candidate *stashedCandidate
 }
@@ -48,6 +57,10 @@ type stashedCandidate struct {
 	loadedAt   time.Time
 	canonHash  string
 	sourceName string
+	// heldETag is non-empty when the candidate was loaded from the
+	// agent's held queue; signing it is an operator approval — the
+	// held slot clears and the agent pushes (no manual download).
+	heldETag string
 }
 
 // New builds a Server.
@@ -87,6 +100,9 @@ func New(cfg config.Config, signer signing.Signer, log *audit.Log, logger *slog.
 		maxUpload:    8 << 20,
 		templates:    tmpls,
 		staticAssets: staticHandler(cfg.Version),
+	}
+	if cfg.AgentHeldDir != "" {
+		s.held = &agent.HeldQueue{Dir: cfg.AgentHeldDir}
 	}
 	s.routes()
 	return s, nil
@@ -150,6 +166,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /candidate", s.requireAuth(s.handleCandidate))
 	s.mux.HandleFunc("POST /discard", s.requireAuth(s.handleDiscard))
 	s.mux.HandleFunc("POST /sign", s.requireAuth(s.handleSign))
+	s.mux.HandleFunc("POST /held/load", s.requireAuth(s.handleHeldLoad))
 	s.mux.HandleFunc("POST /protocol/force-init", s.requireAuth(s.handleProtocolForceInit))
 	s.mux.HandleFunc("POST /protocol/force-reward", s.requireAuth(s.handleProtocolForceReward))
 	s.mux.HandleFunc("POST /protocol/set-service-uri", s.requireAuth(s.handleProtocolSetServiceURI))
@@ -160,12 +177,25 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /protocol/cast-vote", s.requireAuth(s.handleProtocolCastVote))
 	s.mux.HandleFunc("POST /protocol/set-config", s.requireAuth(s.handleProtocolSetConfig))
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", s.staticAssets))
 	s.mux.HandleFunc("/", http.NotFound)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok\n"))
+}
+
+// SetMetricsHandler installs the agent's metrics exposition. Call
+// before Listen.
+func (s *Server) SetMetricsHandler(h http.Handler) { s.metricsHandler = h }
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.metricsHandler == nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.metricsHandler.ServeHTTP(w, r)
 }
 
 // CanonicalSHA256 is exposed so cmd/secure-orch-console can hash

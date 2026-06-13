@@ -9,11 +9,11 @@
 #
 # Usage:
 #   ./scripts/smoke.sh
-#   IMAGE=tztcloud/livepeer-capability-broker:v1.4.0 ./scripts/smoke.sh
+#   IMAGE=tztcloud/livepeer-capability-broker:v1.4.1 ./scripts/smoke.sh
 
 set -euo pipefail
 
-IMAGE="${IMAGE:-tztcloud/livepeer-capability-broker:v1.4.0}"
+IMAGE="${IMAGE:-tztcloud/livepeer-capability-broker:v1.4.1}"
 NETWORK="${NETWORK:-lcb-smoke}"
 BROKER="${BROKER:-lcb-smoke-broker}"
 BACKEND="${BACKEND:-lcb-smoke-backend}"

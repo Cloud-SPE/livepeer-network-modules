@@ -3,6 +3,7 @@ package adminapi
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"net/http"
@@ -136,6 +137,40 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		ctx := context.WithValue(r.Context(), actorContextKey{}, actor)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+// agentActor is the audit identity recorded when a request was
+// admitted by the agent bearer token instead of an operator session.
+const agentActor = "agent"
+
+// requireAuthOrAgent admits either a logged-in operator session or
+// the secure-orch agent's bearer token (plan 0042 §5.2). The bearer
+// only keeps anonymous traffic off the endpoint and identifies the
+// agent in audit; the manifest signature remains the real content
+// authentication. A presented-but-wrong bearer is rejected outright —
+// it never falls through to the cookie flow.
+func (s *Server) requireAuthOrAgent(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if token, ok := bearerToken(r); ok {
+			if s.agentToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.agentToken)) == 1 {
+				ctx := context.WithValue(r.Context(), actorContextKey{}, agentActor)
+				next(w, r.WithContext(ctx))
+				return
+			}
+			http.Error(w, "invalid agent token", http.StatusUnauthorized)
+			return
+		}
+		s.requireAuth(next)(w, r)
+	}
+}
+
+func bearerToken(r *http.Request) (string, bool) {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
+		return strings.TrimSpace(h[len(prefix):]), true
+	}
+	return "", false
 }
 
 func actorFromRequest(r *http.Request) string {

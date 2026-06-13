@@ -21,11 +21,21 @@ type Server struct {
 	addr   string
 	logger *slog.Logger
 	auth   *authManager
+	// agentToken admits the secure-orch agent (plan 0042 §5.2) on the
+	// candidate-download and signed-manifest routes via a bearer
+	// header, bypassing the single-session cookie login so the agent
+	// never locks out the human operator. Empty disables the bearer.
+	agentToken string
 
 	mu       sync.Mutex
 	mux      *http.ServeMux
 	listener net.Listener
 	httpSrv  *http.Server
+}
+
+// SetAgentToken installs the agent bearer token. Call before Listen.
+func (s *Server) SetAgentToken(token string) {
+	s.agentToken = token
 }
 
 // New builds a Server bound to the given address. addr should be a

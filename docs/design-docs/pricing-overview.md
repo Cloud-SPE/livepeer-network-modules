@@ -1131,6 +1131,11 @@ offering.
 Current retail prices, late-2025 / early-2026. Re-verify before deploying:
 all of these update without notice.
 
+For the latest point-in-time operator pricing snapshot captured in this repo,
+including source comparisons and wei conversions for OpenAI-compatible audio,
+embedding, and image workloads, see
+[`docs/references/2026-06-15-openai-compatible-market-pricing.md`](../references/2026-06-15-openai-compatible-market-pricing.md).
+
 ### LLM token serving
 
 | Provider | Model | Retail (per 1M tokens) |

@@ -109,6 +109,10 @@ func (s *stubSubmitter) Wait(_ context.Context, id txintent.IntentID) (txintent.
 	return cp, nil
 }
 
+func (s *stubSubmitter) Resubmit(_ context.Context, _ txintent.IntentID, _ []byte) error {
+	return nil
+}
+
 func newCache(t *testing.T) reward.PoolHintsCache {
 	c, err := poolhints.New(store.Memory())
 	if err != nil {
@@ -501,12 +505,10 @@ func TestForceRewardCall(t *testing.T) {
 	orch := common.HexToAddress("0x00000000000000000000000000000000000000A1")
 	rwd := newRewardSvc(t, bmAddr, orch, bondingmanager.TranscoderInfo{Active: true, ActivationRound: 1, LastRewardRound: 0})
 
-	// Manually drive the service to round 5 first.
-	if _, err := rwd.TryReward(context.Background(), chain.Round{Number: 5}); err != nil {
-		t.Fatal(err)
-	}
-
-	srv, _ := New(Config{Mode: types.ModeReward, Reward: rwd})
+	// The force path reads the live round from the clock; an initialized
+	// round 5 makes the orch eligible.
+	src := &stubRoundClockSrc{cur: chain.Round{Number: 5, Initialized: true}}
+	srv, _ := New(Config{Mode: types.ModeReward, Reward: rwd, RC: src})
 	out, err := srv.ForceRewardCall(context.Background(), struct{}{})
 	if err != nil {
 		t.Fatal(err)
@@ -529,11 +531,9 @@ func TestForceRewardCallSkipsAlreadyRewarded(t *testing.T) {
 	rwd := newRewardSvc(t, bmAddr, orch, bondingmanager.TranscoderInfo{
 		Active: true, ActivationRound: 1, DeactivationRound: 1_000_000, LastRewardRound: 100,
 	})
-	if _, err := rwd.TryReward(context.Background(), chain.Round{Number: 100}); err != nil {
-		t.Fatal(err)
-	}
 
-	srv, _ := New(Config{Mode: types.ModeReward, Reward: rwd})
+	src := &stubRoundClockSrc{cur: chain.Round{Number: 100, Initialized: true}}
+	srv, _ := New(Config{Mode: types.ModeReward, Reward: rwd, RC: src})
 	out, err := srv.ForceRewardCall(context.Background(), struct{}{})
 	if err != nil {
 		t.Fatal(err)
@@ -545,7 +545,7 @@ func TestForceRewardCallSkipsAlreadyRewarded(t *testing.T) {
 		t.Fatalf("Skipped.Code = %d; want SkipCodeAlreadyRewarded (%d)",
 			out.Skipped.Code, SkipCodeAlreadyRewarded)
 	}
-	if out.Skipped.Reason != "already rewarded this round" {
+	if out.Skipped.Reason != "reward already called for round 100 — nothing to do" {
 		t.Fatalf("Skipped.Reason = %q", out.Skipped.Reason)
 	}
 }
@@ -618,10 +618,13 @@ func TestGetTxIntentNoReader(t *testing.T) {
 	}
 }
 
-// stubRoundClock for the streaming test.
+// stubRoundClock for the streaming test and the force-reward path (which reads
+// the live round via Current to get an accurate Initialized flag).
 type stubRoundClockSrc struct {
 	rounds chan chain.Round
 	subErr error
+	cur    chain.Round
+	curErr error
 }
 
 func (s *stubRoundClockSrc) SubscribeRounds(_ context.Context) (<-chan chain.Round, error) {
@@ -632,7 +635,7 @@ func (s *stubRoundClockSrc) SubscribeRounds(_ context.Context) (<-chan chain.Rou
 }
 
 func (s *stubRoundClockSrc) Current(_ context.Context) (chain.Round, error) {
-	return chain.Round{}, nil
+	return s.cur, s.curErr
 }
 
 func TestStreamRoundEvents(t *testing.T) {

@@ -54,6 +54,8 @@ func (noopSub) Wait(_ context.Context, id txintent.IntentID) (txintent.TxIntent,
 	return txintent.TxIntent{ID: id, Status: txintent.StatusConfirmed}, nil
 }
 
+func (noopSub) Resubmit(_ context.Context, _ txintent.IntentID, _ []byte) error { return nil }
+
 // fakeTimeSource is a no-op timesource for roundclock.New().
 type fakeTimeSource struct{}
 

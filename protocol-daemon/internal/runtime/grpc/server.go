@@ -382,8 +382,15 @@ func (s *Server) ForceRewardCall(ctx context.Context, _ struct{}) (ForceOutcome,
 	if !s.mode.HasReward() {
 		return ForceOutcome{}, ErrUnimplemented
 	}
-	st := s.reward.Status()
-	res, err := s.reward.TryReward(ctx, chain.Round{Number: st.LastRound})
+	// Read the live round from the clock so Initialized (and Number) reflect
+	// actual chain state. Using the reward service's last-seen round number
+	// alone would leave Initialized=false and make every force wrongly skip as
+	// "round not initialized".
+	round, err := s.rc.Current(ctx)
+	if err != nil {
+		return ForceOutcome{}, err
+	}
+	res, err := s.reward.TryReward(ctx, round)
 	if err != nil {
 		return ForceOutcome{}, err
 	}

@@ -273,7 +273,12 @@ func (t *pollerSource) maybeEmitRound(r chain.Round) {
 	t.current = r
 	subs := append([]chan chain.Round(nil), t.roundSubs...)
 	t.mu.Unlock()
-	if !changed && r.Number == 0 {
+	// Emit only on a real state transition. Re-emitting an unchanged round on
+	// every poll tick spams downstream consumers (e.g. the reward service
+	// would re-run its eligibility/idempotent-submit path every interval).
+	// New subscribers still get the current round immediately via the initial
+	// send in SubscribeRounds.
+	if !changed {
 		return
 	}
 	for _, ch := range subs {

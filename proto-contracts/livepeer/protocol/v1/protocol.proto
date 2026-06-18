@@ -139,9 +139,17 @@ message SkipReason {
 
   enum Code {
     CODE_UNSPECIFIED         = 0;
-    CODE_ALREADY_REWARDED    = 1; // tinfo.LastRewardRound >= round
-    CODE_TRANSCODER_INACTIVE = 2; // !tinfo.IsActiveAtRound(round)
-    CODE_ROUND_INITIALIZED   = 3; // round.Initialized — applies to ForceInitializeRound
+    CODE_ALREADY_REWARDED      = 1; // tinfo.LastRewardRound >= round
+    CODE_TRANSCODER_INACTIVE   = 2; // !tinfo.IsActiveAtRound(round)
+    CODE_ROUND_INITIALIZED     = 3; // round.Initialized — applies to ForceInitializeRound
+    CODE_ROUND_NOT_INITIALIZED = 4; // !round.Initialized — reward() reverts until initializeRound lands
+
+    // Force-reward pre-send guards: a forced reward broadcasts a new tx
+    // unless one of these makes the send pointless (it would revert and
+    // still burn gas, or another tx is already in flight).
+    CODE_REWARD_IN_FLIGHT      = 5; // a reward tx for this round is already pending/unconfirmed
+    CODE_REWARD_WOULD_REVERT   = 6; // eth_call dry-run reverted; reason carried in `reason`
+    CODE_INSUFFICIENT_BALANCE  = 7; // wallet balance below the gas cost of the tx
 
     // Bonding-admin (transfer-bond / withdraw-fees) skip codes.
     CODE_ROUND_NOT_LOCKED    = 10; // round not in its lock window

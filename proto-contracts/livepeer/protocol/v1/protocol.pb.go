@@ -32,10 +32,17 @@ const (
 type SkipReason_Code int32
 
 const (
-	SkipReason_CODE_UNSPECIFIED         SkipReason_Code = 0
-	SkipReason_CODE_ALREADY_REWARDED    SkipReason_Code = 1 // tinfo.LastRewardRound >= round
-	SkipReason_CODE_TRANSCODER_INACTIVE SkipReason_Code = 2 // !tinfo.IsActiveAtRound(round)
-	SkipReason_CODE_ROUND_INITIALIZED   SkipReason_Code = 3 // round.Initialized — applies to ForceInitializeRound
+	SkipReason_CODE_UNSPECIFIED           SkipReason_Code = 0
+	SkipReason_CODE_ALREADY_REWARDED      SkipReason_Code = 1 // tinfo.LastRewardRound >= round
+	SkipReason_CODE_TRANSCODER_INACTIVE   SkipReason_Code = 2 // !tinfo.IsActiveAtRound(round)
+	SkipReason_CODE_ROUND_INITIALIZED     SkipReason_Code = 3 // round.Initialized — applies to ForceInitializeRound
+	SkipReason_CODE_ROUND_NOT_INITIALIZED SkipReason_Code = 4 // !round.Initialized — reward() reverts until initializeRound lands
+	// Force-reward pre-send guards: a forced reward broadcasts a new tx
+	// unless one of these makes the send pointless (it would revert and
+	// still burn gas, or another tx is already in flight).
+	SkipReason_CODE_REWARD_IN_FLIGHT     SkipReason_Code = 5 // a reward tx for this round is already pending/unconfirmed
+	SkipReason_CODE_REWARD_WOULD_REVERT  SkipReason_Code = 6 // eth_call dry-run reverted; reason carried in `reason`
+	SkipReason_CODE_INSUFFICIENT_BALANCE SkipReason_Code = 7 // wallet balance below the gas cost of the tx
 	// Bonding-admin (transfer-bond / withdraw-fees) skip codes.
 	SkipReason_CODE_ROUND_NOT_LOCKED    SkipReason_Code = 10 // round not in its lock window
 	SkipReason_CODE_NOTHING_TO_TRANSFER SkipReason_Code = 11 // pendingStake <= configured retain
@@ -51,6 +58,10 @@ var (
 		1:  "CODE_ALREADY_REWARDED",
 		2:  "CODE_TRANSCODER_INACTIVE",
 		3:  "CODE_ROUND_INITIALIZED",
+		4:  "CODE_ROUND_NOT_INITIALIZED",
+		5:  "CODE_REWARD_IN_FLIGHT",
+		6:  "CODE_REWARD_WOULD_REVERT",
+		7:  "CODE_INSUFFICIENT_BALANCE",
 		10: "CODE_ROUND_NOT_LOCKED",
 		11: "CODE_NOTHING_TO_TRANSFER",
 		12: "CODE_BELOW_FEE_THRESHOLD",
@@ -58,15 +69,19 @@ var (
 		14: "CODE_ACTION_DISABLED",
 	}
 	SkipReason_Code_value = map[string]int32{
-		"CODE_UNSPECIFIED":         0,
-		"CODE_ALREADY_REWARDED":    1,
-		"CODE_TRANSCODER_INACTIVE": 2,
-		"CODE_ROUND_INITIALIZED":   3,
-		"CODE_ROUND_NOT_LOCKED":    10,
-		"CODE_NOTHING_TO_TRANSFER": 11,
-		"CODE_BELOW_FEE_THRESHOLD": 12,
-		"CODE_REWARD_NOT_CALLED":   13,
-		"CODE_ACTION_DISABLED":     14,
+		"CODE_UNSPECIFIED":           0,
+		"CODE_ALREADY_REWARDED":      1,
+		"CODE_TRANSCODER_INACTIVE":   2,
+		"CODE_ROUND_INITIALIZED":     3,
+		"CODE_ROUND_NOT_INITIALIZED": 4,
+		"CODE_REWARD_IN_FLIGHT":      5,
+		"CODE_REWARD_WOULD_REVERT":   6,
+		"CODE_INSUFFICIENT_BALANCE":  7,
+		"CODE_ROUND_NOT_LOCKED":      10,
+		"CODE_NOTHING_TO_TRANSFER":   11,
+		"CODE_BELOW_FEE_THRESHOLD":   12,
+		"CODE_REWARD_NOT_CALLED":     13,
+		"CODE_ACTION_DISABLED":       14,
 	}
 )
 
@@ -1534,16 +1549,20 @@ const file_livepeer_protocol_v1_protocol_proto_rawDesc = "" +
 	"\fForceOutcome\x12A\n" +
 	"\tsubmitted\x18\x01 \x01(\v2!.livepeer.protocol.v1.TxIntentRefH\x00R\tsubmitted\x12<\n" +
 	"\askipped\x18\x02 \x01(\v2 .livepeer.protocol.v1.SkipReasonH\x00R\askippedB\t\n" +
-	"\aoutcome\"\xe0\x02\n" +
+	"\aoutcome\"\xd8\x03\n" +
 	"\n" +
 	"SkipReason\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\x129\n" +
-	"\x04code\x18\x02 \x01(\x0e2%.livepeer.protocol.v1.SkipReason.CodeR\x04code\"\xfe\x01\n" +
+	"\x04code\x18\x02 \x01(\x0e2%.livepeer.protocol.v1.SkipReason.CodeR\x04code\"\xf6\x02\n" +
 	"\x04Code\x12\x14\n" +
 	"\x10CODE_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CODE_ALREADY_REWARDED\x10\x01\x12\x1c\n" +
 	"\x18CODE_TRANSCODER_INACTIVE\x10\x02\x12\x1a\n" +
-	"\x16CODE_ROUND_INITIALIZED\x10\x03\x12\x19\n" +
+	"\x16CODE_ROUND_INITIALIZED\x10\x03\x12\x1e\n" +
+	"\x1aCODE_ROUND_NOT_INITIALIZED\x10\x04\x12\x19\n" +
+	"\x15CODE_REWARD_IN_FLIGHT\x10\x05\x12\x1c\n" +
+	"\x18CODE_REWARD_WOULD_REVERT\x10\x06\x12\x1d\n" +
+	"\x19CODE_INSUFFICIENT_BALANCE\x10\a\x12\x19\n" +
 	"\x15CODE_ROUND_NOT_LOCKED\x10\n" +
 	"\x12\x1c\n" +
 	"\x18CODE_NOTHING_TO_TRANSFER\x10\v\x12\x1c\n" +

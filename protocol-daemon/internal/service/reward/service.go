@@ -20,6 +20,7 @@ import (
 	"math/big"
 	"sync"
 
+	"github.com/ethereum/go-ethereum"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
@@ -47,6 +48,22 @@ type TxSubmitter interface {
 	Submit(ctx context.Context, p txintent.Params) (txintent.IntentID, error)
 	Status(ctx context.Context, id txintent.IntentID) (txintent.TxIntent, error)
 	Wait(ctx context.Context, id txintent.IntentID) (txintent.TxIntent, error)
+	// Resubmit re-drives a terminally-failed intent with fresh calldata,
+	// broadcasting a new tx. Used by the force path to override the per-round
+	// idempotency guard when an earlier attempt reverted.
+	Resubmit(ctx context.Context, id txintent.IntentID, calldata []byte) error
+}
+
+// RewardCaller issues the read-only chain calls the force path uses to decide
+// whether a forced reward is worth broadcasting: an eth_call dry-run of
+// reward() (catching reverts without spending gas) and a balance/gas-price
+// read (catching a wallet that can't afford the tx). The multi-RPC client
+// satisfies it; it is optional — when nil, the force path skips these
+// pre-send checks and submits directly.
+type RewardCaller interface {
+	CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
+	BalanceAt(ctx context.Context, addr chain.Address, blockNumber *big.Int) (*big.Int, error)
+	SuggestGasPrice(ctx context.Context) (*big.Int, error)
 }
 
 // PoolHintsCache is the cache shape the service depends on. Returns
@@ -63,6 +80,11 @@ type Config struct {
 	TxIntent       TxSubmitter
 	Cache          PoolHintsCache
 	Clock          clock.Clock
+
+	// Caller backs the force path's pre-send checks (eth_call dry-run +
+	// balance). Optional: when nil those checks are skipped. The automatic
+	// per-round path never uses it.
+	Caller RewardCaller
 
 	OrchAddress chain.Address
 	GasLimit    uint64
@@ -101,6 +123,31 @@ const (
 
 	// SkipCodeTranscoderInactive indicates !tinfo.IsActiveAtRound(round).
 	SkipCodeTranscoderInactive SkipCode = 2
+
+	// SkipCodeRoundNotInitialized indicates !round.Initialized. The
+	// BondingManager reward()/rewardWithHint() functions carry the
+	// currentRoundInitialized modifier and revert ("current round is not
+	// initialized") until initializeRound has landed for the current round,
+	// so we wait rather than submit a tx that is guaranteed to revert.
+	// Mirrors protocolv1.SkipReason_CODE_ROUND_NOT_INITIALIZED (=4).
+	SkipCodeRoundNotInitialized SkipCode = 4
+
+	// SkipCodeRewardInFlight indicates a reward tx for this round is already
+	// pending/unconfirmed — forcing another would double-broadcast and the
+	// second tx would revert as "already rewarded". Force-path only.
+	// Mirrors protocolv1.SkipReason_CODE_REWARD_IN_FLIGHT (=5).
+	SkipCodeRewardInFlight SkipCode = 5
+
+	// SkipCodeRewardWouldRevert indicates the eth_call dry-run of reward()
+	// reverted; the human reason carries the contract's revert string. Force
+	// declined to spend gas on a guaranteed-revert tx. Force-path only.
+	// Mirrors protocolv1.SkipReason_CODE_REWARD_WOULD_REVERT (=6).
+	SkipCodeRewardWouldRevert SkipCode = 6
+
+	// SkipCodeInsufficientBalance indicates the wallet balance is below the
+	// gas cost of the tx, so broadcasting would fail. Force-path only.
+	// Mirrors protocolv1.SkipReason_CODE_INSUFFICIENT_BALANCE (=7).
+	SkipCodeInsufficientBalance SkipCode = 7
 )
 
 // SkipReason carries why TryReward did not submit a tx.
@@ -200,12 +247,17 @@ func (s *Service) Run(ctx context.Context, rc roundclock.Clock) error {
 	}
 }
 
-// TryReward is the operator-callable entry point for ForceRewardCall.
-// Returns either an IntentID (a tx was submitted) or a typed Skip (no
-// tx fired — already rewarded / inactive). On error, the result is the
-// zero ForceResult.
+// TryReward is the operator-callable entry point for ForceRewardCall. Unlike
+// the automatic per-round path, it is an explicit override: when the orch is
+// eligible it broadcasts a NEW reward transaction even if an earlier intent
+// for this round failed — re-driving that intent past the (round, orch)
+// idempotency guard. It declines to send (returning a typed Skip with a clear,
+// operator-facing reason) only when a send would be pointless: already
+// rewarded, another reward tx already in flight, the round not initialized,
+// the wallet can't afford the gas, or an eth_call dry-run shows the tx would
+// revert. Any actual broadcast spends gas — callers should surface that.
 func (s *Service) TryReward(ctx context.Context, round chain.Round) (ForceResult, error) {
-	return s.tryRewardForce(ctx, round)
+	return s.forceReward(ctx, round)
 }
 
 // observe refreshes eligibility into Status without submitting. Used by the
@@ -237,16 +289,55 @@ func (s *Service) observe(ctx context.Context, round chain.Round) error {
 // tryReward handles one round driven by the Run loop. Returns nil on
 // skipped (ineligible) or successful submit; an error otherwise.
 func (s *Service) tryReward(ctx context.Context, round chain.Round) error {
-	_, err := s.tryRewardForce(ctx, round)
+	_, err := s.autoReward(ctx, round)
 	return err
 }
 
-func (s *Service) tryRewardForce(ctx context.Context, round chain.Round) (ForceResult, error) {
+// evalEligibility reads the orch's transcoder info and reports whether it can
+// reward this round. skip is non-nil — with a clear, operator-facing reason
+// and a stable code — when it cannot: not active, already rewarded, or the
+// round not yet initialized (reward() reverts "current round is not
+// initialized" until initializeRound lands; treating it as not-yet-eligible
+// also avoids creating a terminal-failed intent that idempotency would pin for
+// the whole round). The returned snapshot is always populated for Status.
+func (s *Service) evalEligibility(ctx context.Context, round chain.Round) (types.RewardEligibility, *SkipReason, error) {
+	tinfo, err := s.cfg.BondingManager.GetTranscoder(ctx, s.cfg.OrchAddress)
+	if err != nil {
+		return types.RewardEligibility{}, nil, fmt.Errorf("getTranscoder: %w", err)
+	}
+	elig := types.RewardEligibility{
+		OrchestratorAddress: s.cfg.OrchAddress,
+		Round:               round.Number,
+		Active:              tinfo.IsActiveAtRound(round.Number),
+		LastRewardRound:     tinfo.LastRewardRound,
+	}
+	elig.Eligible = elig.Active && tinfo.LastRewardRound < round.Number && round.Initialized
+	if elig.Eligible {
+		return elig, nil, nil
+	}
+	var skip SkipReason
+	switch {
+	case !elig.Active:
+		skip = SkipReason{Reason: "orchestrator is not active this round — not eligible to reward", Code: SkipCodeTranscoderInactive}
+	case tinfo.LastRewardRound >= round.Number:
+		skip = SkipReason{Reason: fmt.Sprintf("reward already called for round %d — nothing to do", round.Number), Code: SkipCodeAlreadyRewarded}
+	case !round.Initialized:
+		skip = SkipReason{Reason: "current round is not initialized yet — wait for initializeRound (or force a round-init)", Code: SkipCodeRoundNotInitialized}
+	default:
+		skip = SkipReason{Reason: "ineligible", Code: SkipCodeUnspecified}
+	}
+	elig.Reason = skip.Reason
+	return elig, &skip, nil
+}
+
+// autoReward is the automatic per-round path (Run loop). It respects the
+// (round, orch) idempotency guard: it submits once and, on a repeat round
+// event, surfaces a prior intent's real state rather than re-broadcasting.
+func (s *Service) autoReward(ctx context.Context, round chain.Round) (ForceResult, error) {
 	start := s.cfg.Clock.Now()
 	defer func() {
 		dur := s.cfg.Clock.Now().Sub(start).Seconds()
-		s.metricsHistogram("livepeer_protocol_reward_duration_seconds",
-			metrics.Labels{}, dur)
+		s.metricsHistogram("livepeer_protocol_reward_duration_seconds", metrics.Labels{}, dur)
 	}()
 
 	// Purge old cache entries to keep the store bounded. Best-effort —
@@ -255,86 +346,248 @@ func (s *Service) tryRewardForce(ctx context.Context, round chain.Round) (ForceR
 		_, _ = s.cfg.Cache.PurgeBefore(round.Number - s.cfg.PurgeWindow)
 	}
 
-	tinfo, err := s.cfg.BondingManager.GetTranscoder(ctx, s.cfg.OrchAddress)
+	elig, skip, err := s.evalEligibility(ctx, round)
 	if err != nil {
-		return ForceResult{}, fmt.Errorf("getTranscoder: %w", err)
+		return ForceResult{}, err
 	}
-
-	elig := types.RewardEligibility{
-		OrchestratorAddress: s.cfg.OrchAddress,
-		Round:               round.Number,
-		Active:              tinfo.IsActiveAtRound(round.Number),
-		LastRewardRound:     tinfo.LastRewardRound,
-	}
-	elig.Eligible = elig.Active && tinfo.LastRewardRound < round.Number
-	if !elig.Eligible {
-		var skipCode SkipCode
-		switch {
-		case !elig.Active:
-			elig.Reason = "transcoder is not active at this round"
-			skipCode = SkipCodeTranscoderInactive
-		case tinfo.LastRewardRound >= round.Number:
-			elig.Reason = "already rewarded this round"
-			skipCode = SkipCodeAlreadyRewarded
-		default:
-			elig.Reason = "ineligible"
-			skipCode = SkipCodeUnspecified
-		}
+	if skip != nil {
 		s.recordSkip(round, elig)
-		s.metricsCounter("livepeer_protocol_reward_total",
-			metrics.Labels{"outcome": "skipped"}, 1)
+		s.metricsCounter("livepeer_protocol_reward_total", metrics.Labels{"outcome": "skipped"}, 1)
 		s.metricsGauge("livepeer_protocol_eligible_round_count", metrics.Labels{}, 0)
 		s.metricsGauge("livepeer_protocol_active_status", metrics.Labels{}, boolFloat(elig.Active))
 		if s.cfg.Logger != nil {
 			s.cfg.Logger.Debug("reward skipped",
 				logger.Uint64("round", uint64(round.Number)),
-				logger.String("reason", elig.Reason),
+				logger.String("reason", skip.Reason),
 			)
 		}
-		return ForceResult{Skip: &SkipReason{Reason: elig.Reason, Code: skipCode}}, nil
+		return ForceResult{Skip: skip}, nil
 	}
 
-	hints, err := s.computeHints(ctx, round.Number)
+	hints, calldata, err := s.buildRewardCalldata(ctx, round.Number)
 	if err != nil {
-		return ForceResult{}, fmt.Errorf("%s: %w", types.ErrCodeRewardPoolWalkFailed, err)
+		return ForceResult{}, err
 	}
 
-	calldata, err := s.cfg.BondingManager.PackRewardWithHint(hints.Prev, hints.Next)
-	if err != nil {
-		return ForceResult{}, fmt.Errorf("PackRewardWithHint: %w", err)
-	}
-
-	intentID, err := s.cfg.TxIntent.Submit(ctx, txintent.Params{
-		Kind:      "RewardWithHint",
-		KeyParams: rewardKey(round.Number, s.cfg.OrchAddress),
-		To:        s.cfg.BondingManager.Address(),
-		CallData:  calldata,
-		Value:     new(big.Int),
-		GasLimit:  s.cfg.GasLimit,
-		Metadata: map[string]string{
-			"round": fmt.Sprintf("%d", round.Number),
-			"orch":  s.cfg.OrchAddress.Hex(),
-		},
-	})
+	intentID, err := s.cfg.TxIntent.Submit(ctx, s.rewardParams(round.Number, calldata))
 	if err != nil {
 		return ForceResult{}, fmt.Errorf("%s: %w", types.ErrCodeRewardSubmitFailed, err)
 	}
 
 	s.recordSuccess(round, elig, intentID)
-	s.metricsCounter("livepeer_protocol_reward_total",
-		metrics.Labels{"outcome": "submitted"}, 1)
+	s.metricsGauge("livepeer_protocol_eligible_round_count", metrics.Labels{}, 1)
+	s.metricsGauge("livepeer_protocol_active_status", metrics.Labels{}, 1)
+
+	// Submit is idempotent on (round, orch), so the returned intent may be a
+	// pre-existing one — including one that already reverted. Inspect its real
+	// status so we don't log "reward submitted" (and count a fresh submit) for
+	// an intent that is actually stuck terminal: that false-success logging is
+	// what previously masked on-chain reverts as repeating success lines.
+	st, statusErr := s.cfg.TxIntent.Status(ctx, intentID)
+	switch {
+	case statusErr == nil && st.Status == txintent.StatusFailed:
+		s.metricsCounter("livepeer_protocol_reward_total",
+			metrics.Labels{"outcome": "already_failed"}, 1)
+		if s.cfg.Logger != nil {
+			s.cfg.Logger.Warn("reward intent already failed this round; not retried (use Force Reward to re-broadcast)",
+				logger.Uint64("round", uint64(round.Number)),
+				logger.String("intent_id", intentID.Hex()),
+				logger.String("reason", failedReason(st)),
+			)
+		}
+	case statusErr == nil && st.Status == txintent.StatusConfirmed:
+		s.metricsCounter("livepeer_protocol_reward_total",
+			metrics.Labels{"outcome": "already_confirmed"}, 1)
+		if s.cfg.Logger != nil {
+			s.cfg.Logger.Debug("reward already confirmed this round",
+				logger.Uint64("round", uint64(round.Number)),
+				logger.String("intent_id", intentID.Hex()),
+			)
+		}
+	default:
+		s.metricsCounter("livepeer_protocol_reward_total",
+			metrics.Labels{"outcome": "submitted"}, 1)
+		if s.cfg.Logger != nil {
+			s.cfg.Logger.Info("reward submitted",
+				logger.Uint64("round", uint64(round.Number)),
+				logger.String("intent_id", intentID.Hex()),
+				logger.String("prev", hints.Prev.Hex()),
+				logger.String("next", hints.Next.Hex()),
+			)
+		}
+	}
+
+	return ForceResult{IntentID: intentID}, nil
+}
+
+// forceReward is the operator override path. It broadcasts a fresh reward tx
+// whenever the chain would accept one — re-driving a prior terminal-failed
+// intent past idempotency — and otherwise returns a typed Skip explaining,
+// in plain language, why no transaction was sent.
+func (s *Service) forceReward(ctx context.Context, round chain.Round) (ForceResult, error) {
+	start := s.cfg.Clock.Now()
+	defer func() {
+		dur := s.cfg.Clock.Now().Sub(start).Seconds()
+		s.metricsHistogram("livepeer_protocol_reward_duration_seconds", metrics.Labels{}, dur)
+	}()
+
+	if round.Number > s.cfg.PurgeWindow {
+		_, _ = s.cfg.Cache.PurgeBefore(round.Number - s.cfg.PurgeWindow)
+	}
+
+	// 1) Eligibility (active / not-already-rewarded / round initialized).
+	elig, skip, err := s.evalEligibility(ctx, round)
+	if err != nil {
+		return ForceResult{}, err
+	}
+	if skip != nil {
+		return s.declineForce(round, elig, skip), nil
+	}
+
+	// 2) Build the calldata for the (possibly fresh) tx.
+	hints, calldata, err := s.buildRewardCalldata(ctx, round.Number)
+	if err != nil {
+		return ForceResult{}, err
+	}
+
+	// 3) Inspect any existing intent for this (round, orch). An in-flight one
+	//    must not be double-broadcast; a confirmed one is done; a failed one is
+	//    exactly what Force is here to re-drive.
+	id := txintent.ComputeID("RewardWithHint", rewardKey(round.Number, s.cfg.OrchAddress))
+	prior, priorErr := s.cfg.TxIntent.Status(ctx, id)
+	priorFailed := false
+	if priorErr == nil {
+		switch {
+		case !prior.Status.IsTerminal():
+			reason := "a reward tx for this round is already pending — wait for it to confirm before forcing again"
+			if a := prior.CurrentAttempt(); a != nil {
+				reason = fmt.Sprintf("a reward tx for this round is already pending (tx %s) — wait for it to confirm before forcing again", a.SignedTxHash.Hex())
+			}
+			return s.declineForce(round, elig, &SkipReason{Reason: reason, Code: SkipCodeRewardInFlight}), nil
+		case prior.Status == txintent.StatusConfirmed:
+			reason := fmt.Sprintf("reward for round %d already confirmed on-chain — nothing to do", round.Number)
+			return s.declineForce(round, elig, &SkipReason{Reason: reason, Code: SkipCodeAlreadyRewarded}), nil
+		default: // StatusFailed
+			priorFailed = true
+		}
+	}
+
+	// 4) Pre-send guards (free, no gas): wallet can afford gas, and reward()
+	//    won't revert. Only run when a Caller is wired.
+	if s.cfg.Caller != nil {
+		if guard := s.preflight(ctx, calldata); guard != nil {
+			return s.declineForce(round, elig, guard), nil
+		}
+	}
+
+	// 5) Broadcast a NEW tx: re-drive the failed intent (fresh calldata) past
+	//    idempotency, or submit a new one. Either way this spends gas.
+	var intentID txintent.IntentID
+	if priorFailed {
+		if err := s.cfg.TxIntent.Resubmit(ctx, id, calldata); err != nil {
+			return ForceResult{}, fmt.Errorf("%s: %w", types.ErrCodeRewardSubmitFailed, err)
+		}
+		intentID = id
+	} else {
+		intentID, err = s.cfg.TxIntent.Submit(ctx, s.rewardParams(round.Number, calldata))
+		if err != nil {
+			return ForceResult{}, fmt.Errorf("%s: %w", types.ErrCodeRewardSubmitFailed, err)
+		}
+	}
+
+	s.recordSuccess(round, elig, intentID)
+	s.metricsCounter("livepeer_protocol_reward_total", metrics.Labels{"outcome": "force_submitted"}, 1)
 	s.metricsGauge("livepeer_protocol_eligible_round_count", metrics.Labels{}, 1)
 	s.metricsGauge("livepeer_protocol_active_status", metrics.Labels{}, 1)
 	if s.cfg.Logger != nil {
-		s.cfg.Logger.Info("reward submitted",
+		s.cfg.Logger.Warn("force reward: broadcasting a new reward transaction (gas will be spent)",
 			logger.Uint64("round", uint64(round.Number)),
 			logger.String("intent_id", intentID.Hex()),
 			logger.String("prev", hints.Prev.Hex()),
 			logger.String("next", hints.Next.Hex()),
 		)
 	}
-
 	return ForceResult{IntentID: intentID}, nil
+}
+
+// declineForce records the skip outcome and returns the typed result. Used by
+// every force-path branch that chooses not to broadcast.
+func (s *Service) declineForce(round chain.Round, elig types.RewardEligibility, skip *SkipReason) ForceResult {
+	if elig.Reason == "" {
+		elig.Reason = skip.Reason
+	}
+	s.recordSkip(round, elig)
+	s.metricsCounter("livepeer_protocol_reward_total", metrics.Labels{"outcome": "force_skipped"}, 1)
+	s.metricsGauge("livepeer_protocol_active_status", metrics.Labels{}, boolFloat(elig.Active))
+	if s.cfg.Logger != nil {
+		s.cfg.Logger.Info("force reward declined (no tx sent, no gas spent)",
+			logger.Uint64("round", uint64(round.Number)),
+			logger.String("reason", skip.Reason),
+		)
+	}
+	return ForceResult{Skip: skip}
+}
+
+// preflight runs the force path's free pre-send checks via the Caller: it
+// confirms the wallet can cover the gas, then dry-runs reward() with eth_call
+// so a guaranteed revert costs no gas. Returns a non-nil Skip (with a clear
+// reason) when the tx should not be broadcast; nil means "go ahead". Transient
+// read errors on the balance check are ignored — they must not block a
+// legitimate force.
+func (s *Service) preflight(ctx context.Context, calldata []byte) *SkipReason {
+	if bal, err := s.cfg.Caller.BalanceAt(ctx, s.cfg.OrchAddress, nil); err == nil && bal != nil {
+		if price, perr := s.cfg.Caller.SuggestGasPrice(ctx); perr == nil && price != nil {
+			cost := new(big.Int).Mul(price, new(big.Int).SetUint64(s.cfg.GasLimit))
+			if bal.Cmp(cost) < 0 {
+				return &SkipReason{
+					Reason: fmt.Sprintf("orchestrator wallet balance (%s wei) is below the reward tx gas cost (~%s wei) — top up the wallet", bal.String(), cost.String()),
+					Code:   SkipCodeInsufficientBalance,
+				}
+			}
+		}
+	}
+	to := s.cfg.BondingManager.Address()
+	if _, err := s.cfg.Caller.CallContract(ctx, ethereum.CallMsg{
+		From: s.cfg.OrchAddress,
+		To:   &to,
+		Data: calldata,
+	}, nil); err != nil {
+		return &SkipReason{
+			Reason: fmt.Sprintf("reward() would revert on-chain (%s) — not sending, no gas spent", err.Error()),
+			Code:   SkipCodeRewardWouldRevert,
+		}
+	}
+	return nil
+}
+
+// buildRewardCalldata computes the pool-position hints and packs the
+// rewardWithHint calldata for the round.
+func (s *Service) buildRewardCalldata(ctx context.Context, round chain.RoundNumber) (types.PoolHints, []byte, error) {
+	hints, err := s.computeHints(ctx, round)
+	if err != nil {
+		return types.PoolHints{}, nil, fmt.Errorf("%s: %w", types.ErrCodeRewardPoolWalkFailed, err)
+	}
+	calldata, err := s.cfg.BondingManager.PackRewardWithHint(hints.Prev, hints.Next)
+	if err != nil {
+		return types.PoolHints{}, nil, fmt.Errorf("PackRewardWithHint: %w", err)
+	}
+	return hints, calldata, nil
+}
+
+// rewardParams builds the TxIntent submit params for a reward tx.
+func (s *Service) rewardParams(round chain.RoundNumber, calldata []byte) txintent.Params {
+	return txintent.Params{
+		Kind:      "RewardWithHint",
+		KeyParams: rewardKey(round, s.cfg.OrchAddress),
+		To:        s.cfg.BondingManager.Address(),
+		CallData:  calldata,
+		Value:     new(big.Int),
+		GasLimit:  s.cfg.GasLimit,
+		Metadata: map[string]string{
+			"round": fmt.Sprintf("%d", round),
+			"orch":  s.cfg.OrchAddress.Hex(),
+		},
+	}
 }
 
 // computeHints returns the (prev, next) hints for the configured orch in the
@@ -493,6 +746,15 @@ func copyID(id *txintent.IntentID) *txintent.IntentID {
 	}
 	cp := *id
 	return &cp
+}
+
+// failedReason renders a terminal-failed intent's reason for logging, or a
+// placeholder when the reason is absent.
+func failedReason(t txintent.TxIntent) string {
+	if t.FailedReason != nil {
+		return t.FailedReason.Error()
+	}
+	return "unknown"
 }
 
 func boolFloat(b bool) float64 {

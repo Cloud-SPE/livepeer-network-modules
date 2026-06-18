@@ -455,10 +455,8 @@ func TestListener_ForceRewardCall(t *testing.T) {
 	// it from Status.
 	tinfo := bondingmanager.TranscoderInfo{Active: true, ActivationRound: 1, DeactivationRound: 1_000_000, LastRewardRound: 100}
 	rwd := newRewardSvc(t, bmAddr, orch, tinfo)
-	if _, err := rwd.TryReward(context.Background(), chain.Round{Number: 100}); err != nil {
-		t.Fatal(err)
-	}
-	srv, _ := New(Config{Mode: types.ModeReward, Reward: rwd})
+	src := &stubRoundClockSrc{cur: chain.Round{Number: 100, Initialized: true}}
+	srv, _ := New(Config{Mode: types.ModeReward, Reward: rwd, RC: src})
 	cc, cleanup := dialListener(t, srv)
 	defer cleanup()
 	cli := protocolv1.NewProtocolDaemonClient(cc)
@@ -472,7 +470,7 @@ func TestListener_ForceRewardCall(t *testing.T) {
 	if got.GetSkipped().GetCode() != protocolv1.SkipReason_CODE_ALREADY_REWARDED {
 		t.Fatalf("Skipped.Code = %v; want CODE_ALREADY_REWARDED", got.GetSkipped().GetCode())
 	}
-	if got.GetSkipped().GetReason() != "already rewarded this round" {
+	if got.GetSkipped().GetReason() != "reward already called for round 100 — nothing to do" {
 		t.Fatalf("Skipped.Reason = %q", got.GetSkipped().GetReason())
 	}
 }
@@ -485,10 +483,8 @@ func TestListener_ForceRewardCallSubmits(t *testing.T) {
 	// against a tinfo with LastRewardRound=0 — eligibility is true.
 	tinfo := bondingmanager.TranscoderInfo{Active: true, ActivationRound: 1, DeactivationRound: 1_000_000, LastRewardRound: 0}
 	rwd := newRewardSvc(t, bmAddr, orch, tinfo)
-	if _, err := rwd.TryReward(context.Background(), chain.Round{Number: 5}); err != nil {
-		t.Fatal(err)
-	}
-	srv, _ := New(Config{Mode: types.ModeReward, Reward: rwd})
+	src := &stubRoundClockSrc{cur: chain.Round{Number: 5, Initialized: true}}
+	srv, _ := New(Config{Mode: types.ModeReward, Reward: rwd, RC: src})
 	cc, cleanup := dialListener(t, srv)
 	defer cleanup()
 	cli := protocolv1.NewProtocolDaemonClient(cc)

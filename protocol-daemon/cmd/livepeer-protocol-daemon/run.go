@@ -298,6 +298,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 			TxIntent:       txm,
 			Cache:          cache,
 			Clock:          deps.Clock,
+			Caller:         deps.RPC,
 			OrchAddress:    orch,
 			GasLimit:       cfg.Chain.GasLimit,
 			Enabled:        func() bool { return cfgStore.Get().RewardEnabled },

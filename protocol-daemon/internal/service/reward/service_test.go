@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 
@@ -79,16 +80,19 @@ func (s *stubBondingManager) PackRewardWithHint(prev, next chain.Address) ([]byt
 	return out, nil
 }
 
-// stubSubmitter mimics chain-commons.txintent.Manager's submit semantics.
+// stubSubmitter mimics chain-commons.txintent.Manager's submit semantics:
+// idempotent Submit keyed on (Kind, KeyParams), Status returns ErrNotFound for
+// unknown ids, and Resubmit re-drives a known intent.
 type stubSubmitter struct {
-	mu        sync.Mutex
-	submitted []txintent.Params
-	failNext  error
-	idMap     map[string]txintent.IntentID
+	mu          sync.Mutex
+	submitted   []txintent.Params
+	resubmitted []txintent.IntentID
+	failNext    error
+	intents     map[string]txintent.TxIntent // id.Hex() -> current record
 }
 
 func newStubSubmitter() *stubSubmitter {
-	return &stubSubmitter{idMap: map[string]txintent.IntentID{}}
+	return &stubSubmitter{intents: map[string]txintent.TxIntent{}}
 }
 
 func (s *stubSubmitter) Submit(_ context.Context, p txintent.Params) (txintent.IntentID, error) {
@@ -100,20 +104,47 @@ func (s *stubSubmitter) Submit(_ context.Context, p txintent.Params) (txintent.I
 		return txintent.IntentID{}, err
 	}
 	id := txintent.ComputeID(p.Kind, p.KeyParams)
-	if _, ok := s.idMap[id.Hex()]; ok {
-		return id, nil
+	if _, ok := s.intents[id.Hex()]; ok {
+		return id, nil // idempotent
 	}
-	s.idMap[id.Hex()] = id
+	s.intents[id.Hex()] = txintent.TxIntent{ID: id, Status: txintent.StatusPending}
 	s.submitted = append(s.submitted, p)
 	return id, nil
 }
 
 func (s *stubSubmitter) Status(_ context.Context, id txintent.IntentID) (txintent.TxIntent, error) {
-	return txintent.TxIntent{ID: id}, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.intents[id.Hex()]; ok {
+		return t, nil
+	}
+	return txintent.TxIntent{}, store.ErrNotFound
 }
 
 func (s *stubSubmitter) Wait(_ context.Context, id txintent.IntentID) (txintent.TxIntent, error) {
 	return txintent.TxIntent{ID: id, Status: txintent.StatusConfirmed}, nil
+}
+
+func (s *stubSubmitter) Resubmit(_ context.Context, id txintent.IntentID, _ []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.intents[id.Hex()]
+	if !ok {
+		return store.ErrNotFound
+	}
+	t.Status = txintent.StatusPending
+	t.FailedReason = nil
+	s.intents[id.Hex()] = t
+	s.resubmitted = append(s.resubmitted, id)
+	return nil
+}
+
+// seedIntent injects an intent in a chosen state, mimicking a prior attempt
+// (e.g. a terminal-failed reward the force path must re-drive).
+func (s *stubSubmitter) seedIntent(t txintent.TxIntent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.intents[t.ID.Hex()] = t
 }
 
 func newCache(t *testing.T) PoolHintsCache {
@@ -178,7 +209,7 @@ func TestTryRewardEligibleSubmits(t *testing.T) {
 	cache := newCache(t)
 	svc := mustNewSvc(t, bm, sub, cache, orch)
 
-	res, err := svc.TryReward(context.Background(), chain.Round{Number: 100})
+	res, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +251,7 @@ func TestTryRewardSkippedInactive(t *testing.T) {
 		t.Fatalf("Skip.Code = %d; want SkipCodeTranscoderInactive (%d)",
 			res.Skip.Code, SkipCodeTranscoderInactive)
 	}
-	if res.Skip.Reason != "transcoder is not active at this round" {
+	if res.Skip.Reason != "orchestrator is not active this round — not eligible to reward" {
 		t.Fatalf("Skip.Reason = %q", res.Skip.Reason)
 	}
 	if res.IntentID != (txintent.IntentID{}) {
@@ -257,7 +288,7 @@ func TestTryRewardSkippedAlreadyRewarded(t *testing.T) {
 		t.Fatalf("Skip.Code = %d; want SkipCodeAlreadyRewarded (%d)",
 			res.Skip.Code, SkipCodeAlreadyRewarded)
 	}
-	if res.Skip.Reason != "already rewarded this round" {
+	if res.Skip.Reason != "reward already called for round 100 — nothing to do" {
 		t.Fatalf("Skip.Reason = %q", res.Skip.Reason)
 	}
 	if len(sub.submitted) != 0 {
@@ -266,6 +297,200 @@ func TestTryRewardSkippedAlreadyRewarded(t *testing.T) {
 	st := svc.Status()
 	if st.LastEligibility.Reason == "" {
 		t.Fatal("expected reason set")
+	}
+}
+
+func TestTryRewardSkippedRoundNotInitialized(t *testing.T) {
+	orch := common.HexToAddress("0x00000000000000000000000000000000000000A1")
+	bm := &stubBondingManager{
+		addr: common.HexToAddress("0x000000000000000000000000000000000000FB01"),
+		transcoder: bondingmanager.TranscoderInfo{
+			Active: true, ActivationRound: 1, LastRewardRound: 99,
+		},
+		pool: []chain.Address{orch},
+	}
+	sub := newStubSubmitter()
+	svc := mustNewSvc(t, bm, sub, newCache(t), orch)
+
+	// Active + not-yet-rewarded, but the round is not initialized: reward()
+	// would revert on-chain, so we must skip (not submit) and wait.
+	res, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skip == nil {
+		t.Fatal("expected typed Skip for uninitialized round")
+	}
+	if res.Skip.Code != SkipCodeRoundNotInitialized {
+		t.Fatalf("Skip.Code = %d; want SkipCodeRoundNotInitialized (%d)",
+			res.Skip.Code, SkipCodeRoundNotInitialized)
+	}
+	if res.Skip.Reason != "current round is not initialized yet — wait for initializeRound (or force a round-init)" {
+		t.Fatalf("Skip.Reason = %q", res.Skip.Reason)
+	}
+	if len(sub.submitted) != 0 {
+		t.Fatal("submit must not be called on an uninitialized round")
+	}
+}
+
+// stubCaller backs the force path's pre-send checks.
+type stubCaller struct {
+	callErr  error
+	balance  *big.Int
+	gasPrice *big.Int
+}
+
+func (c *stubCaller) CallContract(_ context.Context, _ ethereum.CallMsg, _ *big.Int) ([]byte, error) {
+	return nil, c.callErr
+}
+func (c *stubCaller) BalanceAt(_ context.Context, _ chain.Address, _ *big.Int) (*big.Int, error) {
+	return c.balance, nil
+}
+func (c *stubCaller) SuggestGasPrice(_ context.Context) (*big.Int, error) {
+	return c.gasPrice, nil
+}
+
+func mustNewSvcWithCaller(t *testing.T, bm BondingManager, sub TxSubmitter, cache PoolHintsCache, orch chain.Address, caller RewardCaller) *Service {
+	t.Helper()
+	svc, err := New(Config{
+		BondingManager: bm,
+		TxIntent:       sub,
+		Cache:          cache,
+		Caller:         caller,
+		OrchAddress:    orch,
+		GasLimit:       1_000_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return svc
+}
+
+// Force re-drives a terminal-failed intent past idempotency: a new tx goes out.
+func TestForceResubmitsFailedIntent(t *testing.T) {
+	orch := common.HexToAddress("0x00000000000000000000000000000000000000A1")
+	bm := &stubBondingManager{
+		addr:       common.HexToAddress("0x000000000000000000000000000000000000FB01"),
+		transcoder: bondingmanager.TranscoderInfo{Active: true, ActivationRound: 1, LastRewardRound: 99},
+		pool:       []chain.Address{orch},
+	}
+	sub := newStubSubmitter()
+	// Seed the prior failed intent for (round 100, orch), as if an earlier
+	// attempt reverted.
+	id := txintent.ComputeID("RewardWithHint", rewardKey(100, orch))
+	sub.seedIntent(txintent.TxIntent{ID: id, Status: txintent.StatusFailed})
+	svc := mustNewSvc(t, bm, sub, newCache(t), orch)
+
+	res, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skip != nil {
+		t.Fatalf("expected resubmit, got skip: %+v", res.Skip)
+	}
+	if len(sub.resubmitted) != 1 || sub.resubmitted[0] != id {
+		t.Fatalf("expected Resubmit(%s), got %+v", id.Hex(), sub.resubmitted)
+	}
+	if res.IntentID != id {
+		t.Fatalf("IntentID = %s; want %s", res.IntentID.Hex(), id.Hex())
+	}
+}
+
+// Force will not double-broadcast when a reward tx is already in flight.
+func TestForceSkipsInFlight(t *testing.T) {
+	orch := common.HexToAddress("0x00000000000000000000000000000000000000A1")
+	bm := &stubBondingManager{
+		addr:       common.HexToAddress("0x000000000000000000000000000000000000FB01"),
+		transcoder: bondingmanager.TranscoderInfo{Active: true, ActivationRound: 1, LastRewardRound: 99},
+		pool:       []chain.Address{orch},
+	}
+	sub := newStubSubmitter()
+	id := txintent.ComputeID("RewardWithHint", rewardKey(100, orch))
+	sub.seedIntent(txintent.TxIntent{ID: id, Status: txintent.StatusSubmitted})
+	svc := mustNewSvc(t, bm, sub, newCache(t), orch)
+
+	res, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skip == nil || res.Skip.Code != SkipCodeRewardInFlight {
+		t.Fatalf("expected SkipCodeRewardInFlight, got %+v", res.Skip)
+	}
+	if len(sub.submitted) != 0 || len(sub.resubmitted) != 0 {
+		t.Fatal("no tx should be sent when one is already in flight")
+	}
+}
+
+// Force declines (no gas) when the eth_call dry-run shows reward() would revert.
+func TestForceDryRunRevert(t *testing.T) {
+	orch := common.HexToAddress("0x00000000000000000000000000000000000000A1")
+	bm := &stubBondingManager{
+		addr:       common.HexToAddress("0x000000000000000000000000000000000000FB01"),
+		transcoder: bondingmanager.TranscoderInfo{Active: true, ActivationRound: 1, LastRewardRound: 99},
+		pool:       []chain.Address{orch},
+	}
+	sub := newStubSubmitter()
+	caller := &stubCaller{callErr: errors.New("execution reverted: current round is not initialized")}
+	svc := mustNewSvcWithCaller(t, bm, sub, newCache(t), orch, caller)
+
+	res, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skip == nil || res.Skip.Code != SkipCodeRewardWouldRevert {
+		t.Fatalf("expected SkipCodeRewardWouldRevert, got %+v", res.Skip)
+	}
+	if len(sub.submitted) != 0 {
+		t.Fatal("no tx should be sent when dry-run reverts")
+	}
+}
+
+// Force declines when the wallet can't cover the gas cost.
+func TestForceInsufficientBalance(t *testing.T) {
+	orch := common.HexToAddress("0x00000000000000000000000000000000000000A1")
+	bm := &stubBondingManager{
+		addr:       common.HexToAddress("0x000000000000000000000000000000000000FB01"),
+		transcoder: bondingmanager.TranscoderInfo{Active: true, ActivationRound: 1, LastRewardRound: 99},
+		pool:       []chain.Address{orch},
+	}
+	sub := newStubSubmitter()
+	// gasPrice * gasLimit(1_000_000) = 1e12 wei; balance below that.
+	caller := &stubCaller{balance: big.NewInt(1_000), gasPrice: big.NewInt(1_000_000)}
+	svc := mustNewSvcWithCaller(t, bm, sub, newCache(t), orch, caller)
+
+	res, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skip == nil || res.Skip.Code != SkipCodeInsufficientBalance {
+		t.Fatalf("expected SkipCodeInsufficientBalance, got %+v", res.Skip)
+	}
+	if len(sub.submitted) != 0 {
+		t.Fatal("no tx should be sent when balance is insufficient")
+	}
+}
+
+// Force broadcasts a fresh tx when eligible and the dry-run passes.
+func TestForceSubmitsWhenDryRunPasses(t *testing.T) {
+	orch := common.HexToAddress("0x00000000000000000000000000000000000000A1")
+	bm := &stubBondingManager{
+		addr:       common.HexToAddress("0x000000000000000000000000000000000000FB01"),
+		transcoder: bondingmanager.TranscoderInfo{Active: true, ActivationRound: 1, LastRewardRound: 99},
+		pool:       []chain.Address{orch},
+	}
+	sub := newStubSubmitter()
+	caller := &stubCaller{balance: big.NewInt(1e18), gasPrice: big.NewInt(1)} // affordable; CallContract ok
+	svc := mustNewSvcWithCaller(t, bm, sub, newCache(t), orch, caller)
+
+	res, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skip != nil {
+		t.Fatalf("expected submit, got skip: %+v", res.Skip)
+	}
+	if len(sub.submitted) != 1 {
+		t.Fatalf("submitted len = %d; want 1", len(sub.submitted))
 	}
 }
 
@@ -292,7 +517,7 @@ func TestTryRewardPoolWalkError(t *testing.T) {
 	}
 	sub := newStubSubmitter()
 	svc := mustNewSvc(t, bm, sub, newCache(t), orch)
-	if _, err := svc.TryReward(context.Background(), chain.Round{Number: 100}); err == nil {
+	if _, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: true}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -307,7 +532,7 @@ func TestTryRewardSubmitError(t *testing.T) {
 	sub := newStubSubmitter()
 	sub.failNext = errors.New("submit failed")
 	svc := mustNewSvc(t, bm, sub, newCache(t), orch)
-	if _, err := svc.TryReward(context.Background(), chain.Round{Number: 100}); err == nil {
+	if _, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: true}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -326,7 +551,7 @@ func TestPoolHintCacheSecondCallSkipsWalk(t *testing.T) {
 	svc := mustNewSvc(t, bm, sub, cache, orch)
 
 	// First call: pool walk happens.
-	if _, err := svc.TryReward(context.Background(), chain.Round{Number: 100}); err != nil {
+	if _, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: true}); err != nil {
 		t.Fatal(err)
 	}
 	firstWalkCalls := bm.getFirstCalls
@@ -340,7 +565,7 @@ func TestPoolHintCacheSecondCallSkipsWalk(t *testing.T) {
 	bm.transcoder.LastRewardRound = 0
 	// Use a fresh submit attempt — the txintent is idempotent so calling
 	// twice is safe.
-	if _, err := svc.TryReward(context.Background(), chain.Round{Number: 100}); err != nil {
+	if _, err := svc.TryReward(context.Background(), chain.Round{Number: 100, Initialized: true}); err != nil {
 		t.Fatal(err)
 	}
 	if bm.getFirstCalls != firstWalkCalls {

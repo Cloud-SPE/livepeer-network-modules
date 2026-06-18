@@ -182,6 +182,43 @@ func (m *Manager) Status(_ context.Context, id IntentID) (TxIntent, error) {
 	return m.read(id)
 }
 
+// Resubmit re-drives a terminally-FAILED intent: it refreshes the calldata
+// (hints may have drifted since the original attempt), resets the intent to
+// StatusPending, clears the failure, and re-dispatches it to the Processor —
+// which signs and broadcasts a brand-new transaction at a fresh nonce.
+//
+// This is the sanctioned operator-override of the (Kind, KeyParams)
+// idempotency guard: a normal Submit returns the existing failed intent
+// without retrying, so a transient revert (e.g. an uninitialized round) would
+// otherwise strand that intent forever. Resubmit deliberately mutates a
+// terminal state, so it is restricted to StatusFailed — a Confirmed intent is
+// never re-driven (its success is immutable) and a non-terminal intent is
+// already in flight; both return an error so callers can surface a clear
+// message instead of double-broadcasting.
+func (m *Manager) Resubmit(ctx context.Context, id IntentID, calldata []byte) error {
+	if err := m.transition(id, func(t *TxIntent) error {
+		if t.Status != StatusFailed {
+			return fmt.Errorf("txintent: Resubmit requires StatusFailed, intent is %s", t.Status)
+		}
+		t.CallData = append([]byte(nil), calldata...)
+		t.Status = StatusPending
+		t.FailedReason = nil
+		t.LastUpdatedAt = m.clock.Now()
+		return nil
+	}); err != nil {
+		return err
+	}
+	if m.logger != nil {
+		m.logger.Info("txintent.resubmit", logger.String("id", id.Hex()))
+	}
+	m.metrics.CounterAdd("livepeer_chain_txintent_submit_total",
+		metrics.Labels{"kind": "", "outcome": "resubmit"}, 1)
+	if m.processor != nil {
+		go m.processor.Process(context.WithoutCancel(ctx), m, id)
+	}
+	return nil
+}
+
 // Wait blocks until the intent reaches a terminal state, ctx is cancelled,
 // or the intent doesn't exist (returns ErrNotFound).
 func (m *Manager) Wait(ctx context.Context, id IntentID) (TxIntent, error) {

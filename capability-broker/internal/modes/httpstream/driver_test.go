@@ -167,6 +167,60 @@ func TestServeInjectsOpenAIStreamUsage(t *testing.T) {
 	}
 }
 
+// TestServeInjectsOpenAIStreamUsageRegardlessOfContentType guards the fix for
+// unmetered streaming chat requests: when the gateway forwards a job with a
+// Content-Type other than application/json (or none at all), the broker must
+// still inject stream_options.include_usage AND normalize the outbound
+// Content-Type to application/json, because the backend only emits a usage
+// block for application/json requests. Without both, work_units silently
+// meters 0.
+func TestServeInjectsOpenAIStreamUsageRegardlessOfContentType(t *testing.T) {
+	for _, ct := range []string{"", "text/plain", "application/octet-stream"} {
+		t.Run("ct="+ct, func(t *testing.T) {
+			d := New()
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/v1/cap",
+				bytes.NewBufferString(`{"model":"qwen","stream":true,"stream_options":{"include_usage":false},"messages":[{"role":"user","content":"hi"}]}`))
+			if ct != "" {
+				req.Header.Set("Content-Type", ct)
+			} else {
+				req.Header.Del("Content-Type")
+			}
+			fwd := &stubForwarder{resp: &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewBufferString(`data: {"usage":{"total_tokens":7}}`)),
+			}}
+			err := d.Serve(context.Background(), modes.Params{
+				Writer:  w,
+				Request: req,
+				Capability: &config.Capability{
+					ID:              "openai:chat-completions",
+					OfferingID:      "shared",
+					InteractionMode: Mode,
+					Backend:         config.Backend{ID: "backend-a", URL: "http://backend-a"},
+				},
+				Extractor: openAIUsageExtractor{},
+				Backend:   fwd,
+			})
+			if err != nil {
+				t.Fatalf("Serve() error = %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(fwd.gotBody, &payload); err != nil {
+				t.Fatalf("forwarded body is not JSON: %v", err)
+			}
+			streamOptions, _ := payload["stream_options"].(map[string]any)
+			if streamOptions == nil || streamOptions["include_usage"] != true {
+				t.Fatalf("include_usage not forced to true; got %#v", payload["stream_options"])
+			}
+			if got := fwd.gotHdrs.Get("Content-Type"); got != "application/json" {
+				t.Fatalf("outbound Content-Type = %q, want application/json", got)
+			}
+		})
+	}
+}
+
 type openAIUsageExtractor struct{}
 
 func (openAIUsageExtractor) Name() string { return "openai-usage" }

@@ -21,7 +21,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
@@ -58,9 +57,18 @@ func (d *Driver) Serve(ctx context.Context, p modes.Params) error {
 			"read request body: "+err.Error())
 		return nil
 	}
-	body = maybeInjectOpenAIStreamUsage(body, p.Request.Header, p.Capability, p.Extractor)
+	body, injectedUsage := maybeInjectOpenAIStreamUsage(body, p.Capability, p.Extractor)
 
 	outHeaders := backend.StripLivepeerHeaders(p.Request.Header)
+	if injectedUsage {
+		// The backend (openai-chat-runner / vLLM) only honors
+		// stream_options.include_usage when the request is declared
+		// application/json. Some gateways forward chat jobs with a different
+		// (or absent) Content-Type, which makes the backend drop the usage
+		// block and leaves us unable to meter work units. We just confirmed
+		// the body is JSON, so normalize the header to match.
+		outHeaders.Set("Content-Type", "application/json")
+	}
 	if p.Auth != nil {
 		if err := p.Auth.Apply(outHeaders, p.Capability.Backend.Auth); err != nil {
 			livepeerheader.WriteError(p.Writer, http.StatusBadGateway, livepeerheader.ErrBackendUnavailable,
@@ -194,21 +202,28 @@ func reportOutcome(p modes.Params, outcome string, latency time.Duration) {
 	})
 }
 
-func maybeInjectOpenAIStreamUsage(body []byte, headers http.Header, cap *config.Capability, ext extractors.Extractor) []byte {
+// maybeInjectOpenAIStreamUsage forces stream_options.include_usage=true on
+// openai:chat-completions requests metered by the openai-usage extractor, so
+// the streamed backend response carries a usage block the extractor can read.
+// It returns the (possibly rewritten) body and whether a rewrite occurred.
+//
+// Injection is deliberately independent of the inbound Content-Type: the only
+// requirement is that the body parses as JSON. The backend gates its own usage
+// handling on an application/json Content-Type, so the caller normalizes the
+// outbound header when this returns true. Gating here on the inbound header
+// (as a previous version did) let non-application/json gateway requests slip
+// through unmetered.
+func maybeInjectOpenAIStreamUsage(body []byte, cap *config.Capability, ext extractors.Extractor) ([]byte, bool) {
 	if cap == nil || ext == nil {
-		return body
+		return body, false
 	}
 	if cap.ID != "openai:chat-completions" || ext.Name() != openaiusage.Name {
-		return body
-	}
-	contentType := strings.ToLower(headers.Get("Content-Type"))
-	if contentType != "" && !strings.Contains(contentType, "application/json") {
-		return body
+		return body, false
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		log.Printf("openai-usage: request body not JSON; cannot inject stream_options.include_usage: %v", err)
-		return body
+		return body, false
 	}
 	streamOptions, _ := payload["stream_options"].(map[string]any)
 	if streamOptions == nil {
@@ -219,7 +234,7 @@ func maybeInjectOpenAIStreamUsage(body []byte, headers http.Header, cap *config.
 	rewritten, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("openai-usage: request rewrite failed; cannot inject stream_options.include_usage: %v", err)
-		return body
+		return body, false
 	}
-	return rewritten
+	return rewritten, true
 }

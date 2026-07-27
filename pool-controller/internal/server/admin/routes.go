@@ -296,6 +296,10 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err := deps.RefreshRendered("template-assignment-created"); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		writeAdminJSON(w, item, nil)
 	}))
 	mux.HandleFunc("POST /admin/v1/template-assignments/{id}/certification/start", auth(func(w http.ResponseWriter, r *http.Request) {
@@ -303,6 +307,10 @@ func Register(mux *http.ServeMux, deps Deps) {
 		run, err := certification.New(deps.Repo).StartAssignmentCertification(id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := deps.RefreshRendered("certification-started"); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		writeAdminJSON(w, run, nil)
@@ -331,6 +339,10 @@ func Register(mux *http.ServeMux, deps Deps) {
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := deps.RefreshRendered("certification-completed"); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		writeAdminJSON(w, run, nil)

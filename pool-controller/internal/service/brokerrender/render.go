@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
@@ -215,7 +216,7 @@ func Render(input RenderInput) (RenderResult, error) {
 			OfferingID:      offer.OfferingID,
 			InteractionMode: offer.InteractionMode,
 			WorkUnit:        config.NormalizeWorkUnit(offer.WorkUnit),
-			Health:          config.Health{},
+			Health:          agentBackendHealth(assignment.ID, offer),
 			Price:           offer.Price,
 			Backend: BrokerBackend{
 				ID:                      assignment.ID,
@@ -278,6 +279,29 @@ func Render(input RenderInput) (RenderResult, error) {
 		Revision:   hex.EncodeToString(sum[:]),
 		Model:      model,
 	}, nil
+}
+
+// agentBackendHealth builds the broker health probe for a worker://-tunneled
+// (connected-worker) backend. Without an explicit probe the broker defaults to
+// probing the backend root (worker://<assignment-id>), which OpenAI-style
+// runners answer with 404 -- leaving the backend permanently unreachable. Probe
+// a real path (default /v1/models) that is forwarded over the worker session to
+// the runner. Operators can override the path per offer via
+// extra.health_probe_path (e.g. "/healthz" for the openai-chat-runner).
+func agentBackendHealth(assignmentID string, offer types.Offer) config.Health {
+	path := "/v1/models"
+	if raw, ok := offer.Extra["health_probe_path"].(string); ok && strings.TrimSpace(raw) != "" {
+		path = strings.TrimSpace(raw)
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+	}
+	return config.Health{
+		Probe: config.HealthProbe{
+			Type:   "http-status",
+			Config: map[string]any{"url": "worker://" + assignmentID + path},
+		},
+	}
 }
 
 func activeOfferForTemplate(offersByID map[string]types.Offer, template types.TemplateCatalogEntry) (types.Offer, bool) {

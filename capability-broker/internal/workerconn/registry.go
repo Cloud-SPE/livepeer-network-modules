@@ -118,3 +118,44 @@ func (f *Forwarder) Forward(ctx context.Context, req backend.ForwardRequest) (*h
 
 var _ backend.Forwarder = (*Registry)(nil)
 var _ backend.Forwarder = (*Forwarder)(nil)
+
+// HTTPTransport returns an http.RoundTripper that serves requests addressed to
+// the "worker://" virtual scheme via this registry's connected worker sessions,
+// delegating every other scheme to base (http.DefaultTransport when nil). It
+// lets a standard *http.Client — e.g. the health prober — reach connected
+// worker backends exactly the way the dispatch path does, instead of failing
+// with an "unsupported protocol scheme worker" error.
+func (r *Registry) HTTPTransport(base http.RoundTripper) http.RoundTripper {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	if r == nil {
+		return base
+	}
+	return &registryTransport{registry: r, base: base}
+}
+
+type registryTransport struct {
+	registry *Registry
+	base     http.RoundTripper
+}
+
+func (t *registryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !strings.EqualFold(req.URL.Scheme, VirtualBackendScheme) {
+		return t.base.RoundTrip(req)
+	}
+	fr := backend.ForwardRequest{
+		URL:     req.URL.String(),
+		Method:  req.Method,
+		Headers: req.Header.Clone(),
+		Body:    req.Body,
+	}
+	// GET probes (and other bodyless requests) carry a nil Body; hand the
+	// forwarder an empty reader so it never dereferences a nil io.Reader.
+	if fr.Body == nil {
+		fr.Body = http.NoBody
+	}
+	return t.registry.Forward(req.Context(), fr)
+}
+
+var _ http.RoundTripper = (*registryTransport)(nil)

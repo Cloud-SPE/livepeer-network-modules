@@ -74,9 +74,13 @@ func (s *SessionForwarder) Done() <-chan struct{} {
 }
 
 func (s *SessionForwarder) Forward(ctx context.Context, req backend.ForwardRequest) (*http.Response, error) {
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		return nil, err
+	var body []byte
+	if req.Body != nil {
+		var err error
+		body, err = io.ReadAll(req.Body)
+		if err != nil {
+			return nil, err
+		}
 	}
 	id, ch, err := s.registerPending()
 	if err != nil {

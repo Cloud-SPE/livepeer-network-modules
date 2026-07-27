@@ -188,6 +188,7 @@ func renderBrokerState(stateRepo *repo.StateRepo, cfg *config.Config) ([]byte, *
 			Listen:        cfg.Listen,
 			PaymentDaemon: cfg.PaymentDaemon,
 			ReceiptSink:   cfg.ReceiptSink,
+			AdminAuth:     cfg.Bootstrap.BrokerAdminAuth,
 		},
 		Offers:              offers,
 		Members:             members,

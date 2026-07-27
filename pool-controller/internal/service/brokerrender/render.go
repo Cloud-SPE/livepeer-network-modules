@@ -16,6 +16,7 @@ type BootstrapBrokerSettings struct {
 	Listen        config.Listen
 	PaymentDaemon config.PaymentDaemon
 	ReceiptSink   config.ReceiptSink
+	AdminAuth     config.AuthConfig
 }
 
 type RenderInput struct {
@@ -39,6 +40,7 @@ type RenderResult struct {
 
 type BrokerConfig struct {
 	Identity      config.Identity      `yaml:"identity"`
+	AdminAuth     config.AuthConfig    `yaml:"admin_auth,omitempty"`
 	Listen        BrokerListen         `yaml:"listen,omitempty"`
 	PaymentDaemon config.PaymentDaemon `yaml:"payment_daemon,omitempty"`
 	ReceiptSink   config.ReceiptSink   `yaml:"receipt_sink,omitempty"`
@@ -255,7 +257,8 @@ func Render(input RenderInput) (RenderResult, error) {
 	})
 
 	model := BrokerConfig{
-		Identity: input.Bootstrap.Identity,
+		Identity:  input.Bootstrap.Identity,
+		AdminAuth: input.Bootstrap.AdminAuth,
 		Listen: BrokerListen{
 			Paid:       input.Bootstrap.Listen.Paid,
 			Metrics:    input.Bootstrap.Listen.Metrics,

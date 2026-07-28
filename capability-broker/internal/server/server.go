@@ -280,7 +280,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		receiptSink:      receiptSink,
 		poolReporter:     poolReporter,
 		poolSnapshot:     poolSnapshot,
-		health:           health.New(cfg),
+		health:           health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
 		rtmpStore:        rtmpStore,
 		sessStore:        sessStore,
 		sessDriver:       sessDriver,

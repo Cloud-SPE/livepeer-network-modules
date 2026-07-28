@@ -224,7 +224,7 @@ func TestApprovePayoutBatchMaterializesExportedIntents(t *testing.T) {
 func TestTemplateAssignmentCertificationRoutes(t *testing.T) {
 	stateRepo := seedAdminCertificationRepo(t)
 	mux := http.NewServeMux()
-	Register(mux, Deps{Repo: stateRepo, WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next }})
+	Register(mux, Deps{Repo: stateRepo, WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next }, RefreshRendered: func(string) error { return nil }})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -276,7 +276,7 @@ func TestSettlementWindowCloseRoute(t *testing.T) {
 		t.Fatalf("SaveWorkReceipt() error = %v", err)
 	}
 	mux := http.NewServeMux()
-	Register(mux, Deps{Repo: stateRepo, WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next }})
+	Register(mux, Deps{Repo: stateRepo, WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next }, RefreshRendered: func(string) error { return nil }})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	resp, err := http.Post(server.URL+"/admin/v1/settlement-windows/close", "application/json", bytes.NewBufferString(`{"window_id":"window-98","round_ids":["100"],"confirmed_revenue_wei":"500"}`))

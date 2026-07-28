@@ -185,6 +185,18 @@ func Register(mux *http.ServeMux, deps Deps) {
 			if strings.TrimSpace(unit.ID) == "" {
 				unit.ID = fmt.Sprintf("%s-gpu-%d", enrollment.ID, i)
 			}
+			// A hardware report carries inventory, not lifecycle. For a unit we
+			// already know, preserve the operator-managed lifecycle State and the
+			// original CreatedAt so a routine re-report (which sends no State)
+			// cannot clobber certification/probation/active back to "registered".
+			if existing, err := deps.Repo.GetHardwareUnit(unit.ID); err == nil {
+				if strings.TrimSpace(string(unit.State)) == "" {
+					unit.State = existing.State
+				}
+				if unit.CreatedAt.IsZero() {
+					unit.CreatedAt = existing.CreatedAt
+				}
+			}
 			if unit.State == "" {
 				unit.State = types.HardwareUnitRegistered
 			}

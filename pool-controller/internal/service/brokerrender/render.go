@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
@@ -16,6 +17,7 @@ type BootstrapBrokerSettings struct {
 	Listen        config.Listen
 	PaymentDaemon config.PaymentDaemon
 	ReceiptSink   config.ReceiptSink
+	AdminAuth     config.AuthConfig
 }
 
 type RenderInput struct {
@@ -39,6 +41,7 @@ type RenderResult struct {
 
 type BrokerConfig struct {
 	Identity      config.Identity      `yaml:"identity"`
+	AdminAuth     config.AuthConfig    `yaml:"admin_auth,omitempty"`
 	Listen        BrokerListen         `yaml:"listen,omitempty"`
 	PaymentDaemon config.PaymentDaemon `yaml:"payment_daemon,omitempty"`
 	ReceiptSink   config.ReceiptSink   `yaml:"receipt_sink,omitempty"`
@@ -213,12 +216,12 @@ func Render(input RenderInput) (RenderResult, error) {
 			OfferingID:      offer.OfferingID,
 			InteractionMode: offer.InteractionMode,
 			WorkUnit:        config.NormalizeWorkUnit(offer.WorkUnit),
-			Health:          config.Health{},
+			Health:          agentBackendHealth(assignment.ID, offer),
 			Price:           offer.Price,
 			Backend: BrokerBackend{
 				ID:                      assignment.ID,
 				Transport:               "http",
-				URL:                     "worker://" + assignment.ID,
+				URL:                     agentBackendURL(assignment.ID, offer),
 				Auth:                    config.AuthConfig{Method: "none"},
 				HostEnrollmentID:        enrollment.ID,
 				HardwareUnitID:          hardware.ID,
@@ -255,7 +258,8 @@ func Render(input RenderInput) (RenderResult, error) {
 	})
 
 	model := BrokerConfig{
-		Identity: input.Bootstrap.Identity,
+		Identity:  input.Bootstrap.Identity,
+		AdminAuth: input.Bootstrap.AdminAuth,
 		Listen: BrokerListen{
 			Paid:       input.Bootstrap.Listen.Paid,
 			Metrics:    input.Bootstrap.Listen.Metrics,
@@ -275,6 +279,46 @@ func Render(input RenderInput) (RenderResult, error) {
 		Revision:   hex.EncodeToString(sum[:]),
 		Model:      model,
 	}, nil
+}
+
+// agentBackendHealth builds the broker health probe for a worker://-tunneled
+// (connected-worker) backend. Without an explicit probe the broker defaults to
+// probing the backend root (worker://<assignment-id>), which OpenAI-style
+// runners answer with 404 -- leaving the backend permanently unreachable. Probe
+// a real path (default /v1/models) that is forwarded over the worker session to
+// the runner. Operators can override the path per offer via
+// extra.health_probe_path (e.g. "/healthz" for the openai-chat-runner).
+// agentBackendURL builds the worker://-tunneled backend URL the broker forwards
+// paid requests to. http-reqresp forwards backend.URL verbatim (it does not
+// append the inbound path), so the URL must carry the runner's endpoint path or
+// the request lands on the backend root and 404s. The host stays the assignment
+// id (the worker-session routing key); the path defaults to /v1/chat/completions
+// and is overridable per offer via extra.backend_path.
+func agentBackendURL(assignmentID string, offer types.Offer) string {
+	path := "/v1/chat/completions"
+	if raw, ok := offer.Extra["backend_path"].(string); ok && strings.TrimSpace(raw) != "" {
+		path = strings.TrimSpace(raw)
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+	}
+	return "worker://" + assignmentID + path
+}
+
+func agentBackendHealth(assignmentID string, offer types.Offer) config.Health {
+	path := "/v1/models"
+	if raw, ok := offer.Extra["health_probe_path"].(string); ok && strings.TrimSpace(raw) != "" {
+		path = strings.TrimSpace(raw)
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+	}
+	return config.Health{
+		Probe: config.HealthProbe{
+			Type:   "http-status",
+			Config: map[string]any{"url": "worker://" + assignmentID + path},
+		},
+	}
 }
 
 func activeOfferForTemplate(offersByID map[string]types.Offer, template types.TemplateCatalogEntry) (types.Offer, bool) {

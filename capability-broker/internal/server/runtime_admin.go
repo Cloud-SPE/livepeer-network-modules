@@ -288,7 +288,7 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 	if previous := s.currentHealth(); previous != nil {
 		previousSnapshots = previous.Snapshot().Capabilities
 	}
-	healthMgr := health.NewWithSnapshots(cfg, previousSnapshots)
+	healthMgr := health.NewWithTransport(cfg, previousSnapshots, s.workerRegistry.HTTPTransport(nil))
 	s.finishReload(attemptID, startedAt, "applied", "", loadedRevision, cfg, healthMgr)
 	s.mu.Lock()
 	s.loadedConfigPath = loadedConfigPath

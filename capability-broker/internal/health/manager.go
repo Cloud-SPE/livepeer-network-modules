@@ -72,6 +72,14 @@ func New(cfg *config.Config) *Manager {
 }
 
 func NewWithSnapshots(cfg *config.Config, previous []Snapshot) *Manager {
+	return NewWithTransport(cfg, previous, nil)
+}
+
+// NewWithTransport builds a Manager whose probe client uses the given
+// RoundTripper. Pass a workerconn transport so "worker://" backend probes are
+// forwarded over the connected worker session instead of failing with an
+// unsupported-scheme error. A nil transport keeps http.DefaultTransport.
+func NewWithTransport(cfg *config.Config, previous []Snapshot, transport http.RoundTripper) *Manager {
 	previousByKey := make(map[string]Snapshot, len(previous))
 	for _, snap := range previous {
 		previousByKey[snapshotKey(snap.ID, snap.OfferingID, snap.BackendID)] = snap
@@ -109,9 +117,13 @@ func NewWithSnapshots(cfg *config.Config, previous []Snapshot) *Manager {
 		}
 		states = append(states, st)
 	}
+	client := &http.Client{}
+	if transport != nil {
+		client.Transport = transport
+	}
 	return &Manager{
 		states: states,
-		client: &http.Client{},
+		client: client,
 	}
 }
 

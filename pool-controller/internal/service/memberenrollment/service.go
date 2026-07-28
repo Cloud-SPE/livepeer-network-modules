@@ -370,10 +370,21 @@ func workerBackendsEnv(input BundleInput) string {
 	var parts []string
 	for _, assignment := range input.Assignments {
 		template, ok := templateByID(input.Templates, assignment.TemplateID)
-		if !ok || stringComposeValue(template.RunnerCompose, "image") == "" {
+		if !ok {
 			continue
 		}
 		internalURL := stringComposeValue(template.RunnerCompose, "internal_url")
+		image := stringComposeValue(template.RunnerCompose, "image")
+		// Include the backend when the template gives any way to reach a runner:
+		// an explicit internal_url (operator runs their own runner; the bundle
+		// ships nothing) or a shipped image (the bundle spins one up and the
+		// agent talks to it at the default service URL). Skip only when neither
+		// is present -- there is nothing to route to. This decouples backend
+		// inclusion from shipping a runner image (bundleCompose still gates the
+		// runner service on image).
+		if internalURL == "" && image == "" {
+			continue
+		}
 		if internalURL == "" {
 			internalURL = "http://" + runnerServiceName(assignment.ID) + ":8080"
 		}

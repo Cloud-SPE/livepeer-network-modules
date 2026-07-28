@@ -221,7 +221,7 @@ func Render(input RenderInput) (RenderResult, error) {
 			Backend: BrokerBackend{
 				ID:                      assignment.ID,
 				Transport:               "http",
-				URL:                     "worker://" + assignment.ID,
+				URL:                     agentBackendURL(assignment.ID, offer),
 				Auth:                    config.AuthConfig{Method: "none"},
 				HostEnrollmentID:        enrollment.ID,
 				HardwareUnitID:          hardware.ID,
@@ -288,6 +288,23 @@ func Render(input RenderInput) (RenderResult, error) {
 // a real path (default /v1/models) that is forwarded over the worker session to
 // the runner. Operators can override the path per offer via
 // extra.health_probe_path (e.g. "/healthz" for the openai-chat-runner).
+// agentBackendURL builds the worker://-tunneled backend URL the broker forwards
+// paid requests to. http-reqresp forwards backend.URL verbatim (it does not
+// append the inbound path), so the URL must carry the runner's endpoint path or
+// the request lands on the backend root and 404s. The host stays the assignment
+// id (the worker-session routing key); the path defaults to /v1/chat/completions
+// and is overridable per offer via extra.backend_path.
+func agentBackendURL(assignmentID string, offer types.Offer) string {
+	path := "/v1/chat/completions"
+	if raw, ok := offer.Extra["backend_path"].(string); ok && strings.TrimSpace(raw) != "" {
+		path = strings.TrimSpace(raw)
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+	}
+	return "worker://" + assignmentID + path
+}
+
 func agentBackendHealth(assignmentID string, offer types.Offer) config.Health {
 	path := "/v1/models"
 	if raw, ok := offer.Extra["health_probe_path"].(string); ok && strings.TrimSpace(raw) != "" {

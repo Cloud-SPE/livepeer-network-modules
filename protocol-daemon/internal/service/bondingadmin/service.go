@@ -59,9 +59,15 @@ type RoundsManager interface {
 	CurrentRoundLocked(ctx context.Context) (bool, error)
 }
 
-// TxSubmitter is the subset of txintent.Manager used here.
+// TxSubmitter is the subset of txintent.Manager used here. Status and
+// Resubmit let submitGuarded re-drive a terminally-failed intent instead of
+// returning it untouched: Submit's (Kind, KeyParams) idempotency would
+// otherwise make every later attempt in the round — including the operator's
+// Force actions — a silent no-op.
 type TxSubmitter interface {
 	Submit(ctx context.Context, p txintent.Params) (txintent.IntentID, error)
+	Status(ctx context.Context, id txintent.IntentID) (txintent.TxIntent, error)
+	Resubmit(ctx context.Context, id txintent.IntentID, calldata []byte) error
 }
 
 // ConfigSource supplies the current operational config (the daemon's
@@ -316,6 +322,22 @@ func (s *Service) submitGuarded(ctx context.Context, kind string, keyParams, cal
 	})
 	if err != nil {
 		return ActionResult{}, fmt.Errorf("%s: %w", types.ErrCodeBondingAdminSubmitFailed, err)
+	}
+	// Submit is idempotent on (kind, keyParams): when this round's intent
+	// already exists it is returned as-is, even if it terminally failed.
+	// The dry-run above proved the action is still valid, so re-drive a
+	// failed intent with the fresh calldata. Resubmit only mutates
+	// StatusFailed — confirmed or in-flight intents are left alone.
+	if existing, serr := s.cfg.TxIntent.Status(ctx, id); serr == nil && existing.Status == txintent.StatusFailed {
+		if rerr := s.cfg.TxIntent.Resubmit(ctx, id, calldata); rerr != nil {
+			return ActionResult{}, fmt.Errorf("%s: resubmit: %w", types.ErrCodeBondingAdminSubmitFailed, rerr)
+		}
+		if s.cfg.Logger != nil {
+			s.cfg.Logger.Info("bondingadmin resubmitted failed intent",
+				logger.String("kind", kind),
+				logger.String("intent_id", id.Hex()))
+		}
+		return ActionResult{IntentID: id}, nil
 	}
 	if s.cfg.Logger != nil {
 		s.cfg.Logger.Info("bondingadmin submitted",

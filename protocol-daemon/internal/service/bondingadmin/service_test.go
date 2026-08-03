@@ -67,6 +67,12 @@ type fakeTx struct {
 	lastKind     string
 	lastGasLimit uint64
 	err          error
+
+	existingStatus txintent.IntentStatus // status reported by Status(); zero value = StatusPending
+	statusErr      error
+	resubmitted    int
+	resubmitErr    error
+	lastCalldata   []byte
 }
 
 func (f *fakeTx) Submit(_ context.Context, p txintent.Params) (txintent.IntentID, error) {
@@ -77,6 +83,22 @@ func (f *fakeTx) Submit(_ context.Context, p txintent.Params) (txintent.IntentID
 	f.lastKind = p.Kind
 	f.lastGasLimit = p.GasLimit
 	return txintent.IntentID{0x01}, nil
+}
+
+func (f *fakeTx) Status(_ context.Context, id txintent.IntentID) (txintent.TxIntent, error) {
+	if f.statusErr != nil {
+		return txintent.TxIntent{}, f.statusErr
+	}
+	return txintent.TxIntent{ID: id, Status: f.existingStatus}, nil
+}
+
+func (f *fakeTx) Resubmit(_ context.Context, _ txintent.IntentID, calldata []byte) error {
+	if f.resubmitErr != nil {
+		return f.resubmitErr
+	}
+	f.resubmitted++
+	f.lastCalldata = append([]byte(nil), calldata...)
+	return nil
 }
 
 // fakeEstimatingCaller is a Caller that also implements the optional
@@ -290,6 +312,35 @@ func TestWithdrawFeesSubmits(t *testing.T) {
 	}
 	if tx.submitted != 1 || tx.lastKind != "WithdrawFees" {
 		t.Errorf("expected WithdrawFees submit, got %d kind=%s", tx.submitted, tx.lastKind)
+	}
+}
+
+func TestWithdrawFeesResubmitsFailedIntent(t *testing.T) {
+	tx := &fakeTx{existingStatus: txintent.StatusFailed}
+	s := newService(t, &fakeBM{pendingFees: big.NewInt(1000)}, &fakeRM{initialized: true, locked: true}, tx, &fakeCaller{}, fakeConfig{enabledWithdraw()})
+	res, err := s.WithdrawFees(context.Background(), chain.Round{Number: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skip != nil {
+		t.Fatalf("unexpected skip: %+v", res.Skip)
+	}
+	if tx.resubmitted != 1 {
+		t.Errorf("expected failed intent to be resubmitted, got %d", tx.resubmitted)
+	}
+	if len(tx.lastCalldata) == 0 {
+		t.Error("resubmit should carry the fresh calldata")
+	}
+}
+
+func TestWithdrawFeesConfirmedIntentNotResubmitted(t *testing.T) {
+	tx := &fakeTx{existingStatus: txintent.StatusConfirmed}
+	s := newService(t, &fakeBM{pendingFees: big.NewInt(1000)}, &fakeRM{initialized: true, locked: true}, tx, &fakeCaller{}, fakeConfig{enabledWithdraw()})
+	if _, err := s.WithdrawFees(context.Background(), chain.Round{Number: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if tx.resubmitted != 0 {
+		t.Error("confirmed intent must never be resubmitted")
 	}
 }
 

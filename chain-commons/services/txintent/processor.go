@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"sync"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
@@ -40,6 +41,17 @@ type DefaultProcessor struct {
 	clock     clock.Clock
 	logger    logger.Logger
 	metrics   metrics.Recorder
+
+	// nonceMu serializes the fetch-nonce→sign→broadcast critical section of
+	// first broadcasts across concurrent intents. Without it, two intents
+	// submitted back-to-back (e.g. TransferBond then WithdrawFees in the
+	// same lock window) both read the same pending nonce before either
+	// broadcast reaches the node, and the loser dies with nonce-too-low.
+	// nonceFloor is the next nonce this process may assign (last successful
+	// broadcast + 1); it guards against a lagging endpoint in a multi-RPC
+	// setup returning a pending nonce that predates our own broadcast.
+	nonceMu    sync.Mutex
+	nonceFloor uint64
 }
 
 // ProcessorConfig wires a DefaultProcessor.
@@ -247,51 +259,82 @@ func (p *DefaultProcessor) waitWithTimeout(ctx context.Context, txHash chain.TxH
 	return waitTimeout, nil
 }
 
+// maxNonceRetries bounds how many times a first broadcast re-fetches a
+// fresh nonce after the node rejects the previous one as already used.
+const maxNonceRetries = 3
+
 func (p *DefaultProcessor) signAndBroadcast(ctx context.Context, m *Manager, intent TxIntent) error {
-	nonce, err := p.rpc.PendingNonceAt(ctx, p.keystore.Address())
-	if err != nil {
-		return cerrors.Wrap(cerrors.ClassTransient, "rpc.pending_nonce_failed", "failed to fetch pending nonce", err)
-	}
+	// The whole assign→sign→broadcast sequence runs under nonceMu so a
+	// concurrent intent cannot read the pending nonce until this one's
+	// broadcast has reached the node (or failed and released the nonce).
+	p.nonceMu.Lock()
+	defer p.nonceMu.Unlock()
 
-	est, err := p.gas.Suggest(ctx)
-	if err != nil {
-		return cerrors.Wrap(cerrors.ClassTransient, "rpc.gas_suggest_failed", "failed to suggest gas", err)
-	}
+	for try := 0; ; try++ {
+		nonce, err := p.rpc.PendingNonceAt(ctx, p.keystore.Address())
+		if err != nil {
+			return cerrors.Wrap(cerrors.ClassTransient, "rpc.pending_nonce_failed", "failed to fetch pending nonce", err)
+		}
+		if nonce < p.nonceFloor {
+			nonce = p.nonceFloor
+		}
 
-	tx, err := p.signTx(intent, nonce, est.FeeCap, est.TipCap)
-	if err != nil {
-		return err
-	}
+		est, err := p.gas.Suggest(ctx)
+		if err != nil {
+			return cerrors.Wrap(cerrors.ClassTransient, "rpc.gas_suggest_failed", "failed to suggest gas", err)
+		}
 
-	now := p.clock.Now()
-	attempt := IntentAttempt{
-		Nonce:         nonce,
-		GasFeeCap:     copyBig(est.FeeCap),
-		GasTipCap:     copyBig(est.TipCap),
-		SignedTxHash:  tx.Hash(),
-		BroadcastedAt: now,
-	}
+		tx, err := p.signTx(intent, nonce, est.FeeCap, est.TipCap)
+		if err != nil {
+			return err
+		}
 
-	if err := m.AppendAttempt(intent.ID, attempt, StatusSigned); err != nil {
-		return cerrors.Wrap(cerrors.ClassPermanent, "txintent.append_signed_failed", "failed to persist signed attempt", err)
-	}
+		now := p.clock.Now()
+		attempt := IntentAttempt{
+			Nonce:         nonce,
+			GasFeeCap:     copyBig(est.FeeCap),
+			GasTipCap:     copyBig(est.TipCap),
+			SignedTxHash:  tx.Hash(),
+			BroadcastedAt: now,
+		}
 
-	if err := p.rpc.SendTransaction(ctx, tx); err != nil {
-		return cerrors.Classify(err)
-	}
+		if err := m.AppendAttempt(intent.ID, attempt, StatusSigned); err != nil {
+			return cerrors.Wrap(cerrors.ClassPermanent, "txintent.append_signed_failed", "failed to persist signed attempt", err)
+		}
 
-	if err := m.SetStatus(intent.ID, StatusSubmitted); err != nil {
-		return cerrors.Wrap(cerrors.ClassPermanent, "txintent.set_submitted_failed", "failed to persist submitted status", err)
+		if err := p.rpc.SendTransaction(ctx, tx); err != nil {
+			classified := cerrors.Classify(err)
+			// A first broadcast rejected as nonce-too-low means our nonce
+			// read was stale (another tx from this wallet landed in
+			// between) — nothing of ours is in flight at that nonce, so
+			// retry with a freshly fetched nonce instead of failing the
+			// intent. nonce_past stays terminal for replacement attempts,
+			// where it means the original tx at that nonce was mined.
+			if classified.Class == cerrors.ClassNoncePast && try < maxNonceRetries {
+				p.logf("txintent.processor.nonce_retry",
+					logger.String("id", intent.ID.Hex()),
+					logger.String("kind", intent.Kind),
+					logger.Uint64("stale_nonce", nonce),
+				)
+				continue
+			}
+			return classified
+		}
+		p.nonceFloor = nonce + 1
+
+		if err := m.SetStatus(intent.ID, StatusSubmitted); err != nil {
+			return cerrors.Wrap(cerrors.ClassPermanent, "txintent.set_submitted_failed", "failed to persist submitted status", err)
+		}
+		p.metricsCounter("livepeer_chain_txintent_broadcast_total",
+			metrics.Labels{"kind": intent.Kind})
+		p.logf("txintent.processor.broadcast",
+			logger.String("id", intent.ID.Hex()),
+			logger.String("kind", intent.Kind),
+			logger.String("tx", tx.Hash().Hex()),
+			logger.Uint64("nonce", nonce),
+		)
+		return nil
 	}
-	p.metricsCounter("livepeer_chain_txintent_broadcast_total",
-		metrics.Labels{"kind": intent.Kind})
-	p.logf("txintent.processor.broadcast",
-		logger.String("id", intent.ID.Hex()),
-		logger.String("kind", intent.Kind),
-		logger.String("tx", tx.Hash().Hex()),
-		logger.Uint64("nonce", nonce),
-	)
-	return nil
 }
 
 func (p *DefaultProcessor) rebroadcast(ctx context.Context, m *Manager, intent TxIntent) error {
@@ -306,7 +349,20 @@ func (p *DefaultProcessor) rebroadcast(ctx context.Context, m *Manager, intent T
 		return err
 	}
 	if err := p.rpc.SendTransaction(ctx, tx); err != nil {
-		return cerrors.Classify(err)
+		classified := cerrors.Classify(err)
+		// nonce-too-low here is ambiguous: the daemon may have died after
+		// the original broadcast actually reached the node (possibly mined
+		// under this very hash). Don't terminally fail — mark submitted
+		// and let the receipt wait resolve confirmed/timeout instead.
+		if classified.Class == cerrors.ClassNoncePast {
+			p.logf("txintent.processor.rebroadcast_nonce_past",
+				logger.String("id", intent.ID.Hex()),
+				logger.String("tx", cur.SignedTxHash.Hex()),
+				logger.Uint64("nonce", cur.Nonce),
+			)
+			return m.SetStatus(intent.ID, StatusSubmitted)
+		}
+		return classified
 	}
 	return m.SetStatus(intent.ID, StatusSubmitted)
 }

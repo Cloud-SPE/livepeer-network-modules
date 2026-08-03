@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -165,10 +166,12 @@ func TestProcessor_RevertedTransitionsToFailed(t *testing.T) {
 	}
 }
 
-func TestProcessor_NoncePastIsTerminalImmediately(t *testing.T) {
+func TestProcessor_NoncePastExhaustsFreshNonceRetriesThenFails(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
+	var sends int32
 	h.rpc.SendTransactionFunc = func(_ context.Context, _ *ethtypes.Transaction) error {
+		atomic.AddInt32(&sends, 1)
 		return errors.New("nonce too low")
 	}
 
@@ -185,6 +188,131 @@ func TestProcessor_NoncePastIsTerminalImmediately(t *testing.T) {
 	}
 	if final.FailedReason == nil || final.FailedReason.Class != cerrors.ClassNoncePast {
 		t.Errorf("FailedReason = %+v, want ClassNoncePast", final.FailedReason)
+	}
+	// A persistent nonce-too-low should have been retried with fresh nonces
+	// before giving up, not failed on the first rejection.
+	if got := atomic.LoadInt32(&sends); got < 2 {
+		t.Errorf("broadcast attempts = %d, want ≥2 (fresh-nonce retries)", got)
+	}
+}
+
+func TestProcessor_ConcurrentSubmitsGetDistinctNonces(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// Simulate a lagging node: the pending nonce it reports never advances,
+	// the way it wouldn't in the instant between two back-to-back submits.
+	h.rpc.PendingNonceAtFunc = func(_ context.Context, _ chain.Address) (uint64, error) {
+		return 100, nil
+	}
+	h.onSend = func(tx *ethtypes.Transaction) {
+		h.receipts.Set(tx.Hash(), &receipts.Receipt{TxHash: tx.Hash(), Status: 1, Confirmed: true})
+	}
+
+	id1, err := h.store.Submit(ctx, sampleParams("TransferBond"))
+	if err != nil {
+		t.Fatalf("Submit 1: %v", err)
+	}
+	id2, err := h.store.Submit(ctx, sampleParams("WithdrawFees"))
+	if err != nil {
+		t.Fatalf("Submit 2: %v", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	for _, id := range []txintent.IntentID{id1, id2} {
+		final, err := h.store.Wait(waitCtx, id)
+		if err != nil {
+			t.Fatalf("Wait(%s): %v", id.Hex(), err)
+		}
+		if final.Status != txintent.StatusConfirmed {
+			t.Errorf("intent %s Status = %s, want confirmed", id.Hex(), final.Status)
+		}
+	}
+
+	h.sentMu.Lock()
+	defer h.sentMu.Unlock()
+	seen := map[uint64]bool{}
+	for _, tx := range h.sentTxs {
+		if seen[tx.Nonce()] {
+			t.Fatalf("nonce %d assigned to two broadcasts; sent nonces so far: %v", tx.Nonce(), seen)
+		}
+		seen[tx.Nonce()] = true
+	}
+	if !seen[100] || !seen[101] {
+		t.Errorf("expected nonces 100 and 101 to be assigned, got %v", seen)
+	}
+}
+
+func TestProcessor_NonceTooLowFirstBroadcastRetriesWithFreshNonce(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// The node's nonce advances between our fetch and our broadcast (an
+	// external tx landed): the first send is rejected, the refetch sees the
+	// new nonce, and the retry succeeds.
+	var fetches int32
+	h.rpc.PendingNonceAtFunc = func(_ context.Context, _ chain.Address) (uint64, error) {
+		if atomic.AddInt32(&fetches, 1) == 1 {
+			return 5, nil
+		}
+		return 7, nil
+	}
+	h.rpc.SendTransactionFunc = func(_ context.Context, tx *ethtypes.Transaction) error {
+		if tx.Nonce() < 7 {
+			return errors.New("nonce too low")
+		}
+		h.receipts.Set(tx.Hash(), &receipts.Receipt{TxHash: tx.Hash(), Status: 1, Confirmed: true})
+		return nil
+	}
+
+	id, _ := h.store.Submit(ctx, sampleParams("RacedByExternalTx"))
+
+	waitCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	final, err := h.store.Wait(waitCtx, id)
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if final.Status != txintent.StatusConfirmed {
+		t.Fatalf("Status = %s, want confirmed", final.Status)
+	}
+	last := final.CurrentAttempt()
+	if last == nil || last.Nonce != 7 {
+		t.Errorf("final attempt nonce = %+v, want 7", last)
+	}
+}
+
+func TestProcessor_RebroadcastNoncePastResolvesViaReceipt(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// First broadcast dies transiently after the attempt is persisted (the
+	// signed-but-not-submitted crash window). The rebroadcast of the same
+	// signed tx is rejected nonce-too-low because the original actually
+	// reached the node and mined — the intent must resolve confirmed via
+	// its receipt, not terminally fail.
+	var sends int32
+	h.rpc.SendTransactionFunc = func(_ context.Context, tx *ethtypes.Transaction) error {
+		switch atomic.AddInt32(&sends, 1) {
+		case 1:
+			h.receipts.Set(tx.Hash(), &receipts.Receipt{TxHash: tx.Hash(), Status: 1, Confirmed: true})
+			return errors.New("connection reset by peer")
+		default:
+			return errors.New("nonce too low")
+		}
+	}
+
+	id, _ := h.store.Submit(ctx, sampleParams("CrashedMidBroadcast"))
+
+	waitCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	final, err := h.store.Wait(waitCtx, id)
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if final.Status != txintent.StatusConfirmed {
+		t.Errorf("Status = %s, want confirmed (FailedReason: %+v)", final.Status, final.FailedReason)
 	}
 }
 

@@ -142,12 +142,8 @@ type Backend struct {
 	// h264-live-1080p-libx264.
 	Profile string `yaml:"profile,omitempty"`
 	// SessionRunner declares the per-session subprocess for
-	// transport=session-runner (session-control-plus-media mode).
+	// transport=session-runner.
 	SessionRunner *SessionRunnerBackend `yaml:"session_runner,omitempty"`
-	// LiveRunner declares the remote runner transport details for
-	// transport=remote-live-runner (broker-managed payment/session
-	// authority; runner-managed RTMP/FFmpeg/HLS media plane).
-	LiveRunner *LiveRunnerBackend `yaml:"live_runner,omitempty"`
 }
 
 // SessionRunnerBackend captures the operator-supplied launch spec for
@@ -181,11 +177,4 @@ type SessionRunnerMediaSpec struct {
 // SessionRunnerLeg is the per-direction transport label.
 type SessionRunnerLeg struct {
 	Transport string `yaml:"transport"`
-}
-
-// LiveRunnerBackend captures the HTTP base URL the broker uses for
-// runner session create/query/delete operations under
-// transport=remote-live-runner.
-type LiveRunnerBackend struct {
-	BaseURL string `yaml:"base_url"`
 }

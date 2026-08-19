@@ -17,17 +17,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/ffmpegprogress"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/encoder"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/hls"
-	mediartmp "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/rtmp"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/sessionrunner"
-	mediawebrtc "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/webrtc"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/rtmpingresshlsegress"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolexternalmedia"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolplusmedia"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolreport"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolsnapshot"
@@ -52,63 +42,6 @@ type Options struct {
 	// 0015. Zero values are a safe disabled state (v0.2 single-debit
 	// fall-through).
 	InterimDebit middleware.InterimDebitConfig
-
-	// RTMP configures the broker's RTMP ingest listener. Empty Addr
-	// keeps the listener disabled; the broker still serves the
-	// session-open POST so configurations without RTMP capabilities
-	// keep working.
-	RTMP RTMPOptions
-
-	// RTMPDriver carries the URL-derivation knobs for the
-	// rtmp-ingress-hls-egress driver. Empty values fall back to
-	// host-of-backend.url.
-	RTMPDriver rtmpingresshlsegress.Config
-
-	// FFmpeg configures the per-session encoder subprocess. Empty
-	// Binary defaults to "ffmpeg"; CancelGrace defaults to 5s.
-	FFmpeg FFmpegOptions
-
-	// HLS configures the LL-HLS muxer flags + scratch root.
-	HLS HLSOptions
-
-	// SessionControl configures the session-control-plus-media
-	// driver's control-WS lifecycle.
-	SessionControl sessioncontrolplusmedia.ControlWSConfig
-
-	// WebRTC governs the per-broker pion settings used by the
-	// session-control-plus-media media-plane relay.
-	WebRTC mediawebrtc.Config
-
-	// SessionRunner governs the per-broker session-runner subprocess
-	// supervisor consumed by the session-control-plus-media driver.
-	SessionRunner sessionrunner.Config
-}
-
-// HLSOptions configures the LL-HLS muxer + scratch directory.
-type HLSOptions struct {
-	Legacy          bool
-	PartDuration    time.Duration
-	SegmentDuration time.Duration
-	PlaylistWindow  int
-	ScratchDir      string
-}
-
-// RTMPOptions configures the broker's RTMP ingest listener.
-type RTMPOptions struct {
-	Addr             string
-	MaxConcurrent    int
-	IdleTimeout      time.Duration
-	DuplicatePolicy  mediartmp.DuplicatePolicy
-	RequireStreamKey bool
-}
-
-// FFmpegOptions configures the per-session FFmpeg subprocess.
-type FFmpegOptions struct {
-	Binary      string
-	CancelGrace time.Duration
-	// Codec is the encoder selected at startup by media/encoder.Probe.
-	// Empty when the RTMP listener is disabled.
-	Codec encoder.Codec
 }
 
 // Server wraps the broker's HTTP server. It owns two listeners: the paid
@@ -136,7 +69,6 @@ type Server struct {
 	srv                  *http.Server
 	metricsSrv           *http.Server
 	payment              payment.Client
-	modes                *modes.Registry
 	extractors           *extractors.Registry
 	backend              backend.Forwarder
 	workerRegistry       *workerconn.Registry
@@ -146,21 +78,11 @@ type Server struct {
 	poolReporter         poolreport.Client
 	poolSnapshot         *poolsnapshot.Cache
 	health               *health.Manager
-	rtmpStore            *rtmpingresshlsegress.Store
-	rtmpListener         *mediartmp.Listener
-	sessStore            *sessioncontrolplusmedia.Store
-	sessDriver           *sessioncontrolplusmedia.Driver
-	extStore             *sessioncontrolexternalmedia.Store
-	extDriver            *sessioncontrolexternalmedia.Driver
-	liveRunnerStore      *liveRunnerSessionStore
-	liveRunnerClient     *liveRunnerBackendClient
-	webrtcEngine         *mediawebrtc.Engine
-	sessRunnerSup        *sessionrunner.Supervisor
 	randIntn             func(int) int
 }
 
 // New constructs a Server from a validated config and registers routes. It
-// fails-fast if any configured capability references an unregistered mode or
+// fails-fast if any configured capability references an unregistered
 // extractor, since those would be unservable at runtime.
 //
 // Selection of the payment client follows host-config:
@@ -209,45 +131,6 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("pool snapshot: %w", err)
 	}
 
-	rtmpStore := rtmpingresshlsegress.NewStore()
-	rtmpDriver := rtmpingresshlsegress.New(rtmpStore, opts.RTMPDriver)
-
-	sessCfg := opts.SessionControl
-	if sessCfg.HeartbeatInterval == 0 && sessCfg.ReconnectWindow == 0 {
-		sessCfg = sessioncontrolplusmedia.DefaultControlWSConfig()
-	}
-	sessStore := sessioncontrolplusmedia.NewStore(sessioncontrolplusmedia.StoreConfig{
-		ReplayBufferMessages: sessCfg.ReplayBufferMessages,
-		ReplayBufferBytes:    sessCfg.ReplayBufferBytes,
-	})
-	sessDriver := sessioncontrolplusmedia.New(sessStore, sessCfg)
-	extStore := sessioncontrolexternalmedia.NewStore()
-	extDriver := sessioncontrolexternalmedia.New(extStore, sessioncontrolexternalmedia.DefaultConfig())
-
-	rtcCfg := opts.WebRTC
-	if rtcCfg.UDPPortMin == 0 {
-		rtcCfg = mediawebrtc.DefaultConfig()
-	}
-	rtcEngine, err := mediawebrtc.NewEngine(rtcCfg)
-	if err != nil {
-		return nil, fmt.Errorf("webrtc engine: %w", err)
-	}
-
-	runnerCfg := opts.SessionRunner
-	if runnerCfg.ContainerRuntime == "" {
-		runnerCfg = sessionrunner.DefaultConfig()
-	}
-	runnerSup, err := sessionrunner.NewSupervisor(runnerCfg)
-	if err != nil {
-		return nil, fmt.Errorf("session-runner supervisor: %w", err)
-	}
-
-	resolver := sessionRunnerResolver(cfg, sessStore)
-	runnerBackend := sessioncontrolplusmedia.NewRunnerBackend(runnerSup, resolver, rtcEngine, sessStore)
-	sessDriver.SetBackend(runnerBackend)
-
-	liveRunnerStore := newLiveRunnerSessionStore()
-	liveRunnerClient := newLiveRunnerBackendClient()
 	workerRegistry := workerconn.NewRegistry()
 
 	s := &Server{
@@ -266,55 +149,23 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			Status:         "startup_loaded",
 			LoadedRevision: loadedRevision,
 		}},
-		opts:             opts,
-		metadata:         metadata,
-		mux:              mux,
-		srv:              srv,
-		payment:          paymentClient,
-		modes:            defaultModes(rtmpDriver, sessDriver, extDriver),
-		extractors:       defaultExtractors(),
-		backend:          workerconn.NewForwarder(backend.NewHTTPClient(), workerRegistry),
-		workerRegistry:   workerRegistry,
-		backendInFlight:  make(map[string]int),
-		secrets:          secretResolver,
-		receiptSink:      receiptSink,
-		poolReporter:     poolReporter,
-		poolSnapshot:     poolSnapshot,
-		health:           health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
-		rtmpStore:        rtmpStore,
-		sessStore:        sessStore,
-		sessDriver:       sessDriver,
-		extStore:         extStore,
-		extDriver:        extDriver,
-		liveRunnerStore:  liveRunnerStore,
-		liveRunnerClient: liveRunnerClient,
-		webrtcEngine:     rtcEngine,
+		opts:            opts,
+		metadata:        metadata,
+		mux:             mux,
+		srv:             srv,
+		payment:         paymentClient,
+		extractors:      defaultExtractors(),
+		backend:         workerconn.NewForwarder(backend.NewHTTPClient(), workerRegistry),
+		workerRegistry:  workerRegistry,
+		backendInFlight: make(map[string]int),
+		secrets:         secretResolver,
+		receiptSink:     receiptSink,
+		poolReporter:    poolReporter,
+		poolSnapshot:    poolSnapshot,
+		health:          health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
 		randIntn: func(n int) int {
 			return rand.New(rand.NewSource(time.Now().UnixNano())).Intn(n)
 		},
-		sessRunnerSup: runnerSup,
-	}
-
-	if opts.RTMP.Addr != "" {
-		s.rtmpListener = mediartmp.New(mediartmp.Config{
-			Addr:             opts.RTMP.Addr,
-			MaxConcurrent:    opts.RTMP.MaxConcurrent,
-			DuplicatePolicy:  opts.RTMP.DuplicatePolicy,
-			RequireStreamKey: opts.RTMP.RequireStreamKey,
-		}, &mediaLookup{
-			store:  rtmpStore,
-			ffmpeg: opts.FFmpeg,
-			hls:    opts.HLS,
-			lookupCap: func(capID, offID string) (encoderProfile string, ok bool) {
-				for i := range cfg.Capabilities {
-					c := &cfg.Capabilities[i]
-					if c.ID == capID && c.OfferingID == offID {
-						return c.Backend.Profile, true
-					}
-				}
-				return "", false
-			},
-		})
 	}
 
 	if err := s.validateAgainstRegistries(); err != nil {
@@ -377,135 +228,6 @@ func newPoolReporter(cfg *config.Config, secrets backend.SecretResolver) (poolre
 	return poolreport.NewHTTPClient(cfg.PoolSnapshot.URL, timeout, cfg.PoolSnapshot.Auth, backend.NewAuthApplier(secrets))
 }
 
-// mediaLookup adapts the session store to mediartmp.SessionLookup
-// and owns the per-session encoder + LL-HLS scratch wire-up. On a
-// successful publish handshake it:
-//
-//  1. Resolves the capability's encoder profile.
-//  2. Materialises the per-session HLS scratch.
-//  3. Renders FFmpeg argv from the profile + HLS options.
-//  4. Spawns the SystemEncoder goroutine reading from a PipeSink.
-//  5. Returns the PipeSink to the listener.
-//
-// Cancellation flows through the context attached to the encoder; the
-// listener invokes Close on the sink when RTMP disconnects.
-type mediaLookup struct {
-	store     *rtmpingresshlsegress.Store
-	ffmpeg    FFmpegOptions
-	hls       HLSOptions
-	lookupCap func(capID, offID string) (string, bool)
-}
-
-func (l *mediaLookup) LookupAndAccept(sessionID, streamKey string) (mediartmp.Sink, bool, bool) {
-	rec, ok := l.store.Lookup(sessionID, streamKey)
-	if !ok {
-		return nil, false, false
-	}
-	if rec.Profile == "" {
-		log.Printf("rtmp: session=%s has empty profile (capability=%s/%s); falling back to passthrough",
-			sessionID, rec.CapabilityID, rec.OfferingID)
-		rec.Profile = encoder.ProfilePassthrough
-	}
-
-	scratch := hls.NewScratch(l.hls.ScratchDir, sessionID)
-	rungs := []string{}
-	if rec.Profile != encoder.ProfilePassthrough {
-		for _, r := range encoder.FiveRungLadder {
-			rungs = append(rungs, r.Name)
-		}
-	}
-	scratchDir, err := scratch.Setup(rungs)
-	if err != nil {
-		log.Printf("rtmp: session=%s scratch setup failed: %v", sessionID, err)
-		return nil, false, false
-	}
-
-	args, err := encoder.BuildArgs(encoder.PresetInput{
-		Profile: rec.Profile,
-		Codec:   l.ffmpeg.Codec,
-		HLS: encoder.HLSOptions{
-			Legacy:          l.hls.Legacy,
-			SegmentDuration: int(l.hls.SegmentDuration.Seconds()),
-			PartDuration:    l.hls.PartDuration.Seconds(),
-			PlaylistWindow:  l.hls.PlaylistWindow,
-			ScratchDir:      scratchDir,
-		},
-	})
-	if err != nil {
-		log.Printf("rtmp: session=%s build args: %v", sessionID, err)
-		_ = scratch.Cleanup()
-		return nil, false, false
-	}
-
-	sysEnc := encoder.NewSystemEncoder(l.ffmpeg.Binary, l.ffmpeg.CancelGrace)
-	prog := sysEnc.Progress()
-	if rec.Profile != encoder.ProfilePassthrough {
-		prog.Width = uint64(encoder.FiveRungLadder[len(encoder.FiveRungLadder)-1].Width)
-		prog.Height = uint64(encoder.FiveRungLadder[len(encoder.FiveRungLadder)-1].Height)
-	}
-
-	pipe := mediartmp.NewPipeSink(func(now time.Time) { l.store.Touch(sessionID, now) })
-
-	encCtx, encCancel := context.WithCancel(context.Background())
-	encDone := make(chan struct{})
-	go func() {
-		defer close(encDone)
-		if err := sysEnc.Run(encCtx, encoder.Job{
-			Input:      pipe.Reader(),
-			ScratchDir: scratchDir,
-			Profile:    rec.Profile,
-			Args:       args,
-		}); err != nil {
-			log.Printf("rtmp: session=%s encoder exited with err=%v", sessionID, err)
-		}
-	}()
-
-	cancel := func() {
-		encCancel()
-		_ = pipe.Close()
-		<-encDone
-		_ = scratch.Cleanup()
-	}
-
-	lc := buildRTMPLiveCounter(rec, prog)
-	l.store.AttachMedia(sessionID, lc, cancel)
-
-	prior, _ := l.store.MarkPublishing(sessionID, time.Now())
-	return pipe, true, prior
-}
-
-// buildRTMPLiveCounter selects the LiveCounter shape based on the
-// capability's configured ffmpeg-progress unit. Falls back to a
-// nil-safe out_time_seconds counter when the capability uses a
-// different extractor.
-func buildRTMPLiveCounter(rec *rtmpingresshlsegress.SessionRecord, prog *encoder.Progress) extractors.LiveCounter {
-	_ = rec
-	ext := &progressLiveCounter{prog: prog}
-	return ext
-}
-
-// progressLiveCounter exposes encoder.Progress as an
-// extractors.LiveCounter. Distinct from
-// extractors/ffmpegprogress.LiveCounter — that one wraps separate
-// atomics; this one wraps the encoder.Progress directly so the unit
-// resolution lives in one place when the dispatch layer owns it.
-type progressLiveCounter struct {
-	prog *encoder.Progress
-}
-
-func (p *progressLiveCounter) CurrentUnits() uint64 {
-	if p == nil || p.prog == nil {
-		return 0
-	}
-	return p.prog.CurrentUnits()
-}
-
-// _ = ffmpegprogress is kept as a build-time hint that the
-// per-extractor LiveCounter constructor in extractors/ffmpegprogress
-// is the alternative wiring (used when the dispatch layer
-// short-circuits past the rtmp-ingress driver).
-var _ = ffmpegprogress.Name
-
 // newPaymentClient picks the right Client implementation per host-config.
 func newPaymentClient(cfg *config.Config) (payment.Client, error) {
 	switch {
@@ -528,22 +250,18 @@ func newPaymentClient(cfg *config.Config) (payment.Client, error) {
 }
 
 // validateAgainstRegistries fails-fast if any configured capability
-// references an unregistered mode or extractor.
+// references an unregistered extractor.
 func (s *Server) validateAgainstRegistries() error {
 	cfg := s.currentConfig()
-	return validateConfigAgainstRegistries(cfg, s.modes, s.extractors)
+	return validateConfigAgainstRegistries(cfg, s.extractors)
 }
 
-func validateConfigAgainstRegistries(cfg *config.Config, modeRegistry *modes.Registry, extractorRegistry *extractors.Registry) error {
+func validateConfigAgainstRegistries(cfg *config.Config, extractorRegistry *extractors.Registry) error {
 	if cfg == nil {
 		return fmt.Errorf("config is not loaded")
 	}
 	for i := range cfg.Capabilities {
 		c := &cfg.Capabilities[i]
-		if !modeRegistry.Has(c.InteractionMode) {
-			return fmt.Errorf("capability %s/%s: interaction_mode %q is not implemented by this broker (registered: %v)",
-				c.ID, c.OfferingID, c.InteractionMode, modeRegistry.Names())
-		}
 		extractorType, _ := c.WorkUnit.Extractor["type"].(string)
 		if !extractorRegistry.Has(extractorType) {
 			return fmt.Errorf("capability %s/%s: work_unit.extractor.type %q is not implemented by this broker (registered: %v)",
@@ -597,19 +315,6 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
-	if s.rtmpListener != nil {
-		go func() {
-			if err := s.rtmpListener.Run(ctx); err != nil {
-				errCh <- fmt.Errorf("listen rtmp: %w", err)
-				return
-			}
-			errCh <- nil
-		}()
-		go s.rtmpStore.RunWatchdog(ctx, rtmpingresshlsegress.LifetimeOptions{
-			IdleTimeout:   s.opts.RTMP.IdleTimeout,
-			CheckInterval: time.Second,
-		})
-	}
 	if strings.TrimSpace(s.cfg.Listen.WorkerQUIC) != "" {
 		go func() {
 			if err := s.runWorkerQUIC(ctx, s.cfg.Listen.WorkerQUIC); err != nil {
@@ -620,9 +325,6 @@ func (s *Server) Run(ctx context.Context) error {
 		}()
 	}
 
-	if s.sessDriver != nil {
-		go s.sessDriver.RunReconnectWatchdog(ctx)
-	}
 	s.attachRunContext(ctx)
 	if s.metadata != nil {
 		go s.runMetadataRefresh(ctx, s.metadataRefreshInterval())

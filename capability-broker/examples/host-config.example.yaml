@@ -9,16 +9,18 @@
 #
 # This example is intentionally conservative: it starts with simple HTTP
 # request/response capabilities and keeps more operationally involved shapes
-# (RTMP, long-lived streaming, third-party API resale) commented out until the
+# (third-party API resale, multi-backend pools) commented out until the
 # operator is ready to wire the required backend infrastructure.
 #
 # Some commented examples below reference workload binaries that used to live
 # in this repo. Those component trees were removed on 2026-05-20; keep the
 # examples only as contract-shape references when wiring your own backends.
 #
-# The current broker binary ships multiple mode drivers and extractors. The
-# commented entries below are examples of real supported shapes, not placeholders
-# for future plans.
+# NOTE: the v0 interaction-mode drivers (http-reqresp, http-stream, RTMP,
+# session-control, live-runner, ...) have been removed from the broker; the
+# `interaction_mode` strings below are retained only as labels for the
+# published manifest. v1 protocol (paid-job / paid-session) capability
+# examples land with the new protocol engines.
 
 identity:
   orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
@@ -180,95 +182,6 @@ capabilities:
   #   constraints:
   #     tier: "standard"
   #     gpu_vendor: "NVIDIA"
-
-  # ---- Remote live runner (live-session-remote-runner) ----
-  # Broker owns paid-session authority while the remote live runner owns
-  # RTMP ingest, FFmpeg, and HLS egress. Use this when live media is no
-  # longer broker-local but the gateway still talks to the broker for open,
-  # top-up, status, and end.
-  #
-  # - id: "video:transcode.live"
-  #   offering_id: "default"
-  #   interaction_mode: "live-session-remote-runner@v0"
-  #   work_unit:
-  #     name: "output_seconds"
-  #     extractor: { type: "seconds-elapsed", granularity: 1 }
-  #   # Placeholder rate; derive from the active market before publishing.
-  #   price:
-  #     amount_wei: "1000000000000"
-  #     per_units: 1
-  #   backend:
-  #     transport: "remote-live-runner"
-  #     auth: "none"
-  #     live_runner:
-  #       base_url: "http://live-runner:8080"
-  #   health:
-  #     probe:
-  #       type: "http-status"
-  #       interval_ms: 5000
-  #       timeout_ms: 1500
-  #       unhealthy_after: 2
-  #       healthy_after: 1
-  #       config:
-  #         url: "http://live-runner:8080/healthz"
-  #   constraints:
-  #     tier: "standard"
-  #     gpu_vendor: "NVIDIA"
-  #
-  # To advertise the gateway-owned ingest topology alongside this one,
-  # reuse id: "video:transcode.live" with a distinct offering_id such as
-  # "gateway-ingest" and interaction_mode: "live-session-gateway-ingest@v0".
-
-  # ---- VTuber session runtime (session-control-plus-media) ----
-  #
-  # - id: "livepeer:vtuber-session"
-  #   offering_id: "default"
-  #   interaction_mode: "session-control-plus-media@v0"
-  #   work_unit:
-  #     name: "seconds"
-  #     extractor: { type: "seconds-elapsed", granularity: 1 }
-  #   # Market-anchored: HeyGen avatar streaming ref $0.008/sec × 0.75
-  #   # (25% discount, 4090 mid-tier) = $0.006/sec retail → $0.00462/sec
-  #   # wholesale at 30% gateway margin.
-  #   price:
-  #     amount_wei: "1600000000000"  # 1.6 Twei/sec
-  #     per_units: 1
-  #   backend:
-  #     transport: "http"
-  #     url: "http://session_backend:8080/api/sessions/start"
-  #     auth: "none"
-  #   extra:
-  #     provider: "session-backend"
-  #     vtuber:
-  #       task: "session"
-  #     # Optional stable fields like vtuber.control_schema,
-  #     # vtuber.media_schema, and vtuber.features.* may be
-  #     # auto-hydrated from GET /options.
-  #   constraints:
-  #     tier: "standard"
-
-  # ---- Live RTMP transcode (rtmp-ingress-hls-egress + ffmpeg-progress) ----
-  # Stream the resulting LL-HLS playlist from the broker's /_hls/<sess>/...
-  # path. The broker's --rtmp-listen-addr must be set for the listener to
-  # bind. backend.url is the broker's externally-advertised host so the
-  # session-open response can derive the RTMP and HLS URLs.
-  #
-  # - id: "video:live.rtmp"
-  #   offering_id: "default"
-  #   interaction_mode: "rtmp-ingress-hls-egress@v0"
-  #   work_unit:
-  #     name: "out_time_seconds"
-  #     extractor: { type: "ffmpeg-progress", unit: "out_time_seconds" }
-  #   # Market-anchored: Mux $0.0004/sec × 0.75 (transcoding 25% discount,
-  #   # 3090 budget tier) = $0.0003/sec retail → $0.000231/sec wholesale at
-  #   # 30% gateway margin. Clears 3090 cost floor (~$0.15/hr per stream) by ~5×.
-  #   price:
-  #     amount_wei: "80000000000"    # 80 Gwei/output-second
-  #     per_units: 1
-  #   backend:
-  #     transport: "ffmpeg-subprocess"
-  #     profile: "h264-live-1080p-nvenc"
-  #     url: "https://broker.example.com"
 
   # ---- Additional shipped examples (uncomment when your deployment is ready) ----
   #

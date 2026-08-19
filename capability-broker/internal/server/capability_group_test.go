@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,17 +9,8 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/requestformula"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolsnapshot"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func TestSelectBackendSkipsDrainingAndUnreachableCandidates(t *testing.T) {
@@ -318,171 +307,6 @@ func TestSelectBackendEnforcesPoolMaxShareCap(t *testing.T) {
 	}
 	if got := selected.Backend.ID; got != "backend-b" {
 		t.Fatalf("selected backend with cap = %q, want backend-b", got)
-	}
-}
-
-func TestDispatchEmitsStubReceiptMetric(t *testing.T) {
-	cfg := &config.Config{
-		Capabilities: []config.Capability{
-			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "shared",
-				InteractionMode: "http-reqresp@v0",
-				Backend:         config.Backend{ID: "backend-a", URL: "http://a"},
-				Health:          config.Health{InitialStatus: "ready"},
-				WorkUnit: config.WorkUnit{
-					Name: "jobs",
-					Extractor: map[string]any{
-						"type":       "request-formula",
-						"expression": "1",
-						"fields":     map[string]any{},
-						"default":    1,
-					},
-				},
-				Price: config.Price{AmountWei: "1", PerUnits: 1},
-				Extra: map[string]any{
-					"pool": map[string]any{
-						"member_eth_address": "0xabc",
-					},
-				},
-			},
-		},
-	}
-	modeRegistry := modes.NewRegistry()
-	modeRegistry.Register(stubModeDriver{mode: "http-reqresp@v0"})
-	extractorRegistry := extractors.NewRegistry()
-	extractorRegistry.Register(requestformula.Name, requestformula.New)
-	mockPayment := payment.NewMock()
-	receiptSink := &stubServerReceiptSink{}
-	s := &Server{
-		cfg:         cfg,
-		health:      health.New(cfg),
-		modes:       modeRegistry,
-		extractors:  extractorRegistry,
-		payment:     mockPayment,
-		receiptSink: receiptSink,
-	}
-
-	handler := middleware.Chain(
-		middleware.RequestID,
-		middleware.Headers,
-		middleware.Payment(mockPayment, s.capabilityLookup(), middleware.InterimDebitConfig{}, receiptSink),
-	)(http.HandlerFunc(s.dispatch))
-
-	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("stub", "success"))
-	req := httptest.NewRequest(http.MethodPost, "/v1/cap", nil)
-	req.Header.Set(livepeerheader.Capability, "openai:chat-completions")
-	req.Header.Set(livepeerheader.Offering, "shared")
-	req.Header.Set(livepeerheader.Mode, "http-reqresp@v0")
-	req.Header.Set(livepeerheader.SpecVersion, "0.1")
-	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("dummy-payment")))
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	if len(receiptSink.items) != 2 {
-		t.Fatalf("receipt count = %d, want 2 (stub + final)", len(receiptSink.items))
-	}
-	if receiptSink.items[0].Status != "stub" {
-		t.Fatalf("first receipt = %#v, want stub receipt first", receiptSink.items[0])
-	}
-	after := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("stub", "success"))
-	if after != before+1 {
-		t.Fatalf("stub receipt emit delta = %v; want 1", after-before)
-	}
-}
-
-type stubModeDriver struct {
-	mode string
-}
-
-func (d stubModeDriver) Mode() string { return d.mode }
-
-func (d stubModeDriver) Serve(_ context.Context, p modes.Params) error {
-	p.Writer.Header().Set(livepeerheader.WorkUnits, "1")
-	p.Writer.WriteHeader(http.StatusOK)
-	return nil
-}
-
-type stubServerReceiptSink struct {
-	items []receipts.WorkReceipt
-	err   error
-}
-
-func (s *stubServerReceiptSink) UpsertWorkReceipt(_ context.Context, receipt receipts.WorkReceipt) error {
-	s.items = append(s.items, receipt)
-	return s.err
-}
-
-func TestDispatchEmitsStubReceiptErrorMetricWhenSinkFails(t *testing.T) {
-	cfg := &config.Config{
-		Capabilities: []config.Capability{
-			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "shared",
-				InteractionMode: "http-reqresp@v0",
-				Backend:         config.Backend{ID: "backend-a", URL: "http://a"},
-				Health:          config.Health{InitialStatus: "ready"},
-				WorkUnit: config.WorkUnit{
-					Name: "jobs",
-					Extractor: map[string]any{
-						"type":       "request-formula",
-						"expression": "1",
-						"fields":     map[string]any{},
-						"default":    1,
-					},
-				},
-				Price: config.Price{AmountWei: "1", PerUnits: 1},
-				Extra: map[string]any{
-					"pool": map[string]any{
-						"member_eth_address": "0xabc",
-					},
-				},
-			},
-		},
-	}
-	modeRegistry := modes.NewRegistry()
-	modeRegistry.Register(stubModeDriver{mode: "http-reqresp@v0"})
-	extractorRegistry := extractors.NewRegistry()
-	extractorRegistry.Register(requestformula.Name, requestformula.New)
-	mockPayment := payment.NewMock()
-	receiptSink := &stubServerReceiptSink{err: errors.New("boom")}
-	s := &Server{
-		cfg:         cfg,
-		health:      health.New(cfg),
-		modes:       modeRegistry,
-		extractors:  extractorRegistry,
-		payment:     mockPayment,
-		receiptSink: receiptSink,
-	}
-
-	handler := middleware.Chain(
-		middleware.RequestID,
-		middleware.Headers,
-		middleware.Payment(mockPayment, s.capabilityLookup(), middleware.InterimDebitConfig{}, receiptSink),
-	)(http.HandlerFunc(s.dispatch))
-
-	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("stub", "error"))
-	req := httptest.NewRequest(http.MethodPost, "/v1/cap", nil)
-	req.Header.Set(livepeerheader.Capability, "openai:chat-completions")
-	req.Header.Set(livepeerheader.Offering, "shared")
-	req.Header.Set(livepeerheader.Mode, "http-reqresp@v0")
-	req.Header.Set(livepeerheader.SpecVersion, "0.1")
-	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("dummy-payment")))
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
-	}
-	if len(receiptSink.items) == 0 || receiptSink.items[0].Status != "stub" {
-		t.Fatalf("stub receipt items = %#v", receiptSink.items)
-	}
-	after := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("stub", "error"))
-	if after != before+1 {
-		t.Fatalf("stub receipt error emit delta = %v; want 1", after-before)
 	}
 }
 

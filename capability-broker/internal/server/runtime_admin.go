@@ -280,7 +280,7 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 	}
 	metadata := newMetadataCatalog()
 	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
-	if err := validateConfigAgainstRegistries(cfg, s.modes, s.extractors); err != nil {
+	if err := validateConfigAgainstRegistries(cfg, s.extractors); err != nil {
 		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
 		return s.runtimeStatus(), err
 	}

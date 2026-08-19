@@ -12,24 +12,23 @@ consumed it; future gateway-side implementations are out-of-repo.
 
 Pre-1.0 (spec-wide). Current version: see [`VERSION`](./VERSION).
 
-Per-mode versions are tracked in each `modes/<mode>.md` frontmatter. Hybrid SemVer is
-the authoritative versioning policy — see
-[plan 0002](../docs/exec-plans/completed/0002-define-interaction-modes-spec.md) Q2
-resolution and [core belief #14](../docs/design-docs/core-beliefs.md).
+Per-protocol versions are tracked in each `protocols/<name>.md` frontmatter, and
+per-schema versions in each `descriptors/<name>.md`. Hybrid SemVer is the
+authoritative versioning policy — see [core belief #14](../docs/design-docs/core-beliefs.md).
 
 ## Layout
 
 | Folder | What it holds |
 |---|---|
 | [`manifest/`](./manifest/) | Manifest JSON Schema, examples, schema changelog |
-| [`modes/`](./modes/) | One spec per interaction mode (`http-reqresp`, `http-stream`, …) |
+| [`protocols/`](./protocols/) | The two core protocols (`paid-job/v1`, `paid-session/v1`), the runtime-descriptor framework, and the offering declared axes |
+| [`descriptors/`](./descriptors/) | One spec per runtime-descriptor schema (`sfu-room/v1`, `rtmp-hls/v1`, …) |
 | [`extractors/`](./extractors/) | One spec per work-unit extractor (`openai-usage`, `response-jsonpath`, …) |
 | [`headers/`](./headers/) | `Livepeer-*` header conventions, payment envelope structure |
 | [`proto/`](./proto/) | Canonical `.proto` source for the payment wire format and the daemon gRPC services |
 | [`proto-go/`](./proto-go/) | Generated Go bindings for `proto/`; importable as a Go module |
 | [`verify/`](./verify/) | Cross-cutting Go module that recovers the Ethereum address from a manifest signature (resolver / coordinator / gateway double-verify) |
 | [`docs/`](./docs/) | Cross-cutting design docs ([`wire-compat.md`](./docs/wire-compat.md) — byte-for-byte contract with go-livepeer's `pm/`) |
-| [`conformance/`](./conformance/) | Test fixtures + Go runner + Dockerfile + Makefile + compose.yaml |
 
 ## Versioning
 
@@ -37,9 +36,11 @@ Hybrid SemVer:
 
 - **Spec-wide SemVer** at [`VERSION`](./VERSION) covers cross-cutting parts: manifest
   schema, header conventions, payment envelope, extractor library envelope.
-- **Per-mode SemVer** in each `modes/<mode>.md` frontmatter covers that specific mode.
+- **Per-protocol SemVer** in each `protocols/<name>.md` frontmatter; per-schema
+  SemVer in each `descriptors/<name>.md`.
 - Manifest tuples carry both: `spec_version: "<X.Y>"` at the manifest root +
-  `interaction_mode: "<name>@v<N>"` per capability.
+  `protocol: "<name>/v<N>"` per capability, plus `session.descriptor_schema`
+  for paid-session offerings (see `protocols/offering-axes.md`).
 
 ## Implementing this spec
 
@@ -57,9 +58,10 @@ product gateways that consumed it.
 
 ## Verifying your implementation
 
-Pull `tztcloud/livepeer-conformance:<tag>` (image tag matches this spec's
-[`VERSION`](./VERSION)) and run it against your broker or gateway. See
-[`conformance/`](./conformance/).
+The mode-era conformance suite was removed with the v0 modes (2026-08-19).
+An executable conformance runner for the v1 protocols is being rebuilt; until
+it ships, the normative fixtures lists in `protocols/*.md` §Conformance are
+the contract.
 
 ## Proposing changes
 

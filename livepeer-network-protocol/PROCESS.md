@@ -5,7 +5,7 @@ explains when you need a PR vs. when you can land directly.
 
 ## When you need a PR (and at least one independent reviewer)
 
-- Adding a new interaction mode (`modes/<new>.md`).
+- Adding a new protocol (`protocols/<new>.md`) or changing an existing one.
 - Adding a new extractor (`extractors/<new>.md`).
 - Any change to the manifest schema (`manifest/schema.json`).
 - Any change to header conventions (`headers/livepeer-headers.md`).
@@ -20,16 +20,17 @@ explains when you need a PR vs. when you can land directly.
 
 ## What a new-mode PR must include
 
-1. The mode spec under `modes/<new>.md` with frontmatter declaring its version (start
+1. The protocol or descriptor-schema spec (`protocols/<new>.md` or `descriptors/<new>.md`)
+   with frontmatter declaring its version (start
    at `v0.1.0`; bump to `v1.3.0` only when the mode is judged stable).
 2. At least one demonstrable use case in the PR description.
-3. Conformance fixtures under `conformance/fixtures/<new>/` covering the happy path
+3. Conformance fixture declarations in the spec's §Conformance covering the happy path
    plus at least one failure case.
-4. Any required changes to the conformance runner (`conformance/runner/`) to support
+4. Any required changes to the conformance runner (being rebuilt for v1) to support
    the mode's framing — if the mode introduces a new transport (e.g., gRPC bidi) the
    runner must learn to drive it.
 5. Approval from at least one independent reviewer that the mode is meaningfully
-   distinct from existing modes — i.e., not just an existing mode with extra headers.
+   distinct from the existing protocols — a new descriptor schema, not a new protocol, is the default answer (see protocols/offering-axes.md).
 
 ## What a new-extractor PR must include
 
@@ -51,13 +52,13 @@ explains when you need a PR vs. when you can land directly.
 See [`README.md`](./README.md) §Versioning. Hybrid SemVer means:
 
 - Spec-wide changes bump [`VERSION`](./VERSION).
-- Per-mode changes bump the version in `modes/<mode>.md` frontmatter.
+- Per-protocol and per-schema changes bump the version in that spec's frontmatter.
 - Manifest schema changes are always spec-wide bumps (the manifest is cross-cutting).
 
 ## Stability promise
 
 A spec at `1.0` or higher is stable. Breaking changes require a major bump and a
-deprecation notice in `manifest/changelog.md` (or the relevant `modes/<mode>.md`
+deprecation notice in `manifest/changelog.md` (or the relevant `protocols/<name>.md`
 changelog block) at least one minor version before the breaking release.
 
 Pre-1.0 specs (`0.x.y`) are not stable; minor bumps may break consumers. Implementers

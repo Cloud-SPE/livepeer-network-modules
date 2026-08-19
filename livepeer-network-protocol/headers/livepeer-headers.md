@@ -1,14 +1,15 @@
 ---
-status: accepted (plan 0002 Q5 closed 2026-05-06)
-spec_version: 0.1.3
-last_updated: 2026-05-07
+status: draft (rewritten for the v1 protocols)
+spec_version: 1.0.0-draft
+last_updated: 2026-08-19
 ---
 
 # Livepeer wire headers
 
 This document defines the `Livepeer-*` HTTP header conventions used between gateway,
-broker, and (where relevant) the gateway resolver. Every interaction-mode spec depends
-on this document.
+broker, and (where relevant) the gateway resolver. Both protocol specs
+([`paid-job/v1`](../protocols/paid-job.md), [`paid-session/v1`](../protocols/paid-session.md))
+depend on this document.
 
 ## Audience and scope
 
@@ -32,11 +33,12 @@ Out of scope:
 | `Livepeer-Capability` | request → broker | yes | gateway | broker, payment-daemon |
 | `Livepeer-Offering` | request → broker | yes | gateway | broker, payment-daemon |
 | `Livepeer-Payment` | request → broker | yes | gateway (via payment-daemon sender) | broker (via payment-daemon receiver) |
-| `Livepeer-Spec-Version` | request → broker | yes | gateway | broker |
-| `Livepeer-Mode` | request → broker | yes | gateway | broker |
-| `Livepeer-Request-Id` | request → broker | optional | gateway | broker (echoed back in responses + logs) |
+| `Livepeer-Protocol` | request → broker | yes | gateway | broker |
+| `Livepeer-Request-Id` | request → broker | yes | gateway | broker (idempotency key; echoed back) |
 | `Livepeer-Backoff` | response from broker | when 503 | broker | gateway |
-| `Livepeer-Work-Units` | response from broker | when applicable | broker | gateway |
+| `Livepeer-Work-Units` | response from broker | every terminal paid-job response | broker | gateway |
+| `Livepeer-Work-Unit` | response from broker | with `Livepeer-Work-Units` | broker | gateway |
+| `Livepeer-Job-Id` | response from broker | every terminal paid-job response | broker | gateway |
 | `Livepeer-Health-Status` | response on `/registry/health` | yes (on that path) | broker | gateway resolver |
 | `Livepeer-Settlement` | response from broker | when applicable | broker | gateway |
 | `Livepeer-Error` | response from broker on error | when error | broker | gateway |
@@ -86,37 +88,30 @@ Behavior:
 - The envelope's wire shape is owned by `payment-daemon`; the protobuf definition
   lives there. This document references it; do not duplicate.
 
-### `Livepeer-Spec-Version`
+### `Livepeer-Protocol`
 
-The spec-wide SemVer the gateway is speaking.
+The protocol + major version the gateway is speaking. Replaces the pre-v1
+`Livepeer-Mode` and `Livepeer-Spec-Version` pair: the protocol tag carries its
+own version, and there is no separate spec-wide wire version to negotiate.
 
-- **Value:** `<major>.<minor>` or `<major>.<minor>.<patch>`. Receivers MUST validate
-  only the major version; minor and patch are non-breaking by definition.
-- **Example:** `Livepeer-Spec-Version: 0.1`
-- The broker MUST reject (505 + `Livepeer-Error: spec_version_unsupported`) any
-  request with a major version it does not implement.
-
-### `Livepeer-Mode`
-
-The interaction mode + major version the gateway is using to wrap this request.
-
-- **Value:** `<mode-name>@v<major>` (per Q2 hybrid SemVer).
-- **Example:** `Livepeer-Mode: http-stream@v0`
-- The broker MUST reject (505 + `Livepeer-Error: mode_unsupported`) if it does not
-  implement that mode + major version for the named capability.
+- **Value:** `<name>/v<major>` — currently `paid-job/v1` or `paid-session/v1`.
+- **Example:** `Livepeer-Protocol: paid-job/v1`
+- The broker MUST reject (505 + `Livepeer-Error: protocol_unsupported`) if it
+  does not implement that protocol + major version for the named capability.
 - Why this is a header (not just derived from the manifest): self-describing
   requests survive intermediaries, simplify logs, and let the broker fast-fail
   before unpacking the payment envelope.
 
 ### `Livepeer-Request-Id`
 
-Optional. UUID v4 (or any opaque short string ≤64 chars). Used for request
-correlation across gateway → broker → backend.
+Required. UUID (or any opaque string ≤64 chars). The idempotency key for the
+exchange: paid-job §4 and paid-session §3.1 define replay semantics on it —
+a retried request converges on the recorded outcome, and reuse with different
+content is `request_id_reuse`.
 
 - **Example:** `Livepeer-Request-Id: 550e8400-e29b-41d4-a716-446655440000`
-- The broker SHOULD echo the value in response headers and emit it in logs and
-  metrics labels.
-- If absent, the broker MAY generate its own and include it in the response.
+- The broker MUST echo the value in response headers and SHOULD emit it in
+  logs and metrics labels.
 
 ### `Livepeer-Backoff`
 
@@ -138,13 +133,27 @@ consumed.
 - **Value:** integer (interpreted in the unit declared by the offering's
   `work_unit.name`).
 - **Example:** `Livepeer-Work-Units: 1247` (e.g., 1247 tokens).
-- Set on successful responses to one-shot modes (`http-reqresp`, `http-multipart`,
-  `http-stream` upon stream end).
-- For session/streaming modes (`ws-realtime`, `session-control-plus-media`,
-  `rtmp-ingress-hls-egress`), reported via the mode's debit cadence — see each
-  `modes/<mode>.md`.
-- The gateway's payment-daemon sender uses this for reconciliation if the pre-debit
-  estimate differed.
+- Set on **every** terminal `paid-job` response, including errors (`0` when no
+  billable work occurred); delivered as an HTTP trailer (with `Trailer`
+  advertised) on the `stream` transport. See paid-job §3.2.
+- `paid-session` usage travels as cumulative claims on runner events and the
+  control plane, not in this header.
+- This is the seller's usage claim under the dual-meter trust model — consumed
+  for runway accounting and divergence detection, never as the buyer's bill.
+
+### `Livepeer-Work-Unit`
+
+Echo of the offering's declared work-unit name, sent alongside
+`Livepeer-Work-Units` so gateways can reject unit drift locally.
+
+- **Example:** `Livepeer-Work-Unit: tokens`
+
+### `Livepeer-Job-Id`
+
+Broker-assigned identifier for one paid-job exchange — the audit key joining
+claim, debit, and idempotency record.
+
+- **Example:** `Livepeer-Job-Id: job_01jx6f6w0rpk`
 
 ### `Livepeer-Settlement`
 
@@ -191,9 +200,9 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 - **Value:** one of the codes in [Error codes](#error-codes) below.
 - The response body SHOULD also include a JSON object with structured error info
   (see [Error body](#error-body)).
-- For long-running modes (`ws-realtime`, `rtmp-ingress-hls-egress`,
-  `session-control-plus-media`, streaming `http-stream`), the response is
-  in flight when the broker decides to terminate. Broker emits the error
+- For in-flight terminations (a `stream` transport body, an `inband-ws`
+  session), the response is already flowing when the broker decides to
+  terminate. Broker emits the error
   code as an HTTP trailer where the wire allows (`Trailer: Livepeer-Error`
   + the value when the body is complete) or as the WebSocket close
   reason. `insufficient_balance` is the canonical code for these
@@ -207,8 +216,11 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 | `offering_not_served` | 404 | The capability is served but the requested offering is not. |
 | `payment_envelope_mismatch` | 401 | `Livepeer-Payment` envelope contents disagree with header values. |
 | `payment_invalid` | 401 | Ticket failed validation (signature, replay, insufficient face value). |
-| `spec_version_unsupported` | 505 | Broker does not implement the requested `Livepeer-Spec-Version`. |
-| `mode_unsupported` | 505 | Broker does not implement the requested `Livepeer-Mode` for this capability. |
+| `protocol_unsupported` | 505 | Broker does not implement the requested `Livepeer-Protocol` for this capability. |
+| `protocol_transport_unsupported` | 400 | The request selected a transport the offering does not declare (paid-job §2). |
+| `job_in_flight` | 409 | Retry of a request id whose original exchange is still executing (paid-job §4). Retryable. |
+| `request_id_reuse` | 400 | Request id replayed with different capability, offering, envelope, or body (paid-job §4). |
+| `refill_refused` | 409 | Top-up refused; `will_refuse_next_refill` was advertised beforehand (paid-session §3.3). |
 | `backend_unavailable` | 502 | Backend reachable but returned an error the broker can't recover from. |
 | `capacity_exhausted` | 503 | Broker has no slots; see `Livepeer-Backoff`. |
 | `insufficient_balance` | 402 | Long-running session terminated by the broker because `PayeeDaemon.SufficientBalance` reported the payer's balance no longer covers the configured runway. The header is emitted as a trailer where the protocol allows it (the response body has typically already begun); the connection is closed by the broker. Plan 0015. |
@@ -234,8 +246,8 @@ Error responses SHOULD include a JSON body with at minimum:
 - HTTP headers are case-insensitive (RFC 7230). Implementations SHOULD emit the
   canonical mixed-case form (`Livepeer-Capability`) and accept any case on read.
 - No required ordering. The five required request headers (`Livepeer-Capability`,
-  `Livepeer-Offering`, `Livepeer-Payment`, `Livepeer-Spec-Version`,
-  `Livepeer-Mode`) MUST all be present on any paid request.
+  `Livepeer-Offering`, `Livepeer-Payment`, `Livepeer-Protocol`,
+  `Livepeer-Request-Id`) MUST all be present on any paid request.
 
 ## Forwarding behavior (broker → backend)
 
@@ -260,7 +272,7 @@ The conformance suite (`tztcloud/livepeer-conformance:<tag>`) verifies, at minim
 - All header/envelope mismatch paths produce the right `Livepeer-Error` codes.
 - 503 + `Livepeer-Backoff` round-trip behavior.
 - `Livepeer-Work-Units` post-`Serve` accounting.
-- `Livepeer-Spec-Version` and `Livepeer-Mode` rejection on unsupported values.
+- `Livepeer-Protocol` rejection on unsupported values.
 - Forwarding behavior — broker strips `Livepeer-*` and injects declared backend
   auth.
 

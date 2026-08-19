@@ -92,12 +92,9 @@ func newSessionTestServer(t *testing.T) (*httptest.Server, *fakeSessionRunner) {
 					TerminatePath: "/sessions/{id}",
 				},
 			},
-			WorkUnit: config.WorkUnit{
-				Name:      "participant_minutes",
-				Extractor: map[string]any{"type": "seconds-elapsed"},
-			},
-			Price:   config.Price{AmountWei: "10", PerUnits: 1},
-			Backend: config.Backend{Transport: "http", URL: runnerSrv.URL},
+			WorkUnit: config.WorkUnit{Name: "participant_minutes"},
+			Price:    config.Price{AmountWei: "10", PerUnits: 1},
+			Backend:  config.Backend{Transport: "http", URL: runnerSrv.URL},
 		}},
 	}
 	if err := cfg.Validate(); err != nil {

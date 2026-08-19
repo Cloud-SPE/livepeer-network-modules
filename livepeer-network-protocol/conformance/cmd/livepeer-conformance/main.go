@@ -116,7 +116,6 @@ capabilities:
     health: { initial_status: ready }
     work_unit:
       name: %s
-      extractor: { type: seconds-elapsed }
     price: { amount_wei: "10", per_units: 1 }
     backend: { transport: http, url: %q }
   - id: conformance:session
@@ -137,7 +136,6 @@ capabilities:
     health: { initial_status: ready }
     work_unit:
       name: %s
-      extractor: { type: seconds-elapsed }
     price: { amount_wei: "10", per_units: 1 }
     backend: { transport: http, url: %q }
   - id: conformance:session
@@ -154,7 +152,6 @@ capabilities:
     health: { initial_status: ready }
     work_unit:
       name: %s
-      extractor: { type: seconds-elapsed }
     price: { amount_wei: "10", per_units: 1 }
     backend: { transport: http, url: %q }
   - id: conformance:session
@@ -171,7 +168,6 @@ capabilities:
     health: { initial_status: ready }
     work_unit:
       name: %s
-      extractor: { type: seconds-elapsed }
     price: { amount_wei: "10", per_units: 1 }
     backend: { transport: http, url: %q }
   - id: conformance:session
@@ -188,7 +184,6 @@ capabilities:
     health: { initial_status: ready }
     work_unit:
       name: %s
-      extractor: { type: seconds-elapsed }
     price: { amount_wei: "10", per_units: 1 }
     backend: { transport: http, url: %q }
   - id: conformance:session
@@ -210,7 +205,6 @@ capabilities:
     health: { initial_status: ready }
     work_unit:
       name: %s
-      extractor: { type: seconds-elapsed }
     price: { amount_wei: "10", per_units: 1 }
     backend: { transport: http, url: %q }
   - id: conformance:session
@@ -225,7 +219,6 @@ capabilities:
     health: { initial_status: ready }
     work_unit:
       name: %s
-      extractor: { type: seconds-elapsed }
     price: { amount_wei: "10", per_units: 1 }
     backend: { transport: http, url: %q }
 `

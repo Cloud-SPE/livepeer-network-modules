@@ -289,6 +289,11 @@ func validateConfigAgainstRegistries(cfg *config.Config, extractorRegistry *extr
 	}
 	for i := range cfg.Capabilities {
 		c := &cfg.Capabilities[i]
+		// paid-session capabilities carry no extractor (see config
+		// validation): usage is runner-reported.
+		if strings.HasPrefix(c.Protocol, "paid-session/") {
+			continue
+		}
 		extractorType, _ := c.WorkUnit.Extractor["type"].(string)
 		if !extractorRegistry.Has(extractorType) {
 			return fmt.Errorf("capability %s/%s: work_unit.extractor.type %q is not implemented by this broker (registered: %v)",

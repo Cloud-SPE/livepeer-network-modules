@@ -70,7 +70,13 @@ func specFromCapability(c *config.Capability) *sessionengine.OfferingSpec {
 		LeaseMax:            time.Duration(c.Session.LeaseMaxSeconds) * time.Second,
 		LeasePolicy:         c.Session.AdvertisedLeasePolicy(),
 		Refill:              c.Session.AdvertisedRefill(),
-		MinRunwayUnits:      c.Session.MinRunwayUnits,
+		Metering:            c.Session.AdvertisedMetering(),
+		RunnerPaths: sessionengine.RunnerPaths{
+			Create:    c.Session.Runner.CreatePath,
+			Status:    c.Session.Runner.StatusPath,
+			Terminate: c.Session.Runner.TerminatePath,
+		},
+		MinRunwayUnits: c.Session.MinRunwayUnits,
 	}
 }
 

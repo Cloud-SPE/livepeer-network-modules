@@ -95,6 +95,7 @@ Per-offering knobs (host-config `session:` block):
 | `burn_rate_per_second` | 1 | Units/second estimate used to convert runway into lease time. |
 | `min_runway_units` | 0 (off) | Post-debit `SufficientBalance` floor; breach winds the session down with `insufficient_balance`. |
 | `runner.create_path` / `status_path` / `terminate_path` | — | The runner's session API paths (`{id}` substituted). No default URL space exists. |
+| `runner.describe_path` | unset | Optional. When set, the broker reads the runner's own declaration at startup and reload and **refuses to start** if it contradicts this capability's configuration — see below. |
 
 Terminal `close_reason` values you will see in status responses and logs:
 `gateway_close`, `runner_ended`, `runner_failed`, `lease_expired`,
@@ -108,6 +109,33 @@ runner. Runner still holds it → rebound silently (same `work_id`,
 credentials keep working, grants are never re-minted). Runner lost it →
 `recovery_failed` terminal. Runner unreachable → left active for heartbeat
 enforcement to decide.
+
+### 3.1 Runner self-description
+
+Several fields above are facts only the runner knows: `descriptor_schema`,
+`work_unit.name`, the runner's own paths, `metering`. Declaring them here
+as well creates two sources of truth, and the broker's runtime checks
+exist only because they can disagree — a `work_unit` mismatch rejects
+**every** usage event for a session's lifetime, which is an expensive way
+to learn about a typo.
+
+Setting `session.runner.describe_path` turns that class of failure into a
+startup error:
+
+- **Contradictions are fatal.** A runner declaring a different
+  `work_unit`, `descriptor_schema`, or `capability_id` than the offering
+  means the configuration cannot work. The broker refuses to start and
+  names the field with both values.
+- **Unreachable is not a contradiction.** A runner that is down, or
+  serves no describe path, produces a warning and nothing more. Never
+  configure a describe path expecting it to gate availability.
+- **Advisory mismatches warn**: `metering`, path disagreements, and a
+  runner whose emit cadence is slower than
+  `heartbeat.interval_seconds × missed_threshold` (which would tear its
+  own sessions down).
+- **Nothing is adopted.** Published offerings are cold-key signed, so a
+  runner's declaration is never absorbed into what you advertise — a
+  runner cannot change what you sell.
 
 ## 4. paid-job operations
 

@@ -909,3 +909,54 @@ func TestValidateRejectsSessionRunnerMissingImage(t *testing.T) {
 		t.Fatalf("Validate() error = %v; want session_runner.image required", err)
 	}
 }
+
+// TestExtractorIsPaidJobOnly pins that extractors belong to paid-job.
+// A paid-session capability has nothing for one to run on — usage is
+// runner-reported — and requiring one made operators declare a type
+// that is never called.
+func TestExtractorIsPaidJobOnly(t *testing.T) {
+	base := func() *Config {
+		return &Config{
+			Identity:        Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+			ExternalBaseURL: "https://broker.example.com",
+			SessionStore:    SessionStore{Path: "/tmp/s.db", SealingKeyFile: "/tmp/k"},
+			Capabilities: []Capability{{
+				ID: "cap:sess", OfferingID: "default", Protocol: "paid-session/v1",
+				Session: &SessionCap{
+					DescriptorSchema: "sfu-room/v1",
+					Runner:           SessionRunnerPaths{CreatePath: "/s", TerminatePath: "/s/{id}"},
+				},
+				WorkUnit: WorkUnit{Name: "participant_seconds"},
+				Price:    Price{AmountWei: "1", PerUnits: 1},
+				Backend:  Backend{Transport: "http", URL: "http://runner:8080"},
+			}},
+		}
+	}
+
+	// No extractor: valid.
+	if err := base().Validate(); err != nil {
+		t.Fatalf("paid-session without an extractor should validate: %v", err)
+	}
+
+	// Declaring one is rejected rather than silently ignored — config
+	// the broker never reads is config that drifts into a lie.
+	withExtractor := base()
+	withExtractor.Capabilities[0].WorkUnit.Extractor = map[string]any{"type": "seconds-elapsed"}
+	err := withExtractor.Validate()
+	if err == nil || !strings.Contains(err.Error(), "not valid for paid-session") {
+		t.Fatalf("paid-session with an extractor should be rejected, got %v", err)
+	}
+
+	// paid-job still requires one.
+	job := base()
+	job.Capabilities[0] = Capability{
+		ID: "cap:job", OfferingID: "default", Protocol: "paid-job/v1",
+		Job:      &JobCapability{Transports: []string{"unary"}},
+		WorkUnit: WorkUnit{Name: "tokens"},
+		Price:    Price{AmountWei: "1", PerUnits: 1},
+		Backend:  Backend{Transport: "http", URL: "http://backend:8080"},
+	}
+	if err := job.Validate(); err == nil || !strings.Contains(err.Error(), "extractor is required") {
+		t.Fatalf("paid-job without an extractor should be rejected, got %v", err)
+	}
+}

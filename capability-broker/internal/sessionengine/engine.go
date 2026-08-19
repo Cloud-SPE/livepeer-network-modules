@@ -76,6 +76,10 @@ type OfferingSpec struct {
 	// Refill is "extensible" (default) or "bounded". A bounded
 	// offering rejects top-up after open (offering-axes §3).
 	Refill string
+	// Metering and RunnerPaths are carried so the broker can compare
+	// them against the runner's own declaration (§7.1.1).
+	Metering    string
+	RunnerPaths RunnerPaths
 	// MinRunwayUnits is the SufficientBalance floor checked after each
 	// debit; <=0 disables the check.
 	MinRunwayUnits int64

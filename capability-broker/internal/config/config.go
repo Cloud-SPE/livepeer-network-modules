@@ -174,6 +174,12 @@ type SessionRunnerPaths struct {
 	CreatePath    string `yaml:"create_path"`
 	StatusPath    string `yaml:"status_path"`
 	TerminatePath string `yaml:"terminate_path"`
+	// DescribePath is optional. When set, the broker reads the runner's
+	// own declaration of what it implements at startup and on reload,
+	// and refuses to serve a capability the runner contradicts
+	// (paid-session/v1 §7.1.1). Advisory only — never adopted into the
+	// published offering, which is cold-key signed.
+	DescribePath string `yaml:"describe_path,omitempty"`
 }
 
 func (c Capability) GetBackendID() string {

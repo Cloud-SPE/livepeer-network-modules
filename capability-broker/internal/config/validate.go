@@ -298,11 +298,24 @@ func (c *Config) Validate() error {
 		if cap.WorkUnit.Name == "" {
 			return fmt.Errorf("%s: work_unit.name is required", ctx)
 		}
-		if len(cap.WorkUnit.Extractor) == 0 {
-			return fmt.Errorf("%s: work_unit.extractor is required", ctx)
-		}
-		if _, ok := cap.WorkUnit.Extractor["type"].(string); !ok {
-			return fmt.Errorf("%s: work_unit.extractor.type must be a string", ctx)
+		// Extractors are a paid-job concept: they compute work units from
+		// an exchange the broker forwarded. paid-session usage arrives as
+		// runner-reported cumulative claims, so a session capability has
+		// nothing for an extractor to run on. Requiring one made
+		// operators declare a type that is never called, which is exactly
+		// the kind of config that drifts into a lie.
+		if strings.HasPrefix(cap.Protocol, "paid-session/") {
+			if len(cap.WorkUnit.Extractor) > 0 {
+				return fmt.Errorf("%s: work_unit.extractor is not valid for paid-session capabilities "+
+					"(usage comes from runner-reported claims; the broker never runs an extractor here)", ctx)
+			}
+		} else {
+			if len(cap.WorkUnit.Extractor) == 0 {
+				return fmt.Errorf("%s: work_unit.extractor is required", ctx)
+			}
+			if _, ok := cap.WorkUnit.Extractor["type"].(string); !ok {
+				return fmt.Errorf("%s: work_unit.extractor.type must be a string", ctx)
+			}
 		}
 
 		if !priceWeiRE.MatchString(cap.Price.AmountWei) {

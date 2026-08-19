@@ -231,6 +231,65 @@ Callback coordinates handed to the runner MUST be derived from operator
 configuration, never from inbound request `Host`/`X-Forwarded-Proto`
 headers.
 
+### 7.1.1 Self-description (optional)
+
+An operator MAY configure a **describe path**. When present the broker
+calls it at startup and on every runtime reload, and the runner responds
+with what it implements:
+
+```json
+{
+  "protocols": ["paid-session/v1"],
+  "capabilities": [
+    {
+      "capability_id": "livepeer:meet/sfu-room",
+      "descriptor_schemas": ["sfu-room/v1"],
+      "work_unit": "participant_seconds",
+      "metering": "runner-reported",
+      "heartbeat": { "interval_seconds": 30 },
+      "paths": {
+        "create": "/sessions",
+        "status": "/sessions/{id}",
+        "terminate": "/sessions/{id}"
+      }
+    }
+  ]
+}
+```
+
+The point is to stop operators from hand-transcribing facts only the
+runner knows. `descriptor_schema`, `work_unit`, the runner's own paths,
+and `metering` are runner facts; declaring them a second time in broker
+config creates two sources of truth that can disagree, and the broker's
+runtime cross-checks exist only because they do. A `work_unit` mismatch,
+for instance, rejects every usage event for a session's lifetime — a
+failure worth catching at configuration time instead.
+
+Rules:
+
+- **Advisory, never authoritative.** The broker MUST NOT adopt
+  self-described values into what it advertises. Published offerings are
+  cold-key signed; silently adopting a runner's declaration would let a
+  runner-side change alter what an orchestrator sells. Disagreement is
+  surfaced for an operator to act on, not absorbed.
+- **A contradiction is fatal to that capability.** If the runner's
+  `work_unit`, `descriptor_schemas`, or `capability_id` disagree with the
+  configured tuple, the configuration is already broken — sessions would
+  fail at open or reject every usage event. The broker MUST refuse to
+  serve that capability and MUST say which field disagreed and what each
+  side declared.
+- **Unreachability is not a contradiction.** A runner that cannot be
+  reached (or serves no describe path) is a warning, not a failure: a
+  broker MUST NOT refuse to serve a capability merely because
+  self-description was unavailable.
+- **Advisory fields warn.** A heartbeat cadence slower than the
+  offering's `interval × missed_threshold` is a misconfiguration the
+  operator should see, but the broker enforces its configured threshold
+  either way.
+
+Describe responses are runner-authored data. The broker validates their
+shape and compares them; it MUST NOT execute or interpret them further.
+
 ### 7.2 Runner events
 
 `POST /v1/session/{session_id}/events`, authenticated by a per-session
@@ -416,6 +475,7 @@ is the difference between a diagnosable bug and an afternoon.
 |---|---|---|
 | Make terminate idempotent; terminating an unknown or already-terminated session succeeds | §7.1 | A non-idempotent terminate turns every winddown retry into a spurious error and can leave the broker's state and yours disagreeing. |
 | Actually stop serving on terminate — the broker treats it as authoritative | §5, §9.2 | Serving after terminate is unmetered work; the broker has already closed payment. |
+| Serve the describe path, if configured, with facts matching what the offering declares | §7.1.1 | The broker refuses to serve a capability whose runner contradicts its configuration, naming the field and both values. |
 | Answer the status path truthfully, including after termination | §7.1, §9.2 | Recovery uses it: reporting a session gone that you still serve strands it; reporting alive one you dropped delays the terminal outcome. |
 
 ### What the runner never does
@@ -432,5 +492,6 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.2-draft | 2026-08-19 | Add §7.1.1 optional runner self-description: advisory-never-authoritative, contradiction fatal to the capability, unreachability only a warning. |
 | 1.0.1-draft | 2026-08-19 | Add §11, the consolidated runner-obligations checklist, with the failure signature for each violation. Derivative and non-normative where it conflicts with a numbered section. |
 | 1.0.0-draft | 2026-08-18 | Initial protocol. Replaces the five session-family modes; durable authority, exactly-once debit, lease/heartbeat enforcement, session credential, and the balance object become normative. Absorbs meeting-handoff requirements B1–B5 and A4. |

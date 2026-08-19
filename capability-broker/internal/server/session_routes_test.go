@@ -365,3 +365,91 @@ func TestQuarantinedCapabilityIsWithheldNotFatal(t *testing.T) {
 		t.Fatalf("expected the healthy sibling to remain advertised, got %d", len(caps))
 	}
 }
+
+// A runner that declares its own readiness endpoint saves the operator
+// from authoring a probe recipe for a fact the runner holds exactly.
+// The derivation must land before the health manager is built.
+func TestReadinessProbeDerivedFromRunnerDeclaration(t *testing.T) {
+	runner := &fakeSessionRunner{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /describe", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"protocols":["paid-session/v1"],"capabilities":[
+			{"capability_id":"livepeer:meet/sfu-room","descriptor_schemas":["sfu-room/v1"],
+			 "work_unit":"participant_minutes","readiness":{"path":"/ready"}}]}`)
+	})
+	mux.Handle("/", runner.handler())
+	runnerSrv := httptest.NewServer(mux)
+	t.Cleanup(runnerSrv.Close)
+
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "seal.key")
+	if err := os.WriteFile(keyPath, make([]byte, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Identity:        config.Identity{OrchEthAddress: "0x" + strings.Repeat("ba", 20)},
+		ExternalBaseURL: "https://broker.example.com",
+		PaymentDaemon:   config.PaymentDaemon{Mock: true},
+		SessionStore:    config.SessionStore{Path: filepath.Join(dir, "s.db"), SealingKeyFile: keyPath},
+		Capabilities: []config.Capability{{
+			ID: "livepeer:meet/sfu-room", OfferingID: "default", Protocol: "paid-session/v1",
+			Session: &config.SessionCap{
+				DescriptorSchema: "sfu-room/v1",
+				Runner: config.SessionRunnerPaths{
+					CreatePath: "/sessions", StatusPath: "/sessions/{id}",
+					TerminatePath: "/sessions/{id}", DescribePath: "/describe",
+				},
+			},
+			WorkUnit: config.WorkUnit{Name: "participant_minutes"},
+			Price:    config.Price{AmountWei: "10", PerUnits: 1},
+			Backend:  config.Backend{Transport: "http", URL: runnerSrv.URL},
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	s, err := New(cfg, Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() {
+		if s.sessionStore != nil {
+			_ = s.sessionStore.Close()
+		}
+	})
+	got := s.currentConfig().Capabilities[0].Health.Probe
+	if got.Type != "http-status" {
+		t.Fatalf("probe type %q, want http-status", got.Type)
+	}
+	if u, _ := got.Config["url"].(string); u != runnerSrv.URL+"/ready" {
+		t.Fatalf("probe url %q, want the runner's declared readiness endpoint %q", u, runnerSrv.URL+"/ready")
+	}
+
+	// An operator-written probe must win over the runner's declaration.
+	cfg2 := *cfg
+	caps := make([]config.Capability, 1)
+	caps[0] = cfg.Capabilities[0]
+	caps[0].Health = config.Health{Probe: config.HealthProbe{
+		Type:   "http-status",
+		Config: map[string]any{"url": runnerSrv.URL + "/operator-choice"},
+	}}
+	cfg2.Capabilities = caps
+	cfg2.SessionStore = config.SessionStore{
+		Path: filepath.Join(t.TempDir(), "s2.db"), SealingKeyFile: keyPath,
+	}
+	if err := cfg2.Validate(); err != nil {
+		t.Fatalf("config2: %v", err)
+	}
+	s2, err := New(&cfg2, Options{})
+	if err != nil {
+		t.Fatalf("New(2): %v", err)
+	}
+	t.Cleanup(func() {
+		if s2.sessionStore != nil {
+			_ = s2.sessionStore.Close()
+		}
+	})
+	if u, _ := s2.currentConfig().Capabilities[0].Health.Probe.Config["url"].(string); u != runnerSrv.URL+"/operator-choice" {
+		t.Fatalf("operator probe overridden by the runner: got %q", u)
+	}
+}

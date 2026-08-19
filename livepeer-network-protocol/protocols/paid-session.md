@@ -247,6 +247,7 @@ with what it implements:
       "work_unit": "participant_seconds",
       "metering": "runner-reported",
       "heartbeat": { "interval_seconds": 30 },
+      "readiness": { "path": "/ready" },
       "paths": {
         "create": "/sessions",
         "status": "/sessions/{id}",
@@ -282,6 +283,12 @@ Rules:
   reached (or serves no describe path) is a warning, not a failure: a
   broker MUST NOT refuse to serve a capability merely because
   self-description was unavailable.
+- **Readiness may be adopted, because it is not manifest data.** A
+  runner MAY declare a readiness endpoint; the broker MAY use it in
+  place of a probe it would otherwise default to. This does not violate
+  the never-adopt rule above: readiness is live data that changes how
+  liveness is measured, never what the orchestrator advertises and
+  sells. An operator-configured probe always wins.
 - **Advisory fields warn.** A heartbeat cadence slower than the
   offering's `interval × missed_threshold` is a misconfiguration the
   operator should see, but the broker enforces its configured threshold

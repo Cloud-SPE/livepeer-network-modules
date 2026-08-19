@@ -144,6 +144,11 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 
 	workerRegistry := workerconn.NewRegistry()
 
+	// Reconcile runner self-descriptions before anything reads the
+	// config: a derived readiness probe must be in place when the
+	// health manager is constructed below.
+	quarantined := applyRunnerDescriptions(cfg)
+
 	s := &Server{
 		cfg:                 cfg,
 		configPath:          opts.ConfigPath,
@@ -174,6 +179,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		poolReporter:    poolReporter,
 		poolSnapshot:    poolSnapshot,
 		health:          health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
+		quarantined:     quarantined,
 		randIntn: func(n int) int {
 			return rand.New(rand.NewSource(time.Now().UnixNano())).Intn(n)
 		},

@@ -138,9 +138,15 @@ startup error:
   runner whose emit cadence is slower than
   `heartbeat.interval_seconds × missed_threshold` (which would tear its
   own sessions down).
-- **Nothing is adopted.** Published offerings are cold-key signed, so a
-  runner's declaration is never absorbed into what you advertise — a
-  runner cannot change what you sell.
+- **Readiness is the one thing that may be adopted.** If the runner
+  declares a readiness endpoint and you have not written a probe, the
+  broker points its health probe there instead of at the backend root —
+  the runner knows what "ready" means for it better than a default
+  does. Your own probe always wins. This is safe because readiness is
+  live data, not manifest data.
+- **Nothing else is adopted.** Published offerings are cold-key signed,
+  so a runner's declaration is never absorbed into what you advertise —
+  a runner cannot change what you sell.
 
 ## 4. paid-job operations
 

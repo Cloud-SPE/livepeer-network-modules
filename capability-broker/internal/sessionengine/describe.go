@@ -35,6 +35,16 @@ type DescribedCapability struct {
 	Metering          string              `json:"metering,omitempty"`
 	Heartbeat         *DescribedHeartbeat `json:"heartbeat,omitempty"`
 	Paths             map[string]string   `json:"paths,omitempty"`
+	// Readiness is the runner's own readiness endpoint. The runner knows
+	// what "ready" means for it (model loaded, GPU free, queue depth)
+	// far better than an operator-authored probe recipe can approximate.
+	Readiness *DescribedReadiness `json:"readiness,omitempty"`
+}
+
+// DescribedReadiness is a runner-declared readiness endpoint. Path is
+// relative to the backend URL, like the other runner paths.
+type DescribedReadiness struct {
+	Path string `json:"path"`
 }
 
 // DescribedHeartbeat is the runner's own emit cadence.

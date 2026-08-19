@@ -251,8 +251,16 @@ func newPoolReporter(cfg *config.Config, secrets backend.SecretResolver) (poolre
 func newPaymentClient(cfg *config.Config) (payment.Client, error) {
 	switch {
 	case cfg.PaymentDaemon.Mock:
-		log.Printf("payment client: in-process Mock (payment_daemon.mock=true)")
-		return payment.WithMetrics(payment.NewMock()), nil
+		mock := payment.NewMock()
+		if p := cfg.PaymentDaemon.MockStatePath; p != "" {
+			if err := mock.EnablePersistence(p); err != nil {
+				return nil, fmt.Errorf("payment mock state: %w", err)
+			}
+			log.Printf("payment client: in-process Mock, state at %s (survives restart)", p)
+		} else {
+			log.Printf("payment client: in-process Mock (payment_daemon.mock=true; state is NOT durable)")
+		}
+		return payment.WithMetrics(mock), nil
 	case cfg.PaymentDaemon.Socket != "":
 		log.Printf("payment client: gRPC unix socket %s", cfg.PaymentDaemon.Socket)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

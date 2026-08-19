@@ -37,6 +37,11 @@ listen:
   metrics: "127.0.0.1:%d"
 payment_daemon:
   mock: true
+  # Durable mock ledger: models the real daemon (which persists to
+  # BoltDB) so a restarted session can actually rebind. Without this
+  # every restarted session takes the fail-closed branch and the rebind
+  # assertions never execute.
+  mock_state_path: %q
 session_store:
   path: %q
   sealing_key_file: %q
@@ -165,6 +170,7 @@ func main() {
 		// Auto mode owns the process, so restart-dependent scenarios
 		// can run for real instead of skipping.
 		ctx.RestartBroker = ctl.restart
+		ctx.RestartBrokerLosingPayment = ctl.restartLosingPayment
 	}
 
 	results := harness.RunAll(ctx, scenarios.All(), os.Stdout)
@@ -213,6 +219,7 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 	}
 	cfg := fmt.Sprintf(configTemplate,
 		paidPort, paidPort, metricsPort,
+		filepath.Join(dir, "payment-mock.json"),
 		filepath.Join(dir, "state.db"), keyPath,
 		jobUnit, backend.URL(),
 		jobUnit, backend.URL(),
@@ -263,14 +270,24 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 			// config — only the process is replaced.
 			return launch()
 		},
+		restartLosingPayment: func() error {
+			halt()
+			// Wipe only the payment ledger: the broker's own session
+			// store survives, so this is precisely "the runner still
+			// has it, the payment layer does not" — the case §9.2's
+			// terminal branch exists for.
+			_ = os.Remove(filepath.Join(dir, "payment-mock.json"))
+			return launch()
+		},
 	}
 	return ctl, url, nil
 }
 
 // brokerControl is the runner's handle on a broker it owns.
 type brokerControl struct {
-	stop    func()
-	restart func() error
+	stop                 func()
+	restart              func() error
+	restartLosingPayment func() error
 }
 
 func waitHealthy(url string, timeout time.Duration) error {

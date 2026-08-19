@@ -78,8 +78,14 @@ type Ctx struct {
 	// its durable state. Non-nil only when the suite owns the process
 	// (auto mode); nil means restart scenarios skip.
 	RestartBroker func() error
-	JobUnit       string // declared work unit for the job offerings
-	SessionUnit   string // declared work unit for the session offering
+
+	// RestartBrokerLosingPayment restarts the broker with its own
+	// session store intact but the payment layer's state discarded —
+	// the "runner still has it, payment layer does not" case that
+	// §9.2's terminal branch exists for. Nil when unavailable.
+	RestartBrokerLosingPayment func() error
+	JobUnit                    string // declared work unit for the job offerings
+	SessionUnit                string // declared work unit for the session offering
 
 	// RunID makes request ids unique across runs against a long-lived
 	// broker (idempotency records outlive the suite).

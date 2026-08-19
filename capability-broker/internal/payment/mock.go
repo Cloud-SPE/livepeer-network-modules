@@ -16,6 +16,9 @@ type Mock struct {
 	mu       sync.Mutex
 	sessions map[string]*mockSession // keyed by work_id (sender unsealed) then composite (sender||work_id)
 	debits   map[string]int64        // (sender||work_id||seq) → recorded units
+	// statePath, when set via EnablePersistence, makes the ledger
+	// survive the process (see mock_persist.go).
+	statePath string
 }
 
 type mockSession struct {
@@ -61,6 +64,7 @@ func (m *Mock) OpenSession(_ context.Context, req OpenSessionRequest) (*OpenSess
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.flushLocked()
 	if _, exists := m.sessions[req.WorkID]; exists {
 		return &OpenSessionResult{AlreadyOpen: true}, nil
 	}
@@ -89,6 +93,7 @@ func (m *Mock) ProcessPayment(_ context.Context, req ProcessPaymentRequest) (*Pr
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.flushLocked()
 	sess, ok := m.sessions[req.WorkID]
 	if !ok {
 		return nil, errors.New("no session for work_id; OpenSession first")
@@ -113,6 +118,7 @@ func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*big.In
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.flushLocked()
 	sess, ok := m.sessions[req.WorkID]
 	if !ok {
 		return nil, errors.New("session not found")
@@ -188,6 +194,7 @@ func (m *Mock) CloseSession(_ context.Context, sender []byte, workID string) err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.flushLocked()
 	sess, ok := m.sessions[workID]
 	if !ok {
 		return errors.New("session not found")

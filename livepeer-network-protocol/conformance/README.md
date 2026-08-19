@@ -55,12 +55,28 @@ callback coordinates land on the broker under test.
 
 Two scenarios need control over the implementation, not just its wire:
 
-- **`paid-session/restart-rebind`** restarts the broker mid-session and
-  asserts the session rebinds — same `work_id`, same credential, surviving
-  usage watermark, duplicate detection still correct, and top-up/end still
-  working. It runs for real in **auto mode**, where the suite owns the
-  process. In URL mode it SKIPs, because the suite cannot restart a broker
-  it did not start; demonstrate it with your own harness.
+- **`paid-session/restart-rebind`** restarts the broker mid-session against a
+  payment layer that survives, and **requires** the rebind branch — same
+  `work_id`, same credential, surviving usage watermark, duplicate detection
+  still correct, and top-up/end still working. A broker that goes terminal
+  here is failing recovery, not choosing the other branch.
+- **`paid-session/restart-terminal-when-unbillable`** restarts the broker with
+  its own session store intact but the payment layer's state discarded — the
+  "runner still has it, payment layer does not" case — and requires the
+  terminal branch, with the forbidden outcomes (second `work_id`, runner left
+  serving) checked there too.
+
+Both restart scenarios run for real in **auto mode**, where the suite owns the
+process. In URL mode they SKIP, because the suite cannot restart a broker it
+did not start; demonstrate them with your own harness.
+
+> **Why the payment layer matters here.** Auto mode configures the reference
+> broker's in-process mock with `mock_state_path`, so its ledger survives the
+> restart the way the real daemon's BoltDB store does. Without that, every
+> restarted session takes the terminal branch and the rebind assertions —
+> the operationally important half of §9.2 — never execute even though the
+> suite passes. If you run in URL mode, make sure your payment layer outlives
+> your broker restart before claiming rebind coverage.
 - **`paid-session/heartbeat-enforcement`** opens against the
   `fast-heartbeat` offering, sends nothing, and waits for the broker to tear
   the session down — asserting the terminal reason is `heartbeat_lost`, that

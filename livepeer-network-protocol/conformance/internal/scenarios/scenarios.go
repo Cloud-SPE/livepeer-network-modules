@@ -435,10 +435,11 @@ func sessionScenarios() []harness.Scenario {
 				return fmt.Errorf("restart: %w", err)
 			}
 
-			// §9.2 requires ONE OF two outcomes, and forbids a specific
-			// set of bad ones. Both branches are conformant; which one a
-			// broker takes depends on whether its payment layer also
-			// survived (an in-process mock daemon, for example, does not).
+			// This scenario runs against a payment layer that survives
+			// the restart, so the REBIND branch is the required outcome:
+			// a broker that terminates here is failing recovery, not
+			// exercising the other branch (which
+			// paid-session/restart-terminal covers deterministically).
 			st, err := c.SessionStatus(sessionID, credential)
 			if err != nil {
 				return err
@@ -456,21 +457,12 @@ func sessionScenarios() []harness.Scenario {
 				return fmt.Errorf("claimed_total %v after restart, want 12 (usage lost)", n)
 			}
 
-			state := harness.FieldString(sm, "state")
-			if state == "ended" || state == "failed" {
-				// Branch 2: explicit terminal. It must be labelled, and
-				// the runner must not be left serving.
-				reason := harness.FieldString(sm, "close_reason")
-				if reason == "" {
-					return fmt.Errorf("terminal after restart with no close_reason")
-				}
-				if len(c.Runner.Terminated()) == 0 {
-					return fmt.Errorf("terminal after restart (%s) but runner left serving", reason)
-				}
-				return nil
+			if state := harness.FieldString(sm, "state"); state == "ended" || state == "failed" {
+				return fmt.Errorf("session went terminal (%s/%s) despite a surviving payment layer; rebind was required",
+					state, harness.FieldString(sm, "close_reason"))
 			}
 
-			// Branch 1: rebound. Usage continues from the surviving
+			// Rebound. Usage continues from the surviving
 			// watermark — the pre-restart event is still a duplicate,
 			// and the next sequence is accepted.
 			if s2, _, err := c.Runner.PostEvent(cb, fmt.Sprintf(
@@ -494,6 +486,55 @@ func sessionScenarios() []harness.Scenario {
 			end, err := c.SessionEnd(sessionID, credential, "gateway_close")
 			if err != nil || end.Status != 200 {
 				return fmt.Errorf("end after restart: %d %v", end.Status, err)
+			}
+			return nil
+		}},
+		{Name: "paid-session/restart-terminal-when-unbillable", Spec: "paid-session §9.2", Run: func(c *harness.Ctx) error {
+			if c.RestartBrokerLosingPayment == nil {
+				return fmt.Errorf("%w: suite cannot discard the payment layer's state (URL mode)", harness.ErrSkip)
+			}
+			open, cb, err := openHappySession(c, "restartterm")
+			if err != nil {
+				return err
+			}
+			m := open.JSON()
+			sessionID := harness.FieldString(m, "session_id")
+			credential := harness.FieldString(m, "credential")
+			workID := harness.FieldString(m, "work_id")
+			if st, _, err := c.Runner.PostEvent(cb, fmt.Sprintf(
+				`{"event_id":"evt_t1","sequence":1,"event_type":"session.usage.tick","usage":{"unit":%q,"total":5}}`,
+				c.SessionUnit)); err != nil || st != 200 {
+				return fmt.Errorf("pre-restart usage event: %d %v", st, err)
+			}
+			terminatedBefore := len(c.Runner.Terminated())
+
+			if err := c.RestartBrokerLosingPayment(); err != nil {
+				return fmt.Errorf("restart: %w", err)
+			}
+
+			// The session cannot be billed any more, so §9.2's terminal
+			// branch is required: never serve work you cannot charge for.
+			st, err := c.SessionStatus(sessionID, credential)
+			if err != nil {
+				return err
+			}
+			if st.Status != 200 {
+				return fmt.Errorf("status after restart: %d %s", st.Status, st.Body)
+			}
+			sm := st.JSON()
+			state := harness.FieldString(sm, "state")
+			if state != "ended" && state != "failed" {
+				return fmt.Errorf("session still %s after losing its payment layer; must reach a terminal outcome", state)
+			}
+			if reason := harness.FieldString(sm, "close_reason"); reason == "" {
+				return fmt.Errorf("terminal with no close_reason")
+			}
+			// Forbidden outcomes still hold on this branch.
+			if got := harness.FieldString(sm, "work_id"); got != workID {
+				return fmt.Errorf("work_id changed: %q -> %q", workID, got)
+			}
+			if len(c.Runner.Terminated()) <= terminatedBefore {
+				return fmt.Errorf("terminal outcome but runner left serving")
 			}
 			return nil
 		}},

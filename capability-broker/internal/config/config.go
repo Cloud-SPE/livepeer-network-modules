@@ -51,6 +51,12 @@ type Listen struct {
 type PaymentDaemon struct {
 	Socket string `yaml:"socket,omitempty"`
 	Mock   bool   `yaml:"mock,omitempty"`
+	// MockStatePath makes the in-process mock's ledger survive the
+	// process, modelling the real daemon's durable store. Test/dev
+	// surface only; ignored unless Mock is true. Without it the mock
+	// is amnesiac, which is a legitimate configuration for exercising
+	// the fail-closed half of session recovery.
+	MockStatePath string `yaml:"mock_state_path,omitempty"`
 }
 
 // PoolSnapshot configures optional polling of pool-controller's backend

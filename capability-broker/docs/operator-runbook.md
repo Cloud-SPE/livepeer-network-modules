@@ -125,7 +125,15 @@ enforcement to decide.
 ## 5. Metrics
 
 Registry surface metrics (`livepeer_broker_registry_*`) are unchanged.
-Protocol-engine metrics are being added with the v1 engines; until the
-instrumentation lands, session and job health are observable via the
-`paid request` structured log lines (request id, capability, protocol,
-status, work units, duration) and session status endpoints.
+Protocol-engine metrics (all on the `--metrics` listener):
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `livepeer_protocol_session_opens_total` | `outcome` (opened\|replayed\|failed) | Session opens. A rising `failed` usually means runner create or descriptor validation failures. |
+| `livepeer_protocol_session_winddowns_total` | `reason` (the stable close reasons in §3) | Terminal winddowns. Alert on `heartbeat_lost` and `recovery_failed` rates. |
+| `livepeer_protocol_session_events_total` | `outcome` (accepted\|duplicate\|rejected\|retryable\|unauthorized) | Runner event intake. `unauthorized` spikes suggest a stale runner or probing; sustained `retryable` means payment-daemon trouble. |
+| `livepeer_protocol_session_debited_units_total` | — | Units debited from usage claims (the seller's meter, aggregated). |
+| `livepeer_protocol_job_exchanges_total` | `transport`, `outcome` (ok\|client_error\|backend_error\|replayed\|refused) | paid-job exchanges. `replayed` is gateways exercising idempotency; `refused` is transport negotiation misses. |
+
+The `paid request` structured log lines (request id, capability,
+protocol, status, work units, duration) remain the per-exchange trace.

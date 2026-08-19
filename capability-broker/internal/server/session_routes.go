@@ -15,6 +15,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
@@ -164,8 +165,14 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 		Spec:             specFromCapability(c),
 	})
 	if err != nil {
+		observability.RecordSessionOpen("failed")
 		s.writeSessionError(w, err)
 		return
+	}
+	if res.Replayed {
+		observability.RecordSessionOpen("replayed")
+	} else {
+		observability.RecordSessionOpen("opened")
 	}
 
 	rec, _ := s.sessionStore.Get(res.SessionID)
@@ -294,6 +301,7 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	rec, err := s.sessionStore.Get(id)
 	if err != nil || token == "" || !sessionstore.VerifySecret(rec.CallbackTokenHash, token) {
+		observability.RecordSessionEvent("unauthorized")
 		writeUniformUnauthorized(w)
 		return
 	}
@@ -316,8 +324,20 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.sessionEngine.ProcessEvent(r.Context(), id, ev)
 	if err != nil {
+		var re *sessionengine.RetryableError
+		if errors.As(err, &re) {
+			observability.RecordSessionEvent("retryable")
+		} else {
+			observability.RecordSessionEvent("rejected")
+		}
 		s.writeSessionError(w, err)
 		return
+	}
+	if out.Duplicate {
+		observability.RecordSessionEvent("duplicate")
+	} else {
+		observability.RecordSessionEvent("accepted")
+		observability.RecordSessionDebit(out.DebitedUnits)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"accepted":  true,

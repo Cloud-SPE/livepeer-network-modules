@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 )
@@ -41,7 +42,8 @@ func (s *Server) initSessionEngine() error {
 			}
 			return s.specForRecord(rec)
 		},
-		Callback: sessionengine.CallbackConfig{BaseURL: s.cfg.ExternalBaseURL},
+		Callback:   sessionengine.CallbackConfig{BaseURL: s.cfg.ExternalBaseURL},
+		OnWinddown: observability.RecordSessionWinddown,
 	})
 	if err != nil {
 		_ = store.Close()

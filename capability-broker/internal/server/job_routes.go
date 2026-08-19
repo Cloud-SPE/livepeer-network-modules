@@ -17,6 +17,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	"github.com/google/uuid"
@@ -176,6 +177,7 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 			}
 		}
 		if !declared {
+			observability.RecordJobExchange(transport, "refused")
 			livepeerheader.WriteError(w, http.StatusBadRequest,
 				livepeerheader.ErrTransportUnsupported,
 				"offering does not declare transport "+transport)
@@ -206,6 +208,7 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(rec.Status)
 				fmt.Fprintf(w, `{"replayed":true,"job_id":%q}`, rec.JobID)
+				observability.RecordJobExchange(transport, "replayed")
 				return
 			case time.Now().After(rec.Deadline):
 				// Crash leftover: converge on a failed terminal.
@@ -227,6 +230,14 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		w.Header().Set(livepeerheader.WorkUnitName, c.WorkUnit.Name)
 		jrec := &jobRecorder{ResponseWriter: w}
 		next.ServeHTTP(jrec, r)
+		switch st := jrec.status(); {
+		case st < 400:
+			observability.RecordJobExchange(transport, "ok")
+		case st < 500:
+			observability.RecordJobExchange(transport, "client_error")
+		default:
+			observability.RecordJobExchange(transport, "backend_error")
+		}
 		if err := s.jobIdem.Finish(requestID, jrec.status(), jrec.units(), c.WorkUnit.Name); err != nil {
 			log.Printf("warning: job idempotency finish failed request_id=%s: %v", requestID, err)
 		}

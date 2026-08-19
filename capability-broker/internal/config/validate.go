@@ -10,10 +10,10 @@ import (
 )
 
 var (
-	protocolRE        = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
-	schemaTagRE       = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
-	ethAddressRE      = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
-	priceWeiRE        = regexp.MustCompile(`^[0-9]+$`)
+	protocolRE   = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
+	schemaTagRE  = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
+	ethAddressRE = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
+	priceWeiRE   = regexp.MustCompile(`^[0-9]+$`)
 )
 
 var validHealthStatuses = map[string]bool{

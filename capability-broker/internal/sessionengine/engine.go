@@ -113,6 +113,9 @@ type Config struct {
 	Callback CallbackConfig
 	// ReleaseCapacity releases a held capacity slot; nil is a no-op.
 	ReleaseCapacity func(capacityRef string)
+	// OnWinddown observes each terminal winddown's stable reason; nil
+	// is a no-op. Used for metrics; never for control flow.
+	OnWinddown func(reason string)
 	// TerminalRetention bounds how long terminal records stay
 	// queryable before eviction; <=0 means 1h.
 	TerminalRetention time.Duration
@@ -593,6 +596,9 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		r.CapacityRef = ""
 		return nil
 	})
+	if e.cfg.OnWinddown != nil {
+		e.cfg.OnWinddown(reason)
+	}
 }
 
 // ---------------------------------------------------------------------------

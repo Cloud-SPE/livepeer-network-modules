@@ -14,12 +14,12 @@ type Config struct {
 	// declared.
 	ExternalBaseURL string        `yaml:"external_base_url,omitempty"`
 	Listen          Listen        `yaml:"listen,omitempty"`
-	AdminAuth     AuthConfig    `yaml:"admin_auth,omitempty"`
-	PaymentDaemon PaymentDaemon `yaml:"payment_daemon,omitempty"`
-	SessionStore  SessionStore  `yaml:"session_store,omitempty"`
-	PoolSnapshot  PoolSnapshot  `yaml:"pool_snapshot,omitempty"`
-	ReceiptSink   ReceiptSink   `yaml:"receipt_sink,omitempty"`
-	Capabilities  []Capability  `yaml:"capabilities"`
+	AdminAuth       AuthConfig    `yaml:"admin_auth,omitempty"`
+	PaymentDaemon   PaymentDaemon `yaml:"payment_daemon,omitempty"`
+	SessionStore    SessionStore  `yaml:"session_store,omitempty"`
+	PoolSnapshot    PoolSnapshot  `yaml:"pool_snapshot,omitempty"`
+	ReceiptSink     ReceiptSink   `yaml:"receipt_sink,omitempty"`
+	Capabilities    []Capability  `yaml:"capabilities"`
 }
 
 // SessionStore configures the durable paid-session store

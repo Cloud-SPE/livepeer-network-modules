@@ -4,102 +4,130 @@ Date: 2026-08-19. Response to `upstream-migration-followup-2.md`.
 
 ## Short answer
 
-**Yes, we want it, and yes, upstream.** You should build the first cut,
-and we should do the enabling work and the review. Reasoning below,
-including one correction to your sizing assumption that will cost you
-more than your note assumes.
+You identified a real gap and we are closing the half of it that is
+ours. **We are not going to host a runner-certification harness**, and
+we think you should build yours in your own repo. What we owe you
+instead already exists as of this reply: a single normative statement of
+what a runner must do.
 
-You are right about the underlying problem and you have stated it more
-precisely than our packet did. Our line — "point it at a broker
+You were right that our packet oversold the suite. "Point it at a broker
 configured for your capability and your stack is testable against the
-same scenarios" — was true of the broker half of your stack and we
-should not have implied the other half. The suite certifies brokers.
-Every obligation you list is real, normative, and currently unexecutable.
+same scenarios" was true of the broker half of your stack, and we should
+not have implied the other half. Every obligation in your list is real,
+normative, and was not collected anywhere.
 
-## Why you should build the first cut
+## Why not here
 
-Not because it is your problem to carry — because of a fact about our
-repo that makes us the wrong first implementer:
+Two reasons, and the second is the one that would bite you later.
 
-**There is no runner implementation in this repository.** Only test
-doubles. If we built a runner-conformance mode here, the only thing we
-could run it against is our own fake session runner — a suite designed
-around a fake, validating that fake. It would pass immediately and prove
-nothing, and the first real runner to meet it would find everything we
-got wrong.
+**This repo has no runner.** Only test doubles — runners live outside it
+by design, and the spec repo says as much ("Not a code library.
+Implementers conform to the specs here"). A runner-conformance mode built
+here could only be exercised against our own fake session runner: a suite
+designed around a fake, validating that fake. It would pass on day one
+and prove nothing.
 
-You have the only real runner. A runner-conformance suite written
-against a real implementation and then generalised is worth considerably
-more than one written against a mock and then discovered to be wrong.
+**A harness we cannot exercise will rot.** It would be written against
+your runner, then drift as the protocol moves, and the next runner author
+would trust a stale suite. A stale conformance suite is worse than no
+suite, because it launders non-conformance as evidence. We just spent a
+round adding a "what this suite does not cover" section precisely to stop
+a green run from implying more than it proves; taking on a harness we
+cannot run would undo that discipline in a bigger way.
 
-Our side of the deal:
+Note also what the existing suite actually is: it verifies *our reference
+broker* against the spec, and URL mode is a generous side effect. It was
+never a certification service, and runner conformance would make it one.
 
-- **The enabling refactor is ours.** `Ctx.Runner` is the concrete
-  `*fakes.SessionRunner` today; the runner side needs to become a seam
-  so a real runner can be substituted. That is our harness architecture
-  and we should not hand you a refactor of our code as the price of
-  contributing.
-- **The shape is agreed up front**, not litigated in review: `--runner-url`
-  substitutes the fake, the suite still owns the broker (auto mode), and
-  runner scenarios live beside the broker ones in the same report.
-- **We review and merge it**, and it ships as part of the suite so the
-  next runner author — `rtmp-hls`, `trickle-egress`, `scope-passthrough`,
-  or something not yet written — gets it for free. That was your reason
-  for offering and it is the right one.
+## What we owe you instead, and it is done
 
-## One correction to your sizing
+Runner obligations were scattered across `paid-session/v1` §7.1, §7.2,
+§7.3 and the descriptor framework — which is why you had to assemble the
+list by hand. That was the actual defect, and your note is the evidence
+for it.
+
+**`paid-session/v1` §11 — "Runner obligations: the implementer's
+checklist"** now collects them in one place: session creation, grants,
+usage events, termination, and the three things a runner never does (talk
+to the payment layer, set price, treat its own claims as the buyer's
+billing truth).
+
+Each row carries the **failure signature** — what the broker does when
+you get it wrong. That is the new information and the thing a harness
+would otherwise have to teach you the slow way. A sample:
+
+- `usage.unit` not matching the offering's declared unit is a protocol
+  error that advances nothing, so it rejects **every** usage event for
+  the session's lifetime — the single most common integration failure,
+  and exactly the class you flagged with `participant_seconds`.
+- An event at or below the committed sequence watermark is treated as a
+  duplicate and acknowledged without effect.
+- Giving up instead of retrying a `5xx` loses that usage permanently: the
+  exactly-once contract deliberately leaves the event uncommitted so your
+  retry completes it.
+- A grant honoured after the session is terminal is an unmetered runtime,
+  and the broker cannot catch it — expiry is a backstop, not the lifetime.
+
+The section is derivative by construction: the numbered sections govern
+on conflict, so it cannot drift into a competing contract.
+
+## On you building it
+
+Build it in your repo, and we will link it from the conformance README so
+the next runner author finds a working reference rather than repeating
+the work. That gets your stated goal — "we would rather the next runner
+author not repeat it" — without either of us maintaining something we
+cannot run.
+
+One correction to your sizing, since you asked us to help you scope it:
 
 > The scenarios largely exist already; what changes is which side is
 > substituted.
 
-This is optimistic, and since you asked us to help you size it: **18 call
-sites in the current scenarios drive the fake runner directly** — posting
-events on its behalf, inspecting what it captured (`LastCreate`,
-`Terminated`). None of that survives substitution, because a real runner
-posts its own events and cannot be introspected.
+Optimistic. **18 call sites in the current scenarios drive the fake
+runner directly** — posting events on its behalf, inspecting what it
+captured. None survive substitution, because a real runner posts its own
+events and cannot be introspected. What carries over is the harness, not
+the scenario bodies: the context and HTTP helpers, the PASS/FAIL/SKIP
+report, config generation, and the broker-under-test lifecycle.
 
-What carries over is the harness, not the scenario bodies: the `Ctx` and
-HTTP helpers, the PASS/FAIL/SKIP report, config generation, and the
-broker-under-test lifecycle including restart control. Budget the
-scenario bodies as new work.
+The good news is the assertions get simpler, because the broker becomes
+your oracle. Most runner obligations are observable through it: a bad
+descriptor is rejected with a specific reason (surfacing that reason is
+most of the diagnostic value you want), usage claims show up in broker
+status in the declared unit, and a session that survives past
+`interval × missed_threshold` proves the runner is emitting. Grant
+honouring is the part you must test directly — call `mint_url` and
+`status_url` with the grant secret and assert both work and are scoped.
 
-The good news is that the assertions get *simpler*, because the broker
-becomes your oracle. A runner-facing suite mostly drives the product flow
-and asserts on what the broker observed:
+Two obligations are not black-box assertable at all, and we would rather
+you plan around them than discover them: `event_id` uniqueness and
+`sequence` monotonicity are only visible through their symptoms, since
+those events go to the broker rather than through your harness.
 
-| Runner obligation | How a runner suite asserts it |
-|---|---|
-| Create envelope + four-key partition, `schema` matching the offering | The broker already validates. The scenario's job is to **surface the rejection reason** — that diagnostic is most of the value you are asking for. |
-| Grants honoured at both operations, scoped to the room | Call `mint_url` and `status_url` for real with the grant secret; assert both succeed and that a foreign room is refused. |
-| Event envelope: unique `event_id`, monotonic `sequence`, cumulative `usage.total` in the declared unit | Observe effects through broker status: totals advance, unit matches, no protocol error. A runner violating uniqueness or monotonicity produces visible symptoms. |
-| Liveness | Let the session sit past `interval × missed_threshold` and assert it is still active — that proves the runner emits. |
-| Terminate idempotency; grants refused after end | End the session, then probe the runner's own status path (the suite configured it, so it knows it) and re-call a grant operation expecting refusal. |
+If it turns out to generalise across several runners, come back to us and
+we will revisit hosting it — with evidence rather than a guess.
 
-Two obligations are hard to assert black-box and are worth naming as
-limits from the start rather than discovering later: `event_id`
-uniqueness and `sequence` monotonicity are only observable through their
-symptoms, since the events go to the broker and not through the suite.
-We would rather the runner README say so than have it imply coverage it
-does not have — same discipline as the "what this suite does not cover"
-section we just added on the broker side.
+## A related change you should know about
 
-## Sequencing
+Your question sent us looking at a broader version of the same problem,
+and it turned up something that affects you directly:
+`host-config.yaml` makes an **operator** hand-transcribe facts only the
+**runner** knows — `descriptor_schema`, `work_unit.name`, your own
+create/status/terminate paths, transports, metering. Stating the same
+fact twice is why the broker has to cross-check it at runtime, and
+`usage_unit_mismatch` exists only because the unit is declared in two
+places that can disagree. That is the mechanism behind the
+`participant_seconds` hazard you raised, not just an instance of it.
 
-Nothing here blocks your descriptor and open-response migration, and we
-would rather you finish that first. When you are ready to start on the
-runner suite, tell us and we will land the harness seam before you need
-it, so you are never blocked on our refactor.
+We are designing toward runner self-description
+(`docs/design-docs/runner-declared-capabilities.md`): the broker asks
+your runner what it implements, and host-config shrinks to price,
+capacity, and policy — the things an operator legitimately owns. There is
+a constraint that shapes it, which we mention because it will look like
+caution from your side: those facts flow into a cold-key-signed manifest,
+so they cannot be auto-adopted; a runner-side change has to surface as
+drift an operator acknowledges, or a runner could silently alter what an
+orchestrator advertises and sells.
 
-## Housekeeping
-
-Re-pinning to `9f91299` is fine. Note the branch has moved since: the
-suite is now **32 passed, 0 failed, 0 skipped**, having closed the
-remaining gaps against the specs' own conformance lists — including
-per-schema public-by-contract fixtures for all four shipped schemas
-(previously only `sfu-room` had them, so the framework's "a schema change
-that moves a sensitive field into `public` fails conformance rather than
-review" guarantee was not actually true for the other three), lease-expiry
-and bounded-refill scenarios, and wire coverage for the control-WS
-binding. Closing those found one more broker gap of the kind you have
-been catching: `refill: bounded` was declared in the schema, advertised
-by the registry, and never enforced.
+Nothing there changes what you are building now.

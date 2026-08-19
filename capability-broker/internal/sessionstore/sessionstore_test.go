@@ -2,8 +2,10 @@ package sessionstore
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -271,5 +273,30 @@ func TestForEachSeesUnsealedRecords(t *testing.T) {
 	}
 	if seen != 2 {
 		t.Fatalf("expected 2 records, saw %d", seen)
+	}
+}
+
+func TestLoadKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, data []byte) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	raw := testKey()
+	if got, err := LoadKeyFile(write("raw", raw)); err != nil || !bytes.Equal(got, raw) {
+		t.Fatalf("raw key: %v", err)
+	}
+	hexed := []byte(hex.EncodeToString(raw) + "\n")
+	if got, err := LoadKeyFile(write("hex", hexed)); err != nil || !bytes.Equal(got, raw) {
+		t.Fatalf("hex key: %v", err)
+	}
+	if _, err := LoadKeyFile(write("short", []byte("nope"))); err == nil {
+		t.Fatal("short key accepted")
+	}
+	if _, err := LoadKeyFile(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("missing file accepted")
 	}
 }

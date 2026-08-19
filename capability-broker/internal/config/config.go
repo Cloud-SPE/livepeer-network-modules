@@ -10,9 +10,21 @@ type Config struct {
 	Listen        Listen        `yaml:"listen,omitempty"`
 	AdminAuth     AuthConfig    `yaml:"admin_auth,omitempty"`
 	PaymentDaemon PaymentDaemon `yaml:"payment_daemon,omitempty"`
+	SessionStore  SessionStore  `yaml:"session_store,omitempty"`
 	PoolSnapshot  PoolSnapshot  `yaml:"pool_snapshot,omitempty"`
 	ReceiptSink   ReceiptSink   `yaml:"receipt_sink,omitempty"`
 	Capabilities  []Capability  `yaml:"capabilities"`
+}
+
+// SessionStore configures the durable paid-session store
+// (internal/sessionstore). Path is the bbolt database file — it must
+// live on a persistent volume, since losing it orphans every active
+// session. SealingKeyFile names a file holding the 32-byte key (raw or
+// hex) that seals descriptor private parts at rest. Both are required
+// once any capability declares a paid-session protocol.
+type SessionStore struct {
+	Path           string `yaml:"path,omitempty"`
+	SealingKeyFile string `yaml:"sealing_key_file,omitempty"`
 }
 
 // Identity carries the orch's chain identity. Must be present.

@@ -107,6 +107,9 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("admin_auth.method %q is not supported", c.AdminAuth.Method)
 	}
+	if (c.SessionStore.Path == "") != (c.SessionStore.SealingKeyFile == "") {
+		return fmt.Errorf("session_store: path and sealing_key_file must be set together")
+	}
 	if c.PoolSnapshot.URL != "" {
 		u, err := url.Parse(c.PoolSnapshot.URL)
 		if err != nil {

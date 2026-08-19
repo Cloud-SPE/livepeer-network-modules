@@ -1,6 +1,6 @@
 {
   "manifest": {
-    "spec_version": "0.2.0",
+    "spec_version": "1.0.0",
     "publication_seq": 1,
     "issued_at": "2026-05-06T12:34:56Z",
     "expires_at": "2026-06-05T12:34:56Z",
@@ -12,7 +12,8 @@
       {
         "capability_id": "openai:chat-completions",
         "offering_id": "vllm-h100-batch4",
-        "interaction_mode": "http-stream@v0",
+        "protocol": "paid-job/v1",
+        "job": { "transports": ["unary", "stream"] },
         "work_unit": { "name": "tokens" },
         "price_per_unit_wei": "1500000",
         "worker_url": "https://broker-a.orch.example.com",
@@ -25,24 +26,31 @@
         }
       },
       {
-        "capability_id": "openai:chat-completions",
-        "offering_id": "openai-resale",
-        "interaction_mode": "http-stream@v0",
-        "work_unit": { "name": "tokens" },
-        "price_per_unit_wei": "8500000",
+        "capability_id": "openai:audio-transcriptions",
+        "offering_id": "whisper-large",
+        "protocol": "paid-job/v1",
+        "job": { "transports": ["multipart"] },
+        "work_unit": { "name": "audio_seconds" },
+        "price_per_unit_wei": "40000",
         "worker_url": "https://broker-a.orch.example.com",
         "extra": {
           "openai": {
-            "model": "gpt-4o"
+            "model": "whisper-large-v3"
           },
-          "backend_provider": "openai",
-          "region": "global"
+          "region": "us-west-2"
         }
       },
       {
         "capability_id": "video:transcode.live",
         "offering_id": "h264-1080p30",
-        "interaction_mode": "rtmp-ingress-hls-egress@v1",
+        "protocol": "paid-session/v1",
+        "session": {
+          "descriptor_schema": "rtmp-hls/v1",
+          "metering": "runner-reported",
+          "refill": "extensible",
+          "heartbeat": { "interval_seconds": 10, "missed_threshold": 3 },
+          "runway_increment_units": 60000
+        },
         "work_unit": { "name": "video-frame-megapixel" },
         "price_per_unit_wei": "200000",
         "worker_url": "https://broker-b.orch.example.com",
@@ -54,7 +62,8 @@
       {
         "capability_id": "kibble:doggo-bark-counter:v1",
         "offering_id": "default",
-        "interaction_mode": "http-reqresp@v1",
+        "protocol": "paid-job/v1",
+        "job": { "transports": ["unary"] },
         "work_unit": { "name": "barks" },
         "price_per_unit_wei": "100",
         "worker_url": "https://broker-a.orch.example.com"
@@ -63,7 +72,7 @@
   },
   "signature": {
     "algorithm": "secp256k1",
-    "value": "0xexample-signature-truncated-for-readability-this-is-not-a-valid-signature-real-signatures-are-65-bytes-of-hex-encoded-r-s-v",
+    "value": "0xababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd1b",
     "canonicalization": "JCS"
   }
 }

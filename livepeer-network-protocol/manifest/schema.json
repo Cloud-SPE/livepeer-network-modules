@@ -74,12 +74,22 @@
       "required": [
         "capability_id",
         "offering_id",
-        "interaction_mode",
+        "protocol",
         "work_unit",
         "price_per_unit_wei",
         "worker_url"
       ],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "protocol": { "pattern": "^paid-job/" } } },
+          "then": { "required": ["job"], "not": { "required": ["session"] } }
+        },
+        {
+          "if": { "properties": { "protocol": { "pattern": "^paid-session/" } } },
+          "then": { "required": ["session"], "not": { "required": ["job"] } }
+        }
+      ],
       "properties": {
         "capability_id": {
           "type": "string",
@@ -91,11 +101,13 @@
           "minLength": 1,
           "description": "Opaque UTF-8 identifier disambiguating priced tiers under the capability (e.g. different models, hardware classes, SLAs)."
         },
-        "interaction_mode": {
+        "protocol": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9-]*@v[0-9]+$",
-          "description": "Mode name + major version (per Q2 hybrid SemVer), e.g. 'http-stream@v0'. Mode names live in modes/<mode>.md."
+          "pattern": "^[a-z][a-z0-9-]*/v[0-9]+$",
+          "description": "Protocol tag, e.g. 'paid-job/v1' or 'paid-session/v1'. Protocol specs live in protocols/<name>.md. Consumers MUST refuse unknown protocols, never guess. Declared axes ride in the matching 'job' or 'session' object (see protocols/offering-axes.md)."
         },
+        "job": { "$ref": "#/$defs/job_axes" },
+        "session": { "$ref": "#/$defs/session_axes" },
         "work_unit": { "$ref": "#/$defs/work_unit" },
         "price_per_unit_wei": {
           "type": "string",
@@ -117,6 +129,78 @@
           "type": "object",
           "description": "Gateway-side filter hints. Same shape as extra; semantics are gateway-defined.",
           "additionalProperties": true
+        }
+      }
+    },
+
+    "job_axes": {
+      "type": "object",
+      "title": "paid-job declared axes",
+      "required": ["transports"],
+      "additionalProperties": false,
+      "properties": {
+        "transports": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["unary", "stream", "multipart"] },
+          "description": "Transports this offering serves. Selected per-request by HTTP negotiation; brokers refuse undeclared transports before payment side effects."
+        }
+      }
+    },
+
+    "session_axes": {
+      "type": "object",
+      "title": "paid-session declared axes",
+      "required": ["descriptor_schema", "metering"],
+      "additionalProperties": false,
+      "properties": {
+        "descriptor_schema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*/v[0-9]+$",
+          "description": "Runtime-descriptor schema tag (protocols/runtime-descriptor.md). Gateways MUST NOT open sessions whose schema they do not implement; brokers reject runner descriptors that do not match it."
+        },
+        "attachment": {
+          "enum": ["external", "inband-ws"],
+          "default": "external",
+          "description": "'external': runtime coordinates come from the descriptor; data never transits the broker. 'inband-ws': the data plane is a broker-relayed WebSocket."
+        },
+        "metering": {
+          "enum": ["runner-reported", "broker-observed"],
+          "description": "Origin of the seller's usage claims. 'broker-observed' is valid only with attachment 'inband-ws' — a broker cannot observe traffic that never transits it."
+        },
+        "refill": {
+          "enum": ["extensible", "bounded"],
+          "default": "extensible",
+          "description": "'bounded' offerings reject top-up after open. The clearinghouse gates refill on this field."
+        },
+        "heartbeat": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "interval_seconds": { "type": "integer", "minimum": 1, "default": 10 },
+            "missed_threshold": { "type": "integer", "minimum": 1, "default": 3 }
+          },
+          "description": "Liveness enforcement parameters (paid-session spec §5)."
+        },
+        "lease": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "policy": { "enum": ["funding-tracking", "fixed"], "default": "funding-tracking" },
+            "max_seconds": { "type": "integer", "minimum": 1 }
+          },
+          "description": "Lease policy override; absent means the session spec's normative funding-tracking default."
+        },
+        "tolerance_band_pct": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Advisory: divergence tolerance the seller commits to operate within (trust-model doc). Buyers may prefer tighter bands at route selection."
+        },
+        "runway_increment_units": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Advisory: seller-suggested top-up sizing. Buyers own their actual increment; it is their exposure bound."
         }
       }
     },

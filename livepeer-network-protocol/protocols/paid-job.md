@@ -112,9 +112,11 @@ request id and converges on the true outcome.
 
 ## 5. Usage and settlement
 
-The offering manifest declares its extractor (`openai-usage`,
-`bytes-counted`, `response-jsonpath`, `seconds-elapsed`, `request-formula`,
-…) and its work unit. The broker runs the extractor at the terminal
+The offering manifest declares the work unit; the extractor that counts it
+(`openai-usage`, `bytes-counted`, `response-jsonpath`, `seconds-elapsed`,
+`request-formula`, …) is broker host configuration — a seller-side
+implementation choice no counterparty gates on, so it is deliberately not
+advertised (see `offering-axes.md`). The broker runs the extractor at the terminal
 accounting point (response completion or stream termination), debits the
 payee-side payment session for exactly the claimed units, and emits the
 claim. Claim emission and debit MUST be consistent: the units in

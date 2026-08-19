@@ -28,7 +28,7 @@ capability-broker/
     │       ├── offerings.go              # GET /registry/offerings
     │       ├── health.go                 # GET /registry/health
     │       └── healthz.go                # GET /healthz
-    ├── modes/                            # one driver per interaction mode
+    ├── sessionengine/                    # paid-session/v1 authority (jobs live in server/)
     │   ├── types.go                      # Driver interface
     │   ├── registry.go                   # mode-name → Driver lookup
     │   └── httpreqresp/

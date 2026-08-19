@@ -19,8 +19,9 @@ A single Go binary that **brokers** between:
 The broker contains **zero capability-specific code**. All workload knowledge
 lives in:
 
-1. **Mode adapters** — implementations of the spec's interaction modes
-   (`http-reqresp@v0` first; others per plan 0006).
+1. **Protocol engines** — implementations of the spec's two protocols:
+   the paid-job transports and the paid-session engine
+   (`internal/sessionengine`), replacing the mode-adapter layer 2026-08.
 2. **Extractor implementations** — declarative work-unit recipes
    (`response-jsonpath` first; others per plan 0007).
 3. **The `host-config.yaml` operator config** — capability ID, offering ID,

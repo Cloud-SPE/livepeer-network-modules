@@ -10,8 +10,8 @@ defined in [`../livepeer-network-protocol/`](../livepeer-network-protocol/).
 One process per orch host. Reads a single declarative `host-config.yaml`,
 exposes:
 
-- `POST /v1/cap` — paid request entry point (HTTP modes).
-- `GET /v1/cap` — paid WebSocket upgrade entry point (`ws-realtime` mode).
+- `POST /v1/job` — paid one-shot exchanges (`paid-job/v1`; unary, stream, multipart).
+- `POST /v1/session` + `/v1/session/{id}[/topup|/end|/events]` — paid durable sessions (`paid-session/v1`).
 - `POST /v1/payment/ticket-params` — unpaid quote-free ticket-params proxy for sender-mode payment daemons.
 - `GET /registry/offerings` — capability inventory for orch-coordinator scrape.
 - `GET /registry/health` — live capability availability for gateway resolvers.
@@ -120,7 +120,7 @@ No host Go install required.
 ## Configuration
 
 A single declarative YAML file: [`examples/host-config.example.yaml`](./examples/host-config.example.yaml).
-The example starts with minimal `http-reqresp@v0` entries for smoke bring-up
+The example starts with minimal `paid-job/v1` entries for smoke bring-up
 and keeps more involved shipped shapes commented out until you wire the
 necessary backend infrastructure.
 

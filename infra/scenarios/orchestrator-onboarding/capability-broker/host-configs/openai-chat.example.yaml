@@ -1,10 +1,14 @@
 # Capability Broker host-config — OpenAI Chat Completions.
 #
-# Advertises a single chat model with two interaction modes:
-#   - http-stream@v0   for gateways that want SSE streaming
-#   - http-reqresp@v0  for gateways that want a single buffered response
+# Advertises a single chat model as two paid-job/v1 offerings:
+#   - vllm-qwen3.6-27b-stream   declares transports [unary, stream]
+#   - vllm-qwen3.6-27b-default  declares transport  [unary]
 #
-# Same backend, same model, same price — different gateway integration paths.
+# Same backend, same model, same price. Note this split is now a pricing
+# choice, not a protocol requirement: one offering declaring
+# [unary, stream] already serves both callers, who pick per request with
+# ordinary HTTP negotiation (Accept: text/event-stream). The old taxonomy
+# forced the split because the mode was part of the offering's identity.
 # Pair this with any reachable vLLM deployment behind the broker's
 # `backend.url` targets below.
 

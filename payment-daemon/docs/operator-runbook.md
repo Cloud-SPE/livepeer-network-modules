@@ -387,13 +387,18 @@ Default is 2 rounds.
 
 The receiver daemon owns per-(sender, work_id) balances. The
 **capability-broker** is the component that performs work and tells the
-daemon "I just did N units; debit accordingly". For request/response
-modes (`http-reqresp@v0`, `http-multipart@v0`) the broker calls
-`PayeeDaemon.DebitBalance` exactly once at handler completion. For
-**long-running modes** (`ws-realtime@v0`, `rtmp-ingress-hls-egress@v0`,
-`session-control-plus-media@v0`, streaming `http-stream@v0`) the broker
-runs a per-session ticker and issues a sequence of `DebitBalance` calls
-plus periodic `SufficientBalance` runway checks. Plan 0015.
+daemon "I just did N units; debit accordingly". For **`paid-job/v1`**
+exchanges the broker calls `PayeeDaemon.DebitBalance` once at the
+terminal accounting point (response completion or stream termination).
+For **`paid-session/v1`** the broker converts the runner's cumulative
+usage claims into a sequence of `DebitBalance` calls, with
+`SufficientBalance` runway checks on cadence.
+
+The session path's accounting invariant is worth knowing here because it
+constrains what the daemon sees: event deduplication is committed only
+together with durable debit progress, so a transient `DebitBalance`
+failure leaves the event unprocessed and the runner's retry produces
+exactly one debit — never zero, never two.
 
 This section is what the gateway operator and the orchestrator operator
 need to know to reason about long-running session economics together.
@@ -473,15 +478,14 @@ semantics unchanged from v0.2.
 If you see `DebitBalance call rate exceeds expected cadence` in
 operator dashboards, that's a sustained-retry signal. See §7.
 
-**`rtmp-ingress-hls-egress@v0` work-units.** RTMP sessions emit
-work-units via the FFmpeg progress extractor (see
-`capability-broker/docs/operator-runbook.md` §"GPU encoder hardware"
-+ §"RTMP pipeline observability"). The broker's interim-debit ticker
-reads `LiveCounter.CurrentUnits()` from the encoder's progress atomic
-and debits at the same cadence as ws-realtime. Termination triggers
-(no_push_timeout / idle_timeout / insufficient_balance / customer
-CloseSession) are all surfaced through the broker's existing
-`Livepeer-Error` channel.
+**Session work-units.** Under `paid-session/v1` the runner is the source
+of usage: it reports cumulative totals on the session's event channel and
+the broker derives debits from them. The broker no longer hosts media
+pipelines or counts units itself, so there is no encoder-progress or
+in-broker counter path to reason about here. Terminal reasons
+(`heartbeat_lost`, `lease_expired`, `insufficient_balance`,
+`gateway_close`, …) are surfaced on the session's status and control
+surfaces; see `capability-broker/docs/operator-runbook.md` §3.
 
 
 
@@ -654,81 +658,18 @@ load-bearing — read the logs.
 
 ---
 
-## 11. Session-control-plus-media operations
+## 11. Removed: session-control-plus-media operations
 
-Cross-cutting deltas for the broker's `session-control-plus-media@v0`
-mode. The mode driver itself ships with the broker; this section
-captures the operator-facing knobs and failure modes.
+This section documented the broker's `session-control-plus-media@v0` mode
+driver: container-runtime prerequisites for per-session backends, image
+management, and the pion WebRTC UDP port range.
 
-### 11.1. Container-runtime prereq
+**That mode and its driver were removed with the v0 interaction-mode
+taxonomy (2026-08).** The flags it described — `--container-runtime`,
+`--webrtc-udp-port-min` / `--webrtc-udp-port-max`,
+`--session-control-max-concurrent-sessions` — no longer exist, and a
+broker started with them will fail to parse its arguments.
 
-Docker daemon must be running on the broker host with image registry
-credentials configured for the operator's session-backend image. The broker's
-`--container-runtime` flag defaults to `docker`; the alternative
-`process` runtime is debug-only and bypasses the runtime entirely.
-
-### 11.2. Image management
-
-Operator pulls the session-backend image; the broker does not vendor it. Pin to
-a digest in production. Rotation = push new image + update
-`host-config.yaml`'s `capabilities[].backend.session_runner.image` +
-SIGHUP the broker. The `--session-control-max-concurrent-sessions` cap
-governs how many session backends can run simultaneously per broker host.
-
-### 11.3. WebRTC firewall
-
-The pion media-plane binds UDP ports `--webrtc-udp-port-min` through
-`--webrtc-udp-port-max` (default `40000-49999`). The full range must be
-reachable from customer clients. STUN config for NAT traversal is
-operator-provisioned via the customer-side player; TURN is not bundled
-by the broker.
-
-If `--webrtc-public-ip` is unset, pion auto-detects the host's
-outbound IP. In multi-homed deployments (private + public NICs), pin
-the flag explicitly to avoid advertising the wrong interface in ICE
-candidates.
-
-### 11.4. Resource sizing
-
-Per-session sizing depends on the backend image. The historical vtuber
-session backend needed ~ 2 GiB RAM + 2 CPU per session; capacity formula
-is `--session-control-max-concurrent-sessions x per-session sizing`.
-Set `capabilities[].backend.session_runner.resources` to enforce per
-session.
-
-### 11.5. Common failure modes
-
-- **Session backend crashed.** Check the broker logs for `runner_crashed` /
-  `runner_oom`. OOM means raising `resources.memory`; missing env or
-  pull failure means registry credentials.
-- **Control-WS keeps disconnecting.** Most often NAT or firewall on the
-  customer side. Pong RTT vs `--session-control-heartbeat-interval`
-  matters: a 10s ping with three missed pongs gives a 30s detection
-  window. Reconnect-window default is 30s; raise both for high-latency
-  customer paths.
-- **SDP failure.** Verify `--webrtc-public-ip`; UDP range open;
-  customer's STUN reachable. The broker emits `media.failed` on the
-  control-WS when negotiation fails.
-- **Session starvation.** `--session-control-max-concurrent-sessions`
-  cap hit. The broker rejects new sessions at the dispatcher with
-  `capacity_exhausted`; pre-existing sessions continue.
-- **Backpressure drop.** The broker dropped a control-WS because the
-  customer stopped reading; the WS close-frame reason is
-  `backpressure_drop`. Customer-side bug; broker is healthy.
-
-### 11.6. Observability
-
-New broker-side metrics for the mode:
-
-- `livepeer_mode_session_runner_subprocess_total{outcome}` — counter;
-  outcome ∈ {started, exited_clean, crashed, oom_killed,
-  watchdog_killed}.
-- `livepeer_mode_session_control_ws_active{capability}` — gauge; per-
-  capability count of currently-attached control-WS connections.
-- `livepeer_mode_session_media_pc_state{state}` — counter; state
-  transitions of the per-session pion PeerConnection.
-
-Reconnect-window expiry shows up on the broker as a
-`control_disconnect_window_expired` close cause and propagates to
-`livepeer_payment_session_terminated_total` via the existing
-interim-debit ticker.
+Long-lived workloads are now `paid-session/v1`, where the runtime is
+owned by a remote runner rather than spawned by the broker. Operator
+guidance lives in `capability-broker/docs/operator-runbook.md` §3.

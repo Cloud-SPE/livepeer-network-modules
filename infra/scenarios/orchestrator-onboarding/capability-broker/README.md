@@ -121,10 +121,14 @@ matching gateway release is published.
   fails enough times in a row the offering is reported `unreachable` and
   gateways skip routing here until it recovers — the signed manifest is
   not touched. See "Health probes" below.
-- **Same model, two interaction modes.** The chat host-config advertises
-  the same Qwen model under both `http-stream@v0` and `http-reqresp@v0`
-  with different `offering_id`s. Gateways pick whichever fits their
-  integration.
+- **One offering can serve several transports.** The chat host-config
+  keeps two offerings for the same Qwen model, but that is now a pricing
+  choice rather than a protocol requirement: a single `paid-job/v1`
+  offering declaring `job.transports: [unary, stream]` serves both
+  streaming and non-streaming callers, who select per request with
+  ordinary HTTP negotiation. Under the old mode taxonomy the split was
+  forced, because the mode was part of the offering's identity. Keep two
+  only if you want to price or constrain them differently.
 - **`constraints` is operator-supplied metadata.** Gateways may use it
   to route requests to brokers with the hardware they expect (e.g.
   `gpu: "4090"`, `gpu_model: "1080"`, `gpu_vendor: "NVIDIA"`).

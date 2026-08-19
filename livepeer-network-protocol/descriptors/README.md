@@ -6,6 +6,10 @@ envelope, public/private partition, grants, validation — is defined in
 each document here defines one schema's fields, grants, and
 public-by-contract conformance surface.
 
+Runner authors: the obligations a schema places on you sit alongside the
+protocol's in
+[`paid-session/v1` §11](../protocols/paid-session.md#11-runner-obligations--the-implementers-checklist).
+
 A schema is owned by its capability. Adding one requires changes only in the
 runner that emits it and the gateway that consumes it — no broker,
 clearinghouse, or registry work.

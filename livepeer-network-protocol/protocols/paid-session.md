@@ -213,6 +213,10 @@ seeing it can drain gracefully instead of discovering refusal mid-broadcast.
 
 ## 7. Runner ↔ broker contract
 
+> Implementing a runner? [§11](#11-runner-obligations--the-implementers-checklist)
+> collects every obligation this protocol places on you in one table,
+> with the failure signature for each.
+
 ### 7.1 Backend paths are configuration
 
 The broker reaches the runner via operator-configured paths declared with the
@@ -356,8 +360,77 @@ Executable fixtures every broker implementation MUST pass:
 - a second open with the same `Livepeer-Request-Id` returns the original
   session, not a sibling.
 
+## 11. Runner obligations — the implementer's checklist
+
+Everything a runner must do, in one place. This section is normative but
+**derivative**: each obligation is specified in full where it is
+referenced, and where this checklist and a numbered section differ, the
+numbered section governs. It exists because a runner author should not
+have to reverse-engineer their contract from a protocol written mostly
+from the broker's point of view.
+
+The third column is the point of the exercise. A runner that gets one of
+these wrong sees a specific failure, and knowing the signature in advance
+is the difference between a diagnosable bug and an afternoon.
+
+### Session creation
+
+| Obligation | Specified in | Failure signature if violated |
+|---|---|---|
+| Respond to create with `runner_session_id` and a `runtime` descriptor | §7.1 | Open fails `502`; broker terminates any partial binding and closes payment state. |
+| Emit exactly the four descriptor keys (`schema`, `public`, `private`, `grants`); no others | [descriptor §2](./runtime-descriptor.md) | Open rejected: `unknown top-level key at path $.<key>`. Unknown keys are a partition-bypass vector, not a compatibility affordance. |
+| `schema` MUST equal the offering's declared `descriptor_schema` | descriptor §2.1 | Open rejected naming both tags. A runner that upgrades its schema without the offering being updated fails here, every time. |
+| Keep the serialized `runtime` object within the size cap (16 KiB default) | descriptor §3 | Open rejected with the observed size and the cap. |
+| Put nothing in `public` that the schema does not declare public | the schema's own doc | Not caught at runtime — the broker relays `public` verbatim. Caught by the schema's conformance fixtures, which is why they exist. |
+| Never place long-lived credentials (API keys, TURN secrets) anywhere in the descriptor | descriptor §2.3 and the schema | Not caught at runtime. This one is on you. |
+| The public part is immutable for the session's lifetime | descriptor §2.2 | No update mechanism exists in v1; coordinates that change mean the session ends and a new one opens. |
+
+### Grants
+
+| Obligation | Specified in | Failure signature if violated |
+|---|---|---|
+| Provide a grant for every operation the schema declares, with `id`, non-empty `operations`, `secret`, and `expires_at` | descriptor §2.4 | Open rejected: `grant[N] missing required field`. |
+| Honour the grant secret on **every** operation the schema names (e.g. both `participant-token-mint` and `room-status` for `sfu-room/v1`) | the schema's own doc | Not caught by the broker — it is not in the grant's data path. The gateway simply cannot use the coordinate, which usually surfaces as a customer-visible failure. |
+| Scope granted operations to this session only | descriptor §2.4 | Not broker-observable. A cross-session grant is a security defect in your runner. |
+| Enforce `expires_at` and `max_uses`, and **refuse all grant operations once the session is terminal** — expiry is a backstop, not the lifetime | descriptor §2.4 rule 5 | Not broker-observable. A grant honoured after end is an unmetered runtime. |
+| Do not expect grants to be re-issued: they are delivered once at open and never re-minted, including after a broker restart | descriptor §2.4 rules 1 and 3 | A runner that assumes re-issue will wait forever. |
+
+### Usage events
+
+| Obligation | Specified in | Failure signature if violated |
+|---|---|---|
+| Send `event_id` non-empty and unique per session | §7.2 | Protocol error; **nothing advances** — not idempotency, not sequence, not usage. |
+| Send `sequence` positive and strictly monotonic per session | §7.2 | Same. An event at or below the committed watermark is treated as a duplicate and acknowledged without effect. |
+| Report `usage.total` as a **cumulative** total, never a per-event delta | §7.2 | A runner sending deltas as totals under-reports permanently: the broker derives its debit from the cumulative figure. A per-event delta field is ignored *by rule*. |
+| `usage.unit` MUST equal the offering's declared work unit | §7.2 | Protocol error advancing nothing — so a unit mismatch rejects **every** usage event for the session's lifetime. The single most common integration failure. |
+| Never let cumulative usage go backwards | §7.2 | Protocol error (`usage_regression`), nothing advances. |
+| Emit the required event types: `session.started`, `session.heartbeat`, `session.usage.tick`, `session.failed`, `session.ended` | §7.2 | A session that never reports is torn down as `heartbeat_lost`. |
+| Emit *something* within `interval × missed_threshold` — any accepted event refreshes liveness, so a usage tick suffices | §5 | Torn down with `heartbeat_lost`: runner terminated, payment closed, capacity released. |
+| Retry on `5xx`, with the same `event_id` and `sequence` | §7.3 | The broker's exactly-once contract depends on it: a transient debit failure leaves the event uncommitted precisely so your retry completes it. A runner that gives up loses that usage permanently. |
+| Extra envelope fields are tolerated and ignored | §7.2 | None — carry your own correlation fields freely. |
+| Authenticate every event with the callback token from create, at the callback URL from create | §7.1, §7.2 | `401`, indistinguishable from an unknown session (no existence oracle). |
+
+### Termination
+
+| Obligation | Specified in | Failure signature if violated |
+|---|---|---|
+| Make terminate idempotent; terminating an unknown or already-terminated session succeeds | §7.1 | A non-idempotent terminate turns every winddown retry into a spurious error and can leave the broker's state and yours disagreeing. |
+| Actually stop serving on terminate — the broker treats it as authoritative | §5, §9.2 | Serving after terminate is unmetered work; the broker has already closed payment. |
+| Answer the status path truthfully, including after termination | §7.1, §9.2 | Recovery uses it: reporting a session gone that you still serve strands it; reporting alive one you dropped delays the terminal outcome. |
+
+### What the runner never does
+
+- **Never talk to the payment layer.** The broker is the sole network-payment
+  authority; a runner that contacts `payment-daemon` is outside the protocol.
+- **Never set price.** Price is the operator's declaration; a runner that
+  reports monetary value rather than work units is misusing the contract.
+- **Never treat its usage claims as billing truth for the buyer.** They are
+  the seller's meter (see the dual-meter trust model). The gateway bills
+  its own customers from its own edge.
+
 ## Changelog
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.1-draft | 2026-08-19 | Add §11, the consolidated runner-obligations checklist, with the failure signature for each violation. Derivative and non-normative where it conflicts with a numbered section. |
 | 1.0.0-draft | 2026-08-18 | Initial protocol. Replaces the five session-family modes; durable authority, exactly-once debit, lease/heartbeat enforcement, session credential, and the balance object become normative. Absorbs meeting-handoff requirements B1–B5 and A4. |

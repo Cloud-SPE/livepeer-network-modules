@@ -35,7 +35,13 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const sessionsBucket = "sessions"
+const (
+	sessionsBucket = "sessions"
+	// openRequestsBucket maps Livepeer-Request-Id -> session id, making
+	// session open idempotent (paid-session/v1 §3.1): a retried open
+	// resolves to the original session instead of minting a sibling.
+	openRequestsBucket = "open_requests"
+)
 
 // KeySize is the required length of the store's sealing key (AES-256).
 const KeySize = 32
@@ -164,7 +170,10 @@ func Open(path string, key []byte) (*Store, error) {
 		return nil, fmt.Errorf("sessionstore: open %s: %w", path, err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		_, e := tx.CreateBucketIfNotExists([]byte(sessionsBucket))
+		if _, e := tx.CreateBucketIfNotExists([]byte(sessionsBucket)); e != nil {
+			return e
+		}
+		_, e := tx.CreateBucketIfNotExists([]byte(openRequestsBucket))
 		return e
 	})
 	if err != nil {
@@ -198,6 +207,52 @@ func (s *Store) Create(rec *Record) error {
 		}
 		return b.Put([]byte(rec.SessionID), raw)
 	})
+}
+
+// CreateIndexed inserts a new record and, in the same transaction,
+// indexes it under the open request id. ErrExists if either the session
+// id or the request id is already taken (a request-id collision means a
+// concurrent open won the race; the caller re-resolves via
+// SessionIDForRequest).
+func (s *Store) CreateIndexed(rec *Record, requestID string) error {
+	if rec.SessionID == "" || requestID == "" {
+		return errors.New("sessionstore: empty session id or request id")
+	}
+	now := time.Now().UTC()
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = now
+	}
+	rec.UpdatedAt = now
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(sessionsBucket))
+		idx := tx.Bucket([]byte(openRequestsBucket))
+		if b.Get([]byte(rec.SessionID)) != nil || idx.Get([]byte(requestID)) != nil {
+			return ErrExists
+		}
+		raw, err := s.seal(rec)
+		if err != nil {
+			return err
+		}
+		if err := b.Put([]byte(rec.SessionID), raw); err != nil {
+			return err
+		}
+		return idx.Put([]byte(requestID), []byte(rec.SessionID))
+	})
+}
+
+// SessionIDForRequest resolves an open request id to its session id.
+// ErrNotFound when the request id is unknown.
+func (s *Store) SessionIDForRequest(requestID string) (string, error) {
+	var id string
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket([]byte(openRequestsBucket)).Get([]byte(requestID))
+		if v == nil {
+			return ErrNotFound
+		}
+		id = string(v)
+		return nil
+	})
+	return id, err
 }
 
 // Get returns the record for id, with the private descriptor part

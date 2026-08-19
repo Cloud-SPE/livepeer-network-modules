@@ -69,7 +69,7 @@ sender/receiver split.
 | Sender (payer) daemon | [`payment-daemon/internal/service/sender/sender.go`](../../payment-daemon/internal/service/sender/sender.go) |
 | Receiver (payee) daemon | [`payment-daemon/internal/service/receiver/receiver.go`](../../payment-daemon/internal/service/receiver/receiver.go) |
 | Session + balance store | [`payment-daemon/internal/store/store.go`](../../payment-daemon/internal/store/store.go) |
-| Interaction modes | [`livepeer-network-protocol/modes/`](../../livepeer-network-protocol/modes/) |
+| Interaction protocols | [`livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/) |
 | Work-unit extractors | [`livepeer-network-protocol/extractors/`](../../livepeer-network-protocol/extractors/) |
 | Pool accounting docs | [`pool-controller/`](../../pool-controller/), [`pool-reconciler/`](../../pool-reconciler/), [`pool-payout-executor/`](../../pool-payout-executor/) |
 
@@ -85,7 +85,7 @@ wei-denominated ratio plus an opaque work-unit name. Example from
 capabilities:
   - id: "kibble:doggo-bark-counter:v1"
     offering_id: "default"
-    interaction_mode: "http-reqresp@v0"
+    protocol: "paid-job/v1"
     work_unit:
       name: "barks"
       extractor: { type: "response-jsonpath", path: "$.bark_count" }
@@ -230,21 +230,20 @@ s.store.OpenSession(store.Session{
 the session — see the `Session` struct in
 [`store.go:47-71`](../../payment-daemon/internal/store/store.go).
 
-### 7. Backend runs in an interaction mode
+### 7. Backend runs under a protocol
 
-The interaction mode controls *when* and *how* work units are reported.
-Specs in [`livepeer-network-protocol/modes/`](../../livepeer-network-protocol/modes/):
+The protocol controls *when* and *how* work units are reported. Specs in
+[`livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/):
 
-- `http-reqresp@v0` — one request, one response, post-response extraction
-- `http-stream@v0` — chunked/SSE response, extraction at stream end
-- `http-multipart@v0` — multipart upload, post-response extraction
-- `ws-realtime@v0` — bidirectional WebSocket, per-cadence debit
-- `rtmp-ingress-hls-egress@v0` — RTMP in, HLS out, session-metered
-- `session-control-plus-media@v0` — broker-managed media plane
-- `live-session-remote-runner@v0` — broker-authoritative live session with a remote runner-owned media runtime
+- `paid-job/v1` — one exchange; the declared extractor runs at the terminal
+  accounting point (response end or stream termination) and the debit
+  settles once.
+- `paid-session/v1` — cumulative usage claims (runner-reported or
+  broker-observed per the offering's declared metering axis) drive debits
+  against funded runway for the session's lifetime.
 
-Pricing math is identical across modes; modes only differ in *when* the
-broker can extract `actualUnits` and call `DebitBalance`.
+Pricing math is identical across protocols; they differ only in *when* the
+broker can establish `actualUnits` and call `DebitBalance`.
 
 ### 8. Extractor produces `actualUnits`
 

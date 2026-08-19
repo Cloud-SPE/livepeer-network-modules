@@ -1,10 +1,19 @@
 ---
 title: Streaming workload pattern
-status: active
-last-reviewed: 2026-05-11
+status: superseded
+last-reviewed: 2026-08-19
 ---
 
 # Streaming workload pattern
+
+> **Status note (2026-08-19).** The interaction modes this doc binds to were
+> removed with the v1 protocol rebuild. Its durability requirements (durable
+> outbox, replay after restart, persisted session identity) survive as the
+> seller's own obligations in
+> [`paid-session/v1`](../../livepeer-network-protocol/protocols/paid-session.md)
+> §7.3/§9; its "broker meters for the gateway" framing is superseded by
+> [`dual-meter-trust.md`](./dual-meter-trust.md). Kept as design provenance —
+> do not implement against it.
 
 Cross-cutting blueprint for long-lived, continuously-metered capabilities on
 the Livepeer network. This is the pattern new streaming capabilities should
@@ -581,6 +590,3 @@ Gateway → sender-side daemon:
   sender / receiver economic model
 - [`payment-decoupling.md`](./payment-decoupling.md) — what the rewrite
   changed in `payment-daemon` to support opaque capability / work-unit names
-- [`../../livepeer-network-protocol/modes/session-control-plus-media.md`](../../livepeer-network-protocol/modes/session-control-plus-media.md)
-- [`../../livepeer-network-protocol/modes/ws-realtime.md`](../../livepeer-network-protocol/modes/ws-realtime.md)
-- [`../../livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md`](../../livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md)

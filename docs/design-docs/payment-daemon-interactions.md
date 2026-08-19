@@ -126,7 +126,7 @@ The gateway resolves through `service-registry-daemon`:
 - recipient ETH address
 - `capability_id`
 - `offering_id`
-- `interaction_mode`
+- `protocol`
 - `price_per_work_unit_wei`
 - `work_unit` (opaque string)
 
@@ -189,7 +189,7 @@ sequenceDiagram
     participant Receiver as payment-daemon<br/>(receiver)
 
     Shell->>SRD: Resolver.Select(capability_id, offering_id?)
-    SRD-->>Shell: { worker_url, eth_address, interaction_mode,<br/>work_unit, price_per_unit_wei }
+    SRD-->>Shell: { worker_url, eth_address, protocol,<br/>work_unit, price_per_unit_wei }
     Shell->>Shell: compute accepted_price + funded_value from<br/>price_per_unit_wei × estimated_units
     Shell->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
     Sender->>SRD: resolve recipient → worker_url (local)
@@ -388,7 +388,7 @@ answer all of these clearly:
 1. What `capability_id` string does it advertise?
 2. What `offering_id` does it route on?
 3. What `work_unit` does it meter in?
-4. What `interaction_mode` from the protocol typology applies?
+4. Which protocol (`paid-job/v1` or `paid-session/v1`) applies, and for sessions, which descriptor schema?
 5. Which extractor produces `actualUnits` from the backend response?
 6. How does the gateway compute requested spend from that unit price?
 7. For streaming: which side owns the live meter — gateway or broker?

@@ -7,11 +7,11 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [core-beliefs.md](./core-beliefs.md) | active | Invariants every change must uphold |
 | [requirements.md](./requirements.md) | active | The 11 supply-side requirements with rationale |
 | [architecture-overview.md](./architecture-overview.md) | active | The 8-layer proposed architecture at a glance, with mermaid diagrams per layer |
-| [interaction-modes.md](./interaction-modes.md) | active | The finite set of client↔broker wire shapes and when each mode is the right fit |
+| [interaction-modes.md](./interaction-modes.md) | active | The two paid protocols (`paid-job/v1`, `paid-session/v1`), declared axes, and how a capability picks its shape |
 | [payment-daemon-interactions.md](./payment-daemon-interactions.md) | active | Cross-cutting guide to how the client, broker, and both `payment-daemon` roles interact |
-| [streaming-workload-pattern.md](./streaming-workload-pattern.md) | active | Long-lived-session blueprint (broker-side meter + client-side ledger) for `ws-realtime`, `session-control-plus-media`, and `rtmp-…` modes |
+| [streaming-workload-pattern.md](./streaming-workload-pattern.md) | superseded | Mode-era long-lived-session blueprint; durability requirements live on in `paid-session/v1`, trust framing in `dual-meter-trust.md` |
 | [payment-decoupling.md](./payment-decoupling.md) | active | What changed in `payment-daemon` for opaque capability / work-unit names |
-| [pricing-overview.md](./pricing-overview.md) | active | End-to-end synthesis: how price flows from `host-config.yaml` through manifest, discovery, headers, extractors, modes, session, debit, settlement, and pool receipts |
+| [pricing-overview.md](./pricing-overview.md) | active | End-to-end synthesis: how price flows from `host-config.yaml` through manifest, discovery, headers, extractors, protocols, session, debit, settlement, and pool receipts |
 | [backend-health.md](./backend-health.md) | active | Three-layer health model (manifest / live / failure-rate) — which layer answers which routing question |
 | [trust-model.md](./trust-model.md) | active | Cold-key + sign-cycle deep dive; threat model and what each invariant defends against |
 | [dual-meter-trust.md](./dual-meter-trust.md) | active | Economic trust for the v1 protocols: dual meters, admission-edge billing, claims-vs-bills, tolerance band + bounded exposure |
@@ -27,8 +27,9 @@ Stubs (to be written as we drill in):
 |---|---|---|
 | `spec-repo-relationship.md` | stub | Boundary between this repo and `livepeer-network-protocol` |
 
-Per-mode wire contracts live in
-[`../../livepeer-network-protocol/modes/`](../../livepeer-network-protocol/modes/),
+Protocol wire contracts live in
+[`../../livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/)
+and [`../../livepeer-network-protocol/descriptors/`](../../livepeer-network-protocol/descriptors/),
 not in this directory.
 
 Component-local designs live inside their respective submodules. Promote a doc

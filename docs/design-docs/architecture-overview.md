@@ -175,7 +175,7 @@ Current Pool implementation boundaries:
 1. Read a single `host-config.yaml`.
 2. Expose `GET /registry/offerings`, `GET /registry/health`, `GET /healthz`,
    `GET /metrics`, plus one canonical path per mode (e.g. `POST /v1/cap` for
-   `http-reqresp` — see [`../../livepeer-network-protocol/modes/`](../../livepeer-network-protocol/modes/)).
+   `paid-job/v1` — see [`../../livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/)).
 3. Route inbound requests by **`Livepeer-Capability` header** → look up the
    **backend descriptor** → wrap in the declared **interaction mode** → forward →
    return the response.
@@ -209,7 +209,7 @@ sequenceDiagram
 
     GW->>Broker: POST /v1/cap<br/>Livepeer-Capability: <id><br/>Livepeer-Offering: <id><br/>Livepeer-Payment: ticket<br/>Authorization: Bearer <session>?
     Broker->>Cfg: lookup (capability_id, offering_id)
-    Cfg-->>Broker: { interaction_mode, work_unit, extractor,<br/>price, backend descriptor }
+    Cfg-->>Broker: { protocol, work_unit, extractor,<br/>price, backend descriptor }
     Broker->>PD: ProcessPayment(payment_bytes, work_id)
     PD-->>Broker: ok (sender, credited_ev, balance)
 
@@ -231,85 +231,29 @@ sequenceDiagram
 - `actualUnits` is whatever the declared extractor returns; the broker doesn't
   know what a "token" or "pixel-second" is.
 
-## Layer 2 — Interaction-mode typology
+## Layer 2 — Interaction protocols
 
-The fixed wire contracts. Capabilities pick one. Initial set:
+The fixed wire contracts, rebuilt 2026-08 as two protocols plus declared
+axes (replacing the seven-mode typology):
 
-| Mode | Wire shape | Examples |
+| Protocol | Wire shape | Examples |
 |---|---|---|
-| `http-reqresp` | one HTTP req → one HTTP resp | `openai:embeddings`, custom REST |
-| `http-stream` | request → SSE / chunked stream | `openai:chat-completions` (stream) |
-| `http-multipart` | multipart upload → response | `openai:audio-transcriptions` |
-| `ws-realtime` | bidirectional WebSocket | `openai:realtime`, vtuber `/control` |
-| `rtmp-ingress-hls-egress` | RTMP in → HLS manifest+segments out | `video:live.rtmp` |
-| `session-control-plus-media` | HTTP session-open → broker-managed long-lived media/runtime plane | `livepeer:vtuber-session` |
-| `live-session-remote-runner` | HTTP session-open -> broker authority + remote runner-owned live RTMP/HLS runtime | `video:transcode.live` |
+| `paid-job/v1` | one paid exchange, settled once; transport `unary` \| `stream` \| `multipart` negotiated per-request | `openai:embeddings`, `openai:chat-completions`, ABR transcode dispatch |
+| `paid-session/v1` | durable paid session: descriptor-declared runtime, control plane, usage claims, lease | SFU meetings, live transcode, interactive generative runtimes |
 
-Each mode is implemented once in the broker, once in the gateway. **New capability
-under an existing mode = zero code.** New mode = one adapter on each side.
+Workload identity lives in **runtime-descriptor schemas**
+(`sfu-room/v1`, `rtmp-hls/v1`, …), never in protocol names; every other
+former mode distinction is a declared offering axis (transports, attachment,
+metering source, refill policy). Specs:
+[`protocols/`](../../livepeer-network-protocol/protocols/) and
+[`descriptors/`](../../livepeer-network-protocol/descriptors/).
 
-**Modes are specifications, not libraries.** Living in the
-`livepeer-network-protocol` spec repo (working name) — not a code dependency.
+**Adding a brand-new capability is a YAML edit plus, at most, a descriptor
+schema** — implemented only by the runner that emits it and the gateway that
+consumes it. No broker, clearinghouse, or registry release.
 
-```mermaid
-flowchart LR
-    subgraph caps["Capabilities (declared in host-config.yaml)"]
-        direction TB
-        C1["openai:chat-completions"]
-        C2["openai:embeddings"]
-        C3["openai:audio-transcriptions"]
-        C4["openai:realtime"]
-        C5["video:live.rtmp"]
-        C6["livepeer:vtuber-session"]
-        C8["daydream:scope:v1"]
-        C7["customer:custom-rest-api"]
-    end
-
-    subgraph modes["Interaction modes (one adapter on each side)"]
-        direction TB
-        M1["http-reqresp"]
-        M2["http-stream"]
-        M3["http-multipart"]
-        M4["ws-realtime"]
-        M5["rtmp-ingress-hls-egress"]
-        M6["session-control-plus-media"]
-        M7["live-session-remote-runner"]
-    end
-
-    subgraph adapters["One adapter per mode<br/>(broker side + gateway side)"]
-        direction TB
-        A1["reqresp adapter"]
-        A2["stream adapter"]
-        A3["multipart adapter"]
-        A4["ws adapter"]
-        A5["rtmp adapter"]
-        A6["session adapter"]
-        A7["external-media session adapter"]
-    end
-
-    C1 --> M2
-    C2 --> M1
-    C3 --> M3
-    C4 --> M4
-    C5 --> M5
-    C6 --> M6
-    C8 --> M7
-    C7 --> M1
-
-    M1 --> A1
-    M2 --> A2
-    M3 --> A3
-    M4 --> A4
-    M5 --> A5
-    M6 --> A6
-    M7 --> A7
-```
-
-**Adding a brand-new capability under an existing mode is a YAML edit** —
-no broker, gateway, or daemon release. Adding a new mode is the rare case
-where code lands in both `capability-broker/` and `gateway-adapters/`.
-
-See [`./interaction-modes.md`](./interaction-modes.md).
+See [`./interaction-modes.md`](./interaction-modes.md) and
+[`./dual-meter-trust.md`](./dual-meter-trust.md).
 
 ## Layer 3 — Declarative capability config
 
@@ -321,7 +265,7 @@ identity:
 
 capabilities:
   - id: "openai:chat-completions"
-    interaction_mode: "http-stream"
+    protocol: "paid-job/v1"
     work_unit:
       name: "tokens"
       extractor: { type: "openai-usage" }
@@ -630,12 +574,12 @@ state.
 ## Layer 4 — Discovery (workload-agnostic registry)
 
 - **Manifest data model**: a flat list of
-  `(capability_id, offering_id, interaction_mode, work_unit_name, price_per_unit_wei, worker_url, eth_address, extra, constraints)`
+  `(capability_id, offering_id, protocol, work_unit_name, price_per_unit_wei, worker_url, eth_address, extra, constraints)`
   tuples. **Host is not a registration unit.**
 - **Coordinator UI**: roster is per-capability-tuple, not per-host. Multi-binary-per-host
   vanishes (no separate binaries); multi-broker-per-orch is N more entries.
 - Resolver semantics keep their existing shape but the response now carries
-  `interaction_mode`.
+  `protocol`.
 
 The current `service-registry-daemon` resolver/publisher split keeps working; what
 changes is the manifest schema and the coordinator UX.
@@ -684,14 +628,14 @@ sequenceDiagram
 
     Note over GW,SRD: On the hot path
     GW->>SRD: Resolver.Select(capability_id,<br/>offering_id?, tier?, min_weight?)
-    SRD-->>GW: route { worker_url, eth_address,<br/>interaction_mode, work_unit,<br/>price_per_unit_wei, extra }
+    SRD-->>GW: route { worker_url, eth_address,<br/>protocol, work_unit,<br/>price_per_unit_wei, extra }
 ```
 
 **Two verifications, intentionally.** The coordinator verifies on upload; every
 gateway resolver verifies again on fetch. If the coordinator host is ever
 compromised, tampered manifests still don't propagate.
 
-**`interaction_mode` is in the resolver response** — the gateway picks the
+**`protocol` is in the resolver response** — the gateway picks the
 adapter from this, not from any per-capability lookup table.
 
 ## Layer 5 — Trust spine: operator-driven sign cycle
@@ -871,7 +815,7 @@ See [`./payment-decoupling.md`](./payment-decoupling.md).
 
 - `service-registry-daemon` applies Layer 1 + Layer 2 before the gateway sees
   a route: signed-manifest validity plus broker live health.
-- Gateway resolves a route → gets the tuple including `interaction_mode`.
+- Gateway resolves a route → gets the tuple including `protocol`.
 - Picks the matching mode adapter (req/resp, stream, ws, RTMP, session) — generic across
   capabilities.
 - Wraps with `Authorization` (customer's bearer), `Livepeer-Payment` (ticket from sender
@@ -894,8 +838,8 @@ flowchart TD
     Cust["customer request"] --> Shell["client shell"]
     Shell --> Auth["AuthResolver<br/>(bearer → customer + balance)"]
     Auth --> Resolve["Resolver.Select(capability_id,<br/>offering_id?, tier?, min_weight?)"]
-    Resolve --> Tuple["route tuple<br/>{ worker_url, eth_address,<br/>interaction_mode, work_unit,<br/>price_per_unit, extra }"]
-    Tuple --> ModeSwitch{interaction_mode?}
+    Resolve --> Tuple["route tuple<br/>{ worker_url, eth_address,<br/>protocol, work_unit,<br/>price_per_unit, extra }"]
+    Tuple --> ModeSwitch{protocol?}
 
     ModeSwitch -->|http-reqresp| A1["reqresp adapter"]
     ModeSwitch -->|http-stream| A2["stream adapter<br/>(SSE / chunked)"]
@@ -985,7 +929,7 @@ market's view of itself.
 
 ### Changes
 
-- Manifest schema: flat list of capability tuples; `interaction_mode` in resolver
+- Manifest schema: flat list of capability tuples; `protocol` in resolver
   response.
 - `payment-daemon`: opaque capability/work-unit names; arithmetic only.
 - Coordinator UX: capability-as-roster-entry.

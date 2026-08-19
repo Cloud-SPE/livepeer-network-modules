@@ -77,7 +77,10 @@ the backend set, and body. The broker adds:
 | `Livepeer-Work-Units` | yes | The seller's usage claim: integer units measured by the offering's declared extractor. Header on `unary`/`multipart`; **HTTP trailer** on `stream` (it cannot be known before the body ends). Every terminal response carries it, including errors (`0` when no billable work occurred). |
 | `Livepeer-Work-Unit` | yes | Echo of the offering's declared unit name (e.g. `tokens`, `output_seconds`). Lets the gateway reject unit drift without a registry round-trip. |
 | `Livepeer-Job-Id` | yes | Broker-assigned id for this exchange; the audit key joining claim, debit, and idempotency record. |
-| `Livepeer-Balance-Low` | no | Advisory: the payment context is near exhaustion. |
+
+There is no balance or runway signaling in `paid-job/v1`: one envelope funds
+one exchange, and the buyer's overall funding posture is the clearinghouse's
+business. Runway is a `paid-session/v1` concept.
 
 For `stream`, the broker MUST advertise the trailer (`Trailer:
 Livepeer-Work-Units`) in the response headers so gateways know to read it.
@@ -99,8 +102,9 @@ the gap — no recovery handshake exists or is needed at this layer.
    operator-configured idempotency window (default 24h).
 3. A retry while the original is still in flight MUST be refused with
    `job_in_flight` (retryable), never run concurrently.
-4. A replayed request id with a *different* payment envelope or body hash is
-   a protocol error (`request_id_reuse`), not a retry.
+4. A replayed request id with a different capability, offering, payment
+   envelope, or body hash is a protocol error (`request_id_reuse`), not a
+   retry. A retry is byte-identical or it is not a retry.
 
 This is the invariant that deletes the surveyed gateways' hand-rolled
 `settle(0)` compensation: a gateway that times out simply retries the same
@@ -120,6 +124,13 @@ Failure semantics: an exchange that fails before the backend produced
 billable output claims and debits `0`. Partial streaming output is billable
 as measured — "how partial is billable" is precisely what the extractor
 declaration decides, per offering, not per incident.
+
+**Funded ceiling (streams).** A `stream` exchange runs against its envelope's
+funded ceiling: the broker MAY terminate the stream once extractor-measured
+usage reaches it, ending the body cleanly and claiming exactly the delivered
+units in the trailer. This is the seller's fail-closed protection for
+long-running exchanges — there is no mid-job refill, deliberately. A workload
+that legitimately needs mid-exchange funding is `paid-session/v1` work.
 
 ## 6. What the broker never does
 

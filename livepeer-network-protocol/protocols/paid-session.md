@@ -165,10 +165,16 @@ top-up, end, and the control-WS attach all require it. Properties:
 Every session carries a lease (`expires_at`) and every offering declares a
 heartbeat interval and missed-event threshold.
 
-- **Lease**: set at open from funded runway, extended by every successful
-  top-up per an offering-declared policy. A session whose lease expires
-  enters `winding_down` with reason `lease_expired`. Recording a timestamp is
-  not enforcement; the broker MUST run the winddown.
+- **Lease**: the normative default is funding-tracking —
+  `expires_at = now + (runway_units ÷ declared burn rate)`, capped by an
+  operator-configured maximum, recomputed on open and on every successful
+  top-up. An offering MAY declare a different lease policy in its manifest,
+  which gateways can then read before opening; absent a declaration, the
+  default applies. A session whose lease expires enters `winding_down` with
+  reason `lease_expired` — but only after a grace window of one heartbeat
+  interval past `expires_at`, so a top-up in flight at expiry never loses the
+  race to the sweeper. Recording a timestamp is not enforcement; the broker
+  MUST run the winddown.
 - **Heartbeat**: the runner emits liveness events (§7). When the missed-event
   threshold is exceeded the broker MUST prevent an unmetered runtime from
   continuing: it MAY first query the runner's status path, then MUST

@@ -91,9 +91,11 @@ change is a new tag.
 
 A JSON object. This is the *only* portion of the descriptor the broker ever
 returns to anyone, and it is returned on **both** session open and session
-status — canonically identical each time (same fields, same values, for the
-lifetime of the session unless the schema defines a runner-initiated update,
-which then applies to open-state and status alike).
+status — canonically identical each time. **The public part is immutable for
+the lifetime of the session.** There is no update mechanism in v1: a runtime
+whose coordinates change (host migration, failover) ends its session and a
+new one opens. Mid-session runtime relocation is reserved for a future
+version as an explicit control-plane event, not a descriptor mutation.
 
 The public part SHOULD include a coordinate the gateway can cheaply probe as
 evidence the runtime is real (a status or playback URL). This is the

@@ -123,17 +123,28 @@ precedence; (3) `lease.policy: fixed` was declared in the manifest schema
 and never implemented. Your instinct that B4 and B5 deserved wire
 coverage was right.
 
-## Timeline: the tag is the one thing we cannot answer here
+## Timeline: build against the branch, no tag
 
-Your request to pin a tag rather than track a branch is correct practice
-and consistent with how you pinned review SHAs for the protocol-fit
-decision. The work is on `tasks/refactor-interaction-modes-and-billing`
-and is not ours to publish unilaterally — merge and tagging are the
-repo owner's call, and that decision is pending. We are flagging your
-request as the strongest argument for cutting one, and will confirm the
-tag as soon as it exists.
+We are not cutting a tag for this. Work against
+`tasks/refactor-interaction-modes-and-billing` directly — it is stable
+enough for what you need, and the whole of it (specs, descriptors,
+reference broker, conformance suite) is there to integrate and run
+against.
 
-Until then, treat any branch SHA as reviewable but not integration-stable.
+If you want the immutability your protocol-fit decision relied on, pin
+the SHA you build against on your side rather than waiting for us to
+name one — that gives you exactly the property you wanted (a fixed
+reference that a moving checkout cannot be mistaken for) without
+blocking on our release cadence. The current head as of this reply is:
+
+```
+a41ff72e7047ef16dcea6ad348608765b07761c3
+```
+
+That commit contains every change described in this document. Later
+commits on the branch will be additive against the contracts you
+reviewed; if something on it turns out to break a contract you have
+built against, that is a bug on our side and we want to hear about it.
 
 ## Your side
 

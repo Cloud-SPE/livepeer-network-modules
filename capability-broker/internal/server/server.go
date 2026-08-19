@@ -82,6 +82,7 @@ type Server struct {
 	health               *health.Manager
 	sessionStore         *sessionstore.Store
 	sessionEngine        *sessionengine.Engine
+	jobIdem              jobIdemStore
 	randIntn             func(int) int
 }
 
@@ -183,6 +184,12 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	s.registerRoutes()
 	if s.sessionEngine != nil {
 		s.registerSessionRoutes()
+	}
+	if err := s.initJobIdem(); err != nil {
+		return nil, fmt.Errorf("job idempotency: %w", err)
+	}
+	if s.jobIdem != nil {
+		s.registerJobRoutes()
 	}
 	s.metricsSrv = newMetricsServer(cfg.Listen.Metrics)
 	return s, nil
@@ -326,7 +333,24 @@ func (s *Server) Run(ctx context.Context) error {
 				}
 			}
 		}()
+	}
+	if s.sessionStore != nil {
 		defer func() { _ = s.sessionStore.Close() }()
+		// Idempotency-window retention for paid-job records.
+		go func() {
+			t := time.NewTicker(10 * time.Minute)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					if n, err := s.sessionStore.EvictJobs(time.Now().Add(-jobRetention)); err == nil && n > 0 {
+						log.Printf("evicted %d job idempotency records", n)
+					}
+				}
+			}
+		}()
 	}
 	go func() {
 		log.Printf("listening on %s (paid)", s.cfg.Listen.Paid)

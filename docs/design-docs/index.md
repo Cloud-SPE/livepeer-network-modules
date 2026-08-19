@@ -14,6 +14,7 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [pricing-overview.md](./pricing-overview.md) | active | End-to-end synthesis: how price flows from `host-config.yaml` through manifest, discovery, headers, extractors, modes, session, debit, settlement, and pool receipts |
 | [backend-health.md](./backend-health.md) | active | Three-layer health model (manifest / live / failure-rate) — which layer answers which routing question |
 | [trust-model.md](./trust-model.md) | active | Cold-key + sign-cycle deep dive; threat model and what each invariant defends against |
+| [dual-meter-trust.md](./dual-meter-trust.md) | active | Economic trust for the v1 protocols: dual meters, admission-edge billing, claims-vs-bills, tolerance band + bounded exposure |
 | [ui-design-system.md](./ui-design-system.md) | active | Shared visual system for all operator and product UIs, aligned to current Livepeer brand and explorer surfaces |
 | [frontend-dom-and-css-invariants.md](./frontend-dom-and-css-invariants.md) | active | Repo-wide frontend implementation contract: light DOM only, semantic HTML only, no inline CSS, styling only from checked-in CSS files |
 | [pool-node-production-readiness.md](./pool-node-production-readiness.md) | active | Cross-cutting production gate for the Pool stack: persistence, secrets, retry policy, alerting, privacy, and live runtime validation |

@@ -37,8 +37,20 @@ type RenderResult struct {
 	ConfigYAML []byte
 	Revision   string
 	Model      BrokerConfig
+	// Warnings carries operator-visible notes about choices the renderer
+	// had to make on incomplete offer data — today only the
+	// job.transports fallback (see DefaultJobTransports).
+	Warnings []string
 }
 
+// BrokerConfig mirrors capability-broker/internal/config.Config. The broker
+// parses host-config.yaml with KnownFields(true), so every key rendered here
+// must exist in that grammar and every required key must be present.
+//
+// external_base_url and session_store are deliberately absent: they are
+// required only when a paid-session capability is declared, and
+// pool-controller refuses to render paid-session offerings (see
+// jobAxesForOffer).
 type BrokerConfig struct {
 	Identity      config.Identity      `yaml:"identity"`
 	AdminAuth     config.AuthConfig    `yaml:"admin_auth,omitempty"`
@@ -55,18 +67,29 @@ type BrokerListen struct {
 }
 
 type BrokerCapability struct {
-	ID              string          `yaml:"id"`
-	OfferingID      string          `yaml:"offering_id"`
-	InteractionMode string          `yaml:"interaction_mode"`
-	WorkUnit        config.WorkUnit `yaml:"work_unit"`
-	Health          config.Health   `yaml:"health,omitempty"`
-	Price           config.Price    `yaml:"price"`
-	Backend         BrokerBackend   `yaml:"backend"`
-	Extra           map[string]any  `yaml:"extra,omitempty"`
+	ID         string `yaml:"id"`
+	OfferingID string `yaml:"offering_id"`
+	// Protocol is the protocol tag ("paid-job/v1"). The broker rejects a
+	// capability whose protocol does not match <name>/v<major>, and
+	// requires exactly the matching axes block.
+	Protocol string `yaml:"protocol"`
+	// Job carries the paid-job axes. Always non-nil for the capabilities
+	// this renderer emits, since paid-session offerings are refused.
+	Job      *BrokerJobAxes  `yaml:"job,omitempty"`
+	WorkUnit config.WorkUnit `yaml:"work_unit"`
+	Health   config.Health   `yaml:"health,omitempty"`
+	Price    config.Price    `yaml:"price"`
+	Backend  BrokerBackend   `yaml:"backend"`
+	Extra    map[string]any  `yaml:"extra,omitempty"`
 	// Constraints is always rendered (no omitempty) so that downstream
 	// resolvers can fingerprint a stable shape even when the operator
 	// declared no constraints. An empty map renders as `constraints: {}`.
 	Constraints map[string]any `yaml:"constraints"`
+}
+
+// BrokerJobAxes mirrors capability-broker/internal/config.JobCapability.
+type BrokerJobAxes struct {
+	Transports []string `yaml:"transports"`
 }
 
 type BrokerBackend struct {
@@ -115,6 +138,7 @@ func Render(input RenderInput) (RenderResult, error) {
 	}
 
 	capabilities := make([]BrokerCapability, 0)
+	warnings := make([]string, 0)
 	for _, assignment := range input.Assignments {
 		if assignment.Status != types.AssignmentStatusActive {
 			continue
@@ -122,6 +146,13 @@ func Render(input RenderInput) (RenderResult, error) {
 		offer, ok := offersByID[assignment.OfferID]
 		if !ok || offer.Status != types.OfferStatusActive {
 			continue
+		}
+		job, warning, err := jobAxesForOffer(offer)
+		if err != nil {
+			return RenderResult{}, err
+		}
+		if warning != "" {
+			warnings = appendWarning(warnings, warning)
 		}
 		backend, ok := backendsByID[assignment.MemberBackendID]
 		if !ok || backend.Status != types.BackendStatusActive {
@@ -146,12 +177,13 @@ func Render(input RenderInput) (RenderResult, error) {
 			constraints = map[string]any{}
 		}
 		capabilities = append(capabilities, BrokerCapability{
-			ID:              offer.CapabilityID,
-			OfferingID:      offer.OfferingID,
-			InteractionMode: offer.InteractionMode,
-			WorkUnit:        config.NormalizeWorkUnit(offer.WorkUnit),
-			Health:          config.Health{Probe: backend.HealthProbe},
-			Price:           offer.Price,
+			ID:         offer.CapabilityID,
+			OfferingID: offer.OfferingID,
+			Protocol:   offer.Protocol,
+			Job:        job,
+			WorkUnit:   config.NormalizeWorkUnit(offer.WorkUnit),
+			Health:     config.Health{Probe: backend.HealthProbe},
+			Price:      offer.Price,
 			Backend: BrokerBackend{
 				ID:        backend.ID,
 				Transport: backend.Transport,
@@ -181,6 +213,13 @@ func Render(input RenderInput) (RenderResult, error) {
 		offer, ok := activeOfferForTemplate(offersByID, template)
 		if !ok {
 			continue
+		}
+		job, warning, err := jobAxesForOffer(offer)
+		if err != nil {
+			return RenderResult{}, err
+		}
+		if warning != "" {
+			warnings = appendWarning(warnings, warning)
 		}
 		hardware, ok := hardwareByID[assignment.HardwareUnitID]
 		if !ok || (hardware.State != types.HardwareUnitActive && hardware.State != types.HardwareUnitProbationary) {
@@ -212,12 +251,13 @@ func Render(input RenderInput) (RenderResult, error) {
 			constraints = map[string]any{}
 		}
 		capabilities = append(capabilities, BrokerCapability{
-			ID:              offer.CapabilityID,
-			OfferingID:      offer.OfferingID,
-			InteractionMode: offer.InteractionMode,
-			WorkUnit:        config.NormalizeWorkUnit(offer.WorkUnit),
-			Health:          agentBackendHealth(assignment.ID, offer),
-			Price:           offer.Price,
+			ID:         offer.CapabilityID,
+			OfferingID: offer.OfferingID,
+			Protocol:   offer.Protocol,
+			Job:        job,
+			WorkUnit:   config.NormalizeWorkUnit(offer.WorkUnit),
+			Health:     agentBackendHealth(assignment.ID, offer),
+			Price:      offer.Price,
 			Backend: BrokerBackend{
 				ID:                      assignment.ID,
 				Transport:               "http",
@@ -274,11 +314,87 @@ func Render(input RenderInput) (RenderResult, error) {
 		return RenderResult{}, fmt.Errorf("marshal broker config: %w", err)
 	}
 	sum := sha256.Sum256(raw)
+	sort.Strings(warnings)
 	return RenderResult{
 		ConfigYAML: raw,
 		Revision:   hex.EncodeToString(sum[:]),
 		Model:      model,
+		Warnings:   warnings,
 	}, nil
+}
+
+// DefaultJobTransports is the transport set assumed for a paid-job offer
+// that carries no transport information at all. Pool offers were authored
+// against the removed v0 interaction-mode field, where the overwhelmingly
+// common value was the plain request/response mode -- which
+// is exactly `unary` in the v1 vocabulary. Rendering the wider set would
+// advertise transports the member backend may not serve, so the renderer
+// takes the narrowest safe option and reports the substitution through
+// RenderResult.Warnings.
+var DefaultJobTransports = []string{"unary"}
+
+var validJobTransports = map[string]bool{
+	"unary":     true,
+	"stream":    true,
+	"multipart": true,
+}
+
+// jobAxesForOffer derives the broker `job` block for an offer and reports a
+// warning when it had to fall back to DefaultJobTransports.
+//
+// paid-session offerings are refused outright: pool-controller has no
+// session-runner contract with its members (no descriptor_schema, no runner
+// create/status/terminate paths) and no way to configure the broker-side
+// session_store / sealing key / external_base_url those capabilities
+// require. Emitting a session capability anyway would produce a host-config
+// the broker refuses to load, taking every other pool capability down with
+// it, so the render fails loudly on the offending offer instead.
+func jobAxesForOffer(offer types.Offer) (*BrokerJobAxes, string, error) {
+	protocol := strings.TrimSpace(offer.Protocol)
+	switch {
+	case protocol == "":
+		return nil, "", fmt.Errorf("offer %q (%s/%s): protocol is required; expected a %s* tag",
+			offer.ID, offer.CapabilityID, offer.OfferingID, types.ProtocolPaidJobPrefix)
+	case offer.IsPaidSession():
+		return nil, "", fmt.Errorf("offer %q (%s/%s) declares protocol %q: pool-controller cannot render paid-session capabilities "+
+			"(the pool member contract carries no descriptor_schema or runner create/status/terminate paths, and pool-controller "+
+			"configures neither external_base_url nor session_store); disable the offer or host it from a standalone broker config",
+			offer.ID, offer.CapabilityID, offer.OfferingID, protocol)
+	case !offer.IsPaidJob():
+		return nil, "", fmt.Errorf("offer %q (%s/%s) declares unsupported protocol %q; pool backends serve %s* offerings only",
+			offer.ID, offer.CapabilityID, offer.OfferingID, protocol, types.ProtocolPaidJobPrefix)
+	}
+
+	declared := offer.JobTransports()
+	if len(declared) == 0 {
+		return &BrokerJobAxes{Transports: append([]string(nil), DefaultJobTransports...)},
+			fmt.Sprintf("offer %q (%s/%s) declares no job.transports; defaulted to %v",
+				offer.ID, offer.CapabilityID, offer.OfferingID, DefaultJobTransports),
+			nil
+	}
+	transports := make([]string, 0, len(declared))
+	seen := make(map[string]bool, len(declared))
+	for _, transport := range declared {
+		if !validJobTransports[transport] {
+			return nil, "", fmt.Errorf("offer %q (%s/%s): job transport %q must be unary|stream|multipart",
+				offer.ID, offer.CapabilityID, offer.OfferingID, transport)
+		}
+		if seen[transport] {
+			continue
+		}
+		seen[transport] = true
+		transports = append(transports, transport)
+	}
+	return &BrokerJobAxes{Transports: transports}, "", nil
+}
+
+func appendWarning(warnings []string, warning string) []string {
+	for _, existing := range warnings {
+		if existing == warning {
+			return warnings
+		}
+	}
+	return append(warnings, warning)
 }
 
 // agentBackendHealth builds the broker health probe for a worker://-tunneled
@@ -326,7 +442,7 @@ func activeOfferForTemplate(offersByID map[string]types.Offer, template types.Te
 		if offer.Status != types.OfferStatusActive {
 			continue
 		}
-		if offer.CapabilityID == template.CapabilityID && offer.OfferingID == template.OfferingID && offer.InteractionMode == template.InteractionMode {
+		if offer.CapabilityID == template.CapabilityID && offer.OfferingID == template.OfferingID && offer.Protocol == template.Protocol {
 			return offer, true
 		}
 	}

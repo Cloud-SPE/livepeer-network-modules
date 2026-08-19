@@ -69,8 +69,17 @@ type Ctx struct {
 	JobOfferingError  string // offering whose backend always fails
 	SessionCapability string // paid-session capability id
 	SessionOffering   string
-	JobUnit           string // declared work unit for the job offerings
-	SessionUnit       string // declared work unit for the session offering
+	// SessionOfferingFastHB is an offering with a deliberately short
+	// heartbeat interval so liveness enforcement is observable in
+	// seconds. Empty means the scenario skips.
+	SessionOfferingFastHB string
+
+	// RestartBroker restarts the broker-under-test in place, keeping
+	// its durable state. Non-nil only when the suite owns the process
+	// (auto mode); nil means restart scenarios skip.
+	RestartBroker func() error
+	JobUnit       string // declared work unit for the job offerings
+	SessionUnit   string // declared work unit for the session offering
 
 	// RunID makes request ids unique across runs against a long-lived
 	// broker (idempotency records outlive the suite).
@@ -202,6 +211,22 @@ func (c *Ctx) OpenSession(requestID, payment, body string) (*HTTPResult, error) 
 	}
 	req.Header.Set(HdrCapability, c.SessionCapability)
 	req.Header.Set(HdrOffering, c.SessionOffering)
+	req.Header.Set(HdrProtocol, ProtoPaidSession)
+	req.Header.Set(HdrRequestID, requestID)
+	req.Header.Set(HdrPayment, payment)
+	req.Header.Set("Content-Type", "application/json")
+	return c.do(req)
+}
+
+// OpenSessionOffering opens against a named offering of the session
+// capability (used by the fast-heartbeat scenario).
+func (c *Ctx) OpenSessionOffering(offering, requestID, payment, body string) (*HTTPResult, error) {
+	req, err := http.NewRequest(http.MethodPost, c.BrokerURL+"/v1/session", strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(HdrCapability, c.SessionCapability)
+	req.Header.Set(HdrOffering, offering)
 	req.Header.Set(HdrProtocol, ProtoPaidSession)
 	req.Header.Set(HdrRequestID, requestID)
 	req.Header.Set(HdrPayment, payment)

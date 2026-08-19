@@ -22,13 +22,13 @@ func newRepo(t *testing.T) *repo.StateRepo {
 func seedRerankOffer(t *testing.T, r *repo.StateRepo) types.Offer {
 	t.Helper()
 	offer := types.Offer{
-		ID:              "offer-rerank",
-		CapabilityID:    "rerank",
-		OfferingID:      "zerank-2-default",
-		InteractionMode: "http-reqresp@v0",
-		WorkUnit:        config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
-		Price:           config.Price{AmountWei: "1", PerUnits: 1},
-		Status:          types.OfferStatusActive,
+		ID:           "offer-rerank",
+		CapabilityID: "rerank",
+		OfferingID:   "zerank-2-default",
+		Protocol:     "paid-job/v1",
+		WorkUnit:     config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
+		Price:        config.Price{AmountWei: "1", PerUnits: 1},
+		Status:       types.OfferStatusActive,
 	}
 	if err := r.PutOffer(offer); err != nil {
 		t.Fatalf("PutOffer() error = %v", err)
@@ -48,9 +48,9 @@ func approvableJoinRequest(id string) types.JoinRequest {
 			URL:                "http://backend-" + id,
 			VerificationStatus: types.VerificationPassing,
 			ClaimedCapabilities: []types.ClaimedOffer{{
-				CapabilityID:    "rerank",
-				OfferingID:      "zerank-2-default",
-				InteractionMode: "http-reqresp@v0",
+				CapabilityID: "rerank",
+				OfferingID:   "zerank-2-default",
+				Protocol:     "paid-job/v1",
 			}},
 		}},
 	}

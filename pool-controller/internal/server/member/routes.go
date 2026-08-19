@@ -334,7 +334,7 @@ func validateJoinRequest(req types.JoinRequest) error {
 			return fmt.Errorf("requested_backends[%d].url is required", i)
 		}
 		for j, claim := range backend.ClaimedCapabilities {
-			if err := poolscope.EnsureSupportedClaim(claim.CapabilityID, claim.InteractionMode); err != nil {
+			if err := poolscope.EnsureSupportedClaim(claim.CapabilityID, claim.Protocol); err != nil {
 				return fmt.Errorf("requested_backends[%d].claimed_capabilities[%d]: %w", i, j, err)
 			}
 		}

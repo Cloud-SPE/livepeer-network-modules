@@ -16,23 +16,26 @@ type MarkRequest struct {
 }
 
 type View struct {
-	DesiredRevision      string    `json:"desired_revision,omitempty"`
-	AppliedRevision      string    `json:"applied_revision,omitempty"`
-	BrokerReloadAttemptID string   `json:"broker_reload_attempt_id,omitempty"`
-	BrokerLoadedRevision string    `json:"broker_loaded_revision,omitempty"`
-	BrokerLoadedAt       time.Time `json:"broker_loaded_at,omitempty"`
-	BrokerReloadStatus   string    `json:"broker_reload_status,omitempty"`
-	BrokerReloadError    string    `json:"broker_reload_error,omitempty"`
-	Dirty                bool      `json:"dirty"`
-	BrokerDirty          bool      `json:"broker_dirty"`
-	LastApplyStartedAt   time.Time `json:"last_apply_started_at,omitempty"`
-	LastApplyFinishedAt  time.Time `json:"last_apply_finished_at,omitempty"`
-	LastApplyStatus      string    `json:"last_apply_status,omitempty"`
-	LastApplyError       string    `json:"last_apply_error,omitempty"`
-	OfferCount           int       `json:"offer_count,omitempty"`
-	MemberCount          int       `json:"member_count,omitempty"`
-	BackendCount         int       `json:"backend_count,omitempty"`
-	AssignmentCount      int       `json:"assignment_count,omitempty"`
+	DesiredRevision       string    `json:"desired_revision,omitempty"`
+	AppliedRevision       string    `json:"applied_revision,omitempty"`
+	BrokerReloadAttemptID string    `json:"broker_reload_attempt_id,omitempty"`
+	BrokerLoadedRevision  string    `json:"broker_loaded_revision,omitempty"`
+	BrokerLoadedAt        time.Time `json:"broker_loaded_at,omitempty"`
+	BrokerReloadStatus    string    `json:"broker_reload_status,omitempty"`
+	BrokerReloadError     string    `json:"broker_reload_error,omitempty"`
+	Dirty                 bool      `json:"dirty"`
+	BrokerDirty           bool      `json:"broker_dirty"`
+	LastApplyStartedAt    time.Time `json:"last_apply_started_at,omitempty"`
+	LastApplyFinishedAt   time.Time `json:"last_apply_finished_at,omitempty"`
+	LastApplyStatus       string    `json:"last_apply_status,omitempty"`
+	LastApplyError        string    `json:"last_apply_error,omitempty"`
+	OfferCount            int       `json:"offer_count,omitempty"`
+	MemberCount           int       `json:"member_count,omitempty"`
+	BackendCount          int       `json:"backend_count,omitempty"`
+	AssignmentCount       int       `json:"assignment_count,omitempty"`
+	// RenderWarnings surfaces renderer choices made on incomplete offer
+	// data (today: a defaulted job.transports set).
+	RenderWarnings []string `json:"render_warnings,omitempty"`
 }
 
 func BuildView(desired *types.DesiredBrokerRuntime, applied types.AppliedBrokerRuntime) View {
@@ -43,34 +46,42 @@ func BuildView(desired *types.DesiredBrokerRuntime, applied types.AppliedBrokerR
 		brokerDirty = desiredRevision != brokerLoaded
 	}
 	return View{
-		DesiredRevision:      desiredRevision,
-		AppliedRevision:      applied.AppliedRevision,
+		DesiredRevision:       desiredRevision,
+		AppliedRevision:       applied.AppliedRevision,
 		BrokerReloadAttemptID: applied.BrokerReloadAttemptID,
-		BrokerLoadedRevision: applied.BrokerLoadedRevision,
-		BrokerLoadedAt:       applied.BrokerLoadedAt,
-		BrokerReloadStatus:   applied.BrokerReloadStatus,
-		BrokerReloadError:    applied.BrokerReloadError,
-		Dirty:                desiredRevision != applied.AppliedRevision,
-		BrokerDirty:          brokerDirty,
-		LastApplyStartedAt:   applied.LastApplyStartedAt,
-		LastApplyFinishedAt:  applied.LastApplyFinishedAt,
-		LastApplyStatus:      applied.LastApplyStatus,
-		LastApplyError:       applied.LastApplyError,
-		OfferCount:           countFromDesired(desired, "offer"),
-		MemberCount:          countFromDesired(desired, "member"),
-		BackendCount:         countFromDesired(desired, "backend"),
-		AssignmentCount:      countFromDesired(desired, "assignment"),
+		BrokerLoadedRevision:  applied.BrokerLoadedRevision,
+		BrokerLoadedAt:        applied.BrokerLoadedAt,
+		BrokerReloadStatus:    applied.BrokerReloadStatus,
+		BrokerReloadError:     applied.BrokerReloadError,
+		Dirty:                 desiredRevision != applied.AppliedRevision,
+		BrokerDirty:           brokerDirty,
+		LastApplyStartedAt:    applied.LastApplyStartedAt,
+		LastApplyFinishedAt:   applied.LastApplyFinishedAt,
+		LastApplyStatus:       applied.LastApplyStatus,
+		LastApplyError:        applied.LastApplyError,
+		OfferCount:            countFromDesired(desired, "offer"),
+		MemberCount:           countFromDesired(desired, "member"),
+		BackendCount:          countFromDesired(desired, "backend"),
+		AssignmentCount:       countFromDesired(desired, "assignment"),
+		RenderWarnings:        renderWarningsOf(desired),
 	}
+}
+
+func renderWarningsOf(desired *types.DesiredBrokerRuntime) []string {
+	if desired == nil {
+		return nil
+	}
+	return desired.RenderWarnings
 }
 
 func BuildDiff(desired *types.DesiredBrokerRuntime, applied types.AppliedBrokerRuntime) map[string]any {
 	return map[string]any{
-		"desired_revision":       revisionOf(desired),
-		"applied_revision":       applied.AppliedRevision,
+		"desired_revision":         revisionOf(desired),
+		"applied_revision":         applied.AppliedRevision,
 		"broker_reload_attempt_id": applied.BrokerReloadAttemptID,
-		"broker_loaded_revision": applied.BrokerLoadedRevision,
-		"dirty":                  revisionOf(desired) != applied.AppliedRevision,
-		"broker_dirty":           applied.BrokerLoadedRevision != "" && revisionOf(desired) != applied.BrokerLoadedRevision,
+		"broker_loaded_revision":   applied.BrokerLoadedRevision,
+		"dirty":                    revisionOf(desired) != applied.AppliedRevision,
+		"broker_dirty":             applied.BrokerLoadedRevision != "" && revisionOf(desired) != applied.BrokerLoadedRevision,
 	}
 }
 

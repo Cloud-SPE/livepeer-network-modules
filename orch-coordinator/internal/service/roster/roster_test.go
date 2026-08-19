@@ -11,7 +11,8 @@ import (
 func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 	now := time.Now().UTC()
 	cand := &types.ManifestPayload{Capabilities: []types.CapabilityTuple{{
-		CapabilityID: "cap", OfferingID: "off", InteractionMode: "m@v1",
+		CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
+		Job:      &types.JobAxes{"transports": []any{"unary"}},
 		WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",
 		WorkerURL: "https://w",
 	}}}
@@ -67,11 +68,13 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 		},
 		SourceTuples: []types.SourceTuple{
 			{BrokerName: "b1", Offering: types.BrokerOffering{
-				CapabilityID: "cap", OfferingID: "off", InteractionMode: "m@v1",
+				CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
+				Job:      &types.JobAxes{"transports": []any{"unary"}},
 				WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",
 			}},
 			{BrokerName: "b2", Offering: types.BrokerOffering{
-				CapabilityID: "cap", OfferingID: "off", InteractionMode: "m@v1",
+				CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
+				Job:      &types.JobAxes{"transports": []any{"unary"}},
 				WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",
 			}},
 		},
@@ -102,12 +105,14 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 
 func TestBuildView_DriftCountsSurface(t *testing.T) {
 	cand := &types.ManifestPayload{Capabilities: []types.CapabilityTuple{
-		{CapabilityID: "a", OfferingID: "1", InteractionMode: "m@v1",
+		{CapabilityID: "a", OfferingID: "1", Protocol: "paid-job/v1",
+			Job:      &types.JobAxes{"transports": []any{"unary"}},
 			WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",
 			WorkerURL: "https://w"},
 	}}
 	pub := &types.ManifestPayload{Capabilities: []types.CapabilityTuple{
-		{CapabilityID: "a", OfferingID: "1", InteractionMode: "m@v1",
+		{CapabilityID: "a", OfferingID: "1", Protocol: "paid-job/v1",
+			Job:      &types.JobAxes{"transports": []any{"unary"}},
 			WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "200",
 			WorkerURL: "https://w"},
 	}}
@@ -127,6 +132,17 @@ func TestApply_FilterBySubstring(t *testing.T) {
 	}}
 	got := v.Apply(Filter{CapabilitySubstring: "openai"})
 	if len(got.Rows) != 1 || got.Rows[0].CapabilityID != "openai:foo" {
+		t.Fatalf("got %+v", got.Rows)
+	}
+}
+
+func TestApply_FilterByProtocol(t *testing.T) {
+	v := &View{Rows: []Row{
+		{CapabilityID: "a", Protocol: "paid-job/v1"},
+		{CapabilityID: "b", Protocol: "paid-session/v1"},
+	}}
+	got := v.Apply(Filter{Protocol: "paid-session/v1"})
+	if len(got.Rows) != 1 || got.Rows[0].CapabilityID != "b" {
 		t.Fatalf("got %+v", got.Rows)
 	}
 }

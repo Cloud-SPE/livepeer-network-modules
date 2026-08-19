@@ -43,10 +43,10 @@ func seedSingleChatAssignment(t *testing.T, stateRepo *repo.StateRepo, memberEth
 		UpdatedAt: now,
 	}
 	offer := types.Offer{
-		ID:              "offer-1",
-		CapabilityID:    "openai:chat-completions",
-		OfferingID:      "default",
-		InteractionMode: "http-stream@v0",
+		ID:           "offer-1",
+		CapabilityID: "openai:chat-completions",
+		OfferingID:   "default",
+		Protocol:     "paid-job/v1",
 		WorkUnit: config.WorkUnit{
 			Name:      "tokens",
 			Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
@@ -1035,9 +1035,9 @@ func TestAdminOfferAndAssignmentMutationEndpoints(t *testing.T) {
 		Status:             types.BackendStatusActive,
 		VerificationStatus: types.VerificationPassing,
 		ClaimedCapabilities: []types.ClaimedOffer{{
-			CapabilityID:    "rerank",
-			OfferingID:      "zerank-2-default",
-			InteractionMode: "http-reqresp@v0",
+			CapabilityID: "rerank",
+			OfferingID:   "zerank-2-default",
+			Protocol:     "paid-job/v1",
 		}},
 	}); err != nil {
 		t.Fatalf("PutMemberBackend() error = %v", err)
@@ -1052,7 +1052,7 @@ func TestAdminOfferAndAssignmentMutationEndpoints(t *testing.T) {
 	server := httptest.NewServer(newServeMux(state))
 	defer server.Close()
 
-	offerBody := `{"id":"offer-1","capability_id":"rerank","offering_id":"zerank-2-default","interaction_mode":"http-reqresp@v0","work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},"price":{"amount_wei":"1","per_units":1}}`
+	offerBody := `{"id":"offer-1","capability_id":"rerank","offering_id":"zerank-2-default","protocol":"paid-job/v1","work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},"price":{"amount_wei":"1","per_units":1}}`
 	resp, err := http.Post(server.URL+"/admin/v1/offers", "application/json", bytes.NewBufferString(offerBody))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/offers error = %v", err)
@@ -1103,13 +1103,13 @@ func TestAdminAssignmentRejectsIncompatibleBackend(t *testing.T) {
 	defer func() { _ = stateRepo.Close() }()
 	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
 	if err := stateRepo.PutOffer(types.Offer{
-		ID:              "offer-1",
-		CapabilityID:    "rerank",
-		OfferingID:      "zerank-2-default",
-		InteractionMode: "http-reqresp@v0",
-		WorkUnit:        config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
-		Price:           config.Price{AmountWei: "1", PerUnits: 1},
-		Status:          types.OfferStatusActive,
+		ID:           "offer-1",
+		CapabilityID: "rerank",
+		OfferingID:   "zerank-2-default",
+		Protocol:     "paid-job/v1",
+		WorkUnit:     config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
+		Price:        config.Price{AmountWei: "1", PerUnits: 1},
+		Status:       types.OfferStatusActive,
 	}); err != nil {
 		t.Fatalf("PutOffer() error = %v", err)
 	}
@@ -1128,8 +1128,8 @@ func TestAdminAssignmentRejectsIncompatibleBackend(t *testing.T) {
 		URL:       "http://backend",
 		Status:    types.BackendStatusActive,
 		ClaimedCapabilities: []types.ClaimedOffer{{
-			CapabilityID:    "openai:chat-completions",
-			InteractionMode: "http-stream@v0",
+			CapabilityID: "openai:chat-completions",
+			Protocol:     "paid-job/v1",
 		}},
 	}); err != nil {
 		t.Fatalf("PutMemberBackend() error = %v", err)
@@ -1201,7 +1201,7 @@ func TestJoinRequestApprovalAndStatusMutations(t *testing.T) {
 	      "auth":{"method":"none"},
 	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
 	      "claimed_capabilities":[
-	        {"capability_id":"rerank","offering_id":"zerank-2-default","interaction_mode":"http-reqresp@v0"}
+	        {"capability_id":"rerank","offering_id":"zerank-2-default","protocol":"paid-job/v1"}
 	      ]
 	    }
 	  ]
@@ -1522,10 +1522,10 @@ func TestApplyDesiredRuntimeDetectsRevisionDrift(t *testing.T) {
 
 	desired := runtimeInfo
 	if err := stateRepo.PutOffer(types.Offer{
-		ID:              "offer-1",
-		CapabilityID:    "rerank",
-		OfferingID:      "zerank-2-default",
-		InteractionMode: "http-reqresp@v0",
+		ID:           "offer-1",
+		CapabilityID: "rerank",
+		OfferingID:   "zerank-2-default",
+		Protocol:     "paid-job/v1",
 		WorkUnit: config.WorkUnit{
 			Name:      "requests",
 			Extractor: map[string]any{"type": "request-formula"},
@@ -1551,9 +1551,9 @@ func TestApplyDesiredRuntimeDetectsRevisionDrift(t *testing.T) {
 		VerificationStatus: types.VerificationPassing,
 		Status:             types.BackendStatusActive,
 		ClaimedCapabilities: []types.ClaimedOffer{{
-			CapabilityID:    "rerank",
-			OfferingID:      "zerank-2-default",
-			InteractionMode: "http-reqresp@v0",
+			CapabilityID: "rerank",
+			OfferingID:   "zerank-2-default",
+			Protocol:     "paid-job/v1",
 		}},
 	}); err != nil {
 		t.Fatalf("PutMemberBackend() error = %v", err)
@@ -1729,7 +1729,7 @@ func TestJoinRequestVerificationAndBackendVerificationFlow(t *testing.T) {
 	      "auth":{"method":"none"},
 	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
 	      "claimed_capabilities":[
-	        {"capability_id":"rerank","offering_id":"zerank-2-default","interaction_mode":"http-reqresp@v0"}
+	        {"capability_id":"rerank","offering_id":"zerank-2-default","protocol":"paid-job/v1"}
 	      ]
 	    }
 	  ]
@@ -1821,7 +1821,7 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 	  "id":"rerank-zerank2",
 	  "capability_id":"rerank",
 	  "offering_id":"zerank-2-default",
-	  "interaction_mode":"http-reqresp@v0",
+	  "protocol":"paid-job/v1",
 	  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
 	  "price":{"amount_wei":"1","per_units":1}
 	}`
@@ -1848,7 +1848,7 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 	      "auth":{"method":"none"},
 	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
 	      "claimed_capabilities":[
-	        {"capability_id":"rerank","offering_id":"zerank-2-default","interaction_mode":"http-reqresp@v0"}
+	        {"capability_id":"rerank","offering_id":"zerank-2-default","protocol":"paid-job/v1"}
 	      ]
 	    }
 	  ]
@@ -1989,7 +1989,7 @@ func TestAssignmentCandidatesEndpoint(t *testing.T) {
 	  "id":"rerank-zerank2",
 	  "capability_id":"rerank",
 	  "offering_id":"zerank-2-default",
-	  "interaction_mode":"http-reqresp@v0",
+	  "protocol":"paid-job/v1",
 	  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
 	  "price":{"amount_wei":"1","per_units":1}
 	}`
@@ -2016,7 +2016,7 @@ func TestAssignmentCandidatesEndpoint(t *testing.T) {
 	      "auth":{"method":"none"},
 	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
 	      "claimed_capabilities":[
-	        {"capability_id":"rerank","offering_id":"zerank-2-default","interaction_mode":"http-reqresp@v0"}
+	        {"capability_id":"rerank","offering_id":"zerank-2-default","protocol":"paid-job/v1"}
 	      ]
 	    }
 	  ]
@@ -2101,7 +2101,7 @@ func TestAssignmentCreateRejectsDuplicateActivePair(t *testing.T) {
 	  "id":"rerank-zerank2",
 	  "capability_id":"rerank",
 	  "offering_id":"zerank-2-default",
-	  "interaction_mode":"http-reqresp@v0",
+	  "protocol":"paid-job/v1",
 	  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
 	  "price":{"amount_wei":"1","per_units":1}
 	}`
@@ -2128,7 +2128,7 @@ func TestAssignmentCreateRejectsDuplicateActivePair(t *testing.T) {
 	      "auth":{"method":"none"},
 	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
 	      "claimed_capabilities":[
-	        {"capability_id":"rerank","offering_id":"zerank-2-default","interaction_mode":"http-reqresp@v0"}
+	        {"capability_id":"rerank","offering_id":"zerank-2-default","protocol":"paid-job/v1"}
 	      ]
 	    }
 	  ]
@@ -2223,7 +2223,7 @@ func TestJoinRequestPreviewRanksSuggestedOffers(t *testing.T) {
 		  "id":"rerank-default",
 		  "capability_id":"rerank",
 		  "offering_id":"zerank-2-default",
-		  "interaction_mode":"http-reqresp@v0",
+		  "protocol":"paid-job/v1",
 		  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
 		  "price":{"amount_wei":"1","per_units":1}
 		}`,
@@ -2231,7 +2231,7 @@ func TestJoinRequestPreviewRanksSuggestedOffers(t *testing.T) {
 		  "id":"rerank-alt",
 		  "capability_id":"rerank",
 		  "offering_id":"alt-rerank",
-		  "interaction_mode":"http-reqresp@v0",
+		  "protocol":"paid-job/v1",
 		  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
 		  "price":{"amount_wei":"1","per_units":1}
 		}`,
@@ -2260,7 +2260,7 @@ func TestJoinRequestPreviewRanksSuggestedOffers(t *testing.T) {
 	      "auth":{"method":"none"},
 	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
 	      "claimed_capabilities":[
-	        {"capability_id":"rerank","interaction_mode":"http-reqresp@v0"}
+	        {"capability_id":"rerank","protocol":"paid-job/v1"}
 	      ]
 	    }
 	  ]
@@ -2294,7 +2294,7 @@ func TestJoinRequestPreviewRanksSuggestedOffers(t *testing.T) {
 	if resp.StatusCode != http.StatusOK ||
 		!strings.Contains(string(body), `"suggested_offer_ids":["rerank-alt","rerank-default"]`) ||
 		!strings.Contains(string(body), `"score":61`) ||
-		!strings.Contains(string(body), `claim allows any offering_id; exact interaction_mode; capability_id matched`) {
+		!strings.Contains(string(body), `claim allows any offering_id; exact protocol; capability_id matched`) {
 		t.Fatalf("join-rank preview status=%d body=%s", resp.StatusCode, string(body))
 	}
 }

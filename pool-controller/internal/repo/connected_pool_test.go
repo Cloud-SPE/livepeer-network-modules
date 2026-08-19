@@ -90,7 +90,7 @@ func TestStateRepoConnectedPoolEntitiesPersist(t *testing.T) {
 		ID:               "image-realvisxl",
 		CapabilityID:     "image-generation",
 		OfferingID:       "realvisxl",
-		InteractionMode:  "http-reqresp@v0",
+		Protocol:         "paid-job/v1",
 		PrimaryAllowed:   true,
 		AllowedGPUModels: []string{"RTX 4090"},
 	}

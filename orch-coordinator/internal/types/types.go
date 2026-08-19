@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -31,12 +32,73 @@ const (
 type BrokerOffering struct {
 	CapabilityID    string         `json:"capability_id"`
 	OfferingID      string         `json:"offering_id"`
-	InteractionMode string         `json:"interaction_mode"`
+	Protocol        string         `json:"protocol"`
+	Job             *JobAxes       `json:"job,omitempty"`
+	Session         *SessionAxes   `json:"session,omitempty"`
 	WorkUnit        WorkUnit       `json:"work_unit"`
 	PricePerUnitWei string         `json:"price_per_unit_wei"`
 	PerUnits        uint64         `json:"per_units,omitempty"`
 	Extra           map[string]any `json:"extra,omitempty"`
 	Constraints     map[string]any `json:"constraints,omitempty"`
+}
+
+// JobAxes carries the paid-job/v1 declared axes
+// (livepeer-network-protocol/protocols/offering-axes.md §2, schema
+// #/$defs/job_axes). Currently one key, "transports".
+//
+// It is deliberately an opaque object rather than a typed mirror: per
+// offering-axes.md §4 the coordinator gates on nothing in here, it
+// only carries the declaration from the broker into the bytes the
+// cold key signs. A typed mirror would silently drop any axis a later
+// spec minor adds, and the drop would be baked into the operator's
+// signature. Pass-through cannot go stale.
+type JobAxes map[string]any
+
+// SessionAxes carries the paid-session/v1 declared axes
+// (offering-axes.md §3, schema #/$defs/session_axes):
+// descriptor_schema, metering, attachment, refill, heartbeat, lease,
+// tolerance_band_pct, runway_increment_units. Opaque for the same
+// reason as JobAxes.
+type SessionAxes map[string]any
+
+// Protocol tag prefixes the manifest schema pairs with a specific
+// axes object. Unknown protocols are carried through unchanged — the
+// coordinator refuses to guess, and the schema imposes no axes rule
+// on them.
+const (
+	ProtocolPaidJobPrefix     = "paid-job/"
+	ProtocolPaidSessionPrefix = "paid-session/"
+)
+
+// protocolTagRE mirrors the schema's protocol pattern
+// (^[a-z][a-z0-9-]*/v[0-9]+$).
+var protocolTagRE = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
+
+// ValidateProtocolAxes enforces the manifest schema's conditional
+// pairing: a paid-job/* protocol requires the job object and forbids
+// session; a paid-session/* protocol requires session and forbids
+// job. Both the scrape boundary and the signed-manifest receive path
+// run it — a tuple that fails here produces a manifest that fails
+// schema validation at every resolver, so it must never reach the
+// cold key.
+func ValidateProtocolAxes(protocol string, job *JobAxes, session *SessionAxes) error {
+	switch {
+	case strings.HasPrefix(protocol, ProtocolPaidJobPrefix):
+		if job == nil {
+			return fmt.Errorf("job: required for %q protocols", ProtocolPaidJobPrefix+"*")
+		}
+		if session != nil {
+			return fmt.Errorf("session: must not be set for %q protocols", ProtocolPaidJobPrefix+"*")
+		}
+	case strings.HasPrefix(protocol, ProtocolPaidSessionPrefix):
+		if session == nil {
+			return fmt.Errorf("session: required for %q protocols", ProtocolPaidSessionPrefix+"*")
+		}
+		if job != nil {
+			return fmt.Errorf("job: must not be set for %q protocols", ProtocolPaidSessionPrefix+"*")
+		}
+	}
+	return nil
 }
 
 // WorkUnit is the metering dimension. Free-form name; opaque to the
@@ -101,7 +163,8 @@ type BrokerHealth struct {
 
 // Validate runs a boundary-decoder pass on the freshly-scraped
 // payload: orch identity match, required fields, decimal-string price,
-// non-empty interaction_mode and work_unit.
+// well-formed protocol tag paired with its declared-axes object, and
+// non-empty work_unit.
 func (b *BrokerOfferings) Validate(expectedOrch string) error {
 	if !strings.EqualFold(strings.TrimSpace(b.OrchEthAddress), strings.TrimSpace(expectedOrch)) {
 		return fmt.Errorf("orch identity mismatch: got %q, want %q", b.OrchEthAddress, expectedOrch)
@@ -113,8 +176,14 @@ func (b *BrokerOfferings) Validate(expectedOrch string) error {
 		if c.OfferingID == "" {
 			return fmt.Errorf("capabilities[%d].offering_id: required", i)
 		}
-		if c.InteractionMode == "" {
-			return fmt.Errorf("capabilities[%d].interaction_mode: required", i)
+		if c.Protocol == "" {
+			return fmt.Errorf("capabilities[%d].protocol: required", i)
+		}
+		if !protocolTagRE.MatchString(c.Protocol) {
+			return fmt.Errorf("capabilities[%d].protocol: must match <name>/v<major>, got %q", i, c.Protocol)
+		}
+		if err := ValidateProtocolAxes(c.Protocol, c.Job, c.Session); err != nil {
+			return fmt.Errorf("capabilities[%d].%w", i, err)
 		}
 		if c.WorkUnit.Name == "" {
 			return fmt.Errorf("capabilities[%d].work_unit.name: required", i)
@@ -189,9 +258,19 @@ type SourceTuple struct {
 // CapabilityTuple is the manifest tuple as the coordinator emits it.
 // Mirrors livepeer-network-protocol/manifest/schema.json #/$defs/capability.
 type CapabilityTuple struct {
-	CapabilityID    string         `json:"capability_id"`
-	OfferingID      string         `json:"offering_id"`
-	InteractionMode string         `json:"interaction_mode"`
+	CapabilityID string `json:"capability_id"`
+	OfferingID   string `json:"offering_id"`
+	// Protocol is the protocol tag ("paid-job/v1", "paid-session/v1").
+	// Manifest spec 1.0.0 replaced the pre-v1 mode field with this plus
+	// the declared axes below.
+	Protocol string `json:"protocol"`
+	// Job / Session are the declared-axes objects. Exactly one is set,
+	// selected by Protocol; both nil only for an unknown protocol the
+	// schema imposes no rule on. Pointers so absence survives the
+	// round-trip — an emitted-but-empty object would break the
+	// schema's conditional requirements.
+	Job             *JobAxes       `json:"job,omitempty"`
+	Session         *SessionAxes   `json:"session,omitempty"`
 	WorkUnit        WorkUnit       `json:"work_unit"`
 	PricePerUnitWei string         `json:"price_per_unit_wei"`
 	WorkerURL       string         `json:"worker_url"`

@@ -4,8 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"io"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -52,7 +55,8 @@ func sampleSnap() scrape.Snapshot {
 				Offering: types.BrokerOffering{
 					CapabilityID:    "openai:chat-completions",
 					OfferingID:      "vllm-h100-batch4",
-					InteractionMode: "http-stream@v1",
+					Protocol:        "paid-job/v1",
+					Job:             &types.JobAxes{"transports": []any{"stream"}},
 					WorkUnit:        types.WorkUnit{Name: "tokens"},
 					PricePerUnitWei: "1500000",
 					Extra: map[string]any{
@@ -238,7 +242,8 @@ func TestAggregate_PriceConflictHardFails(t *testing.T) {
 		Offering: types.BrokerOffering{
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
-			InteractionMode: "http-stream@v1",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"stream"}},
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "1500001", // different price
 			Extra: map[string]any{
@@ -265,7 +270,8 @@ func TestAggregate_HAPairDedupsToLexMin(t *testing.T) {
 		Offering: types.BrokerOffering{
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
-			InteractionMode: "http-stream@v1",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"stream"}},
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "1500000", // same price
 			Extra: map[string]any{
@@ -300,7 +306,8 @@ func TestAggregate_DistinctExtraEmitsBoth(t *testing.T) {
 		Offering: types.BrokerOffering{
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
-			InteractionMode: "http-stream@v1",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"stream"}},
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "1500000",
 			Extra:           map[string]any{"region": "us-east-1"}, // distinct
@@ -593,5 +600,115 @@ func TestBuild_ExplicitRenewalThresholdKeepsDebounce(t *testing.T) {
 	}
 	if !c2.Manifest.IssuedAt.Equal(c1.Manifest.IssuedAt) {
 		t.Fatalf("debounce should hold above explicit threshold: c1=%s c2=%s", c1.Manifest.IssuedAt, c2.Manifest.IssuedAt)
+	}
+}
+
+// The signed bytes are the manifest. Spec 1.0.0 requires `protocol` plus
+// exactly the axes object that matches it; anything the coordinator drops
+// here is dropped from what the cold key signs, and the published manifest
+// fails schema validation at every resolver.
+func TestBuild_EmitsProtocolAndDeclaredAxesVerbatim(t *testing.T) {
+	snap := sampleSnap()
+	snap.SourceTuples = []types.SourceTuple{
+		{
+			BrokerName: "b1",
+			WorkerURL:  "https://b1.example/",
+			Offering: types.BrokerOffering{
+				CapabilityID:    "openai:chat-completions",
+				OfferingID:      "vllm",
+				Protocol:        "paid-job/v1",
+				Job:             &types.JobAxes{"transports": []any{"unary", "stream"}},
+				WorkUnit:        types.WorkUnit{Name: "tokens"},
+				PricePerUnitWei: "1500000",
+			},
+		},
+		{
+			BrokerName: "b2",
+			WorkerURL:  "https://b2.example/",
+			Offering: types.BrokerOffering{
+				CapabilityID: "video:transcode.live",
+				OfferingID:   "h264",
+				Protocol:     "paid-session/v1",
+				Session: &types.SessionAxes{
+					"descriptor_schema":      "rtmp-hls/v1",
+					"metering":               "runner-reported",
+					"heartbeat":              map[string]any{"interval_seconds": float64(10), "missed_threshold": float64(3)},
+					"runway_increment_units": float64(60000),
+				},
+				WorkUnit:        types.WorkUnit{Name: "video-frame-megapixel"},
+				PricePerUnitWei: "200000",
+			},
+		},
+	}
+
+	c, err := Build(snap, BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		Capabilities []map[string]any `json:"capabilities"`
+	}
+	if err := json.Unmarshal(c.ManifestBytes, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Capabilities) != 2 {
+		t.Fatalf("expected 2 tuples, got %d", len(got.Capabilities))
+	}
+
+	byCap := map[string]map[string]any{}
+	for _, e := range got.Capabilities {
+		byCap[e["capability_id"].(string)] = e
+	}
+
+	job := byCap["openai:chat-completions"]
+	if job["protocol"] != "paid-job/v1" {
+		t.Fatalf("protocol = %v", job["protocol"])
+	}
+	// additionalProperties:false — assert the exact key set, so any
+	// stray leftover key (the pre-1.0.0 mode field included) fails here.
+	assertKeys(t, job, "capability_id", "offering_id", "protocol", "job",
+		"work_unit", "price_per_unit_wei", "worker_url")
+	wantJob := map[string]any{"transports": []any{"unary", "stream"}}
+	if !reflect.DeepEqual(job["job"], wantJob) {
+		t.Fatalf("job axes = %#v, want %#v", job["job"], wantJob)
+	}
+	if _, bad := job["session"]; bad {
+		t.Fatal("paid-job tuple must not carry a session object")
+	}
+
+	sess := byCap["video:transcode.live"]
+	if sess["protocol"] != "paid-session/v1" {
+		t.Fatalf("protocol = %v", sess["protocol"])
+	}
+	wantSess := map[string]any{
+		"descriptor_schema":      "rtmp-hls/v1",
+		"metering":               "runner-reported",
+		"heartbeat":              map[string]any{"interval_seconds": float64(10), "missed_threshold": float64(3)},
+		"runway_increment_units": float64(60000),
+	}
+	if !reflect.DeepEqual(sess["session"], wantSess) {
+		t.Fatalf("session axes = %#v, want %#v", sess["session"], wantSess)
+	}
+	if _, bad := sess["job"]; bad {
+		t.Fatal("paid-session tuple must not carry a job object")
+	}
+	assertKeys(t, sess, "capability_id", "offering_id", "protocol", "session",
+		"work_unit", "price_per_unit_wei", "worker_url")
+}
+
+func assertKeys(t *testing.T, entry map[string]any, want ...string) {
+	t.Helper()
+	got := make([]string, 0, len(entry))
+	for k := range entry {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("emitted keys = %v, want %v", got, want)
 	}
 }

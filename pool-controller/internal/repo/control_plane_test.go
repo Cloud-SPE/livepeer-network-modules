@@ -16,10 +16,10 @@ func TestStateRepoControlPlaneEntitiesPersist(t *testing.T) {
 	defer func() { _ = repo.Close() }()
 
 	offer := types.Offer{
-		ID:              "offer-1",
-		CapabilityID:    "rerank",
-		OfferingID:      "zerank-2-default",
-		InteractionMode: "http-reqresp@v0",
+		ID:           "offer-1",
+		CapabilityID: "rerank",
+		OfferingID:   "zerank-2-default",
+		Protocol:     "paid-job/v1",
 		WorkUnit: config.WorkUnit{
 			Name: "requests",
 			Extractor: map[string]any{

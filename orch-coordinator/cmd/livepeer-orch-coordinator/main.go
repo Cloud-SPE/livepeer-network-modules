@@ -414,7 +414,8 @@ func newDevFake(orchAddr string, brokers []config.Broker) brokerclient.Client {
 		caps := []types.BrokerOffering{{
 			CapabilityID:    "demo:echo:v1",
 			OfferingID:      "default",
-			InteractionMode: "http-reqresp@v0",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"unary"}},
 			WorkUnit:        types.WorkUnit{Name: "echoes"},
 			PricePerUnitWei: "100",
 			Extra:           map[string]any{"broker": b.Name},

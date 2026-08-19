@@ -41,7 +41,7 @@
   </details>
   <form method="get" class="filters">
     <input type="text" name="q" value="{{.Filter.CapabilitySubstring}}" placeholder="capability substring">
-    <input type="text" name="mode" value="{{.Filter.Mode}}" placeholder="interaction_mode">
+    <input type="text" name="protocol" value="{{.Filter.Protocol}}" placeholder="protocol">
     <input type="text" name="broker" value="{{.Filter.BrokerName}}" placeholder="broker name">
     <select name="drift">
       <option value="">any drift</option>
@@ -153,7 +153,7 @@
     <thead>
       <tr>
         <th>capability_id / offering_id</th>
-        <th>mode</th>
+        <th>protocol</th>
         <th>price (wei)</th>
         <th>broker(s)</th>
         <th>worker_url</th>
@@ -165,7 +165,7 @@
     {{range .Rows}}
       <tr class="drift-{{.Drift}}" id="row-{{anchorID .CapabilityID .OfferingID}}">
         <td><strong>{{.CapabilityID}}</strong><br><small>{{.OfferingID}}</small><br><a href="/diff#diff-row-{{anchorID .CapabilityID .OfferingID}}" class="inline-link">Open in diff</a></td>
-        <td>{{.InteractionMode}}</td>
+        <td>{{.Protocol}}</td>
         <td>{{.PriceWei}}{{if and (ne .OldPriceWei "") (ne .OldPriceWei .PriceWei)}}<br><small class="was">was {{.OldPriceWei}}</small>{{end}}</td>
         <td>
           {{range .Brokers}}

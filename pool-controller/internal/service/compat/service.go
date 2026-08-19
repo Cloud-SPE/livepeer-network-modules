@@ -44,10 +44,10 @@ func Check(offer types.Offer, backend types.MemberBackend) Result {
 	matchedClaim, matched := matchesAnyClaim(offer, backend)
 	if !matched {
 		reasons = append(reasons, fmt.Sprintf("backend claims do not match offer %s/%s", offer.CapabilityID, offer.OfferingID))
-		checks = append(checks, CheckResult{Name: "claim_matches_offer", Passed: false, Detail: fmt.Sprintf("no claim matched %s/%s %s", offer.CapabilityID, offer.OfferingID, offer.InteractionMode)})
+		checks = append(checks, CheckResult{Name: "claim_matches_offer", Passed: false, Detail: fmt.Sprintf("no claim matched %s/%s %s", offer.CapabilityID, offer.OfferingID, offer.Protocol)})
 		return Result{Compatible: false, Reasons: reasons, Checks: checks}
 	}
-	checks = append(checks, CheckResult{Name: "claim_matches_offer", Passed: true, Detail: fmt.Sprintf("%s/%s %s", matchedClaim.CapabilityID, matchedClaim.OfferingID, matchedClaim.InteractionMode)})
+	checks = append(checks, CheckResult{Name: "claim_matches_offer", Passed: true, Detail: fmt.Sprintf("%s/%s %s", matchedClaim.CapabilityID, matchedClaim.OfferingID, matchedClaim.Protocol)})
 	return Result{Compatible: len(reasons) == 0, Reasons: reasons, Checks: checks, MatchedClaim: matchedClaim}
 }
 
@@ -57,7 +57,7 @@ func matchesAnyClaim(offer types.Offer, backend types.MemberBackend) (*types.Cla
 		if claim.CapabilityID != offer.CapabilityID {
 			continue
 		}
-		if claim.InteractionMode != "" && claim.InteractionMode != offer.InteractionMode {
+		if claim.Protocol != "" && claim.Protocol != offer.Protocol {
 			continue
 		}
 		if claim.OfferingID != "" && claim.OfferingID != offer.OfferingID {

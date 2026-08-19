@@ -220,7 +220,8 @@ func testManifest(t *testing.T, seq uint64, issued, expires time.Time, price str
 	caps := []any{map[string]any{
 		"capability_id":      "openai:chat-completions",
 		"offering_id":        "vllm-h100",
-		"interaction_mode":   "http-stream@v1",
+		"protocol":           "paid-job/v1",
+		"job":                map[string]any{"transports": []any{"unary", "stream"}},
 		"work_unit":          map[string]any{"name": "tokens"},
 		"price_per_unit_wei": price,
 		"worker_url":         "https://a.workers.example-orch.net/",
@@ -229,7 +230,8 @@ func testManifest(t *testing.T, seq uint64, issued, expires time.Time, price str
 		caps = append(caps, map[string]any{
 			"capability_id":      "video:transcode",
 			"offering_id":        "default",
-			"interaction_mode":   "rtmp@v0",
+			"protocol":           "paid-session/v1",
+			"session":            map[string]any{"descriptor_schema": "rtmp-hls/v1", "metering": "runner-reported"},
 			"work_unit":          map[string]any{"name": "minutes"},
 			"price_per_unit_wei": "5",
 			"worker_url":         "https://b.example/",

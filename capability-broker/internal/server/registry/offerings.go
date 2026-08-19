@@ -42,13 +42,19 @@ type offeringsPayload struct {
 }
 
 type offeringsCapabilityV1 struct {
-	CapabilityID    string            `json:"capability_id"`
-	OfferingID      string            `json:"offering_id"`
-	Protocol        string            `json:"protocol"`
-	WorkUnit        offeringsWorkUnit `json:"work_unit"`
-	PricePerUnitWei string            `json:"price_per_unit_wei"`
-	PerUnits        uint64            `json:"per_units"`
-	Extra           map[string]any    `json:"extra,omitempty"`
+	CapabilityID string `json:"capability_id"`
+	OfferingID   string `json:"offering_id"`
+	Protocol     string `json:"protocol"`
+	// Job and Session carry the declared axes through to the
+	// coordinator, which signs them into the manifest verbatim. A
+	// paid-* offering without its axes object produces a manifest that
+	// fails schema validation, so exactly one of these is always set.
+	Job             *offeringsJobAxes     `json:"job,omitempty"`
+	Session         *offeringsSessionAxes `json:"session,omitempty"`
+	WorkUnit        offeringsWorkUnit     `json:"work_unit"`
+	PricePerUnitWei string                `json:"price_per_unit_wei"`
+	PerUnits        uint64                `json:"per_units"`
+	Extra           map[string]any        `json:"extra,omitempty"`
 	// Constraints is always emitted (no omitempty). Resolvers downstream
 	// hash the canonical constraints bytes; an absent block previously
 	// produced a nil constraint_fingerprint that failed request-path
@@ -58,6 +64,65 @@ type offeringsCapabilityV1 struct {
 
 type offeringsWorkUnit struct {
 	Name string `json:"name"`
+}
+
+// offeringsJobAxes / offeringsSessionAxes mirror the manifest schema's
+// axes objects (livepeer-network-protocol/manifest/schema.json), not the
+// broker's host-config shape — this is the advertisement, so it speaks
+// the published vocabulary.
+type offeringsJobAxes struct {
+	Transports []string `json:"transports"`
+}
+
+type offeringsSessionAxes struct {
+	DescriptorSchema     string              `json:"descriptor_schema"`
+	Attachment           string              `json:"attachment,omitempty"`
+	Metering             string              `json:"metering"`
+	Refill               string              `json:"refill,omitempty"`
+	Heartbeat            *offeringsHeartbeat `json:"heartbeat,omitempty"`
+	Lease                *offeringsLease     `json:"lease,omitempty"`
+	ToleranceBandPct     float64             `json:"tolerance_band_pct,omitempty"`
+	RunwayIncrementUnits int64               `json:"runway_increment_units,omitempty"`
+}
+
+type offeringsHeartbeat struct {
+	IntervalSeconds int `json:"interval_seconds,omitempty"`
+	MissedThreshold int `json:"missed_threshold,omitempty"`
+}
+
+type offeringsLease struct {
+	Policy     string `json:"policy,omitempty"`
+	MaxSeconds int    `json:"max_seconds,omitempty"`
+}
+
+// axesFor maps a host-config capability to its advertised axes object.
+func axesFor(c config.Capability) (*offeringsJobAxes, *offeringsSessionAxes) {
+	if c.Job != nil {
+		return &offeringsJobAxes{Transports: c.Job.Transports}, nil
+	}
+	if c.Session == nil {
+		return nil, nil
+	}
+	sess := &offeringsSessionAxes{
+		DescriptorSchema:     c.Session.DescriptorSchema,
+		Attachment:           c.Session.AdvertisedAttachment(),
+		Metering:             c.Session.AdvertisedMetering(),
+		Refill:               c.Session.AdvertisedRefill(),
+		ToleranceBandPct:     c.Session.ToleranceBandPct,
+		RunwayIncrementUnits: c.Session.RunwayIncrementUnits,
+	}
+	if hb := c.Session.Heartbeat; hb.IntervalSeconds > 0 || hb.MissedThreshold > 0 {
+		sess.Heartbeat = &offeringsHeartbeat{
+			IntervalSeconds: hb.IntervalSeconds,
+			MissedThreshold: hb.MissedThreshold,
+		}
+	}
+	// Host config carries a flat cap; the manifest models lease as an
+	// object with an explicit policy.
+	if c.Session.LeaseMaxSeconds > 0 {
+		sess.Lease = &offeringsLease{Policy: "funding-tracking", MaxSeconds: c.Session.LeaseMaxSeconds}
+	}
+	return nil, sess
 }
 
 func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPayload {
@@ -77,10 +142,13 @@ func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPa
 		if constraints == nil {
 			constraints = map[string]any{}
 		}
+		jobAxes, sessionAxes := axesFor(c)
 		out.Capabilities = append(out.Capabilities, offeringsCapabilityV1{
 			CapabilityID:    c.ID,
 			OfferingID:      c.OfferingID,
 			Protocol:        c.Protocol,
+			Job:             jobAxes,
+			Session:         sessionAxes,
 			WorkUnit:        offeringsWorkUnit{Name: c.WorkUnit.Name},
 			PricePerUnitWei: c.Price.AmountWei,
 			PerUnits:        c.Price.PerUnits,

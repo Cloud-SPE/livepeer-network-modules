@@ -403,14 +403,14 @@ func buildRosterPage(deps WebDeps, r *http.Request) rosterPage {
 	q := r.URL.Query()
 	filter := roster.Filter{
 		CapabilitySubstring: strings.TrimSpace(q.Get("q")),
-		Mode:                strings.TrimSpace(q.Get("mode")),
+		Protocol:            strings.TrimSpace(q.Get("protocol")),
 		BrokerName:          strings.TrimSpace(q.Get("broker")),
 		DriftKind:           strings.TrimSpace(q.Get("drift")),
 	}
 	out := view.Apply(filter)
 	driftKinds := []string{
 		diff.DriftNone, diff.DriftAdded, diff.DriftRemoved,
-		diff.DriftPriceChanged, diff.DriftModeChanged,
+		diff.DriftPriceChanged, diff.DriftProtocolChanged,
 		diff.DriftExtraChanged, diff.DriftWorkerChanged,
 	}
 	if len(out.DriftCounts) == 0 {
@@ -647,9 +647,9 @@ func collectDriftAlerts(rows []roster.Row) []alertItem {
 				Message: row.CapabilityID + " / " + row.OfferingID + " changed price from " + row.OldPriceWei + " to " + row.NewPriceWei + ".",
 				Href:    "/diff#diff-row-" + anchorID(row.CapabilityID, row.OfferingID),
 			})
-		case diff.DriftModeChanged:
+		case diff.DriftProtocolChanged:
 			alerts = append(alerts, alertItem{
-				Message: row.CapabilityID + " / " + row.OfferingID + " changed interaction mode.",
+				Message: row.CapabilityID + " / " + row.OfferingID + " changed protocol or declared axes.",
 				Href:    "/diff#diff-row-" + anchorID(row.CapabilityID, row.OfferingID),
 			})
 		case diff.DriftWorkerChanged:

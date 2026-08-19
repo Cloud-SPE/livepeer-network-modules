@@ -9,19 +9,19 @@ import (
 
 func TestCheckMatchesClaim(t *testing.T) {
 	offer := types.Offer{
-		CapabilityID:    "rerank",
-		OfferingID:      "zerank-2-default",
-		InteractionMode: "http-reqresp@v0",
-		WorkUnit:        config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
-		Price:           config.Price{AmountWei: "1", PerUnits: 1},
+		CapabilityID: "rerank",
+		OfferingID:   "zerank-2-default",
+		Protocol:     "paid-job/v1",
+		WorkUnit:     config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
+		Price:        config.Price{AmountWei: "1", PerUnits: 1},
 	}
 	backend := types.MemberBackend{
 		Transport: "http",
 		URL:       "http://backend",
 		ClaimedCapabilities: []types.ClaimedOffer{{
-			CapabilityID:    "rerank",
-			OfferingID:      "zerank-2-default",
-			InteractionMode: "http-reqresp@v0",
+			CapabilityID: "rerank",
+			OfferingID:   "zerank-2-default",
+			Protocol:     "paid-job/v1",
 		}},
 	}
 	got := Check(offer, backend)
@@ -34,13 +34,13 @@ func TestCheckMatchesClaim(t *testing.T) {
 }
 
 func TestCheckRejectsMismatch(t *testing.T) {
-	offer := types.Offer{CapabilityID: "rerank", OfferingID: "zerank-2-default", InteractionMode: "http-reqresp@v0"}
+	offer := types.Offer{CapabilityID: "rerank", OfferingID: "zerank-2-default", Protocol: "paid-job/v1"}
 	backend := types.MemberBackend{
 		Transport: "http",
 		URL:       "http://backend",
 		ClaimedCapabilities: []types.ClaimedOffer{{
-			CapabilityID:    "openai:chat-completions",
-			InteractionMode: "http-stream@v0",
+			CapabilityID: "openai:chat-completions",
+			Protocol:     "paid-job/v1",
 		}},
 	}
 	got := Check(offer, backend)

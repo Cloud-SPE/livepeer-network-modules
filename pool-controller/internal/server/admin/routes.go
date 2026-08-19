@@ -655,10 +655,10 @@ func Register(mux *http.ServeMux, deps Deps) {
 			ResourceID:   offer.ID,
 			ResourceType: "offer",
 			Details: map[string]any{
-				"capability_id":    offer.CapabilityID,
-				"offering_id":      offer.OfferingID,
-				"interaction_mode": offer.InteractionMode,
-				"status":           offer.Status,
+				"capability_id": offer.CapabilityID,
+				"offering_id":   offer.OfferingID,
+				"protocol":      offer.Protocol,
+				"status":        offer.Status,
 			},
 		})
 		if err := deps.RefreshRendered("offer-created"); err != nil {
@@ -696,10 +696,10 @@ func Register(mux *http.ServeMux, deps Deps) {
 			ResourceID:   updated.ID,
 			ResourceType: "offer",
 			Details: map[string]any{
-				"capability_id":    updated.CapabilityID,
-				"offering_id":      updated.OfferingID,
-				"interaction_mode": updated.InteractionMode,
-				"status":           updated.Status,
+				"capability_id": updated.CapabilityID,
+				"offering_id":   updated.OfferingID,
+				"protocol":      updated.Protocol,
+				"status":        updated.Status,
 			},
 		})
 		if err := deps.RefreshRendered("offer-updated"); err != nil {

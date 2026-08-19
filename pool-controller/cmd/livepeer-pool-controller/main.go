@@ -211,6 +211,7 @@ func renderBrokerState(stateRepo *repo.StateRepo, cfg *config.Config) ([]byte, *
 		MemberCount:     len(members),
 		BackendCount:    len(backends),
 		AssignmentCount: len(assignments),
+		RenderWarnings:  result.Warnings,
 	}
 	return result.ConfigYAML, runtimeInfo, nil
 }
@@ -466,14 +467,15 @@ func buildSyntheticProbeTargets(offers []types.Offer, members []types.MemberReco
 				Auth:      backend.Auth,
 			},
 			Offering: probes.ProbeOffering{
-				CapabilityID:    offer.CapabilityID,
-				OfferingID:      offer.OfferingID,
-				InteractionMode: offer.InteractionMode,
-				WorkUnit:        offer.WorkUnit,
-				Price:           offer.Price,
-				Extra:           offer.Extra,
-				Constraints:     offer.Constraints,
-				Health:          config.Health{Probe: backend.HealthProbe},
+				CapabilityID: offer.CapabilityID,
+				OfferingID:   offer.OfferingID,
+				Protocol:     offer.Protocol,
+				Transports:   offer.JobTransports(),
+				WorkUnit:     offer.WorkUnit,
+				Price:        offer.Price,
+				Extra:        offer.Extra,
+				Constraints:  offer.Constraints,
+				Health:       config.Health{Probe: backend.HealthProbe},
 			},
 		})
 	}
@@ -1961,12 +1963,12 @@ func offerFromRequest(req offerMutationRequest) (types.Offer, error) {
 	req.ID = strings.TrimSpace(req.ID)
 	req.CapabilityID = strings.TrimSpace(req.CapabilityID)
 	req.OfferingID = strings.TrimSpace(req.OfferingID)
-	req.InteractionMode = strings.TrimSpace(req.InteractionMode)
+	req.Protocol = strings.TrimSpace(req.Protocol)
 	if req.ID == "" {
 		return types.Offer{}, fmt.Errorf("id is required")
 	}
-	if req.CapabilityID == "" || req.OfferingID == "" || req.InteractionMode == "" {
-		return types.Offer{}, fmt.Errorf("capability_id, offering_id, and interaction_mode are required")
+	if req.CapabilityID == "" || req.OfferingID == "" || req.Protocol == "" {
+		return types.Offer{}, fmt.Errorf("capability_id, offering_id, and protocol are required")
 	}
 	if req.WorkUnit.Name == "" || len(req.WorkUnit.Extractor) == 0 {
 		return types.Offer{}, fmt.Errorf("work_unit.name and work_unit.extractor are required")
@@ -1979,15 +1981,16 @@ func offerFromRequest(req offerMutationRequest) (types.Offer, error) {
 		status = types.OfferStatus(strings.TrimSpace(req.Status))
 	}
 	return types.Offer{
-		ID:              req.ID,
-		CapabilityID:    req.CapabilityID,
-		OfferingID:      req.OfferingID,
-		InteractionMode: req.InteractionMode,
-		WorkUnit:        config.NormalizeWorkUnit(req.WorkUnit),
-		Price:           req.Price,
-		Extra:           req.Extra,
-		Constraints:     req.Constraints,
-		Status:          status,
+		ID:           req.ID,
+		CapabilityID: req.CapabilityID,
+		OfferingID:   req.OfferingID,
+		Protocol:     req.Protocol,
+		Job:          req.Job,
+		WorkUnit:     config.NormalizeWorkUnit(req.WorkUnit),
+		Price:        req.Price,
+		Extra:        req.Extra,
+		Constraints:  req.Constraints,
+		Status:       status,
 	}, nil
 }
 
@@ -1998,8 +2001,11 @@ func updatedOfferFromRequest(current types.Offer, req offerMutationRequest) (typ
 	if strings.TrimSpace(req.OfferingID) != "" {
 		current.OfferingID = strings.TrimSpace(req.OfferingID)
 	}
-	if strings.TrimSpace(req.InteractionMode) != "" {
-		current.InteractionMode = strings.TrimSpace(req.InteractionMode)
+	if strings.TrimSpace(req.Protocol) != "" {
+		current.Protocol = strings.TrimSpace(req.Protocol)
+	}
+	if req.Job != nil {
+		current.Job = req.Job
 	}
 	if req.WorkUnit.Name != "" {
 		current.WorkUnit = config.NormalizeWorkUnit(req.WorkUnit)
@@ -2016,8 +2022,8 @@ func updatedOfferFromRequest(current types.Offer, req offerMutationRequest) (typ
 	if strings.TrimSpace(req.Status) != "" {
 		current.Status = types.OfferStatus(strings.TrimSpace(req.Status))
 	}
-	if current.CapabilityID == "" || current.OfferingID == "" || current.InteractionMode == "" {
-		return types.Offer{}, fmt.Errorf("capability_id, offering_id, and interaction_mode are required")
+	if current.CapabilityID == "" || current.OfferingID == "" || current.Protocol == "" {
+		return types.Offer{}, fmt.Errorf("capability_id, offering_id, and protocol are required")
 	}
 	if current.WorkUnit.Name == "" || len(current.WorkUnit.Extractor) == 0 {
 		return types.Offer{}, fmt.Errorf("work_unit.name and work_unit.extractor are required")
@@ -2209,17 +2215,17 @@ type memberAuthView struct {
 }
 
 type memberOfferingView struct {
-	CapabilityID    string `json:"capability_id"`
-	OfferingID      string `json:"offering_id"`
-	InteractionMode string `json:"interaction_mode"`
+	CapabilityID string `json:"capability_id"`
+	OfferingID   string `json:"offering_id"`
+	Protocol     string `json:"protocol"`
 }
 
 type offeringView struct {
-	CapabilityID    string                `json:"capability_id"`
-	OfferingID      string                `json:"offering_id"`
-	InteractionMode string                `json:"interaction_mode"`
-	BackendCount    int                   `json:"backend_count"`
-	Backends        []offeringBackendView `json:"backends"`
+	CapabilityID string                `json:"capability_id"`
+	OfferingID   string                `json:"offering_id"`
+	Protocol     string                `json:"protocol"`
+	BackendCount int                   `json:"backend_count"`
+	Backends     []offeringBackendView `json:"backends"`
 }
 
 type offeringBackendView struct {
@@ -2496,15 +2502,16 @@ type payoutIntentRequeueRequest struct {
 }
 
 type offerMutationRequest struct {
-	ID              string          `json:"id"`
-	CapabilityID    string          `json:"capability_id"`
-	OfferingID      string          `json:"offering_id"`
-	InteractionMode string          `json:"interaction_mode"`
-	WorkUnit        config.WorkUnit `json:"work_unit"`
-	Price           config.Price    `json:"price"`
-	Extra           map[string]any  `json:"extra,omitempty"`
-	Constraints     map[string]any  `json:"constraints,omitempty"`
-	Status          string          `json:"status,omitempty"`
+	ID           string              `json:"id"`
+	CapabilityID string              `json:"capability_id"`
+	OfferingID   string              `json:"offering_id"`
+	Protocol     string              `json:"protocol"`
+	Job          *types.OfferJobAxes `json:"job,omitempty"`
+	WorkUnit     config.WorkUnit     `json:"work_unit"`
+	Price        config.Price        `json:"price"`
+	Extra        map[string]any      `json:"extra,omitempty"`
+	Constraints  map[string]any      `json:"constraints,omitempty"`
+	Status       string              `json:"status,omitempty"`
 }
 
 type assignmentMutationRequest struct {
@@ -2591,9 +2598,9 @@ func buildMemberViewsFromState(stateRepo *repo.StateRepo) ([]memberView, error) 
 					continue
 				}
 				backendView.Offerings = append(backendView.Offerings, memberOfferingView{
-					CapabilityID:    offer.CapabilityID,
-					OfferingID:      offer.OfferingID,
-					InteractionMode: offer.InteractionMode,
+					CapabilityID: offer.CapabilityID,
+					OfferingID:   offer.OfferingID,
+					Protocol:     offer.Protocol,
 				})
 			}
 			view.Backends = append(view.Backends, backendView)
@@ -2639,10 +2646,10 @@ func buildOfferingViewsFromState(stateRepo *repo.StateRepo) ([]offeringView, err
 	out := make([]offeringView, 0, len(offers))
 	for _, offer := range offers {
 		view := offeringView{
-			CapabilityID:    offer.CapabilityID,
-			OfferingID:      offer.OfferingID,
-			InteractionMode: offer.InteractionMode,
-			Backends:        make([]offeringBackendView, 0, len(assignmentsByOffer[offer.ID])),
+			CapabilityID: offer.CapabilityID,
+			OfferingID:   offer.OfferingID,
+			Protocol:     offer.Protocol,
+			Backends:     make([]offeringBackendView, 0, len(assignmentsByOffer[offer.ID])),
 		}
 		offerAssignments := assignmentsByOffer[offer.ID]
 		sort.Slice(offerAssignments, func(i, j int) bool { return offerAssignments[i].ID < offerAssignments[j].ID })

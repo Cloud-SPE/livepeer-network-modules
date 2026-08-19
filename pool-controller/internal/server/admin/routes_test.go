@@ -333,7 +333,7 @@ func seedAdminCertificationRepo(t *testing.T) *repo.StateRepo {
 	if err := stateRepo.PutHardwareUnit(types.HardwareUnit{ID: "gpu-1", EnrollmentID: "host-1", MemberEthAddress: "0x1111111111111111111111111111111111111111", GPUUUID: "GPU-1", State: types.HardwareUnitRegistered, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatalf("PutHardwareUnit() error = %v", err)
 	}
-	if err := stateRepo.PutTemplateCatalogEntry(types.TemplateCatalogEntry{ID: "chat-4090", CapabilityID: "openai:chat-completions", OfferingID: "default", InteractionMode: "http-stream@v0", Status: types.TemplateStatusActive, CreatedAt: now, UpdatedAt: now}); err != nil {
+	if err := stateRepo.PutTemplateCatalogEntry(types.TemplateCatalogEntry{ID: "chat-4090", CapabilityID: "openai:chat-completions", OfferingID: "default", Protocol: "paid-job/v1", Status: types.TemplateStatusActive, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatalf("PutTemplateCatalogEntry() error = %v", err)
 	}
 	if err := stateRepo.PutTemplateAssignment(types.TemplateAssignment{ID: "assign-1", HardwareUnitID: "gpu-1", HostEnrollmentID: "host-1", MemberEthAddress: "0x1111111111111111111111111111111111111111", TemplateID: "chat-4090", State: types.TemplateAssignmentPending, CreatedAt: now, UpdatedAt: now}); err != nil {

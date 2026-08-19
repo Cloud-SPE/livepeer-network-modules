@@ -94,7 +94,7 @@
         id: $("offerId").value.trim(),
         capability_id: $("offerCapability").value.trim(),
         offering_id: $("offerOffering").value.trim(),
-        interaction_mode: $("offerInteraction").value.trim(),
+        protocol: $("offerProtocol").value.trim(),
         work_unit: {
           name: $("offerWorkUnitName").value.trim(),
           extractor: {
@@ -129,7 +129,7 @@
               {
                 capability_id: $("joinCapability").value.trim(),
                 offering_id: $("joinOffering").value.trim(),
-                interaction_mode: $("joinInteraction").value.trim()
+                protocol: $("joinProtocol").value.trim()
               }
             ]
           }
@@ -154,7 +154,7 @@
       $("offerId").value = "rerank-zerank2";
       $("offerCapability").value = "rerank";
       $("offerOffering").value = "zerank-2-default";
-      $("offerInteraction").value = "http-reqresp@v0";
+      $("offerProtocol").value = "paid-job/v1";
       $("offerWorkUnitName").value = "requests";
       $("offerExtractorType").value = "request-formula";
       $("offerExtractorExpression").value = "1";
@@ -168,7 +168,7 @@
       $("offerId").value = item.id || "";
       $("offerCapability").value = item.capability_id || "";
       $("offerOffering").value = item.offering_id || "";
-      $("offerInteraction").value = item.interaction_mode || "";
+      $("offerProtocol").value = item.protocol || "";
       $("offerWorkUnitName").value = (item.work_unit && item.work_unit.name) || "";
       $("offerExtractorType").value = (item.work_unit && item.work_unit.extractor && item.work_unit.extractor.type) || "";
       $("offerExtractorExpression").value = (item.work_unit && item.work_unit.extractor && item.work_unit.extractor.expression) || "";
@@ -217,7 +217,7 @@
         div.className = "check";
         div.innerHTML =
           '<strong class="ok">matched_claim</strong>' +
-          '<div class="small">' + preview.matched_claim.capability_id + ' / ' + (preview.matched_claim.offering_id || "") + ' / ' + (preview.matched_claim.interaction_mode || "") + '</div>';
+          '<div class="small">' + preview.matched_claim.capability_id + ' / ' + (preview.matched_claim.offering_id || "") + ' / ' + (preview.matched_claim.protocol || "") + '</div>';
         host.appendChild(div);
       }
       if ((preview.reasons || []).length) {
@@ -262,7 +262,7 @@
             : "";
           claimDiv.innerHTML =
             '<strong class="' + (claim.servable ? "ok" : "warn") + '">claim</strong>' +
-            '<div class="small">' + [claim.capability_id || "", claim.offering_id || "", claim.interaction_mode || ""].filter(Boolean).join(" / ") + '</div>' +
+            '<div class="small">' + [claim.capability_id || "", claim.offering_id || "", claim.protocol || ""].filter(Boolean).join(" / ") + '</div>' +
             '<div class="small">matching_offers=' + ((claim.matching_offer_ids || []).join(", ") || "none") + '</div>' +
             '<div class="small">active_offers=' + ((claim.active_offer_ids || []).join(", ") || "none") + '</div>' +
             '<div class="small">suggested_offers=' + ((claim.suggested_offer_ids || []).join(", ") || "none") + '</div>' +
@@ -441,7 +441,7 @@
       );
       renderSimpleCards("poolTemplates", latestTemplateCatalog, item =>
         "<strong>" + item.id + "</strong>" +
-        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + (item.interaction_mode || "") + '</span></div>' +
+        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + (item.protocol || "") + '</span></div>' +
         '<div class="small">' + (item.capability_id || "") + " / " + (item.offering_id || "") + '</div>'
       );
       renderSimpleCards("poolAssignments", latestTemplateAssignments, item =>
@@ -596,7 +596,7 @@
         const el = card(
           "<strong>" + item.id + "</strong>" +
           '<div class="row"><span class="pill">' + item.capability_id + '</span><span class="pill">' + item.offering_id + '</span><span class="pill">' + item.status + '</span></div>' +
-          '<div class="small">mode: ' + item.interaction_mode + '</div>' +
+          '<div class="small">protocol: ' + item.protocol + '</div>' +
           '<div class="mono">price: ' + item.price.amount_wei + " / " + item.price.per_units + '</div>' +
           '<div class="row">' +
             '<button data-offer-promote="' + item.id + '" class="secondary">Use In Assignment Draft</button>' +
@@ -707,7 +707,7 @@
           return (
             '<div class="check">' +
               '<strong class="' + (claim.servable ? "ok" : "warn") + '">claim</strong>' +
-              '<div class="small">' + [claim.capability_id || "", claim.offering_id || "", claim.interaction_mode || ""].filter(Boolean).join(" / ") + '</div>' +
+              '<div class="small">' + [claim.capability_id || "", claim.offering_id || "", claim.protocol || ""].filter(Boolean).join(" / ") + '</div>' +
               '<div class="small">suggested_offers=' + ((claim.suggested_offer_ids || []).join(", ") || "none") + '</div>' +
               ((claim.suggestions || []).map(suggestion => '<div class="small">suggestion ' + (suggestion.offer_id || "") + ' score=' + String(suggestion.score || 0) + ' ' + (suggestion.reason || "") + '</div>').join("")) +
               (button ? '<div class="row">' + button + '</div>' : '') +

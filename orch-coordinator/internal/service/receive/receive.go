@@ -327,6 +327,12 @@ func schemaCheck(sm *types.SignedManifest) error {
 		if c.CapabilityID == "" || c.OfferingID == "" {
 			return errors.New("capability: capability_id + offering_id required")
 		}
+		if c.Protocol == "" {
+			return errors.New("capability.protocol: required")
+		}
+		if err := types.ValidateProtocolAxes(c.Protocol, c.Job, c.Session); err != nil {
+			return fmt.Errorf("capability.%w", err)
+		}
 		if c.WorkUnit.Name == "" {
 			return errors.New("capability.work_unit.name: required")
 		}
@@ -383,10 +389,18 @@ func capsToList(caps []types.CapabilityTuple) []any {
 		entry := map[string]any{
 			"capability_id":      c.CapabilityID,
 			"offering_id":        c.OfferingID,
-			"interaction_mode":   c.InteractionMode,
+			"protocol":           c.Protocol,
 			"work_unit":          map[string]any{"name": c.WorkUnit.Name},
 			"price_per_unit_wei": c.PricePerUnitWei,
 			"worker_url":         c.WorkerURL,
+		}
+		// Must stay identical to candidate.capsToList — these bytes are
+		// re-derived to check the cold key's signature.
+		if c.Job != nil {
+			entry["job"] = map[string]any(*c.Job)
+		}
+		if c.Session != nil {
+			entry["session"] = map[string]any(*c.Session)
 		}
 		if len(c.Extra) > 0 {
 			entry["extra"] = c.Extra

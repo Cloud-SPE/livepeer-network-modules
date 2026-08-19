@@ -15,7 +15,7 @@ import (
 // SpecVersion is the manifest spec version emitted by this coordinator.
 // Pinned to whatever the spec repo declares. Update in lockstep with
 // livepeer-network-protocol/manifest/changelog.md.
-const SpecVersion = "0.1.0"
+const SpecVersion = "1.0.0"
 
 const (
 	WarningCodeMetadataNeverSucceeded = "metadata_never_succeeded"
@@ -203,10 +203,18 @@ func capsToList(caps []types.CapabilityTuple) []any {
 		entry := map[string]any{
 			"capability_id":      c.CapabilityID,
 			"offering_id":        c.OfferingID,
-			"interaction_mode":   c.InteractionMode,
+			"protocol":           c.Protocol,
 			"work_unit":          map[string]any{"name": c.WorkUnit.Name},
 			"price_per_unit_wei": c.PricePerUnitWei,
 			"worker_url":         c.WorkerURL,
+		}
+		// Declared axes ride verbatim. Emitted only when present: the
+		// schema forbids the object that does not match the protocol.
+		if c.Job != nil {
+			entry["job"] = map[string]any(*c.Job)
+		}
+		if c.Session != nil {
+			entry["session"] = map[string]any(*c.Session)
 		}
 		if len(c.Extra) > 0 {
 			entry["extra"] = c.Extra
@@ -342,7 +350,9 @@ func tupleFrom(s types.SourceTuple) types.CapabilityTuple {
 	return types.CapabilityTuple{
 		CapabilityID:    offering.CapabilityID,
 		OfferingID:      offering.OfferingID,
-		InteractionMode: offering.InteractionMode,
+		Protocol:        offering.Protocol,
+		Job:             offering.Job,
+		Session:         offering.Session,
 		WorkUnit:        offering.WorkUnit,
 		PricePerUnitWei: offering.PricePerUnitWei,
 		WorkerURL:       s.WorkerURL,

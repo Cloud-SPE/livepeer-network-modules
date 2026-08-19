@@ -84,13 +84,13 @@ func seedCertificationRepo(t *testing.T) *repo.StateRepo {
 		t.Fatalf("PutHardwareUnit() error = %v", err)
 	}
 	if err := stateRepo.PutTemplateCatalogEntry(types.TemplateCatalogEntry{
-		ID:              "chat-4090",
-		CapabilityID:    "openai:chat-completions",
-		OfferingID:      "default",
-		InteractionMode: "http-stream@v0",
-		Status:          types.TemplateStatusActive,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:           "chat-4090",
+		CapabilityID: "openai:chat-completions",
+		OfferingID:   "default",
+		Protocol:     "paid-job/v1",
+		Status:       types.TemplateStatusActive,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}); err != nil {
 		t.Fatalf("PutTemplateCatalogEntry() error = %v", err)
 	}

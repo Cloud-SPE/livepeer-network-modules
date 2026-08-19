@@ -140,3 +140,72 @@ func TestBuildOfferings_DedupesRepeatedPublishedTuple(t *testing.T) {
 		t.Fatalf("capabilities count = %d; want 1", got)
 	}
 }
+
+// TestBuildOfferings_EmitsDeclaredAxes pins the contract the coordinator
+// depends on: every paid-* offering advertises exactly one axes object,
+// in the manifest's published vocabulary. Emitting protocol without axes
+// produces manifests that fail schema validation downstream.
+func TestBuildOfferings_EmitsDeclaredAxes(t *testing.T) {
+	cfg := &config.Config{
+		Identity: config.Identity{OrchEthAddress: "0xabc"},
+		Capabilities: []config.Capability{
+			{
+				ID: "cap:job", OfferingID: "default", Protocol: "paid-job/v1",
+				Job:      &config.JobCapability{Transports: []string{"unary", "stream"}},
+				WorkUnit: config.WorkUnit{Name: "tokens"},
+				Price:    config.Price{AmountWei: "1", PerUnits: 1},
+			},
+			{
+				ID: "cap:sess", OfferingID: "default", Protocol: "paid-session/v1",
+				Session: &config.SessionCap{
+					DescriptorSchema:     "sfu-room/v1",
+					Heartbeat:            config.SessionHeartbeat{IntervalSeconds: 5, MissedThreshold: 4},
+					LeaseMaxSeconds:      1800,
+					RunwayIncrementUnits: 500,
+				},
+				WorkUnit: config.WorkUnit{Name: "participant_minutes"},
+				Price:    config.Price{AmountWei: "10", PerUnits: 1},
+			},
+		},
+	}
+	got := BuildOfferings(cfg, nil)
+	if len(got.Capabilities) != 2 {
+		t.Fatalf("want 2 capabilities, got %d", len(got.Capabilities))
+	}
+
+	job := got.Capabilities[0]
+	if job.Session != nil {
+		t.Fatal("paid-job offering carries session axes")
+	}
+	if job.Job == nil || len(job.Job.Transports) != 2 || job.Job.Transports[0] != "unary" {
+		t.Fatalf("job axes wrong: %+v", job.Job)
+	}
+
+	sess := got.Capabilities[1]
+	if sess.Job != nil {
+		t.Fatal("paid-session offering carries job axes")
+	}
+	if sess.Session == nil {
+		t.Fatal("paid-session offering has no session axes")
+	}
+	if sess.Session.DescriptorSchema != "sfu-room/v1" {
+		t.Fatalf("descriptor_schema %q", sess.Session.DescriptorSchema)
+	}
+	// Required-by-schema fields must be present even when the operator
+	// left them unset — that is what the Advertised* defaults are for.
+	if sess.Session.Metering != "runner-reported" || sess.Session.Attachment != "external" ||
+		sess.Session.Refill != "extensible" {
+		t.Fatalf("defaulted axes wrong: %+v", sess.Session)
+	}
+	if sess.Session.Heartbeat == nil || sess.Session.Heartbeat.MissedThreshold != 4 {
+		t.Fatalf("heartbeat %+v", sess.Session.Heartbeat)
+	}
+	// Host config's flat lease cap becomes the manifest's lease object.
+	if sess.Session.Lease == nil || sess.Session.Lease.Policy != "funding-tracking" ||
+		sess.Session.Lease.MaxSeconds != 1800 {
+		t.Fatalf("lease %+v", sess.Session.Lease)
+	}
+	if sess.Session.RunwayIncrementUnits != 500 {
+		t.Fatalf("runway increment %d", sess.Session.RunwayIncrementUnits)
+	}
+}

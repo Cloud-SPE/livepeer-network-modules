@@ -75,6 +75,24 @@ capabilities:
     price: { amount_wei: "1", per_units: 1 }
     backend: { transport: http, url: %q }
   - id: conformance:session
+    offering_id: fast-heartbeat
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: sfu-room/v1
+      heartbeat:
+        interval_seconds: 1
+        missed_threshold: 2
+      runner:
+        create_path: /sessions
+        status_path: /sessions/{id}
+        terminate_path: /sessions/{id}
+    health: { initial_status: ready }
+    work_unit:
+      name: participant_minutes
+      extractor: { type: seconds-elapsed }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: %q }
+  - id: conformance:session
     offering_id: default
     protocol: paid-session/v1
     session:
@@ -106,18 +124,19 @@ func main() {
 	defer runner.Close()
 
 	ctx := &harness.Ctx{
-		HTTP:              &http.Client{Timeout: 30 * time.Second},
-		Backend:           backend,
-		Runner:            runner,
-		JobCapability:     "conformance:job",
-		JobOfferingAll:    "all",
-		JobOfferingUnary:  "unary-only",
-		JobOfferingError:  "always-error",
-		SessionCapability: "conformance:session",
-		SessionOffering:   "default",
-		JobUnit:           "tokens",
-		SessionUnit:       "participant_minutes",
-		RunID:             harness.NewRunID(),
+		HTTP:                  &http.Client{Timeout: 30 * time.Second},
+		Backend:               backend,
+		Runner:                runner,
+		JobCapability:         "conformance:job",
+		JobOfferingAll:        "all",
+		JobOfferingUnary:      "unary-only",
+		JobOfferingError:      "always-error",
+		SessionCapability:     "conformance:session",
+		SessionOffering:       "default",
+		SessionOfferingFastHB: "fast-heartbeat",
+		JobUnit:               "tokens",
+		SessionUnit:           "participant_minutes",
+		RunID:                 harness.NewRunID(),
 	}
 
 	if *brokerURL != "" {
@@ -130,13 +149,16 @@ func main() {
 		}
 		ctx.BrokerURL = *brokerURL
 	} else {
-		stop, url, err := startReferenceBroker(*brokerDir, backend, runner, *timeout)
+		ctl, url, err := startReferenceBroker(*brokerDir, backend, runner, *timeout)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "start broker:", err)
 			os.Exit(2)
 		}
-		defer stop()
+		defer ctl.stop()
 		ctx.BrokerURL = url
+		// Auto mode owns the process, so restart-dependent scenarios
+		// can run for real instead of skipping.
+		ctx.RestartBroker = ctl.restart
 	}
 
 	results := harness.RunAll(ctx, scenarios.All(), os.Stdout)
@@ -160,7 +182,7 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *fakes.SessionRunner, timeout time.Duration) (func(), string, error) {
+func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *fakes.SessionRunner, timeout time.Duration) (*brokerControl, string, error) {
 	paidPort, err := freePort()
 	if err != nil {
 		return nil, "", err
@@ -185,43 +207,72 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 	cfg := fmt.Sprintf(configTemplate,
 		paidPort, paidPort, metricsPort,
 		filepath.Join(dir, "state.db"), keyPath,
-		backend.URL(), backend.URL(), backend.ErrorURL(), runner.URL())
+		backend.URL(), backend.URL(), backend.ErrorURL(), runner.URL(), runner.URL())
 	cfgPath := filepath.Join(dir, "host-config.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		return nil, "", err
 	}
 
-	cmd := exec.Command("go", "run", "./cmd/livepeer-capability-broker", "--config", cfgPath)
-	cmd.Dir = brokerDir
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
-	// Own process group so stop() reaches the broker binary go-run
-	// spawns, not just the go-run parent.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		return nil, "", fmt.Errorf("start: %w", err)
-	}
-	stop := func() {
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	url := fmt.Sprintf("http://127.0.0.1:%d", paidPort)
+	var cur *exec.Cmd
+
+	launch := func() error {
+		cmd := exec.Command("go", "run", "./cmd/livepeer-capability-broker", "--config", cfgPath)
+		cmd.Dir = brokerDir
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+		// Own process group so kills reach the broker binary go-run
+		// spawns, not just the go-run parent.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("start: %w", err)
 		}
-		_, _ = cmd.Process.Wait()
-		_ = os.RemoveAll(dir)
+		cur = cmd
+		return waitHealthy(url, timeout)
+	}
+	halt := func() {
+		if cur != nil && cur.Process != nil {
+			_ = syscall.Kill(-cur.Process.Pid, syscall.SIGTERM)
+			_, _ = cur.Process.Wait()
+		}
+		cur = nil
 	}
 
-	url := fmt.Sprintf("http://127.0.0.1:%d", paidPort)
+	if err := launch(); err != nil {
+		halt()
+		return nil, "", err
+	}
+	fmt.Printf("broker under test: %s (reference broker, auto mode)\n\n", url)
+
+	ctl := &brokerControl{
+		stop: func() { halt(); _ = os.RemoveAll(dir) },
+		restart: func() error {
+			halt()
+			// The state store must survive: same dir, same key, same
+			// config — only the process is replaced.
+			return launch()
+		},
+	}
+	return ctl, url, nil
+}
+
+// brokerControl is the runner's handle on a broker it owns.
+type brokerControl struct {
+	stop    func()
+	restart func() error
+}
+
+func waitHealthy(url string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(url + "/healthz")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
-				fmt.Printf("broker under test: %s (reference broker, auto mode)\n\n", url)
-				return stop, url, nil
+				return nil
 			}
 		}
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
-	stop()
-	return nil, "", fmt.Errorf("broker did not become healthy within %s", timeout)
+	return fmt.Errorf("broker did not become healthy within %s", timeout)
 }

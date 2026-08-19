@@ -19,22 +19,22 @@ import (
 
 func TestValidateJoinRequestRejectsOutOfPoolScopeClaim(t *testing.T) {
 	cases := []struct {
-		name            string
-		capabilityID    string
-		interactionMode string
-		wantSubstring   string
+		name          string
+		capabilityID  string
+		protocol      string
+		wantSubstring string
 	}{
 		{
-			name:            "video live rtmp capability",
-			capabilityID:    "video:live.rtmp",
-			interactionMode: "http-reqresp@v0",
-			wantSubstring:   "video:live.rtmp",
+			name:          "video live rtmp capability",
+			capabilityID:  "video:live.rtmp",
+			protocol:      "paid-job/v1",
+			wantSubstring: "video:live.rtmp",
 		},
 		{
-			name:            "rtmp ingress hls egress interaction mode",
-			capabilityID:    "openai:chat-completions",
-			interactionMode: "rtmp-ingress-hls-egress@v0",
-			wantSubstring:   "rtmp-ingress-hls-egress@v0",
+			name:          "paid session protocol",
+			capabilityID:  "openai:chat-completions",
+			protocol:      "paid-session/v1",
+			wantSubstring: "paid-session/v1",
 		},
 	}
 	for _, tc := range cases {
@@ -47,8 +47,8 @@ func TestValidateJoinRequestRejectsOutOfPoolScopeClaim(t *testing.T) {
 					Transport: "http",
 					URL:       "http://backend",
 					ClaimedCapabilities: []types.ClaimedOffer{{
-						CapabilityID:    tc.capabilityID,
-						InteractionMode: tc.interactionMode,
+						CapabilityID: tc.capabilityID,
+						Protocol:     tc.protocol,
 					}},
 				}},
 			}
@@ -75,8 +75,8 @@ func TestValidateJoinRequestAllowsSupportedClaim(t *testing.T) {
 			Transport: "http",
 			URL:       "http://backend",
 			ClaimedCapabilities: []types.ClaimedOffer{{
-				CapabilityID:    "openai:chat-completions",
-				InteractionMode: "http-reqresp@v0",
+				CapabilityID: "openai:chat-completions",
+				Protocol:     "paid-job/v1",
 			}},
 		}},
 	}

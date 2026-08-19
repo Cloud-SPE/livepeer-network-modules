@@ -17,13 +17,13 @@ func TestPreviewAndCreateAssignment(t *testing.T) {
 	defer func() { _ = stateRepo.Close() }()
 
 	offer := types.Offer{
-		ID:              "offer-1",
-		CapabilityID:    "rerank",
-		OfferingID:      "zerank-2-default",
-		InteractionMode: "http-reqresp@v0",
-		WorkUnit:        config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
-		Price:           config.Price{AmountWei: "1", PerUnits: 1},
-		Status:          types.OfferStatusActive,
+		ID:           "offer-1",
+		CapabilityID: "rerank",
+		OfferingID:   "zerank-2-default",
+		Protocol:     "paid-job/v1",
+		WorkUnit:     config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
+		Price:        config.Price{AmountWei: "1", PerUnits: 1},
+		Status:       types.OfferStatusActive,
 	}
 	_ = stateRepo.PutOffer(offer)
 	_ = stateRepo.PutMember(types.MemberRecord{ID: "member-1", EthAddress: "0xabc", Status: types.MemberStatusActive, PayoutMode: "onchain"})
@@ -35,9 +35,9 @@ func TestPreviewAndCreateAssignment(t *testing.T) {
 		Status:             types.BackendStatusActive,
 		VerificationStatus: types.VerificationPassing,
 		ClaimedCapabilities: []types.ClaimedOffer{{
-			CapabilityID:    "rerank",
-			OfferingID:      "zerank-2-default",
-			InteractionMode: "http-reqresp@v0",
+			CapabilityID: "rerank",
+			OfferingID:   "zerank-2-default",
+			Protocol:     "paid-job/v1",
 		}},
 	})
 

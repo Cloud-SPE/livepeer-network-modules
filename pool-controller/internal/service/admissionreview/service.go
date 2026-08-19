@@ -29,7 +29,7 @@ type JoinRequestBackendPreview struct {
 type JoinRequestClaimPreview struct {
 	CapabilityID      string                       `json:"capability_id"`
 	OfferingID        string                       `json:"offering_id,omitempty"`
-	InteractionMode   string                       `json:"interaction_mode,omitempty"`
+	Protocol          string                       `json:"protocol,omitempty"`
 	MatchingOfferIDs  []string                     `json:"matching_offer_ids,omitempty"`
 	ActiveOfferIDs    []string                     `json:"active_offer_ids,omitempty"`
 	SuggestedOfferIDs []string                     `json:"suggested_offer_ids,omitempty"`
@@ -162,11 +162,11 @@ func BuildJoinRequestPreview(item types.JoinRequest, offers []types.Offer) JoinR
 
 func BuildJoinClaimPreview(claim types.ClaimedOffer, offers []types.Offer) JoinRequestClaimPreview {
 	view := JoinRequestClaimPreview{
-		CapabilityID:    claim.CapabilityID,
-		OfferingID:      claim.OfferingID,
-		InteractionMode: claim.InteractionMode,
+		CapabilityID: claim.CapabilityID,
+		OfferingID:   claim.OfferingID,
+		Protocol:     claim.Protocol,
 	}
-	if err := poolscope.EnsureSupportedClaim(claim.CapabilityID, claim.InteractionMode); err != nil {
+	if err := poolscope.EnsureSupportedClaim(claim.CapabilityID, claim.Protocol); err != nil {
 		view.Reasons = append(view.Reasons, err.Error())
 		return view
 	}
@@ -174,7 +174,7 @@ func BuildJoinClaimPreview(claim types.ClaimedOffer, offers []types.Offer) JoinR
 		if offer.CapabilityID != claim.CapabilityID {
 			continue
 		}
-		if claim.InteractionMode != "" && offer.InteractionMode != claim.InteractionMode {
+		if claim.Protocol != "" && offer.Protocol != claim.Protocol {
 			continue
 		}
 		if claim.OfferingID != "" && offer.OfferingID != claim.OfferingID {
@@ -224,14 +224,14 @@ func RankJoinClaimSuggestion(claim types.ClaimedOffer, offer types.Offer) (int, 
 		score += 10
 		parts = append(parts, "claim allows any offering_id")
 	}
-	if strings.TrimSpace(claim.InteractionMode) != "" {
-		if claim.InteractionMode == offer.InteractionMode {
+	if strings.TrimSpace(claim.Protocol) != "" {
+		if claim.Protocol == offer.Protocol {
 			score += 50
-			parts = append(parts, "exact interaction_mode")
+			parts = append(parts, "exact protocol")
 		}
 	} else {
 		score += 5
-		parts = append(parts, "claim allows any interaction_mode")
+		parts = append(parts, "claim allows any protocol")
 	}
 	score += 1
 	parts = append(parts, "capability_id matched")

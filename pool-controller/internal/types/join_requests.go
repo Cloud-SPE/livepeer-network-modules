@@ -40,9 +40,9 @@ type RequestedBackend struct {
 }
 
 type ClaimedOffer struct {
-	CapabilityID    string         `json:"capability_id"`
-	OfferingID      string         `json:"offering_id,omitempty"`
-	InteractionMode string         `json:"interaction_mode,omitempty"`
-	Extra           map[string]any `json:"extra,omitempty"`
-	Constraints     map[string]any `json:"constraints,omitempty"`
+	CapabilityID string         `json:"capability_id"`
+	OfferingID   string         `json:"offering_id,omitempty"`
+	Protocol     string         `json:"protocol,omitempty"`
+	Extra        map[string]any `json:"extra,omitempty"`
+	Constraints  map[string]any `json:"constraints,omitempty"`
 }

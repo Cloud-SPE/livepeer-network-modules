@@ -11,7 +11,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
-func target(memberEthAddress, backendID, backendURL, capabilityID, interactionMode string) ProbeTarget {
+func target(memberEthAddress, backendID, backendURL, capabilityID, protocol string, transports ...string) ProbeTarget {
 	return ProbeTarget{
 		Member: ProbeMember{
 			EthAddress: memberEthAddress,
@@ -22,9 +22,10 @@ func target(memberEthAddress, backendID, backendURL, capabilityID, interactionMo
 			URL:       backendURL,
 		},
 		Offering: ProbeOffering{
-			CapabilityID:    capabilityID,
-			OfferingID:      "default",
-			InteractionMode: interactionMode,
+			CapabilityID: capabilityID,
+			OfferingID:   "default",
+			Protocol:     protocol,
+			Transports:   transports,
 		},
 	}
 }
@@ -54,9 +55,9 @@ func TestRunOnceAppliesChatEmbeddingsAndAudioProbes(t *testing.T) {
 	applied := make([]types.SyntheticProbeObservation, 0)
 	runner := NewRunner(500 * time.Millisecond)
 	summary, err := runner.RunOnceTargets(context.Background(), []ProbeTarget{
-		target("0xabc", "backend-a", ts.URL+"/chat", "openai:chat-completions", "http-reqresp@v0"),
-		target("0xabc", "backend-b", ts.URL+"/embeddings", "openai:embeddings", "http-reqresp@v0"),
-		target("0xabc", "backend-c", ts.URL+"/audio-transcriptions", "openai:audio-transcriptions", "http-multipart@v0"),
+		target("0xabc", "backend-a", ts.URL+"/chat", "openai:chat-completions", "paid-job/v1"),
+		target("0xabc", "backend-b", ts.URL+"/embeddings", "openai:embeddings", "paid-job/v1"),
+		target("0xabc", "backend-c", ts.URL+"/audio-transcriptions", "openai:audio-transcriptions", "paid-job/v1"),
 	}, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
 		applied = append(applied, obs)
 		return types.BackendSelectionState{}, nil
@@ -77,7 +78,7 @@ func TestRunOnceAppliesChatEmbeddingsAndAudioProbes(t *testing.T) {
 	}
 }
 
-func TestRunOnceInfersAudioProbeFamilyFromInteractionMode(t *testing.T) {
+func TestRunOnceInfersAudioProbeFamilyFromTransports(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/audio-generic-multipart":
@@ -97,8 +98,8 @@ func TestRunOnceInfersAudioProbeFamilyFromInteractionMode(t *testing.T) {
 	applied := make([]types.SyntheticProbeObservation, 0, 2)
 	runner := NewRunner(500 * time.Millisecond)
 	summary, err := runner.RunOnceTargets(context.Background(), []ProbeTarget{
-		target("0xabc", "backend-a", ts.URL+"/audio-generic-multipart", "openai:audio-unknown", "http-multipart@v0"),
-		target("0xabc", "backend-b", ts.URL+"/audio-generic-speech", "openai:audio-generated", "http-reqresp@v0"),
+		target("0xabc", "backend-a", ts.URL+"/audio-generic-multipart", "openai:audio-unknown", "paid-job/v1", "multipart"),
+		target("0xabc", "backend-b", ts.URL+"/audio-generic-speech", "openai:audio-generated", "paid-job/v1", "unary"),
 	}, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
 		applied = append(applied, obs)
 		return types.BackendSelectionState{}, nil
@@ -118,7 +119,7 @@ func TestRunOnceSkipsUnsupportedAudioFamily(t *testing.T) {
 	applied := 0
 	runner := NewRunner(500 * time.Millisecond)
 	summary, err := runner.RunOnceTargets(context.Background(), []ProbeTarget{
-		target("0xabc", "backend-a", "http://example.invalid/audio", "openai:audio-unknown", "http-stream@v0"),
+		target("0xabc", "backend-a", "http://example.invalid/audio", "openai:audio-unknown", "paid-job/v1", "stream"),
 	}, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
 		applied++
 		return types.BackendSelectionState{}, nil
@@ -155,7 +156,7 @@ func TestRunOnceAppliesVideoABRProbe(t *testing.T) {
 	applied := make([]types.SyntheticProbeObservation, 0, 1)
 	runner := NewRunner(500 * time.Millisecond)
 	summary, err := runner.RunOnceTargets(context.Background(), []ProbeTarget{
-		target("0xabc", "backend-video", ts.URL+"/v1/video/transcode/abr", "video:transcode.abr", "http-reqresp@v0"),
+		target("0xabc", "backend-video", ts.URL+"/v1/video/transcode/abr", "video:transcode.abr", "paid-job/v1"),
 	}, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
 		applied = append(applied, obs)
 		return types.BackendSelectionState{}, nil
@@ -187,7 +188,7 @@ func TestRunOnceFailsVideoABRProbeOnInvalidPresetResponse(t *testing.T) {
 	applied := make([]types.SyntheticProbeObservation, 0, 1)
 	runner := NewRunner(500 * time.Millisecond)
 	summary, err := runner.RunOnceTargets(context.Background(), []ProbeTarget{
-		target("0xabc", "backend-video", ts.URL, "video:transcode.abr", "http-reqresp@v0"),
+		target("0xabc", "backend-video", ts.URL, "video:transcode.abr", "paid-job/v1"),
 	}, func(obs types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
 		applied = append(applied, obs)
 		return types.BackendSelectionState{}, nil

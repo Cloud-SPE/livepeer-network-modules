@@ -27,11 +27,11 @@ type legacySelectionBackend struct {
 }
 
 type legacySelectionOffering struct {
-	CapabilityID    string
-	OfferingID      string
-	InteractionMode string
-	WorkUnit        config.WorkUnit
-	Price           config.Price
+	CapabilityID string
+	OfferingID   string
+	Protocol     string
+	WorkUnit     config.WorkUnit
+	Price        config.Price
 }
 
 func syncSelectionStatesFromLegacyConfig(t *testing.T, repo *StateRepo, cfg *legacySelectionConfig) {
@@ -72,19 +72,19 @@ func syncSelectionStatesFromLegacyConfig(t *testing.T, repo *StateRepo, cfg *leg
 				UpdatedAt: now,
 			})
 			for _, offering := range backend.Offerings {
-				key := offering.CapabilityID + "|" + offering.OfferingID + "|" + offering.InteractionMode
+				key := offering.CapabilityID + "|" + offering.OfferingID + "|" + offering.Protocol
 				offer, ok := offersByKey[key]
 				if !ok {
 					offer = types.Offer{
-						ID:              key,
-						CapabilityID:    offering.CapabilityID,
-						OfferingID:      offering.OfferingID,
-						InteractionMode: offering.InteractionMode,
-						WorkUnit:        offering.WorkUnit,
-						Price:           offering.Price,
-						Status:          types.OfferStatusActive,
-						CreatedAt:       now,
-						UpdatedAt:       now,
+						ID:           key,
+						CapabilityID: offering.CapabilityID,
+						OfferingID:   offering.OfferingID,
+						Protocol:     offering.Protocol,
+						WorkUnit:     offering.WorkUnit,
+						Price:        offering.Price,
+						Status:       types.OfferStatusActive,
+						CreatedAt:    now,
+						UpdatedAt:    now,
 					}
 					offersByKey[key] = offer
 					offers = append(offers, offer)
@@ -234,18 +234,18 @@ func TestStateRepoSyncBackendSelectionStatesFromEntities(t *testing.T) {
 
 	offers := []types.Offer{
 		{
-			ID:              "offer-1",
-			CapabilityID:    "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
-			Status:          types.OfferStatusActive,
+			ID:           "offer-1",
+			CapabilityID: "openai:chat-completions",
+			OfferingID:   "default",
+			Protocol:     "paid-job/v1",
+			Status:       types.OfferStatusActive,
 		},
 		{
-			ID:              "offer-disabled",
-			CapabilityID:    "openai:embeddings",
-			OfferingID:      "default",
-			InteractionMode: "http-reqresp@v0",
-			Status:          types.OfferStatusDisabled,
+			ID:           "offer-disabled",
+			CapabilityID: "openai:embeddings",
+			OfferingID:   "default",
+			Protocol:     "paid-job/v1",
+			Status:       types.OfferStatusDisabled,
 		},
 	}
 	members := []types.MemberRecord{

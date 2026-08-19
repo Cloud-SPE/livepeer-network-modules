@@ -131,7 +131,7 @@ type TemplateCatalogEntry struct {
 	ID                 string              `json:"id"`
 	CapabilityID       string              `json:"capability_id"`
 	OfferingID         string              `json:"offering_id"`
-	InteractionMode    string              `json:"interaction_mode"`
+	Protocol           string              `json:"protocol"`
 	DisplayName        string              `json:"display_name,omitempty"`
 	Description        string              `json:"description,omitempty"`
 	AllowedGPUClasses  []string            `json:"allowed_gpu_classes,omitempty"`

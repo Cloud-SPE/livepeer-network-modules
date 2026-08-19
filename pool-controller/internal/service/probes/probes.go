@@ -61,14 +61,18 @@ type ProbeBackend struct {
 }
 
 type ProbeOffering struct {
-	CapabilityID    string
-	OfferingID      string
-	InteractionMode string
-	WorkUnit        config.WorkUnit
-	Health          config.Health
-	Price           config.Price
-	Extra           map[string]any
-	Constraints     map[string]any
+	CapabilityID string
+	OfferingID   string
+	// Protocol is the offering's protocol tag ("paid-job/v1", ...).
+	Protocol string
+	// Transports carries the paid-job declared transports
+	// (unary|stream|multipart) when the offering declares them.
+	Transports  []string
+	WorkUnit    config.WorkUnit
+	Health      config.Health
+	Price       config.Price
+	Extra       map[string]any
+	Constraints map[string]any
 }
 
 func NewRunner(timeout time.Duration) *Runner {
@@ -215,14 +219,22 @@ func inferOpenAIAudioProbeFamily(offering ProbeOffering) string {
 		strings.Contains(capabilityID, "tts"):
 		return "speech"
 	}
-	switch strings.TrimSpace(offering.InteractionMode) {
-	case "http-multipart@v0":
-		return "multipart"
-	case "http-reqresp@v0":
-		return "speech"
-	default:
-		return ""
+	// No capability-id match: fall back to the offering's declared
+	// paid-job transports. `multipart` uploads map to the
+	// transcription/translation recipe; a plain `unary` JSON offering maps
+	// to the speech/TTS recipe. Anything else (stream-only, or an offering
+	// that declares no transports at all) has no implemented recipe.
+	for _, transport := range offering.Transports {
+		if strings.TrimSpace(transport) == "multipart" {
+			return "multipart"
+		}
 	}
+	for _, transport := range offering.Transports {
+		if strings.TrimSpace(transport) == "unary" {
+			return "speech"
+		}
+	}
+	return ""
 }
 
 func (r *Runner) runOpenAIJSONProbe(ctx context.Context, backend ProbeBackend, offering ProbeOffering, payload map[string]any, validate func(map[string]any) bool) (bool, string, error) {

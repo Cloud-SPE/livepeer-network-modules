@@ -99,12 +99,48 @@ type JobCapability struct {
 // broker-side backend paths (operator configuration, per A4 — no URL
 // space is imposed by the protocol).
 type SessionCap struct {
-	DescriptorSchema string             `yaml:"descriptor_schema"`
-	Heartbeat        SessionHeartbeat   `yaml:"heartbeat,omitempty"`
-	LeaseMaxSeconds  int                `yaml:"lease_max_seconds,omitempty"`
-	BurnRatePerSec   float64            `yaml:"burn_rate_per_second,omitempty"`
-	MinRunwayUnits   int64              `yaml:"min_runway_units,omitempty"`
-	Runner           SessionRunnerPaths `yaml:"runner"`
+	DescriptorSchema string           `yaml:"descriptor_schema"`
+	Heartbeat        SessionHeartbeat `yaml:"heartbeat,omitempty"`
+	LeaseMaxSeconds  int              `yaml:"lease_max_seconds,omitempty"`
+	BurnRatePerSec   float64          `yaml:"burn_rate_per_second,omitempty"`
+	MinRunwayUnits   int64            `yaml:"min_runway_units,omitempty"`
+	// Attachment and Metering are advertised axes (offering-axes.md §3).
+	// Defaults: external / runner-reported — the only combination this
+	// broker implements today, but declared explicitly because
+	// counterparties gate on them.
+	Attachment string `yaml:"attachment,omitempty"`
+	Metering   string `yaml:"metering,omitempty"`
+	// Refill declares whether top-ups are accepted after open.
+	Refill string `yaml:"refill,omitempty"`
+	// ToleranceBandPct and RunwayIncrementUnits are advisory economics
+	// the buyer reads at route selection; the broker never gates on them.
+	ToleranceBandPct     float64            `yaml:"tolerance_band_pct,omitempty"`
+	RunwayIncrementUnits int64              `yaml:"runway_increment_units,omitempty"`
+	Runner               SessionRunnerPaths `yaml:"runner"`
+}
+
+// AdvertisedAttachment returns the attachment axis with its default.
+func (s *SessionCap) AdvertisedAttachment() string {
+	if s.Attachment == "" {
+		return "external"
+	}
+	return s.Attachment
+}
+
+// AdvertisedMetering returns the metering axis with its default.
+func (s *SessionCap) AdvertisedMetering() string {
+	if s.Metering == "" {
+		return "runner-reported"
+	}
+	return s.Metering
+}
+
+// AdvertisedRefill returns the refill axis with its default.
+func (s *SessionCap) AdvertisedRefill() string {
+	if s.Refill == "" {
+		return "extensible"
+	}
+	return s.Refill
 }
 
 // SessionHeartbeat mirrors the offering axes heartbeat object.

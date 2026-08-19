@@ -251,6 +251,30 @@ func (c *Config) Validate() error {
 			if !schemaTagRE.MatchString(cap.Session.DescriptorSchema) {
 				return fmt.Errorf("%s: session.descriptor_schema must match <name>/v<major> (got %q)", ctx, cap.Session.DescriptorSchema)
 			}
+			switch cap.Session.AdvertisedAttachment() {
+			case "external", "inband-ws":
+			default:
+				return fmt.Errorf("%s: session.attachment must be external or inband-ws (got %q)", ctx, cap.Session.Attachment)
+			}
+			switch cap.Session.AdvertisedMetering() {
+			case "runner-reported":
+			case "broker-observed":
+				// Schema rule: a broker cannot observe traffic that never
+				// transits it.
+				if cap.Session.AdvertisedAttachment() != "inband-ws" {
+					return fmt.Errorf("%s: session.metering=broker-observed requires attachment=inband-ws", ctx)
+				}
+			default:
+				return fmt.Errorf("%s: session.metering must be runner-reported or broker-observed (got %q)", ctx, cap.Session.Metering)
+			}
+			switch cap.Session.AdvertisedRefill() {
+			case "extensible", "bounded":
+			default:
+				return fmt.Errorf("%s: session.refill must be extensible or bounded (got %q)", ctx, cap.Session.Refill)
+			}
+			if cap.Session.ToleranceBandPct < 0 {
+				return fmt.Errorf("%s: session.tolerance_band_pct must be >= 0", ctx)
+			}
 			if cap.Session.Runner.CreatePath == "" || cap.Session.Runner.TerminatePath == "" {
 				return fmt.Errorf("%s: session.runner.create_path and terminate_path are required", ctx)
 			}
@@ -450,7 +474,7 @@ func (c *Config) Validate() error {
 
 func validateRepeatedPublishedTuple(previous, current Capability, ctx string) error {
 	if previous.Protocol != current.Protocol {
-		return fmt.Errorf("%s: repeated published tuple must reuse the same interaction_mode", ctx)
+		return fmt.Errorf("%s: repeated published tuple must reuse the same protocol", ctx)
 	}
 	if previous.WorkUnit.Name != current.WorkUnit.Name {
 		return fmt.Errorf("%s: repeated published tuple must reuse the same work_unit.name", ctx)

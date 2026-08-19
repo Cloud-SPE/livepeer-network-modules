@@ -234,7 +234,8 @@ func primedScrapeService(t *testing.T) *scrape.Service {
 		Capabilities: []types.BrokerOffering{{
 			CapabilityID:    "cap",
 			OfferingID:      "off",
-			InteractionMode: "http-stream@v1",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"stream"}},
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "100",
 		}},

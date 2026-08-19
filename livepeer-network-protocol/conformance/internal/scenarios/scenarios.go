@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/internal/fakes"
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/internal/harness"
@@ -410,10 +411,123 @@ func sessionScenarios() []harness.Scenario {
 			return nil
 		}},
 		{Name: "paid-session/restart-rebind", Spec: "paid-session §9.2", Run: func(c *harness.Ctx) error {
-			return fmt.Errorf("%w: needs broker process control; covered by the reference broker's engine tests (TestRecoverRebindsOrTerminates, TestRoundTripAndRestartSurvival)", harness.ErrSkip)
+			if c.RestartBroker == nil {
+				return fmt.Errorf("%w: suite does not own the broker process (URL mode); run in auto mode or demonstrate restart with your own harness", harness.ErrSkip)
+			}
+			open, cb, err := openHappySession(c, "restart")
+			if err != nil {
+				return err
+			}
+			m := open.JSON()
+			sessionID := harness.FieldString(m, "session_id")
+			credential := harness.FieldString(m, "credential")
+			workID := harness.FieldString(m, "work_id")
+
+			// Claim usage before the restart so we can prove the
+			// watermark and debit progress survived.
+			if st, _, err := c.Runner.PostEvent(cb, fmt.Sprintf(
+				`{"event_id":"evt_r1","sequence":1,"event_type":"session.usage.tick","usage":{"unit":%q,"total":12}}`,
+				c.SessionUnit)); err != nil || st != 200 {
+				return fmt.Errorf("pre-restart usage event: %d %v", st, err)
+			}
+
+			if err := c.RestartBroker(); err != nil {
+				return fmt.Errorf("restart: %w", err)
+			}
+
+			// 1. Control continues against the same work_id with the
+			//    same credential — no re-auth, no new session.
+			st, err := c.SessionStatus(sessionID, credential)
+			if err != nil {
+				return err
+			}
+			if st.Status != 200 {
+				return fmt.Errorf("status after restart: %d %s", st.Status, st.Body)
+			}
+			sm := st.JSON()
+			if got := harness.FieldString(sm, "work_id"); got != workID {
+				return fmt.Errorf("work_id changed across restart: %q -> %q", workID, got)
+			}
+			if n, _ := harness.FieldNumber(sm, "usage.claimed_total"); n != 12 {
+				return fmt.Errorf("claimed_total %v after restart, want 12 (usage lost)", n)
+			}
+
+			// 2. Usage continues from the surviving watermark: a replay
+			//    of the pre-restart event is still a duplicate, and the
+			//    next sequence is accepted.
+			if s2, _, err := c.Runner.PostEvent(cb, fmt.Sprintf(
+				`{"event_id":"evt_r1","sequence":1,"event_type":"session.usage.tick","usage":{"unit":%q,"total":12}}`,
+				c.SessionUnit)); err != nil || s2 != 200 {
+				return fmt.Errorf("post-restart duplicate: %d %v", s2, err)
+			}
+			if s3, b3, err := c.Runner.PostEvent(cb, fmt.Sprintf(
+				`{"event_id":"evt_r2","sequence":2,"event_type":"session.usage.tick","usage":{"unit":%q,"total":20}}`,
+				c.SessionUnit)); err != nil || s3 != 200 {
+				return fmt.Errorf("post-restart usage event: %d %s %v", s3, b3, err)
+			}
+			st2, _ := c.SessionStatus(sessionID, credential)
+			if n, _ := harness.FieldNumber(st2.JSON(), "usage.claimed_total"); n != 20 {
+				return fmt.Errorf("claimed_total %v after post-restart event, want 20", n)
+			}
+
+			// 3. Top-up and end still work on the rebound session.
+			tu, err := c.SessionTopUp(sessionID, credential, c.RequestID("restart-topup"), harness.PaymentEnvelope("restart-topup"))
+			if err != nil || tu.Status != 200 {
+				return fmt.Errorf("topup after restart: %d %v", tu.Status, err)
+			}
+			end, err := c.SessionEnd(sessionID, credential, "gateway_close")
+			if err != nil || end.Status != 200 {
+				return fmt.Errorf("end after restart: %d %v", end.Status, err)
+			}
+			return nil
 		}},
 		{Name: "paid-session/heartbeat-enforcement", Spec: "paid-session §5", Run: func(c *harness.Ctx) error {
-			return fmt.Errorf("%w: needs clock control; covered by the reference broker's engine tests (TestSweepHeartbeatLost, TestSweepLeaseExpiryRespectsGrace)", harness.ErrSkip)
+			if c.SessionOfferingFastHB == "" {
+				return fmt.Errorf("%w: no fast-heartbeat offering configured (see README)", harness.ErrSkip)
+			}
+			r, err := c.OpenSessionOffering(c.SessionOfferingFastHB, c.RequestID("hb"),
+				harness.PaymentEnvelope("hb"), `{"gateway_session_id":"gws-hb","session_params":{}}`)
+			if err != nil {
+				return err
+			}
+			if r.Status != 201 && r.Status != 200 {
+				return fmt.Errorf("open status %d: %s", r.Status, r.Body)
+			}
+			m := r.JSON()
+			sessionID := harness.FieldString(m, "session_id")
+			credential := harness.FieldString(m, "credential")
+
+			// Send nothing. interval 1s x threshold 2 means the sweeper
+			// must tear this down; poll until it does.
+			deadline := time.Now().Add(20 * time.Second)
+			for time.Now().Before(deadline) {
+				time.Sleep(500 * time.Millisecond)
+				st, err := c.SessionStatus(sessionID, credential)
+				if err != nil || st.Status != 200 {
+					continue
+				}
+				sm := st.JSON()
+				state := harness.FieldString(sm, "state")
+				if state == "ended" || state == "failed" {
+					reason := harness.FieldString(sm, "close_reason")
+					if reason != "heartbeat_lost" {
+						return fmt.Errorf("terminal reason %q, want heartbeat_lost", reason)
+					}
+					// Enforcement means the runner was actually torn
+					// down, not just a record flipped.
+					if len(c.Runner.Terminated()) == 0 {
+						return fmt.Errorf("session marked %s but runner never terminated", state)
+					}
+					// And the winddown is idempotent from the outside.
+					if end, err := c.SessionEnd(sessionID, credential, "late"); err == nil && end.Status == 200 {
+						if harness.FieldString(end.JSON(), "close_reason") != "heartbeat_lost" {
+							return fmt.Errorf("post-terminal end changed the close reason")
+						}
+					}
+					return nil
+				}
+			}
+			return fmt.Errorf("session never wound down after missed heartbeats (still active after 20s)")
 		}},
 	}
 }

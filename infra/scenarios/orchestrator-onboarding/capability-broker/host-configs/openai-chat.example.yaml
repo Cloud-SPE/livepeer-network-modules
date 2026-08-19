@@ -23,7 +23,9 @@ capabilities:
   # ── streaming chat completions ──────────────────────────────────────────
   - id: "openai:chat-completions"
     offering_id: "vllm-qwen3.6-27b-stream"
-    interaction_mode: "http-stream@v0"
+    protocol: "paid-job/v1"
+    job:
+      transports: [unary, stream]
     work_unit:
       # vLLM emits an OpenAI-shaped usage block; the broker reads
       # total_tokens directly out of that.
@@ -67,7 +69,9 @@ capabilities:
   # ── non-streaming (request/response) chat completions ───────────────────
   - id: "openai:chat-completions"
     offering_id: "vllm-qwen3.6-27b-default"
-    interaction_mode: "http-reqresp@v0"
+    protocol: "paid-job/v1"
+    job:
+      transports: [unary]
     work_unit:
       name: "tokens"
       extractor:

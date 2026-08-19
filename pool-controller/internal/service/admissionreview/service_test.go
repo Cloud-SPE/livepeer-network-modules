@@ -18,13 +18,13 @@ func TestBuildJoinRequestPreviewAndApprove(t *testing.T) {
 	defer func() { _ = stateRepo.Close() }()
 
 	offer := types.Offer{
-		ID:              "offer-1",
-		CapabilityID:    "rerank",
-		OfferingID:      "zerank-2-default",
-		InteractionMode: "http-reqresp@v0",
-		WorkUnit:        config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
-		Price:           config.Price{AmountWei: "1", PerUnits: 1},
-		Status:          types.OfferStatusActive,
+		ID:           "offer-1",
+		CapabilityID: "rerank",
+		OfferingID:   "zerank-2-default",
+		Protocol:     "paid-job/v1",
+		WorkUnit:     config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula"}},
+		Price:        config.Price{AmountWei: "1", PerUnits: 1},
+		Status:       types.OfferStatusActive,
 	}
 	if err := stateRepo.PutOffer(offer); err != nil {
 		t.Fatalf("PutOffer() error = %v", err)
@@ -41,9 +41,9 @@ func TestBuildJoinRequestPreviewAndApprove(t *testing.T) {
 			URL:                "http://backend",
 			VerificationStatus: types.VerificationPassing,
 			ClaimedCapabilities: []types.ClaimedOffer{{
-				CapabilityID:    "rerank",
-				OfferingID:      "zerank-2-default",
-				InteractionMode: "http-reqresp@v0",
+				CapabilityID: "rerank",
+				OfferingID:   "zerank-2-default",
+				Protocol:     "paid-job/v1",
 			}},
 		}},
 	}
@@ -78,9 +78,9 @@ func TestBuildJoinRequestPreviewAndApprove(t *testing.T) {
 
 func TestBuildJoinClaimPreviewFlagsOutOfPoolScope(t *testing.T) {
 	view := BuildJoinClaimPreview(types.ClaimedOffer{
-		CapabilityID:    "video:live.rtmp",
-		OfferingID:      "live-default",
-		InteractionMode: "rtmp-ingress-hls-egress@v0",
+		CapabilityID: "video:live.rtmp",
+		OfferingID:   "live-default",
+		Protocol:     "paid-session/v1",
 	}, nil)
 	if view.Servable {
 		t.Fatalf("expected non-servable preview, got %#v", view)

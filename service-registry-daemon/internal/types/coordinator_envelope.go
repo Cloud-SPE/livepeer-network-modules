@@ -37,10 +37,25 @@ type CoordinatorOrch struct {
 	ServiceURI string `json:"service_uri,omitempty"`
 }
 
+// CoordinatorCapability is one capability tuple of the coordinator
+// envelope.
+//
+// Protocol replaces the removed interaction-mode field (manifest spec
+// 1.0.0; see livepeer-network-protocol/protocols/offering-axes.md). The
+// declared axes ride alongside it in exactly one of Job (paid-job/*) or
+// Session (paid-session/*).
+//
+// Job and Session are deliberately json.RawMessage: per the "Who
+// consumes what" table in offering-axes.md, the registry/resolver layer
+// gates on *nothing* here — it is pure pass-through. Keeping the bytes
+// verbatim means a new axis (or a whole new protocol) needs no change in
+// this daemon, and nothing downstream sees a value this layer reshaped.
 type CoordinatorCapability struct {
 	CapabilityID    string              `json:"capability_id"`
 	OfferingID      string              `json:"offering_id"`
-	InteractionMode string              `json:"interaction_mode"`
+	Protocol        string              `json:"protocol"`
+	Job             json.RawMessage     `json:"job,omitempty"`
+	Session         json.RawMessage     `json:"session,omitempty"`
 	WorkUnit        CoordinatorWorkUnit `json:"work_unit"`
 	PricePerUnitWei string              `json:"price_per_unit_wei"`
 	WorkerURL       string              `json:"worker_url"`
@@ -102,8 +117,12 @@ func validateCoordinatorEnvelope(sm *CoordinatorSignedManifest) error {
 		if c.OfferingID == "" {
 			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].offering_id", i), "missing")
 		}
-		if c.InteractionMode == "" {
-			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].interaction_mode", i), "missing")
+		// Presence only. The protocol tag's grammar, the job/session
+		// axes, and the protocol↔axes pairing are all gated by the
+		// consumers that actually speak them (clearinghouse, gateway,
+		// broker) — never here. See offering-axes.md §4.
+		if c.Protocol == "" {
+			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].protocol", i), "missing")
 		}
 		if c.WorkUnit.Name == "" {
 			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].work_unit.name", i), "missing")
@@ -215,9 +234,7 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 			urls = append(urls, tuple.WorkerURL)
 		}
 		extraMap := cloneJSONMap(tuple.Extra)
-		if _, exists := extraMap["interaction_mode"]; !exists {
-			extraMap["interaction_mode"] = tuple.InteractionMode
-		}
+		mirrorDeclaration(extraMap, tuple)
 		extraRaw, err := marshalRawObject(extraMap)
 		if err != nil {
 			return nil, err
@@ -290,6 +307,36 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 			Value: sm.Signature.Value,
 		},
 	}, nil
+}
+
+// mirrorDeclaration copies the tuple's protocol declaration and its
+// declared axes into the projected capability's opaque extra block.
+//
+// The node-oriented projection (Node → Capability → Offering) predates
+// the manifest's capability-tuple shape and has no first-class slot for
+// them, and the gRPC surface carries a capability's declaration solely
+// as extra_json. Mirroring here is therefore what keeps the declaration
+// reaching consumers at all: gateways select routes on
+// session.descriptor_schema and job.transports, so dropping the axes
+// while forwarding the rest would silently break route selection.
+//
+// Values are copied verbatim — the axes stay the raw bytes the orch
+// signed. An orch that already published a key of the same name in
+// extra wins; this projection never overwrites operator-declared
+// metadata.
+func mirrorDeclaration(extra map[string]any, tuple CoordinatorCapability) {
+	put := func(key string, val any) {
+		if _, exists := extra[key]; !exists {
+			extra[key] = val
+		}
+	}
+	put("protocol", tuple.Protocol)
+	if len(tuple.Job) > 0 {
+		put("job", tuple.Job)
+	}
+	if len(tuple.Session) > 0 {
+		put("session", tuple.Session)
+	}
 }
 
 func cloneJSONMap(in map[string]any) map[string]any {

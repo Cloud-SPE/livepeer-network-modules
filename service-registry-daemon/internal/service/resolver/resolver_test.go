@@ -277,7 +277,8 @@ func TestResolveByAddress_CoordinatorEnvelopeCompat(t *testing.T) {
 		{
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "qwen3.6-27b-default",
-			InteractionMode: "http-stream@v0",
+			Protocol:        "paid-job/v1",
+			Job:             json.RawMessage(`{"transports":["unary","stream"]}`),
 			WorkUnit:        types.CoordinatorWorkUnit{Name: "tokens"},
 			PricePerUnitWei: "25000000",
 			WorkerURL:       "https://openai-worker.xodeapp.xyz",
@@ -298,7 +299,7 @@ func TestResolveByAddress_CoordinatorEnvelopeCompat(t *testing.T) {
 	if res.Mode != types.ModeWellKnown {
 		t.Fatalf("mode = %v", res.Mode)
 	}
-	if res.SchemaVersion != "0.1.0" {
+	if res.SchemaVersion != "1.0.0" {
 		t.Fatalf("schema version = %q", res.SchemaVersion)
 	}
 	if len(res.Nodes) != 1 {
@@ -321,8 +322,11 @@ func TestResolveByAddress_CoordinatorEnvelopeCompat(t *testing.T) {
 	if !strings.Contains(string(cap.Extra), "\"served_model_name\":\"Qwen3.6-27B\"") {
 		t.Fatalf("capability extra = %s", string(cap.Extra))
 	}
-	if !strings.Contains(string(cap.Extra), "\"interaction_mode\":\"http-stream@v0\"") {
-		t.Fatalf("capability extra missing interaction_mode: %s", string(cap.Extra))
+	if !strings.Contains(string(cap.Extra), "\"protocol\":\"paid-job/v1\"") {
+		t.Fatalf("capability extra missing protocol: %s", string(cap.Extra))
+	}
+	if !strings.Contains(string(cap.Extra), "\"job\":{\"transports\":[\"unary\",\"stream\"]}") {
+		t.Fatalf("capability extra missing job axes: %s", string(cap.Extra))
 	}
 	if len(cap.Offerings) != 1 || cap.Offerings[0].ID != "qwen3.6-27b-default" {
 		t.Fatalf("offerings = %+v", cap.Offerings)
@@ -335,6 +339,71 @@ func TestResolveByAddress_CoordinatorEnvelopeCompat(t *testing.T) {
 	}
 	if !bytesEqual(envBody, f.fetcher.Bodies[f.uri]) {
 		t.Fatal("fixture body mutated unexpectedly")
+	}
+}
+
+// The registry layer gates on nothing in the declaration (offering-axes
+// §4) but must still deliver it: gateways select routes on
+// session.descriptor_schema, so the whole session object has to survive
+// the node-oriented projection byte-for-byte.
+func TestResolveByAddress_CoordinatorEnvelopeSessionAxesPassThrough(t *testing.T) {
+	f := newFixture(t)
+	const session = `{"descriptor_schema":"rtmp-hls/v1","metering":"runner-reported","refill":"bounded","attachment":"external","heartbeat":{"interval_seconds":10,"missed_threshold":3},"tolerance_band_pct":2.5,"runway_increment_units":60000}`
+	f.signCoordinatorEnvelope([]types.CoordinatorCapability{
+		{
+			CapabilityID:    "video:transcode.live",
+			OfferingID:      "h264-1080p30",
+			Protocol:        "paid-session/v1",
+			Session:         json.RawMessage(session),
+			WorkUnit:        types.CoordinatorWorkUnit{Name: "video-frame-megapixel"},
+			PricePerUnitWei: "200000",
+			WorkerURL:       "https://openai-worker.xodeapp.xyz",
+		},
+	})
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 1 || len(res.Nodes[0].Capabilities) != 1 {
+		t.Fatalf("nodes = %+v", res.Nodes)
+	}
+	cap := res.Nodes[0].Capabilities[0]
+	if !strings.Contains(string(cap.Extra), `"protocol":"paid-session/v1"`) {
+		t.Fatalf("capability extra missing protocol: %s", string(cap.Extra))
+	}
+	if !strings.Contains(string(cap.Extra), `"session":`+session) {
+		t.Fatalf("capability extra dropped or reshaped session axes: %s", string(cap.Extra))
+	}
+	if strings.Contains(string(cap.Extra), `"job"`) {
+		t.Fatalf("session offering must not gain job axes: %s", string(cap.Extra))
+	}
+}
+
+// A protocol this daemon has never heard of, carrying axes it has never
+// heard of, still resolves: the registry is not a gate.
+func TestResolveByAddress_CoordinatorEnvelopeUnknownProtocolPassesThrough(t *testing.T) {
+	f := newFixture(t)
+	f.signCoordinatorEnvelope([]types.CoordinatorCapability{
+		{
+			CapabilityID:    "kibble:doggo-bark-counter:v1",
+			OfferingID:      "default",
+			Protocol:        "future-thing/v9",
+			WorkUnit:        types.CoordinatorWorkUnit{Name: "barks"},
+			PricePerUnitWei: "100",
+			WorkerURL:       "https://openai-worker.xodeapp.xyz",
+		},
+	})
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+	if err != nil {
+		t.Fatalf("unknown protocol must not be rejected by the registry: %v", err)
+	}
+	if len(res.Nodes) != 1 || len(res.Nodes[0].Capabilities) != 1 {
+		t.Fatalf("nodes = %+v", res.Nodes)
+	}
+	if !strings.Contains(string(res.Nodes[0].Capabilities[0].Extra), `"protocol":"future-thing/v9"`) {
+		t.Fatalf("capability extra = %s", string(res.Nodes[0].Capabilities[0].Extra))
 	}
 }
 
@@ -398,7 +467,7 @@ func TestResolveByAddress_CoordinatorEnvelopeSignatureMismatchRejected(t *testin
 	other, _ := signer.GenerateRandom()
 	env := &types.CoordinatorSignedManifest{
 		Manifest: types.CoordinatorManifestPayload{
-			SpecVersion: "0.1.0",
+			SpecVersion: "1.0.0",
 			IssuedAt:    f.clk.Now(),
 			ExpiresAt:   f.clk.Now().Add(24 * time.Hour),
 			Orch:        types.CoordinatorOrch{EthAddress: string(f.addr)},
@@ -406,7 +475,8 @@ func TestResolveByAddress_CoordinatorEnvelopeSignatureMismatchRejected(t *testin
 				{
 					CapabilityID:    "openai:chat-completions",
 					OfferingID:      "default",
-					InteractionMode: "http-stream@v0",
+					Protocol:        "paid-job/v1",
+					Job:             json.RawMessage(`{"transports":["unary"]}`),
 					WorkUnit:        types.CoordinatorWorkUnit{Name: "tokens"},
 					PricePerUnitWei: "1",
 					WorkerURL:       "https://openai-worker.xodeapp.xyz",
@@ -1195,7 +1265,7 @@ func (f *fixture) signCoordinatorEnvelope(caps []types.CoordinatorCapability) []
 	f.t.Helper()
 	env := &types.CoordinatorSignedManifest{
 		Manifest: types.CoordinatorManifestPayload{
-			SpecVersion: "0.1.0",
+			SpecVersion: "1.0.0",
 			IssuedAt:    f.clk.Now(),
 			ExpiresAt:   f.clk.Now().Add(24 * time.Hour),
 			Orch: types.CoordinatorOrch{

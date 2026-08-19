@@ -206,11 +206,26 @@ Synthetic probe behavior:
   - `openai:audio-translations`
   - `openai:audio-speech`
 - other `openai:audio-*` subtypes now fall back to family recipes based on
-  `interaction_mode`:
-  - `http-multipart@v0` uses the transcription / translation probe recipe
-  - `http-reqresp@v0` uses the speech / TTS probe recipe
+  the offer's declared `job.transports`:
+  - a `multipart` transport uses the transcription / translation probe recipe
+  - a `unary` transport uses the speech / TTS probe recipe
 - unsupported audio families still return skipped results with
   `audio_probe_not_implemented`
+
+Offer protocol vocabulary:
+
+- Offers declare `protocol` (a `<name>/v<major>` tag such as `paid-job/v1`),
+  which replaced the removed v0 `interaction_mode` field.
+- Paid-job offers may declare `job.transports` (any of `unary`, `stream`,
+  `multipart`). An offer that declares none is rendered as
+  `job: {transports: [unary]}` -- the narrowest safe assumption for the
+  request/response workloads pool members serve -- and the substitution is
+  reported in `GET /admin/v1/broker-runtime` under `render_warnings`.
+- `paid-session/*` offers are rejected at admission and refused by the broker
+  renderer: the pool member contract carries no runtime descriptor schema or
+  runner create/status/terminate paths, and pool-controller configures neither
+  `external_base_url` nor `session_store` -- the broker requires all of them
+  before it will load a session capability.
 
 Current Pool media limitation:
 

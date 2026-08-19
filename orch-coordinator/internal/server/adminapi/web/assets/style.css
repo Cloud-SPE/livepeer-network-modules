@@ -499,7 +499,7 @@
   }
 
   .badge.drift-price_changed,
-  .badge.drift-mode_changed,
+  .badge.drift-protocol_changed,
   .badge.drift-extra_changed,
   .badge.drift-worker_changed,
   .badge.audit-rollback_rejected,
@@ -682,7 +682,7 @@
   }
 
   tbody tr.drift-price_changed,
-  tbody tr.drift-mode_changed,
+  tbody tr.drift-protocol_changed,
   tbody tr.drift-extra_changed,
   tbody tr.drift-worker_changed {
     background: rgba(251, 191, 36, 0.08);

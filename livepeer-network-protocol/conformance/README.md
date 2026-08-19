@@ -26,6 +26,12 @@ prints a PASS/FAIL report, and exits non-zero on any failure.
 go run ./cmd/livepeer-conformance --broker-url http://your-broker:8080 --pause
 ```
 
+Work units are configurable so you can run against your own offerings
+without patching scenarios: `--job-unit` (default `tokens`) and
+`--session-unit` (default `participant_minutes`). The units are properties
+of your offerings, not of the protocols or the descriptor schemas —
+`--session-unit participant_seconds` is as valid as the default.
+
 The suite starts its fakes and prints their addresses. Configure your
 broker to serve these offerings before pressing Enter:
 

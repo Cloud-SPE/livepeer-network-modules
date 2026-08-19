@@ -50,11 +50,10 @@ session-create response:
 ```json
 {
   "runtime": {
-    "schema": "sfu-room/v1",
+    "schema": "example-runtime/v1",
     "public": {
-      "url": "wss://sfu-07.example.net",
-      "room": "rm_9f2c1ab4",
-      "status_url": "https://sfu-07.example.net/rooms/rm_9f2c1ab4/health"
+      "attach_url": "wss://runtime-07.example.net/attach",
+      "status_url": "https://runtime-07.example.net/r/9f2c1ab4/health"
     },
     "private": {
       "terminate_token": "rt_9d41c6…"
@@ -62,7 +61,7 @@ session-create response:
     "grants": [
       {
         "id": "grant_01jx2…",
-        "operations": ["participant-token-mint"],
+        "operations": ["example-admission"],
         "secret": "gs_c81b32…",
         "expires_at": "2026-08-18T21:04:00Z",
         "max_uses": 1
@@ -71,6 +70,14 @@ session-create response:
   }
 }
 ```
+
+`example-runtime/v1` is deliberately fictional: this page defines the
+envelope, not any workload's fields. It exercises every optional feature
+(a `private` part, a bounded `max_uses`) precisely because real schemas
+often use none of them — see [`descriptors/`](../descriptors/) for the
+shipped ones, each of which defines its own public fields, its own grant
+operations, and whether it uses `private` at all. Do not copy this
+example into an implementation.
 
 Exactly four top-level keys are defined: `schema`, `public`, `private`,
 `grants`. `schema` and `public` are REQUIRED; `private` and `grants` are
@@ -96,6 +103,11 @@ the lifetime of the session.** There is no update mechanism in v1: a runtime
 whose coordinates change (host migration, failover) ends its session and a
 new one opens. Mid-session runtime relocation is reserved for a future
 version as an explicit control-plane event, not a descriptor mutation.
+
+The consequence is deliberate and shared by both sides: **in v1 a runtime
+host migration is a customer-visible session end.** A capability that
+cannot tolerate that needs the relocation event, which means a v1.1 —
+not a descriptor mutation smuggled in behind an immutable field.
 
 The public part SHOULD include a coordinate the gateway can cheaply probe as
 evidence the runtime is real (a status or playback URL). This is the

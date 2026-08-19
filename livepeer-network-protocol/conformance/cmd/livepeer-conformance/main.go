@@ -48,7 +48,7 @@ capabilities:
       transports: [unary, stream, multipart]
     health: { initial_status: ready }
     work_unit:
-      name: tokens
+      name: %s
       extractor: { type: openai-usage }
     price: { amount_wei: "1", per_units: 1 }
     backend: { transport: http, url: %q }
@@ -59,7 +59,7 @@ capabilities:
       transports: [unary]
     health: { initial_status: ready }
     work_unit:
-      name: tokens
+      name: %s
       extractor: { type: openai-usage }
     price: { amount_wei: "1", per_units: 1 }
     backend: { transport: http, url: %q }
@@ -70,7 +70,7 @@ capabilities:
       transports: [unary]
     health: { initial_status: ready }
     work_unit:
-      name: tokens
+      name: %s
       extractor: { type: openai-usage }
     price: { amount_wei: "1", per_units: 1 }
     backend: { transport: http, url: %q }
@@ -92,7 +92,7 @@ capabilities:
         terminate_path: /sessions/{id}
     health: { initial_status: ready }
     work_unit:
-      name: participant_minutes
+      name: %s
       extractor: { type: seconds-elapsed }
     price: { amount_wei: "10", per_units: 1 }
     backend: { transport: http, url: %q }
@@ -107,7 +107,7 @@ capabilities:
         terminate_path: /sessions/{id}
     health: { initial_status: ready }
     work_unit:
-      name: participant_minutes
+      name: %s
       extractor: { type: seconds-elapsed }
     price: { amount_wei: "10", per_units: 1 }
     backend: { transport: http, url: %q }
@@ -119,6 +119,8 @@ func main() {
 		brokerDir = flag.String("broker-dir", defaultBrokerDir(), "path to the reference broker module (auto mode)")
 		pause     = flag.Bool("pause", false, "URL mode: wait for Enter after printing fake addresses")
 		timeout   = flag.Duration("startup-timeout", 60*time.Second, "auto mode: how long to wait for the broker to become healthy")
+		jobUnit   = flag.String("job-unit", "tokens", "work unit the paid-job offerings declare")
+		sessUnit  = flag.String("session-unit", "participant_minutes", "work unit the paid-session offerings declare")
 	)
 	flag.Parse()
 
@@ -138,8 +140,8 @@ func main() {
 		SessionCapability:     "conformance:session",
 		SessionOffering:       "default",
 		SessionOfferingFastHB: "fast-heartbeat",
-		JobUnit:               "tokens",
-		SessionUnit:           "participant_minutes",
+		JobUnit:               *jobUnit,
+		SessionUnit:           *sessUnit,
 		RunID:                 harness.NewRunID(),
 	}
 
@@ -153,7 +155,7 @@ func main() {
 		}
 		ctx.BrokerURL = *brokerURL
 	} else {
-		ctl, url, err := startReferenceBroker(*brokerDir, backend, runner, *timeout)
+		ctl, url, err := startReferenceBroker(*brokerDir, backend, runner, *timeout, *jobUnit, *sessUnit)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "start broker:", err)
 			os.Exit(2)
@@ -186,7 +188,8 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *fakes.SessionRunner, timeout time.Duration) (*brokerControl, string, error) {
+func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *fakes.SessionRunner,
+	timeout time.Duration, jobUnit, sessUnit string) (*brokerControl, string, error) {
 	paidPort, err := freePort()
 	if err != nil {
 		return nil, "", err
@@ -211,7 +214,11 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 	cfg := fmt.Sprintf(configTemplate,
 		paidPort, paidPort, metricsPort,
 		filepath.Join(dir, "state.db"), keyPath,
-		backend.URL(), backend.URL(), backend.ErrorURL(), runner.URL(), runner.URL())
+		jobUnit, backend.URL(),
+		jobUnit, backend.URL(),
+		jobUnit, backend.ErrorURL(),
+		sessUnit, runner.URL(),
+		sessUnit, runner.URL())
 	cfgPath := filepath.Join(dir, "host-config.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		return nil, "", err

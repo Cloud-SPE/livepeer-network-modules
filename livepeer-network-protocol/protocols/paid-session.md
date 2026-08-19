@@ -175,9 +175,11 @@ heartbeat interval and missed-event threshold.
   interval past `expires_at`, so a top-up in flight at expiry never loses the
   race to the sweeper. Recording a timestamp is not enforcement; the broker
   MUST run the winddown.
-- **Heartbeat**: the runner emits liveness events (§7). When the missed-event
-  threshold is exceeded the broker MUST prevent an unmetered runtime from
-  continuing: it MAY first query the runner's status path, then MUST
+- **Heartbeat**: the runner emits liveness events (§7). **Any accepted event
+  refreshes liveness** — a `session.usage.tick` counts, so a runner already
+  reporting usage inside `interval × missed_threshold` needs no separate
+  `session.heartbeat` emitter. When the missed-event threshold is exceeded
+  the broker MUST prevent an unmetered runtime from continuing: it MAY first query the runner's status path, then MUST
   idempotently terminate the runner session, close payment state, release
   held capacity, and record `heartbeat_lost`.
 - Winddown from **any** trigger (end, lease expiry, heartbeat loss, runway
@@ -249,6 +251,13 @@ Event envelope:
 
 Required event types: `session.started`, `session.heartbeat`,
 `session.usage.tick`, `session.failed`, `session.ended`.
+
+Unknown fields in the event envelope are **tolerated and ignored** — the
+broker is a tolerant reader here, so runners may carry their own
+correlation fields (their session ids, a per-event delta) without
+coordinating a spec change. Note that a per-event usage delta is ignored
+by rule, not merely unread: cumulative `usage.total` is the only debit
+basis.
 
 Rules:
 

@@ -132,6 +132,11 @@ func applyRunnerDescriptions(cfg *config.Config) map[string]string {
 			}
 		}
 
+		if match := describedFor(desc, c.ID); match != nil && len(match.SessionParamsSchema) > 0 {
+			// Carried to gateways through the offering; never enforced.
+			c.Session.SessionParamsSchema = match.SessionParamsSchema
+		}
+
 		if len(fatal) > 0 {
 			// Fatal to THIS capability, not to the broker: one broken
 			// tuple must not take down every other capability the

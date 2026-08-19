@@ -4,6 +4,8 @@
 // entire day-to-day surface.
 package config
 
+import "encoding/json"
+
 // Config is the top-level host-config.yaml schema.
 type Config struct {
 	Identity Identity `yaml:"identity"`
@@ -128,6 +130,10 @@ type SessionCap struct {
 	ToleranceBandPct     float64            `yaml:"tolerance_band_pct,omitempty"`
 	RunwayIncrementUnits int64              `yaml:"runway_increment_units,omitempty"`
 	Runner               SessionRunnerPaths `yaml:"runner"`
+	// SessionParamsSchema is not operator-authored: the describe pass
+	// fills it from the runner's declaration so it can be advertised to
+	// gateways. Never enforced by the broker.
+	SessionParamsSchema json.RawMessage `yaml:"-" json:"-"`
 }
 
 // AdvertisedLeasePolicy returns the lease policy with its default.

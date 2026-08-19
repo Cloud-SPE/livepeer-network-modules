@@ -248,6 +248,10 @@ with what it implements:
       "metering": "runner-reported",
       "heartbeat": { "interval_seconds": 30 },
       "readiness": { "path": "/ready" },
+      "session_params_schema": {
+        "required": ["room_name"],
+        "properties": { "room_name": "string", "max_participants": "integer" }
+      },
       "paths": {
         "create": "/sessions",
         "status": "/sessions/{id}",
@@ -293,6 +297,20 @@ Rules:
   offering's `interval × missed_threshold` is a misconfiguration the
   operator should see, but the broker enforces its configured threshold
   either way.
+
+A runner MAY also declare the shape of the `session_params` it expects.
+Today a capability's parameter requirements are undocumented: a gateway
+sends params blind and learns what was required from a create-time
+failure, after payment has been validated. A declared shape lets the
+requirement surface at selection time instead.
+
+`session_params_schema` is a **description, not a validator**. The
+broker MUST continue to pass `session_params` to the runner verbatim and
+MUST NOT reject an open on the strength of it — the runner remains the
+authority on its own inputs, and a broker enforcing a stale copy of that
+contract would be the same two-sources-of-truth mistake this section
+exists to remove. Its purpose is to reach gateways through the offering
+so they can validate before opening.
 
 Describe responses are runner-authored data. The broker validates their
 shape and compares them; it MUST NOT execute or interpret them further.

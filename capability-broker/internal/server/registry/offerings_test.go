@@ -209,3 +209,38 @@ func TestBuildOfferings_EmitsDeclaredAxes(t *testing.T) {
 		t.Fatalf("runway increment %d", sess.Session.RunwayIncrementUnits)
 	}
 }
+
+// A runner's declared session_params shape reaches gateways verbatim so
+// they can validate before opening, instead of learning the requirement
+// from a create-time failure after payment was validated. The broker
+// relays it and never enforces it.
+func TestBuildOfferings_RelaysSessionParamsSchema(t *testing.T) {
+	schema := json.RawMessage(`{"required":["room_name"]}`)
+	cfg := &config.Config{
+		Identity: config.Identity{OrchEthAddress: "0xabc"},
+		Capabilities: []config.Capability{{
+			ID: "cap:sess", OfferingID: "default", Protocol: "paid-session/v1",
+			Session: &config.SessionCap{
+				DescriptorSchema:    "sfu-room/v1",
+				SessionParamsSchema: schema,
+			},
+			WorkUnit: config.WorkUnit{Name: "participant_seconds"},
+			Price:    config.Price{AmountWei: "10", PerUnits: 1},
+		}},
+	}
+	got := BuildOfferings(cfg, nil)
+	sess := got.Capabilities[0].Session
+	if sess == nil || len(sess.SessionParamsSchema) == 0 {
+		t.Fatalf("session params schema not advertised: %+v", sess)
+	}
+	if string(sess.SessionParamsSchema) != string(schema) {
+		t.Fatalf("schema altered in transit: %s", sess.SessionParamsSchema)
+	}
+
+	// A capability whose runner declared nothing advertises nothing —
+	// the field must stay absent rather than becoming empty JSON.
+	cfg.Capabilities[0].Session.SessionParamsSchema = nil
+	if s := BuildOfferings(cfg, nil).Capabilities[0].Session.SessionParamsSchema; len(s) != 0 {
+		t.Fatalf("absent schema became %q", s)
+	}
+}

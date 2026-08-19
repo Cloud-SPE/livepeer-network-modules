@@ -2,6 +2,7 @@ package sessionengine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -39,6 +40,12 @@ type DescribedCapability struct {
 	// what "ready" means for it (model loaded, GPU free, queue depth)
 	// far better than an operator-authored probe recipe can approximate.
 	Readiness *DescribedReadiness `json:"readiness,omitempty"`
+	// SessionParamsSchema describes the session_params the runner
+	// expects, so gateways can validate before opening instead of
+	// discovering the requirement as a create-time failure. Opaque to
+	// the broker: carried to gateways, never enforced (the runner
+	// remains the authority on its own inputs).
+	SessionParamsSchema json.RawMessage `json:"session_params_schema,omitempty"`
 }
 
 // DescribedReadiness is a runner-declared readiness endpoint. Path is

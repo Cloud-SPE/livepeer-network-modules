@@ -83,6 +83,10 @@ type offeringsSessionAxes struct {
 	Lease                *offeringsLease     `json:"lease,omitempty"`
 	ToleranceBandPct     float64             `json:"tolerance_band_pct,omitempty"`
 	RunwayIncrementUnits int64               `json:"runway_increment_units,omitempty"`
+	// SessionParamsSchema is the runner's own description of the params
+	// it expects, relayed verbatim so gateways can validate before
+	// opening. The broker never enforces it.
+	SessionParamsSchema json.RawMessage `json:"session_params_schema,omitempty"`
 }
 
 type offeringsHeartbeat struct {
@@ -104,6 +108,7 @@ func axesFor(c config.Capability) (*offeringsJobAxes, *offeringsSessionAxes) {
 		return nil, nil
 	}
 	sess := &offeringsSessionAxes{
+		SessionParamsSchema:  c.Session.SessionParamsSchema,
 		DescriptorSchema:     c.Session.DescriptorSchema,
 		Attachment:           c.Session.AdvertisedAttachment(),
 		Metering:             c.Session.AdvertisedMetering(),

@@ -59,6 +59,7 @@ offerings):
 | `lease` | no | `{ policy, max_seconds }`; default policy `funding-tracking` | The session spec's normative lease default applies unless overridden here; gateways read it before opening. |
 | `tolerance_band_pct` | no | number; advisory | The divergence tolerance the seller commits to operate within (trust-model doc). A buyer's route selection MAY prefer tighter bands. |
 | `runway_increment_units` | no | integer; advisory | Seller-suggested top-up sizing. Buyers own their actual increment (it is their exposure bound), but a suggestion aids first-contact sizing. |
+| `session_params_schema` | no | object; advisory | The runner's own description of the `session_params` it expects, relayed verbatim (see paid-session §7.1.1). Lets a gateway validate before opening rather than discovering the requirement as a create-time failure after payment was validated. Not operator-authored and never broker-enforced. |
 
 `metering: broker-observed` with `attachment: external` is invalid: a broker
 cannot observe traffic that never transits it.

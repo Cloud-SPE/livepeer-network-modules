@@ -88,18 +88,53 @@ cumulative totals on the standard event channel instead of a bespoke
 callback URL, with retries safe by contract (exactly-once debit is the
 broker's problem).
 
-## The part worth arguing with us about
+## The no-broker case: decided, and cheaper than it looks
 
-Vtuber's current design has one property the v1 protocols deliberately do
-not replicate: **it works with no broker at all**, via
-`synthesizeStaticRoute`. Single-orchestrator, no-resolver, no-payment
-deployments are a real mode of operation for local development and demos,
-and we did not make that a first-class degenerate case — a paid session
-today requires a broker with a payment daemon (mock is fine for dev).
+Vtuber's design has one property v1 does not replicate: it works with
+**no broker at all**, via `synthesizeStaticRoute` — fabricating a route
+with eth address `0x0000…0000`, price `"0"`, and self-computed quote and
+fingerprint values so the payer call has the right shape when no registry
+daemon is running. That gives you `docker compose up` with gateway plus
+runner and nothing else.
 
-If that hurts, say so now rather than rebuilding route synthesis. It's a
-solvable problem (a documented dev profile, or a no-payment offering axis),
-but it needs a real requirement behind it, not a guess.
+`paid-session/v1` is paid by construction: the engine validates payment
+before binding a runtime and fails closed otherwise. We are **not** adding
+an unpaid path, for three reasons:
+
+- A mode where sessions run without payment authority is exactly what
+  fail-closed exists to prevent, and anything that exists for dev
+  eventually gets misconfigured into production.
+- It would be a second code path through the session engine — the thing
+  this whole redesign exists to remove.
+- It is not actually needed for your use case (below).
+
+**What to do instead: add one container.** The broker runs standalone with
+an in-process mock payment client. No registry daemon, no payment daemon,
+no wallet, no chain:
+
+```yaml
+# host-config.yaml — local development only
+payment_daemon:
+  mock: true
+  # Optional: makes the mock ledger survive a broker restart, so you can
+  # exercise session rebind locally the way production behaves.
+  mock_state_path: /var/lib/livepeer/payment-mock.json
+```
+
+Your dev stack goes from two processes to three: runner, broker, gateway.
+Point the gateway at the broker's URL instead of resolving a route, and
+you can drive the full product locally including real session lifecycle,
+usage claims, top-ups, and restart recovery.
+
+This is not a theoretical claim: our conformance suite runs exactly this
+configuration — mock payment, no registry, no wallet — and executes 32
+scenarios against it, including broker restart with session rebind.
+
+The trade is one container against deleting `synthesizeStaticRoute`, a
+fabricated zero-address route that exists only to satisfy a payment API.
+We think that is a good trade, but if running a broker in your dev loop
+turns out to be a genuine problem rather than an inconvenience, tell us
+and we will discuss it.
 
 ## What we need from you
 
@@ -112,4 +147,6 @@ but it needs a real requirement behind it, not a guess.
    its price become real.
 3. **Daydream: confirm the payer-contract migration path** — you're on the
    pre-quote shape and it has to move regardless of this work.
-4. **Both: tell us whether the no-broker dev case matters**, per above.
+4. **Vtuber: confirm the one-extra-container dev loop works for you** — see
+   the no-broker section above. If it genuinely does not, that is a
+   conversation, not a silent workaround.

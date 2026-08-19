@@ -44,7 +44,7 @@ type offeringsPayload struct {
 type offeringsCapabilityV1 struct {
 	CapabilityID    string            `json:"capability_id"`
 	OfferingID      string            `json:"offering_id"`
-	InteractionMode string            `json:"interaction_mode"`
+	Protocol        string            `json:"protocol"`
 	WorkUnit        offeringsWorkUnit `json:"work_unit"`
 	PricePerUnitWei string            `json:"price_per_unit_wei"`
 	PerUnits        uint64            `json:"per_units"`
@@ -80,7 +80,7 @@ func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPa
 		out.Capabilities = append(out.Capabilities, offeringsCapabilityV1{
 			CapabilityID:    c.ID,
 			OfferingID:      c.OfferingID,
-			InteractionMode: c.InteractionMode,
+			Protocol:        c.Protocol,
 			WorkUnit:        offeringsWorkUnit{Name: c.WorkUnit.Name},
 			PricePerUnitWei: c.Price.AmountWei,
 			PerUnits:        c.Price.PerUnits,

@@ -2,66 +2,46 @@ package middleware
 
 import (
 	"net/http"
-	"strings"
+	"regexp"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 )
 
-// Headers validates the five required Livepeer-* request headers per
-// livepeer-network-protocol/headers/livepeer-headers.md.
+var protocolTagRE = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
+
+// Headers validates the required Livepeer-* request headers per
+// livepeer-network-protocol/headers/livepeer-headers.md (v1):
+// Capability, Offering, Payment, Protocol, and Request-Id.
 //
-// Missing headers → 400 with a descriptive message body (the spec does not
-// enumerate a Livepeer-Error code for missing-header cases).
-// Spec-Version major mismatch → 505 + Livepeer-Error: spec_version_unsupported.
-// Mode malformed → 505 + Livepeer-Error: mode_unsupported.
-//
-// Cross-checks between header values and the Livepeer-Payment envelope happen
-// in the Payment middleware (envelope decoding is its responsibility).
+// Missing headers → 400 with a descriptive message body.
+// Protocol malformed → 505 + Livepeer-Error: protocol_unsupported.
+// Whether the named protocol is implemented for the capability is the
+// route handler's decision; cross-checks between header values and the
+// payment envelope happen in the Payment middleware.
 func Headers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(livepeerheader.Capability) == "" {
-			livepeerheader.WriteBadRequest(w, "missing required header: "+livepeerheader.Capability)
+		for _, h := range []string{
+			livepeerheader.Capability,
+			livepeerheader.Offering,
+			livepeerheader.Payment,
+			livepeerheader.RequestID,
+		} {
+			if r.Header.Get(h) == "" {
+				livepeerheader.WriteBadRequest(w, "missing required header: "+h)
+				return
+			}
+		}
+		proto := r.Header.Get(livepeerheader.Protocol)
+		if proto == "" {
+			livepeerheader.WriteBadRequest(w, "missing required header: "+livepeerheader.Protocol)
 			return
 		}
-		if r.Header.Get(livepeerheader.Offering) == "" {
-			livepeerheader.WriteBadRequest(w, "missing required header: "+livepeerheader.Offering)
-			return
-		}
-		if r.Header.Get(livepeerheader.Payment) == "" {
-			livepeerheader.WriteBadRequest(w, "missing required header: "+livepeerheader.Payment)
-			return
-		}
-		sv := r.Header.Get(livepeerheader.SpecVersion)
-		if sv == "" {
-			livepeerheader.WriteBadRequest(w, "missing required header: "+livepeerheader.SpecVersion)
-			return
-		}
-		if !majorVersionMatches(sv, livepeerheader.ImplementedSpecVersion) {
+		if !protocolTagRE.MatchString(proto) {
 			livepeerheader.WriteError(w, http.StatusHTTPVersionNotSupported,
-				livepeerheader.ErrSpecVersionUnsupported,
-				"spec version "+sv+" is not supported by this broker (implemented: "+livepeerheader.ImplementedSpecVersion+")")
+				livepeerheader.ErrProtocolUnsupported,
+				"Livepeer-Protocol must be of the form '<name>/v<major>'; got "+proto)
 			return
 		}
-		mode := r.Header.Get(livepeerheader.Mode)
-		if mode == "" {
-			livepeerheader.WriteBadRequest(w, "missing required header: "+livepeerheader.Mode)
-			return
-		}
-		if !strings.Contains(mode, "@v") {
-			livepeerheader.WriteError(w, http.StatusHTTPVersionNotSupported,
-				livepeerheader.ErrModeUnsupported,
-				"Livepeer-Mode must be of the form '<name>@v<major>'; got "+mode)
-			return
-		}
-
 		next.ServeHTTP(w, r)
 	})
-}
-
-// majorVersionMatches returns true if the major component of clientVersion
-// matches that of supportedVersion. Both must be in dotted form.
-func majorVersionMatches(clientVersion, supportedVersion string) bool {
-	cMajor, _, _ := strings.Cut(clientVersion, ".")
-	sMajor, _, _ := strings.Cut(supportedVersion, ".")
-	return cMajor != "" && cMajor == sMajor
 }

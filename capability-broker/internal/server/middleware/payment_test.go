@@ -35,8 +35,7 @@ func makePaidRequest(workID string) *http.Request {
 	r.Header.Set(livepeerheader.Capability, "cap")
 	r.Header.Set(livepeerheader.Offering, "off")
 	r.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("dummy-payment")))
-	r.Header.Set(livepeerheader.SpecVersion, "0.1")
-	r.Header.Set(livepeerheader.Mode, "ws-realtime@v0")
+	r.Header.Set(livepeerheader.Protocol, "paid-session/v1")
 	// The Payment middleware reads RequestIDFromContext for work_id; the
 	// RequestID middleware would normally set this. Inline the same
 	// behavior for the test path.

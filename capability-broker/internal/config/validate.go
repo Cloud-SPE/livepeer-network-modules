@@ -10,7 +10,8 @@ import (
 )
 
 var (
-	interactionModeRE = regexp.MustCompile(`^[a-z][a-z0-9-]*@v[0-9]+$`)
+	protocolRE        = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
+	schemaTagRE       = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
 	ethAddressRE      = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
 	priceWeiRE        = regexp.MustCompile(`^[0-9]+$`)
 )
@@ -217,8 +218,48 @@ func (c *Config) Validate() error {
 		}
 		key := cap.ID + "|" + cap.OfferingID
 
-		if !interactionModeRE.MatchString(cap.InteractionMode) {
-			return fmt.Errorf("%s: interaction_mode must match <name>@v<major> (got %q)", ctx, cap.InteractionMode)
+		if !protocolRE.MatchString(cap.Protocol) {
+			return fmt.Errorf("%s: protocol must match <name>/v<major> (got %q)", ctx, cap.Protocol)
+		}
+		switch {
+		case strings.HasPrefix(cap.Protocol, "paid-job/"):
+			if cap.Session != nil {
+				return fmt.Errorf("%s: session axes are invalid on a paid-job offering", ctx)
+			}
+			if cap.Job == nil || len(cap.Job.Transports) == 0 {
+				return fmt.Errorf("%s: job.transports is required for paid-job offerings", ctx)
+			}
+			seenT := map[string]bool{}
+			for _, tr := range cap.Job.Transports {
+				switch tr {
+				case "unary", "stream", "multipart":
+				default:
+					return fmt.Errorf("%s: job.transports entry %q must be unary|stream|multipart", ctx, tr)
+				}
+				if seenT[tr] {
+					return fmt.Errorf("%s: job.transports entry %q duplicated", ctx, tr)
+				}
+				seenT[tr] = true
+			}
+		case strings.HasPrefix(cap.Protocol, "paid-session/"):
+			if cap.Job != nil {
+				return fmt.Errorf("%s: job axes are invalid on a paid-session offering", ctx)
+			}
+			if cap.Session == nil {
+				return fmt.Errorf("%s: session block is required for paid-session offerings", ctx)
+			}
+			if !schemaTagRE.MatchString(cap.Session.DescriptorSchema) {
+				return fmt.Errorf("%s: session.descriptor_schema must match <name>/v<major> (got %q)", ctx, cap.Session.DescriptorSchema)
+			}
+			if cap.Session.Runner.CreatePath == "" || cap.Session.Runner.TerminatePath == "" {
+				return fmt.Errorf("%s: session.runner.create_path and terminate_path are required", ctx)
+			}
+			if c.SessionStore.Path == "" {
+				return fmt.Errorf("%s: session_store must be configured when a paid-session capability is declared", ctx)
+			}
+			if c.ExternalBaseURL == "" {
+				return fmt.Errorf("%s: external_base_url must be configured when a paid-session capability is declared", ctx)
+			}
 		}
 
 		if cap.WorkUnit.Name == "" {
@@ -408,7 +449,7 @@ func (c *Config) Validate() error {
 }
 
 func validateRepeatedPublishedTuple(previous, current Capability, ctx string) error {
-	if previous.InteractionMode != current.InteractionMode {
+	if previous.Protocol != current.Protocol {
 		return fmt.Errorf("%s: repeated published tuple must reuse the same interaction_mode", ctx)
 	}
 	if previous.WorkUnit.Name != current.WorkUnit.Name {

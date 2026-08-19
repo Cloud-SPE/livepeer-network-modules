@@ -20,11 +20,12 @@ func TestBuildOfferings_MergesOverlayWithoutMutatingConfig(t *testing.T) {
 	cfg := &config.Config{
 		Identity: config.Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []config.Capability{{
-			ID:              "livepeer:vtuber-session",
-			OfferingID:      "default",
-			InteractionMode: "session-control-plus-media@v0",
-			WorkUnit:        config.WorkUnit{Name: "seconds"},
-			Price:           config.Price{AmountWei: "1", PerUnits: 1},
+			ID:         "livepeer:vtuber-session",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &config.JobCapability{Transports: []string{"unary"}},
+			WorkUnit:   config.WorkUnit{Name: "seconds"},
+			Price:      config.Price{AmountWei: "1", PerUnits: 1},
 			Extra: map[string]any{
 				"provider": "vtuber-runner",
 				"vtuber": map[string]any{
@@ -76,11 +77,12 @@ func TestBuildOfferings_EmitsEmptyConstraintsBlock(t *testing.T) {
 	cfg := &config.Config{
 		Identity: config.Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []config.Capability{{
-			ID:              "rerank",
-			OfferingID:      "zerank-2-default",
-			InteractionMode: "http-reqresp@v0",
-			WorkUnit:        config.WorkUnit{Name: "requests"},
-			Price:           config.Price{AmountWei: "1", PerUnits: 1},
+			ID:         "rerank",
+			OfferingID: "zerank-2-default",
+			Protocol:   "paid-job/v1",
+			Job:        &config.JobCapability{Transports: []string{"unary"}},
+			WorkUnit:   config.WorkUnit{Name: "requests"},
+			Price:      config.Price{AmountWei: "1", PerUnits: 1},
 		}},
 	}
 
@@ -105,24 +107,26 @@ func TestBuildOfferings_DedupesRepeatedPublishedTuple(t *testing.T) {
 		Identity: config.Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "shared",
-				InteractionMode: "http-stream@v0",
-				WorkUnit:        config.WorkUnit{Name: "tokens"},
-				Price:           config.Price{AmountWei: "1", PerUnits: 1},
-				Backend:         config.Backend{ID: "a", Transport: "http", URL: "http://backend-a"},
+				ID:         "openai:chat-completions",
+				OfferingID: "shared",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
+				WorkUnit:   config.WorkUnit{Name: "tokens"},
+				Price:      config.Price{AmountWei: "1", PerUnits: 1},
+				Backend:    config.Backend{ID: "a", Transport: "http", URL: "http://backend-a"},
 				Extra: map[string]any{
 					"openai":   map[string]any{"model": "llama-3-70b"},
 					"provider": "vllm",
 				},
 			},
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "shared",
-				InteractionMode: "http-stream@v0",
-				WorkUnit:        config.WorkUnit{Name: "tokens"},
-				Price:           config.Price{AmountWei: "1", PerUnits: 1},
-				Backend:         config.Backend{ID: "b", Transport: "http", URL: "http://backend-b"},
+				ID:         "openai:chat-completions",
+				OfferingID: "shared",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
+				WorkUnit:   config.WorkUnit{Name: "tokens"},
+				Price:      config.Price{AmountWei: "1", PerUnits: 1},
+				Backend:    config.Backend{ID: "b", Transport: "http", URL: "http://backend-b"},
 				Extra: map[string]any{
 					"openai":   map[string]any{"model": "llama-3-70b"},
 					"provider": "vllm",

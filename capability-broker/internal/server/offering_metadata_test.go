@@ -39,9 +39,10 @@ func TestHydrateRunnerMetadata_PopulatesKokoroVoices(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:audio-speech",
-				OfferingID:      "kokoro",
-				InteractionMode: "http-reqresp@v0",
+				ID:         "openai:audio-speech",
+				OfferingID: "kokoro",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/v1/audio/speech",
@@ -102,9 +103,10 @@ func TestHydrateRunnerMetadata_SkipsOnFetchFailure(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:audio-speech",
-				OfferingID:      "kokoro",
-				InteractionMode: "http-reqresp@v0",
+				ID:         "openai:audio-speech",
+				OfferingID: "kokoro",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       "http://127.0.0.1:1/v1/audio/speech",
@@ -161,9 +163,10 @@ func TestHydrateRunnerMetadata_PopulatesVideoTranscodeMetadata(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "video:transcode.vod",
-				OfferingID:      "vod-default",
-				InteractionMode: "http-reqresp@v0",
+				ID:         "video:transcode.vod",
+				OfferingID: "vod-default",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/v1/video/transcode",
@@ -229,9 +232,10 @@ func TestHydrateRunnerMetadata_PopulatesVideoABRMetadata(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "video:transcode.abr",
-				OfferingID:      "abr-default",
-				InteractionMode: "http-reqresp@v0",
+				ID:         "video:transcode.abr",
+				OfferingID: "abr-default",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/v1/video/transcode/abr",
@@ -297,9 +301,10 @@ func TestHydrateRunnerMetadata_PopulatesVTuberMetadata(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "livepeer:vtuber-session",
-				OfferingID:      "vtuber-default",
-				InteractionMode: "session-control-plus-media@v0",
+				ID:         "livepeer:vtuber-session",
+				OfferingID: "vtuber-default",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/api/sessions/start",
@@ -357,9 +362,10 @@ func TestRefreshMetadataCatalog_PopulatesVTuberMetadataStatus(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "livepeer:vtuber-session",
-				OfferingID:      "vtuber-default",
-				InteractionMode: "session-control-plus-media@v0",
+				ID:         "livepeer:vtuber-session",
+				OfferingID: "vtuber-default",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/api/sessions/start",
@@ -404,9 +410,10 @@ func TestRefreshMetadataCatalog_VTuberProbeFailureSetsSpecificResult(t *testing.
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "livepeer:vtuber-session",
-				OfferingID:      "vtuber-default",
-				InteractionMode: "session-control-plus-media@v0",
+				ID:         "livepeer:vtuber-session",
+				OfferingID: "vtuber-default",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       "http://127.0.0.1:1/api/sessions/start",
@@ -450,9 +457,10 @@ func TestRefreshMetadataCatalog_AudioAlreadyConfiguredIsHealthy(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:audio-transcriptions",
-				OfferingID:      "whisper-default",
-				InteractionMode: "http-multipart@v0",
+				ID:         "openai:audio-transcriptions",
+				OfferingID: "whisper-default",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/v1/audio/transcriptions",
@@ -508,9 +516,10 @@ func TestHydrateRunnerMetadata_PopulatesOpenAIMetadataForVLLM(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "default",
-				InteractionMode: "http-stream@v0",
+				ID:         "openai:chat-completions",
+				OfferingID: "default",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/v1/chat/completions",
@@ -573,9 +582,10 @@ func TestHydrateRunnerMetadata_PreservesOperatorOpenAIValues(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "default",
-				InteractionMode: "http-stream@v0",
+				ID:         "openai:chat-completions",
+				OfferingID: "default",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/v1/chat/completions",
@@ -639,9 +649,10 @@ func TestHydrateRunnerMetadata_SkipsWhenConfiguredModelNotFound(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:embeddings",
-				OfferingID:      "default",
-				InteractionMode: "http-reqresp@v0",
+				ID:         "openai:embeddings",
+				OfferingID: "default",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/v1/embeddings",
@@ -694,9 +705,10 @@ func TestRefreshMetadataCatalog_PreservesLastSuccessAtAcrossUnhealthyResult(t *t
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:embeddings",
-				OfferingID:      "default",
-				InteractionMode: "http-reqresp@v0",
+				ID:         "openai:embeddings",
+				OfferingID: "default",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/v1/embeddings",
@@ -777,9 +789,10 @@ func TestHydrateRunnerMetadata_PopulatesOpenAIAudioFormats(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:audio-transcriptions",
-				OfferingID:      "whisper-large-v3",
-				InteractionMode: "http-multipart@v0",
+				ID:         "openai:audio-transcriptions",
+				OfferingID: "whisper-large-v3",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
 				Backend: config.Backend{
 					Transport: "http",
 					URL:       ts.URL + "/v1/audio/transcriptions",
@@ -848,10 +861,11 @@ func TestHydrateRunnerMetadata_PopulatesChatRunnerFields(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "vllm-qwen3.6-27b-stream",
-				InteractionMode: "http-stream@v0",
-				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
+				ID:         "openai:chat-completions",
+				OfferingID: "vllm-qwen3.6-27b-stream",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
+				Backend:    config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
 				Extra: map[string]any{
 					"openai":   map[string]any{"model": "Qwen3.6-27B"},
 					"provider": "openai-chat-runner",
@@ -898,10 +912,11 @@ func TestHydrateRunnerMetadata_OperatorValuesWin(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "operator-pinned",
-				InteractionMode: "http-stream@v0",
-				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
+				ID:         "openai:chat-completions",
+				OfferingID: "operator-pinned",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
+				Backend:    config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
 				Extra: map[string]any{
 					"openai":            map[string]any{"model": "Qwen3.6-27B"},
 					"provider":          "openai-chat-runner",
@@ -943,10 +958,11 @@ func TestHydrateRunnerMetadata_VllmProviderSkipsChatRunnerPath(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "direct-vllm",
-				InteractionMode: "http-stream@v0",
-				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
+				ID:         "openai:chat-completions",
+				OfferingID: "direct-vllm",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
+				Backend:    config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
 				Extra: map[string]any{
 					"openai":   map[string]any{"model": "Qwen3.6-27B"},
 					"provider": "vllm",
@@ -993,10 +1009,11 @@ func TestDiscoverOpenAIBackendMetadata_ChatRunnerProviderProbesOptionsEndpoint(t
 	defer ts.Close()
 
 	cap := &config.Capability{
-		ID:              "openai:chat-completions",
-		OfferingID:      "x",
-		InteractionMode: "http-stream@v0",
-		Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
+		ID:         "openai:chat-completions",
+		OfferingID: "x",
+		Protocol:   "paid-job/v1",
+		Job:        &config.JobCapability{Transports: []string{"unary"}},
+		Backend:    config.Backend{Transport: "http", URL: ts.URL + "/v1/chat/completions"},
 		Extra: map[string]any{
 			"openai":   map[string]any{"model": "Qwen3.6-27B"},
 			"provider": "openai-chat-runner",
@@ -1053,10 +1070,11 @@ func TestHydrateRunnerMetadata_PopulatesEmbeddingsRunnerFields(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:embeddings",
-				OfferingID:      "bge-large-en-v1.5",
-				InteractionMode: "http-reqresp@v0",
-				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
+				ID:         "openai:embeddings",
+				OfferingID: "bge-large-en-v1.5",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
+				Backend:    config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
 				Extra: map[string]any{
 					"openai":   map[string]any{"model": "bge-large-en-v1.5"},
 					"provider": "openai-embeddings-runner",
@@ -1100,10 +1118,11 @@ func TestHydrateRunnerMetadata_EmbeddingsOperatorValuesWin(t *testing.T) {
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:embeddings",
-				OfferingID:      "operator-pinned",
-				InteractionMode: "http-reqresp@v0",
-				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
+				ID:         "openai:embeddings",
+				OfferingID: "operator-pinned",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
+				Backend:    config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
 				Extra: map[string]any{
 					"openai":            map[string]any{"model": "bge-large-en-v1.5"},
 					"provider":          "openai-embeddings-runner",
@@ -1137,10 +1156,11 @@ func TestDiscoverOpenAIBackendMetadata_EmbeddingsRunnerProviderProbesOptionsEndp
 	defer ts.Close()
 
 	cap := &config.Capability{
-		ID:              "openai:embeddings",
-		OfferingID:      "x",
-		InteractionMode: "http-reqresp@v0",
-		Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
+		ID:         "openai:embeddings",
+		OfferingID: "x",
+		Protocol:   "paid-job/v1",
+		Job:        &config.JobCapability{Transports: []string{"unary"}},
+		Backend:    config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
 		Extra: map[string]any{
 			"openai":   map[string]any{"model": "bge-large-en-v1.5"},
 			"provider": "openai-embeddings-runner",
@@ -1178,10 +1198,11 @@ func TestHydrateRunnerMetadata_VllmEmbeddingsProviderSkipsRunnerPath(t *testing.
 	cfg := &config.Config{
 		Capabilities: []config.Capability{
 			{
-				ID:              "openai:embeddings",
-				OfferingID:      "direct-vllm",
-				InteractionMode: "http-reqresp@v0",
-				Backend:         config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
+				ID:         "openai:embeddings",
+				OfferingID: "direct-vllm",
+				Protocol:   "paid-job/v1",
+				Job:        &config.JobCapability{Transports: []string{"unary"}},
+				Backend:    config.Backend{Transport: "http", URL: ts.URL + "/v1/embeddings"},
 				Extra: map[string]any{
 					"openai":   map[string]any{"model": "bge-large-en-v1.5"},
 					"provider": "vllm",

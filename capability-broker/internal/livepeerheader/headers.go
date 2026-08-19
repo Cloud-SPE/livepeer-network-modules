@@ -9,15 +9,14 @@ package livepeerheader
 
 // Required request headers (gateway → broker).
 const (
-	Capability  = "Livepeer-Capability"
-	Offering    = "Livepeer-Offering"
-	Payment     = "Livepeer-Payment"
-	SpecVersion = "Livepeer-Spec-Version"
-	Mode        = "Livepeer-Mode"
-)
-
-// Optional request header (gateway → broker).
-const (
+	Capability = "Livepeer-Capability"
+	Offering   = "Livepeer-Offering"
+	Payment    = "Livepeer-Payment"
+	// Protocol carries the protocol tag, e.g. "paid-job/v1". Replaces
+	// the pre-v1 Livepeer-Mode + Livepeer-Spec-Version pair.
+	Protocol = "Livepeer-Protocol"
+	// RequestID is required on every paid request: it is the
+	// idempotency key (paid-job §4, paid-session §3.1).
 	RequestID = "Livepeer-Request-Id"
 )
 
@@ -25,6 +24,8 @@ const (
 const (
 	Backoff      = "Livepeer-Backoff"
 	WorkUnits    = "Livepeer-Work-Units"
+	WorkUnitName = "Livepeer-Work-Unit"
+	JobID        = "Livepeer-Job-Id"
 	Settlement   = "Livepeer-Settlement"
 	HealthStatus = "Livepeer-Health-Status"
 	Error        = "Livepeer-Error"
@@ -37,32 +38,17 @@ const (
 	ErrOfferingNotServed       = "offering_not_served"
 	ErrPaymentEnvelopeMismatch = "payment_envelope_mismatch"
 	ErrPaymentInvalid          = "payment_invalid"
-	ErrSpecVersionUnsupported  = "spec_version_unsupported"
-	ErrModeUnsupported         = "mode_unsupported"
+	ErrProtocolUnsupported     = "protocol_unsupported"
+	ErrTransportUnsupported    = "protocol_transport_unsupported"
+	ErrJobInFlight             = "job_in_flight"
+	ErrRequestIDReuse          = "request_id_reuse"
+	ErrRefillRefused           = "refill_refused"
 	ErrBackendUnavailable      = "backend_unavailable"
 	ErrCapacityExhausted       = "capacity_exhausted"
 	ErrInternalError           = "internal_error"
-	// ErrInsufficientBalance signals the broker terminated a long-running
-	// session because PayeeDaemon.SufficientBalance returned false (plan
-	// 0015). Emitted as a Livepeer-Error response or trailer; HTTP status
-	// 402 (Payment Required) where the response is still in the
-	// pre-handler phase, otherwise carried as a trailer where the
-	// protocol allows it.
+	// ErrInsufficientBalance signals the broker terminated work because
+	// PayeeDaemon.SufficientBalance reported the payer's balance no
+	// longer covers the configured runway. Emitted as a Livepeer-Error
+	// response, or as a trailer where the response is already in flight.
 	ErrInsufficientBalance = "insufficient_balance"
-
-	// rtmp-ingress-hls-egress error codes (plan 0011-followup). Added
-	// at the end so concurrent additions from sibling plans append
-	// cleanly above this comment block.
-	ErrFFmpegSubprocessFailed = "ffmpeg_subprocess_failed"
-	ErrRTMPIngestIdleTimeout  = "rtmp_ingest_idle_timeout"
-
-	// session-control-plus-media error code: control-WS send buffer
-	// stayed full beyond the configured drop window. Emitted as the
-	// WebSocket close-frame reason and recorded in metrics.
-	ErrBackpressureDrop = "backpressure_drop"
 )
-
-// ImplementedSpecVersion is the spec-wide major.minor this broker speaks.
-// Receivers MUST validate the major component only; this constant exposes
-// both for clarity in logs and diagnostic responses.
-const ImplementedSpecVersion = "0.1"

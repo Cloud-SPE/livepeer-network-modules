@@ -18,7 +18,7 @@
 #
 # NOTE: the v0 interaction-mode drivers (http-reqresp, http-stream, RTMP,
 # session-control, live-runner, ...) have been removed from the broker; the
-# `interaction_mode` strings below are retained only as labels for the
+# `protocol` strings below are retained only as labels for the
 # published manifest. v1 protocol (paid-job / paid-session) capability
 # examples land with the new protocol engines.
 
@@ -96,7 +96,9 @@ capabilities:
   # ---- Simple HTTP request/response examples ----
   - id: "kibble:doggo-bark-counter:v1"
     offering_id: "default"
-    interaction_mode: "http-reqresp@v0"
+    protocol: "paid-job/v1"
+    job:
+      transports: [unary]
     work_unit:
       name: "barks"
       extractor: { type: "response-jsonpath", path: "$.bark_count" }
@@ -121,7 +123,9 @@ capabilities:
   # ---- A second request/response example ----
   - id: "demo:echo:v1"
     offering_id: "default"
-    interaction_mode: "http-reqresp@v0"
+    protocol: "paid-job/v1"
+    job:
+      transports: [unary]
     work_unit:
       name: "echoes"
       extractor: { type: "response-jsonpath", path: "$.count", default: 1 }
@@ -154,7 +158,9 @@ capabilities:
   #
   # - id: "video:transcode.abr"
   #   offering_id: "default"
-  #   interaction_mode: "http-reqresp@v0"
+  #   protocol: "paid-job/v1"
+  #   job:
+  #     transports: [unary]
   #   work_unit:
   #     name: "jobs"
   #     extractor: { type: "request-formula", expression: "1", default: 1 }
@@ -192,7 +198,9 @@ capabilities:
   #
   # - id: "openai:chat-completions"
   #   offering_id: "llama-3-70b-shared"
-  #   interaction_mode: "http-stream@v0"
+  #   protocol: "paid-job/v1"
+  #   job:
+  #     transports: [unary, stream]
   #   work_unit:
   #     name: "tokens"
   #     extractor: { type: "openai-usage", field: "total_tokens" }
@@ -220,7 +228,9 @@ capabilities:
   #
   # - id: "openai:chat-completions"
   #   offering_id: "llama-3-70b-shared"
-  #   interaction_mode: "http-stream@v0"
+  #   protocol: "paid-job/v1"
+  #   job:
+  #     transports: [unary, stream]
   #   work_unit:
   #     name: "tokens"
   #     extractor: { type: "openai-usage", field: "total_tokens" }
@@ -243,7 +253,9 @@ capabilities:
   #
   # - id: "openai:chat-completions"
   #   offering_id: "vllm-h100-batch4"
-  #   interaction_mode: "http-stream@v0"
+  #   protocol: "paid-job/v1"
+  #   job:
+  #     transports: [unary, stream]
   #   work_unit:
   #     name: "tokens"
   #     extractor: { type: "openai-usage", field: "total_tokens" }
@@ -278,7 +290,9 @@ capabilities:
   #
   # - id: "openai:chat-completions"
   #   offering_id: "openai-resale"
-  #   interaction_mode: "http-stream@v0"
+  #   protocol: "paid-job/v1"
+  #   job:
+  #     transports: [unary, stream]
   #   work_unit:
   #     name: "tokens"
   #     extractor: { type: "openai-usage", field: "total_tokens" }
@@ -305,7 +319,9 @@ capabilities:
   #
   # - id: "openai:images-generations"
   #   offering_id: "SG161222/RealVisXL_V4.0_Lightning"
-  #   interaction_mode: "http-reqresp@v0"
+  #   protocol: "paid-job/v1"
+  #   job:
+  #     transports: [unary]
   #   work_unit:
   #     name: "images"
   #     extractor:
@@ -337,7 +353,9 @@ capabilities:
   #
   # - id: "rerank"
   #   offering_id: "zerank-2-default"
-  #   interaction_mode: "http-reqresp@v0"
+  #   protocol: "paid-job/v1"
+  #   job:
+  #     transports: [unary]
   #   work_unit:
   #     # This backend does not emit a usage field today, so the broker
   #     # meters this capability as one priced request per call.

@@ -6,8 +6,14 @@ package config
 
 // Config is the top-level host-config.yaml schema.
 type Config struct {
-	Identity      Identity      `yaml:"identity"`
-	Listen        Listen        `yaml:"listen,omitempty"`
+	Identity Identity `yaml:"identity"`
+	// ExternalBaseURL is the broker's externally-reachable base URL
+	// (e.g. https://broker.example.com). Runner callback URLs and
+	// session control URLs are derived from it — never from inbound
+	// request headers. Required once any paid-session capability is
+	// declared.
+	ExternalBaseURL string        `yaml:"external_base_url,omitempty"`
+	Listen          Listen        `yaml:"listen,omitempty"`
 	AdminAuth     AuthConfig    `yaml:"admin_auth,omitempty"`
 	PaymentDaemon PaymentDaemon `yaml:"payment_daemon,omitempty"`
 	SessionStore  SessionStore  `yaml:"session_store,omitempty"`
@@ -69,15 +75,50 @@ type ReceiptSink struct {
 
 // Capability is one entry in the host-config.yaml capabilities array.
 type Capability struct {
-	ID              string         `yaml:"id"`
-	OfferingID      string         `yaml:"offering_id"`
-	InteractionMode string         `yaml:"interaction_mode"`
-	WorkUnit        WorkUnit       `yaml:"work_unit"`
-	Health          Health         `yaml:"health,omitempty"`
-	Price           Price          `yaml:"price"`
-	Backend         Backend        `yaml:"backend"`
-	Extra           map[string]any `yaml:"extra,omitempty"`
-	Constraints     map[string]any `yaml:"constraints,omitempty"`
+	ID          string         `yaml:"id"`
+	OfferingID  string         `yaml:"offering_id"`
+	Protocol    string         `yaml:"protocol"`
+	Job         *JobCapability `yaml:"job,omitempty"`
+	Session     *SessionCap    `yaml:"session,omitempty"`
+	WorkUnit    WorkUnit       `yaml:"work_unit"`
+	Health      Health         `yaml:"health,omitempty"`
+	Price       Price          `yaml:"price"`
+	Backend     Backend        `yaml:"backend"`
+	Extra       map[string]any `yaml:"extra,omitempty"`
+	Constraints map[string]any `yaml:"constraints,omitempty"`
+}
+
+// JobCapability carries the paid-job/v1 declared axes.
+type JobCapability struct {
+	// Transports is the non-empty subset of unary|stream|multipart the
+	// offering serves; requests negotiate per-transport.
+	Transports []string `yaml:"transports"`
+}
+
+// SessionCap carries the paid-session/v1 declared axes plus the
+// broker-side backend paths (operator configuration, per A4 — no URL
+// space is imposed by the protocol).
+type SessionCap struct {
+	DescriptorSchema string             `yaml:"descriptor_schema"`
+	Heartbeat        SessionHeartbeat   `yaml:"heartbeat,omitempty"`
+	LeaseMaxSeconds  int                `yaml:"lease_max_seconds,omitempty"`
+	BurnRatePerSec   float64            `yaml:"burn_rate_per_second,omitempty"`
+	MinRunwayUnits   int64              `yaml:"min_runway_units,omitempty"`
+	Runner           SessionRunnerPaths `yaml:"runner"`
+}
+
+// SessionHeartbeat mirrors the offering axes heartbeat object.
+type SessionHeartbeat struct {
+	IntervalSeconds int `yaml:"interval_seconds,omitempty"` // default 10
+	MissedThreshold int `yaml:"missed_threshold,omitempty"` // default 3
+}
+
+// SessionRunnerPaths declares the runner's session API paths relative
+// to backend.url; {id} is replaced with the runner session id.
+type SessionRunnerPaths struct {
+	CreatePath    string `yaml:"create_path"`
+	StatusPath    string `yaml:"status_path"`
+	TerminatePath string `yaml:"terminate_path"`
 }
 
 func (c Capability) GetBackendID() string {

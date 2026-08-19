@@ -9,9 +9,10 @@ func TestValidateDefaultsHTTPHealthProbe(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -48,9 +49,10 @@ func TestValidateAllowsWorkerVirtualBackendURL(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -87,9 +89,10 @@ func TestValidateAdminAuth(t *testing.T) {
 			SecretRef: "env://BROKER_ADMIN_TOKEN",
 		},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -123,9 +126,10 @@ func TestValidateDefaultsPoolSnapshotPollingConfig(t *testing.T) {
 			URL: "http://pool-controller:8080",
 		},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -166,9 +170,10 @@ func TestValidateRejectsPoolSnapshotWithoutURL(t *testing.T) {
 			TimeoutMS: 1000,
 		},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -195,9 +200,10 @@ func TestValidateRejectsDeprecatedOpenAICapabilityIDSyntax(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions:llama-3-70b",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions:llama-3-70b",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -226,9 +232,10 @@ func TestValidateRejectsOpenAICapabilityWithoutOpenAIExtra(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -254,9 +261,10 @@ func TestValidateRejectsOpenAICapabilityWithoutModel(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -283,9 +291,10 @@ func TestValidateRejectsOpenAICapabilityWithoutProvider(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -311,9 +320,10 @@ func TestValidateRejectsNonMapOpenAIExtra(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -340,9 +350,10 @@ func TestValidateRejectsNonBooleanFeatureFlags(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -372,9 +383,10 @@ func TestValidateAcceptsOpenAIExtraShape(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "tokens",
 				Extractor: map[string]any{"type": "openai-usage"},
@@ -408,9 +420,10 @@ func TestValidateAllowsRepeatedPublishedTupleWithDistinctBackends(t *testing.T) 
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "shared",
-				InteractionMode: "http-stream@v0",
+				ID:         "openai:chat-completions",
+				OfferingID: "shared",
+				Protocol:   "paid-job/v1",
+				Job:        &JobCapability{Transports: []string{"unary"}},
 				WorkUnit: WorkUnit{
 					Name:      "tokens",
 					Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
@@ -427,9 +440,10 @@ func TestValidateAllowsRepeatedPublishedTupleWithDistinctBackends(t *testing.T) 
 				},
 			},
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "shared",
-				InteractionMode: "http-stream@v0",
+				ID:         "openai:chat-completions",
+				OfferingID: "shared",
+				Protocol:   "paid-job/v1",
+				Job:        &JobCapability{Transports: []string{"unary"}},
 				WorkUnit: WorkUnit{
 					Name:      "tokens",
 					Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
@@ -458,9 +472,10 @@ func TestValidateRejectsRepeatedPublishedTupleWithMismatchedPrice(t *testing.T) 
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "shared",
-				InteractionMode: "http-stream@v0",
+				ID:         "openai:chat-completions",
+				OfferingID: "shared",
+				Protocol:   "paid-job/v1",
+				Job:        &JobCapability{Transports: []string{"unary"}},
 				WorkUnit: WorkUnit{
 					Name:      "tokens",
 					Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
@@ -477,9 +492,10 @@ func TestValidateRejectsRepeatedPublishedTupleWithMismatchedPrice(t *testing.T) 
 				},
 			},
 			{
-				ID:              "openai:chat-completions",
-				OfferingID:      "shared",
-				InteractionMode: "http-stream@v0",
+				ID:         "openai:chat-completions",
+				OfferingID: "shared",
+				Protocol:   "paid-job/v1",
+				Job:        &JobCapability{Transports: []string{"unary"}},
 				WorkUnit: WorkUnit{
 					Name:      "tokens",
 					Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
@@ -516,12 +532,13 @@ func TestValidateAcceptsReceiptSink(t *testing.T) {
 			TimeoutMS: 1500,
 		},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
-			WorkUnit:        WorkUnit{Name: "tokens", Extractor: map[string]any{"type": "openai-usage"}},
-			Price:           Price{AmountWei: "1", PerUnits: 1},
-			Backend:         Backend{Transport: "http", URL: "http://backend:8000/v1/chat/completions"},
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
+			WorkUnit:   WorkUnit{Name: "tokens", Extractor: map[string]any{"type": "openai-usage"}},
+			Price:      Price{AmountWei: "1", PerUnits: 1},
+			Backend:    Backend{Transport: "http", URL: "http://backend:8000/v1/chat/completions"},
 			Extra: map[string]any{
 				"openai":   map[string]any{"model": "llama-3-70b"},
 				"provider": "vllm",
@@ -544,12 +561,13 @@ func TestValidateRejectsReceiptSinkBearerWithoutSecret(t *testing.T) {
 			},
 		},
 		Capabilities: []Capability{{
-			ID:              "openai:chat-completions",
-			OfferingID:      "default",
-			InteractionMode: "http-stream@v0",
-			WorkUnit:        WorkUnit{Name: "tokens", Extractor: map[string]any{"type": "openai-usage"}},
-			Price:           Price{AmountWei: "1", PerUnits: 1},
-			Backend:         Backend{Transport: "http", URL: "http://backend:8000/v1/chat/completions"},
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
+			WorkUnit:   WorkUnit{Name: "tokens", Extractor: map[string]any{"type": "openai-usage"}},
+			Price:      Price{AmountWei: "1", PerUnits: 1},
+			Backend:    Backend{Transport: "http", URL: "http://backend:8000/v1/chat/completions"},
 			Extra: map[string]any{
 				"openai":   map[string]any{"model": "llama-3-70b"},
 				"provider": "vllm",
@@ -567,9 +585,10 @@ func TestValidateRejectsAudioCapabilityWithoutAudioExtra(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:audio-transcriptions",
-			OfferingID:      "default",
-			InteractionMode: "http-multipart@v0",
+			ID:         "openai:audio-transcriptions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "seconds",
 				Extractor: map[string]any{"type": "response-header"},
@@ -596,9 +615,10 @@ func TestValidateRejectsAudioCapabilityWithWrongTask(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:audio-speech",
-			OfferingID:      "default",
-			InteractionMode: "http-reqresp@v0",
+			ID:         "openai:audio-speech",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "characters",
 				Extractor: map[string]any{"type": "request-formula"},
@@ -626,9 +646,10 @@ func TestValidateAcceptsAudioExtraShape(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "openai:audio-speech",
-			OfferingID:      "default",
-			InteractionMode: "http-reqresp@v0",
+			ID:         "openai:audio-speech",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "characters",
 				Extractor: map[string]any{"type": "request-formula"},
@@ -657,9 +678,10 @@ func TestValidateRejectsVideoCapabilityWithoutVideoExtra(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "video:transcode.vod",
-			OfferingID:      "default",
-			InteractionMode: "http-reqresp@v0",
+			ID:         "video:transcode.vod",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "jobs",
 				Extractor: map[string]any{"type": "request-formula"},
@@ -685,9 +707,10 @@ func TestValidateRejectsVideoCapabilityWithWrongTask(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "video:transcode.abr",
-			OfferingID:      "default",
-			InteractionMode: "http-reqresp@v0",
+			ID:         "video:transcode.abr",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "jobs",
 				Extractor: map[string]any{"type": "request-formula"},
@@ -714,9 +737,10 @@ func TestValidateAcceptsVideoExtraShape(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "video:transcode.abr",
-			OfferingID:      "default",
-			InteractionMode: "http-reqresp@v0",
+			ID:         "video:transcode.abr",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "jobs",
 				Extractor: map[string]any{"type": "request-formula"},
@@ -744,9 +768,10 @@ func TestValidateRejectsVTuberCapabilityWithoutVTuberExtra(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "livepeer:vtuber-session",
-			OfferingID:      "default",
-			InteractionMode: "session-control-plus-media@v0",
+			ID:         "livepeer:vtuber-session",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "seconds",
 				Extractor: map[string]any{"type": "seconds-elapsed"},
@@ -772,9 +797,10 @@ func TestValidateRejectsVTuberCapabilityWithWrongTask(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "livepeer:vtuber-session",
-			OfferingID:      "default",
-			InteractionMode: "session-control-plus-media@v0",
+			ID:         "livepeer:vtuber-session",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "seconds",
 				Extractor: map[string]any{"type": "seconds-elapsed"},
@@ -801,9 +827,10 @@ func TestValidateAcceptsVTuberExtraShape(t *testing.T) {
 	cfg := &Config{
 		Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
 		Capabilities: []Capability{{
-			ID:              "livepeer:vtuber-session",
-			OfferingID:      "default",
-			InteractionMode: "session-control-plus-media@v0",
+			ID:         "livepeer:vtuber-session",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &JobCapability{Transports: []string{"unary"}},
 			WorkUnit: WorkUnit{
 				Name:      "seconds",
 				Extractor: map[string]any{"type": "seconds-elapsed"},
@@ -829,9 +856,10 @@ func TestValidateAcceptsVTuberExtraShape(t *testing.T) {
 
 func sessionRunnerCap() Capability {
 	return Capability{
-		ID:              "test:session:v1",
-		OfferingID:      "default",
-		InteractionMode: "session-control-plus-media@v0",
+		ID:         "test:session:v1",
+		OfferingID: "default",
+		Protocol:   "paid-job/v1",
+		Job:        &JobCapability{Transports: []string{"unary"}},
 		WorkUnit: WorkUnit{
 			Name:      "seconds",
 			Extractor: map[string]any{"type": "seconds-elapsed"},

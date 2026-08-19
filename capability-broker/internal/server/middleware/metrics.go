@@ -56,7 +56,7 @@ func Metrics(next http.Handler) http.Handler {
 			"request_id", RequestIDFromContext(r.Context()),
 			"capability", capID,
 			"offering", offID,
-			"mode", r.Header.Get(livepeerheader.Mode),
+			"protocol", r.Header.Get(livepeerheader.Protocol),
 			"status", status,
 			"livepeer_error", errCode,
 			"work_units", workUnits,

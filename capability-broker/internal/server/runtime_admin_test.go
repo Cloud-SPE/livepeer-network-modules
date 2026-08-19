@@ -36,7 +36,9 @@ payment_daemon:
 capabilities:
   - id: rerank
     offering_id: shared
-    interaction_mode: http-reqresp@v0
+    protocol: paid-job/v1
+    job:
+      transports: [unary]
     work_unit:
       name: requests
       extractor:
@@ -142,7 +144,9 @@ payment_daemon:
 capabilities:
   - id: rerank
     offering_id: shared
-    interaction_mode: http-reqresp@v0
+    protocol: paid-job/v1
+    job:
+      transports: [unary]
     work_unit:
       name: requests
       extractor:
@@ -197,7 +201,9 @@ payment_daemon:
 capabilities:
   - id: rerank
     offering_id: shared
-    interaction_mode: http-reqresp@v0
+    protocol: paid-job/v1
+    job:
+      transports: [unary]
     work_unit:
       name: requests
       extractor:
@@ -280,7 +286,9 @@ payment_daemon:
 capabilities:
   - id: rerank
     offering_id: shared
-    interaction_mode: http-reqresp@v0
+    protocol: paid-job/v1
+    job:
+      transports: [unary]
     work_unit:
       name: requests
       extractor:

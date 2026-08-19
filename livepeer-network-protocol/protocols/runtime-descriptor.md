@@ -148,6 +148,12 @@ Grant semantics — the load-bearing rules:
 4. **Verification is the runner's job.** The runner issued the secret and
    enforces `expires_at`, `max_uses`, and operation scope. The broker is not
    in the grant's data path after delivery.
+5. **Grants die with the session.** Once the session is terminal the runner
+   MUST refuse its grants regardless of `expires_at` — expiry is a backstop,
+   not the lifetime. This is what lets long-running sessions use unbounded
+   `max_uses` for inherently repeated admission operations (every
+   participant join, key rotation, or re-attach is a use) without an
+   open-ended credential outliving the thing it admits to.
 
 ## 3. Broker validation contract
 

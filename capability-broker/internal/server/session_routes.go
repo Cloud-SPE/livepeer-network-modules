@@ -37,6 +37,7 @@ func (s *Server) registerSessionRoutes() {
 	s.mux.HandleFunc("POST /v1/session/{id}/topup", s.handleSessionTopUp)
 	s.mux.HandleFunc("POST /v1/session/{id}/end", s.handleSessionEnd)
 	s.mux.HandleFunc("POST /v1/session/{id}/events", s.handleSessionEvents)
+	s.mux.HandleFunc("GET /v1/session/{id}/ws", s.handleSessionWS)
 }
 
 // sessionCapability finds the paid-session capability tuple.
@@ -410,10 +411,17 @@ func (s *Server) balanceObject(r *http.Request, rec *sessionstore.Record, spec *
 
 func (s *Server) sessionControlURLs(sessionID string) map[string]string {
 	base := strings.TrimRight(s.currentConfig().ExternalBaseURL, "/")
+	wsBase := base
+	if strings.HasPrefix(wsBase, "https://") {
+		wsBase = "wss://" + strings.TrimPrefix(wsBase, "https://")
+	} else if strings.HasPrefix(wsBase, "http://") {
+		wsBase = "ws://" + strings.TrimPrefix(wsBase, "http://")
+	}
 	return map[string]string{
 		"status_url": base + "/v1/session/" + sessionID,
 		"topup_url":  base + "/v1/session/" + sessionID + "/topup",
 		"end_url":    base + "/v1/session/" + sessionID + "/end",
+		"events_ws":  wsBase + "/v1/session/" + sessionID + "/ws",
 	}
 }
 

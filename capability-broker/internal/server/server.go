@@ -82,6 +82,7 @@ type Server struct {
 	health               *health.Manager
 	sessionStore         *sessionstore.Store
 	sessionEngine        *sessionengine.Engine
+	sessionWS            *sessionWSHub
 	jobIdem              jobIdemStore
 	randIntn             func(int) int
 }

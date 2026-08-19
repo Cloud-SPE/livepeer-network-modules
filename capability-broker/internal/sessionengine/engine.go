@@ -116,6 +116,11 @@ type Config struct {
 	// OnWinddown observes each terminal winddown's stable reason; nil
 	// is a no-op. Used for metrics; never for control flow.
 	OnWinddown func(reason string)
+	// OnEvent observes session happenings for push surfaces (the
+	// control-WS binding). kind is a frame type; data its body. nil is
+	// a no-op. Observability only — never control flow, and the HTTP
+	// surface remains authoritative (paid-session §8).
+	OnEvent func(sessionID, kind string, data map[string]any)
 	// TerminalRetention bounds how long terminal records stay
 	// queryable before eviction; <=0 means 1h.
 	TerminalRetention time.Duration
@@ -457,6 +462,14 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		}
 		return nil
 	})
+	if err == nil && ev.UsageTot != nil && e.cfg.OnEvent != nil {
+		e.cfg.OnEvent(sessionID, "session.usage.tick", map[string]any{
+			"sequence":      ev.Sequence,
+			"unit":          rec.Unit,
+			"claimed_total": *ev.UsageTot,
+			"debited_units": delta,
+		})
+	}
 	if err != nil {
 		// Debit may have landed; the retry re-presents the same
 		// sequence and debit_seq, the daemon dedupes, and the commit
@@ -598,6 +611,12 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 	})
 	if e.cfg.OnWinddown != nil {
 		e.cfg.OnWinddown(reason)
+	}
+	if e.cfg.OnEvent != nil {
+		e.cfg.OnEvent(sessionID, "session.ended", map[string]any{
+			"state":        state,
+			"close_reason": reason,
+		})
 	}
 }
 

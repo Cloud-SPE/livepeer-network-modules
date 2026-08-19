@@ -31,10 +31,12 @@ func (s *Server) initSessionEngine() error {
 	if err != nil {
 		return err
 	}
+	s.sessionWS = newSessionWSHub()
 	engine, err := sessionengine.New(sessionengine.Config{
 		Store:   store,
 		Payment: s.payment,
 		Runner:  s.runnerClientFor,
+		OnEvent: s.onEngineEvent,
 		Specs: func(sessionID string) *sessionengine.OfferingSpec {
 			rec, err := store.Get(sessionID)
 			if err != nil {

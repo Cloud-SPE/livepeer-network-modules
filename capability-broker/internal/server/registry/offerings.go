@@ -119,8 +119,11 @@ func axesFor(c config.Capability) (*offeringsJobAxes, *offeringsSessionAxes) {
 	}
 	// Host config carries a flat cap; the manifest models lease as an
 	// object with an explicit policy.
-	if c.Session.LeaseMaxSeconds > 0 {
-		sess.Lease = &offeringsLease{Policy: "funding-tracking", MaxSeconds: c.Session.LeaseMaxSeconds}
+	if c.Session.LeaseMaxSeconds > 0 || c.Session.LeasePolicy != "" {
+		sess.Lease = &offeringsLease{
+			Policy:     c.Session.AdvertisedLeasePolicy(),
+			MaxSeconds: c.Session.LeaseMaxSeconds,
+		}
 	}
 	return nil, sess
 }

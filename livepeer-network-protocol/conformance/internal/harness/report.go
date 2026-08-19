@@ -10,8 +10,8 @@ import (
 
 // Scenario is one executable conformance fixture.
 type Scenario struct {
-	Name string        // e.g. "paid-job/unary-exchange"
-	Spec string        // the normative clause it pins, e.g. "paid-job §7"
+	Name string // e.g. "paid-job/unary-exchange"
+	Spec string // the normative clause it pins, e.g. "paid-job §7"
 	Run  func(c *Ctx) error
 }
 

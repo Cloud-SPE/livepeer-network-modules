@@ -435,26 +435,44 @@ func sessionScenarios() []harness.Scenario {
 				return fmt.Errorf("restart: %w", err)
 			}
 
-			// 1. Control continues against the same work_id with the
-			//    same credential — no re-auth, no new session.
+			// §9.2 requires ONE OF two outcomes, and forbids a specific
+			// set of bad ones. Both branches are conformant; which one a
+			// broker takes depends on whether its payment layer also
+			// survived (an in-process mock daemon, for example, does not).
 			st, err := c.SessionStatus(sessionID, credential)
 			if err != nil {
 				return err
 			}
 			if st.Status != 200 {
-				return fmt.Errorf("status after restart: %d %s", st.Status, st.Body)
+				return fmt.Errorf("status after restart: %d %s (session unreachable — neither rebound nor terminal)", st.Status, st.Body)
 			}
 			sm := st.JSON()
+			// Forbidden in BOTH branches: a second work id.
 			if got := harness.FieldString(sm, "work_id"); got != workID {
 				return fmt.Errorf("work_id changed across restart: %q -> %q", workID, got)
 			}
+			// Forbidden in BOTH branches: silently skipped usage.
 			if n, _ := harness.FieldNumber(sm, "usage.claimed_total"); n != 12 {
 				return fmt.Errorf("claimed_total %v after restart, want 12 (usage lost)", n)
 			}
 
-			// 2. Usage continues from the surviving watermark: a replay
-			//    of the pre-restart event is still a duplicate, and the
-			//    next sequence is accepted.
+			state := harness.FieldString(sm, "state")
+			if state == "ended" || state == "failed" {
+				// Branch 2: explicit terminal. It must be labelled, and
+				// the runner must not be left serving.
+				reason := harness.FieldString(sm, "close_reason")
+				if reason == "" {
+					return fmt.Errorf("terminal after restart with no close_reason")
+				}
+				if len(c.Runner.Terminated()) == 0 {
+					return fmt.Errorf("terminal after restart (%s) but runner left serving", reason)
+				}
+				return nil
+			}
+
+			// Branch 1: rebound. Usage continues from the surviving
+			// watermark — the pre-restart event is still a duplicate,
+			// and the next sequence is accepted.
 			if s2, _, err := c.Runner.PostEvent(cb, fmt.Sprintf(
 				`{"event_id":"evt_r1","sequence":1,"event_type":"session.usage.tick","usage":{"unit":%q,"total":12}}`,
 				c.SessionUnit)); err != nil || s2 != 200 {
@@ -469,8 +487,6 @@ func sessionScenarios() []harness.Scenario {
 			if n, _ := harness.FieldNumber(st2.JSON(), "usage.claimed_total"); n != 20 {
 				return fmt.Errorf("claimed_total %v after post-restart event, want 20", n)
 			}
-
-			// 3. Top-up and end still work on the rebound session.
 			tu, err := c.SessionTopUp(sessionID, credential, c.RequestID("restart-topup"), harness.PaymentEnvelope("restart-topup"))
 			if err != nil || tu.Status != 200 {
 				return fmt.Errorf("topup after restart: %d %v", tu.Status, err)

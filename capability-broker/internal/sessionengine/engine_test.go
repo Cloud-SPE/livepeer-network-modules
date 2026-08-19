@@ -30,6 +30,8 @@ type fakePayment struct {
 	closed       int
 	sufficient   bool
 	balance      *big.Int
+	openCalls    int
+	sessionGone  bool
 }
 
 func newFakePayment() *fakePayment {
@@ -40,7 +42,12 @@ func (f *fakePayment) GetTicketParams(context.Context, payment.GetTicketParamsRe
 	return nil, errors.New("unused")
 }
 func (f *fakePayment) OpenSession(context.Context, payment.OpenSessionRequest) (*payment.OpenSessionResult, error) {
-	return &payment.OpenSessionResult{}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.openCalls++
+	already := !f.sessionGone
+	f.sessionGone = false // idempotent open (re-)establishes the session
+	return &payment.OpenSessionResult{AlreadyOpen: already}, nil
 }
 func (f *fakePayment) ProcessPayment(_ context.Context, req payment.ProcessPaymentRequest) (*payment.ProcessPaymentResult, error) {
 	if len(req.PaymentBytes) == 0 {
@@ -51,6 +58,9 @@ func (f *fakePayment) ProcessPayment(_ context.Context, req payment.ProcessPayme
 func (f *fakePayment) DebitBalance(_ context.Context, req payment.DebitBalanceRequest) (*big.Int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.sessionGone {
+		return nil, errors.New("session not found")
+	}
 	if f.failDebits > 0 {
 		f.failDebits--
 		return nil, errors.New("transient daemon failure")
@@ -534,5 +544,84 @@ func TestTopUpExtendsLeaseAndRefusesTerminal(t *testing.T) {
 	var pe *ProtocolError
 	if !errors.As(err, &pe) || pe.Code != "refill_refused" {
 		t.Fatalf("expected refill_refused, got %v", err)
+	}
+}
+
+// TestRecoverRebindReassertsPaymentSession covers the healthy branch:
+// the payment layer still holds the session (AlreadyOpen), so rebind
+// re-asserts it as a no-op and usage keeps flowing on the same work_id.
+func TestRecoverRebindReassertsPaymentSession(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	ctx := context.Background()
+
+	h.pay.mu.Lock()
+	h.pay.openCalls = 0
+	h.pay.mu.Unlock()
+
+	h.engine.Recover(ctx)
+
+	h.pay.mu.Lock()
+	opens := h.pay.openCalls
+	h.pay.mu.Unlock()
+	if opens == 0 {
+		t.Fatal("rebind did not re-assert the payment session")
+	}
+	rec, _ := h.store.Get(res.SessionID)
+	if rec.Terminal() {
+		t.Fatalf("healthy rebind wound the session down: %s", rec.CloseReason)
+	}
+	if _, err := h.engine.ProcessEvent(ctx, res.SessionID, usageEvent("evt_after", 1, 4)); err != nil {
+		t.Fatalf("post-rebind event: %v", err)
+	}
+	if h.pay.totalDebited() != 4 {
+		t.Fatalf("debited %d, want 4", h.pay.totalDebited())
+	}
+}
+
+// TestRecoverFailsClosedWhenPaymentSessionLost covers the branch the
+// conformance suite exposed: the runner still holds the session but the
+// payment layer lost it (OpenSession reports it was NOT already open).
+// The session cannot be billed, so the broker must take the explicit
+// terminal outcome rather than serve unmetered work.
+func TestRecoverFailsClosedWhenPaymentSessionLost(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	ctx := context.Background()
+
+	h.pay.mu.Lock()
+	h.pay.sessionGone = true // payment daemon restarted and lost its ledger
+	h.pay.mu.Unlock()
+
+	h.engine.Recover(ctx)
+
+	rec, _ := h.store.Get(res.SessionID)
+	if !rec.Terminal() || rec.CloseReason != ReasonRecoveryFailed {
+		t.Fatalf("want recovery_failed terminal, got state=%s reason=%q", rec.State, rec.CloseReason)
+	}
+	if !rec.PaymentClosed {
+		t.Fatal("payment left open after fail-closed recovery")
+	}
+	if len(h.runner.terminated) == 0 {
+		t.Fatal("runner left serving after fail-closed recovery")
+	}
+}
+
+// TestSweepHeartbeatWinsOverLease pins the precedence decision: when a
+// session is past both its lease and its heartbeat threshold, the stable
+// reason is heartbeat_lost — a dead runner is the more specific fact and
+// sends the operator to the runner rather than to funding.
+func TestSweepHeartbeatWinsOverLease(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	_ = h.store.Update(res.SessionID, func(r *sessionstore.Record) error {
+		r.LeaseExpiresAt = h.now().Add(-time.Hour) // long expired
+		return nil
+	})
+	h.advance(31 * time.Second) // also past interval(10s) * threshold(3)
+	h.engine.Sweep(context.Background())
+	rec, _ := h.store.Get(res.SessionID)
+	if rec.CloseReason != ReasonHeartbeatLost {
+		t.Fatalf("close reason %q, want heartbeat_lost (lease was also expired)", rec.CloseReason)
 	}
 }

@@ -102,8 +102,13 @@ type SessionCap struct {
 	DescriptorSchema string           `yaml:"descriptor_schema"`
 	Heartbeat        SessionHeartbeat `yaml:"heartbeat,omitempty"`
 	LeaseMaxSeconds  int              `yaml:"lease_max_seconds,omitempty"`
-	BurnRatePerSec   float64          `yaml:"burn_rate_per_second,omitempty"`
-	MinRunwayUnits   int64            `yaml:"min_runway_units,omitempty"`
+	// LeasePolicy is the manifest's lease.policy axis:
+	// "funding-tracking" (default) derives the lease from funded runway;
+	// "fixed" grants lease_max_seconds regardless of funding, for
+	// offerings whose runway is managed out of band.
+	LeasePolicy    string  `yaml:"lease_policy,omitempty"`
+	BurnRatePerSec float64 `yaml:"burn_rate_per_second,omitempty"`
+	MinRunwayUnits int64   `yaml:"min_runway_units,omitempty"`
 	// Attachment and Metering are advertised axes (offering-axes.md §3).
 	// Defaults: external / runner-reported — the only combination this
 	// broker implements today, but declared explicitly because
@@ -117,6 +122,14 @@ type SessionCap struct {
 	ToleranceBandPct     float64            `yaml:"tolerance_band_pct,omitempty"`
 	RunwayIncrementUnits int64              `yaml:"runway_increment_units,omitempty"`
 	Runner               SessionRunnerPaths `yaml:"runner"`
+}
+
+// AdvertisedLeasePolicy returns the lease policy with its default.
+func (s *SessionCap) AdvertisedLeasePolicy() string {
+	if s.LeasePolicy == "" {
+		return "funding-tracking"
+	}
+	return s.LeasePolicy
 }
 
 // AdvertisedAttachment returns the attachment axis with its default.

@@ -68,6 +68,7 @@ func specFromCapability(c *config.Capability) *sessionengine.OfferingSpec {
 		MissedThreshold:     c.Session.Heartbeat.MissedThreshold,
 		BurnRatePerSecond:   c.Session.BurnRatePerSec,
 		LeaseMax:            time.Duration(c.Session.LeaseMaxSeconds) * time.Second,
+		LeasePolicy:         c.Session.AdvertisedLeasePolicy(),
 		MinRunwayUnits:      c.Session.MinRunwayUnits,
 	}
 }

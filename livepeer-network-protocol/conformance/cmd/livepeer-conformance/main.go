@@ -82,6 +82,10 @@ capabilities:
       heartbeat:
         interval_seconds: 1
         missed_threshold: 2
+      # A fixed lease keeps funding from preempting the heartbeat, so
+      # this offering isolates liveness enforcement.
+      lease_policy: fixed
+      lease_max_seconds: 600
       runner:
         create_path: /sessions
         status_path: /sessions/{id}

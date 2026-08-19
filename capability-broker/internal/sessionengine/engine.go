@@ -71,6 +71,8 @@ type OfferingSpec struct {
 	// funding-tracking lease default. <=0 means 1.
 	BurnRatePerSecond float64
 	LeaseMax          time.Duration // operator cap; <=0 means 1h
+	// LeasePolicy is "funding-tracking" (default) or "fixed".
+	LeasePolicy string
 	// MinRunwayUnits is the SufficientBalance floor checked after each
 	// debit; <=0 disables the check.
 	MinRunwayUnits int64
@@ -340,6 +342,11 @@ func (e *Engine) replayOpen(sessionID string) (*OpenResult, error) {
 // the declared burn rate, capped by the operator max (paid-session §5).
 func (e *Engine) leaseFrom(ctx context.Context, now time.Time, sender []byte, workID string, spec *OfferingSpec) time.Time {
 	max := now.Add(spec.leaseMax())
+	// A fixed-policy offering grants its full window regardless of
+	// funded runway; runway is managed out of band for these.
+	if spec.LeasePolicy == "fixed" {
+		return max
+	}
 	bal, err := e.cfg.Payment.GetBalance(ctx, sender, workID)
 	if err != nil || bal == nil || spec.PricePerWorkUnitWei == nil || spec.PricePerWorkUnitWei.Sign() <= 0 {
 		return max
@@ -641,14 +648,18 @@ func (e *Engine) Sweep(ctx context.Context) {
 			return nil
 		}
 		hb := spec.heartbeat()
+		// Precedence: when both triggers are due, heartbeat_lost wins.
+		// A dead runner is the more specific fact and points the
+		// operator at the runner; reporting lease_expired would point
+		// them at funding instead.
+		if now.Sub(r.LastEventAt) > hb*time.Duration(spec.missed()) {
+			dues = append(dues, due{r.SessionID, ReasonHeartbeatLost})
+			return nil
+		}
 		// Lease grace = one heartbeat interval (paid-session §5): a
 		// top-up in flight at expiry never loses the race.
 		if !r.LeaseExpiresAt.IsZero() && now.After(r.LeaseExpiresAt.Add(hb)) {
 			dues = append(dues, due{r.SessionID, ReasonLeaseExpired})
-			return nil
-		}
-		if now.Sub(r.LastEventAt) > hb*time.Duration(spec.missed()) {
-			dues = append(dues, due{r.SessionID, ReasonHeartbeatLost})
 		}
 		return nil
 	})
@@ -686,6 +697,34 @@ func (e *Engine) Recover(ctx context.Context) {
 		_, qerr := e.runnerFor(rec.BackendRef).QuerySession(ctx, rec.RunnerSessionID)
 		switch {
 		case qerr == nil:
+			// Re-assert the payee-side session before accepting events.
+			// OpenSession is idempotent by contract, so this is a no-op
+			// when the payment daemon kept its state — and it is what
+			// makes the broker survive a payment daemon that restarted
+			// independently of us. Without it the first post-restart
+			// debit fails with "session not found" and the runner
+			// retries forever against a session nobody holds.
+			if spec := e.cfg.Specs(id); spec != nil {
+				res, oerr := e.cfg.Payment.OpenSession(ctx, payment.OpenSessionRequest{
+					WorkID:              rec.WorkID,
+					Capability:          rec.Capability,
+					Offering:            rec.Offering,
+					PricePerWorkUnitWei: spec.PricePerWorkUnitWei,
+					WorkUnit:            rec.Unit,
+				})
+				// AlreadyOpen=false means the payment layer did not have
+				// this session — it lost state. The session can no longer
+				// be billed, so fail closed rather than serve unmetered.
+				if oerr != nil || res == nil || !res.AlreadyOpen {
+					e.cfg.Log.Warn("payment session could not be re-asserted on rebind; winding down",
+						"session", id, "err", oerr)
+					mu := e.sessionMu(id)
+					mu.Lock()
+					e.winddownLocked(ctx, id, ReasonRecoveryFailed)
+					mu.Unlock()
+					continue
+				}
+			}
 			e.cfg.Log.Info("session rebound after restart", "session", id, "work_id", rec.WorkID)
 		case errors.Is(qerr, ErrRunnerSessionGone):
 			mu := e.sessionMu(id)

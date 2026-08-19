@@ -183,6 +183,10 @@ heartbeat interval and missed-event threshold.
 - Winddown from **any** trigger (end, lease expiry, heartbeat loss, runway
   exhaustion, refill refusal) runs the same idempotent terminal path with a
   stable machine-readable reason.
+- **Precedence.** When more than one trigger is due at the same sweep,
+  `heartbeat_lost` takes precedence over `lease_expired`: a dead runner is
+  the more specific fact, and it points the operator at the runtime rather
+  than at funding.
 
 ## 6. Balance and runway
 
@@ -308,7 +312,12 @@ outcomes:
 1. **Rebind** — status, top-up, end, events, and the session credential all
    continue against the same `work_id`. Grants are not re-minted. The broker
    MAY query the runner's status path to reconcile state before accepting
-   new events.
+   new events. Before accepting events the broker MUST re-assert the
+   payee-side payment session for the work id; that call is idempotent, so
+   it is a no-op when the payment layer kept its state and is what lets a
+   session survive a payment daemon that restarted independently of the
+   broker. If the payment session cannot be re-asserted, the session takes
+   the terminal outcome below rather than accepting unbillable usage.
 2. **Explicit terminal** — where safe rebinding is impossible, the broker
    runs the standard winddown (terminate runner, close payment, stable
    reason `recovery_failed`), never leaving limbo.

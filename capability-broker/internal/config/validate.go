@@ -267,6 +267,15 @@ func (c *Config) Validate() error {
 			default:
 				return fmt.Errorf("%s: session.metering must be runner-reported or broker-observed (got %q)", ctx, cap.Session.Metering)
 			}
+			switch cap.Session.AdvertisedLeasePolicy() {
+			case "funding-tracking":
+			case "fixed":
+				if cap.Session.LeaseMaxSeconds <= 0 {
+					return fmt.Errorf("%s: session.lease_policy=fixed requires lease_max_seconds > 0", ctx)
+				}
+			default:
+				return fmt.Errorf("%s: session.lease_policy must be funding-tracking or fixed (got %q)", ctx, cap.Session.LeasePolicy)
+			}
 			switch cap.Session.AdvertisedRefill() {
 			case "extensible", "bounded":
 			default:

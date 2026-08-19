@@ -84,7 +84,12 @@ type Server struct {
 	sessionEngine        *sessionengine.Engine
 	sessionWS            *sessionWSHub
 	jobIdem              jobIdemStore
-	randIntn             func(int) int
+	// quarantined holds capability tuples ("cap|off") the broker will
+	// not serve or advertise, with the reason. Populated when a runner's
+	// self-description contradicts its configuration (paid-session
+	// §7.1.1) — fatal to that capability, not to the broker.
+	quarantined map[string]string
+	randIntn    func(int) int
 }
 
 // New constructs a Server from a validated config and registers routes. It

@@ -47,6 +47,9 @@ func (s *Server) sessionCapability(capID, offID string) *config.Capability {
 		c := &cfg.Capabilities[i]
 		if c.ID == capID && c.OfferingID == offID &&
 			strings.HasPrefix(c.Protocol, "paid-session/") && c.Session != nil {
+			if s.isQuarantined(capID, offID) {
+				return nil // withheld: runner contradicts its configuration
+			}
 			return c
 		}
 	}

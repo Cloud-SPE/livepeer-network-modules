@@ -44,6 +44,18 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := registry.BuildOfferings(cfg, s.currentMetadata())
+	// A quarantined tuple is withheld from discovery: advertising a
+	// capability whose runner contradicts its configuration would route
+	// paid work to something that cannot serve it.
+	if q := s.quarantineReasons(); len(q) > 0 {
+		kept := payload.Capabilities[:0]
+		for _, c := range payload.Capabilities {
+			if _, bad := q[c.CapabilityID+"|"+c.OfferingID]; !bad {
+				kept = append(kept, c)
+			}
+		}
+		payload.Capabilities = kept
+	}
 	observability.SetPublishedOfferings(len(payload.Capabilities))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

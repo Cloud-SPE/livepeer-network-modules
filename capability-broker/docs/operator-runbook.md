@@ -122,10 +122,15 @@ to learn about a typo.
 Setting `session.runner.describe_path` turns that class of failure into a
 startup error:
 
-- **Contradictions are fatal.** A runner declaring a different
-  `work_unit`, `descriptor_schema`, or `capability_id` than the offering
-  means the configuration cannot work. The broker refuses to start and
-  names the field with both values.
+- **Contradictions quarantine that capability.** A runner declaring a
+  different `work_unit`, `descriptor_schema`, or `capability_id` than the
+  offering means the configuration cannot work, so the broker withholds
+  that tuple: it is neither served nor advertised, and the log names the
+  field with both values. The broker still starts and every other
+  capability keeps serving — one bad tuple must not take down the rest.
+  A quarantined tuple answers session opens with `capability_not_served`
+  and disappears from `/registry/offerings`, so the network stops routing
+  paid work to something that cannot serve it.
 - **Unreachable is not a contradiction.** A runner that is down, or
   serves no describe path, produces a warning and nothing more. Never
   configure a describe path expecting it to gate availability.

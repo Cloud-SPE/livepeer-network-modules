@@ -74,7 +74,7 @@ func (s *Server) checkRunnerDescriptions() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	var fatal []string
+	s.quarantined = map[string]string{}
 	for i := range s.cfg.Capabilities {
 		c := &s.cfg.Capabilities[i]
 		if c.Session == nil || c.Session.Runner.DescribePath == "" {
@@ -93,6 +93,7 @@ func (s *Server) checkRunnerDescriptions() error {
 		if desc == nil {
 			continue
 		}
+		var fatal []string
 		for _, d := range sessionengine.CompareDescription(specFromCapability(c), desc) {
 			if d.Fatal {
 				fatal = append(fatal, d.String())
@@ -100,10 +101,34 @@ func (s *Server) checkRunnerDescriptions() error {
 				log.Printf("warning: %s", d.String())
 			}
 		}
-	}
-	if len(fatal) > 0 {
-		return fmt.Errorf("runner self-description contradicts configuration:\n  %s",
-			strings.Join(fatal, "\n  "))
+		if len(fatal) > 0 {
+			// Fatal to THIS capability, not to the broker: one broken
+			// tuple must not take down every other capability the
+			// operator serves.
+			reason := strings.Join(fatal, "; ")
+			s.quarantined[c.ID+"|"+c.OfferingID] = reason
+			log.Printf("ERROR: %s/%s quarantined — not served, not advertised: %s",
+				c.ID, c.OfferingID, reason)
+		}
 	}
 	return nil
+}
+
+// isQuarantined reports whether a capability tuple is withheld.
+func (s *Server) isQuarantined(capID, offID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, bad := s.quarantined[capID+"|"+offID]
+	return bad
+}
+
+// quarantineReasons returns a copy for operator surfaces.
+func (s *Server) quarantineReasons() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]string, len(s.quarantined))
+	for k, v := range s.quarantined {
+		out[k] = v
+	}
+	return out
 }

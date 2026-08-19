@@ -272,3 +272,96 @@ func TestSessionSurfaceEndToEnd(t *testing.T) {
 		t.Fatal("runner never terminated")
 	}
 }
+
+// A runner that contradicts its configuration must cost that capability
+// only — not the whole broker, and not the other capabilities an
+// operator serves (paid-session §7.1.1).
+func TestQuarantinedCapabilityIsWithheldNotFatal(t *testing.T) {
+	// A runner whose describe path declares a different work unit.
+	runner := &fakeSessionRunner{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /describe", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"protocols":["paid-session/v1"],"capabilities":[
+			{"capability_id":"livepeer:meet/sfu-room","descriptor_schemas":["sfu-room/v1"],
+			 "work_unit":"participant_minutes"}]}`)
+	})
+	mux.Handle("/", runner.handler())
+	runnerSrv := httptest.NewServer(mux)
+	t.Cleanup(runnerSrv.Close)
+
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "seal.key")
+	if err := os.WriteFile(keyPath, make([]byte, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sessionCap := func(offering, unit string, describe string) config.Capability {
+		return config.Capability{
+			ID: "livepeer:meet/sfu-room", OfferingID: offering, Protocol: "paid-session/v1",
+			Session: &config.SessionCap{
+				DescriptorSchema: "sfu-room/v1",
+				Runner: config.SessionRunnerPaths{
+					CreatePath: "/sessions", StatusPath: "/sessions/{id}",
+					TerminatePath: "/sessions/{id}", DescribePath: describe,
+				},
+			},
+			Health:   config.Health{InitialStatus: "ready"},
+			WorkUnit: config.WorkUnit{Name: unit},
+			Price:    config.Price{AmountWei: "10", PerUnits: 1},
+			Backend:  config.Backend{Transport: "http", URL: runnerSrv.URL},
+		}
+	}
+	cfg := &config.Config{
+		Identity:        config.Identity{OrchEthAddress: "0x" + strings.Repeat("ef", 20)},
+		ExternalBaseURL: "https://broker.example.com",
+		PaymentDaemon:   config.PaymentDaemon{Mock: true},
+		SessionStore:    config.SessionStore{Path: filepath.Join(dir, "s.db"), SealingKeyFile: keyPath},
+		Capabilities: []config.Capability{
+			// Contradicted: config says seconds, runner says minutes.
+			sessionCap("contradicted", "participant_seconds", "/describe"),
+			// Healthy sibling with no describe path.
+			sessionCap("healthy", "participant_seconds", ""),
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+
+	// The broker must still start.
+	s, err := New(cfg, Options{})
+	if err != nil {
+		t.Fatalf("broker refused to start over one bad capability: %v", err)
+	}
+	t.Cleanup(func() {
+		if s.sessionStore != nil {
+			_ = s.sessionStore.Close()
+		}
+	})
+	if !s.isQuarantined("livepeer:meet/sfu-room", "contradicted") {
+		t.Fatal("contradicted capability was not quarantined")
+	}
+	if s.isQuarantined("livepeer:meet/sfu-room", "healthy") {
+		t.Fatal("healthy sibling was quarantined")
+	}
+	if reason := s.quarantineReasons()["livepeer:meet/sfu-room|contradicted"]; !strings.Contains(reason, "work_unit") {
+		t.Fatalf("quarantine reason does not name the field: %q", reason)
+	}
+
+	// It must also disappear from discovery — advertising it would route
+	// paid work to something that cannot serve it.
+	srv := httptest.NewServer(s.mux)
+	t.Cleanup(srv.Close)
+	resp, err := http.Get(srv.URL + "/registry/offerings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := decode(t, resp)
+	caps, _ := body["capabilities"].([]any)
+	for _, c := range caps {
+		if m, ok := c.(map[string]any); ok && m["offering_id"] == "contradicted" {
+			t.Fatal("quarantined capability is still advertised")
+		}
+	}
+	if len(caps) != 1 {
+		t.Fatalf("expected the healthy sibling to remain advertised, got %d", len(caps))
+	}
+}

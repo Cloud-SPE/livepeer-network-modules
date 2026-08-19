@@ -114,6 +114,16 @@ evidence the runtime is real (a status or playback URL). This is the
 verifiability hook the trust model's divergence policy leans on; schemas that
 omit one force gateways to rely on usage claims alone.
 
+**Descriptor coordinates are gateway-facing and independent of the broker's
+backend configuration.** A runner's descriptor URLs and the operator-configured
+paths the broker itself calls (`session.runner.{create,status,terminate}_path`)
+are different endpoints, with different callers and different credentials: the
+broker calls its configured paths with operator-configured credentials, while
+the gateway calls descriptor coordinates with a grant secret. A runner MAY
+serve both from one endpoint, but nothing requires it, and a runner whose
+broker-facing endpoint authenticates only the broker SHOULD expose a separate
+gateway-facing one and publish that in the descriptor.
+
 Gateways MUST treat unknown fields inside `public` as ignorable (tolerant
 reader). Field evolution *within* a schema version is the schema owner's
 contract, not the framework's.

@@ -1,7 +1,7 @@
 ---
 schema_name: sfu-room
 tag: sfu-room/v1
-version: 1.0.1-draft
+version: 1.0.2-draft
 status: draft
 last_updated: 2026-08-19
 ---
@@ -27,7 +27,7 @@ choice; `price_per_unit_wei` and the runway fields simply scale with it.
 | `url` | yes | yes | The SFU signaling endpoint participants connect to (`wss://…`). |
 | `room` | yes | yes | Room identifier participants join. |
 | `mint_url` | yes | no | Runner endpoint where the gateway presents the grant to mint participant tokens. Gateway-only. |
-| `status_url` | no | no | Verifiability hook: room health/occupancy probe. Gateway-only; authorized by the same grant (see below). |
+| `status_url` | no | no | Verifiability hook: room health/occupancy probe. Gateway-only; authorized by the same grant (see below). Independent of the broker's configured `session.runner.status_path` — different caller, different credential; a runner whose broker-facing status endpoint authenticates the broker's control token SHOULD expose a separate gateway-facing endpoint and publish that here. |
 
 ## Private fields
 
@@ -87,4 +87,5 @@ broker response.
 | Version | Date | Change |
 |---|---|---|
 | 1.0.0-draft | 2026-08-18 | Initial schema. |
+| 1.0.2-draft | 2026-08-19 | Meeting-team follow-up: `status_url` stated as independent of the broker's `session.runner.status_path` — two endpoints, two callers, two credentials. |
 | 1.0.1-draft | 2026-08-19 | Meeting-team review: `room-status` added to the grant's operations so a gateway can actually authenticate the verifiability probe; metering section rewritten — the runner is the usage authority and mint records are a cross-check, not the billing basis; work unit stated as an offering property, not a schema property; participant-token TTL ceiling made explicit at 300s. |

@@ -44,6 +44,19 @@ listen:
 # unit tests and the broker's standalone smoke script (no payment-daemon
 # container required). The Mock still requires a well-formed
 # Livepeer-Payment envelope; only the gRPC + BoltDB plumbing is bypassed.
+# Externally-reachable base URL of the paid listener. Runner callback
+# URLs and session control URLs derive from it, and never from inbound
+# request headers. REQUIRED once any paid-session capability is served.
+# external_base_url: "https://broker.example.com"
+
+# Durable state: paid-session authority + paid-job idempotency records.
+# REQUIRED once any paid-session capability is served. The path must be a
+# persistent volume — see docs/operator-runbook.md §2 for the snapshot
+# ordering rule (this file holds debit sequence numbers).
+# session_store:
+#   path: /var/lib/livepeer/broker-state.db
+#   sealing_key_file: /etc/livepeer/broker-seal.key
+
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock
   # mock: true

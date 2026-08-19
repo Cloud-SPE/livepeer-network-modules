@@ -9,6 +9,16 @@
 #   - payment-daemon UDS at /var/run/livepeer/payment-daemon.sock
 #     (mounted from the host or a sibling container; or set
 #     `payment_daemon.mock: true` in host-config.yaml for smoke usage)
+#   - a PERSISTENT state volume at /var/lib/livepeer when any
+#     paid-session capability is served. It holds paid-session authority
+#     and paid-job idempotency records; losing it orphans every active
+#     session (runners keep serving, payee sessions stay open) and
+#     re-uses debit sequence numbers the payment daemon already recorded.
+#     Snapshot it together with, or after, payment-daemon state — never
+#     from before it. See docs/operator-runbook.md §2.
+#   - the descriptor sealing key at /etc/livepeer/broker-seal.key
+#     (32 raw bytes or 64 hex chars). Not rotatable in place: records
+#     sealed under the old key fail closed on read.
 
 services:
   capability-broker:
@@ -25,4 +35,11 @@ services:
     volumes:
       - ${BROKER_CONFIG}:/etc/livepeer/host-config.yaml:ro
       - ${PAYMENT_DAEMON_SOCKET_DIR}:/var/run/livepeer
+      # Durable broker state. Required for paid-session capabilities;
+      # harmless (and still useful for job idempotency) without them.
+      - broker-state:/var/lib/livepeer
+      - ${BROKER_SEALING_KEY:-/dev/null}:/etc/livepeer/broker-seal.key:ro
     restart: unless-stopped
+
+volumes:
+  broker-state:

@@ -73,6 +73,9 @@ type OfferingSpec struct {
 	LeaseMax          time.Duration // operator cap; <=0 means 1h
 	// LeasePolicy is "funding-tracking" (default) or "fixed".
 	LeasePolicy string
+	// Refill is "extensible" (default) or "bounded". A bounded
+	// offering rejects top-up after open (offering-axes §3).
+	Refill string
 	// MinRunwayUnits is the SufficientBalance floor checked after each
 	// debit; <=0 disables the check.
 	MinRunwayUnits int64
@@ -538,6 +541,13 @@ func (e *Engine) TopUp(ctx context.Context, sessionID string, paymentBytes []byt
 	spec := e.cfg.Specs(sessionID)
 	if spec == nil {
 		return nil, fmt.Errorf("sessionengine: no offering spec for session %s", sessionID)
+	}
+	// A bounded offering takes no top-up after open. The refusal is
+	// never a surprise: balance advertises will_refuse_next_refill from
+	// the moment the session opens (§3.3 — never accept payment we will
+	// not honour with lease).
+	if spec.Refill == "bounded" {
+		return nil, protoErr("refill_refused", "offering declares refill: bounded")
 	}
 	res, err := e.cfg.Payment.ProcessPayment(ctx, payment.ProcessPaymentRequest{
 		WorkID:       rec.WorkID,

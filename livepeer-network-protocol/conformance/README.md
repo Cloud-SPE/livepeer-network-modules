@@ -41,7 +41,18 @@ broker to serve these offerings before pressing Enter:
 | `conformance:job` / `unary-only` | `paid-job/v1` | transport unary only | fake backend base URL |
 | `conformance:job` / `always-error` | `paid-job/v1` | transport unary | fake backend `/error` route |
 | `conformance:session` / `default` | `paid-session/v1` | `descriptor_schema: sfu-room/v1`; unit `participant_minutes`; runner paths `/sessions`, `/sessions/{id}` | fake runner base URL |
-| `conformance:session` / `fast-heartbeat` | `paid-session/v1` | same, but `heartbeat: {interval_seconds: 1, missed_threshold: 2}` | fake runner base URL |
+| `conformance:session` / `fast-heartbeat` | `paid-session/v1` | same, but `heartbeat: {interval_seconds: 1, missed_threshold: 2}` and a fixed lease | fake runner base URL |
+| `conformance:job` / `slow` | `paid-job/v1` | transport unary | fake backend `/slow` route (~3s) |
+| `conformance:job` / `longstream` | `paid-job/v1` | transport stream | fake backend `/longstream` route (~6s of SSE) |
+| `conformance:session` / `bounded-refill` | `paid-session/v1` | `refill: bounded`, fixed lease | fake runner base URL |
+| `conformance:session` / `short-lease` | `paid-session/v1` | `lease_policy: fixed`, `lease_max_seconds: 1`, heartbeat far away | fake runner base URL |
+| `conformance:session` / `rtmp-hls` | `paid-session/v1` | `descriptor_schema: rtmp-hls/v1` | fake runner base URL |
+| `conformance:session` / `scope-passthrough` | `paid-session/v1` | `descriptor_schema: scope-passthrough/v1` | fake runner base URL |
+| `conformance:session` / `trickle-egress` | `paid-session/v1` | `descriptor_schema: trickle-egress/v1` | fake runner base URL |
+
+Offerings you do not serve simply cause their scenarios to SKIP rather than
+fail — the per-schema fixtures and the optional control-WS binding are the
+cases where that is expected.
 
 The `fast-heartbeat` offering exists so liveness enforcement is observable in
 seconds rather than minutes. Omit it and the heartbeat scenario skips rather
@@ -83,3 +94,49 @@ did not start; demonstrate them with your own harness.
   the *runner* was actually terminated (not merely a record flipped), and
   that a late `end` doesn't rewrite the close reason. It runs anywhere the
   `fast-heartbeat` offering is configured.
+
+## What this suite does *not* cover
+
+A green run is not a claim of total coverage. Two assertions in the specs'
+own Conformance sections are **not** executable from outside an
+implementation, and one property is only as strong as your configuration.
+An implementer citing this suite as protocol evidence should know exactly
+where its edges are.
+
+**1. Exactly-once debit under a transient payment failure.**
+`paid-job/v1` §7 and `paid-session/v1` §10 both call for this to be
+"verified by fault injection on a transiently failing debit." The suite
+cannot inject a failure into an implementation's payment layer — there is
+no wire surface for it, by design. What the suite *does* prove is the
+observable half: duplicate and reordered events are safe, and a retried
+request id converges on the recorded outcome without a second backend
+execution.
+
+*What to demonstrate instead:* an implementation-side test that fails a
+debit transiently, retries the same event, and asserts exactly one charge —
+never zero (acknowledged but uncharged), never two. The reference broker's
+is `TestExactlyOnceDebitUnderRetry` in `capability-broker/internal/sessionengine`.
+
+**2. "Payment state closed" on a fail-closed open.**
+`runtime-descriptor/v1` §6 requires that a rejected descriptor leaves
+payment state closed. The suite asserts the visible half — the open fails
+and the runner session is terminated — but after a failed open there is no
+session for the gateway to query, so the payment side is not observable
+black-box.
+
+*What to demonstrate instead:* an implementation-side assertion that the
+payee session was closed on every fail-closed open path.
+
+**3. Restart branch coverage depends on your payment layer, not your broker.**
+See the note above: if your payment layer does not outlive a broker
+restart, `paid-session/restart-rebind` will fail and every restarted
+session will take the terminal branch. That is a correct result, not a
+suite defect — but it means "the suite passes" carries a different meaning
+depending on how you deploy. Run it both ways if both are realistic for
+your operators.
+
+**4. Payment validity is mocked.** Auto mode runs the reference broker
+against a mock payment client, so nothing here exercises real ticket
+validation, real balance arithmetic, or the payee daemon's own idempotency.
+The suite tests the *protocol's* handling of payment outcomes, not the
+payment layer itself.

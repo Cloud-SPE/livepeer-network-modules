@@ -79,6 +79,118 @@ capabilities:
       extractor: { type: openai-usage }
     price: { amount_wei: "1", per_units: 1 }
     backend: { transport: http, url: %q }
+  - id: conformance:job
+    offering_id: slow
+    protocol: paid-job/v1
+    job:
+      transports: [unary]
+    health: { initial_status: ready }
+    work_unit:
+      name: %s
+      extractor: { type: openai-usage }
+    price: { amount_wei: "1", per_units: 1 }
+    backend: { transport: http, url: %q }
+  - id: conformance:job
+    offering_id: longstream
+    protocol: paid-job/v1
+    job:
+      transports: [stream]
+    health: { initial_status: ready }
+    work_unit:
+      name: %s
+      extractor: { type: openai-usage }
+    price: { amount_wei: "1", per_units: 1 }
+    backend: { transport: http, url: %q }
+  - id: conformance:session
+    offering_id: bounded-refill
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: sfu-room/v1
+      refill: bounded
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner:
+        create_path: /sessions
+        status_path: /sessions/{id}
+        terminate_path: /sessions/{id}
+    health: { initial_status: ready }
+    work_unit:
+      name: %s
+      extractor: { type: seconds-elapsed }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: %q }
+  - id: conformance:session
+    offering_id: short-lease
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: sfu-room/v1
+      lease_policy: fixed
+      lease_max_seconds: 1
+      # Heartbeat far away so lease expiry is the trigger under test.
+      heartbeat:
+        interval_seconds: 2
+        missed_threshold: 30
+      runner:
+        create_path: /sessions
+        status_path: /sessions/{id}
+        terminate_path: /sessions/{id}
+    health: { initial_status: ready }
+    work_unit:
+      name: %s
+      extractor: { type: seconds-elapsed }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: %q }
+  - id: conformance:session
+    offering_id: rtmp-hls
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: rtmp-hls/v1
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner:
+        create_path: /sessions
+        status_path: /sessions/{id}
+        terminate_path: /sessions/{id}
+    health: { initial_status: ready }
+    work_unit:
+      name: %s
+      extractor: { type: seconds-elapsed }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: %q }
+  - id: conformance:session
+    offering_id: scope-passthrough
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: scope-passthrough/v1
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner:
+        create_path: /sessions
+        status_path: /sessions/{id}
+        terminate_path: /sessions/{id}
+    health: { initial_status: ready }
+    work_unit:
+      name: %s
+      extractor: { type: seconds-elapsed }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: %q }
+  - id: conformance:session
+    offering_id: trickle-egress
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: trickle-egress/v1
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner:
+        create_path: /sessions
+        status_path: /sessions/{id}
+        terminate_path: /sessions/{id}
+    health: { initial_status: ready }
+    work_unit:
+      name: %s
+      extractor: { type: seconds-elapsed }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: %q }
   - id: conformance:session
     offering_id: fast-heartbeat
     protocol: paid-session/v1
@@ -135,13 +247,22 @@ func main() {
 	defer runner.Close()
 
 	ctx := &harness.Ctx{
-		HTTP:                  &http.Client{Timeout: 30 * time.Second},
-		Backend:               backend,
-		Runner:                runner,
-		JobCapability:         "conformance:job",
-		JobOfferingAll:        "all",
-		JobOfferingUnary:      "unary-only",
-		JobOfferingError:      "always-error",
+		HTTP:                      &http.Client{Timeout: 30 * time.Second},
+		Backend:                   backend,
+		Runner:                    runner,
+		JobCapability:             "conformance:job",
+		JobOfferingAll:            "all",
+		JobOfferingUnary:          "unary-only",
+		JobOfferingError:          "always-error",
+		JobOfferingSlow:           "slow",
+		JobOfferingLongStream:     "longstream",
+		SessionOfferingBounded:    "bounded-refill",
+		SessionOfferingShortLease: "short-lease",
+		SessionOfferingsBySchema: map[string]string{
+			"rtmp-hls":          "rtmp-hls",
+			"scope-passthrough": "scope-passthrough",
+			"trickle-egress":    "trickle-egress",
+		},
 		SessionCapability:     "conformance:session",
 		SessionOffering:       "default",
 		SessionOfferingFastHB: "fast-heartbeat",
@@ -224,8 +345,15 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 		jobUnit, backend.URL(),
 		jobUnit, backend.URL(),
 		jobUnit, backend.ErrorURL(),
-		sessUnit, runner.URL(),
-		sessUnit, runner.URL())
+		jobUnit, backend.SlowURL(),
+		jobUnit, backend.LongStreamURL(),
+		sessUnit, runner.URL(), // bounded-refill
+		sessUnit, runner.URL(), // short-lease
+		sessUnit, runner.URL(), // rtmp-hls
+		sessUnit, runner.URL(), // scope-passthrough
+		sessUnit, runner.URL(), // trickle-egress
+		sessUnit, runner.URL(), // fast-heartbeat
+		sessUnit, runner.URL()) // default
 	cfgPath := filepath.Join(dir, "host-config.yaml")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		return nil, "", err

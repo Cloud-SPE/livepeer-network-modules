@@ -69,6 +69,7 @@ func specFromCapability(c *config.Capability) *sessionengine.OfferingSpec {
 		BurnRatePerSecond:   c.Session.BurnRatePerSec,
 		LeaseMax:            time.Duration(c.Session.LeaseMaxSeconds) * time.Second,
 		LeasePolicy:         c.Session.AdvertisedLeasePolicy(),
+		Refill:              c.Session.AdvertisedRefill(),
 		MinRunwayUnits:      c.Session.MinRunwayUnits,
 	}
 }
@@ -384,10 +385,15 @@ func (s *Server) specForRecord(rec *sessionstore.Record) *sessionengine.Offering
 // balanceObject builds the normative balance object (paid-session §6).
 func (s *Server) balanceObject(r *http.Request, rec *sessionstore.Record, spec *sessionengine.OfferingSpec) map[string]any {
 	obj := map[string]any{
-		"claimed_units":           rec.ClaimedTotal,
-		"debited_units":           rec.DebitedTotal,
-		"unit":                    rec.Unit,
-		"will_refuse_next_refill": rec.Terminal() || rec.State == sessionstore.StateWindingDown,
+		"claimed_units": rec.ClaimedTotal,
+		"debited_units": rec.DebitedTotal,
+		"unit":          rec.Unit,
+		// True whenever the next top-up would be refused — including
+		// from open on a bounded offering, so the advertisement always
+		// precedes the refusal.
+		"will_refuse_next_refill": rec.Terminal() ||
+			rec.State == sessionstore.StateWindingDown ||
+			spec.Refill == "bounded",
 	}
 	status := "ok"
 	if bal, err := s.payment.GetBalance(r.Context(), rec.Sender, rec.WorkID); err == nil && bal != nil &&

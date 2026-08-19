@@ -63,12 +63,26 @@ type Ctx struct {
 	Runner  *fakes.SessionRunner
 
 	// Offering coordinates the broker-under-test must serve (see README).
-	JobCapability     string // paid-job capability id
-	JobOfferingAll    string // offering declaring unary+stream+multipart
-	JobOfferingUnary  string // offering declaring only unary
-	JobOfferingError  string // offering whose backend always fails
-	SessionCapability string // paid-session capability id
-	SessionOffering   string
+	JobCapability    string // paid-job capability id
+	JobOfferingAll   string // offering declaring unary+stream+multipart
+	JobOfferingUnary string // offering declaring only unary
+	JobOfferingError string // offering whose backend always fails
+	// JobOfferingSlow serves a backend that takes seconds, so a
+	// concurrent retry lands while the original is in flight.
+	JobOfferingSlow string
+	// JobOfferingLongStream serves a long SSE body a client can sever.
+	JobOfferingLongStream string
+	// SessionOfferingBounded declares refill: bounded.
+	SessionOfferingBounded string
+	// SessionOfferingShortLease has a fixed, very short lease so expiry
+	// fires well before any heartbeat threshold.
+	SessionOfferingShortLease string
+	// SessionOfferingsBySchema maps a descriptor-schema nickname to the
+	// offering id that serves it, so per-schema fixtures can skip
+	// cleanly when an implementation does not serve that schema.
+	SessionOfferingsBySchema map[string]string
+	SessionCapability        string // paid-session capability id
+	SessionOffering          string
 	// SessionOfferingFastHB is an offering with a deliberately short
 	// heartbeat interval so liveness enforcement is observable in
 	// seconds. Empty means the scenario skips.
@@ -177,6 +191,42 @@ func (c *Ctx) DoJob(jr JobRequest) (*JobResponse, error) {
 	}, nil
 }
 
+// DoJobAbort starts a job exchange and severs the connection after
+// reading readChunks chunks of the body — the "stream severed mid-body"
+// case in paid-job §7. The broker's terminal accounting must still
+// happen, and a later retry of the same request id must replay it.
+func (c *Ctx) DoJobAbort(jr JobRequest, readChunks int) error {
+	req, err := http.NewRequest(http.MethodPost, c.BrokerURL+"/v1/job", bytes.NewReader(jr.Body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set(HdrCapability, c.JobCapability)
+	req.Header.Set(HdrOffering, jr.Offering)
+	req.Header.Set(HdrProtocol, ProtoPaidJob)
+	req.Header.Set(HdrRequestID, jr.RequestID)
+	req.Header.Set(HdrPayment, jr.Payment)
+	if jr.Accept != "" {
+		req.Header.Set("Accept", jr.Accept)
+	}
+	// A dedicated client so closing this connection cannot disturb
+	// pooled connections other scenarios are using.
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 512)
+	for i := 0; i < readChunks; i++ {
+		if _, err := resp.Body.Read(buf); err != nil {
+			break
+		}
+	}
+	// Sever without draining: this is the client hanging up mid-body.
+	_ = resp.Body.Close()
+	client.CloseIdleConnections()
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // paid-session helpers
 
@@ -222,6 +272,15 @@ func (c *Ctx) OpenSession(requestID, payment, body string) (*HTTPResult, error) 
 	req.Header.Set(HdrPayment, payment)
 	req.Header.Set("Content-Type", "application/json")
 	return c.do(req)
+}
+
+// SessionOfferingFor returns the offering serving a schema nickname, or
+// "" when the implementation under test does not serve it.
+func (c *Ctx) SessionOfferingFor(nickname string) string {
+	if nickname == "default" {
+		return c.SessionOffering
+	}
+	return c.SessionOfferingsBySchema[nickname]
 }
 
 // OpenSessionOffering opens against a named offering of the session

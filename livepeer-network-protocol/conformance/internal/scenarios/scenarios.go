@@ -154,6 +154,87 @@ func jobScenarios() []harness.Scenario {
 			}
 			return nil
 		}},
+		{Name: "paid-job/in-flight-retry-refused", Spec: "paid-job §4", Run: func(c *harness.Ctx) error {
+			reqID := c.RequestID("inflight")
+			payment := harness.PaymentEnvelope("inflight")
+			body := []byte(`{"prompt":"slow"}`)
+			type res struct {
+				r   *harness.JobResponse
+				err error
+			}
+			done := make(chan res, 1)
+			go func() {
+				r, err := c.DoJob(harness.JobRequest{
+					Offering: c.JobOfferingSlow, RequestID: reqID, Payment: payment, Body: body,
+				})
+				done <- res{r, err}
+			}()
+			// Let the first exchange reach the backend, then retry it.
+			time.Sleep(700 * time.Millisecond)
+			retry, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingSlow, RequestID: reqID, Payment: payment, Body: body,
+			})
+			if err != nil {
+				return err
+			}
+			if retry.Status != 409 || retry.Header.Get(harness.HdrError) != harness.ErrJobInFlight {
+				return fmt.Errorf("in-flight retry: status %d error %q, want 409 %s",
+					retry.Status, retry.Header.Get(harness.HdrError), harness.ErrJobInFlight)
+			}
+			first := <-done
+			if first.err != nil {
+				return fmt.Errorf("original exchange: %w", first.err)
+			}
+			if first.r.Status != 200 {
+				return fmt.Errorf("original exchange status %d", first.r.Status)
+			}
+			// Once it is terminal the same id replays rather than refusing.
+			replay, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingSlow, RequestID: reqID, Payment: payment, Body: body,
+			})
+			if err != nil {
+				return err
+			}
+			if replay.Status != first.r.Status {
+				return fmt.Errorf("post-completion replay status %d, want %d", replay.Status, first.r.Status)
+			}
+			return nil
+		}},
+		{Name: "paid-job/severed-stream-replays-terminal", Spec: "paid-job §7", Run: func(c *harness.Ctx) error {
+			reqID := c.RequestID("severed")
+			payment := harness.PaymentEnvelope("severed")
+			body := []byte(`{"prompt":"long"}`)
+			// Hang up mid-body: read a little, then close.
+			if err := c.DoJobAbort(harness.JobRequest{
+				Offering: c.JobOfferingLongStream, RequestID: reqID, Payment: payment, Body: body,
+				Accept: "text/event-stream",
+			}, 2); err != nil {
+				return fmt.Errorf("severed request: %w", err)
+			}
+			// The exchange must settle to a terminal outcome that a
+			// retry replays — not stay in flight forever.
+			deadline := time.Now().Add(30 * time.Second)
+			for {
+				r, err := c.DoJob(harness.JobRequest{
+					Offering: c.JobOfferingLongStream, RequestID: reqID, Payment: payment, Body: body,
+					Accept: "text/event-stream",
+				})
+				if err != nil {
+					return err
+				}
+				if r.Header.Get(harness.HdrError) == harness.ErrJobInFlight {
+					if time.Now().After(deadline) {
+						return fmt.Errorf("severed exchange still in flight after 30s")
+					}
+					time.Sleep(500 * time.Millisecond)
+					continue
+				}
+				if r.Header.Get(harness.HdrWorkUnits) == "" {
+					return fmt.Errorf("replay after severed stream carried no work-units claim")
+				}
+				return nil
+			}
+		}},
 		{Name: "paid-job/request-id-reuse-rejected", Spec: "paid-job §4", Run: func(c *harness.Ctx) error {
 			reqID := c.RequestID("reuse")
 			if _, err := c.DoJob(harness.JobRequest{
@@ -371,6 +452,165 @@ func sessionScenarios() []harness.Scenario {
 			}
 			if harness.FieldString(second.JSON(), "credential") != "" {
 				return fmt.Errorf("replay re-delivered the credential")
+			}
+			return nil
+		}},
+		{Name: "paid-session/lease-expiry-winddown", Spec: "paid-session §5/§10", Run: func(c *harness.Ctx) error {
+			if c.SessionOfferingShortLease == "" {
+				return fmt.Errorf("%w: no short-lease offering configured (see README)", harness.ErrSkip)
+			}
+			r, err := c.OpenSessionOffering(c.SessionOfferingShortLease, c.RequestID("lease"),
+				harness.PaymentEnvelope("lease"), `{"gateway_session_id":"gws-lease","session_params":{}}`)
+			if err != nil {
+				return err
+			}
+			if r.Status != 201 && r.Status != 200 {
+				return fmt.Errorf("open status %d: %s", r.Status, r.Body)
+			}
+			m := r.JSON()
+			sessionID, credential := harness.FieldString(m, "session_id"), harness.FieldString(m, "credential")
+			deadline := time.Now().Add(30 * time.Second)
+			for time.Now().Before(deadline) {
+				time.Sleep(500 * time.Millisecond)
+				st, err := c.SessionStatus(sessionID, credential)
+				if err != nil || st.Status != 200 {
+					continue
+				}
+				sm := st.JSON()
+				if state := harness.FieldString(sm, "state"); state == "ended" || state == "failed" {
+					if reason := harness.FieldString(sm, "close_reason"); reason != "lease_expired" {
+						return fmt.Errorf("terminal reason %q, want lease_expired", reason)
+					}
+					if len(c.Runner.Terminated()) == 0 {
+						return fmt.Errorf("lease expired but runner never terminated")
+					}
+					return nil
+				}
+			}
+			return fmt.Errorf("session outlived its lease with no winddown")
+		}},
+		{Name: "paid-session/bounded-refill-advertised-then-refused", Spec: "paid-session §3.3/§6", Run: func(c *harness.Ctx) error {
+			if c.SessionOfferingBounded == "" {
+				return fmt.Errorf("%w: no bounded-refill offering configured (see README)", harness.ErrSkip)
+			}
+			r, err := c.OpenSessionOffering(c.SessionOfferingBounded, c.RequestID("bounded"),
+				harness.PaymentEnvelope("bounded"), `{"gateway_session_id":"gws-b","session_params":{}}`)
+			if err != nil {
+				return err
+			}
+			if r.Status != 201 && r.Status != 200 {
+				return fmt.Errorf("open status %d: %s", r.Status, r.Body)
+			}
+			m := r.JSON()
+			sessionID, credential := harness.FieldString(m, "session_id"), harness.FieldString(m, "credential")
+
+			// The advertisement MUST precede the refusal.
+			warned, ok := harness.Field(m, "balance.will_refuse_next_refill").(bool)
+			if !ok || !warned {
+				return fmt.Errorf("bounded offering did not advertise will_refuse_next_refill at open: %v",
+					harness.Field(m, "balance"))
+			}
+			st, err := c.SessionStatus(sessionID, credential)
+			if err != nil {
+				return err
+			}
+			if w, ok := harness.Field(st.JSON(), "balance.will_refuse_next_refill").(bool); !ok || !w {
+				return fmt.Errorf("status did not advertise will_refuse_next_refill")
+			}
+
+			tu, err := c.SessionTopUp(sessionID, credential, c.RequestID("bounded-topup"), harness.PaymentEnvelope("bounded-topup"))
+			if err != nil {
+				return err
+			}
+			if tu.Status/100 == 2 {
+				return fmt.Errorf("bounded offering accepted a top-up (status %d)", tu.Status)
+			}
+			if code := tu.Header.Get(harness.HdrError); code != harness.ErrRefillRefused {
+				return fmt.Errorf("refusal error %q, want %s", code, harness.ErrRefillRefused)
+			}
+			// A refused top-up is not a winddown.
+			st2, _ := c.SessionStatus(sessionID, credential)
+			if state := harness.FieldString(st2.JSON(), "state"); state == "ended" || state == "failed" {
+				return fmt.Errorf("refused top-up wound the session down (%s)", state)
+			}
+			return nil
+		}},
+		{Name: "paid-session/control-ws-push-and-ack", Spec: "paid-session §8", Run: func(c *harness.Ctx) error {
+			open, cb, err := openHappySession(c, "ws")
+			if err != nil {
+				return err
+			}
+			m := open.JSON()
+			wsURL := harness.WSURLFromControl(m)
+			if wsURL == "" {
+				// The binding is optional: an implementation that does
+				// not advertise it is conformant.
+				return fmt.Errorf("%w: implementation advertises no control.events_ws (the binding is optional)", harness.ErrSkip)
+			}
+			sessionID := harness.FieldString(m, "session_id")
+			credential := harness.FieldString(m, "credential")
+
+			// Uniform-401 discipline applies to the upgrade too.
+			if _, resp, err := c.DialControlWS(wsURL, "sc_wrong"); err == nil {
+				return fmt.Errorf("upgrade succeeded with a bad credential")
+			} else if resp == nil || resp.StatusCode != 401 {
+				code := 0
+				if resp != nil {
+					code = resp.StatusCode
+				}
+				return fmt.Errorf("bad-credential upgrade status %d, want 401", code)
+			}
+
+			conn, _, err := c.DialControlWS(wsURL, credential)
+			if err != nil {
+				return fmt.Errorf("upgrade with valid credential: %w", err)
+			}
+			defer conn.Close()
+
+			// A runner usage claim must reach the attached gateway.
+			if st, _, err := c.Runner.PostEvent(cb, fmt.Sprintf(
+				`{"event_id":"evt_ws1","sequence":1,"event_type":"session.usage.tick","usage":{"unit":%q,"total":6}}`,
+				c.SessionUnit)); err != nil || st != 200 {
+				return fmt.Errorf("usage event: %d %v", st, err)
+			}
+			tick, err := conn.ReadUntil("session.usage.tick", 10*time.Second)
+			if err != nil {
+				return fmt.Errorf("no usage push: %w", err)
+			}
+			if total, ok := tick.Body["claimed_total"].(float64); !ok || total != 6 {
+				return fmt.Errorf("pushed tick claimed_total %v, want 6", tick.Body["claimed_total"])
+			}
+			if _, err := conn.ReadUntil("session.balance", 10*time.Second); err != nil {
+				return fmt.Errorf("no balance push: %w", err)
+			}
+
+			// Gateway-initiated frames are acknowledged.
+			if err := conn.SendTopUp(harness.PaymentEnvelope("ws-topup")); err != nil {
+				return err
+			}
+			ack, err := conn.ReadUntil("ack", 10*time.Second)
+			if err != nil {
+				return fmt.Errorf("no topup ack: %w", err)
+			}
+			if op, _ := ack.Body["op"].(string); op != "session.topup" {
+				return fmt.Errorf("ack op %q, want session.topup", op)
+			}
+
+			// Ending over the WS must both ack and push the terminal.
+			if err := conn.Send(harness.WSFrame{Type: "session.end",
+				Body: map[string]any{"reason": "gateway_close"}}); err != nil {
+				return err
+			}
+			if _, err := conn.ReadUntil("session.ended", 10*time.Second); err != nil {
+				return fmt.Errorf("no terminal push after end: %w", err)
+			}
+			// HTTP remains authoritative: status agrees with the push.
+			st, err := c.SessionStatus(sessionID, credential)
+			if err != nil {
+				return err
+			}
+			if state := harness.FieldString(st.JSON(), "state"); state != "ended" && state != "failed" {
+				return fmt.Errorf("WS reported ended but status says %q", state)
 			}
 			return nil
 		}},
@@ -623,12 +863,112 @@ func descriptorScenarios() []harness.Scenario {
 		{Name: "descriptor/unknown-top-level-key-fails-closed", Spec: "runtime-descriptor §2/§3", Run: func(c *harness.Ctx) error {
 			return expectOpenRejected(c, "unknown_key")
 		}},
+		{Name: "descriptor/malformed-grant-fails-closed", Spec: "runtime-descriptor §2.4/§6", Run: func(c *harness.Ctx) error {
+			return expectOpenRejected(c, "malformed_grant")
+		}},
+		{Name: "descriptor/grants-not-re-emitted-after-restart", Spec: "runtime-descriptor §2.4/§6", Run: func(c *harness.Ctx) error {
+			if c.RestartBroker == nil {
+				return fmt.Errorf("%w: suite does not own the broker process (URL mode)", harness.ErrSkip)
+			}
+			open, _, err := openHappySession(c, "grantrestart")
+			if err != nil {
+				return err
+			}
+			m := open.JSON()
+			sessionID, credential := harness.FieldString(m, "session_id"), harness.FieldString(m, "credential")
+			if err := c.RestartBroker(); err != nil {
+				return fmt.Errorf("restart: %w", err)
+			}
+			st, err := c.SessionStatus(sessionID, credential)
+			if err != nil {
+				return err
+			}
+			if st.Status != 200 {
+				return fmt.Errorf("status after restart: %d", st.Status)
+			}
+			if harness.Field(st.JSON(), "runtime.grants") != nil {
+				return fmt.Errorf("status re-emitted grants after restart")
+			}
+			if strings.Contains(string(st.Body), fakes.GrantSecretSentinel) {
+				return fmt.Errorf("grant secret surfaced after restart")
+			}
+			return nil
+		}},
 		{Name: "descriptor/oversize-fails-closed", Spec: "runtime-descriptor §3", Run: func(c *harness.Ctx) error {
 			return expectOpenRejected(c, "oversize")
 		}},
 		{Name: "descriptor/schema-mismatch-fails-closed", Spec: "runtime-descriptor §2.1/§3", Run: func(c *harness.Ctx) error {
 			return expectOpenRejected(c, "schema_mismatch")
 		}},
+		schemaFixture("sfu-room", "default", "sfu-room/v1",
+			[]string{"url", "room", "mint_url", "status_url"}),
+		schemaFixture("rtmp-hls", "rtmp-hls", "rtmp-hls/v1",
+			[]string{"rtmp_url", "hls_url", "key_issue_url", "status_url"}),
+		schemaFixture("scope-passthrough", "scope-passthrough", "scope-passthrough/v1",
+			[]string{"scope_url", "status_url"}),
+		schemaFixture("trickle-egress", "trickle-egress", "trickle-egress/v1",
+			[]string{"control_url", "preview_url", "status_url"}),
+	}
+}
+
+// schemaFixture asserts one shipped schema's public-by-contract field
+// set: exactly the declared fields appear, and the schema's private and
+// grant material never surfaces. This is the check runtime-descriptor §6
+// promises — "a schema change that moves a sensitive field into public
+// fails conformance rather than review" — and it only holds for schemas
+// that actually have a fixture.
+func schemaFixture(name, offering, schema string, publicFields []string) harness.Scenario {
+	return harness.Scenario{
+		Name: "descriptor/" + name + "-public-by-contract",
+		Spec: "runtime-descriptor §6",
+		Run: func(c *harness.Ctx) error {
+			off := c.SessionOfferingFor(offering)
+			if off == "" {
+				return fmt.Errorf("%w: no %s offering configured (see README)", harness.ErrSkip, offering)
+			}
+			r, err := c.OpenSessionOffering(off, c.RequestID(name),
+				harness.PaymentEnvelope(name),
+				fmt.Sprintf(`{"gateway_session_id":"gws-%s","session_params":{"conformance_mode":%q}}`, name, offering))
+			if err != nil {
+				return err
+			}
+			if r.Status != 201 && r.Status != 200 {
+				return fmt.Errorf("open status %d: %s", r.Status, r.Body)
+			}
+			m := r.JSON()
+			if got := harness.FieldString(m, "runtime.schema"); got != schema {
+				return fmt.Errorf("schema %q, want %q", got, schema)
+			}
+			pub, ok := harness.Field(m, "runtime.public").(map[string]any)
+			if !ok {
+				return fmt.Errorf("public part missing or not an object")
+			}
+			allowed := map[string]bool{}
+			for _, f := range publicFields {
+				allowed[f] = true
+			}
+			for k := range pub {
+				if !allowed[k] {
+					return fmt.Errorf("field %q appeared in %s public part; declared set is %v", k, schema, publicFields)
+				}
+			}
+			// Private material and grant secrets must not surface on
+			// open (the grant secret is legitimate at open) or status.
+			if strings.Contains(string(r.Body), fakes.PrivateSentinel) {
+				return fmt.Errorf("private sentinel leaked in open response for %s", schema)
+			}
+			sessionID, credential := harness.FieldString(m, "session_id"), harness.FieldString(m, "credential")
+			st, err := c.SessionStatus(sessionID, credential)
+			if err != nil {
+				return err
+			}
+			for _, probe := range []string{fakes.PrivateSentinel, fakes.GrantSecretSentinel} {
+				if strings.Contains(string(st.Body), probe) {
+					return fmt.Errorf("sensitive material leaked in status for %s", schema)
+				}
+			}
+			return nil
+		},
 	}
 }
 

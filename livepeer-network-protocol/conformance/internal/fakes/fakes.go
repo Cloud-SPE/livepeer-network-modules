@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Sentinel secrets the descriptor leak-scan scenarios grep for in
@@ -39,6 +40,35 @@ func NewJobBackend() *JobBackend {
 		b.mu.Lock()
 		b.hits++
 		b.mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/slow") {
+			// Long enough for a second request to arrive while this one
+			// is still in flight.
+			select {
+			case <-time.After(3 * time.Second):
+			case <-r.Context().Done():
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"choices":[{"text":"slow"}],"usage":{"total_tokens":11}}`)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/longstream") {
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, _ := w.(http.Flusher)
+			for i := 0; i < 40; i++ {
+				fmt.Fprintf(w, "data: {\"chunk\":%d}\n\n", i)
+				if flusher != nil {
+					flusher.Flush()
+				}
+				select {
+				case <-time.After(150 * time.Millisecond):
+				case <-r.Context().Done():
+					return
+				}
+			}
+			fmt.Fprint(w, "data: {\"usage\":{\"total_tokens\":99}}\n\ndata: [DONE]\n\n")
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/error") {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -69,6 +99,14 @@ func (b *JobBackend) URL() string { return b.serve.URL }
 
 // ErrorURL is the always-500 route (point the error offering here).
 func (b *JobBackend) ErrorURL() string { return b.serve.URL + "/error" }
+
+// SlowURL responds after ~3s, so a concurrent retry of the same request
+// id arrives while the original is still in flight.
+func (b *JobBackend) SlowURL() string { return b.serve.URL + "/slow" }
+
+// LongStreamURL emits SSE for ~6s, so a client can sever the body
+// mid-stream.
+func (b *JobBackend) LongStreamURL() string { return b.serve.URL + "/longstream" }
 
 // Hits returns how many requests the backend has served.
 func (b *JobBackend) Hits() int {
@@ -142,6 +180,32 @@ func (f *SessionRunner) handleCreate(w http.ResponseWriter, r *http.Request) {
 	case "oversize":
 		runtime = fmt.Sprintf(`{"schema":"sfu-room/v1","public":{"pad":%q}}`,
 			strings.Repeat("x", 17*1024))
+	case "malformed_grant":
+		// Grant missing the required secret and expires_at.
+		runtime = `{"schema":"sfu-room/v1","public":{"url":"wss://sfu","room":"r","mint_url":"https://sfu/mint"},
+			"grants":[{"id":"g1","operations":["participant-token-mint"]}]}`
+	case "rtmp-hls":
+		runtime = fmt.Sprintf(`{
+			"schema": "rtmp-hls/v1",
+			"public": {"rtmp_url":"rtmp://ingest.example/live","hls_url":"https://play.example/m.m3u8",
+			           "key_issue_url":"%s/keys","status_url":"%s/status"},
+			"private": {"terminate_token": %q},
+			"grants": [{"id":"g1","operations":["stream-key-issue"],"secret":%q,"expires_at":"2030-01-01T00:00:00Z"}]
+		}`, f.serve.URL, f.serve.URL, PrivateSentinel, GrantSecretSentinel)
+	case "scope-passthrough":
+		runtime = fmt.Sprintf(`{
+			"schema": "scope-passthrough/v1",
+			"public": {"scope_url":"%s/scope","status_url":"%s/status"},
+			"private": {"terminate_token": %q},
+			"grants": [{"id":"g1","operations":["scope-api-access"],"secret":%q,"expires_at":"2030-01-01T00:00:00Z"}]
+		}`, f.serve.URL, f.serve.URL, PrivateSentinel, GrantSecretSentinel)
+	case "trickle-egress":
+		runtime = fmt.Sprintf(`{
+			"schema": "trickle-egress/v1",
+			"public": {"control_url":"%s/control","preview_url":"%s/preview","status_url":"%s/status"},
+			"private": {"terminate_token": %q},
+			"grants": [{"id":"g1","operations":["control-attach"],"secret":%q,"expires_at":"2030-01-01T00:00:00Z"}]
+		}`, f.serve.URL, f.serve.URL, f.serve.URL, PrivateSentinel, GrantSecretSentinel)
 	default:
 		runtime = fmt.Sprintf(`{
 			"schema": "sfu-room/v1",

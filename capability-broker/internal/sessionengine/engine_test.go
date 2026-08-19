@@ -625,3 +625,22 @@ func TestSweepHeartbeatWinsOverLease(t *testing.T) {
 		t.Fatalf("close reason %q, want heartbeat_lost (lease was also expired)", rec.CloseReason)
 	}
 }
+
+// TestTopUpRefusedOnBoundedOffering pins offering-axes §3: a bounded
+// offering rejects top-up after open, with the stable refill_refused
+// code.
+func TestTopUpRefusedOnBoundedOffering(t *testing.T) {
+	h := newHarness(t)
+	h.spec.Refill = "bounded"
+	res := h.open(t)
+	_, err := h.engine.TopUp(context.Background(), res.SessionID, []byte{9})
+	var pe *ProtocolError
+	if !errors.As(err, &pe) || pe.Code != "refill_refused" {
+		t.Fatalf("expected refill_refused on a bounded offering, got %v", err)
+	}
+	// The session is untouched — a refused top-up is not a winddown.
+	rec, _ := h.store.Get(res.SessionID)
+	if rec.Terminal() {
+		t.Fatal("refused top-up wound the session down")
+	}
+}

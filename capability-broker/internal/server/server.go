@@ -23,6 +23,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolsnapshot"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
 )
 
@@ -78,6 +80,8 @@ type Server struct {
 	poolReporter         poolreport.Client
 	poolSnapshot         *poolsnapshot.Cache
 	health               *health.Manager
+	sessionStore         *sessionstore.Store
+	sessionEngine        *sessionengine.Engine
 	randIntn             func(int) int
 }
 
@@ -172,7 +176,14 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		return nil, err
 	}
 
+	if err := s.initSessionEngine(); err != nil {
+		return nil, fmt.Errorf("session engine: %w", err)
+	}
+
 	s.registerRoutes()
+	if s.sessionEngine != nil {
+		s.registerSessionRoutes()
+	}
 	s.metricsSrv = newMetricsServer(cfg.Listen.Metrics)
 	return s, nil
 }
@@ -299,6 +310,24 @@ func (s *Server) currentPoolSnapshot() *poolsnapshot.Cache {
 // any listener errors; performs graceful shutdown on cancellation.
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 4)
+	if s.sessionEngine != nil {
+		// Restart recovery first (rebind-or-terminal), then the
+		// lease/heartbeat sweeper for the process lifetime.
+		s.sessionEngine.Recover(ctx)
+		go func() {
+			t := time.NewTicker(2 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					s.sessionEngine.Sweep(ctx)
+				}
+			}
+		}()
+		defer func() { _ = s.sessionStore.Close() }()
+	}
 	go func() {
 		log.Printf("listening on %s (paid)", s.cfg.Listen.Paid)
 		if err := s.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -1055,7 +1055,47 @@ type SettlementRecord struct {
 	BilledValueWei   *BigUInt                           `protobuf:"bytes,7,opt,name=billed_value_wei,json=billedValueWei,proto3" json:"billed_value_wei,omitempty"`
 	Outcome          SettlementRecord_SettlementOutcome `protobuf:"varint,8,opt,name=outcome,proto3,enum=livepeer.payments.v1.SettlementRecord_SettlementOutcome" json:"outcome,omitempty"`
 	// Optional workload-specific metadata. Not part of canonical arithmetic.
-	Breakdown     map[string]string `protobuf:"bytes,9,rep,name=breakdown,proto3" json:"breakdown,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Breakdown map[string]string `protobuf:"bytes,9,rep,name=breakdown,proto3" json:"breakdown,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Stable broker-local session id. Constant across rotations, which is
+	// what makes it the anchor for ordering and replay binding.
+	SessionId string `protobuf:"bytes,10,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// The payment identity in force for this record, and the one it
+	// replaced. predecessor_work_id is empty at generation 0.
+	WorkId            string `protobuf:"bytes,11,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	PredecessorWorkId string `protobuf:"bytes,12,opt,name=predecessor_work_id,json=predecessorWorkId,proto3" json:"predecessor_work_id,omitempty"`
+	// 0 at open, incremented on each rotation.
+	RotationGeneration uint32 `protobuf:"varint,13,opt,name=rotation_generation,json=rotationGeneration,proto3" json:"rotation_generation,omitempty"`
+	// Cumulative over the whole logical session, spanning every
+	// generation. debited_units is the AUTHORITATIVE billing quantity:
+	// claimed_units is what a runner asserted, debited_units is what the
+	// ledger moved. billed_value_wei above is
+	// ceil(debited_units * amount_wei / per_units) over these cumulative
+	// units — one ceiling over the total, never a sum of per-generation
+	// ceilings (offering-axes.md §6.1).
+	ClaimedUnits uint64 `protobuf:"varint,14,opt,name=claimed_units,json=claimedUnits,proto3" json:"claimed_units,omitempty"`
+	DebitedUnits uint64 `protobuf:"varint,15,opt,name=debited_units,json=debitedUnits,proto3" json:"debited_units,omitempty"`
+	// Scoped to work_id above, so each funding envelope reconciles against
+	// what it actually paid for. The generation subtotals sum to the
+	// cumulative totals.
+	GenerationDebitedUnits   uint64   `protobuf:"varint,16,opt,name=generation_debited_units,json=generationDebitedUnits,proto3" json:"generation_debited_units,omitempty"`
+	GenerationBilledValueWei *BigUInt `protobuf:"bytes,17,opt,name=generation_billed_value_wei,json=generationBilledValueWei,proto3" json:"generation_billed_value_wei,omitempty"`
+	GenerationFundedValueWei *BigUInt `protobuf:"bytes,18,opt,name=generation_funded_value_wei,json=generationFundedValueWei,proto3" json:"generation_funded_value_wei,omitempty"`
+	// The price this session was pinned to at open. Carried so a reader
+	// can recompute billed_value_wei without trusting it.
+	AmountWei *BigUInt `protobuf:"bytes,19,opt,name=amount_wei,json=amountWei,proto3" json:"amount_wei,omitempty"`
+	PerUnits  uint64   `protobuf:"varint,20,opt,name=per_units,json=perUnits,proto3" json:"per_units,omitempty"`
+	// Monotonic per session_id — NOT per work_id, because rotation mints a
+	// new work_id and a per-identity counter would restart mid-session.
+	// (session_id, settlement_seq) is the replay binding: a record is
+	// meaningful for exactly one session at exactly one point in its life.
+	SettlementSeq uint64 `protobuf:"varint,21,opt,name=settlement_seq,json=settlementSeq,proto3" json:"settlement_seq,omitempty"`
+	// When this record was produced. A record is a statement about the
+	// session as of this instant, not a cached blob.
+	IssuedAt string `protobuf:"bytes,22,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	// Session state when the record was produced: "open", "winding_down"
+	// or "closed". Distinguishes an interim snapshot from a final
+	// settlement.
+	State         string `protobuf:"bytes,23,opt,name=state,proto3" json:"state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1151,6 +1191,104 @@ func (x *SettlementRecord) GetBreakdown() map[string]string {
 		return x.Breakdown
 	}
 	return nil
+}
+
+func (x *SettlementRecord) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetWorkId() string {
+	if x != nil {
+		return x.WorkId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetPredecessorWorkId() string {
+	if x != nil {
+		return x.PredecessorWorkId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetRotationGeneration() uint32 {
+	if x != nil {
+		return x.RotationGeneration
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetClaimedUnits() uint64 {
+	if x != nil {
+		return x.ClaimedUnits
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetDebitedUnits() uint64 {
+	if x != nil {
+		return x.DebitedUnits
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetGenerationDebitedUnits() uint64 {
+	if x != nil {
+		return x.GenerationDebitedUnits
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetGenerationBilledValueWei() *BigUInt {
+	if x != nil {
+		return x.GenerationBilledValueWei
+	}
+	return nil
+}
+
+func (x *SettlementRecord) GetGenerationFundedValueWei() *BigUInt {
+	if x != nil {
+		return x.GenerationFundedValueWei
+	}
+	return nil
+}
+
+func (x *SettlementRecord) GetAmountWei() *BigUInt {
+	if x != nil {
+		return x.AmountWei
+	}
+	return nil
+}
+
+func (x *SettlementRecord) GetPerUnits() uint64 {
+	if x != nil {
+		return x.PerUnits
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetSettlementSeq() uint64 {
+	if x != nil {
+		return x.SettlementSeq
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetIssuedAt() string {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
 }
 
 // TicketStatus reports the payee daemon's disposition for one ticket
@@ -1373,7 +1511,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x0festimated_units\x18\x01 \x01(\x04R\x0eestimatedUnits\x12G\n" +
 	"\x10funded_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12&\n" +
 	"\x0fmax_total_units\x18\x03 \x01(\x04R\rmaxTotalUnits\x12$\n" +
-	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xfa\x05\n" +
+	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\x88\v\n" +
 	"\x10SettlementRecord\x12L\n" +
 	"\x12accepted_quote_ref\x18\x01 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12$\n" +
 	"\x0ework_unit_name\x18\x02 \x01(\tR\fworkUnitName\x12'\n" +
@@ -1383,7 +1521,24 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x10funded_value_wei\x18\x06 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12G\n" +
 	"\x10billed_value_wei\x18\a \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0ebilledValueWei\x12R\n" +
 	"\aoutcome\x18\b \x01(\x0e28.livepeer.payments.v1.SettlementRecord.SettlementOutcomeR\aoutcome\x12S\n" +
-	"\tbreakdown\x18\t \x03(\v25.livepeer.payments.v1.SettlementRecord.BreakdownEntryR\tbreakdown\x1a<\n" +
+	"\tbreakdown\x18\t \x03(\v25.livepeer.payments.v1.SettlementRecord.BreakdownEntryR\tbreakdown\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\n" +
+	" \x01(\tR\tsessionId\x12\x17\n" +
+	"\awork_id\x18\v \x01(\tR\x06workId\x12.\n" +
+	"\x13predecessor_work_id\x18\f \x01(\tR\x11predecessorWorkId\x12/\n" +
+	"\x13rotation_generation\x18\r \x01(\rR\x12rotationGeneration\x12#\n" +
+	"\rclaimed_units\x18\x0e \x01(\x04R\fclaimedUnits\x12#\n" +
+	"\rdebited_units\x18\x0f \x01(\x04R\fdebitedUnits\x128\n" +
+	"\x18generation_debited_units\x18\x10 \x01(\x04R\x16generationDebitedUnits\x12\\\n" +
+	"\x1bgeneration_billed_value_wei\x18\x11 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x18generationBilledValueWei\x12\\\n" +
+	"\x1bgeneration_funded_value_wei\x18\x12 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x18generationFundedValueWei\x12<\n" +
+	"\n" +
+	"amount_wei\x18\x13 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\tamountWei\x12\x1b\n" +
+	"\tper_units\x18\x14 \x01(\x04R\bperUnits\x12%\n" +
+	"\x0esettlement_seq\x18\x15 \x01(\x04R\rsettlementSeq\x12\x1b\n" +
+	"\tissued_at\x18\x16 \x01(\tR\bissuedAt\x12\x14\n" +
+	"\x05state\x18\x17 \x01(\tR\x05state\x1a<\n" +
 	"\x0eBreakdownEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x01\n" +
@@ -1469,12 +1624,15 @@ var file_livepeer_payments_v1_types_proto_depIdxs = []int32{
 	11, // 12: livepeer.payments.v1.SettlementRecord.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
 	1,  // 13: livepeer.payments.v1.SettlementRecord.outcome:type_name -> livepeer.payments.v1.SettlementRecord.SettlementOutcome
 	18, // 14: livepeer.payments.v1.SettlementRecord.breakdown:type_name -> livepeer.payments.v1.SettlementRecord.BreakdownEntry
-	0,  // 15: livepeer.payments.v1.TicketStatus.rejection_reason:type_name -> livepeer.payments.v1.PaymentRejectionReason
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	11, // 15: livepeer.payments.v1.SettlementRecord.generation_billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	11, // 16: livepeer.payments.v1.SettlementRecord.generation_funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	11, // 17: livepeer.payments.v1.SettlementRecord.amount_wei:type_name -> livepeer.payments.v1.BigUInt
+	0,  // 18: livepeer.payments.v1.TicketStatus.rejection_reason:type_name -> livepeer.payments.v1.PaymentRejectionReason
+	19, // [19:19] is the sub-list for method output_type
+	19, // [19:19] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_livepeer_payments_v1_types_proto_init() }

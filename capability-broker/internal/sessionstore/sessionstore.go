@@ -109,7 +109,19 @@ type Record struct {
 	// this generation began, so a generation's own subtotal is
 	// DebitedTotal - GenerationStartUnits without a second counter to
 	// keep in step.
-	RotationGeneration   uint32 `json:"rotation_generation,omitempty"`
+	RotationGeneration uint32 `json:"rotation_generation,omitempty"`
+	// SettlementSeq orders settlement records for this session. Per
+	// session, not per work_id: a rotation mints a new identity, and a
+	// per-identity counter would restart mid-session.
+	SettlementSeq uint64 `json:"settlement_seq,omitempty"`
+	// FundedWei is cumulative credited value over the whole logical
+	// session; GenerationFundedWei covers the current identity only.
+	// Both are decimal strings, because a wei total outgrows int64.
+	// Funding is per identity while billing is cumulative, so a reader
+	// reconciling one envelope needs the generation figure and one
+	// reconciling the whole session needs the total.
+	FundedWei            string `json:"funded_wei,omitempty"`
+	GenerationFundedWei  string `json:"generation_funded_wei,omitempty"`
 	PredecessorWorkID    string `json:"predecessor_work_id,omitempty"`
 	GenerationStartUnits uint64 `json:"generation_start_units,omitempty"`
 
@@ -392,4 +404,39 @@ func (s *Store) unseal(raw []byte) (*Record, error) {
 		rec.DescriptorPrivate = plain
 	}
 	return &rec, nil
+}
+
+// GetByWorkID finds a session by a payment identity it holds or held.
+// Rotation means a reader can arrive with a superseded work_id — a
+// settlement forwarded through a slow path, say — and matching only the
+// current one would answer "unknown session" about a session that is
+// right there.
+func (s *Store) GetByWorkID(workID string) (*Record, error) {
+	if workID == "" {
+		return nil, ErrNotFound
+	}
+	var out *Record
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(sessionsBucket))
+		if b == nil {
+			return ErrNotFound
+		}
+		return b.ForEach(func(_, raw []byte) error {
+			rec, err := s.unseal(raw)
+			if err != nil {
+				return nil // a record we cannot read is not a match
+			}
+			if rec.WorkID == workID || rec.PredecessorWorkID == workID {
+				out = rec
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return nil, ErrNotFound
+	}
+	return out, nil
 }

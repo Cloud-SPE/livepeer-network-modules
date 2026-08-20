@@ -325,25 +325,27 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	lease := e.leaseFrom(ctx, now, sender, workID, req.Spec)
 
 	rec := &sessionstore.Record{
-		SessionID:         sessionID,
-		GatewaySessionID:  req.GatewaySessionID,
-		RunnerSessionID:   created.RunnerSessionID,
-		WorkID:            workID,
-		Capability:        req.Spec.Capability,
-		Offering:          req.Spec.Offering,
-		BackendRef:        req.Spec.BackendRef,
-		Sender:            sender,
-		CredentialHash:    sessionstore.HashSecret(credential),
-		CallbackTokenHash: sessionstore.HashSecret(callbackToken),
-		DescriptorSchema:  desc.Schema,
-		DescriptorPublic:  desc.Public,
-		DescriptorPrivate: desc.Private,
-		Grants:            auditGrants(desc.Grants),
-		Unit:              req.Spec.WorkUnit,
-		LeaseExpiresAt:    lease,
-		LastEventAt:       now,
-		State:             sessionstore.StateActive,
-		CapacityRef:       req.CapacityRef,
+		SessionID:           sessionID,
+		GatewaySessionID:    req.GatewaySessionID,
+		RunnerSessionID:     created.RunnerSessionID,
+		WorkID:              workID,
+		Capability:          req.Spec.Capability,
+		Offering:            req.Spec.Offering,
+		BackendRef:          req.Spec.BackendRef,
+		Sender:              sender,
+		CredentialHash:      sessionstore.HashSecret(credential),
+		CallbackTokenHash:   sessionstore.HashSecret(callbackToken),
+		FundedWei:           creditedString(payRes),
+		GenerationFundedWei: creditedString(payRes),
+		DescriptorSchema:    desc.Schema,
+		DescriptorPublic:    desc.Public,
+		DescriptorPrivate:   desc.Private,
+		Grants:              auditGrants(desc.Grants),
+		Unit:                req.Spec.WorkUnit,
+		LeaseExpiresAt:      lease,
+		LastEventAt:         now,
+		State:               sessionstore.StateActive,
+		CapacityRef:         req.CapacityRef,
 	}
 	if err := e.cfg.Store.CreateIndexed(rec, req.RequestID); err != nil {
 		if errors.Is(err, sessionstore.ErrExists) {
@@ -702,6 +704,7 @@ func (e *Engine) topUpLocked(ctx context.Context, rec *sessionstore.Record, spec
 	}
 	if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
 		r.LeaseExpiresAt = lease
+		addFunded(r, res)
 		return nil
 	}); err != nil {
 		return nil, err
@@ -825,6 +828,10 @@ func (e *Engine) rebindLocked(ctx context.Context, rec *sessionstore.Record, spe
 		r.WorkID = newWorkID
 		r.RotationGeneration = generation
 		r.GenerationStartUnits = r.DebitedTotal
+		// Funding is per identity: the successor starts from what this
+		// payment credited, while the cumulative total carries on.
+		r.GenerationFundedWei = "0"
+		addFunded(r, res)
 		// debit_seq is per payee session: the successor's sequence space
 		// starts fresh, and daemon idempotency is keyed
 		// (sender, work_id, debit_seq) so nothing collides.
@@ -884,6 +891,31 @@ func (e *Engine) rotationAllowed(ctx context.Context, rec *sessionstore.Record, 
 			"previous rotation delivered no work; refusing to fund another and ending the session")
 	}
 	return nil
+}
+
+// addFunded accumulates credited value on a record. Callers hold the
+// store update.
+func addFunded(r *sessionstore.Record, res *payment.ProcessPaymentResult) {
+	if res == nil || res.CreditedEV == nil || res.CreditedEV.Sign() <= 0 {
+		return
+	}
+	r.FundedWei = addDecimal(r.FundedWei, res.CreditedEV)
+	r.GenerationFundedWei = addDecimal(r.GenerationFundedWei, res.CreditedEV)
+}
+
+func addDecimal(current string, delta *big.Int) string {
+	sum, ok := new(big.Int).SetString(current, 10)
+	if !ok || sum == nil {
+		sum = new(big.Int)
+	}
+	return sum.Add(sum, delta).String()
+}
+
+func creditedString(res *payment.ProcessPaymentResult) string {
+	if res == nil || res.CreditedEV == nil {
+		return "0"
+	}
+	return res.CreditedEV.String()
 }
 
 func bytesEqual(a, b []byte) bool {

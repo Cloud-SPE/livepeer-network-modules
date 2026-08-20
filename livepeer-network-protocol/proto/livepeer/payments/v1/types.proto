@@ -236,6 +236,63 @@ message SettlementRecord {
 
   // Optional workload-specific metadata. Not part of canonical arithmetic.
   map<string, string> breakdown = 9;
+
+  // ---- paid-session/v1 fields ----
+  //
+  // A job settles in one exchange against one payment identity, so the
+  // fields above say everything about it. A session outlives many
+  // payments and may change payment identity mid-flight (recipient
+  // rotation, paid-session §3.3.1), so a clearinghouse needs the chain
+  // as well as the totals. Empty on job settlements.
+
+  // Stable broker-local session id. Constant across rotations, which is
+  // what makes it the anchor for ordering and replay binding.
+  string session_id = 10;
+
+  // The payment identity in force for this record, and the one it
+  // replaced. predecessor_work_id is empty at generation 0.
+  string work_id = 11;
+  string predecessor_work_id = 12;
+
+  // 0 at open, incremented on each rotation.
+  uint32 rotation_generation = 13;
+
+  // Cumulative over the whole logical session, spanning every
+  // generation. debited_units is the AUTHORITATIVE billing quantity:
+  // claimed_units is what a runner asserted, debited_units is what the
+  // ledger moved. billed_value_wei above is
+  // ceil(debited_units * amount_wei / per_units) over these cumulative
+  // units — one ceiling over the total, never a sum of per-generation
+  // ceilings (offering-axes.md §6.1).
+  uint64 claimed_units = 14;
+  uint64 debited_units = 15;
+
+  // Scoped to work_id above, so each funding envelope reconciles against
+  // what it actually paid for. The generation subtotals sum to the
+  // cumulative totals.
+  uint64 generation_debited_units = 16;
+  BigUInt generation_billed_value_wei = 17;
+  BigUInt generation_funded_value_wei = 18;
+
+  // The price this session was pinned to at open. Carried so a reader
+  // can recompute billed_value_wei without trusting it.
+  BigUInt amount_wei = 19;
+  uint64 per_units = 20;
+
+  // Monotonic per session_id — NOT per work_id, because rotation mints a
+  // new work_id and a per-identity counter would restart mid-session.
+  // (session_id, settlement_seq) is the replay binding: a record is
+  // meaningful for exactly one session at exactly one point in its life.
+  uint64 settlement_seq = 21;
+
+  // When this record was produced. A record is a statement about the
+  // session as of this instant, not a cached blob.
+  string issued_at = 22;
+
+  // Session state when the record was produced: "open", "winding_down"
+  // or "closed". Distinguishes an interim snapshot from a final
+  // settlement.
+  string state = 23;
 }
 
 // PaymentRejectionReason is the machine-readable reason a payee daemon

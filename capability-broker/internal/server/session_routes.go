@@ -40,6 +40,7 @@ func (s *Server) registerSessionRoutes() {
 	s.mux.HandleFunc("POST /v1/session/{id}/end", s.handleSessionEnd)
 	s.mux.HandleFunc("POST /v1/session/{id}/events", s.handleSessionEvents)
 	s.mux.HandleFunc("GET /v1/session/{id}/ws", s.handleSessionWS)
+	s.mux.HandleFunc("GET /v1/settlement/{id}", s.handleSettlement)
 }
 
 // sessionCapability finds the paid-session capability tuple.
@@ -283,6 +284,67 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// handleSettlement serves a session's settlement record by session_id or
+// by any work_id the session has held.
+//
+// It exists because the record's normal path — a response header — runs
+// through a customer-controlled SDK that can drop it, and because after a
+// rotation a reader may hold a work_id that is no longer current.
+// Authorisation is the session credential, same as every other session
+// read; the record is regenerated per query rather than cached, so its
+// issued_at is a statement about now.
+func (s *Server) handleSettlement(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rec, err := s.sessionStore.Get(id)
+	if err != nil {
+		// Not a session id — try it as a payment identity, current or
+		// superseded.
+		rec, err = s.sessionStore.GetByWorkID(id)
+	}
+	if err != nil || rec == nil {
+		writeUniformUnauthorized(w)
+		return
+	}
+	if !s.authorizedForSession(r, rec) {
+		writeUniformUnauthorized(w)
+		return
+	}
+	spec := s.specForRecord(rec)
+	if spec == nil {
+		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
+			"no offering spec for this session")
+		return
+	}
+	set := s.sessionEngine.SettlementFor(rec, spec)
+	if set == nil {
+		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
+			"settlement unavailable")
+		return
+	}
+	encoded, err := middleware.EncodeSettlementRecord(set)
+	if err != nil {
+		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
+			"encode settlement: "+err.Error())
+		return
+	}
+	w.Header().Set(livepeerheader.Settlement, encoded)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"session_id":          set.GetSessionId(),
+		"work_id":             set.GetWorkId(),
+		"predecessor_work_id": set.GetPredecessorWorkId(),
+		"rotation_generation": set.GetRotationGeneration(),
+		"state":               set.GetState(),
+		"unit":                set.GetWorkUnitName(),
+		"claimed_units":       set.GetClaimedUnits(),
+		"debited_units":       set.GetDebitedUnits(),
+		"billed_value_wei":    new(big.Int).SetBytes(set.GetBilledValueWei().GetValue()).String(),
+		"amount_wei":          new(big.Int).SetBytes(set.GetAmountWei().GetValue()).String(),
+		"per_units":           set.GetPerUnits(),
+		"settlement_seq":      set.GetSettlementSeq(),
+		"issued_at":           set.GetIssuedAt(),
+	})
+}
+
 func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 	rec, ok := s.authSession(w, r)
 	if !ok {
@@ -297,6 +359,16 @@ func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeSessionError(w, err)
 		return
+	}
+	// The final settlement rides the close, so a gateway that ends a
+	// session holds its accounting without a second call. It is also
+	// retrievable afterwards (GET /v1/settlement/{id}) — a settlement
+	// delivered once through a channel that can drop it is not a
+	// settlement a clearinghouse can rely on.
+	if set, err := s.sessionEngine.RecordSettlement(r.Context(), rec.SessionID); err == nil && set != nil {
+		if encoded, err := middleware.EncodeSettlementRecord(set); err == nil {
+			w.Header().Set(livepeerheader.Settlement, encoded)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id":   final.SessionID,
@@ -390,6 +462,16 @@ func (s *Server) authSession(w http.ResponseWriter, r *http.Request) (*sessionst
 		return nil, false
 	}
 	return rec, true
+}
+
+// authorizedForSession checks the session credential without writing a
+// response, for handlers that resolve their record before authorising.
+func (s *Server) authorizedForSession(r *http.Request, rec *sessionstore.Record) bool {
+	if s.sessionEngine == nil || rec == nil {
+		return false
+	}
+	cred, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return cred != "" && sessionstore.VerifySecret(rec.CredentialHash, cred)
 }
 
 func writeUniformUnauthorized(w http.ResponseWriter) {

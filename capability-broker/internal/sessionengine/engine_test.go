@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"path/filepath"
 	"strings"
@@ -1105,5 +1106,114 @@ func TestRebindRefusesWhenTheLastGenerationDeliveredNothing(t *testing.T) {
 	final, _ := h.store.Get(res.SessionID)
 	if final.CloseReason != ReasonPaymentUnrecoverable {
 		t.Fatalf("close reason = %q; want %q", final.CloseReason, ReasonPaymentUnrecoverable)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// settlement
+
+// TestSettlementReportsCumulativeAccounting: LOC bills off this record,
+// and the authoritative quantity is what the ledger moved, not what a
+// runner claimed. billed_value must be one ceiling over the cumulative
+// total so a reader recomputing it agrees.
+func TestSettlementReportsCumulativeAccounting(t *testing.T) {
+	h := newHarness(t)
+	h.spec.PricePerWorkUnitWei = big.NewInt(100)
+	h.spec.PerUnits = 1000
+	res := h.open(t)
+
+	for i, total := range []uint64{7, 19, 31} {
+		if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID,
+			usageEvent(fmt.Sprintf("ev-%d", i), uint64(i+1), total)); err != nil {
+			t.Fatalf("event %d: %v", i, err)
+		}
+	}
+
+	rec, _ := h.store.Get(res.SessionID)
+	set := h.engine.SettlementFor(rec, h.spec)
+	if set == nil {
+		t.Fatal("no settlement record")
+	}
+	if set.GetDebitedUnits() != 31 || set.GetClaimedUnits() != 31 {
+		t.Fatalf("units: claimed=%d debited=%d; want 31/31",
+			set.GetClaimedUnits(), set.GetDebitedUnits())
+	}
+	// ceil(31 * 100 / 1000) = 4, not 3 (floor) and not the 6 that
+	// pricing each event separately would give (1+2+2).
+	if got := new(big.Int).SetBytes(set.GetBilledValueWei().GetValue()); got.Int64() != 4 {
+		t.Fatalf("billed = %s wei; want 4 — one ceiling over the cumulative total", got)
+	}
+	if set.GetSessionId() != res.SessionID || set.GetWorkId() != rec.WorkID {
+		t.Fatal("settlement does not identify its session")
+	}
+	if set.GetPerUnits() != 1000 {
+		t.Fatalf("per_units = %d; a reader cannot recompute without it", set.GetPerUnits())
+	}
+}
+
+// TestSettlementCarriesTheRotationChain: after a rebind the record has to
+// explain which identity paid for which stretch, because that is all LOC
+// gets — a completed rotation is settlement-only.
+func TestSettlementCarriesTheRotationChain(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	before, _ := h.store.Get(res.SessionID)
+
+	if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID,
+		usageEvent("ev-1", 1, 10)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+	if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID,
+		usageEvent("ev-2", 2, 25)); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, _ := h.store.Get(res.SessionID)
+	set := h.engine.SettlementFor(rec, h.spec)
+	if set.GetRotationGeneration() != 1 {
+		t.Fatalf("generation = %d; want 1", set.GetRotationGeneration())
+	}
+	if set.GetPredecessorWorkId() != before.WorkID {
+		t.Fatalf("predecessor = %q; want %q", set.GetPredecessorWorkId(), before.WorkID)
+	}
+	if set.GetDebitedUnits() != 25 {
+		t.Fatalf("cumulative debited = %d; want 25 spanning both generations", set.GetDebitedUnits())
+	}
+	// The second generation delivered 15 of those 25.
+	if set.GetGenerationDebitedUnits() != 15 {
+		t.Fatalf("generation subtotal = %d; want 15", set.GetGenerationDebitedUnits())
+	}
+}
+
+// TestSettlementSeqIsPerSession: rotation mints a new work_id, so a
+// per-identity counter would restart mid-session and leave a reader
+// unable to order two records from one session.
+func TestSettlementSeqIsPerSession(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	before, _ := h.store.Get(res.SessionID)
+
+	first, err := h.engine.RecordSettlement(context.Background(), res.SessionID)
+	if err != nil || first == nil {
+		t.Fatalf("record: %v", err)
+	}
+	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
+		t.Fatal(err)
+	}
+	second, err := h.engine.RecordSettlement(context.Background(), res.SessionID)
+	if err != nil || second == nil {
+		t.Fatalf("record: %v", err)
+	}
+	if second.GetSettlementSeq() <= first.GetSettlementSeq() {
+		t.Fatalf("seq did not advance across a rotation: %d -> %d",
+			first.GetSettlementSeq(), second.GetSettlementSeq())
+	}
+	if second.GetWorkId() == first.GetWorkId() {
+		t.Fatal("test did not actually rotate")
 	}
 }

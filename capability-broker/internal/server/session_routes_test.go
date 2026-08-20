@@ -171,13 +171,11 @@ func TestSessionSurfaceEndToEnd(t *testing.T) {
 	if replay["session_id"] != sessionID {
 		t.Fatal("replay minted a different session")
 	}
-	if _, has := replay["credential"]; has {
-		t.Fatal("replay re-delivered the credential")
-	}
-	if g, ok := replay["runtime"].(map[string]any)["grants"]; ok && g != nil {
-		if arr, isArr := g.([]any); isArr && len(arr) > 0 {
-			t.Fatal("replay re-delivered grants")
-		}
+	// An idempotent open converges on the usable outcome: the same
+	// credential comes back, so a lost response is recoverable rather
+	// than terminal for a session the gateway already funded.
+	if replay["credential"] != open["credential"] {
+		t.Fatalf("replay credential = %v; want the recorded %v", replay["credential"], open["credential"])
 	}
 
 	// --- status: credential-authenticated, identical public, no grants

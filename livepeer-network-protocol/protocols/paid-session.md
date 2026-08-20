@@ -1,6 +1,6 @@
 ---
 spec_name: paid-session
-version: 1.0.5-draft
+version: 1.0.6-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -94,6 +94,31 @@ Required headers: `Livepeer-Protocol: paid-session/v1`, `Livepeer-Capability`,
 Open is idempotent on `Livepeer-Request-Id` under the same contract as
 `paid-job/v1` §4: a retried open converges on the original outcome and never
 mints a second session or a second `work_id`.
+
+**A replay returns the *usable* outcome — credential and grants included.**
+Delivering secrets exactly once reads as good hygiene and is the wrong trade:
+a gateway whose open response was lost in flight would hold a funded session
+it can never drive, with nothing to do but wait out the lease. Re-delivery is
+bounded instead, and a broker MUST require all of:
+
+- the same `Livepeer-Request-Id`;
+- an identical open fingerprint — capability, offering, `gateway_session_id`,
+  `session_params`, and the payment envelope;
+- the payment envelope in that fingerprint is what proves the same payer: an
+  identical fingerprint means the same funded intent from the same sender, so
+  what is returned goes back to whoever bought it;
+- the exact recorded outcome, with no re-execution and no second runner
+  binding.
+
+Possession of a request id alone MUST NOT authorize credential recovery, and a
+reused id with different content is `request_id_reuse` — answering it with the
+recorded session's credential would hand a caller the keys to a session it
+never opened.
+
+The credential and grant secrets MUST be held encrypted at rest for the replay
+window and MUST be destroyed when the session winds down: the window is the
+session's life, and secrets outliving what they unlock is how a store becomes
+a liability.
 
 Body: `{ "gateway_session_id": "<uuid>", "session_params": { … } }` —
 `session_params` is opaque capability data, passed to the runner verbatim.
@@ -650,6 +675,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.6-draft | 2026-08-20 | §3.1: an open replay now returns the **usable** recorded outcome — credential and grants re-delivered — under four conditions (same request id, identical open fingerprint including the payment envelope, same payer proven by that envelope, exact recorded outcome). Reverses exactly-once secret delivery: a lost open response otherwise left a funded session nobody could drive. Adds the fingerprint requirement, so a reused id with different content is `request_id_reuse` rather than somebody else's session, and requires replay secrets encrypted at rest and destroyed at winddown. |
 | 1.0.5-draft | 2026-08-20 | Add §3.3.1, recipient rotation: payee-authorized only, `recipient_rotated` as the signal, a **declared** rebind on top-up with three verification rules, predecessor settled before close, continuity of session/credential/cumulative accounting, `session.max_rotations` and the zero-delivery bound, `payment_unrecoverable` as the terminal reason, bounded offerings excluded, settlement-only visibility, and stranded balance stated as a known cost. §8 gains `rebind_from` and `session.rebound`. |
 | 1.0.4-draft | 2026-08-20 | §3.3: `Livepeer-Request-Id` is required on top-up (and §8's `session.topup` frame carries it as `request_id`) and its replay semantics are stated — recorded outcome returned verbatim, replay checked before terminal/refusal, and an already-credited envelope (nonce replay) answered with the current lease unextended. The reference implementation ignored the header entirely, so a gateway retrying a top-up after a lost response funded the session twice. |
 | 1.0.3-draft | 2026-08-20 | §3: state the two-identifier rule — `work_id` MUST be the payee-issued `recipient_rand_hash`, `session_id` is an opaque broker-local handle and never a payment key. §3.1: an open whose payment had every ticket rejected MUST fail closed with `payment_invalid`. Both were silences the reference implementation filled differently on each protocol. |

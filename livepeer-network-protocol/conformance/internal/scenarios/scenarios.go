@@ -450,8 +450,27 @@ func sessionScenarios() []harness.Scenario {
 			if a == "" || a != b {
 				return fmt.Errorf("replay minted a sibling: %q vs %q", a, b)
 			}
-			if harness.FieldString(second.JSON(), "credential") != "" {
-				return fmt.Errorf("replay re-delivered the credential")
+			// A replay converges on the USABLE outcome: the same
+			// credential comes back. Withholding it would leave a
+			// gateway whose response was lost holding a funded session
+			// it can never drive, which is the failure idempotent opens
+			// exist to prevent.
+			if got, want := harness.FieldString(second.JSON(), "credential"),
+				harness.FieldString(first.JSON(), "credential"); got != want {
+				return fmt.Errorf("replay credential %q != recorded %q", got, want)
+			}
+
+			// The id is a promise about content. Reusing it for a
+			// different open must be refused, not answered with the
+			// first session's keys.
+			third, err := c.OpenSession(reqID, harness.PaymentEnvelope("openreplay-different"),
+				`{"gateway_session_id":"gws-or","session_params":{"changed":true}}`)
+			if err != nil {
+				return err
+			}
+			if third.Status != 400 || third.Header.Get(harness.HdrError) != harness.ErrRequestIDReuse {
+				return fmt.Errorf("reused id with different content: status %d error %q; want 400 %s",
+					third.Status, third.Header.Get(harness.HdrError), harness.ErrRequestIDReuse)
 			}
 			return nil
 		}},

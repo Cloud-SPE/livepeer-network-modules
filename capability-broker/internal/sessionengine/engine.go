@@ -242,8 +242,9 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	if req.Spec == nil {
 		return nil, errors.New("sessionengine: nil spec")
 	}
+	fingerprint := openFingerprint(req)
 	if id, err := e.cfg.Store.SessionIDForRequest(req.RequestID); err == nil {
-		return e.replayOpen(id)
+		return e.replayOpen(id, fingerprint)
 	}
 
 	now := e.cfg.Now()
@@ -335,6 +336,8 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		Sender:              sender,
 		CredentialHash:      sessionstore.HashSecret(credential),
 		CallbackTokenHash:   sessionstore.HashSecret(callbackToken),
+		OpenFingerprint:     fingerprint,
+		ReplayMaterial:      sealedReplayMaterial(credential, desc.Grants),
 		FundedWei:           creditedString(payRes),
 		GenerationFundedWei: creditedString(payRes),
 		DescriptorSchema:    desc.Schema,
@@ -354,7 +357,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 			_ = e.cfg.Payment.CloseSession(ctx, sender, workID)
 			e.release(req.CapacityRef)
 			if id, lerr := e.cfg.Store.SessionIDForRequest(req.RequestID); lerr == nil {
-				return e.replayOpen(id)
+				return e.replayOpen(id, fingerprint)
 			}
 		}
 		return nil, failClosed("persist", err, created.RunnerSessionID)
@@ -372,12 +375,29 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	}, nil
 }
 
-func (e *Engine) replayOpen(sessionID string) (*OpenResult, error) {
+// replayOpen answers a retried open with the outcome the original call
+// produced — credential and grants included.
+//
+// Delivering secrets exactly once reads as good hygiene and is the wrong
+// trade: a gateway whose open response was lost in flight would hold a
+// funded session it can never drive, with nothing to do but wait out the
+// lease. Re-delivery is bounded instead — same request id, identical
+// content, and the payment envelope that proves the same payer — so what
+// is returned goes back to whoever bought it.
+//
+// A reused id with different content is request_id_reuse: the id is a
+// promise about content, and answering it with somebody else's session
+// would be worse than refusing.
+func (e *Engine) replayOpen(sessionID string, fingerprint []byte) (*OpenResult, error) {
 	rec, err := e.cfg.Store.Get(sessionID)
 	if err != nil {
 		return nil, err
 	}
-	return &OpenResult{
+	if len(rec.OpenFingerprint) > 0 && !bytesEqual(rec.OpenFingerprint, fingerprint) {
+		return nil, protoErr("request_id_reuse",
+			"request id reused with different open content")
+	}
+	out := &OpenResult{
 		SessionID: rec.SessionID,
 		WorkID:    rec.WorkID,
 		State:     rec.State,
@@ -385,7 +405,58 @@ func (e *Engine) replayOpen(sessionID string) (*OpenResult, error) {
 		Public:    rec.DescriptorPublic,
 		Lease:     rec.LeaseExpiresAt,
 		Replayed:  true,
-	}, nil
+	}
+	if len(rec.ReplayMaterial) > 0 {
+		var mat replayMaterial
+		if err := json.Unmarshal(rec.ReplayMaterial, &mat); err != nil {
+			return nil, fmt.Errorf("sessionengine: replay material: %w", err)
+		}
+		out.Credential = mat.Credential
+		out.Grants = mat.Grants
+	}
+	return out, nil
+}
+
+// sealedReplayMaterial renders what a replay must return. Marshalling
+// failure yields nil rather than an error: an open that succeeded must
+// not fail because its replay copy could not be prepared, and a replay
+// with no material degrades to the pre-existing behaviour rather than
+// to a broken session.
+func sealedReplayMaterial(credential string, grants []Grant) []byte {
+	raw, err := json.Marshal(replayMaterial{Credential: credential, Grants: grants})
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// replayMaterial is what an idempotent open must be able to hand back.
+// Sealed at rest and cleared at winddown.
+type replayMaterial struct {
+	Credential string  `json:"credential"`
+	Grants     []Grant `json:"grants,omitempty"`
+}
+
+// openFingerprint binds a request id to the open it answered:
+// capability, offering, the gateway's own session id, the opaque
+// session_params, and the payment envelope. The envelope is what makes
+// the fingerprint an identity check as well as a content check — an
+// identical fingerprint means the same payer presented the same funded
+// intent, which is the condition for handing the credential back.
+func openFingerprint(req OpenRequest) []byte {
+	h := sha256.New()
+	if req.Spec != nil {
+		h.Write([]byte(req.Spec.Capability))
+		h.Write([]byte{0})
+		h.Write([]byte(req.Spec.Offering))
+	}
+	h.Write([]byte{0})
+	h.Write([]byte(req.GatewaySessionID))
+	h.Write([]byte{0})
+	h.Write(req.SessionParams)
+	h.Write([]byte{0})
+	h.Write(req.PaymentBytes)
+	return h.Sum(nil)
 }
 
 // leaseFrom computes the funding-tracking lease default: runway units at
@@ -1005,6 +1076,9 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 	_ = e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
 		r.State = state
 		r.CloseReason = reason
+		// The replay window ends with the session. Secrets outliving
+		// the thing they unlock is how a store becomes a liability.
+		r.ReplayMaterial = nil
 		r.PaymentClosed = paymentClosed
 		r.EndedAt = now
 		r.CapacityRef = ""

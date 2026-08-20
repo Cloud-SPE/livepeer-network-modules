@@ -206,7 +206,10 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 		"lease":   map[string]any{"expires_at": res.Lease.Format(time.RFC3339)},
 		"control": s.sessionControlURLs(res.SessionID),
 	}
-	if !res.Replayed {
+	// Re-delivered on a replay too: an idempotent open converges on the
+	// usable recorded outcome, or a lost response leaves a funded
+	// session nobody can drive (paid-session §3.1).
+	if res.Credential != "" {
 		resp["credential"] = res.Credential
 	}
 	if rec != nil {

@@ -93,6 +93,22 @@ type Record struct {
 	CredentialHash    []byte `json:"credential_hash"`
 	CallbackTokenHash []byte `json:"callback_token_hash"`
 
+	// OpenFingerprint binds the request id to the open it answered, so a
+	// reused id with different content is refused instead of being given
+	// somebody else's session.
+	OpenFingerprint []byte `json:"open_fingerprint,omitempty"`
+
+	// ReplayMaterial is the credential and grant secrets an idempotent
+	// open must be able to re-deliver, sealed under the store key like
+	// the descriptor's private part. A gateway whose open response was
+	// lost otherwise holds a funded session it can never drive.
+	//
+	// Cleared at winddown: the replay window is the session's life, and
+	// secrets outliving the thing they unlock is how a store becomes a
+	// liability.
+	ReplayMaterial       []byte `json:"-"`
+	ReplayMaterialSealed []byte `json:"replay_material_sealed,omitempty"`
+
 	// Runtime descriptor. Public is stored as-is (it is public by
 	// contract); Private is sealed under the store key on write and
 	// unsealed on read; Grants hold audit metadata only.
@@ -384,6 +400,15 @@ func (s *Store) seal(rec *Record) ([]byte, error) {
 		}
 		clone.PrivateSealed = append(nonce, s.aead.Seal(nil, nonce, rec.DescriptorPrivate, []byte(rec.SessionID))...)
 	}
+	if len(rec.ReplayMaterial) > 0 {
+		nonce := make([]byte, s.aead.NonceSize())
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, fmt.Errorf("sessionstore: nonce: %w", err)
+		}
+		clone.ReplayMaterialSealed = append(nonce, s.aead.Seal(nil, nonce, rec.ReplayMaterial, []byte(rec.SessionID))...)
+	} else {
+		clone.ReplayMaterialSealed = nil
+	}
 	return json.Marshal(&clone)
 }
 
@@ -402,6 +427,17 @@ func (s *Store) unseal(raw []byte) (*Record, error) {
 			return nil, fmt.Errorf("sessionstore: unseal private part: %w", err)
 		}
 		rec.DescriptorPrivate = plain
+	}
+	if len(rec.ReplayMaterialSealed) > 0 {
+		ns := s.aead.NonceSize()
+		if len(rec.ReplayMaterialSealed) < ns {
+			return nil, errors.New("sessionstore: sealed replay material truncated")
+		}
+		plain, err := s.aead.Open(nil, rec.ReplayMaterialSealed[:ns], rec.ReplayMaterialSealed[ns:], []byte(rec.SessionID))
+		if err != nil {
+			return nil, fmt.Errorf("sessionstore: unseal replay material: %w", err)
+		}
+		rec.ReplayMaterial = plain
 	}
 	return &rec, nil
 }

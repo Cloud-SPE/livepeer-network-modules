@@ -284,23 +284,62 @@ func TestOpenHappyPath(t *testing.T) {
 	}
 }
 
+// TestOpenIdempotentReplay: an identical retry converges on the USABLE
+// recorded outcome. Withholding the credential would leave a gateway
+// whose response was lost holding a funded session it can never drive —
+// which defeats the point of making opens idempotent.
 func TestOpenIdempotentReplay(t *testing.T) {
 	h := newHarness(t)
 	first := h.open(t)
-	replay, err := h.engine.Open(context.Background(), OpenRequest{
-		RequestID: "req-1", PaymentBytes: []byte{1}, Spec: h.spec,
-	})
-	if err != nil {
-		t.Fatalf("replay: %v", err)
-	}
+	replay := h.open(t) // same request id, same content
 	if !replay.Replayed || replay.SessionID != first.SessionID || replay.WorkID != first.WorkID {
 		t.Fatalf("replay must return the original session: %+v", replay)
 	}
-	if replay.Credential != "" || len(replay.Grants) != 0 {
-		t.Fatal("replay must never re-deliver credential or grants")
+	if replay.Credential != first.Credential {
+		t.Fatalf("replay credential = %q; want the recorded %q", replay.Credential, first.Credential)
+	}
+	if len(replay.Grants) != len(first.Grants) {
+		t.Fatalf("replay returned %d grants; want the recorded %d", len(replay.Grants), len(first.Grants))
 	}
 	if h.runner.created != 1 {
 		t.Fatalf("replay created a second runner session: %d", h.runner.created)
+	}
+}
+
+// TestOpenRefusesReusedRequestIDWithDifferentContent: the id is a
+// promise about content, and re-delivering a credential makes breaking
+// that promise worse than before — the caller would receive the keys to
+// a session it did not open.
+func TestOpenRefusesReusedRequestIDWithDifferentContent(t *testing.T) {
+	h := newHarness(t)
+	h.open(t)
+	_, err := h.engine.Open(context.Background(), OpenRequest{
+		RequestID:     "req-1",
+		SessionParams: json.RawMessage(`{"room_hint":"something-else"}`),
+		PaymentBytes:  []byte{9, 9, 9},
+		Spec:          h.spec,
+	})
+	var pe *ProtocolError
+	if !errors.As(err, &pe) || pe.Code != "request_id_reuse" {
+		t.Fatalf("err = %v; want request_id_reuse", err)
+	}
+}
+
+// TestReplayMaterialIsClearedAtWinddown: the replay window is the
+// session's life. Secrets outliving what they unlock is how a store
+// becomes a liability.
+func TestReplayMaterialIsClearedAtWinddown(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	if _, err := h.engine.End(context.Background(), res.SessionID, ""); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.store.Get(res.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.ReplayMaterial) != 0 || len(rec.ReplayMaterialSealed) != 0 {
+		t.Fatal("credential and grants survived the session that used them")
 	}
 }
 

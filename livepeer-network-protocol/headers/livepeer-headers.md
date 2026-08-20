@@ -1,6 +1,6 @@
 ---
 status: draft (rewritten for the v1 protocols)
-spec_version: 1.0.1-draft
+spec_version: 1.0.2-draft
 last_updated: 2026-08-20
 ---
 
@@ -173,22 +173,61 @@ claim, debit, and idempotency record.
 
 Broker-authoritative settlement record for the completed request or session window.
 
-- **Value:** base64-encoded protobuf `livepeer.payments.v1.SettlementRecord`
-- Contains, when available:
-  - accepted quote identity
-  - funded value
-  - actual units
-  - billed units
-  - billed value
-  - settlement outcome
+- **Value:** base64-encoded JSON envelope:
+
+  ```json
+  {
+    "payload": { … the settlement record … },
+    "signature": {
+      "algorithm": "secp256k1",
+      "canonicalization": "jcs",
+      "value": "0x…130 hex…"
+    }
+  }
+  ```
+
+- `payload` is the JCS-canonical (RFC 8785) JSON form of
+  `livepeer.payments.v1.SettlementRecord`, using the proto field names. It is
+  already canonical as transmitted, so a verifier signs and checks exactly the
+  bytes it received.
+- The signature is EIP-191 personal-sign over those bytes — the same scheme as
+  the manifest, so a consumer verifies settlement with primitives it already
+  has rather than a second scheme.
+- **The signer is a delegated hot key, not the orch's cold key.** A broker is
+  network-exposed; compromising one MUST NOT cost an operator the identity that
+  anchors it on-chain. The cold key delegates by publishing the hot key in the
+  manifest's `settlement_keys`, and resolvers project every currently-valid key
+  onto the route, so key discovery and rotation ride the path a consumer
+  already trusts.
+- A consumer MUST accept a record signed by any delegated key whose validity
+  window contains the record's `issued_at` — an outgoing key stays published
+  until its `expires_at` so a record signed just before a rotation still
+  verifies.
+- **`signature` is absent when the broker holds no delegated key.** A consumer
+  that needs integrity MUST reject an unsigned envelope; the field is omitted
+  rather than emptied so the distinction cannot be missed.
 - For `paid-job/v1`, emitted as a response header or HTTP trailer depending on
   when the implementation can finalize settlement relative to header commit.
-- For `paid-session/v1`, emitted on the protocol's terminal plane (the terminal
-  status response or the control-WS `session.ended` frame).
+- For `paid-session/v1`, emitted on the terminal response, and retrievable at
+  any time from `GET /v1/settlement/{id}` — by `session_id` or by any `work_id`
+  the session has held, including one a rotation superseded. A settlement
+  delivered once, through a channel that can drop it, is not one a
+  clearinghouse can rely on.
 
-Gateways should store `Livepeer-Settlement` as the authoritative settlement record for
-the request/session rather than re-deriving settlement from local heuristics when the
-broker provides it.
+For `paid-session/v1` the record additionally carries the session's identity
+chain and cumulative accounting (paid-session §3.3.1): stable `session_id`,
+current and predecessor `work_id`, `rotation_generation`, cumulative claimed and
+debited units with per-generation subtotals, and `settlement_seq` — monotonic
+per session, so `(session_id, settlement_seq)` is the replay binding.
+
+`debited_units` is the authoritative billing quantity: `claimed_units` is what a
+runner asserted, `debited_units` is what the ledger moved.
+`billed_value_wei` is one ceiling over the cumulative total
+(`offering-axes.md` §6.1), and `amount_wei` / `per_units` travel with it so a
+consumer can recompute rather than trust.
+
+Gateways and clearinghouses should store the envelope as the authoritative
+settlement record rather than re-deriving settlement from local heuristics.
 
 ### `Livepeer-Health-Status`
 
@@ -307,5 +346,6 @@ See [`../conformance/`](../conformance/).
 | 0.1.1 | Add `insufficient_balance` error code for long-running sessions terminated by the broker mid-flight (plan 0015). Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |
 | 0.1.2 | Add `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout` error codes for `rtmp-ingress-hls-egress` (plan 0011-followup). Pre-1.0 minor additions are non-breaking. |
 | 0.1.3 | Add `backpressure_drop` error code for the `session-control-plus-media` control-WebSocket (plan 0012-followup). Pre-1.0 minor additions are non-breaking. |
+| 1.0.2-draft | `Livepeer-Settlement` becomes a signed JSON envelope for BOTH protocols: JCS-canonical payload plus an EIP-191 secp256k1 signature from a manifest-delegated hot key, with the signature omitted when a broker holds no delegation. Adds the paid-session identity chain and cumulative accounting to the record, and names `GET /v1/settlement/{id}` as the retrieval path. Replaces the bare base64 protobuf — the channel that carried it ends at a customer-controlled SDK, so integrity has to travel with the record. |
 | 1.0.1-draft | Add `recipient_rotated` and `rebind_refused` for recipient rotation, and the `Livepeer-Rebind-From` request header that declares a rebind's predecessor (paid-session §3.3.1). Pre-1.0-style minor addition: receivers validate the major only. |
 | 1.0.0-draft | **Breaking.** Rewritten for the v1 protocols (2026-08-19). `Livepeer-Mode` + `Livepeer-Spec-Version` replaced by `Livepeer-Protocol`; `Livepeer-Request-Id` becomes required (it is the idempotency key); `Livepeer-Work-Unit` and `Livepeer-Job-Id` added; `protocol_unsupported`, `protocol_transport_unsupported`, `job_in_flight`, `request_id_reuse`, and `refill_refused` added. The mode-era `ffmpeg_subprocess_failed`, `rtmp_ingest_idle_timeout`, and `backpressure_drop` codes removed with the broker-hosted media plane. |

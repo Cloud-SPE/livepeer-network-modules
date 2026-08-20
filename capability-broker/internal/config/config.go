@@ -39,6 +39,16 @@ type SessionStore struct {
 type Identity struct {
 	OrchEthAddress string `yaml:"orch_eth_address"`
 	Label          string `yaml:"label,omitempty"`
+	// SettlementKeyFile holds the hex secp256k1 private key this broker
+	// signs settlement records with. It is a HOT key the orch's cold key
+	// delegates to through the manifest's settlement_keys block — never
+	// the cold key itself, because a broker is network-exposed and
+	// compromising one must not cost the operator its on-chain identity.
+	//
+	// Absent means settlement records go out unsigned. That keeps a
+	// mock-payment deployment runnable; a consumer that needs integrity
+	// rejects an unsigned envelope.
+	SettlementKeyFile string `yaml:"settlement_key_file,omitempty"`
 }
 
 // Listen declares the broker's bind addresses. If omitted, defaults are used.

@@ -25,6 +25,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
 )
 
@@ -51,6 +52,7 @@ type Options struct {
 // the admin surface, and a metrics listener (cfg.Listen.Metrics) for
 // Prometheus scraping.
 type Server struct {
+	settlementSigner     *settlement.Signer
 	mu                   sync.RWMutex
 	cfg                  *config.Config
 	configPath           string
@@ -143,6 +145,21 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("pool snapshot: %w", err)
 	}
 
+	// The delegated settlement key, if the operator published one.
+	// Absent is not an error: a broker on a mock payment layer has no
+	// delegation and still has to report what it billed.
+	var settlementSigner *settlement.Signer
+	if path := cfg.Identity.SettlementKeyFile; path != "" {
+		settlementSigner, err = settlement.LoadSigner(path)
+		if err != nil {
+			return nil, fmt.Errorf("settlement key: %w", err)
+		}
+		log.Printf("settlement signing enabled; delegated public key %s", settlementSigner.PublicKeyHex())
+	} else {
+		log.Printf("warning: no identity.settlement_key_file — settlement records go out UNSIGNED " +
+			"and a clearinghouse will refuse them for anything financially material")
+	}
+
 	workerRegistry := workerconn.NewRegistry()
 
 	// Reconcile runner self-descriptions before anything reads the
@@ -166,21 +183,22 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			Status:         "startup_loaded",
 			LoadedRevision: loadedRevision,
 		}},
-		opts:            opts,
-		metadata:        metadata,
-		mux:             mux,
-		srv:             srv,
-		payment:         paymentClient,
-		extractors:      defaultExtractors(),
-		backend:         workerconn.NewForwarder(backend.NewHTTPClient(), workerRegistry),
-		workerRegistry:  workerRegistry,
-		backendInFlight: make(map[string]int),
-		secrets:         secretResolver,
-		receiptSink:     receiptSink,
-		poolReporter:    poolReporter,
-		poolSnapshot:    poolSnapshot,
-		health:          health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
-		quarantined:     quarantined,
+		opts:             opts,
+		metadata:         metadata,
+		mux:              mux,
+		srv:              srv,
+		payment:          paymentClient,
+		settlementSigner: settlementSigner,
+		extractors:       defaultExtractors(),
+		backend:          workerconn.NewForwarder(backend.NewHTTPClient(), workerRegistry),
+		workerRegistry:   workerRegistry,
+		backendInFlight:  make(map[string]int),
+		secrets:          secretResolver,
+		receiptSink:      receiptSink,
+		poolReporter:     poolReporter,
+		poolSnapshot:     poolSnapshot,
+		health:           health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
+		quarantined:      quarantined,
 		randIntn: func(n int) int {
 			return rand.New(rand.NewSource(time.Now().UnixNano())).Intn(n)
 		},

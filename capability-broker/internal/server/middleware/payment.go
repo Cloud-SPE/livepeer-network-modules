@@ -17,6 +17,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
+	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 )
 
 // CapabilitySpec is what the payment middleware needs to pass to the
@@ -190,7 +191,16 @@ func SessionStateFromContext(ctx context.Context) *SessionState {
 //   - capability not found in host-config       → 404 + capability_not_served
 //   - offering not found under capability       → 404 + offering_not_served
 //   - daemon rejects (mismatch / bad sender)    → 401 + payment_invalid
-func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitConfig, receiptSink receipts.Client) Middleware {
+//
+// SettlementEncoder renders a settlement record for the wire. Injected
+// so the middleware does not reach for the server's signing key, and so
+// a test can assert on the record without a key at all.
+type SettlementEncoder func(*paymentsv1.SettlementRecord) (string, error)
+
+func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitConfig, receiptSink receipts.Client, encode SettlementEncoder) Middleware {
+	if encode == nil {
+		encode = encodeSettlementRecord
+	}
 	// Production-safety warning per plan 0015 §9.1: tick intervals
 	// below 1s are intended for conformance fixtures only.
 	if idc.Interval > 0 && idc.Interval < time.Second {
@@ -440,7 +450,7 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			}
 
 			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue); settlement != nil {
-				if encoded, err := encodeSettlementRecord(settlement); err == nil {
+				if encoded, err := encode(settlement); err == nil {
 					rec.Header().Set(livepeerheader.Settlement, encoded)
 				} else {
 					log.Printf("warning: settlement encode failed work_id=%s: %v", workID, err)

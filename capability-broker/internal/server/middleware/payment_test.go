@@ -93,7 +93,7 @@ func TestPayment_TickerDisabledFallback(t *testing.T) {
 
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval: 0, // disabled
-	}, nil)
+	}, nil, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(livepeerheader.WorkUnits, "42")
@@ -134,7 +134,7 @@ func TestPayment_TickerHappyPath(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       30 * time.Millisecond,
 		MinRunwayUnits: 0, // disable SufficientBalance for this fixture
-	}, nil)
+	}, nil, nil)
 
 	lc := &fakeLiveCounter{}
 	handlerStart := make(chan struct{})
@@ -205,7 +205,7 @@ func TestPayment_InsufficientBalanceTermination(t *testing.T) {
 		Interval:            20 * time.Millisecond,
 		MinRunwayUnits:      100,
 		GraceOnInsufficient: 0,
-	}, nil)
+	}, nil, nil)
 
 	lc := &fakeLiveCounter{}
 	handlerCtxObserved := make(chan struct{})
@@ -258,7 +258,7 @@ func TestPayment_InsufficientBalanceWithRunwayDoesNotTerminate(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       20 * time.Millisecond,
 		MinRunwayUnits: 10, // price=1 × 10 = 10 wei runway
-	}, nil)
+	}, nil, nil)
 
 	lc := &fakeLiveCounter{}
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +297,7 @@ func TestPayment_NoLiveCounterSkipsTicks(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       10 * time.Millisecond,
 		MinRunwayUnits: 0,
-	}, nil)
+	}, nil, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Do NOT set LiveCounter. Sleep long enough for ≥3 ticks.
@@ -331,7 +331,7 @@ func TestPayment_InvalidRecipientRandReturnsRecipientRotated(t *testing.T) {
 	t.Parallel()
 
 	client := &invalidRecipientRandClient{Mock: payment.NewMock()}
-	mw := Payment(client, stubLookup, InterimDebitConfig{Interval: 0}, nil)
+	mw := Payment(client, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil)
 
 	called := false
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -374,7 +374,7 @@ func TestPayment_EmitsFinalReceiptWhenMetaPresent(t *testing.T) {
 	sink := &stubReceiptSink{}
 	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "success"))
 
-	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink)
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink, nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := SessionStateFromContext(r.Context())
 		state.SetReceiptMeta(ReceiptMeta{
@@ -415,7 +415,7 @@ func TestPayment_EmitsFinalReceiptErrorMetricWhenSinkFails(t *testing.T) {
 	sink := &stubReceiptSink{err: errors.New("boom")}
 	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "error"))
 
-	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink)
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink, nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := SessionStateFromContext(r.Context())
 		state.SetReceiptMeta(ReceiptMeta{

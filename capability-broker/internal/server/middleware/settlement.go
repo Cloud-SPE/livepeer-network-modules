@@ -45,6 +45,10 @@ func BuildSettlementRecord(in SettlementInputs, actualUnits uint64, terminationR
 	return buildSettlementRecord(in.PaymentBytes, in.FundedValueWei, actualUnits, in.WorkUnit, terminationReason)
 }
 
+// Deprecated: use internal/settlement.Encode, which emits the signed
+// envelope both protocols now carry. Kept only until the last caller
+// moves.
+//
 // EncodeSettlementRecord base64-encodes a marshalled SettlementRecord
 // for transport in a single HTTP header or WebSocket terminal-event
 // field.

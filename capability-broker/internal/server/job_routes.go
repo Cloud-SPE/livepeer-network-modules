@@ -20,6 +20,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/google/uuid"
 )
 
@@ -48,7 +50,12 @@ func (s *Server) registerJobRoutes() {
 		middleware.Metrics,
 		middleware.Headers,
 	)(s.jobIdempotency(
-		middleware.Chain(middleware.Payment(s.payment, s.lookupSpec, s.opts.InterimDebit, s.receiptSink))(
+		middleware.Chain(middleware.Payment(s.payment, s.lookupSpec, s.opts.InterimDebit, s.receiptSink,
+			func(rec *pb.SettlementRecord) (string, error) {
+				// Both protocols emit the same signed envelope, so a
+				// clearinghouse verifies settlement with one code path.
+				return settlement.Encode(rec, s.settlementSigner)
+			}))(
 			http.HandlerFunc(s.handleJob))))
 	s.mux.Handle("POST /v1/job", h)
 }

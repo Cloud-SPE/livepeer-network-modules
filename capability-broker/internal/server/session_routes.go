@@ -18,6 +18,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 )
@@ -321,7 +322,7 @@ func (s *Server) handleSettlement(w http.ResponseWriter, r *http.Request) {
 			"settlement unavailable")
 		return
 	}
-	encoded, err := middleware.EncodeSettlementRecord(set)
+	encoded, err := settlement.Encode(set, s.settlementSigner)
 	if err != nil {
 		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
 			"encode settlement: "+err.Error())
@@ -366,7 +367,7 @@ func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 	// delivered once through a channel that can drop it is not a
 	// settlement a clearinghouse can rely on.
 	if set, err := s.sessionEngine.RecordSettlement(r.Context(), rec.SessionID); err == nil && set != nil {
-		if encoded, err := middleware.EncodeSettlementRecord(set); err == nil {
+		if encoded, err := settlement.Encode(set, s.settlementSigner); err == nil {
 			w.Header().Set(livepeerheader.Settlement, encoded)
 		}
 	}

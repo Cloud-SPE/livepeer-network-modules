@@ -372,7 +372,7 @@ func (s *Service) recordSenderFunds(info *providers.SenderInfo) {
 }
 
 func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceValue *big.Int, capability, offering, ticketParamsBaseURL string, acceptedPrice *types.PriceInfo, acceptedQuote *pb.QuoteRef) (*senderSession, error) {
-	key := sessionKey(recipient, capability, offering, faceValue, ticketParamsBaseURL)
+	key := sessionKey(recipient, capability, offering, ticketParamsBaseURL)
 
 	s.mu.Lock()
 	if sess, ok := s.sessions[key]; ok {
@@ -643,12 +643,21 @@ func evToBytes(ev *big.Rat) []byte {
 	return new(big.Int).Quo(num, den).Bytes()
 }
 
-func sessionKey(recipient []byte, capability, offering string, faceValue *big.Int, ticketParamsBaseURL string) string {
-	target := ""
-	if faceValue != nil {
-		target = faceValue.String()
-	}
-	return hex.EncodeToString(recipient) + "|" + capability + "|" + offering + "|" + target + "|" + strings.TrimSpace(ticketParamsBaseURL)
+// sessionKey identifies a sender-side payment session.
+//
+// It deliberately does NOT include the funded value. Refill sizing must
+// never change session identity: the payee pins its recipient rand — and
+// therefore work_id — to the stable (sender, recipient, capability,
+// offering) tuple for as long as its ticket session is open, so keying
+// on funded value here only produced a second cache entry and a
+// redundant ticket-params fetch that came back with the same identity.
+// Worse, it implied the opposite invariant to anyone reading it.
+//
+// Face value is pinned at first issuance for the life of the session; a
+// larger refill mints MORE tickets, not larger ones. See
+// livepeer-network-protocol/protocols/offering-axes.md §6.2.
+func sessionKey(recipient []byte, capability, offering string, ticketParamsBaseURL string) string {
+	return hex.EncodeToString(recipient) + "|" + capability + "|" + offering + "|" + strings.TrimSpace(ticketParamsBaseURL)
 }
 
 func cloneTicketParams(in *types.TicketParams) *types.TicketParams {

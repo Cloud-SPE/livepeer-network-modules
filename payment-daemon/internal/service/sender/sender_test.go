@@ -853,3 +853,48 @@ func standWithStore(t *testing.T, st *store.Store) (pb.PayerDaemonClient, func()
 	t.Cleanup(stop)
 	return pb.NewPayerDaemonClient(conn), stop
 }
+
+// TestRefillSizingDoesNotChangeSessionIdentity pins the invariant LOC
+// asked for in writing. A differently-sized refill is the same session:
+// the payee holds its recipient rand for the stable
+// (sender, recipient, capability, offering) tuple, so work_id must not
+// move because the payer decided to fund more.
+func TestRefillSizingDoesNotChangeSessionIdentity(t *testing.T) {
+	ctx, client, _ := newSenderClient(t)
+
+	small := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5",
+		"token", 1000, 1, 1000, "https://broker.example.com")
+	first, err := client.CreatePayment(ctx, small)
+	if err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+
+	// Same route, ten times the funding: a refill, not a new session.
+	large := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5",
+		"token", 1000, 1, 10000, "https://broker.example.com")
+	second, err := client.CreatePayment(ctx, large)
+	if err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+
+	if second.GetWorkId() != first.GetWorkId() {
+		t.Fatalf("work_id moved on a resize: %q -> %q", first.GetWorkId(), second.GetWorkId())
+	}
+
+	var p1, p2 pb.Payment
+	if err := proto.Unmarshal(first.GetPaymentBytes(), &p1); err != nil {
+		t.Fatal(err)
+	}
+	if err := proto.Unmarshal(second.GetPaymentBytes(), &p2); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(p1.GetTicketParams().GetRecipientRandHash(), p2.GetTicketParams().GetRecipientRandHash()) {
+		t.Fatal("recipient rand changed on a resize; the payee's identity is not the payer's to move")
+	}
+	// Face value is pinned for the life of the session: a bigger refill
+	// buys more tickets, not larger ones.
+	if !bytes.Equal(p1.GetTicketParams().GetFaceValue(), p2.GetTicketParams().GetFaceValue()) {
+		t.Fatalf("face value moved on a resize: %x -> %x",
+			p1.GetTicketParams().GetFaceValue(), p2.GetTicketParams().GetFaceValue())
+	}
+}

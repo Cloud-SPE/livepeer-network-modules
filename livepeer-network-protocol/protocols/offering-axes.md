@@ -1,6 +1,6 @@
 ---
 spec_name: offering-axes
-version: 1.0.3-draft
+version: 1.0.4-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -154,6 +154,18 @@ life of the session, exactly as face value is. A price change on the
 offering applies to sessions opened after it; it never moves an open
 session's cumulative curve.
 
+**Refill sizing never changes session identity.** A payee pins its
+recipient rand — and therefore `work_id` — to the stable
+`(sender, recipient, capability, offering)` tuple for as long as its
+ticket session is open. A payer MUST NOT key its own session cache on the
+funded value: doing so produces a second cache entry and a redundant
+ticket-params fetch that returns the same identity anyway, and it implies
+an invariant the protocol does not have.
+
+Face value is pinned at first issuance for the life of the session. **A
+larger refill mints more tickets, not larger ones**, so funding scales by
+count and the ticket shape a payee validates never changes underneath it.
+
 ### 6.3 Wire names
 
 The same value travels under three names, two of them historical. They
@@ -174,6 +186,7 @@ refused.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.4-draft | 2026-08-20 | §6.2: state the identity invariants explicitly — refill sizing never changes session identity, a payer must not key its session cache on funded value, face value is pinned at first issuance and a larger refill mints more tickets rather than larger ones. All three were true of the implementation by accident and written down nowhere. |
 | 1.0.3-draft | 2026-08-20 | Add §3.1 `session.max_rotations`, the bound on rebinding a session onto a rotated payment identity (paid-session §3.3.1). |
 | 1.0.2-draft | 2026-08-20 | Add §6: price is a `(price_per_unit_wei, per_units)` pair, the cumulative ceiling billing rule that both sides compute identically, pinning at session open, and the three wire names for the denominator. Written normatively because the reference implementation had it in the catalog, the settlement record, and nowhere in the ledger. |
 | 1.0.1-draft | 2026-08-19 | Add the advisory `session.session_params_schema` axis (see paid-session §7.1.1), carried by `manifest/schema.json` and relayed opaquely by `orch-coordinator`, so it reaches gateways through the signed manifest as well as the broker's `/registry/offerings`. |

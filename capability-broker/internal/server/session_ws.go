@@ -169,7 +169,10 @@ func (s *Server) handleSessionWSFrame(ctx context.Context, sessionID string, wc 
 		// idempotency key — in-frame, since a frame has no headers. A
 		// gateway that reconnects and re-sends must not fund twice.
 		requestID, _ := f.Body["request_id"].(string)
-		res, err := s.sessionEngine.TopUp(ctx, sessionID, requestID, paymentBytes)
+		// A declared rotation rebind, when the gateway is retrying after
+		// its payee rotated. Absent on every ordinary top-up.
+		rebindFrom, _ := f.Body["rebind_from"].(string)
+		res, err := s.sessionEngine.TopUpRebind(ctx, sessionID, requestID, rebindFrom, paymentBytes)
 		if err != nil {
 			fail(sessionErrCode(err), err.Error())
 			return

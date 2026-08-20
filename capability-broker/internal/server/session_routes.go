@@ -234,6 +234,14 @@ func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		"lease":      map[string]any{"expires_at": rec.LeaseExpiresAt.Format(time.RFC3339)},
 		"started_at": rec.CreatedAt.Format(time.RFC3339),
 	}
+	if rec.RotationGeneration > 0 {
+		// Recorded, not announced: a completed rotation is settlement-only
+		// from the customer's side (paid-session §3.3 rotation rules).
+		resp["rotation"] = map[string]any{
+			"generation":          rec.RotationGeneration,
+			"predecessor_work_id": rec.PredecessorWorkID,
+		}
+	}
 	if spec != nil {
 		resp["balance"] = s.balanceObject(r, rec, spec)
 	}
@@ -255,8 +263,9 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 			"missing or invalid Livepeer-Payment header")
 		return
 	}
-	res, err := s.sessionEngine.TopUp(r.Context(), rec.SessionID,
-		r.Header.Get(livepeerheader.RequestID), paymentBytes)
+	res, err := s.sessionEngine.TopUpRebind(r.Context(), rec.SessionID,
+		r.Header.Get(livepeerheader.RequestID),
+		r.Header.Get(livepeerheader.RebindFrom), paymentBytes)
 	if err != nil {
 		s.writeSessionError(w, err)
 		return
@@ -462,6 +471,8 @@ func (s *Server) writeSessionError(w http.ResponseWriter, err error) {
 			status, code = http.StatusBadRequest, livepeerheader.ErrRequestIDReuse
 		case "request_id_required":
 			status = http.StatusBadRequest
+		case "rebind_refused":
+			status, code = http.StatusConflict, livepeerheader.ErrRebindRefused
 		}
 		livepeerheader.WriteError(w, status, code, pe.Detail)
 		return

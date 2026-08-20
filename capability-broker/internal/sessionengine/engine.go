@@ -53,6 +53,13 @@ const (
 	ReasonInsufficient   = "insufficient_balance"
 	ReasonRecoveryFailed = "recovery_failed"
 	ReasonOpenFailed     = "open_failed"
+	// ReasonPaymentUnrecoverable ends a session whose payment identity
+	// cannot be recovered — a rotation that could not settle, or one
+	// that exhausted its bound. It names the consequence, not the
+	// mechanism: a recipient rotation is infrastructure the customer
+	// neither caused nor can act on, so the detail belongs in settlement
+	// and operator telemetry rather than in a close reason.
+	ReasonPaymentUnrecoverable = "payment_unrecoverable"
 )
 
 // OfferingSpec is the resolved offering the engine serves a session
@@ -585,6 +592,17 @@ type TopUpResult struct {
 // safe retry: the identical envelope is absorbed by nonce replay, but a
 // freshly minted one — what an SDK retry actually sends — funds twice.
 func (e *Engine) TopUp(ctx context.Context, sessionID, requestID string, paymentBytes []byte) (*TopUpResult, error) {
+	return e.topUp(ctx, sessionID, requestID, "", paymentBytes)
+}
+
+// TopUpRebind is TopUp carrying a declared recipient rotation:
+// rebindFrom is the work_id the session is moving off. See rebindLocked
+// for why the rotation is declared rather than inferred.
+func (e *Engine) TopUpRebind(ctx context.Context, sessionID, requestID, rebindFrom string, paymentBytes []byte) (*TopUpResult, error) {
+	return e.topUp(ctx, sessionID, requestID, rebindFrom, paymentBytes)
+}
+
+func (e *Engine) topUp(ctx context.Context, sessionID, requestID, rebindFrom string, paymentBytes []byte) (*TopUpResult, error) {
 	if requestID == "" {
 		return nil, protoErr("request_id_required", "Livepeer-Request-Id is required")
 	}
@@ -618,9 +636,27 @@ func (e *Engine) TopUp(ctx context.Context, sessionID, requestID string, payment
 	// never a surprise: balance advertises will_refuse_next_refill from
 	// the moment the session opens (§3.3 — never accept payment we will
 	// not honour with lease).
+	//
+	// A bounded session cannot survive a rotation either: the successor
+	// identity starts at a zero balance and the predecessor's remaining
+	// funding is stranded, so a rebind would mean paying twice for one
+	// session. It is refused here and the session ends at its lease.
 	if spec.Refill == "bounded" {
 		return nil, protoErr("refill_refused", "offering declares refill: bounded")
 	}
+
+	if rebindFrom != "" {
+		return e.rebindLocked(ctx, rec, spec, requestID, rebindFrom, fp, paymentBytes)
+	}
+	return e.topUpLocked(ctx, rec, spec, requestID, fp, paymentBytes)
+}
+
+// topUpLocked funds a session against the identity it already holds.
+// Callers hold the session mutex.
+func (e *Engine) topUpLocked(ctx context.Context, rec *sessionstore.Record, spec *OfferingSpec,
+	requestID string, fp []byte, paymentBytes []byte) (*TopUpResult, error) {
+
+	sessionID := rec.SessionID
 	res, err := e.cfg.Payment.ProcessPayment(ctx, payment.ProcessPaymentRequest{
 		WorkID:       rec.WorkID,
 		PaymentBytes: paymentBytes,
@@ -660,6 +696,161 @@ func (e *Engine) TopUp(ctx context.Context, sessionID, requestID string, payment
 		return nil, err
 	}
 	return &TopUpResult{Lease: lease, Balance: res.Balance}, nil
+}
+
+// rebindLocked moves a live session onto a rotated payment identity.
+// Callers hold the session mutex.
+//
+// The rotation is DECLARED (rebindFrom), never inferred from a payment
+// whose identity differs from the session's: inference would absorb an
+// ordinary gateway concurrency bug — session A retried with session B's
+// freshly minted payment — as a silent identity change instead of
+// refusing it.
+//
+// Three guards, of which the second does the real work:
+//
+//  1. rebindFrom is this session's current work_id;
+//  2. the successor payment CREDITS. Tickets minted against a fake or
+//     stale identity cannot validate, so a credit is proof the successor
+//     is genuine — nothing the gateway asserts is trusted, and no
+//     rotation bookkeeping has to survive a broker restart;
+//  3. the sender the payee sealed matches the session's.
+//
+// Note what this must NOT do to verify: asking the payee for the stable
+// tuple's ticket params mints a fresh rand when no ticket session is
+// open, so the verification would itself cause a rotation.
+func (e *Engine) rebindLocked(ctx context.Context, rec *sessionstore.Record, spec *OfferingSpec,
+	requestID, rebindFrom string, fp []byte, paymentBytes []byte) (*TopUpResult, error) {
+
+	if rebindFrom != rec.WorkID {
+		return nil, protoErr("rebind_refused",
+			"declared predecessor %q is not this session's payment identity", rebindFrom)
+	}
+	newWorkID, ok := payment.DerivePayeeWorkID(paymentBytes)
+	if !ok {
+		return nil, protoErr("rebind_refused", "payment carries no ticket params to rebind onto")
+	}
+	if newWorkID == rec.WorkID {
+		// Nothing rotated. Not an error — the gateway may have declared
+		// a rebind on a retry that raced the original — so this is an
+		// ordinary top-up.
+		return e.topUpLocked(ctx, rec, spec, requestID, fp, paymentBytes)
+	}
+
+	// Settle the predecessor before anything else. Carrying unsettled
+	// work across an identity change would make the ledger unauditable,
+	// and a rebind that cannot settle does not proceed.
+	if outstanding := rec.ClaimedTotal - rec.DebitedTotal; outstanding > 0 {
+		seq := rec.DebitSeq + 1
+		if _, err := e.cfg.Payment.DebitBalance(ctx, payment.DebitBalanceRequest{
+			Sender:    rec.Sender,
+			WorkID:    rec.WorkID,
+			WorkUnits: int64(outstanding),
+			DebitSeq:  seq,
+		}); err != nil {
+			e.winddownLocked(ctx, rec.SessionID, ReasonPaymentUnrecoverable)
+			return nil, protoErr("rebind_refused",
+				"could not settle the predecessor identity; session wound down: %v", err)
+		}
+		if err := e.cfg.Store.Update(rec.SessionID, func(r *sessionstore.Record) error {
+			r.DebitedTotal += outstanding
+			r.DebitSeq = seq
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	if _, err := e.cfg.Payment.OpenSession(ctx, payment.OpenSessionRequest{
+		WorkID:              newWorkID,
+		Capability:          spec.Capability,
+		Offering:            spec.Offering,
+		PricePerWorkUnitWei: spec.PricePerWorkUnitWei,
+		PerUnits:            spec.PerUnits,
+		WorkUnit:            spec.WorkUnit,
+	}); err != nil {
+		return nil, &RetryableError{Err: fmt.Errorf("rebind open: %w", err)}
+	}
+	res, err := e.cfg.Payment.ProcessPayment(ctx, payment.ProcessPaymentRequest{
+		WorkID:       newWorkID,
+		PaymentBytes: paymentBytes,
+	})
+	if err != nil {
+		_ = e.cfg.Payment.CloseSession(ctx, rec.Sender, newWorkID)
+		return nil, protoErr("payment_invalid", "rebind payment rejected: %v", err)
+	}
+	// Guard 2. An all-rejected batch proves nothing about the successor,
+	// so the session stays where it is rather than moving onto an
+	// identity that may not exist.
+	if rejErr := rejectionErr(res); rejErr != nil {
+		_ = e.cfg.Payment.CloseSession(ctx, rec.Sender, newWorkID)
+		return nil, protoErr("rebind_refused",
+			"successor identity did not credit: %v", rejErr)
+	}
+	// Guard 3.
+	if !bytesEqual(res.Sender, rec.Sender) {
+		_ = e.cfg.Payment.CloseSession(ctx, res.Sender, newWorkID)
+		return nil, protoErr("rebind_refused", "successor payment is from a different sender")
+	}
+
+	now := e.cfg.Now()
+	lease := e.leaseFrom(ctx, now, rec.Sender, newWorkID, spec)
+	if lease.Before(rec.LeaseExpiresAt) {
+		lease = rec.LeaseExpiresAt
+	}
+	// Persist the new binding BEFORE closing the predecessor. A crash
+	// between the two leaks an open payee session that no longer bills;
+	// the other order would strand a credit the session could never
+	// spend.
+	generation := rec.RotationGeneration + 1
+	if err := e.cfg.Store.Update(rec.SessionID, func(r *sessionstore.Record) error {
+		r.PredecessorWorkID = r.WorkID
+		r.WorkID = newWorkID
+		r.RotationGeneration = generation
+		r.GenerationStartUnits = r.DebitedTotal
+		// debit_seq is per payee session: the successor's sequence space
+		// starts fresh, and daemon idempotency is keyed
+		// (sender, work_id, debit_seq) so nothing collides.
+		r.DebitSeq = 0
+		r.LeaseExpiresAt = lease
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if err := e.cfg.Payment.CloseSession(ctx, rec.Sender, rebindFrom); err != nil {
+		e.cfg.Log.Warn("rebind: predecessor payee session left open",
+			"session", rec.SessionID, "predecessor_work_id", rebindFrom, "err", err)
+	}
+
+	if err := e.cfg.Store.TopUpRecord(rec.SessionID, requestID, fp, lease, balanceString(res.Balance)); err != nil {
+		return nil, err
+	}
+	e.cfg.Log.Info("session rebound after recipient rotation",
+		"session", rec.SessionID, "generation", generation,
+		"predecessor_work_id", rebindFrom, "work_id", newWorkID)
+	if e.cfg.OnEvent != nil {
+		// Control-plane signalling between broker and gateway, not a
+		// session lifecycle event: a completed rotation is settlement-
+		// only from the customer's side.
+		e.cfg.OnEvent(rec.SessionID, "session.rebound", map[string]any{
+			"rotation_generation": generation,
+			"predecessor_work_id": rebindFrom,
+			"work_id":             newWorkID,
+		})
+	}
+	return &TopUpResult{Lease: lease, Balance: res.Balance}, nil
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // topUpFingerprint binds a request id to the top-up it paid for. The

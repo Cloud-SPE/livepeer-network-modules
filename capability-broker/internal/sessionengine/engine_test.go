@@ -1,6 +1,7 @@
 package sessionengine
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -899,5 +900,149 @@ func TestTopUpNonceReplayReadsAsAlreadyCredited(t *testing.T) {
 	after, _ := h.store.Get(res.SessionID)
 	if !after.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
 		t.Fatal("persisted lease moved on an already-credited envelope")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// recipient rotation
+
+// rotatedPayment builds a payment whose derived identity differs from
+// the session's — what a gateway mints after its payee rotated.
+func rotatedPayment(t *testing.T, randHash string) []byte {
+	t.Helper()
+	raw, err := proto.Marshal(&pb.Payment{
+		TicketParams: &pb.TicketParams{RecipientRandHash: []byte(randHash)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// TestRebindMovesSessionToRotatedIdentity: the gap this closes. A live
+// session whose payee rotated has no other way forward — the broker
+// binds one work_id for life and every later payment is rejected.
+func TestRebindMovesSessionToRotatedIdentity(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	before, _ := h.store.Get(res.SessionID)
+
+	successor := rotatedPayment(t, "successor-rand-000000000000000000")
+	out, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-1", before.WorkID, successor)
+	if err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+	if !out.Lease.After(before.LeaseExpiresAt) && !out.Lease.Equal(before.LeaseExpiresAt) {
+		t.Fatalf("rebind shortened the lease: %v -> %v", before.LeaseExpiresAt, out.Lease)
+	}
+
+	after, _ := h.store.Get(res.SessionID)
+	wantWorkID := hex.EncodeToString([]byte("successor-rand-000000000000000000"))
+	if after.WorkID != wantWorkID {
+		t.Fatalf("work_id = %q; want the successor identity %q", after.WorkID, wantWorkID)
+	}
+	if after.PredecessorWorkID != before.WorkID {
+		t.Fatalf("predecessor = %q; want %q", after.PredecessorWorkID, before.WorkID)
+	}
+	if after.RotationGeneration != 1 {
+		t.Fatalf("generation = %d; want 1", after.RotationGeneration)
+	}
+	// Continuity is the whole point: the session, its credential and its
+	// cumulative accounting do not move.
+	if after.SessionID != before.SessionID || after.RunnerSessionID != before.RunnerSessionID {
+		t.Fatal("rebind disturbed session or runner identity")
+	}
+	if !bytes.Equal(after.CredentialHash, before.CredentialHash) {
+		t.Fatal("rebind re-issued the session credential")
+	}
+	if after.DebitedTotal != before.DebitedTotal || after.ClaimedTotal != before.ClaimedTotal {
+		t.Fatal("cumulative accounting reset across the rotation")
+	}
+	if after.DebitSeq != 0 {
+		t.Fatalf("debit_seq = %d; the successor's sequence space starts fresh", after.DebitSeq)
+	}
+}
+
+// TestRebindRefusesWrongPredecessor: the declaration is checked against
+// the session, so a gateway that retries the wrong session's top-up gets
+// a refusal rather than a silent identity change.
+func TestRebindRefusesWrongPredecessor(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+
+	_, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-1", "some-other-sessions-work-id", rotatedPayment(t, "successor-rand-000000000000000000"))
+	var pe *ProtocolError
+	if !errors.As(err, &pe) || pe.Code != "rebind_refused" {
+		t.Fatalf("err = %v; want rebind_refused", err)
+	}
+}
+
+// TestRebindRefusesSuccessorThatDoesNotCredit is guard 2, the one that
+// does the real work: tickets minted against a fake or stale identity
+// cannot validate, so a batch the payee rejects in full proves nothing
+// and the session stays where it is.
+func TestRebindRefusesSuccessorThatDoesNotCredit(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	before, _ := h.store.Get(res.SessionID)
+
+	h.pay.ticketCount, h.pay.ticketsBad = 2, 2
+	h.pay.rejectReason = payment.PaymentRejectionReasonInvalidRecipientRand
+
+	_, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000"))
+	var pe *ProtocolError
+	if !errors.As(err, &pe) || pe.Code != "rebind_refused" {
+		t.Fatalf("err = %v; want rebind_refused", err)
+	}
+	after, _ := h.store.Get(res.SessionID)
+	if after.WorkID != before.WorkID || after.RotationGeneration != 0 {
+		t.Fatal("session moved onto an identity that never credited")
+	}
+}
+
+// TestRebindSettlesPredecessorBeforeClosing: carrying unsettled work
+// across an identity change would make the ledger unauditable, so the
+// outstanding units are debited against the OLD work_id first.
+func TestRebindSettlesPredecessorBeforeClosing(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	before, _ := h.store.Get(res.SessionID)
+
+	// Claim without debiting, the shape a crash mid-commit leaves.
+	if err := h.store.Update(res.SessionID, func(r *sessionstore.Record) error {
+		r.ClaimedTotal = 40
+		r.DebitedTotal = 25
+		r.DebitSeq = 3
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+
+	var settled bool
+	h.pay.mu.Lock()
+	for _, d := range h.pay.debits {
+		if d.units == 15 && d.seq == 4 {
+			settled = true
+		}
+	}
+	h.pay.mu.Unlock()
+	if !settled {
+		t.Fatalf("predecessor was not settled for its 15 outstanding units: %+v", h.pay.debits)
+	}
+	after, _ := h.store.Get(res.SessionID)
+	if after.DebitedTotal != 40 {
+		t.Fatalf("debited total = %d; want the claim settled at 40", after.DebitedTotal)
+	}
+	if after.GenerationStartUnits != 40 {
+		t.Fatalf("generation start = %d; want 40, so the new generation's subtotal starts at zero",
+			after.GenerationStartUnits)
 	}
 }

@@ -24,9 +24,9 @@ const topupsBucket = "topups"
 
 // TopUpRecord is the recorded outcome of one top-up.
 type TopUpRecord struct {
-	RequestID   string    `json:"request_id"`
-	SessionID   string    `json:"session_id"`
-	Fingerprint []byte    `json:"fingerprint"`
+	RequestID   string `json:"request_id"`
+	SessionID   string `json:"session_id"`
+	Fingerprint []byte `json:"fingerprint"`
 	// LeaseExpiresAt and BalanceWei are the response the caller got.
 	// Replayed verbatim: converging on the recorded outcome means the
 	// original answer, not a fresh reading of state that has moved on.

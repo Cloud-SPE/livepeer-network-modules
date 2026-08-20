@@ -102,6 +102,17 @@ type Record struct {
 	PrivateSealed     []byte          `json:"descriptor_private_sealed,omitempty"`
 	Grants            []GrantAudit    `json:"grants,omitempty"`
 
+	// Rotation chain. A recipient rotation rebinds the session to a new
+	// payment identity; session_id and the credential do not move, so
+	// this is the only record of which work_id paid for which stretch.
+	// GenerationStartUnits is the cumulative debited total at the moment
+	// this generation began, so a generation's own subtotal is
+	// DebitedTotal - GenerationStartUnits without a second counter to
+	// keep in step.
+	RotationGeneration   uint32 `json:"rotation_generation,omitempty"`
+	PredecessorWorkID    string `json:"predecessor_work_id,omitempty"`
+	GenerationStartUnits uint64 `json:"generation_start_units,omitempty"`
+
 	// Event/usage/debit progress — the exactly-once commit set.
 	LastEventID  string `json:"last_event_id,omitempty"`
 	LastSequence uint64 `json:"last_sequence"`

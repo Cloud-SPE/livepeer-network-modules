@@ -93,7 +93,8 @@ func negotiateTransport(r *http.Request) string {
 // spec conformance requires the durable form).
 type jobIdemStore interface {
 	Begin(requestID string, fingerprint []byte, jobID string, deadline time.Time) (*sessionstore.JobRecord, bool, error)
-	Finish(requestID string, status int, workUnits uint64, unit string, bodyDigest []byte) error
+	Finish(requestID string, status int, workUnits uint64, unit string, bodyDigest []byte, settlement string) error
+	ByJobID(jobID string) (*sessionstore.JobRecord, error)
 }
 
 type boltJobIdem struct{ store *sessionstore.Store }
@@ -101,8 +102,11 @@ type boltJobIdem struct{ store *sessionstore.Store }
 func (b *boltJobIdem) Begin(id string, fp []byte, jobID string, dl time.Time) (*sessionstore.JobRecord, bool, error) {
 	return b.store.JobBegin(id, fp, jobID, dl)
 }
-func (b *boltJobIdem) Finish(id string, status int, units uint64, unit string, bodyDigest []byte) error {
-	return b.store.JobFinish(id, status, units, unit, bodyDigest)
+func (b *boltJobIdem) Finish(id string, status int, units uint64, unit string, bodyDigest []byte, settlement string) error {
+	return b.store.JobFinish(id, status, units, unit, bodyDigest, settlement)
+}
+func (b *boltJobIdem) ByJobID(jobID string) (*sessionstore.JobRecord, error) {
+	return b.store.JobByID(jobID)
 }
 
 type memJobIdem struct {
@@ -131,7 +135,19 @@ func (m *memJobIdem) Begin(id string, fp []byte, jobID string, dl time.Time) (*s
 	return &cp, true, nil
 }
 
-func (m *memJobIdem) Finish(id string, status int, units uint64, unit string, bodyDigest []byte) error {
+func (m *memJobIdem) ByJobID(jobID string) (*sessionstore.JobRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, rec := range m.recs {
+		if rec.JobID == jobID {
+			cp := *rec
+			return &cp, nil
+		}
+	}
+	return nil, sessionstore.ErrNotFound
+}
+
+func (m *memJobIdem) Finish(id string, status int, units uint64, unit string, bodyDigest []byte, settlement string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec, ok := m.recs[id]
@@ -142,6 +158,8 @@ func (m *memJobIdem) Finish(id string, status int, units uint64, unit string, bo
 	rec.Status = status
 	rec.WorkUnits = units
 	rec.Unit = unit
+	rec.BodyDigest = bytes.Clone(bodyDigest)
+	rec.Settlement = settlement
 	rec.EndedAt = time.Now().UTC()
 	return nil
 }
@@ -269,7 +287,7 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 				return
 			case time.Now().After(rec.Deadline):
 				// Crash leftover: converge on a failed terminal.
-				_ = s.jobIdem.Finish(requestID, http.StatusInternalServerError, 0, c.WorkUnit.Name, nil)
+				_ = s.jobIdem.Finish(requestID, http.StatusInternalServerError, 0, c.WorkUnit.Name, nil, "")
 				w.Header().Set(livepeerheader.JobID, rec.JobID)
 				w.Header().Set(livepeerheader.WorkUnits, "0")
 				w.Header().Set(livepeerheader.WorkUnitName, c.WorkUnit.Name)
@@ -297,7 +315,8 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		default:
 			observability.RecordJobExchange(transport, "backend_error")
 		}
-		if err := s.jobIdem.Finish(requestID, jrec.status(), jrec.units(), c.WorkUnit.Name, body.digest()); err != nil {
+		if err := s.jobIdem.Finish(requestID, jrec.status(), jrec.units(), c.WorkUnit.Name,
+			body.digest(), jrec.settlement()); err != nil {
 			log.Printf("warning: job idempotency finish failed request_id=%s: %v", requestID, err)
 		}
 	})
@@ -335,6 +354,13 @@ func (j *jobRecorder) status() int {
 		return http.StatusOK
 	}
 	return j.code
+}
+
+// settlement returns the envelope the payment middleware emitted, header
+// or trailer. Persisting it is what lets a caller that could not read a
+// trailer ask for it later.
+func (j *jobRecorder) settlement() string {
+	return j.Header().Get(livepeerheader.Settlement)
 }
 
 func (j *jobRecorder) units() uint64 {

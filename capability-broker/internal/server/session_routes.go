@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,9 +19,9 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
 )
 
 // paid-session/v1 HTTP surface. The engine is the authority; these
@@ -41,7 +42,6 @@ func (s *Server) registerSessionRoutes() {
 	s.mux.HandleFunc("POST /v1/session/{id}/end", s.handleSessionEnd)
 	s.mux.HandleFunc("POST /v1/session/{id}/events", s.handleSessionEvents)
 	s.mux.HandleFunc("GET /v1/session/{id}/ws", s.handleSessionWS)
-	s.mux.HandleFunc("GET /v1/settlement/{id}", s.handleSettlement)
 }
 
 // sessionCapability finds the paid-session capability tuple.
@@ -299,6 +299,21 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 // issued_at is a statement about now.
 func (s *Server) handleSettlement(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+
+	// A paid-job exchange first. A streamed job delivers its terminal
+	// claim in an HTTP trailer, which Go reads and HTTPX, Fetch and
+	// reqwest do not — so a caller that could not see it asks here
+	// instead, keyed on the job id the broker handed back. Possession of
+	// that id is the authorisation: it is broker-minted and unguessable,
+	// and the record's integrity comes from its signature rather than
+	// from the channel.
+	if s.jobIdem != nil {
+		if job, jerr := s.jobIdem.ByJobID(id); jerr == nil && job != nil {
+			s.writeJobSettlement(w, job)
+			return
+		}
+	}
+
 	rec, err := s.sessionStore.Get(id)
 	if err != nil {
 		// Not a session id — try it as a payment identity, current or
@@ -380,6 +395,40 @@ func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 		"state":        final.State,
 		"close_reason": final.CloseReason,
 		"ended_at":     final.EndedAt.Format(time.RFC3339),
+	})
+}
+
+// writeJobSettlement answers a settlement query for a paid-job exchange.
+//
+// An exchange still in flight reports its state rather than a claim: a
+// caller must be able to distinguish "not finished" from "finished at
+// zero", because treating the second as the first bills for nothing and
+// treating the first as the second fails open.
+func (s *Server) writeJobSettlement(w http.ResponseWriter, job *sessionstore.JobRecord) {
+	if job.State != sessionstore.JobTerminal {
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"job_id": job.JobID,
+			"state":  job.State,
+		})
+		return
+	}
+	if job.Settlement != "" {
+		w.Header().Set(livepeerheader.Settlement, job.Settlement)
+	}
+	w.Header().Set(livepeerheader.JobID, job.JobID)
+	w.Header().Set(livepeerheader.WorkUnits, strconv.FormatUint(job.WorkUnits, 10))
+	w.Header().Set(livepeerheader.WorkUnitName, job.Unit)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"job_id":     job.JobID,
+		"state":      job.State,
+		"status":     job.Status,
+		"work_units": job.WorkUnits,
+		"unit":       job.Unit,
+		"ended_at":   job.EndedAt.Format(time.RFC3339),
+		// Present only when the exchange produced one: a stub payment
+		// has no settlement to sign, and a caller must not read an
+		// absent envelope as an empty claim.
+		"settlement": job.Settlement,
 	})
 }
 

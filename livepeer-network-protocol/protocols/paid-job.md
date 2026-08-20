@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.1-draft
+version: 1.0.2-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -81,6 +81,23 @@ the backend set, and body. The broker adds:
 There is no balance or runway signaling in `paid-job/v1`: one envelope funds
 one exchange, and the buyer's overall funding posture is the clearinghouse's
 business. Runway is a `paid-session/v1` concept.
+
+**The trailer is not the only channel, and MUST NOT be.** Go reads HTTP
+trailers; HTTPX, the Fetch API and reqwest do not, so a claim delivered
+only that way is unreachable for most SDK stacks — leaving a caller to
+choose between billing zero, which fails open financially, and blocking.
+
+A broker MUST therefore also serve the terminal claim from
+`GET /v1/settlement/{id}`, keyed by the `Livepeer-Job-Id` it returned,
+for at least the idempotency window (§4.2). The response carries the
+terminal `Livepeer-Work-Units`, `Livepeer-Work-Unit`, and the signed
+settlement envelope (`headers/livepeer-headers.md`). An exchange still
+running answers `202` with its state rather than a claim: a caller MUST
+be able to distinguish "not finished" from "finished at zero", and an
+unknown id MUST NOT read as a zero claim.
+
+The trailer stays as the low-latency path for clients that can read it.
+It is an optimization, not the contract.
 
 For `stream`, the broker MUST advertise the trailer (`Trailer:
 Livepeer-Work-Units`) in the response headers so gateways know to read it.
@@ -173,5 +190,6 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.2-draft | 2026-08-20 | §3.2: the streamed terminal claim gains a portable channel. `GET /v1/settlement/{id}`, keyed by `Livepeer-Job-Id`, MUST serve the terminal units, unit name and signed settlement for the idempotency window; a running exchange answers 202 with state and an unknown id is never a zero claim. Trailers become an optimization rather than the only normative channel — Go reads them, HTTPX/Fetch/reqwest do not, and a claim no SDK can read forces a clearinghouse to bill zero or block. |
 | 1.0.1-draft | 2026-08-20 | §4.4: spell out how the body hash is bound — envelope fingerprinted before the exchange, body digested as it streams, replay drained and compared. The requirement was already normative; the reference implementation had been binding the body's *length*, so a retry with a changed body of equal length received the recorded outcome. |
 | 1.0.0-draft | 2026-08-18 | Initial protocol. Replaces `http-reqresp@v0`, `http-stream@v0`, `http-multipart@v0`; transports become per-request negotiation; idempotent open and a reliable claim channel become normative. |

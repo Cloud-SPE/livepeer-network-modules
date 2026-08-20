@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -258,5 +259,69 @@ func TestJobReplayWithTheSameBodyStillReplays(t *testing.T) {
 	}
 	if got := replay.Header.Get(livepeerheader.JobID); got != jobID {
 		t.Fatalf("replay job id = %q; want the recorded %q", got, jobID)
+	}
+}
+
+// TestStreamedJobClaimIsQueryable is the portability fix LOC asked for.
+// A streamed job's terminal claim arrives in an HTTP trailer, which Go
+// reads and HTTPX, Fetch and reqwest do not. A caller that could not see
+// it must be able to ask, or it has to choose between billing zero
+// (fails open) and blocking.
+func TestStreamedJobClaimIsQueryable(t *testing.T) {
+	var calls atomic.Int64
+	srv := newJobTestServer(t, &calls)
+
+	resp := jobReq(t, srv, "req-stream-q", "text/event-stream")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stream status %d", resp.StatusCode)
+	}
+	jobID := resp.Header.Get(livepeerheader.JobID)
+	if jobID == "" {
+		t.Fatal("no Livepeer-Job-Id to query with")
+	}
+	// Read the body out, exactly as a client that cannot see trailers
+	// would, and discard what it could not reach.
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	q, err := http.Get(srv.URL + "/v1/settlement/" + jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Body.Close()
+	if q.StatusCode != http.StatusOK {
+		t.Fatalf("settlement query status %d", q.StatusCode)
+	}
+	if got := q.Header.Get(livepeerheader.WorkUnits); got == "" || got == "0" {
+		t.Fatalf("queried work units = %q; want the terminal claim", got)
+	}
+	if got := q.Header.Get(livepeerheader.WorkUnitName); got == "" {
+		t.Fatal("query did not report the unit name")
+	}
+	var body map[string]any
+	if err := json.NewDecoder(q.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["job_id"] != jobID {
+		t.Fatalf("query answered for %v; want %s", body["job_id"], jobID)
+	}
+	if body["state"] != "terminal" {
+		t.Fatalf("state = %v; want terminal", body["state"])
+	}
+}
+
+// TestSettlementQueryUnknownIDIsNotAClaim: an id the broker does not
+// know must never read as a zero claim.
+func TestSettlementQueryUnknownIDIsNotAClaim(t *testing.T) {
+	var calls atomic.Int64
+	srv := newJobTestServer(t, &calls)
+
+	q, err := http.Get(srv.URL + "/v1/settlement/job_does-not-exist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Body.Close()
+	if q.StatusCode == http.StatusOK {
+		t.Fatal("unknown id answered 200; a caller would bill it as zero")
 	}
 }

@@ -200,6 +200,49 @@ func jobScenarios() []harness.Scenario {
 			}
 			return nil
 		}},
+		{Name: "paid-job/streamed-claim-is-queryable", Spec: "paid-job §3.2", Run: func(c *harness.Ctx) error {
+			// A streamed job's terminal claim arrives in a trailer. Go
+			// reads trailers; HTTPX, Fetch and reqwest do not. If the
+			// trailer were the only channel, those clients would have to
+			// choose between billing zero — which fails open — and
+			// blocking. So the claim must also be queryable.
+			r, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingAll, RequestID: c.RequestID("stream-query"),
+				Payment: harness.PaymentEnvelope("stream-query"),
+				Body:    []byte(`{"model":"m","messages":[]}`), Accept: "text/event-stream",
+			})
+			if err != nil {
+				return err
+			}
+			if r.Status != 200 {
+				return fmt.Errorf("stream status %d: %s", r.Status, r.Body)
+			}
+			jobID := r.Header.Get(harness.HdrJobID)
+			if jobID == "" {
+				return fmt.Errorf("no %s to query with", harness.HdrJobID)
+			}
+
+			q, err := c.QuerySettlement(jobID)
+			if err != nil {
+				return err
+			}
+			if q.Status != 200 {
+				return fmt.Errorf("settlement query status %d: %s", q.Status, q.Body)
+			}
+			units := q.Header.Get(harness.HdrWorkUnits)
+			if units == "" {
+				return fmt.Errorf("query returned no %s", harness.HdrWorkUnits)
+			}
+			if q.Header.Get(harness.HdrWorkUnitName) == "" {
+				return fmt.Errorf("query returned no %s", harness.HdrWorkUnitName)
+			}
+			// The queried claim must equal the trailer's, or the two
+			// channels disagree about what was billed.
+			if trailer := r.Trailer.Get(harness.HdrWorkUnits); trailer != "" && trailer != units {
+				return fmt.Errorf("queried units %q != trailer units %q", units, trailer)
+			}
+			return nil
+		}},
 		{Name: "paid-job/severed-stream-replays-terminal", Spec: "paid-job §7", Run: func(c *harness.Ctx) error {
 			reqID := c.RequestID("severed")
 			payment := harness.PaymentEnvelope("severed")

@@ -17,6 +17,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /registry/offerings", instrumentRegistryScrape("offerings", s.handleOfferings))
 	s.mux.HandleFunc("GET /registry/health", instrumentRegistryScrape("health", s.handleRegistryHealth))
 	s.mux.HandleFunc("GET /healthz", registry.HealthzHandler())
+	// Settlement serves BOTH protocols, so it is registered here rather
+	// than with the session routes: a job-only broker — what an
+	// OpenAI-style gateway runs — needs it most, because a streamed
+	// job's claim arrives in a trailer its SDK may not be able to read.
+	s.mux.HandleFunc("GET /v1/settlement/{id}", s.handleSettlement)
 	s.mux.HandleFunc("POST /v1/payment/ticket-params", ticketParamsHandler(s.payment))
 	s.mux.HandleFunc("GET /admin/v1/runtime", s.handleRuntimeStatus)
 	s.mux.HandleFunc("POST /admin/v1/runtime/reload", s.handleRuntimeReload)

@@ -14,7 +14,13 @@ import (
 // touched, finished with the terminal outcome, retained for the
 // operator's idempotency window, then evicted.
 
-const jobsBucket = "jobs"
+const (
+	jobsBucket = "jobs"
+	// jobIDIndexBucket maps the broker-minted job id to the request id
+	// that owns the record, so a settlement query can be keyed on the
+	// id the broker handed back rather than on the caller's own.
+	jobIDIndexBucket = "job_id_index"
+)
 
 // Job states.
 const (
@@ -36,7 +42,13 @@ type JobRecord struct {
 	// exchange finishes. The envelope fingerprint above is known before
 	// the body has streamed; this is the half that can only be known
 	// after, so it is compared on replay rather than at Begin.
-	BodyDigest []byte    `json:"body_digest,omitempty"`
+	BodyDigest []byte `json:"body_digest,omitempty"`
+	// Settlement is the encoded settlement envelope this exchange
+	// produced. Persisted because a streamed job delivers its terminal
+	// claim in an HTTP trailer, which Go can read and HTTPX, Fetch and
+	// reqwest cannot — so the trailer cannot be the only channel. A
+	// caller that missed it queries for this instead.
+	Settlement string    `json:"settlement,omitempty"`
 	State      string    `json:"state"`
 	Status     int       `json:"status,omitempty"`
 	WorkUnits  uint64    `json:"work_units,omitempty"`
@@ -69,6 +81,9 @@ func (s *Store) JobBegin(requestID string, fingerprint []byte, jobID string, dea
 			rec = &existing
 			return nil
 		}
+		if e := putJobIDIndex(tx, jobID, requestID); e != nil {
+			return e
+		}
 		fresh := JobRecord{
 			RequestID:   requestID,
 			JobID:       jobID,
@@ -88,9 +103,54 @@ func (s *Store) JobBegin(requestID string, fingerprint []byte, jobID string, dea
 	return rec, created, err
 }
 
+func putJobIDIndex(tx *bolt.Tx, jobID, requestID string) error {
+	if jobID == "" {
+		return nil
+	}
+	b, err := tx.CreateBucketIfNotExists([]byte(jobIDIndexBucket))
+	if err != nil {
+		return err
+	}
+	return b.Put([]byte(jobID), []byte(requestID))
+}
+
+// JobByID resolves a record by the broker-minted job id.
+func (s *Store) JobByID(jobID string) (*JobRecord, error) {
+	var out *JobRecord
+	err := s.db.View(func(tx *bolt.Tx) error {
+		idx := tx.Bucket([]byte(jobIDIndexBucket))
+		if idx == nil {
+			return ErrNotFound
+		}
+		requestID := idx.Get([]byte(jobID))
+		if requestID == nil {
+			return ErrNotFound
+		}
+		b := tx.Bucket([]byte(jobsBucket))
+		if b == nil {
+			return ErrNotFound
+		}
+		raw := b.Get(requestID)
+		if raw == nil {
+			return ErrNotFound
+		}
+		var rec JobRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			return err
+		}
+		out = &rec
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // JobFinish records the terminal outcome for the request id, including
-// the digest of the body the exchange actually consumed.
-func (s *Store) JobFinish(requestID string, status int, workUnits uint64, unit string, bodyDigest []byte) error {
+// the digest of the body the exchange actually consumed and the
+// settlement envelope a caller may have to query for.
+func (s *Store) JobFinish(requestID string, status int, workUnits uint64, unit string, bodyDigest []byte, settlement string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(jobsBucket))
 		if b == nil {
@@ -109,6 +169,7 @@ func (s *Store) JobFinish(requestID string, status int, workUnits uint64, unit s
 		rec.WorkUnits = workUnits
 		rec.Unit = unit
 		rec.BodyDigest = bytes.Clone(bodyDigest)
+		rec.Settlement = settlement
 		rec.EndedAt = time.Now().UTC()
 		out, err := json.Marshal(&rec)
 		if err != nil {
@@ -148,7 +209,16 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 		}); err != nil {
 			return err
 		}
+		idx := tx.Bucket([]byte(jobIDIndexBucket))
 		for _, k := range evict {
+			if raw := b.Get(k); raw != nil && idx != nil {
+				var rec JobRecord
+				if err := json.Unmarshal(raw, &rec); err == nil && rec.JobID != "" {
+					// The index outliving its record would answer a
+					// query with "unknown" instead of "expired".
+					_ = idx.Delete([]byte(rec.JobID))
+				}
+			}
 			if err := b.Delete(k); err != nil {
 				return err
 			}

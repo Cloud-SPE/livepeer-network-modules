@@ -1,6 +1,6 @@
 ---
 status: draft (rewritten for the v1 protocols)
-spec_version: 1.0.2-draft
+spec_version: 1.0.3-draft
 last_updated: 2026-08-20
 ---
 
@@ -207,7 +207,9 @@ Broker-authoritative settlement record for the completed request or session wind
   that needs integrity MUST reject an unsigned envelope; the field is omitted
   rather than emptied so the distinction cannot be missed.
 - For `paid-job/v1`, emitted as a response header or HTTP trailer depending on
-  when the implementation can finalize settlement relative to header commit.
+  when the implementation can finalize settlement relative to header commit —
+  and retrievable from `GET /v1/settlement/{id}` keyed by `Livepeer-Job-Id`,
+  because a trailer is unreadable in most SDK stacks (paid-job §3.2).
 - For `paid-session/v1`, emitted on the terminal response, and retrievable at
   any time from `GET /v1/settlement/{id}` — by `session_id` or by any `work_id`
   the session has held, including one a rotation superseded. A settlement
@@ -346,6 +348,7 @@ See [`../conformance/`](../conformance/).
 | 0.1.1 | Add `insufficient_balance` error code for long-running sessions terminated by the broker mid-flight (plan 0015). Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |
 | 0.1.2 | Add `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout` error codes for `rtmp-ingress-hls-egress` (plan 0011-followup). Pre-1.0 minor additions are non-breaking. |
 | 0.1.3 | Add `backpressure_drop` error code for the `session-control-plus-media` control-WebSocket (plan 0012-followup). Pre-1.0 minor additions are non-breaking. |
+| 1.0.3-draft | `GET /v1/settlement/{id}` also serves paid-job exchanges, keyed by `Livepeer-Job-Id`, so a streamed claim is reachable by clients that cannot read HTTP trailers. |
 | 1.0.2-draft | `Livepeer-Settlement` becomes a signed JSON envelope for BOTH protocols: JCS-canonical payload plus an EIP-191 secp256k1 signature from a manifest-delegated hot key, with the signature omitted when a broker holds no delegation. Adds the paid-session identity chain and cumulative accounting to the record, and names `GET /v1/settlement/{id}` as the retrieval path. Replaces the bare base64 protobuf — the channel that carried it ends at a customer-controlled SDK, so integrity has to travel with the record. |
 | 1.0.1-draft | Add `recipient_rotated` and `rebind_refused` for recipient rotation, and the `Livepeer-Rebind-From` request header that declares a rebind's predecessor (paid-session §3.3.1). Pre-1.0-style minor addition: receivers validate the major only. |
 | 1.0.0-draft | **Breaking.** Rewritten for the v1 protocols (2026-08-19). `Livepeer-Mode` + `Livepeer-Spec-Version` replaced by `Livepeer-Protocol`; `Livepeer-Request-Id` becomes required (it is the idempotency key); `Livepeer-Work-Unit` and `Livepeer-Job-Id` added; `protocol_unsupported`, `protocol_transport_unsupported`, `job_in_flight`, `request_id_reuse`, and `refill_refused` added. The mode-era `ffmpeg_subprocess_failed`, `rtmp_ingest_idle_timeout`, and `backpressure_drop` codes removed with the broker-hosted media plane. |

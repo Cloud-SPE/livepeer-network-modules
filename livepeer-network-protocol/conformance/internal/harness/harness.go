@@ -191,6 +191,19 @@ func (c *Ctx) DoJob(jr JobRequest) (*JobResponse, error) {
 	}, nil
 }
 
+// QuerySettlement reads a terminal claim back from the broker by id —
+// a job id, a session id, or a work id. This is the channel an SDK that
+// cannot read HTTP trailers depends on: without it, a streamed job's
+// units are unreachable and the caller must choose between billing zero
+// and blocking.
+func (c *Ctx) QuerySettlement(id string) (*HTTPResult, error) {
+	req, err := http.NewRequest(http.MethodGet, c.BrokerURL+"/v1/settlement/"+id, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req)
+}
+
 // DoJobAbort starts a job exchange and severs the connection after
 // reading readChunks chunks of the body — the "stream severed mid-body"
 // case in paid-job §7. The broker's terminal accounting must still

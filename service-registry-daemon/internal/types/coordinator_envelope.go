@@ -128,6 +128,18 @@ func validateCoordinatorEnvelope(sm *CoordinatorSignedManifest) error {
 		if c.Protocol == "" {
 			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].protocol", i), "missing")
 		}
+		// The declaration is authoritative and `extra` is opaque
+		// operator metadata. A tuple that puts a declaration key in
+		// extra is either confused or trying to make a consumer read a
+		// different protocol than the one it signed; either way the
+		// manifest is refused rather than silently corrected.
+		for _, reserved := range []string{"protocol", "job", "session"} {
+			if _, clash := c.Extra[reserved]; clash {
+				return NewValidation(ErrParse,
+					fmt.Sprintf("manifest.capabilities[%d].extra.%s", i, reserved),
+					"reserved: the signed declaration owns this key")
+			}
+		}
 		if c.WorkUnit.Name == "" {
 			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].work_unit.name", i), "missing")
 		}
@@ -215,6 +227,7 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 	}
 	type capBuilder struct {
 		name     string
+		protocol string
 		workUnit string
 		extra    json.RawMessage
 		offers   []Offering
@@ -251,6 +264,7 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 		if !ok {
 			cb = &capBuilder{
 				name:     tuple.CapabilityID,
+				protocol: tuple.Protocol,
 				workUnit: tuple.WorkUnit.Name,
 				extra:    extraRaw,
 			}
@@ -290,6 +304,7 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 			})
 			caps = append(caps, Capability{
 				Name:      cb.name,
+				Protocol:  cb.protocol,
 				WorkUnit:  cb.workUnit,
 				Offerings: cb.offers,
 				Extra:     cb.extra,
@@ -314,33 +329,37 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 	}, nil
 }
 
-// mirrorDeclaration copies the tuple's protocol declaration and its
-// declared axes into the projected capability's opaque extra block.
+// mirrorDeclaration copies the tuple's declared axes into the projected
+// capability's opaque extra block, and its protocol alongside them.
 //
 // The node-oriented projection (Node → Capability → Offering) predates
-// the manifest's capability-tuple shape and has no first-class slot for
-// them, and the gRPC surface carries a capability's declaration solely
-// as extra_json. Mirroring here is therefore what keeps the declaration
-// reaching consumers at all: gateways select routes on
+// the manifest's capability-tuple shape, and the gRPC surface carries a
+// capability's axes solely as extra_json. Mirroring here is what keeps
+// the declaration reaching consumers at all: gateways select routes on
 // session.descriptor_schema and job.transports, so dropping the axes
 // while forwarding the rest would silently break route selection.
 //
-// Values are copied verbatim — the axes stay the raw bytes the orch
-// signed. An orch that already published a key of the same name in
-// extra wins; this projection never overwrites operator-declared
-// metadata.
+// The signed tuple WINS every collision. An operator that publishes its
+// own "protocol", "job" or "session" key in extra has its value
+// overwritten here, and DecodeCoordinatorEnvelope rejects the manifest
+// outright — see validateCoordinatorEnvelope. The precedence used to run
+// the other way, so an orch could publish extra.protocol = "paid-job/v1"
+// on a paid-session offering and every downstream consumer that gates on
+// protocol would believe it.
+//
+// The axes stay raw bytes: this layer gates on nothing inside them, and
+// a typed mirror would silently drop any axis a later spec minor adds.
 func mirrorDeclaration(extra map[string]any, tuple CoordinatorCapability) {
-	put := func(key string, val any) {
-		if _, exists := extra[key]; !exists {
-			extra[key] = val
-		}
-	}
-	put("protocol", tuple.Protocol)
+	extra["protocol"] = tuple.Protocol
 	if len(tuple.Job) > 0 {
-		put("job", tuple.Job)
+		extra["job"] = tuple.Job
+	} else {
+		delete(extra, "job")
 	}
 	if len(tuple.Session) > 0 {
-		put("session", tuple.Session)
+		extra["session"] = tuple.Session
+	} else {
+		delete(extra, "session")
 	}
 }
 

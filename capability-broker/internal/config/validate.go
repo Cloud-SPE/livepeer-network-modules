@@ -303,6 +303,16 @@ func (c *Config) Validate() error {
 			}
 		}
 
+		// `extra` is opaque operator metadata; the declaration keys
+		// belong to the tuple itself. Caught here so an operator learns
+		// at config load rather than by having the whole signed manifest
+		// refused downstream, which would take every offering with it.
+		for _, reserved := range []string{"protocol", "job", "session"} {
+			if _, clash := cap.Extra[reserved]; clash {
+				return fmt.Errorf("%s: extra.%s is reserved — the declaration owns that key", ctx, reserved)
+			}
+		}
+
 		if !priceWeiRE.MatchString(cap.Price.AmountWei) {
 			return fmt.Errorf("%s: price.amount_wei must be a non-negative decimal string (got %q)", ctx, cap.Price.AmountWei)
 		}

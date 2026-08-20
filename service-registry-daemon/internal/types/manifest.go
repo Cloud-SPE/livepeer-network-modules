@@ -51,8 +51,14 @@ type Node struct {
 // Capability advertises one named operation. Name is opaque to this
 // daemon — see docs/design-docs/workload-agnostic-strings.md.
 type Capability struct {
-	Name      string          `json:"name"`
-	WorkUnit  string          `json:"work_unit,omitempty"`
+	Name     string `json:"name"`
+	WorkUnit string `json:"work_unit,omitempty"`
+	// Protocol is the signed tuple's protocol tag ("paid-job/v1",
+	// "paid-session/v1"). Typed, and projected onto SelectedRoute as a
+	// typed field, because every consumer gates on it. It used to reach
+	// consumers only as a key inside Extra, where an operator-declared
+	// key of the same name could shadow it.
+	Protocol  string          `json:"protocol,omitempty"`
 	Offerings []Offering      `json:"offerings,omitempty"`
 	Extra     json.RawMessage `json:"extra,omitempty"`
 }

@@ -410,9 +410,12 @@ type SelectRequest struct {
 // narrower than ResolvedNode on purpose: gateways get only the route
 // fields they need for dispatch, pricing, and payment.
 type SelectedRoute struct {
-	WorkerURL             string
-	EthAddress            string
-	Capability            string
+	WorkerURL  string
+	EthAddress string
+	Capability string
+	// Protocol is the signed tuple's protocol tag. Typed, not a key in
+	// Extra, because consumers gate their open path on it.
+	Protocol              string
 	Offering              string
 	PricePerWorkUnitWei   string
 	WorkUnit              string

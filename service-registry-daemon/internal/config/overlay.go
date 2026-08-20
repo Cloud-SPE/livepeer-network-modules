@@ -76,7 +76,11 @@ type rawPinNode struct {
 }
 
 type rawPinCapability struct {
-	Name      string           `yaml:"name"`
+	Name string `yaml:"name"`
+	// Protocol is the protocol tag a pinned capability speaks
+	// ("paid-job/v1", "paid-session/v1"). Consumers gate their open path
+	// on it, so a pin without one projects a route they cannot use.
+	Protocol  string           `yaml:"protocol"`
 	WorkUnit  string           `yaml:"work_unit"`
 	Offerings []rawPinOffering `yaml:"offerings"`
 	Extra     map[string]any   `yaml:"extra"`
@@ -85,7 +89,10 @@ type rawPinCapability struct {
 type rawPinOffering struct {
 	ID                  string `yaml:"id"`
 	PricePerWorkUnitWei string `yaml:"price_per_work_unit_wei"`
-	Warm                *bool  `yaml:"warm"`
+	// PerUnits is the price denominator (offering-axes.md §6); absent
+	// means 1.
+	PerUnits uint64 `yaml:"per_units"`
+	Warm     *bool  `yaml:"warm"`
 }
 
 // ParseOverlayYAML decodes overlay YAML bytes into a validated *Overlay.
@@ -165,7 +172,7 @@ func convertPin(rp rawPinNode) (OverlayPinNode, error) {
 		if rc.Name == "" {
 			return OverlayPinNode{}, fmt.Errorf("capability name missing")
 		}
-		c := types.Capability{Name: rc.Name, WorkUnit: rc.WorkUnit}
+		c := types.Capability{Name: rc.Name, Protocol: rc.Protocol, WorkUnit: rc.WorkUnit}
 		for _, ro := range rc.Offerings {
 			if ro.ID == "" {
 				return OverlayPinNode{}, fmt.Errorf("capability %q offering id missing", rc.Name)
@@ -173,6 +180,7 @@ func convertPin(rp rawPinNode) (OverlayPinNode, error) {
 			c.Offerings = append(c.Offerings, types.Offering{
 				ID:                  ro.ID,
 				PricePerWorkUnitWei: ro.PricePerWorkUnitWei,
+				PerUnits:            ro.PerUnits,
 			})
 		}
 		caps = append(caps, c)

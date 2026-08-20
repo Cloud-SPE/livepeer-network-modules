@@ -65,6 +65,18 @@ message SelectedRoute {
   bytes  constraint_fingerprint   = 11;
   bytes  route_fingerprint        = 12;
   uint64 units_per_price          = 13;
+
+  // Protocol tag from the signed manifest tuple ("paid-job/v1",
+  // "paid-session/v1"). Typed because every consumer gates on it: it
+  // decides which open path a clearinghouse or gateway takes, so it
+  // must not travel as opaque metadata a publisher could shadow.
+  //
+  // The declared axes (job.transports, session.descriptor_schema, ...)
+  // deliberately stay in extra_json: this layer gates on nothing inside
+  // them, and a typed mirror would silently drop any axis a later spec
+  // minor adds — with the drop baked into the operator's signature.
+  // Pass-through cannot go stale.
+  string protocol                 = 14;
 }
 
 message ListKnownRequest {}

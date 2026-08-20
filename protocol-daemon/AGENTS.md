@@ -56,10 +56,10 @@ Enforced by `lint/layer-check/`. Don't reach across layers; route through provid
 
 | Task | Where to start |
 |---|---|
-| Add a new RPC method | `proto/livepeer/protocol/v1/protocol.proto` → `internal/runtime/grpc/server.go` → tests |
+| Add a new RPC method | `../proto-contracts/livepeer/protocol/v1/protocol.proto` (sibling module; `make proto` there) → `internal/runtime/grpc/{server,adapter}.go` → tests |
 | Tune the round-init loop | `internal/service/roundinit/service.go` |
 | Tune positional-hint walking | `internal/service/reward/hints.go` + `internal/repo/poolhints/cache.go` |
-| Add a new metric | `internal/runtime/metrics/names.go` (constant) → emitter site → `docs/design-docs/observability.md` |
+| Add a new metric | `internal/runtime/metrics/names.go` (constant) → emitter site → package doc-comment in `internal/runtime/metrics/` (no standalone observability design-doc yet — see `docs/design-docs/index.md`) |
 | Bump preflight | `internal/service/preflight/preflight.go` |
 | Add a start-time (infra) flag | `cmd/livepeer-protocol-daemon/run.go` (flag def) → `internal/config/config.go` (struct field + validation) |
 | Add a runtime operational-config field | `internal/types/opconfig.go` (struct + `Default`/`Validate`) → `internal/repo/opconfig/store.go` (persist) → `proto.../protocol.proto` `OperationalConfig` → `internal/runtime/grpc/{server_actions,adapter_actions}.go` → secure-orch-console config form |

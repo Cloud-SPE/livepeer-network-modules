@@ -109,18 +109,23 @@ before signing.
 
 | Knob | Default | Side | What it controls |
 |---|---|---|---|
-| `--receiver-ev` | 1e12 wei | receiver | Target per-ticket expected value. Receiver sizes face_value × win_prob to hit this. Smaller = more tickets per request, higher overhead, finer billing granularity. Larger = fewer tickets, coarser. |
-| `--receiver-tx-cost-multiplier` | 100 | receiver | Receiver targets `face_value = redemption-tx-cost × multiplier`. 100× = winners pay 100× the gas cost, leaving 99% for the operator. |
 | `--redeem-gas` | 500000 | receiver | Estimated gas for a `redeemWinningTicket` tx. Used to compute the face_value floor. Match to the chain you're on; Arbitrum L2 ≈ 500k. |
 | `--gas-price-multiplier-pct` | 200 | receiver | Headroom on the chain's `eth_gasPrice`. 200% = 2.0×. Protects against base-fee spikes between price-read and tx-submit on EIP-1559 chains. **Lower to 100 only on stable-price chains; raise to 300 if your provider's gas estimates are unusually conservative.** |
-| `MaxEV` (sender config) | unset | sender | Caps per-ticket EV. Refuses to sign tickets where `face_value × win_prob > MaxEV`. Protects payer from a malicious or buggy receiver claiming a $1000 ticket on a $0.001 request. |
-| `MaxTotalEV` (sender config) | unset | sender | Caps cumulative EV across a single batch (size × per-ticket EV). Same protection at batch granularity. |
-| `DepositMultiplier` (sender config) | 0 (disabled) | sender | Caps `face_value ≤ Deposit / DepositMultiplier`. Bounds in-flight exposure as a fraction of escrow. |
+| `--validity-window` | 2 | receiver | Rounds a ticket's `CreationRound` may trail `LastInitializedRound` before it is dropped at redemption. |
 
-The sender knobs are the gateway operator's defense. **Run with them
-set.** A misconfigured or compromised receiver should never be able to
-mint $X worth of expected loss against a sender that was sized for $Y ≪
-X.
+> **Not yet operator-tunable.** The receiver's issued ticket size is
+> currently a compile-time default in
+> `internal/service/receiver` — `face_value = 1e15 wei` and
+> `win_prob = MaxWinProb / 1024`, so per-ticket EV ≈ 1e12 wei. There is
+> **no `--receiver-ev` and no `--receiver-tx-cost-multiplier` flag**;
+> changing the issued ticket size today means changing
+> `receiver.Config{DefaultFaceValue, DefaultWinProb}` at the call site.
+> Likewise, the sender-side EV caps discussed in the pricing material
+> (`MaxEV`, `MaxTotalEV`, `DepositMultiplier`) are **not implemented** —
+> the sender's only pre-signing guards are the deposit / reserve /
+> pending-unlock checks in §3. Model these with `cmd/payout-sim` (see
+> [`payout-modeling-guide.md`](./payout-modeling-guide.md)) rather than
+> expecting a flag.
 
 ---
 
@@ -167,8 +172,10 @@ maxFloat shrinks** — operators should watch the ratio.
   to withdraw their funds; signing tickets after that point creates
   unrecoverable obligations.
 
-The corresponding error returned to the gateway is
-`SenderValidationError`; the message identifies which reason fired.
+The gateway sees a gRPC error whose message identifies which reason
+fired: `no sender deposit`, `no sender reserve`, or `deposit and
+reserve set to unlock soon`. There is no distinct typed
+`SenderValidationError` on the wire — match on the message text.
 
 ### Unlock / withdrawal flow
 
@@ -224,7 +231,7 @@ Before each redemption submission, the daemon checks:
 | Check | Failure mode | Operator-actionable? |
 |---|---|---|
 | `ErrTicketExpired` — ticket's `CreationRound` is older than `Clock.LastInitializedRound() - ValidityWindow` (default 2 rounds) | Ticket is dropped; receiver loses the EV. | Increase `--validity-window` if your block time is unusually slow; otherwise, this is a payer problem (their batch sat too long before redemption). |
-| `ErrFaceValueTooLow` — ticket face_value < estimated redemption-tx cost | Redeeming would lose money to gas. Ticket is dropped; receiver loses the EV. | Tune `--receiver-tx-cost-multiplier` higher when issuing future tickets to avoid this. Past tickets can't be retroactively fixed. |
+| `ErrFaceValueTooLow` — ticket face_value < estimated redemption-tx cost | Redeeming would lose money to gas. Ticket is dropped; receiver loses the EV. | Raise the receiver's issued face value (today a compile-time default — see §2) or lower `--redeem-gas` if it over-estimates your chain. Past tickets can't be retroactively fixed. |
 | `ErrInsufficientFunds` — sender's available funds (deposit + reserve - pending) < redemption-tx cost | Submission would revert at the contract. Ticket is left queued and retried. | Watch for this in logs as a leading indicator of a sender draining their escrow. |
 
 The pre-checks save gas; the alternative is submitting a tx that
@@ -447,17 +454,17 @@ runs out.
 When `SufficientBalance` returns `sufficient=false`:
 
 1. The broker logs at WARN: `terminating session work_id=… reason=insufficient_balance`.
-2. The broker cancels the request context. The mode driver (`ws-realtime`,
-   etc.) sees the cancellation, closes both halves of its relay, and
-   returns.
+2. The broker cancels the request context. Under `paid-job/v1` the
+   exchange handler sees the cancellation, closes both halves of its
+   relay, and returns; under `paid-session/v1` the session engine winds
+   the session down with reason `insufficient_balance`.
 3. The middleware performs a final `DebitBalance` for any units
    accumulated between the last tick and the cancellation point (so the
    daemon's ledger matches the bytes/seconds actually shipped).
 4. `CloseSession` runs.
-5. The connection closes gateway-side. For ws-realtime, the backend sees
-   a server-side close. For other long-running modes, the gateway sees
-   the body terminate; where the protocol allows it, the broker emits
-   `Livepeer-Error: insufficient_balance` as a trailer.
+5. The connection closes gateway-side. The gateway sees the body or the
+   websocket terminate; where the protocol allows it, the broker emits
+   `Livepeer-Error: insufficient_balance`.
 
 The receiver operator does not see anything they wouldn't see from a
 normal session close: a `CloseSession` on the daemon plus the final
@@ -487,20 +494,22 @@ in-broker counter path to reason about here. Terminal reasons
 `gateway_close`, …) are surfaced on the session's status and control
 surfaces; see `capability-broker/docs/operator-runbook.md` §3.
 
+---
 
+## 7. Common failure modes
 
 | Symptom | Likely cause | What to check |
 |---|---|---|
-| Sender returns `SenderValidationError: no sender deposit` | Payer's TicketBroker deposit hit 0. | Have the gateway operator top up via direct contract call. |
-| Sender returns `SenderValidationError: pending unlock imminent` | Payer initiated `unlock()`. | Either the operator wants to drain (in which case stop sending), or it was an accident (in which case, do nothing — `unlock()` doesn't reset; either let it complete and re-lock or call `cancelUnlock()`). |
+| Sender `CreatePayment` fails with `no sender deposit` | Payer's TicketBroker deposit hit 0. | Have the gateway operator top up via direct contract call. |
+| Sender `CreatePayment` fails with `deposit and reserve set to unlock soon` | Payer initiated `unlock()`. | Either the operator wants to drain (in which case stop sending), or it was an accident (in which case, do nothing — `unlock()` doesn't reset; either let it complete and re-lock or call `cancelUnlock()`). |
 | Receiver returns ProcessPayment `signature recovery failed` | Sender's signature does not parse to a valid ETH address. | The hot signing key may be wrong, or the wire bytes were re-encoded mid-flight. Check the wire-compat round-trip test. |
 | Receiver `ErrFaceValueTooLow` shows up consistently for one sender | Sender's last-known price is stale; receiver bumped face_value floor on a gas spike. | Sender should re-quote. Check sender logs for the next outgoing ticket — if the price is back in line, the issue self-corrected. |
-| Receiver redemption queue depth grows unbounded | Redemption loop is wedged or chain RPC is slow. | Check `--chain-rpc-dial-timeout`, `--redemption-interval`. Look at the `pending_redemptions_total` metric over time. |
+| Receiver redemption queue depth grows unbounded | Redemption loop is wedged or chain RPC is slow. | Check `--redemption-interval` and the latency of the endpoint behind `--chain-rpc`. Look at `livepeer_payment_redemption_queue_depth` over time. |
 | Receiver "params expired" rejections from senders | Daemon's L1 clock is trailing the on-chain round. | `--clock-refresh-interval` (default 30s) may be set too high; also check `eth_blockNumber` latency on the RPC endpoint. |
 | Daemon prints `DEV MODE — --chain-rpc is empty` in production logs | Operator forgot to supply `--chain-rpc`. | Set it. Production must not run in dev mode. |
 | Sender returns `face_value capped by maxFloat` | Pending redemptions are eating into deposit faster than 3× heuristic allows. | Speed up redemption (lower `--redemption-interval`), or have payer top up deposit. |
 | Broker terminated long-running session with `Livepeer-Error: insufficient_balance` | Payer's session balance hit zero before the session ended (plan 0015). Either the gateway sized the initial payment too small for the session length, or no mid-session top-up flow exists yet. | Have the gateway raise the initial `face_value` it asks the sender daemon for; or confirm the planned top-up flow is wired (currently a deferred follow-up plan). On Arbitrum One, look for the broker log line `terminating session work_id=… reason=insufficient_balance`. |
-| `livepeer_payment_interim_debit_total{outcome="retried"}` rate > 0 sustained | Broker's interim-debit tick is failing on the daemon. Could be a daemon RPC error, a network partition, or BoltDB contention. | Check broker logs for the per-tick `interim DebitBalance work_id=… failed: …` warning. The broker reuses the same `debit_seq` across retries (plan 0015 §5.3) so the daemon's idempotency key prevents double-debit; sustained retries still indicate a real problem on the daemon side. |
+| `livepeer_payment_debits_total{result="error"}` rate > 0 sustained | Broker's interim-debit tick is failing on the daemon. Could be a daemon RPC error, a network partition, or BoltDB contention. | Check broker logs for the per-tick `interim DebitBalance work_id=… failed: …` warning. The broker reuses the same `debit_seq` across retries (plan 0015 §5.3) so the daemon's idempotency key prevents double-debit; sustained retries still indicate a real problem on the daemon side. |
 | DebitBalance call rate exceeds expected cadence | Broker is retrying tick deltas and the daemon is observing duplicate debit_seq values without successful prior commits. | Check broker logs for `interim DebitBalance work_id=… failed` patterns; if the same work_id repeats with the same `debit_seq`, the daemon is rejecting the ticket (signature, sender mismatch, or session-already-closed). Race with `CloseSession` is the most common — increase the broker's tick-stop wait timeout. |
 
 ---
@@ -564,23 +573,24 @@ work_id, ticket hash, or nonce.**
 - `livepeer_payment_build_info{version,mode,go_version}` (gauge, value 1).
 - `livepeer_payment_uptime_seconds` (gauge).
 
-**Broker (interim-debit cadence — plan 0015; emitted by the broker, not this daemon):**
-- `livepeer_payment_interim_debit_total{outcome}` (counter) — interim
-  DebitBalance call results from the broker's per-session ticker;
-  outcome ∈ {success, retried, terminal_failure}. `retried` means the
-  same `debit_seq` was reused after a non-success daemon reply (plan
-  0015 §5.3 retry semantics). High `retried` rate is a leading
-  indicator of daemon RPC distress.
-- `livepeer_payment_session_terminated_total{reason}` (counter) —
-  long-running sessions terminated by the broker; reason ∈
-  {balance_insufficient, handler_complete, ctx_cancelled}.
-  `balance_insufficient` rates trending up indicate gateway
-  operators are sizing initial payments below their session length.
+**Emitted by the broker, not this daemon** (see
+`capability-broker/docs/operations/`):
+- `livepeer_payment_client_requests_total` / `_request_duration_seconds`
+  / `_in_flight` — the broker's view of its gRPC calls into this daemon.
+  Join against `livepeer_payment_grpc_*` here to separate daemon latency
+  from network/queueing on the broker side.
+- `livepeer_protocol_session_winddowns_total{reason}` — paid-session
+  terminal winddowns; `reason` ∈ {gateway_close, lease_expired,
+  heartbeat_lost, insufficient_balance, …}. `insufficient_balance`
+  trending up means gateway operators are sizing initial payments below
+  their session length.
+- `livepeer_protocol_session_debited_units_total` — units the broker
+  derived from runner usage claims and pushed here via `DebitBalance`.
 
 ### Logging
 
-`--log-level` (`error|warn|info|debug`) and `--log-format` (`text|json`).
-Production runs JSON to ship to Loki / Elastic; development defaults to
+The daemon logs `slog` **text to stderr at INFO** and has no log-level
+or log-format flag; run it under a collector that parses logfmt-ish
 text. Every session start/close, every batch created, every redemption
 attempt + result emits a structured event.
 
@@ -644,13 +654,17 @@ the code.
 5. **Chain RPC reachable.** Test `eth_blockNumber`, `eth_gasPrice`,
    `eth_call` against the RPC endpoint before pointing the daemon at
    it. Latency under 1s; 99.9% uptime SLO.
-6. **BoltDB on persistent storage.** `--store-path` mounted on a real
+6. **BoltDB on persistent storage.** `--db` (receiver mode; default
+   `/var/lib/livepeer/payment-daemon/sessions.db`) mounted on a real
    disk, not tmpfs. Backups are operator-responsibility.
 7. **Metrics scraping configured.** Prometheus pointed at the daemon's
-   `--metrics-listen` port. Alerts wired to `pending_redemptions_total`
-   above some queue-depth threshold.
-8. **Sender knobs set.** Gateway-side `MaxEV`, `MaxTotalEV`, and
-   `DepositMultiplier` set per the operator's risk tolerance.
+   `--metrics-listen` port. Alerts wired to
+   `livepeer_payment_redemption_queue_depth` above some queue-depth
+   threshold — `docs/operations/prometheus/alerts.yaml` ships the rule.
+8. **Gateway-side spend sized deliberately.** The daemon has no
+   sender-side EV cap flags today (see §2), so the gateway's own
+   funding policy — how much value it mints per request or per session
+   top-up — is the only ceiling. Size it with `cmd/payout-sim`.
 
 A misconfigured production daemon that starts up clean and silent is
 worse than one that fails fast. The startup sequence is deliberately

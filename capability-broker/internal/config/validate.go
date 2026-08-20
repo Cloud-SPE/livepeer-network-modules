@@ -35,14 +35,6 @@ var validProbeTypes = map[string]bool{
 	"manual-drain":            true,
 }
 
-var validEncoderProfiles = map[string]bool{
-	"passthrough":             true,
-	"h264-live-1080p-libx264": true,
-	"h264-live-1080p-nvenc":   true,
-	"h264-live-1080p-qsv":     true,
-	"h264-live-1080p-vaapi":   true,
-}
-
 var deprecatedOpenAICapabilityIDSuffixes = []string{
 	"openai:chat-completions:",
 	"openai:embeddings:",
@@ -73,14 +65,6 @@ var videoTaskByCapabilityID = map[string]string{
 
 var vtuberTaskByCapabilityID = map[string]string{
 	"livepeer:vtuber-session": "session",
-}
-
-func encoderProfileList() []string {
-	out := make([]string, 0, len(validEncoderProfiles))
-	for k := range validEncoderProfiles {
-		out = append(out, k)
-	}
-	return out
 }
 
 // Validate runs cross-field validation against a parsed Config. Defaults are
@@ -349,22 +333,13 @@ func (c *Config) Validate() error {
 			if u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "worker" {
 				return fmt.Errorf("%s: backend.url scheme must be http, https, or worker (got %q)", ctx, u.Scheme)
 			}
-		case "ffmpeg-subprocess":
-			if cap.Backend.Profile == "" {
-				return fmt.Errorf("%s: backend.profile is required for transport=ffmpeg-subprocess", ctx)
-			}
-			if !validEncoderProfiles[cap.Backend.Profile] {
-				return fmt.Errorf("%s: backend.profile %q is not one of %v", ctx, cap.Backend.Profile, encoderProfileList())
-			}
-		case "session-runner":
-			if cap.Backend.SessionRunner == nil {
-				return fmt.Errorf("%s: backend.session_runner is required for transport=session-runner", ctx)
-			}
-			if strings.TrimSpace(cap.Backend.SessionRunner.Image) == "" {
-				return fmt.Errorf("%s: backend.session_runner.image is required for transport=session-runner", ctx)
-			}
 		default:
-			return fmt.Errorf("%s: backend.transport %q is not yet supported (only 'http', 'ffmpeg-subprocess', or 'session-runner' in v0.1)", ctx, cap.Backend.Transport)
+			// ffmpeg-subprocess and session-runner were removed with the
+			// v0 media plane. Accepting them here let a config load,
+			// validate, and get advertised on /registry/offerings, then
+			// fail at request time — worse than refusing it up front.
+			return fmt.Errorf("%s: backend.transport %q is not supported (only 'http'); "+
+				"ffmpeg-subprocess and session-runner were removed with the v0 interaction-mode media plane", ctx, cap.Backend.Transport)
 		}
 
 		switch cap.Backend.Auth.Method {

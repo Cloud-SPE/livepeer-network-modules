@@ -38,13 +38,19 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# /var/lib/livepeer is where session_store.path lives. Mount a persistent
+# volume over it in production: it holds paid-session authority and the
+# debit sequence counters, so losing it orphans active sessions.
 RUN useradd --system --uid 65532 --create-home --home-dir /home/nonroot --shell /usr/sbin/nologin nonroot \
-    && mkdir -p /var/lib/livepeer/rtmp-hls \
+    && mkdir -p /var/lib/livepeer \
     && chown -R 65532:65532 /var/lib/livepeer /home/nonroot
 
 COPY --from=builder /out/livepeer-capability-broker /usr/local/bin/livepeer-capability-broker
 
 USER 65532:65532
-EXPOSE 8080 9090 1935
+# 8080 paid (--listen), 9090 metrics (--metrics), 8443/udp optional
+# connected-worker QUIC (listen.worker_quic). The v0 RTMP ingress port
+# (1935) went away with the interaction-mode media plane.
+EXPOSE 8080 9090 8443/udp
 ENTRYPOINT ["/usr/local/bin/livepeer-capability-broker"]
 CMD ["--help"]

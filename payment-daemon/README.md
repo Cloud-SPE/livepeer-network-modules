@@ -60,7 +60,8 @@ that talks about real funds, real gas, or real redemption is
 
 ```sh
 make build      # build dev image locally
-make run        # foreground; sock at ./run/payment-daemon.sock
+make run        # foreground receiver; sock at ./run/payment-daemon.sock
+                # (MODE=sender make run for the sender side)
 make test       # in-container go test ./...
 make publish TAG=0.1.0   # multi-arch push (requires real TAG)
 ```
@@ -78,9 +79,14 @@ Flags:
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--socket` | `/var/run/livepeer/payment-daemon.sock` | unix socket the gRPC server listens on |
-| `--db` | `/var/lib/livepeer/payment-daemon/sessions.db` | BoltDB session ledger path |
+| `--mode` | — (**required**) | `sender` or `receiver`; the process refuses to boot without it |
+| `--socket` | per-mode: `/var/run/livepeer/payer-daemon.sock` (sender), `/var/run/livepeer/payment-daemon.sock` (receiver) | unix socket the gRPC server listens on |
+| `--db` | `/var/lib/livepeer/payment-daemon/sessions.db` | BoltDB session ledger path (receiver only) |
 | `--payee-admin-token` | empty | bearer token for receiver-only `PayeeAdmin` methods; falls back to `PAYEE_DAEMON_ADMIN_TOKEN` when unset |
+
+The full flag set (chain, keystore, gas, and redemption tunables) is in
+[`docs/operator-runbook.md`](./docs/operator-runbook.md); `--version`
+prints the build and exits.
 
 The socket and DB paths are designed to be mounted as docker volumes shared
 with the broker container.

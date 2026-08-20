@@ -8,8 +8,10 @@ import (
 // admin, ticket-params, and worker-session endpoints.
 //
 // The paid dispatch surface (POST/GET /v1/cap and friends) was removed
-// with the v0 interaction-mode taxonomy; the v1 paid-job / paid-session
-// protocol engines will register their own routes when they land.
+// with the v0 interaction-mode taxonomy. The paid routes now belong to
+// the two protocol engines, which register them separately:
+// registerJobRoutes (POST /v1/job, job_routes.go) and
+// registerSessionRoutes (/v1/session/*, session_routes.go).
 func (s *Server) registerRoutes() {
 	// Unpaid registry endpoints — no Livepeer-* validation, no payment.
 	s.mux.HandleFunc("GET /registry/offerings", instrumentRegistryScrape("offerings", s.handleOfferings))

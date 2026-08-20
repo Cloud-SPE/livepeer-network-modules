@@ -63,6 +63,16 @@ services:
     volumes:
       - ${BROKER_CONFIG}:/etc/livepeer/host-config.yaml:ro
       - livepeer-run:/var/run/livepeer
+      # Durable broker state: paid-session authority and paid-job
+      # idempotency records. Point `session_store.path` in host-config.yaml
+      # at a file under this directory. Without it the broker keeps job
+      # idempotency in memory (a warning, fine for a smoke run, not
+      # conformant for production) and refuses to load any paid-session
+      # capability at all. Losing the volume orphans active sessions and
+      # re-uses debit sequence numbers the payment daemon already recorded,
+      # so snapshot it together with, or after, payment-daemon-db — never
+      # from before it.
+      - broker-state:/var/lib/livepeer
     restart: unless-stopped
     depends_on:
       payment-daemon-receiver:
@@ -71,3 +81,4 @@ services:
 volumes:
   livepeer-run: {}
   payment-daemon-db: {}
+  broker-state: {}

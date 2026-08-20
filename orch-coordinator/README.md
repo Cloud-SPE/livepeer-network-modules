@@ -41,10 +41,11 @@ idle timeout.
 
 ## Status
 
-**v0.1 scaffold** (plan 0018, commit 1). The flag set, config parser, broker
-HTTP client, and scrape loop are wired; candidate output, diff surface,
-signed-manifest receive, resolver endpoint, metrics, and web UI land in
-later commits.
+Feature-complete against plan 0018 plus the plan 0042 sign-cycle agent:
+config parser, broker HTTP client, scrape loop, candidate build + tarball,
+diff surface, roster UI, signed-manifest receive + atomic publish, the
+resolver endpoint, the agent bearer credential, and Prometheus metrics all
+ship.
 
 ## Build
 
@@ -59,7 +60,9 @@ make help                # show all targets
 A YAML config file (mounted to `/etc/livepeer/orch-coordinator.yaml` by
 default) plus flags. See
 [`examples/coordinator-config.yaml`](./examples/coordinator-config.yaml)
-and the [`AGENTS.md`](./AGENTS.md) flag table.
+and the flag documentation in
+[`docs/operator-runbook.md`](./docs/operator-runbook.md); `--help` on the
+binary is the authoritative list.
 
 ## Layout
 
@@ -77,8 +80,6 @@ orch-coordinator/
 ├── docs/                            design + operator runbook
 ├── Dockerfile                       distroless static
 ├── Makefile                         docker-first gestures
-└── compose.yaml                     dev compose (coordinator + a fake broker)
+├── compose/                         run-only compose (+ agent overlay)
+└── compose.yaml                     dev compose (coordinator in --dev mode)
 ```
-
-`internal/` packages are added as code lands across plan 0018's seven
-commits.

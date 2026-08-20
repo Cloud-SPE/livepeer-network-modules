@@ -3,20 +3,32 @@
   "$id": "https://livepeer-network-protocol.example/manifest/schema.json",
   "title": "Livepeer registry manifest",
   "description": "Top-level wrapper plus signed manifest content. Published at /.well-known/livepeer-registry.json by the orch-coordinator. Signature is computed by the cold key on secure-orch over the canonical (RFC 8785 JCS) form of the manifest payload.",
-
   "type": "object",
-  "required": ["manifest", "signature"],
+  "required": [
+    "manifest",
+    "signature"
+  ],
   "additionalProperties": false,
   "properties": {
-    "manifest": { "$ref": "#/$defs/manifest" },
-    "signature": { "$ref": "#/$defs/signature" }
+    "manifest": {
+      "$ref": "#/$defs/manifest"
+    },
+    "signature": {
+      "$ref": "#/$defs/signature"
+    }
   },
-
   "$defs": {
     "manifest": {
       "type": "object",
       "title": "Manifest content (signed payload)",
-      "required": ["spec_version", "publication_seq", "issued_at", "expires_at", "orch", "capabilities"],
+      "required": [
+        "spec_version",
+        "publication_seq",
+        "issued_at",
+        "expires_at",
+        "orch",
+        "capabilities"
+      ],
       "additionalProperties": false,
       "properties": {
         "spec_version": {
@@ -39,20 +51,25 @@
           "format": "date-time",
           "description": "ISO 8601 UTC timestamp after which consumers MUST refetch. Resolvers MUST NOT route on expired manifests."
         },
-        "orch": { "$ref": "#/$defs/orch" },
+        "orch": {
+          "$ref": "#/$defs/orch"
+        },
         "capabilities": {
           "type": "array",
           "minItems": 0,
-          "items": { "$ref": "#/$defs/capability" },
+          "items": {
+            "$ref": "#/$defs/capability"
+          },
           "description": "Flat list of capability tuples. Host is not a registration unit; multi-binary or multi-broker hosts contribute multiple entries here."
         }
       }
     },
-
     "orch": {
       "type": "object",
       "title": "Orchestrator identity",
-      "required": ["eth_address"],
+      "required": [
+        "eth_address"
+      ],
       "additionalProperties": false,
       "properties": {
         "eth_address": {
@@ -67,7 +84,6 @@
         }
       }
     },
-
     "capability": {
       "type": "object",
       "title": "Capability tuple",
@@ -82,12 +98,42 @@
       "additionalProperties": false,
       "allOf": [
         {
-          "if": { "properties": { "protocol": { "pattern": "^paid-job/" } } },
-          "then": { "required": ["job"], "not": { "required": ["session"] } }
+          "if": {
+            "properties": {
+              "protocol": {
+                "pattern": "^paid-job/"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "job"
+            ],
+            "not": {
+              "required": [
+                "session"
+              ]
+            }
+          }
         },
         {
-          "if": { "properties": { "protocol": { "pattern": "^paid-session/" } } },
-          "then": { "required": ["session"], "not": { "required": ["job"] } }
+          "if": {
+            "properties": {
+              "protocol": {
+                "pattern": "^paid-session/"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "session"
+            ],
+            "not": {
+              "required": [
+                "job"
+              ]
+            }
+          }
         }
       ],
       "properties": {
@@ -106,9 +152,15 @@
           "pattern": "^[a-z][a-z0-9-]*/v[0-9]+$",
           "description": "Protocol tag, e.g. 'paid-job/v1' or 'paid-session/v1'. Protocol specs live in protocols/<name>.md. Consumers MUST refuse unknown protocols, never guess. Declared axes ride in the matching 'job' or 'session' object (see protocols/offering-axes.md)."
         },
-        "job": { "$ref": "#/$defs/job_axes" },
-        "session": { "$ref": "#/$defs/session_axes" },
-        "work_unit": { "$ref": "#/$defs/work_unit" },
+        "job": {
+          "$ref": "#/$defs/job_axes"
+        },
+        "session": {
+          "$ref": "#/$defs/session_axes"
+        },
+        "work_unit": {
+          "$ref": "#/$defs/work_unit"
+        },
         "price_per_unit_wei": {
           "type": "string",
           "pattern": "^[0-9]+$",
@@ -132,27 +184,36 @@
         }
       }
     },
-
     "job_axes": {
       "type": "object",
       "title": "paid-job declared axes",
-      "required": ["transports"],
+      "required": [
+        "transports"
+      ],
       "additionalProperties": false,
       "properties": {
         "transports": {
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
-          "items": { "enum": ["unary", "stream", "multipart"] },
+          "items": {
+            "enum": [
+              "unary",
+              "stream",
+              "multipart"
+            ]
+          },
           "description": "Transports this offering serves. Selected per-request by HTTP negotiation; brokers refuse undeclared transports before payment side effects."
         }
       }
     },
-
     "session_axes": {
       "type": "object",
       "title": "paid-session declared axes",
-      "required": ["descriptor_schema", "metering"],
+      "required": [
+        "descriptor_schema",
+        "metering"
+      ],
       "additionalProperties": false,
       "properties": {
         "descriptor_schema": {
@@ -161,16 +222,25 @@
           "description": "Runtime-descriptor schema tag (protocols/runtime-descriptor.md). Gateways MUST NOT open sessions whose schema they do not implement; brokers reject runner descriptors that do not match it."
         },
         "attachment": {
-          "enum": ["external", "inband-ws"],
+          "enum": [
+            "external",
+            "inband-ws"
+          ],
           "default": "external",
           "description": "'external': runtime coordinates come from the descriptor; data never transits the broker. 'inband-ws': the data plane is a broker-relayed WebSocket."
         },
         "metering": {
-          "enum": ["runner-reported", "broker-observed"],
-          "description": "Origin of the seller's usage claims. 'broker-observed' is valid only with attachment 'inband-ws' — a broker cannot observe traffic that never transits it."
+          "enum": [
+            "runner-reported",
+            "broker-observed"
+          ],
+          "description": "Origin of the seller's usage claims. 'broker-observed' is valid only with attachment 'inband-ws' \u2014 a broker cannot observe traffic that never transits it."
         },
         "refill": {
-          "enum": ["extensible", "bounded"],
+          "enum": [
+            "extensible",
+            "bounded"
+          ],
           "default": "extensible",
           "description": "'bounded' offerings reject top-up after open. The clearinghouse gates refill on this field."
         },
@@ -178,17 +248,34 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "interval_seconds": { "type": "integer", "minimum": 1, "default": 10 },
-            "missed_threshold": { "type": "integer", "minimum": 1, "default": 3 }
+            "interval_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 10
+            },
+            "missed_threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 3
+            }
           },
-          "description": "Liveness enforcement parameters (paid-session spec §5)."
+          "description": "Liveness enforcement parameters (paid-session spec \u00a75)."
         },
         "lease": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "policy": { "enum": ["funding-tracking", "fixed"], "default": "funding-tracking" },
-            "max_seconds": { "type": "integer", "minimum": 1 }
+            "policy": {
+              "enum": [
+                "funding-tracking",
+                "fixed"
+              ],
+              "default": "funding-tracking"
+            },
+            "max_seconds": {
+              "type": "integer",
+              "minimum": 1
+            }
           },
           "description": "Lease policy override; absent means the session spec's normative funding-tracking default."
         },
@@ -201,14 +288,20 @@
           "type": "integer",
           "minimum": 1,
           "description": "Advisory: seller-suggested top-up sizing. Buyers own their actual increment; it is their exposure bound."
+        },
+        "session_params_schema": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Opaque description of the session_params this capability expects, as declared by the runner (paid-session/v1 \u00a77.1.1). Relayed verbatim to gateways so they can validate before opening rather than discovering the requirement as a create-time failure. Never enforced by the broker or the registry \u2014 the runner remains the authority on its own inputs."
         }
       }
     },
-
     "work_unit": {
       "type": "object",
       "title": "Work-unit declaration",
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
         "name": {
@@ -218,17 +311,21 @@
         }
       }
     },
-
     "signature": {
       "type": "object",
       "title": "Cold-key signature",
       "description": "Signature is computed over the JCS-canonicalized (RFC 8785) form of the manifest payload. Signers: the orch's cold key on secure-orch.",
-      "required": ["algorithm", "value"],
+      "required": [
+        "algorithm",
+        "value"
+      ],
       "additionalProperties": false,
       "properties": {
         "algorithm": {
           "type": "string",
-          "enum": ["secp256k1"],
+          "enum": [
+            "secp256k1"
+          ],
           "description": "Signing algorithm. Currently only secp256k1 (Ethereum's curve) is permitted, matching the orch's on-chain identity."
         },
         "value": {
@@ -238,7 +335,9 @@
         },
         "canonicalization": {
           "type": "string",
-          "enum": ["JCS"],
+          "enum": [
+            "JCS"
+          ],
           "default": "JCS",
           "description": "JSON canonicalization scheme used before hashing. JCS = RFC 8785."
         }

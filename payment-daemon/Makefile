@@ -5,6 +5,7 @@
 
 IMAGE   ?= tztcloud/livepeer-payment-daemon
 TAG     ?= dev
+MODE    ?= receiver
 VERSION ?= $(shell VERSION_PREFIX="$(TAG)" FALLBACK_VERSION=dev ../infra/build/git-version.sh)
 
 PROTO_SRC := ../livepeer-network-protocol/proto
@@ -25,11 +26,12 @@ build: ## Build dev image locally
 		-f Dockerfile \
 		..
 
-run: ## Run the daemon locally; sock + db live under ./run/
+run: ## Run the daemon locally (MODE=receiver|sender); sock + db live under ./run/
 	mkdir -p run
 	docker run --rm \
 		-v $(PWD)/run:/srv \
 		$(IMAGE):$(TAG) \
+		--mode $(MODE) \
 		--socket /srv/payment-daemon.sock \
 		--db /srv/sessions.db
 

@@ -91,7 +91,7 @@ Each alert maps to a concrete executor command:
 | `submitted_stale` | Intent in `submitted` past expected confirmation window | `confirm-submitted` (or wait for the next reconcile-loop iteration). If still pending after several iterations, inspect the chain for the `tx_hash`. |
 | `failed_stale` | Intent in `failed` past `requeue_cooldown_seconds` | If `auto_requeue_failed: true`, the loop will pick it up. Otherwise inspect `failure_reason` and run `requeue-failed` or `requeue-alerted-failed`. |
 | `lease_expiring_soon` | Lease about to expire mid-batch | Loop renews automatically. If you see this persist, check executor wallet liveness and RPC latency. |
-| `retry_limit_reached` | Intent failed `max_retries` times | Manual triage: read `failure_reason`, decide between operator-side requeue (after fixing root cause) and `mark-failed-fatal` to remove it from the auto-loop. |
+| `retry_limit_reached` | Intent failed `max_retries` times | Manual triage: read `failure_reason`, decide between operator-side requeue (after fixing root cause) and leaving it in `failed` (or re-recording it with `mark-failed` and a terminal `--reason`) so the auto-requeue policy stops picking it up. |
 
 Common root causes by failure_reason substring (best inspected with
 `list-alerts` + `list-intents --status failed`):

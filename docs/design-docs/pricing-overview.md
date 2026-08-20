@@ -65,7 +65,7 @@ sender/receiver split.
 | Wire headers | [`livepeer-network-protocol/headers/livepeer-headers.md`](../../livepeer-network-protocol/headers/livepeer-headers.md) |
 | Payee RPC surface | [`livepeer-network-protocol/proto/livepeer/payments/v1/payee_daemon.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/payee_daemon.proto) |
 | Payer RPC surface | [`livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto) |
-| Wire-compat payment types | [`proto-contracts/livepeer/payments/v1/types.proto`](../../proto-contracts/livepeer/payments/v1/types.proto) |
+| Wire-compat payment types | [`livepeer-network-protocol/proto/livepeer/payments/v1/types.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/types.proto) |
 | Sender (payer) daemon | [`payment-daemon/internal/service/sender/sender.go`](../../payment-daemon/internal/service/sender/sender.go) |
 | Receiver (payee) daemon | [`payment-daemon/internal/service/receiver/receiver.go`](../../payment-daemon/internal/service/receiver/receiver.go) |
 | Session + balance store | [`payment-daemon/internal/store/store.go`](../../payment-daemon/internal/store/store.go) |
@@ -151,7 +151,7 @@ requested_face_value_wei = target_units × price_per_work_unit_wei
 (See [`payment-daemon-interactions.md:108-128`](./payment-daemon-interactions.md).)
 
 The gateway calls `PayerDaemon.CreatePayment` —
-[`proto-contracts/livepeer/payments/v1/payer_daemon.proto`](../../proto-contracts/livepeer/payments/v1/payer_daemon.proto)
+[`livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto)
 and the implementation
 [`payment-daemon/internal/service/sender/sender.go:69-150`](../../payment-daemon/internal/service/sender/sender.go).
 The sender:
@@ -182,16 +182,16 @@ headers — see
 
 | Header | Direction | Carries |
 |---|---|---|
-| `Livepeer-Capability` | request → broker | capability id (opaque string), `livepeer-headers.md:45-53` |
-| `Livepeer-Offering` | request → broker | offering id (opaque string), `livepeer-headers.md:55-63` |
-| `Livepeer-Payment` | request → broker | base64 protobuf `Payment` envelope, `livepeer-headers.md:65-86` |
-| `Livepeer-Mode` | request → broker | interaction mode id, e.g. `http-stream@v0` |
-| `Livepeer-Work-Units` | response from broker | `actualUnits` after extraction, `livepeer-headers.md:132-…` |
+| `Livepeer-Capability` | request → broker | capability id (opaque string) |
+| `Livepeer-Offering` | request → broker | offering id (opaque string) |
+| `Livepeer-Payment` | request → broker | base64 protobuf `Payment` envelope |
+| `Livepeer-Protocol` | request → broker | protocol tag, `paid-job/v1` or `paid-session/v1` (replaced the mode-era `Livepeer-Mode` + `Livepeer-Spec-Version` pair) |
+| `Livepeer-Work-Units` | response from broker | `actualUnits` after extraction; a trailer on the `stream` transport |
+| `Livepeer-Work-Unit` | response from broker | echo of the offering's declared unit name, so the gateway can reject unit drift |
 | `Livepeer-Error` | response on error | machine-readable code such as `insufficient_balance` |
 
-The envelope's `capability_id` and `offering_id` MUST match the headers
-(`livepeer-headers.md:74-84`). Mismatch ⇒ broker rejects with
-`Livepeer-Error: payment_invalid`.
+The envelope's `capability_id` and `offering_id` MUST match the headers.
+Mismatch ⇒ broker rejects with `Livepeer-Error: payment_invalid`.
 
 ### 6. Receiver validates the ticket and credits EV
 
@@ -257,7 +257,7 @@ that produces the integer count is declarative. Recipes are in
 | `response-jsonpath` | Arbitrary JSONPath over response body | integer |
 | `request-formula` | Safe arithmetic over request fields (e.g. `width × height × steps`) | integer |
 | `bytes-counted` | Byte length of request, response, or both | bytes |
-| `seconds-elapsed` | Wall-clock duration between mode-defined anchors | seconds |
+| `seconds-elapsed` | Wall-clock duration of one exchange, anchored per transport | seconds |
 | `ffmpeg-progress` | Parsed FFmpeg `-progress` stream | frames or out-time |
 
 The broker ships the extractor implementations; the operator only references
@@ -384,7 +384,7 @@ message SelectedRoute {
 
 ### Wire-compat payment types
 
-[`proto-contracts/livepeer/payments/v1/types.proto`](../../proto-contracts/livepeer/payments/v1/types.proto)
+[`livepeer-network-protocol/proto/livepeer/payments/v1/types.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/types.proto)
 preserves byte-for-byte wire compatibility with go-livepeer's
 `net/lp_rpc.proto`. Field *names* differ
 (`price_per_unit` vs. `pricePerUnit`); field *numbers* are identical, so the
@@ -460,12 +460,13 @@ To pre-empt confusion from the older `livepeer-modules-project` codebase:
   face-value
 - [`architecture-overview.md`](./architecture-overview.md) — the 8-layer
   architecture; pricing sits across layers 3-6
-- [`interaction-modes.md`](./interaction-modes.md) — full mode catalogue
+- [`interaction-modes.md`](./interaction-modes.md) — the two paid protocols
+  (`paid-job/v1`, `paid-session/v1`) and their declared axes
+- [`dual-meter-trust.md`](./dual-meter-trust.md) — whose meter bills whom, and
+  the divergence tolerance band
 - [`streaming-workload-pattern.md`](./streaming-workload-pattern.md) —
-  long-lived session blueprint for streaming modes
+  **superseded**; the mode-era long-lived-session blueprint, kept as provenance
 - [`trust-model.md`](./trust-model.md) — manifest signing, cold key
-- [`migration-from-suite.md`](./migration-from-suite.md) — component map
-  from the older suite
 
 ---
 

@@ -111,14 +111,26 @@ seen on that broker.
 | GET  | `/candidate.json`        | JCS-canonical manifest bytes (the cold-key inputs) |
 | GET  | `/candidate.tar.gz`      | Packaged candidate (manifest.json + metadata.json) |
 | POST | `/admin/signed-manifest` | Upload a cold-key-signed manifest (multipart or JSON) |
+| GET  | `/healthz`               | process liveness probe (also on the metrics listener) |
+| GET  | `/assets/`               | versioned static assets for the web UI |
+
+Web UI (all behind login when `ORCH_COORDINATOR_ADMIN_TOKENS` is set):
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET      | `/`                        | checklist / landing page |
+| GET      | `/roster`                  | capability roster |
+| GET      | `/diff`                    | candidate-vs-published diff |
+| GET      | `/audit`                   | audit log |
+| GET/POST | `/login`, POST `/logout`   | operator session |
+| POST     | `/refresh-roster`          | force an out-of-band scrape |
+| POST     | `/upload-signed-manifest`  | browser form-post wrapper over `/admin/signed-manifest` |
 
 Both candidate routes return an `ETag` over the candidate's canonical
 manifest bytes and honor `If-None-Match` with `304 Not Modified`, so
 the secure-orch agent can poll them at ~zero cost (plan 0042 §5.1).
 Before the first build they return `503` with `Retry-After`. A `304`
 poll is not an audit event; only full tarball downloads are audited.
-
-Web UI routes (`/`, `/diff`, `/audit`) land in plan 0018 commit 6.
 
 `metadata.json` is operator-only and not signed. It now includes:
 

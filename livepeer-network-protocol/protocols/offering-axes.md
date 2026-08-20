@@ -1,8 +1,8 @@
 ---
 spec_name: offering-axes
-version: 1.0.0-draft
+version: 1.0.1-draft
 status: draft
-last_updated: 2026-08-18
+last_updated: 2026-08-19
 ---
 
 # Offering declared axes
@@ -101,4 +101,5 @@ of `interaction_mode` is breaking by design.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.1-draft | 2026-08-19 | Add the advisory `session.session_params_schema` axis (see paid-session §7.1.1), carried by `manifest/schema.json` and relayed opaquely by `orch-coordinator`, so it reaches gateways through the signed manifest as well as the broker's `/registry/offerings`. |
 | 1.0.0-draft | 2026-08-18 | Initial axes. Replaces mode-name inference; `interaction_mode` removed from the manifest. |

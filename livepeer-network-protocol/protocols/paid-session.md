@@ -1,8 +1,8 @@
 ---
 spec_name: paid-session
-version: 1.0.0-draft
+version: 1.0.2-draft
 status: draft
-last_updated: 2026-08-18
+last_updated: 2026-08-19
 ---
 
 # Protocol: `paid-session/v1`
@@ -517,6 +517,6 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
-| 1.0.2-draft | 2026-08-19 | Add §7.1.1 optional runner self-description: advisory-never-authoritative, contradiction fatal to the capability, unreachability only a warning. |
+| 1.0.2-draft | 2026-08-19 | Add §7.1.1 optional runner self-description: advisory-never-authoritative, contradiction fatal to the capability, unreachability only a warning; a runner MAY also declare its `session_params` shape. |
 | 1.0.1-draft | 2026-08-19 | Add §11, the consolidated runner-obligations checklist, with the failure signature for each violation. Derivative and non-normative where it conflicts with a numbered section. |
 | 1.0.0-draft | 2026-08-18 | Initial protocol. Replaces the five session-family modes; durable authority, exactly-once debit, lease/heartbeat enforcement, session credential, and the balance object become normative. Absorbs meeting-handoff requirements B1–B5 and A4. |

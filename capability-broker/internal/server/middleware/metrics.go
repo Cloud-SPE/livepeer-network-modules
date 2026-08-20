@@ -12,9 +12,9 @@ import (
 
 // Metrics is a paid-route middleware that records request observability:
 //
-//   - Increments livepeer_mode_requests_total by (capability, offering, outcome).
-//   - Observes livepeer_mode_request_duration_seconds.
-//   - Sums livepeer_mode_work_units_total.
+//   - Increments livepeer_paid_requests_total by (capability, offering, outcome).
+//   - Observes livepeer_paid_request_duration_seconds.
+//   - Sums livepeer_paid_work_units_total.
 //   - Emits one structured log line per request including request_id, status,
 //     and Livepeer-Error code when present.
 //

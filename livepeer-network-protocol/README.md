@@ -10,7 +10,11 @@ consumed it; future gateway-side implementations are out-of-repo.
 
 ## Status
 
-Pre-1.0 (spec-wide). Current version: see [`VERSION`](./VERSION).
+Spec-wide version **2.0.0** — see [`VERSION`](./VERSION). The 2.0.0 major bump
+removed `interaction_mode` from the manifest in favour of `protocol` plus
+declared axes; pre-2.0 consumers cannot read these manifests. Individual
+protocol and descriptor-schema specs are still at `1.0.x-draft` in their own
+frontmatter.
 
 Per-protocol versions are tracked in each `protocols/<name>.md` frontmatter, and
 per-schema versions in each `descriptors/<name>.md`. Hybrid SemVer is the
@@ -28,6 +32,7 @@ authoritative versioning policy — see [core belief #14](../docs/design-docs/co
 | [`proto/`](./proto/) | Canonical `.proto` source for the payment wire format and the daemon gRPC services |
 | [`proto-go/`](./proto-go/) | Generated Go bindings for `proto/`; importable as a Go module |
 | [`verify/`](./verify/) | Cross-cutting Go module that recovers the Ethereum address from a manifest signature (resolver / coordinator / gateway double-verify) |
+| [`conformance/`](./conformance/) | Executable conformance suite for the v1 protocols; runs against the reference broker or any implementation by URL |
 | [`docs/`](./docs/) | Cross-cutting design docs ([`wire-compat.md`](./docs/wire-compat.md) — byte-for-byte contract with go-livepeer's `pm/`) |
 
 ## Versioning
@@ -58,10 +63,21 @@ product gateways that consumed it.
 
 ## Verifying your implementation
 
-The mode-era conformance suite was removed with the v0 modes (2026-08-19).
-An executable conformance runner for the v1 protocols is being rebuilt; until
-it ships, the normative fixtures lists in `protocols/*.md` §Conformance are
-the contract.
+[`conformance/`](./conformance/) is an executable suite for `paid-job/v1`,
+`paid-session/v1`, and the runtime-descriptor framework. Every scenario pins a
+normative clause from `protocols/*.md` §Conformance, and the suite never
+imports the reference broker — it speaks only the wire contract.
+
+```sh
+make conformance          # auto mode: against the in-repo reference broker
+
+# URL mode: against any implementation
+cd conformance && go run ./cmd/livepeer-conformance --broker-url https://your-broker --pause
+```
+
+See [`conformance/README.md`](./conformance/README.md) for the offerings your
+broker must serve in URL mode, and for the three assertions the suite
+deliberately cannot make black-box.
 
 ## Proposing changes
 

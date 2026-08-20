@@ -95,20 +95,12 @@ and edit:
 
 | Variant                                            | Status | Capability                                          | Pair with |
 | -------------------------------------------------- | ------ | --------------------------------------------------- | --------- |
-| [`openai-chat.example.yaml`](./host-configs/openai-chat.example.yaml) | Stable | `openai:chat-completions` (vLLM, paired stream + reqresp) | your vLLM deployment |
+| [`openai-chat.example.yaml`](./host-configs/openai-chat.example.yaml) | Stable | `openai:chat-completions` (vLLM, two `paid-job/v1` offerings) | your vLLM deployment |
 
 The backend service must be reachable from the broker via the
 `backend.url` host names in the host-config. Either run it in the same
 compose project (so it shares the default network) or attach both stacks
 to the same Docker network.
-
-### Preview variants
-
-Files under [`host-configs/preview/`](./host-configs/preview/) are
-**documented for the onboarding guide but not yet for production use**.
-The gateway integration and protocol version they depend on have not
-shipped. Do not advertise these capabilities on the live network until the
-matching gateway release is published.
 
 ### Notes on the example host-configs
 

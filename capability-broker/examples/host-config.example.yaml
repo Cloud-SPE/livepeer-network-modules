@@ -16,11 +16,27 @@
 # in this repo. Those component trees were removed on 2026-05-20; keep the
 # examples only as contract-shape references when wiring your own backends.
 #
-# NOTE: the v0 interaction-mode drivers (http-reqresp, http-stream, RTMP,
-# session-control, live-runner, ...) have been removed from the broker; the
-# `protocol` strings below are retained only as labels for the
-# published manifest. v1 protocol (paid-job / paid-session) capability
-# examples land with the new protocol engines.
+# The v0 interaction-mode drivers (http-reqresp, http-stream, RTMP,
+# session-control, live-runner, ...) were removed from the broker in
+# 2026-08. Every capability now declares one of two protocols, and the
+# `protocol` value is load-bearing — it selects which engine serves the
+# tuple and which axes the validator requires:
+#
+#   protocol: "paid-job/v1"      served on POST /v1/job
+#     requires: job.transports (subset of unary | stream | multipart)
+#     requires: work_unit.extractor
+#
+#   protocol: "paid-session/v1"  served on POST /v1/session + /v1/session/{id}/*
+#     requires: a session: block (descriptor_schema, runner.create_path,
+#               runner.terminate_path, ...)
+#     requires: top-level session_store and external_base_url
+#     REJECTS:  work_unit.extractor — session usage arrives as
+#               runner-reported cumulative claims, so there is no
+#               exchange for an extractor to run on
+#
+# Every example below is paid-job/v1. A paid-session offering needs a real
+# session runner plus a persistent state volume; see
+# docs/operator-runbook.md §3 for the full knob list before wiring one.
 
 identity:
   orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
@@ -72,9 +88,13 @@ payment_daemon:
 #     method: "bearer"
 #     secret_ref: "env://POOL_CONTROLLER_TOKEN"
 
-# Optional read-only Pool snapshot source. When set, the broker polls
-# pool-controller's backend-selection snapshot and surfaces freshness / entry
-# status on GET /registry/health. This first slice does not alter routing yet.
+# Optional Pool snapshot source. When set, the broker polls
+# pool-controller's backend-selection snapshot, surfaces freshness / entry
+# status on GET /registry/health, AND lets that state gate routing:
+# expired / bootstrap_pending / fetch_error snapshots fail closed for
+# Pool-managed backends, missing and excluded/quarantined entries are
+# ineligible, and eligible/degraded entries scale the broker-local health
+# weight by the snapshot's effective_selection_score.
 #
 # pool_snapshot:
 #   url: "http://pool-controller:8080"

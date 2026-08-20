@@ -10,8 +10,10 @@ The pin: *register, pay, discover, and route work without the architecture knowi
 the workload is.* Every leak of workload-specific knowledge into a layer that doesn't
 need it (the registry, the payment daemon, the gateway router) is a bug.
 
-The single permitted leak point is the **interaction-mode typology** — and even there,
-modes describe transport shape, not capability semantics.
+The single permitted leak point is the **protocol typology and its declared axes** —
+and even there, protocols describe engagement and transport shape, not capability
+semantics. Workload identity lives in runtime-descriptor schemas, which only the
+runner that emits them and the gateway that consumes them need to understand.
 
 ## 2. Capabilities are open-world strings
 
@@ -41,9 +43,9 @@ only. The manifest schema is a flat list of capability tuples. The coordinator's
 is per-capability, not per-host. **No layer should require a `livepeer-modules` change
 to onboard a new capability.**
 
-## 6. Modes are specifications, not libraries
+## 6. Protocols are specifications, not libraries
 
-Interaction modes live in a language-neutral spec repo (working name:
+Interaction protocols live in a language-neutral spec repo (working name:
 `livepeer-network-protocol`). Implementers conform to the spec; no required shared library.
 Reference implementations are opt-in. Conformance test suites are the trust mechanism.
 

@@ -1,9 +1,9 @@
 ---
 spec_name: runtime-descriptor
-version: 1.0.0-draft
+version: 1.0.1-draft
 status: draft
-part_of: paid-session@v1
-last_updated: 2026-08-18
+part_of: paid-session/v1
+last_updated: 2026-08-19
 ---
 
 # Runtime descriptor framework
@@ -13,7 +13,7 @@ when a paid session is opened, and the only vehicle by which workload-specific
 runtime coordinates cross the broker. The broker validates its **structure**,
 stores it, and relays its **public part** — it never interprets its fields.
 
-This is the seam that keeps `paid-session@v1` workload-agnostic:
+This is the seam that keeps `paid-session/v1` workload-agnostic:
 
 > **Workload identity lives in descriptor schemas. Protocol names never carry
 > it.** An SFU room, an RTMP ingest point, a generative-video scope, and a
@@ -163,7 +163,7 @@ Grant semantics — the load-bearing rules:
    response is delivered. It MAY retain a hash plus the grant metadata for
    audit and for status displays (`grants_issued: [...ids...]`).
 3. **Restart recovery never re-mints grants.** A rebound session (see
-   `paid-session@v1` recovery) continues with the grants already in the
+   `paid-session/v1` recovery) continues with the grants already in the
    gateway's hands. A gateway that loses a grant has lost it; a schema MAY
    define a fresh-grant operation, but it MUST be an authenticated
    gateway→runner operation, not a broker replay.
@@ -253,7 +253,7 @@ sensitive field into `public` fails conformance rather than review.
   is coordinates, not content.
 - **Not a general extension mechanism for the session protocol.** Session
   lifecycle, payment, leases, usage claims, and the control plane are fixed
-  by `paid-session@v1`; the descriptor extends only *what the runtime is*.
+  by `paid-session/v1`; the descriptor extends only *what the runtime is*.
 - **Not self-describing.** There is no inline schema definition or
   reflection; the tag points at a spec document under `descriptors/`, and
   both ends are expected to have read it.
@@ -262,4 +262,5 @@ sensitive field into `public` fails conformance rather than review.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.1-draft | 2026-08-19 | Meeting-team review: §2 example made deliberately fictional (`example-runtime/v1`) so it is not copied as a real schema; §2.2 states the consequence of public-part immutability outright (a runtime host migration is a customer-visible session end in v1); §2.2 adds that descriptor coordinates are gateway-facing and independent of the broker's configured `session.runner.{create,status,terminate}_path`. |
 | 1.0.0-draft | 2026-08-18 | Initial framework, extracted from the meeting-product handoff (A1–A3) and generalized per the 2026-08-18 redesign decisions. |

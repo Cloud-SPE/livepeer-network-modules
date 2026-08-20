@@ -1,6 +1,6 @@
 # chain-commons
 
-Shared chain-glue Go library for the [livepeer-modules-project](../README.md) monorepo.
+Shared chain-glue Go library for the [livepeer-network-modules](../README.md) monorepo.
 
 Provides the Ethereum/Arbitrum interaction primitives that `payment-daemon`, `service-registry-daemon`, and `protocol-daemon` consume:
 
@@ -19,19 +19,18 @@ Provides the Ethereum/Arbitrum interaction primitives that `payment-daemon`, `se
 
 ## Status
 
-This is the first scaffolding milestone (plan 0001 §D–§K). Currently shipping:
+Consumed in production by `payment-daemon`, `service-registry-daemon`, and
+`protocol-daemon`. Currently shipping:
 
-- ✅ All 11 provider interfaces (rpc, controller, keystore, gasoracle, logs, receipts, timesource, store, metrics, logger, clock)
-- ✅ `services/txintent` — full durable state machine + persistence + idempotency, comprehensive test suite
-- ✅ `services/{roundclock, eventlog}` — interfaces only; impls land later
-- ✅ In-memory `Store` (production BoltDB impl lands later)
-- ✅ `slog`-backed `Logger` (production impl)
-- ✅ No-op `Recorder` (production decorators live in daemons)
-- ✅ System `Clock`
-- ⏳ Provider implementations for `rpc`, `controller`, `gasoracle`, `keystore`, `logs`, `receipts`, `timesource` — land in subsequent commits
-- ⏳ `services/txintent` `Processor` (signing/broadcasting/receipt-tracking goroutine) — lands in subsequent commit
+- ✅ All 13 provider interfaces (rpc, controller, keystore, gasoracle, logs, receipts, timesource, store, metrics, logger, clock, bondingmanager, roundsmanager) — each with a real implementation in a subpackage
+- ✅ `services/txintent` — full durable state machine + persistence + idempotency + processor
+- ✅ `services/{roundclock, eventlog}`
+- ✅ Both `Store` impls: in-memory (`store/memstore.go`) and BoltDB (`store/bolt`)
+- ✅ `slog`-backed `Logger`; no-op `Recorder` (production decorators live in daemons); system `Clock`
+- ✅ `testing/` fakes for rpc, controller, keystore, gasoracle, receipts, store, metrics, logger, clock
+- ⏳ `lint/{coverage-gate, layer-check, no-secrets-in-logs}` — policy READMEs only; the Go tools are unimplemented (`.golangci.yml` `depguard` covers most layer rules today)
 
-The interfaces are stable enough to be consumed; consumer daemons can dial against fakes from `testing/` (when it lands) and switch to real impls without API churn.
+The interfaces are stable; consumer daemons dial against fakes from `testing/` and switch to real impls without API churn.
 
 ## Layout
 
@@ -40,24 +39,27 @@ chain-commons/
 ├── chain/              typed domain values
 ├── errors/             classified error types + Classify()
 ├── config/             validated Config struct
-├── providers/          interfaces + per-provider impls
-│   ├── rpc/            multi-URL go-ethereum wrapper (impl pending)
-│   ├── controller/     sub-contract address resolver (impl pending)
-│   ├── keystore/       V3 JSON keystore + HSM-shaped Sign() (impl pending)
-│   ├── gasoracle/      eth_gasPrice + maxPriorityFeePerGas TTL cache (impl pending)
-│   ├── logs/           eth_getLogs poller with durable offsets (impl pending)
-│   ├── receipts/       reorg-aware confirmation tracking (impl pending)
-│   ├── timesource/     current round + L1 block + Round events (impl pending)
-│   ├── store/          BoltDB-backed KV (memory impl shipped; bolt impl pending)
+├── providers/          interfaces in the package root, impls in subpackages
+│   ├── rpc/            multi-URL go-ethereum wrapper (rpc/multi)
+│   ├── controller/     sub-contract address resolver (controller/eth)
+│   ├── keystore/       V3 JSON keystore + HSM-shaped Sign() (keystore/v3json)
+│   ├── gasoracle/      eth_gasPrice + maxPriorityFeePerGas TTL cache (gasoracle/ttl)
+│   ├── logs/           eth_getLogs poller with durable offsets (logs/poller)
+│   ├── receipts/       reorg-aware confirmation tracking (receipts/reorg)
+│   ├── timesource/     current round + L1 block + Round events (timesource/poller)
+│   ├── bondingmanager/ BondingManager reads + writes
+│   ├── roundsmanager/  RoundsManager round state
+│   ├── store/          KV: memstore.go (memory) + store/bolt (BoltDB)
 │   ├── metrics/        Recorder interface + no-op
 │   ├── logger/         slog wrapper
 │   └── clock/          time.Now + tickers
 ├── services/
-│   ├── txintent/       durable transaction state machine ✅ shipped
-│   ├── roundclock/     typed Round events (impl pending)
-│   └── eventlog/       durable log subscriptions (impl pending)
-├── testing/            fakes for every provider (impl pending)
+│   ├── txintent/       durable transaction state machine + processor
+│   ├── roundclock/     typed Round events
+│   └── eventlog/       durable log subscriptions
+├── testing/            fakes for the providers daemons dial against
 ├── lint/               coverage-gate, layer-check, no-secrets-in-logs
+│                       (policy READMEs; tools not implemented yet)
 ├── go.mod
 ├── Makefile
 └── .golangci.yml
@@ -75,16 +77,15 @@ make coverage-check  # per-package coverage report
 
 ## Design
 
-Full design at the monorepo root:
+The per-provider and per-service design rationale lives in the package
+doc comments — start at [`doc.go`](./doc.go), then the interface files in
+`providers/*/` and `services/*/`. The layer rules the module is built to
+are pinned in [`lint/layer-check/README.md`](./lint/layer-check/README.md)
+and enforced by `depguard` in `.golangci.yml`.
 
-- [`docs/design-docs/chain-commons-api.md`](../docs/design-docs/chain-commons-api.md) — provider + service catalog with rationale
-- [`docs/design-docs/tx-intent-state-machine.md`](../docs/design-docs/tx-intent-state-machine.md) — the durable transaction state machine
-- [`docs/design-docs/multi-rpc-failover.md`](../docs/design-docs/multi-rpc-failover.md) — circuit-breaker primary/backup routing
-- [`docs/design-docs/controller-resolver.md`](../docs/design-docs/controller-resolver.md) — sub-contract address discovery
-- [`docs/design-docs/event-log-offsets.md`](../docs/design-docs/event-log-offsets.md) — durable per-subscriber log offsets
-
-The build-out plan: [`docs/exec-plans/active/0001-establish-monorepo-and-chain-commons.md`](../docs/exec-plans/active/0001-establish-monorepo-and-chain-commons.md).
+Repo-wide architectural context: [`../docs/design-docs/architecture-overview.md`](../docs/design-docs/architecture-overview.md)
+and [`../AGENTS.md`](../AGENTS.md).
 
 ## License
 
-[MIT](../LICENSE).
+MIT.

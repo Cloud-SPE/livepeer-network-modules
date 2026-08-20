@@ -36,9 +36,12 @@ The off-chain JSON document the publisher hosts at the exact URL returned by `ge
 ```
 
 `worker_eth_address` is intentionally **not** part of the published
-manifest schema in v3.0.1. Workers may surface it on
-`/registry/offerings`, and the orch-coordinator may store/display it,
-but it is stripped before proposal publication and signing.
+manifest schema in v3.0.1. The gRPC `Node` message still carries the
+field for internal/coordinator use, but it is stripped before proposal
+publication and signing, and the gateway-facing `Select` response never
+includes it. It is *not* part of the worker
+[`/registry/offerings`](worker-offerings-endpoint.md) body — that payload
+carries `orch_eth_address` instead.
 
 ## Capability shape
 
@@ -108,4 +111,4 @@ Any failure produces a `types.ManifestValidationError` with a stable error code;
 
 ## Examples
 
-See [docs/generated/manifest-example.md](../generated/manifest-example.md) for a full canonical example produced by `make doc-lint`.
+See [docs/generated/manifest-example.md](../generated/manifest-example.md) for a full canonical example. (`make doc-lint` only runs the doc-gardener frontmatter/cross-link check; it does not generate that file.)

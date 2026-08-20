@@ -19,7 +19,7 @@ manifests via HTTP POST and verifies them; if the signature recovers anything
 other than the configured `eth_address`, the upload is rejected. There is no
 warm-key path here. Cite: plan 0018 §1 + core belief #4.
 
-## Two listeners, two postures
+## Three listeners, three postures
 
 - `--listen=:8080` — operator UX (web UI + JSON API + signed-manifest upload).
   LAN-bound by intent; the coordinator runs on the operator's LAN and the

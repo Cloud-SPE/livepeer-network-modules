@@ -20,10 +20,13 @@ The broker contains **zero capability-specific code**. All workload knowledge
 lives in:
 
 1. **Protocol engines** — implementations of the spec's two protocols:
-   the paid-job transports and the paid-session engine
-   (`internal/sessionengine`), replacing the mode-adapter layer 2026-08.
+   the paid-job transports (`internal/server/job_routes.go`) and the
+   paid-session engine (`internal/sessionengine`), replacing the
+   mode-adapter layer 2026-08.
 2. **Extractor implementations** — declarative work-unit recipes
-   (`response-jsonpath` first; others per plan 0007).
+   (`internal/extractors`). A `paid-job/v1` concept only: paid-session
+   usage arrives as runner-reported cumulative claims, and the config
+   grammar rejects an extractor on a session capability.
 3. **The `host-config.yaml` operator config** — capability ID, offering ID,
    pricing, backend descriptors, declared extractors.
 
@@ -37,10 +40,11 @@ The broker MUST conform to the wire spec at
   orch-coordinator's job).
 - [`headers/livepeer-headers.md`](../livepeer-network-protocol/headers/livepeer-headers.md)
   defines the `Livepeer-*` HTTP header conventions.
-- [`modes/<mode>.md`](../livepeer-network-protocol/modes/) defines per-mode
-  wire shape.
+- [`protocols/`](../livepeer-network-protocol/protocols/) defines the two
+  protocols' wire shapes (`paid-job.md`, `paid-session.md`) plus the
+  advertised offering axes and the runtime descriptor.
 - [`extractors/<extractor>.md`](../livepeer-network-protocol/extractors/)
-  defines the extractor recipes.
+  defines the extractor recipes (a `paid-job/v1` concept only).
 
 When code disagrees with the spec, the spec wins. Conformance is verified by
 [`../livepeer-network-protocol/conformance/`](../livepeer-network-protocol/conformance/).
@@ -48,7 +52,8 @@ When code disagrees with the spec, the spec wins. Conformance is verified by
 ## Internal architecture
 
 See [`docs/design-docs/architecture.md`](./docs/design-docs/architecture.md)
-for the planned package layout, request lifecycle, and dispatch flow.
+for the package layout, the HTTP surface, and the request lifecycle of each
+protocol.
 
 ## What stays out of this binary
 

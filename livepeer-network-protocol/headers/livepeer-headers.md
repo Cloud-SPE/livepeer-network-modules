@@ -167,10 +167,10 @@ Broker-authoritative settlement record for the completed request or session wind
   - billed units
   - billed value
   - settlement outcome
-- For request/response flows, emitted as a response header or HTTP trailer depending on
+- For `paid-job/v1`, emitted as a response header or HTTP trailer depending on
   when the implementation can finalize settlement relative to header commit.
-- For long-running or upgraded flows, emitted on the mode's terminal plane (HTTP
-  trailer, terminal event, or follow-up control surface).
+- For `paid-session/v1`, emitted on the protocol's terminal plane (the terminal
+  status response or the control-WS `session.ended` frame).
 
 Gateways should store `Livepeer-Settlement` as the authoritative settlement record for
 the request/session rather than re-deriving settlement from local heuristics when the
@@ -189,7 +189,7 @@ capacity status for each currently-served capability.
   ```
 - Each value MUST be one of: `"available" | "saturated" | "draining" | "down"`.
 - Gateways poll this every 15-30 seconds. The full three-layer health model lives
-  in [`backend-health.md`](../../docs/design-docs/) (TBD).
+  in [`backend-health.md`](../../docs/design-docs/backend-health.md).
 - Alternative: place the JSON in the response body. Header form is preferred for
   consistency with the `Livepeer-*` family and to allow `HEAD` checks.
 
@@ -224,10 +224,14 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 | `backend_unavailable` | 502 | Backend reachable but returned an error the broker can't recover from. |
 | `capacity_exhausted` | 503 | Broker has no slots; see `Livepeer-Backoff`. |
 | `insufficient_balance` | 402 | Long-running session terminated by the broker because `PayeeDaemon.SufficientBalance` reported the payer's balance no longer covers the configured runway. The header is emitted as a trailer where the protocol allows it (the response body has typically already begun); the connection is closed by the broker. Plan 0015. |
-| `ffmpeg_subprocess_failed` | 500 | The broker's per-session FFmpeg subprocess exited non-zero before the customer-driven RTMP push finished. Emitted on the `rtmp-ingress-hls-egress` control-WebSocket close reason and recorded in metrics. Plan 0011-followup. |
-| `rtmp_ingest_idle_timeout` | 408 | A `rtmp-ingress-hls-egress` session received no RTMP packets for `--rtmp-idle-timeout` after the publish handshake completed; the broker tore down the session. Emitted on the control-WebSocket close reason. Plan 0011-followup. |
-| `backpressure_drop` | n/a | The `session-control-plus-media` broker dropped the control-WebSocket because a per-direction send buffer stayed full beyond `--session-control-backpressure-drop-after`. Emitted as the WebSocket close-frame reason; no HTTP status because the connection is already upgraded. Plan 0012-followup. |
 | `internal_error` | 500 | Anything else. |
+
+Workload-specific failures are **not** protocol error codes. The mode-era
+`ffmpeg_subprocess_failed`, `rtmp_ingest_idle_timeout`, and
+`backpressure_drop` codes were removed with the v0 modes and the broker-hosted
+media plane: under `paid-session/v1` a runtime that dies is a runner fact,
+surfaced as `session.failed` with a runner-authored `close_reason` (§7.2), and
+never as a `Livepeer-Error` value the gateway has to know per workload.
 
 ### Error body
 
@@ -259,14 +263,15 @@ The broker is a transparent proxy with the following obligations:
   example: `Authorization: Bearer <vault-resolved-secret>` when reselling a
   third-party API.
 - **Pass through application-level headers** (`Content-Type`, `Accept`,
-  `User-Agent`, etc.) at the implementer's discretion. Per-mode specs MAY further
-  constrain this.
+  `User-Agent`, etc.) at the implementer's discretion. The protocol specs MAY
+  further constrain this.
 - **Echo `Livepeer-Request-Id` in logs**, even though it's stripped from the
   outbound request.
 
 ## Conformance
 
-The conformance suite (`tztcloud/livepeer-conformance:<tag>`) verifies, at minimum:
+The conformance suite ([`../conformance/`](../conformance/), `make conformance`)
+verifies, at minimum:
 
 - All required request headers parsed correctly.
 - All header/envelope mismatch paths produce the right `Livepeer-Error` codes.
@@ -286,3 +291,4 @@ See [`../conformance/`](../conformance/).
 | 0.1.1 | Add `insufficient_balance` error code for long-running sessions terminated by the broker mid-flight (plan 0015). Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |
 | 0.1.2 | Add `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout` error codes for `rtmp-ingress-hls-egress` (plan 0011-followup). Pre-1.0 minor additions are non-breaking. |
 | 0.1.3 | Add `backpressure_drop` error code for the `session-control-plus-media` control-WebSocket (plan 0012-followup). Pre-1.0 minor additions are non-breaking. |
+| 1.0.0-draft | **Breaking.** Rewritten for the v1 protocols (2026-08-19). `Livepeer-Mode` + `Livepeer-Spec-Version` replaced by `Livepeer-Protocol`; `Livepeer-Request-Id` becomes required (it is the idempotency key); `Livepeer-Work-Unit` and `Livepeer-Job-Id` added; `protocol_unsupported`, `protocol_transport_unsupported`, `job_in_flight`, `request_id_reuse`, and `refill_refused` added. The mode-era `ffmpeg_subprocess_failed`, `rtmp_ingest_idle_timeout`, and `backpressure_drop` codes removed with the broker-hosted media plane. |

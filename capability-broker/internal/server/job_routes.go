@@ -45,6 +45,7 @@ func (s *Server) registerJobRoutes() {
 	h := middleware.Chain(
 		middleware.Recover,
 		middleware.RequestID,
+		middleware.Metrics,
 		middleware.Headers,
 	)(s.jobIdempotency(
 		middleware.Chain(middleware.Payment(s.payment, s.lookupSpec, s.opts.InterimDebit, s.receiptSink))(

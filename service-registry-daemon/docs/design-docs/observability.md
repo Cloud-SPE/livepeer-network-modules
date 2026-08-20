@@ -55,6 +55,7 @@ The daemon also enforces a hard cardinality cap (`--metrics-max-series-per-metri
 | `livepeer_registry_resolve_duration_seconds` | Histogram (default buckets) | `mode`, `freshness` | End-to-end resolve latency per `(mode, freshness)`. |
 | `livepeer_registry_legacy_fallbacks_total` | Counter | `reason` | "How many orchestrators are still legacy?" trend. |
 | `livepeer_registry_overlay_dropped_nodes_total` | Counter | `reason` | Visibility into nodes the operator overlay rejected. |
+| `livepeer_registry_live_health_decisions_total` | Counter | `reason` | Layer 2 live-health route decisions made before a route reaches a gateway (from the worker's `/registry/health`). |
 
 ### Label values
 
@@ -113,7 +114,7 @@ The daemon also enforces a hard cardinality cap (`--metrics-max-series-per-metri
 
 | Metric | Type | Labels | What it answers |
 |---|---|---|---|
-| `livepeer_registry_overlay_reloads_total` | Counter | `outcome` | SIGHUP / fsnotify reload health. |
+| `livepeer_registry_overlay_reloads_total` | Counter | `outcome` | Startup overlay-load outcome. Increments once per process (no hot-reload today). |
 | `livepeer_registry_overlay_entries` | Gauge | — | Operator's allowlist size at-a-glance. |
 
 ### Label values

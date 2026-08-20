@@ -327,7 +327,7 @@ Full method shapes: [docs/product-specs/grpc-surface.md](../product-specs/grpc-s
 ## Build artifacts
 
 - Single Go binary: `livepeer-service-registry-daemon` (~13 MB built locally; ~21 MB Docker image)
-- Generated proto code: `proto/gen/go/livepeer/registry/v1/` (committed; regenerate via `make proto`)
+- Generated proto code: imported from the sibling `proto-contracts/` module (`livepeer/registry/v1`; committed there, regenerated via `make proto` from that module — this repo has no `proto/` tree)
 - Docker image: `tztcloud/livepeer-service-registry-daemon:vX.Y.Z` (Docker Hub, pushed via `make docker-push` locally; `.github/workflows/docker.yml` auto-publishes on tagged release)
 
 ## What this architecture does NOT solve

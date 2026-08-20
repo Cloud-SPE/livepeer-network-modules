@@ -1,6 +1,6 @@
 ---
 title: Runner-declared capabilities — what the runner owns vs what the operator owns
-status: draft
+status: active
 last-reviewed: 2026-08-19
 ---
 
@@ -10,6 +10,15 @@ An architectural gap surfaced 2026-08-19: `host-config.yaml` requires an
 operator to hand-transcribe facts that only the runner actually knows.
 This doc states the split we should be designing to, the drift it causes
 today, and what is missing to close it.
+
+> **Implementation status (2026-08-19).** The design below shipped in the same
+> cycle it was written. Runner self-description is now normative in
+> [`paid-session/v1` §7.1.1](../../livepeer-network-protocol/protocols/paid-session.md)
+> and implemented in `capability-broker/internal/sessionengine/describe.go`
+> plus `internal/server/session_engine_init.go`, with the read-diff-never-adopt
+> rule intact. Gaps 2 (declared `session_params` shape), 3 (runner-declared
+> readiness), and 4 (extractors are `paid-job` only) below are **closed**; gap 1
+> (protocol/schema version negotiation) is still open.
 
 It deliberately does **not** propose that this repo test runner
 implementations. Runners live outside this repo by design. The protocol
@@ -88,22 +97,20 @@ that to surface.
    descriptor-schema versions a runner speaks. A runner that upgrades
    `sfu-room/v1` → `v2` fails at create time with a schema mismatch
    instead of being caught at configuration time.
-2. **No declared `session_params` shape.** A capability may require
-   params of a particular shape; nothing states it, so a gateway sends
-   blind and discovers the requirement as a runner-side create failure.
-   A runner-declared params schema would let the failure surface at
-   selection time.
-3. **Readiness is approximated.** Health probes are operator-declared
-   HTTP recipes standing in for a fact the runner holds precisely.
-   Runner-reported readiness (and capacity) would be more truthful and
-   would remove per-capability probe config.
-4. **Dead config: extractors on session capabilities.** Validation
-   requires `work_unit.extractor` for every capability, but the session
-   engine never uses one — `paid-session` usage comes from runner claims.
-   Operators must invent an extractor type that is never called (the
-   conformance suite declares `seconds-elapsed` purely to pass
-   validation). Extractors are a `paid-job` concept and validation should
-   say so.
+2. ~~**No declared `session_params` shape.**~~ **Closed.** A runner MAY now
+   declare `session_params_schema` in its describe response; the broker
+   relays it verbatim on `/registry/offerings` and never enforces it
+   (`paid-session` §7.1.1). It is not yet carried by the signed manifest
+   schema, so gateways reading a manifest still do not see it.
+3. ~~**Readiness is approximated.**~~ **Closed** for readiness: a runner MAY
+   declare a readiness endpoint and the broker MAY use it in place of a
+   probe it would otherwise default to, with an operator-configured probe
+   always winning. Runner-declared *capacity* remains unaddressed.
+4. ~~**Dead config: extractors on session capabilities.**~~ **Closed.**
+   Config validation now rejects `work_unit.extractor` on a
+   `paid-session` capability outright ("usage comes from runner-reported
+   claims; the broker never runs an extractor here") and requires it only
+   for `paid-job`.
 
 ## What this is not
 

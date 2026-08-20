@@ -62,7 +62,7 @@ flowchart TD
         GW["gateway shell<br/>(OpenAI / video / vtuber)"]
         GPD["payment-daemon<br/>sender"]
         SRD["service-registry-daemon<br/>resolver"]
-        ADAPT["gateway-adapters<br/>(per interaction mode)"]
+        PROTO["protocol clients<br/>(paid-job/v1, paid-session/v1<br/>+ the descriptor schemas served)"]
     end
 
     SOC -.-> PRD
@@ -77,12 +77,12 @@ flowchart TD
     SRD --> SREG
     SRD -.->|"GET /manifest.json<br/>+ verify sig"| OC
 
-    GW --> ADAPT
+    GW --> PROTO
     GW --> SRD
     GW --> GPD
     GPD --> TB
 
-    ADAPT ==>|"paid HTTP / WS / RTMP /<br/>session-control + media"| CB
+    PROTO ==>|"POST /v1/job<br/>POST /v1/session + control plane"| CB
     CB --> WPD
     WPD --> TB
 
@@ -105,8 +105,9 @@ The five logical layers, top to bottom:
 - **Worker hosts (capability broker + backends)** — one broker per host, fully
   workload-agnostic. Backends are arbitrary (local containers, LAN services,
   third-party APIs). Co-located `payment-daemon` (receiver) validates tickets.
-- **Gateway** — resolver + sender + per-mode adapter. Talks to the broker over
-  whichever interaction mode the resolved tuple declares.
+- **Gateway** — resolver + sender + per-protocol client. Talks to the broker over
+  whichever protocol the resolved tuple declares (`paid-job/v1` or
+  `paid-session/v1`).
 
 ## Pool overlay
 
@@ -174,10 +175,12 @@ Current Pool implementation boundaries:
 
 1. Read a single `host-config.yaml`.
 2. Expose `GET /registry/offerings`, `GET /registry/health`, `GET /healthz`,
-   `GET /metrics`, plus one canonical path per mode (e.g. `POST /v1/cap` for
-   `paid-job/v1` — see [`../../livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/)).
+   `GET /metrics`, plus one canonical path set per protocol
+   (`POST /v1/job` for `paid-job/v1`; `POST /v1/session` and
+   `/v1/session/{id}/{status,topup,end,events,ws}` for `paid-session/v1` — see
+   [`../../livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/)).
 3. Route inbound requests by **`Livepeer-Capability` header** → look up the
-   **backend descriptor** → wrap in the declared **interaction mode** → forward →
+   **backend descriptor** → run the declared **protocol** → forward →
    return the response.
 4. Report `actualUnits` to co-located `payment-daemon` (receiver) over unix socket — same
    socket regardless of capability.
@@ -193,10 +196,11 @@ Replaces: `openai-worker-node`, `vtuber-worker-node`, `video-worker-node`.
 
 ### Request lifecycle inside the broker
 
-A single `http-reqresp` request, from inbound TLS to settled payment. Streaming
-modes (`http-stream`, `ws-realtime`, `session-control-plus-media`,
-`rtmp-ingress-hls-egress`) follow the same shape but the "forward + collect
-units" step is long-lived — see the streaming-pattern doc for the full picture.
+A single `unary` `paid-job/v1` exchange, from inbound TLS to settled payment.
+The `stream` transport follows the same shape but the "forward + collect units"
+step is long-lived and the claim arrives as a trailer. `paid-session/v1` is a
+different shape entirely — see
+[`protocols/paid-session.md`](../../livepeer-network-protocol/protocols/paid-session.md).
 
 ```mermaid
 sequenceDiagram
@@ -207,7 +211,7 @@ sequenceDiagram
     participant PD as payment-daemon<br/>(receiver, unix socket)
     participant Backend as backend<br/>(vLLM / OpenAI / FFmpeg / …)
 
-    GW->>Broker: POST /v1/cap<br/>Livepeer-Capability: <id><br/>Livepeer-Offering: <id><br/>Livepeer-Payment: ticket<br/>Authorization: Bearer <session>?
+    GW->>Broker: POST /v1/job<br/>Livepeer-Protocol: paid-job/v1<br/>Livepeer-Capability: <id><br/>Livepeer-Offering: <id><br/>Livepeer-Request-Id: <uuid><br/>Livepeer-Payment: ticket
     Broker->>Cfg: lookup (capability_id, offering_id)
     Cfg-->>Broker: { protocol, work_unit, extractor,<br/>price, backend descriptor }
     Broker->>PD: ProcessPayment(payment_bytes, work_id)
@@ -371,7 +375,7 @@ Rules:
 Boundary:
 
 - In a standalone broker rollout, `host-config.yaml` owns operator intent:
-  capability family, offering ID, interaction mode, price, metering, backend
+  capability family, offering ID, protocol + declared axes, price, metering, backend
   URL, and routing constraints. In a pool-managed rollout, the analogous
   operator intent lives in `pool-controller` persisted control-plane state.
 - Runtime discovery may validate and enrich an offering, but it does not invent
@@ -720,7 +724,7 @@ The `Livepeer-Payment` header remains the wire-format payment envelope while
 `Livepeer-Capability` and `Livepeer-Offering` carry the routed tuple so the
 broker can refuse mismatched routing.
 
-### Per-request payment (`http-reqresp` / `http-stream` / `http-multipart`)
+### Per-exchange payment (`paid-job/v1`)
 
 One ticket per inbound request. Settles on-chain only if the ticket is winning;
 otherwise it's expected-value credit. `actualUnits` is reported after the
@@ -756,12 +760,14 @@ sequenceDiagram
     Broker-->>GW: response
 ```
 
-### Streaming / session payment (`ws-realtime` / `session-control-plus-media` / `rtmp-…`)
+### Session payment (`paid-session/v1`)
 
-Amortized billing: one `OpenSession` at attach, periodic `Debit` ticks during
-the session, `CloseSession` on teardown. The cross-workload rules live in
-[`streaming-workload-pattern.md`](./streaming-workload-pattern.md) — this is the
-canonical shape.
+Amortized billing: one `OpenSession` at open, `Debit` driven by the runner's
+cumulative usage claims, `CloseSession` on winddown. The normative contract is
+[`protocols/paid-session.md`](../../livepeer-network-protocol/protocols/paid-session.md)
+§7/§9 and the trust framing is [`dual-meter-trust.md`](./dual-meter-trust.md).
+(The older [`streaming-workload-pattern.md`](./streaming-workload-pattern.md) is
+superseded and kept only as provenance.)
 
 ```mermaid
 sequenceDiagram
@@ -826,7 +832,7 @@ See [`./payment-decoupling.md`](./payment-decoupling.md).
 - For session/stream/realtime: payment is amortized
   (`OpenSession + periodic Debit + CloseSession`).
 
-**Gateway code is per-mode, not per-capability.** New capability under an existing mode
+**Gateway code is per-protocol, not per-capability.** New capability under an existing protocol
 lights up automatically once the manifest carries it.
 
 **Client-side health policy is shared, not forked.** Client implementations
@@ -839,21 +845,13 @@ flowchart TD
     Shell --> Auth["AuthResolver<br/>(bearer → customer + balance)"]
     Auth --> Resolve["Resolver.Select(capability_id,<br/>offering_id?, tier?, min_weight?)"]
     Resolve --> Tuple["route tuple<br/>{ worker_url, eth_address,<br/>protocol, work_unit,<br/>price_per_unit, extra }"]
-    Tuple --> ModeSwitch{protocol?}
+    Tuple --> ProtoSwitch{protocol?}
 
-    ModeSwitch -->|http-reqresp| A1["reqresp adapter"]
-    ModeSwitch -->|http-stream| A2["stream adapter<br/>(SSE / chunked)"]
-    ModeSwitch -->|http-multipart| A3["multipart adapter"]
-    ModeSwitch -->|ws-realtime| A4["ws adapter"]
-    ModeSwitch -->|rtmp-ingress-hls-egress| A5["rtmp adapter"]
-    ModeSwitch -->|session-control-plus-media| A6["session adapter"]
+    ProtoSwitch -->|paid-job/v1| A1["job client<br/>(unary / stream / multipart<br/>negotiated per request)"]
+    ProtoSwitch -->|paid-session/v1| A2["session client<br/>(open / topup / status / end<br/>+ the descriptor schema)"]
 
     A1 --> Sender["payment-daemon sender<br/>CreatePayment"]
     A2 --> Sender
-    A3 --> Sender
-    A4 --> Sender
-    A5 --> Sender
-    A6 --> Sender
 
     Sender --> Wrap["wrap headers:<br/>Authorization (customer bearer)<br/>Livepeer-Payment (ticket)<br/>Livepeer-Capability / Offering"]
     Wrap --> Broker["Capability Broker<br/>(worker-orch host)"]

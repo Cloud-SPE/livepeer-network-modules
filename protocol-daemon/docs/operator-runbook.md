@@ -61,6 +61,18 @@ Required inputs:
 - writable state at `--store-path`
 - writable unix-socket directory for `--socket`
 
+Other optional flags:
+
+- `--ai-service-registry-address` — the AIServiceRegistry contract backing
+  `SetAIServiceURI` / `GetOnChainAIServiceURI` / `IsAIRegistered`. Defaults
+  to the Arbitrum One deployment
+  (`0x04C0b249740175999E5BF5c9ac1dA92431EF34C5`); override only for
+  forks / testnets.
+- `--metrics-max-series-per-metric` — cardinality cap per metric vec
+  (default `10000`; `0` disables the cap).
+- `--init-jitter`, `--gas-limit`, `--min-balance-wei`, `--log-level`,
+  `--log-format` — see `compose/docker-compose.yml` for the defaults in use.
+
 Optional but required *for treasury voting*:
 
 - `--treasury-address` — the LivepeerGovernor contract. It is **not**

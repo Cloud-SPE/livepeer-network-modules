@@ -6,7 +6,7 @@ last-reviewed: 2026-04-28
 
 # gRPC surface
 
-This is the design-side rationale for the gRPC API. The product-side contract (rules consumers can rely on) lives in [docs/product-specs/grpc-surface.md](../product-specs/grpc-surface.md). The actual `.proto` is at `proto/livepeer/registry/v1/`.
+This is the design-side rationale for the gRPC API. The product-side contract (rules consumers can rely on) lives in [docs/product-specs/grpc-surface.md](../product-specs/grpc-surface.md). The actual `.proto` is at `proto-contracts/livepeer/registry/v1/` (sibling module).
 
 ## Two services, one binary
 

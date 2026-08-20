@@ -15,7 +15,7 @@ import (
 // SpecVersion is the manifest spec version emitted by this coordinator.
 // Pinned to whatever the spec repo declares. Update in lockstep with
 // livepeer-network-protocol/manifest/changelog.md.
-const SpecVersion = "1.0.0"
+const SpecVersion = "2.0.0"
 
 const (
 	WarningCodeMetadataNeverSucceeded = "metadata_never_succeeded"

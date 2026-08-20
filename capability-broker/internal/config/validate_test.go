@@ -854,62 +854,6 @@ func TestValidateAcceptsVTuberExtraShape(t *testing.T) {
 	}
 }
 
-func sessionRunnerCap() Capability {
-	return Capability{
-		ID:         "test:session:v1",
-		OfferingID: "default",
-		Protocol:   "paid-job/v1",
-		Job:        &JobCapability{Transports: []string{"unary"}},
-		WorkUnit: WorkUnit{
-			Name:      "seconds",
-			Extractor: map[string]any{"type": "seconds-elapsed"},
-		},
-		Price: Price{AmountWei: "1", PerUnits: 1},
-		Backend: Backend{
-			Transport: "session-runner",
-			SessionRunner: &SessionRunnerBackend{
-				Image: "tztcloud/livepeer-conformance-session-runner:v0",
-			},
-		},
-	}
-}
-
-func TestValidateAcceptsSessionRunnerTransport(t *testing.T) {
-	cfg := &Config{
-		Identity:     Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
-		Capabilities: []Capability{sessionRunnerCap()},
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-}
-
-func TestValidateRejectsSessionRunnerMissingBlock(t *testing.T) {
-	cap := sessionRunnerCap()
-	cap.Backend.SessionRunner = nil
-	cfg := &Config{
-		Identity:     Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
-		Capabilities: []Capability{cap},
-	}
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "backend.session_runner is required") {
-		t.Fatalf("Validate() error = %v; want session_runner required", err)
-	}
-}
-
-func TestValidateRejectsSessionRunnerMissingImage(t *testing.T) {
-	cap := sessionRunnerCap()
-	cap.Backend.SessionRunner.Image = ""
-	cfg := &Config{
-		Identity:     Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
-		Capabilities: []Capability{cap},
-	}
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "backend.session_runner.image is required") {
-		t.Fatalf("Validate() error = %v; want session_runner.image required", err)
-	}
-}
-
 // TestExtractorIsPaidJobOnly pins that extractors belong to paid-job.
 // A paid-session capability has nothing for one to run on — usage is
 // runner-reported — and requiring one made operators declare a type
@@ -958,5 +902,30 @@ func TestExtractorIsPaidJobOnly(t *testing.T) {
 	}
 	if err := job.Validate(); err == nil || !strings.Contains(err.Error(), "extractor is required") {
 		t.Fatalf("paid-job without an extractor should be rejected, got %v", err)
+	}
+}
+
+// The v0 media-plane transports were removed with internal/media. They
+// must be refused at config time: accepting them let a config load,
+// validate, and get advertised, then fail at request time.
+func TestValidateRejectsRemovedMediaTransports(t *testing.T) {
+	for _, transport := range []string{"ffmpeg-subprocess", "session-runner"} {
+		cfg := &Config{
+			Identity: Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
+			Capabilities: []Capability{{
+				ID: "test:cap", OfferingID: "default", Protocol: "paid-job/v1",
+				Job:      &JobCapability{Transports: []string{"unary"}},
+				WorkUnit: WorkUnit{Name: "seconds", Extractor: map[string]any{"type": "seconds-elapsed"}},
+				Price:    Price{AmountWei: "1", PerUnits: 1},
+				Backend:  Backend{Transport: transport, URL: "http://backend:8080"},
+			}},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatalf("transport %q still validates; nothing implements it", transport)
+		}
+		if !strings.Contains(err.Error(), "not supported") {
+			t.Fatalf("transport %q: unhelpful error %v", transport, err)
+		}
 	}
 }

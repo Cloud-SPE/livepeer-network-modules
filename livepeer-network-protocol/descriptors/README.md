@@ -14,9 +14,9 @@ A schema is owned by its capability. Adding one requires changes only in the
 runner that emits it and the gateway that consumes it — no broker,
 clearinghouse, or registry work.
 
-| Schema | Workload shape | Grant |
+| Schema | Workload shape | Grant operations |
 |---|---|---|
-| [`sfu-room/v1`](./sfu-room.md) | SFU conference room, WebRTC participants | `participant-token-mint` |
+| [`sfu-room/v1`](./sfu-room.md) | SFU conference room, WebRTC participants | `participant-token-mint`, `room-status` |
 | [`rtmp-hls/v1`](./rtmp-hls.md) | RTMP ingest → HLS playback | `stream-key-issue` |
 | [`scope-passthrough/v1`](./scope-passthrough.md) | Interactive HTTP+WebRTC API surface | `scope-api-access` |
 | [`trickle-egress/v1`](./trickle-egress.md) | Generative A/V session, buyer-supplied egress | `control-attach` |

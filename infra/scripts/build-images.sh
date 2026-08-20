@@ -8,7 +8,7 @@
 #
 # Env:
 #   REGISTRY  default: tztcloud
-#   TAG       default: v1.4.1
+#   TAG       default: v2.0.0
 #   VERSION   default: derived from git tag/sha for binary build metadata
 #   PUSH      set to 1 to docker push after each build
 #
@@ -27,7 +27,7 @@ if [[ -f "$VERSION_ENV_FILE" ]]; then
 fi
 
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.4.1}}"
+TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v2.0.0}}"
 PUSH="${PUSH:-0}"
 DEFAULT_VERSION="$(VERSION_PREFIX="${TAG}" FALLBACK_VERSION="${TAG}" ./infra/build/git-version.sh)"
 VERSION="${VERSION:-${DEFAULT_VERSION}}"
@@ -88,7 +88,6 @@ declare -a IMAGES=(
   "livepeer-pool-payout-executor|.|pool-payout-executor/Dockerfile||"
   "livepeer-secure-orch-console|.|secure-orch-console/Dockerfile||"
   "livepeer-conformance|.|livepeer-network-protocol/conformance/Dockerfile||"
-  "livepeer-conformance-session-runner|.|livepeer-network-protocol/conformance/runner/session-runner-stub/Dockerfile||"
 )
 
 # ---- filter ---------------------------------------------------------------

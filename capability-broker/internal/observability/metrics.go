@@ -4,9 +4,9 @@
 // Per the spec's observability section, the broker exposes the following
 // counters/histograms (labels: capability, offering, outcome):
 //
-//	livepeer_mode_requests_total{capability,offering,outcome}
-//	livepeer_mode_request_duration_seconds{capability,offering}
-//	livepeer_mode_work_units_total{capability,offering}
+//	livepeer_paid_requests_total{capability,offering,outcome}
+//	livepeer_paid_request_duration_seconds{capability,offering}
+//	livepeer_paid_work_units_total{capability,offering}
 //
 // In addition, the standard Go runtime + process collectors are exposed via
 // promauto's default registry.
@@ -27,18 +27,18 @@ var (
 	poolMetricsMu sync.Mutex
 
 	requestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "livepeer_mode_requests_total",
+		Name: "livepeer_paid_requests_total",
 		Help: "Total paid requests received by the broker, labeled by capability, offering, and outcome.",
 	}, []string{"capability", "offering", "outcome"})
 
 	requestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "livepeer_mode_request_duration_seconds",
+		Name:    "livepeer_paid_request_duration_seconds",
 		Help:    "Wall-clock duration of paid requests, headers-to-response.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"capability", "offering"})
 
 	workUnitsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "livepeer_mode_work_units_total",
+		Name: "livepeer_paid_work_units_total",
 		Help: "Sum of actualUnits reported by the extractor across all paid requests.",
 	}, []string{"capability", "offering"})
 

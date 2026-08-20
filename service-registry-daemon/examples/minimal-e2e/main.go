@@ -55,6 +55,9 @@ func run() error {
 		Clock:  clk,
 	})
 	m, err := pub.BuildManifest(publisher.BuildSpec{
+		// BuildManifest validates the proposed identity against the
+		// loaded signer before it builds anything; the field is required.
+		EthAddress: addr,
 		Nodes: []types.Node{
 			{
 				ID:  "ai-east",

@@ -73,5 +73,6 @@ Enforced by `lint/layer-check/`. The providers boundary is the only cross-cuttin
 - [`docs/design-docs/architecture.md`](docs/design-docs/architecture.md) — full layer stack with rationale
 - [`docs/design-docs/roundinit-loop.md`](docs/design-docs/roundinit-loop.md) — sequence diagram, jitter, idempotency
 - [`docs/design-docs/core-beliefs.md`](docs/design-docs/core-beliefs.md) — invariants the daemon enforces
+- [`docs/operator-runbook.md`](docs/operator-runbook.md) — deployment, flags, actions, failure modes
 
-Reward-calc, positional-hints, observability, gRPC-surface and operator-runbook docs are tracked as follow-ups; the canonical sources today are the package doc-comments in `internal/service/reward/`, `internal/repo/poolhints/`, `internal/runtime/{grpc,metrics}/`, and `cmd/livepeer-protocol-daemon/`.
+Reward-calc, positional-hints, observability and gRPC-surface docs are tracked as follow-ups; the canonical sources today are the package doc-comments in `internal/service/reward/`, `internal/repo/poolhints/`, `internal/runtime/{grpc,metrics}/`, and `cmd/livepeer-protocol-daemon/`.

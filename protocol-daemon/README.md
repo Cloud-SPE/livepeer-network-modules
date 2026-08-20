@@ -123,8 +123,11 @@ service ProtocolDaemon {
   rpc ForceInitializeRound(Empty) returns (ForceOutcome);
   rpc ForceRewardCall(Empty) returns (ForceOutcome);
   rpc SetServiceURI(SetServiceURIRequest) returns (TxIntentRef);
+  rpc SetAIServiceURI(SetAIServiceURIRequest) returns (TxIntentRef);
   rpc GetOnChainServiceURI(Empty) returns (OnChainServiceURIStatus);
+  rpc GetOnChainAIServiceURI(Empty) returns (OnChainAIServiceURIStatus);
   rpc IsRegistered(Empty) returns (RegistrationStatus);
+  rpc IsAIRegistered(Empty) returns (AIRegistrationStatus);
   rpc GetWalletBalance(Empty) returns (WalletBalanceStatus);
   rpc GetTxIntent(TxIntentRef) returns (TxIntentSnapshot);
   rpc StreamRoundEvents(Empty) returns (stream RoundEvent);
@@ -149,7 +152,8 @@ operator runbook.
 Mode-specific RPCs (`GetRoundStatus`, `ForceInitializeRound`) and
 (`GetRewardStatus`, `ForceRewardCall`) return `Unimplemented` when
 called on the wrong mode. The proto file at
-`proto/livepeer/protocol/v1/protocol.proto` is the canonical source.
+`proto-contracts/livepeer/protocol/v1/protocol.proto` (sibling module) is
+the canonical source.
 
 ## Build & test
 

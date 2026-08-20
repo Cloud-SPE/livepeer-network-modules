@@ -116,7 +116,8 @@ That's a strong claim, and the protocol leans on it heavily:
 That's why the signature payload is the manifest's **canonical bytes** —
 deterministic serialization — not the raw HTTP body. Any change anywhere in
 the canonical bytes invalidates the signature, including changes to the
-declared price, the declared backend URL, or the declared interaction mode.
+declared price, the declared backend URL, or the declared protocol and its
+declared axes.
 
 ## Double verification
 

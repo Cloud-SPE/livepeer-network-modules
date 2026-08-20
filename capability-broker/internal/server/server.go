@@ -47,8 +47,9 @@ type Options struct {
 }
 
 // Server wraps the broker's HTTP server. It owns two listeners: the paid
-// listener (cfg.Listen.Paid) for /v1/cap and /registry/*, and a metrics
-// listener (cfg.Listen.Metrics) for Prometheus scraping.
+// listener (cfg.Listen.Paid) for /v1/job, /v1/session/*, /registry/* and
+// the admin surface, and a metrics listener (cfg.Listen.Metrics) for
+// Prometheus scraping.
 type Server struct {
 	mu                   sync.RWMutex
 	cfg                  *config.Config

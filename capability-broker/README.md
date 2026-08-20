@@ -16,13 +16,30 @@ exposes:
 - `GET /registry/offerings` — capability inventory for orch-coordinator scrape.
 - `GET /registry/health` — live capability availability for gateway resolvers.
 - `GET /healthz` — process health.
-- `GET /metrics` — Prometheus scrape.
 - `GET /admin/v1/runtime` — private runtime status, including loaded revision.
 - `POST /admin/v1/runtime/reload` — private runtime reload endpoint.
+- `GET /internal/v1/worker/session` — connected-worker WebSocket attach.
 
-Dispatches inbound requests to backends declared in `host-config.yaml`. Reports
-work units via the offering's declared extractor. Validates payment via a
-co-located `payment-daemon` (over unix socket; v0.1 uses a stub client).
+Plus `GET /metrics` on a **separate** metrics listener (`--metrics`,
+default `:9090`) — deliberately not mounted on the paid listener, so
+scrapes never traverse the payment middleware chain.
+
+Dispatches inbound requests to backends declared in `host-config.yaml`.
+Validates payment via a co-located `payment-daemon` (over unix socket; a
+stub client is available for dev via `payment_daemon.mock`).
+
+Work units come from a different place per protocol, and the config grammar
+enforces the split:
+
+- `paid-job/v1` meters the exchange the broker forwarded, so
+  `work_unit.extractor` is **required**.
+- `paid-session/v1` meters runner-reported cumulative claims, so
+  `work_unit.extractor` is **rejected** — there is no exchange for an
+  extractor to run on.
+
+Declaring any `paid-session/v1` capability also makes `session_store`
+(durable bbolt path + sealing key) and `external_base_url` required; see
+[`docs/operator-runbook.md`](./docs/operator-runbook.md) §2.
 
 Repeated `capabilities[]` entries with the same `(id, offering_id)` are
 treated as one published offering with multiple runtime backend candidates.
@@ -94,23 +111,25 @@ remote-runner sessions, the capacity slot is held until session finalization.
 dispatch currently fail-fasts when no eligible capacity is available.
 
 **This binary contains zero capability-specific code.** All workload knowledge
-lives in mode adapters and extractor implementations, both standardized in the
-spec.
+lives in the two protocol engines and the extractor implementations, both
+standardized in the spec.
 
 ## Status
 
-**Shipped.** 6 mode drivers registered, 7 extractors, RTMP-ingress + LL-HLS
-egress pipeline, session-control + WebRTC SFU pass-through, and broker-side
-interim-debit ticker are all in. See PLANS.md "Code shipping today" §`capability-broker/`
-for the canonical summary, and the design brief at
-[`../docs/exec-plans/completed/0003-capability-broker.md`](../docs/exec-plans/completed/0003-capability-broker.md).
+**Shipped.** Two protocol engines (`paid-job/v1` on `POST /v1/job`,
+`paid-session/v1` on `/v1/session/*`), 8 extractors, a durable bbolt state
+store backing session authority and job idempotency, and the broker-side
+interim-debit ticker are all in. The v0 seven-mode interaction taxonomy —
+its drivers, the RTMP/HLS media pipeline, and the WebRTC/session-control
+pass-through — was removed in 2026-08. See PLANS.md "Code shipping today"
+§`capability-broker/` for the canonical summary.
 
 ## Build
 
 Per repo-root core belief #15, every gesture is Docker-first.
 
 ```bash
-make build               # build tztcloud/livepeer-capability-broker:v1.4.0
+make build               # build tztcloud/livepeer-capability-broker:v2.0.0
 make run                 # run with examples/host-config.example.yaml
 make help                # show all targets
 ```
@@ -249,10 +268,15 @@ capability-broker/
 ├── cmd/livepeer-capability-broker/main.go
 ├── internal/
 │   ├── config/         # host-config.yaml loader + validator
-│   ├── server/         # HTTP server, middleware, registry endpoints
-│   ├── modes/          # one driver per mode
-│   ├── extractors/     # work-unit extractor library
-│   ├── payment/        # payment-daemon client (mock for v0.1)
+│   ├── server/         # HTTP server, middleware, job + session routes
+│   ├── sessionengine/  # paid-session/v1 authority (leases, descriptors)
+│   ├── sessionstore/   # durable bbolt state: sessions + job idempotency
+│   ├── extractors/     # work-unit extractor library (paid-job only)
+│   ├── backend/        # outbound forwarding to declared backends
+│   ├── health/         # per-backend probes
+│   ├── selection/      # backend eligibility + weighting
+│   ├── workerconn/     # connected-worker QUIC / WebSocket sessions
+│   ├── payment/        # payment-daemon client (mock for dev)
 │   └── observability/  # metrics, logging, request-id
 ├── examples/
 │   └── host-config.example.yaml

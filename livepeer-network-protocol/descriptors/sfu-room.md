@@ -86,6 +86,6 @@ broker response.
 
 | Version | Date | Change |
 |---|---|---|
-| 1.0.0-draft | 2026-08-18 | Initial schema. |
 | 1.0.2-draft | 2026-08-19 | Meeting-team follow-up: `status_url` stated as independent of the broker's `session.runner.status_path` — two endpoints, two callers, two credentials. |
 | 1.0.1-draft | 2026-08-19 | Meeting-team review: `room-status` added to the grant's operations so a gateway can actually authenticate the verifiability probe; metering section rewritten — the runner is the usage authority and mint records are a cross-check, not the billing basis; work unit stated as an offering property, not a schema property; participant-token TTL ceiling made explicit at 300s. |
+| 1.0.0-draft | 2026-08-18 | Initial schema. |

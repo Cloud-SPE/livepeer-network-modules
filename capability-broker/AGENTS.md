@@ -24,7 +24,8 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 |---|---|
 | What is this component? | [`README.md`](./README.md) |
 | Architectural overview | [`DESIGN.md`](./DESIGN.md) |
-| Planned package layout + dispatch flow | [`docs/design-docs/architecture.md`](./docs/design-docs/architecture.md) |
+| Package layout + HTTP surface + dispatch flow | [`docs/design-docs/architecture.md`](./docs/design-docs/architecture.md) |
+| Day-2 operations (state store, session + job knobs) | [`docs/operator-runbook.md`](./docs/operator-runbook.md) |
 | Build / run / test gestures | [`Makefile`](./Makefile) |
 | Example operator config | [`examples/host-config.example.yaml`](./examples/host-config.example.yaml) |
 | The wire spec this implements | [`../livepeer-network-protocol/`](../livepeer-network-protocol/) |
@@ -34,13 +35,19 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 - **All gestures are Docker-first** (per repo-root core belief #15). Do not
   add steps that require a host Go install. Use `make build`, `make run`,
   `make test`.
-- **Source layout follows the planned `internal/` tree** in
+- **Source layout follows the `internal/` tree** in
   [`docs/design-docs/architecture.md`](./docs/design-docs/architecture.md).
   Add new packages under `internal/` per that tree; do not export internal
   types unless they're part of an embedding API.
-- **Request paths land mode by mode.** The first is `http-reqresp` (plan
-  0003). Other modes get their own plans (plan 0006); don't pre-build their
-  drivers.
+- **There are exactly two protocols**: `paid-job/v1` (`POST /v1/job`) and
+  `paid-session/v1` (`/v1/session/*`). The v0 seven-mode interaction
+  taxonomy and its `POST /v1/cap` dispatch surface were removed in 2026-08;
+  do not reintroduce a mode axis. New capability shapes are expressed as
+  axes on the existing protocols (`job.transports`, the `session` block),
+  not as new drivers.
+- **Extractors are paid-job only.** `work_unit.extractor` is required for
+  `paid-job/v1` and rejected for `paid-session/v1`, whose usage arrives as
+  runner-reported cumulative claims.
 - **Headers are validated in middleware**, not in handlers. The
   `Livepeer-*` header pipeline is a middleware chain; handlers see only
   fully-validated requests.

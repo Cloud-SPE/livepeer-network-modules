@@ -30,8 +30,9 @@ import (
 const sessionProtocol = "paid-session/v1"
 
 func (s *Server) registerSessionRoutes() {
-	open := middleware.Chain(middleware.Recover, middleware.RequestID, middleware.Headers)(
-		http.HandlerFunc(s.handleSessionOpen))
+	open := middleware.Chain(
+		middleware.Recover, middleware.RequestID, middleware.Metrics, middleware.Headers,
+	)(http.HandlerFunc(s.handleSessionOpen))
 	s.mux.Handle("POST /v1/session", open)
 	s.mux.HandleFunc("GET /v1/session/{id}", s.handleSessionStatus)
 	s.mux.HandleFunc("POST /v1/session/{id}/topup", s.handleSessionTopUp)

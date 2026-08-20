@@ -1,7 +1,7 @@
 ---
 title: Payment-daemon interactions
 status: active
-last-reviewed: 2026-05-11
+last-reviewed: 2026-08-19
 ---
 
 # Payment-daemon interactions
@@ -18,16 +18,20 @@ The goal is to make three things explicit:
 
 ## Scope
 
-This doc applies to both interaction-model families:
+This doc applies to both v1 protocols
+([`interaction-modes.md`](./interaction-modes.md)):
 
-- **request/response** modes (`http-reqresp`, `http-stream`, `http-multipart`)
-- **streaming** modes (`ws-realtime`, `rtmp-ingress-hls-egress`,
-  `session-control-plus-media`) using the worker-metered / gateway-ledger
-  split defined in [`streaming-workload-pattern.md`](./streaming-workload-pattern.md)
+- **[`paid-job/v1`](../../livepeer-network-protocol/protocols/paid-job.md)** —
+  one paid exchange, one envelope, one `ReportUsage`, settled once. Transport
+  (`unary` / `stream` / `multipart`) is a per-request HTTP negotiation and does
+  not change the payment shape.
+- **[`paid-session/v1`](../../livepeer-network-protocol/protocols/paid-session.md)** —
+  one `OpenSession` at open, debits driven by the runner's cumulative usage
+  claims, top-ups crediting the same `work_id`, `CloseSession` at winddown.
 
-The payment primitives are shared. What changes between the two model families
-is who owns the long-lived session meter and when customer-ledger commits
-happen.
+The payment primitives are shared. What changes between the two is who owns the
+long-lived session meter and when customer-ledger commits happen; the trust
+framing for both is [`dual-meter-trust.md`](./dual-meter-trust.md).
 
 > **Important rewrite-specific change.** In the rewrite, the daemon no longer
 > enforces a closed enum of capability or work-unit names. Both are opaque
@@ -108,7 +112,7 @@ flowchart LR
     Adapter --> Sender
     Sender -.->|"unix socket"| SRDg
     Sender -.->|"POST /v1/payment/ticket-params"| Broker
-    Adapter ==>|"HTTPS / WS / RTMP +<br/>Livepeer-Payment header"| Broker
+    Adapter ==>|"POST /v1/job or /v1/session +<br/>Livepeer-Payment header"| Broker
     Broker -.->|"unix socket"| Receiver
     Receiver -->|"redeemWinningTicket"| Chain
     Broker --> Backend
@@ -116,7 +120,7 @@ flowchart LR
 
 ## End-to-end quote-free flow
 
-This is the canonical flow used across all interaction modes.
+This is the canonical flow, shared by both protocols.
 
 ### 1. Resolve route and retail price
 

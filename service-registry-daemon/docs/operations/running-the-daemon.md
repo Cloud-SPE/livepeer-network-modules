@@ -16,6 +16,7 @@ A single host can run both daemons side-by-side with separate sockets and stores
 | `--store-path` | `/var/lib/livepeer/registry-cache.db` | BoltDB file (resolver only by default; publisher also uses it for write history) |
 | `--chain-rpc` | `https://arb1.arbitrum.io/rpc` | Ethereum JSON-RPC endpoint |
 | `--chain-id` | `42161` | Sanity check; daemon refuses to boot if RPC reports a different chain |
+| `--controller-address` | `0xD8E8...6ee4` (Arbitrum One) | Livepeer Controller. Resolver derives `BondingManager` + `RoundsManager` from it, and `ServiceRegistry` too when `--service-registry-address` is empty. |
 | `--service-registry-address` | `""` | Optional override for the primary registry contract used by resolver `getServiceURI()` lookups. When empty, the resolver reads `ServiceRegistry` from Controller. |
 | `--ai-service-registry-address` | `0x04C0...` (Arbitrum One) | Optional AI registry fallback. Resolver consults it when the primary registry has no pointer for the address. |
 | `--log-format` | `text` | `text` or `json` |
@@ -33,6 +34,7 @@ A single host can run both daemons side-by-side with separate sockets and stores
 | `--max-stale` | `1h` | After this, last-good is dropped and `cache_stale_failing` is returned |
 | `--static-overlay` | `""` (none) | Path to operator-curated `nodes.yaml`. Layered on top of chain discovery (overlay wins on policy fields like `enabled` / `tier_allowed` / `weight`). |
 | `--reject-unsigned` | `true` | If `false`, unsigned manifests (CSV-mode) are returned without `allow_unsigned=true` per request |
+| `--worker-probe-timeout` | `5s` | HTTP timeout for the live-health probe of a worker's `/registry/health` during `Select` / `SelectMany`. Despite the name this is **not** publisher-only — it is on the resolver request path. |
 
 The previously-documented `--cache-chain-ttl` flag was removed in plan 0009 §C
 (2026-04-27) when chain-side cache invalidation switched from a fixed TTL to
@@ -46,7 +48,7 @@ round-anchored refreshes via `chain-commons.services.roundclock`.
 | `--keystore-password-file` | (or `LIVEPEER_KEYSTORE_PASSWORD` env) | Password for the keystore |
 | `--orch-address` | (derived from keystore) | Override for hot/cold split (advanced) |
 | `--manifest-out` | `""` | If set, the daemon writes the signed `registry-manifest.json` here whenever `SignManifest` is invoked. Operator's HTTP server serves this file at the exact URL later published on-chain. |
-| `--worker-probe-timeout` | `5s` | Reserved for the deferred `ProbeWorker` implementation; the gRPC method is currently unimplemented. |
+| `--worker-probe-timeout` | `5s` | Shared with resolver mode (see the resolver table). The publisher-side `ProbeWorker` gRPC method is still unimplemented and returns `chain_write_failed`. |
 
 ## Metrics flags (both modes)
 
@@ -88,17 +90,27 @@ Set `--dev` on either mode. Effects:
 
 ## Health
 
-The daemon exposes a gRPC `Health()` method; in addition, it writes a heartbeat file at `--store-path` sibling `daemon.alive` updated every 5s (operators can rely on file-mtime for liveness if gRPC is locked behind firewalls in their setup).
+Three liveness surfaces, all real:
+
+- the gRPC `Resolver.Health()` / `Publisher.Health()` methods;
+- the standard `grpc.health.v1.Health` service (plus server reflection) on the same socket;
+- plain-text `GET /healthz` on the metrics listener, when `--metrics-listen` is set.
+
+There is **no** heartbeat file. Earlier drafts of this page described a
+`daemon.alive` file next to `--store-path`; the daemon has never written
+one, so do not build a file-mtime probe around it.
 
 ## Shutdown
 
 SIGTERM / SIGINT triggers graceful shutdown:
-1. Stop accepting new gRPC requests.
-2. Wait up to 10s for in-flight requests.
-3. Flush BoltDB, release file locks.
+1. Stop accepting new gRPC requests (and stop the metrics listener + chain seeder).
+2. Wait up to 10s for the serve goroutines to drain.
+3. Close BoltDB, release file locks.
 4. Exit 0.
 
-A second signal forces immediate exit (1).
+Only SIGINT and SIGTERM are handled. A second signal during the drain is
+not special-cased — it does not shorten the wait. Any other signal
+(SIGHUP included) takes the Go runtime default and kills the process.
 
 ## Logging
 

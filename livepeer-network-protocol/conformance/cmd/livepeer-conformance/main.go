@@ -231,12 +231,35 @@ func main() {
 		timeout   = flag.Duration("startup-timeout", 60*time.Second, "auto mode: how long to wait for the broker to become healthy")
 		jobUnit   = flag.String("job-unit", "tokens", "work unit the paid-job offerings declare")
 		sessUnit  = flag.String("session-unit", "participant_minutes", "work unit the paid-session offerings declare")
+
+		fakesBind = flag.String("fakes-listen", "127.0.0.1",
+			"interface the suite's fakes bind; use 0.0.0.0 when the broker under test runs elsewhere on a docker network")
+		fakesAdvertise = flag.String("fakes-advertise", "",
+			"host the broker under test reaches the fakes on (default: --fakes-listen, or this host's name when binding 0.0.0.0)")
+		fakesBackendPort = flag.Int("fakes-backend-port", 0, "fixed port for the fake job backend (0 = ephemeral)")
+		fakesRunnerPort  = flag.Int("fakes-runner-port", 0, "fixed port for the fake session runner (0 = ephemeral)")
+		warmup           = flag.Duration("warmup", 0,
+			"URL mode: wait this long after the fakes are up before running scenarios, so a broker whose health probes have been failing against them recovers")
 	)
 	flag.Parse()
 
-	backend := fakes.NewJobBackend()
+	listen := fakes.Listen{
+		BindHost:      *fakesBind,
+		AdvertiseHost: *fakesAdvertise,
+		BackendPort:   *fakesBackendPort,
+		RunnerPort:    *fakesRunnerPort,
+	}
+	backend, err := fakes.NewJobBackend(listen)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "start fake job backend:", err)
+		os.Exit(2)
+	}
 	defer backend.Close()
-	runner := fakes.NewSessionRunner()
+	runner, err := fakes.NewSessionRunner(listen)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "start fake session runner:", err)
+		os.Exit(2)
+	}
 	defer runner.Close()
 
 	ctx := &harness.Ctx{
@@ -271,6 +294,13 @@ func main() {
 		if *pause {
 			fmt.Print("press Enter when the broker is ready... ")
 			_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
+		}
+		if *warmup > 0 {
+			// A broker that was already running has been probing dead
+			// addresses; its backends stay unselectable until a couple
+			// of probe cycles land on the now-live fakes.
+			fmt.Printf("warmup: waiting %s for the broker's health probes to see the fakes\n\n", *warmup)
+			time.Sleep(*warmup)
 		}
 		ctx.BrokerURL = *brokerURL
 	} else {

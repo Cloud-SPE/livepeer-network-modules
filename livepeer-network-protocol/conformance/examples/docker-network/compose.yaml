@@ -1,0 +1,35 @@
+# Runs the conformance suite against a broker on an ordinary docker
+# network — no host networking. The suite binds its fakes on 0.0.0.0 and
+# advertises them under its own service name, so the broker reaches them
+# at http://conformance:8091 and http://conformance:8092.
+#
+#   openssl rand -hex 32 > seal.key
+#   docker compose up --abort-on-container-exit --exit-code-from conformance
+#
+# Use `up`, not `run`: a one-off `docker compose run` container is not
+# registered under its service name, so --fakes-advertise=conformance
+# would not resolve (`run --use-aliases` is the exception).
+#
+# Override BROKER_IMAGE / CONFORMANCE_IMAGE to test locally built images.
+
+services:
+  broker:
+    image: ${BROKER_IMAGE:-tztcloud/livepeer-capability-broker:dev}
+    command: ["--config", "/cfg/host-config.yaml"]
+    volumes:
+      - ./host-config.yaml:/cfg/host-config.yaml:ro
+      - ./seal.key:/cfg/seal.key:ro
+
+  conformance:
+    image: ${CONFORMANCE_IMAGE:-tztcloud/livepeer-conformance:dev}
+    depends_on: [broker]
+    command:
+      - --broker-url=http://broker:8080
+      - --fakes-listen=0.0.0.0
+      - --fakes-advertise=conformance
+      - --fakes-backend-port=8091
+      - --fakes-runner-port=8092
+      # The broker starts first and probes addresses that are not up
+      # yet; give its health probes a couple of cycles on the live
+      # fakes before the first scenario runs.
+      - --warmup=20s

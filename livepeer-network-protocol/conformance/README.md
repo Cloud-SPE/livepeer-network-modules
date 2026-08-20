@@ -62,6 +62,55 @@ The broker's externally-reachable base URL must be its callback source
 (`external_base_url` or equivalent) so the fake runner's captured
 callback coordinates land on the broker under test.
 
+### Reaching the fakes from another host or container
+
+By default the fakes bind loopback, which only works when the broker under
+test shares the host. When it does not — the published image against a
+broker on a docker network, or a broker on another machine — bind and
+advertise them explicitly:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--fakes-listen` | `127.0.0.1` | interface the fakes bind; `0.0.0.0` to accept off-host traffic |
+| `--fakes-advertise` | `--fakes-listen`, or this host's name when binding `0.0.0.0` | host the broker under test uses to reach the fakes |
+| `--fakes-backend-port` | `0` (ephemeral) | pin the fake job backend's port |
+| `--fakes-runner-port` | `0` (ephemeral) | pin the fake session runner's port |
+
+Pin the ports when the broker's config has to name the fakes before the
+suite starts — which is the usual case, since the offerings' `backend.url`
+values are written up front:
+
+```
+docker run --rm --network lpm_default --name conformance \
+    tztcloud/livepeer-conformance:<tag> \
+    --broker-url http://broker:8080 \
+    --fakes-listen 0.0.0.0 --fakes-advertise conformance \
+    --fakes-backend-port 8091 --fakes-runner-port 8092 --warmup 20s
+```
+
+The broker's offerings then point at `http://conformance:8091` (job
+backend) and `http://conformance:8092` (session runner). Host networking
+is no longer required.
+
+`examples/docker-network/` holds a working compose file and reference-broker
+config for exactly this shape; it is what the flags above were validated
+against (29 passed, 3 URL-mode skips).
+
+Two things bite brokers that health-probe their backends, which the fakes
+did not expose while they only ever ran alongside a broker the suite
+started itself:
+
+- **`--warmup`.** A broker that came up before the suite has been probing
+  addresses nothing was listening on, so its backends are unselectable and
+  the first scenarios get `503`. `--warmup 20s` waits for a couple of probe
+  cycles on the now-live fakes. Not needed when the broker starts after the
+  fakes, or when you use `--pause`.
+- **Probe the base URL, not the special routes.** The `always-error`,
+  `slow`, and `longstream` offerings point at backend routes that 500 or
+  answer slowly *on purpose*. Aim their health probe at the fake backend's
+  base URL — probing the route itself marks the offering unreachable and
+  its scenarios fail with `503` instead of the behaviour under test.
+
 ## Scenarios that need more than HTTP
 
 Two scenarios need control over the implementation, not just its wire:

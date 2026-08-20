@@ -1,0 +1,148 @@
+# Reference-broker config for the networked conformance run (see
+# ../../README.md). The two hosts here are compose service names:
+# "broker" is the broker under test, "conformance" is the suite
+# container hosting the fake job backend (:8091) and fake session
+# runner (:8092).
+#
+# Note the probe overrides on the always-error, slow, and longstream
+# offerings: their backend URL is a route that 500s or answers slowly,
+# so a probe aimed at it would mark the offering unreachable and every
+# scenario using it would 503. Probe the base URL instead.
+identity:
+  orch_eth_address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+external_base_url: "http://broker:8080"
+listen:
+  paid: "0.0.0.0:8080"
+  metrics: "0.0.0.0:9090"
+payment_daemon:
+  mock: true
+  mock_state_path: /var/lib/livepeer/payment-mock.json
+session_store:
+  path: /var/lib/livepeer/state.db
+  sealing_key_file: /cfg/seal.key
+capabilities:
+  - id: conformance:job
+    offering_id: all
+    protocol: paid-job/v1
+    job: { transports: [unary, stream, multipart] }
+    health: { initial_status: ready }
+    work_unit: { name: tokens, extractor: { type: openai-usage } }
+    price: { amount_wei: "1", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8091" }
+  - id: conformance:job
+    offering_id: unary-only
+    protocol: paid-job/v1
+    job: { transports: [unary] }
+    health: { initial_status: ready }
+    work_unit: { name: tokens, extractor: { type: openai-usage } }
+    price: { amount_wei: "1", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8091" }
+  - id: conformance:job
+    offering_id: always-error
+    protocol: paid-job/v1
+    job: { transports: [unary] }
+    health: { initial_status: ready, probe: { type: http-status, config: { url: "http://conformance:8091" } } }
+    work_unit: { name: tokens, extractor: { type: openai-usage } }
+    price: { amount_wei: "1", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8091/error" }
+  - id: conformance:job
+    offering_id: slow
+    protocol: paid-job/v1
+    job: { transports: [unary] }
+    health: { initial_status: ready, probe: { type: http-status, config: { url: "http://conformance:8091" } } }
+    work_unit: { name: tokens, extractor: { type: openai-usage } }
+    price: { amount_wei: "1", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8091/slow" }
+  - id: conformance:job
+    offering_id: longstream
+    protocol: paid-job/v1
+    job: { transports: [stream] }
+    health: { initial_status: ready, probe: { type: http-status, config: { url: "http://conformance:8091" } } }
+    work_unit: { name: tokens, extractor: { type: openai-usage } }
+    price: { amount_wei: "1", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8091/longstream" }
+  - id: conformance:session
+    offering_id: bounded-refill
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: sfu-room/v1
+      refill: bounded
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
+    health: { initial_status: ready }
+    work_unit: { name: participant_minutes }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8092" }
+  - id: conformance:session
+    offering_id: short-lease
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: sfu-room/v1
+      lease_policy: fixed
+      lease_max_seconds: 1
+      heartbeat: { interval_seconds: 2, missed_threshold: 30 }
+      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
+    health: { initial_status: ready }
+    work_unit: { name: participant_minutes }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8092" }
+  - id: conformance:session
+    offering_id: rtmp-hls
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: rtmp-hls/v1
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
+    health: { initial_status: ready }
+    work_unit: { name: participant_minutes }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8092" }
+  - id: conformance:session
+    offering_id: scope-passthrough
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: scope-passthrough/v1
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
+    health: { initial_status: ready }
+    work_unit: { name: participant_minutes }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8092" }
+  - id: conformance:session
+    offering_id: trickle-egress
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: trickle-egress/v1
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
+    health: { initial_status: ready }
+    work_unit: { name: participant_minutes }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8092" }
+  - id: conformance:session
+    offering_id: fast-heartbeat
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: sfu-room/v1
+      heartbeat: { interval_seconds: 1, missed_threshold: 2 }
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
+    health: { initial_status: ready }
+    work_unit: { name: participant_minutes }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8092" }
+  - id: conformance:session
+    offering_id: default
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: sfu-room/v1
+      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
+    health: { initial_status: ready }
+    work_unit: { name: participant_minutes }
+    price: { amount_wei: "10", per_units: 1 }
+    backend: { transport: http, url: "http://conformance:8092" }

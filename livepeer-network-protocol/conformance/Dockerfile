@@ -11,15 +11,25 @@
 # not carry; use `make conformance` from a checkout for that.
 #
 # The suite hosts its own fake job backend and fake session runner, and
-# the broker under test must be able to reach them. They bind loopback,
-# so run with host networking:
+# the broker under test must be able to reach them. They bind loopback by
+# default, so on a shared docker network bind and advertise them:
+#
+#   docker run --rm --network lpm_default --name conformance \
+#       tztcloud/livepeer-conformance:<tag> \
+#       --broker-url http://broker:8080 \
+#       --fakes-listen 0.0.0.0 --fakes-advertise conformance \
+#       --fakes-backend-port 8091 --fakes-runner-port 8092 --warmup 20s
+#
+# Point the broker's offerings at http://conformance:8091 (job backend)
+# and http://conformance:8092 (session runner); --warmup lets a broker
+# that started first recover the health probes it failed against them.
+# examples/docker-network/ has a working compose file. With --network host the
+# defaults still work:
 #
 #   docker run --rm --network host tztcloud/livepeer-conformance:<tag> \
 #       --broker-url http://127.0.0.1:8080 --pause
 #
-# Without --network host the broker cannot reach the fakes and every
-# session scenario fails at create. See README.md for the offerings the
-# broker under test must serve.
+# See README.md for the offerings the broker under test must serve.
 
 ARG GO_VERSION=1.25
 

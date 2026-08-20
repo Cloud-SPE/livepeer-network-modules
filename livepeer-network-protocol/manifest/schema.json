@@ -241,6 +241,11 @@
           ],
           "description": "Origin of the seller's usage claims. 'broker-observed' is valid only with attachment 'inband-ws' \u2014 a broker cannot observe traffic that never transits it."
         },
+        "max_rotations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cap on how many times a session may be rebound onto a rotated payment identity (protocols/paid-session.md §3.3.1). Absent or 0 means the default, 3. Consumers gate on nothing here; it is the broker's own bound, advertised so an operator can see it. Note a 'bounded' offering cannot survive a rotation at all — its successor identity starts at a zero balance."
+        },
         "refill": {
           "enum": [
             "extensible",

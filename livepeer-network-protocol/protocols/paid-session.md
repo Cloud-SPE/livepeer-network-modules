@@ -1,6 +1,6 @@
 ---
 spec_name: paid-session
-version: 1.0.4-draft
+version: 1.0.5-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -180,6 +180,90 @@ Rules:
   reached), it MUST have been advertising `will_refuse_next_refill: true` in
   `balance` beforehand, and MUST refuse with `refill_refused` and a stable
   reason — never accept payment it won't honor with lease.
+
+#### 3.3.1 Recipient rotation
+
+A payee's recipient rand anchors the payment session: tickets are signed
+against it, `work_id` is its hash, and every ticket is validated by
+recomputing that hash. When the payee rotates it — a restart that lost the
+rand, an operator reset, an exhausted nonce space — every subsequent ticket
+from the payer is rejected.
+
+**Rotation is payee-authorized, always.** A payer cannot request one and a
+broker MUST NOT perform one on a gateway's say-so. If a payer could force
+rotation it could force the nonce watermark to reset, which would make
+replay protection a payer-controlled property.
+
+**The signal.** A batch rejected in full for an invalid recipient rand MUST
+be reported as `recipient_rotated`, on both protocols. It is a distinct code
+because the remedy is mechanical and a client must be able to run it without
+matching prose: re-fetch ticket params, re-mint, retry.
+
+**The rebind.** A session moves to the rotated identity on an ordinary
+top-up that **declares** its predecessor (`Livepeer-Rebind-From`, or
+`rebind_from` in the §8 control frame). It is a declaration, never an
+inference from a payment whose identity differs from the session's:
+inference would absorb a caller's own mistake — retrying one session's
+top-up with another's payment — as a silent identity change.
+
+A broker MUST verify all three before rebinding, and MUST refuse with
+`rebind_refused` otherwise:
+
+1. the declared predecessor is the session's current `work_id`;
+2. the successor payment **credits** — a batch rejected in full proves
+   nothing about the successor and MUST NOT move the session;
+3. the sender the payee sealed matches the session's.
+
+(2) carries the weight: tickets minted against a fake or stale identity
+cannot validate, so a credit is proof the successor is genuine. A broker
+MUST NOT verify by requesting ticket params for the stable tuple — with no
+open ticket session that request mints a fresh rand and would itself cause a
+rotation.
+
+**What the rebind preserves.** `session_id`, the session credential, the
+grants and the runner binding are untouched; the runner is never told.
+Cumulative `claimed_units` and `debited_units` span every generation and
+never reset. `debit_seq` restarts, because exactly-once is keyed
+`(sender, work_id, debit_seq)` and the successor's sequence space is its
+own.
+
+**What it settles first.** Outstanding claimed-but-undebited units MUST be
+debited against the **predecessor** before it is closed. A rebind that
+cannot settle the predecessor MUST NOT proceed; the session winds down
+instead. Carrying unsettled work across an identity change would make the
+ledger unauditable.
+
+**Bounds.** A broker MUST bound rebinding, and both bounds end the session
+rather than refusing in place — a session whose identity is already
+rejecting payment has no way forward:
+
+- at most `session.max_rotations` (default 3) per session;
+- a rotation whose predecessor generation debited **nothing** is refused
+  immediately whatever the count: it bought no work, and funding another is
+  a loop that costs the payer and delivers nothing.
+
+The terminal reason is `payment_unrecoverable` — the consequence, not the
+mechanism.
+
+**A `refill: bounded` offering cannot survive rotation.** Its successor
+identity starts at a zero balance and the predecessor's remaining funding is
+stranded, so a rebind would mean paying twice for one session. The rebind is
+refused and the session ends at its lease.
+
+**Visibility.** A *completed* rotation is settlement-only: it is
+infrastructure recovery the customer neither caused nor can act on, and it
+MUST NOT be surfaced as a session lifecycle event. It MUST appear in the
+session's settlement record with the stable `session_id`,
+`rotation_generation`, `predecessor_work_id`, the current `work_id`, and
+cumulative continuity across generations. The `session.rebound` control
+message (§8) is broker↔gateway signalling, not session history. Failure is
+visible as the resulting degraded or terminal session state, never as the
+rotation itself.
+
+**Stranded balance is a known cost.** Credited-but-unspent value on a
+rotated-away `work_id` is lost to the payer: balances are per payee session
+and this spec defines no transfer between them. Fund in increments you are
+willing to strand.
 
 ### 3.4 End
 
@@ -426,7 +510,10 @@ credential. Frames mirror the HTTP surface — broker→gateway:
 emitted at least on every `low`/`will_refuse_next_refill` transition),
 `session.state`, `session.ended`; gateway→broker: `session.topup` (payment
 envelope in-frame, plus `request_id` — a frame has no headers, and the
-mirror carries the same idempotency key as §3.3), `session.end`. Every gateway-initiated frame is
+mirror carries the same idempotency key as §3.3 — and `rebind_from` when
+declaring a rotation rebind), `session.end`. The broker→gateway
+`session.rebound` message reports a completed rebind; it is control-plane
+signalling and a gateway MUST NOT surface it as session history (§3.3.1). Every gateway-initiated frame is
 acknowledged; the HTTP surface remains available and authoritative — the WS
 is a push optimization, and a gateway ignoring it loses nothing but latency.
 
@@ -563,6 +650,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.5-draft | 2026-08-20 | Add §3.3.1, recipient rotation: payee-authorized only, `recipient_rotated` as the signal, a **declared** rebind on top-up with three verification rules, predecessor settled before close, continuity of session/credential/cumulative accounting, `session.max_rotations` and the zero-delivery bound, `payment_unrecoverable` as the terminal reason, bounded offerings excluded, settlement-only visibility, and stranded balance stated as a known cost. §8 gains `rebind_from` and `session.rebound`. |
 | 1.0.4-draft | 2026-08-20 | §3.3: `Livepeer-Request-Id` is required on top-up (and §8's `session.topup` frame carries it as `request_id`) and its replay semantics are stated — recorded outcome returned verbatim, replay checked before terminal/refusal, and an already-credited envelope (nonce replay) answered with the current lease unextended. The reference implementation ignored the header entirely, so a gateway retrying a top-up after a lost response funded the session twice. |
 | 1.0.3-draft | 2026-08-20 | §3: state the two-identifier rule — `work_id` MUST be the payee-issued `recipient_rand_hash`, `session_id` is an opaque broker-local handle and never a payment key. §3.1: an open whose payment had every ticket rejected MUST fail closed with `payment_invalid`. Both were silences the reference implementation filled differently on each protocol. |
 | 1.0.2-draft | 2026-08-19 | Add §7.1.1 optional runner self-description: advisory-never-authoritative, contradiction fatal to the capability, unreachability only a warning; a runner MAY also declare its `session_params` shape. |

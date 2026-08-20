@@ -1,7 +1,7 @@
 ---
 status: draft (rewritten for the v1 protocols)
-spec_version: 1.0.0-draft
-last_updated: 2026-08-19
+spec_version: 1.0.1-draft
+last_updated: 2026-08-20
 ---
 
 # Livepeer wire headers
@@ -113,6 +113,20 @@ content is `request_id_reuse`.
 - The broker MUST echo the value in response headers and SHOULD emit it in
   logs and metrics labels.
 
+### `Livepeer-Rebind-From`
+
+Optional, `paid-session/v1` top-up only. Declares a recipient rotation: the
+value is the `work_id` the session is moving **off**. Present only on the
+retry after a `recipient_rotated` refusal.
+
+A rebind is declared, never inferred from a payment whose identity differs
+from the session's — see paid-session §3.3.1 for the three rules a broker
+verifies before moving a session, and for why inference is unsafe.
+
+- **Example:** `Livepeer-Rebind-From: b3d1f0…c47a`
+- The control-WS mirror carries the same value as `rebind_from` in the
+  `session.topup` frame, since a frame has no headers.
+
 ### `Livepeer-Backoff`
 
 On 503, the broker advises the gateway how long to back off before retrying or
@@ -221,6 +235,8 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 | `job_in_flight` | 409 | Retry of a request id whose original exchange is still executing (paid-job §4). Retryable. |
 | `request_id_reuse` | 400 | Request id replayed with different capability, offering, envelope, or body (paid-job §4; paid-session §3.1 opens and §3.3 top-ups). |
 | `refill_refused` | 409 | Top-up refused; `will_refuse_next_refill` was advertised beforehand (paid-session §3.3). |
+| `recipient_rotated` | 409 | The payee rotated its recipient rand, so every ticket in the batch was rejected. Mechanical remedy: re-fetch ticket params, re-mint, retry — for a session, declaring `Livepeer-Rebind-From` (paid-session §3.3.1). |
+| `rebind_refused` | 409 | A declared rotation rebind the broker would not perform: wrong predecessor, a successor that did not credit, a different sender, or a rotation bound reached (paid-session §3.3.1). |
 | `backend_unavailable` | 502 | Backend reachable but returned an error the broker can't recover from. |
 | `capacity_exhausted` | 503 | Broker has no slots; see `Livepeer-Backoff`. |
 | `insufficient_balance` | 402 | Long-running session terminated by the broker because `PayeeDaemon.SufficientBalance` reported the payer's balance no longer covers the configured runway. The header is emitted as a trailer where the protocol allows it (the response body has typically already begun); the connection is closed by the broker. Plan 0015. |
@@ -291,4 +307,5 @@ See [`../conformance/`](../conformance/).
 | 0.1.1 | Add `insufficient_balance` error code for long-running sessions terminated by the broker mid-flight (plan 0015). Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |
 | 0.1.2 | Add `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout` error codes for `rtmp-ingress-hls-egress` (plan 0011-followup). Pre-1.0 minor additions are non-breaking. |
 | 0.1.3 | Add `backpressure_drop` error code for the `session-control-plus-media` control-WebSocket (plan 0012-followup). Pre-1.0 minor additions are non-breaking. |
+| 1.0.1-draft | Add `recipient_rotated` and `rebind_refused` for recipient rotation, and the `Livepeer-Rebind-From` request header that declares a rebind's predecessor (paid-session §3.3.1). Pre-1.0-style minor addition: receivers validate the major only. |
 | 1.0.0-draft | **Breaking.** Rewritten for the v1 protocols (2026-08-19). `Livepeer-Mode` + `Livepeer-Spec-Version` replaced by `Livepeer-Protocol`; `Livepeer-Request-Id` becomes required (it is the idempotency key); `Livepeer-Work-Unit` and `Livepeer-Job-Id` added; `protocol_unsupported`, `protocol_transport_unsupported`, `job_in_flight`, `request_id_reuse`, and `refill_refused` added. The mode-era `ffmpeg_subprocess_failed`, `rtmp_ingest_idle_timeout`, and `backpressure_drop` codes removed with the broker-hosted media plane. |

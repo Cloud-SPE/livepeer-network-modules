@@ -76,6 +76,7 @@ type offeringsJobAxes struct {
 
 type offeringsSessionAxes struct {
 	DescriptorSchema     string              `json:"descriptor_schema"`
+	MaxRotations         int                 `json:"max_rotations,omitempty"`
 	Attachment           string              `json:"attachment,omitempty"`
 	Metering             string              `json:"metering"`
 	Refill               string              `json:"refill,omitempty"`
@@ -110,6 +111,7 @@ func axesFor(c config.Capability) (*offeringsJobAxes, *offeringsSessionAxes) {
 	sess := &offeringsSessionAxes{
 		SessionParamsSchema:  c.Session.SessionParamsSchema,
 		DescriptorSchema:     c.Session.DescriptorSchema,
+		MaxRotations:         c.Session.MaxRotations,
 		Attachment:           c.Session.AdvertisedAttachment(),
 		Metering:             c.Session.AdvertisedMetering(),
 		Refill:               c.Session.AdvertisedRefill(),

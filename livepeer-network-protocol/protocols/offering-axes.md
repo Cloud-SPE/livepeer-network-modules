@@ -1,6 +1,6 @@
 ---
 spec_name: offering-axes
-version: 1.0.2-draft
+version: 1.0.3-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -63,6 +63,20 @@ offerings):
 
 `metering: broker-observed` with `attachment: external` is invalid: a broker
 cannot observe traffic that never transits it.
+
+### 3.1 `session.max_rotations`
+
+Caps how many times a session may be rebound onto a rotated payment
+identity (paid-session §3.3.1). Optional, default **3**.
+
+The bound exists because a rebind costs the payer a funded envelope: an
+unbounded rotate-and-rebind loop spends deposit without delivering work.
+A broker also refuses a rebind whose predecessor generation delivered no
+units at all, whatever this value says — that catches a loop after one
+round rather than after `max_rotations` of them.
+
+Consumers gate on nothing here; it is the broker's own bound, advertised
+so an operator can see it.
 
 ## 4. Who consumes what
 
@@ -160,6 +174,7 @@ refused.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.3-draft | 2026-08-20 | Add §3.1 `session.max_rotations`, the bound on rebinding a session onto a rotated payment identity (paid-session §3.3.1). |
 | 1.0.2-draft | 2026-08-20 | Add §6: price is a `(price_per_unit_wei, per_units)` pair, the cumulative ceiling billing rule that both sides compute identically, pinning at session open, and the three wire names for the denominator. Written normatively because the reference implementation had it in the catalog, the settlement record, and nowhere in the ledger. |
 | 1.0.1-draft | 2026-08-19 | Add the advisory `session.session_params_schema` axis (see paid-session §7.1.1), carried by `manifest/schema.json` and relayed opaquely by `orch-coordinator`, so it reaches gateways through the signed manifest as well as the broker's `/registry/offerings`. |
 | 1.0.0-draft | 2026-08-18 | Initial axes. Replaces mode-name inference; `interaction_mode` removed from the manifest. |

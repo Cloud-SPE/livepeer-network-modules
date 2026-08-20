@@ -740,12 +740,14 @@ func TestOpenFailsClosedWhenEveryTicketRejected(t *testing.T) {
 		RequestID: "req-1", PaymentBytes: []byte{1, 2, 3}, Spec: h.spec,
 		CapacityRef: "cap-slot-1",
 	})
+	// recipient_rotated rather than a generic payment failure: the
+	// gateway's remedy is mechanical, and it should act on a code.
 	var perr *ProtocolError
-	if !errors.As(err, &perr) || perr.Code != "payment_invalid" {
-		t.Fatalf("err = %v; want a payment_invalid ProtocolError", err)
+	if !errors.As(err, &perr) || perr.Code != "recipient_rotated" {
+		t.Fatalf("err = %v; want a recipient_rotated ProtocolError", err)
 	}
-	if !strings.Contains(perr.Detail, "INVALID_RECIPIENT_RAND") {
-		t.Fatalf("detail = %q; want the rotation signal named", perr.Detail)
+	if !strings.Contains(perr.Detail, "rotated") {
+		t.Fatalf("detail = %q; want the rotation named", perr.Detail)
 	}
 	if h.runner.created != 0 {
 		t.Fatal("runner was bound against a payment that funded nothing")
@@ -1044,5 +1046,64 @@ func TestRebindSettlesPredecessorBeforeClosing(t *testing.T) {
 	if after.GenerationStartUnits != 40 {
 		t.Fatalf("generation start = %d; want 40, so the new generation's subtotal starts at zero",
 			after.GenerationStartUnits)
+	}
+}
+
+// TestRebindStopsAtTheRotationBound: an unbounded rotate-and-rebind loop
+// would burn the payer's deposit without ever delivering work, so the
+// session ends instead — naming the consequence, not the mechanism.
+func TestRebindStopsAtTheRotationBound(t *testing.T) {
+	h := newHarness(t)
+	h.spec.MaxRotations = 1
+	res := h.open(t)
+	before, _ := h.store.Get(res.SessionID)
+
+	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
+		t.Fatalf("first rebind: %v", err)
+	}
+	mid, _ := h.store.Get(res.SessionID)
+
+	_, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-2", mid.WorkID, rotatedPayment(t, "third-rand-00000000000000000000"))
+	var pe *ProtocolError
+	if !errors.As(err, &pe) || pe.Code != "rebind_refused" {
+		t.Fatalf("err = %v; want rebind_refused at the bound", err)
+	}
+	final, _ := h.store.Get(res.SessionID)
+	if !final.Terminal() {
+		t.Fatal("session survived its rotation bound with no way to fund itself")
+	}
+	if final.CloseReason != ReasonPaymentUnrecoverable {
+		t.Fatalf("close reason = %q; want %q — the consequence, not the mechanism",
+			final.CloseReason, ReasonPaymentUnrecoverable)
+	}
+}
+
+// TestRebindRefusesWhenTheLastGenerationDeliveredNothing: the bound that
+// catches a loop early. A generation that debited no units bought
+// nothing, so funding another rebind is throwing good money after bad.
+func TestRebindRefusesWhenTheLastGenerationDeliveredNothing(t *testing.T) {
+	h := newHarness(t)
+	h.spec.MaxRotations = 5
+	res := h.open(t)
+	before, _ := h.store.Get(res.SessionID)
+
+	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
+		t.Fatalf("first rebind: %v", err)
+	}
+	mid, _ := h.store.Get(res.SessionID)
+	// No usage debited on the new generation, so the rebind bought
+	// nothing.
+	_, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-2", mid.WorkID, rotatedPayment(t, "third-rand-00000000000000000000"))
+	var pe *ProtocolError
+	if !errors.As(err, &pe) || pe.Code != "rebind_refused" {
+		t.Fatalf("err = %v; want rebind_refused on a rotation that delivered nothing", err)
+	}
+	final, _ := h.store.Get(res.SessionID)
+	if final.CloseReason != ReasonPaymentUnrecoverable {
+		t.Fatalf("close reason = %q; want %q", final.CloseReason, ReasonPaymentUnrecoverable)
 	}
 }

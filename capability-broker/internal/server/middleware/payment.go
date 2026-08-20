@@ -270,8 +270,11 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			defer func() { _ = client.CloseSession(ctx, result.Sender, workID) }()
 
 			if result.TicketsRejected > 0 && result.DominantRejection == payment.PaymentRejectionReasonInvalidRecipientRand {
-				livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid,
-					"process payment: INVALID_RECIPIENT_RAND")
+				// The payee rotated its recipient rand. For a job the
+				// remedy is the payer's existing evict-and-retry loop;
+				// the code is what tells the gateway to run it.
+				livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrRecipientRotated,
+					"payee rejected every ticket: its recipient rand rotated; re-fetch ticket params and retry")
 				return
 			}
 

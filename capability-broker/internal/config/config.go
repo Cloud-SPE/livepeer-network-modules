@@ -117,6 +117,11 @@ type SessionCap struct {
 	LeasePolicy    string  `yaml:"lease_policy,omitempty"`
 	BurnRatePerSec float64 `yaml:"burn_rate_per_second,omitempty"`
 	MinRunwayUnits int64   `yaml:"min_runway_units,omitempty"`
+	// MaxRotations caps how many times a session may be rebound onto a
+	// rotated payment identity. 0 means the default (3). An unbounded
+	// rotate-and-rebind loop would burn the payer's deposit without ever
+	// delivering work.
+	MaxRotations int `yaml:"max_rotations,omitempty"`
 	// Attachment and Metering are advertised axes (offering-axes.md §3).
 	// Defaults: external / runner-reported — the only combination this
 	// broker implements today, but declared explicitly because

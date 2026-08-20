@@ -83,6 +83,7 @@ func specFromCapability(c *config.Capability) *sessionengine.OfferingSpec {
 			Terminate: c.Session.Runner.TerminatePath,
 		},
 		MinRunwayUnits: c.Session.MinRunwayUnits,
+		MaxRotations:   c.Session.MaxRotations,
 	}
 }
 
@@ -473,6 +474,8 @@ func (s *Server) writeSessionError(w http.ResponseWriter, err error) {
 			status = http.StatusBadRequest
 		case "rebind_refused":
 			status, code = http.StatusConflict, livepeerheader.ErrRebindRefused
+		case "recipient_rotated":
+			status, code = http.StatusConflict, livepeerheader.ErrRecipientRotated
 		}
 		livepeerheader.WriteError(w, status, code, pe.Detail)
 		return

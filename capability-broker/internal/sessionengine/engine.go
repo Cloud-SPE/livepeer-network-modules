@@ -62,6 +62,13 @@ const (
 	ReasonPaymentUnrecoverable = "payment_unrecoverable"
 )
 
+// DefaultMaxRotations bounds rebinds when an offering does not say.
+// Three is enough to ride out a payee restart or two; more than that in
+// one session is a loop, not bad luck.
+const DefaultMaxRotations = 3
+
+const ()
+
 // OfferingSpec is the resolved offering the engine serves a session
 // under — the declared axes plus pricing, supplied by the composition
 // root from host config.
@@ -91,6 +98,10 @@ type OfferingSpec struct {
 	// them against the runner's own declaration (§7.1.1).
 	Metering    string
 	RunnerPaths RunnerPaths
+	// MaxRotations caps rebinds onto a rotated payment identity; <=0
+	// means DefaultMaxRotations.
+	MaxRotations int
+
 	// MinRunwayUnits is the SufficientBalance floor checked after each
 	// debit; <=0 disables the check.
 	MinRunwayUnits int64
@@ -564,8 +575,11 @@ func rejectionErr(res *payment.ProcessPaymentResult) error {
 		return nil
 	}
 	if res.DominantRejection == payment.PaymentRejectionReasonInvalidRecipientRand {
-		return protoErr("payment_invalid",
-			"payee rejected every ticket: INVALID_RECIPIENT_RAND (recipient rand rotated)")
+		// A code, not a message to match on: the gateway's remedy is
+		// mechanical — re-fetch params, re-mint, retry declaring
+		// Livepeer-Rebind-From.
+		return protoErr("recipient_rotated",
+			"payee rejected every ticket: its recipient rand rotated; re-fetch ticket params and rebind")
 	}
 	return protoErr("payment_invalid",
 		"payee rejected every ticket (reason %d)", res.DominantRejection)
@@ -726,6 +740,9 @@ func (e *Engine) rebindLocked(ctx context.Context, rec *sessionstore.Record, spe
 		return nil, protoErr("rebind_refused",
 			"declared predecessor %q is not this session's payment identity", rebindFrom)
 	}
+	if err := e.rotationAllowed(ctx, rec, spec); err != nil {
+		return nil, err
+	}
 	newWorkID, ok := payment.DerivePayeeWorkID(paymentBytes)
 	if !ok {
 		return nil, protoErr("rebind_refused", "payment carries no ticket params to rebind onto")
@@ -839,6 +856,34 @@ func (e *Engine) rebindLocked(ctx context.Context, rec *sessionstore.Record, spe
 		})
 	}
 	return &TopUpResult{Lease: lease, Balance: res.Balance}, nil
+}
+
+// rotationAllowed enforces the two bounds on rebinding. Both end the
+// session rather than refusing in place, because a session that cannot
+// take another identity has no way forward: its current one is already
+// rejecting payment.
+//
+// The count bound is obvious. The other one is the useful one: a
+// generation that delivered no units at all means the rebind bought
+// nothing, and a payer that keeps funding rebinds against a payee that
+// keeps rotating is in a loop that costs deposit and produces no work.
+// One such round is enough to call it.
+func (e *Engine) rotationAllowed(ctx context.Context, rec *sessionstore.Record, spec *OfferingSpec) error {
+	max := spec.MaxRotations
+	if max <= 0 {
+		max = DefaultMaxRotations
+	}
+	if int(rec.RotationGeneration) >= max {
+		e.winddownLocked(ctx, rec.SessionID, ReasonPaymentUnrecoverable)
+		return protoErr("rebind_refused",
+			"rotation bound reached (%d); session ended", max)
+	}
+	if rec.RotationGeneration > 0 && rec.DebitedTotal == rec.GenerationStartUnits {
+		e.winddownLocked(ctx, rec.SessionID, ReasonPaymentUnrecoverable)
+		return protoErr("rebind_refused",
+			"previous rotation delivered no work; refusing to fund another and ending the session")
+	}
+	return nil
 }
 
 func bytesEqual(a, b []byte) bool {

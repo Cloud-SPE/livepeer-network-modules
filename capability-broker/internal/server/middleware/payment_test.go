@@ -323,7 +323,11 @@ func TestPayment_NoLiveCounterSkipsTicks(t *testing.T) {
 	}
 }
 
-func TestPayment_InvalidRecipientRandReturnsPaymentInvalid(t *testing.T) {
+// TestPayment_InvalidRecipientRandReturnsRecipientRotated: the payee
+// rotating its rand is not a generic payment failure. It has a
+// mechanical remedy — re-fetch params, re-mint, retry — so the gateway
+// gets a code it can act on rather than a message to match.
+func TestPayment_InvalidRecipientRandReturnsRecipientRotated(t *testing.T) {
 	t.Parallel()
 
 	client := &invalidRecipientRandClient{Mock: payment.NewMock()}
@@ -342,14 +346,14 @@ func TestPayment_InvalidRecipientRandReturnsPaymentInvalid(t *testing.T) {
 	if called {
 		t.Fatal("handler should not run when ticket params are invalidated")
 	}
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status: got %d, want 401; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: got %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get(livepeerheader.Error); got != livepeerheader.ErrPaymentInvalid {
-		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrPaymentInvalid)
+	if got := rec.Header().Get(livepeerheader.Error); got != livepeerheader.ErrRecipientRotated {
+		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrRecipientRotated)
 	}
-	if body := rec.Body.String(); body == "" || !contains(body, "INVALID_RECIPIENT_RAND") {
-		t.Fatalf("body = %q; want INVALID_RECIPIENT_RAND marker", body)
+	if body := rec.Body.String(); body == "" || !contains(body, "rotated") {
+		t.Fatalf("body = %q; want the rotation named", body)
 	}
 }
 

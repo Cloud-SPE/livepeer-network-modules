@@ -48,6 +48,12 @@ const (
 	ErrJobInFlight             = "job_in_flight"
 	ErrRequestIDReuse          = "request_id_reuse"
 	ErrRefillRefused           = "refill_refused"
+	// ErrRecipientRotated tells a gateway its payment identity is stale:
+	// the payee rotated its recipient rand, so every ticket in the batch
+	// was rejected. The remedy is mechanical — re-fetch ticket params,
+	// re-mint, and retry declaring Livepeer-Rebind-From. A distinct code
+	// exists so a gateway acts on a code instead of matching a message.
+	ErrRecipientRotated = "recipient_rotated"
 	// ErrRebindRefused reports a declared rotation rebind the broker
 	// would not perform: the declared predecessor is not this session's
 	// identity, the successor did not credit, or the sender differs.

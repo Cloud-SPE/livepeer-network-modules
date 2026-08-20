@@ -29,16 +29,21 @@ var ErrRequestIDReuse = errors.New("sessionstore: request id reused with differe
 
 // JobRecord is the durable idempotency record for one exchange.
 type JobRecord struct {
-	RequestID   string    `json:"request_id"`
-	JobID       string    `json:"job_id"`
-	Fingerprint []byte    `json:"fingerprint"`
-	State       string    `json:"state"`
-	Status      int       `json:"status,omitempty"`
-	WorkUnits   uint64    `json:"work_units,omitempty"`
-	Unit        string    `json:"unit,omitempty"`
-	Deadline    time.Time `json:"deadline"`
-	CreatedAt   time.Time `json:"created_at"`
-	EndedAt     time.Time `json:"ended_at,omitzero"`
+	RequestID   string `json:"request_id"`
+	JobID       string `json:"job_id"`
+	Fingerprint []byte `json:"fingerprint"`
+	// BodyDigest is sha256 of the request body, recorded when the
+	// exchange finishes. The envelope fingerprint above is known before
+	// the body has streamed; this is the half that can only be known
+	// after, so it is compared on replay rather than at Begin.
+	BodyDigest []byte    `json:"body_digest,omitempty"`
+	State      string    `json:"state"`
+	Status     int       `json:"status,omitempty"`
+	WorkUnits  uint64    `json:"work_units,omitempty"`
+	Unit       string    `json:"unit,omitempty"`
+	Deadline   time.Time `json:"deadline"`
+	CreatedAt  time.Time `json:"created_at"`
+	EndedAt    time.Time `json:"ended_at,omitzero"`
 }
 
 // JobBegin records an in-flight exchange, or returns the existing
@@ -83,8 +88,9 @@ func (s *Store) JobBegin(requestID string, fingerprint []byte, jobID string, dea
 	return rec, created, err
 }
 
-// JobFinish records the terminal outcome for the request id.
-func (s *Store) JobFinish(requestID string, status int, workUnits uint64, unit string) error {
+// JobFinish records the terminal outcome for the request id, including
+// the digest of the body the exchange actually consumed.
+func (s *Store) JobFinish(requestID string, status int, workUnits uint64, unit string, bodyDigest []byte) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(jobsBucket))
 		if b == nil {
@@ -102,6 +108,7 @@ func (s *Store) JobFinish(requestID string, status int, workUnits uint64, unit s
 		rec.Status = status
 		rec.WorkUnits = workUnits
 		rec.Unit = unit
+		rec.BodyDigest = bytes.Clone(bodyDigest)
 		rec.EndedAt = time.Now().UTC()
 		out, err := json.Marshal(&rec)
 		if err != nil {

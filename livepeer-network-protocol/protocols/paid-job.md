@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.0-draft
+version: 1.0.1-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -106,6 +106,14 @@ the gap — no recovery handshake exists or is needed at this layer.
    envelope, or body hash is a protocol error (`request_id_reuse`), not a
    retry. A retry is byte-identical or it is not a retry.
 
+   Binding the body costs no buffering, which is the objection that
+   usually leads implementations to bind its *length* instead — a hole,
+   since a changed body of equal length then receives the recorded
+   outcome. The envelope is fingerprinted before the exchange (it is all
+   that is knowable then) and the body is digested **as it streams** to
+   the backend, recorded with the terminal outcome. A replay is drained
+   for its digest and compared, which costs a read and no execution.
+
 This is the invariant that deletes the surveyed gateways' hand-rolled
 `settle(0)` compensation: a gateway that times out simply retries the same
 request id and converges on the true outcome.
@@ -165,4 +173,5 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.1-draft | 2026-08-20 | §4.4: spell out how the body hash is bound — envelope fingerprinted before the exchange, body digested as it streams, replay drained and compared. The requirement was already normative; the reference implementation had been binding the body's *length*, so a retry with a changed body of equal length received the recorded outcome. |
 | 1.0.0-draft | 2026-08-18 | Initial protocol. Replaces `http-reqresp@v0`, `http-stream@v0`, `http-multipart@v0`; transports become per-request negotiation; idempotent open and a reliable claim channel become normative. |

@@ -97,6 +97,23 @@ func jobReq(t *testing.T, srv *httptest.Server, requestID, accept string) *http.
 	return resp
 }
 
+// jobReqBody posts a job with a chosen body, for the tests that care
+// what the body was rather than how it was negotiated.
+func jobReqBody(t *testing.T, srv *httptest.Server, requestID, body string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/job", strings.NewReader(body))
+	req.Header.Set(livepeerheader.Capability, "openai:chat-completions")
+	req.Header.Set(livepeerheader.Offering, "default")
+	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
+	req.Header.Set(livepeerheader.RequestID, requestID)
+	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("stub-payment")))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
 func TestJobSurfaceEndToEnd(t *testing.T) {
 	var backendCalls atomic.Int64
 	srv := newJobTestServer(t, &backendCalls)
@@ -191,5 +208,55 @@ func TestJobSurfaceEndToEnd(t *testing.T) {
 	}
 	if got := sresp.Trailer.Get(livepeerheader.WorkUnits); got != "21" {
 		t.Fatalf("stream trailer Work-Units %q, want 21 (trailers: %v)", got, sresp.Trailer)
+	}
+}
+
+// TestJobReplayRefusesADifferentBody: the defect this closes. The
+// envelope fingerprint matches on a retry that reuses the request id and
+// the payment, so binding only the envelope — or the body's length —
+// let a changed body receive the first exchange's recorded outcome. A
+// wrong answer, not an error.
+func TestJobReplayRefusesADifferentBody(t *testing.T) {
+	var calls atomic.Int64
+	srv := newJobTestServer(t, &calls)
+
+	first := jobReqBody(t, srv, "req-body-1", `{"prompt":"alpha"}`)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first exchange status %d", first.StatusCode)
+	}
+	_ = first.Body.Close()
+
+	// Same id, same envelope, different body of the same length.
+	replay := jobReqBody(t, srv, "req-body-1", `{"prompt":"beta_"}`)
+	defer replay.Body.Close()
+	if replay.StatusCode != http.StatusBadRequest {
+		t.Fatalf("changed body replayed with status %d; want 400", replay.StatusCode)
+	}
+	if got := replay.Header.Get(livepeerheader.Error); got != livepeerheader.ErrRequestIDReuse {
+		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrRequestIDReuse)
+	}
+}
+
+// TestJobReplayWithTheSameBodyStillReplays: binding the body must not
+// break the retry the idempotency contract exists for.
+func TestJobReplayWithTheSameBodyStillReplays(t *testing.T) {
+	var calls atomic.Int64
+	srv := newJobTestServer(t, &calls)
+
+	body := `{"prompt":"alpha"}`
+	first := jobReqBody(t, srv, "req-body-2", body)
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first exchange status %d", first.StatusCode)
+	}
+	jobID := first.Header.Get(livepeerheader.JobID)
+	_ = first.Body.Close()
+
+	replay := jobReqBody(t, srv, "req-body-2", body)
+	defer replay.Body.Close()
+	if replay.StatusCode != http.StatusOK {
+		t.Fatalf("identical retry status %d; want the recorded 200", replay.StatusCode)
+	}
+	if got := replay.Header.Get(livepeerheader.JobID); got != jobID {
+		t.Fatalf("replay job id = %q; want the recorded %q", got, jobID)
 	}
 }

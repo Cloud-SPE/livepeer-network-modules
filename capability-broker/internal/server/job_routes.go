@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"net/http"
@@ -92,7 +93,7 @@ func negotiateTransport(r *http.Request) string {
 // spec conformance requires the durable form).
 type jobIdemStore interface {
 	Begin(requestID string, fingerprint []byte, jobID string, deadline time.Time) (*sessionstore.JobRecord, bool, error)
-	Finish(requestID string, status int, workUnits uint64, unit string) error
+	Finish(requestID string, status int, workUnits uint64, unit string, bodyDigest []byte) error
 }
 
 type boltJobIdem struct{ store *sessionstore.Store }
@@ -100,8 +101,8 @@ type boltJobIdem struct{ store *sessionstore.Store }
 func (b *boltJobIdem) Begin(id string, fp []byte, jobID string, dl time.Time) (*sessionstore.JobRecord, bool, error) {
 	return b.store.JobBegin(id, fp, jobID, dl)
 }
-func (b *boltJobIdem) Finish(id string, status int, units uint64, unit string) error {
-	return b.store.JobFinish(id, status, units, unit)
+func (b *boltJobIdem) Finish(id string, status int, units uint64, unit string, bodyDigest []byte) error {
+	return b.store.JobFinish(id, status, units, unit, bodyDigest)
 }
 
 type memJobIdem struct {
@@ -130,7 +131,7 @@ func (m *memJobIdem) Begin(id string, fp []byte, jobID string, dl time.Time) (*s
 	return &cp, true, nil
 }
 
-func (m *memJobIdem) Finish(id string, status int, units uint64, unit string) error {
+func (m *memJobIdem) Finish(id string, status int, units uint64, unit string, bodyDigest []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	rec, ok := m.recs[id]
@@ -145,17 +146,55 @@ func (m *memJobIdem) Finish(id string, status int, units uint64, unit string) er
 	return nil
 }
 
-// jobFingerprint binds a request id to its content: capability,
-// offering, payment envelope, and content length. (Body-hash matching
-// would require buffering multipart uploads twice; the envelope hash
-// already binds the payment, which is the load-bearing part.)
-func jobFingerprint(r *http.Request) []byte {
+// jobEnvelopeFingerprint binds a request id to what is knowable before
+// the body streams: capability, offering, and the payment envelope.
+//
+// It used to include ContentLength and call itself the content
+// fingerprint, which let a retry that reused the id and the envelope but
+// changed the body to one of equal length receive the first exchange's
+// recorded outcome — a wrong answer rather than request_id_reuse. The
+// body is bound separately, by digest, because it cannot be hashed until
+// it has been read and the record has to exist before then.
+func jobEnvelopeFingerprint(r *http.Request) []byte {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%s|%s|%d",
+	fmt.Fprintf(h, "%s|%s|%s",
 		r.Header.Get(livepeerheader.Capability),
 		r.Header.Get(livepeerheader.Offering),
-		r.Header.Get(livepeerheader.Payment),
-		r.ContentLength)
+		r.Header.Get(livepeerheader.Payment))
+	return h.Sum(nil)
+}
+
+// hashingBody streams the request body through a digest on its way to
+// the backend, so binding the body costs no buffering — which is what
+// made body-hashing look impractical for multipart uploads.
+type hashingBody struct {
+	io.ReadCloser
+	h hash.Hash
+}
+
+func newHashingBody(rc io.ReadCloser) *hashingBody {
+	return &hashingBody{ReadCloser: rc, h: sha256.New()}
+}
+
+func (b *hashingBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.h.Write(p[:n])
+	}
+	return n, err
+}
+
+func (b *hashingBody) digest() []byte { return b.h.Sum(nil) }
+
+// drainDigest reads a body to its end for its digest alone, without
+// forwarding it anywhere. This is the replay path: a retry has to prove
+// it carries the same content, and proving it costs a read rather than
+// an execution.
+func drainDigest(rc io.ReadCloser) []byte {
+	h := sha256.New()
+	if rc != nil {
+		_, _ = io.Copy(h, rc)
+	}
 	return h.Sum(nil)
 }
 
@@ -194,12 +233,12 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 
 		requestID := r.Header.Get(livepeerheader.RequestID)
 		jobID := "job_" + uuid.NewString()
-		rec, created, err := s.jobIdem.Begin(requestID, jobFingerprint(r), jobID, time.Now().Add(jobInFlightTTL))
+		rec, created, err := s.jobIdem.Begin(requestID, jobEnvelopeFingerprint(r), jobID, time.Now().Add(jobInFlightTTL))
 		if err != nil {
 			if errors.Is(err, sessionstore.ErrRequestIDReuse) {
 				livepeerheader.WriteError(w, http.StatusBadRequest,
 					livepeerheader.ErrRequestIDReuse,
-					"request id replayed with different capability, offering, envelope, or length")
+					"request id replayed with a different capability, offering, or payment envelope")
 				return
 			}
 			livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError, err.Error())
@@ -208,6 +247,16 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		if !created {
 			switch {
 			case rec.State == sessionstore.JobTerminal:
+				// The envelope matched; the body still has to. Draining
+				// the retry for its digest costs a read and proves the
+				// content, where trusting the envelope alone would let a
+				// changed body receive the first exchange's outcome.
+				if len(rec.BodyDigest) > 0 && !bytes.Equal(rec.BodyDigest, drainDigest(r.Body)) {
+					livepeerheader.WriteError(w, http.StatusBadRequest,
+						livepeerheader.ErrRequestIDReuse,
+						"request id replayed with a different body")
+					return
+				}
 				// Replay the recorded outcome: status + claim headers,
 				// no backend re-execution, no second debit.
 				w.Header().Set(livepeerheader.JobID, rec.JobID)
@@ -220,7 +269,7 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 				return
 			case time.Now().After(rec.Deadline):
 				// Crash leftover: converge on a failed terminal.
-				_ = s.jobIdem.Finish(requestID, http.StatusInternalServerError, 0, c.WorkUnit.Name)
+				_ = s.jobIdem.Finish(requestID, http.StatusInternalServerError, 0, c.WorkUnit.Name, nil)
 				w.Header().Set(livepeerheader.JobID, rec.JobID)
 				w.Header().Set(livepeerheader.WorkUnits, "0")
 				w.Header().Set(livepeerheader.WorkUnitName, c.WorkUnit.Name)
@@ -236,6 +285,8 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 
 		w.Header().Set(livepeerheader.JobID, rec.JobID)
 		w.Header().Set(livepeerheader.WorkUnitName, c.WorkUnit.Name)
+		body := newHashingBody(r.Body)
+		r.Body = body
 		jrec := &jobRecorder{ResponseWriter: w}
 		next.ServeHTTP(jrec, r)
 		switch st := jrec.status(); {
@@ -246,7 +297,7 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		default:
 			observability.RecordJobExchange(transport, "backend_error")
 		}
-		if err := s.jobIdem.Finish(requestID, jrec.status(), jrec.units(), c.WorkUnit.Name); err != nil {
+		if err := s.jobIdem.Finish(requestID, jrec.status(), jrec.units(), c.WorkUnit.Name, body.digest()); err != nil {
 			log.Printf("warning: job idempotency finish failed request_id=%s: %v", requestID, err)
 		}
 	})

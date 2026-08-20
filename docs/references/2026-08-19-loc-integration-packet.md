@@ -43,8 +43,19 @@ that actually determines compatibility now) and `job.transports`.
 
 ## What stays exactly as it is
 
-- **`work_id`** — still the daemon-returned `recipient_rand_hash`, still
-  your public lookup key, still what `GetSessionDebits` keys on. Untouched.
+> **Correction (2026-08-20).** Two claims in this section were wrong when
+> written. `work_id` was NOT untouched: `paid-job/v1` derived it from the
+> payment's `recipient_rand_hash` as described, but `paid-session/v1`
+> minted a UUID, so in chain mode no session payment could validate. And
+> `GetSessionDebits` keys on nothing — the payer daemon never implemented
+> it and holds no debit ledger. Both are fixed; see
+> `2026-08-20-loc-review-reply.md` and the replies that follow it. The
+> section is left as sent, with this note, because a packet that quietly
+> rewrites itself is worse than one that carries its errata.
+
+- **`work_id`** — the daemon-issued `recipient_rand_hash`, your public
+  lookup key. (See the correction above: this was true of jobs only until
+  `87ef866` made it true of sessions too.)
 - **The handoff-mode boundary.** LOC remains a control plane; the envelope
   still travels to the broker in the customer's own request. The v1 work
   does not put anything new in your data path, and your blast-radius
@@ -116,6 +127,9 @@ Reporting these because they matter to the joint picture, not to pile on:
    sender rather than the pooled wallet address. The daemon ledger is your
    trust anchor for money — if this is masking to "any sender," it's worth a
    look before it masks something real.
+   *(Correction, 2026-08-20: the empty sender was never the binding
+   constraint — the payer daemon does not implement this RPC at all. The
+   reconciliation source is the payee-side signed settlement record.)*
 2. **A naming collision worth documenting.** Your
    `payment_session.last_debit_seq` is a *refill* counter (surfaced as
    `refill_seq` / `refill_count`). The broker's `debit_seq` is a different

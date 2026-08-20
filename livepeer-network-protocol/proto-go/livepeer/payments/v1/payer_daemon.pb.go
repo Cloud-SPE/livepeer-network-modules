@@ -352,9 +352,13 @@ type GetSessionDebitsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Sender ETH address (20 raw bytes), echoed from the payment envelope.
 	Sender []byte `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
-	// Work-id of the long-lived session. Hex-encoded
-	// recipient_rand_hash, identical to the value the broker echoes in
-	// `Livepeer-Request-Id` when the session opens.
+	// Work-id of the long-lived session: the hex-encoded
+	// recipient_rand_hash the payee issued.
+	//
+	// An earlier comment here claimed this equals the value the broker
+	// echoes in `Livepeer-Request-Id` at session open. It does not, and
+	// never did — `Livepeer-Request-Id` is the caller's own idempotency
+	// key and has no relationship to a payment identity.
 	WorkId        string `protobuf:"bytes,2,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -15,6 +15,7 @@ package sender
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -29,10 +30,12 @@ import (
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -47,6 +50,12 @@ type Service struct {
 	logger   *slog.Logger
 	fetcher  TicketParamsFetcher
 	metrics  metrics.Recorder
+
+	// store is the durable mint-idempotency ledger. Minting signs
+	// tickets against real deposit, so a retry after an uncertain
+	// response must replay rather than re-sign, and that record has to
+	// outlive the process.
+	store *store.Store
 
 	mu          sync.Mutex
 	sessions    map[string]*senderSession // keyed by recipient/capability/offering/target-spend tuple
@@ -65,7 +74,7 @@ type senderSession struct {
 }
 
 // New constructs a sender Service. rec may be nil (no-op metrics).
-func New(keystore providers.KeyStore, broker providers.Broker, clock providers.Clock, logger *slog.Logger, fetcher TicketParamsFetcher, rec metrics.Recorder) *Service {
+func New(keystore providers.KeyStore, broker providers.Broker, clock providers.Clock, logger *slog.Logger, fetcher TicketParamsFetcher, rec metrics.Recorder, st *store.Store) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -79,6 +88,7 @@ func New(keystore providers.KeyStore, broker providers.Broker, clock providers.C
 		logger:      logger,
 		fetcher:     fetcher,
 		metrics:     rec,
+		store:       st,
 		sessions:    map[string]*senderSession{},
 		workIDIndex: map[string]string{},
 	}
@@ -96,6 +106,39 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	if len(req.GetRecipient()) == 0 {
 		return nil, errors.New("recipient is empty")
 	}
+	mintID := strings.TrimSpace(req.GetMintRequestId())
+	if mintID == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "mint_request_id is required")
+	}
+	if len(mintID) > maxMintRequestIDBytes {
+		return nil, grpcstatus.Errorf(codes.InvalidArgument,
+			"mint_request_id exceeds %d bytes", maxMintRequestIDBytes)
+	}
+	if s.store == nil {
+		// Without the ledger there is no way to keep the idempotency
+		// promise, and minting anyway would be the unsafe half of it.
+		return nil, grpcstatus.Error(codes.FailedPrecondition,
+			"mint idempotency store is not configured; refusing to mint")
+	}
+	fingerprint := mintFingerprint(req)
+	prior, err := s.store.MintRecall(s.keystore.Address(), mintID, fingerprint)
+	switch {
+	case errors.Is(err, store.ErrMintFingerprintMismatch):
+		return nil, grpcstatus.Error(codes.InvalidArgument,
+			"mint_request_id was used for different request content")
+	case errors.Is(err, store.ErrMintExpired):
+		// Deliberately not a fresh mint. The replay record aged out, but
+		// the key was issued a payment once, and re-minting it now would
+		// pay twice for one intent.
+		return nil, grpcstatus.Error(codes.FailedPrecondition,
+			"mint_request_id was already used and its replay record has expired; use a new id")
+	case err != nil:
+		return nil, grpcstatus.Errorf(codes.Internal, "mint recall: %v", err)
+	case prior != nil:
+		s.metrics.IncPaymentCreated(metrics.ResultOK)
+		return mintResponseFrom(prior), nil
+	}
+
 	acceptedPrice, err := parseAcceptedPrice(req.GetAcceptedPrice())
 	if err != nil {
 		return nil, fmt.Errorf("accepted_price: %w", err)
@@ -172,14 +215,87 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		"ticket_face_value", session.ticketParams.FaceValue.String(),
 		"nonce", tsp.SenderNonce)
 
-	return &pb.CreatePaymentResponse{
+	out := &pb.CreatePaymentResponse{
 		PaymentBytes:     bytes,
 		TicketsCreated:   1,
 		ExpectedValue:    &pb.BigUInt{Value: evBytes},
 		FundedValueWei:   &pb.BigUInt{Value: funding.fundedValueWei.Bytes()},
 		AcceptedQuoteRef: cloneQuoteRef(session.acceptedQuote),
 		WorkId:           session.workID,
-	}, nil
+	}
+	// Record before returning. A crash between the signature and this
+	// write leaves the ticket minted and unrecorded, and the retry
+	// re-mints — so the window is narrowed to a single write rather than
+	// closed. Closing it entirely would need the nonce reservation and
+	// the record in one transaction, which is the next increment.
+	quoteJSON, err := marshalQuoteRef(out.AcceptedQuoteRef)
+	if err != nil {
+		return nil, fmt.Errorf("record mint: %w", err)
+	}
+	if err := s.store.MintRecord(s.keystore.Address(), mintID, store.MintRecord{
+		Fingerprint:    fingerprint,
+		PaymentBytes:   out.PaymentBytes,
+		TicketsCreated: out.TicketsCreated,
+		ExpectedValue:  evBytes,
+		FundedValueWei: funding.fundedValueWei.Bytes(),
+		QuoteRefJSON:   quoteJSON,
+		WorkID:         out.WorkId,
+	}); err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "record mint: %v", err)
+	}
+	return out, nil
+}
+
+// maxMintRequestIDBytes caps the caller-supplied key. Long enough for a
+// prefixed UUID, short enough that the tombstone space stays predictable.
+const maxMintRequestIDBytes = 128
+
+// mintFingerprint binds a mint id to the request it paid for. A reused
+// id with different content is refused rather than answered with the
+// earlier payment, which would hand the caller a batch it never asked
+// for.
+func mintFingerprint(req *pb.CreatePaymentRequest) []byte {
+	h := sha256.New()
+	h.Write(req.GetRecipient())
+	h.Write([]byte{0})
+	h.Write([]byte(strings.TrimSpace(req.GetTicketParamsBaseUrl())))
+	h.Write([]byte{0})
+	if p, err := proto.Marshal(req.GetAcceptedPrice()); err == nil {
+		h.Write(p)
+	}
+	h.Write([]byte{0})
+	if f, err := proto.Marshal(req.GetFunding()); err == nil {
+		h.Write(f)
+	}
+	return h.Sum(nil)
+}
+
+func mintResponseFrom(rec *store.MintRecord) *pb.CreatePaymentResponse {
+	out := &pb.CreatePaymentResponse{
+		PaymentBytes:   rec.PaymentBytes,
+		TicketsCreated: rec.TicketsCreated,
+		WorkId:         rec.WorkID,
+	}
+	if len(rec.ExpectedValue) > 0 {
+		out.ExpectedValue = &pb.BigUInt{Value: rec.ExpectedValue}
+	}
+	if len(rec.FundedValueWei) > 0 {
+		out.FundedValueWei = &pb.BigUInt{Value: rec.FundedValueWei}
+	}
+	if len(rec.QuoteRefJSON) > 0 {
+		var qr pb.QuoteRef
+		if err := protojson.Unmarshal(rec.QuoteRefJSON, &qr); err == nil {
+			out.AcceptedQuoteRef = &qr
+		}
+	}
+	return out
+}
+
+func marshalQuoteRef(qr *pb.QuoteRef) ([]byte, error) {
+	if qr == nil {
+		return nil, nil
+	}
+	return protojson.Marshal(qr)
 }
 
 // ReportPaymentResult applies payee-side feedback to sender session state.

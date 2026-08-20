@@ -49,7 +49,35 @@ type CreatePaymentRequest struct {
 	// Accepted route/quote basis chosen by the gateway.
 	AcceptedPrice *AcceptedPrice `protobuf:"bytes,3,opt,name=accepted_price,json=acceptedPrice,proto3" json:"accepted_price,omitempty"`
 	// Funding scope the gateway is authorizing for this minted payment batch.
-	Funding       *FundingIntent `protobuf:"bytes,4,opt,name=funding,proto3" json:"funding,omitempty"`
+	Funding *FundingIntent `protobuf:"bytes,4,opt,name=funding,proto3" json:"funding,omitempty"`
+	// Caller-supplied idempotency key for this mint intent. REQUIRED.
+	//
+	// Minting signs tickets against real deposit, so a retry after an
+	// uncertain response must never mint a second batch. With this key the
+	// daemon replays the exact original response — same payment_bytes,
+	// same work_id, same values — and never re-signs.
+	//
+	// Namespace: the key is scoped to the daemon's own sender identity
+	// (its keystore address). Two callers sharing one daemon share one
+	// namespace, so ids MUST be globally unique within it — a UUIDv4, or a
+	// caller-prefixed form like "loc:<uuid>". Max 128 bytes. A key reused
+	// with different request content is refused (INVALID_ARGUMENT), never
+	// minted: the key is a promise about content.
+	//
+	// A recovery retry after `ReportPaymentResult` reported
+	// INVALID_RECIPIENT_RAND is a NEW intent and needs a NEW key: the old
+	// one would replay the very payment the payee rejected. The rotation
+	// mints against a fresh recipient rand, so it is a different payment
+	// by construction.
+	//
+	// Lifecycle: the daemon keeps the full response for a retention window
+	// (operator-configured, default 24h) and keeps a permanent tombstone of
+	// the key beyond it. A retry arriving after the window is REFUSED with
+	// FAILED_PRECONDITION, never treated as a fresh mint — an evicted key
+	// must not become mintable again, or a sufficiently delayed retry
+	// would double-pay. The tombstone is a hash, not the key, so retention
+	// costs ~80 bytes per mint forever.
+	MintRequestId string `protobuf:"bytes,5,opt,name=mint_request_id,json=mintRequestId,proto3" json:"mint_request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -110,6 +138,13 @@ func (x *CreatePaymentRequest) GetFunding() *FundingIntent {
 		return x.Funding
 	}
 	return nil
+}
+
+func (x *CreatePaymentRequest) GetMintRequestId() string {
+	if x != nil {
+		return x.MintRequestId
+	}
+	return ""
 }
 
 type CreatePaymentResponse struct {
@@ -540,12 +575,13 @@ var File_livepeer_payments_v1_payer_daemon_proto protoreflect.FileDescriptor
 
 const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\n" +
-	"'livepeer/payments/v1/payer_daemon.proto\x12\x14livepeer.payments.v1\x1a livepeer/payments/v1/types.proto\"\xf4\x01\n" +
+	"'livepeer/payments/v1/payer_daemon.proto\x12\x14livepeer.payments.v1\x1a livepeer/payments/v1/types.proto\"\x9c\x02\n" +
 	"\x14CreatePaymentRequest\x12\x1c\n" +
 	"\trecipient\x18\x01 \x01(\fR\trecipient\x123\n" +
 	"\x16ticket_params_base_url\x18\x02 \x01(\tR\x13ticketParamsBaseUrl\x12J\n" +
 	"\x0eaccepted_price\x18\x03 \x01(\v2#.livepeer.payments.v1.AcceptedPriceR\racceptedPrice\x12=\n" +
-	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\"\xdb\x02\n" +
+	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\x12&\n" +
+	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\"\xdb\x02\n" +
 	"\x15CreatePaymentResponse\x12#\n" +
 	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x12'\n" +
 	"\x0ftickets_created\x18\x02 \x01(\rR\x0eticketsCreated\x12D\n" +

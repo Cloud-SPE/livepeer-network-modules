@@ -86,8 +86,11 @@ func TestSessionControlWS(t *testing.T) {
 		t.Fatalf("balance frame missing will_refuse_next_refill: %v", bal["body"])
 	}
 
-	// Gateway-initiated topup frame is acknowledged.
+	// Gateway-initiated topup frame is acknowledged. The frame carries
+	// its own request_id: a frame has no headers, and the WS mirror is
+	// idempotent on the same key as the HTTP verb (§3.3, §8).
 	topup := map[string]any{"type": "session.topup", "body": map[string]any{
+		"request_id":     "ws-topup-1",
 		"payment_header": base64.StdEncoding.EncodeToString([]byte("ws-topup")),
 	}}
 	if err := conn.WriteJSON(topup); err != nil {
@@ -125,10 +128,41 @@ func TestSessionControlWS(t *testing.T) {
 		t.Fatalf("end flow incomplete: ack=%v ended=%v", sawAck, sawEnded)
 	}
 
-	// Post-terminal topup over WS: refused with the stable code.
-	_ = conn.WriteJSON(topup)
+	// Post-terminal topup over WS: refused with the stable code. A fresh
+	// request id, because replaying the successful one above is answered
+	// from its record and never reaches the terminal check (§3.3).
+	postTerminal := map[string]any{"type": "session.topup", "body": map[string]any{
+		"request_id":     "ws-topup-2",
+		"payment_header": base64.StdEncoding.EncodeToString([]byte("ws-topup")),
+	}}
+	_ = conn.WriteJSON(postTerminal)
 	refused := wsRead(t, conn)
 	if refused["type"] != "error" || refused["body"].(map[string]any)["code"] != "refill_refused" {
 		t.Fatalf("post-terminal topup: %v", refused)
+	}
+}
+
+// TestSessionControlWSTopUpRequiresRequestID: the mirror does not get a
+// weaker contract than the HTTP verb. Without the key there is no safe
+// retry after a dropped connection, which is exactly when a gateway
+// resends.
+func TestSessionControlWSTopUpRequiresRequestID(t *testing.T) {
+	srv, _ := newSessionTestServer(t)
+	open := decode(t, sessionOpenReq(t, srv, "req-ws-noid"))
+	sessionID := open["session_id"].(string)
+	credential := open["credential"].(string)
+
+	conn, _ := wsDial(t, srv.URL, sessionID, credential)
+	if conn == nil {
+		t.Fatal("ws dial failed")
+	}
+	defer conn.Close()
+
+	_ = conn.WriteJSON(map[string]any{"type": "session.topup", "body": map[string]any{
+		"payment_header": base64.StdEncoding.EncodeToString([]byte("ws-topup")),
+	}})
+	f := wsRead(t, conn)
+	if f["type"] != "error" || f["body"].(map[string]any)["code"] != "request_id_required" {
+		t.Fatalf("topup without a request id: %v; want a request_id_required error frame", f)
 	}
 }

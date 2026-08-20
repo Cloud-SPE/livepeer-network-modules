@@ -88,7 +88,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, sender.NewHTTPTicketParamsFetcher(), nil)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, sender.NewHTTPTicketParamsFetcher(), nil, mintStore(t))
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -112,6 +112,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 	createResp, err := payer.CreatePayment(ctx, &pb.CreatePaymentRequest{
 		Recipient:           recipient,
 		TicketParamsBaseUrl: proxy.URL,
+		MintRequestId:       "e2e-mint-1",
 		AcceptedPrice: &pb.AcceptedPrice{
 			PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
 			UnitsPerPrice:   1,

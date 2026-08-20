@@ -1,12 +1,15 @@
 package sender_test
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"math/big"
 	"net"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,6 +25,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devkeystore"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/sender"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 	senderTypes "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
@@ -37,7 +41,7 @@ func stand(t *testing.T) (pb.PayerDaemonClient, func()) {
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{}, nil)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{}, nil, mintStore(t))
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -191,7 +195,11 @@ func TestCreatePayment_NonceAdvances(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePayment 1: %v", err)
 	}
-	second, err := client.CreatePayment(ctx, req)
+	// A second mint, not a retry of the first — distinct intent, distinct
+	// key. Reusing the key would (correctly) replay and never advance.
+	next := proto.Clone(req).(*pb.CreatePaymentRequest)
+	next.MintRequestId = req.GetMintRequestId() + "-2"
+	second, err := client.CreatePayment(ctx, next)
 	if err != nil {
 		t.Fatalf("CreatePayment 2: %v", err)
 	}
@@ -289,7 +297,7 @@ func TestReportPaymentResult_InvalidRecipientRandEvictsSessionAndReturnsAborted(
 		t.Fatalf("devkeystore.New: %v", err)
 	}
 	fetcher := &rotatingFetcher{}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher, nil)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher, nil, mintStore(t))
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -359,7 +367,11 @@ func TestReportPaymentResult_InvalidRecipientRandEvictsSessionAndReturnsAborted(
 		t.Fatal("RetryInfo missing")
 	}
 
-	second, err := client.CreatePayment(ctx, req)
+	// The rotation retry is a NEW mint intent and needs a new key: the
+	// original id would replay the very payment the payee rejected.
+	retry := proto.Clone(req).(*pb.CreatePaymentRequest)
+	retry.MintRequestId = req.GetMintRequestId() + "-after-rotation"
+	second, err := client.CreatePayment(ctx, retry)
 	if err != nil {
 		t.Fatalf("CreatePayment 2: %v", err)
 	}
@@ -386,7 +398,7 @@ func TestCreatePayment_UsesAuthoritativeTicketFaceValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, authoritativeFetcher{}, nil)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, authoritativeFetcher{}, nil, mintStore(t))
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -443,7 +455,7 @@ func TestCreatePayment_PrefersPerRequestTicketParamsBaseURL(t *testing.T) {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
 	fetcher := &recordingFetcher{}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher, nil)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher, nil, mintStore(t))
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -518,6 +530,9 @@ func TestCreatePayment_RejectsEmptyFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Each case must fail on the field it is about, not on a
+			// missing mint id.
+			tc.req.MintRequestId = "validation:" + tc.name
 			if _, err := client.CreatePayment(ctx, tc.req); err == nil {
 				t.Errorf("CreatePayment: want error for %s", tc.name)
 			}
@@ -533,7 +548,7 @@ func TestCreatePayment_RejectsEmptySeedFromFetcher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, emptySeedFetcher{}, nil)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, emptySeedFetcher{}, nil, mintStore(t))
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -607,12 +622,18 @@ func TestGetDepositInfo(t *testing.T) {
 	}
 }
 
+// mintSeq hands out a distinct mint_request_id per constructed request.
+// Every call to this helper is a separate mint intent; a test that wants
+// a replay reuses one request rather than building two.
+var mintSeq atomic.Uint64
+
 func makeCreatePaymentRequest(recipient []byte, capability, offering, workUnit string, pricePerUnitWei, unitsPerPrice, fundedValueWei uint64, baseURL string) *pb.CreatePaymentRequest {
 	return &pb.CreatePaymentRequest{
 		Recipient:           recipient,
 		TicketParamsBaseUrl: baseURL,
 		AcceptedPrice:       baseAcceptedPrice(capability, offering, workUnit, pricePerUnitWei, unitsPerPrice),
 		Funding:             baseFunding(fundedValueWei, unitsPerPrice),
+		MintRequestId:       fmt.Sprintf("test-mint-%d", mintSeq.Add(1)),
 	}
 }
 
@@ -666,4 +687,169 @@ func (emptySeedFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest)
 	}
 	params.Seed = nil
 	return params, nil
+}
+
+// mintStore opens a throwaway durable store. CreatePayment refuses to
+// mint without one — that is the contract, not a test detail.
+func mintStore(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "sender.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	return st
+}
+
+// ---------------------------------------------------------------------------
+// mint idempotency
+
+// TestCreatePayment_ReplaysOnSameMintID: the defect this closes. A retry
+// after an uncertain response must return the original batch, not sign a
+// second one against the payer's deposit.
+func TestCreatePayment_ReplaysOnSameMintID(t *testing.T) {
+	ctx, client, _ := newSenderClient(t)
+	req := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5",
+		"token", 1000, 1, 1000, "https://broker.example.com")
+
+	first, err := client.CreatePayment(ctx, req)
+	if err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+	replay, err := client.CreatePayment(ctx, req)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if !bytes.Equal(first.GetPaymentBytes(), replay.GetPaymentBytes()) {
+		t.Fatal("replay minted different payment bytes; a second batch was signed")
+	}
+	if replay.GetWorkId() != first.GetWorkId() ||
+		replay.GetTicketsCreated() != first.GetTicketsCreated() ||
+		!bytes.Equal(replay.GetFundedValueWei().GetValue(), first.GetFundedValueWei().GetValue()) ||
+		!bytes.Equal(replay.GetExpectedValue().GetValue(), first.GetExpectedValue().GetValue()) {
+		t.Fatalf("replay response differs from the recorded one:\nfirst=%+v\nreplay=%+v", first, replay)
+	}
+}
+
+// TestCreatePayment_RefusesMintIDWithDifferentContent: the key is a
+// promise about content. Answering with the earlier payment would hand
+// the caller a batch it never asked for.
+func TestCreatePayment_RefusesMintIDWithDifferentContent(t *testing.T) {
+	ctx, client, _ := newSenderClient(t)
+	req := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5",
+		"token", 1000, 1, 1000, "https://broker.example.com")
+	if _, err := client.CreatePayment(ctx, req); err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+
+	different := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5",
+		"token", 1000, 1, 9999, "https://broker.example.com")
+	different.MintRequestId = req.GetMintRequestId()
+	_, err := client.CreatePayment(ctx, different)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("reused id with new content: %v; want InvalidArgument", err)
+	}
+}
+
+// TestCreatePayment_EvictedMintIDRefusesRatherThanRemints is the rule
+// LOC asked for in writing. A retry delayed past the replay window must
+// not be treated as a fresh mint: the tombstone is permanent, so the
+// daemon refuses instead of paying a second time.
+func TestCreatePayment_EvictedMintIDRefusesRatherThanRemints(t *testing.T) {
+	ctx, client, st := newSenderClient(t)
+	req := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5",
+		"token", 1000, 1, 1000, "https://broker.example.com")
+	if _, err := client.CreatePayment(ctx, req); err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+
+	// Age out the replay payload, exactly as the retention sweep does.
+	if n, err := st.EvictMints(time.Now().Add(time.Hour)); err != nil || n != 1 {
+		t.Fatalf("EvictMints = (%d, %v); want (1, nil)", n, err)
+	}
+
+	_, err := client.CreatePayment(ctx, req)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("delayed retry after eviction: %v; want FailedPrecondition, never a second mint", err)
+	}
+}
+
+// TestCreatePayment_ReplaySurvivesRestart: the record has to outlive the
+// process, since the uncertain-response case includes "the daemon died
+// before answering".
+func TestCreatePayment_ReplaySurvivesRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "sender.db")
+	req := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5",
+		"token", 1000, 1, 1000, "https://broker.example.com")
+
+	ctx, client, closeFirst := newSenderClientAt(t, dbPath)
+	first, err := client.CreatePayment(ctx, req)
+	if err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+	closeFirst()
+
+	ctx2, client2, closeSecond := newSenderClientAt(t, dbPath)
+	defer closeSecond()
+	replay, err := client2.CreatePayment(ctx2, req)
+	if err != nil {
+		t.Fatalf("replay after restart: %v", err)
+	}
+	if !bytes.Equal(first.GetPaymentBytes(), replay.GetPaymentBytes()) {
+		t.Fatal("restarted daemon minted a second batch for the same intent")
+	}
+}
+
+// newSenderClient is `stand` plus a handle on the mint ledger, for tests
+// that drive retention directly.
+func newSenderClient(t *testing.T) (context.Context, pb.PayerDaemonClient, *store.Store) {
+	t.Helper()
+	st := mintStore(t)
+	client, _ := standWithStore(t, st)
+	return context.Background(), client, st
+}
+
+// newSenderClientAt boots a daemon over a specific database file so a
+// test can stop it and start another on the same state.
+func newSenderClientAt(t *testing.T, dbPath string) (context.Context, pb.PayerDaemonClient, func()) {
+	t.Helper()
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	client, stop := standWithStore(t, st)
+	return context.Background(), client, func() {
+		stop()
+		_ = st.Close()
+	}
+}
+
+// standWithStore is `stand` with the ledger supplied by the caller.
+func standWithStore(t *testing.T, st *store.Store) (pb.PayerDaemonClient, func()) {
+	t.Helper()
+	sockPath := filepath.Join(t.TempDir(), "tx.sock")
+	keystore, err := devkeystore.New("")
+	if err != nil {
+		t.Fatalf("devkeystore.New: %v", err)
+	}
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{}, nil, st)
+
+	lis, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	pb.RegisterPayerDaemonServer(gs, svc)
+	go func() { _ = gs.Serve(lis) }()
+
+	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	stop := func() {
+		_ = conn.Close()
+		gs.GracefulStop()
+	}
+	t.Cleanup(stop)
+	return pb.NewPayerDaemonClient(conn), stop
 }

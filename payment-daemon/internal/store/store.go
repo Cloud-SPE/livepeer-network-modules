@@ -151,7 +151,7 @@ func Open(path string) (*Store, error) {
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for _, name := range []string{
 			sessionsBucket, debitSeqsBucket, capIndexBucket, ticketIdxBucket,
-			noncesBucket,
+			noncesBucket, mintsBucket, tombstonesBucket,
 			redemptionsPending, redemptionsByHash, redemptionsRedeemed, redemptionsMeta,
 		} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {

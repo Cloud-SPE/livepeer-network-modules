@@ -90,6 +90,35 @@ message CreatePaymentRequest {
 
   // Funding scope the gateway is authorizing for this minted payment batch.
   FundingIntent funding = 4;
+
+  // Caller-supplied idempotency key for this mint intent. REQUIRED.
+  //
+  // Minting signs tickets against real deposit, so a retry after an
+  // uncertain response must never mint a second batch. With this key the
+  // daemon replays the exact original response — same payment_bytes,
+  // same work_id, same values — and never re-signs.
+  //
+  // Namespace: the key is scoped to the daemon's own sender identity
+  // (its keystore address). Two callers sharing one daemon share one
+  // namespace, so ids MUST be globally unique within it — a UUIDv4, or a
+  // caller-prefixed form like "loc:<uuid>". Max 128 bytes. A key reused
+  // with different request content is refused (INVALID_ARGUMENT), never
+  // minted: the key is a promise about content.
+  //
+  // A recovery retry after `ReportPaymentResult` reported
+  // INVALID_RECIPIENT_RAND is a NEW intent and needs a NEW key: the old
+  // one would replay the very payment the payee rejected. The rotation
+  // mints against a fresh recipient rand, so it is a different payment
+  // by construction.
+  //
+  // Lifecycle: the daemon keeps the full response for a retention window
+  // (operator-configured, default 24h) and keeps a permanent tombstone of
+  // the key beyond it. A retry arriving after the window is REFUSED with
+  // FAILED_PRECONDITION, never treated as a fresh mint — an evicted key
+  // must not become mintable again, or a sufficiently delayed retry
+  // would double-pay. The tombstone is a hash, not the key, so retention
+  // costs ~80 bytes per mint forever.
+  string mint_request_id = 5;
 }
 
 message CreatePaymentResponse {

@@ -40,8 +40,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devkeystore"
 	gasprice "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/gasprice/onchain"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/inmemory"
-	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/jsonfile"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/server"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver"
@@ -58,7 +58,8 @@ func main() {
 	var (
 		mode                  = flag.String("mode", "", "required: 'sender' or 'receiver'")
 		socketPath            = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
-		dbPath                = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB session ledger path (receiver only)")
+		dbPath                = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB ledger path: receiver sessions, or sender mint-idempotency records")
+		mintRetention         = flag.Duration("mint-retention", 24*time.Hour, "sender: how long a mint response stays replayable. Keys are remembered forever regardless — an expired key is refused, never re-minted")
 		payeeAdminToken       = flag.String("payee-admin-token", "", "Bearer token required for receiver-only PayeeAdmin RPCs. Empty disables authenticated admin access.")
 		chainRPC              = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers and signing key are fakes.")
 		devKeyHex             = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
@@ -127,6 +128,7 @@ func main() {
 		mode:                  *mode,
 		socketPath:            *socketPath,
 		dbPath:                *dbPath,
+		mintRetention:         *mintRetention,
 		payeeAdminToken:       adminToken,
 		chainRPC:              *chainRPC,
 		devKeyHex:             *devKeyHex,
@@ -163,6 +165,7 @@ type bootConfig struct {
 	mode                  string
 	socketPath            string
 	dbPath                string
+	mintRetention         time.Duration
 	payeeAdminToken       string
 	chainRPC              string
 	devKeyHex             string
@@ -259,6 +262,37 @@ func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec met
 	}
 	broker = providers.NewMeteredBroker(broker, rec)
 
+	// Sender mode needs the durable store too: mint idempotency lives
+	// there, and without it CreatePayment cannot promise a retry-safe
+	// mint — so the daemon refuses to mint rather than risk paying twice.
+	if err := ensureParentDir(cfg.dbPath); err != nil {
+		return fmt.Errorf("prepare db dir: %w", err)
+	}
+	st, err := store.Open(cfg.dbPath)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer st.Close()
+
+	// Age out replay payloads on the operator's window. The permanent
+	// tombstones stay: an expired key must refuse, not re-mint, or a
+	// delayed retry pays twice.
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if n, err := st.EvictMints(time.Now().Add(-cfg.mintRetention)); err == nil && n > 0 {
+					logger.Info("evicted mint replay records", "count", n,
+						"retention", cfg.mintRetention.String())
+				}
+			}
+		}
+	}()
+
 	svc := sender.New(
 		keystore,
 		broker,
@@ -266,6 +300,7 @@ func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec met
 		logger.With("component", "sender"),
 		sender.NewHTTPTicketParamsFetcher(),
 		rec,
+		st,
 	)
 	srv := server.NewSender(svc, cfg.socketPath, rec, logger.With("component", "grpc"))
 	return runServerWithCtx(ctx, logger, srv)

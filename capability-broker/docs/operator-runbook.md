@@ -169,10 +169,25 @@ Protocol-engine metrics (all on the `--metrics` listener):
 | Metric | Labels | Meaning |
 |---|---|---|
 | `livepeer_protocol_session_opens_total` | `outcome` (opened\|replayed\|failed) | Session opens. A rising `failed` usually means runner create or descriptor validation failures. |
-| `livepeer_protocol_session_winddowns_total` | `reason` (the stable close reasons in §3) | Terminal winddowns. Alert on `heartbeat_lost` and `recovery_failed` rates. |
+| `livepeer_protocol_session_winddowns_total` | `reason` (the stable close reasons in §3) | Terminal winddowns. Alerting rules for `heartbeat_lost` and `recovery_failed` ship in `docs/operations/prometheus/alerts.yaml`. |
 | `livepeer_protocol_session_events_total` | `outcome` (accepted\|duplicate\|rejected\|retryable\|unauthorized) | Runner event intake. `unauthorized` spikes suggest a stale runner or probing; sustained `retryable` means payment-daemon trouble. |
 | `livepeer_protocol_session_debited_units_total` | — | Units debited from usage claims (the seller's meter, aggregated). |
 | `livepeer_protocol_job_exchanges_total` | `transport`, `outcome` (ok\|client_error\|backend_error\|replayed\|refused) | paid-job exchanges. `replayed` is gateways exercising idempotency; `refused` is transport negotiation misses. |
 
+Per-capability request rate, error ratio, and latency come from the paid
+middleware as `livepeer_paid_requests_total{capability,offering,outcome}`,
+`livepeer_paid_request_duration_seconds`, and
+`livepeer_paid_work_units_total` — these carry the capability/offering
+labels the `livepeer_protocol_*` counters deliberately do not.
+
 The `paid request` structured log lines (request id, capability,
 protocol, status, work units, duration) remain the per-exchange trace.
+
+**Alerting.** `docs/operations/prometheus/alerts.yaml` ships rules for
+both protocol surfaces. The one to understand before it pages you is
+`BrokerSessionsDyingByHeartbeat`: it fires when `heartbeat_lost`
+*dominates* winddowns rather than merely occurring, because that pattern
+is the signature of a wrong `external_base_url` — runners cannot reach
+the callback URL, so every session opens, reports nothing, and dies on
+schedule. Thresholds in that file are starting points sized for a busy
+orchestrator; tune them to your own session volume.

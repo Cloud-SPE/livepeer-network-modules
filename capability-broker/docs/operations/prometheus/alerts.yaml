@@ -1,9 +1,15 @@
 # Prometheus alert rules for the capability-broker's dependency surfaces.
 #
-# Scope: the broker's payment-daemon client calls and its unpaid registry
-# endpoint serving (plan 0038, workstream A). The broker's request/backend/
-# pool-snapshot metrics are documented in docs/operator-runbook.md §2.8;
-# add rules for those separately as their SLOs are defined.
+# Scope: the broker's payment-daemon client calls, its unpaid registry
+# endpoint serving, and the v1 protocol surfaces (paid-job / paid-session).
+# The metric catalogue is in docs/operator-runbook.md §5.
+#
+# THRESHOLDS ARE STARTING POINTS. The protocol rules below are written
+# against ratios and volume floors rather than bare counts so they behave
+# sanely at any traffic level, but the exact numbers assume a busy
+# orchestrator. Tune them to your own session volume before trusting a
+# page; a rule that cries wolf gets muted, and a muted rule is worse than
+# no rule.
 #
 # Severity tiers:
 #   page   — wake someone up (paid traffic impact)
@@ -90,3 +96,157 @@ groups:
             15m. If this broker is expected to advertise capabilities, its
             host-config has no (or all-deduplicated) capabilities, or a
             reload wiped them. Downstream resolvers will not route to it.
+
+  # --- v1 protocol surfaces -------------------------------------------------
+
+  - name: livepeer-broker-paid-session-critical
+    interval: 30s
+    rules:
+      - alert: BrokerSessionsDyingByHeartbeat
+        expr: |
+          (
+            sum(rate(livepeer_protocol_session_winddowns_total{reason="heartbeat_lost"}[15m]))
+            /
+            clamp_min(sum(rate(livepeer_protocol_session_winddowns_total[15m])), 1e-9)
+          ) > 0.5
+          and
+          sum(increase(livepeer_protocol_session_winddowns_total{reason="heartbeat_lost"}[15m])) >= 3
+        for: 10m
+        labels:
+          severity: page
+          service: livepeer-capability-broker
+        annotations:
+          summary: "Most paid sessions are being torn down as heartbeat_lost"
+          description: |
+            More than half of session winddowns in the last 15m were
+            heartbeat_lost, on at least 3 sessions. Isolated losses are
+            normal — a runner crashed. Losses *dominating* winddowns are
+            usually not a runner problem at all: they are the signature of
+            runners being unable to reach the broker's callback URL, in
+            which case every session opens, reports nothing, and dies on
+            schedule.
+
+            Check first:
+              1. external_base_url in host-config — it is the ONLY source
+                 of the callback URL handed to runners. If it is wrong or
+                 unreachable from the runner network, this is your cause.
+              2. Network path runner -> broker paid listener.
+              3. Whether the runners are actually emitting; any accepted
+                 event refreshes liveness, so a runner sending usage ticks
+                 inside interval x missed_threshold cannot trip this.
+            Break down by reason:
+              sum by (reason) (increase(livepeer_protocol_session_winddowns_total[1h]))
+
+  - name: livepeer-broker-paid-session-warning
+    interval: 1m
+    rules:
+      - alert: BrokerSessionHeartbeatLossElevated
+        expr: |
+          sum(increase(livepeer_protocol_session_winddowns_total{reason="heartbeat_lost"}[1h])) > 3
+        for: 15m
+        labels:
+          severity: ticket
+          service: livepeer-capability-broker
+        annotations:
+          summary: "More than 3 sessions lost to heartbeat in the last hour"
+          description: |
+            Sessions are being torn down because their runners stopped
+            reporting. Below the ratio that pages, so this reads as an
+            unhealthy runner fleet rather than a broker misconfiguration —
+            crashes, OOMs, or a runner deploy cycling mid-session.
+
+            Each of these terminated a customer's session and closed its
+            payment state, so it is real user impact even when the rate is
+            low. Raise the threshold if your fleet is large enough that a
+            few losses an hour is background noise.
+
+      - alert: BrokerSessionRecoveryFailed
+        expr: |
+          sum(increase(livepeer_protocol_session_winddowns_total{reason="recovery_failed"}[10m])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          service: livepeer-capability-broker
+        annotations:
+          summary: "A paid session could not be rebound after broker restart"
+          description: |
+            recovery_failed is rare by design: on restart the broker either
+            rebinds a session against the same work_id or takes this
+            explicit terminal outcome. It fires when the runner no longer
+            holds the session, or when the payee-side payment session could
+            not be re-asserted — the broker refuses to serve work it cannot
+            bill.
+
+            A single event after a restart is expected if that session's
+            runner was also restarted. A BURST right after a broker restart
+            usually means the payment layer did not survive: check that the
+            payment-daemon kept its store, and that the broker's own
+            session_store is on a persistent volume (runbook §2). Losing
+            either orphans every active session.
+
+      - alert: BrokerSessionOpensFailing
+        expr: |
+          (
+            sum(rate(livepeer_protocol_session_opens_total{outcome="failed"}[10m]))
+            /
+            clamp_min(sum(rate(livepeer_protocol_session_opens_total[10m])), 1e-9)
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: ticket
+          service: livepeer-capability-broker
+        annotations:
+          summary: "More than 10% of paid-session opens are failing"
+          description: |
+            Opens fail closed: the broker terminates any partial runner
+            binding and closes payment state, so a failing open is lost
+            revenue rather than a stuck session. Usual causes, in order of
+            likelihood: the runner's create call erroring, or its runtime
+            descriptor being rejected (unknown top-level key, oversize, or
+            a schema that does not match the offering's descriptor_schema).
+            The rejection reason is on the 502 response and in the logs.
+
+      - alert: BrokerSessionEventsUnauthorized
+        expr: |
+          sum(increase(livepeer_protocol_session_events_total{outcome="unauthorized"}[15m])) > 10
+        for: 10m
+        labels:
+          severity: ticket
+          service: livepeer-capability-broker
+        annotations:
+          summary: "Runner events are being rejected as unauthorized"
+          description: |
+            The events endpoint is answering 401. Two benign causes: a
+            runner still posting for a session that has ended, or a runner
+            that outlived a broker whose session store was wiped. One
+            not-benign cause: something is probing the endpoint, which
+            answers identically for an unknown session and a bad token, so
+            it yields no information — but sustained volume is worth a look.
+
+            If this climbs alongside heartbeat_lost, suspect a stale runner
+            fleet holding credentials for sessions the broker no longer has.
+
+  - name: livepeer-broker-paid-job-warning
+    interval: 1m
+    rules:
+      - alert: BrokerJobBackendErrorsHigh
+        expr: |
+          (
+            sum(rate(livepeer_protocol_job_exchanges_total{outcome="backend_error"}[5m]))
+            /
+            clamp_min(sum(rate(livepeer_protocol_job_exchanges_total[5m])), 1e-9)
+          ) > 0.1
+        for: 10m
+        labels:
+          severity: ticket
+          service: livepeer-capability-broker
+        annotations:
+          summary: "More than 10% of paid-job exchanges are failing at the backend"
+          description: |
+            The broker forwarded and the backend failed. These exchanges
+            claim zero work units, so they are not billed — this is a
+            capacity or backend-health problem, not a billing one. Break
+            down by transport:
+              sum by (transport,outcome) (rate(livepeer_protocol_job_exchanges_total[1h]))
+            A spike confined to transport="stream" points at long-running
+            requests hitting the funded ceiling rather than backend faults.

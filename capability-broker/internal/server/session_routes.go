@@ -16,6 +16,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
@@ -67,6 +68,7 @@ func specFromCapability(c *config.Capability) *sessionengine.OfferingSpec {
 		BackendRef:          c.ID + "|" + c.OfferingID,
 		WorkUnit:            c.WorkUnit.Name,
 		PricePerWorkUnitWei: price,
+		PerUnits:            c.Price.PerUnits,
 		DescriptorSchema:    c.Session.DescriptorSchema,
 		HeartbeatInterval:   hb,
 		MissedThreshold:     c.Session.Heartbeat.MissedThreshold,
@@ -408,7 +410,7 @@ func (s *Server) balanceObject(r *http.Request, rec *sessionstore.Record, spec *
 	status := "ok"
 	if bal, err := s.payment.GetBalance(r.Context(), rec.Sender, rec.WorkID); err == nil && bal != nil &&
 		spec.PricePerWorkUnitWei != nil && spec.PricePerWorkUnitWei.Sign() > 0 {
-		runway := new(big.Int).Div(bal, spec.PricePerWorkUnitWei).Int64()
+		runway := payment.RunwayUnits(bal, spec.PricePerWorkUnitWei, spec.PerUnits)
 		obj["runway_units"] = runway
 		burn := spec.BurnRatePerSecond
 		if burn <= 0 {

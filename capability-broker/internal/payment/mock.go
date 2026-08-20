@@ -27,8 +27,10 @@ type mockSession struct {
 	capability          string
 	offering            string
 	pricePerWorkUnitWei *big.Int
+	perUnits            uint64
 	workUnit            string
 	balance             *big.Int
+	debitedUnits        uint64 // cumulative, for the billing rule
 	openedAt            time.Time
 	closedAt            time.Time
 	closed              bool
@@ -77,6 +79,7 @@ func (m *Mock) OpenSession(_ context.Context, req OpenSessionRequest) (*OpenSess
 		capability:          req.Capability,
 		offering:            req.Offering,
 		pricePerWorkUnitWei: new(big.Int).Set(price),
+		perUnits:            req.PerUnits,
 		workUnit:            req.WorkUnit,
 		balance:             new(big.Int),
 		openedAt:            time.Now(),
@@ -133,7 +136,14 @@ func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*big.In
 	if _, alreadyDebited := m.debits[seqKey]; alreadyDebited {
 		return new(big.Int).Set(sess.balance), nil
 	}
-	debitWei := new(big.Int).Mul(sess.pricePerWorkUnitWei, big.NewInt(req.WorkUnits))
+	// Cumulative ceiling billing, same rule as the real daemon
+	// (offering-axes.md §6.1). A mock that priced each debit on its own
+	// would let dev and conformance runs disagree with production about
+	// what a session cost.
+	before := BillFor(sess.pricePerWorkUnitWei, sess.perUnits, sess.debitedUnits)
+	sess.debitedUnits += uint64(req.WorkUnits)
+	debitWei := new(big.Int).Sub(
+		BillFor(sess.pricePerWorkUnitWei, sess.perUnits, sess.debitedUnits), before)
 	sess.balance.Sub(sess.balance, debitWei)
 	sess.debits = append(sess.debits, req.WorkUnits)
 	m.debits[seqKey] = req.WorkUnits
@@ -142,8 +152,9 @@ func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*big.In
 
 // SufficientBalance reports whether the session balance covers
 // `min_work_units` of additional work at the session's price. The mock
-// uses the same arithmetic as the real daemon: balance ≥ price ×
-// min_work_units. Closed sessions always report insufficient.
+// uses the same arithmetic as the real daemon: the balance must cover
+// the difference between cumulative bills. Closed sessions always report
+// insufficient.
 func (m *Mock) SufficientBalance(_ context.Context, req SufficientBalanceRequest) (*SufficientBalanceResult, error) {
 	if len(req.Sender) == 0 || req.WorkID == "" {
 		return nil, errors.New("sender and work_id are required")
@@ -163,7 +174,13 @@ func (m *Mock) SufficientBalance(_ context.Context, req SufficientBalanceRequest
 			Balance:    new(big.Int).Set(sess.balance),
 		}, nil
 	}
-	required := new(big.Int).Mul(sess.pricePerWorkUnitWei, big.NewInt(req.MinWorkUnits))
+	min := req.MinWorkUnits
+	if min < 0 {
+		min = 0
+	}
+	required := new(big.Int).Sub(
+		BillFor(sess.pricePerWorkUnitWei, sess.perUnits, sess.debitedUnits+uint64(min)),
+		BillFor(sess.pricePerWorkUnitWei, sess.perUnits, sess.debitedUnits))
 	sufficient := sess.balance.Cmp(required) >= 0
 	return &SufficientBalanceResult{
 		Sufficient: sufficient,

@@ -100,6 +100,7 @@ func (g *GRPC) OpenSession(ctx context.Context, req OpenSessionRequest) (*OpenSe
 		Capability:          req.Capability,
 		Offering:            req.Offering,
 		PricePerWorkUnitWei: priceBytes,
+		PerUnits:            req.PerUnits,
 		WorkUnit:            req.WorkUnit,
 	})
 	if err != nil {

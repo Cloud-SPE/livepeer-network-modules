@@ -145,6 +145,14 @@ capabilities:
         config:
           url: "http://localhost:9000/healthz"
     # Demo placeholder — symbolic price, not a real-world rate.
+    #
+    # The pair is the price: amount_wei buys per_units work units. Set
+    # per_units above 1 to price below 1 wei per unit — the usual case
+    # for token-metered offerings, e.g. amount_wei "100" / per_units
+    # 1000 is 0.1 wei per token. Billing is cumulative:
+    # ceil(units * amount_wei / per_units) over the session's running
+    # total, so no sequence of debits accumulates rounding drift
+    # (protocols/offering-axes.md §6).
     price:
       amount_wei: "100"
       per_units: 1

@@ -63,10 +63,13 @@ type OfferingSpec struct {
 	BackendRef          string
 	WorkUnit            string
 	PricePerWorkUnitWei *big.Int
-	DescriptorSchema    string
-	DescriptorMaxBytes  int
-	HeartbeatInterval   time.Duration // default 10s
-	MissedThreshold     int           // default 3
+	// PerUnits is the price denominator: PricePerWorkUnitWei buys this
+	// many work units (offering-axes.md §6). 0 means 1.
+	PerUnits           uint64
+	DescriptorSchema   string
+	DescriptorMaxBytes int
+	HeartbeatInterval  time.Duration // default 10s
+	MissedThreshold    int           // default 3
 	// BurnRatePerSecond estimates units consumed per second for the
 	// funding-tracking lease default. <=0 means 1.
 	BurnRatePerSecond float64
@@ -251,6 +254,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		Capability:          req.Spec.Capability,
 		Offering:            req.Spec.Offering,
 		PricePerWorkUnitWei: req.Spec.PricePerWorkUnitWei,
+		PerUnits:            req.Spec.PerUnits,
 		WorkUnit:            req.Spec.WorkUnit,
 	}); err != nil {
 		return nil, &RetryableError{Err: fmt.Errorf("payment open: %w", err)}
@@ -376,8 +380,8 @@ func (e *Engine) leaseFrom(ctx context.Context, now time.Time, sender []byte, wo
 	if err != nil || bal == nil || spec.PricePerWorkUnitWei == nil || spec.PricePerWorkUnitWei.Sign() <= 0 {
 		return max
 	}
-	units := new(big.Int).Div(bal, spec.PricePerWorkUnitWei)
-	secs := float64(units.Int64()) / spec.burnRate()
+	units := payment.RunwayUnits(bal, spec.PricePerWorkUnitWei, spec.PerUnits)
+	secs := float64(units) / spec.burnRate()
 	lease := now.Add(time.Duration(secs * float64(time.Second)))
 	if lease.After(max) {
 		return max
@@ -771,6 +775,7 @@ func (e *Engine) Recover(ctx context.Context) {
 					Capability:          rec.Capability,
 					Offering:            rec.Offering,
 					PricePerWorkUnitWei: spec.PricePerWorkUnitWei,
+					PerUnits:            spec.PerUnits,
 					WorkUnit:            rec.Unit,
 				})
 				// AlreadyOpen=false means the payment layer did not have

@@ -169,12 +169,25 @@ message OpenSessionRequest {
   // Offering the session is opened against.
   string offering = 3;
 
-  // Authoritative price per work unit for this session (wei,
-  // big-endian bytes).
+  // Authoritative price for `per_units` work units (wei, big-endian
+  // bytes). NOT necessarily the price of one unit — read it with
+  // `per_units`, never alone.
   bytes price_per_work_unit_wei = 4;
 
   // Work-unit identifier for this session ("token", "second", ...).
   string work_unit = 5;
+
+  // Denominator of the price: `price_per_work_unit_wei` buys this many
+  // work units. 0 is read as 1. Carrying it lets an offering price
+  // below 1 wei per unit, which token-metered workloads need; dropping
+  // it makes the ledger debit `per_units` times the intended rate.
+  //
+  // The daemon bills cumulatively —
+  // `bill(U) = ceil(U * price / per_units)` over units debited since
+  // open — and charges each debit the difference between successive
+  // cumulative bills. Rounding each debit on its own would let a long
+  // session accumulate up to one wei of drift per debit.
+  uint64 per_units = 6;
 }
 
 message OpenSessionResponse {

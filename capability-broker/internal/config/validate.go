@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/url"
 	"regexp"
 	"sort"
@@ -307,6 +308,14 @@ func (c *Config) Validate() error {
 		}
 		if cap.Price.PerUnits == 0 {
 			return fmt.Errorf("%s: price.per_units must be > 0", ctx)
+		}
+		// The payment envelope carries the price as an int64
+		// (PriceInfo.price_per_unit). A price that does not fit is
+		// unrepresentable on the wire, so refuse it at load rather than
+		// narrowing it silently at request time.
+		if amount, ok := new(big.Int).SetString(cap.Price.AmountWei, 10); ok && !amount.IsInt64() {
+			return fmt.Errorf("%s: price.amount_wei %s exceeds the payment wire's int64 range",
+				ctx, cap.Price.AmountWei)
 		}
 
 		if cap.Backend.Transport == "" {

@@ -58,9 +58,13 @@ type CoordinatorCapability struct {
 	Session         json.RawMessage     `json:"session,omitempty"`
 	WorkUnit        CoordinatorWorkUnit `json:"work_unit"`
 	PricePerUnitWei string              `json:"price_per_unit_wei"`
-	WorkerURL       string              `json:"worker_url"`
-	Extra           map[string]any      `json:"extra,omitempty"`
-	Constraints     map[string]any      `json:"constraints,omitempty"`
+	// PerUnits is the price denominator (offering-axes.md §6). Absent
+	// means 1. The envelope decoder rejects unknown fields, so this must
+	// exist here for a manifest that declares it to parse at all.
+	PerUnits    uint64         `json:"per_units,omitempty"`
+	WorkerURL   string         `json:"worker_url"`
+	Extra       map[string]any `json:"extra,omitempty"`
+	Constraints map[string]any `json:"constraints,omitempty"`
 }
 
 type CoordinatorWorkUnit struct {
@@ -260,6 +264,7 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 		cb.offers = append(cb.offers, Offering{
 			ID:                  tuple.OfferingID,
 			PricePerWorkUnitWei: tuple.PricePerUnitWei,
+			PerUnits:            tuple.PerUnits,
 			Constraints:         constraintsRaw,
 		})
 	}

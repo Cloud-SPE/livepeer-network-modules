@@ -208,6 +208,13 @@ func capsToList(caps []types.CapabilityTuple) []any {
 			"price_per_unit_wei": c.PricePerUnitWei,
 			"worker_url":         c.WorkerURL,
 		}
+		// Emitted only when it carries information. A denominator of 1
+		// is the default, so omitting it keeps every already-signed
+		// manifest canonicalizing to the same bytes it did before the
+		// field existed.
+		if c.PerUnits > 1 {
+			entry["per_units"] = c.PerUnits
+		}
 		// Declared axes ride verbatim. Emitted only when present: the
 		// schema forbids the object that does not match the protocol.
 		if c.Job != nil {
@@ -355,6 +362,7 @@ func tupleFrom(s types.SourceTuple) types.CapabilityTuple {
 		Session:         offering.Session,
 		WorkUnit:        offering.WorkUnit,
 		PricePerUnitWei: offering.PricePerUnitWei,
+		PerUnits:        offering.PerUnits,
 		WorkerURL:       s.WorkerURL,
 		Extra:           offering.Extra,
 		Constraints:     offering.Constraints,

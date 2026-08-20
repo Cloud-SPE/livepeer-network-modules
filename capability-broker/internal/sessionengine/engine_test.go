@@ -37,6 +37,7 @@ type fakePayment struct {
 	openCalls    int
 	sessionGone  bool
 	workIDs      []string
+	openPerUnits []uint64
 	ticketCount  int32 // tickets in the batch ProcessPayment reports
 	ticketsBad   int32 // how many of them were rejected
 	rejectReason payment.PaymentRejectionReason
@@ -54,6 +55,7 @@ func (f *fakePayment) OpenSession(_ context.Context, req payment.OpenSessionRequ
 	defer f.mu.Unlock()
 	f.openCalls++
 	f.workIDs = append(f.workIDs, req.WorkID)
+	f.openPerUnits = append(f.openPerUnits, req.PerUnits)
 	already := !f.sessionGone
 	f.sessionGone = false // idempotent open (re-)establishes the session
 	return &payment.OpenSessionResult{AlreadyOpen: already}, nil
@@ -791,5 +793,24 @@ func TestTopUpRefusesAllRejectedBatch(t *testing.T) {
 	if !after.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
 		t.Fatalf("lease moved from %s to %s on a refused top-up",
 			before.LeaseExpiresAt, after.LeaseExpiresAt)
+	}
+}
+
+// TestOpenCarriesPriceDenominatorToDaemon: the daemon multiplies price by
+// units and divides by this. Omitting it bills per_units times the
+// intended rate, which is invisible in every test that prices at 1.
+func TestOpenCarriesPriceDenominatorToDaemon(t *testing.T) {
+	h := newHarness(t)
+	h.spec.PerUnits = 1000
+
+	h.open(t)
+
+	h.pay.mu.Lock()
+	defer h.pay.mu.Unlock()
+	if len(h.pay.openPerUnits) == 0 {
+		t.Fatal("daemon session was never opened")
+	}
+	if got := h.pay.openPerUnits[0]; got != 1000 {
+		t.Fatalf("daemon was told per_units = %d; want the offering's 1000", got)
 	}
 }

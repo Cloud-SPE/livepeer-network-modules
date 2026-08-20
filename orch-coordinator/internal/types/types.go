@@ -269,13 +269,19 @@ type CapabilityTuple struct {
 	// schema imposes no rule on. Pointers so absence survives the
 	// round-trip — an emitted-but-empty object would break the
 	// schema's conditional requirements.
-	Job             *JobAxes       `json:"job,omitempty"`
-	Session         *SessionAxes   `json:"session,omitempty"`
-	WorkUnit        WorkUnit       `json:"work_unit"`
-	PricePerUnitWei string         `json:"price_per_unit_wei"`
-	WorkerURL       string         `json:"worker_url"`
-	Extra           map[string]any `json:"extra,omitempty"`
-	Constraints     map[string]any `json:"constraints,omitempty"`
+	Job             *JobAxes     `json:"job,omitempty"`
+	Session         *SessionAxes `json:"session,omitempty"`
+	WorkUnit        WorkUnit     `json:"work_unit"`
+	PricePerUnitWei string       `json:"price_per_unit_wei"`
+	// PerUnits is the price denominator: PricePerUnitWei buys this many
+	// work units. Absent (0) means 1. Carried verbatim from the broker's
+	// offering into the signed bytes — dropping it here is what let a
+	// per_units offering publish a quote at per_units times the rate its
+	// own ledger charges.
+	PerUnits    uint64         `json:"per_units,omitempty"`
+	WorkerURL   string         `json:"worker_url"`
+	Extra       map[string]any `json:"extra,omitempty"`
+	Constraints map[string]any `json:"constraints,omitempty"`
 }
 
 // Orch is the orchestrator-identity sub-struct. Mirrors

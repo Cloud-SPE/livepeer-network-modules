@@ -127,7 +127,7 @@ func Compute(cand, pub *types.ManifestPayload) (*Result, error) {
 }
 
 func classify(c, p *types.CapabilityTuple) string {
-	if c.PricePerUnitWei != p.PricePerUnitWei {
+	if c.PricePerUnitWei != p.PricePerUnitWei || c.PerUnits != p.PerUnits {
 		return DriftPriceChanged
 	}
 	if c.Protocol != p.Protocol || !axesEqualCanonical(c, p) {

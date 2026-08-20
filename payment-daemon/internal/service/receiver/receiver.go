@@ -122,6 +122,7 @@ func (s *Service) OpenSession(_ context.Context, req *pb.OpenSessionRequest) (*p
 		Capability:          req.GetCapability(),
 		Offering:            req.GetOffering(),
 		PricePerWorkUnitWei: priceWei.String(),
+		PerUnits:            req.GetPerUnits(),
 		WorkUnit:            req.GetWorkUnit(),
 		RecipientRand:       rand.String(),
 		FaceValueWei:        s.defaultFaceValue.String(),
@@ -453,7 +454,17 @@ func (s *Service) SufficientBalance(_ context.Context, req *pb.SufficientBalance
 	if price == nil {
 		price = new(big.Int)
 	}
-	required := new(big.Int).Mul(price, big.NewInt(req.GetMinWorkUnits()))
+	// Price the runway the way it will actually be debited: the
+	// difference between cumulative bills, not the units in isolation.
+	// Asking with the isolated price would over-state what the next
+	// tick costs whenever the denominator is > 1.
+	min := req.GetMinWorkUnits()
+	if min < 0 {
+		min = 0
+	}
+	required := new(big.Int).Sub(
+		store.BillFor(price, sess.PerUnits, sess.DebitedUnits+uint64(min)),
+		store.BillFor(price, sess.PerUnits, sess.DebitedUnits))
 	return &pb.SufficientBalanceResponse{
 		Sufficient: balance.Cmp(required) >= 0,
 		Balance:    balance.Bytes(),

@@ -394,6 +394,13 @@ func capsToList(caps []types.CapabilityTuple) []any {
 			"price_per_unit_wei": c.PricePerUnitWei,
 			"worker_url":         c.WorkerURL,
 		}
+		// Emitted only when it carries information. A denominator of 1
+		// is the default, so omitting it keeps every already-signed
+		// manifest canonicalizing to the same bytes it did before the
+		// field existed.
+		if c.PerUnits > 1 {
+			entry["per_units"] = c.PerUnits
+		}
 		// Must stay identical to candidate.capsToList — these bytes are
 		// re-derived to check the cold key's signature.
 		if c.Job != nil {

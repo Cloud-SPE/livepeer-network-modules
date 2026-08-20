@@ -29,7 +29,9 @@ type persistedSession struct {
 	Capability          string    `json:"capability"`
 	Offering            string    `json:"offering"`
 	PricePerWorkUnitWei string    `json:"price_per_work_unit_wei"`
+	PerUnits            uint64    `json:"per_units,omitempty"`
 	WorkUnit            string    `json:"work_unit"`
+	DebitedUnits        uint64    `json:"debited_units,omitempty"`
 	Balance             string    `json:"balance"`
 	OpenedAt            time.Time `json:"opened_at"`
 	ClosedAt            time.Time `json:"closed_at,omitzero"`
@@ -82,7 +84,9 @@ func (m *Mock) loadLocked() error {
 			capability:          ps.Capability,
 			offering:            ps.Offering,
 			pricePerWorkUnitWei: price,
+			perUnits:            ps.PerUnits,
 			workUnit:            ps.WorkUnit,
+			debitedUnits:        ps.DebitedUnits,
 			balance:             bal,
 			openedAt:            ps.OpenedAt,
 			closedAt:            ps.ClosedAt,
@@ -117,7 +121,8 @@ func (m *Mock) flushLocked() {
 		}
 		st.Sessions[k] = persistedSession{
 			WorkID: s.workID, Sender: s.sender, Capability: s.capability,
-			Offering: s.offering, PricePerWorkUnitWei: price, WorkUnit: s.workUnit,
+			Offering: s.offering, PricePerWorkUnitWei: price, PerUnits: s.perUnits,
+			WorkUnit: s.workUnit, DebitedUnits: s.debitedUnits,
 			Balance: bal, OpenedAt: s.openedAt, ClosedAt: s.closedAt,
 			Closed: s.closed, Debits: s.debits,
 		}

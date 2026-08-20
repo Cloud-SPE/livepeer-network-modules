@@ -26,6 +26,9 @@ import (
 type CapabilitySpec struct {
 	WorkUnit            string
 	PricePerWorkUnitWei *big.Int
+	// PerUnits is the denominator the price is quoted over
+	// (offering-axes.md §6). 0 means 1.
+	PerUnits uint64
 }
 
 // CapabilityLookup resolves a (capability_id, offering_id) pair to its
@@ -243,6 +246,7 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				Capability:          capability,
 				Offering:            offering,
 				PricePerWorkUnitWei: spec.PricePerWorkUnitWei,
+				PerUnits:            spec.PerUnits,
 				WorkUnit:            spec.WorkUnit,
 			}); err != nil {
 				livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
@@ -447,8 +451,7 @@ func metaGatewayRevenue(meta ReceiptMeta, spec CapabilitySpec, actual uint64) st
 	if spec.PricePerWorkUnitWei == nil || actual == 0 {
 		return ""
 	}
-	total := new(big.Int).Mul(spec.PricePerWorkUnitWei, new(big.Int).SetUint64(actual))
-	return total.String()
+	return payment.BillFor(spec.PricePerWorkUnitWei, spec.PerUnits, actual).String()
 }
 
 // interimDebitArgs is the parameter bundle for the ticker goroutine.

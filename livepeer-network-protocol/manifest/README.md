@@ -26,9 +26,11 @@ Each tuple has `capability_id`, `offering_id`, `protocol` (`<name>/v<major>` —
 `paid-job/v1` or `paid-session/v1`), the matching declared-axes object (`job`
 for paid-job, `session` for paid-session; see
 [`../protocols/offering-axes.md`](../protocols/offering-axes.md)),
-`work_unit.name`, `price_per_unit_wei` (string-encoded big int), `worker_url`
-(HTTPS), and optional free-form `extra` / `constraints` for workload-specific
-filtering. Signature is
+`work_unit.name`, `price_per_unit_wei` (string-encoded big int) with its
+optional denominator `per_units` (absent means 1 — the pair is the price,
+see [`../protocols/offering-axes.md`](../protocols/offering-axes.md) §6),
+`worker_url` (HTTPS), and optional free-form `extra` / `constraints` for
+workload-specific filtering. Signature is
 secp256k1 (Ethereum's curve) — recovers to the orch's `eth_address`, which must
 match the on-chain `ServiceRegistry` entry.
 

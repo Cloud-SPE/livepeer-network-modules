@@ -240,7 +240,10 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 		PricePerWorkUnitWei: offering.PricePerWorkUnitWei,
 		WorkUnit:            capability.WorkUnit,
 		QuoteVersion:        n.PublicationSeq,
-		UnitsPerPrice:       1,
+		// The offering's own denominator, not an assumption. Hard-coding
+		// 1 here published a quote at per_units times the rate the
+		// payee's ledger charges.
+		UnitsPerPrice: unitsPerPrice(offering.PerUnits),
 	}
 	if len(capability.Extra) > 0 {
 		out.Extra = append([]byte(nil), capability.Extra...)
@@ -252,6 +255,15 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 	out.QuoteID = buildQuoteID(out)
 	out.RouteFingerprint = fingerprintRoute(out)
 	return out, nil
+}
+
+// unitsPerPrice normalizes the wire form: absent (0) means 1, so a
+// consumer never divides by nothing.
+func unitsPerPrice(perUnits uint64) uint64 {
+	if perUnits == 0 {
+		return 1
+	}
+	return perUnits
 }
 
 func buildQuoteID(r *SelectedRoute) string {

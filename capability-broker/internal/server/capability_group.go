@@ -76,6 +76,7 @@ func (s *Server) lookupSpec(capID, offID string) (middleware.CapabilitySpec, boo
 	return middleware.CapabilitySpec{
 		WorkUnit:            group.Published.WorkUnit.Name,
 		PricePerWorkUnitWei: mustBig(group.Published.Price.AmountWei),
+		PerUnits:            group.Published.Price.PerUnits,
 	}, true
 }
 

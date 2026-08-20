@@ -64,9 +64,14 @@ type Capability struct {
 // the per-work-unit wholesale rate the orchestrator advertises;
 // gateways/bridges read it as the wholesale-side input to routing.
 type Offering struct {
-	ID                  string          `json:"id"`
-	PricePerWorkUnitWei string          `json:"price_per_work_unit_wei,omitempty"` // decimal big-int as string
-	Constraints         json.RawMessage `json:"constraints,omitempty"`
+	ID                  string `json:"id"`
+	PricePerWorkUnitWei string `json:"price_per_work_unit_wei,omitempty"` // decimal big-int as string
+	// PerUnits is the denominator of the price: it buys this many work
+	// units. Absent (0) means 1. Projected onto SelectedRoute as
+	// units_per_price — a consumer that reads the price without it
+	// quotes per_units times the rate the payee will charge.
+	PerUnits    uint64          `json:"per_units,omitempty"`
+	Constraints json.RawMessage `json:"constraints,omitempty"`
 }
 
 // Clone returns a deep copy of the manifest. Used in canonicalization

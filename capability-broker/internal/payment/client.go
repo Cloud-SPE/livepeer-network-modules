@@ -74,13 +74,18 @@ type Client interface {
 }
 
 // OpenSessionRequest carries the (capability, offering, price,
-// work_unit) tuple the daemon binds to the work_id.
+// per_units, work_unit) tuple the daemon binds to the work_id.
 type OpenSessionRequest struct {
 	WorkID              string
 	Capability          string
 	Offering            string
 	PricePerWorkUnitWei *big.Int
-	WorkUnit            string
+	// PerUnits is the denominator PricePerWorkUnitWei is quoted over.
+	// The daemon bills ceil(units * price / per_units) cumulatively; a
+	// zero here means 1, so an omitted denominator bills per_units times
+	// the intended rate.
+	PerUnits uint64
+	WorkUnit string
 }
 
 // GetTicketParamsRequest mirrors the payee-daemon quote-free request

@@ -526,11 +526,23 @@ type OpenSessionRequest struct {
 	Capability string `protobuf:"bytes,2,opt,name=capability,proto3" json:"capability,omitempty"`
 	// Offering the session is opened against.
 	Offering string `protobuf:"bytes,3,opt,name=offering,proto3" json:"offering,omitempty"`
-	// Authoritative price per work unit for this session (wei,
-	// big-endian bytes).
+	// Authoritative price for `per_units` work units (wei, big-endian
+	// bytes). NOT necessarily the price of one unit — read it with
+	// `per_units`, never alone.
 	PricePerWorkUnitWei []byte `protobuf:"bytes,4,opt,name=price_per_work_unit_wei,json=pricePerWorkUnitWei,proto3" json:"price_per_work_unit_wei,omitempty"`
 	// Work-unit identifier for this session ("token", "second", ...).
-	WorkUnit      string `protobuf:"bytes,5,opt,name=work_unit,json=workUnit,proto3" json:"work_unit,omitempty"`
+	WorkUnit string `protobuf:"bytes,5,opt,name=work_unit,json=workUnit,proto3" json:"work_unit,omitempty"`
+	// Denominator of the price: `price_per_work_unit_wei` buys this many
+	// work units. 0 is read as 1. Carrying it lets an offering price
+	// below 1 wei per unit, which token-metered workloads need; dropping
+	// it makes the ledger debit `per_units` times the intended rate.
+	//
+	// The daemon bills cumulatively —
+	// `bill(U) = ceil(U * price / per_units)` over units debited since
+	// open — and charges each debit the difference between successive
+	// cumulative bills. Rounding each debit on its own would let a long
+	// session accumulate up to one wei of drift per debit.
+	PerUnits      uint64 `protobuf:"varint,6,opt,name=per_units,json=perUnits,proto3" json:"per_units,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -598,6 +610,13 @@ func (x *OpenSessionRequest) GetWorkUnit() string {
 		return x.WorkUnit
 	}
 	return ""
+}
+
+func (x *OpenSessionRequest) GetPerUnits() uint64 {
+	if x != nil {
+		return x.PerUnits
+	}
+	return 0
 }
 
 type OpenSessionResponse struct {
@@ -1557,7 +1576,7 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\rticket_params\x18\x01 \x01(\v2\".livepeer.payments.v1.TicketParamsR\fticketParams\"\x19\n" +
 	"\x17ListCapabilitiesRequest\"e\n" +
 	"\x18ListCapabilitiesResponse\x12I\n" +
-	"\fcapabilities\x18\x01 \x03(\v2%.livepeer.payments.v1.CapabilityEntryR\fcapabilities\"\xbc\x01\n" +
+	"\fcapabilities\x18\x01 \x03(\v2%.livepeer.payments.v1.CapabilityEntryR\fcapabilities\"\xd9\x01\n" +
 	"\x12OpenSessionRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1e\n" +
 	"\n" +
@@ -1565,7 +1584,8 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"capability\x12\x1a\n" +
 	"\boffering\x18\x03 \x01(\tR\boffering\x124\n" +
 	"\x17price_per_work_unit_wei\x18\x04 \x01(\fR\x13pricePerWorkUnitWei\x12\x1b\n" +
-	"\twork_unit\x18\x05 \x01(\tR\bworkUnit\"\xb4\x01\n" +
+	"\twork_unit\x18\x05 \x01(\tR\bworkUnit\x12\x1b\n" +
+	"\tper_units\x18\x06 \x01(\x04R\bperUnits\"\xb4\x01\n" +
 	"\x13OpenSessionResponse\x12K\n" +
 	"\aoutcome\x18\x01 \x01(\x0e21.livepeer.payments.v1.OpenSessionResponse.OutcomeR\aoutcome\"P\n" +
 	"\aOutcome\x12\x17\n" +

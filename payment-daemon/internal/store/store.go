@@ -52,17 +52,25 @@ const metaNextSeq = "next_seq"
 
 // Session is the on-disk receiver session record.
 type Session struct {
-	WorkID              string    `json:"work_id"`
-	Sender              []byte    `json:"sender,omitempty"` // nil until first ProcessPayment seals it
-	Recipient           []byte    `json:"recipient,omitempty"`
-	Capability          string    `json:"capability"`
-	Offering            string    `json:"offering"`
-	PricePerWorkUnitWei string    `json:"price_per_work_unit_wei"` // big.Int decimal string
-	WorkUnit            string    `json:"work_unit"`
-	BalanceWei          string    `json:"balance_wei"` // big.Int decimal string; may be negative (overdraft)
-	Closed              bool      `json:"closed"`
-	OpenedAt            time.Time `json:"opened_at"`
-	ClosedAt            time.Time `json:"closed_at,omitempty"`
+	WorkID              string `json:"work_id"`
+	Sender              []byte `json:"sender,omitempty"` // nil until first ProcessPayment seals it
+	Recipient           []byte `json:"recipient,omitempty"`
+	Capability          string `json:"capability"`
+	Offering            string `json:"offering"`
+	PricePerWorkUnitWei string `json:"price_per_work_unit_wei"` // big.Int decimal string
+	// PerUnits is the price denominator: PricePerWorkUnitWei buys this
+	// many work units. Zero is read as 1, which keeps sessions written
+	// before the field existed billing exactly as they did.
+	PerUnits uint64 `json:"per_units,omitempty"`
+	WorkUnit string `json:"work_unit"`
+	// DebitedUnits is cumulative work units debited since open. Billing
+	// is a function of this running total, not of any single debit —
+	// see billFor.
+	DebitedUnits uint64    `json:"debited_units,omitempty"`
+	BalanceWei   string    `json:"balance_wei"` // big.Int decimal string; may be negative (overdraft)
+	Closed       bool      `json:"closed"`
+	OpenedAt     time.Time `json:"opened_at"`
+	ClosedAt     time.Time `json:"closed_at,omitempty"`
 
 	// Authoritative ticket params issued by the receiver at session
 	// open. RecipientRand is the receiver-only secret; the daemon
@@ -75,6 +83,35 @@ type Session struct {
 	RecipientRand string `json:"recipient_rand,omitempty"` // big.Int decimal string
 	FaceValueWei  string `json:"face_value_wei,omitempty"`
 	WinProb       string `json:"win_prob,omitempty"`
+}
+
+// BillFor returns the total wei owed for `units` cumulative work units:
+//
+//	bill(U) = ceil(U * price / per_units)
+//
+// Ceiling, so a payee is never left short on work it already delivered;
+// cumulative, so a debit costs bill(total+delta) - bill(total) and the
+// sum of every debit equals one ceiling over the running total. Rounding
+// each debit independently would cost the payer up to a wei per debit,
+// which over a long session with a fast tick is real money and — worse —
+// makes the payer's and payee's arithmetic disagree.
+//
+// perUnits of 0 means 1: a session persisted before the denominator
+// existed bills exactly as it used to.
+func BillFor(price *big.Int, perUnits uint64, units uint64) *big.Int {
+	if price == nil || price.Sign() == 0 || units == 0 {
+		return new(big.Int)
+	}
+	if perUnits == 0 {
+		perUnits = 1
+	}
+	total := new(big.Int).Mul(price, new(big.Int).SetUint64(units))
+	denom := new(big.Int).SetUint64(perUnits)
+	quo, rem := new(big.Int).QuoRem(total, denom, new(big.Int))
+	if rem.Sign() != 0 {
+		quo.Add(quo, big.NewInt(1))
+	}
+	return quo
 }
 
 // ErrNotFound is returned when a (sender, work_id) tuple has no
@@ -418,8 +455,13 @@ func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debi
 			return ErrClosed
 		}
 
+		// Cumulative billing: charge the difference between the bill
+		// for everything debited so far and the bill including this
+		// delta. Never price the delta on its own.
 		price := parseDecimalBig(sess.PricePerWorkUnitWei)
-		debitWei := new(big.Int).Mul(price, big.NewInt(workUnits))
+		before := BillFor(price, sess.PerUnits, sess.DebitedUnits)
+		sess.DebitedUnits += uint64(workUnits)
+		debitWei := new(big.Int).Sub(BillFor(price, sess.PerUnits, sess.DebitedUnits), before)
 		bal := parseDecimalBig(sess.BalanceWei)
 		bal.Sub(bal, debitWei)
 		sess.BalanceWei = bal.String()

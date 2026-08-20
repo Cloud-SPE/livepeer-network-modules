@@ -159,8 +159,16 @@ func validateExpectedPriceForRequest(paymentBytes []byte, capability, offering s
 			return fmt.Errorf("payment price_per_unit %d does not match broker price %s", price.GetPricePerUnit(), spec.PricePerWorkUnitWei.String())
 		}
 	}
-	if price.GetPixelsPerUnit() != 1 {
-		return fmt.Errorf("payment pixels_per_unit %d does not match broker expectation 1", price.GetPixelsPerUnit())
+	// pixels_per_unit is go-livepeer's name for the price denominator
+	// (offering-axes.md §6.3). It must equal the offering's per_units,
+	// or payer and payee are pricing the same work differently.
+	wantPerUnits := int64(1)
+	if spec.PerUnits > 1 {
+		wantPerUnits = int64(spec.PerUnits)
+	}
+	if price.GetPixelsPerUnit() != wantPerUnits {
+		return fmt.Errorf("payment pixels_per_unit %d does not match the offering's per_units %d",
+			price.GetPixelsPerUnit(), wantPerUnits)
 	}
 	return nil
 }

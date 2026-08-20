@@ -164,7 +164,12 @@
         "price_per_unit_wei": {
           "type": "string",
           "pattern": "^[0-9]+$",
-          "description": "Wei per work-unit, expressed as a non-negative decimal string. String form preserves precision beyond JSON's safe-integer range."
+          "description": "Wei per `per_units` work units, expressed as a non-negative decimal string. String form preserves precision beyond JSON's safe-integer range. Read with per_units, never alone: this is the price of a batch of units, not necessarily of one."
+        },
+        "per_units": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Denominator of price_per_unit_wei: the price buys this many work units. Absent means 1. Lets an offering price below 1 wei per unit, which token-metered workloads need. Every layer that carries the price MUST carry this with it — see protocols/offering-axes.md §6, which also fixes the cumulative ceiling billing rule both payer and payee compute."
         },
         "worker_url": {
           "type": "string",

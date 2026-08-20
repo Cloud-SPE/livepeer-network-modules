@@ -65,38 +65,61 @@ Rotation triggers, all payee-side:
 
 ### 2. How the new identity reaches an open session
 
-**Implicit rebind, carried by the top-up that already has to happen.**
+**On the top-up that already has to happen — with the rebind declared,
+not inferred.**
 
 A gateway whose top-up was rejected re-fetches params (existing path),
 mints against the new rand (existing path), and retries the top-up with a
 **new** `Livepeer-Request-Id` — a rotation retry is a new intent, the
-same rule the mint id already follows. The broker sees a payment whose
-derived `work_id` differs from the session's, and rebinds.
+same rule the mint id already follows. The retry additionally carries
+`rebind_from: <old_work_id>`: one optional field, set only on this
+branch.
 
 We considered an explicit `POST /v1/session/{id}/rebind` and rejected it.
-The top-up already carries exactly the evidence a rebind needs — a valid
-payment against the new identity — so a separate verb would add a state
-machine to every gateway SDK for an event most of them will never see.
-Fewer verbs, less to get wrong.
+The top-up already carries the evidence a rebind needs — a valid payment
+against the new identity — so a separate verb would add a state machine
+to every gateway SDK for an event most will never see.
 
-The rebind is not silent, which is the honest half of choosing implicit:
+We also rejected pure inference, where the broker treats any mismatched
+`work_id` as a rotation. Inference at a money boundary is where
+brittleness lives: a gateway that retries session A's top-up with session
+B's freshly minted payment — an ordinary concurrency bug — would have its
+mistake silently absorbed as an identity change. Declaring the intent
+costs one field and turns that into a clean refusal.
 
-- `rotation_generation` and `work_id` appear in session status;
-- a `session.rebound` control event is emitted (WS and, for pollers, a
-  status transition);
+**The three guards, and the one that does the real work:**
+
+1. `rebind_from` MUST equal the session's current `work_id`;
+2. `ProcessPayment` against the new `work_id` MUST credit — not an
+   all-rejected batch;
+3. the sealed sender MUST match the session's.
+
+(2) is the load-bearing one. **Tickets minted against a fake or stale
+identity cannot validate**, so a successful credit is proof the successor
+is genuine — no assertion by the gateway is trusted, and no rotation
+bookkeeping has to survive a broker restart for the check to work.
+
+An earlier draft required the old `work_id` to be in a rotated state
+"confirmed by its own dominant rejection". That is dropped: it is
+circumstantial, and it fails a rebind whose rejection predates a restart.
+
+Note what the broker MUST NOT do to verify: calling the payee's
+`GetTicketParams` for the stable tuple **mints a fresh rand when no
+ticket session is open**, so the verification step would itself cause a
+rotation.
+
+Rebinding is refused on a terminal or winding-down session, like any
+top-up.
+
+The rebind is recorded, not silent:
+
+- `rotation_generation` and the current `work_id` appear in session
+  status;
+- a `session.rebound` **control-plane** message is emitted to the gateway
+  (WS, and a status transition for pollers). It is infrastructure
+  signalling between broker and gateway, not a session lifecycle event —
+  see §6;
 - the settlement record carries the generation chain (§4).
-
-**Guards, because "a payment for a different work_id" must not become a
-way to graft one session onto another:**
-
-- the new `work_id` MUST validate against the same `(sender, capability,
-  offering)` as the session — the sealed sender in particular MUST match,
-  or the rebind is refused with `payment_invalid`;
-- the old `work_id` MUST be in a rotated state on the payee — the broker
-  confirms by the old session's dominant rejection, not by the gateway's
-  assertion;
-- rebinding is refused on a terminal or winding-down session, like any
-  top-up.
 
 ### 3. Retry limits and terminal behaviour
 
@@ -105,7 +128,10 @@ loop burns the payer's deposit without ever delivering work.
 
 - At most `session.max_rotations` per session (default **3**,
   operator-configurable per offering).
-- Exceeding it ends the session with `close_reason: rotation_exhausted`.
+- Exceeding it ends the session with `close_reason:
+  payment_unrecoverable` — the consequence, not the mechanism. Which
+  rotation attempt failed, and how many there were, belongs in the
+  settlement chain and the operator's logs (§6).
 - Each rotation must be separated by at least one accepted payment;
   two consecutive rotations with no accepted payment between them counts
   as exhausted immediately, because that is a rotation loop rather than a
@@ -146,6 +172,32 @@ Unchanged across rotation, by construction:
 So rotation is invisible to the runner and nearly invisible to the
 gateway: one refused top-up, one re-fetch, one retry.
 
+### 6. What a rotation is visible as (settled with LOC, 2026-08-20)
+
+**A completed rotation is settlement-only.** It is infrastructure
+recovery the customer neither caused nor can act on, so it produces no
+customer-facing lifecycle event.
+
+It MUST appear in the signed settlement/audit chain, carrying:
+
+- the stable `session_id`;
+- `rotation_generation`;
+- `predecessor_work_id` and the current `work_id`;
+- cumulative accounting continuity across the generations.
+
+The `session.rebound` message in §2 is explicitly **not** a customer
+lifecycle event: it is an internal control-plane message that completes
+the handshake between broker and gateway. A gateway MUST NOT surface it
+as session history.
+
+**Failure is visible; the mechanism is not.** When rotation fails,
+exhausts its bound, or interrupts the workload, the customer sees the
+resulting degraded or terminal session state — `payment_unrecoverable`,
+with the usual balance and lease semantics — and not the fact that a
+recipient rand rotated underneath it. The rotation detail stays in
+settlement and operator telemetry, where the people who can act on it
+are.
+
 ## What this deliberately does not solve
 
 **Stranded balance on the old generation.** Credited-but-unspent EV on a
@@ -167,30 +219,23 @@ verb nobody can reason about.
 |---|---|
 | Rebind path on top-up: detect, guard, settle-old, open-new, generation++ | `capability-broker/internal/sessionengine` |
 | `rotation_generation`, `predecessor_work_id` on the session record and in status | broker |
-| `session.rebound` control event | broker |
-| `session.max_rotations` axis + the consecutive-rotation rule | broker config + `offering-axes.md` |
+| `session.rebound` control-plane message (not a lifecycle event) | broker |
+| `session.max_rotations` axis, the consecutive-rotation rule, `payment_unrecoverable` | broker config + `offering-axes.md` |
 | Settlement payload fields and per-generation subtotals | broker + `lnm-sqe.13` |
 | A distinct wire error code so a gateway does not string-match a message | `headers/livepeer-headers.md` |
 | §3.3/§9 spec text for all of the above | `paid-session.md` |
 
-**LOC:** reads `rotation_generation`, `predecessor_work_id` and the
-per-generation subtotals in settlement; treats a rotation as one logical
-session for billing. No new call, no new verb.
+**LOC:** reads `session_id`, `rotation_generation`,
+`predecessor_work_id`, the current `work_id` and the per-generation
+subtotals from the signed settlement chain; treats a rotation as one
+logical session for billing, and surfaces nothing to the customer unless
+the session degrades or terminates. No new call, no new verb.
 
-**Gateways:** retry a refused top-up with fresh params and a fresh
-request id — which a correct implementation of the existing top-up
-contract already does. The only new behaviour is *not* treating
-`recipient_rotated` as fatal.
-
-## Open question for LOC
-
-One, and it is theirs to answer because it lands in their reconciler: do
-you want a **rotation event** surfaced to the customer (a line in the
-session's history), or is the generation chain in settlement enough? We
-lean toward settlement-only — a rotation is an infrastructure detail the
-customer did not cause and cannot act on — but if your dispute flow needs
-to explain a funding gap, a visible event is cheaper to add now than
-later.
+**Gateways:** retry a refused top-up with fresh params, a fresh request
+id, and `rebind_from` set to the session's previous `work_id`. Everything
+but that last field is a correct implementation of the existing top-up
+contract. The other new behaviour is *not* treating a rotation refusal as
+fatal, and not surfacing `session.rebound` as customer-visible history.
 
 ## Next
 

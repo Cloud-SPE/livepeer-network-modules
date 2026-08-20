@@ -1,8 +1,8 @@
 ---
 spec_name: paid-session
-version: 1.0.2-draft
+version: 1.0.3-draft
 status: draft
-last_updated: 2026-08-19
+last_updated: 2026-08-20
 ---
 
 # Protocol: `paid-session/v1`
@@ -63,6 +63,27 @@ open ──► active ──► winding_down ──► ended
 
 ## 3. Gateway ↔ broker wire shape
 
+A session carries **two identifiers, and only one of them is authoritative
+for money.**
+
+- **`work_id` — the payment identity.** It MUST be the hex-encoded
+  `recipient_rand_hash` the payee issued with the `TicketParams` that the
+  payment's tickets were minted against. A broker MUST NOT mint one of its
+  own: the payee daemon binds both its session and its recipient rand to
+  that value, so any other identifier binds the session to a rand the
+  sender never saw, and no ticket in the payment can validate against it.
+  `work_id` is the key for the payee lifecycle (`OpenSession`,
+  `ProcessPayment`, `DebitBalance`, `CloseSession`), the public lookup key
+  for a clearinghouse, and what a settlement record binds.
+
+- **`session_id` — an opaque broker-local resource id.** It addresses the
+  session on the broker's own surface (`/v1/session/{id}`) and correlates
+  logs. It is never a payment key, and a payee daemon never sees it.
+
+The same rule holds for `paid-job/v1`; it is stated here because a session
+outlives many payments and the temptation to mint a stable local id and
+bill against it is strongest.
+
 ### 3.1 Open
 
 `POST /v1/session`
@@ -77,12 +98,20 @@ mints a second session or a second `work_id`.
 Body: `{ "gateway_session_id": "<uuid>", "session_params": { … } }` —
 `session_params` is opaque capability data, passed to the runner verbatim.
 
+A payee daemon reports ticket outcomes **in its result, not as an error**.
+If every ticket in the open payment was rejected, the open MUST fail closed
+with `payment_invalid` and the payee session MUST be closed: a session with
+no funded runway would open, then die at its first lease check, presenting
+a payment fault as a broker fault. A partially rejected batch credits what
+it credited — the resulting balance is the honest one, and §5's runway
+enforcement handles the consequences.
+
 Response (success):
 
 ```json
 {
   "session_id": "sess_01jx…",
-  "work_id": "3f8a1dd7-…",
+  "work_id": "b3d1f0…c47a",
   "state": "active",
   "runtime": {
     "schema": "sfu-room/v1",
@@ -517,6 +546,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.3-draft | 2026-08-20 | §3: state the two-identifier rule — `work_id` MUST be the payee-issued `recipient_rand_hash`, `session_id` is an opaque broker-local handle and never a payment key. §3.1: an open whose payment had every ticket rejected MUST fail closed with `payment_invalid`. Both were silences the reference implementation filled differently on each protocol. |
 | 1.0.2-draft | 2026-08-19 | Add §7.1.1 optional runner self-description: advisory-never-authoritative, contradiction fatal to the capability, unreachability only a warning; a runner MAY also declare its `session_params` shape. |
 | 1.0.1-draft | 2026-08-19 | Add §11, the consolidated runner-obligations checklist, with the failure signature for each violation. Derivative and non-normative where it conflicts with a numbered section. |
 | 1.0.0-draft | 2026-08-18 | Initial protocol. Replaces the five session-family modes; durable authority, exactly-once debit, lease/heartbeat enforcement, session credential, and the balance object become normative. Absorbs meeting-handoff requirements B1–B5 and A4. |

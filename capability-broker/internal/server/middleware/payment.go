@@ -223,7 +223,7 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				return
 			}
 
-			workID, ok := DerivePayeeWorkID(paymentBytes)
+			workID, ok := payment.DerivePayeeWorkID(paymentBytes)
 			if !ok {
 				workID = RequestIDFromContext(r.Context())
 				if workID == "" {

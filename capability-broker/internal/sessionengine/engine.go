@@ -226,7 +226,16 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 
 	now := e.cfg.Now()
 	sessionID := "sess_" + uuid.NewString()
-	workID := uuid.NewString()
+	// The payee daemon keys its session — and the recipient rand every
+	// ticket in this payment was minted against — on the payment's
+	// recipient_rand_hash. Minting our own id here binds the session to
+	// a rand the sender never saw, so nothing it pays with can validate.
+	// Stub payments carry no ticket params; the request id stands in,
+	// exactly as the job path does.
+	workID, ok := payment.DerivePayeeWorkID(req.PaymentBytes)
+	if !ok {
+		workID = req.RequestID
+	}
 	credential, err := randomSecret("sc_")
 	if err != nil {
 		return nil, err
@@ -252,6 +261,15 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	})
 	if err != nil {
 		return nil, protoErr("payment_invalid", "payment rejected: %v", err)
+	}
+	// A daemon that rejects every ticket returns no error — it reports
+	// the rejection in the result. Opening anyway produces a session
+	// with no funded runway that dies at the first lease check, which
+	// reads as a broker fault rather than the payment fault it is.
+	if err := rejectionErr(payRes); err != nil {
+		_ = e.cfg.Payment.CloseSession(ctx, payRes.Sender, workID)
+		e.release(req.CapacityRef)
+		return nil, err
 	}
 	sender := payRes.Sender
 
@@ -517,6 +535,30 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 	return out, nil
 }
 
+// rejectionErr converts an all-rejected ticket batch into a protocol
+// error. A partially-rejected batch still credits something and is left
+// alone: the balance it produced is the honest one, and the session's
+// own runway checks enforce the consequences.
+//
+// INVALID_RECIPIENT_RAND is called out by name because it is the
+// signal that the payee rotated its recipient rand under a live payer —
+// the case the rotation design has to answer. Until it does, saying so
+// beats a generic rejection.
+func rejectionErr(res *payment.ProcessPaymentResult) error {
+	if res == nil || res.TicketsRejected == 0 || len(res.TicketStatus) == 0 {
+		return nil
+	}
+	if int(res.TicketsRejected) < len(res.TicketStatus) {
+		return nil
+	}
+	if res.DominantRejection == payment.PaymentRejectionReasonInvalidRecipientRand {
+		return protoErr("payment_invalid",
+			"payee rejected every ticket: INVALID_RECIPIENT_RAND (recipient rand rotated)")
+	}
+	return protoErr("payment_invalid",
+		"payee rejected every ticket (reason %d)", res.DominantRejection)
+}
+
 // ---------------------------------------------------------------------------
 // Top-up
 
@@ -559,6 +601,11 @@ func (e *Engine) TopUp(ctx context.Context, sessionID string, paymentBytes []byt
 	})
 	if err != nil {
 		return nil, protoErr("payment_invalid", "top-up rejected: %v", err)
+	}
+	// An all-rejected top-up must not extend the lease: the session
+	// would run on runway nobody funded.
+	if err := rejectionErr(res); err != nil {
+		return nil, err
 	}
 	now := e.cfg.Now()
 	lease := e.leaseFrom(ctx, now, rec.Sender, rec.WorkID, spec)

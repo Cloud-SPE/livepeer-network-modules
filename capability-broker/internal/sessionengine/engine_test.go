@@ -2,16 +2,20 @@ package sessionengine
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math/big"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,6 +36,10 @@ type fakePayment struct {
 	balance      *big.Int
 	openCalls    int
 	sessionGone  bool
+	workIDs      []string
+	ticketCount  int32 // tickets in the batch ProcessPayment reports
+	ticketsBad   int32 // how many of them were rejected
+	rejectReason payment.PaymentRejectionReason
 }
 
 func newFakePayment() *fakePayment {
@@ -41,10 +49,11 @@ func newFakePayment() *fakePayment {
 func (f *fakePayment) GetTicketParams(context.Context, payment.GetTicketParamsRequest) (*payment.TicketParams, error) {
 	return nil, errors.New("unused")
 }
-func (f *fakePayment) OpenSession(context.Context, payment.OpenSessionRequest) (*payment.OpenSessionResult, error) {
+func (f *fakePayment) OpenSession(_ context.Context, req payment.OpenSessionRequest) (*payment.OpenSessionResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.openCalls++
+	f.workIDs = append(f.workIDs, req.WorkID)
 	already := !f.sessionGone
 	f.sessionGone = false // idempotent open (re-)establishes the session
 	return &payment.OpenSessionResult{AlreadyOpen: already}, nil
@@ -53,7 +62,21 @@ func (f *fakePayment) ProcessPayment(_ context.Context, req payment.ProcessPayme
 	if len(req.PaymentBytes) == 0 {
 		return nil, errors.New("empty payment")
 	}
-	return &payment.ProcessPaymentResult{Sender: []byte{0xAB}, Balance: f.balance}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.workIDs = append(f.workIDs, req.WorkID)
+	res := &payment.ProcessPaymentResult{Sender: []byte{0xAB}, Balance: f.balance}
+	// The daemon reports ticket outcomes in the result, not as an error.
+	for i := int32(0); i < f.ticketCount; i++ {
+		st := payment.TicketStatus{SenderNonce: uint32(i)}
+		if i < f.ticketsBad {
+			st.RejectionReason = f.rejectReason
+		}
+		res.TicketStatus = append(res.TicketStatus, st)
+	}
+	res.TicketsRejected = f.ticketsBad
+	res.DominantRejection = f.rejectReason
+	return res, nil
 }
 func (f *fakePayment) DebitBalance(_ context.Context, req payment.DebitBalanceRequest) (*big.Int, error) {
 	f.mu.Lock()
@@ -642,5 +665,131 @@ func TestTopUpRefusedOnBoundedOffering(t *testing.T) {
 	rec, _ := h.store.Get(res.SessionID)
 	if rec.Terminal() {
 		t.Fatal("refused top-up wound the session down")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// payee identity and ticket rejection
+
+// TestOpenDerivesWorkIDFromPayment pins the identity rule: the payee
+// daemon binds its session — and the recipient rand every ticket was
+// minted against — to the payment's recipient_rand_hash. A work_id of
+// our own invention would bind the session to a rand the sender never
+// saw, and nothing it paid with could validate against it.
+func TestOpenDerivesWorkIDFromPayment(t *testing.T) {
+	h := newHarness(t)
+	hash := []byte("0123456789abcdef0123456789abcdef")
+	raw, err := proto.Marshal(&pb.Payment{
+		TicketParams: &pb.TicketParams{RecipientRandHash: hash},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.engine.Open(context.Background(), OpenRequest{
+		RequestID: "req-1", PaymentBytes: raw, Spec: h.spec,
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	want := hex.EncodeToString(hash)
+	if res.WorkID != want {
+		t.Fatalf("work id = %q; want the payment's recipient_rand_hash %q", res.WorkID, want)
+	}
+	// Every daemon call for this session must carry that same id, or
+	// the lifecycle spans two payee sessions.
+	h.pay.mu.Lock()
+	defer h.pay.mu.Unlock()
+	if len(h.pay.workIDs) == 0 {
+		t.Fatal("daemon was never called")
+	}
+	for _, got := range h.pay.workIDs {
+		if got != want {
+			t.Fatalf("daemon call used work id %q; want %q", got, want)
+		}
+	}
+}
+
+// TestOpenFallsBackToRequestIDForStubPayment keeps in-process stubs and
+// fixtures working: bytes that carry no ticket params have no payee
+// session to collide with, so the request id stands in — the same
+// fallback the job path takes.
+func TestOpenFallsBackToRequestIDForStubPayment(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	if res.WorkID != "req-1" {
+		t.Fatalf("work id = %q; want the request id", res.WorkID)
+	}
+}
+
+// TestOpenFailsClosedWhenEveryTicketRejected pins the other half: the
+// daemon reports an all-rejected batch in its result, not as an error.
+// Opening anyway yields a session with no funded runway that dies at the
+// first lease check, which reads as a broker fault rather than the
+// payment fault it is.
+func TestOpenFailsClosedWhenEveryTicketRejected(t *testing.T) {
+	h := newHarness(t)
+	h.pay.ticketCount, h.pay.ticketsBad = 2, 2
+	h.pay.rejectReason = payment.PaymentRejectionReasonInvalidRecipientRand
+
+	_, err := h.engine.Open(context.Background(), OpenRequest{
+		RequestID: "req-1", PaymentBytes: []byte{1, 2, 3}, Spec: h.spec,
+		CapacityRef: "cap-slot-1",
+	})
+	var perr *ProtocolError
+	if !errors.As(err, &perr) || perr.Code != "payment_invalid" {
+		t.Fatalf("err = %v; want a payment_invalid ProtocolError", err)
+	}
+	if !strings.Contains(perr.Detail, "INVALID_RECIPIENT_RAND") {
+		t.Fatalf("detail = %q; want the rotation signal named", perr.Detail)
+	}
+	if h.runner.created != 0 {
+		t.Fatal("runner was bound against a payment that funded nothing")
+	}
+	if h.pay.closed == 0 {
+		t.Fatal("payee session left open after a failed open")
+	}
+	if len(h.release) != 1 {
+		t.Fatalf("capacity releases = %d; want the reserved slot given back", len(h.release))
+	}
+}
+
+// TestOpenAcceptsPartiallyRejectedBatch: a partial rejection still
+// credits something. The balance it produced is the honest one, and the
+// session's own runway checks enforce the consequences.
+func TestOpenAcceptsPartiallyRejectedBatch(t *testing.T) {
+	h := newHarness(t)
+	h.pay.ticketCount, h.pay.ticketsBad = 3, 1
+	h.pay.rejectReason = payment.PaymentRejectionReasonNonceReplay
+
+	if _, err := h.engine.Open(context.Background(), OpenRequest{
+		RequestID: "req-1", PaymentBytes: []byte{1, 2, 3}, Spec: h.spec,
+	}); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+}
+
+// TestTopUpRefusesAllRejectedBatch: an all-rejected top-up must not
+// extend the lease, or the session runs on runway nobody funded.
+func TestTopUpRefusesAllRejectedBatch(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	before, err := h.store.Get(res.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h.pay.ticketCount, h.pay.ticketsBad = 2, 2
+	h.pay.rejectReason = payment.PaymentRejectionReasonInvalidSignature
+	if _, err := h.engine.TopUp(context.Background(), res.SessionID, []byte{9}); err == nil {
+		t.Fatal("top-up accepted a batch the payee rejected in full")
+	}
+
+	after, err := h.store.Get(res.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
+		t.Fatalf("lease moved from %s to %s on a refused top-up",
+			before.LeaseExpiresAt, after.LeaseExpiresAt)
 	}
 }

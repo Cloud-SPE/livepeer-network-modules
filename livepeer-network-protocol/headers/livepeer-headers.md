@@ -219,7 +219,7 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 | `protocol_unsupported` | 505 | Broker does not implement the requested `Livepeer-Protocol` for this capability. |
 | `protocol_transport_unsupported` | 400 | The request selected a transport the offering does not declare (paid-job §2). |
 | `job_in_flight` | 409 | Retry of a request id whose original exchange is still executing (paid-job §4). Retryable. |
-| `request_id_reuse` | 400 | Request id replayed with different capability, offering, envelope, or body (paid-job §4). |
+| `request_id_reuse` | 400 | Request id replayed with different capability, offering, envelope, or body (paid-job §4; paid-session §3.1 opens and §3.3 top-ups). |
 | `refill_refused` | 409 | Top-up refused; `will_refuse_next_refill` was advertised beforehand (paid-session §3.3). |
 | `backend_unavailable` | 502 | Backend reachable but returned an error the broker can't recover from. |
 | `capacity_exhausted` | 503 | Broker has no slots; see `Livepeer-Backoff`. |

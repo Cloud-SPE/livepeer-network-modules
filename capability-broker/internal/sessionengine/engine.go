@@ -8,6 +8,7 @@ package sessionengine
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -577,10 +578,31 @@ type TopUpResult struct {
 // lifetime move together. Refused with refill_refused on terminal or
 // winding-down sessions — never accept payment that won't be honored
 // with lease.
-func (e *Engine) TopUp(ctx context.Context, sessionID string, paymentBytes []byte) (*TopUpResult, error) {
+//
+// Idempotent on requestID. A retry after a lost response replays the
+// recorded answer without touching the daemon; the same id with a
+// different envelope is request_id_reuse. Without this a gateway had no
+// safe retry: the identical envelope is absorbed by nonce replay, but a
+// freshly minted one — what an SDK retry actually sends — funds twice.
+func (e *Engine) TopUp(ctx context.Context, sessionID, requestID string, paymentBytes []byte) (*TopUpResult, error) {
+	if requestID == "" {
+		return nil, protoErr("request_id_required", "Livepeer-Request-Id is required")
+	}
 	mu := e.sessionMu(sessionID)
 	mu.Lock()
 	defer mu.Unlock()
+
+	fp := topUpFingerprint(sessionID, paymentBytes)
+	if prior, err := e.cfg.Store.TopUpRecall(sessionID, requestID, fp); err != nil {
+		if errors.Is(err, sessionstore.ErrRequestIDReuse) {
+			return nil, protoErr("request_id_reuse", "request id reused with a different payment envelope")
+		}
+		return nil, err
+	} else if prior != nil {
+		bal, _ := new(big.Int).SetString(prior.BalanceWei, 10)
+		return &TopUpResult{Lease: prior.LeaseExpiresAt, Balance: bal}, nil
+	}
+
 	rec, err := e.cfg.Store.Get(sessionID)
 	if err != nil {
 		return nil, err
@@ -607,9 +629,21 @@ func (e *Engine) TopUp(ctx context.Context, sessionID string, paymentBytes []byt
 		return nil, protoErr("payment_invalid", "top-up rejected: %v", err)
 	}
 	// An all-rejected top-up must not extend the lease: the session
-	// would run on runway nobody funded.
+	// would run on runway nobody funded. Nonce replay is the exception —
+	// it means the daemon already credited exactly this envelope, so the
+	// lease it bought was already granted. That is the crash window
+	// between a credit and its idempotency record, and answering with
+	// the current state is what makes the retry safe.
 	if err := rejectionErr(res); err != nil {
-		return nil, err
+		if !alreadyCredited(res) {
+			return nil, err
+		}
+		out := &TopUpResult{Lease: rec.LeaseExpiresAt, Balance: res.Balance}
+		if err := e.cfg.Store.TopUpRecord(sessionID, requestID, fp,
+			out.Lease, balanceString(out.Balance)); err != nil {
+			return nil, err
+		}
+		return out, nil
 	}
 	now := e.cfg.Now()
 	lease := e.leaseFrom(ctx, now, rec.Sender, rec.WorkID, spec)
@@ -622,7 +656,34 @@ func (e *Engine) TopUp(ctx context.Context, sessionID string, paymentBytes []byt
 	}); err != nil {
 		return nil, err
 	}
+	if err := e.cfg.Store.TopUpRecord(sessionID, requestID, fp, lease, balanceString(res.Balance)); err != nil {
+		return nil, err
+	}
 	return &TopUpResult{Lease: lease, Balance: res.Balance}, nil
+}
+
+// topUpFingerprint binds a request id to the top-up it paid for. The
+// envelope is the whole content of the call — there is no body — so a
+// reused id with different bytes is a different top-up.
+func topUpFingerprint(sessionID string, paymentBytes []byte) []byte {
+	h := sha256.New()
+	h.Write([]byte(sessionID))
+	h.Write([]byte{0})
+	h.Write(paymentBytes)
+	return h.Sum(nil)
+}
+
+// alreadyCredited reports a rejection that means "this exact envelope
+// was accepted before": every ticket bounced on nonce replay.
+func alreadyCredited(res *payment.ProcessPaymentResult) bool {
+	return res != nil && res.DominantRejection == payment.PaymentRejectionReasonNonceReplay
+}
+
+func balanceString(b *big.Int) string {
+	if b == nil {
+		return "0"
+	}
+	return b.String()
 }
 
 // ---------------------------------------------------------------------------

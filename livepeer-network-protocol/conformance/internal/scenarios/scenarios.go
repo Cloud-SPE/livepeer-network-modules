@@ -489,6 +489,50 @@ func sessionScenarios() []harness.Scenario {
 			}
 			return fmt.Errorf("session outlived its lease with no winddown")
 		}},
+		{Name: "paid-session/topup-replay-is-idempotent", Spec: "paid-session §3.3", Run: func(c *harness.Ctx) error {
+			open, _, err := openHappySession(c, "topup-idem")
+			if err != nil {
+				return err
+			}
+			m := open.JSON()
+			sessionID, credential := harness.FieldString(m, "session_id"), harness.FieldString(m, "credential")
+
+			reqID := c.RequestID("topup-idem-1")
+			first, err := c.SessionTopUp(sessionID, credential, reqID, harness.PaymentEnvelope("topup-idem-1"))
+			if err != nil {
+				return err
+			}
+			if first.Status != 200 && first.Status != 201 {
+				return fmt.Errorf("%w: offering refused the first top-up (status %d): %s",
+					harness.ErrSkip, first.Status, first.Body)
+			}
+			firstLease := harness.FieldString(first.JSON(), "lease.expires_at")
+
+			// Same id, same envelope: the recorded outcome, verbatim.
+			replay, err := c.SessionTopUp(sessionID, credential, reqID, harness.PaymentEnvelope("topup-idem-1"))
+			if err != nil {
+				return err
+			}
+			if replay.Status != first.Status {
+				return fmt.Errorf("replay status %d != original %d: %s", replay.Status, first.Status, replay.Body)
+			}
+			if got := harness.FieldString(replay.JSON(), "lease.expires_at"); got != firstLease {
+				return fmt.Errorf("replay lease %q != recorded %q — a retry funded the session again", got, firstLease)
+			}
+
+			// Same id, different envelope: the id is a promise about
+			// content, so this is a caller bug and must not be answered
+			// with the first top-up's outcome.
+			reuse, err := c.SessionTopUp(sessionID, credential, reqID, harness.PaymentEnvelope("topup-idem-different"))
+			if err != nil {
+				return err
+			}
+			if reuse.Status != 400 || reuse.Header.Get(harness.HdrError) != harness.ErrRequestIDReuse {
+				return fmt.Errorf("reused id with a different envelope: status %d error %q; want 400 %s",
+					reuse.Status, reuse.Header.Get(harness.HdrError), harness.ErrRequestIDReuse)
+			}
+			return nil
+		}},
 		{Name: "paid-session/bounded-refill-advertised-then-refused", Spec: "paid-session §3.3/§6", Run: func(c *harness.Ctx) error {
 			if c.SessionOfferingBounded == "" {
 				return fmt.Errorf("%w: no bounded-refill offering configured (see README)", harness.ErrSkip)
@@ -585,7 +629,7 @@ func sessionScenarios() []harness.Scenario {
 			}
 
 			// Gateway-initiated frames are acknowledged.
-			if err := conn.SendTopUp(harness.PaymentEnvelope("ws-topup")); err != nil {
+			if err := conn.SendTopUp(c.RequestID("ws-topup"), harness.PaymentEnvelope("ws-topup")); err != nil {
 				return err
 			}
 			ack, err := conn.ReadUntil("ack", 10*time.Second)

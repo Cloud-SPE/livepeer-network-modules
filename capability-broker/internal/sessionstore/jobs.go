@@ -22,9 +22,10 @@ const (
 	JobTerminal = "terminal"
 )
 
-// ErrJobFingerprintMismatch reports a request-id replay whose content
-// differs — request_id_reuse on the wire.
-var ErrJobFingerprintMismatch = errors.New("sessionstore: request id reused with different content")
+// ErrRequestIDReuse reports a request-id replay whose content differs —
+// request_id_reuse on the wire. Shared by both protocols: paid-job
+// exchanges and paid-session top-ups answer a reused id the same way.
+var ErrRequestIDReuse = errors.New("sessionstore: request id reused with different content")
 
 // JobRecord is the durable idempotency record for one exchange.
 type JobRecord struct {
@@ -45,7 +46,7 @@ type JobRecord struct {
 // consult the returned record: terminal → replay its outcome;
 // in_flight → refuse job_in_flight (or, past Deadline, treat as a
 // failed terminal). A fingerprint mismatch returns
-// ErrJobFingerprintMismatch.
+// ErrRequestIDReuse.
 func (s *Store) JobBegin(requestID string, fingerprint []byte, jobID string, deadline time.Time) (rec *JobRecord, created bool, err error) {
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		b, e := tx.CreateBucketIfNotExists([]byte(jobsBucket))
@@ -58,7 +59,7 @@ func (s *Store) JobBegin(requestID string, fingerprint []byte, jobID string, dea
 				return e
 			}
 			if !bytes.Equal(existing.Fingerprint, fingerprint) {
-				return ErrJobFingerprintMismatch
+				return ErrRequestIDReuse
 			}
 			rec = &existing
 			return nil

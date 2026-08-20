@@ -362,7 +362,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	if s.sessionStore != nil {
 		defer func() { _ = s.sessionStore.Close() }()
-		// Idempotency-window retention for paid-job records.
+		// Idempotency-window retention for paid-job and top-up records.
 		go func() {
 			t := time.NewTicker(10 * time.Minute)
 			defer t.Stop()
@@ -371,8 +371,12 @@ func (s *Server) Run(ctx context.Context) error {
 				case <-ctx.Done():
 					return
 				case <-t.C:
-					if n, err := s.sessionStore.EvictJobs(time.Now().Add(-jobRetention)); err == nil && n > 0 {
+					cutoff := time.Now().Add(-jobRetention)
+					if n, err := s.sessionStore.EvictJobs(cutoff); err == nil && n > 0 {
 						log.Printf("evicted %d job idempotency records", n)
+					}
+					if n, err := s.sessionStore.EvictTopUps(cutoff); err == nil && n > 0 {
+						log.Printf("evicted %d top-up idempotency records", n)
 					}
 				}
 			}

@@ -109,7 +109,7 @@ func (m *memJobIdem) Begin(id string, fp []byte, jobID string, dl time.Time) (*s
 	defer m.mu.Unlock()
 	if existing, ok := m.recs[id]; ok {
 		if !bytes.Equal(existing.Fingerprint, fp) {
-			return nil, false, sessionstore.ErrJobFingerprintMismatch
+			return nil, false, sessionstore.ErrRequestIDReuse
 		}
 		cp := *existing
 		return &cp, false, nil
@@ -189,7 +189,7 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		jobID := "job_" + uuid.NewString()
 		rec, created, err := s.jobIdem.Begin(requestID, jobFingerprint(r), jobID, time.Now().Add(jobInFlightTTL))
 		if err != nil {
-			if errors.Is(err, sessionstore.ErrJobFingerprintMismatch) {
+			if errors.Is(err, sessionstore.ErrRequestIDReuse) {
 				livepeerheader.WriteError(w, http.StatusBadRequest,
 					livepeerheader.ErrRequestIDReuse,
 					"request id replayed with different capability, offering, envelope, or length")

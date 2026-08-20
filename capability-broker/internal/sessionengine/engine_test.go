@@ -550,7 +550,7 @@ func TestTopUpExtendsLeaseAndRefusesTerminal(t *testing.T) {
 	res := h.open(t)
 	before, _ := h.store.Get(res.SessionID)
 	h.pay.balance = big.NewInt(5000) // more funding arrived
-	out, err := h.engine.TopUp(context.Background(), res.SessionID, []byte{9})
+	out, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9})
 	if err != nil {
 		t.Fatalf("topup: %v", err)
 	}
@@ -561,11 +561,13 @@ func TestTopUpExtendsLeaseAndRefusesTerminal(t *testing.T) {
 	if !rec.LeaseExpiresAt.Equal(out.Lease) {
 		t.Fatal("lease not persisted")
 	}
-	// Terminal sessions refuse refill with a stable code.
+	// Terminal sessions refuse refill with a stable code. A fresh
+	// request id, because a replay of the one above is answered from the
+	// record and never reaches the terminal check.
 	if _, err := h.engine.End(context.Background(), res.SessionID, ""); err != nil {
 		t.Fatal(err)
 	}
-	_, err = h.engine.TopUp(context.Background(), res.SessionID, []byte{9})
+	_, err = h.engine.TopUp(context.Background(), res.SessionID, "topup-2", []byte{9})
 	var pe *ProtocolError
 	if !errors.As(err, &pe) || pe.Code != "refill_refused" {
 		t.Fatalf("expected refill_refused, got %v", err)
@@ -658,7 +660,7 @@ func TestTopUpRefusedOnBoundedOffering(t *testing.T) {
 	h := newHarness(t)
 	h.spec.Refill = "bounded"
 	res := h.open(t)
-	_, err := h.engine.TopUp(context.Background(), res.SessionID, []byte{9})
+	_, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9})
 	var pe *ProtocolError
 	if !errors.As(err, &pe) || pe.Code != "refill_refused" {
 		t.Fatalf("expected refill_refused on a bounded offering, got %v", err)
@@ -782,7 +784,7 @@ func TestTopUpRefusesAllRejectedBatch(t *testing.T) {
 
 	h.pay.ticketCount, h.pay.ticketsBad = 2, 2
 	h.pay.rejectReason = payment.PaymentRejectionReasonInvalidSignature
-	if _, err := h.engine.TopUp(context.Background(), res.SessionID, []byte{9}); err == nil {
+	if _, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9}); err == nil {
 		t.Fatal("top-up accepted a batch the payee rejected in full")
 	}
 
@@ -812,5 +814,90 @@ func TestOpenCarriesPriceDenominatorToDaemon(t *testing.T) {
 	}
 	if got := h.pay.openPerUnits[0]; got != 1000 {
 		t.Fatalf("daemon was told per_units = %d; want the offering's 1000", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// top-up idempotency
+
+// TestTopUpReplayReturnsRecordedOutcome: a retry after a lost response
+// must not fund the session again. With identical bytes the daemon's
+// nonce dedup would absorb it, but an SDK retry mints a fresh envelope —
+// so the broker has to answer from its own record.
+func TestTopUpReplayReturnsRecordedOutcome(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+
+	first, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9})
+	if err != nil {
+		t.Fatalf("topup: %v", err)
+	}
+	processCalls := len(h.pay.workIDs)
+
+	replay, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9})
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if !replay.Lease.Equal(first.Lease) || replay.Balance.Cmp(first.Balance) != 0 {
+		t.Fatalf("replay = (%v, %s); want the recorded (%v, %s)",
+			replay.Lease, replay.Balance, first.Lease, first.Balance)
+	}
+	if len(h.pay.workIDs) != processCalls {
+		t.Fatal("replay reached the payment daemon; it must answer from the record")
+	}
+}
+
+// TestTopUpRejectsReusedRequestIDWithDifferentEnvelope: the id is a
+// promise about content. A different envelope under the same id is a
+// caller bug, and answering it with the first top-up's outcome would
+// silently swallow funding.
+func TestTopUpRejectsReusedRequestIDWithDifferentEnvelope(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	if _, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{7, 7})
+	var pe *ProtocolError
+	if !errors.As(err, &pe) || pe.Code != "request_id_reuse" {
+		t.Fatalf("err = %v; want request_id_reuse", err)
+	}
+}
+
+// TestTopUpRequiresRequestID: without the key there is no safe retry,
+// which is the whole defect this closes.
+func TestTopUpRequiresRequestID(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	_, err := h.engine.TopUp(context.Background(), res.SessionID, "", []byte{9})
+	var pe *ProtocolError
+	if !errors.As(err, &pe) || pe.Code != "request_id_required" {
+		t.Fatalf("err = %v; want request_id_required", err)
+	}
+}
+
+// TestTopUpNonceReplayReadsAsAlreadyCredited covers the crash window
+// between the daemon's credit and the broker's idempotency record: the
+// retry re-presents nonces the daemon has seen, and every ticket bounces.
+// That is not a payment failure — the money landed the first time — so
+// the caller gets the current lease back, unextended.
+func TestTopUpNonceReplayReadsAsAlreadyCredited(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	before, _ := h.store.Get(res.SessionID)
+
+	h.pay.ticketCount, h.pay.ticketsBad = 2, 2
+	h.pay.rejectReason = payment.PaymentRejectionReasonNonceReplay
+
+	out, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9})
+	if err != nil {
+		t.Fatalf("nonce replay must not read as a payment failure: %v", err)
+	}
+	if !out.Lease.Equal(before.LeaseExpiresAt) {
+		t.Fatalf("lease moved to %v; an already-credited envelope buys no new runway", out.Lease)
+	}
+	after, _ := h.store.Get(res.SessionID)
+	if !after.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
+		t.Fatal("persisted lease moved on an already-credited envelope")
 	}
 }

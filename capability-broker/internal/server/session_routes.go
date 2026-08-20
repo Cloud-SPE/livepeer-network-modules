@@ -255,7 +255,8 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 			"missing or invalid Livepeer-Payment header")
 		return
 	}
-	res, err := s.sessionEngine.TopUp(r.Context(), rec.SessionID, paymentBytes)
+	res, err := s.sessionEngine.TopUp(r.Context(), rec.SessionID,
+		r.Header.Get(livepeerheader.RequestID), paymentBytes)
 	if err != nil {
 		s.writeSessionError(w, err)
 		return
@@ -456,6 +457,11 @@ func (s *Server) writeSessionError(w http.ResponseWriter, err error) {
 			status, code = http.StatusConflict, livepeerheader.ErrRefillRefused
 		case "session_terminal":
 			status = http.StatusConflict
+		case "request_id_reuse":
+			// 400 per headers §error table — same as the job path.
+			status, code = http.StatusBadRequest, livepeerheader.ErrRequestIDReuse
+		case "request_id_required":
+			status = http.StatusBadRequest
 		}
 		livepeerheader.WriteError(w, status, code, pe.Detail)
 		return

@@ -1,6 +1,6 @@
 ---
 spec_name: paid-session
-version: 1.0.3-draft
+version: 1.0.4-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -152,9 +152,25 @@ synchronous runner round-trip to answer.
 ### 3.3 Top-up
 
 `POST /v1/session/{session_id}/topup` — session credential plus a new
-`Livepeer-Payment` envelope, idempotent on `Livepeer-Request-Id`.
+`Livepeer-Payment` envelope, idempotent on `Livepeer-Request-Id`, which is
+**required**.
 
 Rules:
+
+- **Replay returns the recorded outcome** — the `lease` and `balance` the
+  original call was given, not a fresh reading of state that has moved on.
+  The broker MUST NOT re-present the envelope to its payment layer on a
+  replay. The same request id with a different envelope is
+  `request_id_reuse`.
+- The replay check precedes every other check, including the terminal and
+  `refill_refused` ones: a caller retrying a top-up that succeeded gets its
+  answer back even if the session has since ended. Only a *new* request id
+  meets a refusal.
+- A retry whose envelope the payment layer reports as **already credited**
+  (every ticket rejected for nonce replay) is not a payment failure — the
+  funds landed on the first attempt. The broker returns the current lease
+  and balance, **unextended**: an envelope already spent buys no new runway.
+  This closes the window between a credit and the broker's own record of it.
 
 - Credits the **existing** payee-side payment session for the same `work_id`;
   a top-up MUST NOT create a new logical session.
@@ -409,7 +425,8 @@ credential. Frames mirror the HTTP surface — broker→gateway:
 `session.usage.tick` (cumulative claim), `session.balance` (the §6 object,
 emitted at least on every `low`/`will_refuse_next_refill` transition),
 `session.state`, `session.ended`; gateway→broker: `session.topup` (payment
-envelope in-frame), `session.end`. Every gateway-initiated frame is
+envelope in-frame, plus `request_id` — a frame has no headers, and the
+mirror carries the same idempotency key as §3.3), `session.end`. Every gateway-initiated frame is
 acknowledged; the HTTP surface remains available and authoritative — the WS
 is a push optimization, and a gateway ignoring it loses nothing but latency.
 
@@ -546,6 +563,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.4-draft | 2026-08-20 | §3.3: `Livepeer-Request-Id` is required on top-up (and §8's `session.topup` frame carries it as `request_id`) and its replay semantics are stated — recorded outcome returned verbatim, replay checked before terminal/refusal, and an already-credited envelope (nonce replay) answered with the current lease unextended. The reference implementation ignored the header entirely, so a gateway retrying a top-up after a lost response funded the session twice. |
 | 1.0.3-draft | 2026-08-20 | §3: state the two-identifier rule — `work_id` MUST be the payee-issued `recipient_rand_hash`, `session_id` is an opaque broker-local handle and never a payment key. §3.1: an open whose payment had every ticket rejected MUST fail closed with `payment_invalid`. Both were silences the reference implementation filled differently on each protocol. |
 | 1.0.2-draft | 2026-08-19 | Add §7.1.1 optional runner self-description: advisory-never-authoritative, contradiction fatal to the capability, unreachability only a warning; a runner MAY also declare its `session_params` shape. |
 | 1.0.1-draft | 2026-08-19 | Add §11, the consolidated runner-obligations checklist, with the failure signature for each violation. Derivative and non-normative where it conflicts with a numbered section. |

@@ -165,7 +165,11 @@ func (s *Server) handleSessionWSFrame(ctx context.Context, sessionID string, wc 
 			fail("payment_invalid", "body.payment_header must be base64 payment bytes")
 			return
 		}
-		res, err := s.sessionEngine.TopUp(ctx, sessionID, paymentBytes)
+		// The WS is a mirror of the HTTP verb, so it carries the same
+		// idempotency key — in-frame, since a frame has no headers. A
+		// gateway that reconnects and re-sends must not fund twice.
+		requestID, _ := f.Body["request_id"].(string)
+		res, err := s.sessionEngine.TopUp(ctx, sessionID, requestID, paymentBytes)
 		if err != nil {
 			fail(sessionErrCode(err), err.Error())
 			return

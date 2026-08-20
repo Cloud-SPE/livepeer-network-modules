@@ -13,6 +13,33 @@
     "manifest": {
       "$ref": "#/$defs/manifest"
     },
+    "settlement_key": {
+      "type": "object",
+      "title": "Delegated settlement key",
+      "required": [
+        "public_key",
+        "not_before",
+        "expires_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "public_key": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{130}$",
+          "description": "Uncompressed secp256k1 public key, hex, 65 bytes (0x04 || X || Y). Same curve as the manifest signature, so a consumer verifies settlement with the primitives it already has."
+        },
+        "not_before": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Start of the key's validity window."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "End of the key's validity window. An outgoing key stays listed until this passes so a record signed just before a rotation still verifies — without the overlap, rotating a key would invalidate settlements already in flight."
+        }
+      }
+    },
     "signature": {
       "$ref": "#/$defs/signature"
     }
@@ -53,6 +80,14 @@
         },
         "orch": {
           "$ref": "#/$defs/orch"
+        },
+        "settlement_keys": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "$ref": "#/$defs/settlement_key"
+          },
+          "description": "Hot keys the orch's cold key delegates settlement signing to. A broker is network-exposed, so it must never hold the cold key that anchors the operator's on-chain identity; it signs settlement records with one of these instead. Consumers accept a record signed by any listed key whose validity window contains the record's issued_at, which is what makes rotation an ordinary republish: publish a manifest with the new key, a higher publication_seq, and the outgoing key still present until its expires_at."
         },
         "capabilities": {
           "type": "array",

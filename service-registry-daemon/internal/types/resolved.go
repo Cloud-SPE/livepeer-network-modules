@@ -16,6 +16,10 @@ type ResolvedNode struct {
 	Extra            []byte
 	Capabilities     []Capability
 	PublicationSeq   uint64
+	// SettlementKeys travel with the node, not the capability: they are
+	// the orch's delegation, so every route from this orch verifies
+	// against the same set.
+	SettlementKeys []SettlementKey
 
 	// Resolver-attached:
 	Source          Source

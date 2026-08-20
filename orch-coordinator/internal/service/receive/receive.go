@@ -372,6 +372,12 @@ func manifestPayloadMap(p types.ManifestPayload) map[string]any {
 		"orch":            orchToMap(p.Orch),
 		"capabilities":    capsToList(p.Capabilities),
 	}
+	// Emitted only when present, so a manifest without delegations
+	// canonicalizes to exactly the bytes it did before the field
+	// existed.
+	if len(p.SettlementKeys) > 0 {
+		root["settlement_keys"] = settlementKeysToList(p.SettlementKeys)
+	}
 	return root
 }
 
@@ -416,6 +422,21 @@ func capsToList(caps []types.CapabilityTuple) []any {
 			entry["constraints"] = c.Constraints
 		}
 		out = append(out, entry)
+	}
+	return out
+}
+
+// settlementKeysToList must stay byte-identical across both payload
+// builders — these bytes are re-derived to check the cold key's
+// signature.
+func settlementKeysToList(keys []types.SettlementKey) []any {
+	out := make([]any, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, map[string]any{
+			"public_key": k.PublicKey,
+			"not_before": k.NotBefore.UTC().Format(time.RFC3339Nano),
+			"expires_at": k.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		})
 	}
 	return out
 }

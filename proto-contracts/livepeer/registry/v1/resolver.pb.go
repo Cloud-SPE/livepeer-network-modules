@@ -372,9 +372,18 @@ type SelectedRoute struct {
 	// them, and a typed mirror would silently drop any axis a later spec
 	// minor adds — with the drop baked into the operator's signature.
 	// Pass-through cannot go stale.
-	Protocol      string `protobuf:"bytes,14,opt,name=protocol,proto3" json:"protocol,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Protocol string `protobuf:"bytes,14,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	// Settlement-signing keys the orch's cold key delegates to, carried
+	// with the route so a consumer can verify a broker's settlement
+	// signature without fetching or verifying manifests itself. ALL
+	// currently-valid keys, newest first: a record signed just before a
+	// rotation must still verify, so an outgoing key stays until its
+	// expires_at. Rotation is a manifest republish with a higher
+	// publication_seq, so the rollback rule a resolver already enforces
+	// protects this set too.
+	SettlementKeys []*SettlementKey `protobuf:"bytes,15,rep,name=settlement_keys,json=settlementKeys,proto3" json:"settlement_keys,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *SelectedRoute) Reset() {
@@ -505,6 +514,86 @@ func (x *SelectedRoute) GetProtocol() string {
 	return ""
 }
 
+func (x *SelectedRoute) GetSettlementKeys() []*SettlementKey {
+	if x != nil {
+		return x.SettlementKeys
+	}
+	return nil
+}
+
+type SettlementKey struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Uncompressed secp256k1 public key, 0x-prefixed hex (65 bytes).
+	PublicKey string `protobuf:"bytes,1,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`
+	// Validity window. Accept a settlement record signed by this key when
+	// the record's issued_at falls inside it.
+	NotBefore string `protobuf:"bytes,2,opt,name=not_before,json=notBefore,proto3" json:"not_before,omitempty"`
+	ExpiresAt string `protobuf:"bytes,3,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	// publication_seq of the manifest that introduced this key, for
+	// diagnosing which publication a consumer is verifying against.
+	IntroducedInPublicationSeq uint64 `protobuf:"varint,4,opt,name=introduced_in_publication_seq,json=introducedInPublicationSeq,proto3" json:"introduced_in_publication_seq,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *SettlementKey) Reset() {
+	*x = SettlementKey{}
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SettlementKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SettlementKey) ProtoMessage() {}
+
+func (x *SettlementKey) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SettlementKey.ProtoReflect.Descriptor instead.
+func (*SettlementKey) Descriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SettlementKey) GetPublicKey() string {
+	if x != nil {
+		return x.PublicKey
+	}
+	return ""
+}
+
+func (x *SettlementKey) GetNotBefore() string {
+	if x != nil {
+		return x.NotBefore
+	}
+	return ""
+}
+
+func (x *SettlementKey) GetExpiresAt() string {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return ""
+}
+
+func (x *SettlementKey) GetIntroducedInPublicationSeq() uint64 {
+	if x != nil {
+		return x.IntroducedInPublicationSeq
+	}
+	return 0
+}
+
 type ListKnownRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -513,7 +602,7 @@ type ListKnownRequest struct {
 
 func (x *ListKnownRequest) Reset() {
 	*x = ListKnownRequest{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[6]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -525,7 +614,7 @@ func (x *ListKnownRequest) String() string {
 func (*ListKnownRequest) ProtoMessage() {}
 
 func (x *ListKnownRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[6]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -538,7 +627,7 @@ func (x *ListKnownRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKnownRequest.ProtoReflect.Descriptor instead.
 func (*ListKnownRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{6}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{7}
 }
 
 type ListKnownResult struct {
@@ -550,7 +639,7 @@ type ListKnownResult struct {
 
 func (x *ListKnownResult) Reset() {
 	*x = ListKnownResult{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[7]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -562,7 +651,7 @@ func (x *ListKnownResult) String() string {
 func (*ListKnownResult) ProtoMessage() {}
 
 func (x *ListKnownResult) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[7]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -575,7 +664,7 @@ func (x *ListKnownResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKnownResult.ProtoReflect.Descriptor instead.
 func (*ListKnownResult) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{7}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListKnownResult) GetEntries() []*KnownEntry {
@@ -597,7 +686,7 @@ type KnownEntry struct {
 
 func (x *KnownEntry) Reset() {
 	*x = KnownEntry{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[8]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -609,7 +698,7 @@ func (x *KnownEntry) String() string {
 func (*KnownEntry) ProtoMessage() {}
 
 func (x *KnownEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[8]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -622,7 +711,7 @@ func (x *KnownEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KnownEntry.ProtoReflect.Descriptor instead.
 func (*KnownEntry) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{8}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *KnownEntry) GetEthAddress() string {
@@ -663,7 +752,7 @@ type RefreshRequest struct {
 
 func (x *RefreshRequest) Reset() {
 	*x = RefreshRequest{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[9]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -675,7 +764,7 @@ func (x *RefreshRequest) String() string {
 func (*RefreshRequest) ProtoMessage() {}
 
 func (x *RefreshRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[9]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -688,7 +777,7 @@ func (x *RefreshRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefreshRequest.ProtoReflect.Descriptor instead.
 func (*RefreshRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{9}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *RefreshRequest) GetEthAddress() string {
@@ -716,7 +805,7 @@ type GetAuditLogRequest struct {
 
 func (x *GetAuditLogRequest) Reset() {
 	*x = GetAuditLogRequest{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[10]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -728,7 +817,7 @@ func (x *GetAuditLogRequest) String() string {
 func (*GetAuditLogRequest) ProtoMessage() {}
 
 func (x *GetAuditLogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[10]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -741,7 +830,7 @@ func (x *GetAuditLogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAuditLogRequest.ProtoReflect.Descriptor instead.
 func (*GetAuditLogRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{10}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetAuditLogRequest) GetEthAddress() string {
@@ -774,7 +863,7 @@ type AuditLogResult struct {
 
 func (x *AuditLogResult) Reset() {
 	*x = AuditLogResult{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[11]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -786,7 +875,7 @@ func (x *AuditLogResult) String() string {
 func (*AuditLogResult) ProtoMessage() {}
 
 func (x *AuditLogResult) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[11]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -799,7 +888,7 @@ func (x *AuditLogResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditLogResult.ProtoReflect.Descriptor instead.
 func (*AuditLogResult) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{11}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *AuditLogResult) GetEvents() []*AuditEvent {
@@ -822,7 +911,7 @@ type AuditEvent struct {
 
 func (x *AuditEvent) Reset() {
 	*x = AuditEvent{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[12]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -834,7 +923,7 @@ func (x *AuditEvent) String() string {
 func (*AuditEvent) ProtoMessage() {}
 
 func (x *AuditEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[12]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -847,7 +936,7 @@ func (x *AuditEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditEvent.ProtoReflect.Descriptor instead.
 func (*AuditEvent) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{12}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *AuditEvent) GetAt() *timestamppb.Timestamp {
@@ -898,7 +987,7 @@ type HealthResult struct {
 
 func (x *HealthResult) Reset() {
 	*x = HealthResult{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[13]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -910,7 +999,7 @@ func (x *HealthResult) String() string {
 func (*HealthResult) ProtoMessage() {}
 
 func (x *HealthResult) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[13]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -923,7 +1012,7 @@ func (x *HealthResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResult.ProtoReflect.Descriptor instead.
 func (*HealthResult) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{13}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *HealthResult) GetMode() string {
@@ -994,7 +1083,7 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\fSelectResult\x129\n" +
 	"\x05route\x18\x01 \x01(\v2#.livepeer.registry.v1.SelectedRouteR\x05route\"O\n" +
 	"\x10SelectManyResult\x12;\n" +
-	"\x06routes\x18\x01 \x03(\v2#.livepeer.registry.v1.SelectedRouteR\x06routes\"\x90\x04\n" +
+	"\x06routes\x18\x01 \x03(\v2#.livepeer.registry.v1.SelectedRouteR\x06routes\"\xde\x04\n" +
 	"\rSelectedRoute\x12\x1d\n" +
 	"\n" +
 	"worker_url\x18\x01 \x01(\tR\tworkerUrl\x12\x1f\n" +
@@ -1015,7 +1104,16 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\x16constraint_fingerprint\x18\v \x01(\fR\x15constraintFingerprint\x12+\n" +
 	"\x11route_fingerprint\x18\f \x01(\fR\x10routeFingerprint\x12&\n" +
 	"\x0funits_per_price\x18\r \x01(\x04R\runitsPerPrice\x12\x1a\n" +
-	"\bprotocol\x18\x0e \x01(\tR\bprotocol\"\x12\n" +
+	"\bprotocol\x18\x0e \x01(\tR\bprotocol\x12L\n" +
+	"\x0fsettlement_keys\x18\x0f \x03(\v2#.livepeer.registry.v1.SettlementKeyR\x0esettlementKeys\"\xaf\x01\n" +
+	"\rSettlementKey\x12\x1d\n" +
+	"\n" +
+	"public_key\x18\x01 \x01(\tR\tpublicKey\x12\x1d\n" +
+	"\n" +
+	"not_before\x18\x02 \x01(\tR\tnotBefore\x12\x1d\n" +
+	"\n" +
+	"expires_at\x18\x03 \x01(\tR\texpiresAt\x12A\n" +
+	"\x1dintroduced_in_publication_seq\x18\x04 \x01(\x04R\x1aintroducedInPublicationSeq\"\x12\n" +
 	"\x10ListKnownRequest\"M\n" +
 	"\x0fListKnownResult\x12:\n" +
 	"\aentries\x18\x01 \x03(\v2 .livepeer.registry.v1.KnownEntryR\aentries\"\xef\x01\n" +
@@ -1074,7 +1172,7 @@ func file_livepeer_registry_v1_resolver_proto_rawDescGZIP() []byte {
 	return file_livepeer_registry_v1_resolver_proto_rawDescData
 }
 
-var file_livepeer_registry_v1_resolver_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_livepeer_registry_v1_resolver_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_livepeer_registry_v1_resolver_proto_goTypes = []any{
 	(*ResolveByAddressRequest)(nil), // 0: livepeer.registry.v1.ResolveByAddressRequest
 	(*ResolveResult)(nil),           // 1: livepeer.registry.v1.ResolveResult
@@ -1082,56 +1180,58 @@ var file_livepeer_registry_v1_resolver_proto_goTypes = []any{
 	(*SelectResult)(nil),            // 3: livepeer.registry.v1.SelectResult
 	(*SelectManyResult)(nil),        // 4: livepeer.registry.v1.SelectManyResult
 	(*SelectedRoute)(nil),           // 5: livepeer.registry.v1.SelectedRoute
-	(*ListKnownRequest)(nil),        // 6: livepeer.registry.v1.ListKnownRequest
-	(*ListKnownResult)(nil),         // 7: livepeer.registry.v1.ListKnownResult
-	(*KnownEntry)(nil),              // 8: livepeer.registry.v1.KnownEntry
-	(*RefreshRequest)(nil),          // 9: livepeer.registry.v1.RefreshRequest
-	(*GetAuditLogRequest)(nil),      // 10: livepeer.registry.v1.GetAuditLogRequest
-	(*AuditLogResult)(nil),          // 11: livepeer.registry.v1.AuditLogResult
-	(*AuditEvent)(nil),              // 12: livepeer.registry.v1.AuditEvent
-	(*HealthResult)(nil),            // 13: livepeer.registry.v1.HealthResult
-	(ResolveMode)(0),                // 14: livepeer.registry.v1.ResolveMode
-	(*Node)(nil),                    // 15: livepeer.registry.v1.Node
-	(FreshnessStatus)(0),            // 16: livepeer.registry.v1.FreshnessStatus
-	(*timestamppb.Timestamp)(nil),   // 17: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),           // 18: google.protobuf.Empty
+	(*SettlementKey)(nil),           // 6: livepeer.registry.v1.SettlementKey
+	(*ListKnownRequest)(nil),        // 7: livepeer.registry.v1.ListKnownRequest
+	(*ListKnownResult)(nil),         // 8: livepeer.registry.v1.ListKnownResult
+	(*KnownEntry)(nil),              // 9: livepeer.registry.v1.KnownEntry
+	(*RefreshRequest)(nil),          // 10: livepeer.registry.v1.RefreshRequest
+	(*GetAuditLogRequest)(nil),      // 11: livepeer.registry.v1.GetAuditLogRequest
+	(*AuditLogResult)(nil),          // 12: livepeer.registry.v1.AuditLogResult
+	(*AuditEvent)(nil),              // 13: livepeer.registry.v1.AuditEvent
+	(*HealthResult)(nil),            // 14: livepeer.registry.v1.HealthResult
+	(ResolveMode)(0),                // 15: livepeer.registry.v1.ResolveMode
+	(*Node)(nil),                    // 16: livepeer.registry.v1.Node
+	(FreshnessStatus)(0),            // 17: livepeer.registry.v1.FreshnessStatus
+	(*timestamppb.Timestamp)(nil),   // 18: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),           // 19: google.protobuf.Empty
 }
 var file_livepeer_registry_v1_resolver_proto_depIdxs = []int32{
-	14, // 0: livepeer.registry.v1.ResolveResult.mode:type_name -> livepeer.registry.v1.ResolveMode
-	15, // 1: livepeer.registry.v1.ResolveResult.nodes:type_name -> livepeer.registry.v1.Node
-	16, // 2: livepeer.registry.v1.ResolveResult.freshness_status:type_name -> livepeer.registry.v1.FreshnessStatus
-	17, // 3: livepeer.registry.v1.ResolveResult.cached_at:type_name -> google.protobuf.Timestamp
-	17, // 4: livepeer.registry.v1.ResolveResult.fetched_at:type_name -> google.protobuf.Timestamp
+	15, // 0: livepeer.registry.v1.ResolveResult.mode:type_name -> livepeer.registry.v1.ResolveMode
+	16, // 1: livepeer.registry.v1.ResolveResult.nodes:type_name -> livepeer.registry.v1.Node
+	17, // 2: livepeer.registry.v1.ResolveResult.freshness_status:type_name -> livepeer.registry.v1.FreshnessStatus
+	18, // 3: livepeer.registry.v1.ResolveResult.cached_at:type_name -> google.protobuf.Timestamp
+	18, // 4: livepeer.registry.v1.ResolveResult.fetched_at:type_name -> google.protobuf.Timestamp
 	5,  // 5: livepeer.registry.v1.SelectResult.route:type_name -> livepeer.registry.v1.SelectedRoute
 	5,  // 6: livepeer.registry.v1.SelectManyResult.routes:type_name -> livepeer.registry.v1.SelectedRoute
-	8,  // 7: livepeer.registry.v1.ListKnownResult.entries:type_name -> livepeer.registry.v1.KnownEntry
-	14, // 8: livepeer.registry.v1.KnownEntry.mode:type_name -> livepeer.registry.v1.ResolveMode
-	16, // 9: livepeer.registry.v1.KnownEntry.freshness_status:type_name -> livepeer.registry.v1.FreshnessStatus
-	17, // 10: livepeer.registry.v1.KnownEntry.cached_at:type_name -> google.protobuf.Timestamp
-	17, // 11: livepeer.registry.v1.GetAuditLogRequest.since:type_name -> google.protobuf.Timestamp
-	12, // 12: livepeer.registry.v1.AuditLogResult.events:type_name -> livepeer.registry.v1.AuditEvent
-	17, // 13: livepeer.registry.v1.AuditEvent.at:type_name -> google.protobuf.Timestamp
-	14, // 14: livepeer.registry.v1.AuditEvent.mode:type_name -> livepeer.registry.v1.ResolveMode
-	17, // 15: livepeer.registry.v1.HealthResult.last_chain_success:type_name -> google.protobuf.Timestamp
-	0,  // 16: livepeer.registry.v1.Resolver.ResolveByAddress:input_type -> livepeer.registry.v1.ResolveByAddressRequest
-	2,  // 17: livepeer.registry.v1.Resolver.Select:input_type -> livepeer.registry.v1.SelectRequest
-	2,  // 18: livepeer.registry.v1.Resolver.SelectMany:input_type -> livepeer.registry.v1.SelectRequest
-	6,  // 19: livepeer.registry.v1.Resolver.ListKnown:input_type -> livepeer.registry.v1.ListKnownRequest
-	9,  // 20: livepeer.registry.v1.Resolver.Refresh:input_type -> livepeer.registry.v1.RefreshRequest
-	10, // 21: livepeer.registry.v1.Resolver.GetAuditLog:input_type -> livepeer.registry.v1.GetAuditLogRequest
-	18, // 22: livepeer.registry.v1.Resolver.Health:input_type -> google.protobuf.Empty
-	1,  // 23: livepeer.registry.v1.Resolver.ResolveByAddress:output_type -> livepeer.registry.v1.ResolveResult
-	3,  // 24: livepeer.registry.v1.Resolver.Select:output_type -> livepeer.registry.v1.SelectResult
-	4,  // 25: livepeer.registry.v1.Resolver.SelectMany:output_type -> livepeer.registry.v1.SelectManyResult
-	7,  // 26: livepeer.registry.v1.Resolver.ListKnown:output_type -> livepeer.registry.v1.ListKnownResult
-	18, // 27: livepeer.registry.v1.Resolver.Refresh:output_type -> google.protobuf.Empty
-	11, // 28: livepeer.registry.v1.Resolver.GetAuditLog:output_type -> livepeer.registry.v1.AuditLogResult
-	13, // 29: livepeer.registry.v1.Resolver.Health:output_type -> livepeer.registry.v1.HealthResult
-	23, // [23:30] is the sub-list for method output_type
-	16, // [16:23] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	6,  // 7: livepeer.registry.v1.SelectedRoute.settlement_keys:type_name -> livepeer.registry.v1.SettlementKey
+	9,  // 8: livepeer.registry.v1.ListKnownResult.entries:type_name -> livepeer.registry.v1.KnownEntry
+	15, // 9: livepeer.registry.v1.KnownEntry.mode:type_name -> livepeer.registry.v1.ResolveMode
+	17, // 10: livepeer.registry.v1.KnownEntry.freshness_status:type_name -> livepeer.registry.v1.FreshnessStatus
+	18, // 11: livepeer.registry.v1.KnownEntry.cached_at:type_name -> google.protobuf.Timestamp
+	18, // 12: livepeer.registry.v1.GetAuditLogRequest.since:type_name -> google.protobuf.Timestamp
+	13, // 13: livepeer.registry.v1.AuditLogResult.events:type_name -> livepeer.registry.v1.AuditEvent
+	18, // 14: livepeer.registry.v1.AuditEvent.at:type_name -> google.protobuf.Timestamp
+	15, // 15: livepeer.registry.v1.AuditEvent.mode:type_name -> livepeer.registry.v1.ResolveMode
+	18, // 16: livepeer.registry.v1.HealthResult.last_chain_success:type_name -> google.protobuf.Timestamp
+	0,  // 17: livepeer.registry.v1.Resolver.ResolveByAddress:input_type -> livepeer.registry.v1.ResolveByAddressRequest
+	2,  // 18: livepeer.registry.v1.Resolver.Select:input_type -> livepeer.registry.v1.SelectRequest
+	2,  // 19: livepeer.registry.v1.Resolver.SelectMany:input_type -> livepeer.registry.v1.SelectRequest
+	7,  // 20: livepeer.registry.v1.Resolver.ListKnown:input_type -> livepeer.registry.v1.ListKnownRequest
+	10, // 21: livepeer.registry.v1.Resolver.Refresh:input_type -> livepeer.registry.v1.RefreshRequest
+	11, // 22: livepeer.registry.v1.Resolver.GetAuditLog:input_type -> livepeer.registry.v1.GetAuditLogRequest
+	19, // 23: livepeer.registry.v1.Resolver.Health:input_type -> google.protobuf.Empty
+	1,  // 24: livepeer.registry.v1.Resolver.ResolveByAddress:output_type -> livepeer.registry.v1.ResolveResult
+	3,  // 25: livepeer.registry.v1.Resolver.Select:output_type -> livepeer.registry.v1.SelectResult
+	4,  // 26: livepeer.registry.v1.Resolver.SelectMany:output_type -> livepeer.registry.v1.SelectManyResult
+	8,  // 27: livepeer.registry.v1.Resolver.ListKnown:output_type -> livepeer.registry.v1.ListKnownResult
+	19, // 28: livepeer.registry.v1.Resolver.Refresh:output_type -> google.protobuf.Empty
+	12, // 29: livepeer.registry.v1.Resolver.GetAuditLog:output_type -> livepeer.registry.v1.AuditLogResult
+	14, // 30: livepeer.registry.v1.Resolver.Health:output_type -> livepeer.registry.v1.HealthResult
+	24, // [24:31] is the sub-list for method output_type
+	17, // [17:24] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_livepeer_registry_v1_resolver_proto_init() }
@@ -1146,7 +1246,7 @@ func file_livepeer_registry_v1_resolver_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_livepeer_registry_v1_resolver_proto_rawDesc), len(file_livepeer_registry_v1_resolver_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

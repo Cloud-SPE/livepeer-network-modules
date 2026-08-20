@@ -29,7 +29,22 @@ type Manifest struct {
 	EthAddress    string    `json:"eth_address"`
 	IssuedAt      time.Time `json:"issued_at"`
 	Nodes         []Node    `json:"nodes"`
-	Signature     Signature `json:"signature"`
+	// SettlementKeys are the orch's delegated settlement-signing keys,
+	// verified as part of the manifest and projected onto every route so
+	// a consumer can check a broker's settlement signature without
+	// fetching or verifying manifests itself.
+	SettlementKeys []SettlementKey `json:"settlement_keys,omitempty"`
+	Signature      Signature       `json:"signature"`
+}
+
+// SettlementKey is one delegated key with its validity window. All
+// currently-valid keys are carried, newest first: a record signed just
+// before a rotation must still verify, so the outgoing key stays until
+// its expires_at.
+type SettlementKey struct {
+	PublicKey string    `json:"public_key"`
+	NotBefore time.Time `json:"not_before"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // Signature carries the eth-personal-sign output plus a diagnostic hash.

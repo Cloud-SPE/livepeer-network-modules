@@ -538,11 +538,14 @@ func projectManifest(addr types.EthAddress, m *types.Manifest, publicationSeq ui
 			Extra:            append([]byte(nil), n.Extra...),
 			Capabilities:     append([]types.Capability(nil), n.Capabilities...),
 			PublicationSeq:   publicationSeq,
-			Source:           types.SourceManifest,
-			SignatureStatus:  types.SigVerified,
-			OperatorAddr:     addr,
-			Enabled:          true,
-			Weight:           100,
+			// The delegation is the orch's, so every node projected from
+			// this manifest carries the same set.
+			SettlementKeys:  append([]types.SettlementKey(nil), m.SettlementKeys...),
+			Source:          types.SourceManifest,
+			SignatureStatus: types.SigVerified,
+			OperatorAddr:    addr,
+			Enabled:         true,
+			Weight:          100,
 		})
 	}
 	return out

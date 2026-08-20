@@ -89,3 +89,78 @@ func TestDeclarationReachesTheProjection(t *testing.T) {
 		t.Fatal("operator metadata was dropped")
 	}
 }
+
+// TestSettlementKeysReachTheProjection: LOC consumes the registry
+// daemon's verified projection and does not verify manifests itself, so
+// a delegation that stops here is a delegation it can never use.
+func TestSettlementKeysReachTheProjection(t *testing.T) {
+	raw := envelopeWithSettlementKeys(t, []map[string]any{
+		{
+			"public_key": "0x04" + strings.Repeat("ab", 64),
+			"not_before": "2026-08-01T00:00:00Z",
+			"expires_at": "2026-09-01T00:00:00Z",
+		},
+		{
+			// The outgoing key, still listed so a record signed just
+			// before the rotation keeps verifying.
+			"public_key": "0x04" + strings.Repeat("cd", 64),
+			"not_before": "2026-07-01T00:00:00Z",
+			"expires_at": "2026-08-15T00:00:00Z",
+		},
+	})
+	sm, err := DecodeCoordinatorEnvelope(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := sm.ToManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.SettlementKeys) != 2 {
+		t.Fatalf("projected %d settlement keys; want both", len(m.SettlementKeys))
+	}
+	// Newest first: a consumer taking the head gets the current signer.
+	if !m.SettlementKeys[0].NotBefore.After(m.SettlementKeys[1].NotBefore) {
+		t.Fatalf("keys are not newest-first: %v", m.SettlementKeys)
+	}
+}
+
+// TestSettlementKeyValidation: a malformed delegation is refused rather
+// than projected, because a consumer cannot tell a bad key from a key it
+// simply does not have the record for.
+func TestSettlementKeyValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		key  map[string]any
+	}{
+		{"short key", map[string]any{
+			"public_key": "0x04ab", "not_before": "2026-08-01T00:00:00Z", "expires_at": "2026-09-01T00:00:00Z",
+		}},
+		{"window inverted", map[string]any{
+			"public_key": "0x04" + strings.Repeat("ab", 64),
+			"not_before": "2026-09-01T00:00:00Z", "expires_at": "2026-08-01T00:00:00Z",
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := DecodeCoordinatorEnvelope(envelopeWithSettlementKeys(t, []map[string]any{tc.key})); err == nil {
+				t.Fatal("malformed delegation was accepted")
+			}
+		})
+	}
+}
+
+func envelopeWithSettlementKeys(t *testing.T, keys []map[string]any) []byte {
+	t.Helper()
+	raw := envelopeWithExtra(t, nil)
+	var env map[string]any
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	env["manifest"].(map[string]any)["settlement_keys"] = keys
+	out, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}

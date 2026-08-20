@@ -219,6 +219,14 @@ func selectedRouteToProto(r *SelectedRoute) *registryv1.SelectedRoute {
 	if len(r.Constraints) > 0 {
 		out.ConstraintsJson = append([]byte(nil), r.Constraints...)
 	}
+	for _, k := range r.SettlementKeys {
+		out.SettlementKeys = append(out.SettlementKeys, &registryv1.SettlementKey{
+			PublicKey:                  k.PublicKey,
+			NotBefore:                  k.NotBefore,
+			ExpiresAt:                  k.ExpiresAt,
+			IntroducedInPublicationSeq: k.IntroducedInPublicationSeq,
+		})
+	}
 	if len(r.ConstraintFingerprint) > 0 {
 		out.ConstraintFingerprint = append([]byte(nil), r.ConstraintFingerprint...)
 	}
@@ -245,7 +253,8 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 		// The offering's own denominator, not an assumption. Hard-coding
 		// 1 here published a quote at per_units times the rate the
 		// payee's ledger charges.
-		UnitsPerPrice: unitsPerPrice(offering.PerUnits),
+		UnitsPerPrice:  unitsPerPrice(offering.PerUnits),
+		SettlementKeys: settlementKeysFor(n),
 	}
 	if len(capability.Extra) > 0 {
 		out.Extra = append([]byte(nil), capability.Extra...)
@@ -257,6 +266,27 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 	out.QuoteID = buildQuoteID(out)
 	out.RouteFingerprint = fingerprintRoute(out)
 	return out, nil
+}
+
+// settlementKeysFor carries the orch's delegated settlement keys onto a
+// route. Every currently-valid key, not just the active one: LOC pins
+// this set with its immutable route snapshot, and a record signed just
+// before a rotation has to keep verifying against a snapshot taken
+// before it.
+func settlementKeysFor(n types.ResolvedNode) []SettlementKey {
+	if len(n.SettlementKeys) == 0 {
+		return nil
+	}
+	out := make([]SettlementKey, 0, len(n.SettlementKeys))
+	for _, k := range n.SettlementKeys {
+		out = append(out, SettlementKey{
+			PublicKey:                  k.PublicKey,
+			NotBefore:                  k.NotBefore.UTC().Format(time.RFC3339),
+			ExpiresAt:                  k.ExpiresAt.UTC().Format(time.RFC3339),
+			IntroducedInPublicationSeq: n.PublicationSeq,
+		})
+	}
+	return out
 }
 
 // unitsPerPrice normalizes the wire form: absent (0) means 1, so a

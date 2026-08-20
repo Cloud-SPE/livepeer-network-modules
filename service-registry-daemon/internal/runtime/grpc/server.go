@@ -426,6 +426,18 @@ type SelectedRoute struct {
 	ConstraintFingerprint []byte
 	RouteFingerprint      []byte
 	UnitsPerPrice         uint64
+	// SettlementKeys are the orch's delegated settlement-signing keys,
+	// carried with the route so a consumer verifies a broker signature
+	// against a set it already trusts.
+	SettlementKeys []SettlementKey
+}
+
+// SettlementKey mirrors the proto message.
+type SettlementKey struct {
+	PublicKey                  string
+	NotBefore                  string
+	ExpiresAt                  string
+	IntroducedInPublicationSeq uint64
 }
 
 // KnownEntry mirrors the proto message.

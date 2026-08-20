@@ -295,12 +295,24 @@ type Orch struct {
 // over this). Mirrors livepeer-network-protocol/manifest/schema.json
 // #/$defs/manifest.
 type ManifestPayload struct {
-	SpecVersion    string            `json:"spec_version"`
-	PublicationSeq uint64            `json:"publication_seq"`
-	IssuedAt       time.Time         `json:"issued_at"`
-	ExpiresAt      time.Time         `json:"expires_at"`
-	Orch           Orch              `json:"orch"`
+	SpecVersion    string    `json:"spec_version"`
+	PublicationSeq uint64    `json:"publication_seq"`
+	IssuedAt       time.Time `json:"issued_at"`
+	ExpiresAt      time.Time `json:"expires_at"`
+	Orch           Orch      `json:"orch"`
+	// SettlementKeys are hot keys the cold key delegates settlement
+	// signing to. They ride inside the signed payload because that is
+	// the whole point: the cold key's signature is what makes a
+	// broker-held key trustworthy to a consumer.
+	SettlementKeys []SettlementKey   `json:"settlement_keys,omitempty"`
 	Capabilities   []CapabilityTuple `json:"capabilities"`
+}
+
+// SettlementKey is one delegated settlement-signing key and its window.
+type SettlementKey struct {
+	PublicKey string    `json:"public_key"`
+	NotBefore time.Time `json:"not_before"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // Signature is the cold-key signature over the JCS bytes of

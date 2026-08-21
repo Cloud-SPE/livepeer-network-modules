@@ -545,3 +545,114 @@ func TestAccountingPendingSurvivesEviction(t *testing.T) {
 		t.Fatalf("state = %q; want it still pending", rec.State)
 	}
 }
+
+// SETTLED must require an actual signed settlement, never merely a
+// terminal state. A crash leftover closed out at its deadline is
+// terminal with no settlement, and reporting it as SETTLED with a zero
+// status tells a consumer the exchange cost nothing — a claim about
+// money that nothing supports.
+func TestExpiredInFlightIsNotReportedAsSettled(t *testing.T) {
+	var calls atomic.Int64
+	srv, s := newSignedJobTestServer(t, &calls)
+
+	// A record admitted and never finished, whose deadline has passed.
+	const requestID = "loc-job-crashed"
+	if _, _, err := s.sessionStore.JobBegin(requestID, []byte("fp"), "job_crashed",
+		time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.sessionStore.EvictJobs(time.Now().Add(-96 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := http.Get(srv.URL + "/v1/exchange/" + requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := body["outcome"].(string); got == "SETTLED" {
+		t.Fatalf("a crash leftover reported as SETTLED (settlement=%q status=%v) — that says "+
+			"the exchange cost nothing", body["settlement"], body["status"])
+	}
+	if got, _ := body["outcome"].(string); got != "ADMITTED_OUTCOME_UNKNOWN" {
+		t.Fatalf("outcome = %q; want ADMITTED_OUTCOME_UNKNOWN", got)
+	}
+}
+
+// Closeout runs on the exchange's own deadline, not on the retention
+// cutoff. Conflating them left a ten-minute job in flight for the whole
+// retention window, so every retry answered job_in_flight for days.
+func TestExpiredInFlightClosesPromptly(t *testing.T) {
+	var calls atomic.Int64
+	_, s := newSignedJobTestServer(t, &calls)
+
+	const requestID = "loc-job-prompt"
+	if _, _, err := s.sessionStore.JobBegin(requestID, []byte("fp"), "job_prompt",
+		time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	// A retention cutoff far in the past — nothing is old enough to
+	// evict, yet the deadline has passed and closeout must still happen.
+	if _, err := s.sessionStore.EvictJobs(time.Now().Add(-96 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s.sessionStore.JobByRequestID(requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.State == sessionstore.JobInFlight {
+		t.Fatal("a job past its deadline is still in flight; every retry will answer " +
+			"job_in_flight until the retention window elapses")
+	}
+	if rec.State != sessionstore.JobAbandoned {
+		t.Fatalf("state = %q; want abandoned", rec.State)
+	}
+}
+
+// The evidence-expired outcome has to survive a restart: it is backed by
+// a durable tombstone, not by anything in memory.
+func TestEvidenceExpiredSurvivesRestart(t *testing.T) {
+	var calls atomic.Int64
+	srv, s := newSignedJobTestServer(t, &calls)
+
+	const requestID = "loc-job-restart"
+	exchange := jobReqPaid(t, srv, requestID, "")
+	_, _ = io.Copy(io.Discard, exchange.Body)
+	_ = exchange.Body.Close()
+
+	if _, err := s.sessionStore.EvictJobs(time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := s.cfg.SessionStore.Path
+	keyPath := s.cfg.SessionStore.SealingKeyFile
+	if err := s.sessionStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopen the same store, as a restart does.
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := sessionstore.Open(dbPath, key)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	admitted, jobID, err := reopened.WasAdmitted(requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !admitted {
+		t.Fatal("the admission fact did not survive a restart; after this the broker would " +
+			"sign NOT_ADMITTED for an exchange it served")
+	}
+	if jobID == "" {
+		t.Fatal("tombstone lost its job id")
+	}
+}

@@ -93,19 +93,34 @@ func (s *Server) writeExchangeState(w http.ResponseWriter, rec *sessionstore.Job
 		"state":  rec.State,
 	}
 	switch rec.State {
-	case sessionstore.JobTerminal:
+	case sessionstore.JobTerminal, sessionstore.JobAbandoned:
+		if !rec.EndedAt.IsZero() {
+			body["ended_at"] = rec.EndedAt.Format(time.RFC3339Nano)
+		}
+		w.Header().Set(livepeerheader.JobID, rec.JobID)
+
+		// SETTLED requires an actual signed settlement, not merely a
+		// terminal state.
+		//
+		// A crash leftover closed out at its deadline is terminal and
+		// has no settlement; reporting it as SETTLED with a zero status
+		// tells a consumer the exchange cost nothing, which is a claim
+		// about money that nothing supports. The outcome is derived from
+		// the EVIDENCE rather than from the state, so a record that
+		// somehow lacks one can never be reported as settled.
+		if rec.Settlement == "" {
+			body["outcome"] = "ADMITTED_OUTCOME_UNKNOWN"
+			body["detail"] = "this broker admitted the exchange and holds no signed settlement " +
+				"for it; it produced no recorded outcome"
+			writeJSON(w, http.StatusOK, body)
+			return
+		}
 		body["outcome"] = "SETTLED"
 		body["status"] = rec.Status
 		body["work_units"] = rec.WorkUnits
 		body["unit"] = rec.Unit
 		body["settlement"] = rec.Settlement
-		if !rec.EndedAt.IsZero() {
-			body["ended_at"] = rec.EndedAt.Format(time.RFC3339Nano)
-		}
-		if rec.Settlement != "" {
-			w.Header().Set(livepeerheader.Settlement, rec.Settlement)
-		}
-		w.Header().Set(livepeerheader.JobID, rec.JobID)
+		w.Header().Set(livepeerheader.Settlement, rec.Settlement)
 		w.Header().Set(livepeerheader.WorkUnits, strconv.FormatUint(rec.WorkUnits, 10))
 		writeJSON(w, http.StatusOK, body)
 	case sessionstore.JobAccountingPending:

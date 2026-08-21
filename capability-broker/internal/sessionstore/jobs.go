@@ -32,6 +32,16 @@ const (
 	// accounting is settled, and reporting that while a debit is still
 	// outstanding is the failure this state exists to avoid.
 	JobAccountingPending = "accounting_pending"
+	// JobAbandoned: admitted, then the broker crashed or the exchange
+	// never reported an outcome, and its deadline has passed.
+	//
+	// Terminal in the sense that nothing more will happen, and NOT
+	// terminal in the sense that matters to a consumer: there is no
+	// settlement and never will be. Closing these out as ordinary
+	// terminal records made them indistinguishable from a settled
+	// exchange whose settlement happened to be empty, which reports as
+	// SETTLED with a zero status — a false claim about money.
+	JobAbandoned = "abandoned"
 )
 
 // ErrRequestIDReuse reports a request-id replay whose content differs —
@@ -258,6 +268,11 @@ func (s *Store) JobFinish(requestID string, status int, workUnits uint64, unit s
 // leftovers), returning how many were removed.
 func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 	n := 0
+	// Two clocks. cutoff governs how long a finished record is KEPT;
+	// now governs whether an unfinished one is still running. Using the
+	// retention cutoff for both left short-deadline jobs in flight for
+	// the entire retention window.
+	now := time.Now().UTC()
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(jobsBucket))
 		if b == nil {
@@ -286,8 +301,20 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 				// job_in_flight forever. So it is closed out as terminal
 				// with nothing claimed: the exchange was admitted, it
 				// produced no recorded outcome, and it is over.
-				if rec.Deadline.Before(cutoff) {
+				// Against NOW, not the retention cutoff. A job with a
+				// ten-minute deadline was staying in flight for the
+				// whole retention window, so every retry got
+				// job_in_flight for days. Closeout is about the
+				// exchange's own deadline; retention is about how long
+				// its record is kept, and they are different clocks.
+				if rec.Deadline.Before(now) {
 					abandon = append(abandon, bytes.Clone(k))
+				}
+			case JobAbandoned:
+				// Retained on the terminal schedule: it is evidence
+				// that the exchange was admitted and produced nothing.
+				if !rec.EndedAt.IsZero() && rec.EndedAt.Before(cutoff) {
+					evict = append(evict, bytes.Clone(k))
 				}
 			case JobAccountingPending:
 				// Never evicted here. A debit is still outstanding; the
@@ -310,7 +337,7 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 			if uerr := json.Unmarshal(raw, &rec); uerr != nil {
 				continue
 			}
-			rec.State = JobTerminal
+			rec.State = JobAbandoned
 			rec.EndedAt = time.Now().UTC()
 			out, merr := json.Marshal(&rec)
 			if merr != nil {

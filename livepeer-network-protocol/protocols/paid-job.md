@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.14-draft
+version: 1.0.15-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -485,13 +485,37 @@ issued**.
 
 `GET /v1/exchange/{request_id}` returns one of:
 
-| Outcome | Status | Carries |
-|---|---|---|
-| `SETTLED` | 200 | broker `job_id`, work units, and the original signed settlement |
-| `ACCOUNTING_PENDING` | 202 | `job_id` as a stable polling identity, plus the debit attempt count |
-| `IN_FLIGHT` | 202 | `job_id` and the exchange deadline |
-| `NOT_ADMITTED` | 200 | the signed non-admission record, if one was issued |
-| `NO_RECORD` | 404 | nothing — this broker has made no claim either way |
+| Outcome | Status | Meaning | Carries |
+|---|---|---|---|
+| `SETTLED` | 200 | Admitted and costed. | broker `job_id`, work units, and the original signed settlement |
+| `ACCOUNTING_PENDING` | 202 | Delivered; its debit is still being retried. | `job_id` as a stable polling identity, plus the debit attempt count |
+| `IN_FLIGHT` | 202 | Running. | `job_id` and the exchange deadline |
+| `ADMITTED_OUTCOME_UNKNOWN` | 200 | Admitted, and it produced no recorded outcome — a crash leftover closed out at its deadline. | `job_id` |
+| `ADMITTED_EVIDENCE_EXPIRED` | 200 | Admitted; the detailed record has aged out of retention. | `job_id` |
+| `NOT_ADMITTED` | 200 | A signed non-admission record exists. | the record |
+| `NO_RECORD` | 404 | This broker has made no claim either way. | nothing |
+
+**`SETTLED` MUST require an original signed settlement**, not merely a
+terminal state. A record that is terminal and carries none is
+`ADMITTED_OUTCOME_UNKNOWN`: reporting it as settled with a zero status
+tells a consumer the exchange cost nothing, which is a claim about money
+that nothing supports. Implementations MUST derive the outcome from the
+evidence rather than from the state, so a record that lacks a settlement
+for any reason can never be reported as settled.
+
+**Three ways of having been admitted without a settlement**, and a
+consumer treats them differently:
+`ACCOUNTING_PENDING` will still resolve; `ADMITTED_OUTCOME_UNKNOWN` never
+will; `ADMITTED_EVIDENCE_EXPIRED` may have resolved and the broker can no
+longer say.
+
+**Status codes are per surface; the outcome body is the contract.**
+`GET /v1/exchange/{request_id}` answers `200` for any determinate
+outcome, including the admitted-without-settlement ones, and `404` only
+for `NO_RECORD`. `POST /v1/non-admission/{request_id}` answers `409` for
+the same admitted outcomes, because there the caller asked for a claim
+the broker is refusing to make. A consumer MUST read `outcome`, which is
+stable across both.
 
 Every other lookup a broker offers is keyed on something the **customer**
 holds: the broker job id, the session id, the payment identity. A
@@ -604,6 +628,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.15-draft | 2026-08-21 | §5.3.0: `SETTLED` MUST require an original signed settlement and not merely a terminal state — a crash leftover closed out at its deadline was reported as SETTLED with a zero status, telling a consumer the exchange cost nothing. Adds `ADMITTED_OUTCOME_UNKNOWN` and `ADMITTED_EVIDENCE_EXPIRED` to the normative table, distinguishes the three ways of being admitted without a settlement, and states that status codes are per surface while the outcome body is the contract. Also: crash leftovers close on their own deadline rather than the retention cutoff, which had left short-deadline jobs in flight for the whole retention window. Raised by LOC. |
 | 1.0.14-draft | 2026-08-21 | §5.3.1 corrected: non-admission is audit and dispute evidence, never refund authority, and the instruction to act on it after expiry is removed — both contradicted §5.3. Retention restated as an OPERATIONAL rule (conservative-charge deadline + consumer outage window + margin); deriving it from maximum envelope spendable life was not implementable, since governance can revive tickets and that quantity has no finite bound. Adds per-evidence retention clocks, forbids evicting in-flight and accounting-pending records as terminal, and requires the FACT of admission to outlive the detailed record — otherwise eviction manufactures false non-admission evidence. Raised by LOC and the OpenAI gateway team. |
 | 1.0.13-draft | 2026-08-21 | Add §5.3.0: `GET /v1/exchange/{request_id}` returns an exchange's outcome keyed on the id the CONSUMER issued — settled with the original signed settlement, accounting-pending or in-flight with a stable polling identity, a durable non-admission, or NO_RECORD. Every other lookup was keyed on something the customer holds, so a customer that withheld the settlement could force a conservative full charge the broker had evidence against. The non-admission endpoint now returns the outcome on conflict rather than a bare 409. Raised by LOC. |
 | 1.0.12-draft | 2026-08-21 | §5.3 rewritten for consistency after LOC set policy. The earlier text said there was no unconditional expiry and then told consumers to finalize on expiry and re-encumber after a governance increase; those cannot both hold, and re-encumbrance is not implementable — finalized credit may already be spent. Replaced with four terminal outcomes (settle / unresolved / conservative full charge at an operational deadline / non-admission as audit evidence) and an explicit statement that automatic refund is unavailable. Records that `Livepeer-Request-Id` is not bound into `payment_bytes`, so a non-admission tombstone does not retire the envelope. Names the two protocol changes that would create refund authority. Adds `ticket_validity_period_observed_at` so a cached value is not mistaken for a current one. |

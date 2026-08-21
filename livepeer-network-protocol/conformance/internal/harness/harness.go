@@ -421,3 +421,14 @@ func ParseLease(m map[string]any) (time.Time, error) {
 	}
 	return time.Parse(time.RFC3339, s)
 }
+
+// GetExchange asks what happened to an exchange, keyed on the id the
+// CONSUMER issued — the only identifier a clearinghouse is guaranteed to
+// still hold when a customer withholds the rest.
+func (c *Ctx) GetExchange(requestID string) (*HTTPResult, error) {
+	req, err := http.NewRequest(http.MethodGet, c.BrokerURL+"/v1/exchange/"+requestID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(req)
+}

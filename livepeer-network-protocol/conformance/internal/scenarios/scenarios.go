@@ -348,6 +348,81 @@ func jobScenarios() []harness.Scenario {
 			return nil
 		}},
 
+		{Name: "paid-job/exchange-lookup-by-request-id", Spec: "paid-job §5.3.0", Run: func(c *harness.Ctx) error {
+			// A clearinghouse holds only the id it issued. Every other
+			// lookup is keyed on something the customer holds, so a
+			// customer that withheld the settlement could force a
+			// conservative full charge the broker had evidence against.
+			env, err := harness.SignedPaymentEnvelope(c.JobCapability, c.JobOfferingAll,
+				c.JobUnit, 1, 1, 42, "lookup")
+			if err != nil {
+				return err
+			}
+			reqID := c.RequestID("lookup")
+			r, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingAll, RequestID: reqID, Payment: env,
+				Body: []byte(`{"model":"m","messages":[]}`),
+			})
+			if err != nil {
+				return err
+			}
+			if r.Status != 200 {
+				return fmt.Errorf("exchange status %d: %s", r.Status, r.Body)
+			}
+			q, err := c.GetExchange(reqID)
+			if err != nil {
+				return err
+			}
+			if q.Status != 200 {
+				return fmt.Errorf("lookup by request id status %d: %s", q.Status, q.Body)
+			}
+			var body struct {
+				Outcome    string `json:"outcome"`
+				JobID      string `json:"job_id"`
+				Settlement string `json:"settlement"`
+			}
+			if err := json.Unmarshal(q.Body, &body); err != nil {
+				return fmt.Errorf("decode: %w", err)
+			}
+			if body.Outcome != "SETTLED" {
+				return fmt.Errorf("outcome = %q; want SETTLED", body.Outcome)
+			}
+			// The rule that matters: SETTLED is a claim about money and
+			// requires the evidence, not merely a terminal state.
+			if body.Settlement == "" {
+				return fmt.Errorf("SETTLED with no signed settlement — that reports an " +
+					"exchange as costed when nothing supports the figure")
+			}
+			if body.JobID == "" {
+				return fmt.Errorf("no broker job id; a consumer cannot correlate or poll")
+			}
+			return nil
+		}},
+
+		{Name: "paid-job/unknown-request-id-is-not-a-claim", Spec: "paid-job §5.3.0", Run: func(c *harness.Ctx) error {
+			// Silence and a signed non-admission are different answers.
+			// A broker that has not been asked to attest has made no
+			// claim, and a consumer must not read one into a 404.
+			q, err := c.GetExchange(c.RequestID("never-happened"))
+			if err != nil {
+				return err
+			}
+			if q.Status != 404 {
+				return fmt.Errorf("unknown request id status %d; want 404", q.Status)
+			}
+			var body struct {
+				Outcome string `json:"outcome"`
+			}
+			if err := json.Unmarshal(q.Body, &body); err != nil {
+				return fmt.Errorf("decode: %w", err)
+			}
+			if body.Outcome != "NO_RECORD" {
+				return fmt.Errorf("outcome = %q; want NO_RECORD — an unasked broker has made "+
+					"no claim, which is not the same as NOT_ADMITTED", body.Outcome)
+			}
+			return nil
+		}},
+
 		{Name: "paid-job/no-undeliverable-trailer-advertised", Spec: "paid-job §3.2", Run: func(c *harness.Ctx) error {
 			// A trailer rides only on a chunked response. A unary
 			// exchange is Content-Length delimited, so any trailer it

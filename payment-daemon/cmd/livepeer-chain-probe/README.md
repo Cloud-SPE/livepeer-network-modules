@@ -45,7 +45,7 @@ Flags worth setting deliberately:
 |---|---|
 | `--per-units` | **Keep it above 1.** At `per_units: 1` flooring and ceiling agree, so a rounding defect cannot surface — which is exactly how one shipped. |
 | `--price-wei` | Pick a price whose product with the unit count leaves a remainder. |
-| `--protocol` | `job`, `session`, `both`, or `rotation`. |
+| `--protocol` | `job`, `session`, `both`, `rotation`, or `retry`. |
 | `--payee-admin-token` | Required for `rotation`: it drives `PayeeAdmin.ResetSession`, which is closed unless the payee was started with a matching `--payee-admin-token`. |
 
 ## The rotation run
@@ -71,6 +71,34 @@ This run found that the payee **credited** payments arriving on the
 retired identity while every debit against that closed session failed —
 value in, no work billable out. Run it after any change to session
 lifecycle or ticket validation.
+
+## The retry run
+
+`--protocol=retry` exercises the debit-retry lifecycle against a real
+ledger: work delivered, debit refused, and the exchange reaching a signed
+terminal settlement anyway.
+
+The failure has to come from outside, because the probe cannot stop a
+daemon it did not start. Point the offering's backend at something slow,
+run the probe, and **stop the payee while the backend is working**, then
+start it again:
+
+```
+# backend sleeps ~20s
+./chain-probe --protocol=retry --recipient=0x... &
+sleep 2 && kill -9 $(pgrep -f 'payment-daemon --mode=receiver')
+sleep 20 && ./payment-daemon --mode=receiver ...   # same --db
+```
+
+The probe asserts the sequence: `202 accounting_pending` while the debit
+is outstanding, then a signed terminal settlement whose `debited_units`
+reflect what the ledger finally took.
+
+Restart the payee with the **same `--db`**. The session has to survive, and
+the broker has to have left it open — a closed session refuses debits, so
+closing it at end of exchange makes every retry fail no matter how
+generous the budget. That was a real bug, and this run is what would have
+caught it.
 
 ## Run it twice
 

@@ -56,6 +56,21 @@ func (s *Server) handleExchangeByRequestID(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Admitted, record aged out. Distinct from both a settlement and a
+	// non-admission: the exchange happened, and this broker can no
+	// longer say what it cost.
+	if s.sessionStore != nil {
+		if admitted, jobID, aerr := s.sessionStore.WasAdmitted(requestID); aerr == nil && admitted {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"request_id": requestID,
+				"job_id":     jobID,
+				"outcome":    "ADMITTED_EVIDENCE_EXPIRED",
+				"detail":     "admitted; the detailed record has aged out of retention",
+			})
+			return
+		}
+	}
+
 	// Nothing at all. Distinct from NOT_ADMITTED: this broker has not
 	// been asked to attest, and silence is not a claim.
 	writeJSON(w, http.StatusNotFound, map[string]any{

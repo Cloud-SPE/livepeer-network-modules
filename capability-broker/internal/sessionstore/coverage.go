@@ -94,6 +94,14 @@ const nonAdmissionBucket = "non_admissions"
 // original. The record is evidence; re-issuing it under a later
 // observed_at would produce two different signed statements about the
 // same fact, and a consumer holding both has no way to know they agree.
+// nonAdmissionEntry stores the envelope with the time it was observed,
+// because non-admission retention runs from observed_at rather than from
+// an exchange that never happened.
+type nonAdmissionEntry struct {
+	Envelope   string    `json:"envelope"`
+	ObservedAt time.Time `json:"observed_at"`
+}
+
 func (s *Store) RecordNonAdmission(requestID, envelope string, observedAt time.Time) (existing string, err error) {
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		jobs := tx.Bucket([]byte(jobsBucket))
@@ -105,10 +113,17 @@ func (s *Store) RecordNonAdmission(requestID, envelope string, observedAt time.T
 			return err
 		}
 		if prior := b.Get([]byte(requestID)); prior != nil {
-			existing = string(prior)
+			var e nonAdmissionEntry
+			if uerr := json.Unmarshal(prior, &e); uerr == nil {
+				existing = e.Envelope
+			}
 			return nil
 		}
-		return b.Put([]byte(requestID), []byte(envelope))
+		raw, merr := json.Marshal(nonAdmissionEntry{Envelope: envelope, ObservedAt: observedAt.UTC()})
+		if merr != nil {
+			return merr
+		}
+		return b.Put([]byte(requestID), raw)
 	})
 	return existing, err
 }
@@ -123,7 +138,11 @@ func (s *Store) NonAdmissionFor(requestID string) (string, bool, error) {
 			return nil
 		}
 		if raw := b.Get([]byte(requestID)); raw != nil {
-			out = string(raw)
+			var e nonAdmissionEntry
+			if uerr := json.Unmarshal(raw, &e); uerr != nil {
+				return nil
+			}
+			out = e.Envelope
 			found = true
 		}
 		return nil
@@ -137,4 +156,164 @@ func (s *Store) NonAdmissionFor(requestID string) (string, bool, error) {
 func (s *Store) HasNonAdmission(requestID string) (bool, error) {
 	_, found, err := s.NonAdmissionFor(requestID)
 	return found, err
+}
+
+const admittedBucket = "admitted"
+const evidenceHorizonKey = "evidence_horizon"
+
+// admissionTombstone is the minimal fact that outlives a job record:
+// this broker admitted this request.
+//
+// Written at admission and kept after the full record is evicted,
+// because eviction otherwise creates FALSE evidence. A broker asked for
+// non-admission after its record aged out would find nothing and sign
+// NOT_ADMITTED for an exchange it had served — the coverage marker does
+// not catch it, since coverage was continuous the whole time.
+type admissionTombstone struct {
+	JobID      string    `json:"job_id"`
+	AdmittedAt time.Time `json:"admitted_at"`
+}
+
+// EvidenceHorizon is the earliest issuance time this broker can answer
+// "was this admitted" for.
+//
+// It is the later of two things: when this store began (coverage), and
+// how far back its admission tombstones still reach. Both are ways of
+// not knowing, and the answer to a question before either is the same —
+// refuse, rather than mistake an absence for a fact.
+func (s *Store) EvidenceHorizon() (time.Time, error) {
+	coverage, err := s.CoverageStartedAt()
+	if err != nil {
+		return time.Time{}, err
+	}
+	var pruned time.Time
+	err = s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(coverageBucket))
+		if b == nil {
+			return nil
+		}
+		if raw := b.Get([]byte(evidenceHorizonKey)); raw != nil {
+			if t, perr := time.Parse(time.RFC3339Nano, string(raw)); perr == nil {
+				pruned = t
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	if pruned.After(coverage) {
+		return pruned, nil
+	}
+	return coverage, nil
+}
+
+// WasAdmitted reports whether this broker ever admitted the request,
+// consulting the tombstone rather than the full record so the answer
+// survives eviction.
+func (s *Store) WasAdmitted(requestID string) (bool, string, error) {
+	var found bool
+	var jobID string
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(admittedBucket))
+		if b == nil {
+			return nil
+		}
+		raw := b.Get([]byte(requestID))
+		if raw == nil {
+			return nil
+		}
+		found = true
+		var t admissionTombstone
+		if err := json.Unmarshal(raw, &t); err == nil {
+			jobID = t.JobID
+		}
+		return nil
+	})
+	return found, jobID, err
+}
+
+// EvictAdmissionTombstones drops tombstones admitted before cutoff and
+// advances the evidence horizon to match, so the broker stops claiming
+// it can answer for a period it can no longer see.
+func (s *Store) EvictAdmissionTombstones(cutoff time.Time) (int, error) {
+	n := 0
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(admittedBucket))
+		if b == nil {
+			return nil
+		}
+		var drop [][]byte
+		if err := b.ForEach(func(k, raw []byte) error {
+			var t admissionTombstone
+			if err := json.Unmarshal(raw, &t); err != nil {
+				return nil
+			}
+			if t.AdmittedAt.Before(cutoff) {
+				drop = append(drop, append([]byte(nil), k...))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, k := range drop {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+			n++
+		}
+		if n == 0 {
+			return nil
+		}
+		cov, err := tx.CreateBucketIfNotExists([]byte(coverageBucket))
+		if err != nil {
+			return err
+		}
+		// Advance monotonically. A horizon that could move backwards
+		// would re-qualify the broker to answer for a period it has
+		// already forgotten.
+		if raw := cov.Get([]byte(evidenceHorizonKey)); raw != nil {
+			if prev, perr := time.Parse(time.RFC3339Nano, string(raw)); perr == nil && prev.After(cutoff) {
+				return nil
+			}
+		}
+		return cov.Put([]byte(evidenceHorizonKey), []byte(cutoff.UTC().Format(time.RFC3339Nano)))
+	})
+	return n, err
+}
+
+// EvictNonAdmissions drops non-admission records observed before cutoff.
+//
+// Retention runs from observed_at, not from an exchange — there was no
+// exchange. A consumer's reconciliation window starts when it obtained
+// the claim, so that is when the clock starts.
+func (s *Store) EvictNonAdmissions(cutoff time.Time) (int, error) {
+	n := 0
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(nonAdmissionBucket))
+		if b == nil {
+			return nil
+		}
+		var drop [][]byte
+		if err := b.ForEach(func(k, raw []byte) error {
+			var e nonAdmissionEntry
+			if uerr := json.Unmarshal(raw, &e); uerr != nil {
+				return nil
+			}
+			if e.ObservedAt.Before(cutoff) {
+				drop = append(drop, append([]byte(nil), k...))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, k := range drop {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+			n++
+		}
+		return nil
+	})
+	return n, err
 }

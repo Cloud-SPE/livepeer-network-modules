@@ -160,7 +160,31 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	coverage, err := s.sessionStore.CoverageStartedAt()
+	// The record may be long evicted while the FACT of admission
+	// survives. Checked before anything else, because signing
+	// NOT_ADMITTED for an exchange this broker served is the one failure
+	// this endpoint must never produce.
+	if admitted, jobID, aerr := s.sessionStore.WasAdmitted(requestID); aerr == nil && admitted {
+		w.Header().Set(livepeerheader.Error, livepeerheader.ErrAdmitted)
+		if rec, rerr := s.jobIdem.ByRequestID(requestID); rerr == nil && rec != nil {
+			s.writeExchangeState(w, rec)
+			return
+		}
+		// Admitted, and the detailed record has aged out. Say exactly
+		// that: it is a different answer from "never admitted" and from
+		// "here is the settlement", and a consumer charging on it needs
+		// to know which one it got.
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"request_id": requestID,
+			"job_id":     jobID,
+			"outcome":    "ADMITTED_EVIDENCE_EXPIRED",
+			"detail": "this broker admitted that request; its detailed record has aged out " +
+				"of the retention window, so no settlement can be returned",
+		})
+		return
+	}
+
+	coverage, err := s.sessionStore.EvidenceHorizon()
 	if err != nil {
 		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
 			"reading record coverage failed")
@@ -172,8 +196,9 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 	// to check.
 	if issuedAt.Before(coverage) {
 		livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrCoverageGap,
-			"this broker's records begin at "+coverage.Format(time.RFC3339Nano)+
-				", after the job was issued; absence before that is forgetting, not non-admission")
+			"this broker can only answer for jobs issued at or after "+
+				coverage.Format(time.RFC3339Nano)+"; absence before that is forgetting, "+
+				"not non-admission")
 		return
 	}
 

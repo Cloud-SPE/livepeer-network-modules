@@ -434,6 +434,16 @@ func (s *Server) Run(ctx context.Context) error {
 					if n, err := s.sessionStore.EvictTopUps(cutoff); err == nil && n > 0 {
 						log.Printf("evicted %d top-up idempotency records", n)
 					}
+					if n, err := s.sessionStore.EvictNonAdmissions(cutoff); err == nil && n > 0 {
+						log.Printf("evicted %d non-admission records", n)
+					}
+					// Admission tombstones outlive the detailed records
+					// they refer to, and pruning them advances the
+					// horizon so the broker stops claiming it can answer
+					// for a period it can no longer see.
+					if n, err := s.sessionStore.EvictAdmissionTombstones(cutoff); err == nil && n > 0 {
+						log.Printf("evicted %d admission tombstones; evidence horizon advanced", n)
+					}
 				}
 			}
 		}()

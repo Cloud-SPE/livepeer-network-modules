@@ -142,6 +142,22 @@ func (s *Store) JobBegin(requestID string, fingerprint []byte, jobID string, dea
 		if e := putJobIDIndex(tx, jobID, requestID); e != nil {
 			return e
 		}
+		// The fact of admission, written in the SAME transaction and
+		// outliving the record itself. Without it, eviction manufactures
+		// false evidence: a broker asked for non-admission after the
+		// record aged out finds nothing and signs NOT_ADMITTED for an
+		// exchange it served.
+		adm, e := tx.CreateBucketIfNotExists([]byte(admittedBucket))
+		if e != nil {
+			return e
+		}
+		stone, e := json.Marshal(admissionTombstone{JobID: jobID, AdmittedAt: time.Now().UTC()})
+		if e != nil {
+			return e
+		}
+		if e := adm.Put([]byte(requestID), stone); e != nil {
+			return e
+		}
 		fresh := JobRecord{
 			RequestID:   requestID,
 			JobID:       jobID,
@@ -248,6 +264,7 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 			return nil
 		}
 		var evict [][]byte
+		var abandon [][]byte
 		if err := b.ForEach(func(k, raw []byte) error {
 			var rec JobRecord
 			if err := json.Unmarshal(raw, &rec); err != nil {
@@ -259,14 +276,51 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 					evict = append(evict, bytes.Clone(k))
 				}
 			case JobInFlight:
+				// NOT evicted. An in-flight record past its deadline is
+				// a crash leftover, and deleting it destroys the only
+				// detailed evidence that the exchange was admitted —
+				// after which this broker would sign NOT_ADMITTED for
+				// something it served.
+				//
+				// It cannot stay in flight either, or every retry gets
+				// job_in_flight forever. So it is closed out as terminal
+				// with nothing claimed: the exchange was admitted, it
+				// produced no recorded outcome, and it is over.
 				if rec.Deadline.Before(cutoff) {
-					evict = append(evict, bytes.Clone(k))
+					abandon = append(abandon, bytes.Clone(k))
 				}
+			case JobAccountingPending:
+				// Never evicted here. A debit is still outstanding; the
+				// retrier drives it to terminal, and only then does the
+				// retention clock start.
 			}
 			return nil
 		}); err != nil {
 			return err
 		}
+		// Close out crash leftovers rather than deleting them: the
+		// admission fact has to survive, and a record stuck in flight
+		// makes every retry answer job_in_flight forever.
+		for _, k := range abandon {
+			raw := b.Get(k)
+			if raw == nil {
+				continue
+			}
+			var rec JobRecord
+			if uerr := json.Unmarshal(raw, &rec); uerr != nil {
+				continue
+			}
+			rec.State = JobTerminal
+			rec.EndedAt = time.Now().UTC()
+			out, merr := json.Marshal(&rec)
+			if merr != nil {
+				continue
+			}
+			if perr := b.Put(k, out); perr != nil {
+				return perr
+			}
+		}
+
 		idx := tx.Bucket([]byte(jobIDIndexBucket))
 		for _, k := range evict {
 			if raw := b.Get(k); raw != nil && idx != nil {

@@ -38,36 +38,32 @@ const (
 	// jobInFlightTTL bounds how long a crashed exchange blocks its
 	// request id before retries treat it as a failed terminal.
 	jobInFlightTTL = 10 * time.Minute
-	// defaultJobRetention is the default retention for terminal job
-	// records.
+	// defaultJobRetention is how long terminal evidence is kept.
 	//
-	// It is NOT just the idempotency window (paid-job §4). It is also
-	// how long the broker can answer "was this exchange ever admitted",
-	// which is the only evidence that can distinguish a payment envelope
-	// that went unused from one that bought work and was then hidden.
+	// The rule is operational, not chain-derived:
 	//
-	// That question is asked after the envelope EXPIRES — before then it
-	// is still spendable and the question is premature — so retention
-	// has to outlast expiry or the record is gone before anyone can ask.
-	// Expiry is creation_round + 2, which on ~19h rounds is roughly
-	// 38–57 hours depending on where in a round the mint landed. The old
-	// 24h default guaranteed the record was deleted first.
+	//   retention > conservative-charge deadline
+	//             + consumer outage/recovery window
+	//             + scheduler and clock margin
 	//
-	// The rule, not the number, is what matters:
+	// An earlier version derived it from the envelope's spendable life.
+	// That is not implementable: governance can raise
+	// ticketValidityPeriod and revive tickets, so maximum spendable life
+	// has no finite bound and a retention window derived from it has no
+	// value to compute.
 	//
-	//   retention >= max envelope spendable life + dispute/recovery window
+	// What retention actually has to outlast is the consumer's own
+	// reconciliation: the point at which it gives up waiting and applies
+	// a conservative charge, plus however long it might itself be down,
+	// plus slack for the sweeps at both ends. 96h is that sum for a
+	// consumer with a ~48h charge deadline and a 24h outage target.
+	// Operators serving a consumer with a longer window raise
+	// session_store.job_retention.
 	//
-	// 96h is that rule evaluated for today's deployment: ~57h worst-case
-	// spendable life plus the 24h outage-and-recovery window downstream
-	// gateways target, with margin. An earlier 72h left only ~15h after
-	// expiry, which does not cover a 24h outage — a consumer that was
-	// itself down for the recovery window would come back to find the
-	// evidence gone.
-	//
-	// Operators whose consumers need longer raise
-	// session_store.job_retention. Operators on a deployment with a
-	// different ticketValidityPeriod or round length must recompute it:
-	// both are on-chain parameters, not constants.
+	// Retention starts at TERMINAL state for a settlement and at
+	// observed_at for a non-admission record. In-flight and
+	// accounting-pending records are never evicted as terminal evidence;
+	// the first is closed out, the second is still moving.
 	defaultJobRetention = 96 * time.Hour
 	// maxJobBodyBytes bounds buffered request/response bodies.
 	maxJobBodyBytes = 64 << 20 // 64 MiB
@@ -687,16 +683,11 @@ func (s *Server) jobRetention() time.Duration {
 	return defaultJobRetention
 }
 
-// minEvidenceRetention is the shortest retention that can still answer
-// "was this exchange ever admitted" for an expired envelope.
+// minEvidenceRetention is the floor below which the broker warns.
 //
-// ~57h of worst-case spendable life (three rounds of ~19h, the envelope
-// having been minted at the very start of a round) plus the 24h
-// outage-and-recovery window downstream consumers target. Below this a
-// consumer that was itself down for its recovery window returns to find
-// the evidence already evicted.
-//
-// Both inputs are deployment properties — ticketValidityPeriod and round
-// length are on-chain parameters — so this is a floor for today's
-// mainnet and not a universal constant.
-const minEvidenceRetention = 81 * time.Hour
+// Not derived from the chain — see defaultJobRetention for why that is
+// not a computable quantity. It is a conservative stand-in for a
+// consumer's reconciliation window, and an operator who knows their
+// consumer's actual deadline should set job_retention from that rather
+// than from this.
+const minEvidenceRetention = 72 * time.Hour

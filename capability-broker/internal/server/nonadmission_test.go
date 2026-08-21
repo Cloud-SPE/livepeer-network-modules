@@ -17,6 +17,8 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/ethereum/go-ethereum/crypto"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -451,5 +453,95 @@ func TestExchangeLookupSurfacesNonAdmission(t *testing.T) {
 	}
 	if got, _ := body["non_admission"].(string); got == "" {
 		t.Fatal("no signed record returned")
+	}
+}
+
+// Eviction must not manufacture false evidence. Once a job record ages
+// out, a broker that found nothing would sign NOT_ADMITTED for an
+// exchange it actually served — and the coverage marker does not catch
+// it, because coverage was continuous the whole time.
+func TestNonAdmissionRefusedAfterRecordEvicted(t *testing.T) {
+	var calls atomic.Int64
+	srv, s := newSignedJobTestServer(t, &calls)
+
+	const requestID = "loc-job-aged-out"
+	exchange := jobReqPaid(t, srv, requestID, "")
+	_, _ = io.Copy(io.Discard, exchange.Body)
+	_ = exchange.Body.Close()
+
+	// Age the detailed record out, leaving the admission fact behind.
+	if _, err := s.sessionStore.EvictJobs(time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.sessionStore.JobByRequestID(requestID); err == nil {
+		t.Fatal("record was not evicted; the test proves nothing")
+	}
+
+	resp := askNonAdmission(t, srv, requestID, naBody())
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("broker signed NOT_ADMITTED for an exchange it served, after the record aged " +
+			"out — eviction must not manufacture evidence")
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := body["outcome"].(string); got != "ADMITTED_EVIDENCE_EXPIRED" {
+		t.Fatalf("outcome = %q; want ADMITTED_EVIDENCE_EXPIRED — distinct from both a "+
+			"settlement and a non-admission", got)
+	}
+}
+
+// Pruning the admission tombstones advances the horizon, so the broker
+// stops claiming it can answer for a period it can no longer see.
+func TestEvidenceHorizonAdvancesWithTombstonePruning(t *testing.T) {
+	var calls atomic.Int64
+	srv, s := newSignedJobTestServer(t, &calls)
+
+	exchange := jobReqPaid(t, srv, "loc-job-horizon", "")
+	_, _ = io.Copy(io.Discard, exchange.Body)
+	_ = exchange.Body.Close()
+
+	before, err := s.sessionStore.EvidenceHorizon()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().Add(time.Hour)
+	if _, err := s.sessionStore.EvictAdmissionTombstones(cutoff); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.sessionStore.EvidenceHorizon()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.After(before) {
+		t.Fatalf("horizon did not advance after pruning (%s -> %s); the broker still claims "+
+			"it can answer for a period it has forgotten", before, after)
+	}
+}
+
+// An accounting-pending exchange is still moving; its retention clock
+// has not started, so eviction must leave it alone.
+func TestAccountingPendingSurvivesEviction(t *testing.T) {
+	var calls atomic.Int64
+	mock := payment.NewMock()
+	mock.FailNextDebits(1000)
+	srv, s := newJobTestServerWith(t, &calls, mock)
+
+	const requestID = "loc-job-pending-evict"
+	exchange := jobReqPaid(t, srv, requestID, "")
+	_, _ = io.Copy(io.Discard, exchange.Body)
+	_ = exchange.Body.Close()
+
+	if _, err := s.sessionStore.EvictJobs(time.Now().Add(24 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := s.sessionStore.JobByRequestID(requestID)
+	if err != nil {
+		t.Fatalf("accounting-pending record was evicted: %v", err)
+	}
+	if rec.State != sessionstore.JobAccountingPending {
+		t.Fatalf("state = %q; want it still pending", rec.State)
 	}
 }

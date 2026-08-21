@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.13-draft
+version: 1.0.14-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -431,17 +431,41 @@ Until one exists, a consumer that returns customer credit is accepting
 risk this layer cannot remove, and this document does not pretend
 otherwise.
 
-**What a broker owes.** A broker MUST retain terminal exchange records
-for at least
+**What a broker owes.** Retention is an **operational** quantity:
 
 ```
-max envelope spendable life  +  supported dispute/recovery window
+retention  >  conservative-charge deadline
+           +  consumer outage/recovery window
+           +  scheduler and clock margin
 ```
 
-The dispute window begins at **expiry**, not at the exchange, because
-before expiry the question is premature. Retention shorter than that
-deletes the evidence before anyone can ask — which the reference broker
-did, evicting at 24h against an expiry window of roughly 38–57 hours.
+It is deliberately not derived from the envelope's spendable life. That
+quantity has no finite bound: governance can raise `ticketValidityPeriod`
+and revive tickets, so "maximum spendable life" is not a number an
+implementation can compute. What retention actually has to outlast is the
+consumer's own reconciliation — the point at which it stops waiting and
+applies a conservative charge, plus however long it might itself be down,
+plus slack for the sweeps at both ends.
+
+Retention clocks and eviction rules:
+
+- **A settlement's retention starts at terminal state.**
+- **A non-admission record's starts at `observed_at`.**
+- **In-flight and accounting-pending records MUST NOT be evicted as
+  terminal evidence.** An accounting-pending exchange is still moving and
+  its clock has not started. An in-flight record past its deadline is a
+  crash leftover and MUST be closed out rather than deleted — deleting it
+  destroys the evidence that the exchange was admitted.
+- **The fact of admission MUST outlive the detailed record.** Once a
+  record is evicted a broker asked for non-admission would otherwise find
+  nothing and attest `NOT_ADMITTED` for an exchange it served. A broker
+  MUST retain enough to answer "admitted, evidence expired" — a distinct
+  outcome from both a settlement and a non-admission — and MUST refuse to
+  attest non-admission for any job issued before the earliest point it
+  can still answer for.
+
+Earlier retention shorter than this deleted evidence before anyone could
+ask: the reference broker evicted at 24h.
 
 Both inputs are deployment properties, not constants. `ticketValidityPeriod`
 is a governance-settable parameter on the TicketBroker
@@ -486,8 +510,25 @@ which is the input to charging correctly rather than conservatively.
 #### 5.3.1 Non-admission evidence
 
 A broker MUST be able to state, in a signed record, that it never
-admitted an exchange for a given request id. This is the evidence a
-refund requires, and it is the only form of it available.
+admitted an exchange for a given request id.
+
+**This is audit and dispute evidence. It is NOT refund authority**, and
+§5.3's terminal outcomes govern. An earlier draft called it the evidence
+a refund requires; that was wrong, for a reason worth keeping written
+down rather than rediscovering:
+
+`Livepeer-Request-Id` is not cryptographically bound into
+`payment_bytes`. So a record saying "I never admitted request R" does not
+retire the envelope — the same envelope can be presented under a
+different request id, and a governance increase to
+`ticketValidityPeriod` can revive it after the record was signed. The
+claim is true and useful and still cannot establish that no value moved.
+
+What it is good for: attributing a broker's position at a point in time.
+A broker that has signed both a settlement and a non-admission for one
+request has produced two contradictory statements under one delegated
+key, which is something a consumer can act on in a dispute even though
+it is not something it can act on automatically.
 
 - **Retrievable by the consumer, keyed on the consumer's own
   `request_id`.** Never through the customer and never requiring a
@@ -523,8 +564,9 @@ refund requires, and it is the only form of it available.
 - **Refused if any record exists** for the request — in flight, terminal,
   or pending accounting. Attesting mid-flight signs a statement the next
   second contradicts.
-- **A consumer MUST NOT act on it before expiry.** Until then the request
-  can still arrive and use the envelope.
+- **Retained per §5.3's operational rule**, from `observed_at` rather
+  than from an exchange — there was no exchange, so the clock starts when
+  the consumer obtained the claim.
 - **Conflicting records MUST be retained.** A broker that has signed both
   a settlement and a non-admission for one request has produced two
   contradictory statements under one delegated key. That is the
@@ -562,6 +604,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.14-draft | 2026-08-21 | §5.3.1 corrected: non-admission is audit and dispute evidence, never refund authority, and the instruction to act on it after expiry is removed — both contradicted §5.3. Retention restated as an OPERATIONAL rule (conservative-charge deadline + consumer outage window + margin); deriving it from maximum envelope spendable life was not implementable, since governance can revive tickets and that quantity has no finite bound. Adds per-evidence retention clocks, forbids evicting in-flight and accounting-pending records as terminal, and requires the FACT of admission to outlive the detailed record — otherwise eviction manufactures false non-admission evidence. Raised by LOC and the OpenAI gateway team. |
 | 1.0.13-draft | 2026-08-21 | Add §5.3.0: `GET /v1/exchange/{request_id}` returns an exchange's outcome keyed on the id the CONSUMER issued — settled with the original signed settlement, accounting-pending or in-flight with a stable polling identity, a durable non-admission, or NO_RECORD. Every other lookup was keyed on something the customer holds, so a customer that withheld the settlement could force a conservative full charge the broker had evidence against. The non-admission endpoint now returns the outcome on conflict rather than a bare 409. Raised by LOC. |
 | 1.0.12-draft | 2026-08-21 | §5.3 rewritten for consistency after LOC set policy. The earlier text said there was no unconditional expiry and then told consumers to finalize on expiry and re-encumber after a governance increase; those cannot both hold, and re-encumbrance is not implementable — finalized credit may already be spent. Replaced with four terminal outcomes (settle / unresolved / conservative full charge at an operational deadline / non-admission as audit evidence) and an explicit statement that automatic refund is unavailable. Records that `Livepeer-Request-Id` is not bound into `payment_bytes`, so a non-admission tombstone does not retire the envelope. Names the two protocol changes that would create refund authority. Adds `ticket_validity_period_observed_at` so a cached value is not mistaken for a current one. |
 | 1.0.11-draft | 2026-08-21 | §5.3 corrected: expiry is CONDITIONAL, not unconditional. The TicketBroker evaluates `creationRound + ticketValidityPeriod > currRound` against current storage and keeps round block hashes permanently, so raising the governance parameter extends issued tickets and can revive lapsed ones. Payers now publish `ticket_validity_period` alongside the deadline so a consumer can detect the change, and `expires_after_round` is corrected to the last redeemable round (`creation_round + period - 1`) to match the contract's boundary rather than sitting one round beyond it. §5.3.1: `coverage_started_at` is described accurately as an attributable assertion — it detects a wiped store, not a restored backup. All raised by LOC. |

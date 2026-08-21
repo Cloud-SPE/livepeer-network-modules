@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
@@ -84,5 +88,85 @@ func TestSeedChainRejectsIncompleteEntries(t *testing.T) {
 func TestSeedChainMissingFileIsAnError(t *testing.T) {
 	if err := seedChain(chain.NewInMemory(""), "/nonexistent/seed.yaml"); err == nil {
 		t.Fatal("expected an error for a missing seed file")
+	}
+}
+
+// --dev used to force discovery=overlay-only unconditionally, and
+// validation refuses --chain-seed alongside overlay-only — so the
+// documented seed invocation could not start at all. The two rules were
+// each correct and jointly fatal, which is the kind of thing only an
+// end-to-end start catches.
+func TestParseFlags_ChainSeedKeepsChainDiscovery(t *testing.T) {
+	seed := writeSeed(t, `
+seed:
+  - eth_address: "0xabc0000000000000000000000000000000000000"
+    service_uri: "http://127.0.0.1:9099/.well-known/livepeer-registry.json"
+`)
+	cfg, _, err := parseFlags([]string{"--mode=resolver", "--dev", "--chain-seed=" + seed})
+	if err != nil {
+		t.Fatalf("the documented seed invocation does not parse: %v", err)
+	}
+	if cfg.Discovery != config.DiscoveryChain {
+		t.Fatalf("discovery = %q; want %q — a seed is read through the chain provider, and "+
+			"overlay-only never reads it", cfg.Discovery, config.DiscoveryChain)
+	}
+	if cfg.ChainSeedPath != seed {
+		t.Fatalf("chain seed path = %q; want %q", cfg.ChainSeedPath, seed)
+	}
+}
+
+// Without a seed, --dev still means overlay-only.
+func TestParseFlags_DevWithoutSeedStaysOverlayOnly(t *testing.T) {
+	cfg, _, err := parseFlags([]string{"--mode=resolver", "--dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Discovery != config.DiscoveryOverlayOnly {
+		t.Fatalf("discovery = %q; want %q for plain --dev", cfg.Discovery, config.DiscoveryOverlayOnly)
+	}
+}
+
+// An explicit contradiction is still refused: overlay-only never reads
+// the chain, so the seed would be silently ignored.
+func TestParseFlags_ChainSeedWithExplicitOverlayOnlyRefused(t *testing.T) {
+	seed := writeSeed(t, `
+seed:
+  - eth_address: "0xabc0000000000000000000000000000000000000"
+    service_uri: "http://127.0.0.1:9099/m.json"
+`)
+	if _, _, err := parseFlags([]string{
+		"--mode=resolver", "--dev", "--discovery=overlay-only", "--chain-seed=" + seed,
+	}); err == nil {
+		t.Fatal("expected --chain-seed with an explicit --discovery=overlay-only to be refused")
+	}
+}
+
+// The daemon must actually START on the documented invocation. The unit
+// tests above would all have passed while the binary refused to boot.
+func TestRun_ChainSeedResolverStartsAndStops(t *testing.T) {
+	seed := writeSeed(t, `
+seed:
+  - eth_address: "0xabc0000000000000000000000000000000000000"
+    service_uri: "http://127.0.0.1:9099/.well-known/livepeer-registry.json"
+`)
+	sock := filepath.Join(t.TempDir(), "registry.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	err := run(ctx, []string{"--mode=resolver", "--dev", "--chain-seed=" + seed, "--socket=" + sock})
+	if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("the documented seed invocation does not start: %v", err)
+	}
+}
+
+// A malformed seed must fail the daemon at boot rather than starting a
+// resolver that silently resolves nothing.
+func TestRun_ChainSeedMalformedFailsBoot(t *testing.T) {
+	seed := writeSeed(t, "seed:\n  - eth_address: \"not-an-address\"\n    service_uri: \"http://x/m.json\"\n")
+	sock := filepath.Join(t.TempDir(), "registry.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	err := run(ctx, []string{"--mode=resolver", "--dev", "--chain-seed=" + seed, "--socket=" + sock})
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a malformed seed started the daemon anyway (err=%v)", err)
 	}
 }

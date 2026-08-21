@@ -603,3 +603,40 @@ func TestSessionOpenRefusesDuplicateGatewaySessionID(t *testing.T) {
 		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrGatewaySessionIDReuse)
 	}
 }
+
+// An omitted gateway_session_id must be refused, not accepted.
+//
+// The meeting team's client omitted it from the first day and nothing
+// anywhere complained: sessions opened, work was served, and every
+// settlement carried an empty value for the only identifier its consumer
+// issues itself. Uniqueness was enforced only when the field was
+// present, so the empty case reached — silently — exactly the failure
+// the uniqueness rule exists to prevent.
+func TestSessionOpenRequiresGatewaySessionID(t *testing.T) {
+	srv, _ := newSessionTestServer(t)
+
+	for _, tc := range []struct{ name, body string }{
+		{"omitted", `{"session_params":{}}`},
+		{"empty", `{"gateway_session_id":"","session_params":{}}`},
+		{"whitespace", `{"gateway_session_id":"   ","session_params":{}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/session", strings.NewReader(tc.body))
+			req.Header.Set(livepeerheader.Capability, "livepeer:meet/sfu-room")
+			req.Header.Set(livepeerheader.Offering, "default")
+			req.Header.Set(livepeerheader.Protocol, "paid-session/v1")
+			req.Header.Set(livepeerheader.RequestID, "gws-required-"+tc.name)
+			req.Header.Set(livepeerheader.Payment,
+				base64.StdEncoding.EncodeToString([]byte("stub-payment")))
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("open without a gateway_session_id = %d; want 400 — accepting it "+
+					"produces a settlement its consumer can never resolve", resp.StatusCode)
+			}
+		})
+	}
+}

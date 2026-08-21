@@ -351,7 +351,7 @@ func seedChain(mem *chain.InMemory, path string) error {
 	if path == "" {
 		return nil
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied path, same as --static-overlay
 	if err != nil {
 		return fmt.Errorf("read %s: %w", path, err)
 	}

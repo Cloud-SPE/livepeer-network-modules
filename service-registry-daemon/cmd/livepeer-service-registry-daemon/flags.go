@@ -69,7 +69,13 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	cfg.KeystorePassword = readPassword(*keystorePasswordFile)
 
 	// Dev mode forces overlay-only discovery — no real chain to walk.
-	if cfg.Dev {
+	//
+	// Unless a seed supplies one. --chain-seed exists precisely so a
+	// chain-free run can resolve through the SIGNED manifest path, which
+	// requires reading the (in-memory) chain; forcing overlay-only there
+	// makes the daemon reject its own documented invocation, because
+	// overlay-only never reads the chain and validation says so.
+	if cfg.Dev && cfg.ChainSeedPath == "" {
 		cfg.Discovery = config.DiscoveryOverlayOnly
 	}
 

@@ -175,6 +175,23 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An omitted gateway_session_id reaches the same failure as a
+	// colliding one, by the other road: the session opens, work is
+	// served, and the settlement carries an empty value for the only
+	// key its consumer issued itself — a record that can never be bound
+	// to the session it is evidence for.
+	//
+	// It was refused only when it collided, so a client that never sent
+	// the field at all got no signal from anywhere. Two such clients are
+	// not even detected as colliding: the broker retains two
+	// unresolvable records instead of refusing one open.
+	if strings.TrimSpace(body.GatewaySessionID) == "" {
+		livepeerheader.WriteBadRequest(w,
+			"gateway_session_id is required: it is the only settlement identifier you issue "+
+				"yourself, and without it the signed record cannot be bound to your session")
+		return
+	}
+
 	res, err := s.sessionEngine.Open(r.Context(), sessionengine.OpenRequest{
 		RequestID:        r.Header.Get(livepeerheader.RequestID),
 		GatewaySessionID: body.GatewaySessionID,

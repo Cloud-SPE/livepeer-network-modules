@@ -351,11 +351,7 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 
 	keys := make([]SettlementKey, 0, len(sm.Manifest.SettlementKeys))
 	for _, k := range sm.Manifest.SettlementKeys {
-		keys = append(keys, SettlementKey{
-			PublicKey: k.PublicKey,
-			NotBefore: k.NotBefore,
-			ExpiresAt: k.ExpiresAt,
-		})
+		keys = append(keys, SettlementKey(k))
 	}
 	// Newest first, so a consumer taking the head gets the signer for
 	// records emitted now.

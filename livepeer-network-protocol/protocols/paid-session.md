@@ -1,6 +1,6 @@
 ---
 spec_name: paid-session
-version: 1.0.8-draft
+version: 1.0.9-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -238,6 +238,21 @@ The rotation retires the identity for **future** work only. Tickets already
 minted against the old rand remain valid for redemption; a rotation MUST NOT
 be used to repudiate them.
 
+**A gateway needs no rotation notice to rebind.** The predecessor to
+declare is the last `work_id` the gateway held for the session, which is
+by definition the identity the broker still has recorded — the rotation
+happened payee-side and the broker learns of it from the same refusal the
+gateway did. A gateway that lost its own state reads it back from
+`GET /v1/session/{id}`, which returns the session's current `work_id`.
+
+So `session.rebound` and the §8 socket are an optimisation, not a
+precondition: a gateway that drives sessions over HTTP and polls status
+has everything the rebind requires. This is stated because the natural
+reading of the paragraph below — that a session "moves to the rotated
+identity on a top-up that declares its predecessor" — is that you must
+have been *told* about the rotation first, and the only place you are
+told is a channel not every consumer holds.
+
 **The rebind.** A session moves to the rotated identity on an ordinary
 top-up that **declares** its predecessor (`Livepeer-Rebind-From`, or
 `rebind_from` in the §8 control frame). It is a declaration, never an
@@ -295,6 +310,15 @@ MUST NOT be surfaced as a session lifecycle event. It MUST appear in the
 session's settlement record with the stable `session_id`,
 `rotation_generation`, `predecessor_work_id`, the current `work_id`, and
 cumulative continuity across generations.
+
+`gateway_session_id` is REQUIRED on open. A broker MUST refuse an open
+that omits it, or sends it empty, with `invalid_request` (400) — the same
+failure a colliding one produces, reached by the other road. Enforcing
+uniqueness only when the field is present lets a client that never sends
+it open sessions indefinitely and receive settlements carrying an empty
+value for the one identifier their consumer issued itself. Two such
+clients do not even collide: the broker retains two unresolvable records
+rather than refusing one open.
 
 A session settlement MUST also carry `gateway_session_id`. It is the only
 identifier in the record that its consumer issued itself: `session_id` is
@@ -715,6 +739,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.9-draft | 2026-08-21 | §3.3.1: `gateway_session_id` is REQUIRED on open and an omitted or empty one MUST be refused with `invalid_request` — uniqueness was enforced only when the field was present, so a client that never sent it opened sessions indefinitely and got settlements nobody could resolve, with no signal at any point. Also states that a gateway needs no rotation notice to rebind: the predecessor is the last `work_id` it held, readable from `GET /v1/session/{id}`, so the §8 socket is an optimisation and not a precondition. Both raised by the meeting team. |
 | 1.0.8-draft | 2026-08-21 | §3.3.1: `GET /v1/settlement/{id}` MUST resolve `gateway_session_id`, not merely echo it — it is the only lookup key a clearinghouse issues itself. Brokers MUST keep it unique across retained sessions (`gateway_session_id_reuse`, 409), and a query matching several sessions MUST answer `ambiguous_identifier` (409) instead of returning one of them. LOC could reject a wrong-session record but had no key that would find the right one; the reference broker's `work_id` lookup returned whichever session sorted last. |
 | 1.0.7-draft | 2026-08-21 | §3.3.1: a payee that has rotated away from a `work_id` MUST refuse payments arriving on it — before validating any ticket, crediting nothing, queueing no winner — and report an invalid recipient rand so `recipient_rotated` is raised. The spec mandated the signal but never the refusal that produces it, and the reference receiver credited those payments while every debit against the closed session failed: real value in, no work ever billable out, and a winning ticket redeemable on chain against a session the payer could not draw on. Also states that rotation retires an identity for future work only and MUST NOT be used to repudiate tickets already minted. Found on Arbitrum One. |
 | 1.0.6-draft | 2026-08-20 | §3.1: an open replay now returns the **usable** recorded outcome — credential and grants re-delivered — under four conditions (same request id, identical open fingerprint including the payment envelope, same payer proven by that envelope, exact recorded outcome). Reverses exactly-once secret delivery: a lost open response otherwise left a funded session nobody could drive. Adds the fingerprint requirement, so a reused id with different content is `request_id_reuse` rather than somebody else's session, and requires replay secrets encrypted at rest and destroyed at winddown. |

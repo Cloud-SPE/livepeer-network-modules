@@ -4,7 +4,10 @@
 // entire day-to-day surface.
 package config
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Config is the top-level host-config.yaml schema.
 type Config struct {
@@ -33,6 +36,26 @@ type Config struct {
 type SessionStore struct {
 	Path           string `yaml:"path,omitempty"`
 	SealingKeyFile string `yaml:"sealing_key_file,omitempty"`
+	// JobRetention is how long a terminal paid-job record is kept.
+	//
+	// It bounds two different things and the larger one governs. The
+	// first is the idempotency window — how late a retry can still
+	// converge on the recorded outcome. The second is how long the
+	// broker can answer "was this exchange ever admitted", which a
+	// clearinghouse needs to resolve an encumbrance held against a
+	// payment envelope that may never have been used.
+	//
+	// The second window opens when the envelope EXPIRES, because before
+	// then the envelope is still spendable and the question is
+	// premature. So retention shorter than the expiry window deletes the
+	// evidence before anybody is able to ask for it. Expiry is
+	// creation_round + 2, which on Arbitrum's ~19h rounds is roughly
+	// 38–57 hours depending on where in a round the mint landed — so a
+	// 24h default, which is what this was, guaranteed the record was
+	// gone first.
+	//
+	// Zero means the default below.
+	JobRetention time.Duration `yaml:"job_retention,omitempty"`
 }
 
 // Identity carries the orch's chain identity. Must be present.

@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.8-draft
+version: 1.0.9-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -319,6 +319,63 @@ it either way, so the field is always populated — it binds to the caller's
 own record only when the caller chose it, which is the caller's decision to
 make.
 
+### 5.3 Encumbrance on an envelope that may never have been used
+
+A consumer that reserves funds against a payment envelope needs to know
+when it can stop holding them. Two questions look alike and are not:
+
+1. **Can this envelope still be spent?** Answerable, unconditionally, by
+   expiry. A ticket is redeemable only while its creation round's block
+   hash is available, so past `creation_round + validity_window` the
+   chain refuses it. A payer daemon reports both
+   `expires_after_round` (at mint) and `current_round` (from the same
+   clock), and the rule is:
+
+   ```
+   no longer spendable  iff  current_round > expires_after_round
+   ```
+
+   Equality stays encumbered: a ticket minted in round R is redeemable
+   **through** R+window inclusive. A missing, zero, or regressing
+   `current_round` also stays encumbered — a stale clock can only make an
+   expired envelope look live, never the reverse.
+
+2. **Was this envelope ever used?** **Expiry does not answer this**, and
+   the difference is the whole of §5.3.
+
+A customer can submit the envelope, receive work, withhold the job id and
+signed settlement from its clearinghouse, wait for expiry, and ask for
+the encumbrance back. The exchange happened; the clearinghouse has no
+record of it; and the chain shows nothing, because a losing ticket is
+never redeemed on-chain and most tickets lose. Chain state cannot
+distinguish "never used" from "used and hidden".
+
+So the protocol distinguishes two outcomes, and implementations MUST NOT
+conflate them:
+
+- **Finalize.** The encumbrance stops being pending and becomes a
+  settled charge. Expiry alone is sufficient, because the question it
+  answers — "can more value still move?" — is the only one finalization
+  depends on.
+- **Refund.** Value returns to the customer. Expiry is **NOT** sufficient.
+  A refund requires positive evidence that no exchange occurred, and that
+  evidence can only come from the party that would have served it.
+
+A consumer MUST NOT refund on expiry alone, on a caller's assertion, on a
+broker's refusal — a broker that received the envelope can retain it and
+submit it later, so its refusal describes its own intentions and not the
+outcome — or on a non-use attestation relayed by the party that would
+benefit from it.
+
+**What a broker owes.** A broker MUST retain terminal exchange records
+long enough to answer "was this request id ever admitted" for the whole
+period an envelope minted against it could still be disputed. That period
+begins at **expiry**, not at the exchange, because before expiry the
+question is premature. Retention shorter than the envelope's spendable
+life therefore deletes the evidence before anyone can ask for it — which
+the reference broker did, evicting at 24h against an expiry window of
+roughly 38–57 hours.
+
 ## 6. What the broker never does
 
 - Hold job state past the idempotency window — there is no job resource to
@@ -350,6 +407,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.9-draft | 2026-08-21 | Add §5.3, encumbrance on an envelope that may never have been used. Separates FINALIZE (expiry is sufficient) from REFUND (it is not): a customer can submit an envelope, take the work, withhold the job id and settlement, wait for expiry and ask for the money back, and chain state cannot tell that apart from non-use because a losing ticket is never redeemed. Requires brokers to retain exchange records past the envelope's spendable life — the dispute window opens AT expiry, and the reference broker evicted at 24h against a 38–57h expiry, deleting the evidence before it could be asked for. Raised by LOC. |
 | 1.0.8-draft | 2026-08-21 | §5.2 gains the debit-failure LIFECYCLE the OpenAI gateway team asked for: `202 accounting_pending` while a bounded, idempotent retry is active, a signed terminal settlement when the debit lands, and terminal `DEBIT_FAILED` only on retry exhaustion. Retry MUST reuse the original `debit_seq`, and a broker MUST NOT close a payee session while a debit against it is outstanding — a closed session refuses debits, so closing guarantees the retry can never land. Replaces settle-on-first-failure, which reported a recoverable timeout as a permanent loss. |
 | 1.0.7-draft | 2026-08-21 | Add §4.1, replay semantics, and §5.2, the debit-failure rule. A replay returns the ACCOUNTING outcome and not the backend body — reproducing the body would make every broker a customer-data store — and the caller's loss is stated plainly rather than left implicit. A failed final debit MUST NOT be reported as a settled exchange: `debited_units` attests what the ledger took and the record carries `DEBIT_FAILED`. Both raised by the OpenAI gateway team. |
 | 1.0.6-draft | 2026-08-21 | §3.2: a broker MUST NOT advertise a trailer on a response that cannot carry one, and MAY advertise `Livepeer-Settlement` on `stream`. The reference broker declared the settlement trailer on every exchange including Content-Length delimited unary ones, where the transport drops it silently — nothing asserted it, so a client waiting on the advertised name waited forever. |

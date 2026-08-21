@@ -233,6 +233,17 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("session engine: %w", err)
 	}
 
+	// Retention shorter than a payment envelope's life deletes the
+	// broker's record of an exchange before a clearinghouse is able to
+	// ask whether it happened — that question is only asked once the
+	// envelope has expired, which is later than this.
+	if r := s.jobRetention(); r < minEvidenceRetention {
+		log.Printf("warning: session_store.job_retention is %s, shorter than the %s a payment "+
+			"envelope can stay spendable; a consumer holding an encumbrance will find the "+
+			"exchange record already evicted when it asks whether the envelope was ever used",
+			r, minEvidenceRetention)
+	}
+
 	s.registerRoutes()
 	if s.sessionEngine != nil {
 		s.registerSessionRoutes()
@@ -416,7 +427,7 @@ func (s *Server) Run(ctx context.Context) error {
 				case <-ctx.Done():
 					return
 				case <-t.C:
-					cutoff := time.Now().Add(-jobRetention)
+					cutoff := time.Now().Add(-s.jobRetention())
 					if n, err := s.sessionStore.EvictJobs(cutoff); err == nil && n > 0 {
 						log.Printf("evicted %d job idempotency records", n)
 					}

@@ -38,8 +38,24 @@ const (
 	// jobInFlightTTL bounds how long a crashed exchange blocks its
 	// request id before retries treat it as a failed terminal.
 	jobInFlightTTL = 10 * time.Minute
-	// jobRetention is the default idempotency window (paid-job §4).
-	jobRetention = 24 * time.Hour
+	// defaultJobRetention is the default retention for terminal job
+	// records.
+	//
+	// It is NOT just the idempotency window (paid-job §4). It is also
+	// how long the broker can answer "was this exchange ever admitted",
+	// which is the only evidence that can distinguish a payment envelope
+	// that went unused from one that bought work and was then hidden.
+	//
+	// That question is asked after the envelope EXPIRES — before then it
+	// is still spendable and the question is premature — so retention
+	// has to outlast expiry or the record is gone before anyone can ask.
+	// Expiry is creation_round + 2, which on ~19h rounds is roughly
+	// 38–57 hours depending on where in a round the mint landed. The old
+	// 24h default guaranteed the record was deleted first.
+	//
+	// 72h covers the worst case with margin. Operators whose consumers
+	// need a longer dispute window raise session_store.job_retention.
+	defaultJobRetention = 72 * time.Hour
 	// maxJobBodyBytes bounds buffered request/response bodies.
 	maxJobBodyBytes = 64 << 20 // 64 MiB
 )
@@ -627,3 +643,23 @@ func isHopByHop(k string) bool {
 	}
 	return false
 }
+
+// jobRetention returns the configured retention, or the default.
+//
+// See defaultJobRetention for why this outlasts the payment envelope's
+// expiry rather than just the idempotency window.
+func (s *Server) jobRetention() time.Duration {
+	if s.cfg != nil && s.cfg.SessionStore.JobRetention > 0 {
+		return s.cfg.SessionStore.JobRetention
+	}
+	return defaultJobRetention
+}
+
+// minEvidenceRetention is the shortest retention that can still answer
+// "was this exchange ever admitted" for an expired envelope.
+//
+// An envelope expires at creation_round + 2. On ~19h rounds the worst
+// case — minted at the very start of a round — is just under three
+// rounds of wall clock, so anything below this can evict the record
+// before the question becomes askable.
+const minEvidenceRetention = 60 * time.Hour

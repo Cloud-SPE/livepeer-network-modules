@@ -170,3 +170,12 @@ func TestRun_ChainSeedMalformedFailsBoot(t *testing.T) {
 		t.Fatalf("a malformed seed started the daemon anyway (err=%v)", err)
 	}
 }
+
+// The shipped example must actually load. A seed example that drifts
+// from the parser is worse than none: it is the first thing an operator
+// copies, and it fails at their boot rather than at ours.
+func TestSeedChainShippedExampleLoads(t *testing.T) {
+	if err := seedChain(chain.NewInMemory(""), "../../examples/chain-seed/seed.example.yaml"); err != nil {
+		t.Fatalf("the shipped seed example does not load: %v", err)
+	}
+}

@@ -1,6 +1,6 @@
 ---
 spec_name: paid-session
-version: 1.0.9-draft
+version: 1.0.10-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -310,6 +310,19 @@ MUST NOT be surfaced as a session lifecycle event. It MUST appear in the
 session's settlement record with the stable `session_id`,
 `rotation_generation`, `predecessor_work_id`, the current `work_id`, and
 cumulative continuity across generations.
+
+`gateway_session_id` MUST be globally unique across a broker's retained
+sessions — not per-payer. A consumer looking a settlement up holds only
+the id it issued, so scoping uniqueness to a tenant would require it to
+supply a second key it has no reason to hold, and would couple the broker
+to a tenant model it otherwise has none of.
+
+A producer MUST generate it with at least 96 bits of CSPRNG entropy; a
+UUIDv4 satisfies this. The broker cannot verify entropy from a value and
+does not try — this is collision and enumeration resistance, **not
+authentication**. Possession of the id is not authority over the session;
+it is only what makes the settlement query usable and its keyspace
+impractical to walk.
 
 `gateway_session_id` is REQUIRED on open. A broker MUST refuse an open
 that omits it, or sends it empty, with `invalid_request` (400) — the same
@@ -739,6 +752,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.10-draft | 2026-08-21 | §3.3.1: state that `gateway_session_id` uniqueness is GLOBAL across a broker's retained sessions rather than per-payer, and that a producer MUST generate it with at least 96 bits of CSPRNG entropy (UUIDv4 qualifies). The broker cannot verify entropy and does not try: this is collision and enumeration resistance, not authentication. Confirmed with LOC. |
 | 1.0.9-draft | 2026-08-21 | §3.3.1: `gateway_session_id` is REQUIRED on open and an omitted or empty one MUST be refused with `invalid_request` — uniqueness was enforced only when the field was present, so a client that never sent it opened sessions indefinitely and got settlements nobody could resolve, with no signal at any point. Also states that a gateway needs no rotation notice to rebind: the predecessor is the last `work_id` it held, readable from `GET /v1/session/{id}`, so the §8 socket is an optimisation and not a precondition. Both raised by the meeting team. |
 | 1.0.8-draft | 2026-08-21 | §3.3.1: `GET /v1/settlement/{id}` MUST resolve `gateway_session_id`, not merely echo it — it is the only lookup key a clearinghouse issues itself. Brokers MUST keep it unique across retained sessions (`gateway_session_id_reuse`, 409), and a query matching several sessions MUST answer `ambiguous_identifier` (409) instead of returning one of them. LOC could reject a wrong-session record but had no key that would find the right one; the reference broker's `work_id` lookup returned whichever session sorted last. |
 | 1.0.7-draft | 2026-08-21 | §3.3.1: a payee that has rotated away from a `work_id` MUST refuse payments arriving on it — before validating any ticket, crediting nothing, queueing no winner — and report an invalid recipient rand so `recipient_rotated` is raised. The spec mandated the signal but never the refusal that produces it, and the reference receiver credited those payments while every debit against the closed session failed: real value in, no work ever billable out, and a winning ticket redeemable on chain against a session the payer could not draw on. Also states that rotation retires an identity for future work only and MUST NOT be used to repudiate tickets already minted. Found on Arbitrum One. |

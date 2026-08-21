@@ -324,10 +324,20 @@ func (s *Server) handleSettlement(w http.ResponseWriter, r *http.Request) {
 		writeUniformUnauthorized(w)
 		return
 	}
-	if !s.authorizedForSession(r, rec) {
-		writeUniformUnauthorized(w)
-		return
-	}
+	// Authorization is possession of the id, not the session credential.
+	//
+	// The direct query exists so a clearinghouse can read a settlement
+	// WITHOUT it crossing the customer's SDK. A clearinghouse is not the
+	// gateway and does not hold the gateway's credential, so requiring
+	// it would defeat the reason the surface exists — and it would differ
+	// from the paid-job side, where possession of the broker-minted job
+	// id is the bar.
+	//
+	// The id is broker-minted and unguessable, and the record's
+	// integrity comes from its signature rather than from this channel,
+	// so possession is the same bar the job path already sets. An
+	// operator wanting caller authentication puts mTLS in front; the
+	// contract does not change.
 	spec := s.specForRecord(rec)
 	if spec == nil {
 		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
@@ -515,16 +525,6 @@ func (s *Server) authSession(w http.ResponseWriter, r *http.Request) (*sessionst
 		return nil, false
 	}
 	return rec, true
-}
-
-// authorizedForSession checks the session credential without writing a
-// response, for handlers that resolve their record before authorising.
-func (s *Server) authorizedForSession(r *http.Request, rec *sessionstore.Record) bool {
-	if s.sessionEngine == nil || rec == nil {
-		return false
-	}
-	cred, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	return cred != "" && sessionstore.VerifySecret(rec.CredentialHash, cred)
 }
 
 func writeUniformUnauthorized(w http.ResponseWriter) {

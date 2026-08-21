@@ -49,6 +49,13 @@ func startFakeRunner(bind string) (*fakeRunner, error) {
 			           "secret":"probe-grant-secret","expires_at":"2030-01-01T00:00:00Z"}]
 		}}`, req.SessionID, f.url)
 	})
+	// The broker health-probes the backend's base URL. Without this the
+	// runner answers 404 there and the offering never leaves "degraded",
+	// which looks like a payment defect and is not one.
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	mux.HandleFunc("GET /sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"runner_session_id":%q,"state":"active"}`, r.PathValue("id"))
 	})

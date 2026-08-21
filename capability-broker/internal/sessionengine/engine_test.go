@@ -1294,3 +1294,49 @@ func TestSettlementSeqIsPerSession(t *testing.T) {
 		t.Fatal("test did not actually rotate")
 	}
 }
+
+// TestTwoSessionsOnOneIdentityBothBill: a gateway minting twice from one
+// ticket session gives two sessions the same work_id. The first to end
+// used to close the shared payee session, and the second then failed
+// every debit with "session is closed" — crediting fine and billing
+// nothing. Found on mainnet by opening a second session after the first
+// had ended.
+func TestTwoSessionsOnOneIdentityBothBill(t *testing.T) {
+	h := newHarness(t)
+	shared := rotatedPayment(t, "shared-ticket-session-rand-000000")
+
+	openOne := func(reqID, gwID string) *OpenResult {
+		t.Helper()
+		res, err := h.engine.Open(context.Background(), OpenRequest{
+			RequestID: reqID, GatewaySessionID: gwID,
+			SessionParams: json.RawMessage(`{}`),
+			PaymentBytes:  shared, Spec: h.spec,
+		})
+		if err != nil {
+			t.Fatalf("open %s: %v", reqID, err)
+		}
+		return res
+	}
+
+	first := openOne("req-a", "gws-a")
+	if _, err := h.engine.End(context.Background(), first.SessionID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if h.pay.closed != 0 {
+		t.Fatal("ending a session closed a payment identity other sessions may hold")
+	}
+
+	// A second session on the same identity must still bill.
+	second := openOne("req-b", "gws-b")
+	if second.WorkID != first.WorkID {
+		t.Fatalf("test premise wrong: %q vs %q", second.WorkID, first.WorkID)
+	}
+	before := h.pay.totalDebited()
+	if _, err := h.engine.ProcessEvent(context.Background(), second.SessionID,
+		usageEvent("ev-1", 1, 25)); err != nil {
+		t.Fatalf("usage on the second session: %v", err)
+	}
+	if got := h.pay.totalDebited(); got == before {
+		t.Fatal("the second session on a shared identity billed nothing")
+	}
+}

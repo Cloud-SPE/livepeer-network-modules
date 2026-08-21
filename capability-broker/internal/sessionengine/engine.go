@@ -264,8 +264,8 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	// a rand the sender never saw, so nothing it pays with can validate.
 	// Stub payments carry no ticket params; the request id stands in,
 	// exactly as the job path does.
-	workID, ok := payment.DerivePayeeWorkID(req.PaymentBytes)
-	if !ok {
+	workID, sharedIdentity := payment.DerivePayeeWorkID(req.PaymentBytes)
+	if !sharedIdentity {
 		workID = req.RequestID
 	}
 	credential, err := randomSecret("sc_")
@@ -300,7 +300,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	// with no funded runway that dies at the first lease check, which
 	// reads as a broker fault rather than the payment fault it is.
 	if err := rejectionErr(payRes); err != nil {
-		_ = e.cfg.Payment.CloseSession(ctx, payRes.Sender, workID)
+		_ = e.closePayeeSession(ctx, sharedIdentity, payRes.Sender, workID)
 		e.release(req.CapacityRef)
 		return nil, err
 	}
@@ -310,7 +310,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		if runnerSessionID != "" {
 			_ = e.runnerFor(req.Spec.BackendRef).TerminateSession(ctx, runnerSessionID, ReasonOpenFailed)
 		}
-		_ = e.cfg.Payment.CloseSession(ctx, sender, workID)
+		_ = e.closePayeeSession(ctx, sharedIdentity, sender, workID)
 		e.release(req.CapacityRef)
 		return fmt.Errorf("sessionengine: open failed at %s (failed closed): %w", stage, cause)
 	}
@@ -335,35 +335,36 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	lease := e.leaseFrom(ctx, now, sender, workID, req.Spec)
 
 	rec := &sessionstore.Record{
-		SessionID:           sessionID,
-		GatewaySessionID:    req.GatewaySessionID,
-		RunnerSessionID:     created.RunnerSessionID,
-		WorkID:              workID,
-		Capability:          req.Spec.Capability,
-		Offering:            req.Spec.Offering,
-		BackendRef:          req.Spec.BackendRef,
-		Sender:              sender,
-		CredentialHash:      sessionstore.HashSecret(credential),
-		CallbackTokenHash:   sessionstore.HashSecret(callbackToken),
-		OpenFingerprint:     fingerprint,
-		ReplayMaterial:      sealedReplayMaterial(credential, desc.Grants),
-		FundedWei:           creditedString(payRes),
-		GenerationFundedWei: creditedString(payRes),
-		DescriptorSchema:    desc.Schema,
-		DescriptorPublic:    desc.Public,
-		DescriptorPrivate:   desc.Private,
-		Grants:              auditGrants(desc.Grants),
-		Unit:                req.Spec.WorkUnit,
-		LeaseExpiresAt:      lease,
-		LastEventAt:         now,
-		State:               sessionstore.StateActive,
-		CapacityRef:         req.CapacityRef,
+		SessionID:             sessionID,
+		GatewaySessionID:      req.GatewaySessionID,
+		RunnerSessionID:       created.RunnerSessionID,
+		WorkID:                workID,
+		Capability:            req.Spec.Capability,
+		Offering:              req.Spec.Offering,
+		BackendRef:            req.Spec.BackendRef,
+		Sender:                sender,
+		CredentialHash:        sessionstore.HashSecret(credential),
+		CallbackTokenHash:     sessionstore.HashSecret(callbackToken),
+		OpenFingerprint:       fingerprint,
+		SharedPaymentIdentity: sharedIdentity,
+		ReplayMaterial:        sealedReplayMaterial(credential, desc.Grants),
+		FundedWei:             creditedString(payRes),
+		GenerationFundedWei:   creditedString(payRes),
+		DescriptorSchema:      desc.Schema,
+		DescriptorPublic:      desc.Public,
+		DescriptorPrivate:     desc.Private,
+		Grants:                auditGrants(desc.Grants),
+		Unit:                  req.Spec.WorkUnit,
+		LeaseExpiresAt:        lease,
+		LastEventAt:           now,
+		State:                 sessionstore.StateActive,
+		CapacityRef:           req.CapacityRef,
 	}
 	if err := e.cfg.Store.CreateIndexed(rec, req.RequestID); err != nil {
 		if errors.Is(err, sessionstore.ErrExists) {
 			// Concurrent open with the same request id won; converge.
 			_ = e.runnerFor(req.Spec.BackendRef).TerminateSession(ctx, created.RunnerSessionID, ReasonOpenFailed)
-			_ = e.cfg.Payment.CloseSession(ctx, sender, workID)
+			_ = e.closePayeeSession(ctx, sharedIdentity, sender, workID)
 			e.release(req.CapacityRef)
 			if id, lerr := e.cfg.Store.SessionIDForRequest(req.RequestID); lerr == nil {
 				return e.replayOpen(id, fingerprint)
@@ -686,6 +687,22 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 	return out, nil
 }
 
+// closePayeeSession closes a payee session ONLY when this broker
+// exclusively owns it.
+//
+// A payment-derived work_id is the payee's ticket-session rand hash,
+// shared by every session and job minted against that ticket session.
+// Closing it strands the others — they credit fine and then fail every
+// debit with "session is closed" — and forfeits residual credit that is
+// not this session's to forfeit. A shared identity is closed by the
+// payee's own lifecycle, which is where that decision belongs.
+func (e *Engine) closePayeeSession(ctx context.Context, shared bool, sender []byte, workID string) error {
+	if shared {
+		return nil
+	}
+	return e.cfg.Payment.CloseSession(ctx, sender, workID)
+}
+
 // rejectionErr converts an all-rejected ticket batch into a protocol
 // error. A partially-rejected batch still credits something and is left
 // alone: the balance it produced is the honest one, and the session's
@@ -922,20 +939,20 @@ func (e *Engine) rebindLocked(ctx context.Context, rec *sessionstore.Record, spe
 		PaymentBytes: paymentBytes,
 	})
 	if err != nil {
-		_ = e.cfg.Payment.CloseSession(ctx, rec.Sender, newWorkID)
+		_ = e.closePayeeSession(ctx, rec.SharedPaymentIdentity, rec.Sender, newWorkID)
 		return nil, protoErr("payment_invalid", "rebind payment rejected: %v", err)
 	}
 	// Guard 2. An all-rejected batch proves nothing about the successor,
 	// so the session stays where it is rather than moving onto an
 	// identity that may not exist.
 	if rejErr := rejectionErr(res); rejErr != nil {
-		_ = e.cfg.Payment.CloseSession(ctx, rec.Sender, newWorkID)
+		_ = e.closePayeeSession(ctx, rec.SharedPaymentIdentity, rec.Sender, newWorkID)
 		return nil, protoErr("rebind_refused",
 			"successor identity did not credit: %v", rejErr)
 	}
 	// Guard 3.
 	if !bytesEqual(res.Sender, rec.Sender) {
-		_ = e.cfg.Payment.CloseSession(ctx, res.Sender, newWorkID)
+		_ = e.closePayeeSession(ctx, rec.SharedPaymentIdentity, res.Sender, newWorkID)
 		return nil, protoErr("rebind_refused", "successor payment is from a different sender")
 	}
 
@@ -967,7 +984,7 @@ func (e *Engine) rebindLocked(ctx context.Context, rec *sessionstore.Record, spe
 	}); err != nil {
 		return nil, err
 	}
-	if err := e.cfg.Payment.CloseSession(ctx, rec.Sender, rebindFrom); err != nil {
+	if err := e.closePayeeSession(ctx, rec.SharedPaymentIdentity, rec.Sender, rebindFrom); err != nil {
 		e.cfg.Log.Warn("rebind: predecessor payee session left open",
 			"session", rec.SessionID, "predecessor_work_id", rebindFrom, "err", err)
 	}
@@ -1115,7 +1132,7 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 	}
 	paymentClosed := rec.PaymentClosed
 	if !paymentClosed {
-		if err := e.cfg.Payment.CloseSession(ctx, rec.Sender, rec.WorkID); err != nil {
+		if err := e.closePayeeSession(ctx, rec.SharedPaymentIdentity, rec.Sender, rec.WorkID); err != nil {
 			e.cfg.Log.Warn("payment close failed; will retry on sweep",
 				"session", sessionID, "err", err)
 		} else {

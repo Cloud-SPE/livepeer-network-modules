@@ -88,6 +88,13 @@ type Record struct {
 	// Payment.
 	Sender        []byte `json:"sender,omitempty"`
 	PaymentClosed bool   `json:"payment_closed"`
+	// SharedPaymentIdentity is true when work_id came from the payment
+	// (the payee's ticket-session rand hash), which many sessions and
+	// jobs can share. The broker MUST NOT close such a session: closing
+	// strands every other holder and forfeits credit that is not this
+	// session's to forfeit. False only for the stub fallback, where the
+	// identity belongs to this session alone.
+	SharedPaymentIdentity bool `json:"shared_payment_identity,omitempty"`
 
 	// Authentication material, hashed (never plaintext).
 	CredentialHash    []byte `json:"credential_hash"`

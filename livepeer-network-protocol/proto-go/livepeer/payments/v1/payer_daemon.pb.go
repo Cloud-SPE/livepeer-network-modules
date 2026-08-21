@@ -183,9 +183,14 @@ type CreatePaymentResponse struct {
 	// expires_after_round alone can be wrong about an envelope it already
 	// acted on.
 	//
-	// ticket_validity_period is published so a consumer can detect that:
-	// compare it against the chain's current value, and treat an increase
-	// as re-encumbering everything whose deadline it moved.
+	// ticket_validity_period is published so a consumer can DETECT that:
+	// compare it against the chain's current value and you can see that a
+	// deadline moved.
+	//
+	// Detect, not repair. Re-encumbering on an increase is not
+	// implementable — credit already finalized or returned may have been
+	// spent or withdrawn — so this is telemetry, and paid-job §5.3
+	// describes the terminal outcomes that actually govern.
 	//
 	// expires_after_round is the LAST round the envelope can still be
 	// redeemed in — creation_round + ticket_validity_period - 1 — so

@@ -213,9 +213,18 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 	// something it is at that moment running.
 	existing, err := s.sessionStore.RecordNonAdmission(requestID, encoded, time.Now().UTC())
 	if errors.Is(err, sessionstore.ErrExists) {
+		// Not a bare refusal. A consumer asking this is about to decide
+		// how much to charge, and answering only "no" sends it away to
+		// charge conservatively while this broker holds the settlement
+		// that says otherwise. Hand back the outcome instead.
+		if rec, rerr := s.jobIdem.ByRequestID(requestID); rerr == nil && rec != nil {
+			w.Header().Set(livepeerheader.Error, livepeerheader.ErrAdmitted)
+			s.writeExchangeState(w, rec)
+			return
+		}
 		livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted,
-			"this broker has a record for that request id; it was admitted, and its "+
-				"settlement is at /v1/settlement/{id}")
+			"this broker has a record for that request id; "+
+				"GET /v1/exchange/{request_id} returns its outcome")
 		return
 	}
 	if err != nil {

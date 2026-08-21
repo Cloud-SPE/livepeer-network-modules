@@ -25,6 +25,11 @@ func (s *Server) registerRoutes() {
 	// Evidence of ABSENCE, keyed on the id the consumer issued so it is
 	// retrievable without anything the customer holds.
 	s.mux.HandleFunc("POST /v1/non-admission/{request_id}", s.handleNonAdmission)
+	// What happened to this request, keyed on the id the consumer
+	// issued. Every other lookup here is keyed on something the customer
+	// holds, so a customer that withheld the settlement could force a
+	// conservative full charge the broker had evidence against.
+	s.mux.HandleFunc("GET /v1/exchange/{request_id}", s.handleExchangeByRequestID)
 	s.mux.HandleFunc("POST /v1/payment/ticket-params", ticketParamsHandler(s.payment))
 	s.mux.HandleFunc("GET /admin/v1/runtime", s.handleRuntimeStatus)
 	s.mux.HandleFunc("POST /admin/v1/runtime/reload", s.handleRuntimeReload)

@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.12-draft
+version: 1.0.13-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -453,6 +453,36 @@ NOT tolerable for telling a third party how long an envelope stays
 spendable. A payer MUST derive `expires_after_round` from the value read
 from the contract.
 
+#### 5.3.0 Recovering an outcome with only your own id
+
+Before applying the conservative charge above, a consumer MUST be able to
+find out what actually happened, using **only the `request_id` it
+issued**.
+
+`GET /v1/exchange/{request_id}` returns one of:
+
+| Outcome | Status | Carries |
+|---|---|---|
+| `SETTLED` | 200 | broker `job_id`, work units, and the original signed settlement |
+| `ACCOUNTING_PENDING` | 202 | `job_id` as a stable polling identity, plus the debit attempt count |
+| `IN_FLIGHT` | 202 | `job_id` and the exchange deadline |
+| `NOT_ADMITTED` | 200 | the signed non-admission record, if one was issued |
+| `NO_RECORD` | 404 | nothing — this broker has made no claim either way |
+
+Every other lookup a broker offers is keyed on something the **customer**
+holds: the broker job id, the session id, the payment identity. A
+customer that withheld the settlement withheld those too. Without a
+request-id lookup a broker could be sitting on a valid signed settlement
+while the consumer, unable to find it, charged the customer in full — the
+conservative outcome applied to a case that was never ambiguous.
+
+`NO_RECORD` and `NOT_ADMITTED` are deliberately distinct. The first means
+this broker has not been asked to attest; silence is not a claim.
+
+This surface is **not** refund authority and answers nothing about
+whether an envelope can still be spent. It reports what the broker did,
+which is the input to charging correctly rather than conservatively.
+
 #### 5.3.1 Non-admission evidence
 
 A broker MUST be able to state, in a signed record, that it never
@@ -532,6 +562,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.13-draft | 2026-08-21 | Add §5.3.0: `GET /v1/exchange/{request_id}` returns an exchange's outcome keyed on the id the CONSUMER issued — settled with the original signed settlement, accounting-pending or in-flight with a stable polling identity, a durable non-admission, or NO_RECORD. Every other lookup was keyed on something the customer holds, so a customer that withheld the settlement could force a conservative full charge the broker had evidence against. The non-admission endpoint now returns the outcome on conflict rather than a bare 409. Raised by LOC. |
 | 1.0.12-draft | 2026-08-21 | §5.3 rewritten for consistency after LOC set policy. The earlier text said there was no unconditional expiry and then told consumers to finalize on expiry and re-encumber after a governance increase; those cannot both hold, and re-encumbrance is not implementable — finalized credit may already be spent. Replaced with four terminal outcomes (settle / unresolved / conservative full charge at an operational deadline / non-admission as audit evidence) and an explicit statement that automatic refund is unavailable. Records that `Livepeer-Request-Id` is not bound into `payment_bytes`, so a non-admission tombstone does not retire the envelope. Names the two protocol changes that would create refund authority. Adds `ticket_validity_period_observed_at` so a cached value is not mistaken for a current one. |
 | 1.0.11-draft | 2026-08-21 | §5.3 corrected: expiry is CONDITIONAL, not unconditional. The TicketBroker evaluates `creationRound + ticketValidityPeriod > currRound` against current storage and keeps round block hashes permanently, so raising the governance parameter extends issued tickets and can revive lapsed ones. Payers now publish `ticket_validity_period` alongside the deadline so a consumer can detect the change, and `expires_after_round` is corrected to the last redeemable round (`creation_round + period - 1`) to match the contract's boundary rather than sitting one round beyond it. §5.3.1: `coverage_started_at` is described accurately as an attributable assertion — it detects a wiped store, not a restored backup. All raised by LOC. |
 | 1.0.10-draft | 2026-08-21 | Add §5.3.1, non-admission evidence: a broker MUST be able to sign `NOT_ADMITTED` for a request id, retrievable by the consumer keyed on the consumer's own id, bound to protocol/request/work/sender/recipient/quote/broker, carrying `observed_at` and a durable `coverage_started_at`, refused if any record exists or if coverage began after issuance, and never emitted unsigned. States retention as a formula rather than a number, and requires `expires_after_round` to be derived from the contract's `ticketValidityPeriod` rather than a hardcoded mirror — it is governance-settable, and an understated value releases an encumbrance while the envelope is still spendable. Requirements from LOC. |

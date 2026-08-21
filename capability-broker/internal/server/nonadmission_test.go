@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,12 +135,25 @@ func TestNonAdmissionRefusedForAdmittedRequest(t *testing.T) {
 
 	resp := askNonAdmission(t, srv, requestID, naBody())
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("status %d for an admitted request; want 409 — a broker must not be able to "+
-			"sign both a settlement and a non-admission for one exchange", resp.StatusCode)
-	}
 	if got := resp.Header.Get(livepeerheader.Error); got != livepeerheader.ErrAdmitted {
 		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrAdmitted)
+	}
+	// And it hands back the OUTCOME, not just a refusal. A consumer
+	// asking this is about to decide how much to charge; answering only
+	// "no" sends it away to charge conservatively while the broker holds
+	// the settlement that says otherwise.
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := body["outcome"].(string); got != "SETTLED" {
+		t.Fatalf("outcome = %q; want SETTLED with the recoverable evidence", got)
+	}
+	if got, _ := body["settlement"].(string); got == "" {
+		t.Fatal("no settlement returned; the consumer still cannot avoid overcharging")
+	}
+	if got, _ := body["job_id"].(string); got == "" {
+		t.Fatal("no job_id returned")
 	}
 }
 
@@ -348,5 +362,94 @@ func TestAdmissionRefusedAfterNonAdmission(t *testing.T) {
 	if resp.StatusCode == http.StatusOK {
 		t.Fatal("the broker admitted a request it had already sworn it never admitted; " +
 			"two contradictory signed claims under one key")
+	}
+}
+
+// A clearinghouse holds only its own request id. Every other lookup on
+// this broker is keyed on something the customer holds, so a customer
+// that withheld the settlement could force a conservative full charge
+// the broker had evidence against.
+func TestExchangeLookupByRequestID(t *testing.T) {
+	var calls atomic.Int64
+	srv, _ := newSignedJobTestServer(t, &calls)
+
+	const requestID = "loc-job-reconcile"
+	exchange := jobReqPaid(t, srv, requestID, "")
+	_, _ = io.Copy(io.Discard, exchange.Body)
+	_ = exchange.Body.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/exchange/" + requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d; want 200 for a settled exchange", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := body["outcome"].(string); got != "SETTLED" {
+		t.Fatalf("outcome = %q; want SETTLED", got)
+	}
+	if got, _ := body["settlement"].(string); got == "" {
+		t.Fatal("settled exchange returned no settlement envelope")
+	}
+	if got, _ := body["job_id"].(string); got == "" {
+		t.Fatal("no broker job id; the consumer cannot correlate or poll")
+	}
+}
+
+// An unknown request is NO_RECORD, which is distinct from NOT_ADMITTED:
+// this broker has not been asked to attest, and silence is not a claim.
+func TestExchangeLookupUnknownIsNotAClaim(t *testing.T) {
+	var calls atomic.Int64
+	srv, _ := newSignedJobTestServer(t, &calls)
+
+	resp, err := http.Get(srv.URL + "/v1/exchange/never-heard-of-it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status %d; want 404", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := body["outcome"].(string); got != "NO_RECORD" {
+		t.Fatalf("outcome = %q; want NO_RECORD — an unasked broker has made no claim", got)
+	}
+}
+
+// Once a non-admission has been issued, the same lookup surfaces it, so
+// a consumer does not have to know which endpoint to try.
+func TestExchangeLookupSurfacesNonAdmission(t *testing.T) {
+	var calls atomic.Int64
+	srv, _ := newSignedJobTestServer(t, &calls)
+
+	const requestID = "loc-job-sworn-lookup"
+	na := askNonAdmission(t, srv, requestID, naBody())
+	if na.StatusCode != http.StatusOK {
+		t.Fatalf("non-admission status %d", na.StatusCode)
+	}
+	_ = na.Body.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/exchange/" + requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := body["outcome"].(string); got != "NOT_ADMITTED" {
+		t.Fatalf("outcome = %q; want NOT_ADMITTED", got)
+	}
+	if got, _ := body["non_admission"].(string); got == "" {
+		t.Fatal("no signed record returned")
 	}
 }

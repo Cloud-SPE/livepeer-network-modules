@@ -415,3 +415,33 @@ func (s *Store) mutateJob(requestID string, fn func(*JobRecord) error) error {
 		return b.Put([]byte(requestID), out)
 	})
 }
+
+// JobByRequestID returns the record for the id the consumer issued.
+//
+// The jobs bucket is keyed by request id, so this is a direct read. It
+// exists because a clearinghouse holds only its own id: the broker job
+// id reaches it through the customer, and a customer that withheld the
+// settlement withheld that too.
+func (s *Store) JobByRequestID(requestID string) (*JobRecord, error) {
+	var out *JobRecord
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(jobsBucket))
+		if b == nil {
+			return ErrNotFound
+		}
+		raw := b.Get([]byte(requestID))
+		if raw == nil {
+			return ErrNotFound
+		}
+		var rec JobRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			return err
+		}
+		out = &rec
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}

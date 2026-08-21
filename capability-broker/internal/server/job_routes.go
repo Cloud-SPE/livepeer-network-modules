@@ -129,6 +129,11 @@ type jobIdemStore interface {
 	FinishPendingAccounting(requestID string, status int, workUnits uint64, unit string,
 		bodyDigest []byte, pd *middleware.PendingDebit) error
 	ByJobID(jobID string) (*sessionstore.JobRecord, error)
+	// ByRequestID resolves the id the CONSUMER issued. Job records are
+	// keyed by it, so this is the cheap lookup — it was simply never
+	// exposed, which left a clearinghouse holding only its own id unable
+	// to find an exchange the broker had settled.
+	ByRequestID(requestID string) (*sessionstore.JobRecord, error)
 }
 
 type boltJobIdem struct{ store *sessionstore.Store }
@@ -181,6 +186,10 @@ func (b *boltJobIdem) ByJobID(jobID string) (*sessionstore.JobRecord, error) {
 	return b.store.JobByID(jobID)
 }
 
+func (b *boltJobIdem) ByRequestID(requestID string) (*sessionstore.JobRecord, error) {
+	return b.store.JobByRequestID(requestID)
+}
+
 type memJobIdem struct {
 	mu   sync.Mutex
 	recs map[string]*sessionstore.JobRecord
@@ -205,6 +214,16 @@ func (m *memJobIdem) Begin(id string, fp []byte, jobID string, dl time.Time) (*s
 	m.recs[id] = rec
 	cp := *rec
 	return &cp, true, nil
+}
+
+func (m *memJobIdem) ByRequestID(requestID string) (*sessionstore.JobRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rec, ok := m.recs[requestID]; ok {
+		cp := *rec
+		return &cp, nil
+	}
+	return nil, sessionstore.ErrNotFound
 }
 
 func (m *memJobIdem) ByJobID(jobID string) (*sessionstore.JobRecord, error) {

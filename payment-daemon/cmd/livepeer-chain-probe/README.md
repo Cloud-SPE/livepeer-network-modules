@@ -95,4 +95,21 @@ Not log lines — money:
   RFC3339 `issued_at`;
 - for sessions: the `work_id` is the payment's, usage debits, a top-up
   replay returns the recorded outcome rather than funding twice, and the
-  runner is terminated at end.
+  runner is terminated at end;
+- the settlement carries the id its CONSUMER issued — `request_id` on a
+  job, `gateway_session_id` on a session — inside the signature. Every
+  other identifier in the record is broker-minted and reaches a
+  clearinghouse only through the customer's SDK, which is the channel
+  the signature exists to distrust;
+- a session settlement **resolves** by `gateway_session_id`, not merely
+  echoes it: that is the only key a clearinghouse holds;
+- a second session declaring a `gateway_session_id` already in use is
+  refused with `gateway_session_id_reuse`. This one costs a real payment
+  to check and is worth it — it is a new way for a gateway to fail, and
+  it fails at open.
+
+Note the last one when reading the source: the probe uses a **unique**
+`gateway_session_id` per run. It used a constant, and the uniqueness rule
+turned this file's own "run it twice" instruction into a failure at the
+second open — which is precisely the friction a gateway reusing a stable
+id will hit.

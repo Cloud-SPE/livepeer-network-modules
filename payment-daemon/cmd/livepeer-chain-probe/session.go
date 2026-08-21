@@ -39,13 +39,20 @@ func probeSession(ctx context.Context, cfg config, payer pb.PayerDaemonClient, p
 	}
 	sender := senderOf(m)
 
+	// Unique per run, deliberately. A broker keeps gateway_session_id
+	// unique across retained sessions so the settlement lookup resolves
+	// to one session, which means a gateway reusing a constant id gets
+	// refused on its second session. This probe used a constant, and the
+	// rule turned its own "run it twice" instruction into a failure.
+	gatewaySessionID := fmt.Sprintf("chain-probe-%d", time.Now().UnixNano())
+
 	open, err := postJSON(cfg.brokerURL+"/v1/session", map[string]string{
 		"Livepeer-Capability": cfg.capability,
 		"Livepeer-Offering":   cfg.offering,
 		"Livepeer-Protocol":   "paid-session/v1",
 		"Livepeer-Request-Id": fmt.Sprintf("chain-probe-open-%d", time.Now().UnixNano()),
 		"Livepeer-Payment":    base64.StdEncoding.EncodeToString(m.GetPaymentBytes()),
-	}, `{"gateway_session_id":"chain-probe","session_params":{}}`)
+	}, `{"gateway_session_id":"`+gatewaySessionID+`","session_params":{}}`)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
@@ -72,6 +79,39 @@ func probeSession(ctx context.Context, cfg config, payer pb.PayerDaemonClient, p
 	if !ok {
 		return fmt.Errorf("broker never called the runner")
 	}
+
+	// Done AFTER the runner callback above is captured, deliberately: a
+	// second open creates a second runner session, so lastCreate() would
+	// otherwise hand back the duplicate's callback — belonging to a
+	// session the broker refused and never persisted, whose every event
+	// is then a 401.
+	//
+	// A second session claiming the same gateway id must be REFUSED.
+	// Accepting it would leave the id resolving to two sessions, which
+	// breaks the lookup for the first one as much as for the second —
+	// so the collision is refused at open rather than resolved at query
+	// time. This costs a real payment to check, and is worth it: it is
+	// a new way for a gateway to fail, and it fails at open.
+	dup, err := mint(ctx, cfg, payer, "dup")
+	if err != nil {
+		return fmt.Errorf("mint for the duplicate-id check: %w", err)
+	}
+	dupOpen, err := postJSON(cfg.brokerURL+"/v1/session", map[string]string{
+		"Livepeer-Capability": cfg.capability,
+		"Livepeer-Offering":   cfg.offering,
+		"Livepeer-Protocol":   "paid-session/v1",
+		"Livepeer-Request-Id": fmt.Sprintf("chain-probe-dup-%d", time.Now().UnixNano()),
+		"Livepeer-Payment":    base64.StdEncoding.EncodeToString(dup.GetPaymentBytes()),
+	}, `{"gateway_session_id":"`+gatewaySessionID+`","session_params":{}}`)
+	if err != nil {
+		return fmt.Errorf("duplicate open: %w", err)
+	}
+	if dupOpen.errCode != "gateway_session_id_reuse" {
+		return fmt.Errorf("duplicate gateway_session_id gave status %d error %q; want "+
+			"gateway_session_id_reuse — accepting it makes the settlement lookup ambiguous",
+			dupOpen.status, dupOpen.errCode)
+	}
+	fmt.Printf("  duplicate gateway_session_id refused\n")
 
 	before, err := balanceOf(ctx, payee, sender, workID)
 	if err != nil {
@@ -164,6 +204,24 @@ func probeSession(ctx context.Context, cfg config, payer pb.PayerDaemonClient, p
 	if set.payload.SessionID != sessionID {
 		return fmt.Errorf("settlement session_id = %q; want %q", set.payload.SessionID, sessionID)
 	}
+	if set.payload.GatewaySessionID != gatewaySessionID {
+		return fmt.Errorf("settlement gateway_session_id = %q; want %q",
+			set.payload.GatewaySessionID, gatewaySessionID)
+	}
+	// The lookup a clearinghouse actually performs. It does not know
+	// session_id — that is broker-local and reaches it only through the
+	// customer's SDK — and a work_id can cover several sessions. The
+	// gateway's own id is the one key it holds, so it has to resolve,
+	// and it has to resolve to THIS session.
+	byGateway, err := fetchSettlement(cfg.brokerURL, gatewaySessionID)
+	if err != nil {
+		return fmt.Errorf("settlement lookup by gateway_session_id: %w", err)
+	}
+	if byGateway.payload.SessionID != sessionID {
+		return fmt.Errorf("lookup by gateway_session_id resolved to session %q; want %q",
+			byGateway.payload.SessionID, sessionID)
+	}
+	fmt.Printf("  settlement resolves by gateway_session_id\n")
 	if set.payload.DebitedUnits != fmt.Sprint(claimed) {
 		return fmt.Errorf("settlement debited_units = %q; want %d", set.payload.DebitedUnits, claimed)
 	}

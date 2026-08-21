@@ -52,7 +52,8 @@ func probeJob(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee
 	req.Header.Set("Livepeer-Capability", cfg.capability)
 	req.Header.Set("Livepeer-Offering", cfg.offering)
 	req.Header.Set("Livepeer-Protocol", "paid-job/v1")
-	req.Header.Set("Livepeer-Request-Id", fmt.Sprintf("chain-probe-job-%d", time.Now().UnixNano()))
+	requestID := fmt.Sprintf("chain-probe-job-%d", time.Now().UnixNano())
+	req.Header.Set("Livepeer-Request-Id", requestID)
 	req.Header.Set("Livepeer-Payment", base64.StdEncoding.EncodeToString(m.GetPaymentBytes()))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -132,6 +133,17 @@ func probeJob(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee
 		return fmt.Errorf("settlement job_id = %q; want %q — evidence that cannot name its exchange can be replayed against another",
 			set.payload.JobID, jobID)
 	}
+	// The gateway's OWN id for the exchange, inside the signature.
+	// job_id above is broker-minted and reaches a clearinghouse only
+	// through the customer-controlled SDK — the channel the signature
+	// exists to distrust — and work_id is shared by every job on the
+	// ticket session. request_id is what binds this record to the
+	// consumer's durable job.
+	if set.payload.RequestID != requestID {
+		return fmt.Errorf("settlement request_id = %q; want the gateway's own %q — "+
+			"without it a clearinghouse cannot bind this record to its own job",
+			set.payload.RequestID, requestID)
+	}
 	if set.payload.IssuedAt == "" {
 		return fmt.Errorf("settlement carries no issued_at")
 	}
@@ -182,6 +194,9 @@ type settlementPayload struct {
 	RotationGeneration uint32 `json:"rotation_generation"`
 	PredecessorWorkID  string `json:"predecessor_work_id"`
 	GatewaySessionID   string `json:"gateway_session_id"`
+	// RequestID is the paid-job counterpart to GatewaySessionID: the id
+	// the CALLER chose, as opposed to the two the broker minted.
+	RequestID string `json:"request_id"`
 	// PaymentCumulativeUnits is the running total on the work_id — the
 	// field that places this charge on the curve. debited_units is
 	// scoped to the exchange, so using it here computed bill(units) -

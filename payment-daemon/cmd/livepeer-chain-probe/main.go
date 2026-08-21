@@ -76,7 +76,7 @@ func main() {
 		perUnits    = flag.Uint64("per-units", 1000, "the offering's per_units — keep this above 1: it is the denominator where flooring and ceiling disagree, and a run at 1 cannot see a rounding defect")
 		fundedWei   = flag.String("funded-wei", "1000000000000000", "value to authorize per payment")
 		runnerBind  = flag.String("runner-bind", "127.0.0.1:0", "address for the probe's fake session runner")
-		protocol    = flag.String("protocol", "both", "job | session | both | rotation | retry")
+		protocol    = flag.String("protocol", "both", "job | session | both | rotation | retry | evidence")
 		adminToken  = flag.String("payee-admin-token", "",
 			"rotation only: the payee's --payee-admin-token. Rotation is driven through PayeeAdmin.ResetSession, which is closed unless the operator configured a token.")
 	)
@@ -129,6 +129,14 @@ func main() {
 			failed++
 		} else {
 			fmt.Print("PASS paid-session\n\n")
+		}
+	}
+	if cfg.protocol == "evidence" {
+		if err := probeEvidence(ctx, cfg, pb.NewPayerDaemonClient(payer)); err != nil {
+			fmt.Printf("FAIL evidence: %v\n\n", err)
+			failed++
+		} else {
+			fmt.Print("PASS evidence\n\n")
 		}
 	}
 	if cfg.protocol == "retry" {

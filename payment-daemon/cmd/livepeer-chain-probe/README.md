@@ -45,7 +45,7 @@ Flags worth setting deliberately:
 |---|---|
 | `--per-units` | **Keep it above 1.** At `per_units: 1` flooring and ceiling agree, so a rounding defect cannot surface — which is exactly how one shipped. |
 | `--price-wei` | Pick a price whose product with the unit count leaves a remainder. |
-| `--protocol` | `job`, `session`, `both`, `rotation`, or `retry`. |
+| `--protocol` | `job`, `session`, `both`, `rotation`, `retry`, or `evidence`. |
 | `--payee-admin-token` | Required for `rotation`: it drives `PayeeAdmin.ResetSession`, which is closed unless the payee was started with a matching `--payee-admin-token`. |
 
 ## The rotation run
@@ -71,6 +71,38 @@ This run found that the payee **credited** payments arriving on the
 retired identity while every debit against that closed session failed —
 value in, no work billable out. Run it after any change to session
 lifecycle or ticket validation.
+
+## The evidence run
+
+`--protocol=evidence` exercises the reconciliation surfaces a
+clearinghouse depends on, against a real signing broker:
+
+- a settled exchange is findable by the `request_id` the CONSUMER issued,
+  and carries an actual signed settlement — `SETTLED` is a claim about
+  money, so it requires the evidence rather than merely a terminal state;
+- an id nobody has heard of answers `NO_RECORD`, which is silence and not
+  a claim;
+- a non-admission is signed for an unseen id, and the SECOND ask returns
+  the same record rather than re-signing one fact under a later
+  `observed_at`;
+- that record then surfaces through the ordinary exchange lookup;
+- asking for non-admission on an ADMITTED request hands back its
+  settlement instead of a bare refusal, so the caller does not charge
+  conservatively against evidence the broker is holding.
+
+These decide how much a customer is charged when a settlement goes
+missing, and the failure they guard against is silent in both directions.
+
+The `job` run also prints and checks the expiry the payer computed from a
+REAL contract read:
+
+```
+expiry: creation_round=4310 validity_period=2 expires_after_round=4311 observed_at=...
+```
+
+`validity_period` comes from `TicketBroker.ticketValidityPeriod()`, and
+the read is fail-closed — a broker that cannot read it refuses to mint.
+That makes this run the only place the ABI entry is exercised at all.
 
 ## The retry run
 

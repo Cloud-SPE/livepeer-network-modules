@@ -34,6 +34,22 @@ func probeJob(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee
 	workID := m.GetWorkId()
 	fmt.Printf("  minted work_id=%s ev=%s wei\n", workID,
 		new(big.Int).SetBytes(m.GetExpectedValue().GetValue()))
+	// The expiry the payer computed from a REAL contract read. Printed
+	// because the read is fail-closed and now gates minting: if the ABI
+	// entry were wrong the mint would refuse, and if the value were
+	// wrong every downstream release decision would be too.
+	fmt.Printf("  expiry: creation_round=%d validity_period=%d expires_after_round=%d observed_at=%s\n",
+		m.GetCreationRound(), m.GetTicketValidityPeriod(), m.GetExpiresAfterRound(),
+		m.GetTicketValidityPeriodObservedAt())
+	if m.GetTicketValidityPeriod() < 1 {
+		return fmt.Errorf("mint reported no ticket_validity_period; the contract read is the " +
+			"thing every release deadline is derived from")
+	}
+	if want := m.GetCreationRound() + m.GetTicketValidityPeriod() - 1; m.GetExpiresAfterRound() != want {
+		return fmt.Errorf("expires_after_round = %d; the contract redeems while "+
+			"creationRound + period > currentRound, so the last redeemable round is %d",
+			m.GetExpiresAfterRound(), want)
+	}
 
 	// A payment that credits nothing buys nothing. This is the shape of
 	// the first mainnet defect, where a valid ticket credited zero and

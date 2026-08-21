@@ -572,6 +572,7 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		delta = *ev.UsageTot - rec.ClaimedTotal
 	}
 
+	var chargedWei *big.Int
 	debitSeq := rec.DebitSeq
 	if delta > 0 {
 		// The seq space belongs to the work_id, not to this session: two
@@ -596,12 +597,16 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 			}
 			debitSeq = next
 		}
-		if _, err := e.cfg.Payment.DebitBalance(ctx, payment.DebitBalanceRequest{
+		debitRes, err := e.cfg.Payment.DebitBalance(ctx, payment.DebitBalanceRequest{
 			Sender:    rec.Sender,
 			WorkID:    rec.WorkID,
 			WorkUnits: int64(delta),
 			DebitSeq:  debitSeq,
-		}); err != nil {
+		})
+		if debitRes != nil && debitRes.DebitedWei != nil {
+			chargedWei = debitRes.DebitedWei
+		}
+		if err != nil {
 			// Nothing committed: the retry really retries, with the
 			// same sequence and the same debit_seq — the daemon
 			// dedupes if the debit actually landed.
@@ -634,6 +639,9 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 			r.DebitedTotal += delta
 			r.DebitSeq = debitSeq
 			r.PendingDebitSeq = 0
+			if chargedWei != nil {
+				r.BilledWei = addDecimal(r.BilledWei, chargedWei)
+			}
 		}
 		return nil
 	})

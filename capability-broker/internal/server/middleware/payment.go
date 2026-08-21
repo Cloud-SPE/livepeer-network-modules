@@ -474,6 +474,8 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 					finalUnits = 0
 				}
 			}
+			var chargedWei *big.Int
+			var cumulativeUnits uint64
 			if finalUnits > 0 {
 				// finalSeq counted from per-request state, which
 				// repeats across exchanges on one work_id. Allocate
@@ -487,12 +489,17 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				// money, and swallowing it is what let a closed shared
 				// session serve work for free through two sessions of
 				// debugging while every log line read "success".
-				if _, derr := client.DebitBalance(ctx, payment.DebitBalanceRequest{
+				debitRes, derr := client.DebitBalance(ctx, payment.DebitBalanceRequest{
 					Sender:    result.Sender,
 					WorkID:    workID,
 					WorkUnits: int64(finalUnits),
 					DebitSeq:  finalSeq,
-				}); derr != nil {
+				})
+				if debitRes != nil {
+					chargedWei = debitRes.DebitedWei
+					cumulativeUnits = debitRes.CumulativeUnits
+				}
+				if derr != nil {
 					log.Printf("ERROR: final debit FAILED work_id=%s seq=%d units=%d: %v "+
 						"— work was delivered and NOT billed", workID, finalSeq, finalUnits, derr)
 					observability.RecordDebitFailure(capability, offering)
@@ -547,6 +554,14 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				JobID:    rec.Header().Get(livepeerheader.JobID),
 				WorkID:   workID,
 				IssuedAt: time.Now().UTC().Format(time.RFC3339Nano),
+				// What the LEDGER charged, not what this process would
+				// recompute. Billing is cumulative, so a second exchange
+				// on a shared payment session costs the difference of
+				// two ceilings — and a record that recomputed an
+				// independent ceiling attested a number the ledger never
+				// charged.
+				ChargedWei:      chargedWei,
+				CumulativeUnits: cumulativeUnits,
 			}
 			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue, ident); settlement != nil {
 				if encoded, err := encode(settlement); err == nil {

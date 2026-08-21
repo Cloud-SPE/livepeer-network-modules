@@ -46,7 +46,14 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 	// One ceiling over the cumulative total — never a sum of
 	// per-generation ceilings, which would reintroduce the per-chunk
 	// rounding drift the cumulative rule exists to prevent.
+	// What the ledger charged, summed across this session's debits. A
+	// ceiling recomputed over the session's own total is right only when
+	// the payment session is not shared — and it is shared whenever a
+	// gateway mints more than once from one ticket session.
 	billed := payment.BillFor(amount, perUnits, rec.DebitedTotal)
+	if v, ok := new(big.Int).SetString(rec.BilledWei, 10); ok && v != nil && v.Sign() > 0 {
+		billed = v
+	}
 	generationUnits := rec.DebitedTotal - rec.GenerationStartUnits
 	generationBilled := new(big.Int).Sub(billed, payment.BillFor(amount, perUnits, rec.GenerationStartUnits))
 

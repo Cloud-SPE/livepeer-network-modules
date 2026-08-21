@@ -1,6 +1,6 @@
 ---
 spec_name: offering-axes
-version: 1.0.4-draft
+version: 1.0.5-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -130,8 +130,8 @@ bills `per_units` times the intended rate.
 
 ### 6.1 The cumulative billing rule
 
-For `U` **cumulative** work units delivered since the session opened (for
-`paid-job/v1`, the units of the single exchange):
+For `U` **cumulative** work units delivered on the payment session —
+identified by `work_id`, which a gateway reuses across many exchanges:
 
 ```
 bill(U) = ceil(U × price_per_unit_wei / per_units)
@@ -146,6 +146,22 @@ bill(U) = ceil(U × price_per_unit_wei / per_units)
 
 Both sides of a session MUST compute this identical function. It is
 written here, once, so neither re-derives it.
+
+**This spans exchanges, not just ticks.** A `paid-job/v1` exchange is one
+increment on its payment session's curve, exactly like a session's usage
+tick: the first job on a session costs `bill(u)`, and the next costs
+`bill(2u) − bill(u)`, which is smaller whenever a remainder carried.
+Charging each exchange an independent ceiling would overcharge by up to
+one wei per job — the drift this rule exists to remove — and the payee
+could not do otherwise if it wanted to, since it sees debits on a
+`work_id` and cannot tell a job boundary from a tick.
+
+**A settlement MUST attest what the ledger charged**, not a value the
+attesting party recomputed. The two disagree for every exchange after the
+first, and a clearinghouse that recomputes the rule fails closed on the
+difference. Records therefore carry the cumulative unit total alongside
+the exchange's own units, so a reader can verify the charge as
+`bill(cumulative) − bill(cumulative − units)` from the record alone.
 
 ### 6.2 Pinning
 
@@ -186,6 +202,7 @@ refused.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.5-draft | 2026-08-21 | §6.1: the cumulative curve spans EXCHANGES, not only ticks — a paid-job exchange is one increment on its payment session's curve, so the second job on a session costs the difference of two ceilings. A settlement MUST attest what the ledger charged rather than recomputing, and carries the cumulative total so the charge stays verifiable from the record. Found on mainnet: a signed record attested 5 wei for a debit the ledger charged 4. |
 | 1.0.4-draft | 2026-08-20 | §6.2: state the identity invariants explicitly — refill sizing never changes session identity, a payer must not key its session cache on funded value, face value is pinned at first issuance and a larger refill mints more tickets rather than larger ones. All three were true of the implementation by accident and written down nowhere. |
 | 1.0.3-draft | 2026-08-20 | Add §3.1 `session.max_rotations`, the bound on rebinding a session onto a rotated payment identity (paid-session §3.3.1). |
 | 1.0.2-draft | 2026-08-20 | Add §6: price is a `(price_per_unit_wei, per_units)` pair, the cumulative ceiling billing rule that both sides compute identically, pinning at session open, and the three wire names for the denominator. Written normatively because the reference implementation had it in the catalog, the settlement record, and nowhere in the ledger. |

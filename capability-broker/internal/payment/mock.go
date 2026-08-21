@@ -134,7 +134,7 @@ func (m *Mock) ProcessPayment(_ context.Context, req ProcessPaymentRequest) (*Pr
 // mock from being the thing that fails a test about something else.
 var mockCreditPerPayment = new(big.Int).Exp(big.NewInt(10), big.NewInt(15), nil)
 
-func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*big.Int, error) {
+func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*DebitResult, error) {
 	if len(req.Sender) == 0 || req.WorkID == "" {
 		return nil, errors.New("sender and work_id are required")
 	}
@@ -153,7 +153,12 @@ func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*big.In
 	}
 	seqKey := compositeSeq(req.Sender, req.WorkID, req.DebitSeq)
 	if _, alreadyDebited := m.debits[seqKey]; alreadyDebited {
-		return new(big.Int).Set(sess.balance), nil
+		return &DebitResult{
+			Balance:         new(big.Int).Set(sess.balance),
+			DebitedWei:      new(big.Int),
+			CumulativeUnits: sess.debitedUnits,
+			Replayed:        true,
+		}, nil
 	}
 	// Cumulative ceiling billing, same rule as the real daemon
 	// (offering-axes.md §6.1). A mock that priced each debit on its own
@@ -165,9 +170,15 @@ func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*big.In
 		BillFor(sess.pricePerWorkUnitWei, sess.perUnits, sess.debitedUnits), before)
 	sess.balance.Sub(sess.balance, debitWei)
 	sess.debits = append(sess.debits, req.WorkUnits)
-	sess.debitLog = append(sess.debitLog, DebitRecord{Seq: req.DebitSeq, Units: req.WorkUnits})
+	sess.debitLog = append(sess.debitLog, DebitRecord{
+		Seq: req.DebitSeq, Units: req.WorkUnits, Wei: new(big.Int).Set(debitWei)})
 	m.debits[seqKey] = req.WorkUnits
-	return new(big.Int).Set(sess.balance), nil
+	return &DebitResult{
+		Balance:         new(big.Int).Set(sess.balance),
+		DebitedWei:      debitWei,
+		CumulativeUnits: sess.debitedUnits,
+		Replayed:        false,
+	}, nil
 }
 
 // SufficientBalance reports whether the session balance covers
@@ -252,6 +263,8 @@ func (m *Mock) CloseSession(_ context.Context, sender []byte, workID string) err
 type DebitRecord struct {
 	Seq   uint64
 	Units int64
+	// Wei is what this debit actually charged under cumulative billing.
+	Wei *big.Int
 }
 
 // Debits returns the debits APPLIED to a work_id — deduplicated repeats

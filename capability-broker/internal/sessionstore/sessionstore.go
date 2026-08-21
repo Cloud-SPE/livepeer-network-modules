@@ -136,7 +136,12 @@ type Record struct {
 	// Funding is per identity while billing is cumulative, so a reader
 	// reconciling one envelope needs the generation figure and one
 	// reconciling the whole session needs the total.
-	FundedWei            string `json:"funded_wei,omitempty"`
+	FundedWei string `json:"funded_wei,omitempty"`
+	// BilledWei is what the LEDGER reported charging this session, summed
+	// across its debits. Not recomputed from units: billing is
+	// cumulative over the payment session, which two sessions can share,
+	// so only the ledger knows what this one actually cost.
+	BilledWei            string `json:"billed_wei,omitempty"`
 	GenerationFundedWei  string `json:"generation_funded_wei,omitempty"`
 	PredecessorWorkID    string `json:"predecessor_work_id,omitempty"`
 	GenerationStartUnits uint64 `json:"generation_start_units,omitempty"`

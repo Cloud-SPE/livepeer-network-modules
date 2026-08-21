@@ -257,6 +257,30 @@ message DebitBalanceResponse {
   // indicate overdraft; callers should stop serving work when this
   // happens.
   bytes balance = 1;
+
+  // What this debit actually CHARGED, in wei.
+  //
+  // Returned rather than left for the caller to recompute. Billing is
+  // cumulative — a debit costs bill(total_after) - bill(total_before) —
+  // so the charge depends on the session's running total, and a caller
+  // recomputing it from the units alone gets a different number whenever
+  // a remainder is carried. That is not hypothetical: a broker attested
+  // 5 wei in a signed settlement for a debit the ledger charged 4, and
+  // the two disagreed by exactly the carried remainder.
+  //
+  // The ledger is the authority on what was charged. It says so here.
+  BigUInt debited_wei = 2;
+
+  // Cumulative work units debited on this (sender, work_id) after this
+  // debit. Carried so a settlement record can state its position in the
+  // cumulative curve, which is what makes the charge verifiable from the
+  // record alone rather than from the session's whole history.
+  uint64 cumulative_units = 3;
+
+  // Zero when the debit was deduplicated as a replay: nothing was
+  // charged and the totals did not move. Distinguishes "already applied"
+  // from "applied and cost nothing".
+  bool replayed = 4;
 }
 
 message SufficientBalanceRequest {

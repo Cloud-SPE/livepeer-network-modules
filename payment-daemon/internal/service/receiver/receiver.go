@@ -501,14 +501,23 @@ func (s *Service) DebitBalance(_ context.Context, req *pb.DebitBalanceRequest) (
 	if req.GetWorkUnits() < 0 {
 		return nil, status.Error(codes.InvalidArgument, "work_units must be >= 0")
 	}
-	balance, err := s.store.DebitBalance(req.GetSender(), req.GetWorkId(), req.GetWorkUnits(), req.GetDebitSeq())
+	res, err := s.store.DebitBalance(req.GetSender(), req.GetWorkId(), req.GetWorkUnits(), req.GetDebitSeq())
 	if err != nil {
 		s.metrics.IncDebit(metrics.ResultError)
 		return nil, mapStoreErr(err)
 	}
 	s.metrics.IncDebit(metrics.ResultOK)
 	s.metrics.AddWorkUnitsDebited(float64(req.GetWorkUnits()))
-	return &pb.DebitBalanceResponse{Balance: balance.Bytes()}, nil
+	// Report what was actually charged. The caller must not recompute
+	// it: billing is cumulative, so the amount depends on the running
+	// total and a recomputation from units alone disagrees whenever a
+	// remainder carries.
+	return &pb.DebitBalanceResponse{
+		Balance:         res.Balance.Bytes(),
+		DebitedWei:      &pb.BigUInt{Value: res.DebitedWei.Bytes()},
+		CumulativeUnits: res.CumulativeUnits,
+		Replayed:        res.Replayed,
+	}, nil
 }
 
 // SufficientBalance reports whether the balance covers a minimum

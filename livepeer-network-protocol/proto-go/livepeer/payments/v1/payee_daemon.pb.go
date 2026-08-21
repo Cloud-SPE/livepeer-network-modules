@@ -901,7 +901,28 @@ type DebitBalanceResponse struct {
 	// New balance after debit (wei, big-endian bytes). Negative values
 	// indicate overdraft; callers should stop serving work when this
 	// happens.
-	Balance       []byte `protobuf:"bytes,1,opt,name=balance,proto3" json:"balance,omitempty"`
+	Balance []byte `protobuf:"bytes,1,opt,name=balance,proto3" json:"balance,omitempty"`
+	// What this debit actually CHARGED, in wei.
+	//
+	// Returned rather than left for the caller to recompute. Billing is
+	// cumulative — a debit costs bill(total_after) - bill(total_before) —
+	// so the charge depends on the session's running total, and a caller
+	// recomputing it from the units alone gets a different number whenever
+	// a remainder is carried. That is not hypothetical: a broker attested
+	// 5 wei in a signed settlement for a debit the ledger charged 4, and
+	// the two disagreed by exactly the carried remainder.
+	//
+	// The ledger is the authority on what was charged. It says so here.
+	DebitedWei *BigUInt `protobuf:"bytes,2,opt,name=debited_wei,json=debitedWei,proto3" json:"debited_wei,omitempty"`
+	// Cumulative work units debited on this (sender, work_id) after this
+	// debit. Carried so a settlement record can state its position in the
+	// cumulative curve, which is what makes the charge verifiable from the
+	// record alone rather than from the session's whole history.
+	CumulativeUnits uint64 `protobuf:"varint,3,opt,name=cumulative_units,json=cumulativeUnits,proto3" json:"cumulative_units,omitempty"`
+	// Zero when the debit was deduplicated as a replay: nothing was
+	// charged and the totals did not move. Distinguishes "already applied"
+	// from "applied and cost nothing".
+	Replayed      bool `protobuf:"varint,4,opt,name=replayed,proto3" json:"replayed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -941,6 +962,27 @@ func (x *DebitBalanceResponse) GetBalance() []byte {
 		return x.Balance
 	}
 	return nil
+}
+
+func (x *DebitBalanceResponse) GetDebitedWei() *BigUInt {
+	if x != nil {
+		return x.DebitedWei
+	}
+	return nil
+}
+
+func (x *DebitBalanceResponse) GetCumulativeUnits() uint64 {
+	if x != nil {
+		return x.CumulativeUnits
+	}
+	return 0
+}
+
+func (x *DebitBalanceResponse) GetReplayed() bool {
+	if x != nil {
+		return x.Replayed
+	}
+	return false
 }
 
 type SufficientBalanceRequest struct {
@@ -1609,9 +1651,13 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\awork_id\x18\x02 \x01(\tR\x06workId\x12\x1d\n" +
 	"\n" +
 	"work_units\x18\x03 \x01(\x03R\tworkUnits\x12\x1b\n" +
-	"\tdebit_seq\x18\x04 \x01(\x04R\bdebitSeq\"0\n" +
+	"\tdebit_seq\x18\x04 \x01(\x04R\bdebitSeq\"\xb7\x01\n" +
 	"\x14DebitBalanceResponse\x12\x18\n" +
-	"\abalance\x18\x01 \x01(\fR\abalance\"q\n" +
+	"\abalance\x18\x01 \x01(\fR\abalance\x12>\n" +
+	"\vdebited_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\n" +
+	"debitedWei\x12)\n" +
+	"\x10cumulative_units\x18\x03 \x01(\x04R\x0fcumulativeUnits\x12\x1a\n" +
+	"\breplayed\x18\x04 \x01(\bR\breplayed\"q\n" +
 	"\x18SufficientBalanceRequest\x12\x16\n" +
 	"\x06sender\x18\x01 \x01(\fR\x06sender\x12\x17\n" +
 	"\awork_id\x18\x02 \x01(\tR\x06workId\x12$\n" +
@@ -1721,9 +1767,10 @@ var file_livepeer_payments_v1_payee_daemon_proto_goTypes = []any{
 	(*CapabilityEntry)(nil),                 // 29: livepeer.payments.v1.CapabilityEntry
 	(*TicketStatus)(nil),                    // 30: livepeer.payments.v1.TicketStatus
 	(PaymentRejectionReason)(0),             // 31: livepeer.payments.v1.PaymentRejectionReason
-	(*PendingRedemption)(nil),               // 32: livepeer.payments.v1.PendingRedemption
-	(*HealthRequest)(nil),                   // 33: livepeer.payments.v1.HealthRequest
-	(*HealthResponse)(nil),                  // 34: livepeer.payments.v1.HealthResponse
+	(*BigUInt)(nil),                         // 32: livepeer.payments.v1.BigUInt
+	(*PendingRedemption)(nil),               // 33: livepeer.payments.v1.PendingRedemption
+	(*HealthRequest)(nil),                   // 34: livepeer.payments.v1.HealthRequest
+	(*HealthResponse)(nil),                  // 35: livepeer.payments.v1.HealthResponse
 }
 var file_livepeer_payments_v1_payee_daemon_proto_depIdxs = []int32{
 	27, // 0: livepeer.payments.v1.GetQuoteResponse.ticket_params:type_name -> livepeer.payments.v1.TicketParams
@@ -1733,40 +1780,41 @@ var file_livepeer_payments_v1_payee_daemon_proto_depIdxs = []int32{
 	0,  // 4: livepeer.payments.v1.OpenSessionResponse.outcome:type_name -> livepeer.payments.v1.OpenSessionResponse.Outcome
 	30, // 5: livepeer.payments.v1.ProcessPaymentResponse.ticket_status:type_name -> livepeer.payments.v1.TicketStatus
 	31, // 6: livepeer.payments.v1.ProcessPaymentResponse.dominant_rejection:type_name -> livepeer.payments.v1.PaymentRejectionReason
-	1,  // 7: livepeer.payments.v1.CloseSessionResponse.outcome:type_name -> livepeer.payments.v1.CloseSessionResponse.Outcome
-	32, // 8: livepeer.payments.v1.ListPendingRedemptionsResponse.redemptions:type_name -> livepeer.payments.v1.PendingRedemption
-	2,  // 9: livepeer.payments.v1.GetRedemptionStatusResponse.status:type_name -> livepeer.payments.v1.GetRedemptionStatusResponse.Status
-	3,  // 10: livepeer.payments.v1.PayeeDaemon.GetQuote:input_type -> livepeer.payments.v1.GetQuoteRequest
-	5,  // 11: livepeer.payments.v1.PayeeDaemon.GetTicketParams:input_type -> livepeer.payments.v1.GetTicketParamsRequest
-	7,  // 12: livepeer.payments.v1.PayeeDaemon.ListCapabilities:input_type -> livepeer.payments.v1.ListCapabilitiesRequest
-	9,  // 13: livepeer.payments.v1.PayeeDaemon.OpenSession:input_type -> livepeer.payments.v1.OpenSessionRequest
-	11, // 14: livepeer.payments.v1.PayeeDaemon.ProcessPayment:input_type -> livepeer.payments.v1.ProcessPaymentRequest
-	13, // 15: livepeer.payments.v1.PayeeDaemon.DebitBalance:input_type -> livepeer.payments.v1.DebitBalanceRequest
-	15, // 16: livepeer.payments.v1.PayeeDaemon.SufficientBalance:input_type -> livepeer.payments.v1.SufficientBalanceRequest
-	17, // 17: livepeer.payments.v1.PayeeDaemon.GetBalance:input_type -> livepeer.payments.v1.GetBalanceRequest
-	19, // 18: livepeer.payments.v1.PayeeDaemon.CloseSession:input_type -> livepeer.payments.v1.CloseSessionRequest
-	21, // 19: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:input_type -> livepeer.payments.v1.ListPendingRedemptionsRequest
-	23, // 20: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:input_type -> livepeer.payments.v1.GetRedemptionStatusRequest
-	25, // 21: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:input_type -> livepeer.payments.v1.GetRoundRevenueRequest
-	33, // 22: livepeer.payments.v1.PayeeDaemon.Health:input_type -> livepeer.payments.v1.HealthRequest
-	4,  // 23: livepeer.payments.v1.PayeeDaemon.GetQuote:output_type -> livepeer.payments.v1.GetQuoteResponse
-	6,  // 24: livepeer.payments.v1.PayeeDaemon.GetTicketParams:output_type -> livepeer.payments.v1.GetTicketParamsResponse
-	8,  // 25: livepeer.payments.v1.PayeeDaemon.ListCapabilities:output_type -> livepeer.payments.v1.ListCapabilitiesResponse
-	10, // 26: livepeer.payments.v1.PayeeDaemon.OpenSession:output_type -> livepeer.payments.v1.OpenSessionResponse
-	12, // 27: livepeer.payments.v1.PayeeDaemon.ProcessPayment:output_type -> livepeer.payments.v1.ProcessPaymentResponse
-	14, // 28: livepeer.payments.v1.PayeeDaemon.DebitBalance:output_type -> livepeer.payments.v1.DebitBalanceResponse
-	16, // 29: livepeer.payments.v1.PayeeDaemon.SufficientBalance:output_type -> livepeer.payments.v1.SufficientBalanceResponse
-	18, // 30: livepeer.payments.v1.PayeeDaemon.GetBalance:output_type -> livepeer.payments.v1.GetBalanceResponse
-	20, // 31: livepeer.payments.v1.PayeeDaemon.CloseSession:output_type -> livepeer.payments.v1.CloseSessionResponse
-	22, // 32: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:output_type -> livepeer.payments.v1.ListPendingRedemptionsResponse
-	24, // 33: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:output_type -> livepeer.payments.v1.GetRedemptionStatusResponse
-	26, // 34: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:output_type -> livepeer.payments.v1.GetRoundRevenueResponse
-	34, // 35: livepeer.payments.v1.PayeeDaemon.Health:output_type -> livepeer.payments.v1.HealthResponse
-	23, // [23:36] is the sub-list for method output_type
-	10, // [10:23] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	32, // 7: livepeer.payments.v1.DebitBalanceResponse.debited_wei:type_name -> livepeer.payments.v1.BigUInt
+	1,  // 8: livepeer.payments.v1.CloseSessionResponse.outcome:type_name -> livepeer.payments.v1.CloseSessionResponse.Outcome
+	33, // 9: livepeer.payments.v1.ListPendingRedemptionsResponse.redemptions:type_name -> livepeer.payments.v1.PendingRedemption
+	2,  // 10: livepeer.payments.v1.GetRedemptionStatusResponse.status:type_name -> livepeer.payments.v1.GetRedemptionStatusResponse.Status
+	3,  // 11: livepeer.payments.v1.PayeeDaemon.GetQuote:input_type -> livepeer.payments.v1.GetQuoteRequest
+	5,  // 12: livepeer.payments.v1.PayeeDaemon.GetTicketParams:input_type -> livepeer.payments.v1.GetTicketParamsRequest
+	7,  // 13: livepeer.payments.v1.PayeeDaemon.ListCapabilities:input_type -> livepeer.payments.v1.ListCapabilitiesRequest
+	9,  // 14: livepeer.payments.v1.PayeeDaemon.OpenSession:input_type -> livepeer.payments.v1.OpenSessionRequest
+	11, // 15: livepeer.payments.v1.PayeeDaemon.ProcessPayment:input_type -> livepeer.payments.v1.ProcessPaymentRequest
+	13, // 16: livepeer.payments.v1.PayeeDaemon.DebitBalance:input_type -> livepeer.payments.v1.DebitBalanceRequest
+	15, // 17: livepeer.payments.v1.PayeeDaemon.SufficientBalance:input_type -> livepeer.payments.v1.SufficientBalanceRequest
+	17, // 18: livepeer.payments.v1.PayeeDaemon.GetBalance:input_type -> livepeer.payments.v1.GetBalanceRequest
+	19, // 19: livepeer.payments.v1.PayeeDaemon.CloseSession:input_type -> livepeer.payments.v1.CloseSessionRequest
+	21, // 20: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:input_type -> livepeer.payments.v1.ListPendingRedemptionsRequest
+	23, // 21: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:input_type -> livepeer.payments.v1.GetRedemptionStatusRequest
+	25, // 22: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:input_type -> livepeer.payments.v1.GetRoundRevenueRequest
+	34, // 23: livepeer.payments.v1.PayeeDaemon.Health:input_type -> livepeer.payments.v1.HealthRequest
+	4,  // 24: livepeer.payments.v1.PayeeDaemon.GetQuote:output_type -> livepeer.payments.v1.GetQuoteResponse
+	6,  // 25: livepeer.payments.v1.PayeeDaemon.GetTicketParams:output_type -> livepeer.payments.v1.GetTicketParamsResponse
+	8,  // 26: livepeer.payments.v1.PayeeDaemon.ListCapabilities:output_type -> livepeer.payments.v1.ListCapabilitiesResponse
+	10, // 27: livepeer.payments.v1.PayeeDaemon.OpenSession:output_type -> livepeer.payments.v1.OpenSessionResponse
+	12, // 28: livepeer.payments.v1.PayeeDaemon.ProcessPayment:output_type -> livepeer.payments.v1.ProcessPaymentResponse
+	14, // 29: livepeer.payments.v1.PayeeDaemon.DebitBalance:output_type -> livepeer.payments.v1.DebitBalanceResponse
+	16, // 30: livepeer.payments.v1.PayeeDaemon.SufficientBalance:output_type -> livepeer.payments.v1.SufficientBalanceResponse
+	18, // 31: livepeer.payments.v1.PayeeDaemon.GetBalance:output_type -> livepeer.payments.v1.GetBalanceResponse
+	20, // 32: livepeer.payments.v1.PayeeDaemon.CloseSession:output_type -> livepeer.payments.v1.CloseSessionResponse
+	22, // 33: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:output_type -> livepeer.payments.v1.ListPendingRedemptionsResponse
+	24, // 34: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:output_type -> livepeer.payments.v1.GetRedemptionStatusResponse
+	26, // 35: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:output_type -> livepeer.payments.v1.GetRoundRevenueResponse
+	35, // 36: livepeer.payments.v1.PayeeDaemon.Health:output_type -> livepeer.payments.v1.HealthResponse
+	24, // [24:37] is the sub-list for method output_type
+	11, // [11:24] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_livepeer_payments_v1_payee_daemon_proto_init() }

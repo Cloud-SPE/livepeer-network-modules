@@ -43,6 +43,11 @@ type fakePayment struct {
 	ticketCount  int32 // tickets in the batch ProcessPayment reports
 	ticketsBad   int32 // how many of them were rejected
 	rejectReason payment.PaymentRejectionReason
+	// pricing reads the offering under test at call time, so a test that
+	// changes the price after the harness is built still gets a fake
+	// that bills the way the real ledger would.
+	pricing      func() (*big.Int, uint64)
+	debitedUnits uint64
 }
 
 func newFakePayment() *fakePayment {
@@ -82,7 +87,7 @@ func (f *fakePayment) ProcessPayment(_ context.Context, req payment.ProcessPayme
 	res.DominantRejection = f.rejectReason
 	return res, nil
 }
-func (f *fakePayment) DebitBalance(_ context.Context, req payment.DebitBalanceRequest) (*big.Int, error) {
+func (f *fakePayment) DebitBalance(_ context.Context, req payment.DebitBalanceRequest) (*payment.DebitResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.sessionGone {
@@ -92,12 +97,39 @@ func (f *fakePayment) DebitBalance(_ context.Context, req payment.DebitBalanceRe
 		f.failDebits--
 		return nil, errors.New("transient daemon failure")
 	}
-	// Idempotent by seq, like the real daemon.
+	// Idempotent by seq, like the real daemon. The charge is reported
+	// cumulatively, also like the real daemon: a debit costs
+	// bill(after) - bill(before), so the fake must not hand back an
+	// independent per-debit ceiling or tests would encode the very
+	// arithmetic the ledger disagrees with.
+	replayed := true
 	if _, seen := f.debitSeqSeen[req.DebitSeq]; !seen {
 		f.debitSeqSeen[req.DebitSeq] = req.WorkUnits
 		f.debits = append(f.debits, debitCall{req.WorkUnits, req.DebitSeq})
+		replayed = false
 	}
-	return big.NewInt(0), nil
+	charged := new(big.Int)
+	if !replayed {
+		price, perUnits := f.price()
+		before := payment.BillFor(price, perUnits, f.debitedUnits)
+		f.debitedUnits += uint64(req.WorkUnits)
+		charged = new(big.Int).Sub(payment.BillFor(price, perUnits, f.debitedUnits), before)
+	}
+	return &payment.DebitResult{
+		Balance:         big.NewInt(0),
+		DebitedWei:      charged,
+		CumulativeUnits: f.debitedUnits,
+		Replayed:        replayed,
+	}, nil
+}
+
+func (f *fakePayment) price() (*big.Int, uint64) {
+	if f.pricing != nil {
+		if p, u := f.pricing(); p != nil {
+			return p, u
+		}
+	}
+	return big.NewInt(1), 1
 }
 func (f *fakePayment) SufficientBalance(context.Context, payment.SufficientBalanceRequest) (*payment.SufficientBalanceResult, error) {
 	f.mu.Lock()
@@ -232,6 +264,12 @@ func newHarness(t *testing.T) *harness {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	h.pay.pricing = func() (*big.Int, uint64) {
+		if h.spec == nil {
+			return nil, 0
+		}
+		return h.spec.PricePerWorkUnitWei, h.spec.PerUnits
 	}
 	h.engine = eng
 	return h

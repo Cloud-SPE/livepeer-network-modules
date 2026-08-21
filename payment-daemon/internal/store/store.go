@@ -459,10 +459,22 @@ func (s *Store) CreditBalance(sender []byte, workID string, weiToCredit *big.Int
 // DebitBalance is idempotent by debit_seq within a session: a debit
 // recorded with the same (sender, work_id, debit_seq) returns the
 // balance from the original debit, not a re-debit.
-func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debitSeq uint64) (*big.Int, error) {
+// DebitResult is what a debit actually did. The charge is returned
+// rather than left for a caller to recompute: billing is cumulative, so
+// the amount depends on the running total, and a caller working from the
+// units alone disagrees whenever a remainder carries.
+type DebitResult struct {
+	Balance         *big.Int
+	DebitedWei      *big.Int
+	CumulativeUnits uint64
+	Replayed        bool
+}
+
+func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debitSeq uint64) (*DebitResult, error) {
 	if workUnits < 0 {
 		return nil, errors.New("work_units must be >= 0")
 	}
+	out := &DebitResult{}
 	var newBalance *big.Int
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		composite := compositeKey(sender, workID)
@@ -480,6 +492,8 @@ func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debi
 				return fmt.Errorf("unmarshal: %w", err)
 			}
 			newBalance = parseDecimalBig(sess.BalanceWei)
+			out.CumulativeUnits = sess.DebitedUnits
+			out.Replayed = true
 			return nil
 		}
 
@@ -510,6 +524,8 @@ func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debi
 		before := BillFor(price, sess.PerUnits, sess.DebitedUnits)
 		sess.DebitedUnits += uint64(workUnits)
 		debitWei := new(big.Int).Sub(BillFor(price, sess.PerUnits, sess.DebitedUnits), before)
+		out.DebitedWei = new(big.Int).Set(debitWei)
+		out.CumulativeUnits = sess.DebitedUnits
 		bal := parseDecimalBig(sess.BalanceWei)
 		bal.Sub(bal, debitWei)
 		sess.BalanceWei = bal.String()
@@ -527,7 +543,11 @@ func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debi
 	if err != nil {
 		return nil, err
 	}
-	return newBalance, nil
+	out.Balance = newBalance
+	if out.DebitedWei == nil {
+		out.DebitedWei = new(big.Int)
+	}
+	return out, nil
 }
 
 // GetBalance returns the current balance for a session.

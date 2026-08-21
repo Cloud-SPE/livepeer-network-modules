@@ -582,3 +582,87 @@ func makeTicketPaidRequest(t *testing.T, randHash []byte, requestID string) *htt
 	r.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	return r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
 }
+
+// TestSettlementAttestsWhatTheLedgerCharged is the mismatch the chain
+// probe found on a second job over one payment session.
+//
+// Billing is cumulative: 42 units at 100 wei per 1000 costs ceil(4.2)=5
+// for the first exchange and ceil(8.4)-5 = 4 for the second. A record
+// that recomputed an independent ceiling attested 5 both times, so the
+// second settlement claimed a wei that never moved — and a clearinghouse
+// recomputing the rule fails closed on exactly that.
+func TestSettlementAttestsWhatTheLedgerCharged(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+
+	var captured []*paymentsv1.SettlementRecord
+	mw := Payment(mock, fractionalLookup, InterimDebitConfig{Interval: 0}, nil,
+		func(rec *paymentsv1.SettlementRecord) (string, error) {
+			captured = append(captured, rec)
+			return "encoded", nil
+		}, nil)
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	randHash := []byte("fedcba9876543210fedcba9876543210")
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, makeFractionalPaidRequest(t, randHash, fmt.Sprintf("req-%d", i)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("exchange %d: status %d body %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if len(captured) != 2 {
+		t.Fatalf("captured %d settlements; want 2", len(captured))
+	}
+
+	debits := mock.Debits(hex.EncodeToString(randHash))
+	if len(debits) != 2 {
+		t.Fatalf("ledger applied %d debits; want 2", len(debits))
+	}
+	for i, rec := range captured {
+		attested := new(big.Int).SetBytes(rec.GetBilledValueWei().GetValue())
+		if attested.Cmp(debits[i].Wei) != 0 {
+			t.Fatalf("exchange %d: settlement attests %s wei, ledger charged %s",
+				i, attested, debits[i].Wei)
+		}
+	}
+	// And the second must genuinely differ, or the test proves nothing.
+	if debits[0].Wei.Cmp(debits[1].Wei) == 0 {
+		t.Fatalf("both exchanges charged %s — pick a price whose remainder carries", debits[0].Wei)
+	}
+}
+
+// fractionalLookup prices per 1000 units, the denominator where an
+// independent ceiling and a cumulative delta diverge.
+func fractionalLookup(cap, off string) (CapabilitySpec, bool) {
+	return CapabilitySpec{
+		WorkUnit:            "tokens",
+		PricePerWorkUnitWei: big.NewInt(100),
+		PerUnits:            1000,
+	}, true
+}
+
+func makeFractionalPaidRequest(t *testing.T, randHash []byte, requestID string) *http.Request {
+	t.Helper()
+	raw, err := proto.Marshal(&paymentsv1.Payment{
+		TicketParams: &paymentsv1.TicketParams{RecipientRandHash: randHash},
+		ExpectedPrice: &paymentsv1.PriceInfo{
+			PricePerUnit:  100,
+			PixelsPerUnit: 1000,
+			Constraint:    "cap=cap;off=off;wu=tokens;est=1000;qid=q;qv=1;cfp=aa;rfp=bb",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/v1/job", nil)
+	r.Header.Set(livepeerheader.Capability, "cap")
+	r.Header.Set(livepeerheader.Offering, "off")
+	r.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString(raw))
+	r.Header.Set(livepeerheader.Protocol, "paid-job/v1")
+	return r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
+}

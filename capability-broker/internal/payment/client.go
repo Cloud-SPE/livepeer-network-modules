@@ -55,7 +55,13 @@ type Client interface {
 	// DebitBalance is idempotent by (sender, work_id, debit_seq).
 	// Retries with the same seq return the prior balance instead of
 	// double-debiting.
-	DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.Int, error)
+	//
+	// The result reports what the ledger actually CHARGED. Do not
+	// recompute it: billing is cumulative, so a charge depends on the
+	// running total and a recomputation from units alone disagrees
+	// whenever a remainder carries — which is how a signed settlement
+	// came to attest 5 wei for a debit that cost 4.
+	DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error)
 
 	// SufficientBalance checks whether the (sender, work_id) balance
 	// covers at least min_work_units of additional priced work, without
@@ -71,6 +77,21 @@ type Client interface {
 	// ProcessPayment or DebitBalance against (sender, work_id) is
 	// accepted.
 	CloseSession(ctx context.Context, sender []byte, workID string) error
+}
+
+// DebitResult is what a debit did, as reported by the ledger.
+type DebitResult struct {
+	Balance *big.Int
+	// DebitedWei is the amount charged. Authoritative — this is the
+	// number a settlement record must attest.
+	DebitedWei *big.Int
+	// CumulativeUnits is the running unit total after this debit, so a
+	// settlement can state its position on the cumulative curve and stay
+	// verifiable from the record alone.
+	CumulativeUnits uint64
+	// Replayed is true when the debit was deduplicated: nothing was
+	// charged and no totals moved.
+	Replayed bool
 }
 
 // OpenSessionRequest carries the (capability, offering, price,

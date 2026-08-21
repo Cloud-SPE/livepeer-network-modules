@@ -139,7 +139,7 @@ func (g *GRPC) ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (*
 	}, nil
 }
 
-func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.Int, error) {
+func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error) {
 	resp, err := g.client.DebitBalance(ctx, &pb.DebitBalanceRequest{
 		Sender:    req.Sender,
 		WorkId:    req.WorkID,
@@ -149,7 +149,12 @@ func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.
 	if err != nil {
 		return nil, err
 	}
-	return new(big.Int).SetBytes(resp.GetBalance()), nil
+	return &DebitResult{
+		Balance:         new(big.Int).SetBytes(resp.GetBalance()),
+		DebitedWei:      new(big.Int).SetBytes(resp.GetDebitedWei().GetValue()),
+		CumulativeUnits: resp.GetCumulativeUnits(),
+		Replayed:        resp.GetReplayed(),
+	}, nil
 }
 
 func (g *GRPC) SufficientBalance(ctx context.Context, req SufficientBalanceRequest) (*SufficientBalanceResult, error) {

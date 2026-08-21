@@ -27,6 +27,15 @@ type SettlementIdentity struct {
 	WorkID string
 	// IssuedAt is RFC3339 (nanosecond precision).
 	IssuedAt string
+	// ChargedWei is what the ledger reported charging for this
+	// exchange. Nil means no debit happened (zero units, or the debit
+	// failed) and the record falls back to the computed value.
+	ChargedWei *big.Int
+	// CumulativeUnits is the running unit total on the payment session
+	// after this exchange, so a reader can verify the charge as
+	// bill(cumulative) - bill(cumulative - actual_units) without needing
+	// the session's whole history.
+	CumulativeUnits uint64
 }
 
 // SettlementInputs captures everything needed to build a
@@ -103,7 +112,15 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 	// with per_units > 1 this used to attest less than was actually
 	// billed, and a clearinghouse recomputing the rule disagreed with
 	// the record it was verifying.
-	billedValueWei := payment.BillFor(big.NewInt(price.GetPricePerUnit()), uint64(unitsPerPrice), actualUnits)
+	// Prefer what the ledger says it charged. Recomputing here produces
+	// an INDEPENDENT ceiling, which is right only for the first exchange
+	// on a payment session: billing is cumulative, so later exchanges
+	// cost the difference of two ceilings and an independent one attests
+	// money that never moved.
+	billedValueWei := ident.ChargedWei
+	if billedValueWei == nil {
+		billedValueWei = payment.BillFor(big.NewInt(price.GetPricePerUnit()), uint64(unitsPerPrice), actualUnits)
+	}
 	if fundedValueWei == nil {
 		fundedValueWei = new(big.Int)
 	}
@@ -133,9 +150,10 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 		// paid-job is the ticket session's rand hash, shared by every
 		// job minted against it, so job_id is what makes the record
 		// about ONE exchange.
-		JobId:    ident.JobID,
-		WorkId:   ident.WorkID,
-		IssuedAt: ident.IssuedAt,
+		JobId:        ident.JobID,
+		WorkId:       ident.WorkID,
+		IssuedAt:     ident.IssuedAt,
+		DebitedUnits: ident.CumulativeUnits,
 
 		AcceptedQuoteRef: &pb.QuoteRef{
 			QuoteId:               meta.quoteID,

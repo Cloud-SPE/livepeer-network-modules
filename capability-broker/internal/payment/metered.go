@@ -56,7 +56,7 @@ func (m *metered) ProcessPayment(ctx context.Context, req ProcessPaymentRequest)
 	return res, err
 }
 
-func (m *metered) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.Int, error) {
+func (m *metered) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error) {
 	done := observability.StartPaymentClientCall("debit_balance")
 	res, err := m.inner.DebitBalance(ctx, req)
 	done(resultLabel(err))

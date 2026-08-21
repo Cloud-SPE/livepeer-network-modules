@@ -78,18 +78,21 @@ func probeJob(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee
 		return fmt.Errorf("balance after: %w", err)
 	}
 	ev := new(big.Int).SetBytes(m.GetExpectedValue().GetValue())
-	want := billFor(cfg.priceWei, cfg.perUnits, units)
-	wantAfter := new(big.Int).Add(before, ev)
-	wantAfter.Sub(wantAfter, want)
-	if after.Cmp(wantAfter) != 0 {
-		moved := new(big.Int).Sub(after, before)
-		return fmt.Errorf("balance moved by %s wei; want credit %s minus bill %s = %s "+
-			"(before=%s after=%s, %d units at %d per %d)",
-			moved, ev, want, new(big.Int).Sub(ev, want), before, after,
-			units, cfg.priceWei, cfg.perUnits)
+
+	// What the ledger actually charged: credit in, balance out.
+	//
+	// Deliberately NOT recomputed as ceil(units x price / per_units).
+	// Billing is cumulative over the payment session, so only the FIRST
+	// exchange on a session costs an independent ceiling; later ones cost
+	// the difference of two ceilings. An earlier version of this probe
+	// asserted the independent value and called a correct ledger wrong.
+	charged := new(big.Int).Add(before, ev)
+	charged.Sub(charged, after)
+	if charged.Sign() <= 0 {
+		return fmt.Errorf("ledger charged %s wei for %d units — work was served free "+
+			"(before=%s credit=%s after=%s)", charged, units, before, ev, after)
 	}
-	fmt.Printf("  ledger credited %s, billed %s wei (rule: ceil(%d x %d / %d))\n",
-		ev, want, units, cfg.priceWei, cfg.perUnits)
+	fmt.Printf("  ledger credited %s, charged %s wei for %d units\n", ev, charged, units)
 
 	// 2. The settlement is reachable without reading a trailer, and it
 	//    agrees with the ledger.
@@ -97,8 +100,23 @@ func probeJob(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee
 	if err != nil {
 		return err
 	}
-	if got := new(big.Int).SetBytes(set.payload.BilledValueWei.value()); got.Cmp(want) != 0 {
-		return fmt.Errorf("signed settlement says %s wei; ledger and rule say %s", got, want)
+	// The invariant that matters: the signed record attests exactly what
+	// the ledger charged. This is the check a clearinghouse runs, and
+	// the one that caught a record claiming a wei that never moved.
+	attested := new(big.Int).SetBytes(set.payload.BilledValueWei.value())
+	if attested.Cmp(charged) != 0 {
+		return fmt.Errorf("signed settlement attests %s wei; the ledger charged %s", attested, charged)
+	}
+	// And the charge must sit on the normative cumulative curve, which
+	// the record carries enough context to verify on its own.
+	if cum := set.payload.cumulativeUnits(); cum >= units {
+		wantCharge := new(big.Int).Sub(
+			billFor(cfg.priceWei, cfg.perUnits, cum),
+			billFor(cfg.priceWei, cfg.perUnits, cum-units))
+		if charged.Cmp(wantCharge) != 0 {
+			return fmt.Errorf("charged %s wei; the cumulative rule at %d units says %s "+
+				"(bill(%d) - bill(%d))", charged, cum, wantCharge, cum, cum-units)
+		}
 	}
 	if set.payload.JobID != jobID {
 		return fmt.Errorf("settlement job_id = %q; want %q — evidence that cannot name its exchange can be replayed against another",
@@ -197,4 +215,12 @@ func fetchSettlement(brokerURL, id string) (*settlementEnvelope, error) {
 		return nil, fmt.Errorf("settlement payload: %w", err)
 	}
 	return &settlementEnvelope{payload: payload, signature: env.Signature}, nil
+}
+
+// cumulativeUnits reads the running unit total the record carries.
+// protojson renders uint64 as a string, so it arrives quoted.
+func (p settlementPayload) cumulativeUnits() uint64 {
+	var n uint64
+	_, _ = fmt.Sscanf(p.DebitedUnits, "%d", &n)
+	return n
 }

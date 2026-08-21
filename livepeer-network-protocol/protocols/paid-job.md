@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.4-draft
+version: 1.0.5-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -191,6 +191,26 @@ units in the trailer. This is the seller's fail-closed protection for
 long-running exchanges — there is no mid-job refill, deliberately. A workload
 that legitimately needs mid-exchange funding is `paid-session/v1` work.
 
+### 5.1 What binds a job settlement to the job
+
+A paid-job settlement MUST carry both `job_id` and the exchange's
+`request_id`, inside the signature.
+
+Neither alone is sufficient. `work_id` is the ticket session's rand hash,
+shared by every job minted against it, so it identifies the payment
+identity and not the exchange. `job_id` narrows it to one exchange, but the
+broker mints it and it reaches a consumer only through the
+customer-controlled SDK — the channel the signature exists to distrust. A
+clearinghouse holding its own durable job record has no way to bind the
+signed evidence to that record without the id it chose itself.
+
+`request_id` is that id: the gateway's `Livepeer-Request-Id` for the
+exchange. It is the job path's counterpart to `gateway_session_id` on
+paid-session. A broker generates one when the caller sends none, and echoes
+it either way, so the field is always populated — it binds to the caller's
+own record only when the caller chose it, which is the caller's decision to
+make.
+
 ## 6. What the broker never does
 
 - Hold job state past the idempotency window — there is no job resource to
@@ -222,6 +242,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.5-draft | 2026-08-21 | Add §5.1: a paid-job settlement MUST carry the exchange's `request_id` alongside `job_id`, inside the signature. LOC reported that neither broker-minted `job_id` nor shared `work_id` binds a signed record to the clearinghouse's own durable job — the job path's counterpart to `gateway_session_id`. |
 | 1.0.4-draft | 2026-08-21 | Add §4.6: a payment arriving on a payee-retired `work_id` MUST be refused rather than credited, and surfaced as `recipient_rotated` so a gateway re-mints instead of retrying a doomed envelope. The job spec never covered rotation, though the job path hits the same refusal; the payee obligation lives in paid-session §3.3.1. |
 | 1.0.3-draft | 2026-08-20 | Add §4.5: a broker MUST refuse with `insufficient_balance` rather than run a backend for a session that cannot cover one work unit. A mainnet run served real work against a zero balance and reported success at every layer — the interim-debit ticker guards long-running work and is a no-op for a single exchange, so nothing checked. |
 | 1.0.2-draft | 2026-08-20 | §3.2: the streamed terminal claim gains a portable channel. `GET /v1/settlement/{id}`, keyed by `Livepeer-Job-Id`, MUST serve the terminal units, unit name and signed settlement for the idempotency window; a running exchange answers 202 with state and an unknown id is never a zero claim. Trailers become an optimization rather than the only normative channel — Go reads them, HTTPX/Fetch/reqwest do not, and a claim no SDK can read forces a clearinghouse to bill zero or block. |

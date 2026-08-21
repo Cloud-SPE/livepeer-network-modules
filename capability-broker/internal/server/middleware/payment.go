@@ -562,6 +562,7 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				// charged.
 				ChargedWei:      chargedWei,
 				CumulativeUnits: cumulativeUnits,
+				RequestID:       RequestIDFromContext(r.Context()),
 			}
 			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue, ident); settlement != nil {
 				if encoded, err := encode(settlement); err == nil {

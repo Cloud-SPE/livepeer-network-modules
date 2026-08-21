@@ -15,6 +15,9 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // End-to-end paid-job surface: transport negotiation, extractor claim,
@@ -324,4 +327,115 @@ func TestSettlementQueryUnknownIDIsNotAClaim(t *testing.T) {
 	if q.StatusCode == http.StatusOK {
 		t.Fatal("unknown id answered 200; a caller would bill it as zero")
 	}
+}
+
+// The signed job settlement must carry the gateway's own request id.
+//
+// LOC asked for this: job_id is broker-minted and reaches a
+// clearinghouse only through the customer-controlled SDK, and work_id is
+// shared by every job on a ticket session. Neither binds the record to
+// the durable job the consumer already holds. This is the job path's
+// counterpart to gateway_session_id.
+func TestJobSettlementCarriesRequestID(t *testing.T) {
+	var calls atomic.Int64
+	srv := newJobTestServer(t, &calls)
+
+	const requestID = "loc-job-7f3a"
+	// A real payment envelope, not the stub the other tests use: the
+	// settlement is built from the price the sender signed, so a stub
+	// produces no record at all.
+	pay := &pb.Payment{ExpectedPrice: &pb.PriceInfo{
+		PricePerUnit:  1,
+		PixelsPerUnit: 1,
+		Constraint: "cap=openai:chat-completions;off=default;wu=tokens;est=42;" +
+			"qid=quote-1;qv=1;cfp=aabb;rfp=ccdd",
+	}}
+	rawPay, err := proto.Marshal(pay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/job",
+		strings.NewReader(`{"model":"test-model","messages":[]}`))
+	req.Header.Set(livepeerheader.Capability, "openai:chat-completions")
+	req.Header.Set(livepeerheader.Offering, "default")
+	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
+	req.Header.Set(livepeerheader.RequestID, requestID)
+	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString(rawPay))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	// Read it back the way a clearinghouse does: the durable record via
+	// the query surface, not the trailer its HTTP client cannot see.
+	jobID := resp.Header.Get(livepeerheader.JobID)
+	q, err := http.Get(srv.URL + "/v1/settlement/" + jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Body.Close()
+	if q.StatusCode != http.StatusOK {
+		t.Fatalf("settlement query status %d", q.StatusCode)
+	}
+	var qb struct {
+		Settlement string `json:"settlement"`
+	}
+	if err := json.NewDecoder(q.Body).Decode(&qb); err != nil {
+		t.Fatal(err)
+	}
+	encoded := qb.Settlement
+	rec := decodeSettlementHeader(t, encoded)
+	if got := rec.GetRequestId(); got != requestID {
+		t.Fatalf("settlement request_id = %q; want the gateway's own %q — without it the "+
+			"record cannot be bound to the caller's job", got, requestID)
+	}
+	// It must be INSIDE the signature, not merely alongside it: a field
+	// outside the payload can be rewritten in transit by the very
+	// channel the signature exists to distrust.
+	if !strings.Contains(rawSettlementPayload(t, encoded), requestID) {
+		t.Fatal("request_id is not in the signed payload")
+	}
+}
+
+// decodeSettlementHeader unwraps the base64 envelope and returns the
+// record inside it.
+func decodeSettlementHeader(t *testing.T, header string) *pb.SettlementRecord {
+	t.Helper()
+	if header == "" {
+		t.Fatal("no Livepeer-Settlement header")
+	}
+	raw, err := base64.StdEncoding.DecodeString(header)
+	if err != nil {
+		t.Fatalf("settlement base64: %v", err)
+	}
+	var env struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("settlement envelope: %v", err)
+	}
+	var rec pb.SettlementRecord
+	if err := protojson.Unmarshal(env.Payload, &rec); err != nil {
+		t.Fatalf("settlement payload: %v", err)
+	}
+	return &rec
+}
+
+func rawSettlementPayload(t *testing.T, header string) string {
+	t.Helper()
+	raw, err := base64.StdEncoding.DecodeString(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	return string(env.Payload)
 }

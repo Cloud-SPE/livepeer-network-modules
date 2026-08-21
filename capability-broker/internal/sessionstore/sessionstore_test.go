@@ -300,3 +300,123 @@ func TestLoadKeyFile(t *testing.T) {
 		t.Fatal("missing file accepted")
 	}
 }
+
+// A clearinghouse holds only the id it issued itself. session_id is
+// broker-local and reaches it through the customer-controlled SDK — the
+// channel the settlement signature exists to distrust — so the gateway's
+// own id has to resolve.
+func TestGetByGatewaySessionID(t *testing.T) {
+	s, _ := openTemp(t)
+	rec := sampleRecord()
+	if err := s.CreateIndexed(rec, "req-1"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetByGatewaySessionID(rec.GatewaySessionID)
+	if err != nil {
+		t.Fatalf("GetByGatewaySessionID: %v", err)
+	}
+	if got.SessionID != rec.SessionID {
+		t.Fatalf("resolved to %q; want %q", got.SessionID, rec.SessionID)
+	}
+	if _, err := s.GetByGatewaySessionID("nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown id = %v; want ErrNotFound", err)
+	}
+	if _, err := s.GetByGatewaySessionID(""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("empty id = %v; want ErrNotFound — an unset gateway id must not match a record", err)
+	}
+}
+
+// The lookup is only usable if the id resolves to ONE session, so a
+// second open claiming the same gateway id is refused. Accepting it
+// would break the lookup for both sessions, not just the newcomer.
+func TestCreateIndexedRefusesDuplicateGatewaySessionID(t *testing.T) {
+	s, _ := openTemp(t)
+	first := sampleRecord()
+	if err := s.CreateIndexed(first, "req-1"); err != nil {
+		t.Fatal(err)
+	}
+	second := sampleRecord()
+	second.SessionID = "sess_2"
+	second.WorkID = "work_2"
+	if err := s.CreateIndexed(second, "req-2"); !errors.Is(err, ErrGatewaySessionExists) {
+		t.Fatalf("duplicate gateway_session_id = %v; want ErrGatewaySessionExists", err)
+	}
+	// The original must be untouched, and still resolvable.
+	got, err := s.GetByGatewaySessionID(first.GatewaySessionID)
+	if err != nil || got.SessionID != first.SessionID {
+		t.Fatalf("original no longer resolves: %v / %+v", err, got)
+	}
+	if _, err := s.Get("sess_2"); !errors.Is(err, ErrNotFound) {
+		t.Fatal("the refused session was persisted anyway")
+	}
+}
+
+// A gateway id that shadows a broker session id would be unreachable —
+// Get(id) is tried first on the query path — so it is refused at open.
+func TestCreateIndexedRefusesGatewayIDCollidingWithSessionID(t *testing.T) {
+	s, _ := openTemp(t)
+	first := sampleRecord()
+	if err := s.CreateIndexed(first, "req-1"); err != nil {
+		t.Fatal(err)
+	}
+	second := sampleRecord()
+	second.SessionID = "sess_2"
+	second.GatewaySessionID = first.SessionID // names the other session
+	if err := s.CreateIndexed(second, "req-2"); !errors.Is(err, ErrGatewaySessionExists) {
+		t.Fatalf("gateway id colliding with a session id = %v; want ErrGatewaySessionExists", err)
+	}
+}
+
+// A work_id is a PAYMENT identity: one ticket session carries many
+// logical sessions. The lookup used to keep the last match in iteration
+// order, handing back a correctly signed record for the wrong session —
+// which a caller cannot tell is wrong from the record alone.
+func TestGetByWorkIDRefusesAmbiguity(t *testing.T) {
+	s, _ := openTemp(t)
+	a := sampleRecord()
+	if err := s.CreateIndexed(a, "req-1"); err != nil {
+		t.Fatal(err)
+	}
+	b := sampleRecord()
+	b.SessionID = "sess_2"
+	b.GatewaySessionID = "gws_2"
+	// Same payment identity — the whole point of a shared ticket session.
+	if err := s.CreateIndexed(b, "req-2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetByWorkID(a.WorkID); !errors.Is(err, ErrAmbiguous) {
+		t.Fatalf("shared work_id = %v; want ErrAmbiguous rather than an arbitrary match", err)
+	}
+	// Each is still reachable by the key that identifies it.
+	for _, rec := range []*Record{a, b} {
+		got, err := s.GetByGatewaySessionID(rec.GatewaySessionID)
+		if err != nil || got.SessionID != rec.SessionID {
+			t.Fatalf("%s not reachable by its gateway id: %v", rec.SessionID, err)
+		}
+	}
+}
+
+// An evicted record must release its gateway id, or a gateway reusing
+// ids across days is refused an open on account of a session that no
+// longer exists.
+func TestEvictTerminalReleasesGatewaySessionID(t *testing.T) {
+	s, _ := openTemp(t)
+	rec := sampleRecord()
+	rec.State = StateEnded
+	rec.EndedAt = time.Now().UTC().Add(-2 * time.Hour)
+	if err := s.CreateIndexed(rec, "req-1"); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.EvictTerminal(time.Now().UTC().Add(-time.Hour))
+	if err != nil || n != 1 {
+		t.Fatalf("evicted %d (%v); want 1", n, err)
+	}
+	if _, err := s.GetByGatewaySessionID(rec.GatewaySessionID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("gateway index survived eviction: %v", err)
+	}
+	reuse := sampleRecord()
+	reuse.SessionID = "sess_2"
+	if err := s.CreateIndexed(reuse, "req-2"); err != nil {
+		t.Fatalf("id not released after eviction: %v", err)
+	}
+}

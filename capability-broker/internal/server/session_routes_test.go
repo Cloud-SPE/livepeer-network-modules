@@ -530,3 +530,76 @@ func TestTopUpResponseReturnsTheSuccessorWorkID(t *testing.T) {
 			"back to the identity it just rotated away from)", got["work_id"], want, originalWorkID)
 	}
 }
+
+// sessionOpenWithGatewayID opens a session declaring a specific
+// gateway_session_id.
+func sessionOpenWithGatewayID(t *testing.T, srv *httptest.Server, requestID, gatewayID string) *http.Response {
+	t.Helper()
+	body := `{"gateway_session_id":"` + gatewayID + `","session_params":{}}`
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/session", strings.NewReader(body))
+	req.Header.Set(livepeerheader.Capability, "livepeer:meet/sfu-room")
+	req.Header.Set(livepeerheader.Offering, "default")
+	req.Header.Set(livepeerheader.Protocol, "paid-session/v1")
+	req.Header.Set(livepeerheader.RequestID, requestID)
+	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("stub-payment")))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// A clearinghouse holds only the id it issued itself, so the settlement
+// query has to resolve it. session_id is broker-local and reaches LOC
+// through the customer-controlled SDK — the channel the signature exists
+// to distrust — and work_id can cover several sessions.
+func TestSettlementQueryResolvesGatewaySessionID(t *testing.T) {
+	srv, _ := newSessionTestServer(t)
+
+	open := decode(t, sessionOpenWithGatewayID(t, srv, "req-gws-lookup", "loc-sess-9c21"))
+	sessionID, _ := open["session_id"].(string)
+	if sessionID == "" {
+		t.Fatal("no session_id from open")
+	}
+
+	q, err := http.Get(srv.URL + "/v1/settlement/loc-sess-9c21")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Body.Close()
+	if q.StatusCode != http.StatusOK {
+		t.Fatalf("query by gateway_session_id status %d; want 200", q.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(q.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := body["session_id"].(string); got != sessionID {
+		t.Fatalf("resolved to session %q; want %q", got, sessionID)
+	}
+	if got, _ := body["gateway_session_id"].(string); got != "loc-sess-9c21" {
+		t.Fatalf("gateway_session_id = %q; want it echoed", got)
+	}
+}
+
+// The lookup is only usable if the id resolves to one session, so a
+// second open claiming it is refused rather than silently breaking the
+// lookup for both.
+func TestSessionOpenRefusesDuplicateGatewaySessionID(t *testing.T) {
+	srv, _ := newSessionTestServer(t)
+
+	first := sessionOpenWithGatewayID(t, srv, "req-dup-1", "loc-sess-dup")
+	if first.StatusCode != http.StatusCreated {
+		t.Fatalf("first open status %d", first.StatusCode)
+	}
+	_ = first.Body.Close()
+
+	second := sessionOpenWithGatewayID(t, srv, "req-dup-2", "loc-sess-dup")
+	defer second.Body.Close()
+	if second.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate gateway_session_id status %d; want 409", second.StatusCode)
+	}
+	if got := second.Header.Get(livepeerheader.Error); got != livepeerheader.ErrGatewaySessionIDReuse {
+		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrGatewaySessionIDReuse)
+	}
+}

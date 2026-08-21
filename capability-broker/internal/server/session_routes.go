@@ -324,9 +324,26 @@ func (s *Server) handleSettlement(w http.ResponseWriter, r *http.Request) {
 
 	rec, err := s.sessionStore.Get(id)
 	if err != nil {
-		// Not a session id — try it as a payment identity, current or
-		// superseded.
+		// Then the gateway's own session id. This is the key a
+		// clearinghouse actually holds: session_id is broker-local and
+		// reaches it only through the customer-controlled SDK. It is
+		// tried before work_id because it is unique by construction,
+		// while a work_id is shared by every session on one ticket
+		// session.
+		rec, err = s.sessionStore.GetByGatewaySessionID(id)
+	}
+	if err != nil {
+		// Last, a payment identity, current or superseded.
 		rec, err = s.sessionStore.GetByWorkID(id)
+	}
+	if errors.Is(err, sessionstore.ErrAmbiguous) {
+		// Answering with one of them would be a correctly signed record
+		// for the WRONG session, which a caller cannot detect from the
+		// record alone. Naming the usable key matters too: a caller told
+		// only "ambiguous" has nothing to try next.
+		livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAmbiguousIdentifier,
+			"this work_id covers more than one session; query by gateway_session_id or session_id")
+		return
 	}
 	if err != nil || rec == nil {
 		writeUniformUnauthorized(w)
@@ -620,6 +637,12 @@ func (s *Server) writeSessionError(w http.ResponseWriter, err error) {
 			status, code = http.StatusConflict, livepeerheader.ErrRebindRefused
 		case "recipient_rotated":
 			status, code = http.StatusConflict, livepeerheader.ErrRecipientRotated
+		case "gateway_session_id_reuse":
+			// 409, not 400: the request is well formed and the id is
+			// merely taken — the same shape as refill_refused, and a
+			// caller distinguishes "retry with a new id" from "this
+			// request is malformed" by the status alone.
+			status, code = http.StatusConflict, livepeerheader.ErrGatewaySessionIDReuse
 		}
 		livepeerheader.WriteError(w, status, code, pe.Detail)
 		return

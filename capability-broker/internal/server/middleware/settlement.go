@@ -36,6 +36,12 @@ type SettlementIdentity struct {
 	// bill(cumulative) - bill(cumulative - actual_units) without needing
 	// the session's whole history.
 	CumulativeUnits uint64
+	// RequestID is the exchange's Livepeer-Request-Id. job_id is
+	// broker-minted and reaches a clearinghouse only through the
+	// customer's SDK, so it binds the record to the broker's view of the
+	// exchange; this binds it to the caller's own, when the caller chose
+	// the id. It is the job path's counterpart to gateway_session_id.
+	RequestID string
 }
 
 // SettlementInputs captures everything needed to build a
@@ -150,9 +156,10 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 		// paid-job is the ticket session's rand hash, shared by every
 		// job minted against it, so job_id is what makes the record
 		// about ONE exchange.
-		JobId:    ident.JobID,
-		WorkId:   ident.WorkID,
-		IssuedAt: ident.IssuedAt,
+		JobId:     ident.JobID,
+		WorkId:    ident.WorkID,
+		RequestId: ident.RequestID,
+		IssuedAt:  ident.IssuedAt,
 		// This exchange's own units. The identity's running total goes
 		// in payment_cumulative_units — putting it here made one field
 		// mean the exchange on the job path and the whole session on the

@@ -339,6 +339,22 @@ message SettlementRecord {
   // sessions, so neither binds a record to one party's session record.
   // This does.
   string gateway_session_id = 26;
+
+  // The gateway's own id for this EXCHANGE, echoed from
+  // `Livepeer-Request-Id`. REQUIRED on a paid-job settlement.
+  //
+  // job_id above makes the record about one exchange, but the broker
+  // mints it, so it binds the settlement to the broker's view and
+  // reaches a clearinghouse only through the customer-controlled SDK.
+  // work_id is shared across every job on a ticket session. Neither ties
+  // the record to the durable job record its consumer already holds —
+  // this is the counterpart to gateway_session_id on the session path.
+  //
+  // A broker generates a request id when the caller sends none, and
+  // echoes it in the response either way, so the field is always
+  // populated; it binds to the caller's own record only when the caller
+  // chose it.
+  string request_id = 27;
 }
 
 // PaymentRejectionReason is the machine-readable reason a payee daemon

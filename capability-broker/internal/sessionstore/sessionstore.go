@@ -41,6 +41,14 @@ const (
 	// session open idempotent (paid-session/v1 §3.1): a retried open
 	// resolves to the original session instead of minting a sibling.
 	openRequestsBucket = "open_requests"
+	// gatewaySessionsBucket maps the GATEWAY's own session id ->
+	// session id. A clearinghouse holds only the id it issued itself:
+	// session_id is broker-local and reaches it through the customer's
+	// SDK, and work_id is shared by every session on a ticket session.
+	// Without this index the only key it can present resolves
+	// ambiguously, which returns a valid signed record for the wrong
+	// session.
+	gatewaySessionsBucket = "gateway_sessions"
 )
 
 // KeySize is the required length of the store's sealing key (AES-256).
@@ -51,6 +59,16 @@ var (
 	ErrNotFound = errors.New("sessionstore: session not found")
 	// ErrExists is returned by Create when the session id is taken.
 	ErrExists = errors.New("sessionstore: session already exists")
+	// ErrGatewaySessionExists is returned when an open declares a
+	// gateway_session_id already bound to a retained session. It is
+	// distinct from ErrExists because the remedy differs: the caller
+	// picked a colliding id, and no retry of the same open will succeed.
+	ErrGatewaySessionExists = errors.New("sessionstore: gateway_session_id already in use")
+	// ErrAmbiguous is returned by a lookup whose key matches more than
+	// one session. Returning any one of them would hand back a valid
+	// signature for the wrong session, which a caller cannot detect as
+	// wrong from the record alone.
+	ErrAmbiguous = errors.New("sessionstore: identifier matches more than one session")
 )
 
 // Session states (paid-session/v1 §2).
@@ -234,7 +252,10 @@ func Open(path string, key []byte) (*Store, error) {
 		if _, e := tx.CreateBucketIfNotExists([]byte(sessionsBucket)); e != nil {
 			return e
 		}
-		_, e := tx.CreateBucketIfNotExists([]byte(openRequestsBucket))
+		if _, e := tx.CreateBucketIfNotExists([]byte(openRequestsBucket)); e != nil {
+			return e
+		}
+		_, e := tx.CreateBucketIfNotExists([]byte(gatewaySessionsBucket))
 		return e
 	})
 	if err != nil {
@@ -290,12 +311,30 @@ func (s *Store) CreateIndexed(rec *Record, requestID string) error {
 		if b.Get([]byte(rec.SessionID)) != nil || idx.Get([]byte(requestID)) != nil {
 			return ErrExists
 		}
+		// The gateway's id has to resolve to exactly one session for as
+		// long as the record is retained, or the lookup it exists for
+		// returns somebody else's signed settlement. Two guards: it must
+		// not already be indexed, and it must not collide with a broker
+		// session id — Get(id) is tried first on the query path, so a
+		// caller could otherwise name another session and shadow its own.
+		gidx := tx.Bucket([]byte(gatewaySessionsBucket))
+		if rec.GatewaySessionID != "" {
+			if gidx.Get([]byte(rec.GatewaySessionID)) != nil ||
+				b.Get([]byte(rec.GatewaySessionID)) != nil {
+				return ErrGatewaySessionExists
+			}
+		}
 		raw, err := s.seal(rec)
 		if err != nil {
 			return err
 		}
 		if err := b.Put([]byte(rec.SessionID), raw); err != nil {
 			return err
+		}
+		if rec.GatewaySessionID != "" {
+			if err := gidx.Put([]byte(rec.GatewaySessionID), []byte(rec.SessionID)); err != nil {
+				return err
+			}
 		}
 		return idx.Put([]byte(requestID), []byte(rec.SessionID))
 	})
@@ -314,6 +353,36 @@ func (s *Store) SessionIDForRequest(requestID string) (string, error) {
 		return nil
 	})
 	return id, err
+}
+
+// GetByGatewaySessionID resolves the gateway's own session id to its
+// record. ErrNotFound when unknown.
+//
+// This is the key a clearinghouse actually holds. It is unique by
+// construction (CreateIndexed refuses a collision), so unlike a work_id
+// lookup it cannot return the wrong session.
+func (s *Store) GetByGatewaySessionID(gatewaySessionID string) (*Record, error) {
+	if gatewaySessionID == "" {
+		return nil, ErrNotFound
+	}
+	var rec *Record
+	err := s.db.View(func(tx *bolt.Tx) error {
+		id := tx.Bucket([]byte(gatewaySessionsBucket)).Get([]byte(gatewaySessionID))
+		if id == nil {
+			return ErrNotFound
+		}
+		raw := tx.Bucket([]byte(sessionsBucket)).Get(id)
+		if raw == nil {
+			return ErrNotFound
+		}
+		var e error
+		rec, e = s.unseal(raw)
+		return e
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rec, nil
 }
 
 // Get returns the record for id, with the private descriptor part
@@ -386,6 +455,7 @@ func (s *Store) EvictTerminal(cutoff time.Time) (int, error) {
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(sessionsBucket))
 		var evict [][]byte
+		var gateways [][]byte
 		if err := b.ForEach(func(k, raw []byte) error {
 			rec, err := s.unseal(raw)
 			if err != nil {
@@ -393,6 +463,9 @@ func (s *Store) EvictTerminal(cutoff time.Time) (int, error) {
 			}
 			if rec.Terminal() && !rec.EndedAt.IsZero() && rec.EndedAt.Before(cutoff) {
 				evict = append(evict, bytes.Clone(k))
+				if rec.GatewaySessionID != "" {
+					gateways = append(gateways, []byte(rec.GatewaySessionID))
+				}
 			}
 			return nil
 		}); err != nil {
@@ -404,6 +477,23 @@ func (s *Store) EvictTerminal(cutoff time.Time) (int, error) {
 			}
 			n++
 		}
+		// Drop the gateway index with the record. Left behind it would
+		// both point at nothing and keep the id reserved forever, so a
+		// gateway that reuses ids across days would be refused an open
+		// on account of a session that no longer exists.
+		gidx := tx.Bucket([]byte(gatewaySessionsBucket))
+		for _, g := range gateways {
+			if err := gidx.Delete(g); err != nil {
+				return err
+			}
+		}
+		// The open-request index is left alone. Dropping an entry with
+		// its record would let a late retry of the same open mint a
+		// second session, which is the failure idempotency exists to
+		// prevent. The cost is a pointer to an evicted record, and a
+		// retry that finds one currently errors rather than replaying —
+		// acceptable only because the retry window is far shorter than
+		// the retention cutoff.
 		return nil
 	})
 	return n, err
@@ -484,9 +574,21 @@ func (s *Store) GetByWorkID(workID string) (*Record, error) {
 			if err != nil {
 				return nil // a record we cannot read is not a match
 			}
-			if rec.WorkID == workID || rec.PredecessorWorkID == workID {
-				out = rec
+			if rec.WorkID != workID && rec.PredecessorWorkID != workID {
+				return nil
 			}
+			// A work_id is a PAYMENT identity, and a gateway reuses one
+			// ticket session across many logical sessions. This used to
+			// keep the last match in iteration order, so a query with
+			// several sessions on one identity returned whichever
+			// session id sorted last — a correctly signed record for the
+			// wrong session, which the caller cannot tell is wrong.
+			// Refusing is the only honest answer; the caller has a key
+			// that resolves, in gateway_session_id.
+			if out != nil && out.SessionID != rec.SessionID {
+				return ErrAmbiguous
+			}
+			out = rec
 			return nil
 		})
 	})

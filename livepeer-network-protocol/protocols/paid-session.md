@@ -1,6 +1,6 @@
 ---
 spec_name: paid-session
-version: 1.0.7-draft
+version: 1.0.8-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -303,6 +303,22 @@ SDK — the channel the signature exists to distrust — and `work_id` can be
 shared by several sessions. Without it a signed record cannot be bound to
 the session it is evidence for. It MUST appear in the direct settlement
 query response too.
+
+Carrying it is not enough: **`GET /v1/settlement/{id}` MUST resolve it.** A
+consumer that cannot look a record up by the only key it holds is left
+querying by `work_id`, which can match several sessions — and a broker that
+answers with one of them returns a correctly signed record for the wrong
+session, indistinguishable from the right one by inspection. Two
+obligations follow:
+
+- A broker MUST keep `gateway_session_id` unique across retained sessions,
+  refusing a colliding open with `gateway_session_id_reuse` (409). Accepting
+  a duplicate would break the lookup for the earlier session as well as the
+  new one, so the collision has to be refused at open rather than resolved
+  at query time.
+- A query whose key matches more than one session MUST fail with
+  `ambiguous_identifier` (409) and name a key that resolves, rather than
+  return any one of the matches.
 
 The `session.rebound` control
 message (§8) is broker↔gateway signalling, not session history. Failure is
@@ -699,6 +715,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.8-draft | 2026-08-21 | §3.3.1: `GET /v1/settlement/{id}` MUST resolve `gateway_session_id`, not merely echo it — it is the only lookup key a clearinghouse issues itself. Brokers MUST keep it unique across retained sessions (`gateway_session_id_reuse`, 409), and a query matching several sessions MUST answer `ambiguous_identifier` (409) instead of returning one of them. LOC could reject a wrong-session record but had no key that would find the right one; the reference broker's `work_id` lookup returned whichever session sorted last. |
 | 1.0.7-draft | 2026-08-21 | §3.3.1: a payee that has rotated away from a `work_id` MUST refuse payments arriving on it — before validating any ticket, crediting nothing, queueing no winner — and report an invalid recipient rand so `recipient_rotated` is raised. The spec mandated the signal but never the refusal that produces it, and the reference receiver credited those payments while every debit against the closed session failed: real value in, no work ever billable out, and a winning ticket redeemable on chain against a session the payer could not draw on. Also states that rotation retires an identity for future work only and MUST NOT be used to repudiate tickets already minted. Found on Arbitrum One. |
 | 1.0.6-draft | 2026-08-20 | §3.1: an open replay now returns the **usable** recorded outcome — credential and grants re-delivered — under four conditions (same request id, identical open fingerprint including the payment envelope, same payer proven by that envelope, exact recorded outcome). Reverses exactly-once secret delivery: a lost open response otherwise left a funded session nobody could drive. Adds the fingerprint requirement, so a reused id with different content is `request_id_reuse` rather than somebody else's session, and requires replay secrets encrypted at rest and destroyed at winddown. |
 | 1.0.5-draft | 2026-08-20 | Add §3.3.1, recipient rotation: payee-authorized only, `recipient_rotated` as the signal, a **declared** rebind on top-up with three verification rules, predecessor settled before close, continuity of session/credential/cumulative accounting, `session.max_rotations` and the zero-delivery bound, `payment_unrecoverable` as the terminal reason, bounded offerings excluded, settlement-only visibility, and stranded balance stated as a known cost. §8 gains `rebind_from` and `session.rebound`. |

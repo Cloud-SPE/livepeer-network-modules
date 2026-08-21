@@ -361,6 +361,19 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		CapacityRef:           req.CapacityRef,
 	}
 	if err := e.cfg.Store.CreateIndexed(rec, req.RequestID); err != nil {
+		// A colliding gateway_session_id is the caller's own mistake and
+		// no retry fixes it, so it fails as a protocol error rather than
+		// converging on somebody else's session. The id has to resolve
+		// to one session for the settlement lookup to be usable, and
+		// silently accepting a duplicate would break that for BOTH
+		// parties to the collision.
+		if errors.Is(err, sessionstore.ErrGatewaySessionExists) {
+			_ = e.runnerFor(req.Spec.BackendRef).TerminateSession(ctx, created.RunnerSessionID, ReasonOpenFailed)
+			_ = e.closePayeeSession(ctx, sharedIdentity, sender, workID)
+			e.release(req.CapacityRef)
+			return nil, protoErr("gateway_session_id_reuse",
+				"gateway_session_id is already bound to another session; choose an unused id")
+		}
 		if errors.Is(err, sessionstore.ErrExists) {
 			// Concurrent open with the same request id won; converge.
 			_ = e.runnerFor(req.Spec.BackendRef).TerminateSession(ctx, created.RunnerSessionID, ReasonOpenFailed)

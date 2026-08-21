@@ -47,7 +47,18 @@ const (
 	ErrTransportUnsupported    = "protocol_transport_unsupported"
 	ErrJobInFlight             = "job_in_flight"
 	ErrRequestIDReuse          = "request_id_reuse"
-	ErrRefillRefused           = "refill_refused"
+	// ErrGatewaySessionIDReuse rejects an open whose gateway_session_id
+	// is already bound to a retained session. The id is what a
+	// clearinghouse looks a settlement up by, so it has to resolve to
+	// exactly one session; accepting a duplicate would break that lookup
+	// for both sessions, not just the second one.
+	ErrGatewaySessionIDReuse = "gateway_session_id_reuse"
+	// ErrAmbiguousIdentifier answers a settlement query whose key
+	// matches more than one session — a work_id shared across sessions.
+	// Returning one of them would be a valid signature for the wrong
+	// session, so the query fails and names a key that resolves.
+	ErrAmbiguousIdentifier = "ambiguous_identifier"
+	ErrRefillRefused       = "refill_refused"
 	// ErrRecipientRotated tells a gateway its payment identity is stale:
 	// the payee rotated its recipient rand, so every ticket in the batch
 	// was rejected. The remedy is mechanical — re-fetch ticket params,

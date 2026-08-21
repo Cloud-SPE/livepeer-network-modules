@@ -5,6 +5,7 @@ package scenarios
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -423,6 +424,55 @@ func sessionScenarios() []harness.Scenario {
 			}
 			if len(c.Runner.Terminated()) == 0 {
 				return fmt.Errorf("runner session never terminated")
+			}
+			return nil
+		}},
+		{Name: "paid-session/settlement-resolves-gateway-session-id", Spec: "paid-session §3.3.1", Run: func(c *harness.Ctx) error {
+			// The gateway's own id is the ONLY lookup key a
+			// clearinghouse issues itself. session_id is broker-local
+			// and reaches it through the customer-controlled SDK — the
+			// channel the settlement signature exists to distrust — and
+			// a work_id can cover several sessions, so a query by it can
+			// return a correctly signed record for the wrong one.
+			gatewayID := "gws-settle-" + c.RequestID("gwslookup")
+			r, err := c.OpenSession(c.RequestID("gwslookup"), harness.PaymentEnvelope("gwslookup"),
+				`{"gateway_session_id":"`+gatewayID+`","session_params":{}}`)
+			if err != nil {
+				return err
+			}
+			if r.Status != 201 && r.Status != 200 {
+				return fmt.Errorf("open status %d: %s", r.Status, r.Body)
+			}
+			var open struct {
+				SessionID string `json:"session_id"`
+			}
+			if err := json.Unmarshal([]byte(r.Body), &open); err != nil {
+				return fmt.Errorf("decode open: %w", err)
+			}
+
+			q, err := c.QuerySettlement(gatewayID)
+			if err != nil {
+				return err
+			}
+			if q.Status != 200 {
+				return fmt.Errorf("settlement query by gateway_session_id status %d: %s "+
+					"— a consumer that cannot look up by the one key it issued itself has "+
+					"no way to find its own record", q.Status, q.Body)
+			}
+			var got struct {
+				SessionID        string `json:"session_id"`
+				GatewaySessionID string `json:"gateway_session_id"`
+			}
+			if err := json.Unmarshal([]byte(q.Body), &got); err != nil {
+				return fmt.Errorf("decode settlement query: %w", err)
+			}
+			if got.GatewaySessionID != gatewayID {
+				return fmt.Errorf("query returned gateway_session_id %q; want %q",
+					got.GatewaySessionID, gatewayID)
+			}
+			if open.SessionID != "" && got.SessionID != open.SessionID {
+				return fmt.Errorf("query resolved to session %q; want the opened %q",
+					got.SessionID, open.SessionID)
 			}
 			return nil
 		}},

@@ -1135,8 +1135,23 @@ type SettlementRecord struct {
 	// sessions, so neither binds a record to one party's session record.
 	// This does.
 	GatewaySessionId string `protobuf:"bytes,26,opt,name=gateway_session_id,json=gatewaySessionId,proto3" json:"gateway_session_id,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The gateway's own id for this EXCHANGE, echoed from
+	// `Livepeer-Request-Id`. REQUIRED on a paid-job settlement.
+	//
+	// job_id above makes the record about one exchange, but the broker
+	// mints it, so it binds the settlement to the broker's view and
+	// reaches a clearinghouse only through the customer-controlled SDK.
+	// work_id is shared across every job on a ticket session. Neither ties
+	// the record to the durable job record its consumer already holds —
+	// this is the counterpart to gateway_session_id on the session path.
+	//
+	// A broker generates a request id when the caller sends none, and
+	// echoes it in the response either way, so the field is always
+	// populated; it binds to the caller's own record only when the caller
+	// chose it.
+	RequestId     string `protobuf:"bytes,27,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SettlementRecord) Reset() {
@@ -1347,6 +1362,13 @@ func (x *SettlementRecord) GetPaymentCumulativeUnits() uint64 {
 func (x *SettlementRecord) GetGatewaySessionId() string {
 	if x != nil {
 		return x.GatewaySessionId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
 	}
 	return ""
 }
@@ -1571,7 +1593,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x0festimated_units\x18\x01 \x01(\x04R\x0eestimatedUnits\x12G\n" +
 	"\x10funded_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12&\n" +
 	"\x0fmax_total_units\x18\x03 \x01(\x04R\rmaxTotalUnits\x12$\n" +
-	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\x87\f\n" +
+	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xa6\f\n" +
 	"\x10SettlementRecord\x12L\n" +
 	"\x12accepted_quote_ref\x18\x01 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12$\n" +
 	"\x0ework_unit_name\x18\x02 \x01(\tR\fworkUnitName\x12'\n" +
@@ -1601,7 +1623,9 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x05state\x18\x17 \x01(\tR\x05state\x12\x15\n" +
 	"\x06job_id\x18\x18 \x01(\tR\x05jobId\x128\n" +
 	"\x18payment_cumulative_units\x18\x19 \x01(\x04R\x16paymentCumulativeUnits\x12,\n" +
-	"\x12gateway_session_id\x18\x1a \x01(\tR\x10gatewaySessionId\x1a<\n" +
+	"\x12gateway_session_id\x18\x1a \x01(\tR\x10gatewaySessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x1b \x01(\tR\trequestId\x1a<\n" +
 	"\x0eBreakdownEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x01\n" +

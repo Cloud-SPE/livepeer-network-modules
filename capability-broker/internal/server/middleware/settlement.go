@@ -36,6 +36,16 @@ type SettlementIdentity struct {
 	// bill(cumulative) - bill(cumulative - actual_units) without needing
 	// the session's whole history.
 	CumulativeUnits uint64
+	// DebitFailed reports that the final debit did not complete. The
+	// record then attests what the ledger TOOK (debited_units, usually
+	// zero) rather than what the extractor measured, and carries
+	// DEBIT_FAILED so a clearinghouse refuses it instead of booking
+	// revenue that never moved.
+	DebitFailed bool
+	// DebitedUnits is what the ledger actually accepted. Equal to the
+	// measured units on the normal path; less, usually zero, when the
+	// debit failed.
+	DebitedUnits uint64
 	// RequestID is the exchange's Livepeer-Request-Id. job_id is
 	// broker-minted and reaches a clearinghouse only through the
 	// customer's SDK, so it binds the record to the broker's view of the
@@ -131,6 +141,16 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 		fundedValueWei = new(big.Int)
 	}
 
+	// A failed debit overrides every funded/billed comparison below: the
+	// question "was this over- or under-funded" presumes value moved,
+	// and none did. Attest what the ledger took, not what was measured.
+	if ident.DebitFailed {
+		billedValueWei = big.NewInt(0)
+		if ident.ChargedWei != nil {
+			billedValueWei = ident.ChargedWei
+		}
+	}
+
 	outcome := pb.SettlementRecord_EXACT
 	switch fundedValueWei.Cmp(billedValueWei) {
 	case -1:
@@ -143,6 +163,11 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 	// because the gateway happened to over- or under-fund the request.
 	if terminationReason == livepeerheader.ErrInsufficientBalance {
 		outcome = pb.SettlementRecord_STOPPED_AT_BUDGET
+	}
+	// And a failed debit outranks that in turn — a budget stop is an
+	// orderly end to a settled exchange; this one did not settle.
+	if ident.DebitFailed {
+		outcome = pb.SettlementRecord_DEBIT_FAILED
 	}
 
 	workUnit := meta.workUnitName
@@ -164,7 +189,10 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 		// in payment_cumulative_units — putting it here made one field
 		// mean the exchange on the job path and the whole session on the
 		// session path, which is worse than the gap it was filling.
-		DebitedUnits:           actualUnits,
+		// What the LEDGER took, which is the measured units on the
+		// normal path and less — usually zero — when the debit failed.
+		// Reporting the measurement here claimed value that never moved.
+		DebitedUnits:           ident.DebitedUnits,
 		PaymentCumulativeUnits: ident.CumulativeUnits,
 
 		AcceptedQuoteRef: &pb.QuoteRef{

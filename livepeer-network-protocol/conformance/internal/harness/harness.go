@@ -63,6 +63,13 @@ type Ctx struct {
 	Backend *fakes.JobBackend
 	Runner  *fakes.SessionRunner
 
+	// SettlementSigner is the eth address of the delegated settlement key
+	// the broker-under-test was configured with. Empty means the run is
+	// unsigned, and the signature scenarios skip rather than fail — a
+	// third party pointing the suite at their own broker may not have
+	// wired a key yet.
+	SettlementSigner string
+
 	// Offering coordinates the broker-under-test must serve (see README).
 	JobCapability    string // paid-job capability id
 	JobOfferingAll   string // offering declaring unary+stream+multipart

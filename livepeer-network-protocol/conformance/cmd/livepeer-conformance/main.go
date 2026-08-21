@@ -27,10 +27,15 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/internal/fakes"
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/internal/harness"
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/internal/scenarios"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 const configTemplate = `identity:
   orch_eth_address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+  # The suite runs SIGNED. An unsigned run exercises every rule except
+  # the one a clearinghouse actually gates money on, which is the rule
+  # most worth grading.
+  settlement_key_file: %q
 external_base_url: "http://127.0.0.1:%d"
 listen:
   paid: "127.0.0.1:%d"
@@ -332,6 +337,11 @@ func main() {
 		// can run for real instead of skipping.
 		ctx.RestartBroker = ctl.restart
 		ctx.RestartBrokerLosingPayment = ctl.restartLosingPayment
+		// Only an auto-launched broker has a key this suite chose, so
+		// only then can a signature be checked against an expected
+		// address. Against an external broker the signature scenarios
+		// skip rather than assert something they cannot know.
+		ctx.SettlementSigner = ctl.settlementSigner
 	}
 
 	results := harness.RunAll(ctx, scenarios.All(), os.Stdout)
@@ -378,7 +388,23 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 	if err := os.WriteFile(keyPath, []byte(hex.EncodeToString(key)), 0o600); err != nil {
 		return nil, "", err
 	}
+
+	// A delegated settlement key, generated per run. The address it
+	// derives to is what every settlement in the run must recover to —
+	// the assertion a clearinghouse makes before it books anything.
+	settleKey, err := crypto.GenerateKey()
+	if err != nil {
+		return nil, "", err
+	}
+	settleKeyPath := filepath.Join(dir, "settlement.key")
+	if err := os.WriteFile(settleKeyPath,
+		[]byte(hex.EncodeToString(crypto.FromECDSA(settleKey))), 0o600); err != nil {
+		return nil, "", err
+	}
+	signerAddr := crypto.PubkeyToAddress(settleKey.PublicKey).Hex()
+
 	cfg := fmt.Sprintf(configTemplate,
+		settleKeyPath,
 		paidPort, paidPort, metricsPort,
 		filepath.Join(dir, "payment-mock.json"),
 		filepath.Join(dir, "state.db"), keyPath,
@@ -432,7 +458,8 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 	fmt.Printf("broker under test: %s (reference broker, auto mode)\n\n", url)
 
 	ctl := &brokerControl{
-		stop: func() { halt(); _ = os.RemoveAll(dir) },
+		settlementSigner: signerAddr,
+		stop:             func() { halt(); _ = os.RemoveAll(dir) },
 		restart: func() error {
 			halt()
 			// The state store must survive: same dir, same key, same
@@ -457,6 +484,9 @@ type brokerControl struct {
 	stop                 func()
 	restart              func() error
 	restartLosingPayment func() error
+	// settlementSigner is the eth address of the delegated key this run
+	// gave the broker. Every settlement it emits must recover to it.
+	settlementSigner string
 }
 
 func waitHealthy(url string, timeout time.Duration) error {

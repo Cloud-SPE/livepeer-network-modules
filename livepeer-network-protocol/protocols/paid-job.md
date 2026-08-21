@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.6-draft
+version: 1.0.7-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -144,6 +144,34 @@ This is the invariant that deletes the surveyed gateways' hand-rolled
 `settle(0)` compensation: a gateway that times out simply retries the same
 request id and converges on the true outcome.
 
+### 4.1 What a replay returns, and what it does not
+
+A replay returns the **accounting** outcome, not the backend's response
+body. Concretely it MUST return the recorded status, `Livepeer-Work-Units`,
+`Livepeer-Work-Unit` and `Livepeer-Job-Id`, and the settlement MUST remain
+retrievable at `GET /v1/settlement/{id}`; it MUST NOT re-execute the
+backend, debit a second time, or fabricate a body it does not have.
+
+The body is deliberately not replayed. Reproducing it would require every
+broker to durably store every customer response — inference output,
+transcripts, generated media — for the whole idempotency window, turning a
+metering component into a customer-data store with the retention,
+encryption and deletion obligations that follow. That is a large liability
+to impose on all operators to cover a response lost in flight.
+
+The consequence is explicit rather than hidden: **a caller whose original
+response was lost cannot recover the result through this protocol.** It has
+paid for work it cannot see. A broker MUST make that distinguishable — a
+replayed exchange is marked as such in its body — so the caller can treat
+it as a failed delivery of a *charged* exchange rather than as a fresh
+result. Deciding what to do then is the caller's: surface the charge,
+absorb it, or re-submit under a new request id and pay again.
+
+Operators for whom that trade is wrong MAY offer response retention as an
+offering-level feature. It is deliberately not the default and not
+required, because the protocol should not oblige every seller to store
+every buyer's output.
+
 ### 4.5 Funding is checked before the backend runs
 
 A broker MUST NOT execute a backend for a session whose credited balance
@@ -193,12 +221,52 @@ billable output claims and debits `0`. Partial streaming output is billable
 as measured — "how partial is billable" is precisely what the extractor
 declaration decides, per offering, not per incident.
 
+**A non-2xx backend response on a non-streaming transport claims `0`
+regardless of the extractor.** Leaving that to the extractor makes the rule
+an accident of configuration: a usage-reading extractor finds no usage in
+an error body and reaches zero on its own, but a request-derived one — a
+formula over an image count, a per-request constant — returns its full
+count for a request the backend never served. The unit that decides
+whether work was billable cannot be the one that never looked at the
+outcome.
+
 **Funded ceiling (streams).** A `stream` exchange runs against its envelope's
 funded ceiling: the broker MAY terminate the stream once extractor-measured
 usage reaches it, ending the body cleanly and claiming exactly the delivered
 units in the trailer. This is the seller's fail-closed protection for
 long-running exchanges — there is no mid-job refill, deliberately. A workload
 that legitimately needs mid-exchange funding is `paid-session/v1` work.
+
+### 5.2 A failed debit is not a settled exchange
+
+The broker delivers work and debits after, so the ledger call can fail
+with the response already gone. When it does:
+
+- `debited_units` MUST report what the ledger actually took — usually zero,
+  or the interim ticks that did succeed on a long exchange. It MUST NOT
+  report the measurement.
+- `billed_value_wei` MUST report the value that actually moved.
+- `actual_units` still reports what the extractor measured. The
+  measurement is not in doubt; the payment is.
+- The record MUST carry outcome `DEBIT_FAILED`, and a consumer MUST NOT
+  treat it as settled.
+
+Reporting the measured units here — which the reference broker did —
+makes a broker whose ledger call failed byte-indistinguishable from one
+that was paid. A clearinghouse then books revenue that never moved, and
+the failure is invisible exactly when it matters.
+
+This is fail-closed on the *accounting*, which is the part still
+recoverable once work has shipped. It is deliberately not a claim that the
+work was free: the operator has delivered something and has an unpaid
+exchange, which is an operational matter — a retry, a dunning process, an
+alert — and not something the record should paper over.
+
+Note the ordering limit this does not fix: on a `unary` exchange the
+broker commits `Livepeer-Work-Units` in the response headers before the
+debit runs, so that header can name units a subsequent debit fails to
+take. The settlement is authoritative where the two disagree, and closing
+the gap means debiting before header commit.
 
 ### 5.1 What binds a job settlement to the job
 
@@ -251,6 +319,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.7-draft | 2026-08-21 | Add §4.1, replay semantics, and §5.2, the debit-failure rule. A replay returns the ACCOUNTING outcome and not the backend body — reproducing the body would make every broker a customer-data store — and the caller's loss is stated plainly rather than left implicit. A failed final debit MUST NOT be reported as a settled exchange: `debited_units` attests what the ledger took and the record carries `DEBIT_FAILED`. Both raised by the OpenAI gateway team. |
 | 1.0.6-draft | 2026-08-21 | §3.2: a broker MUST NOT advertise a trailer on a response that cannot carry one, and MAY advertise `Livepeer-Settlement` on `stream`. The reference broker declared the settlement trailer on every exchange including Content-Length delimited unary ones, where the transport drops it silently — nothing asserted it, so a client waiting on the advertised name waited forever. |
 | 1.0.5-draft | 2026-08-21 | Add §5.1: a paid-job settlement MUST carry the exchange's `request_id` alongside `job_id`, inside the signature. LOC reported that neither broker-minted `job_id` nor shared `work_id` binds a signed record to the clearinghouse's own durable job — the job path's counterpart to `gateway_session_id`. |
 | 1.0.4-draft | 2026-08-21 | Add §4.6: a payment arriving on a payee-retired `work_id` MUST be refused rather than credited, and surfaced as `recipient_rotated` so a gateway re-mints instead of retrying a doomed envelope. The job spec never covered rotation, though the job path hits the same refusal; the payee obligation lives in paid-session §3.3.1. |

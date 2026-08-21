@@ -247,6 +247,107 @@ func jobScenarios() []harness.Scenario {
 			}
 			return nil
 		}},
+		{Name: "paid-job/settlement-signature-verifies", Spec: "livepeer-headers §Livepeer-Settlement", Run: func(c *harness.Ctx) error {
+			// The assertion a clearinghouse gates money on. Every other
+			// rule in this suite can hold while the signature is absent
+			// or forged, and the record would still be worthless as
+			// evidence — so an unsigned suite grades everything except
+			// the part that decides whether the money moves.
+			if c.SettlementSigner == "" {
+				return fmt.Errorf("%w: run is unsigned (no delegated settlement key configured)",
+					harness.ErrSkip)
+			}
+			env, err := harness.SignedPaymentEnvelope(c.JobCapability, c.JobOfferingAll,
+				c.JobUnit, 1, 1, 42, "signed")
+			if err != nil {
+				return err
+			}
+			r, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingAll, RequestID: c.RequestID("signed"),
+				Payment: env,
+				Body:    []byte(`{"model":"m","messages":[]}`),
+			})
+			if err != nil {
+				return err
+			}
+			if r.Status != 200 {
+				return fmt.Errorf("status %d: %s", r.Status, r.Body)
+			}
+			jobID := r.Header.Get(harness.HdrJobID)
+			q, err := c.QuerySettlement(jobID)
+			if err != nil {
+				return err
+			}
+			if q.Status != 200 {
+				return fmt.Errorf("settlement query status %d: %s", q.Status, q.Body)
+			}
+			var body struct {
+				Settlement string `json:"settlement"`
+			}
+			if err := json.Unmarshal(q.Body, &body); err != nil {
+				return fmt.Errorf("decode settlement query: %w", err)
+			}
+			if body.Settlement == "" {
+				return fmt.Errorf("settlement query returned no envelope")
+			}
+			signer, err := harness.RecoverSettlementSigner(body.Settlement)
+			if err != nil {
+				return err
+			}
+			if !strings.EqualFold(signer, c.SettlementSigner) {
+				return fmt.Errorf("settlement recovered to %s; the delegated key is %s — a "+
+					"record that does not recover to a delegated key is not evidence",
+					signer, c.SettlementSigner)
+			}
+			return nil
+		}},
+
+		{Name: "paid-job/tampered-settlement-fails-verification", Spec: "livepeer-headers §Livepeer-Settlement", Run: func(c *harness.Ctx) error {
+			// The signature has to actually bind the payload. A verifier
+			// that accepts an altered record is worse than none: it
+			// converts "signed" from a guarantee into decoration.
+			if c.SettlementSigner == "" {
+				return fmt.Errorf("%w: run is unsigned", harness.ErrSkip)
+			}
+			env, err := harness.SignedPaymentEnvelope(c.JobCapability, c.JobOfferingAll,
+				c.JobUnit, 1, 1, 42, "tamper")
+			if err != nil {
+				return err
+			}
+			r, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingAll, RequestID: c.RequestID("tamper"),
+				Payment: env,
+				Body:    []byte(`{"model":"m","messages":[]}`),
+			})
+			if err != nil {
+				return err
+			}
+			jobID := r.Header.Get(harness.HdrJobID)
+			q, err := c.QuerySettlement(jobID)
+			if err != nil {
+				return err
+			}
+			var body struct {
+				Settlement string `json:"settlement"`
+			}
+			if err := json.Unmarshal(q.Body, &body); err != nil {
+				return err
+			}
+			tampered, err := harness.TamperSettlementUnits(body.Settlement)
+			if err != nil {
+				return err
+			}
+			signer, err := harness.RecoverSettlementSigner(tampered)
+			if err != nil {
+				return nil // recovery refused outright: also correct
+			}
+			if strings.EqualFold(signer, c.SettlementSigner) {
+				return fmt.Errorf("a settlement with altered units still recovered to the "+
+					"delegated key %s — the signature does not bind the payload", signer)
+			}
+			return nil
+		}},
+
 		{Name: "paid-job/no-undeliverable-trailer-advertised", Spec: "paid-job §3.2", Run: func(c *harness.Ctx) error {
 			// A trailer rides only on a chunked response. A unary
 			// exchange is Content-Length delimited, so any trailer it

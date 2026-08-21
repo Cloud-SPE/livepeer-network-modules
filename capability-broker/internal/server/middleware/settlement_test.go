@@ -229,3 +229,85 @@ func TestCrossJobSettlementReplayIsDetectable(t *testing.T) {
 		t.Fatal("settlements for different jobs are indistinguishable inside the signature")
 	}
 }
+
+// A failed debit must be visible in the record, not smoothed over.
+//
+// The broker delivers work and debits afterwards, so a ledger call can
+// fail with the response already gone. The record used to attest the
+// MEASURED units regardless, which made a broker whose debit failed
+// indistinguishable from one that was paid — a clearinghouse would book
+// revenue that never moved, and the failure was invisible exactly when
+// it mattered.
+func TestBuildSettlementRecord_DebitFailureIsAttested(t *testing.T) {
+	paymentBytes := makePaymentBytes(t, 10, 100)
+
+	ident := testIdentity()
+	ident.DebitFailed = true
+	ident.DebitedUnits = 0 // single-debit path: nothing was taken
+
+	got := buildSettlementRecord(paymentBytes, big.NewInt(1000), 100, "tokens", "", ident)
+	if got == nil {
+		t.Fatal("buildSettlementRecord returned nil")
+	}
+	if got.GetOutcome() != pb.SettlementRecord_DEBIT_FAILED {
+		t.Fatalf("outcome = %v; want DEBIT_FAILED so a consumer refuses the record",
+			got.GetOutcome())
+	}
+	if got.GetDebitedUnits() != 0 {
+		t.Fatalf("debited_units = %d; want 0 — the ledger took nothing",
+			got.GetDebitedUnits())
+	}
+	if got.GetActualUnits() != 100 {
+		t.Fatalf("actual_units = %d; want the measurement preserved at 100",
+			got.GetActualUnits())
+	}
+	if v := new(big.Int).SetBytes(got.GetBilledValueWei().GetValue()); v.Sign() != 0 {
+		t.Fatalf("billed_value_wei = %s; want 0 — attesting a charge that never moved is "+
+			"the whole defect", v)
+	}
+}
+
+// Interim ticks that DID succeed took real value; a failed FINAL debit
+// must not disown them.
+func TestBuildSettlementRecord_DebitFailureKeepsInterimDebits(t *testing.T) {
+	paymentBytes := makePaymentBytes(t, 10, 100)
+
+	ident := testIdentity()
+	ident.DebitFailed = true
+	ident.DebitedUnits = 70 // interim ticks covered 70 of 100
+	ident.ChargedWei = big.NewInt(700)
+
+	got := buildSettlementRecord(paymentBytes, big.NewInt(1000), 100, "tokens", "", ident)
+	if got == nil {
+		t.Fatal("buildSettlementRecord returned nil")
+	}
+	if got.GetOutcome() != pb.SettlementRecord_DEBIT_FAILED {
+		t.Fatalf("outcome = %v; want DEBIT_FAILED", got.GetOutcome())
+	}
+	if got.GetDebitedUnits() != 70 {
+		t.Fatalf("debited_units = %d; want 70 — the interim ticks were real debits",
+			got.GetDebitedUnits())
+	}
+	if v := new(big.Int).SetBytes(got.GetBilledValueWei().GetValue()); v.Cmp(big.NewInt(700)) != 0 {
+		t.Fatalf("billed_value_wei = %s; want 700, what the ledger actually took", v)
+	}
+}
+
+// The normal path is unchanged: measured units are debited units.
+func TestBuildSettlementRecord_NormalPathDebitsWhatItMeasures(t *testing.T) {
+	paymentBytes := makePaymentBytes(t, 10, 100)
+	ident := testIdentity()
+	ident.DebitedUnits = 100
+
+	got := buildSettlementRecord(paymentBytes, big.NewInt(1000), 100, "tokens", "", ident)
+	if got == nil {
+		t.Fatal("buildSettlementRecord returned nil")
+	}
+	if got.GetOutcome() == pb.SettlementRecord_DEBIT_FAILED {
+		t.Fatal("a successful exchange must not be marked DEBIT_FAILED")
+	}
+	if got.GetDebitedUnits() != got.GetActualUnits() {
+		t.Fatalf("debited %d != actual %d on the normal path",
+			got.GetDebitedUnits(), got.GetActualUnits())
+	}
+}

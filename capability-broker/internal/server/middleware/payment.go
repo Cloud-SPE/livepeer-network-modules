@@ -490,6 +490,17 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			}
 			var chargedWei *big.Int
 			var cumulativeUnits uint64
+			// Units the LEDGER accepted, as opposed to units measured.
+			// They differ exactly when a debit fails, which is the case
+			// the settlement has to be able to say out loud.
+			//
+			// Starts at the full measurement: with no final debit to
+			// make (finalUnits == 0) the interim ticks already covered
+			// the exchange. A failed final debit subtracts only the part
+			// that failed — interim ticks that DID succeed took real
+			// value and the record must not disown them.
+			debitedUnits := actual
+			var debitFailed bool
 			if finalUnits > 0 {
 				// finalSeq counted from per-request state, which
 				// repeats across exchanges on one work_id. Allocate
@@ -517,6 +528,15 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 					log.Printf("ERROR: final debit FAILED work_id=%s seq=%d units=%d: %v "+
 						"— work was delivered and NOT billed", workID, finalSeq, finalUnits, derr)
 					observability.RecordDebitFailure(capability, offering)
+					// Fail the ACCOUNTING closed even though the work
+					// has already gone out. The settlement used to
+					// attest the measured units here, which made a
+					// broker whose ledger call failed indistinguishable
+					// from one that was paid — the failure invisible
+					// exactly when it matters. The record now says
+					// DEBIT_FAILED and attests what the ledger took.
+					debitFailed = true
+					debitedUnits = actual - finalUnits
 				}
 			}
 
@@ -577,6 +597,8 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				ChargedWei:      chargedWei,
 				CumulativeUnits: cumulativeUnits,
 				RequestID:       RequestIDFromContext(r.Context()),
+				DebitFailed:     debitFailed,
+				DebitedUnits:    debitedUnits,
 			}
 			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue, ident); settlement != nil {
 				if encoded, err := encode(settlement); err == nil {

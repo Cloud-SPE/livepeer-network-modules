@@ -445,7 +445,24 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 			"read backend body: "+err.Error())
 		return
 	}
-	units := s.extractUnits(r, extractor, reqBody, respBody, resp, start)
+	// A non-2xx backend produced no billable output, so the claim is
+	// zero regardless of what the extractor would compute (paid-job §5).
+	//
+	// Leaving it to the extractor made the rule an accident of
+	// configuration: `openai-usage` finds no usage object in an error
+	// body and reaches zero on its own, but a request-derived extractor
+	// — `request-formula` over an image `n`, a per-request constant —
+	// returns its full count for a request the backend never served.
+	// The unit that decides whether work was billable cannot be the one
+	// that never looked at the outcome.
+	//
+	// Streaming is deliberately not covered here: a stream that failed
+	// partway still delivered client-visible output, and how partial is
+	// billable is what the extractor declaration exists to decide.
+	var units uint64
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		units = s.extractUnits(r, extractor, reqBody, respBody, resp, start)
+	}
 	copyBackendHeaders(w, resp)
 	w.Header().Set(livepeerheader.WorkUnits, strconv.FormatUint(units, 10))
 	if resp.StatusCode >= 500 {

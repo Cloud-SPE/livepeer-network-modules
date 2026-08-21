@@ -102,6 +102,17 @@ const (
 	SettlementRecord_OVERFUNDED                     SettlementRecord_SettlementOutcome = 3
 	SettlementRecord_STOPPED_AT_BUDGET              SettlementRecord_SettlementOutcome = 4
 	SettlementRecord_TOPPED_UP                      SettlementRecord_SettlementOutcome = 5
+	// The exchange was delivered but its debit did NOT complete, so no
+	// value moved for the units in actual_units. debited_units is what
+	// the ledger actually took, which is less than actual_units and is
+	// usually zero.
+	//
+	// A consumer MUST NOT treat this as settled. It exists because the
+	// alternative — emitting a record indistinguishable from a settled
+	// one — makes a broker whose ledger call failed look identical to a
+	// broker that was paid, and the failure is invisible precisely when
+	// it matters.
+	SettlementRecord_DEBIT_FAILED SettlementRecord_SettlementOutcome = 6
 )
 
 // Enum value maps for SettlementRecord_SettlementOutcome.
@@ -113,6 +124,7 @@ var (
 		3: "OVERFUNDED",
 		4: "STOPPED_AT_BUDGET",
 		5: "TOPPED_UP",
+		6: "DEBIT_FAILED",
 	}
 	SettlementRecord_SettlementOutcome_value = map[string]int32{
 		"SETTLEMENT_OUTCOME_UNSPECIFIED": 0,
@@ -121,6 +133,7 @@ var (
 		"OVERFUNDED":                     3,
 		"STOPPED_AT_BUDGET":              4,
 		"TOPPED_UP":                      5,
+		"DEBIT_FAILED":                   6,
 	}
 )
 
@@ -1593,7 +1606,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x0festimated_units\x18\x01 \x01(\x04R\x0eestimatedUnits\x12G\n" +
 	"\x10funded_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12&\n" +
 	"\x0fmax_total_units\x18\x03 \x01(\x04R\rmaxTotalUnits\x12$\n" +
-	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xa6\f\n" +
+	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xb8\f\n" +
 	"\x10SettlementRecord\x12L\n" +
 	"\x12accepted_quote_ref\x18\x01 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12$\n" +
 	"\x0ework_unit_name\x18\x02 \x01(\tR\fworkUnitName\x12'\n" +
@@ -1628,7 +1641,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"request_id\x18\x1b \x01(\tR\trequestId\x1a<\n" +
 	"\x0eBreakdownEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9b\x01\n" +
 	"\x11SettlementOutcome\x12\"\n" +
 	"\x1eSETTLEMENT_OUTCOME_UNSPECIFIED\x10\x00\x12\t\n" +
 	"\x05EXACT\x10\x01\x12\x0f\n" +
@@ -1636,7 +1649,8 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"OVERFUNDED\x10\x03\x12\x15\n" +
 	"\x11STOPPED_AT_BUDGET\x10\x04\x12\r\n" +
-	"\tTOPPED_UP\x10\x05\"\xcc\x01\n" +
+	"\tTOPPED_UP\x10\x05\x12\x10\n" +
+	"\fDEBIT_FAILED\x10\x06\"\xcc\x01\n" +
 	"\fTicketStatus\x12!\n" +
 	"\fsender_nonce\x18\x01 \x01(\rR\vsenderNonce\x12W\n" +
 	"\x10rejection_reason\x18\x02 \x01(\x0e2,.livepeer.payments.v1.PaymentRejectionReasonR\x0frejectionReason\x12\x1f\n" +

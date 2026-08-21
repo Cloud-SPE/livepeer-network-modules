@@ -3,7 +3,9 @@ package middleware
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +18,9 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
+	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"google.golang.org/protobuf/proto"
 )
 
 // fakeLiveCounter is a goroutine-safe LiveCounter for middleware tests.
@@ -93,7 +97,7 @@ func TestPayment_TickerDisabledFallback(t *testing.T) {
 
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval: 0, // disabled
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(livepeerheader.WorkUnits, "42")
@@ -134,7 +138,7 @@ func TestPayment_TickerHappyPath(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       30 * time.Millisecond,
 		MinRunwayUnits: 0, // disable SufficientBalance for this fixture
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	lc := &fakeLiveCounter{}
 	handlerStart := make(chan struct{})
@@ -205,7 +209,7 @@ func TestPayment_InsufficientBalanceTermination(t *testing.T) {
 		Interval:            20 * time.Millisecond,
 		MinRunwayUnits:      100,
 		GraceOnInsufficient: 0,
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	lc := &fakeLiveCounter{}
 	handlerCtxObserved := make(chan struct{})
@@ -262,7 +266,7 @@ func TestPayment_InsufficientBalanceWithRunwayDoesNotTerminate(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       20 * time.Millisecond,
 		MinRunwayUnits: 10, // price=1 × 10 = 10 wei runway
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	lc := &fakeLiveCounter{}
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -301,7 +305,7 @@ func TestPayment_NoLiveCounterSkipsTicks(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       10 * time.Millisecond,
 		MinRunwayUnits: 0,
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Do NOT set LiveCounter. Sleep long enough for ≥3 ticks.
@@ -335,7 +339,7 @@ func TestPayment_InvalidRecipientRandReturnsRecipientRotated(t *testing.T) {
 	t.Parallel()
 
 	client := &invalidRecipientRandClient{Mock: payment.NewMock()}
-	mw := Payment(client, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil)
+	mw := Payment(client, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil, nil)
 
 	called := false
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -378,7 +382,7 @@ func TestPayment_EmitsFinalReceiptWhenMetaPresent(t *testing.T) {
 	sink := &stubReceiptSink{}
 	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "success"))
 
-	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink, nil)
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink, nil, nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := SessionStateFromContext(r.Context())
 		state.SetReceiptMeta(ReceiptMeta{
@@ -419,7 +423,7 @@ func TestPayment_EmitsFinalReceiptErrorMetricWhenSinkFails(t *testing.T) {
 	sink := &stubReceiptSink{err: errors.New("boom")}
 	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "error"))
 
-	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink, nil)
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink, nil, nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := SessionStateFromContext(r.Context())
 		state.SetReceiptMeta(ReceiptMeta{
@@ -455,7 +459,7 @@ func TestPayment_EmitsFinalReceiptErrorMetricWhenSinkFails(t *testing.T) {
 func TestPayment_RefusesWorkAgainstAnUnfundedSession(t *testing.T) {
 	t.Parallel()
 	mock := payment.NewMock()
-	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil)
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil, nil)
 
 	called := false
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -486,7 +490,7 @@ func TestPayment_RefusesWorkAgainstAnUnfundedSession(t *testing.T) {
 func TestPayment_FundedSessionStillServes(t *testing.T) {
 	t.Parallel()
 	mock := payment.NewMock()
-	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil)
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil, nil)
 
 	called := false
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -504,4 +508,77 @@ func TestPayment_FundedSessionStillServes(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200", rec.Code)
 	}
+}
+
+// TestPayment_EverySeparateExchangeOnOneWorkIDDebits is the defect a
+// real chain run found and nothing else could.
+//
+// A gateway reuses one ticket session across many jobs, so work_id is
+// stable. debit_seq used to be derived from per-request state, which
+// meant every unary job debited at seq 1 — and the payee, correctly
+// deduplicating on (sender, work_id, debit_seq), dropped every debit
+// after the first. Only the first job on a session ever billed, and it
+// billed correctly, which is exactly the request an operator tests.
+func TestPayment_EverySeparateExchangeOnOneWorkIDDebits(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil, nil)
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Three exchanges sharing one work_id, as a gateway on one ticket
+	// session produces. The payment must carry ticket params: a stub
+	// payment falls back to a per-request work_id, which is the one case
+	// that never collides and therefore never showed the bug.
+	randHash := []byte("0123456789abcdef0123456789abcdef")
+	workID := hex.EncodeToString(randHash)
+	for i := 0; i < 3; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, makeTicketPaidRequest(t, randHash, fmt.Sprintf("req-%d", i)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("exchange %d: status %d body %s", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	debits := mock.Debits(workID)
+	if len(debits) != 3 {
+		t.Fatalf("recorded %d debits for 3 exchanges: %v — a shared work_id deduplicated them away",
+			len(debits), debits)
+	}
+	seen := map[uint64]bool{}
+	for _, d := range debits {
+		if seen[d.Seq] {
+			t.Fatalf("debit_seq %d issued twice; the payee will drop the repeat: %v", d.Seq, debits)
+		}
+		seen[d.Seq] = true
+	}
+}
+
+// makeTicketPaidRequest builds a request whose payment carries ticket
+// params, so the middleware derives the payee work_id from it — the
+// shared-identity path a real gateway uses.
+func makeTicketPaidRequest(t *testing.T, randHash []byte, requestID string) *http.Request {
+	t.Helper()
+	raw, err := proto.Marshal(&paymentsv1.Payment{
+		TicketParams: &paymentsv1.TicketParams{RecipientRandHash: randHash},
+		// The envelope check compares this against the offering, so it
+		// must match stubLookup: 1 wei per 1 unit of "bytes".
+		ExpectedPrice: &paymentsv1.PriceInfo{
+			PricePerUnit:  1,
+			PixelsPerUnit: 1,
+			Constraint:    "cap=cap;off=off;wu=bytes;est=100;qid=q;qv=1;cfp=aa;rfp=bb",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/v1/job", nil)
+	r.Header.Set(livepeerheader.Capability, "cap")
+	r.Header.Set(livepeerheader.Offering, "off")
+	r.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString(raw))
+	r.Header.Set(livepeerheader.Protocol, "paid-job/v1")
+	return r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
 }

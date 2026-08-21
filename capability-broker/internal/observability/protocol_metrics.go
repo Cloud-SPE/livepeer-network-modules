@@ -28,6 +28,11 @@ var (
 		Help: "work units debited from paid-session usage claims.",
 	})
 
+	debitFailuresTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "livepeer_protocol_debit_failures_total",
+		Help: "debits that FAILED after work was delivered — every increment is unbilled work. Alert on any non-zero rate.",
+	}, []string{"capability", "offering"})
+
 	jobExchangesTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "livepeer_protocol_job_exchanges_total",
 		Help: "paid-job exchanges by transport and outcome (ok|client_error|backend_error|replayed|refused).",
@@ -42,6 +47,13 @@ func RecordSessionWinddown(reason string) { sessionWinddownsTotal.WithLabelValue
 
 // RecordSessionEvent counts one runner-event outcome.
 func RecordSessionEvent(outcome string) { sessionEventsTotal.WithLabelValues(outcome).Inc() }
+
+// RecordDebitFailure counts a debit that failed after the work was
+// already delivered. There is no recovering the work at that point, so
+// the only thing left is to make the loss visible.
+func RecordDebitFailure(capability, offering string) {
+	debitFailuresTotal.WithLabelValues(capability, offering).Inc()
+}
 
 // RecordSessionDebit adds debited units from a usage claim.
 func RecordSessionDebit(units uint64) { sessionDebitUnitsTotal.Add(float64(units)) }

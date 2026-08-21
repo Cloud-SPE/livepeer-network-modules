@@ -50,8 +50,9 @@ func (s *Server) initSessionEngine() error {
 			}
 			return s.specForRecord(rec)
 		},
-		Callback:   sessionengine.CallbackConfig{BaseURL: s.cfg.ExternalBaseURL},
-		OnWinddown: observability.RecordSessionWinddown,
+		Callback:      sessionengine.CallbackConfig{BaseURL: s.cfg.ExternalBaseURL},
+		AllocDebitSeq: s.allocDebitSeq,
+		OnWinddown:    observability.RecordSessionWinddown,
 	})
 	if err != nil {
 		_ = store.Close()

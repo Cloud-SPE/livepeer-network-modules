@@ -53,6 +53,8 @@ type Options struct {
 // Prometheus scraping.
 type Server struct {
 	settlementSigner     *settlement.Signer
+	memDebitSeqMu        sync.Mutex
+	memDebitSeq          map[string]uint64
 	mu                   sync.RWMutex
 	cfg                  *config.Config
 	configPath           string
@@ -550,4 +552,25 @@ func describeValidity(notBefore, expiresAt time.Time) string {
 		until = expiresAt.Format(time.RFC3339)
 	}
 	return from + " .. " + until
+}
+
+// allocDebitSeq hands out the next debit sequence for a work_id.
+//
+// Durable when a state store is configured. Without one it falls back to
+// an in-process counter, which is correct within a process and lost on
+// restart — after which a work_id's sequence restarts and the payee
+// deduplicates the first debits away as replays. That is the same
+// caveat the in-process job idempotency carries, and the same reason
+// session_store is required for spec conformance.
+func (s *Server) allocDebitSeq(workID string) (uint64, error) {
+	if s.sessionStore != nil {
+		return s.sessionStore.NextDebitSeq(workID)
+	}
+	s.memDebitSeqMu.Lock()
+	defer s.memDebitSeqMu.Unlock()
+	if s.memDebitSeq == nil {
+		s.memDebitSeq = map[string]uint64{}
+	}
+	s.memDebitSeq[workID]++
+	return s.memDebitSeq[workID], nil
 }

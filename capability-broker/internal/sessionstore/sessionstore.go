@@ -148,6 +148,11 @@ type Record struct {
 	ClaimedTotal uint64 `json:"claimed_total"`
 	DebitedTotal uint64 `json:"debited_total"`
 	DebitSeq     uint64 `json:"debit_seq"`
+	// PendingDebitSeq is a debit sequence allocated but not yet
+	// committed. It is persisted BEFORE the debit is attempted so a
+	// retry re-presents the same number and the payee deduplicates it;
+	// allocating again on retry would double-debit.
+	PendingDebitSeq uint64 `json:"pending_debit_seq,omitempty"`
 
 	// Lease and liveness.
 	LeaseExpiresAt time.Time `json:"lease_expires_at"`

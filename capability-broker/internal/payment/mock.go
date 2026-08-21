@@ -38,7 +38,8 @@ type mockSession struct {
 	openedAt            time.Time
 	closedAt            time.Time
 	closed              bool
-	debits              []int64 // for test inspection
+	debits              []int64       // for test inspection
+	debitLog            []DebitRecord // (seq, units) applied, in order
 }
 
 // NewMock returns an empty Mock client.
@@ -164,6 +165,7 @@ func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*big.In
 		BillFor(sess.pricePerWorkUnitWei, sess.perUnits, sess.debitedUnits), before)
 	sess.balance.Sub(sess.balance, debitWei)
 	sess.debits = append(sess.debits, req.WorkUnits)
+	sess.debitLog = append(sess.debitLog, DebitRecord{Seq: req.DebitSeq, Units: req.WorkUnits})
 	m.debits[seqKey] = req.WorkUnits
 	return new(big.Int).Set(sess.balance), nil
 }
@@ -245,6 +247,26 @@ func (m *Mock) CloseSession(_ context.Context, sender []byte, workID string) err
 // CreditBalance is a test helper that adds `wei` to a session's balance.
 // Used by unit tests and the conformance fixture to seed runway without
 // going through ProcessPayment.
+// DebitRecord is one applied debit, for tests that need to see which
+// sequence numbers were actually used rather than only the total.
+type DebitRecord struct {
+	Seq   uint64
+	Units int64
+}
+
+// Debits returns the debits APPLIED to a work_id — deduplicated repeats
+// are absent, which is the point: a test asserting that N exchanges
+// billed N times must see the drops.
+func (m *Mock) Debits(workID string) []DebitRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[workID]
+	if !ok {
+		return nil
+	}
+	return append([]DebitRecord(nil), sess.debitLog...)
+}
+
 // SetCreditPerPayment overrides what one payment credits. Zero models a
 // payment whose expected value rounds away — the case a mainnet run
 // actually produced, where a valid ticket credited nothing and the

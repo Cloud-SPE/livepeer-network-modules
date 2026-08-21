@@ -197,9 +197,32 @@ func SessionStateFromContext(ctx context.Context) *SessionState {
 // a test can assert on the record without a key at all.
 type SettlementEncoder func(*paymentsv1.SettlementRecord) (string, error)
 
-func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitConfig, receiptSink receipts.Client, encode SettlementEncoder) Middleware {
+// DebitSeqAllocator hands out the next debit sequence for a work_id.
+//
+// It is injected rather than derived from request state because the seq
+// space belongs to the work_id: a gateway reuses one ticket session
+// across many exchanges, so anything counted per-request repeats and the
+// payee — correctly deduplicating on (sender, work_id, debit_seq) —
+// drops every debit after the first.
+type DebitSeqAllocator func(workID string) (uint64, error)
+
+func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitConfig, receiptSink receipts.Client, encode SettlementEncoder, allocSeq DebitSeqAllocator) Middleware {
 	if encode == nil {
 		encode = encodeSettlementRecord
+	}
+	if allocSeq == nil {
+		// In-process fallback for tests and for a broker with no state
+		// store. Correct within a process, lost on restart — the same
+		// caveat the in-process job idempotency carries, and logged the
+		// same way at startup.
+		var mu sync.Mutex
+		counters := map[string]uint64{}
+		allocSeq = func(workID string) (uint64, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			counters[workID]++
+			return counters[workID], nil
+		}
 	}
 	// Production-safety warning per plan 0015 §9.1: tick intervals
 	// below 1s are intended for conformance fixtures only.
@@ -236,8 +259,8 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				return
 			}
 
-			workID, ok := payment.DerivePayeeWorkID(paymentBytes)
-			if !ok {
+			workID, payeeOwned := payment.DerivePayeeWorkID(paymentBytes)
+			if !payeeOwned {
 				workID = RequestIDFromContext(r.Context())
 				if workID == "" {
 					// RequestID middleware always sets one; defense in depth.
@@ -276,8 +299,29 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				return
 			}
 
-			// Always close the session, even on early-return paths below.
-			defer func() { _ = client.CloseSession(ctx, result.Sender, workID) }()
+			// Close the payee session only if this exchange EXCLUSIVELY
+			// owns it.
+			//
+			// A payment-derived work_id is the payee's ticket-session
+			// rand hash, which a gateway reuses across many exchanges.
+			// Closing it after one job destroyed the shared session:
+			// every later job on it still CREDITED (the payee guards
+			// credit on nothing) but could not DEBIT, since a closed
+			// session refuses debits — so work was served free from the
+			// second job onward. Closing also forfeits residual credit,
+			// which is not this exchange's to forfeit.
+			//
+			// The old behaviour was correct when work_id WAS the request
+			// id: that session belonged to one exchange. It stopped
+			// being correct when the id became payment-derived, and
+			// nothing noticed because the error was discarded.
+			//
+			// A shared session is closed by the payee's own lifecycle —
+			// rand rotation and retention — which is where that decision
+			// belongs.
+			if !payeeOwned {
+				defer func() { _ = client.CloseSession(ctx, result.Sender, workID) }()
+			}
 
 			if result.TicketsRejected > 0 && result.DominantRejection == payment.PaymentRejectionReasonInvalidRecipientRand {
 				// The payee rotated its recipient rand. For a job the
@@ -359,6 +403,7 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 					sender:         result.Sender,
 					workID:         workID,
 					interval:       idc.Interval,
+					allocSeq:       allocSeq,
 					minRunwayUnits: idc.MinRunwayUnits,
 					graceOnInsuff:  idc.GraceOnInsufficient,
 					state:          state,
@@ -430,12 +475,28 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				}
 			}
 			if finalUnits > 0 {
-				_, _ = client.DebitBalance(ctx, payment.DebitBalanceRequest{
+				// finalSeq counted from per-request state, which
+				// repeats across exchanges on one work_id. Allocate
+				// from the work_id's own space instead.
+				if seq, serr := allocSeq(workID); serr == nil {
+					finalSeq = seq
+				} else {
+					log.Printf("warning: debit seq allocation failed work_id=%s: %v", workID, serr)
+				}
+				// NEVER discard this error. It is the call that moves
+				// money, and swallowing it is what let a closed shared
+				// session serve work for free through two sessions of
+				// debugging while every log line read "success".
+				if _, derr := client.DebitBalance(ctx, payment.DebitBalanceRequest{
 					Sender:    result.Sender,
 					WorkID:    workID,
 					WorkUnits: int64(finalUnits),
 					DebitSeq:  finalSeq,
-				})
+				}); derr != nil {
+					log.Printf("ERROR: final debit FAILED work_id=%s seq=%d units=%d: %v "+
+						"— work was delivered and NOT billed", workID, finalSeq, finalUnits, derr)
+					observability.RecordDebitFailure(capability, offering)
+				}
 			}
 
 			// 6. If the ticker terminated the session for insufficient
@@ -514,6 +575,7 @@ type interimDebitArgs struct {
 	minRunwayUnits uint64
 	graceOnInsuff  time.Duration
 	state          *SessionState
+	allocSeq       DebitSeqAllocator
 	seq            *atomic.Uint64
 	lastTickTotal  *atomic.Uint64
 	cancelHandler  context.CancelFunc
@@ -565,7 +627,18 @@ func runInterimDebitTicker(ctx context.Context, stop <-chan struct{}, done chan<
 		if delta > 0 {
 			pendingMu.Lock()
 			if pendingSeq == 0 {
-				pendingSeq = a.seq.Load() + 1
+				// Allocate from the work_id's sequence space, not from
+				// this request's counter. pendingSeq holds the number
+				// until the debit succeeds, so a retry re-presents the
+				// same one and the payee deduplicates it — allocating
+				// again on retry would double-debit.
+				next, aerr := a.allocSeq(a.workID)
+				if aerr != nil {
+					pendingMu.Unlock()
+					log.Printf("warning: debit seq allocation failed work_id=%s: %v", a.workID, aerr)
+					continue
+				}
+				pendingSeq = next
 			}
 			seq := pendingSeq
 			pendingMu.Unlock()

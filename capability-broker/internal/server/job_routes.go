@@ -56,7 +56,8 @@ func (s *Server) registerJobRoutes() {
 				// Both protocols emit the same signed envelope, so a
 				// clearinghouse verifies settlement with one code path.
 				return settlement.Encode(rec, s.settlementSigner)
-			}))(
+			},
+			s.allocDebitSeq))(
 			http.HandlerFunc(s.handleJob))))
 	s.mux.Handle("POST /v1/job", h)
 }

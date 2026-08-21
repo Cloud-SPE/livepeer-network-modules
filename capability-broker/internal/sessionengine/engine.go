@@ -142,6 +142,12 @@ type Config struct {
 	Runner   func(backendRef string) RunnerClient // resolver, per backend
 	Specs    func(sessionID string) *OfferingSpec // resolve spec for a stored session
 	Callback CallbackConfig
+	// AllocDebitSeq allocates the next debit sequence for a work_id.
+	// The seq space belongs to the work_id — two sessions can share one
+	// — so this must come from durable per-work_id state, not from a
+	// per-session counter. Nil falls back to a per-session increment,
+	// which is correct only when no work_id is ever shared.
+	AllocDebitSeq func(workID string) (uint64, error)
 	// ReleaseCapacity releases a held capacity slot; nil is a no-op.
 	ReleaseCapacity func(capacityRef string)
 	// OnWinddown observes each terminal winddown's stable reason; nil
@@ -173,6 +179,9 @@ type Engine struct {
 	cfg  Config
 	mu   sync.Mutex
 	perS map[string]*sync.Mutex // serializes event processing per session
+
+	fallbackSeqMu sync.Mutex
+	fallbackSeq   map[string]uint64
 }
 
 // New constructs an Engine.
@@ -459,6 +468,22 @@ func openFingerprint(req OpenRequest) []byte {
 	return h.Sum(nil)
 }
 
+// allocDebitSeq allocates from the work_id's sequence space, falling
+// back to a per-session increment when no allocator is wired — which is
+// correct for a single session and is what the unit-test harness uses.
+func (e *Engine) allocDebitSeq(workID string) (uint64, error) {
+	if e.cfg.AllocDebitSeq != nil {
+		return e.cfg.AllocDebitSeq(workID)
+	}
+	e.fallbackSeqMu.Lock()
+	defer e.fallbackSeqMu.Unlock()
+	if e.fallbackSeq == nil {
+		e.fallbackSeq = map[string]uint64{}
+	}
+	e.fallbackSeq[workID]++
+	return e.fallbackSeq[workID], nil
+}
+
 // leaseFrom computes the funding-tracking lease default: runway units at
 // the declared burn rate, capped by the operator max (paid-session §5).
 func (e *Engine) leaseFrom(ctx context.Context, now time.Time, sender []byte, workID string, spec *OfferingSpec) time.Time {
@@ -549,7 +574,28 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 
 	debitSeq := rec.DebitSeq
 	if delta > 0 {
-		debitSeq++
+		// The seq space belongs to the work_id, not to this session: two
+		// sessions opened from payments minted on one ticket session
+		// share a work_id, and per-session counters would collide — the
+		// payee would deduplicate the second session's debits away.
+		//
+		// Reserve durably before debiting, so a retry re-presents the
+		// same number rather than allocating a fresh one.
+		if rec.PendingDebitSeq != 0 {
+			debitSeq = rec.PendingDebitSeq
+		} else {
+			next, err := e.allocDebitSeq(rec.WorkID)
+			if err != nil {
+				return nil, &RetryableError{Err: fmt.Errorf("debit seq: %w", err)}
+			}
+			if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
+				r.PendingDebitSeq = next
+				return nil
+			}); err != nil {
+				return nil, &RetryableError{Err: fmt.Errorf("reserve debit seq: %w", err)}
+			}
+			debitSeq = next
+		}
 		if _, err := e.cfg.Payment.DebitBalance(ctx, payment.DebitBalanceRequest{
 			Sender:    rec.Sender,
 			WorkID:    rec.WorkID,
@@ -587,6 +633,7 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		if delta > 0 {
 			r.DebitedTotal += delta
 			r.DebitSeq = debitSeq
+			r.PendingDebitSeq = 0
 		}
 		return nil
 	})

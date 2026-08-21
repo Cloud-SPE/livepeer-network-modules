@@ -466,6 +466,11 @@ func (s *Server) streamJobResponse(w http.ResponseWriter, r *http.Request, resp 
 	// would suppress them (and is wrong for a live stream anyway).
 	w.Header().Del("Content-Length")
 	w.Header().Add("Trailer", livepeerheader.WorkUnits)
+	// Declared here rather than in the payment middleware, which cannot
+	// know the transport yet: this is the one path guaranteed to be
+	// chunked, and a trailer advertised on a Content-Length response is
+	// dropped by net/http without a word.
+	w.Header().Add("Trailer", livepeerheader.Settlement)
 	w.WriteHeader(resp.StatusCode)
 
 	var buf bytes.Buffer

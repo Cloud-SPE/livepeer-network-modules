@@ -387,7 +387,21 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			}
 
 			rec := &responseRecorder{ResponseWriter: w}
-			rec.Header().Add("Trailer", livepeerheader.Settlement)
+			// The Livepeer-Settlement trailer is declared by the STREAMED
+			// job path, not here.
+			//
+			// Trailers ride only on a chunked response. This middleware
+			// runs before the handler has decided its transport, and a
+			// unary job copies the backend's Content-Length — so
+			// declaring it here advertised a trailer on unary responses
+			// that net/http then silently dropped, leaving a client that
+			// waits for it waiting forever. The streamed path deletes
+			// Content-Length before committing headers, so the
+			// declaration is honest exactly there.
+			//
+			// The value is still set below on both transports: harmless
+			// when undeclared, and it is what the durable record and the
+			// GET /v1/settlement/{id} surface are built from.
 
 			tickerDone := make(chan struct{})
 			tickerStop := make(chan struct{})

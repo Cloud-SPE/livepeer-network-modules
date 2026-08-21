@@ -1,6 +1,6 @@
 ---
 status: draft (rewritten for the v1 protocols)
-spec_version: 1.0.5-draft
+spec_version: 1.0.6-draft
 last_updated: 2026-08-20
 ---
 
@@ -206,10 +206,16 @@ Broker-authoritative settlement record for the completed request or session wind
 - **`signature` is absent when the broker holds no delegated key.** A consumer
   that needs integrity MUST reject an unsigned envelope; the field is omitted
   rather than emptied so the distinction cannot be missed.
-- For `paid-job/v1`, emitted as a response header or HTTP trailer depending on
-  when the implementation can finalize settlement relative to header commit —
-  and retrievable from `GET /v1/settlement/{id}` keyed by `Livepeer-Job-Id`,
-  because a trailer is unreadable in most SDK stacks (paid-job §3.2).
+- For `paid-job/v1`, retrievable from `GET /v1/settlement/{id}` keyed by
+  `Livepeer-Job-Id` — always, and on every transport, because a trailer is
+  unreadable in most SDK stacks (paid-job §3.2). In band it may additionally
+  arrive as a trailer on a **streamed** exchange, where headers commit long
+  before the units are known.
+- **A trailer MUST NOT be advertised on a response that cannot carry one.** A
+  trailer rides only on a chunked response, so a `Content-Length` delimited
+  (unary) exchange that names `Livepeer-Settlement` in its `Trailer` header is
+  telling a client to wait for something the transport will silently drop. On
+  that transport the record is retrieved from the query surface instead.
 - For `paid-session/v1`, emitted on the terminal response, and retrievable at
   any time from `GET /v1/settlement/{id}` — by `session_id`, by
   `gateway_session_id`, or by any `work_id` the session has held, including one
@@ -360,6 +366,7 @@ See [`../conformance/`](../conformance/).
 | 0.1.1 | Add `insufficient_balance` error code for long-running sessions terminated by the broker mid-flight (plan 0015). Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |
 | 0.1.2 | Add `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout` error codes for `rtmp-ingress-hls-egress` (plan 0011-followup). Pre-1.0 minor additions are non-breaking. |
 | 0.1.3 | Add `backpressure_drop` error code for the `session-control-plus-media` control-WebSocket (plan 0012-followup). Pre-1.0 minor additions are non-breaking. |
+| 1.0.6-draft | A `Livepeer-Settlement` trailer MUST NOT be advertised on a response that cannot carry one. Trailers ride only on chunked responses, and the reference broker declared one on every paid-job exchange including Content-Length delimited unary ones, where net/http dropped it silently — a client that waits for the advertised name waits forever. States the per-transport rule: the query surface always, the trailer additionally on streamed. |
 | 1.0.5-draft | `GET /v1/settlement/{id}` MUST also resolve `gateway_session_id`, the only lookup key a clearinghouse issues itself, and brokers MUST keep it unique across retained sessions (`gateway_session_id_reuse`). A key matching several sessions MUST answer `ambiguous_identifier` rather than return one of them. LOC could reject a wrong-session record but had no key that would find the right one. |
 | 1.0.4-draft | `insufficient_balance` is also a pre-flight refusal, not only a mid-flight termination (paid-job §4.5). |
 | 1.0.3-draft | `GET /v1/settlement/{id}` also serves paid-job exchanges, keyed by `Livepeer-Job-Id`, so a streamed claim is reachable by clients that cannot read HTTP trailers. |

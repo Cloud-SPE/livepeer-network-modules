@@ -247,6 +247,50 @@ func jobScenarios() []harness.Scenario {
 			}
 			return nil
 		}},
+		{Name: "paid-job/no-undeliverable-trailer-advertised", Spec: "paid-job §3.2", Run: func(c *harness.Ctx) error {
+			// A trailer rides only on a chunked response. A unary
+			// exchange is Content-Length delimited, so any trailer it
+			// advertises is dropped by the transport without a word —
+			// and a client that waits for the advertised name waits
+			// forever. Advertise it only where it can be sent.
+			r, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingAll, RequestID: c.RequestID("trailer-unary"),
+				Payment: harness.PaymentEnvelope("trailer-unary"),
+				Body:    []byte(`{"model":"m","messages":[]}`),
+			})
+			if err != nil {
+				return err
+			}
+			if r.Status != 200 {
+				return fmt.Errorf("unary status %d: %s", r.Status, r.Body)
+			}
+			// Go promotes advertised trailers off a chunked response
+			// into the trailer map; what stays in the header block is an
+			// advertisement on a response that cannot carry one.
+			if r.Header.Get("Content-Length") == "" {
+				return nil // not Content-Length delimited: the advertisement is honest
+			}
+			if declared := r.Header.Get("Trailer"); strings.Contains(declared, harness.HdrSettlement) {
+				return fmt.Errorf("unary response advertises %s as a trailer it cannot send "+
+					"(Trailer: %q); the settlement for a unary exchange is retrieved from "+
+					"GET /v1/settlement/{id}", harness.HdrSettlement, declared)
+			}
+			// Whatever the transport, the record must still be reachable.
+			jobID := r.Header.Get(harness.HdrJobID)
+			if jobID == "" {
+				return fmt.Errorf("no %s", harness.HdrJobID)
+			}
+			q, err := c.QuerySettlement(jobID)
+			if err != nil {
+				return err
+			}
+			if q.Status != 200 {
+				return fmt.Errorf("settlement query status %d: %s — a unary exchange that "+
+					"advertises no trailer MUST be queryable, or its settlement is "+
+					"unreachable entirely", q.Status, q.Body)
+			}
+			return nil
+		}},
 		{Name: "paid-job/streamed-claim-is-queryable", Spec: "paid-job §3.2", Run: func(c *harness.Ctx) error {
 			// A streamed job's terminal claim arrives in a trailer. Go
 			// reads trailers; HTTPX, Fetch and reqwest do not. If the

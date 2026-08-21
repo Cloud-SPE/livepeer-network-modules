@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.5-draft
+version: 1.0.6-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -100,7 +100,16 @@ The trailer stays as the low-latency path for clients that can read it.
 It is an optimization, not the contract.
 
 For `stream`, the broker MUST advertise the trailer (`Trailer:
-Livepeer-Work-Units`) in the response headers so gateways know to read it.
+Livepeer-Work-Units`) in the response headers so gateways know to read it,
+and MAY advertise `Livepeer-Settlement` the same way.
+
+Conversely, **a broker MUST NOT advertise a trailer on a response that
+cannot carry one.** Trailers ride only on chunked responses, so a
+`Content-Length` delimited `unary` or `multipart` exchange that names a
+trailer is telling a client to wait for something the transport will drop
+without a word. On those transports the settlement is retrieved from
+`GET /v1/settlement/{id}` — which is the contract on every transport
+anyway.
 A stream that terminates without the trailer (connection loss) is an
 *unclaimed* exchange: the broker still debits what the extractor measured,
 the gateway still has its own edge meter, and the divergence policy absorbs
@@ -242,6 +251,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.6-draft | 2026-08-21 | §3.2: a broker MUST NOT advertise a trailer on a response that cannot carry one, and MAY advertise `Livepeer-Settlement` on `stream`. The reference broker declared the settlement trailer on every exchange including Content-Length delimited unary ones, where the transport drops it silently — nothing asserted it, so a client waiting on the advertised name waited forever. |
 | 1.0.5-draft | 2026-08-21 | Add §5.1: a paid-job settlement MUST carry the exchange's `request_id` alongside `job_id`, inside the signature. LOC reported that neither broker-minted `job_id` nor shared `work_id` binds a signed record to the clearinghouse's own durable job — the job path's counterpart to `gateway_session_id`. |
 | 1.0.4-draft | 2026-08-21 | Add §4.6: a payment arriving on a payee-retired `work_id` MUST be refused rather than credited, and surfaced as `recipient_rotated` so a gateway re-mints instead of retrying a doomed envelope. The job spec never covered rotation, though the job path hits the same refusal; the payee obligation lives in paid-session §3.3.1. |
 | 1.0.3-draft | 2026-08-20 | Add §4.5: a broker MUST refuse with `insufficient_balance` rather than run a backend for a session that cannot cover one work unit. A mainnet run served real work against a zero balance and reported success at every layer — the interim-debit ticker guards long-running work and is a no-op for a single exchange, so nothing checked. |

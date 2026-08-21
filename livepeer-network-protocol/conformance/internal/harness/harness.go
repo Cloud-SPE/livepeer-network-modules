@@ -33,6 +33,7 @@ const (
 	HdrWorkUnits    = "Livepeer-Work-Units"
 	HdrWorkUnitName = "Livepeer-Work-Unit"
 	HdrJobID        = "Livepeer-Job-Id"
+	HdrSettlement   = "Livepeer-Settlement"
 	HdrError        = "Livepeer-Error"
 )
 

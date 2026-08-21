@@ -439,3 +439,109 @@ func rawSettlementPayload(t *testing.T, header string) string {
 	}
 	return string(env.Payload)
 }
+
+// jobReqPaid sends a job with a real payment envelope, so the exchange
+// actually produces a settlement. The stub envelope other tests use
+// parses to no expected_price, and no settlement is built at all.
+func jobReqPaid(t *testing.T, srv *httptest.Server, requestID, accept string) *http.Response {
+	t.Helper()
+	pay := &pb.Payment{ExpectedPrice: &pb.PriceInfo{
+		PricePerUnit: 1, PixelsPerUnit: 1,
+		Constraint: "cap=openai:chat-completions;off=default;wu=tokens;est=42;" +
+			"qid=quote-1;qv=1;cfp=aabb;rfp=ccdd",
+	}}
+	raw, err := proto.Marshal(pay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/job",
+		strings.NewReader(`{"model":"test-model","messages":[]}`))
+	req.Header.Set(livepeerheader.Capability, "openai:chat-completions")
+	req.Header.Set(livepeerheader.Offering, "default")
+	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
+	req.Header.Set(livepeerheader.RequestID, requestID)
+	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString(raw))
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// A streamed job delivers the signed settlement in the trailer it
+// advertises. This is the transport where a trailer is the only in-band
+// channel — headers are committed long before the units are known.
+func TestStreamedJobDeliversSettlementTrailer(t *testing.T) {
+	var calls atomic.Int64
+	srv := newJobTestServer(t, &calls)
+
+	resp := jobReqPaid(t, srv, "trailer-stream", "text/event-stream")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	// Trailers are only readable once the body is drained.
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	if got := resp.Trailer.Get(livepeerheader.Settlement); got == "" {
+		t.Fatalf("no %s trailer on a streamed job; trailers present: %v",
+			livepeerheader.Settlement, resp.Trailer)
+	}
+	if got := resp.Trailer.Get(livepeerheader.WorkUnits); got == "" || got == "0" {
+		t.Fatalf("streamed work units trailer = %q", got)
+	}
+}
+
+// A unary job must NOT advertise a settlement trailer.
+//
+// Trailers ride only on chunked responses, and a unary job copies the
+// backend's Content-Length — so net/http drops any trailer without a
+// word. Advertising one told a trailer-reading client to wait for
+// something that was never coming. The settlement for a unary exchange
+// is retrieved from GET /v1/settlement/{id}.
+func TestUnaryJobAdvertisesNoUndeliverableTrailer(t *testing.T) {
+	var calls atomic.Int64
+	srv := newJobTestServer(t, &calls)
+
+	resp := jobReqPaid(t, srv, "trailer-unary", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	// With Content-Length set the response is not chunked, so Go leaves
+	// any declaration in the ordinary header block rather than promoting
+	// it to resp.Trailer — which is exactly how the lie was visible.
+	if resp.Header.Get("Content-Length") == "" {
+		t.Skip("response was not Content-Length delimited; the advertisement would be honest")
+	}
+	if declared := resp.Header.Get("Trailer"); strings.Contains(declared, livepeerheader.Settlement) {
+		t.Fatalf("unary response advertises %q as a trailer it cannot send (Trailer: %q); "+
+			"a client that waits for it waits forever",
+			livepeerheader.Settlement, declared)
+	}
+	if got := resp.Trailer.Get(livepeerheader.Settlement); got != "" {
+		t.Fatalf("unexpected settlement trailer on a unary response: %q", got)
+	}
+
+	// And the settlement is still reachable — the channel that works.
+	jobID := resp.Header.Get(livepeerheader.JobID)
+	q, err := http.Get(srv.URL + "/v1/settlement/" + jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Body.Close()
+	var body struct {
+		Settlement string `json:"settlement"`
+	}
+	if err := json.NewDecoder(q.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Settlement == "" {
+		t.Fatal("unary settlement unreachable: no trailer AND no queryable record")
+	}
+}

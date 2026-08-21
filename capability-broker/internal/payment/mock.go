@@ -27,6 +27,10 @@ type Mock struct {
 	// creditOverride replaces the default per-payment credit when a test
 	// needs a payment that funds nothing.
 	creditOverride *big.Int
+
+	// failDebits counts down injected DebitBalance failures, so a test
+	// can exercise work shipping while the ledger call does not land.
+	failDebits int
 }
 
 type mockSession struct {
@@ -224,10 +228,28 @@ func (m *Mock) ProcessPayment(_ context.Context, req ProcessPaymentRequest) (*Pr
 // mock from being the thing that fails a test about something else.
 var mockCreditPerPayment = new(big.Int).Exp(big.NewInt(10), big.NewInt(15), nil)
 
+// FailNextDebits makes the next n DebitBalance calls fail, so a test can
+// exercise the path where work ships and the ledger call does not land.
+// Without it the durable-retry lifecycle is unreachable from a test, and
+// that lifecycle is the one that decides whether a delivered exchange
+// ever settles.
+func (m *Mock) FailNextDebits(n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failDebits = n
+}
+
 func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*DebitResult, error) {
 	if len(req.Sender) == 0 || req.WorkID == "" {
 		return nil, errors.New("sender and work_id are required")
 	}
+	m.mu.Lock()
+	if m.failDebits > 0 {
+		m.failDebits--
+		m.mu.Unlock()
+		return nil, errors.New("mock: injected debit failure")
+	}
+	m.mu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.flushLocked()

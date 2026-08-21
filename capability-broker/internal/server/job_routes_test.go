@@ -12,9 +12,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -543,5 +546,255 @@ func TestUnaryJobAdvertisesNoUndeliverableTrailer(t *testing.T) {
 	}
 	if body.Settlement == "" {
 		t.Fatal("unary settlement unreachable: no trailer AND no queryable record")
+	}
+}
+
+// newJobTestServerWith exposes the *Server and lets a test supply the
+// payment client, which is the only way to reach the path where work
+// ships and the ledger call does not land.
+func newJobTestServerWith(t *testing.T, backendCalls *atomic.Int64, pc payment.Client) (*httptest.Server, *Server) {
+	t.Helper()
+	be := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"text":"hi"}],"usage":{"total_tokens":42}}`)
+	}))
+	t.Cleanup(be.Close)
+
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "seal.key")
+	if err := os.WriteFile(keyPath, make([]byte, 32), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Identity:      config.Identity{OrchEthAddress: "0x" + strings.Repeat("cd", 20)},
+		PaymentDaemon: config.PaymentDaemon{Mock: true},
+		SessionStore: config.SessionStore{
+			Path:           filepath.Join(dir, "state.db"),
+			SealingKeyFile: keyPath,
+		},
+		Capabilities: []config.Capability{{
+			ID:         "openai:chat-completions",
+			OfferingID: "default",
+			Protocol:   "paid-job/v1",
+			Job:        &config.JobCapability{Transports: []string{"unary", "stream"}},
+			WorkUnit: config.WorkUnit{
+				Name:      "tokens",
+				Extractor: map[string]any{"type": "openai-usage"},
+			},
+			Health:  config.Health{InitialStatus: "ready"},
+			Price:   config.Price{AmountWei: "1", PerUnits: 1},
+			Backend: config.Backend{Transport: "http", URL: be.URL},
+			Extra:   map[string]any{"openai": map[string]any{"model": "test-model"}, "provider": "vllm"},
+		}},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	s, err := New(cfg, Options{PaymentClient: pc})
+	if err != nil {
+		t.Fatalf("server: %v", err)
+	}
+	t.Cleanup(func() {
+		if s.sessionStore != nil {
+			_ = s.sessionStore.Close()
+		}
+	})
+	srv := httptest.NewServer(s.mux)
+	t.Cleanup(srv.Close)
+	return srv, s
+}
+
+// The lifecycle the gateway team asked for: a debit that does not land
+// leaves the exchange DELIVERED BUT UNSETTLED, answers 202
+// accounting_pending while it retries, and reaches a signed terminal
+// settlement once the ledger accepts it.
+//
+// Before this, a failed debit was final on the first attempt: the
+// settlement said DEBIT_FAILED and a recoverable timeout was reported as
+// a permanent loss.
+func TestDebitRetryReachesSignedSettlement(t *testing.T) {
+	var calls atomic.Int64
+	mock := payment.NewMock()
+	mock.FailNextDebits(1) // the exchange's own debit fails; the retry lands
+	srv, s := newJobTestServerWith(t, &calls, mock)
+
+	resp := jobReqPaid(t, srv, "retry-1", "")
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("exchange status %d", resp.StatusCode)
+	}
+	jobID := resp.Header.Get(livepeerheader.JobID)
+
+	// Delivered, not settled: 202 with a state that says which.
+	q, err := http.Get(srv.URL + "/v1/settlement/" + jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := decodeBody(t, q)
+	if q.StatusCode != http.StatusAccepted {
+		t.Fatalf("query while pending = %d; want 202 accounting_pending (body %v)", q.StatusCode, body)
+	}
+	if got := q.Header.Get(livepeerheader.Error); got != livepeerheader.ErrAccountingPending {
+		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrAccountingPending)
+	}
+	if got, _ := body["state"].(string); got != sessionstore.JobAccountingPending {
+		t.Fatalf("state = %q; want %q", got, sessionstore.JobAccountingPending)
+	}
+
+	// The retrier drives it to terminal.
+	s.sweepPendingDebits(t.Context())
+
+	q2, err := http.Get(srv.URL + "/v1/settlement/" + jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body2 := decodeBody(t, q2)
+	if q2.StatusCode != http.StatusOK {
+		t.Fatalf("query after retry = %d; want 200 (body %v)", q2.StatusCode, body2)
+	}
+	encoded, _ := body2["settlement"].(string)
+	if encoded == "" {
+		t.Fatal("terminal settlement carries no envelope after a successful retry")
+	}
+	rec := decodeSettlementHeader(t, encoded)
+	if rec.GetOutcome() == pb.SettlementRecord_DEBIT_FAILED {
+		t.Fatal("settlement says DEBIT_FAILED after the retry landed")
+	}
+	if rec.GetDebitedUnits() == 0 {
+		t.Fatal("debited_units is 0 after a successful retry")
+	}
+}
+
+// Retry is bounded. An unbounded one leaves a job that can never reach a
+// terminal state, which is worse for a clearinghouse than a clear loss:
+// an encumbrance it can neither release nor write off.
+func TestDebitRetryExhaustionSettlesDebitFailed(t *testing.T) {
+	var calls atomic.Int64
+	mock := payment.NewMock()
+	mock.FailNextDebits(1000) // never lands
+	srv, s := newJobTestServerWith(t, &calls, mock)
+
+	resp := jobReqPaid(t, srv, "retry-exhaust", "")
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	jobID := resp.Header.Get(livepeerheader.JobID)
+
+	// Burn the attempt budget. Each sweep is one attempt.
+	for i := 0; i < debitRetryMaxAttempts+1; i++ {
+		s.sweepPendingDebits(t.Context())
+		forcePendingDue(t, s)
+	}
+
+	q, err := http.Get(srv.URL + "/v1/settlement/" + jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := decodeBody(t, q)
+	if q.StatusCode != http.StatusOK {
+		t.Fatalf("query after exhaustion = %d; want a terminal 200 (body %v)", q.StatusCode, body)
+	}
+	encoded, _ := body["settlement"].(string)
+	if encoded == "" {
+		t.Fatal("exhausted retry produced no settlement; the job can never be reconciled")
+	}
+	rec := decodeSettlementHeader(t, encoded)
+	if rec.GetOutcome() != pb.SettlementRecord_DEBIT_FAILED {
+		t.Fatalf("outcome = %v; want DEBIT_FAILED after bounded retry exhaustion",
+			rec.GetOutcome())
+	}
+	if rec.GetDebitedUnits() != 0 {
+		t.Fatalf("debited_units = %d; the ledger never took anything", rec.GetDebitedUnits())
+	}
+}
+
+// forcePendingDue pulls every pending record's next attempt into the
+// past so a test can burn the retry budget without sleeping.
+func forcePendingDue(t *testing.T, s *Server) {
+	t.Helper()
+	recs, err := s.sessionStore.DuePendingDebits(time.Now().Add(time.Hour), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range recs {
+		if err := s.sessionStore.RecordDebitRetryFailure(r.RequestID,
+			time.Now().Add(-time.Minute), "forced due"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func decodeBody(t *testing.T, resp *http.Response) map[string]any {
+	t.Helper()
+	defer resp.Body.Close()
+	var m map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return m
+}
+
+// A retry must not double-charge. It reuses the original debit_seq, and
+// a debit is idempotent by (sender, work_id, debit_seq) — which is what
+// makes durable retry safe for the case that motivates it most: an
+// attempt that landed and lost its response.
+func TestDebitRetryCannotDoubleCharge(t *testing.T) {
+	var calls atomic.Int64
+	mock := payment.NewMock()
+	mock.FailNextDebits(1)
+	srv, s := newJobTestServerWith(t, &calls, mock)
+
+	resp := jobReqPaid(t, srv, "retry-nodouble", "")
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	// Sweep repeatedly. Only the first lands; the rest find a terminal
+	// record and must do nothing.
+	for i := 0; i < 3; i++ {
+		s.sweepPendingDebits(t.Context())
+	}
+
+	var total int64
+	var seqs []uint64
+	for _, sess := range mock.Sessions() {
+		for _, d := range mock.Debits(sess.WorkID) {
+			total += d.Units
+			seqs = append(seqs, d.Seq)
+		}
+	}
+	if total != 42 {
+		t.Fatalf("ledger recorded %d units across seqs %v; the exchange was 42 — a retry charged twice",
+			total, seqs)
+	}
+}
+
+// The session a pending debit needs must stay open. Closing it at the
+// end of the exchange makes every retry fail with "session is closed",
+// so the work stays unbilled however generous the retry budget is.
+func TestPendingDebitKeepsPayeeSessionOpen(t *testing.T) {
+	var calls atomic.Int64
+	mock := payment.NewMock()
+	mock.FailNextDebits(1)
+	srv, s := newJobTestServerWith(t, &calls, mock)
+
+	resp := jobReqPaid(t, srv, "retry-openness", "")
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	for _, rec := range mock.Sessions() {
+		if rec.Closed {
+			t.Fatalf("payee session %s was closed while a debit was outstanding; "+
+				"no retry can land against it", rec.WorkID)
+		}
+	}
+	s.sweepPendingDebits(t.Context())
+
+	recs, err := s.sessionStore.DuePendingDebits(time.Now().Add(time.Hour), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("still pending after a sweep: %+v", recs[0].Pending)
 	}
 }

@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.7-draft
+version: 1.0.8-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -239,8 +239,39 @@ that legitimately needs mid-exchange funding is `paid-session/v1` work.
 
 ### 5.2 A failed debit is not a settled exchange
 
+A debit that does not land leaves the exchange **delivered but
+unsettled**. It is not terminal, and MUST NOT be reported as terminal:
+
+1. **While retry is active**, `GET /v1/settlement/{id}` MUST answer `202`
+   with state `accounting_pending`. This is distinct from a job still
+   running — nothing further is expected from the backend, only from the
+   ledger — so a consumer holds the encumbrance rather than booking it or
+   writing it off.
+2. **When the debit lands**, the exchange settles normally: a signed
+   terminal settlement whose `debited_units` and `billed_value_wei` are
+   what the ledger took.
+3. **Only when retry is exhausted** does the exchange settle terminal
+   with outcome `DEBIT_FAILED`.
+
+Retry MUST be bounded. An unbounded retry produces a job that never
+reaches a terminal state, which is worse for a clearinghouse than a clear
+loss: an encumbrance it can neither release nor write off. A bound
+converts an outage into a recoverable outcome somebody can act on.
+
+Retry MUST reuse the original `debit_seq`. Debits are idempotent by
+`(sender, work_id, debit_seq)`, so reusing it cannot double-charge — and
+it is what makes the case that motivates retry most, an attempt that
+landed and lost its response, safe to repeat.
+
+A broker MUST NOT close the payee session while a debit against it is
+outstanding. A closed session refuses debits, so closing guarantees the
+retry can never land however generous the budget.
+
+#### What the terminal settlement says
+
 The broker delivers work and debits after, so the ledger call can fail
-with the response already gone. When it does:
+with the response already gone. When retry is exhausted and the exchange
+settles `DEBIT_FAILED`:
 
 - `debited_units` MUST report what the ledger actually took — usually zero,
   or the interim ticks that did succeed on a long exchange. It MUST NOT
@@ -319,6 +350,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.8-draft | 2026-08-21 | §5.2 gains the debit-failure LIFECYCLE the OpenAI gateway team asked for: `202 accounting_pending` while a bounded, idempotent retry is active, a signed terminal settlement when the debit lands, and terminal `DEBIT_FAILED` only on retry exhaustion. Retry MUST reuse the original `debit_seq`, and a broker MUST NOT close a payee session while a debit against it is outstanding — a closed session refuses debits, so closing guarantees the retry can never land. Replaces settle-on-first-failure, which reported a recoverable timeout as a permanent loss. |
 | 1.0.7-draft | 2026-08-21 | Add §4.1, replay semantics, and §5.2, the debit-failure rule. A replay returns the ACCOUNTING outcome and not the backend body — reproducing the body would make every broker a customer-data store — and the caller's loss is stated plainly rather than left implicit. A failed final debit MUST NOT be reported as a settled exchange: `debited_units` attests what the ledger took and the record carries `DEBIT_FAILED`. Both raised by the OpenAI gateway team. |
 | 1.0.6-draft | 2026-08-21 | §3.2: a broker MUST NOT advertise a trailer on a response that cannot carry one, and MAY advertise `Livepeer-Settlement` on `stream`. The reference broker declared the settlement trailer on every exchange including Content-Length delimited unary ones, where the transport drops it silently — nothing asserted it, so a client waiting on the advertised name waited forever. |
 | 1.0.5-draft | 2026-08-21 | Add §5.1: a paid-job settlement MUST carry the exchange's `request_id` alongside `job_id`, inside the signature. LOC reported that neither broker-minted `job_id` nor shared `work_id` binds a signed record to the clearinghouse's own durable job — the job path's counterpart to `gateway_session_id`. |

@@ -26,6 +26,12 @@ const (
 const (
 	JobInFlight = "in_flight"
 	JobTerminal = "terminal"
+	// JobAccountingPending: the work was delivered and the exchange is
+	// over, but its debit has not landed and is being retried. It is
+	// deliberately NOT terminal — a terminal record asserts the
+	// accounting is settled, and reporting that while a debit is still
+	// outstanding is the failure this state exists to avoid.
+	JobAccountingPending = "accounting_pending"
 )
 
 // ErrRequestIDReuse reports a request-id replay whose content differs —
@@ -56,6 +62,48 @@ type JobRecord struct {
 	Deadline   time.Time `json:"deadline"`
 	CreatedAt  time.Time `json:"created_at"`
 	EndedAt    time.Time `json:"ended_at,omitzero"`
+	// Pending is set while State is JobAccountingPending: everything the
+	// retrier needs to finish the debit and then build the settlement
+	// the exchange should have had.
+	Pending *PendingDebit `json:"pending,omitempty"`
+}
+
+// PendingDebit is a debit that was attempted and did not land, plus the
+// inputs needed to build the settlement once it does.
+//
+// Retrying is safe because a debit is idempotent by
+// (sender, work_id, debit_seq): a retry of an attempt that actually
+// succeeded but lost its response returns the original debit rather than
+// charging twice. That property is what makes durable retry the right
+// answer here instead of a compensating write.
+type PendingDebit struct {
+	Sender   []byte `json:"sender"`
+	WorkID   string `json:"work_id"`
+	DebitSeq uint64 `json:"debit_seq"`
+	// Units is the amount THIS debit is for — the final flush, which on
+	// a long exchange is less than the exchange's total.
+	Units uint64 `json:"units"`
+	// DebitedUnits is what already landed before this attempt: interim
+	// ticks that succeeded. They took real value and the settlement must
+	// not disown them if the retry never lands.
+	DebitedUnits uint64 `json:"debited_units"`
+
+	Attempts      int       `json:"attempts"`
+	FirstFailedAt time.Time `json:"first_failed_at"`
+	NextAttemptAt time.Time `json:"next_attempt_at"`
+	LastError     string    `json:"last_error,omitempty"`
+
+	// Settlement rebuild inputs. Held because the record can only be
+	// built once the charge is known, and the charge is exactly what is
+	// still outstanding.
+	PaymentBytes      []byte `json:"payment_bytes,omitempty"`
+	FundedValueWei    string `json:"funded_value_wei,omitempty"`
+	ActualUnits       uint64 `json:"actual_units"`
+	WorkUnitName      string `json:"work_unit_name,omitempty"`
+	TerminationReason string `json:"termination_reason,omitempty"`
+	JobID             string `json:"job_id,omitempty"`
+	RequestID         string `json:"request_id,omitempty"`
+	IssuedAt          string `json:"issued_at,omitempty"`
 }
 
 // JobBegin records an in-flight exchange, or returns the existing
@@ -227,4 +275,133 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 		return nil
 	})
 	return n, err
+}
+
+// JobFinishPendingAccounting records a delivered exchange whose debit
+// did not land. The outcome (status, units, body digest) is terminal —
+// the work happened and a replay must return it — but the record is not,
+// because its accounting is still outstanding.
+func (s *Store) JobFinishPendingAccounting(requestID string, status int, workUnits uint64,
+	unit string, bodyDigest []byte, pending *PendingDebit) error {
+	if pending == nil {
+		return errors.New("sessionstore: nil pending debit")
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(jobsBucket))
+		if b == nil {
+			return ErrNotFound
+		}
+		raw := b.Get([]byte(requestID))
+		if raw == nil {
+			return ErrNotFound
+		}
+		var rec JobRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			return err
+		}
+		rec.State = JobAccountingPending
+		rec.Status = status
+		rec.WorkUnits = workUnits
+		rec.Unit = unit
+		rec.BodyDigest = bytes.Clone(bodyDigest)
+		rec.EndedAt = time.Now().UTC()
+		rec.Pending = pending
+		out, err := json.Marshal(&rec)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(requestID), out)
+	})
+}
+
+// DuePendingDebits returns records whose debit retry is due at now.
+// Copies are returned; the caller mutates through the store.
+func (s *Store) DuePendingDebits(now time.Time, limit int) ([]*JobRecord, error) {
+	var out []*JobRecord
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(jobsBucket))
+		if b == nil {
+			return nil
+		}
+		return b.ForEach(func(_, raw []byte) error {
+			if limit > 0 && len(out) >= limit {
+				return nil
+			}
+			var rec JobRecord
+			if err := json.Unmarshal(raw, &rec); err != nil {
+				return nil // a record we cannot read is not due
+			}
+			if rec.State != JobAccountingPending || rec.Pending == nil {
+				return nil
+			}
+			if rec.Pending.NextAttemptAt.After(now) {
+				return nil
+			}
+			cp := rec
+			out = append(out, &cp)
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RecordDebitRetryFailure bumps the attempt counter and schedules the
+// next try. The record stays pending.
+func (s *Store) RecordDebitRetryFailure(requestID string, nextAttempt time.Time, cause string) error {
+	return s.mutateJob(requestID, func(rec *JobRecord) error {
+		if rec.Pending == nil {
+			return ErrNotFound
+		}
+		rec.Pending.Attempts++
+		rec.Pending.NextAttemptAt = nextAttempt
+		rec.Pending.LastError = cause
+		if rec.Pending.FirstFailedAt.IsZero() {
+			rec.Pending.FirstFailedAt = time.Now().UTC()
+		}
+		return nil
+	})
+}
+
+// SettleJob moves a pending record to terminal with its settlement. Used
+// both when a retry finally lands and when retries are exhausted — the
+// difference is what the settlement says, which is the caller's to
+// decide.
+func (s *Store) SettleJob(requestID, settlement string) error {
+	return s.mutateJob(requestID, func(rec *JobRecord) error {
+		rec.State = JobTerminal
+		rec.Settlement = settlement
+		rec.Pending = nil
+		if rec.EndedAt.IsZero() {
+			rec.EndedAt = time.Now().UTC()
+		}
+		return nil
+	})
+}
+
+func (s *Store) mutateJob(requestID string, fn func(*JobRecord) error) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(jobsBucket))
+		if b == nil {
+			return ErrNotFound
+		}
+		raw := b.Get([]byte(requestID))
+		if raw == nil {
+			return ErrNotFound
+		}
+		var rec JobRecord
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			return err
+		}
+		if err := fn(&rec); err != nil {
+			return err
+		}
+		out, err := json.Marshal(&rec)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(requestID), out)
+	})
 }

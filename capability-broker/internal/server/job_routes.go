@@ -95,6 +95,10 @@ func negotiateTransport(r *http.Request) string {
 type jobIdemStore interface {
 	Begin(requestID string, fingerprint []byte, jobID string, deadline time.Time) (*sessionstore.JobRecord, bool, error)
 	Finish(requestID string, status int, workUnits uint64, unit string, bodyDigest []byte, settlement string) error
+	// FinishPendingAccounting records a delivered exchange whose debit
+	// is still outstanding, so it can be retried and settled later.
+	FinishPendingAccounting(requestID string, status int, workUnits uint64, unit string,
+		bodyDigest []byte, pd *middleware.PendingDebit) error
 	ByJobID(jobID string) (*sessionstore.JobRecord, error)
 }
 
@@ -105,6 +109,44 @@ func (b *boltJobIdem) Begin(id string, fp []byte, jobID string, dl time.Time) (*
 }
 func (b *boltJobIdem) Finish(id string, status int, units uint64, unit string, bodyDigest []byte, settlement string) error {
 	return b.store.JobFinish(id, status, units, unit, bodyDigest, settlement)
+}
+
+func (b *boltJobIdem) FinishPendingAccounting(id string, status int, units uint64, unit string,
+	bodyDigest []byte, pd *middleware.PendingDebit) error {
+	return b.store.JobFinishPendingAccounting(id, status, units, unit, bodyDigest, toStorePending(pd))
+}
+
+// toStorePending converts the middleware's in-flight shape to the
+// durable one. The two are separate types on purpose: the middleware
+// package has no business importing the store, and the durable record
+// has to survive a restart, so its big.Int becomes a decimal string.
+func toStorePending(pd *middleware.PendingDebit) *sessionstore.PendingDebit {
+	if pd == nil {
+		return nil
+	}
+	funded := "0"
+	if pd.FundedValueWei != nil {
+		funded = pd.FundedValueWei.String()
+	}
+	return &sessionstore.PendingDebit{
+		Sender:            append([]byte(nil), pd.Sender...),
+		WorkID:            pd.WorkID,
+		DebitSeq:          pd.DebitSeq,
+		Units:             pd.Units,
+		DebitedUnits:      pd.DebitedUnits,
+		PaymentBytes:      append([]byte(nil), pd.PaymentBytes...),
+		FundedValueWei:    funded,
+		ActualUnits:       pd.ActualUnits,
+		WorkUnitName:      pd.WorkUnitName,
+		TerminationReason: pd.TerminationReason,
+		JobID:             pd.JobID,
+		RequestID:         pd.RequestID,
+		IssuedAt:          pd.IssuedAt,
+		// Due immediately: the first retry should not wait out a backoff
+		// the exchange has not earned yet.
+		NextAttemptAt: time.Now().UTC(),
+		FirstFailedAt: time.Now().UTC(),
+	}
 }
 func (b *boltJobIdem) ByJobID(jobID string) (*sessionstore.JobRecord, error) {
 	return b.store.JobByID(jobID)
@@ -146,6 +188,24 @@ func (m *memJobIdem) ByJobID(jobID string) (*sessionstore.JobRecord, error) {
 		}
 	}
 	return nil, sessionstore.ErrNotFound
+}
+
+func (m *memJobIdem) FinishPendingAccounting(id string, status int, units uint64, unit string,
+	bodyDigest []byte, pd *middleware.PendingDebit) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.recs[id]
+	if !ok {
+		return sessionstore.ErrNotFound
+	}
+	rec.State = sessionstore.JobAccountingPending
+	rec.Status = status
+	rec.WorkUnits = units
+	rec.Unit = unit
+	rec.BodyDigest = bytes.Clone(bodyDigest)
+	rec.EndedAt = time.Now().UTC()
+	rec.Pending = toStorePending(pd)
+	return nil
 }
 
 func (m *memJobIdem) Finish(id string, status int, units uint64, unit string, bodyDigest []byte, settlement string) error {
@@ -307,7 +367,11 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		body := newHashingBody(r.Body)
 		r.Body = body
 		jrec := &jobRecorder{ResponseWriter: w}
-		next.ServeHTTP(jrec, r)
+		// A slot for the payment layer to report a debit that did not
+		// land. It sits inside this layer but the durable record lives
+		// here, so the failure has to travel outward.
+		ctx, pendingSlot := middleware.WithPendingDebitSlot(r.Context())
+		next.ServeHTTP(jrec, r.WithContext(ctx))
 		switch st := jrec.status(); {
 		case st < 400:
 			observability.RecordJobExchange(transport, "ok")
@@ -315,6 +379,18 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 			observability.RecordJobExchange(transport, "client_error")
 		default:
 			observability.RecordJobExchange(transport, "backend_error")
+		}
+		if pd := pendingSlot.Get(); pd != nil {
+			// Delivered but unsettled. The outcome is recorded so a
+			// replay still returns it; the record stays non-terminal so
+			// nothing reports the accounting as done while a debit is
+			// outstanding.
+			if err := s.jobIdem.FinishPendingAccounting(requestID, jrec.status(), jrec.units(),
+				c.WorkUnit.Name, body.digest(), pd); err != nil {
+				log.Printf("warning: job pending-accounting record failed request_id=%s: %v",
+					requestID, err)
+			}
+			return
 		}
 		if err := s.jobIdem.Finish(requestID, jrec.status(), jrec.units(), c.WorkUnit.Name,
 			body.digest(), jrec.settlement()); err != nil {

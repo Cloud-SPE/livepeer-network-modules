@@ -45,6 +45,13 @@ type Options struct {
 	// 0015. Zero values are a safe disabled state (v0.2 single-debit
 	// fall-through).
 	InterimDebit middleware.InterimDebitConfig
+
+	// PaymentClient replaces the client the config would select. Tests
+	// use it to drive failure paths the config cannot reach — a ledger
+	// that refuses a debit after the work has already shipped is the
+	// case the durable-retry lifecycle exists for, and it is
+	// unreachable without injecting the failure.
+	PaymentClient payment.Client
 }
 
 // Server wraps the broker's HTTP server. It owns two listeners: the paid
@@ -129,9 +136,15 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	paymentClient, err := newPaymentClient(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("payment client: %w", err)
+	// An injected client wins over the configured one, so a test can
+	// drive failure paths the config cannot express.
+	paymentClient := opts.PaymentClient
+	if paymentClient == nil {
+		var err error
+		paymentClient, err = newPaymentClient(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("payment client: %w", err)
+		}
 	}
 	secretResolver := backend.NewEnvSecretResolver()
 	receiptSink, err := newReceiptSink(cfg, secretResolver)
@@ -385,6 +398,12 @@ func (s *Server) Run(ctx context.Context) error {
 				}
 			}
 		}()
+	}
+	if s.sessionStore != nil && s.payment != nil {
+		// Drive outstanding debits to a terminal accounting state. Until
+		// this ran, a debit that failed after the work shipped was
+		// simply lost — and the exchange reported as settled anyway.
+		go s.runDebitRetry(ctx)
 	}
 	if s.sessionStore != nil {
 		defer func() { _ = s.sessionStore.Close() }()

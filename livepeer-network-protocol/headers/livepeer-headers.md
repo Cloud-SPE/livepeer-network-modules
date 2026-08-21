@@ -1,6 +1,6 @@
 ---
 status: draft (rewritten for the v1 protocols)
-spec_version: 1.0.6-draft
+spec_version: 1.0.7-draft
 last_updated: 2026-08-20
 ---
 
@@ -292,6 +292,7 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 | `job_in_flight` | 409 | Retry of a request id whose original exchange is still executing (paid-job §4). Retryable. |
 | `request_id_reuse` | 400 | Request id replayed with different capability, offering, envelope, or body (paid-job §4; paid-session §3.1 opens and §3.3 top-ups). |
 | `gateway_session_id_reuse` | 409 | Session open declared a `gateway_session_id` already bound to a retained session. The id is the settlement query's only consumer-issued key, so it must resolve to exactly one session; accepting a duplicate breaks the lookup for both. Choose an unused id — no retry of the same open succeeds. |
+| `accounting_pending` | 202 | The exchange was delivered but its debit has not landed and is being retried. Distinct from a job still running: nothing further is expected from the backend, only from the ledger. It will reach a terminal settlement — signed once the debit lands, or `DEBIT_FAILED` on retry exhaustion (paid-job §5.2). Hold the encumbrance; do not book or write off. |
 | `ambiguous_identifier` | 409 | A settlement query key matches more than one session — a `work_id` shared across sessions on one ticket session. Returning one would be a valid signature for the wrong session. Re-query by `gateway_session_id` or `session_id`. |
 | `refill_refused` | 409 | Top-up refused; `will_refuse_next_refill` was advertised beforehand (paid-session §3.3). |
 | `recipient_rotated` | 409 | The payee rotated its recipient rand, so every ticket in the batch was rejected. Mechanical remedy: re-fetch ticket params, re-mint, retry — for a session, declaring `Livepeer-Rebind-From` (paid-session §3.3.1). |
@@ -366,6 +367,7 @@ See [`../conformance/`](../conformance/).
 | 0.1.1 | Add `insufficient_balance` error code for long-running sessions terminated by the broker mid-flight (plan 0015). Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |
 | 0.1.2 | Add `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout` error codes for `rtmp-ingress-hls-egress` (plan 0011-followup). Pre-1.0 minor additions are non-breaking. |
 | 0.1.3 | Add `backpressure_drop` error code for the `session-control-plus-media` control-WebSocket (plan 0012-followup). Pre-1.0 minor additions are non-breaking. |
+| 1.0.7-draft | Add `accounting_pending` (202): a delivered exchange whose debit is still being retried, distinct from one still running. |
 | 1.0.6-draft | A `Livepeer-Settlement` trailer MUST NOT be advertised on a response that cannot carry one. Trailers ride only on chunked responses, and the reference broker declared one on every paid-job exchange including Content-Length delimited unary ones, where net/http dropped it silently — a client that waits for the advertised name waits forever. States the per-transport rule: the query surface always, the trailer additionally on streamed. |
 | 1.0.5-draft | `GET /v1/settlement/{id}` MUST also resolve `gateway_session_id`, the only lookup key a clearinghouse issues itself, and brokers MUST keep it unique across retained sessions (`gateway_session_id_reuse`). A key matching several sessions MUST answer `ambiguous_identifier` rather than return one of them. LOC could reject a wrong-session record but had no key that would find the right one. |
 | 1.0.4-draft | `insufficient_balance` is also a pre-flight refusal, not only a mid-flight termination (paid-job §4.5). |

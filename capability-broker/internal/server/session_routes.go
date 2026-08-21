@@ -441,6 +441,27 @@ func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 // zero", because treating the second as the first bills for nothing and
 // treating the first as the second fails open.
 func (s *Server) writeJobSettlement(w http.ResponseWriter, job *sessionstore.JobRecord) {
+	if job.State == sessionstore.JobAccountingPending {
+		// Delivered, not yet settled. 202 with a distinct state because
+		// the remedy differs from a job still running: there is nothing
+		// left to wait for from the backend, only from the ledger, and
+		// the exchange WILL reach a terminal settlement — either signed
+		// after the debit lands, or DEBIT_FAILED once retries are spent.
+		// A clearinghouse holds the encumbrance until then instead of
+		// booking or writing off.
+		body := map[string]any{
+			"job_id":     job.JobID,
+			"state":      job.State,
+			"work_units": job.WorkUnits,
+			"unit":       job.Unit,
+		}
+		if job.Pending != nil {
+			body["debit_attempts"] = job.Pending.Attempts
+		}
+		w.Header().Set(livepeerheader.Error, livepeerheader.ErrAccountingPending)
+		writeJSON(w, http.StatusAccepted, body)
+		return
+	}
 	if job.State != sessionstore.JobTerminal {
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"job_id": job.JobID,

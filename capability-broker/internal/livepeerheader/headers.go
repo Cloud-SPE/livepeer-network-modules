@@ -52,6 +52,13 @@ const (
 	// clearinghouse looks a settlement up by, so it has to resolve to
 	// exactly one session; accepting a duplicate would break that lookup
 	// for both sessions, not just the second one.
+	// ErrAccountingPending answers a settlement query for an exchange
+	// that was delivered but whose debit has not landed and is still
+	// being retried. Distinct from a job still running: nothing further
+	// is expected from the backend, only from the ledger, and the
+	// exchange will reach a terminal settlement either way. A consumer
+	// holds the encumbrance rather than booking or writing it off.
+	ErrAccountingPending     = "accounting_pending"
 	ErrGatewaySessionIDReuse = "gateway_session_id_reuse"
 	// ErrAmbiguousIdentifier answers a settlement query whose key
 	// matches more than one session — a work_id shared across sessions.

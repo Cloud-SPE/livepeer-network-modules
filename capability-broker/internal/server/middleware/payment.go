@@ -319,8 +319,22 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			// A shared session is closed by the payee's own lifecycle —
 			// rand rotation and retention — which is where that decision
 			// belongs.
+			// Set when the final debit fails and is handed off for
+			// durable retry. Declared here because the close below is
+			// deferred before the debit runs.
+			var debitOutstanding bool
 			if !payeeOwned {
-				defer func() { _ = client.CloseSession(ctx, result.Sender, workID) }()
+				defer func() {
+					// A closed session refuses debits, so closing while
+					// a retry is outstanding guarantees the retry can
+					// never land — the work would stay unbilled no
+					// matter how many attempts the budget allows. The
+					// payee's own retention reclaims it instead.
+					if debitOutstanding {
+						return
+					}
+					_ = client.CloseSession(ctx, result.Sender, workID)
+				}()
 			}
 
 			if result.TicketsRejected > 0 && result.DominantRejection == payment.PaymentRejectionReasonInvalidRecipientRand {
@@ -537,6 +551,37 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 					// DEBIT_FAILED and attests what the ledger took.
 					debitFailed = true
 					debitedUnits = actual - finalUnits
+					// Hand it up for durable retry rather than closing
+					// the books here. A debit is idempotent by
+					// (sender, work_id, debit_seq), so retrying the same
+					// seq cannot double-charge — including the case that
+					// motivates retry most, an attempt that landed and
+					// lost its response.
+					//
+					// The settlement is deliberately NOT built now. A
+					// record can only state a charge once the charge is
+					// known, and that is exactly what is still
+					// outstanding; emitting DEBIT_FAILED on the first
+					// failed attempt would report a recoverable timeout
+					// as a terminal loss.
+					debitOutstanding = true
+					if slot := PendingDebitSlotFrom(r.Context()); slot != nil {
+						slot.Set(&PendingDebit{
+							Sender:            result.Sender,
+							WorkID:            workID,
+							DebitSeq:          finalSeq,
+							Units:             finalUnits,
+							DebitedUnits:      debitedUnits,
+							PaymentBytes:      paymentBytes,
+							FundedValueWei:    result.CreditedEV,
+							ActualUnits:       actual,
+							WorkUnitName:      spec.WorkUnit,
+							TerminationReason: loadTerminationReason(&terminationReason),
+							JobID:             rec.Header().Get(livepeerheader.JobID),
+							RequestID:         RequestIDFromContext(r.Context()),
+							IssuedAt:          time.Now().UTC().Format(time.RFC3339Nano),
+						})
+					}
 				}
 			}
 
@@ -764,4 +809,14 @@ func mapClientErr(err error) (int, string) {
 		return http.StatusInternalServerError, livepeerheader.ErrInternalError
 	}
 	return http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid
+}
+
+// loadTerminationReason reads the interim-debit ticker's cause, if it
+// set one. Read here rather than from the variable computed below
+// because the pending debit is captured at the point of failure.
+func loadTerminationReason(p *atomic.Pointer[string]) string {
+	if r := p.Load(); r != nil {
+		return *r
+	}
+	return ""
 }

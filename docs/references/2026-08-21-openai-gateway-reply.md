@@ -229,3 +229,107 @@ Worth reading before you retrofit, since two touch surfaces you listed:
 Two open questions back to you: **durable debit retry or the header
 ordering fix** (§2), and **can your transcription runner emit a duration
 header** (§4).
+
+
+---
+
+# Follow-up — 2026-08-21, head `12fa0db`
+
+Both of your decisions are implemented.
+
+## Durable idempotent debit retry (`818430c`)
+
+You were right to prefer this over the header-ordering change alone.
+Settling `DEBIT_FAILED` on the first failed attempt reported a
+recoverable timeout as a permanent loss, and left LOC holding an
+encumbered job that could never settle. The lifecycle you specified is
+now the contract, in `paid-job` 1.0.8-draft §5.2:
+
+- a debit that does not land records the exchange as **delivered but
+  unsettled** — the outcome is durable so a replay still returns it, but
+  the record is not terminal, because a terminal record asserts the
+  accounting is done;
+- `GET /v1/settlement/{jobId}` answers **202 `accounting_pending`**
+  while retry is active, with `Livepeer-Error: accounting_pending` and
+  the attempt count in the body;
+- a background retrier drives it to a **signed terminal settlement**
+  once the debit lands;
+- **`DEBIT_FAILED` only after the retry budget is spent** — bounded at
+  10 attempts over 30 minutes, both configurable.
+
+Retry reuses the original `debit_seq`. Debits are idempotent by
+`(sender, work_id, debit_seq)`, so it cannot double-charge, and that is
+what makes the case motivating retry most — an attempt that landed and
+lost its response — safe to repeat. There is a test asserting the ledger
+records 42 units across three sweeps.
+
+Bounding is deliberate and worth flagging: an unbounded retry produces a
+job that never reaches a terminal state, which is worse for you than a
+clear loss — an encumbrance you can neither release nor write off. If 10
+attempts over 30 minutes is the wrong shape for your reconciliation
+window, tell us; it is one constant.
+
+**A second bug fell out of building it,** and it would have made the
+feature useless: the job path closed the payee session at the end of the
+exchange, and a closed session refuses debits, so every retry failed
+with "session is closed" however generous the budget. The close now
+waits while a debit is outstanding.
+
+`lnm-y08` (unary header ordering) stays open, and we agree it is not a
+release gate now that you treat the signed settlement as authoritative
+on all transports. The spec says plainly that the settlement wins where
+the header disagrees.
+
+## Transcription duration (`12fa0db`, lnm-4xh closed)
+
+Understood on not owning the runner — that settles it. We built
+`multipart-audio-duration` rather than making a duration header
+mandatory across operators, so it works with a runner you did not ship.
+
+Exact for **WAV, FLAC, MP4/M4A, Ogg (Opus and Vorbis), WebM**, and
+**MP3 carrying a Xing/Info/VBRI header**. An MP3 without one falls back
+to a constant-bitrate estimate, which is reported as inexact and, by
+default, **refused rather than billed** — a CBR estimate on a VBR file
+can be far out. Set `allow_inexact: true` if you would rather bill the
+estimate than bill the default.
+
+```yaml
+work_unit:
+  name: "seconds"
+  extractor:
+    type: "multipart-audio-duration"
+    file_field: "file"
+    unit: "seconds"
+    max_seconds: 0
+```
+
+Seconds round up. Everything unmeasurable bills the configured default
+and logs why, rather than falling back to another signal — that would
+bill for something nobody measured, silently, on exactly the inputs the
+parser got wrong. `max_seconds` bounds what one exchange can bill so a
+misread container cannot become a large charge.
+
+Spec: `livepeer-network-protocol/extractors/multipart-audio-duration.md`.
+
+**What we would like from you:** a handful of real transcription uploads
+in the formats you actually see, especially MP3. Our fixtures are
+synthesized headers, which exercise the parsers exactly but prove
+nothing about what encoders in the wild emit. If your traffic is mostly
+MP3 without Xing headers, we should know before cutover, because that is
+the one row of the table that is an estimate.
+
+## Your gateway design
+
+All four points are supported as described. One note on the second:
+persisting the **broker request ID** is what binds our signed settlement
+to your job — `request_id` rides inside the signature, and it is the id
+*you* chose whenever you send `Livepeer-Request-Id`. If you let us
+generate one, the field still populates but binds to nothing you hold.
+
+On the encumbered-but-never-admitted lifecycle you are working through
+with LOC: loop us in if the resolution needs anything from the broker.
+The two states we can produce today are a refusal before admission
+(nothing debited, no settlement) and `accounting_pending` (delivered,
+debit outstanding). If you need a third — admitted, encumbered, and
+abandoned without delivery — that is a broker-side state we would have
+to add rather than something you can synthesize.

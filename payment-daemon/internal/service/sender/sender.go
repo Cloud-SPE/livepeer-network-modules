@@ -52,6 +52,11 @@ type Service struct {
 	fetcher  TicketParamsFetcher
 	metrics  metrics.Recorder
 
+	// validityPeriod is the contract's ticketValidityPeriod, read once
+	// at construction. Zero means the read failed and the fallback
+	// applies — see validityPeriodRounds.
+	validityPeriod int64
+
 	// limits is this payer's own policy on what it will sign. Enforced
 	// before any signature, because a refusal after signing is not a
 	// refusal.
@@ -93,7 +98,7 @@ func New(keystore providers.KeyStore, broker providers.Broker, clock providers.C
 	if rec == nil {
 		rec = metrics.NewNoop()
 	}
-	return &Service{
+	svc := &Service{
 		keystore:    keystore,
 		broker:      broker,
 		clock:       clock,
@@ -105,6 +110,28 @@ func New(keystore providers.KeyStore, broker providers.Broker, clock providers.C
 		sessions:    map[string]*senderSession{},
 		workIDIndex: map[string]string{},
 	}
+	// Read the contract's ticketValidityPeriod once, here, because every
+	// expires_after_round the daemon publishes is derived from it and a
+	// consumer makes release decisions against that number.
+	if broker != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if v, err := broker.TicketValidityPeriod(ctx); err == nil {
+			svc.validityPeriod = v
+			if v != settlement.ChainValidityWindowRounds {
+				logger.Warn("ticketValidityPeriod differs from the historical default; "+
+					"expires_after_round follows the chain",
+					"chain", v, "assumed_default", settlement.ChainValidityWindowRounds)
+			}
+		} else {
+			logger.Error("could not read ticketValidityPeriod; expires_after_round falls back "+
+				"to the historical default and will be WRONG if governance changed it — "+
+				"a consumer releasing against it may release while the envelope is still "+
+				"spendable",
+				"err", err, "fallback", settlement.ChainValidityWindowRounds)
+		}
+	}
+	return svc
 }
 
 // CreatePayment implements pb.PayerDaemonServer.
@@ -259,7 +286,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		// deadline travels with the envelope instead of having to be
 		// parsed back out of it.
 		CreationRound:     batch.ExpirationParams.CreationRound,
-		ExpiresAfterRound: batch.ExpirationParams.CreationRound + settlement.ChainValidityWindowRounds,
+		ExpiresAfterRound: batch.ExpirationParams.CreationRound + s.validityPeriodRounds(),
 	}
 	// Record before returning. A crash between the signature and this
 	// write leaves the ticket minted and unrecorded, and the retry
@@ -749,4 +776,21 @@ func cloneTicketParams(in *types.TicketParams) *types.TicketParams {
 		out.ExpirationParams = &exp
 	}
 	return &out
+}
+
+// validityPeriodRounds returns the contract's ticketValidityPeriod, or
+// the historical default when it could not be read.
+//
+// The fallback is deliberately the value the deployed contracts have
+// carried rather than something conservative: a LARGER guess would tell
+// a consumer the envelope stays spendable longer than it does, which
+// only delays a release. A SMALLER one would tell them it dies sooner
+// than it does, which releases an encumbrance while the envelope can
+// still be redeemed. Neither is safe if it is wrong, so the read is what
+// matters and the daemon says loudly when it failed.
+func (s *Service) validityPeriodRounds() int64 {
+	if s.validityPeriod > 0 {
+		return s.validityPeriod
+	}
+	return settlement.ChainValidityWindowRounds
 }

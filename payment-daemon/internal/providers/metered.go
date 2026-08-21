@@ -75,3 +75,9 @@ func (m *meteredBroker) RedeemWinningTicket(ctx context.Context, ticket *Ticket,
 
 // Compile-time interface check.
 var _ Broker = (*meteredBroker)(nil)
+
+// TicketValidityPeriod passes through; it is a startup read, not a
+// per-request one, so it carries no metrics of its own.
+func (m *meteredBroker) TicketValidityPeriod(ctx context.Context) (int64, error) {
+	return m.inner.TicketValidityPeriod(ctx)
+}

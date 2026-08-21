@@ -66,6 +66,21 @@ type Broker interface {
 	// confirmed transaction hash on success; sentinel errors on
 	// terminal failure (see settlement.IsNonRetryable).
 	RedeemWinningTicket(ctx context.Context, ticket *Ticket, sig []byte, recipientRand *big.Int) (txHash []byte, err error)
+
+	// TicketValidityPeriod returns the contract's ticketValidityPeriod:
+	// how many rounds behind the current one a ticket's creation round
+	// may be and still redeem.
+	//
+	// Read rather than assumed. It is a governance-settable parameter
+	// (TicketBroker.setTicketValidityPeriod), and go-livepeer keeps a
+	// hardcoded mirror of it — so did we, until a consumer started
+	// making release decisions against the number we publish. If
+	// governance raises it, an assumed value understates how long an
+	// envelope stays spendable, and a consumer that trusts the
+	// understatement releases an encumbrance while the envelope can
+	// still be redeemed. That is the direction that costs somebody
+	// money, so the value comes from the chain.
+	TicketValidityPeriod(ctx context.Context) (int64, error)
 }
 
 // KeyStore signs ticket hashes. v0.2's dev fake uses a deterministic

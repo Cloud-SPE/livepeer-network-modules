@@ -22,6 +22,9 @@ func (s *Server) registerRoutes() {
 	// OpenAI-style gateway runs — needs it most, because a streamed
 	// job's claim arrives in a trailer its SDK may not be able to read.
 	s.mux.HandleFunc("GET /v1/settlement/{id}", s.handleSettlement)
+	// Evidence of ABSENCE, keyed on the id the consumer issued so it is
+	// retrievable without anything the customer holds.
+	s.mux.HandleFunc("POST /v1/non-admission/{request_id}", s.handleNonAdmission)
 	s.mux.HandleFunc("POST /v1/payment/ticket-params", ticketParamsHandler(s.payment))
 	s.mux.HandleFunc("GET /admin/v1/runtime", s.handleRuntimeStatus)
 	s.mux.HandleFunc("POST /admin/v1/runtime/reload", s.handleRuntimeReload)

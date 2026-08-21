@@ -32,6 +32,10 @@ const (
 	WorkUnitName = "Livepeer-Work-Unit"
 	JobID        = "Livepeer-Job-Id"
 	Settlement   = "Livepeer-Settlement"
+	// NonAdmission carries a signed NonAdmissionRecord envelope. A
+	// separate header from Settlement because the two are opposite
+	// claims and a consumer must never treat one as the other.
+	NonAdmission = "Livepeer-Non-Admission"
 	HealthStatus = "Livepeer-Health-Status"
 	Error        = "Livepeer-Error"
 )
@@ -58,7 +62,15 @@ const (
 	// is expected from the backend, only from the ledger, and the
 	// exchange will reach a terminal settlement either way. A consumer
 	// holds the encumbrance rather than booking or writing it off.
-	ErrAccountingPending     = "accounting_pending"
+	ErrAccountingPending = "accounting_pending"
+	// ErrAdmitted refuses a non-admission query for a request the broker
+	// does have a record of. The caller wanted evidence of absence and
+	// the answer is presence, which is a different and better answer.
+	ErrAdmitted = "admitted"
+	// ErrCoverageGap refuses a non-admission query this broker cannot
+	// honestly answer: its records begin after the job was issued, so
+	// absence across the gap is forgetting rather than non-admission.
+	ErrCoverageGap           = "coverage_gap"
 	ErrGatewaySessionIDReuse = "gateway_session_id_reuse"
 	// ErrAmbiguousIdentifier answers a settlement query whose key
 	// matches more than one session — a work_id shared across sessions.

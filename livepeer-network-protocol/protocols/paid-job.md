@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.9-draft
+version: 1.0.10-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -368,13 +368,65 @@ outcome — or on a non-use attestation relayed by the party that would
 benefit from it.
 
 **What a broker owes.** A broker MUST retain terminal exchange records
-long enough to answer "was this request id ever admitted" for the whole
-period an envelope minted against it could still be disputed. That period
-begins at **expiry**, not at the exchange, because before expiry the
-question is premature. Retention shorter than the envelope's spendable
-life therefore deletes the evidence before anyone can ask for it — which
-the reference broker did, evicting at 24h against an expiry window of
-roughly 38–57 hours.
+for at least
+
+```
+max envelope spendable life  +  supported dispute/recovery window
+```
+
+The dispute window begins at **expiry**, not at the exchange, because
+before expiry the question is premature. Retention shorter than that
+deletes the evidence before anyone can ask — which the reference broker
+did, evicting at 24h against an expiry window of roughly 38–57 hours.
+
+Both inputs are deployment properties, not constants. `ticketValidityPeriod`
+is a governance-settable parameter on the TicketBroker
+(`setTicketValidityPeriod`), and round length is read from the
+RoundsManager. An implementation that hardcodes either — as go-livepeer
+and this one both did — is mirroring a value it does not control, which
+is tolerable for deciding which of your own tickets are worth gas and is
+NOT tolerable for telling a third party how long an envelope stays
+spendable. A payer MUST derive `expires_after_round` from the value read
+from the contract.
+
+#### 5.3.1 Non-admission evidence
+
+A broker MUST be able to state, in a signed record, that it never
+admitted an exchange for a given request id. This is the evidence a
+refund requires, and it is the only form of it available.
+
+- **Retrievable by the consumer, keyed on the consumer's own
+  `request_id`.** Never through the customer and never requiring a
+  broker-minted job id: a customer that took the work and hid the receipt
+  must not also be able to suppress the evidence against itself.
+- **A distinct outcome, `NOT_ADMITTED`.** Not a zero-unit settlement — a
+  settlement says an exchange happened and cost nothing, which is a
+  different claim.
+- **Signed with the same delegated key and canonicalization as
+  settlements**, so a consumer verifies both with one code path. An
+  unsigned non-admission record MUST NOT be emitted at all: unlike a
+  settlement, which still carries useful accounting unsigned, its entire
+  purpose is to be attributable.
+- **Bound to** protocol, `request_id`, `work_id`, sender, recipient,
+  quote identity, and broker identity, so it cannot be replayed against a
+  different envelope carrying the same id from another payer.
+- **Carries `observed_at` and a durable `coverage_started_at`.** A
+  consumer MUST reject the record unless coverage began no later than its
+  own job's issuance. A broker whose store was reset, restored, or
+  reinitialized after issuance MUST NOT attest across the gap — absence
+  there is forgetting, not non-admission. Because the marker lives in the
+  store, a wiped store re-stamps it and disqualifies itself
+  automatically.
+- **Refused if any record exists** for the request — in flight, terminal,
+  or pending accounting. Attesting mid-flight signs a statement the next
+  second contradicts.
+- **A consumer MUST NOT act on it before expiry.** Until then the request
+  can still arrive and use the envelope.
+- **Conflicting records MUST be retained.** A broker that has signed both
+  a settlement and a non-admission for one request has produced two
+  contradictory statements under one delegated key. That is the
+  accountability the signature exists for, and discarding either destroys
+  it.
 
 ## 6. What the broker never does
 
@@ -407,6 +459,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.10-draft | 2026-08-21 | Add §5.3.1, non-admission evidence: a broker MUST be able to sign `NOT_ADMITTED` for a request id, retrievable by the consumer keyed on the consumer's own id, bound to protocol/request/work/sender/recipient/quote/broker, carrying `observed_at` and a durable `coverage_started_at`, refused if any record exists or if coverage began after issuance, and never emitted unsigned. States retention as a formula rather than a number, and requires `expires_after_round` to be derived from the contract's `ticketValidityPeriod` rather than a hardcoded mirror — it is governance-settable, and an understated value releases an encumbrance while the envelope is still spendable. Requirements from LOC. |
 | 1.0.9-draft | 2026-08-21 | Add §5.3, encumbrance on an envelope that may never have been used. Separates FINALIZE (expiry is sufficient) from REFUND (it is not): a customer can submit an envelope, take the work, withhold the job id and settlement, wait for expiry and ask for the money back, and chain state cannot tell that apart from non-use because a losing ticket is never redeemed. Requires brokers to retain exchange records past the envelope's spendable life — the dispute window opens AT expiry, and the reference broker evicted at 24h against a 38–57h expiry, deleting the evidence before it could be asked for. Raised by LOC. |
 | 1.0.8-draft | 2026-08-21 | §5.2 gains the debit-failure LIFECYCLE the OpenAI gateway team asked for: `202 accounting_pending` while a bounded, idempotent retry is active, a signed terminal settlement when the debit lands, and terminal `DEBIT_FAILED` only on retry exhaustion. Retry MUST reuse the original `debit_seq`, and a broker MUST NOT close a payee session while a debit against it is outstanding — a closed session refuses debits, so closing guarantees the retry can never land. Replaces settle-on-first-failure, which reported a recoverable timeout as a permanent loss. |
 | 1.0.7-draft | 2026-08-21 | Add §4.1, replay semantics, and §5.2, the debit-failure rule. A replay returns the ACCOUNTING outcome and not the backend body — reproducing the body would make every broker a customer-data store — and the caller's loss is stated plainly rather than left implicit. A failed final debit MUST NOT be reported as a settled exchange: `debited_units` attests what the ledger took and the record carries `DEBIT_FAILED`. Both raised by the OpenAI gateway team. |

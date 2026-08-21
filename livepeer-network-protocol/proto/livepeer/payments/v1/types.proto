@@ -369,6 +369,73 @@ message SettlementRecord {
   string request_id = 27;
 }
 
+// NonAdmissionRecord is a broker's signed statement that it never
+// admitted an exchange for a request id.
+//
+// It exists because expiry proves an envelope can never be spent AGAIN
+// and proves nothing about whether it was already used. A customer can
+// submit an envelope, take the work, withhold the job id and settlement
+// from its clearinghouse, wait out expiry and ask for the money back —
+// and chain state cannot tell that apart from genuine non-use, because a
+// losing ticket is never redeemed and most tickets lose.
+//
+// So this is the evidence a refund needs, and it is deliberately shaped
+// so it cannot be laundered through the party that benefits from it:
+// a consumer fetches it directly from the broker, keyed on an id the
+// CONSUMER issued.
+//
+// It is a claim, not a proof — but an attributable one. A broker that
+// signs a non-admission and has also signed a settlement for the same
+// request has produced two contradictory statements under one delegated
+// key, which is why both MUST be retained.
+message NonAdmissionRecord {
+  // Always "paid-job/v1" or "paid-session/v1". Present so a record
+  // cannot be replayed across protocols.
+  string protocol = 1;
+
+  // The request id the consumer issued and queried by. This is the
+  // binding that makes the record about ONE job.
+  string request_id = 2;
+
+  // The payment identity the envelope was minted against, and the two
+  // parties. A record that named only the request id could be replayed
+  // against a different envelope bearing the same id from another payer.
+  string work_id = 3;
+  bytes sender = 4;
+  bytes recipient = 5;
+
+  // Quote identity, mirroring a settlement's accepted_quote_ref, so the
+  // record is bound to the same commercial terms the exchange would have
+  // been.
+  QuoteRef accepted_quote_ref = 6;
+
+  // The broker asserting it, so a consumer knows whose key must have
+  // signed and whose statement to hold against them later.
+  string broker_eth_address = 7;
+
+  // When the broker looked. RFC3339 with nanoseconds.
+  string observed_at = 8;
+
+  // The earliest moment this broker's records are continuous through.
+  //
+  // A consumer MUST reject the record unless coverage began no later
+  // than its own job's issuance: a store that was reset, restored from
+  // backup, or reinitialized after issuance cannot distinguish "never
+  // admitted" from "forgot". A broker whose store lost continuity MUST
+  // move this forward and thereby disqualify itself for jobs older than
+  // the gap, rather than attest across it.
+  string coverage_started_at = 9;
+
+  // The outcome. A distinct value on purpose: a zero-unit settlement
+  // says an exchange happened and cost nothing, which is a different
+  // claim and one a consumer must not confuse with this.
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    NOT_ADMITTED = 1;
+  }
+  Outcome outcome = 10;
+}
+
 // PaymentRejectionReason is the machine-readable reason a payee daemon
 // rejected a ticket in ProcessPayment. UNSPECIFIED means the ticket was
 // accepted.

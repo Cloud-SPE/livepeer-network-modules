@@ -53,9 +53,22 @@ const (
 	// 38–57 hours depending on where in a round the mint landed. The old
 	// 24h default guaranteed the record was deleted first.
 	//
-	// 72h covers the worst case with margin. Operators whose consumers
-	// need a longer dispute window raise session_store.job_retention.
-	defaultJobRetention = 72 * time.Hour
+	// The rule, not the number, is what matters:
+	//
+	//   retention >= max envelope spendable life + dispute/recovery window
+	//
+	// 96h is that rule evaluated for today's deployment: ~57h worst-case
+	// spendable life plus the 24h outage-and-recovery window downstream
+	// gateways target, with margin. An earlier 72h left only ~15h after
+	// expiry, which does not cover a 24h outage — a consumer that was
+	// itself down for the recovery window would come back to find the
+	// evidence gone.
+	//
+	// Operators whose consumers need longer raise
+	// session_store.job_retention. Operators on a deployment with a
+	// different ticketValidityPeriod or round length must recompute it:
+	// both are on-chain parameters, not constants.
+	defaultJobRetention = 96 * time.Hour
 	// maxJobBodyBytes bounds buffered request/response bodies.
 	maxJobBodyBytes = 64 << 20 // 64 MiB
 )
@@ -658,8 +671,13 @@ func (s *Server) jobRetention() time.Duration {
 // minEvidenceRetention is the shortest retention that can still answer
 // "was this exchange ever admitted" for an expired envelope.
 //
-// An envelope expires at creation_round + 2. On ~19h rounds the worst
-// case — minted at the very start of a round — is just under three
-// rounds of wall clock, so anything below this can evict the record
-// before the question becomes askable.
-const minEvidenceRetention = 60 * time.Hour
+// ~57h of worst-case spendable life (three rounds of ~19h, the envelope
+// having been minted at the very start of a round) plus the 24h
+// outage-and-recovery window downstream consumers target. Below this a
+// consumer that was itself down for its recovery window returns to find
+// the evidence already evicted.
+//
+// Both inputs are deployment properties — ticketValidityPeriod and round
+// length are on-chain parameters — so this is a floor for today's
+// mainnet and not a universal constant.
+const minEvidenceRetention = 81 * time.Hour

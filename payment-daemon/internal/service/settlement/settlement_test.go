@@ -230,3 +230,5 @@ func TestEscrowRebuildAfterRestart(t *testing.T) {
 		t.Errorf("pending after rebuild = %s; want %s", got, want)
 	}
 }
+
+func (b *fakeBroker) TicketValidityPeriod(_ context.Context) (int64, error) { return 2, nil }

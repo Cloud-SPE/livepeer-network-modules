@@ -269,3 +269,54 @@ func setSignerClock(s *Signer, at time.Time) {
 		s.now = func() time.Time { return at }
 	}
 }
+
+// CanonicalNonAdmissionPayload canonicalizes a non-admission record with
+// the SAME rules a settlement uses — proto field names, JCS ordering —
+// so a consumer verifies both with one code path and cannot end up
+// trusting one shape while rejecting the other.
+func CanonicalNonAdmissionPayload(rec *pb.NonAdmissionRecord) (json.RawMessage, error) {
+	if rec == nil {
+		return nil, fmt.Errorf("settlement: nil non-admission record")
+	}
+	raw, err := protojson.MarshalOptions{UseProtoNames: true}.Marshal(rec)
+	if err != nil {
+		return nil, fmt.Errorf("settlement: marshal non-admission record: %w", err)
+	}
+	return canonicalize(raw)
+}
+
+// EncodeNonAdmission signs and wraps a non-admission record in the same
+// envelope shape as a settlement.
+//
+// Unlike a settlement, an UNSIGNED non-admission record is refused
+// outright rather than emitted with the signature omitted. A settlement
+// still carries useful accounting when a broker holds no delegation; a
+// non-admission record's entire purpose is to be evidence somebody can
+// be held to, and an unsigned one is an anonymous assertion that a
+// refund should happen.
+func EncodeNonAdmission(rec *pb.NonAdmissionRecord, signer *Signer) (string, error) {
+	if signer == nil {
+		return "", fmt.Errorf("settlement: refusing to emit an unsigned non-admission record; " +
+			"it is only evidence if it is attributable")
+	}
+	canonical, err := CanonicalNonAdmissionPayload(rec)
+	if err != nil {
+		return "", err
+	}
+	value, err := signer.Sign(canonical)
+	if err != nil {
+		return "", err
+	}
+	out, err := json.Marshal(Envelope{
+		Payload: canonical,
+		Signature: &Signature{
+			Algorithm:        Alg,
+			Canonicalization: Canonicalization,
+			Value:            value,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("settlement: marshal non-admission envelope: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(out), nil
+}

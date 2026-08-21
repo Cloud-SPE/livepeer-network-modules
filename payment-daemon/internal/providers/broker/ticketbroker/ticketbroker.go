@@ -408,3 +408,39 @@ func nilToZero(v *big.Int) *big.Int {
 	}
 	return new(big.Int).Set(v)
 }
+
+// TicketValidityPeriod implements providers.Broker by reading the
+// contract parameter rather than assuming it.
+//
+// go-livepeer keeps a hardcoded mirror (pm/queue.go's
+// ticketValidityPeriod = 2) and so did we. That is fine for deciding
+// which of your own queued tickets are still worth gas, and not fine for
+// telling a third party how long a payment envelope stays spendable:
+// governance can raise it (setTicketValidityPeriod), and an understated
+// value makes a consumer release an encumbrance while the envelope can
+// still be redeemed.
+func (b *Broker) TicketValidityPeriod(ctx context.Context) (int64, error) {
+	data, err := ParsedABI.Pack("ticketValidityPeriod")
+	if err != nil {
+		return 0, fmt.Errorf("pack ticketValidityPeriod: %w", err)
+	}
+	out, err := b.client.CallContract(ctx, ethereum.CallMsg{To: &b.cfg.Address, Data: data}, nil)
+	if err != nil {
+		return 0, fmt.Errorf("call ticketValidityPeriod: %w", err)
+	}
+	decoded, err := ParsedABI.Unpack("ticketValidityPeriod", out)
+	if err != nil {
+		return 0, fmt.Errorf("unpack ticketValidityPeriod: %w", err)
+	}
+	if len(decoded) != 1 {
+		return 0, fmt.Errorf("ticketValidityPeriod: expected 1 return value, got %d", len(decoded))
+	}
+	v, ok := decoded[0].(*big.Int)
+	if !ok {
+		return 0, fmt.Errorf("ticketValidityPeriod: unexpected return type %T", decoded[0])
+	}
+	if !v.IsInt64() || v.Int64() < 1 {
+		return 0, fmt.Errorf("ticketValidityPeriod: implausible value %s", v)
+	}
+	return v.Int64(), nil
+}

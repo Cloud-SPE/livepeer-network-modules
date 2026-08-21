@@ -60,6 +60,14 @@ keys.
 
 ### One thing to check on your side
 
+Worth knowing before you answer: this rule bit our own mainnet probe
+immediately. It opened every session with a constant `gateway_session_id`,
+so the second run was refused at open. That is the rule working as
+designed — but it is exactly the shape of breakage any client reusing a
+stable id will hit, and it hits at open rather than at settlement time.
+If your gateways derive the id from anything stable per tenant or per
+room, they will hit it too.
+
 Uniqueness is enforced globally, not per-payer. If your gateways derive
 `gateway_session_id` from something that could collide across tenants —
 a per-tenant counter, a short slug — two of them will now race and the

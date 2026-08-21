@@ -20,6 +20,13 @@ import (
 // the normative rule says, and that the signed settlement agrees with
 // the ledger.
 func probeJob(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee pb.PayeeDaemonClient) error {
+	// Same startup race the session path waits out: a broker that came up
+	// before its backend has been probing a dead address, and a 503 here
+	// reads as a payment defect when it is a health-probe cycle.
+	if err := waitForOffering(cfg, 90*time.Second); err != nil {
+		return err
+	}
+
 	m, err := mint(ctx, cfg, payer, "job")
 	if err != nil {
 		return fmt.Errorf("mint: %w", err)
@@ -109,7 +116,10 @@ func probeJob(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee
 	}
 	// And the charge must sit on the normative cumulative curve, which
 	// the record carries enough context to verify on its own.
-	if cum := set.payload.cumulativeUnits(); cum >= units {
+	// Verify from the RECORD's own numbers, not from what the probe
+	// happens to know — that is the check a clearinghouse runs.
+	if cum, ex := set.payload.cumulativeUnits(), set.payload.exchangeUnits(); cum >= ex && ex > 0 {
+		units := ex
 		wantCharge := new(big.Int).Sub(
 			billFor(cfg.priceWei, cfg.perUnits, cum),
 			billFor(cfg.priceWei, cfg.perUnits, cum-units))
@@ -163,13 +173,18 @@ type settlementSignature struct {
 // probe does not check are deliberately absent rather than mirrored, so
 // this does not quietly become a second schema to maintain.
 type settlementPayload struct {
-	JobID          string   `json:"job_id"`
-	WorkID         string   `json:"work_id"`
-	SessionID      string   `json:"session_id"`
-	IssuedAt       string   `json:"issued_at"`
-	State          string   `json:"state"`
-	DebitedUnits   string   `json:"debited_units"`
-	BilledValueWei bigValue `json:"billed_value_wei"`
+	JobID        string `json:"job_id"`
+	WorkID       string `json:"work_id"`
+	SessionID    string `json:"session_id"`
+	IssuedAt     string `json:"issued_at"`
+	State        string `json:"state"`
+	DebitedUnits string `json:"debited_units"`
+	// PaymentCumulativeUnits is the running total on the work_id — the
+	// field that places this charge on the curve. debited_units is
+	// scoped to the exchange, so using it here computed bill(units) -
+	// bill(0) and called a correct cumulative charge wrong.
+	PaymentCumulativeUnits string   `json:"payment_cumulative_units"`
+	BilledValueWei         bigValue `json:"billed_value_wei"`
 }
 
 // bigValue mirrors the proto BigUInt as protojson renders it: an object
@@ -220,6 +235,13 @@ func fetchSettlement(brokerURL, id string) (*settlementEnvelope, error) {
 // cumulativeUnits reads the running unit total the record carries.
 // protojson renders uint64 as a string, so it arrives quoted.
 func (p settlementPayload) cumulativeUnits() uint64 {
+	var n uint64
+	_, _ = fmt.Sscanf(p.PaymentCumulativeUnits, "%d", &n)
+	return n
+}
+
+// exchangeUnits is what THIS exchange billed, scoped to the exchange.
+func (p settlementPayload) exchangeUnits() uint64 {
 	var n uint64
 	_, _ = fmt.Sscanf(p.DebitedUnits, "%d", &n)
 	return n

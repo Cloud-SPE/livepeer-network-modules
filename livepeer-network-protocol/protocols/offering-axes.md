@@ -1,6 +1,6 @@
 ---
 spec_name: offering-axes
-version: 1.0.5-draft
+version: 1.0.6-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -159,9 +159,28 @@ could not do otherwise if it wanted to, since it sees debits on a
 **A settlement MUST attest what the ledger charged**, not a value the
 attesting party recomputed. The two disagree for every exchange after the
 first, and a clearinghouse that recomputes the rule fails closed on the
-difference. Records therefore carry the cumulative unit total alongside
-the exchange's own units, so a reader can verify the charge as
-`bill(cumulative) − bill(cumulative − units)` from the record alone.
+difference.
+
+Records carry `payment_cumulative_units` — the running total on the
+`work_id`, not on the logical session — so a reader can place a charge on
+the curve. What that buys differs by protocol, and the difference is
+worth stating rather than discovering:
+
+- **`paid-job/v1`**: fully recomputable. One exchange is one increment,
+  so `billed_value_wei` MUST equal
+  `bill(payment_cumulative_units) − bill(payment_cumulative_units − debited_units)`.
+- **`paid-session/v1`**: **not** recomputable when the identity is
+  shared. A session's charge is the sum of its own debits, and two
+  sessions interleaving on one `work_id` do not occupy contiguous
+  stretches of the curve. The signature is what makes a session's charge
+  trustworthy; `payment_cumulative_units` lets a reader verify the
+  **aggregate** across every record on an identity, and notice a missing
+  one.
+
+`debited_units` is scoped to the exchange (`paid-job`) or to the logical
+session (`paid-session`). It is never the identity's total — that is what
+`payment_cumulative_units` is for, and conflating them means a reader has
+to know which protocol produced a record before it can interpret it.
 
 ### 6.2 Pinning
 
@@ -202,6 +221,7 @@ refused.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.6-draft | 2026-08-21 | §6.1: add `payment_cumulative_units` — the running total on the `work_id`, distinct from the session- or exchange-scoped `debited_units` — and state what it does and does not make verifiable: a paid-job charge is fully recomputable from the record, a paid-session charge on a shared identity is attested rather than recomputable, because interleaved sessions do not occupy contiguous stretches of the curve. |
 | 1.0.5-draft | 2026-08-21 | §6.1: the cumulative curve spans EXCHANGES, not only ticks — a paid-job exchange is one increment on its payment session's curve, so the second job on a session costs the difference of two ceilings. A settlement MUST attest what the ledger charged rather than recomputing, and carries the cumulative total so the charge stays verifiable from the record. Found on mainnet: a signed record attested 5 wei for a debit the ledger charged 4. |
 | 1.0.4-draft | 2026-08-20 | §6.2: state the identity invariants explicitly — refill sizing never changes session identity, a payer must not key its session cache on funded value, face value is pinned at first issuance and a larger refill mints more tickets rather than larger ones. All three were true of the implementation by accident and written down nowhere. |
 | 1.0.3-draft | 2026-08-20 | Add §3.1 `session.max_rotations`, the bound on rebinding a session onto a rotated payment identity (paid-session §3.3.1). |

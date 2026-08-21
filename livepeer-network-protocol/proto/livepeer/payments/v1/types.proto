@@ -305,6 +305,29 @@ message SettlementRecord {
   // signature, a valid settlement for one exchange verifies as evidence
   // for another on the same session.
   string job_id = 24;
+
+  // ---- position on the payment identity's billing curve ----
+
+  // Cumulative work units debited on this work_id — the PAYMENT
+  // identity — after this record's exchange.
+  //
+  // Distinct from debited_units above, which is scoped to the logical
+  // session (or, for a job, to the exchange). A gateway reuses one
+  // ticket session across many jobs and sessions, and billing is
+  // cumulative over that identity, so this is what places a charge on
+  // the curve: the second exchange on an identity costs
+  // bill(cumulative) - bill(cumulative - units), which is less than an
+  // independent ceiling whenever a remainder carried.
+  //
+  // For a paid-job exchange the charge IS verifiable from this field
+  // plus actual_units. For a paid-session settlement it is not, when the
+  // identity is shared: a session's charge is the sum of its own debits,
+  // and two sessions interleaving on one identity do not occupy
+  // contiguous stretches of the curve. The signature is what makes a
+  // session's charge trustworthy; this field lets a reader verify the
+  // AGGREGATE across every record on an identity, and detect a missing
+  // one.
+  uint64 payment_cumulative_units = 25;
 }
 
 // PaymentRejectionReason is the machine-readable reason a payee daemon

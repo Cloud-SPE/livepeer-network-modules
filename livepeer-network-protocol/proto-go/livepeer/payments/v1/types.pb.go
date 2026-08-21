@@ -1104,9 +1104,29 @@ type SettlementRecord struct {
 	// minted against that session shares. Without job_id inside the
 	// signature, a valid settlement for one exchange verifies as evidence
 	// for another on the same session.
-	JobId         string `protobuf:"bytes,24,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	JobId string `protobuf:"bytes,24,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	// Cumulative work units debited on this work_id — the PAYMENT
+	// identity — after this record's exchange.
+	//
+	// Distinct from debited_units above, which is scoped to the logical
+	// session (or, for a job, to the exchange). A gateway reuses one
+	// ticket session across many jobs and sessions, and billing is
+	// cumulative over that identity, so this is what places a charge on
+	// the curve: the second exchange on an identity costs
+	// bill(cumulative) - bill(cumulative - units), which is less than an
+	// independent ceiling whenever a remainder carried.
+	//
+	// For a paid-job exchange the charge IS verifiable from this field
+	// plus actual_units. For a paid-session settlement it is not, when the
+	// identity is shared: a session's charge is the sum of its own debits,
+	// and two sessions interleaving on one identity do not occupy
+	// contiguous stretches of the curve. The signature is what makes a
+	// session's charge trustworthy; this field lets a reader verify the
+	// AGGREGATE across every record on an identity, and detect a missing
+	// one.
+	PaymentCumulativeUnits uint64 `protobuf:"varint,25,opt,name=payment_cumulative_units,json=paymentCumulativeUnits,proto3" json:"payment_cumulative_units,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *SettlementRecord) Reset() {
@@ -1305,6 +1325,13 @@ func (x *SettlementRecord) GetJobId() string {
 		return x.JobId
 	}
 	return ""
+}
+
+func (x *SettlementRecord) GetPaymentCumulativeUnits() uint64 {
+	if x != nil {
+		return x.PaymentCumulativeUnits
+	}
+	return 0
 }
 
 // TicketStatus reports the payee daemon's disposition for one ticket
@@ -1527,7 +1554,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x0festimated_units\x18\x01 \x01(\x04R\x0eestimatedUnits\x12G\n" +
 	"\x10funded_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12&\n" +
 	"\x0fmax_total_units\x18\x03 \x01(\x04R\rmaxTotalUnits\x12$\n" +
-	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\x9f\v\n" +
+	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xd9\v\n" +
 	"\x10SettlementRecord\x12L\n" +
 	"\x12accepted_quote_ref\x18\x01 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12$\n" +
 	"\x0ework_unit_name\x18\x02 \x01(\tR\fworkUnitName\x12'\n" +
@@ -1555,7 +1582,8 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x0esettlement_seq\x18\x15 \x01(\x04R\rsettlementSeq\x12\x1b\n" +
 	"\tissued_at\x18\x16 \x01(\tR\bissuedAt\x12\x14\n" +
 	"\x05state\x18\x17 \x01(\tR\x05state\x12\x15\n" +
-	"\x06job_id\x18\x18 \x01(\tR\x05jobId\x1a<\n" +
+	"\x06job_id\x18\x18 \x01(\tR\x05jobId\x128\n" +
+	"\x18payment_cumulative_units\x18\x19 \x01(\x04R\x16paymentCumulativeUnits\x1a<\n" +
 	"\x0eBreakdownEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x01\n" +

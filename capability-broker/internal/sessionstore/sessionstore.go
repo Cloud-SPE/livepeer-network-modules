@@ -148,10 +148,15 @@ type Record struct {
 	// across its debits. Not recomputed from units: billing is
 	// cumulative over the payment session, which two sessions can share,
 	// so only the ledger knows what this one actually cost.
-	BilledWei            string `json:"billed_wei,omitempty"`
-	GenerationFundedWei  string `json:"generation_funded_wei,omitempty"`
-	PredecessorWorkID    string `json:"predecessor_work_id,omitempty"`
-	GenerationStartUnits uint64 `json:"generation_start_units,omitempty"`
+	BilledWei string `json:"billed_wei,omitempty"`
+	// PaymentCumulativeUnits is the running unit total on the PAYMENT
+	// identity, as the ledger last reported it. Sessions sharing a
+	// work_id advance it together, so it is not this session's total —
+	// it is where this session's last debit landed on the shared curve.
+	PaymentCumulativeUnits uint64 `json:"payment_cumulative_units,omitempty"`
+	GenerationFundedWei    string `json:"generation_funded_wei,omitempty"`
+	PredecessorWorkID      string `json:"predecessor_work_id,omitempty"`
+	GenerationStartUnits   uint64 `json:"generation_start_units,omitempty"`
 
 	// Event/usage/debit progress — the exactly-once commit set.
 	LastEventID  string `json:"last_event_id,omitempty"`

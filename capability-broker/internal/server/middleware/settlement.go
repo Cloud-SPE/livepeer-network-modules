@@ -150,10 +150,15 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 		// paid-job is the ticket session's rand hash, shared by every
 		// job minted against it, so job_id is what makes the record
 		// about ONE exchange.
-		JobId:        ident.JobID,
-		WorkId:       ident.WorkID,
-		IssuedAt:     ident.IssuedAt,
-		DebitedUnits: ident.CumulativeUnits,
+		JobId:    ident.JobID,
+		WorkId:   ident.WorkID,
+		IssuedAt: ident.IssuedAt,
+		// This exchange's own units. The identity's running total goes
+		// in payment_cumulative_units — putting it here made one field
+		// mean the exchange on the job path and the whole session on the
+		// session path, which is worse than the gap it was filling.
+		DebitedUnits:           actualUnits,
+		PaymentCumulativeUnits: ident.CumulativeUnits,
 
 		AcceptedQuoteRef: &pb.QuoteRef{
 			QuoteId:               meta.quoteID,

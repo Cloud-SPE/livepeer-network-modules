@@ -70,6 +70,10 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 
 		ClaimedUnits: rec.ClaimedTotal,
 		DebitedUnits: rec.DebitedTotal,
+		// Where this session's last debit landed on the shared identity's
+		// curve. Not this session's total — see the proto comment for
+		// what it does and does not let a reader verify.
+		PaymentCumulativeUnits: rec.PaymentCumulativeUnits,
 
 		GenerationDebitedUnits:   generationUnits,
 		GenerationBilledValueWei: &pb.BigUInt{Value: generationBilled.Bytes()},

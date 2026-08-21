@@ -666,3 +666,58 @@ func makeFractionalPaidRequest(t *testing.T, randHash []byte, requestID string) 
 	r.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	return r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
 }
+
+// TestSettlementFieldsMeanTheSameThingOnBothProtocols: debited_units is
+// scoped to the exchange (job) or the logical session, and the payment
+// identity's running total has its own field. They were briefly the same
+// field, which meant a reader had to know which protocol produced a
+// record before it could interpret it — worse than the gap that
+// conflation was filling.
+func TestSettlementFieldsMeanTheSameThingOnBothProtocols(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	var captured []*paymentsv1.SettlementRecord
+	mw := Payment(mock, fractionalLookup, InterimDebitConfig{Interval: 0}, nil,
+		func(rec *paymentsv1.SettlementRecord) (string, error) {
+			captured = append(captured, rec)
+			return "encoded", nil
+		}, nil)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	randHash := []byte("aaaabbbbccccddddeeeeffff00001111")
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, makeFractionalPaidRequest(t, randHash, fmt.Sprintf("r-%d", i)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("exchange %d: %d", i, rec.Code)
+		}
+	}
+
+	for i, rec := range captured {
+		if rec.GetDebitedUnits() != 42 {
+			t.Fatalf("exchange %d: debited_units = %d; a job's is its OWN units",
+				i, rec.GetDebitedUnits())
+		}
+	}
+	// The identity's total advances across exchanges; the exchange's own
+	// units do not.
+	if a, b := captured[0].GetPaymentCumulativeUnits(), captured[1].GetPaymentCumulativeUnits(); a != 42 || b != 84 {
+		t.Fatalf("payment_cumulative_units = %d then %d; want 42 then 84", a, b)
+	}
+	// And that field is exactly what makes the charge recomputable.
+	for i, rec := range captured {
+		cum := rec.GetPaymentCumulativeUnits()
+		units := rec.GetDebitedUnits()
+		want := new(big.Int).Sub(
+			payment.BillFor(big.NewInt(100), 1000, cum),
+			payment.BillFor(big.NewInt(100), 1000, cum-units))
+		got := new(big.Int).SetBytes(rec.GetBilledValueWei().GetValue())
+		if got.Cmp(want) != 0 {
+			t.Fatalf("exchange %d: attested %s wei; bill(%d)-bill(%d) = %s",
+				i, got, cum, cum-units, want)
+		}
+	}
+}

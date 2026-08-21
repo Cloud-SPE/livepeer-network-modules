@@ -574,6 +574,7 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 	}
 
 	var chargedWei *big.Int
+	var paymentCumulative uint64
 	debitSeq := rec.DebitSeq
 	if delta > 0 {
 		// The seq space belongs to the work_id, not to this session: two
@@ -604,8 +605,11 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 			WorkUnits: int64(delta),
 			DebitSeq:  debitSeq,
 		})
-		if debitRes != nil && debitRes.DebitedWei != nil {
-			chargedWei = debitRes.DebitedWei
+		if debitRes != nil {
+			if debitRes.DebitedWei != nil {
+				chargedWei = debitRes.DebitedWei
+			}
+			paymentCumulative = debitRes.CumulativeUnits
 		}
 		if err != nil {
 			// Nothing committed: the retry really retries, with the
@@ -642,6 +646,9 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 			r.PendingDebitSeq = 0
 			if chargedWei != nil {
 				r.BilledWei = addDecimal(r.BilledWei, chargedWei)
+			}
+			if paymentCumulative > 0 {
+				r.PaymentCumulativeUnits = paymentCumulative
 			}
 		}
 		return nil

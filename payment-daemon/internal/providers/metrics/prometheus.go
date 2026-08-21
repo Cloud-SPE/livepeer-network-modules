@@ -175,12 +175,14 @@ func (p *Prometheus) SetGRPCInFlight(role, method string, n int) {
 	p.grpcInFlight.WithLabelValues(unset(role), unset(method)).Set(float64(n))
 }
 
-func (p *Prometheus) IncSessionEvent(event string) { p.sessionEvents.WithLabelValues(unset(event)).Inc() }
-func (p *Prometheus) IncTicket(result string)      { p.tickets.WithLabelValues(unset(result)).Inc() }
+func (p *Prometheus) IncSessionEvent(event string) {
+	p.sessionEvents.WithLabelValues(unset(event)).Inc()
+}
+func (p *Prometheus) IncTicket(result string) { p.tickets.WithLabelValues(unset(result)).Inc() }
 func (p *Prometheus) IncTicketRejected(reason string) {
 	p.ticketsRejected.WithLabelValues(unset(reason)).Inc()
 }
-func (p *Prometheus) IncWinningTicket()             { p.winningTickets.Inc() }
+func (p *Prometheus) IncWinningTicket() { p.winningTickets.Inc() }
 func (p *Prometheus) AddCreditedEVGwei(gwei float64) {
 	if gwei > 0 {
 		p.creditedEVGwei.Add(gwei)
@@ -201,7 +203,7 @@ func (p *Prometheus) SetRedemptionQueueDepth(n int) { p.redemptionQueue.Set(floa
 func (p *Prometheus) IncRedemptionTx(result string) {
 	p.redemptionTx.WithLabelValues(unset(result)).Inc()
 }
-func (p *Prometheus) SetGasPriceWei(wei float64) { p.gasPriceWei.Set(wei) }
+func (p *Prometheus) SetGasPriceWei(wei float64)  { p.gasPriceWei.Set(wei) }
 func (p *Prometheus) SetCurrentRound(round int64) { p.currentRound.Set(float64(round)) }
 
 func (p *Prometheus) SetEscrowPendingFloatWei(wei float64) { p.escrowPendingFloat.Set(wei) }
@@ -231,7 +233,7 @@ func (p *Prometheus) IncTicketParamsFetch(result string) {
 func (p *Prometheus) ObserveTicketParamsFetch(d time.Duration) {
 	p.ticketParamsDur.Observe(d.Seconds())
 }
-func (p *Prometheus) SetSenderSessions(n int)        { p.senderSessions.Set(float64(n)) }
+func (p *Prometheus) SetSenderSessions(n int)         { p.senderSessions.Set(float64(n)) }
 func (p *Prometheus) SetSenderDepositWei(wei float64) { p.senderDeposit.Set(wei) }
 func (p *Prometheus) SetSenderReserveWei(wei float64) { p.senderReserve.Set(wei) }
 

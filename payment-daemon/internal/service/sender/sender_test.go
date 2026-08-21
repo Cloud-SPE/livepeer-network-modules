@@ -27,6 +27,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/sender"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 	senderTypes "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
+
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/settlement"
 )
 
 // stand spins up an in-process sender Service over a unix socket and
@@ -987,4 +989,43 @@ func devSenderAddress(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return ks.Address()
+}
+
+// A minted envelope reports when it dies.
+//
+// A signed payment envelope cannot be revoked — the signature IS the
+// authorization and handing it over is irreversible — so a consumer
+// holding an encumbrance against one that was issued but never admitted
+// has exactly one unconditional release: expiry, which the chain
+// enforces rather than either daemon. Reporting it at mint means the
+// deadline travels with the envelope instead of having to be parsed back
+// out of it.
+func TestCreatePayment_ReportsExpiryRound(t *testing.T) {
+	client, cleanup := stand(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := client.CreatePayment(ctx, makeCreatePaymentRequest(
+		[]byte("recipient-20-bytes!!"),
+		"openai:/v1/chat/completions",
+		"gpt-5",
+		"token",
+		1000,
+		1,
+		1000,
+		"https://broker.example.com",
+	))
+	if err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+	if resp.GetCreationRound() == 0 {
+		t.Fatal("mint reported no creation_round; an encumbrance holder has no release deadline")
+	}
+	want := resp.GetCreationRound() + settlement.ChainValidityWindowRounds
+	if got := resp.GetExpiresAfterRound(); got != want {
+		t.Fatalf("expires_after_round = %d; want creation_round + %d = %d",
+			got, settlement.ChainValidityWindowRounds, want)
+	}
 }

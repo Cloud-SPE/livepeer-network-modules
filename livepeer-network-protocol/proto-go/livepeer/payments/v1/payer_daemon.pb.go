@@ -163,9 +163,28 @@ type CreatePaymentResponse struct {
 	// Quote identity serialized into the payment context.
 	AcceptedQuoteRef *QuoteRef `protobuf:"bytes,5,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`
 	// Work-id bound to this minted payment (hex recipient_rand_hash).
-	WorkId        string `protobuf:"bytes,6,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	WorkId string `protobuf:"bytes,6,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	// The round these tickets were minted in, and the last round in which
+	// any of them can still be redeemed.
+	//
+	// A signed envelope cannot be revoked: the sender's signature IS the
+	// authorization, and handing it over is irreversible. Nothing the
+	// payer or payee says proves an envelope went unused — a payee holding
+	// it can redeem a winner at any point in the window, and whether a
+	// ticket won cannot be computed by anyone else, because it depends on
+	// a recipient rand only the payee holds.
+	//
+	// Expiry is therefore the only unconditional release. It is enforced
+	// by the chain, not by either daemon: past the validity window the
+	// creation round's block hash is no longer available and redemption
+	// reverts. A consumer holding an encumbrance against an envelope that
+	// was issued but never admitted releases it once
+	// expires_after_round is behind the current round — with no
+	// attestation from anybody.
+	CreationRound     int64 `protobuf:"varint,7,opt,name=creation_round,json=creationRound,proto3" json:"creation_round,omitempty"`
+	ExpiresAfterRound int64 `protobuf:"varint,8,opt,name=expires_after_round,json=expiresAfterRound,proto3" json:"expires_after_round,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *CreatePaymentResponse) Reset() {
@@ -238,6 +257,20 @@ func (x *CreatePaymentResponse) GetWorkId() string {
 		return x.WorkId
 	}
 	return ""
+}
+
+func (x *CreatePaymentResponse) GetCreationRound() int64 {
+	if x != nil {
+		return x.CreationRound
+	}
+	return 0
+}
+
+func (x *CreatePaymentResponse) GetExpiresAfterRound() int64 {
+	if x != nil {
+		return x.ExpiresAfterRound
+	}
+	return 0
 }
 
 type ReportPaymentResultRequest struct {
@@ -585,14 +618,16 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\x16ticket_params_base_url\x18\x02 \x01(\tR\x13ticketParamsBaseUrl\x12J\n" +
 	"\x0eaccepted_price\x18\x03 \x01(\v2#.livepeer.payments.v1.AcceptedPriceR\racceptedPrice\x12=\n" +
 	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\x12&\n" +
-	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\"\xdb\x02\n" +
+	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\"\xb2\x03\n" +
 	"\x15CreatePaymentResponse\x12#\n" +
 	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x12'\n" +
 	"\x0ftickets_created\x18\x02 \x01(\rR\x0eticketsCreated\x12D\n" +
 	"\x0eexpected_value\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\rexpectedValue\x12G\n" +
 	"\x10funded_value_wei\x18\x04 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12L\n" +
 	"\x12accepted_quote_ref\x18\x05 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12\x17\n" +
-	"\awork_id\x18\x06 \x01(\tR\x06workId\"\xca\x01\n" +
+	"\awork_id\x18\x06 \x01(\tR\x06workId\x12%\n" +
+	"\x0ecreation_round\x18\a \x01(\x03R\rcreationRound\x12.\n" +
+	"\x13expires_after_round\x18\b \x01(\x03R\x11expiresAfterRound\"\xca\x01\n" +
 	"\x1aReportPaymentResultRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1e\n" +
 	"\n" +

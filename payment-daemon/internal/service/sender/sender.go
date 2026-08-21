@@ -30,6 +30,7 @@ import (
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/settlement"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -251,6 +252,14 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		FundedValueWei:   &pb.BigUInt{Value: funding.fundedValueWei.Bytes()},
 		AcceptedQuoteRef: cloneQuoteRef(session.acceptedQuote),
 		WorkId:           session.workID,
+		// When this envelope dies. A signed envelope cannot be revoked
+		// — the signature is the authorization and handing it over is
+		// irreversible — so expiry is the only unconditional release for
+		// anything encumbered against it. Reported at mint so the
+		// deadline travels with the envelope instead of having to be
+		// parsed back out of it.
+		CreationRound:     batch.ExpirationParams.CreationRound,
+		ExpiresAfterRound: batch.ExpirationParams.CreationRound + settlement.ChainValidityWindowRounds,
 	}
 	// Record before returning. A crash between the signature and this
 	// write leaves the ticket minted and unrecorded, and the retry

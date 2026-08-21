@@ -10,8 +10,8 @@ import (
 
 // Chain method labels for the metered Broker.
 const (
-	chainGetSenderInfo      = "get_sender_info"
-	chainIsUsedTicket       = "is_used_ticket"
+	chainGetSenderInfo       = "get_sender_info"
+	chainIsUsedTicket        = "is_used_ticket"
 	chainRedeemWinningTicket = "redeem_winning_ticket"
 )
 

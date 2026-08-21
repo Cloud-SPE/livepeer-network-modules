@@ -43,7 +43,21 @@ var (
 	ErrInsufficientFunds = errors.New("settlement: insufficient sender funds")
 )
 
-const defaultValidityWindow = 2
+// ChainValidityWindowRounds is how many rounds behind the current one a
+// ticket's creation round may be and still be redeemable.
+//
+// This is the CHAIN's rule, not a local policy: the TicketBroker needs
+// the creation round's block hash to verify a winning ticket, and that
+// hash stops being available beyond the window, so redemption reverts.
+// A daemon can configure a shorter window — it only stops trying sooner
+// — but it cannot extend one.
+//
+// It is exported because it is also the answer to "when does an issued
+// but never-admitted payment envelope become unspendable", which is the
+// only unconditional release for an encumbrance held against one.
+const ChainValidityWindowRounds = 2
+
+const defaultValidityWindow = ChainValidityWindowRounds
 
 // Config holds the settlement service's tunable state.
 type Config struct {

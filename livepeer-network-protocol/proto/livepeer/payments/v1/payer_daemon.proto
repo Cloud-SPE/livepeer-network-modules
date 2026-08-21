@@ -149,6 +149,28 @@ message CreatePaymentResponse {
 
   // Work-id bound to this minted payment (hex recipient_rand_hash).
   string work_id = 6;
+
+  // ---- encumbrance release ----
+
+  // The round these tickets were minted in, and the last round in which
+  // any of them can still be redeemed.
+  //
+  // A signed envelope cannot be revoked: the sender's signature IS the
+  // authorization, and handing it over is irreversible. Nothing the
+  // payer or payee says proves an envelope went unused — a payee holding
+  // it can redeem a winner at any point in the window, and whether a
+  // ticket won cannot be computed by anyone else, because it depends on
+  // a recipient rand only the payee holds.
+  //
+  // Expiry is therefore the only unconditional release. It is enforced
+  // by the chain, not by either daemon: past the validity window the
+  // creation round's block hash is no longer available and redemption
+  // reverts. A consumer holding an encumbrance against an envelope that
+  // was issued but never admitted releases it once
+  // expires_after_round is behind the current round — with no
+  // attestation from anybody.
+  int64 creation_round = 7;
+  int64 expires_after_round = 8;
 }
 
 message ReportPaymentResultRequest {

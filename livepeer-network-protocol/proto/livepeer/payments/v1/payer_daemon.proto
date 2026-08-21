@@ -152,25 +152,37 @@ message CreatePaymentResponse {
 
   // ---- encumbrance release ----
 
-  // The round these tickets were minted in, and the last round in which
-  // any of them can still be redeemed.
+  // The round these tickets were minted in, the last round in which they
+  // can currently still be redeemed, and the ticketValidityPeriod that
+  // figure was computed from.
   //
-  // A signed envelope cannot be revoked: the sender's signature IS the
-  // authorization, and handing it over is irreversible. Nothing the
-  // payer or payee says proves an envelope went unused — a payee holding
-  // it can redeem a winner at any point in the window, and whether a
-  // ticket won cannot be computed by anyone else, because it depends on
-  // a recipient rand only the payee holds.
+  // READ THE NEXT PARAGRAPH BEFORE TREATING expires_after_round AS A
+  // DEADLINE. It is a PREDICTION under the governance parameter observed
+  // at mint, not an immutable property of the envelope.
   //
-  // Expiry is therefore the only unconditional release. It is enforced
-  // by the chain, not by either daemon: past the validity window the
-  // creation round's block hash is no longer available and redemption
-  // reverts. A consumer holding an encumbrance against an envelope that
-  // was issued but never admitted releases it once
-  // expires_after_round is behind the current round — with no
-  // attestation from anybody.
+  // The TicketBroker checks, at redemption:
+  //
+  //     require(creationRound + ticketValidityPeriod > currentRound)
+  //
+  // reading ticketValidityPeriod from CURRENT storage, and the round
+  // block hashes it also needs are kept in a permanent mapping. So
+  // raising the parameter extends tickets already issued, and can revive
+  // ones that had lapsed. A consumer that finalizes or refunds on
+  // expires_after_round alone can be wrong about an envelope it already
+  // acted on.
+  //
+  // ticket_validity_period is published so a consumer can detect that:
+  // compare it against the chain's current value, and treat an increase
+  // as re-encumbering everything whose deadline it moved.
+  //
+  // expires_after_round is the LAST round the envelope can still be
+  // redeemed in — creation_round + ticket_validity_period - 1 — so
+  // "no longer redeemable" is exactly current_round > expires_after_round,
+  // matching the contract's boundary rather than sitting a round beyond
+  // it.
   int64 creation_round = 7;
   int64 expires_after_round = 8;
+  int64 ticket_validity_period = 9;
 }
 
 message ReportPaymentResultRequest {
@@ -250,6 +262,14 @@ message GetDepositInfoResponse {
   // reverse — so the safe reading of a suspect clock is "still
   // encumbered".
   int64 current_round = 4;
+
+  // The chain's CURRENT ticketValidityPeriod, read fresh.
+  //
+  // Paired with the value a mint recorded, this is how a consumer
+  // notices that governance moved the goalposts: an envelope minted when
+  // the period was 2 and evaluated when it is 4 is redeemable two rounds
+  // longer than its recorded deadline says.
+  int64 ticket_validity_period = 5;
 }
 
 // HealthRequest / HealthResponse live in types.proto (shared with PayeeDaemon).

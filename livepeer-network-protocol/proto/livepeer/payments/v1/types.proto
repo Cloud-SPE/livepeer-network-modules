@@ -393,20 +393,31 @@ message NonAdmissionRecord {
   // cannot be replayed across protocols.
   string protocol = 1;
 
-  // The request id the consumer issued and queried by. This is the
-  // binding that makes the record about ONE job.
+  // The request id the consumer issued and queried by. This is the ONE
+  // field below that the broker independently knows: it looked this id
+  // up in its own store and found nothing.
   string request_id = 2;
 
-  // The payment identity the envelope was minted against, and the two
-  // parties. A record that named only the request id could be replayed
-  // against a different envelope bearing the same id from another payer.
+  // ---- caller-supplied scope ----
+  //
+  // EVERYTHING IN THIS BLOCK IS ECHOED FROM THE QUERY, NOT OBSERVED BY
+  // THE BROKER. It describes an exchange that never happened, so the
+  // broker has nothing of its own to check it against.
+  //
+  // It is signed anyway, as scope: a record naming only a request id
+  // could be replayed against a different envelope that happened to
+  // carry the same id from another payer. A consumer MUST compare every
+  // field to its own record before acting — the broker's signature here
+  // attests "I have no record of request_id X, asked in this context",
+  // and not "these values are true".
   string work_id = 3;
   bytes sender = 4;
   bytes recipient = 5;
 
-  // Quote identity, mirroring a settlement's accepted_quote_ref, so the
-  // record is bound to the same commercial terms the exchange would have
-  // been.
+  // Full quote identity, mirroring a settlement's accepted_quote_ref
+  // including both fingerprints, so the record is bound to the same
+  // commercial terms the exchange would have carried. Caller-supplied,
+  // like the rest of this block.
   QuoteRef accepted_quote_ref = 6;
 
   // The broker asserting it, so a consumer knows whose key must have

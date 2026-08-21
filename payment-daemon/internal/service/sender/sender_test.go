@@ -27,8 +27,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/sender"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 	senderTypes "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
-
-	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/settlement"
 )
 
 // stand spins up an in-process sender Service over a unix socket and
@@ -1023,10 +1021,17 @@ func TestCreatePayment_ReportsExpiryRound(t *testing.T) {
 	if resp.GetCreationRound() == 0 {
 		t.Fatal("mint reported no creation_round; an encumbrance holder has no release deadline")
 	}
-	want := resp.GetCreationRound() + settlement.ChainValidityWindowRounds
+	if resp.GetTicketValidityPeriod() < 1 {
+		t.Fatal("ticket_validity_period is unset; a consumer cannot tell whether the deadline " +
+			"it was handed still holds after governance moves")
+	}
+	// The contract redeems while creationRound + period > currentRound,
+	// so the LAST redeemable round is creationRound + period - 1 and
+	// "expired" is exactly current > that. Sitting a round beyond the
+	// contract's boundary is conservative but misdescribes the rule.
+	want := resp.GetCreationRound() + resp.GetTicketValidityPeriod() - 1
 	if got := resp.GetExpiresAfterRound(); got != want {
-		t.Fatalf("expires_after_round = %d; want creation_round + %d = %d",
-			got, settlement.ChainValidityWindowRounds, want)
+		t.Fatalf("expires_after_round = %d; want creation_round + period - 1 = %d", got, want)
 	}
 }
 
@@ -1054,6 +1059,9 @@ func TestGetDepositInfo_ReportsCurrentRound(t *testing.T) {
 	}
 	if info.GetCurrentRound() == 0 {
 		t.Fatal("current_round is 0; a consumer has nothing to evaluate expiry against")
+	}
+	if info.GetTicketValidityPeriod() < 1 {
+		t.Fatal("deposit info does not report the current ticket_validity_period")
 	}
 	if info.GetCurrentRound() != mint.GetCreationRound() {
 		t.Fatalf("current_round %d != the round that stamped the mint %d; the two must come "+

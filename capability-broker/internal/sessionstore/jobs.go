@@ -129,6 +129,16 @@ func (s *Store) JobBegin(requestID string, fingerprint []byte, jobID string, dea
 			rec = &existing
 			return nil
 		}
+		// A request this broker has already sworn it never admitted
+		// cannot now be admitted. Checked inside the SAME transaction
+		// that writes the record, so the two cannot interleave: Bolt
+		// serializes writers, which is what makes the pair atomic
+		// rather than merely ordered.
+		if na := tx.Bucket([]byte(nonAdmissionBucket)); na != nil {
+			if na.Get([]byte(requestID)) != nil {
+				return ErrNonAdmissionIssued
+			}
+		}
 		if e := putJobIDIndex(tx, jobID, requestID); e != nil {
 			return e
 		}

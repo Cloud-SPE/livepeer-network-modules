@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.10-draft
+version: 1.0.11-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -324,21 +324,46 @@ make.
 A consumer that reserves funds against a payment envelope needs to know
 when it can stop holding them. Two questions look alike and are not:
 
-1. **Can this envelope still be spent?** Answerable, unconditionally, by
-   expiry. A ticket is redeemable only while its creation round's block
-   hash is available, so past `creation_round + validity_window` the
-   chain refuses it. A payer daemon reports both
-   `expires_after_round` (at mint) and `current_round` (from the same
-   clock), and the rule is:
+1. **Can this envelope still be spent?** Answerable, but **conditionally**
+   — and the condition is easy to miss.
 
-   ```
-   no longer spendable  iff  current_round > expires_after_round
+   The TicketBroker checks, at redemption:
+
+   ```solidity
+   require(creationRound.add(ticketValidityPeriod) > currRound, "ticket is expired");
    ```
 
-   Equality stays encumbered: a ticket minted in round R is redeemable
-   **through** R+window inclusive. A missing, zero, or regressing
-   `current_round` also stays encumbered — a stale clock can only make an
-   expired envelope look live, never the reverse.
+   reading `ticketValidityPeriod` from **current storage**, and the round
+   block hash it also requires lives in a permanent mapping that is never
+   cleared. So the deadline is not a property of the envelope. **Raising
+   `ticketValidityPeriod` extends tickets already issued, and can revive
+   ones that had lapsed.**
+
+   A payer therefore reports three things: `creation_round`,
+   `expires_after_round` (the last round the envelope can be redeemed in,
+   `creation_round + ticket_validity_period - 1`), and the
+   `ticket_validity_period` those were computed from. `GetDepositInfo`
+   reports `current_round` from the same clock, plus the chain's
+   **current** period.
+
+   ```
+   not currently spendable  iff  current_round > expires_after_round
+                            and  the chain's period is unchanged
+   ```
+
+   A consumer MUST compare the period a mint recorded against the chain's
+   current one, and treat an increase as **re-encumbering** every envelope
+   whose deadline it moved. A missing, zero, or regressing `current_round`
+   stays encumbered — a stale clock can only make an expired envelope look
+   live, never the reverse.
+
+   **There is no unconditional expiry today.** Making the deadline
+   immutable needs one of: the validity period snapshotted into the ticket
+   and enforced from there, a governance invariant against retroactive
+   extension, or some other mechanism that permanently retires the
+   envelope. Until one exists, a consumer that finalizes on
+   `expires_after_round` accepts the residual risk that governance moves
+   it afterwards.
 
 2. **Was this envelope ever used?** **Expiry does not answer this**, and
    the difference is the whole of §5.3.
@@ -412,11 +437,20 @@ refund requires, and it is the only form of it available.
   different envelope carrying the same id from another payer.
 - **Carries `observed_at` and a durable `coverage_started_at`.** A
   consumer MUST reject the record unless coverage began no later than its
-  own job's issuance. A broker whose store was reset, restored, or
-  reinitialized after issuance MUST NOT attest across the gap — absence
-  there is forgetting, not non-admission. Because the marker lives in the
-  store, a wiped store re-stamps it and disqualifies itself
-  automatically.
+  own job's issuance. A broker whose store was reset or reinitialized
+  after issuance MUST NOT attest across the gap — absence there is
+  forgetting, not non-admission.
+
+  **The marker detects wiping, not rollback.** It lives in the store, so
+  a fresh store re-stamps it and disqualifies itself. Restoring an older
+  *backup* restores the older marker along with it, while dropping the
+  job records written since — a broker in that state reports continuous
+  coverage it does not have. `coverage_started_at` is therefore an
+  **attributable broker assertion, not proof of uninterrupted storage**,
+  and this document does not claim otherwise. A consumer wanting
+  rollback resistance must anchor continuity outside the broker's own
+  store: retaining periodic signed coverage statements works, because a
+  rollback then contradicts evidence the consumer already holds.
 - **Refused if any record exists** for the request — in flight, terminal,
   or pending accounting. Attesting mid-flight signs a statement the next
   second contradicts.
@@ -459,6 +493,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.11-draft | 2026-08-21 | §5.3 corrected: expiry is CONDITIONAL, not unconditional. The TicketBroker evaluates `creationRound + ticketValidityPeriod > currRound` against current storage and keeps round block hashes permanently, so raising the governance parameter extends issued tickets and can revive lapsed ones. Payers now publish `ticket_validity_period` alongside the deadline so a consumer can detect the change, and `expires_after_round` is corrected to the last redeemable round (`creation_round + period - 1`) to match the contract's boundary rather than sitting one round beyond it. §5.3.1: `coverage_started_at` is described accurately as an attributable assertion — it detects a wiped store, not a restored backup. All raised by LOC. |
 | 1.0.10-draft | 2026-08-21 | Add §5.3.1, non-admission evidence: a broker MUST be able to sign `NOT_ADMITTED` for a request id, retrievable by the consumer keyed on the consumer's own id, bound to protocol/request/work/sender/recipient/quote/broker, carrying `observed_at` and a durable `coverage_started_at`, refused if any record exists or if coverage began after issuance, and never emitted unsigned. States retention as a formula rather than a number, and requires `expires_after_round` to be derived from the contract's `ticketValidityPeriod` rather than a hardcoded mirror — it is governance-settable, and an understated value releases an encumbrance while the envelope is still spendable. Requirements from LOC. |
 | 1.0.9-draft | 2026-08-21 | Add §5.3, encumbrance on an envelope that may never have been used. Separates FINALIZE (expiry is sufficient) from REFUND (it is not): a customer can submit an envelope, take the work, withhold the job id and settlement, wait for expiry and ask for the money back, and chain state cannot tell that apart from non-use because a losing ticket is never redeemed. Requires brokers to retain exchange records past the envelope's spendable life — the dispute window opens AT expiry, and the reference broker evicted at 24h against a 38–57h expiry, deleting the evidence before it could be asked for. Raised by LOC. |
 | 1.0.8-draft | 2026-08-21 | §5.2 gains the debit-failure LIFECYCLE the OpenAI gateway team asked for: `202 accounting_pending` while a bounded, idempotent retry is active, a signed terminal settlement when the debit lands, and terminal `DEBIT_FAILED` only on retry exhaustion. Retry MUST reuse the original `debit_seq`, and a broker MUST NOT close a payee session while a debit against it is outstanding — a closed session refuses debits, so closing guarantees the retry can never land. Replaces settle-on-first-failure, which reported a recoverable timeout as a permanent loss. |

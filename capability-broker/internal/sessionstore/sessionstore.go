@@ -69,6 +69,10 @@ var (
 	// signature for the wrong session, which a caller cannot detect as
 	// wrong from the record alone.
 	ErrAmbiguous = errors.New("sessionstore: identifier matches more than one session")
+	// ErrNonAdmissionIssued means this broker already signed a statement
+	// that it never admitted this request. Admitting it now would put two
+	// contradictory signed claims under one delegated key.
+	ErrNonAdmissionIssued = errors.New("sessionstore: a non-admission record was already issued for this request")
 )
 
 // Session states (paid-session/v1 §2).
@@ -262,7 +266,17 @@ func Open(path string, key []byte) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sessionstore: init bucket: %w", err)
 	}
-	return &Store{db: db, aead: aead}, nil
+	st := &Store{db: db, aead: aead}
+	// Stamp coverage at OPEN, not lazily at the first query that needs
+	// it. Stamped lazily, a broker that had been running for days would
+	// mark its coverage as beginning the moment somebody first asked —
+	// and then refuse every job older than that question, which is every
+	// job it had actually served.
+	if _, err := st.CoverageStartedAt(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sessionstore: stamp coverage: %w", err)
+	}
+	return st, nil
 }
 
 // Close closes the underlying database.

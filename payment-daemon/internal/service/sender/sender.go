@@ -30,7 +30,6 @@ import (
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
-	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/settlement"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -52,10 +51,13 @@ type Service struct {
 	fetcher  TicketParamsFetcher
 	metrics  metrics.Recorder
 
-	// validityPeriod is the contract's ticketValidityPeriod, read once
-	// at construction. Zero means the read failed and the fallback
-	// applies — see validityPeriodRounds.
+	// validityPeriod caches the contract's ticketValidityPeriod for a
+	// short window. NOT for the process lifetime: it is governance
+	// settable, and a value cached at startup is a value that can be
+	// wrong for as long as the daemon runs.
+	validityMu     sync.Mutex
 	validityPeriod int64
+	validityReadAt time.Time
 
 	// limits is this payer's own policy on what it will sign. Enforced
 	// before any signature, because a refusal after signing is not a
@@ -109,27 +111,6 @@ func New(keystore providers.KeyStore, broker providers.Broker, clock providers.C
 		limits:      limits,
 		sessions:    map[string]*senderSession{},
 		workIDIndex: map[string]string{},
-	}
-	// Read the contract's ticketValidityPeriod once, here, because every
-	// expires_after_round the daemon publishes is derived from it and a
-	// consumer makes release decisions against that number.
-	if broker != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if v, err := broker.TicketValidityPeriod(ctx); err == nil {
-			svc.validityPeriod = v
-			if v != settlement.ChainValidityWindowRounds {
-				logger.Warn("ticketValidityPeriod differs from the historical default; "+
-					"expires_after_round follows the chain",
-					"chain", v, "assumed_default", settlement.ChainValidityWindowRounds)
-			}
-		} else {
-			logger.Error("could not read ticketValidityPeriod; expires_after_round falls back "+
-				"to the historical default and will be WRONG if governance changed it — "+
-				"a consumer releasing against it may release while the envelope is still "+
-				"spendable",
-				"err", err, "fallback", settlement.ChainValidityWindowRounds)
-		}
 	}
 	return svc
 }
@@ -223,6 +204,20 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		return nil, fmt.Errorf("sender validation: %w", err)
 	}
 
+	// Read the expiry parameter BEFORE signing anything.
+	//
+	// Fail-closed on purpose: every envelope this daemon issues carries a
+	// deadline derived from this number, and a consumer makes release
+	// decisions against it. A daemon that cannot read it has nothing
+	// honest to publish, and signing anyway would hand out an envelope
+	// with a deadline we made up.
+	validityPeriod, err := s.ticketValidityPeriod(ctx)
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.Unavailable,
+			"cannot read the chain's ticketValidityPeriod, so this mint would carry an "+
+				"unverified expiry deadline; refusing: %v", err)
+	}
+
 	session, err := s.findOrOpenSession(
 		ctx,
 		req.GetRecipient(),
@@ -279,14 +274,20 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		FundedValueWei:   &pb.BigUInt{Value: funding.fundedValueWei.Bytes()},
 		AcceptedQuoteRef: cloneQuoteRef(session.acceptedQuote),
 		WorkId:           session.workID,
-		// When this envelope dies. A signed envelope cannot be revoked
-		// — the signature is the authorization and handing it over is
-		// irreversible — so expiry is the only unconditional release for
-		// anything encumbered against it. Reported at mint so the
-		// deadline travels with the envelope instead of having to be
-		// parsed back out of it.
-		CreationRound:     batch.ExpirationParams.CreationRound,
-		ExpiresAfterRound: batch.ExpirationParams.CreationRound + s.validityPeriodRounds(),
+		// When this envelope dies UNDER THE PARAMETER OBSERVED NOW.
+		//
+		// Not a property of the envelope: the contract evaluates
+		// creationRound + ticketValidityPeriod > currentRound against
+		// CURRENT storage, and keeps round block hashes forever, so
+		// raising the parameter extends tickets already issued and can
+		// revive lapsed ones. The period is published alongside so a
+		// consumer can compare it to the chain and notice.
+		//
+		// The last redeemable round is creationRound + period - 1, which
+		// is what the contract's strict > comparison works out to.
+		CreationRound:        batch.ExpirationParams.CreationRound,
+		ExpiresAfterRound:    batch.ExpirationParams.CreationRound + validityPeriod - 1,
+		TicketValidityPeriod: validityPeriod,
 	}
 	// Record before returning. A crash between the signature and this
 	// write leaves the ticket minted and unrecorded, and the retry
@@ -428,6 +429,15 @@ func (s *Service) GetDepositInfo(ctx context.Context, _ *pb.GetDepositInfoReques
 		// consumer evaluating "has this envelope expired" reads one
 		// clock rather than correlating two.
 		CurrentRound: s.clock.LastInitializedRound(),
+	}
+	// The CURRENT period, read fresh. Paired with what a mint recorded,
+	// this is how a consumer notices that governance moved a deadline it
+	// may already have acted on.
+	if v, verr := s.ticketValidityPeriod(ctx); verr == nil {
+		out.TicketValidityPeriod = v
+	} else {
+		s.logger.Error("could not read ticketValidityPeriod for deposit info; a consumer cannot "+
+			"verify whether recorded expiry deadlines still hold", "err", verr)
 	}
 	if info.Deposit != nil {
 		out.Deposit = info.Deposit.Bytes()
@@ -778,19 +788,41 @@ func cloneTicketParams(in *types.TicketParams) *types.TicketParams {
 	return &out
 }
 
-// validityPeriodRounds returns the contract's ticketValidityPeriod, or
-// the historical default when it could not be read.
+// validityPeriodTTL bounds how stale the cached ticketValidityPeriod
+// may be. Short, because a consumer's release decisions are derived from
+// it and governance can change it at any time; not per-call, because a
+// contract read on every mint puts the chain in the latency path of
+// signing.
+const validityPeriodTTL = 30 * time.Second
+
+// ticketValidityPeriod returns the contract's value, refreshing when
+// stale.
 //
-// The fallback is deliberately the value the deployed contracts have
-// carried rather than something conservative: a LARGER guess would tell
-// a consumer the envelope stays spendable longer than it does, which
-// only delays a release. A SMALLER one would tell them it dies sooner
-// than it does, which releases an encumbrance while the envelope can
-// still be redeemed. Neither is safe if it is wrong, so the read is what
-// matters and the daemon says loudly when it failed.
-func (s *Service) validityPeriodRounds() int64 {
-	if s.validityPeriod > 0 {
-		return s.validityPeriod
+// It FAILS rather than falling back. A fallback here is not a
+// conservative default in either direction: guess high and a consumer
+// holds an encumbrance longer than needed, guess low and it releases
+// while the envelope is still redeemable. Since the number exists to be
+// published to somebody making money decisions with it, a daemon that
+// cannot read it has nothing honest to say and must refuse to mint.
+func (s *Service) ticketValidityPeriod(ctx context.Context) (int64, error) {
+	s.validityMu.Lock()
+	defer s.validityMu.Unlock()
+	if s.validityPeriod > 0 && time.Since(s.validityReadAt) < validityPeriodTTL {
+		return s.validityPeriod, nil
 	}
-	return settlement.ChainValidityWindowRounds
+	if s.broker == nil {
+		return 0, fmt.Errorf("no chain broker configured")
+	}
+	v, err := s.broker.TicketValidityPeriod(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("read ticketValidityPeriod: %w", err)
+	}
+	if s.validityPeriod > 0 && v != s.validityPeriod {
+		s.logger.Warn("ticketValidityPeriod CHANGED on chain; envelopes already issued now "+
+			"expire on a different round than they were told",
+			"was", s.validityPeriod, "now", v)
+	}
+	s.validityPeriod = v
+	s.validityReadAt = time.Now()
+	return v, nil
 }

@@ -1459,18 +1459,29 @@ type NonAdmissionRecord struct {
 	// Always "paid-job/v1" or "paid-session/v1". Present so a record
 	// cannot be replayed across protocols.
 	Protocol string `protobuf:"bytes,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
-	// The request id the consumer issued and queried by. This is the
-	// binding that makes the record about ONE job.
+	// The request id the consumer issued and queried by. This is the ONE
+	// field below that the broker independently knows: it looked this id
+	// up in its own store and found nothing.
 	RequestId string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	// The payment identity the envelope was minted against, and the two
-	// parties. A record that named only the request id could be replayed
-	// against a different envelope bearing the same id from another payer.
+	// ---- caller-supplied scope ----
+	//
+	// EVERYTHING IN THIS BLOCK IS ECHOED FROM THE QUERY, NOT OBSERVED BY
+	// THE BROKER. It describes an exchange that never happened, so the
+	// broker has nothing of its own to check it against.
+	//
+	// It is signed anyway, as scope: a record naming only a request id
+	// could be replayed against a different envelope that happened to
+	// carry the same id from another payer. A consumer MUST compare every
+	// field to its own record before acting — the broker's signature here
+	// attests "I have no record of request_id X, asked in this context",
+	// and not "these values are true".
 	WorkId    string `protobuf:"bytes,3,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
 	Sender    []byte `protobuf:"bytes,4,opt,name=sender,proto3" json:"sender,omitempty"`
 	Recipient []byte `protobuf:"bytes,5,opt,name=recipient,proto3" json:"recipient,omitempty"`
-	// Quote identity, mirroring a settlement's accepted_quote_ref, so the
-	// record is bound to the same commercial terms the exchange would have
-	// been.
+	// Full quote identity, mirroring a settlement's accepted_quote_ref
+	// including both fingerprints, so the record is bound to the same
+	// commercial terms the exchange would have carried. Caller-supplied,
+	// like the rest of this block.
 	AcceptedQuoteRef *QuoteRef `protobuf:"bytes,6,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`
 	// The broker asserting it, so a consumer knows whose key must have
 	// signed and whose statement to hold against them later.

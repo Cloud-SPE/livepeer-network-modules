@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
@@ -20,8 +21,18 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-const naBody = `{"protocol":"paid-job/v1","work_id":"work-abc","sender":"0a0b0c",` +
-	`"recipient":"0d0e0f","quote_id":"q-1","quote_version":1}`
+func naBodyFor(issuedAt string) string {
+	return `{"protocol":"paid-job/v1","work_id":"work-abc",` +
+		`"sender":"` + strings.Repeat("0a", 20) + `",` +
+		`"recipient":"` + strings.Repeat("0b", 20) + `",` +
+		`"quote_id":"q-1","quote_version":1,` +
+		`"constraint_fingerprint":"aabb","route_fingerprint":"ccdd",` +
+		`"job_issued_at":"` + issuedAt + `"}`
+}
+
+// naBody is a well-formed query whose job was issued now, so coverage
+// (stamped when this test's store was created) covers it.
+func naBody() string { return naBodyFor(time.Now().UTC().Format(time.RFC3339Nano)) }
 
 func askNonAdmission(t *testing.T, srv *httptest.Server, requestID, body string) *http.Response {
 	t.Helper()
@@ -65,7 +76,7 @@ func TestNonAdmissionSignedForUnknownRequest(t *testing.T) {
 	var calls atomic.Int64
 	srv, _ := newSignedJobTestServer(t, &calls)
 
-	resp := askNonAdmission(t, srv, "loc-job-never-sent", naBody)
+	resp := askNonAdmission(t, srv, "loc-job-never-sent", naBody())
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d", resp.StatusCode)
@@ -100,8 +111,14 @@ func TestNonAdmissionSignedForUnknownRequest(t *testing.T) {
 		t.Fatalf("observed_at=%q coverage_started_at=%q; both are required",
 			rec.GetObservedAt(), rec.GetCoverageStartedAt())
 	}
-	if rec.GetAcceptedQuoteRef().GetQuoteId() != "q-1" {
+	qr := rec.GetAcceptedQuoteRef()
+	if qr.GetQuoteId() != "q-1" || qr.GetQuoteVersion() != 1 {
 		t.Fatal("quote identity not bound")
+	}
+	// The full snapshotted identity, not just id+version: two quotes can
+	// share an id and version and differ in the terms they fingerprint.
+	if len(qr.GetConstraintFingerprint()) == 0 || len(qr.GetRouteFingerprint()) == 0 {
+		t.Fatal("quote fingerprints not bound")
 	}
 }
 
@@ -115,7 +132,7 @@ func TestNonAdmissionRefusedForAdmittedRequest(t *testing.T) {
 	exchange := jobReqPaid(t, srv, requestID, "")
 	_ = exchange.Body.Close()
 
-	resp := askNonAdmission(t, srv, requestID, naBody)
+	resp := askNonAdmission(t, srv, requestID, naBody())
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status %d for an admitted request; want 409 — a broker must not be able to "+
@@ -135,8 +152,7 @@ func TestNonAdmissionRefusedWhenCoverageStartsAfterIssuance(t *testing.T) {
 
 	// The store was created by this test, so its coverage starts now;
 	// a job issued in 2020 predates it.
-	body := `{"protocol":"paid-job/v1","work_id":"w","job_issued_at":"2020-01-01T00:00:00Z"}`
-	resp := askNonAdmission(t, srv, "loc-job-before-coverage", body)
+	resp := askNonAdmission(t, srv, "loc-job-before-coverage", naBodyFor("2020-01-01T00:00:00Z"))
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("status %d; want 409 — a broker whose records begin after issuance must not "+
@@ -233,4 +249,104 @@ func newSignedJobTestServer(t *testing.T, backendCalls *atomic.Int64) (*httptest
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
 	return srv, s
+}
+
+// Every field is required and strictly parsed. The old handler failed
+// OPEN in the direction that mattered: a missing job_issued_at parsed as
+// the zero time and skipped the coverage check, so the one query a
+// broker with a records gap must refuse was the one that omitted a
+// field.
+func TestNonAdmissionRequiresCompleteContext(t *testing.T) {
+	var calls atomic.Int64
+	srv, _ := newSignedJobTestServer(t, &calls)
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	full := `"protocol":"paid-job/v1","work_id":"w","sender":"` + strings.Repeat("0a", 20) +
+		`","recipient":"` + strings.Repeat("0b", 20) + `","quote_id":"q","quote_version":1,` +
+		`"constraint_fingerprint":"aabb","route_fingerprint":"ccdd","job_issued_at":"` + now + `"`
+
+	cases := map[string]string{
+		"missing job_issued_at":   `{"protocol":"paid-job/v1","work_id":"w","sender":"` + strings.Repeat("0a", 20) + `","recipient":"` + strings.Repeat("0b", 20) + `","quote_id":"q","quote_version":1,"constraint_fingerprint":"aabb","route_fingerprint":"ccdd"}`,
+		"malformed job_issued_at": `{` + strings.Replace(full, `"job_issued_at":"`+now+`"`, `"job_issued_at":"last tuesday"`, 1) + `}`,
+		"empty work_id":           `{` + strings.Replace(full, `"work_id":"w"`, `"work_id":""`, 1) + `}`,
+		"unknown protocol":        `{` + strings.Replace(full, `"protocol":"paid-job/v1"`, `"protocol":"whatever/v9"`, 1) + `}`,
+		"short sender":            `{` + strings.Replace(full, `"sender":"`+strings.Repeat("0a", 20)+`"`, `"sender":"0a0b"`, 1) + `}`,
+		"non-hex recipient":       `{` + strings.Replace(full, `"recipient":"`+strings.Repeat("0b", 20)+`"`, `"recipient":"zzzz"`, 1) + `}`,
+		"missing quote_id":        `{` + strings.Replace(full, `"quote_id":"q"`, `"quote_id":""`, 1) + `}`,
+		"zero quote_version":      `{` + strings.Replace(full, `"quote_version":1`, `"quote_version":0`, 1) + `}`,
+		"missing fingerprints":    `{"protocol":"paid-job/v1","work_id":"w","sender":"` + strings.Repeat("0a", 20) + `","recipient":"` + strings.Repeat("0b", 20) + `","quote_id":"q","quote_version":1,"job_issued_at":"` + now + `"}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			resp := askNonAdmission(t, srv, "req-"+strings.ReplaceAll(name, " ", "-"), body)
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status %d; want 400 — signing an incompletely-scoped record produces "+
+					"evidence that binds to nothing", resp.StatusCode)
+			}
+		})
+	}
+}
+
+// The record must be RETAINED, not just returned. A conflicting pair is
+// the accountability the signature exists for, and a record that only
+// ever lived in one HTTP response cannot conflict with anything.
+func TestNonAdmissionIsRetainedAndStable(t *testing.T) {
+	var calls atomic.Int64
+	srv, s := newSignedJobTestServer(t, &calls)
+
+	const requestID = "loc-job-retained"
+	first := askNonAdmission(t, srv, requestID, naBody())
+	var b1 struct {
+		NonAdmission string `json:"non_admission"`
+	}
+	if err := json.NewDecoder(first.Body).Decode(&b1); err != nil {
+		t.Fatal(err)
+	}
+	_ = first.Body.Close()
+
+	stored, found, err := s.sessionStore.NonAdmissionFor(requestID)
+	if err != nil || !found {
+		t.Fatalf("record not retained (found=%v err=%v)", found, err)
+	}
+	if stored != b1.NonAdmission {
+		t.Fatal("retained record differs from the one returned")
+	}
+
+	// Asking again returns the SAME record. Re-signing would produce two
+	// signed statements about one fact under different observed_at, and
+	// a consumer holding both cannot tell agreement from conflict.
+	second := askNonAdmission(t, srv, requestID, naBody())
+	var b2 struct {
+		NonAdmission string `json:"non_admission"`
+	}
+	if err := json.NewDecoder(second.Body).Decode(&b2); err != nil {
+		t.Fatal(err)
+	}
+	_ = second.Body.Close()
+	if b2.NonAdmission != b1.NonAdmission {
+		t.Fatal("a second query re-signed the same fact; one fact, one record")
+	}
+}
+
+// Having sworn non-admission, the broker must refuse to admit. Otherwise
+// it can end up holding a settlement and a non-admission for one
+// request, both signed by the same delegated key.
+func TestAdmissionRefusedAfterNonAdmission(t *testing.T) {
+	var calls atomic.Int64
+	srv, _ := newSignedJobTestServer(t, &calls)
+
+	const requestID = "loc-job-sworn"
+	na := askNonAdmission(t, srv, requestID, naBody())
+	if na.StatusCode != http.StatusOK {
+		t.Fatalf("non-admission status %d", na.StatusCode)
+	}
+	_ = na.Body.Close()
+
+	resp := jobReqPaid(t, srv, requestID, "")
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("the broker admitted a request it had already sworn it never admitted; " +
+			"two contradictory signed claims under one key")
+	}
 }

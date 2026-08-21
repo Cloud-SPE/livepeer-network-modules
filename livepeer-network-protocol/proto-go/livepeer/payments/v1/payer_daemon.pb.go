@@ -164,27 +164,39 @@ type CreatePaymentResponse struct {
 	AcceptedQuoteRef *QuoteRef `protobuf:"bytes,5,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`
 	// Work-id bound to this minted payment (hex recipient_rand_hash).
 	WorkId string `protobuf:"bytes,6,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
-	// The round these tickets were minted in, and the last round in which
-	// any of them can still be redeemed.
+	// The round these tickets were minted in, the last round in which they
+	// can currently still be redeemed, and the ticketValidityPeriod that
+	// figure was computed from.
 	//
-	// A signed envelope cannot be revoked: the sender's signature IS the
-	// authorization, and handing it over is irreversible. Nothing the
-	// payer or payee says proves an envelope went unused — a payee holding
-	// it can redeem a winner at any point in the window, and whether a
-	// ticket won cannot be computed by anyone else, because it depends on
-	// a recipient rand only the payee holds.
+	// READ THE NEXT PARAGRAPH BEFORE TREATING expires_after_round AS A
+	// DEADLINE. It is a PREDICTION under the governance parameter observed
+	// at mint, not an immutable property of the envelope.
 	//
-	// Expiry is therefore the only unconditional release. It is enforced
-	// by the chain, not by either daemon: past the validity window the
-	// creation round's block hash is no longer available and redemption
-	// reverts. A consumer holding an encumbrance against an envelope that
-	// was issued but never admitted releases it once
-	// expires_after_round is behind the current round — with no
-	// attestation from anybody.
-	CreationRound     int64 `protobuf:"varint,7,opt,name=creation_round,json=creationRound,proto3" json:"creation_round,omitempty"`
-	ExpiresAfterRound int64 `protobuf:"varint,8,opt,name=expires_after_round,json=expiresAfterRound,proto3" json:"expires_after_round,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// The TicketBroker checks, at redemption:
+	//
+	//	require(creationRound + ticketValidityPeriod > currentRound)
+	//
+	// reading ticketValidityPeriod from CURRENT storage, and the round
+	// block hashes it also needs are kept in a permanent mapping. So
+	// raising the parameter extends tickets already issued, and can revive
+	// ones that had lapsed. A consumer that finalizes or refunds on
+	// expires_after_round alone can be wrong about an envelope it already
+	// acted on.
+	//
+	// ticket_validity_period is published so a consumer can detect that:
+	// compare it against the chain's current value, and treat an increase
+	// as re-encumbering everything whose deadline it moved.
+	//
+	// expires_after_round is the LAST round the envelope can still be
+	// redeemed in — creation_round + ticket_validity_period - 1 — so
+	// "no longer redeemable" is exactly current_round > expires_after_round,
+	// matching the contract's boundary rather than sitting a round beyond
+	// it.
+	CreationRound        int64 `protobuf:"varint,7,opt,name=creation_round,json=creationRound,proto3" json:"creation_round,omitempty"`
+	ExpiresAfterRound    int64 `protobuf:"varint,8,opt,name=expires_after_round,json=expiresAfterRound,proto3" json:"expires_after_round,omitempty"`
+	TicketValidityPeriod int64 `protobuf:"varint,9,opt,name=ticket_validity_period,json=ticketValidityPeriod,proto3" json:"ticket_validity_period,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *CreatePaymentResponse) Reset() {
@@ -269,6 +281,13 @@ func (x *CreatePaymentResponse) GetCreationRound() int64 {
 func (x *CreatePaymentResponse) GetExpiresAfterRound() int64 {
 	if x != nil {
 		return x.ExpiresAfterRound
+	}
+	return 0
+}
+
+func (x *CreatePaymentResponse) GetTicketValidityPeriod() int64 {
+	if x != nil {
+		return x.TicketValidityPeriod
 	}
 	return 0
 }
@@ -572,9 +591,16 @@ type GetDepositInfoResponse struct {
 	// stale round can only make an expired envelope look live — never the
 	// reverse — so the safe reading of a suspect clock is "still
 	// encumbered".
-	CurrentRound  int64 `protobuf:"varint,4,opt,name=current_round,json=currentRound,proto3" json:"current_round,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	CurrentRound int64 `protobuf:"varint,4,opt,name=current_round,json=currentRound,proto3" json:"current_round,omitempty"`
+	// The chain's CURRENT ticketValidityPeriod, read fresh.
+	//
+	// Paired with the value a mint recorded, this is how a consumer
+	// notices that governance moved the goalposts: an envelope minted when
+	// the period was 2 and evaluated when it is 4 is redeemable two rounds
+	// longer than its recorded deadline says.
+	TicketValidityPeriod int64 `protobuf:"varint,5,opt,name=ticket_validity_period,json=ticketValidityPeriod,proto3" json:"ticket_validity_period,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *GetDepositInfoResponse) Reset() {
@@ -635,6 +661,13 @@ func (x *GetDepositInfoResponse) GetCurrentRound() int64 {
 	return 0
 }
 
+func (x *GetDepositInfoResponse) GetTicketValidityPeriod() int64 {
+	if x != nil {
+		return x.TicketValidityPeriod
+	}
+	return 0
+}
+
 var File_livepeer_payments_v1_payer_daemon_proto protoreflect.FileDescriptor
 
 const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
@@ -645,7 +678,7 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\x16ticket_params_base_url\x18\x02 \x01(\tR\x13ticketParamsBaseUrl\x12J\n" +
 	"\x0eaccepted_price\x18\x03 \x01(\v2#.livepeer.payments.v1.AcceptedPriceR\racceptedPrice\x12=\n" +
 	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\x12&\n" +
-	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\"\xb2\x03\n" +
+	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\"\xe8\x03\n" +
 	"\x15CreatePaymentResponse\x12#\n" +
 	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x12'\n" +
 	"\x0ftickets_created\x18\x02 \x01(\rR\x0eticketsCreated\x12D\n" +
@@ -654,7 +687,8 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\x12accepted_quote_ref\x18\x05 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12\x17\n" +
 	"\awork_id\x18\x06 \x01(\tR\x06workId\x12%\n" +
 	"\x0ecreation_round\x18\a \x01(\x03R\rcreationRound\x12.\n" +
-	"\x13expires_after_round\x18\b \x01(\x03R\x11expiresAfterRound\"\xca\x01\n" +
+	"\x13expires_after_round\x18\b \x01(\x03R\x11expiresAfterRound\x124\n" +
+	"\x16ticket_validity_period\x18\t \x01(\x03R\x14ticketValidityPeriod\"\xca\x01\n" +
 	"\x1aReportPaymentResultRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1e\n" +
 	"\n" +
@@ -671,12 +705,13 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\vdebit_count\x18\x02 \x01(\x04R\n" +
 	"debitCount\x12\x16\n" +
 	"\x06closed\x18\x03 \x01(\bR\x06closed\"\x17\n" +
-	"\x15GetDepositInfoRequest\"\x98\x01\n" +
+	"\x15GetDepositInfoRequest\"\xce\x01\n" +
 	"\x16GetDepositInfoResponse\x12\x18\n" +
 	"\adeposit\x18\x01 \x01(\fR\adeposit\x12\x18\n" +
 	"\areserve\x18\x02 \x01(\fR\areserve\x12%\n" +
 	"\x0ewithdraw_round\x18\x03 \x01(\x03R\rwithdrawRound\x12#\n" +
-	"\rcurrent_round\x18\x04 \x01(\x03R\fcurrentRound2\xa8\x04\n" +
+	"\rcurrent_round\x18\x04 \x01(\x03R\fcurrentRound\x124\n" +
+	"\x16ticket_validity_period\x18\x05 \x01(\x03R\x14ticketValidityPeriod2\xa8\x04\n" +
 	"\vPayerDaemon\x12h\n" +
 	"\rCreatePayment\x12*.livepeer.payments.v1.CreatePaymentRequest\x1a+.livepeer.payments.v1.CreatePaymentResponse\x12z\n" +
 	"\x13ReportPaymentResult\x120.livepeer.payments.v1.ReportPaymentResultRequest\x1a1.livepeer.payments.v1.ReportPaymentResultResponse\x12k\n" +

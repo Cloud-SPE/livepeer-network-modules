@@ -2,6 +2,7 @@ package server
 
 import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/audioduration"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/bytescounted"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/ffmpegprogress"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/openaiusage"
@@ -24,5 +25,6 @@ func defaultExtractors() *extractors.Registry {
 	r.Register(bytescounted.Name, bytescounted.New)         // plan 0007
 	r.Register(secondselapsed.Name, secondselapsed.New)     // plan 0007
 	r.Register(ffmpegprogress.Name, ffmpegprogress.New)     // plan 0007
+	r.Register(audioduration.Name, audioduration.New)       // transcription: bill by input audio duration
 	return r
 }

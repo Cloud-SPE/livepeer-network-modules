@@ -16,6 +16,7 @@ The initial six (per plan 0002):
 - [`openai-usage.md`](./openai-usage.md) — read `usage.{prompt|completion|total}_tokens` from OpenAI-shaped response JSON. **Accepted 2026-05-06.**
 - [`response-jsonpath.md`](./response-jsonpath.md) — extract a count from a JSONPath in the response body. **Accepted 2026-05-06.**
 - [`request-formula.md`](./request-formula.md) — safe arithmetic expression over request fields (e.g., `width × height × steps`). **Accepted 2026-05-06.**
+- [`multipart-audio-duration.md`](./multipart-audio-duration.md) — playing time of an uploaded audio file, for transcription offerings billed by input duration. **Draft 2026-08-21.**
 - [`bytes-counted.md`](./bytes-counted.md) — tally bytes in/out (request, response, or both). **Accepted 2026-05-06.**
 - [`seconds-elapsed.md`](./seconds-elapsed.md) — wall-clock duration of one exchange, anchored per transport. **Accepted 2026-05-06.**
 - [`ffmpeg-progress.md`](./ffmpeg-progress.md) — parse FFmpeg's `-progress` output (frame, frame-megapixel, out-time). **Accepted 2026-05-06.**

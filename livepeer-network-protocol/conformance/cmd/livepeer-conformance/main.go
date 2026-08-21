@@ -101,6 +101,22 @@ capabilities:
       extractor: { type: openai-usage }
     price: { amount_wei: "1", per_units: 1 }
     backend: { transport: http, url: %q }
+  - id: conformance:job
+    offering_id: fractional
+    protocol: paid-job/v1
+    job:
+      transports: [unary]
+    health: { initial_status: ready }
+    work_unit:
+      name: %s
+      extractor: { type: openai-usage }
+    # Priced per 1000 units, and deliberately remainder-producing: the
+    # fixture backend claims 42 units, so 42 x 100 / 1000 = 4.2 wei.
+    # Every offering here used to be per_units 1, which is exactly the
+    # denominator at which flooring and ceiling agree — so a rounding
+    # defect could not surface.
+    price: { amount_wei: "100", per_units: 1000 }
+    backend: { transport: http, url: %q }
   - id: conformance:session
     offering_id: bounded-refill
     protocol: paid-session/v1
@@ -272,6 +288,7 @@ func main() {
 		JobOfferingError:          "always-error",
 		JobOfferingSlow:           "slow",
 		JobOfferingLongStream:     "longstream",
+		JobOfferingFractional:     "fractional",
 		SessionOfferingBounded:    "bounded-refill",
 		SessionOfferingShortLease: "short-lease",
 		SessionOfferingsBySchema: map[string]string{
@@ -370,6 +387,7 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 		jobUnit, backend.ErrorURL(),
 		jobUnit, backend.SlowURL(),
 		jobUnit, backend.LongStreamURL(),
+		jobUnit, backend.URL(), // fractional
 		sessUnit, runner.URL(), // bounded-refill
 		sessUnit, runner.URL(), // short-lease
 		sessUnit, runner.URL(), // rtmp-hls

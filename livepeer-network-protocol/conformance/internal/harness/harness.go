@@ -72,6 +72,10 @@ type Ctx struct {
 	JobOfferingSlow string
 	// JobOfferingLongStream serves a long SSE body a client can sever.
 	JobOfferingLongStream string
+	// JobOfferingFractional is priced per many units rather than per
+	// one, so the paid path is exercised at a denominator where
+	// flooring and ceiling disagree.
+	JobOfferingFractional string
 	// SessionOfferingBounded declares refill: bounded.
 	SessionOfferingBounded string
 	// SessionOfferingShortLease has a fixed, very short lease so expiry

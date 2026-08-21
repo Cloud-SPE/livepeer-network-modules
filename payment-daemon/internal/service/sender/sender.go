@@ -62,6 +62,12 @@ type Service struct {
 	// outlive the process.
 	store *store.Store
 
+	// mintMu serializes concurrent CreatePayment calls sharing a mint id.
+	// The durable reservation makes a crash safe; this makes a RACE
+	// safe — without it two simultaneous identical requests both see an
+	// unreserved id and both sign.
+	mintMu sync.Map // mint key -> *sync.Mutex
+
 	mu          sync.Mutex
 	sessions    map[string]*senderSession // keyed by recipient/capability/offering/target-spend tuple
 	workIDIndex map[string]string         // work_id -> session cache key
@@ -127,8 +133,18 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 			"mint idempotency store is not configured; refusing to mint")
 	}
 	fingerprint := mintFingerprint(req)
-	prior, err := s.store.MintRecall(s.keystore.Address(), mintID, fingerprint)
+
+	// Serialize this id, then reserve it durably before anything is
+	// signed. The two together give exactly-once across both the racing
+	// case and the crashing one.
+	unlock := s.lockMint(mintID)
+	defer unlock()
+
+	prior, err := s.store.MintReserve(s.keystore.Address(), mintID, fingerprint)
 	switch {
+	case errors.Is(err, store.ErrMintIncomplete):
+		return nil, grpcstatus.Error(codes.FailedPrecondition,
+			"mint_request_id was reserved but never completed; a ticket may already have been signed for it — use a new id")
 	case errors.Is(err, store.ErrMintFingerprintMismatch):
 		return nil, grpcstatus.Error(codes.InvalidArgument,
 			"mint_request_id was used for different request content")
@@ -259,6 +275,16 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	return out, nil
 }
 
+// lockMint serializes CreatePayment calls sharing a mint id, returning
+// the unlock. Keyed per id rather than one global lock so unrelated
+// mints stay concurrent.
+func (s *Service) lockMint(mintID string) func() {
+	actual, _ := s.mintMu.LoadOrStore(mintID, &sync.Mutex{})
+	mu := actual.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
 // maxMintRequestIDBytes caps the caller-supplied key. Long enough for a
 // prefixed UUID, short enough that the tombstone space stays predictable.
 const maxMintRequestIDBytes = 128
@@ -267,7 +293,13 @@ const maxMintRequestIDBytes = 128
 // id with different content is refused rather than answered with the
 // earlier payment, which would hand the caller a batch it never asked
 // for.
-func mintFingerprint(req *pb.CreatePaymentRequest) []byte {
+func mintFingerprint(req *pb.CreatePaymentRequest) []byte { return MintFingerprint(req) }
+
+// MintFingerprint is the content a mint id promises. Exported because it
+// is part of the idempotency contract — "the same id with the same
+// content replays" is only meaningful if a caller can see what content
+// means — and because tests reconstruct it to simulate a crash.
+func MintFingerprint(req *pb.CreatePaymentRequest) []byte {
 	h := sha256.New()
 	h.Write(req.GetRecipient())
 	h.Write([]byte{0})

@@ -1095,7 +1095,16 @@ type SettlementRecord struct {
 	// Session state when the record was produced: "open", "winding_down"
 	// or "closed". Distinguishes an interim snapshot from a final
 	// settlement.
-	State         string `protobuf:"bytes,23,opt,name=state,proto3" json:"state,omitempty"`
+	State string `protobuf:"bytes,23,opt,name=state,proto3" json:"state,omitempty"`
+	// Broker-assigned id for a single job exchange, matching
+	// `Livepeer-Job-Id`. REQUIRED on a paid-job settlement.
+	//
+	// work_id above is NOT sufficient to identify a job: on paid-job it is
+	// the hex recipient_rand_hash of the ticket session, which every job
+	// minted against that session shares. Without job_id inside the
+	// signature, a valid settlement for one exchange verifies as evidence
+	// for another on the same session.
+	JobId         string `protobuf:"bytes,24,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1287,6 +1296,13 @@ func (x *SettlementRecord) GetIssuedAt() string {
 func (x *SettlementRecord) GetState() string {
 	if x != nil {
 		return x.State
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetJobId() string {
+	if x != nil {
+		return x.JobId
 	}
 	return ""
 }
@@ -1511,7 +1527,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x0festimated_units\x18\x01 \x01(\x04R\x0eestimatedUnits\x12G\n" +
 	"\x10funded_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12&\n" +
 	"\x0fmax_total_units\x18\x03 \x01(\x04R\rmaxTotalUnits\x12$\n" +
-	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\x88\v\n" +
+	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\x9f\v\n" +
 	"\x10SettlementRecord\x12L\n" +
 	"\x12accepted_quote_ref\x18\x01 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12$\n" +
 	"\x0ework_unit_name\x18\x02 \x01(\tR\fworkUnitName\x12'\n" +
@@ -1538,7 +1554,8 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\tper_units\x18\x14 \x01(\x04R\bperUnits\x12%\n" +
 	"\x0esettlement_seq\x18\x15 \x01(\x04R\rsettlementSeq\x12\x1b\n" +
 	"\tissued_at\x18\x16 \x01(\tR\bissuedAt\x12\x14\n" +
-	"\x05state\x18\x17 \x01(\tR\x05state\x1a<\n" +
+	"\x05state\x18\x17 \x01(\tR\x05state\x12\x15\n" +
+	"\x06job_id\x18\x18 \x01(\tR\x05jobId\x1a<\n" +
 	"\x0eBreakdownEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x01\n" +

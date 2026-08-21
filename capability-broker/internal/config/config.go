@@ -49,6 +49,12 @@ type Identity struct {
 	// mock-payment deployment runnable; a consumer that needs integrity
 	// rejects an unsigned envelope.
 	SettlementKeyFile string `yaml:"settlement_key_file,omitempty"`
+	// SettlementKeyNotBefore / SettlementKeyExpiresAt mirror the window
+	// published for this key in the manifest's settlement_keys block
+	// (RFC3339). The broker refuses to sign outside them, so it cannot
+	// emit evidence that no consumer will accept. Empty means unbounded.
+	SettlementKeyNotBefore string `yaml:"settlement_key_not_before,omitempty"`
+	SettlementKeyExpiresAt string `yaml:"settlement_key_expires_at,omitempty"`
 }
 
 // Listen declares the broker's bind addresses. If omitted, defaults are used.

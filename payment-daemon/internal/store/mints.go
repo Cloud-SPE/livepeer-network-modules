@@ -48,6 +48,16 @@ var ErrMintFingerprintMismatch = errors.New("store: mint_request_id reused with 
 // The mint is refused, never re-signed.
 var ErrMintExpired = errors.New("store: mint_request_id was seen but its replay record has expired")
 
+// ErrMintIncomplete reports a mint id whose reservation exists but whose
+// response was never recorded — the daemon died between signing and
+// persisting.
+//
+// The retry is refused rather than re-signed. The reservation cannot
+// tell us whether the first attempt got far enough to produce a ticket,
+// and re-signing on a maybe is how a payer pays twice. Refusing costs
+// the caller a new idempotency key; guessing costs it money.
+var ErrMintIncomplete = errors.New("store: mint_request_id was reserved but never completed")
+
 // MintRecord is the recorded response for one mint intent, replayed
 // verbatim on retry.
 type MintRecord struct {
@@ -64,6 +74,11 @@ type MintRecord struct {
 type mintTombstone struct {
 	Fingerprint []byte    `json:"fingerprint"`
 	FirstSeenAt time.Time `json:"first_seen_at"`
+	// Completed distinguishes "the response aged out of retention" from
+	// "the response never landed". The first is an expired replay; the
+	// second is a crash between signing and recording, and they must not
+	// be answered the same way.
+	Completed bool `json:"completed,omitempty"`
 }
 
 // MintKey is the storage key: the mint id scoped to the sender identity
@@ -75,6 +90,70 @@ func MintKey(sender []byte, mintRequestID string) []byte {
 	h.Write([]byte{0})
 	h.Write([]byte(mintRequestID))
 	return h.Sum(nil)
+}
+
+// MintReserve claims a mint id before anything is signed, and reports
+// what was already known about it:
+//
+//	(nil, nil)                — reserved by this call; go mint
+//	(record, nil)             — completed before; replay it verbatim
+//	(nil, ErrMintIncomplete)  — reserved but never completed; refuse
+//	(nil, ErrMintExpired)     — completed, replay record evicted; refuse
+//	(nil, ErrMintFingerprintMismatch) — seen with other content; refuse
+//
+// Reserving BEFORE signing is what closes the crash window: a daemon
+// that dies after signing leaves a reservation, so the retry refuses
+// instead of minting a second batch against the same intent.
+func (s *Store) MintReserve(sender []byte, mintRequestID string, fingerprint []byte) (*MintRecord, error) {
+	key := MintKey(sender, mintRequestID)
+	var out *MintRecord
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		tb, err := tx.CreateBucketIfNotExists([]byte(tombstonesBucket))
+		if err != nil {
+			return err
+		}
+		if rawTomb := tb.Get(key); rawTomb != nil {
+			var tomb mintTombstone
+			if err := json.Unmarshal(rawTomb, &tomb); err != nil {
+				return err
+			}
+			if !bytes.Equal(tomb.Fingerprint, fingerprint) {
+				return ErrMintFingerprintMismatch
+			}
+			mb := tx.Bucket([]byte(mintsBucket))
+			if mb == nil {
+				return ErrMintExpired
+			}
+			raw := mb.Get(key)
+			if raw == nil {
+				// Tombstoned with no payload: either the response aged
+				// out, or it never landed. Completed tells them apart.
+				if tomb.Completed {
+					return ErrMintExpired
+				}
+				return ErrMintIncomplete
+			}
+			var rec MintRecord
+			if err := json.Unmarshal(raw, &rec); err != nil {
+				return err
+			}
+			out = &rec
+			return nil
+		}
+		// First sight: stake the claim before a signature exists.
+		tomb, err := json.Marshal(&mintTombstone{
+			Fingerprint: bytes.Clone(fingerprint),
+			FirstSeenAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		return tb.Put(key, tomb)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // MintRecall reports what the daemon already knows about a mint id:
@@ -137,6 +216,7 @@ func (s *Store) MintRecord(sender []byte, mintRequestID string, rec MintRecord) 
 	tomb, err := json.Marshal(&mintTombstone{
 		Fingerprint: bytes.Clone(rec.Fingerprint),
 		FirstSeenAt: rec.CreatedAt,
+		Completed:   true,
 	})
 	if err != nil {
 		return err

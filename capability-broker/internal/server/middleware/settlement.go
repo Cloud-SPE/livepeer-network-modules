@@ -11,9 +11,23 @@ import (
 	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"google.golang.org/protobuf/proto"
 )
+
+// SettlementIdentity binds a settlement record to the exchange it
+// describes, and to when it was made. All three ride inside the signed
+// payload — evidence that does not say what it is evidence of can be
+// replayed against something else.
+type SettlementIdentity struct {
+	// JobID is the broker-assigned Livepeer-Job-Id.
+	JobID string
+	// WorkID is the payee-side payment identity.
+	WorkID string
+	// IssuedAt is RFC3339 (nanosecond precision).
+	IssuedAt string
+}
 
 // SettlementInputs captures everything needed to build a
 // SettlementRecord at a later point in time. Long-lived session
@@ -41,8 +55,8 @@ type SettlementInputs struct {
 // Returns nil when the payment cannot be parsed or has no
 // expected_price — both indicate a stub/legacy payment that doesn't
 // support settlement.
-func BuildSettlementRecord(in SettlementInputs, actualUnits uint64, terminationReason string) *pb.SettlementRecord {
-	return buildSettlementRecord(in.PaymentBytes, in.FundedValueWei, actualUnits, in.WorkUnit, terminationReason)
+func BuildSettlementRecord(in SettlementInputs, actualUnits uint64, terminationReason string, ident SettlementIdentity) *pb.SettlementRecord {
+	return buildSettlementRecord(in.PaymentBytes, in.FundedValueWei, actualUnits, in.WorkUnit, terminationReason, ident)
 }
 
 // Deprecated: use internal/settlement.Encode, which emits the signed
@@ -67,7 +81,7 @@ func encodeSettlementRecord(record *pb.SettlementRecord) (string, error) {
 	return base64.StdEncoding.EncodeToString(raw), nil
 }
 
-func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualUnits uint64, currentWorkUnit string, terminationReason string) *pb.SettlementRecord {
+func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualUnits uint64, currentWorkUnit string, terminationReason string, ident SettlementIdentity) *pb.SettlementRecord {
 	var pay pb.Payment
 	if err := proto.Unmarshal(paymentBytes, &pay); err != nil {
 		return nil
@@ -84,8 +98,12 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 	if unitsPerPrice <= 0 {
 		unitsPerPrice = 1
 	}
-	billedValueWei := new(big.Int).Mul(big.NewInt(price.GetPricePerUnit()), new(big.Int).SetUint64(actualUnits))
-	billedValueWei.Div(billedValueWei, big.NewInt(unitsPerPrice))
+	// Ceiling, per offering-axes.md §6.1 — the same function the payee's
+	// ledger and the session path compute. Integer division floors, so
+	// with per_units > 1 this used to attest less than was actually
+	// billed, and a clearinghouse recomputing the rule disagreed with
+	// the record it was verifying.
+	billedValueWei := payment.BillFor(big.NewInt(price.GetPricePerUnit()), uint64(unitsPerPrice), actualUnits)
 	if fundedValueWei == nil {
 		fundedValueWei = new(big.Int)
 	}
@@ -110,6 +128,15 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 	}
 
 	return &pb.SettlementRecord{
+		// Identity inside the signature. Without it a valid settlement
+		// verifies as evidence for a different exchange: work_id on
+		// paid-job is the ticket session's rand hash, shared by every
+		// job minted against it, so job_id is what makes the record
+		// about ONE exchange.
+		JobId:    ident.JobID,
+		WorkId:   ident.WorkID,
+		IssuedAt: ident.IssuedAt,
+
 		AcceptedQuoteRef: &pb.QuoteRef{
 			QuoteId:               meta.quoteID,
 			QuoteVersion:          meta.quoteVersion,

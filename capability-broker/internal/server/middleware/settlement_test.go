@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
@@ -15,6 +16,13 @@ import (
 // payment-daemon/internal/service/sender/sender.go:expectedPriceConstraint).
 func makePaymentBytes(t *testing.T, pricePerUnit int64, estimatedUnits uint64) []byte {
 	t.Helper()
+	return makePaymentBytesPerUnits(t, pricePerUnit, 1, estimatedUnits)
+}
+
+// makePaymentBytesPerUnits builds a payment whose price is quoted per
+// many units — the case where flooring and ceiling diverge.
+func makePaymentBytesPerUnits(t *testing.T, pricePerUnit int64, perUnits int64, estimatedUnits uint64) []byte {
+	t.Helper()
 	constraint := fmt.Sprintf(
 		"cap=cap;off=off;wu=tokens;est=%d;qid=quote-1;qv=1;cfp=%x;rfp=%x",
 		estimatedUnits,
@@ -24,7 +32,7 @@ func makePaymentBytes(t *testing.T, pricePerUnit int64, estimatedUnits uint64) [
 	pay := &pb.Payment{
 		ExpectedPrice: &pb.PriceInfo{
 			PricePerUnit:  pricePerUnit,
-			PixelsPerUnit: 1,
+			PixelsPerUnit: perUnits,
 			Constraint:    constraint,
 		},
 	}
@@ -93,6 +101,7 @@ func TestBuildSettlementRecord_Outcomes(t *testing.T) {
 				tc.actualUnits,
 				"tokens",
 				tc.terminationReason,
+				testIdentity(),
 			)
 			if got == nil {
 				t.Fatalf("buildSettlementRecord returned nil")
@@ -117,7 +126,7 @@ func TestBuildSettlementRecord_Outcomes(t *testing.T) {
 }
 
 func TestBuildSettlementRecord_NilForUnparseablePayment(t *testing.T) {
-	if got := buildSettlementRecord([]byte("not-a-proto"), big.NewInt(0), 0, "tokens", ""); got != nil {
+	if got := buildSettlementRecord([]byte("not-a-proto"), big.NewInt(0), 0, "tokens", "", testIdentity()); got != nil {
 		t.Fatalf("expected nil for unparseable payment, got %+v", got)
 	}
 }
@@ -127,14 +136,14 @@ func TestBuildSettlementRecord_NilWhenExpectedPriceMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if got := buildSettlementRecord(raw, big.NewInt(0), 0, "tokens", ""); got != nil {
+	if got := buildSettlementRecord(raw, big.NewInt(0), 0, "tokens", "", testIdentity()); got != nil {
 		t.Fatalf("expected nil when expected_price missing, got %+v", got)
 	}
 }
 
 func TestEncodeSettlementRecord_RoundTrip(t *testing.T) {
 	paymentBytes := makePaymentBytes(t, 10, 100)
-	rec := buildSettlementRecord(paymentBytes, big.NewInt(1000), 100, "tokens", "")
+	rec := buildSettlementRecord(paymentBytes, big.NewInt(1000), 100, "tokens", "", testIdentity())
 	if rec == nil {
 		t.Fatalf("buildSettlementRecord returned nil")
 	}
@@ -144,5 +153,79 @@ func TestEncodeSettlementRecord_RoundTrip(t *testing.T) {
 	}
 	if encoded == "" {
 		t.Fatalf("encoded settlement record is empty")
+	}
+}
+
+// testIdentity is the signed identity every settlement carries: which
+// exchange it describes and when it was made.
+func testIdentity() SettlementIdentity {
+	return SettlementIdentity{
+		JobID:    "job_test",
+		WorkID:   "work_test",
+		IssuedAt: "2026-08-20T12:00:00Z",
+	}
+}
+
+// TestBilledValueCeilingsWithRemainder is LOC's finding: with
+// per_units > 1 the record used integer division, which FLOORS. A
+// clearinghouse recomputing the normative rule then disagreed with the
+// signed record it was verifying.
+func TestBilledValueCeilingsWithRemainder(t *testing.T) {
+	// 31 units at 100 wei per 1000 units = 3.1 wei. Ceiling is 4;
+	// flooring gives 3, and the remainder is what exposes the bug.
+	paymentBytes := makePaymentBytesPerUnits(t, 100, 1000, 31)
+	rec := buildSettlementRecord(paymentBytes, big.NewInt(1000), 31, "tokens", "", testIdentity())
+	if rec == nil {
+		t.Fatal("nil record")
+	}
+	got := new(big.Int).SetBytes(rec.GetBilledValueWei().GetValue())
+	if got.Int64() != 4 {
+		t.Fatalf("billed = %s wei; want 4 (ceil), not 3 (floor)", got)
+	}
+}
+
+// TestSettlementCarriesSignedIdentity: a record that cannot say which
+// exchange it describes can be replayed as evidence for another. work_id
+// alone is not enough on paid-job — it is the ticket session's rand
+// hash, shared by every job minted against that session.
+func TestSettlementCarriesSignedIdentity(t *testing.T) {
+	paymentBytes := makePaymentBytes(t, 1, 100)
+	rec := buildSettlementRecord(paymentBytes, big.NewInt(1000), 100, "tokens", "", SettlementIdentity{
+		JobID:    "job_abc",
+		WorkID:   "work_shared",
+		IssuedAt: "2026-08-20T12:00:00Z",
+	})
+	if rec.GetJobId() != "job_abc" {
+		t.Fatalf("job_id = %q; a settlement must name its exchange", rec.GetJobId())
+	}
+	if rec.GetWorkId() != "work_shared" {
+		t.Fatalf("work_id = %q", rec.GetWorkId())
+	}
+	if rec.GetIssuedAt() == "" {
+		t.Fatal("issued_at is empty; a record with no time cannot be aged out or ordered")
+	}
+	if _, err := time.Parse(time.RFC3339, rec.GetIssuedAt()); err != nil {
+		t.Fatalf("issued_at %q is not RFC3339: %v", rec.GetIssuedAt(), err)
+	}
+}
+
+// TestCrossJobSettlementReplayIsDetectable: two exchanges on the SAME
+// ticket session share a work_id, so job_id is the only thing that
+// distinguishes their settlements. Without it the two records would be
+// interchangeable.
+func TestCrossJobSettlementReplayIsDetectable(t *testing.T) {
+	paymentBytes := makePaymentBytes(t, 1, 100)
+	shared := "work_shared_by_both_jobs"
+	a := buildSettlementRecord(paymentBytes, big.NewInt(1000), 100, "tokens", "", SettlementIdentity{
+		JobID: "job_a", WorkID: shared, IssuedAt: "2026-08-20T12:00:00Z",
+	})
+	b := buildSettlementRecord(paymentBytes, big.NewInt(1000), 100, "tokens", "", SettlementIdentity{
+		JobID: "job_b", WorkID: shared, IssuedAt: "2026-08-20T12:00:01Z",
+	})
+	if a.GetWorkId() != b.GetWorkId() {
+		t.Fatal("test premise wrong: these should share a work_id")
+	}
+	if a.GetJobId() == b.GetJobId() {
+		t.Fatal("settlements for different jobs are indistinguishable inside the signature")
 	}
 }

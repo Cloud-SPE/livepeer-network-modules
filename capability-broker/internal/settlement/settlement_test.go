@@ -5,10 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -158,5 +160,50 @@ func TestUnsignedEnvelopeOmitsSignature(t *testing.T) {
 	rawEnv, _ := base64.StdEncoding.DecodeString(encoded)
 	if strings.Contains(string(rawEnv), "signature") {
 		t.Fatalf("unsigned envelope mentions a signature: %s", rawEnv)
+	}
+}
+
+// TestSignerRefusesOutsideValidityWindow: a record signed outside the
+// window the orch published is one no consumer will accept, so the
+// broker must not produce it — failing here is visible to the operator,
+// where failing at the clearinghouse later is not.
+func TestSignerRefusesOutsideValidityWindow(t *testing.T) {
+	base := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	signer := testSigner(t)
+	signer.SetValidity(base.Add(-time.Hour), base.Add(time.Hour))
+
+	cases := []struct {
+		name    string
+		now     time.Time
+		wantErr bool
+	}{
+		{"inside", base, false},
+		{"at not_before", base.Add(-time.Hour), false},
+		{"before not_before", base.Add(-2 * time.Hour), true},
+		{"after expires_at", base.Add(2 * time.Hour), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setSignerClock(signer, tc.now)
+			_, err := Encode(sample(), signer)
+			if tc.wantErr {
+				if !errors.Is(err, ErrKeyOutsideValidity) {
+					t.Fatalf("err = %v; want ErrKeyOutsideValidity", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("signing inside the window failed: %v", err)
+			}
+		})
+	}
+}
+
+// TestSignerUnboundedWindowSigns: a deployment that has not published a
+// delegation yet still signs. The window is a published fact to mirror,
+// not a hurdle to invent.
+func TestSignerUnboundedWindowSigns(t *testing.T) {
+	if _, err := Encode(sample(), testSigner(t)); err != nil {
+		t.Fatalf("unbounded validity must sign: %v", err)
 	}
 }

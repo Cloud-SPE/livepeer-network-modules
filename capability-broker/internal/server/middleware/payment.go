@@ -449,7 +449,16 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				}
 			}
 
-			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue); settlement != nil {
+			// jobIdempotency wraps this middleware and sets the job id
+			// header before calling through, so it is available here —
+			// and it must be, because a settlement that cannot say which
+			// exchange it describes can be replayed against another.
+			ident := SettlementIdentity{
+				JobID:    rec.Header().Get(livepeerheader.JobID),
+				WorkID:   workID,
+				IssuedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			}
+			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue, ident); settlement != nil {
 				if encoded, err := encode(settlement); err == nil {
 					rec.Header().Set(livepeerheader.Settlement, encoded)
 				} else {

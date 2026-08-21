@@ -898,3 +898,93 @@ func TestRefillSizingDoesNotChangeSessionIdentity(t *testing.T) {
 			p1.GetTicketParams().GetFaceValue(), p2.GetTicketParams().GetFaceValue())
 	}
 }
+
+// TestConcurrentIdenticalMintsSignOnce: two callers racing on the same
+// mint id must produce one ticket, not two. The durable reservation
+// makes a CRASH safe; without serialization a RACE still double-signs,
+// because both callers check before either records.
+func TestConcurrentIdenticalMintsSignOnce(t *testing.T) {
+	ctx, client, _ := newSenderClient(t)
+	req := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5",
+		"token", 1000, 1, 1000, "https://broker.example.com")
+
+	const callers = 8
+	var wg sync.WaitGroup
+	results := make([]*pb.CreatePaymentResponse, callers)
+	errs := make([]error, callers)
+	start := make(chan struct{})
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i], errs[i] = client.CreatePayment(ctx, req)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	var payments [][]byte
+	for i := range results {
+		if errs[i] != nil {
+			t.Fatalf("caller %d failed: %v", i, errs[i])
+		}
+		payments = append(payments, results[i].GetPaymentBytes())
+	}
+	// Every caller must have received the SAME batch. Differing bytes
+	// mean more than one was signed against the payer's deposit.
+	for i := 1; i < len(payments); i++ {
+		if !bytes.Equal(payments[0], payments[i]) {
+			t.Fatalf("caller %d got different payment bytes; a second batch was signed", i)
+		}
+	}
+	// And exactly one nonce was consumed.
+	var pay pb.Payment
+	if err := proto.Unmarshal(payments[0], &pay); err != nil {
+		t.Fatal(err)
+	}
+	if n := pay.GetTicketSenderParams()[0].GetSenderNonce(); n != 1 {
+		t.Fatalf("sender nonce = %d; want 1 — the race consumed more than one", n)
+	}
+}
+
+// TestMintReservedButNeverCompletedRefuses covers the crash window: the
+// daemon died between signing and recording. The reservation survives
+// with no response behind it, and the retry must refuse rather than
+// re-sign — the reservation cannot prove whether a ticket was produced,
+// and re-signing on a maybe is how a payer pays twice.
+func TestMintReservedButNeverCompletedRefuses(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "sender.db")
+	req := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5",
+		"token", 1000, 1, 1000, "https://broker.example.com")
+
+	// Simulate the crash: reserve the id, then never record a response.
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderAddr := devSenderAddress(t)
+	fp := sender.MintFingerprint(req)
+	if prior, err := st.MintReserve(senderAddr, req.GetMintRequestId(), fp); err != nil || prior != nil {
+		t.Fatalf("first reserve = (%v, %v); want a clean claim", prior, err)
+	}
+	_ = st.Close()
+
+	ctx, client, closeFn := newSenderClientAt(t, dbPath)
+	defer closeFn()
+	_, err = client.CreatePayment(ctx, req)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("retry after an incomplete mint = %v; want FailedPrecondition, never a second mint", err)
+	}
+}
+
+// devSenderAddress is the address the dev keystore deterministically
+// produces, which is the sender the test daemon signs as.
+func devSenderAddress(t *testing.T) []byte {
+	t.Helper()
+	ks, err := devkeystore.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ks.Address()
+}

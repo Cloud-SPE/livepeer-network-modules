@@ -44,11 +44,18 @@ broker to serve these offerings before pressing Enter:
 | `conformance:session` / `fast-heartbeat` | `paid-session/v1` | same, but `heartbeat: {interval_seconds: 1, missed_threshold: 2}` and a fixed lease | fake runner base URL |
 | `conformance:job` / `slow` | `paid-job/v1` | transport unary | fake backend `/slow` route (~3s) |
 | `conformance:job` / `longstream` | `paid-job/v1` | transport stream | fake backend `/longstream` route (~6s of SSE) |
+| `conformance:job` / `fractional` | `paid-job/v1` | transport unary; **`price: {amount_wei: "100", per_units: 1000}`** | fake backend base URL |
 | `conformance:session` / `bounded-refill` | `paid-session/v1` | `refill: bounded`, fixed lease | fake runner base URL |
 | `conformance:session` / `short-lease` | `paid-session/v1` | `lease_policy: fixed`, `lease_max_seconds: 1`, heartbeat far away | fake runner base URL |
 | `conformance:session` / `rtmp-hls` | `paid-session/v1` | `descriptor_schema: rtmp-hls/v1` | fake runner base URL |
 | `conformance:session` / `scope-passthrough` | `paid-session/v1` | `descriptor_schema: scope-passthrough/v1` | fake runner base URL |
 | `conformance:session` / `trickle-egress` | `paid-session/v1` | `descriptor_schema: trickle-egress/v1` | fake runner base URL |
+
+The `fractional` offering is priced per *many* units on purpose. Every other
+fixture is `per_units: 1` — the one denominator at which flooring and
+ceiling agree — so a rounding defect cannot surface against them. Serve it
+with a remainder-producing price and the paid path gets exercised where the
+arithmetic actually differs.
 
 Offerings you do not serve simply cause their scenarios to SKIP rather than
 fail — the per-schema fixtures and the optional control-WS binding are the

@@ -154,7 +154,13 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		if err != nil {
 			return nil, fmt.Errorf("settlement key: %w", err)
 		}
-		log.Printf("settlement signing enabled; delegated public key %s", settlementSigner.PublicKeyHex())
+		notBefore, expiresAt, verr := parseKeyValidity(cfg.Identity)
+		if verr != nil {
+			return nil, fmt.Errorf("settlement key validity: %w", verr)
+		}
+		settlementSigner.SetValidity(notBefore, expiresAt)
+		log.Printf("settlement signing enabled; delegated public key %s (validity %s)",
+			settlementSigner.PublicKeyHex(), describeValidity(notBefore, expiresAt))
 	} else {
 		log.Printf("warning: no identity.settlement_key_file — settlement records go out UNSIGNED " +
 			"and a clearinghouse will refuse them for anything financially material")
@@ -501,4 +507,47 @@ func (s *Server) runMetadataRefresh(ctx context.Context, interval time.Duration)
 			refreshMetadataCatalog(ctx, client, cfg, metadata)
 		}
 	}
+}
+
+// parseKeyValidity reads the delegation window the operator published
+// alongside the settlement key. Empty means unbounded — a deployment
+// that has not published a delegation yet.
+func parseKeyValidity(id config.Identity) (time.Time, time.Time, error) {
+	parse := func(field, raw string) (time.Time, error) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return time.Time{}, nil
+		}
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("%s: %w", field, err)
+		}
+		return t.UTC(), nil
+	}
+	notBefore, err := parse("settlement_key_not_before", id.SettlementKeyNotBefore)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	expiresAt, err := parse("settlement_key_expires_at", id.SettlementKeyExpiresAt)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if !notBefore.IsZero() && !expiresAt.IsZero() && !expiresAt.After(notBefore) {
+		return time.Time{}, time.Time{}, fmt.Errorf("settlement_key_expires_at must be after settlement_key_not_before")
+	}
+	return notBefore, expiresAt, nil
+}
+
+func describeValidity(notBefore, expiresAt time.Time) string {
+	if notBefore.IsZero() && expiresAt.IsZero() {
+		return "unbounded — publish a settlement_keys window and mirror it here"
+	}
+	from, until := "-inf", "+inf"
+	if !notBefore.IsZero() {
+		from = notBefore.Format(time.RFC3339)
+	}
+	if !expiresAt.IsZero() {
+		until = expiresAt.Format(time.RFC3339)
+	}
+	return from + " .. " + until
 }

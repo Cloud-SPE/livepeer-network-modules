@@ -293,6 +293,18 @@ message SettlementRecord {
   // or "closed". Distinguishes an interim snapshot from a final
   // settlement.
   string state = 23;
+
+  // ---- paid-job/v1 identity ----
+
+  // Broker-assigned id for a single job exchange, matching
+  // `Livepeer-Job-Id`. REQUIRED on a paid-job settlement.
+  //
+  // work_id above is NOT sufficient to identify a job: on paid-job it is
+  // the hex recipient_rand_hash of the ticket session, which every job
+  // minted against that session shares. Without job_id inside the
+  // signature, a valid settlement for one exchange verifies as evidence
+  // for another on the same session.
+  string job_id = 24;
 }
 
 // PaymentRejectionReason is the machine-readable reason a payee daemon

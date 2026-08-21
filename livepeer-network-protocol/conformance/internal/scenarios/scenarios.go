@@ -200,6 +200,52 @@ func jobScenarios() []harness.Scenario {
 			}
 			return nil
 		}},
+		{Name: "paid-job/fractional-pricing-exchange", Spec: "offering-axes §6", Run: func(c *harness.Ctx) error {
+			// An offering priced per many units, not per one. Every
+			// other fixture here is per_units 1 — the single denominator
+			// at which flooring and ceiling agree — so this is the case
+			// where a rounding defect can actually surface.
+			if c.JobOfferingFractional == "" {
+				return fmt.Errorf("%w: no fractional-priced offering configured (see README)", harness.ErrSkip)
+			}
+			r, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingFractional, RequestID: c.RequestID("fractional"),
+				Payment: harness.PaymentEnvelope("fractional"),
+				Body:    []byte(`{"model":"m","messages":[]}`),
+			})
+			if err != nil {
+				return err
+			}
+			if r.Status != 200 {
+				return fmt.Errorf("status %d: %s", r.Status, r.Body)
+			}
+			// Work units are a count, so the denominator must not touch
+			// them — it prices them. A broker that folded per_units into
+			// the claim would show up right here.
+			units := r.Header.Get(harness.HdrWorkUnits)
+			if units == "" || units == "0" {
+				return fmt.Errorf("work units = %q on a successful exchange", units)
+			}
+			if got := r.Header.Get(harness.HdrWorkUnitName); got != c.JobUnit {
+				return fmt.Errorf("work unit = %q; want %q", got, c.JobUnit)
+			}
+			// And the claim must be queryable, like any other job.
+			jobID := r.Header.Get(harness.HdrJobID)
+			if jobID == "" {
+				return fmt.Errorf("no %s", harness.HdrJobID)
+			}
+			q, err := c.QuerySettlement(jobID)
+			if err != nil {
+				return err
+			}
+			if q.Status != 200 {
+				return fmt.Errorf("settlement query status %d: %s", q.Status, q.Body)
+			}
+			if got := q.Header.Get(harness.HdrWorkUnits); got != units {
+				return fmt.Errorf("queried units %q != exchange units %q", got, units)
+			}
+			return nil
+		}},
 		{Name: "paid-job/streamed-claim-is-queryable", Spec: "paid-job §3.2", Run: func(c *harness.Ctx) error {
 			// A streamed job's terminal claim arrives in a trailer. Go
 			// reads trailers; HTTPX, Fetch and reqwest do not. If the

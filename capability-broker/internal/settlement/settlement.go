@@ -27,10 +27,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -58,10 +60,40 @@ type Signature struct {
 	Value            string `json:"value"` // 0x-prefixed 130-hex
 }
 
-// Signer holds the broker's delegated settlement key.
+// Signer holds the broker's delegated settlement key and the validity
+// window the orch published for it.
 type Signer struct {
 	key *ecdsa.PrivateKey
+	// notBefore/expiresAt mirror the manifest's settlement_keys entry.
+	// A record signed outside the window is one no consumer will accept,
+	// so the broker refuses to produce it rather than emitting evidence
+	// that fails verification somewhere else, later, for reasons the
+	// operator cannot see from here.
+	notBefore time.Time
+	expiresAt time.Time
+	now       func() time.Time
 }
+
+// SetValidity records the delegation window this key was published with.
+// Zero times mean unbounded, which is what a deployment that has not
+// published a delegation yet has.
+func (s *Signer) SetValidity(notBefore, expiresAt time.Time) {
+	if s == nil {
+		return
+	}
+	s.notBefore, s.expiresAt = notBefore, expiresAt
+}
+
+func (s *Signer) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now().UTC()
+}
+
+// ErrKeyOutsideValidity reports a signing attempt outside the published
+// window.
+var ErrKeyOutsideValidity = errors.New("settlement: signing key is outside its published validity window")
 
 // LoadSigner reads a hex-encoded secp256k1 private key from path. The
 // file holds the key with optional 0x prefix and surrounding whitespace,
@@ -93,6 +125,13 @@ func (s *Signer) PublicKeyHex() string {
 func (s *Signer) Sign(canonical []byte) (string, error) {
 	if s == nil || s.key == nil {
 		return "", fmt.Errorf("settlement: no signing key")
+	}
+	now := s.clock()
+	if !s.notBefore.IsZero() && now.Before(s.notBefore) {
+		return "", fmt.Errorf("%w: not_before=%s", ErrKeyOutsideValidity, s.notBefore.Format(time.RFC3339))
+	}
+	if !s.expiresAt.IsZero() && now.After(s.expiresAt) {
+		return "", fmt.Errorf("%w: expires_at=%s", ErrKeyOutsideValidity, s.expiresAt.Format(time.RFC3339))
 	}
 	sig, err := crypto.Sign(personalSignDigest(canonical), s.key)
 	if err != nil {
@@ -221,4 +260,12 @@ func writeCanonical(buf *bytes.Buffer, v any) error {
 func personalSignDigest(canonical []byte) []byte {
 	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%d", len(canonical))
 	return crypto.Keccak256([]byte(prefix), canonical)
+}
+
+// setSignerClock is a test seam: validity is time-dependent, and a test
+// that waits for a window to pass is a test nobody runs.
+func setSignerClock(s *Signer, at time.Time) {
+	if s != nil {
+		s.now = func() time.Time { return at }
+	}
 }

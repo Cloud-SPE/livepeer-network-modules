@@ -173,12 +173,15 @@ type settlementSignature struct {
 // probe does not check are deliberately absent rather than mirrored, so
 // this does not quietly become a second schema to maintain.
 type settlementPayload struct {
-	JobID        string `json:"job_id"`
-	WorkID       string `json:"work_id"`
-	SessionID    string `json:"session_id"`
-	IssuedAt     string `json:"issued_at"`
-	State        string `json:"state"`
-	DebitedUnits string `json:"debited_units"`
+	JobID              string `json:"job_id"`
+	WorkID             string `json:"work_id"`
+	SessionID          string `json:"session_id"`
+	IssuedAt           string `json:"issued_at"`
+	State              string `json:"state"`
+	DebitedUnits       string `json:"debited_units"`
+	RotationGeneration uint32 `json:"rotation_generation"`
+	PredecessorWorkID  string `json:"predecessor_work_id"`
+	GatewaySessionID   string `json:"gateway_session_id"`
 	// PaymentCumulativeUnits is the running total on the work_id — the
 	// field that places this charge on the curve. debited_units is
 	// scoped to the exchange, so using it here computed bill(units) -
@@ -239,6 +242,10 @@ func (p settlementPayload) cumulativeUnits() uint64 {
 	_, _ = fmt.Sscanf(p.PaymentCumulativeUnits, "%d", &n)
 	return n
 }
+
+// cumulative is the record's own scoped total: the exchange's units for
+// a job, the logical session's for a session.
+func (p settlementPayload) cumulative() uint64 { return p.exchangeUnits() }
 
 // exchangeUnits is what THIS exchange billed, scoped to the exchange.
 func (p settlementPayload) exchangeUnits() uint64 {

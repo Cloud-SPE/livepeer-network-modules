@@ -3,7 +3,9 @@ package payment
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"google.golang.org/protobuf/proto"
 	"math/big"
@@ -52,16 +54,49 @@ func NewMock() *Mock {
 	}
 }
 
+// ErrPricingConflict mirrors the real ledger's refusal to re-price a
+// session an offering already priced.
+var ErrPricingConflict = errors.New("payment: session price already set by an offering and differs")
+
+// ErrPricingUnset mirrors the real ledger's refusal to bill a session no
+// offering has priced. Treating unset as zero is how work gets served
+// free while every log line reports success.
+var ErrPricingUnset = errors.New("payment: session has no offering price; refusing to bill")
+
+// GetTicketParams mints ticket params AND creates the payment session —
+// unpriced — exactly as the real payee does.
+//
+// This ordering is the whole point. A sender cannot mint without params,
+// so this call always runs FIRST and the session exists before any
+// offering has priced it. The mock used to create nothing here, which
+// meant the sequence that let every exchange bill zero in production
+// could not be represented in a test at all.
 func (m *Mock) GetTicketParams(_ context.Context, req GetTicketParamsRequest) (*TicketParams, error) {
 	faceValue := new(big.Int)
 	if req.FaceValue != nil {
 		faceValue.Set(req.FaceValue)
 	}
+	randHash := sha256.Sum256(append(append([]byte(nil), req.Sender...), req.Recipient...))
+	workID := hex.EncodeToString(randHash[:])
+
+	m.mu.Lock()
+	if _, exists := m.sessions[workID]; !exists {
+		m.sessions[workID] = &mockSession{
+			workID: workID,
+			// Unpriced: this call knows nothing about what work costs.
+			pricePerWorkUnitWei: nil,
+			balance:             new(big.Int),
+			openedAt:            time.Now(),
+		}
+		m.flushLocked()
+	}
+	m.mu.Unlock()
+
 	return &TicketParams{
 		Recipient:         append([]byte(nil), req.Recipient...),
 		FaceValue:         faceValue,
 		WinProb:           big.NewInt(0),
-		RecipientRandHash: func() []byte { sum := sha256.Sum256(req.Recipient); return sum[:] }(),
+		RecipientRandHash: randHash[:],
 		Seed:              nil,
 		ExpirationBlock:   new(big.Int),
 	}, nil
@@ -74,7 +109,24 @@ func (m *Mock) OpenSession(_ context.Context, req OpenSessionRequest) (*OpenSess
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.flushLocked()
-	if _, exists := m.sessions[req.WorkID]; exists {
+	if existing, exists := m.sessions[req.WorkID]; exists {
+		// Apply the offering's pricing exactly once, and refuse to move
+		// it afterwards — the same rule the real ledger enforces.
+		switch {
+		case existing.pricePerWorkUnitWei == nil:
+			price := req.PricePerWorkUnitWei
+			if price == nil {
+				price = new(big.Int)
+			}
+			existing.pricePerWorkUnitWei = new(big.Int).Set(price)
+			existing.perUnits = req.PerUnits
+			existing.workUnit = req.WorkUnit
+			existing.capability = req.Capability
+			existing.offering = req.Offering
+		case req.PricePerWorkUnitWei != nil &&
+			(existing.pricePerWorkUnitWei.Cmp(req.PricePerWorkUnitWei) != 0 || existing.perUnits != req.PerUnits):
+			return nil, ErrPricingConflict
+		}
 		return &OpenSessionResult{AlreadyOpen: true}, nil
 	}
 	price := req.PricePerWorkUnitWei
@@ -115,6 +167,21 @@ func (m *Mock) ProcessPayment(_ context.Context, req ProcessPaymentRequest) (*Pr
 	if len(sess.sender) == 0 {
 		sess.sender = stubSenderFromPayment(req.PaymentBytes)
 	}
+	// Cross-check the price against what the SENDER signed, as the real
+	// payee does. Without this a broker could bill at a rate the gateway
+	// never agreed to and every test would still pass.
+	if sess.pricePerWorkUnitWei != nil {
+		var pay pb.Payment
+		if err := proto.Unmarshal(req.PaymentBytes, &pay); err == nil {
+			if ep := pay.GetExpectedPrice(); ep != nil {
+				if big.NewInt(ep.GetPricePerUnit()).Cmp(sess.pricePerWorkUnitWei) != 0 {
+					return nil, fmt.Errorf("payment signed price %d does not match the session price %s",
+						ep.GetPricePerUnit(), sess.pricePerWorkUnitWei)
+				}
+			}
+		}
+	}
+
 	// Credit the session. The mock used to accept a payment and credit
 	// NOTHING, so every mock-backed test, conformance run and dev
 	// deployment served work against a zero balance — which is exactly
@@ -149,6 +216,9 @@ func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*DebitR
 	}
 	if sess.closed {
 		return nil, errors.New("session is closed")
+	}
+	if sess.pricePerWorkUnitWei == nil {
+		return nil, ErrPricingUnset
 	}
 	if !bytesEqual(sess.sender, req.Sender) {
 		return nil, errors.New("sender mismatch")

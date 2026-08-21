@@ -183,6 +183,17 @@ message CreatePaymentResponse {
   int64 creation_round = 7;
   int64 expires_after_round = 8;
   int64 ticket_validity_period = 9;
+
+  // When ticket_validity_period was read from the chain, RFC3339 with
+  // nanoseconds.
+  //
+  // A payer may serve this from a short cache rather than reading the
+  // contract inside every signing path. That makes the value "the
+  // chain's, as of a moment", and the moment has to be stated or a
+  // consumer cannot tell a current value from one governance changed a
+  // second ago. Treat it as telemetry for detecting drift, not as
+  // authority over anything.
+  string ticket_validity_period_observed_at = 10;
 }
 
 message ReportPaymentResultRequest {
@@ -270,6 +281,12 @@ message GetDepositInfoResponse {
   // the period was 2 and evaluated when it is 4 is redeemable two rounds
   // longer than its recorded deadline says.
   int64 ticket_validity_period = 5;
+
+  // When that value was read. This RPC reads the contract fresh on every
+  // call — it is an administrative query, not a signing path, so there
+  // is no latency argument for caching and therefore no reason to make a
+  // consumer reason about staleness here.
+  string ticket_validity_period_observed_at = 6;
 }
 
 // HealthRequest / HealthResponse live in types.proto (shared with PayeeDaemon).

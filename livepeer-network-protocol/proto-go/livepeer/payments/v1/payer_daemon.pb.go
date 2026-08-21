@@ -195,8 +195,18 @@ type CreatePaymentResponse struct {
 	CreationRound        int64 `protobuf:"varint,7,opt,name=creation_round,json=creationRound,proto3" json:"creation_round,omitempty"`
 	ExpiresAfterRound    int64 `protobuf:"varint,8,opt,name=expires_after_round,json=expiresAfterRound,proto3" json:"expires_after_round,omitempty"`
 	TicketValidityPeriod int64 `protobuf:"varint,9,opt,name=ticket_validity_period,json=ticketValidityPeriod,proto3" json:"ticket_validity_period,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// When ticket_validity_period was read from the chain, RFC3339 with
+	// nanoseconds.
+	//
+	// A payer may serve this from a short cache rather than reading the
+	// contract inside every signing path. That makes the value "the
+	// chain's, as of a moment", and the moment has to be stated or a
+	// consumer cannot tell a current value from one governance changed a
+	// second ago. Treat it as telemetry for detecting drift, not as
+	// authority over anything.
+	TicketValidityPeriodObservedAt string `protobuf:"bytes,10,opt,name=ticket_validity_period_observed_at,json=ticketValidityPeriodObservedAt,proto3" json:"ticket_validity_period_observed_at,omitempty"`
+	unknownFields                  protoimpl.UnknownFields
+	sizeCache                      protoimpl.SizeCache
 }
 
 func (x *CreatePaymentResponse) Reset() {
@@ -290,6 +300,13 @@ func (x *CreatePaymentResponse) GetTicketValidityPeriod() int64 {
 		return x.TicketValidityPeriod
 	}
 	return 0
+}
+
+func (x *CreatePaymentResponse) GetTicketValidityPeriodObservedAt() string {
+	if x != nil {
+		return x.TicketValidityPeriodObservedAt
+	}
+	return ""
 }
 
 type ReportPaymentResultRequest struct {
@@ -599,8 +616,13 @@ type GetDepositInfoResponse struct {
 	// the period was 2 and evaluated when it is 4 is redeemable two rounds
 	// longer than its recorded deadline says.
 	TicketValidityPeriod int64 `protobuf:"varint,5,opt,name=ticket_validity_period,json=ticketValidityPeriod,proto3" json:"ticket_validity_period,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// When that value was read. This RPC reads the contract fresh on every
+	// call — it is an administrative query, not a signing path, so there
+	// is no latency argument for caching and therefore no reason to make a
+	// consumer reason about staleness here.
+	TicketValidityPeriodObservedAt string `protobuf:"bytes,6,opt,name=ticket_validity_period_observed_at,json=ticketValidityPeriodObservedAt,proto3" json:"ticket_validity_period_observed_at,omitempty"`
+	unknownFields                  protoimpl.UnknownFields
+	sizeCache                      protoimpl.SizeCache
 }
 
 func (x *GetDepositInfoResponse) Reset() {
@@ -668,6 +690,13 @@ func (x *GetDepositInfoResponse) GetTicketValidityPeriod() int64 {
 	return 0
 }
 
+func (x *GetDepositInfoResponse) GetTicketValidityPeriodObservedAt() string {
+	if x != nil {
+		return x.TicketValidityPeriodObservedAt
+	}
+	return ""
+}
+
 var File_livepeer_payments_v1_payer_daemon_proto protoreflect.FileDescriptor
 
 const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
@@ -678,7 +707,7 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\x16ticket_params_base_url\x18\x02 \x01(\tR\x13ticketParamsBaseUrl\x12J\n" +
 	"\x0eaccepted_price\x18\x03 \x01(\v2#.livepeer.payments.v1.AcceptedPriceR\racceptedPrice\x12=\n" +
 	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\x12&\n" +
-	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\"\xe8\x03\n" +
+	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\"\xb4\x04\n" +
 	"\x15CreatePaymentResponse\x12#\n" +
 	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x12'\n" +
 	"\x0ftickets_created\x18\x02 \x01(\rR\x0eticketsCreated\x12D\n" +
@@ -688,7 +717,9 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\awork_id\x18\x06 \x01(\tR\x06workId\x12%\n" +
 	"\x0ecreation_round\x18\a \x01(\x03R\rcreationRound\x12.\n" +
 	"\x13expires_after_round\x18\b \x01(\x03R\x11expiresAfterRound\x124\n" +
-	"\x16ticket_validity_period\x18\t \x01(\x03R\x14ticketValidityPeriod\"\xca\x01\n" +
+	"\x16ticket_validity_period\x18\t \x01(\x03R\x14ticketValidityPeriod\x12J\n" +
+	"\"ticket_validity_period_observed_at\x18\n" +
+	" \x01(\tR\x1eticketValidityPeriodObservedAt\"\xca\x01\n" +
 	"\x1aReportPaymentResultRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1e\n" +
 	"\n" +
@@ -705,13 +736,14 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\vdebit_count\x18\x02 \x01(\x04R\n" +
 	"debitCount\x12\x16\n" +
 	"\x06closed\x18\x03 \x01(\bR\x06closed\"\x17\n" +
-	"\x15GetDepositInfoRequest\"\xce\x01\n" +
+	"\x15GetDepositInfoRequest\"\x9a\x02\n" +
 	"\x16GetDepositInfoResponse\x12\x18\n" +
 	"\adeposit\x18\x01 \x01(\fR\adeposit\x12\x18\n" +
 	"\areserve\x18\x02 \x01(\fR\areserve\x12%\n" +
 	"\x0ewithdraw_round\x18\x03 \x01(\x03R\rwithdrawRound\x12#\n" +
 	"\rcurrent_round\x18\x04 \x01(\x03R\fcurrentRound\x124\n" +
-	"\x16ticket_validity_period\x18\x05 \x01(\x03R\x14ticketValidityPeriod2\xa8\x04\n" +
+	"\x16ticket_validity_period\x18\x05 \x01(\x03R\x14ticketValidityPeriod\x12J\n" +
+	"\"ticket_validity_period_observed_at\x18\x06 \x01(\tR\x1eticketValidityPeriodObservedAt2\xa8\x04\n" +
 	"\vPayerDaemon\x12h\n" +
 	"\rCreatePayment\x12*.livepeer.payments.v1.CreatePaymentRequest\x1a+.livepeer.payments.v1.CreatePaymentResponse\x12z\n" +
 	"\x13ReportPaymentResult\x120.livepeer.payments.v1.ReportPaymentResultRequest\x1a1.livepeer.payments.v1.ReportPaymentResultResponse\x12k\n" +

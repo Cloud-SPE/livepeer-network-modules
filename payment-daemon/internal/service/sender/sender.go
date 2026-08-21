@@ -211,7 +211,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	// decisions against it. A daemon that cannot read it has nothing
 	// honest to publish, and signing anyway would hand out an envelope
 	// with a deadline we made up.
-	validityPeriod, err := s.ticketValidityPeriod(ctx)
+	validityPeriod, validityObservedAt, err := s.ticketValidityPeriod(ctx)
 	if err != nil {
 		return nil, grpcstatus.Errorf(codes.Unavailable,
 			"cannot read the chain's ticketValidityPeriod, so this mint would carry an "+
@@ -285,9 +285,10 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		//
 		// The last redeemable round is creationRound + period - 1, which
 		// is what the contract's strict > comparison works out to.
-		CreationRound:        batch.ExpirationParams.CreationRound,
-		ExpiresAfterRound:    batch.ExpirationParams.CreationRound + validityPeriod - 1,
-		TicketValidityPeriod: validityPeriod,
+		CreationRound:                  batch.ExpirationParams.CreationRound,
+		ExpiresAfterRound:              batch.ExpirationParams.CreationRound + validityPeriod - 1,
+		TicketValidityPeriod:           validityPeriod,
+		TicketValidityPeriodObservedAt: validityObservedAt.Format(time.RFC3339Nano),
 	}
 	// Record before returning. A crash between the signature and this
 	// write leaves the ticket minted and unrecorded, and the retry
@@ -433,8 +434,9 @@ func (s *Service) GetDepositInfo(ctx context.Context, _ *pb.GetDepositInfoReques
 	// The CURRENT period, read fresh. Paired with what a mint recorded,
 	// this is how a consumer notices that governance moved a deadline it
 	// may already have acted on.
-	if v, verr := s.ticketValidityPeriod(ctx); verr == nil {
+	if v, at, verr := s.ticketValidityPeriodFresh(ctx); verr == nil {
 		out.TicketValidityPeriod = v
+		out.TicketValidityPeriodObservedAt = at.Format(time.RFC3339Nano)
 	} else {
 		s.logger.Error("could not read ticketValidityPeriod for deposit info; a consumer cannot "+
 			"verify whether recorded expiry deadlines still hold", "err", verr)
@@ -804,18 +806,30 @@ const validityPeriodTTL = 30 * time.Second
 // while the envelope is still redeemable. Since the number exists to be
 // published to somebody making money decisions with it, a daemon that
 // cannot read it has nothing honest to say and must refuse to mint.
-func (s *Service) ticketValidityPeriod(ctx context.Context) (int64, error) {
+func (s *Service) ticketValidityPeriod(ctx context.Context) (int64, time.Time, error) {
+	return s.readValidityPeriod(ctx, false)
+}
+
+// ticketValidityPeriodFresh bypasses the cache. Used by GetDepositInfo,
+// which is an administrative query rather than a signing path: no
+// latency argument for caching, so no reason to hand a consumer a value
+// whose staleness they have to reason about.
+func (s *Service) ticketValidityPeriodFresh(ctx context.Context) (int64, time.Time, error) {
+	return s.readValidityPeriod(ctx, true)
+}
+
+func (s *Service) readValidityPeriod(ctx context.Context, fresh bool) (int64, time.Time, error) {
 	s.validityMu.Lock()
 	defer s.validityMu.Unlock()
-	if s.validityPeriod > 0 && time.Since(s.validityReadAt) < validityPeriodTTL {
-		return s.validityPeriod, nil
+	if !fresh && s.validityPeriod > 0 && time.Since(s.validityReadAt) < validityPeriodTTL {
+		return s.validityPeriod, s.validityReadAt, nil
 	}
 	if s.broker == nil {
-		return 0, fmt.Errorf("no chain broker configured")
+		return 0, time.Time{}, fmt.Errorf("no chain broker configured")
 	}
 	v, err := s.broker.TicketValidityPeriod(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("read ticketValidityPeriod: %w", err)
+		return 0, time.Time{}, fmt.Errorf("read ticketValidityPeriod: %w", err)
 	}
 	if s.validityPeriod > 0 && v != s.validityPeriod {
 		s.logger.Warn("ticketValidityPeriod CHANGED on chain; envelopes already issued now "+
@@ -823,6 +837,6 @@ func (s *Service) ticketValidityPeriod(ctx context.Context) (int64, error) {
 			"was", s.validityPeriod, "now", v)
 	}
 	s.validityPeriod = v
-	s.validityReadAt = time.Now()
-	return v, nil
+	s.validityReadAt = time.Now().UTC()
+	return v, s.validityReadAt, nil
 }

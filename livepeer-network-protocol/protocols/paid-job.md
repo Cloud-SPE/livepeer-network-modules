@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.11-draft
+version: 1.0.12-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -351,11 +351,23 @@ when it can stop holding them. Two questions look alike and are not:
                             and  the chain's period is unchanged
    ```
 
-   A consumer MUST compare the period a mint recorded against the chain's
-   current one, and treat an increase as **re-encumbering** every envelope
-   whose deadline it moved. A missing, zero, or regressing `current_round`
-   stays encumbered — a stale clock can only make an expired envelope look
-   live, never the reverse.
+   A consumer MAY compare the period a mint recorded against the chain's
+   current one to **detect** that a deadline moved. It is deliberately
+   not an instruction to re-encumber: once credit has been finalized or
+   returned it may already have been spent or withdrawn, so a later
+   increase cannot be undone by re-encumbering, and a protocol that told
+   consumers to do so would be describing a recovery that does not exist.
+   Treat the comparison as telemetry.
+
+   A missing, zero, or regressing `current_round` stays encumbered — a
+   stale clock can only make an expired envelope look live, never the
+   reverse.
+
+   Both `ticket_validity_period` fields carry an
+   `..._observed_at` timestamp, because a payer may serve the value from
+   a short cache rather than reading the contract inside a signing path.
+   A value that is "the chain's, as of a moment" is only meaningful with
+   the moment attached.
 
    **There is no unconditional expiry today.** Making the deadline
    immutable needs one of: the validity period snapshotted into the ticket
@@ -375,22 +387,49 @@ record of it; and the chain shows nothing, because a losing ticket is
 never redeemed on-chain and most tickets lose. Chain state cannot
 distinguish "never used" from "used and hidden".
 
-So the protocol distinguishes two outcomes, and implementations MUST NOT
-conflate them:
+#### Terminal outcomes
 
-- **Finalize.** The encumbrance stops being pending and becomes a
-  settled charge. Expiry alone is sufficient, because the question it
-  answers — "can more value still move?" — is the only one finalization
-  depends on.
-- **Refund.** Value returns to the customer. Expiry is **NOT** sufficient.
-  A refund requires positive evidence that no exchange occurred, and that
-  evidence can only come from the party that would have served it.
+Because the deadline is conditional, an encumbrance has **four** terminal
+outcomes and not two. This replaces an earlier formulation that told
+consumers to finalize on expiry and re-encumber if governance later moved
+it; that instruction was unsafe and is withdrawn. Finalized credit may
+already have been spent or withdrawn, so there is nothing to re-encumber.
 
-A consumer MUST NOT refund on expiry alone, on a caller's assertion, on a
-broker's refusal — a broker that received the envelope can retain it and
-submit it later, so its refusal describes its own intentions and not the
-outcome — or on a non-use attestation relayed by the party that would
-benefit from it.
+| Evidence | Outcome |
+|---|---|
+| A valid signed settlement | **Settle** on the broker's evidence. |
+| No terminal evidence | **Remain unresolved.** Not finalized, not refunded. |
+| An operational deadline reached with no settlement | A **distinct conservative full charge** — chosen by the consumer's own policy, not by this protocol, and marked as such rather than presented as a settled exchange. |
+| A signed non-admission record | **Retain as attributable audit evidence.** It is NOT refund authority. |
+
+**Automatic refund is not available.** Not on expiry, not on a caller's
+assertion, not on a broker's refusal — a broker that received the
+envelope can retain and submit it later, so its refusal describes its own
+intentions — and not on a non-admission record.
+
+The last of those is the one worth spelling out, because it is the case
+that looks closed and is not. `Livepeer-Request-Id` is **not
+cryptographically bound into `payment_bytes`**: the signed envelope
+carries ticket params, sender, expiration params, ticket sender params
+and an expected price whose constraint is
+`cap;off;wu;est;qid;qv;cfp;rfp`. No request id, anywhere. So a
+non-admission tombstone keyed on a request id does not retire the
+envelope — the same envelope can be presented under a different request
+id, and a governance increase can revive it after the tombstone was
+issued. Non-admission evidence is therefore attributable and useful for
+audit and dispute, and insufficient to authorize returning money.
+
+Refund authority requires the protocol to provide one of:
+
+- **immutable ticket validity** — the period snapshotted into the ticket
+  and enforced from there, so no later governance change can move a
+  deadline already relied upon; or
+- **permanent retirement of the exact envelope** — a mechanism that makes
+  one specific payment envelope unredeemable regardless of parameters.
+
+Until one exists, a consumer that returns customer credit is accepting
+risk this layer cannot remove, and this document does not pretend
+otherwise.
 
 **What a broker owes.** A broker MUST retain terminal exchange records
 for at least
@@ -493,6 +532,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.12-draft | 2026-08-21 | §5.3 rewritten for consistency after LOC set policy. The earlier text said there was no unconditional expiry and then told consumers to finalize on expiry and re-encumber after a governance increase; those cannot both hold, and re-encumbrance is not implementable — finalized credit may already be spent. Replaced with four terminal outcomes (settle / unresolved / conservative full charge at an operational deadline / non-admission as audit evidence) and an explicit statement that automatic refund is unavailable. Records that `Livepeer-Request-Id` is not bound into `payment_bytes`, so a non-admission tombstone does not retire the envelope. Names the two protocol changes that would create refund authority. Adds `ticket_validity_period_observed_at` so a cached value is not mistaken for a current one. |
 | 1.0.11-draft | 2026-08-21 | §5.3 corrected: expiry is CONDITIONAL, not unconditional. The TicketBroker evaluates `creationRound + ticketValidityPeriod > currRound` against current storage and keeps round block hashes permanently, so raising the governance parameter extends issued tickets and can revive lapsed ones. Payers now publish `ticket_validity_period` alongside the deadline so a consumer can detect the change, and `expires_after_round` is corrected to the last redeemable round (`creation_round + period - 1`) to match the contract's boundary rather than sitting one round beyond it. §5.3.1: `coverage_started_at` is described accurately as an attributable assertion — it detects a wiped store, not a restored backup. All raised by LOC. |
 | 1.0.10-draft | 2026-08-21 | Add §5.3.1, non-admission evidence: a broker MUST be able to sign `NOT_ADMITTED` for a request id, retrievable by the consumer keyed on the consumer's own id, bound to protocol/request/work/sender/recipient/quote/broker, carrying `observed_at` and a durable `coverage_started_at`, refused if any record exists or if coverage began after issuance, and never emitted unsigned. States retention as a formula rather than a number, and requires `expires_after_round` to be derived from the contract's `ticketValidityPeriod` rather than a hardcoded mirror — it is governance-settable, and an understated value releases an encumbrance while the envelope is still spendable. Requirements from LOC. |
 | 1.0.9-draft | 2026-08-21 | Add §5.3, encumbrance on an envelope that may never have been used. Separates FINALIZE (expiry is sufficient) from REFUND (it is not): a customer can submit an envelope, take the work, withhold the job id and settlement, wait for expiry and ask for the money back, and chain state cannot tell that apart from non-use because a losing ticket is never redeemed. Requires brokers to retain exchange records past the envelope's spendable life — the dispute window opens AT expiry, and the reference broker evicted at 24h against a 38–57h expiry, deleting the evidence before it could be asked for. Raised by LOC. |

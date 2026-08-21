@@ -35,23 +35,23 @@ type Prometheus struct {
 	cfg PrometheusConfig
 
 	// Counters
-	grpcRequests     *capVec
-	resolutions      *capVec
-	legacyFallbacks  *capVec
+	grpcRequests        *capVec
+	resolutions         *capVec
+	legacyFallbacks     *capVec
 	liveHealthDecisions *capVec
-	manifestFetches  *capVec
-	manifestVerifies *capVec
-	cacheLookups     *capVec
-	cacheWrites      prometheus.Counter
-	cacheEvictions   *capVec
-	auditEvents      *capVec
-	overlayReloads   *capVec
-	overlayDrops     *capVec
-	chainReads       *capVec
-	chainWrites      *capVec
-	publisherBuilds  prometheus.Counter
-	publisherSigns   *capVec
-	publisherProbes  *capVec
+	manifestFetches     *capVec
+	manifestVerifies    *capVec
+	cacheLookups        *capVec
+	cacheWrites         prometheus.Counter
+	cacheEvictions      *capVec
+	auditEvents         *capVec
+	overlayReloads      *capVec
+	overlayDrops        *capVec
+	chainReads          *capVec
+	chainWrites         *capVec
+	publisherBuilds     prometheus.Counter
+	publisherSigns      *capVec
+	publisherProbes     *capVec
 
 	// Histograms
 	grpcDuration     *prometheus.HistogramVec

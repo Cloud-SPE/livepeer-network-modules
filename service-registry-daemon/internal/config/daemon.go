@@ -61,6 +61,14 @@ type Daemon struct {
 	StaticOverlayPath    string
 	RejectUnsigned       bool
 
+	// ChainSeedPath preloads the in-memory chain (--dev only) with
+	// address → serviceURI pairs, so a chain-free deployment can resolve
+	// through the ordinary SIGNED path against a locally served
+	// manifest. Overlay-only is the other chain-free mode and is
+	// unsigned by construction, so it cannot carry a settlement
+	// delegation; this is the path to use when signatures matter.
+	ChainSeedPath string
+
 	// RoundPollInterval governs how often the chain-commons timesource
 	// polls RoundsManager.currentRound() to detect round transitions
 	// (resolver mode + Discovery=chain). Round transitions trigger the
@@ -118,6 +126,17 @@ func (d *Daemon) Validate() error {
 	}
 	if d.Dev && d.ChainRPC != "" && d.ChainRPC != "dev" {
 		return fmt.Errorf("config: --dev and --chain-rpc are mutually exclusive")
+	}
+	// A seed outside --dev would be read, validated, and then ignored,
+	// because a real chain provider replaces the in-memory one. Refusing
+	// beats a hermetic CI run that silently resolves against mainnet.
+	if d.ChainSeedPath != "" && !d.Dev {
+		return fmt.Errorf("config: --chain-seed requires --dev (it seeds the in-memory chain)")
+	}
+	if d.ChainSeedPath != "" && d.Discovery == DiscoveryOverlayOnly {
+		return fmt.Errorf("config: --chain-seed and --discovery=overlay-only are contradictory: " +
+			"overlay-only never reads the chain, so the seed would be ignored — and overlay pins " +
+			"are unsigned, which is the reason to use a seed in the first place")
 	}
 	if d.Mode == ModeResolver {
 		switch d.Discovery {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
@@ -92,7 +93,10 @@ type rawPinOffering struct {
 	// PerUnits is the price denominator (offering-axes.md §6); absent
 	// means 1.
 	PerUnits uint64 `yaml:"per_units"`
-	Warm     *bool  `yaml:"warm"`
+	// No `warm` here on purpose. It was accepted and then discarded —
+	// nothing in the manifest, the axes, or any consumer has ever read
+	// it — so an operator who declared it got silence. Strict parsing
+	// now rejects it, which at least says so.
 }
 
 // ParseOverlayYAML decodes overlay YAML bytes into a validated *Overlay.
@@ -173,6 +177,21 @@ func convertPin(rp rawPinNode) (OverlayPinNode, error) {
 			return OverlayPinNode{}, fmt.Errorf("capability name missing")
 		}
 		c := types.Capability{Name: rc.Name, Protocol: rc.Protocol, WorkUnit: rc.WorkUnit}
+		// Carry `extra` through. This is where the declared
+		// compatibility axes live (offering-axes.md), so a pin that
+		// drops it projects a route a consumer cannot evaluate: it can
+		// see the capability and the price and still not know whether it
+		// can speak to it. The field was parsed and then silently
+		// discarded, which is the worst of the three options — the
+		// operator writes axes, the config validates, and the route goes
+		// out without them.
+		if len(rc.Extra) > 0 {
+			raw, err := json.Marshal(rc.Extra)
+			if err != nil {
+				return OverlayPinNode{}, fmt.Errorf("capability %q extra: %w", rc.Name, err)
+			}
+			c.Extra = raw
+		}
 		for _, ro := range rc.Offerings {
 			if ro.ID == "" {
 				return OverlayPinNode{}, fmt.Errorf("capability %q offering id missing", rc.Name)

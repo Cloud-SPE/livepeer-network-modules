@@ -71,3 +71,43 @@ func TestDaemonValidate_PublisherDevHappy(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// A seed outside --dev would be parsed, validated, and then ignored,
+// because a real chain provider replaces the in-memory one. A hermetic
+// CI run that silently resolved against mainnet instead is worse than a
+// startup error.
+func TestValidate_ChainSeedRequiresDev(t *testing.T) {
+	d := DefaultDaemon()
+	d.Mode = ModeResolver
+	d.ChainSeedPath = "/tmp/seed.yaml"
+	d.Dev = false
+	if err := d.Validate(); err == nil {
+		t.Fatal("expected --chain-seed without --dev to be refused")
+	}
+}
+
+// overlay-only never reads the chain, so a seed alongside it is a
+// contradiction — and overlay pins are unsigned, which is the reason to
+// reach for a seed in the first place.
+func TestValidate_ChainSeedRejectsOverlayOnly(t *testing.T) {
+	d := DefaultDaemon()
+	d.Mode = ModeResolver
+	d.Dev = true
+	d.ChainRPC = ""
+	d.ChainSeedPath = "/tmp/seed.yaml"
+	d.Discovery = DiscoveryOverlayOnly
+	if err := d.Validate(); err == nil {
+		t.Fatal("expected --chain-seed with --discovery=overlay-only to be refused")
+	}
+}
+
+func TestValidate_ChainSeedWithDevIsAccepted(t *testing.T) {
+	d := DefaultDaemon()
+	d.Mode = ModeResolver
+	d.Dev = true
+	d.ChainRPC = ""
+	d.ChainSeedPath = "/tmp/seed.yaml"
+	if err := d.Validate(); err != nil {
+		t.Fatalf("--chain-seed with --dev = %v; want accepted", err)
+	}
+}

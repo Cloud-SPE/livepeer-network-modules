@@ -122,6 +122,51 @@ WARN mode=resolver eth_address=0xabcd...0123 event=signature_invalid recovered=0
 ERROR mode=publisher event=chain_write_failed err="chain_write_not_implemented"
 ```
 
+## Hermetic runs that need signatures (`--chain-seed`)
+
+There are two chain-free ways to run a resolver, and they are not
+interchangeable.
+
+**`--discovery=overlay-only`** serves the pin nodes in `--static-overlay`.
+Those pins are *operator-asserted and unsigned by construction*: the
+resolver marks them `unsigned`, and they carry **no settlement
+delegation**. That is deliberate. `settlement_keys` say which hot keys are
+authorized to sign settlement records, and their authority comes from the
+orchestrator's cold key signing the manifest that lists them. A YAML file
+on the resolver host asserting the same thing establishes nothing — it is
+precisely the claim the signature exists to make. So overlay-only is right
+for routing and capacity curation, and wrong for anything a clearinghouse
+will settle against.
+
+**`--chain-seed`** is the path when signatures matter. It preloads the
+in-memory chain (so it requires `--dev`) with address → serviceURI pairs:
+
+```yaml
+# seed.yaml
+seed:
+  - eth_address: "0xabc0000000000000000000000000000000000000"
+    service_uri: "http://127.0.0.1:9099/.well-known/livepeer-registry.json"
+```
+
+```
+livepeer-service-registry-daemon --mode=resolver --dev \
+  --chain-seed ./seed.yaml --socket /tmp/registry.sock
+```
+
+Serve a **signed** manifest at that URI from any static file server, and
+resolution takes the ordinary well-known path: fetch, canonicalize, verify
+the signature, project `settlement_keys` onto every node from that
+address. Nothing is stubbed except where the serviceURI came from, which
+is the one thing a chain-free run cannot have.
+
+This is the supported seed path for nightly CI that needs signed
+settlements end to end. `--chain-seed` is refused without `--dev`, and
+refused alongside `--discovery=overlay-only` — overlay-only never reads
+the chain, so the seed would be silently ignored.
+
+To produce the signed manifest itself, run the daemon in publisher mode or
+see `examples/minimal-e2e`, which builds and signs one in-process.
+
 ## Overlay-only seed-on-startup
 
 When `--mode=resolver` runs with `--discovery=overlay-only` (forced in `--dev` mode), the daemon walks every enabled entry in `--static-overlay` once at startup and calls `ResolveByAddress` for each. Two paths can succeed:

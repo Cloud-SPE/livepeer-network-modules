@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
+
+	"gopkg.in/yaml.v3"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -41,16 +44,16 @@ import (
 // builtProviders holds the set of providers needed by the services. The
 // resolver needs all I/O providers; the publisher needs Signer + Chain.
 type builtProviders struct {
-	cfg      *config.Daemon
-	log      logger.Logger
-	store    store.Store
-	chain    chain.Chain
-	signer   signer.Signer
-	verify   verifier.Verifier
-	fetcher  manifestfetcher.ManifestFetcher
+	cfg        *config.Daemon
+	log        logger.Logger
+	store      store.Store
+	chain      chain.Chain
+	signer     signer.Signer
+	verify     verifier.Verifier
+	fetcher    manifestfetcher.ManifestFetcher
 	liveHealth livehealthfetcher.Fetcher
-	clock    clock.Clock
-	recorder metrics.Recorder
+	clock      clock.Clock
+	recorder   metrics.Recorder
 
 	// Resolver chain-discovery dependencies (nil unless in resolver
 	// mode with --discovery=chain). roundclock + discovery feed the
@@ -225,7 +228,25 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		if bp.signer != nil {
 			addr = bp.signer.Address()
 		}
-		bp.chain = chain.NewInMemory(addr)
+		mem := chain.NewInMemory(addr)
+		// Seed the in-memory chain so a chain-free deployment can still
+		// resolve through the SIGNED path.
+		//
+		// Without this the only chain-free mode is overlay-only, whose
+		// pins are operator-asserted and unsigned by construction — they
+		// carry no settlement delegation and never will, because an
+		// unsigned file asserting which keys may sign settlements is
+		// exactly the claim a signature is supposed to establish. A
+		// hermetic CI run that needs signed settlements therefore cannot
+		// use overlay-only, and had no supported alternative.
+		//
+		// With a seed it points the resolver at a locally served signed
+		// manifest and takes the ordinary well-known path: real
+		// signature verification, real settlement_keys, no chain.
+		if err := seedChain(mem, cfg.ChainSeedPath); err != nil {
+			return nil, fmt.Errorf("providers: chain seed: %w", err)
+		}
+		bp.chain = mem
 	} else if cfg.Mode == config.ModeResolver {
 		cli, err := ethclient.DialContext(ctx, cfg.ChainRPC)
 		if err != nil {
@@ -312,4 +333,46 @@ func (bp *builtProviders) Close() {
 	if k, ok := bp.signer.(*signer.Keystore); ok {
 		k.Close()
 	}
+}
+
+// chainSeed is the file shape for --chain-seed: an address to the
+// serviceURI it would carry on chain.
+type chainSeed struct {
+	Seed []struct {
+		EthAddress string `yaml:"eth_address"`
+		ServiceURI string `yaml:"service_uri"`
+	} `yaml:"seed"`
+}
+
+// seedChain preloads the in-memory chain from a seed file. A missing
+// path is not an error — an unseeded dev daemon is the previous
+// behavior and remains valid.
+func seedChain(mem *chain.InMemory, path string) error {
+	if path == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	var cs chainSeed
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true) // typos fail at boot, not at resolve time
+	if err := dec.Decode(&cs); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	if len(cs.Seed) == 0 {
+		return fmt.Errorf("%s declares no seed entries", path)
+	}
+	for i, e := range cs.Seed {
+		addr, err := types.ParseEthAddress(e.EthAddress)
+		if err != nil {
+			return fmt.Errorf("seed[%d].eth_address: %w", i, err)
+		}
+		if e.ServiceURI == "" {
+			return fmt.Errorf("seed[%d].service_uri: empty", i)
+		}
+		mem.PreLoad(addr, e.ServiceURI)
+	}
+	return nil
 }

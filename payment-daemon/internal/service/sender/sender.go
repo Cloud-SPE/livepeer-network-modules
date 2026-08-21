@@ -397,6 +397,10 @@ func (s *Service) GetDepositInfo(ctx context.Context, _ *pb.GetDepositInfoReques
 	s.recordSenderFunds(info)
 	out := &pb.GetDepositInfoResponse{
 		WithdrawRound: info.WithdrawRound,
+		// The same clock that stamps creation_round on a mint, so a
+		// consumer evaluating "has this envelope expired" reads one
+		// clock rather than correlating two.
+		CurrentRound: s.clock.LastInitializedRound(),
 	}
 	if info.Deposit != nil {
 		out.Deposit = info.Deposit.Bytes()

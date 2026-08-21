@@ -229,6 +229,27 @@ message GetDepositInfoResponse {
   // If the payer has initiated an unlock, the round at which
   // withdrawal becomes possible. Zero when no unlock is pending.
   int64 withdraw_round = 3;
+
+  // The payer's current round, read from the SAME clock that stamps
+  // CreatePaymentResponse.creation_round.
+  //
+  // It is here so a consumer holding an encumbrance can evaluate
+  // release against one clock rather than correlating two. The rule the
+  // field exists for is
+  //
+  //     release iff current_round > expires_after_round
+  //
+  // with equality staying encumbered — a ticket minted in round R is
+  // redeemable through R+window inclusive, so releasing at equality
+  // releases while the envelope is still spendable.
+  //
+  // A consumer MUST also refuse to release on a missing, zero, or
+  // REGRESSING value. A round that goes backwards means the payer's
+  // clock lost state or is talking to a re-orged or lagging node, and a
+  // stale round can only make an expired envelope look live — never the
+  // reverse — so the safe reading of a suspect clock is "still
+  // encumbered".
+  int64 current_round = 4;
 }
 
 // HealthRequest / HealthResponse live in types.proto (shared with PayeeDaemon).

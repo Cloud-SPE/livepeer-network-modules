@@ -1029,3 +1029,41 @@ func TestCreatePayment_ReportsExpiryRound(t *testing.T) {
 			got, settlement.ChainValidityWindowRounds, want)
 	}
 }
+
+// current_round comes from the SAME clock that stamps creation_round, so
+// a consumer evaluating "has this envelope expired" reads one clock
+// rather than correlating two that may disagree.
+func TestGetDepositInfo_ReportsCurrentRound(t *testing.T) {
+	client, cleanup := stand(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	mint, err := client.CreatePayment(ctx, makeCreatePaymentRequest(
+		[]byte("recipient-20-bytes!!"),
+		"openai:/v1/chat/completions", "gpt-5", "token", 1000, 1, 1000,
+		"https://broker.example.com",
+	))
+	if err != nil {
+		t.Fatalf("CreatePayment: %v", err)
+	}
+	info, err := client.GetDepositInfo(ctx, &pb.GetDepositInfoRequest{})
+	if err != nil {
+		t.Fatalf("GetDepositInfo: %v", err)
+	}
+	if info.GetCurrentRound() == 0 {
+		t.Fatal("current_round is 0; a consumer has nothing to evaluate expiry against")
+	}
+	if info.GetCurrentRound() != mint.GetCreationRound() {
+		t.Fatalf("current_round %d != the round that stamped the mint %d; the two must come "+
+			"from one clock or a consumer is correlating clocks that can disagree",
+			info.GetCurrentRound(), mint.GetCreationRound())
+	}
+	// The rule the fields exist for: release iff current > expires.
+	// At mint time the envelope is live, so the rule must say "hold".
+	if info.GetCurrentRound() > mint.GetExpiresAfterRound() {
+		t.Fatalf("a freshly minted envelope already reads as releasable "+
+			"(current=%d expires_after=%d)", info.GetCurrentRound(), mint.GetExpiresAfterRound())
+	}
+}

@@ -1,0 +1,35 @@
+// Livepeer Payments v1 — PayerAdmin service.
+//
+// Operator-only RPCs for the sender-side payment daemon. Mounted only
+// in sender mode, and only when the daemon is running on a dev clock.
+
+syntax = "proto3";
+
+package livepeer.payments.v1;
+
+option go_package = "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
+
+service PayerAdmin {
+  // Advance the dev clock by whole rounds.
+  //
+  // Exists so a live conformance run can exercise anything gated on
+  // round advancement — above all the encumbrance release rule, where a
+  // consumer waits for current_round to pass expires_after_round. On a
+  // real chain that is hours per round, so without this the rule can
+  // only be reasoned about, never demonstrated end to end.
+  //
+  // REFUSED when the daemon is on a real chain clock: rounds there are
+  // the chain's, and a daemon that could fake them could make an
+  // expired envelope look live to anything reading its clock.
+  rpc AdvanceDevRound(AdvanceDevRoundRequest) returns (AdvanceDevRoundResponse);
+}
+
+message AdvanceDevRoundRequest {
+  // Whole rounds to advance. Must be >= 1.
+  int64 rounds = 1;
+}
+
+message AdvanceDevRoundResponse {
+  // The round after advancing.
+  int64 current_round = 1;
+}

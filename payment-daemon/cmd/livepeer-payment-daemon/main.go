@@ -31,6 +31,7 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/broker/ticketbroker"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/chain"
@@ -67,6 +68,7 @@ func main() {
 				"Keyed by work unit because that is the denominator prices are quoted in; a unit not listed keeps only the circuit breaker.")
 		mintRetention         = flag.Duration("mint-retention", 24*time.Hour, "sender: how long a mint response stays replayable. Keys are remembered forever regardless — an expired key is refused, never re-minted")
 		payeeAdminToken       = flag.String("payee-admin-token", "", "Bearer token required for receiver-only PayeeAdmin RPCs. Empty disables authenticated admin access.")
+		payerAdminToken       = flag.String("payer-admin-token", "", "Bearer token required for sender-only PayerAdmin RPCs (dev-clock round advancement, for live conformance). Empty disables admin access. Refused outright on a chain clock.")
 		chainRPC              = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers and signing key are fakes.")
 		devKeyHex             = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
 		keystorePath          = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc is set.")
@@ -138,6 +140,7 @@ func main() {
 		maxPaymentWei:         *maxPaymentWei,
 		maxPricePerUnit:       *maxPricePerUnit,
 		payeeAdminToken:       adminToken,
+		payerAdminToken:       *payerAdminToken,
 		chainRPC:              *chainRPC,
 		devKeyHex:             *devKeyHex,
 		keystorePath:          *keystorePath,
@@ -177,6 +180,7 @@ type bootConfig struct {
 	maxPaymentWei         string
 	maxPricePerUnit       string
 	payeeAdminToken       string
+	payerAdminToken       string
 	chainRPC              string
 	devKeyHex             string
 	keystorePath          string
@@ -319,7 +323,18 @@ func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec met
 		st,
 		limits,
 	)
-	srv := server.NewSender(svc, cfg.socketPath, rec, logger.With("component", "grpc"))
+	// PayerAdmin is mounted only on a dev clock. On a chain clock there
+	// is nothing it could legitimately do: rounds are the chain's, and a
+	// daemon that could fake them could make an expired payment envelope
+	// look live to anything reading its clock.
+	var payerAdmin pb.PayerAdminServer
+	if dc, ok := clock.(sender.RoundAdvancer); ok {
+		payerAdmin = sender.NewAdmin(dc)
+		logger.Info("PayerAdmin mounted (dev clock): round advancement available for conformance")
+	}
+	srv := server.NewSenderWithAdmin(svc, payerAdmin,
+		server.SenderAdminConfig{Token: cfg.payerAdminToken},
+		cfg.socketPath, rec, logger.With("component", "grpc"))
 	return runServerWithCtx(ctx, logger, srv)
 }
 

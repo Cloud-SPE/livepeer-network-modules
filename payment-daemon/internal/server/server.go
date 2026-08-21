@@ -56,11 +56,32 @@ type ReceiverAdminConfig struct {
 // mode). PayeeDaemon RPCs are not mounted; calls to them return
 // UNIMPLEMENTED. rec may be nil (no metrics).
 func NewSender(svc pb.PayerDaemonServer, socketPath string, rec metrics.Recorder, logger *slog.Logger) *Server {
+	return NewSenderWithAdmin(svc, nil, SenderAdminConfig{}, socketPath, rec, logger)
+}
+
+// SenderAdminConfig gates the PayerAdmin surface. An empty token leaves
+// it mounted but refusing, exactly as the receiver's does: a surface
+// that can move the clock the release rule reads should be closed unless
+// an operator deliberately opened it.
+type SenderAdminConfig struct {
+	Token string
+}
+
+// NewSenderWithAdmin constructs a sender Server that also mounts
+// PayerAdmin. admin may be nil (not mounted).
+func NewSenderWithAdmin(svc pb.PayerDaemonServer, admin pb.PayerAdminServer, adminCfg SenderAdminConfig,
+	socketPath string, rec metrics.Recorder, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	gs := grpc.NewServer(grpc.UnaryInterceptor(metricsInterceptor(metrics.RoleSender, rec)))
+	gs := grpc.NewServer(grpc.ChainUnaryInterceptor(
+		metricsInterceptor(metrics.RoleSender, rec),
+		senderAdminAuthInterceptor(adminCfg.Token),
+	))
 	pb.RegisterPayerDaemonServer(gs, svc)
+	if admin != nil {
+		pb.RegisterPayerAdminServer(gs, admin)
+	}
 	return &Server{socketPath: socketPath, logger: logger, grpcServer: gs}
 }
 
@@ -161,22 +182,34 @@ func (t *inFlightTable) get(key string) *atomic.Int64 {
 	return c
 }
 
+// senderAdminAuthInterceptor gates PayerAdmin the way its receiver
+// counterpart gates PayeeAdmin.
+func senderAdminAuthInterceptor(token string) grpc.UnaryServerInterceptor {
+	return adminAuthInterceptor("/livepeer.payments.v1.PayerAdmin/", "payer admin token", token)
+}
+
 func receiverAdminAuthInterceptor(token string) grpc.UnaryServerInterceptor {
+	return adminAuthInterceptor("/livepeer.payments.v1.PayeeAdmin/", "payee admin token", token)
+}
+
+// adminAuthInterceptor gates one admin service prefix behind a bearer
+// token. Shared by both roles so the two surfaces cannot drift into
+// different answers for "no token configured".
+func adminAuthInterceptor(prefix, label, token string) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		if !strings.HasPrefix(info.FullMethod, "/livepeer.payments.v1.PayeeAdmin/") {
+		if !strings.HasPrefix(info.FullMethod, prefix) {
 			return handler(ctx, req)
 		}
 		if strings.TrimSpace(token) == "" {
-			return nil, status.Error(codes.PermissionDenied, "payee admin token is not configured")
+			return nil, status.Errorf(codes.PermissionDenied, "%s is not configured", label)
 		}
 		md, _ := metadata.FromIncomingContext(ctx)
 		authz := ""
 		if vals := md.Get("authorization"); len(vals) > 0 {
 			authz = vals[0]
 		}
-		want := "Bearer " + token
-		if authz != want {
-			return nil, status.Error(codes.PermissionDenied, "invalid payee admin token")
+		if authz != "Bearer "+token {
+			return nil, status.Errorf(codes.PermissionDenied, "invalid %s", label)
 		}
 		return handler(ctx, req)
 	}

@@ -553,6 +553,26 @@ type GetDepositInfoResponse struct {
 	// If the payer has initiated an unlock, the round at which
 	// withdrawal becomes possible. Zero when no unlock is pending.
 	WithdrawRound int64 `protobuf:"varint,3,opt,name=withdraw_round,json=withdrawRound,proto3" json:"withdraw_round,omitempty"`
+	// The payer's current round, read from the SAME clock that stamps
+	// CreatePaymentResponse.creation_round.
+	//
+	// It is here so a consumer holding an encumbrance can evaluate
+	// release against one clock rather than correlating two. The rule the
+	// field exists for is
+	//
+	//	release iff current_round > expires_after_round
+	//
+	// with equality staying encumbered — a ticket minted in round R is
+	// redeemable through R+window inclusive, so releasing at equality
+	// releases while the envelope is still spendable.
+	//
+	// A consumer MUST also refuse to release on a missing, zero, or
+	// REGRESSING value. A round that goes backwards means the payer's
+	// clock lost state or is talking to a re-orged or lagging node, and a
+	// stale round can only make an expired envelope look live — never the
+	// reverse — so the safe reading of a suspect clock is "still
+	// encumbered".
+	CurrentRound  int64 `protobuf:"varint,4,opt,name=current_round,json=currentRound,proto3" json:"current_round,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -608,6 +628,13 @@ func (x *GetDepositInfoResponse) GetWithdrawRound() int64 {
 	return 0
 }
 
+func (x *GetDepositInfoResponse) GetCurrentRound() int64 {
+	if x != nil {
+		return x.CurrentRound
+	}
+	return 0
+}
+
 var File_livepeer_payments_v1_payer_daemon_proto protoreflect.FileDescriptor
 
 const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
@@ -644,11 +671,12 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\vdebit_count\x18\x02 \x01(\x04R\n" +
 	"debitCount\x12\x16\n" +
 	"\x06closed\x18\x03 \x01(\bR\x06closed\"\x17\n" +
-	"\x15GetDepositInfoRequest\"s\n" +
+	"\x15GetDepositInfoRequest\"\x98\x01\n" +
 	"\x16GetDepositInfoResponse\x12\x18\n" +
 	"\adeposit\x18\x01 \x01(\fR\adeposit\x12\x18\n" +
 	"\areserve\x18\x02 \x01(\fR\areserve\x12%\n" +
-	"\x0ewithdraw_round\x18\x03 \x01(\x03R\rwithdrawRound2\xa8\x04\n" +
+	"\x0ewithdraw_round\x18\x03 \x01(\x03R\rwithdrawRound\x12#\n" +
+	"\rcurrent_round\x18\x04 \x01(\x03R\fcurrentRound2\xa8\x04\n" +
 	"\vPayerDaemon\x12h\n" +
 	"\rCreatePayment\x12*.livepeer.payments.v1.CreatePaymentRequest\x1a+.livepeer.payments.v1.CreatePaymentResponse\x12z\n" +
 	"\x13ReportPaymentResult\x120.livepeer.payments.v1.ReportPaymentResultRequest\x1a1.livepeer.payments.v1.ReportPaymentResultResponse\x12k\n" +

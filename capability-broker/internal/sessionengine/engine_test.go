@@ -1340,3 +1340,51 @@ func TestTwoSessionsOnOneIdentityBothBill(t *testing.T) {
 		t.Fatal("the second session on a shared identity billed nothing")
 	}
 }
+
+// TestSettlementBindsToTheGatewaysOwnID: a clearinghouse cannot bind a
+// record to its session using session_id (broker-local, and it arrives
+// through the customer's SDK — the channel the signature distrusts) or
+// work_id (shareable across sessions). The gateway's own id is the only
+// one it issued itself.
+func TestSettlementBindsToTheGatewaysOwnID(t *testing.T) {
+	h := newHarness(t)
+	res, err := h.engine.Open(context.Background(), OpenRequest{
+		RequestID: "req-1", GatewaySessionID: "loc-session-9f2c",
+		SessionParams: json.RawMessage(`{}`), PaymentBytes: []byte{1, 2, 3}, Spec: h.spec,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.store.Get(res.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := h.engine.SettlementFor(rec, h.spec)
+	if set.GetGatewaySessionId() != "loc-session-9f2c" {
+		t.Fatalf("gateway_session_id = %q; a record that cannot be bound to the caller's own "+
+			"session is not evidence the caller can use", set.GetGatewaySessionId())
+	}
+}
+
+// TestTopUpRebindReturnsTheSuccessorIdentity: after a rebind the caller
+// must be told which identity it is now on. Returning the predecessor
+// sends it back to mint against the one it just rotated away from.
+func TestTopUpRebindReturnsTheSuccessorIdentity(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	before, _ := h.store.Get(res.SessionID)
+
+	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
+		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+	after, _ := h.store.Get(res.SessionID)
+	if after.WorkID == before.WorkID {
+		t.Fatal("test premise wrong: nothing rotated")
+	}
+	// The handler reads the reloaded record; assert the record it reads
+	// carries the successor.
+	if after.PredecessorWorkID != before.WorkID {
+		t.Fatalf("predecessor = %q; want %q", after.PredecessorWorkID, before.WorkID)
+	}
+}

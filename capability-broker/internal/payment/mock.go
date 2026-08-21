@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/protobuf/proto"
 	"math/big"
 	"sync"
 	"time"
@@ -373,9 +375,24 @@ func compositeSeq(sender []byte, workID string, seq uint64) string {
 // stubSenderFromPayment derives a deterministic 20-byte "sender" from
 // the payment_bytes for mock-mode use. This is NOT a real recovery; it
 // just gives the mock a stable identity to seal the session against.
-func stubSenderFromPayment(bytes []byte) []byte {
+// stubSenderFromPayment recovers the sender the way a real payee does:
+// from the payment's own sender field.
+//
+// It used to XOR the whole payment, which made "same wallet, new ticket
+// params" look like a DIFFERENT wallet — exactly the recipient-rotation
+// case, where a rebind is then refused for a sender mismatch that does
+// not exist. A mock that cannot represent the scenario under test turns
+// a passing suite into no evidence at all.
+//
+// Opaque stub bytes have no sender field, so they keep the old
+// derivation: stable per payment, which is all those tests need.
+func stubSenderFromPayment(raw []byte) []byte {
+	var pay pb.Payment
+	if err := proto.Unmarshal(raw, &pay); err == nil && len(pay.GetSender()) > 0 {
+		return append([]byte(nil), pay.GetSender()...)
+	}
 	out := make([]byte, 20)
-	for i, b := range bytes {
+	for i, b := range raw {
 		out[i%20] ^= b
 	}
 	return out

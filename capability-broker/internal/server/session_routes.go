@@ -276,10 +276,18 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 		s.writeSessionError(w, err)
 		return
 	}
+	// Reload: a top-up that rebinds moves the session onto a new payment
+	// identity, and rec is the pre-rebind snapshot. Returning its
+	// work_id hands the gateway back the predecessor it just rotated
+	// away from, which it would then keep minting against.
 	fresh, _ := s.sessionStore.Get(rec.SessionID)
+	workID := rec.WorkID
+	if fresh != nil {
+		workID = fresh.WorkID
+	}
 	resp := map[string]any{
 		"session_id": rec.SessionID,
-		"work_id":    rec.WorkID,
+		"work_id":    workID,
 		"lease":      map[string]any{"expires_at": res.Lease.Format(time.RFC3339)},
 	}
 	if spec := s.specForRecord(rec); spec != nil && fresh != nil {
@@ -359,6 +367,7 @@ func (s *Server) handleSettlement(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(livepeerheader.Settlement, encoded)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id":          set.GetSessionId(),
+		"gateway_session_id":  set.GetGatewaySessionId(),
 		"work_id":             set.GetWorkId(),
 		"predecessor_work_id": set.GetPredecessorWorkId(),
 		"rotation_generation": set.GetRotationGeneration(),

@@ -63,7 +63,11 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 		BilledUnits:    rec.DebitedTotal,
 		BilledValueWei: &pb.BigUInt{Value: billed.Bytes()},
 
-		SessionId:          rec.SessionID,
+		SessionId: rec.SessionID,
+		// The consumer's own identifier. session_id is broker-local and
+		// work_id can be shared, so this is the only field that binds a
+		// record to the session a clearinghouse issued.
+		GatewaySessionId:   rec.GatewaySessionID,
 		WorkId:             rec.WorkID,
 		PredecessorWorkId:  rec.PredecessorWorkID,
 		RotationGeneration: rec.RotationGeneration,

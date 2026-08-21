@@ -280,7 +280,17 @@ infrastructure recovery the customer neither caused nor can act on, and it
 MUST NOT be surfaced as a session lifecycle event. It MUST appear in the
 session's settlement record with the stable `session_id`,
 `rotation_generation`, `predecessor_work_id`, the current `work_id`, and
-cumulative continuity across generations. The `session.rebound` control
+cumulative continuity across generations.
+
+A session settlement MUST also carry `gateway_session_id`. It is the only
+identifier in the record that its consumer issued itself: `session_id` is
+broker-local and reaches a clearinghouse through the customer-controlled
+SDK — the channel the signature exists to distrust — and `work_id` can be
+shared by several sessions. Without it a signed record cannot be bound to
+the session it is evidence for. It MUST appear in the direct settlement
+query response too.
+
+The `session.rebound` control
 message (§8) is broker↔gateway signalling, not session history. Failure is
 visible as the resulting degraded or terminal session state, never as the
 rotation itself.

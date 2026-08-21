@@ -328,6 +328,17 @@ message SettlementRecord {
   // AGGREGATE across every record on an identity, and detect a missing
   // one.
   uint64 payment_cumulative_units = 25;
+
+  // The GATEWAY's own id for this session, echoed from session open.
+  // REQUIRED on a paid-session settlement.
+  //
+  // It is the only identifier in this record that its consumer issued
+  // itself. session_id is broker-local and reaches a clearinghouse only
+  // through the customer-controlled SDK — the exact channel the
+  // signature exists to distrust — and work_id can be shared by several
+  // sessions, so neither binds a record to one party's session record.
+  // This does.
+  string gateway_session_id = 26;
 }
 
 // PaymentRejectionReason is the machine-readable reason a payee daemon

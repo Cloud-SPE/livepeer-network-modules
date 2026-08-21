@@ -1125,8 +1125,18 @@ type SettlementRecord struct {
 	// AGGREGATE across every record on an identity, and detect a missing
 	// one.
 	PaymentCumulativeUnits uint64 `protobuf:"varint,25,opt,name=payment_cumulative_units,json=paymentCumulativeUnits,proto3" json:"payment_cumulative_units,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// The GATEWAY's own id for this session, echoed from session open.
+	// REQUIRED on a paid-session settlement.
+	//
+	// It is the only identifier in this record that its consumer issued
+	// itself. session_id is broker-local and reaches a clearinghouse only
+	// through the customer-controlled SDK — the exact channel the
+	// signature exists to distrust — and work_id can be shared by several
+	// sessions, so neither binds a record to one party's session record.
+	// This does.
+	GatewaySessionId string `protobuf:"bytes,26,opt,name=gateway_session_id,json=gatewaySessionId,proto3" json:"gateway_session_id,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SettlementRecord) Reset() {
@@ -1332,6 +1342,13 @@ func (x *SettlementRecord) GetPaymentCumulativeUnits() uint64 {
 		return x.PaymentCumulativeUnits
 	}
 	return 0
+}
+
+func (x *SettlementRecord) GetGatewaySessionId() string {
+	if x != nil {
+		return x.GatewaySessionId
+	}
+	return ""
 }
 
 // TicketStatus reports the payee daemon's disposition for one ticket
@@ -1554,7 +1571,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x0festimated_units\x18\x01 \x01(\x04R\x0eestimatedUnits\x12G\n" +
 	"\x10funded_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12&\n" +
 	"\x0fmax_total_units\x18\x03 \x01(\x04R\rmaxTotalUnits\x12$\n" +
-	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xd9\v\n" +
+	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\x87\f\n" +
 	"\x10SettlementRecord\x12L\n" +
 	"\x12accepted_quote_ref\x18\x01 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12$\n" +
 	"\x0ework_unit_name\x18\x02 \x01(\tR\fworkUnitName\x12'\n" +
@@ -1583,7 +1600,8 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\tissued_at\x18\x16 \x01(\tR\bissuedAt\x12\x14\n" +
 	"\x05state\x18\x17 \x01(\tR\x05state\x12\x15\n" +
 	"\x06job_id\x18\x18 \x01(\tR\x05jobId\x128\n" +
-	"\x18payment_cumulative_units\x18\x19 \x01(\x04R\x16paymentCumulativeUnits\x1a<\n" +
+	"\x18payment_cumulative_units\x18\x19 \x01(\x04R\x16paymentCumulativeUnits\x12,\n" +
+	"\x12gateway_session_id\x18\x1a \x01(\tR\x10gatewaySessionId\x1a<\n" +
 	"\x0eBreakdownEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x01\n" +

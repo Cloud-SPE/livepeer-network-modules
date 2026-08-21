@@ -2,8 +2,12 @@ package server
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/protobuf/proto"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -449,5 +453,80 @@ func TestReadinessProbeDerivedFromRunnerDeclaration(t *testing.T) {
 	})
 	if u, _ := s2.currentConfig().Capabilities[0].Health.Probe.Config["url"].(string); u != runnerSrv.URL+"/operator-choice" {
 		t.Fatalf("operator probe overridden by the runner: got %q", u)
+	}
+}
+
+// TestTopUpResponseReturnsTheSuccessorWorkID pins the handler, not the
+// engine: the engine rebound correctly all along, and the handler read
+// the pre-rebind snapshot for work_id while using a reloaded record for
+// everything else. A gateway that rotated got the predecessor back and
+// would keep minting against the identity it had just left.
+func TestTopUpResponseReturnsTheSuccessorWorkID(t *testing.T) {
+	srv, _ := newSessionTestServer(t)
+
+	// One wallet, two ticket identities — a rotation. Both payments must
+	// carry the SAME sender or the rebind is refused for a mismatch the
+	// scenario does not have.
+	wallet := []byte("0123456789abcdef0123")
+	pay := func(rand string) string {
+		t.Helper()
+		raw, err := proto.Marshal(&paymentsv1.Payment{
+			Sender:       wallet,
+			TicketParams: &paymentsv1.TicketParams{RecipientRandHash: []byte(rand)},
+			// Must match the offering (10 wei per 1 unit) or the
+			// envelope check refuses it. Opaque stub payments are
+			// tolerated because they do not parse; a real one is held to
+			// the price the sender signed.
+			ExpectedPrice: &paymentsv1.PriceInfo{
+				PricePerUnit:  10,
+				PixelsPerUnit: 1,
+				Constraint: "cap=livepeer:meet/sfu-room;off=default;wu=participant_minutes;" +
+					"est=100;qid=q;qv=1;cfp=aa;rfp=bb",
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return base64.StdEncoding.EncodeToString(raw)
+	}
+
+	openReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/session",
+		strings.NewReader(`{"gateway_session_id":"gws-rebind","session_params":{}}`))
+	openReq.Header.Set(livepeerheader.Capability, "livepeer:meet/sfu-room")
+	openReq.Header.Set(livepeerheader.Offering, "default")
+	openReq.Header.Set(livepeerheader.Protocol, "paid-session/v1")
+	openReq.Header.Set(livepeerheader.RequestID, "req-topup-rebind")
+	openReq.Header.Set(livepeerheader.Payment, pay("original-rand-0123456789abcdef0"))
+	openResp, err := http.DefaultClient.Do(openReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := decode(t, openResp)
+	sessionID := open["session_id"].(string)
+	credential := open["credential"].(string)
+	originalWorkID := open["work_id"].(string)
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/session/"+sessionID+"/topup", nil)
+	req.Header.Set("Authorization", "Bearer "+credential)
+	req.Header.Set(livepeerheader.RequestID, "topup-rebind-1")
+	req.Header.Set(livepeerheader.RebindFrom, originalWorkID)
+	req.Header.Set(livepeerheader.Payment, pay("successor-rand-0123456789abcdef"))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("rebinding top-up status %d: %s", resp.StatusCode, body)
+	}
+	var got map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	want := hex.EncodeToString([]byte("successor-rand-0123456789abcdef"))
+	if got["work_id"] != want {
+		t.Fatalf("work_id = %v; want the successor %s (returning %s sends the caller "+
+			"back to the identity it just rotated away from)", got["work_id"], want, originalWorkID)
 	}
 }

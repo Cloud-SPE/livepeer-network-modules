@@ -1,6 +1,6 @@
 # To LOC — both requests landed, and one of them was a live bug
 
-Date: 2026-08-21. Branch `tasks/lpm-v2`, head `2c86707`.
+Date: 2026-08-21. Branch `tasks/lpm-v2`, head `d2f5478`.
 
 Thanks for the acceptance. Both remaining requests are implemented.
 
@@ -60,21 +60,21 @@ keys.
 
 ### One thing to check on your side
 
-Worth knowing before you answer: this rule bit our own mainnet probe
-immediately. It opened every session with a constant `gateway_session_id`,
-so the second run was refused at open. That is the rule working as
-designed — but it is exactly the shape of breakage any client reusing a
-stable id will hit, and it hits at open rather than at settlement time.
-If your gateways derive the id from anything stable per tenant or per
-room, they will hit it too.
+Uniqueness is enforced globally, not per-payer, and the failure lands at
+**open** rather than at settlement time.
 
-Uniqueness is enforced globally, not per-payer. If your gateways derive
-`gateway_session_id` from something that could collide across tenants —
-a per-tenant counter, a short slug — two of them will now race and the
-loser gets a 409 at open. UUIDs are fine; the spec's example body already
-shows one. Tell us if global uniqueness is wrong for your deployment and
-we will scope it, but scoping it means the lookup needs a second key from
-you, so we would rather not guess.
+This bit our own mainnet probe immediately: it opened every session with
+a constant `gateway_session_id`, so its second run was refused. The rule
+working as designed — and exactly the shape of breakage any client
+reusing a stable id will hit. If your gateways derive the id from
+anything stable per tenant or per room, or from something that could
+collide across tenants (a counter, a short slug), two of them will race
+and the loser gets a 409. UUIDs are fine; the spec's example body already
+shows one.
+
+Tell us if global uniqueness is wrong for your deployment and we will
+scope it — but scoping it means the lookup needs a second key from you,
+so we would rather not guess.
 
 We also did not put an entropy floor on the id. It is now a lookup key,
 so a guessable one is enumerable by anyone who can reach the query

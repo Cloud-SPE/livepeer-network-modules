@@ -215,8 +215,12 @@ func TestPayment_InsufficientBalanceTermination(t *testing.T) {
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := SessionStateFromContext(r.Context())
 		state.SetLiveCounter(lc)
-		// Don't credit balance; mock starts at 0 → SufficientBalance
-		// (price=1, min=100) returns false on first tick.
+		// Empty the session explicitly: with price=1 and min=100,
+		// SufficientBalance returns false on the first tick. Stated
+		// rather than inherited from the mock, which now credits.
+		if err := mock.SetBalance(RequestIDFromContext(r.Context()), new(big.Int)); err != nil {
+			t.Errorf("SetBalance: %v", err)
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -440,5 +444,64 @@ func TestPayment_EmitsFinalReceiptErrorMetricWhenSinkFails(t *testing.T) {
 	after := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "error"))
 	if after != before+1 {
 		t.Fatalf("final receipt error emit delta = %v; want 1", after-before)
+	}
+}
+
+// TestPayment_RefusesWorkAgainstAnUnfundedSession is what the mainnet
+// probe exposed: a unary job ran the backend and returned results
+// against a session with zero balance, reporting success at every layer.
+// The interim ticker guards long-running work and is a no-op here, so
+// nothing checked before the backend ran.
+func TestPayment_RefusesWorkAgainstAnUnfundedSession(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// A payment that credits nothing — a valid ticket whose expected
+	// value rounded away, which is what the mainnet run produced.
+	mock.SetCreditPerPayment(new(big.Int))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, makePaidRequest("wid-unfunded"))
+
+	if called {
+		t.Fatal("backend ran for a session that cannot pay for one unit of work")
+	}
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d; want 402", rec.Code)
+	}
+	if got := rec.Header().Get(livepeerheader.Error); got != livepeerheader.ErrInsufficientBalance {
+		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrInsufficientBalance)
+	}
+}
+
+// TestPayment_FundedSessionStillServes: the check must not refuse work a
+// gateway has actually paid for.
+func TestPayment_FundedSessionStillServes(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, makePaidRequest("wid-funded"))
+
+	if !called {
+		t.Fatalf("funded session was refused: status %d body %s", rec.Code, rec.Body.String())
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200", rec.Code)
 	}
 }

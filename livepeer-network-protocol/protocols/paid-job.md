@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.2-draft
+version: 1.0.3-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -135,6 +135,25 @@ This is the invariant that deletes the surveyed gateways' hand-rolled
 `settle(0)` compensation: a gateway that times out simply retries the same
 request id and converges on the true outcome.
 
+### 4.5 Funding is checked before the backend runs
+
+A broker MUST NOT execute a backend for a session whose credited balance
+cannot cover at least one work unit, and MUST refuse with
+`insufficient_balance` (402) instead.
+
+The obvious reading — "usage is unknown until the work runs, so the check
+must come after" — is what leaves the hole: for a single exchange there
+is no later check at all, since the interim-debit ticker that guards
+long-running work never fires. A payee ledger may permit overdraft, and
+that is the right primitive for absorbing a probabilistic credit that
+lags a debit; deciding whether to *deliver* is the broker's call, and it
+should decline what it has not been paid for.
+
+One unit is the floor deliberately, rather than the request's estimate:
+payment credit is probabilistic, so a session funded exactly to its
+estimate would flap between served and refused. "Can this session afford
+anything at all" is the question with a stable answer.
+
 ## 5. Usage and settlement
 
 The offering manifest declares the work unit; the extractor that counts it
@@ -190,6 +209,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.3-draft | 2026-08-20 | Add §4.5: a broker MUST refuse with `insufficient_balance` rather than run a backend for a session that cannot cover one work unit. A mainnet run served real work against a zero balance and reported success at every layer — the interim-debit ticker guards long-running work and is a no-op for a single exchange, so nothing checked. |
 | 1.0.2-draft | 2026-08-20 | §3.2: the streamed terminal claim gains a portable channel. `GET /v1/settlement/{id}`, keyed by `Livepeer-Job-Id`, MUST serve the terminal units, unit name and signed settlement for the idempotency window; a running exchange answers 202 with state and an unknown id is never a zero claim. Trailers become an optimization rather than the only normative channel — Go reads them, HTTPX/Fetch/reqwest do not, and a claim no SDK can read forces a clearinghouse to bill zero or block. |
 | 1.0.1-draft | 2026-08-20 | §4.4: spell out how the body hash is bound — envelope fingerprinted before the exchange, body digested as it streams, replay drained and compared. The requirement was already normative; the reference implementation had been binding the body's *length*, so a retry with a changed body of equal length received the recorded outcome. |
 | 1.0.0-draft | 2026-08-18 | Initial protocol. Replaces `http-reqresp@v0`, `http-stream@v0`, `http-multipart@v0`; transports become per-request negotiation; idempotent open and a reliable claim channel become normative. |

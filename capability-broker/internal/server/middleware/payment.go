@@ -313,6 +313,35 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			handlerCtx, cancelHandler := context.WithCancel(ctx)
 			defer cancelHandler()
 
+			// Pre-flight: do not run a backend for a session that
+			// cannot pay for a single unit of work.
+			//
+			// The interim ticker guards LONG-running work, but it is a
+			// no-op for a unary job, so nothing checked before the
+			// backend ran. A mainnet probe served real work against a
+			// zero balance and reported success at every layer. The
+			// ledger permits overdraft by design — that is the right
+			// primitive — but the broker is the component that decides
+			// whether to deliver, and it should decline what it has not
+			// been paid for.
+			//
+			// One unit is deliberately the floor rather than the job's
+			// estimate: payment credit is probabilistic, so a session
+			// funded exactly to its estimate would flap. "Can it afford
+			// anything at all" is the question with a stable answer.
+			if suff, serr := client.SufficientBalance(ctx, payment.SufficientBalanceRequest{
+				Sender:       result.Sender,
+				WorkID:       workID,
+				MinWorkUnits: 1,
+			}); serr != nil {
+				log.Printf("warning: pre-flight balance check failed work_id=%s: %v", workID, serr)
+			} else if suff != nil && !suff.Sufficient {
+				livepeerheader.WriteError(w, http.StatusPaymentRequired,
+					livepeerheader.ErrInsufficientBalance,
+					"payment credited no runway for this offering; fund the session before requesting work")
+				return
+			}
+
 			rec := &responseRecorder{ResponseWriter: w}
 			rec.Header().Add("Trailer", livepeerheader.Settlement)
 

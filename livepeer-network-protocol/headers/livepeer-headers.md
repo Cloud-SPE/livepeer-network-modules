@@ -1,6 +1,6 @@
 ---
 status: draft (rewritten for the v1 protocols)
-spec_version: 1.0.3-draft
+spec_version: 1.0.4-draft
 last_updated: 2026-08-20
 ---
 
@@ -280,7 +280,7 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 | `rebind_refused` | 409 | A declared rotation rebind the broker would not perform: wrong predecessor, a successor that did not credit, a different sender, or a rotation bound reached (paid-session §3.3.1). |
 | `backend_unavailable` | 502 | Backend reachable but returned an error the broker can't recover from. |
 | `capacity_exhausted` | 503 | Broker has no slots; see `Livepeer-Backoff`. |
-| `insufficient_balance` | 402 | Long-running session terminated by the broker because `PayeeDaemon.SufficientBalance` reported the payer's balance no longer covers the configured runway. The header is emitted as a trailer where the protocol allows it (the response body has typically already begun); the connection is closed by the broker. Plan 0015. |
+| `insufficient_balance` | 402 | The payer's balance does not cover the work. Emitted **before** the backend runs when the credited balance cannot cover one work unit (paid-job §4.5), and mid-flight when a long-running session's runway runs out. The header is emitted as a trailer where the protocol allows it (the response body has typically already begun); the connection is closed by the broker. Plan 0015. |
 | `internal_error` | 500 | Anything else. |
 
 Workload-specific failures are **not** protocol error codes. The mode-era
@@ -348,6 +348,7 @@ See [`../conformance/`](../conformance/).
 | 0.1.1 | Add `insufficient_balance` error code for long-running sessions terminated by the broker mid-flight (plan 0015). Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |
 | 0.1.2 | Add `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout` error codes for `rtmp-ingress-hls-egress` (plan 0011-followup). Pre-1.0 minor additions are non-breaking. |
 | 0.1.3 | Add `backpressure_drop` error code for the `session-control-plus-media` control-WebSocket (plan 0012-followup). Pre-1.0 minor additions are non-breaking. |
+| 1.0.4-draft | `insufficient_balance` is also a pre-flight refusal, not only a mid-flight termination (paid-job §4.5). |
 | 1.0.3-draft | `GET /v1/settlement/{id}` also serves paid-job exchanges, keyed by `Livepeer-Job-Id`, so a streamed claim is reachable by clients that cannot read HTTP trailers. |
 | 1.0.2-draft | `Livepeer-Settlement` becomes a signed JSON envelope for BOTH protocols: JCS-canonical payload plus an EIP-191 secp256k1 signature from a manifest-delegated hot key, with the signature omitted when a broker holds no delegation. Adds the paid-session identity chain and cumulative accounting to the record, and names `GET /v1/settlement/{id}` as the retrieval path. Replaces the bare base64 protobuf — the channel that carried it ends at a customer-controlled SDK, so integrity has to travel with the record. |
 | 1.0.1-draft | Add `recipient_rotated` and `rebind_refused` for recipient rotation, and the `Livepeer-Rebind-From` request header that declares a rebind's predecessor (paid-session §3.3.1). Pre-1.0-style minor addition: receivers validate the major only. |

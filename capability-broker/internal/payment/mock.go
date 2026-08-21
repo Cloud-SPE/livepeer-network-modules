@@ -19,6 +19,10 @@ type Mock struct {
 	// statePath, when set via EnablePersistence, makes the ledger
 	// survive the process (see mock_persist.go).
 	statePath string
+
+	// creditOverride replaces the default per-payment credit when a test
+	// needs a payment that funds nothing.
+	creditOverride *big.Int
 }
 
 type mockSession struct {
@@ -108,12 +112,26 @@ func (m *Mock) ProcessPayment(_ context.Context, req ProcessPaymentRequest) (*Pr
 	if len(sess.sender) == 0 {
 		sess.sender = stubSenderFromPayment(req.PaymentBytes)
 	}
+	// Credit the session. The mock used to accept a payment and credit
+	// NOTHING, so every mock-backed test, conformance run and dev
+	// deployment served work against a zero balance — which is exactly
+	// how the real zero-billing defect stayed invisible. A payment that
+	// credits nothing is not a payment.
+	//
+	// A test that wants an exhausted session sets the balance directly.
+	credited := new(big.Int).Set(m.creditPerPayment())
+	sess.balance.Add(sess.balance, credited)
 	return &ProcessPaymentResult{
 		Sender:     append([]byte(nil), sess.sender...),
-		CreditedEV: new(big.Int),
+		CreditedEV: credited,
 		Balance:    new(big.Int).Set(sess.balance),
 	}, nil
 }
+
+// mockCreditPerPayment is what one stub payment funds: 0.001 ETH, which
+// is generous against the wei-scale prices fixtures use and keeps the
+// mock from being the thing that fails a test about something else.
+var mockCreditPerPayment = new(big.Int).Exp(big.NewInt(10), big.NewInt(15), nil)
 
 func (m *Mock) DebitBalance(_ context.Context, req DebitBalanceRequest) (*big.Int, error) {
 	if len(req.Sender) == 0 || req.WorkID == "" {
@@ -227,6 +245,40 @@ func (m *Mock) CloseSession(_ context.Context, sender []byte, workID string) err
 // CreditBalance is a test helper that adds `wei` to a session's balance.
 // Used by unit tests and the conformance fixture to seed runway without
 // going through ProcessPayment.
+// SetCreditPerPayment overrides what one payment credits. Zero models a
+// payment whose expected value rounds away — the case a mainnet run
+// actually produced, where a valid ticket credited nothing and the
+// broker served work anyway.
+func (m *Mock) SetCreditPerPayment(wei *big.Int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.creditOverride = new(big.Int).Set(wei)
+}
+
+func (m *Mock) creditPerPayment() *big.Int {
+	if m.creditOverride != nil {
+		return m.creditOverride
+	}
+	return mockCreditPerPayment
+}
+
+// SetBalance forces a session's balance, for tests that need an
+// exhausted or precisely-funded session. Stating the precondition beats
+// relying on the mock's own crediting behaviour, which is what the
+// insufficient-balance test used to do — and which silently stopped
+// testing anything the moment the mock began crediting.
+func (m *Mock) SetBalance(workID string, wei *big.Int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.flushLocked()
+	sess, ok := m.sessions[workID]
+	if !ok {
+		return errors.New("no session for work_id")
+	}
+	sess.balance = new(big.Int).Set(wei)
+	return nil
+}
+
 func (m *Mock) CreditBalance(workID string, wei *big.Int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

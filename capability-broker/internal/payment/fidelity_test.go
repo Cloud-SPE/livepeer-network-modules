@@ -194,3 +194,77 @@ func paymentWithSender(t *testing.T, wallet []byte, rand string) []byte {
 	}
 	return raw
 }
+
+// A payment to a closed session must be REFUSED, not credited.
+//
+// This is how a payee retires an identity: the old session is closed and
+// its index dropped so the next params issuance mints a fresh work_id. A
+// payer that hasn't learned of the rotation keeps paying the old one. The
+// mock used to credit those payments while DebitBalance refused them, so
+// a broker that stranded a payer's funds on a dead identity — real ETH
+// in, no work ever billable out — passed every mock-backed test.
+func TestMockProcessPaymentRefusesClosedSession(t *testing.T) {
+	m := NewMock()
+	ctx := context.Background()
+	sender := []byte("sender-20-bytes-0000")
+	tp, err := m.GetTicketParams(ctx, GetTicketParamsRequest{
+		Sender: sender, Recipient: []byte("recipient-20-bytes00"),
+		FaceValue: big.NewInt(1000), Capability: "c", Offering: "o",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workID := hexOf(tp.RecipientRandHash)
+	if _, err := m.OpenSession(ctx, OpenSessionRequest{
+		WorkID: workID, Capability: "c", Offering: "o",
+		PricePerWorkUnitWei: big.NewInt(100), PerUnits: 1000, WorkUnit: "tokens",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.ProcessPayment(ctx, ProcessPaymentRequest{
+		WorkID: workID, PaymentBytes: []byte("stub"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.CloseSession(ctx, senderOfSession(m, workID), workID); err != nil {
+		t.Fatal(err)
+	}
+
+	before := balanceOfSession(m, workID)
+	res, err := m.ProcessPayment(ctx, ProcessPaymentRequest{
+		WorkID: workID, PaymentBytes: []byte("stub"),
+	})
+	if err != nil {
+		t.Fatalf("ProcessPayment on a closed session returned a transport error %v; it must "+
+			"return the refusal in band so the broker sees the rotation signal", err)
+	}
+	if res.CreditedEV.Sign() != 0 {
+		t.Fatalf("credited %s to a closed session; a closed session takes no more money",
+			res.CreditedEV)
+	}
+	if after := balanceOfSession(m, workID); after.Cmp(before) != 0 {
+		t.Fatalf("balance moved %s -> %s on a closed session", before, after)
+	}
+	if res.TicketsRejected == 0 {
+		t.Fatal("tickets_rejected is 0; the broker reads that as accepted and never rebinds")
+	}
+	// The broker only calls a batch fully rejected when the count covers
+	// every status entry — a bare count with no statuses reads as accepted.
+	if len(res.TicketStatus) == 0 || int(res.TicketsRejected) < len(res.TicketStatus) {
+		t.Fatalf("tickets_rejected=%d over %d statuses; the broker needs every entry rejected "+
+			"to raise recipient_rotated", res.TicketsRejected, len(res.TicketStatus))
+	}
+	if res.DominantRejection != PaymentRejectionReasonInvalidRecipientRand {
+		t.Fatalf("dominant rejection = %v; want INVALID_RECIPIENT_RAND, the signal that "+
+			"drives the payer to re-fetch params and rebind", res.DominantRejection)
+	}
+}
+
+func balanceOfSession(m *Mock, workID string) *big.Int {
+	for _, r := range m.Sessions() {
+		if r.WorkID == workID {
+			return r.Balance
+		}
+	}
+	return big.NewInt(0)
+}

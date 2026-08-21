@@ -1,6 +1,6 @@
 ---
 spec_name: paid-session
-version: 1.0.6-draft
+version: 1.0.7-draft
 status: draft
 last_updated: 2026-08-20
 ---
@@ -223,6 +223,20 @@ replay protection a payer-controlled property.
 be reported as `recipient_rotated`, on both protocols. It is a distinct code
 because the remedy is mechanical and a client must be able to run it without
 matching prose: re-fetch ticket params, re-mint, retry.
+
+**A retired identity MUST take no more money.** A payee that has rotated
+away from a `work_id` MUST reject payments arriving on it — before
+validating any ticket, crediting nothing and queueing no winner — and MUST
+report that rejection as an invalid recipient rand so the signal above is
+raised. Accepting them is not a conservative choice: a retired session
+cannot be debited, so its credit buys work that can never be delivered, and
+a winning ticket banked there is redeemed on chain against a session the
+payer can never draw on. The obligation is on the payee because it is the
+only party that knows the rotation happened.
+
+The rotation retires the identity for **future** work only. Tickets already
+minted against the old rand remain valid for redemption; a rotation MUST NOT
+be used to repudiate them.
 
 **The rebind.** A session moves to the rotated identity on an ordinary
 top-up that **declares** its predecessor (`Livepeer-Rebind-From`, or
@@ -685,6 +699,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.7-draft | 2026-08-21 | §3.3.1: a payee that has rotated away from a `work_id` MUST refuse payments arriving on it — before validating any ticket, crediting nothing, queueing no winner — and report an invalid recipient rand so `recipient_rotated` is raised. The spec mandated the signal but never the refusal that produces it, and the reference receiver credited those payments while every debit against the closed session failed: real value in, no work ever billable out, and a winning ticket redeemable on chain against a session the payer could not draw on. Also states that rotation retires an identity for future work only and MUST NOT be used to repudiate tickets already minted. Found on Arbitrum One. |
 | 1.0.6-draft | 2026-08-20 | §3.1: an open replay now returns the **usable** recorded outcome — credential and grants re-delivered — under four conditions (same request id, identical open fingerprint including the payment envelope, same payer proven by that envelope, exact recorded outcome). Reverses exactly-once secret delivery: a lost open response otherwise left a funded session nobody could drive. Adds the fingerprint requirement, so a reused id with different content is `request_id_reuse` rather than somebody else's session, and requires replay secrets encrypted at rest and destroyed at winddown. |
 | 1.0.5-draft | 2026-08-20 | Add §3.3.1, recipient rotation: payee-authorized only, `recipient_rotated` as the signal, a **declared** rebind on top-up with three verification rules, predecessor settled before close, continuity of session/credential/cumulative accounting, `session.max_rotations` and the zero-delivery bound, `payment_unrecoverable` as the terminal reason, bounded offerings excluded, settlement-only visibility, and stranded balance stated as a known cost. §8 gains `rebind_from` and `session.rebound`. |
 | 1.0.4-draft | 2026-08-20 | §3.3: `Livepeer-Request-Id` is required on top-up (and §8's `session.topup` frame carries it as `request_id`) and its replay semantics are stated — recorded outcome returned verbatim, replay checked before terminal/refusal, and an already-credited envelope (nonce replay) answered with the current lease unextended. The reference implementation ignored the header entirely, so a gateway retrying a top-up after a lost response funded the session twice. |

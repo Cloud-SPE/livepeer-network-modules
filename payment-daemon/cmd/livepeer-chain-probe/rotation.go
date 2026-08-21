@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/grpc/metadata"
 )
 
 // probeRotation drives a real recipient rotation under a LIVE session.
@@ -75,7 +76,14 @@ func probeRotation(ctx context.Context, cfg config, payer pb.PayerDaemonClient,
 	}
 
 	// --- the payee rotates under the live session ---------------------
-	reset, err := admin.ResetSession(ctx, &pb.ResetSessionRequest{
+	// PayeeAdmin is closed unless the operator configured a token, which
+	// is the right default for a surface that can rotate a live
+	// identity.
+	adminCtx := ctx
+	if cfg.adminToken != "" {
+		adminCtx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+cfg.adminToken)
+	}
+	reset, err := admin.ResetSession(adminCtx, &pb.ResetSessionRequest{
 		Sender:     sender,
 		Recipient:  cfg.recipient,
 		Capability: cfg.capability,
@@ -90,6 +98,13 @@ func probeRotation(ctx context.Context, cfg config, payer pb.PayerDaemonClient,
 	fmt.Printf("  payee rotated its rand away from %s\n", reset.GetOldWorkId())
 
 	// --- the gateway discovers it the way a gateway does ---------------
+	//
+	// The payer still holds the retired identity, so it mints against it.
+	// The payee must refuse that payment rather than bank it: a closed
+	// session's debits all fail, so anything credited there is money in
+	// for work that can never go out. The refusal carries
+	// INVALID_RECIPIENT_RAND, which the broker surfaces as
+	// recipient_rotated — the code a gateway acts on to rebind.
 	stale, err := mint(ctx, cfg, payer, "rot-stale")
 	if err != nil {
 		return fmt.Errorf("mint against the stale identity: %w", err)

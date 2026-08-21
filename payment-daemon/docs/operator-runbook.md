@@ -447,6 +447,26 @@ recipient, capability, offering)`. Reset closes the old session, drops
 its nonce ledger, and makes the next `GetTicketParams` mint a fresh
 `work_id`.
 
+Payments that arrive on the retired `work_id` are **refused, not
+banked**. A closed session's debits all fail, so anything credited to it
+is money in for work that can never go out — and a winning ticket
+credited there would be redeemed on chain against a session that can
+never serve the sender. The receiver therefore rejects the payment
+before validating any ticket, credits nothing, and queues no winners.
+
+The refusal is returned as a successful `ProcessPayment` carrying
+`tickets_rejected` and a dominant `INVALID_RECIPIENT_RAND`, which the
+broker surfaces to the gateway as `recipient_rotated`. That code is the
+gateway's cue to re-fetch ticket params and rebind with
+`Livepeer-Rebind-From`; a transport error in its place would read as a
+generic failure and strand the sender on the dead identity.
+
+Note what reset does **not** do: it rotates the stable-tuple index and
+closes the session record, but the session's rand survives, so tickets
+already in flight against it still validate at redemption time. Rotation
+retires an identity for future work — it does not invalidate past
+tickets.
+
 ### Nonce-replay window
 
 Per `recipient_rand_hash`, the receiver tracks **up to 600 nonces**.

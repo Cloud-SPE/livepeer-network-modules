@@ -210,6 +210,57 @@ func (s *Service) ProcessPayment(_ context.Context, req *pb.ProcessPaymentReques
 		return nil, status.Errorf(codes.Internal, "load session: %v", err)
 	}
 
+	// A closed session takes no more money.
+	//
+	// Closing is how a payee retires an identity — ResetSession marks the
+	// old session closed and drops its index entry so the next
+	// ticket-params issuance mints a fresh work_id. A payer that has not
+	// yet learned of the rotation keeps paying the old one, and until
+	// this guard existed those payments were accepted: validateAndCredit
+	// ran, winning tickets were QUEUED FOR REDEMPTION, and the EV landed
+	// on a session whose every debit fails with ErrClosed. The payer paid
+	// real ETH into a session that can never serve it work.
+	//
+	// The refusal is returned in band rather than as an error because
+	// that is how the rotation signal travels: the broker rebinds on
+	// tickets_rejected > 0 with a dominant INVALID_RECIPIENT_RAND, and a
+	// gRPC error would read as a generic failure and strand the payer on
+	// the dead identity. The reason is the honest one — the recipient
+	// rand behind this work_id is no longer one the payee will honour.
+	if sess.Closed {
+		statuses := make([]*pb.TicketStatus, 0, len(pay.GetTicketSenderParams()))
+		for _, tsp := range pay.GetTicketSenderParams() {
+			statuses = append(statuses, &pb.TicketStatus{
+				SenderNonce:     tsp.GetSenderNonce(),
+				RejectionReason: pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND,
+			})
+		}
+		if len(statuses) == 0 {
+			// A ticketless payment still has to carry the signal:
+			// tickets_rejected == 0 reads as "accepted" downstream.
+			statuses = append(statuses, &pb.TicketStatus{
+				RejectionReason: pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND,
+			})
+		}
+		rejected, dominant := summarizeTicketStatus(statuses)
+		balance, ok := new(big.Int).SetString(sess.BalanceWei, 10)
+		if !ok {
+			balance = big.NewInt(0)
+		}
+		s.logger.Info("payment refused: session closed",
+			"work_id", req.GetWorkId(),
+			"sender_hex", hex.EncodeToString(pay.GetSender()),
+			"tickets_refused", rejected)
+		return &pb.ProcessPaymentResponse{
+			Sender:            pay.GetSender(),
+			CreditedEv:        big.NewInt(0).Bytes(),
+			Balance:           balance.Bytes(),
+			TicketStatus:      statuses,
+			TicketsRejected:   rejected,
+			DominantRejection: dominant,
+		}, nil
+	}
+
 	// Recover the per-session rand. Empty rand = session was opened by
 	// the v0.2 stub flow before plan 0016 landed; we bypass chain
 	// validation in that case to keep the dev path running. A real

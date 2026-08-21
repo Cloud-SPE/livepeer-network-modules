@@ -160,6 +160,27 @@ func (m *Mock) ProcessPayment(_ context.Context, req ProcessPaymentRequest) (*Pr
 	if !ok {
 		return nil, errors.New("no session for work_id; OpenSession first")
 	}
+	// A closed session takes no more money — same refusal, same in-band
+	// signal, as the real payee. Without this the mock credited a
+	// rotated-away session while every debit against it failed, so a
+	// broker that stranded a payer's funds on a dead identity passed
+	// every mock-backed test.
+	if sess.closed {
+		return &ProcessPaymentResult{
+			Sender:     append([]byte(nil), sess.sender...),
+			CreditedEV: big.NewInt(0),
+			Balance:    new(big.Int).Set(sess.balance),
+			// The status list matters: the broker only treats a batch as
+			// fully rejected when tickets_rejected covers every entry,
+			// so a bare count with no statuses reads as accepted.
+			TicketStatus: []TicketStatus{{
+				RejectionReason: PaymentRejectionReasonInvalidRecipientRand,
+			}},
+			TicketsRejected:   1,
+			DominantRejection: PaymentRejectionReasonInvalidRecipientRand,
+		}, nil
+	}
+
 	// Mock seals the sender to a derived stub value if it isn't already
 	// sealed. Real receivers extract sender from the wire Payment; the
 	// mock is only used in unit tests and the broker smoke (where the

@@ -45,7 +45,32 @@ Flags worth setting deliberately:
 |---|---|
 | `--per-units` | **Keep it above 1.** At `per_units: 1` flooring and ceiling agree, so a rounding defect cannot surface — which is exactly how one shipped. |
 | `--price-wei` | Pick a price whose product with the unit count leaves a remainder. |
-| `--protocol` | `job`, `session`, or `both`. |
+| `--protocol` | `job`, `session`, `both`, or `rotation`. |
+| `--payee-admin-token` | Required for `rotation`: it drives `PayeeAdmin.ResetSession`, which is closed unless the payee was started with a matching `--payee-admin-token`. |
+
+## The rotation run
+
+`--protocol=rotation` drives a recipient rotation under a live session —
+the one path with no other way to test it. A mock cannot rotate a rand it
+never had, and conformance treats payment envelopes as opaque by design.
+The sequence is the one a gateway actually hits:
+
+```
+open → payee resets its rand → the next payment is refused with
+recipient_rotated → the payer evicts its cached identity → a re-mint
+gets a new work_id → a top-up declaring Livepeer-Rebind-From moves the
+live session onto it
+```
+
+and it then asserts what makes a rotation safe: same session, same
+credential, one generation forward, cumulative units unbroken across the
+boundary, predecessor settled, and the whole chain in the signed
+settlement.
+
+This run found that the payee **credited** payments arriving on the
+retired identity while every debit against that closed session failed —
+value in, no work billable out. Run it after any change to session
+lifecycle or ticket validation.
 
 ## Run it twice
 

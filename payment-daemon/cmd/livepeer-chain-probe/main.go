@@ -60,6 +60,7 @@ type config struct {
 	fundedWei   *big.Int
 	runnerBind  string
 	protocol    string
+	adminToken  string
 }
 
 func main() {
@@ -75,7 +76,9 @@ func main() {
 		perUnits    = flag.Uint64("per-units", 1000, "the offering's per_units — keep this above 1: it is the denominator where flooring and ceiling disagree, and a run at 1 cannot see a rounding defect")
 		fundedWei   = flag.String("funded-wei", "1000000000000000", "value to authorize per payment")
 		runnerBind  = flag.String("runner-bind", "127.0.0.1:0", "address for the probe's fake session runner")
-		protocol    = flag.String("protocol", "both", "job | session | both")
+		protocol    = flag.String("protocol", "both", "job | session | both | rotation")
+		adminToken  = flag.String("payee-admin-token", "",
+			"rotation only: the payee's --payee-admin-token. Rotation is driven through PayeeAdmin.ResetSession, which is closed unless the operator configured a token.")
 	)
 	flag.Parse()
 
@@ -91,7 +94,7 @@ func main() {
 		payerSocket: *payerSocket, payeeSocket: *payeeSocket, brokerURL: *brokerURL,
 		recipient: addr, capability: *capability, offering: *offering,
 		workUnit: *workUnit, priceWei: *priceWei, perUnits: *perUnits,
-		fundedWei: funded, runnerBind: *runnerBind, protocol: *protocol,
+		fundedWei: funded, runnerBind: *runnerBind, protocol: *protocol, adminToken: *adminToken,
 	}
 
 	payer, closePayer, err := dial(cfg.payerSocket)
@@ -126,6 +129,15 @@ func main() {
 			failed++
 		} else {
 			fmt.Print("PASS paid-session\n\n")
+		}
+	}
+	if cfg.protocol == "rotation" {
+		if err := probeRotation(ctx, cfg, pb.NewPayerDaemonClient(payer),
+			pb.NewPayeeDaemonClient(payee), pb.NewPayeeAdminClient(payee)); err != nil {
+			fmt.Printf("FAIL rotation: %v\n\n", err)
+			failed++
+		} else {
+			fmt.Print("PASS rotation\n\n")
 		}
 	}
 	if failed > 0 {

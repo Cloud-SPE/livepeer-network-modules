@@ -1,6 +1,6 @@
 ---
 spec_name: paid-job
-version: 1.0.3-draft
+version: 1.0.4-draft
 status: draft
 last_updated: 2026-08-18
 ---
@@ -154,6 +154,19 @@ payment credit is probabilistic, so a session funded exactly to its
 estimate would flap between served and refused. "Can this session afford
 anything at all" is the question with a stable answer.
 
+### 4.6 Payment on a rotated-away identity
+
+A payee may retire the recipient rand behind a `work_id` (restart, operator
+reset, exhausted nonce space). A payment arriving on a retired identity MUST
+be refused, crediting nothing, and surfaced to the caller as
+`recipient_rotated` — the same code and the same remedy as
+[paid-session](./paid-session.md) §3.3.1, which states the payee's
+obligation in full.
+
+The job path has no session to rebind, so the remedy is simply: re-fetch
+ticket params, re-mint, retry the job. The distinct code still matters,
+because retrying with the same envelope would fail identically forever.
+
 ## 5. Usage and settlement
 
 The offering manifest declares the work unit; the extractor that counts it
@@ -209,6 +222,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.4-draft | 2026-08-21 | Add §4.6: a payment arriving on a payee-retired `work_id` MUST be refused rather than credited, and surfaced as `recipient_rotated` so a gateway re-mints instead of retrying a doomed envelope. The job spec never covered rotation, though the job path hits the same refusal; the payee obligation lives in paid-session §3.3.1. |
 | 1.0.3-draft | 2026-08-20 | Add §4.5: a broker MUST refuse with `insufficient_balance` rather than run a backend for a session that cannot cover one work unit. A mainnet run served real work against a zero balance and reported success at every layer — the interim-debit ticker guards long-running work and is a no-op for a single exchange, so nothing checked. |
 | 1.0.2-draft | 2026-08-20 | §3.2: the streamed terminal claim gains a portable channel. `GET /v1/settlement/{id}`, keyed by `Livepeer-Job-Id`, MUST serve the terminal units, unit name and signed settlement for the idempotency window; a running exchange answers 202 with state and an unknown id is never a zero claim. Trailers become an optimization rather than the only normative channel — Go reads them, HTTPX/Fetch/reqwest do not, and a claim no SDK can read forces a clearinghouse to bill zero or block. |
 | 1.0.1-draft | 2026-08-20 | §4.4: spell out how the body hash is bound — envelope fingerprinted before the exchange, body digested as it streams, replay drained and compared. The requirement was already normative; the reference implementation had been binding the body's *length*, so a retry with a changed body of equal length received the recorded outcome. |

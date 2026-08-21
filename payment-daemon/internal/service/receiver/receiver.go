@@ -40,6 +40,10 @@ type Service struct {
 	// constructor time; future plans can refine per-offering pricing.
 	defaultFaceValue *big.Int
 	defaultWinProb   *big.Int
+	// minFaceValue is the smallest ticket this payee will issue. Below
+	// it, EV credit floors to zero and a winning ticket costs more gas
+	// to redeem than it pays.
+	minFaceValue *big.Int
 }
 
 // Config holds the receiver service's tunable state.
@@ -71,10 +75,26 @@ func New(st *store.Store, cfg Config, logger *slog.Logger) *Service {
 	if faceValue == nil {
 		faceValue = new(big.Int).Exp(big.NewInt(10), big.NewInt(15), nil)
 	}
+	// The floor must make EV land above zero: EV is
+	// face_value x win_prob / 2^256, so the smallest useful face value
+	// is 2^256 / win_prob — one wei of credit per ticket. Operators who
+	// want more headroom raise DefaultFaceValue; this is the hard
+	// minimum below which tickets are worthless by arithmetic.
 	winProb := cfg.DefaultWinProb
 	if winProb == nil {
 		// 1/1024 of MaxWinProb.
 		winProb = new(big.Int).Quo(types.MaxWinProb, big.NewInt(1024))
+	}
+	// One wei of credit per ticket is the arithmetic floor: below
+	// 2^256/win_prob, EV rounds to zero and the ticket is free money for
+	// the sender. Never above the default face value, so an operator
+	// choosing a small default is not overridden by the floor.
+	minFace := new(big.Int).Quo(types.MaxWinProb, winProb)
+	if minFace.Sign() <= 0 {
+		minFace = big.NewInt(1)
+	}
+	if minFace.Cmp(faceValue) > 0 {
+		minFace = new(big.Int).Set(faceValue)
 	}
 	rec := cfg.Recorder
 	if rec == nil {
@@ -87,6 +107,7 @@ func New(st *store.Store, cfg Config, logger *slog.Logger) *Service {
 		recipient:        append([]byte(nil), cfg.Recipient...),
 		defaultFaceValue: faceValue,
 		defaultWinProb:   winProb,
+		minFaceValue:     minFace,
 	}
 }
 
@@ -129,6 +150,12 @@ func (s *Service) OpenSession(_ context.Context, req *pb.OpenSessionRequest) (*p
 		WinProb:             s.defaultWinProb.String(),
 	})
 	if err != nil {
+		if errors.Is(err, store.ErrPricingConflict) {
+			s.logger.Error("open session: pricing conflict",
+				"work_id", req.GetWorkId(), "offered_price_wei", priceWei.String())
+			return nil, status.Error(codes.FailedPrecondition,
+				"session price was already set by an offering and cannot be changed")
+		}
 		s.logger.Error("open session", "err", err)
 		return nil, status.Errorf(codes.Internal, "open session: %v", err)
 	}
@@ -195,6 +222,18 @@ func (s *Service) ProcessPayment(_ context.Context, req *pb.ProcessPaymentReques
 		if !ok {
 			return nil, status.Error(codes.Internal, "session rand corrupt")
 		}
+	}
+
+	// Cross-check the price against what the SENDER signed.
+	//
+	// Until here the price is an assertion by the broker — the party
+	// being paid. expected_price rides inside the payment the sender
+	// signed, so it is the only figure both sides committed to. A
+	// mismatch means the two disagree about the rate, and billing at
+	// either number would charge somebody something they never agreed
+	// to, so the payment is refused instead.
+	if err := checkSignedPrice(&pay, sess); err != nil {
+		return nil, err
 	}
 
 	credited := big.NewInt(0)
@@ -411,6 +450,45 @@ func summarizeTicketStatus(statuses []*pb.TicketStatus) (int32, pb.PaymentReject
 	return rejected, dominant
 }
 
+// checkSignedPrice compares the session's price against the payment's
+// signed expected_price. A payment carrying no expected_price is a
+// stub/legacy blob and is tolerated — those cannot be minted against a
+// real deposit, so there is nothing to protect.
+//
+// A session whose price is still unset is also tolerated: the broker's
+// OpenSession has not run yet, and DebitBalance refuses to bill an
+// unpriced session anyway.
+func checkSignedPrice(pay *pb.Payment, sess *store.Session) error {
+	price := pay.GetExpectedPrice()
+	if price == nil || sess == nil || sess.PricePerWorkUnitWei == store.PricingUnset {
+		return nil
+	}
+	signed := big.NewInt(price.GetPricePerUnit())
+	stored, ok := new(big.Int).SetString(sess.PricePerWorkUnitWei, 10)
+	if !ok || stored == nil {
+		return status.Error(codes.Internal, "session price corrupt")
+	}
+	if signed.Cmp(stored) != 0 {
+		return status.Errorf(codes.FailedPrecondition,
+			"payment signed price %s wei does not match the session price %s wei",
+			signed, stored)
+	}
+	signedPerUnits := price.GetPixelsPerUnit()
+	if signedPerUnits <= 0 {
+		signedPerUnits = 1
+	}
+	storedPerUnits := sess.PerUnits
+	if storedPerUnits == 0 {
+		storedPerUnits = 1
+	}
+	if uint64(signedPerUnits) != storedPerUnits {
+		return status.Errorf(codes.FailedPrecondition,
+			"payment signed per_units %d does not match the session per_units %d",
+			signedPerUnits, storedPerUnits)
+	}
+	return nil
+}
+
 // DebitBalance subtracts (work_units × price) from the balance.
 // Idempotent by (sender, work_id, debit_seq).
 func (s *Service) DebitBalance(_ context.Context, req *pb.DebitBalanceRequest) (*pb.DebitBalanceResponse, error) {
@@ -578,9 +656,20 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 
 	faceValue := new(big.Int).Set(s.defaultFaceValue)
 	if got := req.GetFaceValue(); len(got) > 0 {
-		// Honor the sender's face-value request when economically
-		// reasonable. Plan-future: real per-offering pricing.
-		faceValue = new(big.Int).SetBytes(got)
+		requested := new(big.Int).SetBytes(got)
+		// A sender may size its own tickets, but not below the floor.
+		//
+		// Credit is floor(face_value x win_prob / 2^256), so a small
+		// enough face value makes every ticket credit ZERO while still
+		// looking valid — the sender gets work for money that rounds
+		// away. The floor is also plain economics: redeeming a winner
+		// costs gas, and a face value under that is not worth winning.
+		if requested.Cmp(s.minFaceValue) < 0 {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"requested face_value %s wei is below this payee's minimum of %s wei",
+				requested, s.minFaceValue)
+		}
+		faceValue = requested
 	}
 
 	sess, _, err := s.store.GetOrCreateTicketSession(store.TicketSessionKey{
@@ -589,9 +678,12 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 		Capability: req.GetCapability(),
 		Offering:   req.GetOffering(),
 	}, store.Session{
-		WorkID:              workID,
-		PricePerWorkUnitWei: "0",
-		WorkUnit:            "ticket",
+		WorkID: workID,
+		// This call mints ticket params; it has no idea what the work
+		// costs. The broker's OpenSession sets the real price exactly
+		// once — see store.PricingUnset.
+		PricePerWorkUnitWei: store.PricingUnset,
+		WorkUnit:            "",
 		RecipientRand:       r.String(),
 		FaceValueWei:        faceValue.String(),
 		WinProb:             s.defaultWinProb.String(),
@@ -710,6 +802,10 @@ func (s *Service) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthResp
 }
 
 func mapStoreErr(err error) error {
+	if errors.Is(err, store.ErrPricingUnset) {
+		return status.Error(codes.FailedPrecondition,
+			"session has no offering price; the broker must OpenSession with pricing before billing")
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return status.Error(codes.NotFound, "session not found")

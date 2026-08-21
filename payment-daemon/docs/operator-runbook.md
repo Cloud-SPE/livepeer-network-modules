@@ -194,6 +194,90 @@ decision and stays out-of-band.
 
 ---
 
+## 3.5. Spend limits (sender side) — REQUIRED in chain mode
+
+A gateway signs whatever price the resolver hands it, and the quote is
+*where a bad price comes from* — so no consistency check can catch one.
+The only defence is your own policy about what you are willing to pay,
+and the daemon refuses to start in chain mode until you state it.
+
+**What is not at risk.** A payment cannot be charged beyond its funded
+value. An overpriced orchestrator therefore delivers *less work for the
+same money* rather than draining more of it. These limits guard against
+waste and runaway, not unbounded loss — which is why one of them is
+required and the other is not.
+
+### `--max-payment-wei` (required in chain mode)
+
+The circuit breaker: the largest funded value the daemon will authorize
+for a **single** payment.
+
+```
+--max-payment-wei=10000000000000000    # 0.01 ETH
+```
+
+One number, unit-agnostic, meaningful for every workload. It exists to
+bound the blast radius of a runaway retry loop or a fat-fingered funding
+call — not to express what a fair price is.
+
+**Sizing it.** Take the most expensive single request you ever intend to
+make and give it some headroom. If your largest job funds 0.002 ETH, set
+0.01 and you will notice a bug long before it costs you. Set it too high
+and it stops protecting you; set it too low and legitimate work fails
+loudly with `spend limit: funded_value … exceeds max-payment-wei …`,
+which is the failure you want.
+
+Dev mode (no `--chain-rpc`) has no real funds and runs without it.
+
+### `--max-price-per-unit` (optional, and the one that scales)
+
+Rate ceilings, keyed by **work unit**:
+
+```
+--max-price-per-unit='tokens=10,video_seconds=2000000000000000'
+```
+
+The work unit is the key because it is the denominator a price is quoted
+in (`price_per_unit_wei` per `work_unit.name`), and the manifest declares
+it before anything is minted.
+
+This is what handles **diverse workloads**. A fair price for an LLM token
+and one for a second of generated video differ by orders of magnitude, so
+a single ceiling cannot serve both — but two entries can, and neither
+constrains the other. A unit you have not listed has no rate policy and
+keeps only the circuit breaker, so adding a capability never hard-fails;
+it just runs with the weaker guard until you set a number.
+
+A price quoted per many units is scaled before comparison: with
+`tokens=10`, an offering at 5000 wei per 1000 tokens is 5 wei/token and
+passes.
+
+**Sizing it.** Start from what you actually pay today and roughly double
+it. The point is to catch an orchestrator publishing 1000× the going
+rate — or, far more likely, one that typed an extra three zeros — not to
+haggle over normal variation.
+
+**Known limitation.** Work unit is not a perfect key: tokens from a small
+model and tokens from a large one are the same unit at legitimately
+different prices, so one `tokens` ceiling must be set for the most
+expensive case you route to and will not catch overpricing on the
+cheapest. If that gap matters for your traffic, split the workloads
+across daemons with different policies.
+
+### Managing them day to day
+
+- The active policy is logged at startup (`spend limits policy=…`). Read
+  it after any config change; it is the ground truth for what this daemon
+  will sign.
+- A refusal is a `FailedPrecondition` naming the limit and **both**
+  numbers, so the log line tells you whether the limit is wrong or the
+  price is.
+- Changing a limit takes a restart. There is no hot reload by design: a
+  spend policy that can change without an audit trail is not a policy.
+- Raise a limit when your own legitimate spend grows. Never raise one to
+  make a specific failing request pass without first checking *why* that
+  request wanted more.
+
 ## 4. Gas economics and redemption (receiver side)
 
 Winning tickets accumulate in a durable redemption queue (BoltDB-backed)
@@ -654,17 +738,24 @@ the code.
 5. **Chain RPC reachable.** Test `eth_blockNumber`, `eth_gasPrice`,
    `eth_call` against the RPC endpoint before pointing the daemon at
    it. Latency under 1s; 99.9% uptime SLO.
-6. **BoltDB on persistent storage.** `--db` (receiver mode; default
+6. **Spend limits set (sender).** `--max-payment-wei` is REQUIRED in
+   chain mode and the daemon will not start without it — see §3.5.
+   Consider `--max-price-per-unit` for each work unit you route to,
+   especially if you mix cheap and expensive workloads.
+7. **BoltDB on persistent storage.** `--db` (receiver mode; default
    `/var/lib/livepeer/payment-daemon/sessions.db`) mounted on a real
    disk, not tmpfs. Backups are operator-responsibility.
-7. **Metrics scraping configured.** Prometheus pointed at the daemon's
+8. **Metrics scraping configured.** Prometheus pointed at the daemon's
    `--metrics-listen` port. Alerts wired to
    `livepeer_payment_redemption_queue_depth` above some queue-depth
    threshold — `docs/operations/prometheus/alerts.yaml` ships the rule.
-8. **Gateway-side spend sized deliberately.** The daemon has no
-   sender-side EV cap flags today (see §2), so the gateway's own
-   funding policy — how much value it mints per request or per session
-   top-up — is the only ceiling. Size it with `cmd/payout-sim`.
+9. **Gateway-side spend sized deliberately.** `--max-payment-wei` and
+   `--max-price-per-unit` (§3.5) are the daemon's ceilings, and they
+   bound what any caller above them can authorize. They do not replace
+   the gateway's own funding policy — how much value it mints per
+   request or per session top-up — which decides how much work you
+   actually buy. Size that with `cmd/payout-sim`; size the limits to
+   catch the bugs.
 
 A misconfigured production daemon that starts up clean and silent is
 worse than one that fails fast. The startup sequence is deliberately

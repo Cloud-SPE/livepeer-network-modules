@@ -50,6 +50,27 @@ const (
 
 const metaNextSeq = "next_seq"
 
+// PricingUnset marks a session whose price has not been set by an
+// offering. GetTicketParams must create the payment session before a
+// sender can mint against it, but it knows nothing about what the work
+// costs — so it seeds this, and the broker's OpenSession fills in the
+// real price exactly once.
+//
+// It is a distinct value rather than "0" because a zero price is a legal
+// offering price (free capabilities exist), and "free" must not be
+// indistinguishable from "nobody has said yet".
+const PricingUnset = ""
+
+// ErrPricingConflict reports an OpenSession that would change a price an
+// offering already set. Re-pricing a live session retroactively bills
+// funded work at a rate the payer never agreed to, so it is refused.
+var ErrPricingConflict = errors.New("store: session price already set by an offering and differs")
+
+// ErrPricingUnset reports a debit against a session no offering has
+// priced. Billing it would silently charge zero — the failure mode this
+// exists to prevent — so the debit fails loudly instead.
+var ErrPricingUnset = errors.New("store: session has no offering price; refusing to bill")
+
 // Session is the on-disk receiver session record.
 type Session struct {
 	WorkID              string `json:"work_id"`
@@ -209,6 +230,27 @@ func (s *Store) OpenSession(seed Session) (sess *Session, alreadyOpen bool, err 
 			var found Session
 			if err := json.Unmarshal(raw, &found); err != nil {
 				return fmt.Errorf("unmarshal existing session: %w", err)
+			}
+			// The session exists, but it may have been created by
+			// GetTicketParams, which cannot know what the work costs.
+			// Apply the offering's pricing exactly once; refuse to move
+			// it afterwards.
+			switch {
+			case found.PricePerWorkUnitWei == PricingUnset:
+				found.PricePerWorkUnitWei = seed.PricePerWorkUnitWei
+				found.PerUnits = seed.PerUnits
+				found.WorkUnit = seed.WorkUnit
+				found.Capability = seed.Capability
+				found.Offering = seed.Offering
+				updated, err := json.Marshal(&found)
+				if err != nil {
+					return fmt.Errorf("marshal priced session: %w", err)
+				}
+				if err := tx.Bucket([]byte(sessionsBucket)).Put(rawKey, updated); err != nil {
+					return err
+				}
+			case found.PricePerWorkUnitWei != seed.PricePerWorkUnitWei || found.PerUnits != seed.PerUnits:
+				return ErrPricingConflict
 			}
 			sess = &found
 			alreadyOpen = true
@@ -455,6 +497,12 @@ func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debi
 			return ErrClosed
 		}
 
+		// Fail closed on an unpriced session. Treating "nobody set a
+		// price" as zero is how work gets delivered free while every
+		// log line reports success.
+		if sess.PricePerWorkUnitWei == PricingUnset {
+			return ErrPricingUnset
+		}
 		// Cumulative billing: charge the difference between the bill
 		// for everything debited so far and the bill including this
 		// delta. Never price the delta on its own.

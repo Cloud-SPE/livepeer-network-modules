@@ -41,7 +41,7 @@ func stand(t *testing.T) (pb.PayerDaemonClient, func()) {
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{}, nil, mintStore(t))
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{}, nil, mintStore(t), sender.Limits{})
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -297,7 +297,7 @@ func TestReportPaymentResult_InvalidRecipientRandEvictsSessionAndReturnsAborted(
 		t.Fatalf("devkeystore.New: %v", err)
 	}
 	fetcher := &rotatingFetcher{}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher, nil, mintStore(t))
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher, nil, mintStore(t), sender.Limits{})
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -398,7 +398,7 @@ func TestCreatePayment_UsesAuthoritativeTicketFaceValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, authoritativeFetcher{}, nil, mintStore(t))
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, authoritativeFetcher{}, nil, mintStore(t), sender.Limits{})
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -455,7 +455,7 @@ func TestCreatePayment_PrefersPerRequestTicketParamsBaseURL(t *testing.T) {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
 	fetcher := &recordingFetcher{}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher, nil, mintStore(t))
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fetcher, nil, mintStore(t), sender.Limits{})
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -548,7 +548,7 @@ func TestCreatePayment_RejectsEmptySeedFromFetcher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, emptySeedFetcher{}, nil, mintStore(t))
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, emptySeedFetcher{}, nil, mintStore(t), sender.Limits{})
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -832,7 +832,7 @@ func standWithStore(t *testing.T, st *store.Store) (pb.PayerDaemonClient, func()
 	if err != nil {
 		t.Fatalf("devkeystore.New: %v", err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{}, nil, st)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{}, nil, st, sender.Limits{})
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {

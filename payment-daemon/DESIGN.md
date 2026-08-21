@@ -27,8 +27,12 @@ caller restarts and component extraction.
   `TicketParams`.
 - **Outbound, receiver mode:** optional Arbitrum JSON-RPC when
   `--chain-rpc` is set.
-- **State:** BoltDB on receiver side only. Sender-side sessions remain
-  process-local memory.
+- **State:** BoltDB on both sides. The receiver keeps the session ledger;
+  the sender keeps mint-idempotency records, so a retry after an
+  uncertain response replays rather than signing a second batch. Only the
+  sender's ticket-session cache is process-local memory — it is
+  reconstructible from the payee, and losing it costs a round trip, not
+  money.
 
 ## Load-bearing session contracts
 

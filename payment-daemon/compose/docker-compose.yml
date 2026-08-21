@@ -14,6 +14,11 @@
 #
 # Production requires --chain-rpc set. Dev mode (no --chain-rpc) is
 # chain-stubbed and will not redeem on-chain.
+#
+# A sender in chain mode also requires --max-payment-wei: the daemon
+# refuses to start without a stated ceiling on what one payment may
+# authorize. See docs/operator-runbook.md §3.5 for sizing, and for the
+# optional per-work-unit rate ceilings that mixed workloads need.
 
 services:
   payment-daemon-receiver:
@@ -46,6 +51,14 @@ services:
       - --chain-rpc=${CHAIN_RPC}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
+      # REQUIRED in chain mode — the daemon will not start without it.
+      # Circuit breaker on a single payment; see runbook §3.5.
+      - --max-payment-wei=${MAX_PAYMENT_WEI}
+      # Optional per-work-unit rate ceilings. Set one entry per workload
+      # you route to: a fair price for LLM tokens and for a second of
+      # generated video differ by orders of magnitude, so one number
+      # cannot serve both. Units you omit keep only the breaker above.
+      - --max-price-per-unit=${MAX_PRICE_PER_UNIT}
     environment:
       LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD}
     volumes:

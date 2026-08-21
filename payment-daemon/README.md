@@ -47,6 +47,12 @@ Simulation inputs: [`scenarios/`](./scenarios/).
   mode the daemon still uses fake chain providers and a deterministic
   key; in production mode it validates against real chain state and runs
   the redemption pipeline.
+- **Chain mode requires a spend limit.** A sender daemon will not start
+  without `--max-payment-wei`, the most it may authorize for a single
+  payment. Optional `--max-price-per-unit` adds per-work-unit rate
+  ceilings, which is how a deployment mixing cheap and expensive
+  workloads gets meaningful protection. See
+  [operator-runbook §3.5](./docs/operator-runbook.md).
 
 Anything in [`docs/operator-runbook.md`](./docs/operator-runbook.md)
 that talks about real funds, real gas, or real redemption is

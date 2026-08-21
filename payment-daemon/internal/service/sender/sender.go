@@ -51,6 +51,11 @@ type Service struct {
 	fetcher  TicketParamsFetcher
 	metrics  metrics.Recorder
 
+	// limits is this payer's own policy on what it will sign. Enforced
+	// before any signature, because a refusal after signing is not a
+	// refusal.
+	limits Limits
+
 	// store is the durable mint-idempotency ledger. Minting signs
 	// tickets against real deposit, so a retry after an uncertain
 	// response must replay rather than re-sign, and that record has to
@@ -74,7 +79,7 @@ type senderSession struct {
 }
 
 // New constructs a sender Service. rec may be nil (no-op metrics).
-func New(keystore providers.KeyStore, broker providers.Broker, clock providers.Clock, logger *slog.Logger, fetcher TicketParamsFetcher, rec metrics.Recorder, st *store.Store) *Service {
+func New(keystore providers.KeyStore, broker providers.Broker, clock providers.Clock, logger *slog.Logger, fetcher TicketParamsFetcher, rec metrics.Recorder, st *store.Store, limits Limits) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -89,6 +94,7 @@ func New(keystore providers.KeyStore, broker providers.Broker, clock providers.C
 		fetcher:     fetcher,
 		metrics:     rec,
 		store:       st,
+		limits:      limits,
 		sessions:    map[string]*senderSession{},
 		workIDIndex: map[string]string{},
 	}
@@ -146,6 +152,13 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	funding, err := parseFundingIntent(req.GetFunding())
 	if err != nil {
 		return nil, fmt.Errorf("funding: %w", err)
+	}
+	// Policy check before any signing, minting or network call.
+	if err := s.limits.CheckMint(acceptedPrice.WorkUnitName,
+		big.NewInt(acceptedPrice.PricePerUnitWei),
+		acceptedPrice.UnitsPerPrice, funding.fundedValueWei); err != nil {
+		s.logger.Warn("refusing mint: spend limit", "err", err.Error())
+		return nil, grpcstatus.Errorf(codes.FailedPrecondition, "spend limit: %v", err)
 	}
 	if s.fetcher == nil {
 		return nil, errors.New("ticket params fetcher is not configured")

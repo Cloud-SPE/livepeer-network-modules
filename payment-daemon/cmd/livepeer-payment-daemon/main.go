@@ -56,9 +56,15 @@ const configErrExitCode = 2
 
 func main() {
 	var (
-		mode                  = flag.String("mode", "", "required: 'sender' or 'receiver'")
-		socketPath            = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
-		dbPath                = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB ledger path: receiver sessions, or sender mint-idempotency records")
+		mode          = flag.String("mode", "", "required: 'sender' or 'receiver'")
+		socketPath    = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
+		dbPath        = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB ledger path: receiver sessions, or sender mint-idempotency records")
+		maxPaymentWei = flag.String("max-payment-wei", "",
+			"sender: REQUIRED in chain mode. Largest funded value this daemon will authorize for a single payment, in wei. "+
+				"A circuit breaker against runaway loops and fat-fingered funding, not a price policy — see --max-price-per-unit.")
+		maxPricePerUnit = flag.String("max-price-per-unit", "",
+			"sender: optional rate ceilings as unit=wei pairs, e.g. 'tokens=10,video_seconds=2000000000000000'. "+
+				"Keyed by work unit because that is the denominator prices are quoted in; a unit not listed keeps only the circuit breaker.")
 		mintRetention         = flag.Duration("mint-retention", 24*time.Hour, "sender: how long a mint response stays replayable. Keys are remembered forever regardless — an expired key is refused, never re-minted")
 		payeeAdminToken       = flag.String("payee-admin-token", "", "Bearer token required for receiver-only PayeeAdmin RPCs. Empty disables authenticated admin access.")
 		chainRPC              = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers and signing key are fakes.")
@@ -129,6 +135,8 @@ func main() {
 		socketPath:            *socketPath,
 		dbPath:                *dbPath,
 		mintRetention:         *mintRetention,
+		maxPaymentWei:         *maxPaymentWei,
+		maxPricePerUnit:       *maxPricePerUnit,
 		payeeAdminToken:       adminToken,
 		chainRPC:              *chainRPC,
 		devKeyHex:             *devKeyHex,
@@ -166,6 +174,8 @@ type bootConfig struct {
 	socketPath            string
 	dbPath                string
 	mintRetention         time.Duration
+	maxPaymentWei         string
+	maxPricePerUnit       string
 	payeeAdminToken       string
 	chainRPC              string
 	devKeyHex             string
@@ -293,6 +303,12 @@ func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec met
 		}
 	}()
 
+	limits, err := buildLimits(cfg)
+	if err != nil {
+		return err
+	}
+	logger.Info("spend limits", "policy", limits.Describe())
+
 	svc := sender.New(
 		keystore,
 		broker,
@@ -301,6 +317,7 @@ func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec met
 		sender.NewHTTPTicketParamsFetcher(),
 		rec,
 		st,
+		limits,
 	)
 	srv := server.NewSender(svc, cfg.socketPath, rec, logger.With("component", "grpc"))
 	return runServerWithCtx(ctx, logger, srv)
@@ -601,4 +618,34 @@ func hexNibble(c byte) (byte, error) {
 		return c - 'A' + 10, nil
 	}
 	return 0, errors.New("non-hex digit")
+}
+
+// buildLimits assembles the payer's spend policy.
+//
+// Chain mode REQUIRES --max-payment-wei. A daemon signing against a real
+// deposit should have to state, once, the most it will ever authorize in
+// one payment; defaulting that to unlimited would make the protection
+// opt-in, and the operators most exposed are the least likely to opt in.
+// Dev mode has no real funds, so it runs without.
+func buildLimits(cfg bootConfig) (sender.Limits, error) {
+	var out sender.Limits
+	raw := strings.TrimSpace(cfg.maxPaymentWei)
+	switch {
+	case raw == "" && cfg.chainRPC != "":
+		return out, fmt.Errorf("--max-payment-wei is required in chain mode: " +
+			"set the largest funded value this daemon may authorize for one payment " +
+			"(see docs/operator-runbook.md, 'Spend limits')")
+	case raw != "":
+		v, ok := new(big.Int).SetString(raw, 10)
+		if !ok || v.Sign() <= 0 {
+			return out, fmt.Errorf("--max-payment-wei %q must be a positive decimal integer", raw)
+		}
+		out.MaxPaymentWei = v
+	}
+	rates, err := sender.ParseMaxPricePerUnit(cfg.maxPricePerUnit)
+	if err != nil {
+		return out, fmt.Errorf("--max-price-per-unit: %w", err)
+	}
+	out.MaxPricePerUnit = rates
+	return out, nil
 }

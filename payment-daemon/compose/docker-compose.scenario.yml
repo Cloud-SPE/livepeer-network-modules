@@ -49,6 +49,9 @@ services:
       - --chain-rpc=${CHAIN_RPC}
       - --keystore-path=/etc/livepeer/sender-keystore.json
       - --keystore-password-file=/etc/livepeer/sender-keystore-password
+      # REQUIRED in chain mode — see runbook §3.5.
+      - --max-payment-wei=${MAX_PAYMENT_WEI}
+      - --max-price-per-unit=${MAX_PRICE_PER_UNIT}
     environment:
       LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_SENDER_KEYSTORE_PASSWORD}
     volumes:

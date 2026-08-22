@@ -255,6 +255,11 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 		// payee's ledger charges.
 		UnitsPerPrice:  unitsPerPrice(offering.PerUnits),
 		SettlementKeys: settlementKeysFor(n),
+		// Carried, not dropped. A consumer reserving funds against this
+		// route has to reach the same number the seller will bill, and
+		// for a multipart upload it cannot derive that from its own
+		// request.
+		WorkUnitEstimator: estimatorFor(capability.WorkUnitEstimator),
 	}
 	if len(capability.Extra) > 0 {
 		out.Extra = append([]byte(nil), capability.Extra...)
@@ -456,4 +461,18 @@ func nodesFromProto(ps []*registryv1.Node) []types.Node {
 		out = append(out, n)
 	}
 	return out
+}
+
+// estimatorFor projects the resolved estimator onto a route.
+func estimatorFor(in *types.Estimator) *Estimator {
+	if in == nil {
+		return nil
+	}
+	return &Estimator{
+		ID:        in.ID,
+		Rounding:  in.Rounding,
+		Exactness: in.Exactness,
+		Package:   in.Package,
+		Fixtures:  in.Fixtures,
+	}
 }

@@ -87,6 +87,25 @@ type CoordinatorCapability struct {
 
 type CoordinatorWorkUnit struct {
 	Name string `json:"name"`
+	// Estimator, when present, is how a CLIENT computes a funding
+	// ceiling before the work runs.
+	//
+	// Carried through rather than dropped. Extractors are otherwise
+	// seller-side detail that no counterparty gates on, and this type
+	// modelled work_unit as just a name on that basis — but a caller
+	// funding a multipart upload cannot derive a ceiling from the
+	// request the way a JSON workload can, so for those offerings the
+	// measurement has to reach it.
+	Estimator *CoordinatorEstimator `json:"estimator,omitempty"`
+}
+
+// CoordinatorEstimator mirrors the manifest's estimator block.
+type CoordinatorEstimator struct {
+	ID        string `json:"id"`
+	Rounding  string `json:"rounding"`
+	Exactness string `json:"exactness"`
+	Package   string `json:"package,omitempty"`
+	Fixtures  string `json:"fixtures,omitempty"`
 }
 
 type CoordinatorEnvelopeSignature struct {
@@ -258,11 +277,12 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 		extra string
 	}
 	type capBuilder struct {
-		name     string
-		protocol string
-		workUnit string
-		extra    json.RawMessage
-		offers   []Offering
+		name      string
+		protocol  string
+		workUnit  string
+		estimator *Estimator
+		extra     json.RawMessage
+		offers    []Offering
 	}
 	type nodeBuilder struct {
 		url   string
@@ -295,10 +315,11 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 		cb, ok := nb.caps[key]
 		if !ok {
 			cb = &capBuilder{
-				name:     tuple.CapabilityID,
-				protocol: tuple.Protocol,
-				workUnit: tuple.WorkUnit.Name,
-				extra:    extraRaw,
+				name:      tuple.CapabilityID,
+				protocol:  tuple.Protocol,
+				workUnit:  tuple.WorkUnit.Name,
+				estimator: cloneEstimator(tuple.WorkUnit.Estimator),
+				extra:     extraRaw,
 			}
 			nb.caps[key] = cb
 			nb.order = append(nb.order, key)
@@ -335,11 +356,12 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 				return string(cb.offers[i].Constraints) < string(cb.offers[j].Constraints)
 			})
 			caps = append(caps, Capability{
-				Name:      cb.name,
-				Protocol:  cb.protocol,
-				WorkUnit:  cb.workUnit,
-				Offerings: cb.offers,
-				Extra:     cb.extra,
+				Name:              cb.name,
+				Protocol:          cb.protocol,
+				WorkUnit:          cb.workUnit,
+				WorkUnitEstimator: cb.estimator,
+				Offerings:         cb.offers,
+				Extra:             cb.extra,
 			})
 		}
 		out = append(out, Node{
@@ -424,4 +446,19 @@ func marshalRawObject(v map[string]any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("marshal opaque object: %w", err)
 	}
 	return json.RawMessage(b), nil
+}
+
+// cloneEstimator copies the estimator so a caller cannot mutate the
+// projected view through the envelope it came from.
+func cloneEstimator(in *CoordinatorEstimator) *Estimator {
+	if in == nil {
+		return nil
+	}
+	return &Estimator{
+		ID:        in.ID,
+		Rounding:  in.Rounding,
+		Exactness: in.Exactness,
+		Package:   in.Package,
+		Fixtures:  in.Fixtures,
+	}
 }

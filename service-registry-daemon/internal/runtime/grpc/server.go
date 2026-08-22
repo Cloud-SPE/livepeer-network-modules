@@ -430,6 +430,25 @@ type SelectedRoute struct {
 	// carried with the route so a consumer verifies a broker signature
 	// against a set it already trusts.
 	SettlementKeys []SettlementKey
+	// WorkUnitEstimator is how a client computes a funding ceiling for
+	// this route before the work runs, when it can.
+	//
+	// Nil for the routes whose ceiling a caller derives from its own
+	// request, which is most of them. Present for the ones where it
+	// cannot — a multipart upload has no ceiling in its parameters —
+	// and a consumer that reserves funds against a route carrying one
+	// MUST use it rather than guess, or its reservation and the
+	// seller's bill are two different numbers.
+	WorkUnitEstimator *Estimator
+}
+
+// Estimator mirrors the manifest's work_unit.estimator block.
+type Estimator struct {
+	ID        string
+	Rounding  string
+	Exactness string
+	Package   string
+	Fixtures  string
 }
 
 // SettlementKey mirrors the proto message.

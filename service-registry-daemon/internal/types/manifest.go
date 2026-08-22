@@ -68,6 +68,11 @@ type Node struct {
 type Capability struct {
 	Name     string `json:"name"`
 	WorkUnit string `json:"work_unit,omitempty"`
+	// WorkUnitEstimator is how a client computes a funding ceiling for
+	// this capability, when it can. Nil for every capability whose
+	// ceiling the caller can derive from its own request — which is most
+	// of them, and why this is a pointer rather than a value.
+	WorkUnitEstimator *Estimator `json:"work_unit_estimator,omitempty"`
 	// Protocol is the signed tuple's protocol tag ("paid-job/v1",
 	// "paid-session/v1"). Typed, and projected onto SelectedRoute as a
 	// typed field, because every consumer gates on it. It used to reach
@@ -127,4 +132,19 @@ func (m *Manifest) Clone() *Manifest {
 		}
 	}
 	return &out
+}
+
+// Estimator is the client-reproducible measurement for a capability
+// whose ceiling a caller cannot derive from its own request.
+//
+// It travels because a consumer reserving funds up front has to reach
+// the same number the seller will bill: if the two disagree the
+// settlement exceeds the reservation, and that surfaces as a refused
+// exchange rather than a bug report.
+type Estimator struct {
+	ID        string `json:"id"`
+	Rounding  string `json:"rounding"`
+	Exactness string `json:"exactness"`
+	Package   string `json:"package,omitempty"`
+	Fixtures  string `json:"fixtures,omitempty"`
 }

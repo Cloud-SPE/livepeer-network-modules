@@ -36,7 +36,7 @@
         "expires_at": {
           "type": "string",
           "format": "date-time",
-          "description": "End of the key's validity window. An outgoing key stays listed until this passes so a record signed just before a rotation still verifies — without the overlap, rotating a key would invalidate settlements already in flight."
+          "description": "End of the key's validity window. An outgoing key stays listed until this passes so a record signed just before a rotation still verifies \u2014 without the overlap, rotating a key would invalidate settlements already in flight."
         }
       }
     },
@@ -204,7 +204,7 @@
         "per_units": {
           "type": "integer",
           "minimum": 1,
-          "description": "Denominator of price_per_unit_wei: the price buys this many work units. Absent means 1. Lets an offering price below 1 wei per unit, which token-metered workloads need. Every layer that carries the price MUST carry this with it — see protocols/offering-axes.md §6, which also fixes the cumulative ceiling billing rule both payer and payee compute."
+          "description": "Denominator of price_per_unit_wei: the price buys this many work units. Absent means 1. Lets an offering price below 1 wei per unit, which token-metered workloads need. Every layer that carries the price MUST carry this with it \u2014 see protocols/offering-axes.md \u00a76, which also fixes the cumulative ceiling billing rule both payer and payee compute."
         },
         "worker_url": {
           "type": "string",
@@ -279,7 +279,7 @@
         "max_rotations": {
           "type": "integer",
           "minimum": 0,
-          "description": "Cap on how many times a session may be rebound onto a rotated payment identity (protocols/paid-session.md §3.3.1). Absent or 0 means the default, 3. Consumers gate on nothing here; it is the broker's own bound, advertised so an operator can see it. Note a 'bounded' offering cannot survive a rotation at all — its successor identity starts at a zero balance."
+          "description": "Cap on how many times a session may be rebound onto a rotated payment identity (protocols/paid-session.md \u00a73.3.1). Absent or 0 means the default, 3. Consumers gate on nothing here; it is the broker's own bound, advertised so an operator can see it. Note a 'bounded' offering cannot survive a rotation at all \u2014 its successor identity starts at a zero balance."
         },
         "refill": {
           "enum": [
@@ -352,7 +352,10 @@
         "name": {
           "type": "string",
           "minLength": 1,
-          "description": "The metering dimension's name, e.g. 'tokens', 'video-frame-megapixel', 'barks'. Opaque to the protocol; consumed by gateways for billing display. The extractor (which counts the units) is host-config concern, not advertised here."
+          "description": "The metering dimension's name, e.g. 'tokens', 'seconds', 'characters'. Opaque to the protocol; consumed by gateways for billing display. The EXTRACTOR that counts units is host-config concern and is never advertised \u2014 how a seller counts is its own business. See `estimator` for the one case where a consumer must reproduce the measurement."
+        },
+        "estimator": {
+          "$ref": "#/$defs/estimator"
         }
       }
     },
@@ -385,6 +388,47 @@
           ],
           "default": "JCS",
           "description": "JSON canonicalization scheme used before hashing. JCS = RFC 8785."
+        }
+      }
+    },
+    "estimator": {
+      "type": "object",
+      "title": "Client-reproducible estimator",
+      "description": "How a CLIENT computes a funding ceiling before the work runs, for the offerings where that is possible at all. Present only when a consumer must reproduce the seller's measurement: a JSON workload exposes a ceiling in its own request parameters, but a multipart upload does not, and a caller reserving funds has to reach the same number the seller will bill. This is the exception to extractors being unadvertised, not a relaxation of it.",
+      "required": [
+        "id",
+        "rounding",
+        "exactness"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Versioned estimator name, e.g. 'multipart-audio-duration/v1'. A consumer MUST refuse an id it does not implement rather than guess a ceiling."
+        },
+        "rounding": {
+          "type": "string",
+          "enum": [
+            "ceil-to-whole-seconds",
+            "ceil-to-whole-units"
+          ],
+          "description": "How a fractional measurement becomes billable units. Ceiling, always: a rule that could round down would fund less work than the exchange delivers."
+        },
+        "exactness": {
+          "type": "string",
+          "enum": [
+            "exact-or-reject"
+          ],
+          "description": "What an implementation does when it cannot measure exactly. 'exact-or-reject' means it MUST refuse rather than return an estimate \u2014 a ceiling that reads low underfunds real work and one that reads high overcharges, so neither is guessed."
+        },
+        "package": {
+          "type": "string",
+          "description": "Canonical client implementation, e.g. an npm package name."
+        },
+        "fixtures": {
+          "type": "string",
+          "description": "Shared conformance fixtures both sides run, so a disagreement between implementations is a test failure rather than a settlement that exceeds a ceiling."
         }
       }
     }

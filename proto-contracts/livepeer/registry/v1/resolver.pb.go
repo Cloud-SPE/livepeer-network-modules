@@ -382,8 +382,19 @@ type SelectedRoute struct {
 	// publication_seq, so the rollback rule a resolver already enforces
 	// protects this set too.
 	SettlementKeys []*SettlementKey `protobuf:"bytes,15,rep,name=settlement_keys,json=settlementKeys,proto3" json:"settlement_keys,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// How a CLIENT computes a funding ceiling for this route before the
+	// work runs. Typed rather than left in extra_json because a consumer
+	// acts on it: it decides the reservation, and an operator-declared
+	// extra_json key of the same name could otherwise shadow it.
+	//
+	// Absent for most routes, and correctly so — a JSON workload exposes
+	// its ceiling in its own request parameters. Present only where the
+	// caller cannot derive the number it must reserve, which today means
+	// multipart uploads: the request carries no duration, so a consumer
+	// that guesses reserves one number while the seller bills another.
+	WorkUnitEstimator *Estimator `protobuf:"bytes,16,opt,name=work_unit_estimator,json=workUnitEstimator,proto3" json:"work_unit_estimator,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SelectedRoute) Reset() {
@@ -517,6 +528,13 @@ func (x *SelectedRoute) GetProtocol() string {
 func (x *SelectedRoute) GetSettlementKeys() []*SettlementKey {
 	if x != nil {
 		return x.SettlementKeys
+	}
+	return nil
+}
+
+func (x *SelectedRoute) GetWorkUnitEstimator() *Estimator {
+	if x != nil {
+		return x.WorkUnitEstimator
 	}
 	return nil
 }
@@ -1083,7 +1101,7 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\fSelectResult\x129\n" +
 	"\x05route\x18\x01 \x01(\v2#.livepeer.registry.v1.SelectedRouteR\x05route\"O\n" +
 	"\x10SelectManyResult\x12;\n" +
-	"\x06routes\x18\x01 \x03(\v2#.livepeer.registry.v1.SelectedRouteR\x06routes\"\xde\x04\n" +
+	"\x06routes\x18\x01 \x03(\v2#.livepeer.registry.v1.SelectedRouteR\x06routes\"\xaf\x05\n" +
 	"\rSelectedRoute\x12\x1d\n" +
 	"\n" +
 	"worker_url\x18\x01 \x01(\tR\tworkerUrl\x12\x1f\n" +
@@ -1105,7 +1123,8 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\x11route_fingerprint\x18\f \x01(\fR\x10routeFingerprint\x12&\n" +
 	"\x0funits_per_price\x18\r \x01(\x04R\runitsPerPrice\x12\x1a\n" +
 	"\bprotocol\x18\x0e \x01(\tR\bprotocol\x12L\n" +
-	"\x0fsettlement_keys\x18\x0f \x03(\v2#.livepeer.registry.v1.SettlementKeyR\x0esettlementKeys\"\xaf\x01\n" +
+	"\x0fsettlement_keys\x18\x0f \x03(\v2#.livepeer.registry.v1.SettlementKeyR\x0esettlementKeys\x12O\n" +
+	"\x13work_unit_estimator\x18\x10 \x01(\v2\x1f.livepeer.registry.v1.EstimatorR\x11workUnitEstimator\"\xaf\x01\n" +
 	"\rSettlementKey\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\tR\tpublicKey\x12\x1d\n" +
@@ -1193,7 +1212,8 @@ var file_livepeer_registry_v1_resolver_proto_goTypes = []any{
 	(*Node)(nil),                    // 16: livepeer.registry.v1.Node
 	(FreshnessStatus)(0),            // 17: livepeer.registry.v1.FreshnessStatus
 	(*timestamppb.Timestamp)(nil),   // 18: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),           // 19: google.protobuf.Empty
+	(*Estimator)(nil),               // 19: livepeer.registry.v1.Estimator
+	(*emptypb.Empty)(nil),           // 20: google.protobuf.Empty
 }
 var file_livepeer_registry_v1_resolver_proto_depIdxs = []int32{
 	15, // 0: livepeer.registry.v1.ResolveResult.mode:type_name -> livepeer.registry.v1.ResolveMode
@@ -1204,34 +1224,35 @@ var file_livepeer_registry_v1_resolver_proto_depIdxs = []int32{
 	5,  // 5: livepeer.registry.v1.SelectResult.route:type_name -> livepeer.registry.v1.SelectedRoute
 	5,  // 6: livepeer.registry.v1.SelectManyResult.routes:type_name -> livepeer.registry.v1.SelectedRoute
 	6,  // 7: livepeer.registry.v1.SelectedRoute.settlement_keys:type_name -> livepeer.registry.v1.SettlementKey
-	9,  // 8: livepeer.registry.v1.ListKnownResult.entries:type_name -> livepeer.registry.v1.KnownEntry
-	15, // 9: livepeer.registry.v1.KnownEntry.mode:type_name -> livepeer.registry.v1.ResolveMode
-	17, // 10: livepeer.registry.v1.KnownEntry.freshness_status:type_name -> livepeer.registry.v1.FreshnessStatus
-	18, // 11: livepeer.registry.v1.KnownEntry.cached_at:type_name -> google.protobuf.Timestamp
-	18, // 12: livepeer.registry.v1.GetAuditLogRequest.since:type_name -> google.protobuf.Timestamp
-	13, // 13: livepeer.registry.v1.AuditLogResult.events:type_name -> livepeer.registry.v1.AuditEvent
-	18, // 14: livepeer.registry.v1.AuditEvent.at:type_name -> google.protobuf.Timestamp
-	15, // 15: livepeer.registry.v1.AuditEvent.mode:type_name -> livepeer.registry.v1.ResolveMode
-	18, // 16: livepeer.registry.v1.HealthResult.last_chain_success:type_name -> google.protobuf.Timestamp
-	0,  // 17: livepeer.registry.v1.Resolver.ResolveByAddress:input_type -> livepeer.registry.v1.ResolveByAddressRequest
-	2,  // 18: livepeer.registry.v1.Resolver.Select:input_type -> livepeer.registry.v1.SelectRequest
-	2,  // 19: livepeer.registry.v1.Resolver.SelectMany:input_type -> livepeer.registry.v1.SelectRequest
-	7,  // 20: livepeer.registry.v1.Resolver.ListKnown:input_type -> livepeer.registry.v1.ListKnownRequest
-	10, // 21: livepeer.registry.v1.Resolver.Refresh:input_type -> livepeer.registry.v1.RefreshRequest
-	11, // 22: livepeer.registry.v1.Resolver.GetAuditLog:input_type -> livepeer.registry.v1.GetAuditLogRequest
-	19, // 23: livepeer.registry.v1.Resolver.Health:input_type -> google.protobuf.Empty
-	1,  // 24: livepeer.registry.v1.Resolver.ResolveByAddress:output_type -> livepeer.registry.v1.ResolveResult
-	3,  // 25: livepeer.registry.v1.Resolver.Select:output_type -> livepeer.registry.v1.SelectResult
-	4,  // 26: livepeer.registry.v1.Resolver.SelectMany:output_type -> livepeer.registry.v1.SelectManyResult
-	8,  // 27: livepeer.registry.v1.Resolver.ListKnown:output_type -> livepeer.registry.v1.ListKnownResult
-	19, // 28: livepeer.registry.v1.Resolver.Refresh:output_type -> google.protobuf.Empty
-	12, // 29: livepeer.registry.v1.Resolver.GetAuditLog:output_type -> livepeer.registry.v1.AuditLogResult
-	14, // 30: livepeer.registry.v1.Resolver.Health:output_type -> livepeer.registry.v1.HealthResult
-	24, // [24:31] is the sub-list for method output_type
-	17, // [17:24] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	19, // 8: livepeer.registry.v1.SelectedRoute.work_unit_estimator:type_name -> livepeer.registry.v1.Estimator
+	9,  // 9: livepeer.registry.v1.ListKnownResult.entries:type_name -> livepeer.registry.v1.KnownEntry
+	15, // 10: livepeer.registry.v1.KnownEntry.mode:type_name -> livepeer.registry.v1.ResolveMode
+	17, // 11: livepeer.registry.v1.KnownEntry.freshness_status:type_name -> livepeer.registry.v1.FreshnessStatus
+	18, // 12: livepeer.registry.v1.KnownEntry.cached_at:type_name -> google.protobuf.Timestamp
+	18, // 13: livepeer.registry.v1.GetAuditLogRequest.since:type_name -> google.protobuf.Timestamp
+	13, // 14: livepeer.registry.v1.AuditLogResult.events:type_name -> livepeer.registry.v1.AuditEvent
+	18, // 15: livepeer.registry.v1.AuditEvent.at:type_name -> google.protobuf.Timestamp
+	15, // 16: livepeer.registry.v1.AuditEvent.mode:type_name -> livepeer.registry.v1.ResolveMode
+	18, // 17: livepeer.registry.v1.HealthResult.last_chain_success:type_name -> google.protobuf.Timestamp
+	0,  // 18: livepeer.registry.v1.Resolver.ResolveByAddress:input_type -> livepeer.registry.v1.ResolveByAddressRequest
+	2,  // 19: livepeer.registry.v1.Resolver.Select:input_type -> livepeer.registry.v1.SelectRequest
+	2,  // 20: livepeer.registry.v1.Resolver.SelectMany:input_type -> livepeer.registry.v1.SelectRequest
+	7,  // 21: livepeer.registry.v1.Resolver.ListKnown:input_type -> livepeer.registry.v1.ListKnownRequest
+	10, // 22: livepeer.registry.v1.Resolver.Refresh:input_type -> livepeer.registry.v1.RefreshRequest
+	11, // 23: livepeer.registry.v1.Resolver.GetAuditLog:input_type -> livepeer.registry.v1.GetAuditLogRequest
+	20, // 24: livepeer.registry.v1.Resolver.Health:input_type -> google.protobuf.Empty
+	1,  // 25: livepeer.registry.v1.Resolver.ResolveByAddress:output_type -> livepeer.registry.v1.ResolveResult
+	3,  // 26: livepeer.registry.v1.Resolver.Select:output_type -> livepeer.registry.v1.SelectResult
+	4,  // 27: livepeer.registry.v1.Resolver.SelectMany:output_type -> livepeer.registry.v1.SelectManyResult
+	8,  // 28: livepeer.registry.v1.Resolver.ListKnown:output_type -> livepeer.registry.v1.ListKnownResult
+	20, // 29: livepeer.registry.v1.Resolver.Refresh:output_type -> google.protobuf.Empty
+	12, // 30: livepeer.registry.v1.Resolver.GetAuditLog:output_type -> livepeer.registry.v1.AuditLogResult
+	14, // 31: livepeer.registry.v1.Resolver.Health:output_type -> livepeer.registry.v1.HealthResult
+	25, // [25:32] is the sub-list for method output_type
+	18, // [18:25] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_livepeer_registry_v1_resolver_proto_init() }

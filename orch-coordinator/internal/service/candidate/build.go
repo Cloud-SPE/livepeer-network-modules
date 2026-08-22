@@ -203,6 +203,30 @@ func orchToMap(o types.Orch) map[string]any {
 	return m
 }
 
+// workUnitToMap emits the estimator only when the offering carries one,
+// so a manifest without one canonicalizes to exactly the bytes it did
+// before the field existed. Same rule as per_units and the declared axes:
+// an emitted-but-empty object would change every already-signed
+// manifest's hash.
+func workUnitToMap(w types.WorkUnit) map[string]any {
+	m := map[string]any{"name": w.Name}
+	if w.Estimator != nil {
+		e := map[string]any{
+			"id":        w.Estimator.ID,
+			"rounding":  w.Estimator.Rounding,
+			"exactness": w.Estimator.Exactness,
+		}
+		if w.Estimator.Package != "" {
+			e["package"] = w.Estimator.Package
+		}
+		if w.Estimator.Fixtures != "" {
+			e["fixtures"] = w.Estimator.Fixtures
+		}
+		m["estimator"] = e
+	}
+	return m
+}
+
 func capsToList(caps []types.CapabilityTuple) []any {
 	out := make([]any, 0, len(caps))
 	for _, c := range caps {
@@ -210,7 +234,7 @@ func capsToList(caps []types.CapabilityTuple) []any {
 			"capability_id":      c.CapabilityID,
 			"offering_id":        c.OfferingID,
 			"protocol":           c.Protocol,
-			"work_unit":          map[string]any{"name": c.WorkUnit.Name},
+			"work_unit":          workUnitToMap(c.WorkUnit),
 			"price_per_unit_wei": c.PricePerUnitWei,
 			"worker_url":         c.WorkerURL,
 		}

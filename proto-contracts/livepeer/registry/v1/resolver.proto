@@ -87,7 +87,20 @@ message SelectedRoute {
   // publication_seq, so the rollback rule a resolver already enforces
   // protects this set too.
   repeated SettlementKey settlement_keys = 15;
+
+  // How a CLIENT computes a funding ceiling for this route before the
+  // work runs. Typed rather than left in extra_json because a consumer
+  // acts on it: it decides the reservation, and an operator-declared
+  // extra_json key of the same name could otherwise shadow it.
+  //
+  // Absent for most routes, and correctly so — a JSON workload exposes
+  // its ceiling in its own request parameters. Present only where the
+  // caller cannot derive the number it must reserve, which today means
+  // multipart uploads: the request carries no duration, so a consumer
+  // that guesses reserves one number while the seller bills another.
+  Estimator work_unit_estimator = 16;
 }
+
 
 message SettlementKey {
   // Uncompressed secp256k1 public key, 0x-prefixed hex (65 bytes).

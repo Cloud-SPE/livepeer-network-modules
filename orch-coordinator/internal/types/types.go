@@ -105,6 +105,29 @@ func ValidateProtocolAxes(protocol string, job *JobAxes, session *SessionAxes) e
 // coordinator but signed into the manifest verbatim.
 type WorkUnit struct {
 	Name string `json:"name"`
+	// Estimator, when present, is how a CLIENT computes a funding
+	// ceiling before the work runs. Carried, not interpreted: the
+	// coordinator neither measures anything nor checks that the id is
+	// one it recognises. It is here because the scrape decodes with
+	// DisallowUnknownFields, so a field the coordinator does not model
+	// is not merely dropped — it rejects the broker's entire offering
+	// set with ErrBrokerSchema, and the operator sees a broker that
+	// looks unreachable rather than one advertising a field.
+	Estimator *Estimator `json:"estimator,omitempty"`
+}
+
+// Estimator mirrors the manifest schema's #/$defs/estimator. It is the
+// one exception to extractors being unadvertised: how a seller counts is
+// its own business, except when a consumer must reserve funds against a
+// measurement it cannot derive from its own request — a multipart upload
+// has no duration in its parameters, and a guessed reservation and the
+// seller's bill are two different numbers.
+type Estimator struct {
+	ID        string `json:"id"`
+	Rounding  string `json:"rounding"`
+	Exactness string `json:"exactness"`
+	Package   string `json:"package,omitempty"`
+	Fixtures  string `json:"fixtures,omitempty"`
 }
 
 // BrokerOfferings is the full /registry/offerings response.
@@ -187,6 +210,9 @@ func (b *BrokerOfferings) Validate(expectedOrch string) error {
 		}
 		if c.WorkUnit.Name == "" {
 			return fmt.Errorf("capabilities[%d].work_unit.name: required", i)
+		}
+		if err := validateEstimator(c.WorkUnit.Estimator); err != nil {
+			return fmt.Errorf("capabilities[%d].work_unit.%w", i, err)
 		}
 		if !isNonNegativeDecimalString(c.PricePerUnitWei) {
 			return fmt.Errorf("capabilities[%d].price_per_unit_wei: must be a non-negative decimal string, got %q", i, c.PricePerUnitWei)
@@ -423,6 +449,33 @@ func ParseSignedManifest(b []byte) (*SignedManifest, error) {
 		return nil, errors.New("trailing data after signed manifest")
 	}
 	return &sm, nil
+}
+
+// validateEstimator refuses a partial estimator rather than signing one.
+// The schema requires id, rounding and exactness together, and a consumer
+// that reads an estimator missing its rounding rule has no way to reach
+// the seller's number — which is the single thing the block exists to let
+// it do. Refusing here keeps that failure at publication, where an
+// operator can see it, rather than at a funding decision downstream.
+//
+// The enum values are deliberately NOT checked: this daemon gates on
+// nothing inside the estimator, and a hard-coded list would reject the
+// first value a later spec minor adds, with the rejection baked into the
+// operator's signature.
+func validateEstimator(e *Estimator) error {
+	if e == nil {
+		return nil
+	}
+	if e.ID == "" {
+		return fmt.Errorf("estimator.id: required")
+	}
+	if e.Rounding == "" {
+		return fmt.Errorf("estimator.rounding: required")
+	}
+	if e.Exactness == "" {
+		return fmt.Errorf("estimator.exactness: required")
+	}
+	return nil
 }
 
 func isNonNegativeDecimalString(s string) bool {

@@ -97,8 +97,9 @@ func sourceFromProto(s registryv1.Source) types.Source {
 // capabilityToProto converts a domain Capability.
 func capabilityToProto(c types.Capability) *registryv1.Capability {
 	out := &registryv1.Capability{
-		Name:     c.Name,
-		WorkUnit: c.WorkUnit,
+		Name:              c.Name,
+		WorkUnit:          c.WorkUnit,
+		WorkUnitEstimator: domainEstimatorToProto(c.WorkUnitEstimator),
 	}
 	if len(c.Extra) > 0 {
 		out.ExtraJson = append([]byte(nil), c.Extra...)
@@ -114,7 +115,11 @@ func capabilityFromProto(p *registryv1.Capability) types.Capability {
 	if p == nil {
 		return types.Capability{}
 	}
-	c := types.Capability{Name: p.GetName(), WorkUnit: p.GetWorkUnit()}
+	c := types.Capability{
+		Name:              p.GetName(),
+		WorkUnit:          p.GetWorkUnit(),
+		WorkUnitEstimator: domainEstimatorFromProto(p.GetWorkUnitEstimator()),
+	}
 	if x := p.GetExtraJson(); len(x) > 0 {
 		c.Extra = append([]byte(nil), x...)
 	}
@@ -212,6 +217,7 @@ func selectedRouteToProto(r *SelectedRoute) *registryv1.SelectedRoute {
 		QuoteId:             r.QuoteID,
 		QuoteVersion:        r.QuoteVersion,
 		UnitsPerPrice:       r.UnitsPerPrice,
+		WorkUnitEstimator:   estimatorToProto(r.WorkUnitEstimator),
 	}
 	if len(r.Extra) > 0 {
 		out.ExtraJson = append([]byte(nil), r.Extra...)
@@ -461,6 +467,52 @@ func nodesFromProto(ps []*registryv1.Node) []types.Node {
 		out = append(out, n)
 	}
 	return out
+}
+
+// estimatorToProto puts the route's estimator on the wire. Without it
+// the field reached the route struct and died at the gRPC boundary — the
+// same parsed-here-modelled-nowhere shape that lost capability.extra,
+// one layer further out.
+func estimatorToProto(in *Estimator) *registryv1.Estimator {
+	if in == nil {
+		return nil
+	}
+	return &registryv1.Estimator{
+		Id:        in.ID,
+		Rounding:  in.Rounding,
+		Exactness: in.Exactness,
+		Package:   in.Package,
+		Fixtures:  in.Fixtures,
+	}
+}
+
+// domainEstimatorToProto and domainEstimatorFromProto carry the estimator
+// across the node-listing path, which round-trips through proto and so
+// drops anything the message does not model.
+func domainEstimatorToProto(in *types.Estimator) *registryv1.Estimator {
+	if in == nil {
+		return nil
+	}
+	return &registryv1.Estimator{
+		Id:        in.ID,
+		Rounding:  in.Rounding,
+		Exactness: in.Exactness,
+		Package:   in.Package,
+		Fixtures:  in.Fixtures,
+	}
+}
+
+func domainEstimatorFromProto(p *registryv1.Estimator) *types.Estimator {
+	if p == nil {
+		return nil
+	}
+	return &types.Estimator{
+		ID:        p.GetId(),
+		Rounding:  p.GetRounding(),
+		Exactness: p.GetExactness(),
+		Package:   p.GetPackage(),
+		Fixtures:  p.GetFixtures(),
+	}
 }
 
 // estimatorFor projects the resolved estimator onto a route.

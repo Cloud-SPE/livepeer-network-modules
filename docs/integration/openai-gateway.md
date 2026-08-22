@@ -94,19 +94,29 @@ does not, so the offering advertises how to compute one:
     "id": "multipart-audio-duration/v1",
     "rounding": "ceil-to-whole-seconds",
     "exactness": "exact-or-reject",
-    "package": "@livepeer-network/audio-duration"
+    "fixtures": "livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1"
   }
 }
 ```
 
-```ts
-import { estimateCeilingSecondsFromMultipart } from '@livepeer-network/audio-duration';
-const seconds = estimateCeilingSecondsFromMultipart(body, contentType);
-```
+**You own the TypeScript implementation.** There is no package to
+install: the offering advertises no `package`, because there is no
+canonical client library any more. What binds the two sides is this
+triple plus the fixtures at `fixtures`, which your implementation and the
+broker's extractor both run.
 
-It **throws** rather than guessing — in practice only on headerless MP3,
-where the duration would be a bitrate estimate. Treat the throw as "not
-fundable" and decline the upload.
+Two rules the fixtures enforce, worth stating outright because getting
+either wrong is a funding bug rather than a test failure:
+
+- **Ceiling, never an estimate.** Refuse rather than return a bitrate
+  guess — in practice this only bites on headerless MP3. Treat the
+  refusal as "not fundable" and decline the upload. A ceiling that reads
+  low underfunds real work; one that reads high overcharges.
+- **Whole seconds, rounded up.** `ceil-to-whole-seconds`, always.
+
+Run the fixtures in your own CI. A disagreement between your
+implementation and ours is then a failing test on your side rather than a
+settlement that exceeds the ceiling you funded.
 
 Refuse an estimator `id` you do not implement rather than guess a
 ceiling. And never treat your local estimate as settlement evidence: it

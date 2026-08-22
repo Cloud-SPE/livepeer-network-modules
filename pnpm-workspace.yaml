@@ -1,5 +1,4 @@
 packages:
-  - "packages/audio-duration"
   - "customer-portal"
   - "customer-portal/frontend"
   - "customer-portal/frontend/shared"

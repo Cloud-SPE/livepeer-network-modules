@@ -40,7 +40,6 @@
             "id": "multipart-audio-duration/v1",
             "rounding": "ceil-to-whole-seconds",
             "exactness": "exact-or-reject",
-            "package": "@livepeer-network/audio-duration",
             "fixtures": "livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1"
           }
         },

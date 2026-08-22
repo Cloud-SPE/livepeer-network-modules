@@ -67,7 +67,6 @@ publishes it:
     "id": "multipart-audio-duration/v1",
     "rounding": "ceil-to-whole-seconds",
     "exactness": "exact-or-reject",
-    "package": "@livepeer-network/audio-duration",
     "fixtures": "livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1"
   }
 }
@@ -75,6 +74,13 @@ publishes it:
 
 A client MUST refuse an `id` it does not implement rather than guess a
 ceiling.
+
+**No `package`.** The optional field names a canonical client
+implementation, and there is not one: implementations are independently
+owned. The contract is this document, the `id`/`rounding`/`exactness`
+triple, and the fixtures below — which is what makes independent
+ownership safe. A disagreement between two implementations is then a
+fixture failure rather than a settlement that exceeds a ceiling.
 
 **`exact-or-reject`.** The estimator returns an exact whole-second
 ceiling or it refuses. It MUST NOT return a bitrate estimate: a ceiling

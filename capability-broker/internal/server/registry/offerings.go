@@ -106,8 +106,16 @@ var clientEstimators = map[string]offeringsEstimator{
 		ID:        "multipart-audio-duration/v1",
 		Rounding:  "ceil-to-whole-seconds",
 		Exactness: "exact-or-reject",
-		Package:   "@livepeer-network/audio-duration",
-		Fixtures:  "livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1",
+		// No Package. The field names a canonical client implementation
+		// a consumer can install, and there is no longer one to name:
+		// implementations are independently owned, and the package this
+		// used to advertise was never published to npm — so a caller
+		// that trusted the field and ran `npm i` got a 404.
+		//
+		// What actually defines the contract is ID, Rounding, Exactness
+		// and the fixtures both sides run. An unresolvable pointer to a
+		// fourth thing adds nothing and costs a debugging session.
+		Fixtures: "livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1",
 	},
 }
 

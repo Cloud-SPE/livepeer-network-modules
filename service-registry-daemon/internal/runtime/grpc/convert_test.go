@@ -385,7 +385,7 @@ func TestSelectedRouteCarriesEstimatorOntoTheWire(t *testing.T) {
 		ID:        "multipart-audio-duration/v1",
 		Rounding:  "ceil-to-whole-seconds",
 		Exactness: "exact-or-reject",
-		Package:   "@livepeer-network/audio-duration",
+		Package:   "example.invalid/some-client-lib", // optional field; pass-through only
 		Fixtures:  "livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1",
 	}
 	in := types.ResolvedNode{

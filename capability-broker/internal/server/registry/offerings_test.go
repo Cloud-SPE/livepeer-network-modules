@@ -263,9 +263,21 @@ func TestOfferingAdvertisesClientEstimator(t *testing.T) {
 		t.Fatalf("exactness = %q; a ceiling built on an estimate underfunds or overcharges",
 			est.Exactness)
 	}
-	if est.Package == "" || est.Fixtures == "" {
-		t.Fatal("a client told to reproduce an estimator needs the implementation and the " +
-			"fixtures that pin it")
+	// The fixtures are the contract. Two independently-owned
+	// implementations agree because they run the same vectors, so a
+	// disagreement surfaces as a failing test rather than as a
+	// settlement that exceeds the ceiling a caller funded.
+	if est.Fixtures == "" {
+		t.Fatal("a client told to reproduce an estimator needs the fixtures that pin it")
+	}
+	// And no package. The field names a canonical client library a
+	// caller can install; there is no longer one, and the name this used
+	// to carry was never published — so a caller that trusted the field
+	// got a 404 for its trouble. Absent is the honest answer, and this
+	// asserts it rather than letting a well-meaning re-add slip back in.
+	if est.Package != "" {
+		t.Fatalf("package = %q; implementations are independently owned, so there is no "+
+			"canonical client library to name", est.Package)
 	}
 }
 

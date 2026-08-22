@@ -798,3 +798,48 @@ func TestPendingDebitKeepsPayeeSessionOpen(t *testing.T) {
 		t.Fatalf("still pending after a sweep: %+v", recs[0].Pending)
 	}
 }
+
+// A payment whose every ticket was rejected must not buy work.
+//
+// The job path used to special-case only the rotated recipient rand and
+// let every other full rejection through, so a replayed nonce stream, a
+// bad signature or an exhausted nonce space credited NOTHING and the
+// exchange ran anyway — funded out of balance credited earlier, with the
+// caller seeing 200 the whole time. Found on the pilot stack, where a
+// payer restart replayed its nonces and served three exchanges free.
+func TestFullyRejectedPaymentBuysNoWork(t *testing.T) {
+	var calls atomic.Int64
+	mock := payment.NewMock()
+	mock.RejectNextPayments(1, payment.PaymentRejectionReasonNonceReplay)
+	srv, _ := newJobTestServerWith(t, &calls, mock)
+
+	before := calls.Load()
+	resp := jobReqPaid(t, srv, "rejected-batch", "")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status %d for a payment that credited nothing; want 401 — otherwise the "+
+			"exchange is funded by somebody else's earlier credit", resp.StatusCode)
+	}
+	if got := resp.Header.Get(livepeerheader.Error); got != livepeerheader.ErrPaymentInvalid {
+		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrPaymentInvalid)
+	}
+	if calls.Load() != before {
+		t.Fatal("the backend ran for a payment that credited nothing")
+	}
+}
+
+// A PARTIALLY rejected batch is left alone: it credited something, that
+// balance is the honest one, and the runway check decides whether it
+// buys anything.
+func TestPartiallyRejectedPaymentStillRuns(t *testing.T) {
+	var calls atomic.Int64
+	mock := payment.NewMock()
+	srv, _ := newJobTestServerWith(t, &calls, mock)
+
+	resp := jobReqPaid(t, srv, "partial-batch", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d; an unrejected payment must still run", resp.StatusCode)
+	}
+}

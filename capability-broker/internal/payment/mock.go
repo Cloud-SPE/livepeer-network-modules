@@ -31,6 +31,10 @@ type Mock struct {
 	// failDebits counts down injected DebitBalance failures, so a test
 	// can exercise work shipping while the ledger call does not land.
 	failDebits int
+
+	// rejectPayments counts down injected full-batch rejections.
+	rejectPayments int
+	rejectReason   PaymentRejectionReason
 }
 
 type mockSession struct {
@@ -207,6 +211,20 @@ func (m *Mock) ProcessPayment(_ context.Context, req ProcessPaymentRequest) (*Pr
 		}
 	}
 
+	if m.rejectPayments > 0 {
+		m.rejectPayments--
+		return &ProcessPaymentResult{
+			Sender:     append([]byte(nil), sess.sender...),
+			CreditedEV: big.NewInt(0),
+			Balance:    new(big.Int).Set(sess.balance),
+			TicketStatus: []TicketStatus{{
+				RejectionReason: m.rejectReason,
+			}},
+			TicketsRejected:   1,
+			DominantRejection: m.rejectReason,
+		}, nil
+	}
+
 	// Credit the session. The mock used to accept a payment and credit
 	// NOTHING, so every mock-backed test, conformance run and dev
 	// deployment served work against a zero balance — which is exactly
@@ -227,6 +245,16 @@ func (m *Mock) ProcessPayment(_ context.Context, req ProcessPaymentRequest) (*Pr
 // is generous against the wei-scale prices fixtures use and keeps the
 // mock from being the thing that fails a test about something else.
 var mockCreditPerPayment = new(big.Int).Exp(big.NewInt(10), big.NewInt(15), nil)
+
+// RejectNextPayments makes the next n ProcessPayment calls report every
+// ticket rejected for the given reason, crediting nothing — the shape a
+// replayed nonce stream or a bad signature produces.
+func (m *Mock) RejectNextPayments(n int, reason PaymentRejectionReason) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rejectPayments = n
+	m.rejectReason = reason
+}
 
 // FailNextDebits makes the next n DebitBalance calls fail, so a test can
 // exercise the path where work ships and the ledger call does not land.

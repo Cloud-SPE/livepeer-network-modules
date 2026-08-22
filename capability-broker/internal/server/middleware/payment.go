@@ -346,6 +346,30 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				return
 			}
 
+			// Any OTHER batch rejected in full also fails closed.
+			//
+			// This used to special-case the rotated rand and let every
+			// other full rejection through, so a payment whose tickets
+			// were all refused — a replayed nonce stream, a bad
+			// signature, an exhausted nonce space — bought work anyway.
+			// It credited nothing; the exchange was funded out of
+			// balance credited earlier, and the caller saw 200 the whole
+			// time. Found on the pilot stack, where a payer restart
+			// replayed its nonces and three exchanges in a row were
+			// served free.
+			//
+			// A partially-rejected batch is left alone deliberately: it
+			// credited something, that balance is the honest one, and
+			// the pre-flight runway check decides whether it buys
+			// anything.
+			if result.TicketsRejected > 0 && len(result.TicketStatus) > 0 &&
+				int(result.TicketsRejected) >= len(result.TicketStatus) {
+				livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid,
+					"payee rejected every ticket in this payment; it credited nothing "+
+						"(rejection reason "+strconv.Itoa(int(result.DominantRejection))+")")
+				return
+			}
+
 			// 3. Set up interim-debit ticker. The dispatch layer publishes
 			//    the LiveCounter via the SessionState we attach to the
 			//    request context; the ticker polls it on each tick.

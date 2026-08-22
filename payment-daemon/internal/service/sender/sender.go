@@ -674,13 +674,20 @@ func clonePriceInfo(in *types.PriceInfo) *types.PriceInfo {
 	return &out
 }
 
-// signOneTicket increments the session's nonce, builds a Ticket, hashes
-// it, and signs with the keystore.
+// signOneTicket allocates the next nonce, builds a Ticket, hashes it,
+// and signs with the keystore.
+//
+// The nonce comes from the STORE, not from the in-memory session. The
+// receiver's replay ledger is durable, so a sender whose nonce was not
+// would restart at 1 and replay nonces already consumed — every ticket
+// rejected, nothing credited, and the broker serving work out of
+// balance credited before the restart until it ran dry. Found on the
+// pilot stack after a routine restart.
 func (s *Service) signOneTicket(session *senderSession) (*types.TicketSenderParams, error) {
-	s.mu.Lock()
-	session.nonce++
-	nonce := session.nonce
-	s.mu.Unlock()
+	nonce, err := s.nextNonce(session)
+	if err != nil {
+		return nil, err
+	}
 
 	params := session.ticketParams
 	hash := ticketHash(&types.Ticket{
@@ -839,4 +846,28 @@ func (s *Service) readValidityPeriod(ctx context.Context, fresh bool) (int64, ti
 	s.validityPeriod = v
 	s.validityReadAt = time.Now().UTC()
 	return v, s.validityReadAt, nil
+}
+
+// nextNonce allocates durably when a store is configured, and falls back
+// to the in-memory counter only when one is not — which is tests, and
+// the in-process dev path that has no receiver to disagree with.
+func (s *Service) nextNonce(session *senderSession) (uint32, error) {
+	if s.store != nil && session.workID != "" {
+		n, err := s.store.NextSenderNonce(session.workID)
+		if err != nil {
+			return 0, fmt.Errorf("allocate ticket nonce: %w", err)
+		}
+		// Keep the in-memory view in step so anything reading it for
+		// diagnostics does not disagree with what was signed.
+		s.mu.Lock()
+		if n > session.nonce {
+			session.nonce = n
+		}
+		s.mu.Unlock()
+		return n, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session.nonce++
+	return session.nonce, nil
 }

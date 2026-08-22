@@ -36,7 +36,7 @@ capabilities:
       name: tokens
       extractor: { type: openai-usage }
     price: { amount_wei: "100", per_units: 1000 }
-    backend: { transport: http, url: "http://127.0.0.1:9411/v1/chat" }
+    backend: { transport: http, url: "http://127.0.0.1:9411/v1/chat/completions" }
     extra:
       openai: { model: gpt-oss-20b }
       provider: vllm

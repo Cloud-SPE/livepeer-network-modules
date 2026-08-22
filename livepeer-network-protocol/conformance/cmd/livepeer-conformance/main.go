@@ -20,7 +20,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -245,6 +247,17 @@ capabilities:
 `
 
 func main() {
+	// os.Exit does not run deferred functions, and this command exits
+	// non-zero on a failing suite — which is the common case when you
+	// are using it. So every `defer ctl.stop()` was skipped exactly when
+	// the suite failed, leaking the reference broker and its temp dir.
+	// Four of them were found running 32 hours after their runs ended.
+	//
+	// run() returns the code and main is the only place that exits.
+	os.Exit(run())
+}
+
+func run() int {
 	var (
 		brokerURL = flag.String("broker-url", "", "run against an already-running broker (URL mode)")
 		brokerDir = flag.String("broker-dir", defaultBrokerDir(), "path to the reference broker module (auto mode)")
@@ -273,13 +286,13 @@ func main() {
 	backend, err := fakes.NewJobBackend(listen)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "start fake job backend:", err)
-		os.Exit(2)
+		return 2
 	}
 	defer backend.Close()
 	runner, err := fakes.NewSessionRunner(listen)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "start fake session runner:", err)
-		os.Exit(2)
+		return 2
 	}
 	defer runner.Close()
 
@@ -329,9 +342,22 @@ func main() {
 		ctl, url, err := startReferenceBroker(*brokerDir, backend, runner, *timeout, *jobUnit, *sessUnit)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "start broker:", err)
-			os.Exit(2)
+			return 2
 		}
-		defer ctl.stop()
+		// A signal bypasses defers too, and Ctrl-C on a long suite is
+		// how an impatient operator ends most runs. Stop the broker on
+		// the way out rather than leaving it holding a port and a temp
+		// dir nobody will ever look for.
+		stopOnce := sync.OnceFunc(ctl.stop)
+		defer stopOnce()
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			<-sigCh
+			fmt.Fprintln(os.Stderr, "\ninterrupted — stopping the reference broker")
+			stopOnce()
+			os.Exit(130)
+		}()
 		ctx.BrokerURL = url
 		// Auto mode owns the process, so restart-dependent scenarios
 		// can run for real instead of skipping.
@@ -346,8 +372,9 @@ func main() {
 
 	results := harness.RunAll(ctx, scenarios.All(), os.Stdout)
 	if !harness.Summarize(results, os.Stdout) {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 func defaultBrokerDir() string {

@@ -56,7 +56,26 @@ start backend python3 ./backend.py
 
 # The broker refuses to start until the payee answers Health, so the
 # daemons must be up first.
-sleep 3
+#
+# Wait for the sockets rather than guessing a duration. This was
+# `sleep 3`, and against a real chain the payee verifies the chain id and
+# reads its wallet balance BEFORE it binds — so startup drifted past
+# three seconds and the broker dialled 62ms too early and died. A
+# guessed duration is a race with a comment on it; a socket either
+# exists or it does not.
+wait_for_socket() {
+  local path="$1" name="$2"
+  for _ in $(seq 1 120); do
+    [ -S "$path" ] && return 0
+    sleep 0.5
+  done
+  echo "$name socket $path never appeared; see $RUN_DIR/$name.log" >&2
+  return 1
+}
+echo "waiting for payment daemon sockets..."
+wait_for_socket /tmp/lpm-payer.sock payer || exit 1
+wait_for_socket /tmp/lpm-payee.sock payee || exit 1
+
 ./render-config.sh > "$RUN_DIR/host-config.yaml"
 echo "starting broker..."
 start broker "$BIN_DIR/capability-broker" --config "$RUN_DIR/host-config.yaml"

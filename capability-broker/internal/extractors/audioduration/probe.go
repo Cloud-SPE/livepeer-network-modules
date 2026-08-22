@@ -478,3 +478,35 @@ func mp3FrameCount(frame []byte, h mp3Header) (uint32, bool) {
 	}
 	return binary.BigEndian.Uint32(frame[off+8 : off+12]), true
 }
+
+// ErrInexact means the container was recognized and its duration is a
+// bitrate estimate rather than a declared sample or frame count. Only
+// constant-bitrate MP3 without a Xing/VBRI header reaches this.
+var ErrInexact = errors.New("audioduration: duration is an estimate, not a measurement")
+
+// EstimateCeilingSeconds is the multipart-audio-duration/v1 estimator
+// contract: an exact whole-second ceiling, or an error.
+//
+// This is the shared surface — a client computes a funding ceiling with
+// it before the work runs, and the broker bills from the same parse
+// afterwards. The two must agree, or the ceiling is exceeded by the
+// settlement and a correct exchange is refused.
+//
+// It refuses an inexact duration rather than returning one, which is the
+// difference between this and Probe. A ceiling is a number somebody
+// funds against: an estimate that reads slightly low underfunds real
+// work, and one that reads high overcharges. Neither is a thing to guess
+// at, so a duration that cannot be measured is not offered.
+//
+// Rounds UP. A rule that could return 0 for delivered work funds nothing
+// for it.
+func EstimateCeilingSeconds(b []byte) (int64, error) {
+	res, err := Probe(b)
+	if err != nil {
+		return 0, err
+	}
+	if !res.Exact {
+		return 0, fmt.Errorf("%w: %s", ErrInexact, res.Format)
+	}
+	return int64(math.Ceil(res.Duration.Seconds())), nil
+}

@@ -48,6 +48,70 @@ work_unit:
 A request body that is not `multipart/*` is treated as the audio itself,
 so one extractor serves both a form upload and a raw one.
 
+## The estimator contract (`multipart-audio-duration/v1`)
+
+A caller that must reserve funds **before** the work runs has to reach
+the same number the seller will bill. A JSON workload exposes a usable
+ceiling in its request parameters; a multipart upload does not, so this
+extractor doubles as a client-side estimator.
+
+That makes it the one extractor a counterparty reproduces, which changes
+what it owes. Elsewhere how a seller counts is its own business and is
+deliberately unadvertised (`offering-axes.md`); here the offering
+publishes it:
+
+```json
+"work_unit": {
+  "name": "seconds",
+  "estimator": {
+    "id": "multipart-audio-duration/v1",
+    "rounding": "ceil-to-whole-seconds",
+    "exactness": "exact-or-reject",
+    "package": "@livepeer-network/audio-duration",
+    "fixtures": "livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1"
+  }
+}
+```
+
+A client MUST refuse an `id` it does not implement rather than guess a
+ceiling.
+
+**`exact-or-reject`.** The estimator returns an exact whole-second
+ceiling or it refuses. It MUST NOT return a bitrate estimate: a ceiling
+that reads low underfunds real work, one that reads high overcharges, and
+neither is a thing to guess at. In practice only headerless
+constant-bitrate MP3 reaches this, and it is refused.
+
+Note the asymmetry with billing. The estimator refuses an inexact
+measurement outright; the seller's extractor may, by configuration
+(`allow_inexact`), bill one. They are different questions — what may be
+spent versus what was — and the same parse serves both.
+
+**The client estimate is never settlement evidence.** It bounds what may
+happen. The broker's signed settlement is authoritative for what did.
+
+### Shared fixtures
+
+Two implementations of one measurement disagree eventually, and the
+disagreement surfaces as a settlement exceeding a ceiling — a refused
+exchange rather than a bug report. So the contract is the bytes:
+
+```
+livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1/
+  manifest.json     expected format, seconds, ceiling_seconds, reject
+  *.wav *.flac *.m4a *.webm *.mp3 *.bin
+```
+
+An implementation MUST return exactly `ceiling_seconds` for every fixture
+with `reject: false`, and MUST refuse every fixture with `reject: true`.
+**Refusing is not returning zero** — zero is a claim that the audio has
+no duration.
+
+Both the broker's Go implementation and the published TypeScript package
+run this set. Regenerate with
+`go run ./internal/extractors/audioduration/genfixtures -out <dir>` from
+`capability-broker`.
+
 ## Formats
 
 | Container | Source of truth | Exact |

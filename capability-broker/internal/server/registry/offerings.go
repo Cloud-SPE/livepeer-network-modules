@@ -64,6 +64,61 @@ type offeringsCapabilityV1 struct {
 
 type offeringsWorkUnit struct {
 	Name string `json:"name"`
+	// Estimator describes how a CLIENT can compute a funding ceiling
+	// before the work runs, for the offerings where that is possible.
+	//
+	// Extractors are otherwise deliberately unadvertised — how a seller
+	// counts is its own business and no counterparty gates on it
+	// (offering-axes.md). This is the exception: a caller that must
+	// reserve funds up front has to reach the same number the seller
+	// will bill, and for a multipart upload it cannot derive that from
+	// the request parameters. So the offering names the estimator, its
+	// rounding, and its exactness requirement, and the client runs the
+	// published implementation rather than inventing a parser.
+	Estimator *offeringsEstimator `json:"estimator,omitempty"`
+}
+
+type offeringsEstimator struct {
+	// ID is the versioned estimator name, e.g.
+	// "multipart-audio-duration/v1". A client MUST refuse an id it does
+	// not implement rather than guess a ceiling.
+	ID string `json:"id"`
+	// Rounding is how a fractional measurement becomes billable units.
+	Rounding string `json:"rounding"`
+	// Exactness states what an implementation must do when it cannot
+	// measure exactly. "exact-or-reject" means it MUST refuse rather
+	// than return an estimate: a ceiling that reads low underfunds real
+	// work and one that reads high overcharges, so neither is guessed.
+	Exactness string `json:"exactness"`
+	// Package is the canonical client implementation.
+	Package string `json:"package,omitempty"`
+	// Fixtures is the shared conformance set both sides run, so a
+	// disagreement is a test failure rather than a refused exchange.
+	Fixtures string `json:"fixtures,omitempty"`
+}
+
+// clientEstimators maps an extractor type to the estimator a client can
+// run itself. Absent means the offering advertises none, which is the
+// default and correct for extractors whose inputs the client does not
+// have.
+var clientEstimators = map[string]offeringsEstimator{
+	"multipart-audio-duration": {
+		ID:        "multipart-audio-duration/v1",
+		Rounding:  "ceil-to-whole-seconds",
+		Exactness: "exact-or-reject",
+		Package:   "@livepeer-network/audio-duration",
+		Fixtures:  "livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1",
+	},
+}
+
+// estimatorFor returns the advertised estimator for an extractor config.
+func estimatorFor(extractor map[string]any) *offeringsEstimator {
+	t, _ := extractor["type"].(string)
+	est, ok := clientEstimators[t]
+	if !ok {
+		return nil
+	}
+	return &est
 }
 
 // offeringsJobAxes / offeringsSessionAxes mirror the manifest schema's
@@ -154,12 +209,15 @@ func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPa
 		}
 		jobAxes, sessionAxes := axesFor(c)
 		out.Capabilities = append(out.Capabilities, offeringsCapabilityV1{
-			CapabilityID:    c.ID,
-			OfferingID:      c.OfferingID,
-			Protocol:        c.Protocol,
-			Job:             jobAxes,
-			Session:         sessionAxes,
-			WorkUnit:        offeringsWorkUnit{Name: c.WorkUnit.Name},
+			CapabilityID: c.ID,
+			OfferingID:   c.OfferingID,
+			Protocol:     c.Protocol,
+			Job:          jobAxes,
+			Session:      sessionAxes,
+			WorkUnit: offeringsWorkUnit{
+				Name:      c.WorkUnit.Name,
+				Estimator: estimatorFor(c.WorkUnit.Extractor),
+			},
 			PricePerUnitWei: c.Price.AmountWei,
 			PerUnits:        c.Price.PerUnits,
 			Extra:           extra,

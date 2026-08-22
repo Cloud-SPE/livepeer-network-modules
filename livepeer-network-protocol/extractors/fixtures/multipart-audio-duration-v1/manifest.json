@@ -1,0 +1,93 @@
+{
+  "contract": "An implementation MUST return exactly ceiling_seconds for every fixture with reject=false, and MUST refuse every fixture with reject=true. Refusing is not the same as returning zero.",
+  "estimator": "multipart-audio-duration/v1",
+  "fixtures": [
+    {
+      "file": "wav-16k-mono-3s.wav",
+      "format": "wav",
+      "seconds": 3,
+      "ceiling_seconds": 3,
+      "reject": false,
+      "why": "data chunk over the fmt byte rate"
+    },
+    {
+      "file": "wav-16k-mono-0.4s.wav",
+      "format": "wav",
+      "seconds": 0.4,
+      "ceiling_seconds": 1,
+      "reject": false,
+      "why": "rounds UP: a rule returning 0 for delivered work funds nothing"
+    },
+    {
+      "file": "wav-44k-stereo-1.5s.wav",
+      "format": "wav",
+      "seconds": 1.5,
+      "ceiling_seconds": 2,
+      "reject": false,
+      "why": "stereo byte rate; the ceiling is still whole seconds"
+    },
+    {
+      "file": "flac-44k-7s.flac",
+      "format": "flac",
+      "seconds": 7,
+      "ceiling_seconds": 7,
+      "reject": false,
+      "why": "STREAMINFO total samples over sample rate"
+    },
+    {
+      "file": "mp4-12.5s.m4a",
+      "format": "mp4",
+      "seconds": 12.5,
+      "ceiling_seconds": 13,
+      "reject": false,
+      "why": "mvhd duration over timescale"
+    },
+    {
+      "file": "webm-9.5s.webm",
+      "format": "webm",
+      "seconds": 9.5,
+      "ceiling_seconds": 10,
+      "reject": false,
+      "why": "Info Duration times TimecodeScale"
+    },
+    {
+      "file": "mp3-xing-4s.mp3",
+      "format": "mp3",
+      "seconds": 3.996734693877551,
+      "ceiling_seconds": 4,
+      "reject": false,
+      "why": "Xing frame count times samples per frame over sample rate"
+    },
+    {
+      "file": "mp3-headerless.mp3",
+      "reject": true,
+      "why": "headerless MP3 duration is a bitrate estimate, never exact; an estimator MUST refuse rather than silently guess"
+    },
+    {
+      "file": "flac-unknown-length.flac",
+      "reject": true,
+      "why": "FLAC declaring no sample count; billing zero for real audio is wrong"
+    },
+    {
+      "file": "mp4-fragmented.m4a",
+      "reject": true,
+      "why": "fragmented MP4 declares duration 0 in mvhd"
+    },
+    {
+      "file": "not-audio.bin",
+      "reject": true,
+      "why": "unrecognized container"
+    },
+    {
+      "file": "flac-implausible.flac",
+      "reject": true,
+      "why": "25 hours is a misparse rather than a transcription input; billing it would be a large silent overcharge"
+    },
+    {
+      "file": "truncated.wav",
+      "reject": true,
+      "why": "truncated header"
+    }
+  ],
+  "rounding": "ceil-to-whole-seconds"
+}

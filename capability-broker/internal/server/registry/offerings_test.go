@@ -244,3 +244,40 @@ func TestBuildOfferings_RelaysSessionParamsSchema(t *testing.T) {
 		t.Fatalf("absent schema became %q", s)
 	}
 }
+
+// A transcription offering advertises its estimator, because a caller
+// funding a multipart upload cannot derive a ceiling from the request
+// parameters the way a JSON workload can.
+func TestOfferingAdvertisesClientEstimator(t *testing.T) {
+	est := estimatorFor(map[string]any{"type": "multipart-audio-duration"})
+	if est == nil {
+		t.Fatal("no estimator advertised for multipart-audio-duration")
+	}
+	if est.ID != "multipart-audio-duration/v1" {
+		t.Fatalf("id = %q", est.ID)
+	}
+	if est.Rounding != "ceil-to-whole-seconds" {
+		t.Fatalf("rounding = %q; a client must round the same way the seller bills", est.Rounding)
+	}
+	if est.Exactness != "exact-or-reject" {
+		t.Fatalf("exactness = %q; a ceiling built on an estimate underfunds or overcharges",
+			est.Exactness)
+	}
+	if est.Package == "" || est.Fixtures == "" {
+		t.Fatal("a client told to reproduce an estimator needs the implementation and the " +
+			"fixtures that pin it")
+	}
+}
+
+// Everything else stays unadvertised. How a seller counts is its own
+// business and no counterparty gates on it; the exception exists only
+// where a client genuinely has to reproduce the number.
+func TestOtherExtractorsAdvertiseNoEstimator(t *testing.T) {
+	for _, typ := range []string{"openai-usage", "request-formula", "bytes-counted",
+		"seconds-elapsed", "response-jsonpath", ""} {
+		if est := estimatorFor(map[string]any{"type": typ}); est != nil {
+			t.Fatalf("extractor %q advertised estimator %q; extractors are seller-side "+
+				"implementation detail unless a client must reproduce them", typ, est.ID)
+		}
+	}
+}

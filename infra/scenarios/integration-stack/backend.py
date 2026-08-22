@@ -263,10 +263,63 @@ class RunnerHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    # The descriptor a runner emits is chosen by the WORKLOAD, not the
+    # protocol: paid-session/v1 carries every one of these. The broker
+    # validates what comes back against the offering's declared
+    # descriptor_schema, so the stub has to answer per capability or a
+    # vtuber open fails schema validation against an sfu-room body.
+    #
+    # Each schema has a CLOSED public key set — see
+    # livepeer-network-protocol/descriptors/. An extra key here is not a
+    # harmless addition; it is what the leak fixtures exist to catch.
+    def _runtime_for(self, capability, sid):
+        if capability == "livepeer:vtuber/session":
+            return {
+                "schema": "trickle-egress/v1",
+                "public": {
+                    "control_url": f"wss://vtuber.stub.invalid/control/{sid}",
+                    "preview_url": f"https://vtuber.stub.invalid/preview/{sid}",
+                    "status_url": f"https://vtuber.stub.invalid/status/{sid}",
+                },
+                "grants": [{
+                    "id": "control-attach",
+                    "operations": ["control-attach"],
+                    "secret": f"vt_{sid}",
+                    "expires_at": "2030-01-01T00:00:00Z",
+                }],
+            }
+        if capability == "livepeer:daydream/session":
+            return {
+                "schema": "scope-passthrough/v1",
+                "public": {
+                    "scope_url": f"https://daydream.stub.invalid/scope/{sid}",
+                    "status_url": f"https://daydream.stub.invalid/status/{sid}",
+                },
+                "grants": [{
+                    "id": "scope-api-access",
+                    "operations": ["scope-api-access"],
+                    "secret": f"dd_{sid}",
+                    "expires_at": "2030-01-01T00:00:00Z",
+                }],
+            }
+        return {
+            "schema": "sfu-room/v1",
+            "public": {
+                "room_url": f"https://sfu.stub.invalid/rooms/{sid}",
+                "ice_servers": [{"urls": ["stun:stun.l.google.com:19302"]}],
+                "max_participants": 12,
+            },
+            "private": {"terminate_token": f"cb_{sid}"},
+        }
+
     def do_POST(self):
-        read_body(self)
+        raw = read_body(self)
         if self.path.rstrip("/") != "/sessions":
             return self._json(404, {"error": "not found"})
+        try:
+            capability = json.loads(raw or b"{}").get("capability", "")
+        except ValueError:
+            capability = ""
         sid = f"rns_{uuid.uuid4().hex[:12]}"
         SESSIONS[sid] = {"state": "active"}
         # The field names are `runner_session_id` and `runtime`, and they
@@ -281,15 +334,7 @@ class RunnerHandler(BaseHTTPRequestHandler):
         # partition-bypass vector and rejects the open.
         return self._json(200, {
             "runner_session_id": sid,
-            "runtime": {
-                "schema": "sfu-room/v1",
-                "public": {
-                    "room_url": f"https://sfu.stub.invalid/rooms/{sid}",
-                    "ice_servers": [{"urls": ["stun:stun.l.google.com:19302"]}],
-                    "max_participants": 12,
-                },
-                "private": {"terminate_token": f"cb_{sid}"},
-            },
+            "runtime": self._runtime_for(capability, sid),
         })
 
     def do_GET(self):

@@ -83,4 +83,42 @@ capabilities:
     # stub runner deliberately emits no usage events, so a session opened
     # against it never meters.
     backend: { transport: http, url: "${MEET_RUNNER_URL:-http://127.0.0.1:9500}" }
+
+  # --- vtuber: paid-session/v1 + trickle-egress/v1 -----------------------
+  # Workload identity lives in the descriptor schema, not a protocol name.
+  # These two exist so the vtuber and daydream gateways have something to
+  # open a real session against; the offerings differ ONLY by
+  # descriptor_schema, which is the point of the factoring.
+  - id: livepeer:vtuber/session
+    offering_id: default
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: trickle-egress/v1
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner:
+        create_path: /sessions
+        status_path: "/sessions/{id}"
+        terminate_path: "/sessions/{id}"
+    health: { initial_status: ready }
+    work_unit: { name: participant-seconds }
+    price: { amount_wei: "100", per_units: 1000 }
+    backend: { transport: http, url: "${VTUBER_RUNNER_URL:-http://127.0.0.1:9500}" }
+
+  # --- daydream: paid-session/v1 + scope-passthrough/v1 ------------------
+  - id: livepeer:daydream/session
+    offering_id: default
+    protocol: paid-session/v1
+    session:
+      descriptor_schema: scope-passthrough/v1
+      lease_policy: fixed
+      lease_max_seconds: 600
+      runner:
+        create_path: /sessions
+        status_path: "/sessions/{id}"
+        terminate_path: "/sessions/{id}"
+    health: { initial_status: ready }
+    work_unit: { name: participant-seconds }
+    price: { amount_wei: "100", per_units: 1000 }
+    backend: { transport: http, url: "${DAYDREAM_RUNNER_URL:-http://127.0.0.1:9500}" }
 YAML

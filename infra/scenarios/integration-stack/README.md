@@ -60,6 +60,8 @@ Per-team, in `docs/integration/`:
 - `openai-gateway.md` — paid-job/v1, the funding ceiling, settlement retrieval
 - `loc-clearinghouse.md` — settlement verification, encumbrance, evidence
 - `meeting.md` — paid-session/v1, rotation, rebinding
+- `vtuber-daydream.md` — paid-session/v1, trickle-egress/v1 and
+  scope-passthrough/v1; workload identity lives in the descriptor schema
 
 ## Verifying the stack with the chain probe
 

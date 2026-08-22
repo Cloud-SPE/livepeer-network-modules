@@ -78,5 +78,9 @@ capabilities:
     health: { initial_status: ready }
     work_unit: { name: participant-seconds }
     price: { amount_wei: "100", per_units: 1000 }
-    backend: { transport: http, url: "http://127.0.0.1:9500" }
+    # Overridable so the chain probe can point this at its own fake
+    # runner, which is the only way to exercise session metering: the
+    # stub runner deliberately emits no usage events, so a session opened
+    # against it never meters.
+    backend: { transport: http, url: "${MEET_RUNNER_URL:-http://127.0.0.1:9500}" }
 YAML

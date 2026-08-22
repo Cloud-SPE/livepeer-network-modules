@@ -25,6 +25,7 @@ import json
 import re
 import time
 import uuid
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
@@ -206,7 +207,16 @@ class OpenAIHandler(BaseHTTPRequestHandler):
 
     # --- routing ----------------------------------------------------------
 
+    # Seconds to stall before answering, so an operator has a window to
+    # kill the payee mid-exchange. That is the only way to exercise the
+    # debit-retry lifecycle against a real ledger: the failure has to
+    # come from outside, because a probe cannot stop a daemon it did not
+    # start. Default 0 — nothing waits unless asked.
+    DELAY = float(os.environ.get("BACKEND_DELAY_SECONDS", "0"))
+
     def do_POST(self):
+        if self.DELAY > 0:
+            time.sleep(self.DELAY)
         raw = read_body(self)
         path = self.path.split("?")[0].rstrip("/")
 
@@ -259,23 +269,37 @@ class RunnerHandler(BaseHTTPRequestHandler):
             return self._json(404, {"error": "not found"})
         sid = f"rns_{uuid.uuid4().hex[:12]}"
         SESSIONS[sid] = {"state": "active"}
+        # The field names are `runner_session_id` and `runtime`, and they
+        # are not cosmetic: the broker fails the open closed when either
+        # is missing, so a runner using its own names looks to an
+        # operator like a backend outage. This stub previously answered
+        # `session_id` + `descriptor` and the meet offering had never
+        # completed an open.
+        #
+        # `runtime` has a CLOSED key set — schema, public, private,
+        # grants — because an unknown key at that level is a
+        # partition-bypass vector and rejects the open.
         return self._json(200, {
-            "session_id": sid,
-            "descriptor": {
+            "runner_session_id": sid,
+            "runtime": {
                 "schema": "sfu-room/v1",
                 "public": {
                     "room_url": f"https://sfu.stub.invalid/rooms/{sid}",
                     "ice_servers": [{"urls": ["stun:stun.l.google.com:19302"]}],
                     "max_participants": 12,
                 },
+                "private": {"terminate_token": f"cb_{sid}"},
             },
-            "callback_token": f"cb_{sid}",
         })
 
     def do_GET(self):
         m = re.match(r"^/sessions/([^/?]+)", self.path)
         if m:
-            return self._json(200, {"state": SESSIONS.get(m.group(1), {}).get("state", "gone")})
+            sid = m.group(1)
+            return self._json(200, {
+                "runner_session_id": sid,
+                "state": SESSIONS.get(sid, {}).get("state", "gone"),
+            })
         return self._json(200, {"ok": True})
 
     def do_DELETE(self):

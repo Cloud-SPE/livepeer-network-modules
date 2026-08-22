@@ -60,3 +60,44 @@ Per-team, in `docs/integration/`:
 - `openai-gateway.md` — paid-job/v1, the funding ceiling, settlement retrieval
 - `loc-clearinghouse.md` — settlement verification, encumbrance, evidence
 - `meeting.md` — paid-session/v1, rotation, rebinding
+
+## Verifying the stack with the chain probe
+
+`payment-daemon/cmd/livepeer-chain-probe` exercises both protocols
+against this stack and a real ledger. All five modes pass against it.
+
+```
+go -C payment-daemon build -o /tmp/chain-probe ./cmd/livepeer-chain-probe
+
+# paid-job — unary, and the one that checks the inline settlement headers
+/tmp/chain-probe --recipient=$ORCH_ETH_ADDRESS --protocol=job \
+  --capability=openai:chat-completions --offering=default \
+  --work-unit=tokens --price-wei=100 --per-units=1000 \
+  --payee-admin-token=$PAYEE_ADMIN_TOKEN
+
+# paid-session and rotation — need the offering pointed at the probe's
+# own runner, because the stub emits no usage events and so never meters
+MEET_RUNNER_URL=http://127.0.0.1:9501 ./up.sh
+/tmp/chain-probe --recipient=$ORCH_ETH_ADDRESS --protocol=session \
+  --capability=livepeer:meet/sfu-room --offering=default \
+  --work-unit=participant-seconds --price-wei=100 --per-units=1000 \
+  --runner-bind=127.0.0.1:9501 --payee-admin-token=$PAYEE_ADMIN_TOKEN
+```
+
+### The retry run
+
+`--protocol=retry` needs the debit to fail from outside — a probe cannot
+stop a daemon it did not start. Give the backend a stall window, then
+kill the payee inside it and restart it on the **same `--db`**:
+
+```
+BACKEND_DELAY_SECONDS=25 ./up.sh
+/tmp/chain-probe --protocol=retry ... &
+sleep 4  && kill -9 $(sed -n 2p run/pids) && rm -f /tmp/lpm-payee.sock
+sleep 22 && run/bin/payment-daemon --mode=receiver --db=run/payee.db ...
+```
+
+The same `--db` matters: the session has to survive the restart, and the
+broker has to have left it open. A closed session refuses debits, so
+closing one at end of exchange makes every retry fail no matter how
+generous the budget.

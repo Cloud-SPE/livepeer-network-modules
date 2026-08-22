@@ -46,6 +46,9 @@ type Server struct {
 	socketPath string
 	logger     *slog.Logger
 	grpcServer *grpc.Server
+
+	mu  sync.Mutex
+	lis net.Listener
 }
 
 type ReceiverAdminConfig struct {
@@ -102,9 +105,20 @@ func NewReceiver(svc pb.PayeeDaemonServer, admin pb.PayeeAdminServer, adminCfg R
 	return &Server{socketPath: socketPath, logger: logger, grpcServer: gs}
 }
 
-// Serve binds the unix socket and runs the gRPC server. Blocks until
-// the listener errors or GracefulStop is called.
-func (s *Server) Serve() error {
+// Listen binds the unix socket without accepting on it. Idempotent.
+//
+// It exists so a caller can know the socket is there before anything
+// dials it. Serve does the bind too, but it does it on the far side of
+// the `go Serve()` that callers write, so "the goroutine has started"
+// and "the socket exists" are two different moments — and a client that
+// dialled in between got ENOENT. That is a race a caller cannot close
+// from the outside without polling for a file and hoping.
+func (s *Server) Listen() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lis != nil {
+		return nil
+	}
 	// Remove a stale socket file if a prior run left it behind.
 	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove stale socket %s: %w", s.socketPath, err)
@@ -114,9 +128,24 @@ func (s *Server) Serve() error {
 		return fmt.Errorf("listen unix %s: %w", s.socketPath, err)
 	}
 	if err := os.Chmod(s.socketPath, 0o660); err != nil {
+		_ = lis.Close()
 		return fmt.Errorf("chmod socket: %w", err)
 	}
+	s.lis = lis
 	s.logger.Info("gRPC listening", "socket", s.socketPath)
+	return nil
+}
+
+// Serve binds the unix socket (unless Listen already did) and runs the
+// gRPC server. Blocks until the listener errors or GracefulStop is
+// called.
+func (s *Server) Serve() error {
+	if err := s.Listen(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	lis := s.lis
+	s.mu.Unlock()
 	if err := s.grpcServer.Serve(lis); err != nil {
 		return fmt.Errorf("grpc serve: %w", err)
 	}
@@ -126,6 +155,14 @@ func (s *Server) Serve() error {
 // GracefulStop stops the gRPC server and lets in-flight RPCs finish.
 func (s *Server) GracefulStop() {
 	s.grpcServer.GracefulStop()
+	// A server that was bound but never served still holds the socket;
+	// GracefulStop on the gRPC server does not know about it.
+	s.mu.Lock()
+	if s.lis != nil {
+		_ = s.lis.Close()
+		s.lis = nil
+	}
+	s.mu.Unlock()
 	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.logger.Warn("remove socket on stop", "err", err)
 	}

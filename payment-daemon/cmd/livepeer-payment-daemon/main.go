@@ -577,6 +577,14 @@ func orchHexOrEmpty(orchHex string) string {
 }
 
 func runServerWithCtx(ctx context.Context, logger *slog.Logger, srv *server.Server) error {
+	// Bind before the goroutine, so the socket exists by the time this
+	// returns and anything told the daemon is up can actually dial it.
+	// It also makes a bind failure — a port in use, a bad path, a
+	// permissions problem — a synchronous error rather than one racing
+	// ctx.Done() for the return value.
+	if err := srv.Listen(); err != nil {
+		return err
+	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve() }()
 	select {

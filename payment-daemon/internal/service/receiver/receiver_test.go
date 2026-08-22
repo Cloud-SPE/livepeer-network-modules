@@ -78,6 +78,13 @@ func standWithAdmin(t *testing.T, token string) (pb.PayeeDaemonClient, pb.PayeeA
 	}
 	svc := receiver.New(st, receiver.Config{Recipient: bytes20(0xaa)}, nil)
 	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: token}, sockPath, nil, nil)
+	// Bind before starting the goroutine. Serve binds on the far side of
+	// the `go`, so "the goroutine started" and "the socket exists" are
+	// different moments, and under parallel load the first RPC lost that
+	// race and dialled a socket that was not there yet.
+	if err := srv.Listen(); err != nil {
+		t.Fatalf("listen: %v", err)
+	}
 	go func() { _ = srv.Serve() }()
 
 	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))

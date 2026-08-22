@@ -425,6 +425,19 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			}
 
 			rec := &responseRecorder{ResponseWriter: w}
+			// Hold the response until the final debit has resolved.
+			// On a unary exchange the handler commits headers before
+			// this middleware debits, so Livepeer-Work-Units named a
+			// measurement the ledger had not accepted yet — and the
+			// gateway team reasonably reads that header as "units you
+			// were charged for". Deferring lets the header state what
+			// the ledger actually took.
+			//
+			// This releases itself the moment the handler proves it is
+			// streaming, so the streamed path is untouched: it corrects
+			// its own claim in the trailer it declares.
+			rec.deferResponse()
+			defer rec.commit()
 			// The Livepeer-Settlement trailer is declared by the STREAMED
 			// job path, not here.
 			//
@@ -675,6 +688,33 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				} else {
 					log.Printf("warning: settlement encode failed work_id=%s: %v", workID, err)
 				}
+			}
+
+			// The response is still held only on the unary path. Correct
+			// the claim to what the ledger took before letting it go.
+			//
+			// Both branches matter. On success debitedUnits == actual
+			// and this changes nothing, which is the point: the header
+			// means the same thing on every exchange. On failure it is
+			// the difference between telling a caller it was charged for
+			// work it was not charged for and telling it the truth.
+			if rec.deferred() {
+				rec.Header().Set(livepeerheader.WorkUnits, strconv.FormatUint(debitedUnits, 10))
+				if debitOutstanding {
+					// Not a terminal failure — the debit is queued for
+					// retry — so this says "the number may still move"
+					// rather than reporting a recoverable timeout as a
+					// loss. It matches what GET /v1/settlement/{id}
+					// answers for the same exchange.
+					rec.Header().Set(livepeerheader.Error, livepeerheader.ErrAccountingPending)
+				}
+				rec.commit()
+			} else if debitedUnits != actual {
+				// Streaming corrects itself in its trailer; anything
+				// else got too large to hold. Say so rather than let the
+				// claim stand unexplained.
+				log.Printf("warning: work-units header states measured %d, ledger took %d work_id=%s "+
+					"(response could not be deferred)", actual, debitedUnits, workID)
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"io"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -719,5 +720,156 @@ func TestSettlementFieldsMeanTheSameThingOnBothProtocols(t *testing.T) {
 			t.Fatalf("exchange %d: attested %s wei; bill(%d)-bill(%d) = %s",
 				i, got, cum, cum-units, want)
 		}
+	}
+}
+
+// TestUnaryWorkUnitsHeaderStatesWhatTheLedgerTook: on a unary exchange
+// the handler commits its headers before this middleware runs the final
+// debit, so Livepeer-Work-Units named a measurement the ledger had not
+// accepted yet. A gateway reads that header as "units you were charged
+// for" — reasonably, since that is what it has to reconcile against —
+// and on a failed debit it was charged for none of them.
+//
+// The response is now held until the debit resolves. Both cases below
+// matter: on success the number is unchanged, which is the point (the
+// header means one thing on every exchange), and on failure it is the
+// difference between a true statement and a false one.
+func TestUnaryWorkUnitsHeaderStatesWhatTheLedgerTook(t *testing.T) {
+	t.Parallel()
+
+	newHandler := func(mock *payment.Mock) http.Handler {
+		mw := Payment(mock, fractionalLookup, InterimDebitConfig{Interval: 0}, nil,
+			func(*paymentsv1.SettlementRecord) (string, error) { return "encoded", nil }, nil)
+		return mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// The unary shape: measure, set the claim, commit, write.
+			w.Header().Set(livepeerheader.WorkUnits, "42")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}))
+	}
+
+	t.Run("debit succeeds", func(t *testing.T) {
+		t.Parallel()
+		mock := payment.NewMock()
+		rec := httptest.NewRecorder()
+		newHandler(mock).ServeHTTP(rec, makeFractionalPaidRequest(t,
+			[]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), "req-ok"))
+
+		if got := rec.Header().Get(livepeerheader.WorkUnits); got != "42" {
+			t.Errorf("work units = %q, want %q", got, "42")
+		}
+		if rec.Body.String() != `{"ok":true}` {
+			t.Errorf("body = %q; deferral must not eat the response", rec.Body.String())
+		}
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", rec.Code)
+		}
+	})
+
+	t.Run("debit fails", func(t *testing.T) {
+		t.Parallel()
+		mock := payment.NewMock()
+		mock.FailNextDebits(1)
+		rec := httptest.NewRecorder()
+		newHandler(mock).ServeHTTP(rec, makeFractionalPaidRequest(t,
+			[]byte("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), "req-fail"))
+
+		// Nothing was debited, so the claim must not say 42.
+		if got := rec.Header().Get(livepeerheader.WorkUnits); got != "0" {
+			t.Errorf("work units = %q, want %q — the ledger took nothing", got, "0")
+		}
+		// And the caller is told the number may still move, because the
+		// debit is queued for retry rather than lost.
+		if got := rec.Header().Get(livepeerheader.Error); got != livepeerheader.ErrAccountingPending {
+			t.Errorf("error header = %q, want %q", got, livepeerheader.ErrAccountingPending)
+		}
+	})
+}
+
+// A streamed response cannot be held, and must not be: it corrects its
+// own claim in the trailer it declares. This pins that the deferral
+// releases rather than stalling the stream or eating its body.
+func TestStreamedResponseIsNotDeferred(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	mw := Payment(mock, fractionalLookup, InterimDebitConfig{Interval: 0}, nil,
+		func(*paymentsv1.SettlementRecord) (string, error) { return "encoded", nil }, nil)
+
+	rec := httptest.NewRecorder()
+	bodyAtFlush := -1
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Del("Content-Length")
+		w.Header().Add("Trailer", livepeerheader.WorkUnits)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("chunk-one"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// The bytes must already be through to the client, not parked
+		// in a buffer waiting on a debit that has not run yet. Read the
+		// underlying recorder directly: w here is the middleware's
+		// wrapper, which is exactly the thing under test.
+		bodyAtFlush = rec.Body.Len()
+		w.Header().Set(livepeerheader.WorkUnits, "7")
+	}))
+
+	handler.ServeHTTP(rec, makeFractionalPaidRequest(t,
+		[]byte("cccccccccccccccccccccccccccccccc"), "req-stream"))
+
+	if rec.Body.String() != "chunk-one" {
+		t.Errorf("body = %q, want %q", rec.Body.String(), "chunk-one")
+	}
+	if bodyAtFlush != len("chunk-one") {
+		t.Errorf("at flush the client had %d bytes, want %d — the stream was held",
+			bodyAtFlush, len("chunk-one"))
+	}
+}
+
+// httptest.ResponseRecorder keeps a live header map, so a header set
+// after WriteHeader still shows up in it — which makes it useless for
+// asking whether a header actually reached the client. This runs over a
+// real connection, where a late Set is simply lost.
+//
+// It matters for the settlement record specifically: it is built after
+// the handler returns, so on unary it was always set too late. The
+// record was still durable and readable via GET /v1/settlement/{id},
+// but a caller that expected it inline never got it. Holding the
+// response back is what makes the inline copy deliverable.
+func TestUnarySettlementReachesTheClientOverARealConnection(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	mw := Payment(mock, fractionalLookup, InterimDebitConfig{Interval: 0}, nil,
+		func(*paymentsv1.SettlementRecord) (string, error) { return "encoded-record", nil }, nil)
+
+	srv := httptest.NewServer(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})))
+	defer srv.Close()
+
+	req := makeFractionalPaidRequest(t, []byte("dddddddddddddddddddddddddddddddd"), "req-real")
+	out, err := http.NewRequest("POST", srv.URL+"/v1/job", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Header = req.Header.Clone()
+
+	resp, err := srv.Client().Do(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if got := resp.Header.Get(livepeerheader.Settlement); got != "encoded-record" {
+		t.Errorf("settlement header = %q, want %q — set after the handler, so it only "+
+			"arrives if the response was held", got, "encoded-record")
+	}
+	if got := resp.Header.Get(livepeerheader.WorkUnits); got != "42" {
+		t.Errorf("work units = %q, want %q", got, "42")
+	}
+	if string(body) != `{"ok":true}` {
+		t.Errorf("body = %q, want %q", body, `{"ok":true}`)
 	}
 }

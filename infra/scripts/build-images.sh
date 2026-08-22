@@ -81,7 +81,8 @@ is_pushable_image() {
     livepeer-pool-member-agent|\
     livepeer-pool-reconciler|\
     livepeer-pool-payout-executor|\
-    livepeer-secure-orch-console)
+    livepeer-secure-orch-console|\
+    livepeer-conformance)
       return 0
       ;;
     *)

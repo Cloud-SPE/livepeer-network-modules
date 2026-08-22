@@ -38,13 +38,19 @@ FROM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /src
 
-COPY livepeer-network-protocol/conformance/go.mod livepeer-network-protocol/conformance/go.sum ./
-RUN go mod download
+# The module's replace directives point at ../verify and ../proto-go, so the
+# builder has to mirror the repo layout rather than flatten conformance into
+# /src — otherwise `go mod download` resolves them to /verify and /proto-go
+# and finds nothing there.
+COPY livepeer-network-protocol/conformance/go.mod livepeer-network-protocol/conformance/go.sum ./livepeer-network-protocol/conformance/
+COPY livepeer-network-protocol/verify/ ./livepeer-network-protocol/verify/
+COPY livepeer-network-protocol/proto-go/ ./livepeer-network-protocol/proto-go/
+RUN cd livepeer-network-protocol/conformance && go mod download
 
-COPY livepeer-network-protocol/conformance/ ./
+COPY livepeer-network-protocol/conformance/ ./livepeer-network-protocol/conformance/
 
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux \
+RUN cd livepeer-network-protocol/conformance && CGO_ENABLED=0 GOOS=linux \
     go build \
         -trimpath \
         -ldflags="-s -w -X main.version=${VERSION}" \

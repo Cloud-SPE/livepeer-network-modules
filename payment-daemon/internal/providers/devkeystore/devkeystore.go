@@ -1,18 +1,37 @@
-// Package devkeystore is a dev-mode KeyStore. It signs nothing real —
-// returns a deterministic 65-byte vector built from `keccak256(devKey ||
-// hash)` — and exposes a fake ETH address.
+// Package devkeystore is a dev-mode KeyStore. It holds a deterministic
+// throwaway secp256k1 key rather than a generated one, so two daemons
+// started with no override reach the same identity and a test can seed
+// it — but the signatures it produces are REAL.
 //
-// This is NOT cryptographically valid for on-chain redemption. Plan
-// 0016 swaps in V3 JSON keystore loading + go-ethereum signing.
+// It used to emit a synthetic SHA-256 vector with a hardcoded V=27, on
+// the premise recorded in its own comment that "receivers in dev mode
+// skip signature recovery". No such bypass exists: the receiver's
+// validator always performs EIP-191 secp256k1 recovery. So a chain-free
+// sender/receiver pair could not exchange a single payment — every
+// ticket failed signature validation, which is exactly what the hermetic
+// LOC matrix found.
+//
+// Making the key real is the right fix rather than teaching the receiver
+// to skip validation in dev: a suite that bypasses the security boundary
+// is not exercising it, and the one thing worth proving hermetically is
+// that a tampered signature is refused.
+//
+// The key is still a throwaway with a published default. This is for
+// dev and CI; it must never hold value.
 package devkeystore
 
 import (
-	"crypto/sha256"
+	"crypto/ecdsa"
 	"encoding/hex"
 	"errors"
+	"fmt"
+
+	"github.com/ethereum/go-ethereum/accounts"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // Default dev key (32 bytes). Override with --dev-signing-key-hex.
+// A valid secp256k1 scalar: non-zero and below the curve order.
 var defaultDevKey = []byte{
 	0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
 	0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
@@ -21,17 +40,18 @@ var defaultDevKey = []byte{
 }
 
 // DevKeyStore implements providers.KeyStore with a deterministic
-// stand-in for ECDSA signing.
+// throwaway secp256k1 key.
 type DevKeyStore struct {
-	key  []byte
+	key  *ecdsa.PrivateKey
 	addr []byte
 }
 
 // New constructs a DevKeyStore. If `keyHex` is empty, the package
-// default key is used (so two daemons with no override produce
-// reproducible identities). The derived address is `last 20 bytes of
-// sha256(key)` — not a real keccak256-derived ETH address, but stable
-// and easy to seed in tests.
+// default key is used, so two daemons with no override share an
+// identity. The address is the real keccak256-derived Ethereum address
+// for the key — it has to be, because the receiver recovers a signer
+// address from the signature and compares it to the sender's declared
+// one.
 func New(keyHex string) (*DevKeyStore, error) {
 	key := defaultDevKey
 	if keyHex != "" {
@@ -44,42 +64,45 @@ func New(keyHex string) (*DevKeyStore, error) {
 		}
 		key = raw
 	}
-	addrSum := sha256.Sum256(key)
+	// Rejects zero and anything at or above the curve order. Refusing
+	// here beats signing with a key that cannot verify: the failure
+	// would otherwise surface as an unexplained ticket rejection on the
+	// far side of a daemon boundary.
+	priv, err := crypto.ToECDSA(key)
+	if err != nil {
+		return nil, fmt.Errorf("--dev-signing-key-hex: not a valid secp256k1 key: %w", err)
+	}
+	addr := crypto.PubkeyToAddress(priv.PublicKey)
 	return &DevKeyStore{
-		key:  key,
-		addr: addrSum[12:32], // last 20 bytes — placeholder address
+		key:  priv,
+		addr: addr.Bytes(),
 	}, nil
 }
 
-// Address returns the deterministic 20-byte stand-in address.
+// Address returns the 20-byte Ethereum address for the held key.
 func (k *DevKeyStore) Address() []byte {
 	return append([]byte(nil), k.addr...)
 }
 
-// Sign returns 65 bytes built from `sha256(key || personalPrefix(hash))`,
-// padded out with a fake `V = 27`. Not a real ECDSA signature; receivers
-// in dev mode skip signature recovery.
+// Sign returns an Ethereum personal_sign signature over `hash`,
+// identical in construction to the production keystore:
 //
-// The output is byte-stable for a given (key, hash) pair so dev tests
-// can pin expected values.
+//	digest = keccak256("\x19Ethereum Signed Message:\n" + len(hash) + hash)
+//	sig    = ECDSA_sign(digest, key)
+//	sig[64] += 27         // v ∈ {27, 28}
+//
+// Deterministic for a given (key, hash) because go-ethereum signs with
+// RFC 6979, so dev tests can still pin values.
 func (k *DevKeyStore) Sign(hash []byte) ([]byte, error) {
 	if len(hash) == 0 {
 		return nil, errors.New("devkeystore: hash is empty")
 	}
-	prefix := []byte("\x19Ethereum Signed Message:\n32")
-	digest := sha256.New()
-	_, _ = digest.Write(k.key)
-	_, _ = digest.Write(prefix)
-	_, _ = digest.Write(hash)
-	r := digest.Sum(nil) // 32 bytes
-	digest.Reset()
-	_, _ = digest.Write(r)
-	_, _ = digest.Write(k.key)
-	s := digest.Sum(nil) // 32 bytes
-
-	out := make([]byte, 0, 65)
-	out = append(out, r...)
-	out = append(out, s...)
-	out = append(out, 27) // V ∈ {27, 28}; pin to 27 in dev
-	return out, nil
+	digest := accounts.TextHash(hash)
+	sig, err := crypto.Sign(digest, k.key)
+	if err != nil {
+		return nil, err
+	}
+	// crypto.Sign returns V ∈ {0, 1}; personal_sign requires V ∈ {27, 28}.
+	sig[64] += 27
+	return sig, nil
 }

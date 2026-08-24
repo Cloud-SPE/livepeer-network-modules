@@ -887,3 +887,118 @@ func TestJobReplayReturnsTheRecordedSettlement(t *testing.T) {
 		t.Fatalf("replay returned a DIFFERENT settlement.\n first: %s\nreplay: %s", original, got)
 	}
 }
+
+// A pending debit must not ship a signed terminal settlement.
+//
+// The failed-debit branch says the record is deliberately not built yet,
+// and it is right: a record can only state a charge once the charge is
+// known. But the encoder ran unconditionally, so the response carried a
+// SIGNED terminal DEBIT_FAILED settlement alongside the
+// accounting_pending header — two contradictory answers to "what did this
+// exchange cost", one of them signed. A consumer trusting the signature
+// booked a permanent loss for a debit that was about to succeed, and
+// would then have received a second, disagreeing settlement.
+//
+// Found by LOC's real-process fault injection (loc-bkr). The lookup
+// surface was already correct, which is why the existing retry tests
+// missed it — they never read the initial response's headers.
+func TestPendingDebitShipsNoTerminalSettlement(t *testing.T) {
+	t.Run("pending: no settlement on the response", func(t *testing.T) {
+		var calls atomic.Int64
+		mock := payment.NewMock()
+		mock.FailNextDebits(1)
+		srv, _ := newJobTestServerWith(t, &calls, mock)
+
+		resp := jobReqPaid(t, srv, "loc-bkr-pending", "")
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+
+		if got := resp.Header.Get(livepeerheader.Error); got != livepeerheader.ErrAccountingPending {
+			t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrAccountingPending)
+		}
+		if got := resp.Header.Get(livepeerheader.Settlement); got != "" {
+			rec := decodeSettlementHeader(t, got)
+			t.Fatalf("accounting_pending shipped a signed terminal settlement (outcome=%s); "+
+				"the debit is still in flight and its cost is not yet known",
+				rec.GetOutcome())
+		}
+	})
+
+	t.Run("successful retry: exactly one terminal settlement", func(t *testing.T) {
+		var calls atomic.Int64
+		mock := payment.NewMock()
+		mock.FailNextDebits(1)
+		srv, s := newJobTestServerWith(t, &calls, mock)
+
+		resp := jobReqPaid(t, srv, "loc-bkr-retry-ok", "")
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		jobID := resp.Header.Get(livepeerheader.JobID)
+		backendBefore := calls.Load()
+
+		s.sweepPendingDebits(t.Context())
+
+		q, err := http.Get(srv.URL + "/v1/settlement/" + jobID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := decodeBody(t, q)
+		encoded, _ := body["settlement"].(string)
+		if encoded == "" {
+			t.Fatal("no settlement after a successful retry")
+		}
+		rec := decodeSettlementHeader(t, encoded)
+		if rec.GetOutcome() == pb.SettlementRecord_DEBIT_FAILED {
+			t.Fatal("settlement says DEBIT_FAILED after the retry landed")
+		}
+		// Exactly-once: the retry must not re-run the backend, and the
+		// ledger must not be charged twice for one exchange.
+		if calls.Load() != backendBefore {
+			t.Fatalf("retry re-executed the backend: %d -> %d", backendBefore, calls.Load())
+		}
+		if n := len(mock.Debits(rec.GetWorkId())); n > 1 {
+			for i, d := range mock.Debits(rec.GetWorkId()) {
+				t.Logf("debit %d: seq=%d wei=%s", i, d.Seq, d.Wei)
+			}
+			t.Fatalf("ledger recorded %d debits for one exchange; want exactly 1", n)
+		}
+	})
+
+	t.Run("exhaustion: exactly one DEBIT_FAILED settlement", func(t *testing.T) {
+		var calls atomic.Int64
+		mock := payment.NewMock()
+		mock.FailNextDebits(1000)
+		srv, s := newJobTestServerWith(t, &calls, mock)
+
+		resp := jobReqPaid(t, srv, "loc-bkr-exhaust", "")
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		jobID := resp.Header.Get(livepeerheader.JobID)
+
+		// While retries remain, still nothing terminal on the wire.
+		if got := resp.Header.Get(livepeerheader.Settlement); got != "" {
+			t.Fatal("shipped a terminal settlement before retries were exhausted")
+		}
+
+		for i := 0; i < debitRetryMaxAttempts+1; i++ {
+			s.sweepPendingDebits(t.Context())
+			forcePendingDue(t, s)
+		}
+
+		q, err := http.Get(srv.URL + "/v1/settlement/" + jobID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := decodeBody(t, q)
+		if q.StatusCode != http.StatusOK {
+			t.Fatalf("after exhaustion: %d; want a terminal 200 (body %v)", q.StatusCode, body)
+		}
+		encoded, _ := body["settlement"].(string)
+		if encoded == "" {
+			t.Fatal("exhausted retry produced no settlement")
+		}
+		if rec := decodeSettlementHeader(t, encoded); rec.GetOutcome() != pb.SettlementRecord_DEBIT_FAILED {
+			t.Fatalf("outcome = %s after exhaustion; want DEBIT_FAILED", rec.GetOutcome())
+		}
+	})
+}

@@ -682,11 +682,35 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 				DebitFailed:     debitFailed,
 				DebitedUnits:    debitedUnits,
 			}
-			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue, ident); settlement != nil {
-				if encoded, err := encode(settlement); err == nil {
-					rec.Header().Set(livepeerheader.Settlement, encoded)
-				} else {
-					log.Printf("warning: settlement encode failed work_id=%s: %v", workID, err)
+			// No settlement while a debit is still outstanding.
+			//
+			// The comment at the failed-debit branch above says the
+			// record is deliberately NOT built yet, and it is right: a
+			// record can only state a charge once the charge is known,
+			// and that is precisely what is unresolved. But this encoder
+			// ran unconditionally, so the response carried a SIGNED
+			// terminal DEBIT_FAILED settlement alongside the
+			// accounting_pending header — two contradictory answers to
+			// "what did this exchange cost", one of them signed. A
+			// consumer that trusted the signature booked a terminal loss
+			// for a debit that was about to succeed on retry, and would
+			// then have received a second, disagreeing settlement.
+			//
+			// The retrier owns the terminal record for this exchange and
+			// emits exactly one, DEBIT_FAILED only once retries are
+			// actually exhausted (see debitretry.go settlePending).
+			//
+			// This became visible rather than merely wrong when the
+			// unary path started holding its response: before that, a
+			// settlement set after WriteHeader was dropped by net/http,
+			// so the contradiction never reached a client on unary.
+			if !debitOutstanding {
+				if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue, ident); settlement != nil {
+					if encoded, err := encode(settlement); err == nil {
+						rec.Header().Set(livepeerheader.Settlement, encoded)
+					} else {
+						log.Printf("warning: settlement encode failed work_id=%s: %v", workID, err)
+					}
 				}
 			}
 

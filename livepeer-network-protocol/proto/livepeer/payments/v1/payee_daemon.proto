@@ -157,6 +157,24 @@ message GetTicketParamsResponse {
   //
   // Empty on the ordinary path, which is almost every call.
   string predecessor_work_id = 2;
+
+  // The highest sender nonce this payee has already recorded against the
+  // returned recipient rand, and whether it has recorded any.
+  //
+  // A sender allocates nonces from its own durable counter. If that
+  // counter is lost — a restored backup, a wiped volume — the sender
+  // rewinds and every nonce it produces has already been seen here, so
+  // every payment is refused as a replay, credits nothing, and it can
+  // never make progress on this rand again. It cannot detect this
+  // itself: from its side a replay rejection looks the same as a
+  // duplicate delivery.
+  //
+  // So the payee states what it has seen, and a sender resumes ABOVE it.
+  // Reported at quote time rather than in a rejection, because that is
+  // before anything is signed: the loss heals on the next mint instead
+  // of costing a refused payment first.
+  uint32 highest_seen_nonce = 3;
+  bool has_seen_nonces = 4;
 }
 
 // ─── ListCapabilities ─────────────────────────────────────────────────

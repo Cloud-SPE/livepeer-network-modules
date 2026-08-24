@@ -406,8 +406,25 @@ type GetTicketParamsResponse struct {
 	//
 	// Empty on the ordinary path, which is almost every call.
 	PredecessorWorkId string `protobuf:"bytes,2,opt,name=predecessor_work_id,json=predecessorWorkId,proto3" json:"predecessor_work_id,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// The highest sender nonce this payee has already recorded against the
+	// returned recipient rand, and whether it has recorded any.
+	//
+	// A sender allocates nonces from its own durable counter. If that
+	// counter is lost — a restored backup, a wiped volume — the sender
+	// rewinds and every nonce it produces has already been seen here, so
+	// every payment is refused as a replay, credits nothing, and it can
+	// never make progress on this rand again. It cannot detect this
+	// itself: from its side a replay rejection looks the same as a
+	// duplicate delivery.
+	//
+	// So the payee states what it has seen, and a sender resumes ABOVE it.
+	// Reported at quote time rather than in a rejection, because that is
+	// before anything is signed: the loss heals on the next mint instead
+	// of costing a refused payment first.
+	HighestSeenNonce uint32 `protobuf:"varint,3,opt,name=highest_seen_nonce,json=highestSeenNonce,proto3" json:"highest_seen_nonce,omitempty"`
+	HasSeenNonces    bool   `protobuf:"varint,4,opt,name=has_seen_nonces,json=hasSeenNonces,proto3" json:"has_seen_nonces,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *GetTicketParamsResponse) Reset() {
@@ -452,6 +469,20 @@ func (x *GetTicketParamsResponse) GetPredecessorWorkId() string {
 		return x.PredecessorWorkId
 	}
 	return ""
+}
+
+func (x *GetTicketParamsResponse) GetHighestSeenNonce() uint32 {
+	if x != nil {
+		return x.HighestSeenNonce
+	}
+	return 0
+}
+
+func (x *GetTicketParamsResponse) GetHasSeenNonces() bool {
+	if x != nil {
+		return x.HasSeenNonces
+	}
+	return false
 }
 
 type ListCapabilitiesRequest struct {
@@ -1632,10 +1663,12 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\n" +
 	"capability\x18\x04 \x01(\tR\n" +
 	"capability\x12\x1a\n" +
-	"\boffering\x18\x05 \x01(\tR\boffering\"\x92\x01\n" +
+	"\boffering\x18\x05 \x01(\tR\boffering\"\xe8\x01\n" +
 	"\x17GetTicketParamsResponse\x12G\n" +
 	"\rticket_params\x18\x01 \x01(\v2\".livepeer.payments.v1.TicketParamsR\fticketParams\x12.\n" +
-	"\x13predecessor_work_id\x18\x02 \x01(\tR\x11predecessorWorkId\"\x19\n" +
+	"\x13predecessor_work_id\x18\x02 \x01(\tR\x11predecessorWorkId\x12,\n" +
+	"\x12highest_seen_nonce\x18\x03 \x01(\rR\x10highestSeenNonce\x12&\n" +
+	"\x0fhas_seen_nonces\x18\x04 \x01(\bR\rhasSeenNonces\"\x19\n" +
 	"\x17ListCapabilitiesRequest\"e\n" +
 	"\x18ListCapabilitiesResponse\x12I\n" +
 	"\fcapabilities\x18\x01 \x03(\v2%.livepeer.payments.v1.CapabilityEntryR\fcapabilities\"\xd9\x01\n" +

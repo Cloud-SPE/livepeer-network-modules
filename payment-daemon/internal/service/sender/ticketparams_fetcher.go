@@ -86,7 +86,13 @@ func (f *HTTPTicketParamsFetcher) Fetch(ctx context.Context, req TicketParamsReq
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
-	return parsed.TicketParams.toTypes()
+	out, err := parsed.TicketParams.toTypes()
+	if err != nil {
+		return nil, err
+	}
+	out.HighestSeenNonce = parsed.HighestSeenNonce
+	out.HasSeenNonces = parsed.HasSeenNonces
+	return out, nil
 }
 
 type ticketParamsHTTPRequest struct {
@@ -99,6 +105,10 @@ type ticketParamsHTTPRequest struct {
 
 type ticketParamsHTTPResponse struct {
 	TicketParams ticketParamsJSON `json:"ticket_params"`
+	// Relayed from the payee's GetTicketParams. The broker is a
+	// pass-through here; it has no opinion on either value.
+	HighestSeenNonce uint32 `json:"highest_seen_nonce,omitempty"`
+	HasSeenNonces    bool   `json:"has_seen_nonces,omitempty"`
 }
 
 type ticketParamsJSON struct {

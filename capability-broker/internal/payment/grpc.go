@@ -81,6 +81,8 @@ func (g *GRPC) GetTicketParams(ctx context.Context, req GetTicketParamsRequest) 
 		Seed:              append([]byte(nil), tp.GetSeed()...),
 		ExpirationBlock:   new(big.Int).SetBytes(tp.GetExpirationBlock()),
 	}
+	out.HighestSeenNonce = resp.GetHighestSeenNonce()
+	out.HasSeenNonces = resp.GetHasSeenNonces()
 	if exp := tp.GetExpirationParams(); exp != nil {
 		out.ExpirationParams = &TicketExpirationParams{
 			CreationRound:          exp.GetCreationRound(),

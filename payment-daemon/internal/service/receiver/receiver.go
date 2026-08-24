@@ -905,8 +905,18 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 		return nil, status.Error(codes.Internal, "session win prob corrupt")
 	}
 
+	// State what this payee has already recorded against the rand, so a
+	// sender whose own counter was lost resumes above it instead of
+	// replaying into rejections it cannot diagnose.
+	highestSeen, hasSeen, hErr := s.store.HighestSenderNonce(recipientRand)
+	if hErr != nil {
+		return nil, status.Errorf(codes.Internal, "read nonce high-water mark: %v", hErr)
+	}
+
 	return &pb.GetTicketParamsResponse{
 		PredecessorWorkId: predecessorWorkID,
+		HighestSeenNonce:  highestSeen,
+		HasSeenNonces:     hasSeen,
 		TicketParams: &pb.TicketParams{
 			Recipient:         append([]byte(nil), s.recipient...),
 			FaceValue:         faceValue.Bytes(),

@@ -103,3 +103,42 @@ func (s *Store) ForgetSenderNonces(workID string) error {
 		return b.Delete([]byte(workID))
 	})
 }
+
+// ResyncSenderNonces raises the watermark for a work_id to at least
+// `seen`, and reports whether it moved.
+//
+// Only ever raises. The payee states the highest nonce it has recorded
+// against the rand, and a sender must resume ABOVE that — but a sender
+// whose own counter is further along is the authority on its own
+// allocations, and lowering it would reissue nonces the payee has not
+// seen yet but this sender has already signed against.
+//
+// This is the recovery for partial payer state loss. A payer that lost
+// its counter rewinds, and every nonce it produces has already been
+// seen: refused as a replay, credits nothing, no progress ever again.
+// From its own side that is indistinguishable from a duplicate delivery,
+// so it cannot detect the condition — the payee has to state it and the
+// payer has to act on it.
+func (s *Store) ResyncSenderNonces(workID string, seen uint32) (raised bool, err error) {
+	if workID == "" {
+		return false, fmt.Errorf("store: empty work_id")
+	}
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		b, berr := tx.CreateBucketIfNotExists([]byte(senderNoncesBucket))
+		if berr != nil {
+			return berr
+		}
+		var current uint32
+		if raw := b.Get([]byte(workID)); len(raw) == 4 {
+			current = binary.BigEndian.Uint32(raw)
+		}
+		if current >= seen {
+			return nil
+		}
+		var buf [4]byte
+		binary.BigEndian.PutUint32(buf[:], seen)
+		raised = true
+		return b.Put([]byte(workID), buf[:])
+	})
+	return raised, err
+}

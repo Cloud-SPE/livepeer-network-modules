@@ -779,6 +779,33 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 		}
 	}
 	workID := hex.EncodeToString(params.RecipientRandHash)
+
+	// Resume above what the payee has already recorded.
+	//
+	// This is where partial payer state loss heals. A payer that lost
+	// its durable counter restarts low, and every nonce it then produces
+	// has been seen — refused as a replay, crediting nothing, forever.
+	// It cannot detect that itself: a replay rejection looks exactly
+	// like a duplicate delivery from this side. So the payee states its
+	// high-water mark at quote time and the watermark is raised to match
+	// BEFORE anything is signed, which costs nothing when the counter
+	// was intact and is the whole recovery when it was not.
+	//
+	// Raise only. A payer further along than the payee is the authority
+	// on its own allocations; lowering would reissue nonces it has
+	// already signed against.
+	if s.store != nil && params.HasSeenNonces {
+		raised, rerr := s.store.ResyncSenderNonces(workID, params.HighestSeenNonce)
+		if rerr != nil {
+			return nil, fmt.Errorf("resync nonce watermark for %s: %w", workID, rerr)
+		}
+		if raised {
+			s.logger.Warn("nonce watermark was behind the payee; resumed above it",
+				"work_id", workID,
+				"payee_highest_seen", params.HighestSeenNonce)
+		}
+	}
+
 	sess := &senderSession{
 		workID:        workID,
 		cacheKey:      key,

@@ -199,6 +199,13 @@ func devModeSenderStandVia(t *testing.T, payeeFor func() pb.PayeeDaemonClient) (
 // so a test can simulate the state loss that puts the payer's nonce
 // watermark out of step with the payee's ledger.
 func devModeSenderStandWithStore(t *testing.T, payeeFor func() pb.PayeeDaemonClient) (pb.PayerDaemonClient, string, *store.Store, func()) {
+	return devModeSenderStandOn(t, payeeFor, nil)
+}
+
+// devModeSenderStandOn builds a sender on an EXISTING store when one is
+// given, which is what restarting a payer means: same durable state, new
+// process, empty in-memory session cache.
+func devModeSenderStandOn(t *testing.T, payeeFor func() pb.PayeeDaemonClient, reuseStore *store.Store) (pb.PayerDaemonClient, string, *store.Store, func()) {
 	t.Helper()
 
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -226,6 +233,10 @@ func devModeSenderStandWithStore(t *testing.T, payeeFor func() pb.PayeeDaemonCli
 			return
 		}
 		out := map[string]any{
+			// Relayed the way the real broker relays them: a payer that
+			// lost its nonce counter resumes above the payee's mark.
+			"highest_seen_nonce": resp.GetHighestSeenNonce(),
+			"has_seen_nonces":    resp.GetHasSeenNonces(),
 			"ticket_params": map[string]any{
 				"recipient":           req.RecipientETHAddress,
 				"face_value":          new(big.Int).SetBytes(resp.GetTicketParams().GetFaceValue()).String(),
@@ -249,7 +260,10 @@ func devModeSenderStandWithStore(t *testing.T, payeeFor func() pb.PayeeDaemonCli
 	}
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "tx.sock")
-	payerStore := mintStore(t)
+	payerStore := reuseStore
+	if payerStore == nil {
+		payerStore = mintStore(t)
+	}
 	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil,
 		sender.NewHTTPTicketParamsFetcher(), nil, payerStore, sender.Limits{})
 
@@ -398,6 +412,14 @@ func parseAdvertisedMinimum(t *testing.T, msg string) *big.Int {
 // no face value or win probability override — because those defaults are
 // what the derived minimum is computed from.
 func defaultConfigReceiverStand(t *testing.T, recipient []byte) (pb.PayeeDaemonClient, func()) {
+	c, _, stop := defaultConfigReceiverStandWithStore(t, recipient)
+	return c, stop
+}
+
+// defaultConfigReceiverStandWithStore also hands back the payee's store,
+// so a test can arrange payee-side conditions — such as a nonce ledger
+// already at its cap — that the payer cannot produce on its own.
+func defaultConfigReceiverStandWithStore(t *testing.T, recipient []byte) (pb.PayeeDaemonClient, *store.Store, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "rx.db"))
@@ -419,7 +441,7 @@ func defaultConfigReceiverStand(t *testing.T, recipient []byte) (pb.PayeeDaemonC
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	return pb.NewPayeeDaemonClient(conn), func() {
+	return pb.NewPayeeDaemonClient(conn), st, func() {
 		_ = conn.Close()
 		gs.GracefulStop()
 		_ = st.Close()
@@ -927,8 +949,8 @@ func receiverStandAt(t *testing.T, recipient []byte, dbPath string) (pb.PayeeDae
 	}
 }
 
-// Partial payer state loss is NOT yet recoverable, and this pins the
-// boundary of what is.
+// Partial payer state loss recovers, and a duplicate delivery does not
+// pretend to be one.
 //
 // A payer that loses its durable watermark restarts its nonce stream
 // low. Every nonce it then produces has already been seen, so it is
@@ -945,7 +967,7 @@ func receiverStandAt(t *testing.T, recipient []byte, dbPath string) (pb.PayeeDae
 // delivery stays a plain replay, and a rewound payer is currently stuck.
 // The fix is for the payee to report its high-water nonce so the payer
 // resyncs deliberately — lnm-nbx.
-func TestDuplicateDeliveryStaysAReplayAndARewoundPayerIsStuck(t *testing.T) {
+func TestDuplicateDeliveryStaysAReplayAndAPayerRecoversFromStateLoss(t *testing.T) {
 	recipient := bytes20(0xf8)
 	payee, cleanupPayee := defaultConfigReceiverStand(t, recipient)
 	defer cleanupPayee()
@@ -1006,17 +1028,124 @@ func TestDuplicateDeliveryStaysAReplayAndARewoundPayerIsStuck(t *testing.T) {
 		t.Fatalf("a duplicate delivery credited %s a second time", credited)
 	}
 
-	// A rewound payer is currently stuck, and stuck LOUDLY — refused
-	// rather than silently credited nothing on a payment that looks
-	// successful.
+	// Now lose the payer's durable counter and restart it on the same
+	// store — a restored backup, a wiped volume. Its nonce stream would
+	// rewind, and every nonce it produced would already have been seen.
 	if err := payerStore.ForgetSenderNonces(workID); err != nil {
 		t.Fatalf("simulating payer state loss: %v", err)
 	}
-	stuck := process(mint("loss-after-wipe"))
-	if stuck.GetTicketsRejected() == 0 {
-		t.Fatal("a rewound payer's payment was accepted; its nonces were already spent")
+	cleanupPayer()
+	restarted, restartedURL, _, cleanupRestarted := devModeSenderStandOn(t,
+		func() pb.PayeeDaemonClient { return payee }, payerStore)
+	defer cleanupRestarted()
+
+	req := devModeCreateRequest(recipient, "loss-after-wipe", restartedURL)
+	req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+	created, err := restarted.CreatePayment(ctx, req)
+	if err != nil {
+		t.Fatalf("mint after payer state loss: %v", err)
 	}
-	if credited := new(big.Int).SetBytes(stuck.GetCreditedEv()); credited.Sign() != 0 {
-		t.Fatalf("a rewound payer's payment credited %s", credited)
+	// Recovery is silent and costs nothing: the payee stated its
+	// high-water mark at quote time and the payer resumed above it, so
+	// this payment is accepted rather than replayed into a rejection.
+	recovered := process(created)
+	if recovered.GetTicketsRejected() != 0 {
+		t.Fatalf("after state loss the payer was refused %s — it rewound into nonces the "+
+			"payee had already seen and cannot recover on its own",
+			recovered.GetDominantRejection())
+	}
+	if credited := new(big.Int).SetBytes(recovered.GetCreditedEv()); credited.Sign() == 0 {
+		t.Fatal("the recovered payment credited nothing")
+	}
+	// Same session: recovery must not cost the route its identity.
+	if created.GetWorkId() != workID {
+		t.Fatalf("recovery moved work_id %s -> %s; resuming above the payee's mark is not "+
+			"a rotation", workID, created.GetWorkId())
+	}
+}
+
+// The reactive backstop, exercised directly.
+//
+// It is a backstop, so in ordinary operation the proactive rollover
+// reaches the boundary first and this never fires — which means it also
+// never gets tested by any end-to-end path. That is exactly the shape of
+// an untested safety net, so the payee-side condition is arranged here
+// instead: a ledger already at capacity, with the sender's next nonce
+// genuinely NEW rather than a replay.
+//
+// The distinction matters. A replay is a duplicate delivery and must
+// stay one. Reaching the cap with a new nonce is the case where the rand
+// is spent and the only exit is rotation.
+func TestReactiveRotationWhenTheLedgerIsAlreadyAtCapacity(t *testing.T) {
+	recipient := bytes20(0xfa)
+	payee, payeeStore, cleanupPayee := defaultConfigReceiverStandWithStore(t, recipient)
+	defer cleanupPayee()
+	payer, baseURL, cleanupPayer := devModeSenderStand(t, payee)
+	defer cleanupPayer()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	mint := func(id string) *pb.CreatePaymentResponse {
+		t.Helper()
+		req := devModeCreateRequest(recipient, id, baseURL)
+		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		created, err := payer.CreatePayment(ctx, req)
+		if err != nil {
+			t.Fatalf("mint %s: %v", id, err)
+		}
+		return created
+	}
+
+	first := mint("cap-1")
+	workID := first.GetWorkId()
+	if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{
+		WorkId:              workID,
+		Capability:          "openai:chat-completions",
+		Offering:            "model-a",
+		PricePerWorkUnitWei: big.NewInt(1000).Bytes(),
+		WorkUnit:            "tokens",
+	}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+
+	// Fill the ledger to capacity with HIGH nonces, so the sender's next
+	// nonce is new rather than a replay — the cap, not a duplicate.
+	sess, err := payeeStore.GetByWorkID(workID)
+	if err != nil || sess == nil {
+		t.Fatalf("look up payee session: %v", err)
+	}
+	rand, ok := new(big.Int).SetString(sess.RecipientRand, 10)
+	if !ok {
+		t.Fatal("payee session rand unreadable")
+	}
+	if err := payeeStore.FillNonceLedger(rand, 100000, uint32(store.MaxSenderNonces)); err != nil {
+		t.Fatalf("filling the ledger: %v", err)
+	}
+
+	resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		PaymentBytes: first.GetPaymentBytes(),
+		WorkId:       workID,
+	})
+	if err != nil {
+		t.Fatalf("ProcessPayment: %v", err)
+	}
+	if resp.GetTicketsRejected() == 0 {
+		t.Fatal("a payment against a full ledger was accepted")
+	}
+	// Normalized onto the rotation contract, NOT surfaced as a cap a
+	// caller has nothing to do with.
+	if got := resp.GetDominantRejection(); got != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND {
+		t.Fatalf("rejection = %s; want INVALID_RECIPIENT_RAND so the existing eviction and "+
+			"rebind path engages", got)
+	}
+	// And the rand is retired, not merely refused once.
+	after, err := payeeStore.GetByWorkID(workID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != nil && !after.Closed {
+		t.Fatal("the exhausted rand was refused but not retired; the next payment would " +
+			"be refused identically, forever")
 	}
 }

@@ -36,6 +36,12 @@ type TicketParams struct {
 	Seed              []byte
 	ExpirationBlock   *big.Int
 	ExpirationParams  *TicketExpirationParams
+	// HighestSeenNonce is the largest sender nonce the PAYEE has already
+	// recorded against this rand, when it reported one. A sender resumes
+	// above it, so a lost local counter heals on the next quote instead
+	// of replaying into rejections it cannot tell from duplicates.
+	HighestSeenNonce uint32
+	HasSeenNonces    bool
 }
 
 // TicketExpirationParams pins the protocol round + block hash a ticket

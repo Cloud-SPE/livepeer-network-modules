@@ -159,3 +159,18 @@ func (s *Store) HighestSenderNonce(recipientRand *big.Int) (uint32, bool, error)
 	})
 	return highest, found, err
 }
+
+// FillNonceLedger records a run of nonces under a rand without the
+// per-call cap check, so a test can arrange a ledger that is already at
+// capacity. Not for production use: the cap in RecordNonce is the point.
+func (s *Store) FillNonceLedger(recipientRand *big.Int, from, count uint32) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte(noncesBucket))
+		for i := uint32(0); i < count; i++ {
+			if err := bucket.Put(nonceKey(recipientRand, from+i), []byte{1}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}

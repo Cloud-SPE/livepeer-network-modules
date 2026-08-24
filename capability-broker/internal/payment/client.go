@@ -128,6 +128,12 @@ type TicketParams struct {
 	Seed              []byte
 	ExpirationBlock   *big.Int
 	ExpirationParams  *TicketExpirationParams
+	// HighestSeenNonce / HasSeenNonces are relayed verbatim from the
+	// payee so a payer whose durable nonce counter was lost can resume
+	// above what the payee has already recorded. The broker has no
+	// opinion on either value; it is a pass-through.
+	HighestSeenNonce uint32
+	HasSeenNonces    bool
 }
 
 // TicketExpirationParams mirrors the payee-daemon response submessage.

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +21,10 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devbroker"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devkeystore"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/sender"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
+	daemonTypes "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
 // A chain-free sender and receiver must be able to exchange a payment.
@@ -272,5 +276,133 @@ func devModeCreateRequest(recipient []byte, mintID, baseURL string) *pb.CreatePa
 			FundedValueWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
 			MaxTotalUnits:  1,
 		},
+	}
+}
+
+// The advertised minimum face value must actually credit something.
+//
+// It did not. minFaceValue was floor(MaxWinProb/win_prob); credit is
+// floor(face_value x win_prob / MaxWinProb). MaxWinProb is odd, so at the
+// default win_prob (MaxWinProb/1024) the floor came out at 1024 and
+// 1024 x win_prob < MaxWinProb — the payee accepted its own advertised
+// minimum and credited zero. A gateway funding at exactly the advertised
+// figure bought work for nothing and then saw insufficient_balance,
+// which is how LOC found it. The correct minimum is 1025.
+//
+// This asks the daemon what its minimum is rather than hardcoding one,
+// so it keeps holding if the defaults move: whatever face value this
+// payee advertises as sufficient, a ticket at that value must credit at
+// least one wei.
+func TestAdvertisedMinimumFaceValueCreditsAtLeastOneWei(t *testing.T) {
+	recipient := bytes20(0xdf)
+	// Deliberately the DEFAULT config, not receiverStand's: the bug is
+	// in the default win probability's derived minimum, and a stand that
+	// pins win_prob to MaxWinProb makes the minimum 1 and hides it.
+	payee, cleanup := defaultConfigReceiverStand(t, recipient)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Ask for an impossible face value; the refusal names the minimum.
+	_, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+		Sender:     bytes20(0x01),
+		Recipient:  recipient,
+		FaceValue:  big.NewInt(1).Bytes(),
+		Capability: "openai:chat-completions",
+		Offering:   "model-a",
+	})
+	if err == nil {
+		t.Fatal("a 1 wei face value was accepted; expected a refusal naming the minimum")
+	}
+	minFace := parseAdvertisedMinimum(t, err.Error())
+
+	// The advertised minimum must be accepted...
+	params, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+		Sender:     bytes20(0x01),
+		Recipient:  recipient,
+		FaceValue:  minFace.Bytes(),
+		Capability: "openai:chat-completions",
+		Offering:   "model-a",
+	})
+	if err != nil {
+		t.Fatalf("payee refused its own advertised minimum of %s wei: %v", minFace, err)
+	}
+
+	// ...and must credit at least one wei, which is the entire point of
+	// having a minimum. This is the receiver's own arithmetic, not a
+	// reimplementation: floor(face x win / MaxWinProb).
+	winProb := new(big.Int).SetBytes(params.GetTicketParams().GetWinProb())
+	credit := new(big.Int).Quo(new(big.Int).Mul(minFace, winProb), daemonTypes.MaxWinProb)
+	if credit.Sign() == 0 {
+		t.Fatalf("advertised minimum %s wei credits ZERO at win_prob %s — "+
+			"a gateway funding exactly this buys work for free",
+			minFace, winProb)
+	}
+
+	// And one wei below it must be refused, or the boundary is not a
+	// boundary — an off-by-one in the safe direction is still wrong.
+	below := new(big.Int).Sub(minFace, big.NewInt(1))
+	if _, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+		Sender:     bytes20(0x01),
+		Recipient:  recipient,
+		FaceValue:  below.Bytes(),
+		Capability: "openai:chat-completions",
+		Offering:   "model-a",
+	}); err == nil {
+		t.Fatalf("payee accepted %s wei, one below its advertised minimum", below)
+	}
+}
+
+// parseAdvertisedMinimum pulls the figure out of the payee's refusal:
+// "requested face_value N wei is below this payee's minimum of M wei".
+func parseAdvertisedMinimum(t *testing.T, msg string) *big.Int {
+	t.Helper()
+	const marker = "minimum of "
+	i := strings.Index(msg, marker)
+	if i < 0 {
+		t.Fatalf("refusal did not name a minimum: %s", msg)
+	}
+	rest := msg[i+len(marker):]
+	j := strings.Index(rest, " ")
+	if j < 0 {
+		t.Fatalf("could not parse the minimum out of: %s", msg)
+	}
+	got, ok := new(big.Int).SetString(rest[:j], 10)
+	if !ok {
+		t.Fatalf("minimum %q is not a decimal integer", rest[:j])
+	}
+	return got
+}
+
+// defaultConfigReceiverStand runs a receiver on its shipped defaults —
+// no face value or win probability override — because those defaults are
+// what the derived minimum is computed from.
+func defaultConfigReceiverStand(t *testing.T, recipient []byte) (pb.PayeeDaemonClient, func()) {
+	t.Helper()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "rx.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	svc := receiver.New(st, receiver.Config{Recipient: recipient}, nil)
+
+	sockPath := filepath.Join(dir, "rx.sock")
+	lis, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	pb.RegisterPayeeDaemonServer(gs, svc)
+	go func() { _ = gs.Serve(lis) }()
+
+	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	return pb.NewPayeeDaemonClient(conn), func() {
+		_ = conn.Close()
+		gs.GracefulStop()
+		_ = st.Close()
 	}
 }

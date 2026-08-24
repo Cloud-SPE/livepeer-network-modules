@@ -85,16 +85,37 @@ func New(st *store.Store, cfg Config, logger *slog.Logger) *Service {
 		// 1/1024 of MaxWinProb.
 		winProb = new(big.Int).Quo(types.MaxWinProb, big.NewInt(1024))
 	}
-	// One wei of credit per ticket is the arithmetic floor: below
-	// 2^256/win_prob, EV rounds to zero and the ticket is free money for
-	// the sender. Never above the default face value, so an operator
-	// choosing a small default is not overridden by the floor.
-	minFace := new(big.Int).Quo(types.MaxWinProb, winProb)
+	// One wei of credit per ticket is the arithmetic floor. Credit is
+	// floor(face_value x win_prob / MaxWinProb), so crediting at least
+	// one wei needs face_value >= MaxWinProb/win_prob — and that has to
+	// round UP.
+	//
+	// It used to floor. At the defaults (win_prob = MaxWinProb/1024)
+	// that advertised a minimum of 1024, and MaxWinProb is odd so
+	// 1024 x win_prob < MaxWinProb: the payee accepted its own
+	// advertised minimum and credited zero. Work served, nothing paid —
+	// the same shape as the zero-credit payment found on mainnet, this
+	// time reachable through the documented boundary rather than a bug.
+	// The correct minimum for those defaults is 1025.
+	minFace, rem := new(big.Int).QuoRem(types.MaxWinProb, winProb, new(big.Int))
+	if rem.Sign() != 0 {
+		minFace.Add(minFace, big.NewInt(1))
+	}
 	if minFace.Sign() <= 0 {
 		minFace = big.NewInt(1)
 	}
-	if minFace.Cmp(faceValue) > 0 {
-		minFace = new(big.Int).Set(faceValue)
+	// The floor used to be clamped DOWN to the operator's default face
+	// value, so "an operator choosing a small default is not overridden."
+	// That defeated the floor exactly when it was needed: a default
+	// below the arithmetic minimum makes every ticket this payee issues
+	// credit zero. The floor is not a preference, so the default is
+	// raised to meet it and the operator is told.
+	if faceValue.Cmp(minFace) < 0 {
+		logger.Warn("default face value is below the arithmetic minimum; raising it",
+			"configured_wei", faceValue.String(),
+			"minimum_wei", minFace.String(),
+			"reason", "below this, EV credit floors to zero and tickets are free money for the sender")
+		faceValue = new(big.Int).Set(minFace)
 	}
 	rec := cfg.Recorder
 	if rec == nil {

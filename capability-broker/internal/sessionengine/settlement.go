@@ -90,7 +90,7 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 
 		SettlementSeq: rec.SettlementSeq,
 		IssuedAt:      e.cfg.Now().UTC().Format(time.RFC3339Nano),
-		State:         rec.State,
+		State:         wireState(rec.State),
 	}
 	if rec.ClaimedTotal != rec.DebitedTotal {
 		// Recorded rather than smoothed over: the two advance in one
@@ -136,6 +136,40 @@ func (e *Engine) recordSettlementLocked(_ context.Context, sessionID string) (*p
 	}
 	out.SettlementSeq = seq
 	return out, nil
+}
+
+// wireState maps this broker's internal session state onto the three
+// the signed record is allowed to carry: "open", "winding_down" or
+// "closed" (types.proto SettlementRecord.state).
+//
+// The internal set is active / winding_down / ended / failed, and it was
+// being passed through verbatim. A terminal record therefore said
+// "ended", which is not a value the proto defines, and a clearinghouse
+// validating against the spec refused it as session_not_terminal —
+// correctly. An interim record said "active" for the same reason; that
+// half went unreported only because nobody had validated one yet.
+//
+// Both terminal states map to "closed". The wire field answers "may more
+// value still be claimed against this session", and for a failed session
+// the answer is no, exactly as for one that ended cleanly. WHY it ended
+// is carried by termination_reason, which is where a reader should look
+// — the state field has three values precisely so it cannot become an
+// open-ended enum a consumer has to keep up with.
+func wireState(internal string) string {
+	switch internal {
+	case sessionstore.StateActive:
+		return "open"
+	case sessionstore.StateWindingDown:
+		return "winding_down"
+	case sessionstore.StateEnded, sessionstore.StateFailed:
+		return "closed"
+	default:
+		// An unmapped state is a bug in this broker, not a value to
+		// invent a wire name for. "closed" is the conservative answer:
+		// it tells a reader no further claim is coming, which is the
+		// safe thing to be wrong about.
+		return "closed"
+	}
 }
 
 func decimalBytes(s string) []byte {

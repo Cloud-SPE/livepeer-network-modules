@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -68,7 +69,15 @@ func (f *fakeSessionRunner) handler() http.Handler {
 func newSessionTestServer(t *testing.T) (*httptest.Server, *fakeSessionRunner) {
 	t.Helper()
 	runner := &fakeSessionRunner{}
-	runnerSrv := httptest.NewServer(runner.handler())
+	return newSessionTestServerWithRunner(t, runner.handler()), runner
+}
+
+// newSessionTestServerWithRunner is newSessionTestServer with a
+// caller-supplied runner, for the tests that need a descriptor the
+// standard fake does not produce.
+func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *httptest.Server {
+	t.Helper()
+	runnerSrv := httptest.NewServer(runnerHandler)
 	t.Cleanup(runnerSrv.Close)
 
 	dir := t.TempDir()
@@ -115,7 +124,7 @@ func newSessionTestServer(t *testing.T) (*httptest.Server, *fakeSessionRunner) {
 	})
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
-	return srv, runner
+	return srv
 }
 
 func sessionOpenReq(t *testing.T, srv *httptest.Server, requestID string) *http.Response {
@@ -638,5 +647,61 @@ func TestSessionOpenRequiresGatewaySessionID(t *testing.T) {
 					"produces a settlement its consumer can never resolve", resp.StatusCode)
 			}
 		})
+	}
+}
+
+// A descriptor with no grants must not emit `"grants": null`.
+//
+// The open response is assembled as a map[string]any, which has no
+// omitempty, so a nil slice marshalled to null. The descriptor schemas
+// require an array when the key is present, so a consumer validating the
+// runtime block rejected an otherwise good open. Most descriptors carry
+// grants, which is why this survived: the ones that do not were the
+// broken case.
+func TestSessionOpenNeverEmitsNullGrants(t *testing.T) {
+	// A runner whose descriptor carries no grants at all.
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /sessions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"runner_session_id": "rns_nogrants",
+			"runtime": {
+				"schema": "sfu-room/v1",
+				"public": {"url": "wss://sfu.example", "room": "rm_nogrants"}
+			}
+		}`)
+	})
+	mux.HandleFunc("GET /sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"runner_session_id":"rns_nogrants","state":"active"}`)
+	})
+	mux.HandleFunc("DELETE /sessions/{id}", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := newSessionTestServerWithRunner(t, mux)
+
+	resp := sessionOpenReq(t, srv, "sess-nogrants")
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("open status %d: %s", resp.StatusCode, raw)
+	}
+
+	// Assert on the BYTES. Decoding to map[string]any turns both a null
+	// and an absent key into a nil interface, so a decoded check cannot
+	// tell the broken case from the fixed one.
+	if bytes.Contains(raw, []byte(`"grants":null`)) ||
+		bytes.Contains(raw, []byte(`"grants": null`)) {
+		t.Fatalf("open emitted a null grants; the schema requires an array "+
+			"when the key is present:\n%s", raw)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	rt, _ := out["runtime"].(map[string]any)
+	if g, present := rt["grants"]; present {
+		if _, isArray := g.([]any); !isArray {
+			t.Fatalf("grants present but not an array: %T %v", g, g)
+		}
 	}
 }

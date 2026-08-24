@@ -211,15 +211,24 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rec, _ := s.sessionStore.Get(res.SessionID)
+	// Grants is omitted rather than emitted as null when a descriptor
+	// carries none. A map[string]any has no omitempty, so a nil slice
+	// marshalled to `"grants": null` — and the schema requires an array
+	// when the key is present, so a consumer validating the descriptor
+	// rejected an otherwise good open. Most descriptors have grants;
+	// the ones that do not were the broken case.
+	runtime := map[string]any{
+		"schema": res.Schema,
+		"public": res.Public,
+	}
+	if len(res.Grants) > 0 {
+		runtime["grants"] = res.Grants
+	}
 	resp := map[string]any{
 		"session_id": res.SessionID,
 		"work_id":    res.WorkID,
 		"state":      res.State,
-		"runtime": map[string]any{
-			"schema": res.Schema,
-			"public": res.Public,
-			"grants": res.Grants,
-		},
+		"runtime":    runtime,
 		"lease":   map[string]any{"expires_at": res.Lease.Format(time.RFC3339)},
 		"control": s.sessionControlURLs(res.SessionID),
 	}

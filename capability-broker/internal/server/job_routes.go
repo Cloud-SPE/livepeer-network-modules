@@ -385,6 +385,15 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 				w.Header().Set(livepeerheader.JobID, rec.JobID)
 				w.Header().Set(livepeerheader.WorkUnits, strconv.FormatUint(rec.WorkUnits, 10))
 				w.Header().Set(livepeerheader.WorkUnitName, rec.Unit)
+				// The recorded claim includes the settlement. Replay
+				// carried the status, the job id and the units but
+				// dropped this, so a caller retrying an exchange whose
+				// response it lost got back everything EXCEPT the
+				// evidence it retried for. Idempotent means the same
+				// answer, not a similar one.
+				if rec.Settlement != "" {
+					w.Header().Set(livepeerheader.Settlement, rec.Settlement)
+				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(rec.Status)
 				fmt.Fprintf(w, `{"replayed":true,"job_id":%q}`, rec.JobID)

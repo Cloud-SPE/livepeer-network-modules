@@ -1388,3 +1388,78 @@ func TestTopUpRebindReturnsTheSuccessorIdentity(t *testing.T) {
 		t.Fatalf("predecessor = %q; want %q", after.PredecessorWorkID, before.WorkID)
 	}
 }
+
+// The signed record's state has to be one of the three the proto
+// defines: "open", "winding_down" or "closed".
+//
+// It carried this broker's INTERNAL state instead. The internal set is
+// active / winding_down / ended / failed, so a terminal record said
+// "ended" — not a value the spec defines — and a clearinghouse
+// validating against the spec refused it as session_not_terminal.
+// Correctly: a consumer that accepts an undefined state is not
+// validating. An interim record said "active" for the same reason; that
+// half went unreported only because nobody had validated one yet.
+func TestSettlementStateUsesTheNormativeVocabulary(t *testing.T) {
+	// Every state the proto allows, and nothing else.
+	normative := map[string]bool{"open": true, "winding_down": true, "closed": true}
+
+	t.Run("interim record is open", func(t *testing.T) {
+		h := newHarness(t)
+		res := h.open(t)
+		if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID,
+			usageEvent("ev-1", 1, 5)); err != nil {
+			t.Fatal(err)
+		}
+		rec, _ := h.store.Get(res.SessionID)
+		if rec.State != sessionstore.StateActive {
+			t.Fatalf("precondition: internal state is %q, wanted %q",
+				rec.State, sessionstore.StateActive)
+		}
+		set := h.engine.SettlementFor(rec, h.spec)
+		if set == nil {
+			t.Fatal("no settlement record")
+		}
+		if !normative[set.GetState()] {
+			t.Fatalf("state = %q; the proto allows only open|winding_down|closed",
+				set.GetState())
+		}
+		if set.GetState() != "open" {
+			t.Fatalf("an active session settles as %q; want \"open\"", set.GetState())
+		}
+	})
+
+	t.Run("terminal record is closed", func(t *testing.T) {
+		h := newHarness(t)
+		res := h.open(t)
+		if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID,
+			usageEvent("ev-1", 1, 5)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.engine.End(context.Background(), res.SessionID, "gateway_close"); err != nil {
+			t.Fatalf("End: %v", err)
+		}
+		rec, _ := h.store.Get(res.SessionID)
+		// The internal state really is "ended" — that is the value that
+		// was leaking, so pin it, or the test could pass because the
+		// internal vocabulary changed rather than because it is mapped.
+		if rec.State != sessionstore.StateEnded {
+			t.Fatalf("precondition: internal state is %q, wanted %q",
+				rec.State, sessionstore.StateEnded)
+		}
+		set := h.engine.SettlementFor(rec, h.spec)
+		if set == nil {
+			t.Fatal("no settlement record")
+		}
+		if set.GetState() == sessionstore.StateEnded {
+			t.Fatal(`state = "ended": the internal vocabulary reached the wire; ` +
+				`a clearinghouse refuses this as session_not_terminal`)
+		}
+		if !normative[set.GetState()] {
+			t.Fatalf("state = %q; the proto allows only open|winding_down|closed",
+				set.GetState())
+		}
+		if set.GetState() != "closed" {
+			t.Fatalf("an ended session settles as %q; want \"closed\"", set.GetState())
+		}
+	})
+}

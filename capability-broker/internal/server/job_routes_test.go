@@ -843,3 +843,47 @@ func TestPartiallyRejectedPaymentStillRuns(t *testing.T) {
 		t.Fatalf("status %d; an unrejected payment must still run", resp.StatusCode)
 	}
 }
+
+// A byte-identical replay must return the SAME recorded claim, and the
+// settlement is part of that claim.
+//
+// Replay carried the status, the job id and the units but dropped
+// Livepeer-Settlement, so a caller retrying an exchange whose response it
+// lost got back everything except the evidence it retried for. Idempotent
+// means the same answer, not a similar one — and the settlement is the
+// half a clearinghouse actually reads.
+func TestJobReplayReturnsTheRecordedSettlement(t *testing.T) {
+	var backendCalls atomic.Int64
+	srv := newJobTestServer(t, &backendCalls)
+
+	first := jobReqPaid(t, srv, "job-settlement-replay", "")
+	io.Copy(io.Discard, first.Body)
+	first.Body.Close()
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("first exchange status %d", first.StatusCode)
+	}
+	original := first.Header.Get(livepeerheader.Settlement)
+	if original == "" {
+		t.Fatal("no settlement on the first exchange; the replay assertion " +
+			"below would be vacuous")
+	}
+
+	before := backendCalls.Load()
+	replay := jobReqPaid(t, srv, "job-settlement-replay", "")
+	io.Copy(io.Discard, replay.Body)
+	replay.Body.Close()
+
+	if replay.StatusCode != first.StatusCode {
+		t.Fatalf("replay status %d, first %d", replay.StatusCode, first.StatusCode)
+	}
+	if backendCalls.Load() != before {
+		t.Fatal("replay re-executed the backend")
+	}
+	got := replay.Header.Get(livepeerheader.Settlement)
+	if got == "" {
+		t.Fatal("replay dropped Livepeer-Settlement; the recorded claim includes it")
+	}
+	if got != original {
+		t.Fatalf("replay returned a DIFFERENT settlement.\n first: %s\nreplay: %s", original, got)
+	}
+}

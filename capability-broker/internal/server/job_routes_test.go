@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1001,4 +1002,73 @@ func TestPendingDebitShipsNoTerminalSettlement(t *testing.T) {
 			t.Fatalf("outcome = %s after exhaustion; want DEBIT_FAILED", rec.GetOutcome())
 		}
 	})
+}
+
+// A refusal AFTER the payment was admitted has to say what it cost.
+//
+// The payment is credited to the ledger, then the request is refused for
+// no runway: value moved, no work done. The response carried only an
+// error code — no units claim, so a gateway had to infer "nothing was
+// billed" from a missing header — and no signed evidence, so the exchange
+// lookup answered ADMITTED_OUTCOME_UNKNOWN: "this broker admitted the
+// exchange and holds no signed settlement for it." Correct about the
+// record, useless to a gateway reconciling an admitted envelope.
+//
+// Nothing was billed. That is knowable and terminal, and this broker can
+// attest to it at the moment it refuses.
+func TestPostAdmissionRefusalStatesZeroAndSignsIt(t *testing.T) {
+	var calls atomic.Int64
+	mock := payment.NewMock()
+	// Admitted, but credits nothing — so the pre-flight check refuses
+	// before any backend work.
+	mock.SetCreditPerPayment(big.NewInt(0))
+	srv, _ := newJobTestServerWith(t, &calls, mock)
+	// Baseline after startup: the broker health-probes the backend, so
+	// the counter is not zero before the request.
+	baseline := calls.Load()
+
+	resp := jobReqPaid(t, srv, "post-admission-refusal", "")
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("status %d; want 402 insufficient_balance", resp.StatusCode)
+	}
+	if got := resp.Header.Get(livepeerheader.Error); got != livepeerheader.ErrInsufficientBalance {
+		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrInsufficientBalance)
+	}
+	if calls.Load() != baseline {
+		t.Fatalf("backend ran for a refused request: %d -> %d", baseline, calls.Load())
+	}
+	if got := resp.Header.Get(livepeerheader.WorkUnits); got != "0" {
+		t.Fatalf("Livepeer-Work-Units = %q; want \"0\" — a reader should not have to "+
+			"infer the amount from a missing header", got)
+	}
+
+	encoded := resp.Header.Get(livepeerheader.Settlement)
+	if encoded == "" {
+		t.Fatal("no signed evidence for an admitted-then-refused exchange")
+	}
+	rec := decodeSettlementHeader(t, encoded)
+	if rec.GetDebitedUnits() != 0 {
+		t.Fatalf("debited_units = %d; nothing was billed", rec.GetDebitedUnits())
+	}
+	if billed := new(big.Int).SetBytes(rec.GetBilledValueWei().GetValue()); billed.Sign() != 0 {
+		t.Fatalf("billed_value_wei = %s; nothing was billed", billed)
+	}
+
+	// And it must be retrievable, not merely delivered — a gateway that
+	// lost the response is exactly the case evidence exists for.
+	jobID := resp.Header.Get(livepeerheader.JobID)
+	if jobID == "" {
+		t.Fatal("refusal carries no job id, so its evidence cannot be looked up")
+	}
+	q, err := http.Get(srv.URL + "/v1/exchange/" + "post-admission-refusal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := decodeBody(t, q)
+	if got, _ := body["outcome"].(string); got == "ADMITTED_OUTCOME_UNKNOWN" {
+		t.Fatalf("exchange lookup still reports %q: %v", got, body["detail"])
+	}
 }

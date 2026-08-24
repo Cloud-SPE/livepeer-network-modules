@@ -418,6 +418,43 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			}); serr != nil {
 				log.Printf("warning: pre-flight balance check failed work_id=%s: %v", workID, serr)
 			} else if suff != nil && !suff.Sufficient {
+				// The payment was ADMITTED — credited to the ledger —
+				// and then the request refused. Value moved and no work
+				// was done, so this needs to be a statement, not just an
+				// error code.
+				//
+				// Zero units, said out loud. WriteError sets only the
+				// error and the status, so the response carried no units
+				// claim at all and a gateway had to infer "nothing was
+				// billed" from the absence of a header. A reader that
+				// has to infer an amount is a reader that will
+				// eventually infer the wrong one.
+				w.Header().Set(livepeerheader.WorkUnits, "0")
+				w.Header().Set(livepeerheader.WorkUnitName, spec.WorkUnit)
+				// And signed evidence of the refusal. Without it the
+				// exchange lookup answered ADMITTED_OUTCOME_UNKNOWN —
+				// "this broker admitted the exchange and holds no signed
+				// settlement for it" — which is the correct thing to say
+				// about a record that has none, and a useless thing for
+				// a gateway trying to reconcile an admitted envelope.
+				// Nothing was billed, and that is a knowable, terminal
+				// fact this broker can attest to now.
+				refusal := SettlementIdentity{
+					JobID:        w.Header().Get(livepeerheader.JobID),
+					WorkID:       workID,
+					IssuedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+					RequestID:    RequestIDFromContext(r.Context()),
+					ChargedWei:   big.NewInt(0),
+					DebitedUnits: 0,
+				}
+				if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, 0,
+					spec.WorkUnit, livepeerheader.ErrInsufficientBalance, refusal); settlement != nil {
+					if encoded, err := encode(settlement); err == nil {
+						w.Header().Set(livepeerheader.Settlement, encoded)
+					} else {
+						log.Printf("warning: refusal settlement encode failed work_id=%s: %v", workID, err)
+					}
+				}
 				livepeerheader.WriteError(w, http.StatusPaymentRequired,
 					livepeerheader.ErrInsufficientBalance,
 					"payment credited no runway for this offering; fund the session before requesting work")

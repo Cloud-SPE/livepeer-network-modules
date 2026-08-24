@@ -1050,11 +1050,33 @@ func TestPostAdmissionRefusalStatesZeroAndSignsIt(t *testing.T) {
 		t.Fatal("no signed evidence for an admitted-then-refused exchange")
 	}
 	rec := decodeSettlementHeader(t, encoded)
-	if rec.GetDebitedUnits() != 0 {
-		t.Fatalf("debited_units = %d; nothing was billed", rec.GetDebitedUnits())
+	if rec.GetOutcome() != pb.SettlementRecord_STOPPED_AT_BUDGET {
+		t.Fatalf("outcome = %s; a refusal for no runway is STOPPED_AT_BUDGET", rec.GetOutcome())
+	}
+	// All three unit counts zero: no work was measured, none was billed,
+	// none was debited. A record that left any of them unset would let a
+	// reader conclude something happened.
+	if rec.GetActualUnits() != 0 || rec.GetBilledUnits() != 0 || rec.GetDebitedUnits() != 0 {
+		t.Fatalf("units actual=%d billed=%d debited=%d; all three must be 0",
+			rec.GetActualUnits(), rec.GetBilledUnits(), rec.GetDebitedUnits())
 	}
 	if billed := new(big.Int).SetBytes(rec.GetBilledValueWei().GetValue()); billed.Sign() != 0 {
 		t.Fatalf("billed_value_wei = %s; nothing was billed", billed)
+	}
+	// Bound to the exchange it describes. Evidence that cannot name its
+	// exchange can be replayed as evidence for another.
+	if rec.GetRequestId() != "post-admission-refusal" {
+		t.Fatalf("request_id = %q", rec.GetRequestId())
+	}
+	if rec.GetJobId() == "" || rec.GetWorkId() == "" {
+		t.Fatalf("job_id=%q work_id=%q; both bind the record to this exchange",
+			rec.GetJobId(), rec.GetWorkId())
+	}
+	if rec.GetWorkUnitName() == "" {
+		t.Fatal("work_unit_name is empty; a billed figure without its unit is unreadable")
+	}
+	if rec.GetAcceptedQuoteRef().GetQuoteId() == "" {
+		t.Fatal("accepted_quote_ref is empty; the record cannot be tied to the quote it priced")
 	}
 
 	// And it must be retrievable, not merely delivered — a gateway that
@@ -1063,12 +1085,44 @@ func TestPostAdmissionRefusalStatesZeroAndSignsIt(t *testing.T) {
 	if jobID == "" {
 		t.Fatal("refusal carries no job id, so its evidence cannot be looked up")
 	}
-	q, err := http.Get(srv.URL + "/v1/exchange/" + "post-admission-refusal")
-	if err != nil {
-		t.Fatal(err)
+	// Retrievable by BOTH identifiers, and byte-identical to what was
+	// delivered — a gateway holds one or the other depending on where it
+	// lost the response.
+	for _, u := range []string{
+		srv.URL + "/v1/exchange/post-admission-refusal",
+		srv.URL + "/v1/settlement/" + jobID,
+	} {
+		q, err := http.Get(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := decodeBody(t, q)
+		if got, _ := body["outcome"].(string); got == "ADMITTED_OUTCOME_UNKNOWN" {
+			t.Fatalf("%s reports %q: %v", u, got, body["detail"])
+		}
+		got, _ := body["settlement"].(string)
+		if got == "" {
+			got = q.Header.Get(livepeerheader.Settlement)
+		}
+		if got != encoded {
+			t.Fatalf("%s returned different evidence than the response carried", u)
+		}
 	}
-	body := decodeBody(t, q)
-	if got, _ := body["outcome"].(string); got == "ADMITTED_OUTCOME_UNKNOWN" {
-		t.Fatalf("exchange lookup still reports %q: %v", got, body["detail"])
+
+	// And a replay returns the same evidence without re-admitting the
+	// payment or running the backend.
+	beforeReplay := calls.Load()
+	replay := jobReqPaid(t, srv, "post-admission-refusal", "")
+	_, _ = io.Copy(io.Discard, replay.Body)
+	_ = replay.Body.Close()
+	if calls.Load() != beforeReplay {
+		t.Fatal("replay of a refused request ran the backend")
+	}
+	if got := replay.Header.Get(livepeerheader.Settlement); got != encoded {
+		t.Fatalf("replay evidence differs from the original:\n  first: %s\n replay: %s",
+			encoded, got)
+	}
+	if got := replay.Header.Get(livepeerheader.WorkUnits); got != "0" {
+		t.Fatalf("replay Work-Units = %q; want \"0\"", got)
 	}
 }

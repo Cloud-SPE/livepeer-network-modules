@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"log"
 	"math/big"
 	"net/http"
@@ -418,6 +419,17 @@ func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitCon
 			}); serr != nil {
 				log.Printf("warning: pre-flight balance check failed work_id=%s: %v", workID, serr)
 			} else if suff != nil && !suff.Sufficient {
+				// Drain the request body before refusing.
+				//
+				// The outer idempotency layer records a digest of the
+				// body as it was consumed, and compares it on replay. A
+				// refusal that returns without reading recorded the
+				// digest of an EMPTY read, so every replay of a refused
+				// request mismatched and came back 400
+				// request_id_reuse — a gateway retrying after a lost
+				// response got a confusing reuse error instead of the
+				// recorded outcome it is entitled to.
+				_, _ = io.Copy(io.Discard, r.Body)
 				// The payment was ADMITTED — credited to the ledger —
 				// and then the request refused. Value moved and no work
 				// was done, so this needs to be a statement, not just an

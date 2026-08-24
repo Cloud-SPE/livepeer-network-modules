@@ -392,10 +392,22 @@ func (x *GetTicketParamsRequest) GetOffering() string {
 }
 
 type GetTicketParamsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TicketParams  *TicketParams          `protobuf:"bytes,1,opt,name=ticket_params,json=ticketParams,proto3" json:"ticket_params,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	TicketParams *TicketParams          `protobuf:"bytes,1,opt,name=ticket_params,json=ticketParams,proto3" json:"ticket_params,omitempty"`
+	// Set when answering this call ROTATED the ticket session: the work_id
+	// the returned params supersede.
+	//
+	// A recipient rand tracks a bounded number of sender nonces, so a
+	// long-lived session eventually exhausts its budget and the payee
+	// mints a fresh rand. That changes work_id, and a changed work_id must
+	// never arrive silently — a consumer keying evidence on it would
+	// otherwise attribute the successor's payments to nothing, or to the
+	// predecessor.
+	//
+	// Empty on the ordinary path, which is almost every call.
+	PredecessorWorkId string `protobuf:"bytes,2,opt,name=predecessor_work_id,json=predecessorWorkId,proto3" json:"predecessor_work_id,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *GetTicketParamsResponse) Reset() {
@@ -433,6 +445,13 @@ func (x *GetTicketParamsResponse) GetTicketParams() *TicketParams {
 		return x.TicketParams
 	}
 	return nil
+}
+
+func (x *GetTicketParamsResponse) GetPredecessorWorkId() string {
+	if x != nil {
+		return x.PredecessorWorkId
+	}
+	return ""
 }
 
 type ListCapabilitiesRequest struct {
@@ -1613,9 +1632,10 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\n" +
 	"capability\x18\x04 \x01(\tR\n" +
 	"capability\x12\x1a\n" +
-	"\boffering\x18\x05 \x01(\tR\boffering\"b\n" +
+	"\boffering\x18\x05 \x01(\tR\boffering\"\x92\x01\n" +
 	"\x17GetTicketParamsResponse\x12G\n" +
-	"\rticket_params\x18\x01 \x01(\v2\".livepeer.payments.v1.TicketParamsR\fticketParams\"\x19\n" +
+	"\rticket_params\x18\x01 \x01(\v2\".livepeer.payments.v1.TicketParamsR\fticketParams\x12.\n" +
+	"\x13predecessor_work_id\x18\x02 \x01(\tR\x11predecessorWorkId\"\x19\n" +
 	"\x17ListCapabilitiesRequest\"e\n" +
 	"\x18ListCapabilitiesResponse\x12I\n" +
 	"\fcapabilities\x18\x01 \x03(\v2%.livepeer.payments.v1.CapabilityEntryR\fcapabilities\"\xd9\x01\n" +

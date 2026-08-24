@@ -291,6 +291,43 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	}
 	n := int(ticketCount.Int64())
 
+	// Roll the session over BEFORE signing anything, if this batch would
+	// run past the payee's per-rand nonce budget.
+	//
+	// The budget is cumulative over the session's whole life, not per
+	// payment: after MaxSenderNonces accepted tickets the payee refuses
+	// every further one on this rand and credits nothing. Bounding a
+	// single batch does not see that — the 601st one-ticket payment
+	// still signs, still looks successful to the caller, and is rejected
+	// whole.
+	//
+	// Before signing, because a signed envelope the payee has already
+	// decided to refuse is worse than an error: it is authorisation the
+	// caller believes it spent. If rotation cannot complete, this
+	// returns without signing.
+	predecessorWorkID := ""
+	if s.store != nil && session.workID != "" {
+		used, uerr := s.store.SenderNoncesUsed(session.workID)
+		if uerr != nil {
+			return nil, fmt.Errorf("read nonce budget: %w", uerr)
+		}
+		if uint64(used)+uint64(n) > uint64(store.MaxSenderNonces) {
+			rotated, rerr := s.rotateExhaustedSession(ctx, session, req.GetRecipient(),
+				acceptedPrice, req.GetTicketParamsBaseUrl(),
+				req.GetAcceptedPrice().GetQuoteRef(), funding)
+			if rerr != nil {
+				return nil, rerr
+			}
+			predecessorWorkID = session.workID
+			session = rotated
+			s.logger.Info("ticket session rolled over: nonce budget exhausted",
+				"predecessor_work_id", predecessorWorkID,
+				"successor_work_id", session.workID,
+				"nonces_used", used,
+				"cap", store.MaxSenderNonces)
+		}
+	}
+
 	tsps := make([]*types.TicketSenderParams, 0, n)
 	for i := 0; i < n; i++ {
 		tsp, err := s.signOneTicket(session)
@@ -335,12 +372,13 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		"first_nonce", tsp.SenderNonce)
 
 	out := &pb.CreatePaymentResponse{
-		PaymentBytes:     bytes,
-		TicketsCreated:   uint32(n),
-		ExpectedValue:    &pb.BigUInt{Value: evBytes},
-		FundedValueWei:   &pb.BigUInt{Value: funding.fundedValueWei.Bytes()},
-		AcceptedQuoteRef: cloneQuoteRef(session.acceptedQuote),
-		WorkId:           session.workID,
+		PaymentBytes:      bytes,
+		TicketsCreated:    uint32(n),
+		ExpectedValue:     &pb.BigUInt{Value: evBytes},
+		FundedValueWei:    &pb.BigUInt{Value: funding.fundedValueWei.Bytes()},
+		AcceptedQuoteRef:  cloneQuoteRef(session.acceptedQuote),
+		WorkId:            session.workID,
+		PredecessorWorkId: predecessorWorkID,
 		// When this envelope dies UNDER THE PARAMETER OBSERVED NOW.
 		//
 		// Not a property of the envelope: the contract evaluates
@@ -545,6 +583,59 @@ func (s *Service) recordSenderFunds(info *providers.SenderInfo) {
 // matters because the payee caps a session at store.MaxSenderNonces
 // tickets: paying for a large intent in many small tickets runs out of
 // nonces long before it runs out of money.
+// rotateExhaustedSession retires a session whose nonce budget is spent
+// and returns its successor, or an error if it cannot.
+//
+// Coordinated rather than unilateral: the payee owns the recipient rand,
+// so the payer asks and the payee mints. Dropping the cached session
+// first is what makes the next lookup a miss, which is what causes the
+// payee to be asked at all.
+//
+// Fails closed. A successor that came back with the SAME rand is not a
+// rotation — it is the exhausted identity again, and minting on it would
+// produce exactly the refused payment this exists to prevent.
+func (s *Service) rotateExhaustedSession(ctx context.Context, old *senderSession,
+	recipient []byte, acceptedPrice *acceptedPriceInput, baseURL string,
+	acceptedQuote *pb.QuoteRef, funding *fundingIntentInput) (*senderSession, error) {
+
+	key := old.cacheKey
+	s.mu.Lock()
+	if cur, ok := s.sessions[key]; ok && cur.workID == old.workID {
+		delete(s.sessions, key)
+		delete(s.workIDIndex, cur.workID)
+		s.metrics.SetSenderSessions(len(s.sessions))
+	}
+	s.mu.Unlock()
+
+	next, err := s.findOrOpenSession(ctx, recipient, funding.fundedValueWei,
+		old.capability, old.offering, baseURL,
+		acceptedPrice.toPriceInfo(funding.estimatedUnits), acceptedQuote)
+	if err != nil {
+		return nil, fmt.Errorf("rotating exhausted ticket session %s: %w", old.workID, err)
+	}
+	if next.workID == old.workID {
+		// The payee re-quoted the SAME identity, which means it does not
+		// consider the budget spent — and its count is the authoritative
+		// one. This payer's watermark is an estimate that can run ahead:
+		// a nonce allocated and never sent, or a payee restored from a
+		// point before those tickets arrived, both leave the payer
+		// counting spend the payee never saw.
+		//
+		// So this is "rotation was unnecessary", not "rotation failed".
+		// Proceeding is safe because the payee is the backstop: if the
+		// budget really is spent, ProcessPayment retires the rand and
+		// answers INVALID_RECIPIENT_RAND, and recovery runs through the
+		// path both sides already implement. Failing closed here would
+		// block a mint the payee was willing to serve, on the strength
+		// of a number this side cannot vouch for.
+		s.logger.Info("payee re-quoted the same ticket session; its nonce budget is not spent",
+			"work_id", old.workID,
+			"payer_watermark_cap", store.MaxSenderNonces)
+		return next, nil
+	}
+	return next, nil
+}
+
 func (s *Service) rescaleTicketParams(ctx context.Context, recipient []byte, want *big.Int,
 	capability, offering, baseURL string, current *types.TicketParams) (*types.TicketParams, error) {
 

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -183,6 +184,22 @@ func TestDevModeTamperedSignatureIsRejected(t *testing.T) {
 // through an HTTP proxy onto the real payee, the way a broker relays it.
 func devModeSenderStand(t *testing.T, payee pb.PayeeDaemonClient) (pb.PayerDaemonClient, string, func()) {
 	t.Helper()
+	return devModeSenderStandVia(t, func() pb.PayeeDaemonClient { return payee })
+}
+
+// devModeSenderStandVia resolves the payee per call, so a test can
+// restart it underneath the sender — which is what a restart test has to
+// do, rather than leaving the sender talking to a closed connection.
+func devModeSenderStandVia(t *testing.T, payeeFor func() pb.PayeeDaemonClient) (pb.PayerDaemonClient, string, func()) {
+	c, u, _, stop := devModeSenderStandWithStore(t, payeeFor)
+	return c, u, stop
+}
+
+// devModeSenderStandWithStore also hands back the payer's durable store,
+// so a test can simulate the state loss that puts the payer's nonce
+// watermark out of step with the payee's ledger.
+func devModeSenderStandWithStore(t *testing.T, payeeFor func() pb.PayeeDaemonClient) (pb.PayerDaemonClient, string, *store.Store, func()) {
+	t.Helper()
 
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -197,7 +214,7 @@ func devModeSenderStand(t *testing.T, payee pb.PayeeDaemonClient) (pb.PayerDaemo
 			return
 		}
 		faceValue, _ := new(big.Int).SetString(req.FaceValueWei, 10)
-		resp, err := payee.GetTicketParams(r.Context(), &pb.GetTicketParamsRequest{
+		resp, err := payeeFor().GetTicketParams(r.Context(), &pb.GetTicketParamsRequest{
 			Sender:     mustDecodeHexAddress(t, req.SenderETHAddress),
 			Recipient:  mustDecodeHexAddress(t, req.RecipientETHAddress),
 			FaceValue:  faceValue.Bytes(),
@@ -232,8 +249,9 @@ func devModeSenderStand(t *testing.T, payee pb.PayeeDaemonClient) (pb.PayerDaemo
 	}
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "tx.sock")
+	payerStore := mintStore(t)
 	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil,
-		sender.NewHTTPTicketParamsFetcher(), nil, mintStore(t), sender.Limits{})
+		sender.NewHTTPTicketParamsFetcher(), nil, payerStore, sender.Limits{})
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -247,7 +265,7 @@ func devModeSenderStand(t *testing.T, payee pb.PayeeDaemonClient) (pb.PayerDaemo
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	return pb.NewPayerDaemonClient(conn), proxy.URL, func() {
+	return pb.NewPayerDaemonClient(conn), proxy.URL, payerStore, func() {
 		_ = conn.Close()
 		gs.GracefulStop()
 		proxy.Close()
@@ -578,5 +596,427 @@ func TestCachedSessionFundsALargerLaterRequest(t *testing.T) {
 	// payee's identity for this route.
 	if secondWorkID != firstWorkID {
 		t.Fatalf("work_id moved on a resize: %s -> %s", firstWorkID, secondWorkID)
+	}
+}
+
+// The nonce budget is cumulative over a session's whole life, so a
+// long-lived route eventually rolls over.
+//
+// store.MaxSenderNonces applies per recipient rand, not per payment. So
+// after that many accepted one-ticket payments the NEXT one was still
+// minted, still looked successful to the caller, and was rejected whole
+// with NONCE_CAP_REACHED for zero credit. Bounding a single batch does
+// not see a budget spent across many.
+//
+// Rotation is coordinated: the payee owns the rand and mints the
+// successor; the payer asks before signing and reports the predecessor
+// so a changed work_id never arrives silently.
+func TestSessionRollsOverAtTheNonceBudget(t *testing.T) {
+	recipient := bytes20(0xf5)
+	payee, cleanupPayee := defaultConfigReceiverStand(t, recipient)
+	defer cleanupPayee()
+	payer, baseURL, cleanupPayer := devModeSenderStand(t, payee)
+	defer cleanupPayer()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	opened := map[string]bool{}
+	pay := func(i int) (workID, predecessor string) {
+		t.Helper()
+		req := devModeCreateRequest(recipient, fmt.Sprintf("roll-%d", i), baseURL)
+		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		created, err := payer.CreatePayment(ctx, req)
+		if err != nil {
+			t.Fatalf("payment %d: %v", i, err)
+		}
+		workID = created.GetWorkId()
+		predecessor = created.GetPredecessorWorkId()
+
+		if !opened[workID] {
+			if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{
+				WorkId:              workID,
+				Capability:          "openai:chat-completions",
+				Offering:            "model-a",
+				PricePerWorkUnitWei: big.NewInt(1000).Bytes(),
+				WorkUnit:            "tokens",
+			}); err != nil {
+				t.Fatalf("OpenSession at payment %d: %v", i, err)
+			}
+			opened[workID] = true
+		}
+		resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+			PaymentBytes: created.GetPaymentBytes(),
+			WorkId:       workID,
+		})
+		if err != nil {
+			t.Fatalf("ProcessPayment %d: %v", i, err)
+		}
+		if resp.GetTicketsRejected() != 0 {
+			t.Fatalf("payment %d rejected %d of %d tickets (%s) — a payment the payer signed "+
+				"and the payee refused whole",
+				i, resp.GetTicketsRejected(), len(resp.GetTicketStatus()),
+				resp.GetDominantRejection())
+		}
+		if credited := new(big.Int).SetBytes(resp.GetCreditedEv()); credited.Sign() == 0 {
+			t.Fatalf("payment %d credited nothing", i)
+		}
+		return workID, predecessor
+	}
+
+	firstWorkID, _ := pay(1)
+	var rolloverAt int
+	var successor, reportedPredecessor string
+	for i := 2; i <= store.MaxSenderNonces+1; i++ {
+		w, pred := pay(i)
+		if pred != "" {
+			if rolloverAt != 0 {
+				t.Fatalf("rolled over twice: at %d and again at %d", rolloverAt, i)
+			}
+			rolloverAt, successor, reportedPredecessor = i, w, pred
+		}
+	}
+
+	if rolloverAt == 0 {
+		t.Fatalf("no rollover across %d payments; the budget is %d",
+			store.MaxSenderNonces+1, store.MaxSenderNonces)
+	}
+	// The changed identity must be reported, not discovered.
+	if reportedPredecessor != firstWorkID {
+		t.Fatalf("predecessor_work_id = %q; want the exhausted %q",
+			reportedPredecessor, firstWorkID)
+	}
+	if successor == firstWorkID {
+		t.Fatal("rollover reported a predecessor but did not change work_id")
+	}
+
+	// The exhausted identity is retired: a late payment on it is refused
+	// rather than credited to a session nobody can draw on.
+	stale := devModeCreateRequest(recipient, "roll-stale", baseURL)
+	stale.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+	if created, err := payer.CreatePayment(ctx, stale); err == nil {
+		if created.GetWorkId() == firstWorkID {
+			t.Fatal("still minting against the retired identity")
+		}
+	}
+}
+
+// Two mints racing the boundary must produce ONE successor.
+//
+// Both see the exhausted rand and both ask the payee to rotate. If each
+// got its own successor the route would fork: two live identities for
+// one tuple, and a consumer with no way to order them.
+func TestConcurrentBoundaryMintsProduceOneSuccessor(t *testing.T) {
+	recipient := bytes20(0xf6)
+	payee, cleanupPayee := defaultConfigReceiverStand(t, recipient)
+	defer cleanupPayee()
+	payer, baseURL, cleanupPayer := devModeSenderStand(t, payee)
+	defer cleanupPayer()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	mint := func(id string) (*pb.CreatePaymentResponse, error) {
+		req := devModeCreateRequest(recipient, id, baseURL)
+		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		return payer.CreatePayment(ctx, req)
+	}
+
+	// Walk the session right up to its last nonce, PROCESSING each
+	// payment. Minting alone only moves the payer's watermark; the
+	// payee's nonce ledger — the authoritative count, and the one
+	// rotation keys on — advances when a payment is processed.
+	first, err := mint("race-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := first.GetWorkId()
+	if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{
+		WorkId:              original,
+		Capability:          "openai:chat-completions",
+		Offering:            "model-a",
+		PricePerWorkUnitWei: big.NewInt(1000).Bytes(),
+		WorkUnit:            "tokens",
+	}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	process := func(created *pb.CreatePaymentResponse) {
+		t.Helper()
+		if _, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+			PaymentBytes: created.GetPaymentBytes(),
+			WorkId:       created.GetWorkId(),
+		}); err != nil {
+			t.Fatalf("ProcessPayment: %v", err)
+		}
+	}
+	process(first)
+	for i := 2; i <= store.MaxSenderNonces; i++ {
+		created, err := mint(fmt.Sprintf("race-%d", i))
+		if err != nil {
+			t.Fatalf("priming mint %d: %v", i, err)
+		}
+		process(created)
+	}
+
+	// Now race several mints across the boundary.
+	const racers = 8
+	var wg sync.WaitGroup
+	results := make([]string, racers)
+	errs := make([]error, racers)
+	wg.Add(racers)
+	for i := 0; i < racers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			resp, err := mint(fmt.Sprintf("race-boundary-%d", i))
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			results[i] = resp.GetWorkId()
+		}(i)
+	}
+	wg.Wait()
+
+	successors := map[string]int{}
+	succeeded := 0
+	for i, w := range results {
+		if errs[i] != nil {
+			// Failing closed is acceptable; forking is not.
+			continue
+		}
+		succeeded++
+		if w != original {
+			successors[w]++
+		}
+	}
+	// Without this the test passes when EVERY racer errored, proving
+	// nothing about forking. At least one has to get through.
+	if succeeded == 0 {
+		t.Fatalf("every racer failed; nothing was proved about forking. errors: %v", errs)
+	}
+	if len(successors) == 0 {
+		t.Fatalf("%d mints succeeded at the boundary and none rotated; the budget was spent",
+			succeeded)
+	}
+	if len(successors) > 1 {
+		t.Fatalf("boundary race forked the route into %d successors: %v",
+			len(successors), successors)
+	}
+}
+
+// Restart safety at the boundary.
+//
+// The previous version of this test only reopened a Bolt file and
+// checked a number survived, which proves the store works and says
+// nothing about rollover. This drives the real thing: spend the budget,
+// restart the PAYEE, and confirm the next payment still rotates rather
+// than being signed against an identity whose budget the restarted
+// daemon still remembers.
+func TestRolloverSurvivesAPayeeRestartAtTheBoundary(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "rx.db")
+	recipient := bytes20(0xf7)
+
+	payee, stopPayee := receiverStandAt(t, recipient, dbPath)
+	live := payee
+	payer, baseURL, cleanupPayer := devModeSenderStandVia(t,
+		func() pb.PayeeDaemonClient { return live })
+	defer cleanupPayer()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	mint := func(id string) (*pb.CreatePaymentResponse, error) {
+		req := devModeCreateRequest(recipient, id, baseURL)
+		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		return payer.CreatePayment(ctx, req)
+	}
+
+	first, err := mint("restart-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := first.GetWorkId()
+	if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{
+		WorkId:              original,
+		Capability:          "openai:chat-completions",
+		Offering:            "model-a",
+		PricePerWorkUnitWei: big.NewInt(1000).Bytes(),
+		WorkUnit:            "tokens",
+	}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	// Spend the budget to its last nonce, PROCESSING each payment: the
+	// payee's ledger is the authoritative count and only advances when a
+	// payment is processed. Minting alone moves the payer's estimate,
+	// and the payee is entitled to ignore that.
+	process := func(created *pb.CreatePaymentResponse) {
+		t.Helper()
+		if _, err := live.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+			PaymentBytes: created.GetPaymentBytes(),
+			WorkId:       created.GetWorkId(),
+		}); err != nil {
+			t.Fatalf("ProcessPayment: %v", err)
+		}
+	}
+	process(first)
+	for i := 2; i <= store.MaxSenderNonces; i++ {
+		created, err := mint(fmt.Sprintf("restart-%d", i))
+		if err != nil {
+			t.Fatalf("priming mint %d: %v", i, err)
+		}
+		process(created)
+	}
+
+	// Restart the payee on the SAME database, and point the sender at
+	// the new one — otherwise this only proves a closed connection
+	// fails, which is not what restart safety means.
+	stopPayee()
+	payee2, stopPayee2 := receiverStandAt(t, recipient, dbPath)
+	defer stopPayee2()
+	live = payee2
+
+	// The next mint must roll over, not sign against the spent identity.
+	next, err := mint("restart-boundary")
+	if err != nil {
+		t.Fatalf("boundary mint after a payee restart: %v", err)
+	}
+	if next.GetWorkId() == original {
+		t.Fatal("after a payee restart the boundary mint reused the exhausted identity; " +
+			"a restarted daemon that forgets its budget signs payments it will refuse")
+	}
+	if next.GetPredecessorWorkId() != original {
+		t.Fatalf("predecessor_work_id = %q; want the exhausted %q",
+			next.GetPredecessorWorkId(), original)
+	}
+}
+
+// receiverStandAt is defaultConfigReceiverStand with a caller-chosen
+// database path, so a test can stop a payee and start a new one on the
+// same state — which is what "restart" has to mean here.
+func receiverStandAt(t *testing.T, recipient []byte, dbPath string) (pb.PayeeDaemonClient, func()) {
+	t.Helper()
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	svc := receiver.New(st, receiver.Config{Recipient: recipient}, nil)
+
+	sockPath := filepath.Join(t.TempDir(), "rx.sock")
+	lis, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	gs := grpc.NewServer()
+	pb.RegisterPayeeDaemonServer(gs, svc)
+	go func() { _ = gs.Serve(lis) }()
+
+	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	stopped := false
+	return pb.NewPayeeDaemonClient(conn), func() {
+		if stopped {
+			return
+		}
+		stopped = true
+		_ = conn.Close()
+		gs.GracefulStop()
+		_ = st.Close()
+	}
+}
+
+// Partial payer state loss is NOT yet recoverable, and this pins the
+// boundary of what is.
+//
+// A payer that loses its durable watermark restarts its nonce stream
+// low. Every nonce it then produces has already been seen, so it is
+// refused NONCE_REPLAY, credits nothing, and cannot make progress on
+// that rand again — the exact failure the durable watermark exists to
+// prevent, reached by losing the watermark rather than never having had
+// one. The nonce-cap rotation does not cover it: the cap is about a
+// stream that ran too far, this is one that ran backwards.
+//
+// It is not fixable by guessing from a single payment. A re-delivered
+// early payment replays a low nonce exactly as a rewound sender does, so
+// any positional rule rotates the route on ordinary retries. This test
+// records both halves so the distinction does not get lost: a duplicate
+// delivery stays a plain replay, and a rewound payer is currently stuck.
+// The fix is for the payee to report its high-water nonce so the payer
+// resyncs deliberately — lnm-nbx.
+func TestDuplicateDeliveryStaysAReplayAndARewoundPayerIsStuck(t *testing.T) {
+	recipient := bytes20(0xf8)
+	payee, cleanupPayee := defaultConfigReceiverStand(t, recipient)
+	defer cleanupPayee()
+	payer, baseURL, payerStore, cleanupPayer := devModeSenderStandWithStore(t,
+		func() pb.PayeeDaemonClient { return payee })
+	defer cleanupPayer()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	mint := func(id string) *pb.CreatePaymentResponse {
+		t.Helper()
+		req := devModeCreateRequest(recipient, id, baseURL)
+		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		created, err := payer.CreatePayment(ctx, req)
+		if err != nil {
+			t.Fatalf("mint %s: %v", id, err)
+		}
+		return created
+	}
+	process := func(created *pb.CreatePaymentResponse) *pb.ProcessPaymentResponse {
+		t.Helper()
+		resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+			PaymentBytes: created.GetPaymentBytes(),
+			WorkId:       created.GetWorkId(),
+		})
+		if err != nil {
+			t.Fatalf("ProcessPayment: %v", err)
+		}
+		return resp
+	}
+
+	first := mint("loss-1")
+	workID := first.GetWorkId()
+	if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{
+		WorkId:              workID,
+		Capability:          "openai:chat-completions",
+		Offering:            "model-a",
+		PricePerWorkUnitWei: big.NewInt(1000).Bytes(),
+		WorkUnit:            "tokens",
+	}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	process(first)
+	for i := 2; i <= 20; i++ {
+		process(mint(fmt.Sprintf("loss-%d", i)))
+	}
+
+	// A re-sent payment is a plain replay. It must NOT rotate the route:
+	// a gateway retrying delivery would otherwise churn work_id every
+	// time, and every consumer keying evidence on it would follow.
+	dup := process(first)
+	if dup.GetDominantRejection() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_REPLAY {
+		t.Fatalf("duplicate delivery reported %s; a re-sent payment is a plain replay",
+			dup.GetDominantRejection())
+	}
+	if credited := new(big.Int).SetBytes(dup.GetCreditedEv()); credited.Sign() != 0 {
+		t.Fatalf("a duplicate delivery credited %s a second time", credited)
+	}
+
+	// A rewound payer is currently stuck, and stuck LOUDLY — refused
+	// rather than silently credited nothing on a payment that looks
+	// successful.
+	if err := payerStore.ForgetSenderNonces(workID); err != nil {
+		t.Fatalf("simulating payer state loss: %v", err)
+	}
+	stuck := process(mint("loss-after-wipe"))
+	if stuck.GetTicketsRejected() == 0 {
+		t.Fatal("a rewound payer's payment was accepted; its nonces were already spent")
+	}
+	if credited := new(big.Int).SetBytes(stuck.GetCreditedEv()); credited.Sign() != 0 {
+		t.Fatalf("a rewound payer's payment credited %s", credited)
 	}
 }

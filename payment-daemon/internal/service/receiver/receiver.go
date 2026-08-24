@@ -403,14 +403,66 @@ func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipi
 				s.logger.Warn("nonce replay; skipping",
 					"work_id", sess.WorkID,
 					"nonce", tsp.GetSenderNonce())
+				// NOT treated as a rotation trigger.
+				//
+				// A replay is ordinarily a duplicate delivery — the same
+				// payment arriving twice, already credited, nothing to
+				// do. It is ALSO what a payer that lost its durable
+				// watermark looks like: its stream restarts low, every
+				// nonce it produces has been seen, and it can never make
+				// progress on this rand again.
+				//
+				// Those two cannot be told apart from one payment. A
+				// re-delivered early payment replays a low nonce exactly
+				// as a rewound sender does, so a positional rule
+				// ("replayed far below the high-water mark") rotates the
+				// route's identity on every ordinary retry. Recovering
+				// the rewound case needs the payee to report its
+				// high-water nonce so the payer can resync deliberately,
+				// rather than this side guessing. Tracked separately;
+				// see lnm-nbx.
 				continue
 			}
 			if errors.Is(err, store.ErrTooManyNonces) {
-				ticketStatus.RejectionReason = pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_CAP_REACHED
+				// The rand's nonce budget is spent. Retire it here and
+				// report the result as a rotation, so recovery runs
+				// through the path both sides already implement.
+				//
+				// The payee is the only party that authoritatively knows
+				// this count — the payer's view is an estimate that a
+				// restart or a partial state loss can put out of step —
+				// so this is where the decision has to be made and acted
+				// on in one step.
+				//
+				// Compare-and-swap against THIS session's work_id:
+				// several payments can arrive at an exhausted rand at
+				// once, and without the comparison the second would
+				// retire the successor the first just created.
+				rotated, rerr := s.store.ResetTicketSessionIfCurrent(store.TicketSessionKey{
+					Sender:     sess.Sender,
+					Recipient:  s.recipient,
+					Capability: sess.Capability,
+					Offering:   sess.Offering,
+				}, sess.WorkID)
+				if rerr != nil {
+					return nil, 0, nil, status.Errorf(codes.Internal,
+						"retiring exhausted ticket session: %v", rerr)
+				}
+				// Normalized to the existing contract rather than
+				// surfaced as its own terminal reason. A caller seeing
+				// NONCE_CAP_REACHED has nothing to do with it; one
+				// seeing INVALID_RECIPIENT_RAND evicts its cache, mints
+				// a successor and rebinds — machinery that already
+				// exists on every side of this. The cause is in the log,
+				// where an operator needs it; the wire carries the
+				// recovery the caller can act on.
+				ticketStatus.RejectionReason = pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND
 				statuses = append(statuses, ticketStatus)
-				s.logger.Warn("nonce cap reached; skipping ticket and remaining batch",
+				s.logger.Warn("nonce budget exhausted; retiring the rand and reporting rotation",
 					"work_id", sess.WorkID,
-					"nonce", tsp.GetSenderNonce())
+					"nonce", tsp.GetSenderNonce(),
+					"cap", store.MaxSenderNonces,
+					"rotated_by_this_call", rotated)
 				return creditTotal, winners, statuses, nil
 			}
 			return nil, 0, nil, status.Errorf(codes.Internal, "record nonce: %v", err)
@@ -756,12 +808,58 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 		requestedFace = requested
 	}
 
-	sess, _, err := s.store.GetOrCreateTicketSession(store.TicketSessionKey{
+	tupleKey := store.TicketSessionKey{
 		Sender:     req.GetSender(),
 		Recipient:  s.recipient,
 		Capability: req.GetCapability(),
 		Offering:   req.GetOffering(),
-	}, store.Session{
+	}
+
+	// Rotate before handing out params the sender cannot use.
+	//
+	// A recipient rand tracks at most store.MaxSenderNonces nonces.
+	// Beyond that every ticket on it is refused NONCE_CAP_REACHED and
+	// credits nothing — so a sender that kept minting against an
+	// exhausted rand would sign payments this payee has already decided
+	// to reject. The store comment on MaxSenderNonces names this exit:
+	// "beyond this the receiver should re-quote with a fresh
+	// recipientRandHash". This is where that happens.
+	//
+	// Rotation retires the exhausted identity: ResetTicketSession closes
+	// the old session, so a late payment on it is refused
+	// recipient_rotated rather than credited to a session nobody can
+	// draw on.
+	//
+	// Idempotent by construction. The check is on the CONSUMED budget of
+	// the rand currently indexed for the tuple, so once rotated the new
+	// rand has zero nonces and no further call rotates again. Two
+	// concurrent callers both see the exhausted rand, but
+	// ResetTicketSession is a single Bolt transaction, so exactly one
+	// performs the reset and the other observes the successor.
+	var predecessorWorkID string
+	if existing, lookupErr := s.store.TicketSessionFor(tupleKey); lookupErr == nil && existing != nil {
+		if rand, ok := new(big.Int).SetString(existing.RecipientRand, 10); ok {
+			used, cerr := s.store.NonceCount(rand)
+			if cerr != nil {
+				return nil, status.Errorf(codes.Internal, "nonce budget: %v", cerr)
+			}
+			if used >= store.MaxSenderNonces {
+				old, reset, rerr := s.store.ResetTicketSession(tupleKey)
+				if rerr != nil {
+					return nil, status.Errorf(codes.Internal, "rotate exhausted session: %v", rerr)
+				}
+				if reset {
+					predecessorWorkID = old
+					s.logger.Info("ticket session rotated: nonce budget exhausted",
+						"predecessor_work_id", old,
+						"nonces_used", used,
+						"cap", store.MaxSenderNonces)
+				}
+			}
+		}
+	}
+
+	sess, _, err := s.store.GetOrCreateTicketSession(tupleKey, store.Session{
 		WorkID: workID,
 		// This call mints ticket params; it has no idea what the work
 		// costs. The broker's OpenSession sets the real price exactly
@@ -808,6 +906,7 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 	}
 
 	return &pb.GetTicketParamsResponse{
+		PredecessorWorkId: predecessorWorkID,
 		TicketParams: &pb.TicketParams{
 			Recipient:         append([]byte(nil), s.recipient...),
 			FaceValue:         faceValue.Bytes(),

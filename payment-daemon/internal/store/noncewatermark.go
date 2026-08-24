@@ -57,3 +57,49 @@ func (s *Store) NextSenderNonce(workID string) (uint32, error) {
 	}
 	return next, nil
 }
+
+// SenderNoncesUsed reports the highest nonce allocated for a work_id, so
+// a caller can tell how much of the receiver's per-rand budget this
+// session has already spent WITHOUT spending another.
+//
+// Read-only on purpose: NextSenderNonce commits an increment, so asking
+// it "how many are left" would consume one to find out. The watermark is
+// durable, so this survives a restart at 599 or 600 — which is exactly
+// where the answer matters.
+func (s *Store) SenderNoncesUsed(workID string) (uint32, error) {
+	if workID == "" {
+		return 0, fmt.Errorf("store: empty work_id")
+	}
+	var used uint32
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(senderNoncesBucket))
+		if b == nil {
+			return nil
+		}
+		if raw := b.Get([]byte(workID)); len(raw) == 4 {
+			used = binary.BigEndian.Uint32(raw)
+		}
+		return nil
+	})
+	return used, err
+}
+
+// ForgetSenderNonces clears the durable watermark for a work_id.
+//
+// Exists for tests that need to simulate PARTIAL payer state loss — a
+// restored backup, a wiped volume — which is the case that puts the
+// payer's estimate out of step with the payee's ledger. Production code
+// must not call it: forgetting the watermark is the failure the
+// watermark exists to prevent.
+func (s *Store) ForgetSenderNonces(workID string) error {
+	if workID == "" {
+		return fmt.Errorf("store: empty work_id")
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(senderNoncesBucket))
+		if b == nil {
+			return nil
+		}
+		return b.Delete([]byte(workID))
+	})
+}

@@ -271,6 +271,42 @@ func (s *Store) OpenSession(seed Session) (sess *Session, alreadyOpen bool, err 
 // GetOrCreateTicketSession returns the open receiver-issued session for
 // this stable sender/recipient/capability/offering identity. Closed or
 // stale indexed sessions are discarded and replaced with a fresh one.
+// TicketSessionFor returns the session currently indexed for a tuple,
+// or nil when there is none. Read-only: it does not create one.
+//
+// Exists so the receiver can ask what a tuple's rand has consumed before
+// deciding whether to rotate it — GetOrCreateTicketSession would mint a
+// session as a side effect of asking.
+func (s *Store) TicketSessionFor(key TicketSessionKey) (*Session, error) {
+	indexKey := ticketSessionIndexKey(key)
+	var out *Session
+	err := s.db.View(func(tx *bolt.Tx) error {
+		idx := tx.Bucket([]byte(ticketIdxBucket))
+		if idx == nil {
+			return nil
+		}
+		workID := idx.Get(indexKey)
+		if workID == nil {
+			return nil
+		}
+		sessions := tx.Bucket([]byte(sessionsBucket))
+		if sessions == nil {
+			return nil
+		}
+		raw := sessions.Get(compositeKey(key.Sender, string(workID)))
+		if raw == nil {
+			return nil
+		}
+		var found Session
+		if err := json.Unmarshal(raw, &found); err != nil {
+			return err
+		}
+		out = &found
+		return nil
+	})
+	return out, err
+}
+
 func (s *Store) GetOrCreateTicketSession(key TicketSessionKey, seed Session) (sess *Session, alreadyOpen bool, err error) {
 	if seed.WorkID == "" {
 		return nil, false, errors.New("work_id is required")
@@ -338,6 +374,78 @@ func (s *Store) GetOrCreateTicketSession(key TicketSessionKey, seed Session) (se
 // ResetTicketSession closes the active stable-identity ticket session,
 // drops its nonce ledger, and removes the active index so the next
 // GetTicketParams call mints a fresh work_id.
+// ResetTicketSessionIfCurrent retires a tuple's session ONLY when the
+// work_id currently indexed for it is the one the caller expected.
+//
+// Compare-and-swap, because rotation has concurrent callers by nature:
+// several payments can reach an exhausted rand at once and each will try
+// to rotate it. Without the comparison the second one retires the
+// SUCCESSOR the first just created, and the route forks or loses a
+// freshly-minted identity. With it, exactly one caller observes
+// rotated=true and the rest see their expectation no longer holds.
+//
+// rotated=false with no error means someone else already rotated it —
+// which is success from the caller's point of view, not a failure.
+func (s *Store) ResetTicketSessionIfCurrent(key TicketSessionKey, expectedWorkID string) (rotated bool, err error) {
+	if expectedWorkID == "" {
+		return false, errors.New("store: expected work_id is required")
+	}
+	indexKey := ticketSessionIndexKey(key)
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		idx := tx.Bucket([]byte(ticketIdxBucket))
+		current := idx.Get(indexKey)
+		if current == nil || string(current) != expectedWorkID {
+			// Already rotated, or never indexed. Either way this
+			// caller's predecessor is no longer the live identity.
+			return nil
+		}
+		if err := retireIndexedSession(tx, key, expectedWorkID); err != nil {
+			return err
+		}
+		rotated = true
+		return nil
+	})
+	return rotated, err
+}
+
+// retireIndexedSession closes a session, unhooks it from the tuple index
+// and drops its nonce ledger. Shared so the conditional and
+// unconditional resets cannot drift apart.
+func retireIndexedSession(tx *bolt.Tx, key TicketSessionKey, workID string) error {
+	idx := tx.Bucket([]byte(ticketIdxBucket))
+	sessions := tx.Bucket([]byte(sessionsBucket))
+	raw := sessions.Get(compositeKey(key.Sender, workID))
+	if raw == nil {
+		return idx.Delete(ticketSessionIndexKey(key))
+	}
+	var sess Session
+	if err := json.Unmarshal(raw, &sess); err != nil {
+		return fmt.Errorf("unmarshal indexed session: %w", err)
+	}
+	sess.Closed = true
+	sess.ClosedAt = time.Now().UTC()
+	updated, err := json.Marshal(sess)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if err := sessions.Put(compositeKey(key.Sender, workID), updated); err != nil {
+		return err
+	}
+	if err := idx.Delete(ticketSessionIndexKey(key)); err != nil {
+		return err
+	}
+	if sess.RecipientRand != "" {
+		randInt, ok := new(big.Int).SetString(sess.RecipientRand, 10)
+		if !ok {
+			return errors.New("session rand corrupt")
+		}
+		if err := deleteNonceLedger(tx.Bucket([]byte(noncesBucket)), randInt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) ResetTicketSession(key TicketSessionKey) (oldWorkID string, reset bool, err error) {
 	indexKey := ticketSessionIndexKey(key)
 	err = s.db.Update(func(tx *bolt.Tx) error {

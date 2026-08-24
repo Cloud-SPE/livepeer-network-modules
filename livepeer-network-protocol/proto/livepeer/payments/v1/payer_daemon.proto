@@ -150,6 +150,23 @@ message CreatePaymentResponse {
   // Work-id bound to this minted payment (hex recipient_rand_hash).
   string work_id = 6;
 
+  // Set when minting this payment ROTATED the ticket session: the
+  // work_id that `work_id` above supersedes.
+  //
+  // The payee tracks a bounded number of sender nonces per recipient
+  // rand. On exhaustion it mints a fresh rand, so work_id moves. This
+  // field is what makes that explicit rather than silent: a caller
+  // compares it to the work_id it was using and knows a rollover
+  // happened, a clearinghouse advances its rotation generation, and a
+  // gateway holding an open session takes its existing rebind path.
+  //
+  // A paid JOB can simply adopt the successor. An open paid SESSION
+  // cannot — it is already bound — so the pair is what lets the gateway
+  // rebind rather than discover the change through a refused payment.
+  //
+  // Empty on every ordinary mint.
+  string predecessor_work_id = 11;
+
   // ---- encumbrance release ----
 
   // The round these tickets were minted in, the last round in which they

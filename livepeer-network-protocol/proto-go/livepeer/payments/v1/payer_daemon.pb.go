@@ -164,6 +164,22 @@ type CreatePaymentResponse struct {
 	AcceptedQuoteRef *QuoteRef `protobuf:"bytes,5,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`
 	// Work-id bound to this minted payment (hex recipient_rand_hash).
 	WorkId string `protobuf:"bytes,6,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	// Set when minting this payment ROTATED the ticket session: the
+	// work_id that `work_id` above supersedes.
+	//
+	// The payee tracks a bounded number of sender nonces per recipient
+	// rand. On exhaustion it mints a fresh rand, so work_id moves. This
+	// field is what makes that explicit rather than silent: a caller
+	// compares it to the work_id it was using and knows a rollover
+	// happened, a clearinghouse advances its rotation generation, and a
+	// gateway holding an open session takes its existing rebind path.
+	//
+	// A paid JOB can simply adopt the successor. An open paid SESSION
+	// cannot — it is already bound — so the pair is what lets the gateway
+	// rebind rather than discover the change through a refused payment.
+	//
+	// Empty on every ordinary mint.
+	PredecessorWorkId string `protobuf:"bytes,11,opt,name=predecessor_work_id,json=predecessorWorkId,proto3" json:"predecessor_work_id,omitempty"`
 	// The round these tickets were minted in, the last round in which they
 	// can currently still be redeemed, and the ticketValidityPeriod that
 	// figure was computed from.
@@ -282,6 +298,13 @@ func (x *CreatePaymentResponse) GetAcceptedQuoteRef() *QuoteRef {
 func (x *CreatePaymentResponse) GetWorkId() string {
 	if x != nil {
 		return x.WorkId
+	}
+	return ""
+}
+
+func (x *CreatePaymentResponse) GetPredecessorWorkId() string {
+	if x != nil {
+		return x.PredecessorWorkId
 	}
 	return ""
 }
@@ -712,14 +735,15 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\x16ticket_params_base_url\x18\x02 \x01(\tR\x13ticketParamsBaseUrl\x12J\n" +
 	"\x0eaccepted_price\x18\x03 \x01(\v2#.livepeer.payments.v1.AcceptedPriceR\racceptedPrice\x12=\n" +
 	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\x12&\n" +
-	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\"\xb4\x04\n" +
+	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\"\xe4\x04\n" +
 	"\x15CreatePaymentResponse\x12#\n" +
 	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x12'\n" +
 	"\x0ftickets_created\x18\x02 \x01(\rR\x0eticketsCreated\x12D\n" +
 	"\x0eexpected_value\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\rexpectedValue\x12G\n" +
 	"\x10funded_value_wei\x18\x04 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12L\n" +
 	"\x12accepted_quote_ref\x18\x05 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12\x17\n" +
-	"\awork_id\x18\x06 \x01(\tR\x06workId\x12%\n" +
+	"\awork_id\x18\x06 \x01(\tR\x06workId\x12.\n" +
+	"\x13predecessor_work_id\x18\v \x01(\tR\x11predecessorWorkId\x12%\n" +
 	"\x0ecreation_round\x18\a \x01(\x03R\rcreationRound\x12.\n" +
 	"\x13expires_after_round\x18\b \x01(\x03R\x11expiresAfterRound\x124\n" +
 	"\x16ticket_validity_period\x18\t \x01(\x03R\x14ticketValidityPeriod\x12J\n" +

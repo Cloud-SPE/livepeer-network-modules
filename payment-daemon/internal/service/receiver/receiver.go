@@ -844,14 +844,23 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 				return nil, status.Errorf(codes.Internal, "nonce budget: %v", cerr)
 			}
 			if used >= store.MaxSenderNonces {
-				old, reset, rerr := s.store.ResetTicketSession(tupleKey)
+				// Conditional on the session actually observed above.
+				//
+				// The lookup, the count and the reset are three separate
+				// reads, so another caller can rotate between them. An
+				// unconditional reset would then retire the SUCCESSOR
+				// that caller just created, leaving the tuple with no
+				// live identity — the compare-and-swap makes this a
+				// no-op in exactly that case, and the caller that did
+				// rotate keeps its successor.
+				rotated, rerr := s.store.ResetTicketSessionIfCurrent(tupleKey, existing.WorkID)
 				if rerr != nil {
 					return nil, status.Errorf(codes.Internal, "rotate exhausted session: %v", rerr)
 				}
-				if reset {
-					predecessorWorkID = old
+				if rotated {
+					predecessorWorkID = existing.WorkID
 					s.logger.Info("ticket session rotated: nonce budget exhausted",
-						"predecessor_work_id", old,
+						"predecessor_work_id", existing.WorkID,
 						"nonces_used", used,
 						"cap", store.MaxSenderNonces)
 				}

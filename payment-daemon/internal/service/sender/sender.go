@@ -318,13 +318,22 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 			if rerr != nil {
 				return nil, rerr
 			}
-			predecessorWorkID = session.workID
+			// Only a rotation that actually MOVED the work id has a
+			// predecessor. The payee can re-quote the same identity —
+			// its count is authoritative and this side's watermark can
+			// run ahead — and reporting predecessor == work_id there
+			// tells a consumer a rollover happened when none did, which
+			// is the silent-change failure this field exists to prevent,
+			// inverted.
+			if rotated.workID != session.workID {
+				predecessorWorkID = session.workID
+				s.logger.Info("ticket session rolled over: nonce budget exhausted",
+					"predecessor_work_id", predecessorWorkID,
+					"successor_work_id", rotated.workID,
+					"nonces_used", used,
+					"cap", store.MaxSenderNonces)
+			}
 			session = rotated
-			s.logger.Info("ticket session rolled over: nonce budget exhausted",
-				"predecessor_work_id", predecessorWorkID,
-				"successor_work_id", session.workID,
-				"nonces_used", used,
-				"cap", store.MaxSenderNonces)
 		}
 	}
 

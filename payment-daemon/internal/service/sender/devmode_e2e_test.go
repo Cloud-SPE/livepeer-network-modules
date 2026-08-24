@@ -1149,3 +1149,159 @@ func TestReactiveRotationWhenTheLedgerIsAlreadyAtCapacity(t *testing.T) {
 			"be refused identically, forever")
 	}
 }
+
+// predecessor_work_id is set only when the work id actually MOVED.
+//
+// The payer's watermark is an estimate and can run ahead of the payee's
+// ledger — a nonce allocated and never sent, a payee restored from
+// before those tickets arrived. It then asks to rotate, the payee
+// re-quotes the SAME identity because its count says the budget is not
+// spent, and the mint proceeds. Reporting a predecessor there tells a
+// consumer a rollover happened when none did: the silent-change failure
+// this field exists to prevent, inverted. A clearinghouse would advance
+// its rotation generation for nothing.
+func TestPredecessorIsEmptyWhenNothingRotated(t *testing.T) {
+	recipient := bytes20(0xfb)
+	payee, cleanupPayee := defaultConfigReceiverStand(t, recipient)
+	defer cleanupPayee()
+	payer, baseURL, payerStore, cleanupPayer := devModeSenderStandWithStore(t,
+		func() pb.PayeeDaemonClient { return payee })
+	defer cleanupPayer()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	mint := func(id string) *pb.CreatePaymentResponse {
+		t.Helper()
+		req := devModeCreateRequest(recipient, id, baseURL)
+		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		created, err := payer.CreatePayment(ctx, req)
+		if err != nil {
+			t.Fatalf("mint %s: %v", id, err)
+		}
+		return created
+	}
+
+	first := mint("pred-1")
+	workID := first.GetWorkId()
+	if first.GetPredecessorWorkId() != "" {
+		t.Fatalf("a first mint reported predecessor %q", first.GetPredecessorWorkId())
+	}
+
+	// Put the payer's watermark past the budget WITHOUT the payee having
+	// seen any of it: its estimate is now ahead, which is the condition
+	// that makes it ask for a rotation the payee will decline.
+	if _, err := payerStore.ResyncSenderNonces(workID, uint32(store.MaxSenderNonces)); err != nil {
+		t.Fatalf("advancing the payer watermark: %v", err)
+	}
+
+	next := mint("pred-2")
+	if next.GetWorkId() != workID {
+		t.Fatalf("the payee rotated after all: %s -> %s; this test needs the "+
+			"same-identity case", workID, next.GetWorkId())
+	}
+	if got := next.GetPredecessorWorkId(); got != "" {
+		t.Fatalf("predecessor_work_id = %q with an UNCHANGED work id %q; a consumer would "+
+			"advance its rotation generation for a rollover that never happened",
+			got, workID)
+	}
+}
+
+// Concurrent quotes at an exhausted budget must not lose the successor.
+//
+// GetTicketParams looks up the session, counts its nonces and rotates as
+// three separate reads, so another caller can rotate in between. An
+// unconditional reset would then retire the successor that caller just
+// created and leave the tuple with no live identity — every subsequent
+// quote opening yet another session, and no consumer able to follow the
+// chain.
+//
+// Exactly one caller may report a predecessor, and the tuple must end
+// with one live session.
+func TestConcurrentQuotesAtAnExhaustedBudgetKeepOneSuccessor(t *testing.T) {
+	recipient := bytes20(0xfc)
+	payee, payeeStore, cleanupPayee := defaultConfigReceiverStandWithStore(t, recipient)
+	defer cleanupPayee()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	quote := func() (*pb.GetTicketParamsResponse, error) {
+		return payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+			Sender:     bytes20(0x0c),
+			Recipient:  recipient,
+			FaceValue:  big.NewInt(4_000_000).Bytes(),
+			Capability: "openai:chat-completions",
+			Offering:   "model-a",
+		})
+	}
+
+	first, err := quote()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workID := hex.EncodeToString(first.GetTicketParams().GetRecipientRandHash())
+	sess, err := payeeStore.GetByWorkID(workID)
+	if err != nil || sess == nil {
+		t.Fatalf("look up session: %v", err)
+	}
+	rand, ok := new(big.Int).SetString(sess.RecipientRand, 10)
+	if !ok {
+		t.Fatal("rand unreadable")
+	}
+	// Spend the budget so the next quote must rotate.
+	if err := payeeStore.FillNonceLedger(rand, 1, uint32(store.MaxSenderNonces)); err != nil {
+		t.Fatal(err)
+	}
+
+	const callers = 8
+	var wg sync.WaitGroup
+	preds := make([]string, callers)
+	ids := make([]string, callers)
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			resp, err := quote()
+			if err != nil {
+				return
+			}
+			preds[i] = resp.GetPredecessorWorkId()
+			ids[i] = hex.EncodeToString(resp.GetTicketParams().GetRecipientRandHash())
+		}(i)
+	}
+	wg.Wait()
+
+	reported := 0
+	successors := map[string]bool{}
+	for i := range preds {
+		if preds[i] != "" {
+			reported++
+			if preds[i] != workID {
+				t.Fatalf("caller %d reported predecessor %q; the exhausted identity was %q",
+					i, preds[i], workID)
+			}
+		}
+		if ids[i] != "" && ids[i] != workID {
+			successors[ids[i]] = true
+		}
+	}
+	if reported != 1 {
+		t.Fatalf("%d callers reported a rotation; exactly one may — the others observed a "+
+			"predecessor that was no longer live", reported)
+	}
+	if len(successors) != 1 {
+		t.Fatalf("concurrent quotes produced %d successors: %v", len(successors), successors)
+	}
+	// And the tuple still has a live session, not a retired successor.
+	for id := range successors {
+		live, err := payeeStore.GetByWorkID(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if live == nil || live.Closed {
+			t.Fatal("the successor was retired by a concurrent caller; the tuple has no " +
+				"live identity")
+		}
+	}
+}

@@ -500,3 +500,83 @@ func TestFundingIntentIsActuallyFunded(t *testing.T) {
 		})
 	}
 }
+
+// A cached session must fund a LATER, larger request.
+//
+// LOC's reproducer: issue and process 1,025 wei, then issue 616,025 wei
+// on the same payer/payee/route. The rescale that sizes a session's face
+// value to its funding intent ran only when the session was created, so
+// the second request was served from the cached 1,025-wei face value.
+// Sizing the batch in tickets to compensate needed 601 of them, the payee
+// rejected the last one at its 600-nonce cap, and 613,975 of 616,025 wei
+// was credited — an under-funding the caller was never told about.
+//
+// The session is now re-quoted at a larger face value instead, keeping
+// the tuple's recipient rand so work_id does not move.
+func TestCachedSessionFundsALargerLaterRequest(t *testing.T) {
+	recipient := bytes20(0xf3)
+	payee, cleanupPayee := defaultConfigReceiverStand(t, recipient)
+	defer cleanupPayee()
+	payer, baseURL, cleanupPayer := devModeSenderStand(t, payee)
+	defer cleanupPayer()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	issueAndProcess := func(mintID string, funded int64) (workID string, credited *big.Int) {
+		t.Helper()
+		req := devModeCreateRequest(recipient, mintID, baseURL)
+		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(funded).Bytes()}
+		created, err := payer.CreatePayment(ctx, req)
+		if err != nil {
+			t.Fatalf("CreatePayment(%d): %v", funded, err)
+		}
+		if ev := new(big.Int).SetBytes(created.GetExpectedValue().GetValue()); ev.Cmp(big.NewInt(funded)) < 0 {
+			t.Fatalf("payer promised %s for a %d wei intent", ev, funded)
+		}
+		var pay pb.Payment
+		if err := proto.Unmarshal(created.GetPaymentBytes(), &pay); err != nil {
+			t.Fatal(err)
+		}
+		workID = hex.EncodeToString(pay.GetTicketParams().GetRecipientRandHash())
+		if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{
+			WorkId:              workID,
+			Capability:          "openai:chat-completions",
+			Offering:            "model-a",
+			PricePerWorkUnitWei: big.NewInt(1000).Bytes(),
+			WorkUnit:            "tokens",
+		}); err != nil {
+			t.Fatalf("OpenSession: %v", err)
+		}
+		resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+			PaymentBytes: created.GetPaymentBytes(),
+			WorkId:       workID,
+		})
+		if err != nil {
+			t.Fatalf("ProcessPayment(%d): %v", funded, err)
+		}
+		if resp.GetTicketsRejected() != 0 {
+			t.Fatalf("payee rejected %d of %d tickets funding %d wei (%s) — the batch did not "+
+				"fit the session's remaining nonce budget",
+				resp.GetTicketsRejected(), len(resp.GetTicketStatus()), funded,
+				resp.GetDominantRejection())
+		}
+		return workID, new(big.Int).SetBytes(resp.GetCreditedEv())
+	}
+
+	firstWorkID, firstCredit := issueAndProcess("loc-small", 1025)
+	if firstCredit.Cmp(big.NewInt(1025)) < 0 {
+		t.Fatalf("first request credited %s of 1025", firstCredit)
+	}
+
+	secondWorkID, secondCredit := issueAndProcess("loc-large", 616025)
+	if secondCredit.Cmp(big.NewInt(616025)) < 0 {
+		t.Fatalf("the larger request credited %s of 616025 — a cached session under-funded it",
+			secondCredit)
+	}
+	// Same session throughout: the resize is not allowed to move the
+	// payee's identity for this route.
+	if secondWorkID != firstWorkID {
+		t.Fatalf("work_id moved on a resize: %s -> %s", firstWorkID, secondWorkID)
+	}
+}

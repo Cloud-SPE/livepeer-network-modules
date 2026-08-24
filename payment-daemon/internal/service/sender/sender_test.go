@@ -899,11 +899,20 @@ func TestRefillSizingDoesNotChangeSessionIdentity(t *testing.T) {
 	if !bytes.Equal(p1.GetTicketParams().GetRecipientRandHash(), p2.GetTicketParams().GetRecipientRandHash()) {
 		t.Fatal("recipient rand changed on a resize; the payee's identity is not the payer's to move")
 	}
-	// Face value is pinned for the life of the session: a bigger refill
-	// buys more tickets, not larger ones.
-	if !bytes.Equal(p1.GetTicketParams().GetFaceValue(), p2.GetTicketParams().GetFaceValue()) {
-		t.Fatalf("face value moved on a resize: %x -> %x",
-			p1.GetTicketParams().GetFaceValue(), p2.GetTicketParams().GetFaceValue())
+	// Face value MAY grow on a resize. It used to be pinned — "a bigger
+	// refill buys more tickets, not larger ones" — and that turned out
+	// to under-fund: a ticket credits its expected value, so a larger
+	// intent needs many small tickets, and the payee caps a session at
+	// store.MaxSenderNonces. LOC hit the ceiling at 601 tickets and was
+	// credited 613,975 of 616,025 wei, then asked for the face to be
+	// resized while the rand is preserved. That is what this now pins.
+	//
+	// The identity assertion above is the one that must not move: the
+	// rand is the payee's, the face value is the payer's to size.
+	f1 := new(big.Int).SetBytes(p1.GetTicketParams().GetFaceValue())
+	f2 := new(big.Int).SetBytes(p2.GetTicketParams().GetFaceValue())
+	if f2.Cmp(f1) < 0 {
+		t.Fatalf("face value SHRANK on a bigger refill: %s -> %s", f1, f2)
 	}
 }
 

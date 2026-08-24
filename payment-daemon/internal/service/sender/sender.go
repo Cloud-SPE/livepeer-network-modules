@@ -14,6 +14,7 @@
 package sender
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -40,12 +41,19 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
-// maxTicketsPerPayment bounds a single minted batch. Funding beyond it
-// is refused rather than under-served: every ticket is independently
-// redeemable at face value, so a very large batch is also an exposure the
-// caller was never shown. An operator wanting more per payment raises the
-// offering's face value, which buys more credit per ticket.
-const maxTicketsPerPayment = 4096
+// maxTicketsPerPayment bounds a single minted batch.
+//
+// Tied to the payee's per-session nonce budget, because that is the real
+// constraint: the payee rejects tickets past store.MaxSenderNonces on a
+// session and credits only what it accepted, so minting more than the
+// budget silently under-funds. LOC hit exactly that — 601 tickets, the
+// last one rejected, 613,975 credited of 616,025 requested.
+//
+// After rescaling a session's face value this should always be 1. A
+// count above the budget means the rescale did not take, and refusing is
+// the honest answer: the caller learns now rather than discovering it as
+// insufficient_balance after the exchange was admitted.
+const maxTicketsPerPayment = store.MaxSenderNonces
 
 // Service implements pb.PayerDaemonServer.
 type Service struct {
@@ -527,6 +535,69 @@ func (s *Service) recordSenderFunds(info *providers.SenderInfo) {
 	}
 }
 
+// rescaleTicketParams re-quotes a session at a face value whose
+// per-ticket expected value covers `want`, keeping the tuple's recipient
+// rand — so work_id does not move and the session is the same one.
+//
+// A ticket credits floor(face x win_prob / MaxWinProb), and win_prob is
+// the payee's to choose, so the face value is the only lever the sender
+// has. Scaling it is what makes ONE ticket carry the intent, which
+// matters because the payee caps a session at store.MaxSenderNonces
+// tickets: paying for a large intent in many small tickets runs out of
+// nonces long before it runs out of money.
+func (s *Service) rescaleTicketParams(ctx context.Context, recipient []byte, want *big.Int,
+	capability, offering, baseURL string, current *types.TicketParams) (*types.TicketParams, error) {
+
+	if current.WinProb == nil || current.WinProb.Sign() <= 0 {
+		return nil, grpcstatus.Errorf(codes.FailedPrecondition,
+			"payee quoted win_prob %v, so no ticket on this session can credit anything",
+			current.WinProb)
+	}
+	// scaled = ceil(want x MaxWinProb / win_prob): the face value whose
+	// per-ticket credit is at least the funding intent.
+	scaled, rem := new(big.Int).QuoRem(
+		new(big.Int).Mul(want, types.MaxWinProb), current.WinProb, new(big.Int))
+	if rem.Sign() != 0 {
+		scaled.Add(scaled, big.NewInt(1))
+	}
+
+	fetchStart := time.Now()
+	retry, err := s.fetcher.Fetch(ctx, TicketParamsRequest{
+		BaseURL:    baseURL,
+		Sender:     append([]byte(nil), s.keystore.Address()...),
+		Recipient:  append([]byte(nil), recipient...),
+		FaceValue:  scaled,
+		Capability: capability,
+		Offering:   offering,
+	})
+	s.metrics.ObserveTicketParamsFetch(time.Since(fetchStart))
+	if err != nil {
+		s.metrics.IncTicketParamsFetch(metrics.ResultError)
+		return nil, fmt.Errorf("re-quoting ticket params at %s wei face value to fund %s wei: %w",
+			scaled, want, err)
+	}
+	s.metrics.IncTicketParamsFetch(metrics.ResultOK)
+
+	if got := types.CreditedEV(retry.FaceValue, retry.WinProb); got.Cmp(want) < 0 {
+		// Fail closed. Handing back a payment that funds less than asked
+		// is how a caller ends up admitted and then refused for
+		// insufficient balance.
+		return nil, grpcstatus.Errorf(codes.FailedPrecondition,
+			"payee will not quote parameters that fund %s wei: best offer credits %s wei "+
+				"per ticket (face_value %s, win_prob %s)",
+			want, got, retry.FaceValue, retry.WinProb)
+	}
+	// The rand must not move: a new one would be a different session and
+	// a work_id the caller never agreed to.
+	if len(current.RecipientRandHash) > 0 &&
+		!bytes.Equal(current.RecipientRandHash, retry.RecipientRandHash) {
+		return nil, grpcstatus.Errorf(codes.FailedPrecondition,
+			"payee moved recipient rand while re-quoting face value; the session identity "+
+				"is not the payer's to change")
+	}
+	return retry, nil
+}
+
 func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceValue *big.Int, capability, offering, ticketParamsBaseURL string, acceptedPrice *types.PriceInfo, acceptedQuote *pb.QuoteRef) (*senderSession, error) {
 	key := sessionKey(recipient, capability, offering, ticketParamsBaseURL)
 
@@ -534,7 +605,37 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	if sess, ok := s.sessions[key]; ok {
 		sess.acceptedPrice = clonePriceInfo(acceptedPrice)
 		sess.acceptedQuote = cloneQuoteRef(acceptedQuote)
+		cached := cloneTicketParams(sess.ticketParams)
 		s.mu.Unlock()
+		// A cached session keeps the face value it was opened at, and a
+		// LATER, larger funding request has to be funded from it. Sizing
+		// the batch in tickets to compensate does not work: the payee
+		// caps a session at store.MaxSenderNonces, so a small original
+		// face value silently caps how much this session can ever fund —
+		// 1,025 wei followed by 616,025 wei needed 601 tickets and the
+		// payee rejected the last one, crediting 613,975 of 616,025.
+		//
+		// So the cached session is re-quoted at a larger face value
+		// instead. The payee keeps its recipient rand for the tuple, so
+		// work_id does not move and the session is the same one.
+		if types.CreditedEV(cached.FaceValue, cached.WinProb).Cmp(faceValue) < 0 {
+			rescaled, rerr := s.rescaleTicketParams(ctx, recipient, faceValue,
+				capability, offering, ticketParamsBaseURL, cached)
+			if rerr != nil {
+				return nil, rerr
+			}
+			s.mu.Lock()
+			// Re-read under the lock: another mint may have rescaled it
+			// already, and the larger of the two is the one to keep.
+			if live, still := s.sessions[key]; still {
+				if types.CreditedEV(live.ticketParams.FaceValue, live.ticketParams.WinProb).Cmp(
+					types.CreditedEV(rescaled.FaceValue, rescaled.WinProb)) < 0 {
+					live.ticketParams = cloneTicketParams(rescaled)
+				}
+				sess = live
+			}
+			s.mu.Unlock()
+		}
 		return sess, nil
 	}
 	s.mu.Unlock()
@@ -579,34 +680,12 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	// face value scaled to match. EV is linear in face value, so one
 	// correction is enough. The tuple's recipient rand is stable, so
 	// re-asking does not move work_id.
-	if perTicket := types.CreditedEV(params.FaceValue, params.WinProb); perTicket.Cmp(faceValue) < 0 {
-		if params.WinProb == nil || params.WinProb.Sign() <= 0 {
-			return nil, grpcstatus.Errorf(codes.FailedPrecondition,
-				"payee quoted win_prob %v, so no ticket on this session can credit anything",
-				params.WinProb)
+	if types.CreditedEV(params.FaceValue, params.WinProb).Cmp(faceValue) < 0 {
+		params, err = s.rescaleTicketParams(ctx, recipient, faceValue,
+			capability, offering, ticketParamsBaseURL, params)
+		if err != nil {
+			return nil, err
 		}
-		// scaled = ceil(funded x MaxWinProb / win_prob), the face value
-		// whose per-ticket credit is at least the funding intent.
-		scaled, rem := new(big.Int).QuoRem(
-			new(big.Int).Mul(faceValue, types.MaxWinProb), params.WinProb, new(big.Int))
-		if rem.Sign() != 0 {
-			scaled.Add(scaled, big.NewInt(1))
-		}
-		retry, rerr := fetch(scaled)
-		if rerr != nil {
-			return nil, fmt.Errorf("re-quoting ticket params at %s wei face value to fund %s wei: %w",
-				scaled, faceValue, rerr)
-		}
-		if got := types.CreditedEV(retry.FaceValue, retry.WinProb); got.Cmp(faceValue) < 0 {
-			// Fail closed. Handing back a payment that funds less than
-			// asked is how a caller ends up admitted and then refused
-			// for insufficient balance.
-			return nil, grpcstatus.Errorf(codes.FailedPrecondition,
-				"payee will not quote parameters that fund %s wei: best offer credits %s wei "+
-					"per ticket (face_value %s, win_prob %s)",
-				faceValue, got, retry.FaceValue, retry.WinProb)
-		}
-		params = retry
 	}
 	workID := hex.EncodeToString(params.RecipientRandHash)
 	sess := &senderSession{

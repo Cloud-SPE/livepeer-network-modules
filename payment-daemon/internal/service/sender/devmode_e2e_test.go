@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -404,5 +405,98 @@ func defaultConfigReceiverStand(t *testing.T, recipient []byte) (pb.PayeeDaemonC
 		_ = conn.Close()
 		gs.GracefulStop()
 		_ = st.Close()
+	}
+}
+
+// A funding intent must actually be funded.
+//
+// A ticket credits its EXPECTED value — floor(face x win_prob /
+// MaxWinProb), about face/1024 at the default probability — and exactly
+// one ticket was minted regardless of funded_value_wei. So a 3,000 wei
+// intent bought 2 wei of credit: the caller funded 512x less than it
+// believed, then hit insufficient_balance after the exchange had already
+// been admitted.
+//
+// The face value cannot be raised to fix it: the payee fixes face value
+// when the session opens, and a resize must not move work_id
+// (TestRefillSizingDoesNotChangeSessionIdentity). So the batch grows in
+// tickets instead — same session, same face value, N times the credit.
+//
+// Checked end to end rather than on the mint alone: the contract is that
+// the PAYEE credits at least what was funded, and only the payee can say
+// what it credited.
+func TestFundingIntentIsActuallyFunded(t *testing.T) {
+	for _, funded := range []int64{
+		1025,      // the advertised minimum
+		3000,      // the reported case
+		4097,      // non-divisible by the per-ticket credit
+		1_000_000, // comfortably many tickets
+	} {
+		t.Run(fmt.Sprintf("funded_%d", funded), func(t *testing.T) {
+			recipient := bytes20(0xf0)
+			// The DEFAULT win probability — the whole defect lives in
+			// the 1/1024 rounding, and a stand pinning MaxWinProb makes
+			// one ticket sufficient and hides it.
+			payee, cleanupPayee := defaultConfigReceiverStand(t, recipient)
+			defer cleanupPayee()
+			payer, baseURL, cleanupPayer := devModeSenderStand(t, payee)
+			defer cleanupPayer()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			req := devModeCreateRequest(recipient, fmt.Sprintf("fund-%d", funded), baseURL)
+			req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(funded).Bytes()}
+			created, err := payer.CreatePayment(ctx, req)
+			if err != nil {
+				t.Fatalf("CreatePayment for %d wei: %v", funded, err)
+			}
+
+			// funded_value_wei echoes the request exactly.
+			if got := new(big.Int).SetBytes(created.GetFundedValueWei().GetValue()); got.Int64() != funded {
+				t.Fatalf("funded_value_wei echoed %s; want %d", got, funded)
+			}
+			// expected_value covers it.
+			ev := new(big.Int).SetBytes(created.GetExpectedValue().GetValue())
+			if ev.Cmp(big.NewInt(funded)) < 0 {
+				t.Fatalf("expected_value %s < funded_value_wei %d (%d tickets) — "+
+					"the caller funded less than it asked for",
+					ev, funded, created.GetTicketsCreated())
+			}
+
+			// And the PAYEE independently credits at least that much.
+			var pay pb.Payment
+			if err := proto.Unmarshal(created.GetPaymentBytes(), &pay); err != nil {
+				t.Fatal(err)
+			}
+			workID := hex.EncodeToString(pay.GetTicketParams().GetRecipientRandHash())
+			if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{
+				WorkId:              workID,
+				Capability:          "openai:chat-completions",
+				Offering:            "model-a",
+				PricePerWorkUnitWei: big.NewInt(1000).Bytes(),
+				WorkUnit:            "tokens",
+			}); err != nil {
+				t.Fatalf("OpenSession: %v", err)
+			}
+			resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+				PaymentBytes: created.GetPaymentBytes(),
+				WorkId:       workID,
+			})
+			if err != nil {
+				t.Fatalf("ProcessPayment: %v", err)
+			}
+			if resp.GetTicketsRejected() != 0 {
+				t.Fatalf("payee rejected %d of %d tickets (%s)",
+					resp.GetTicketsRejected(), len(resp.GetTicketStatus()),
+					resp.GetDominantRejection())
+			}
+			credited := new(big.Int).SetBytes(resp.GetCreditedEv())
+			if credited.Cmp(big.NewInt(funded)) < 0 {
+				t.Fatalf("payee credited %s for a %d wei intent across %d tickets — "+
+					"the sender's promise and the ledger disagree",
+					credited, funded, created.GetTicketsCreated())
+			}
+		})
 	}
 }

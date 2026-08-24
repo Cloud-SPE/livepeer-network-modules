@@ -415,13 +415,14 @@ func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipi
 			}
 			return nil, 0, nil, status.Errorf(codes.Internal, "record nonce: %v", err)
 		}
-		// EV credit: face_value × win_prob / 2^256, integer floor.
-		ev := types.EV(faceValue, winProb)
-		if ev != nil {
-			num := new(big.Int).Quo(ev.Num(), ev.Denom())
-			creditTotal.Add(creditTotal, num)
-			ticketStatus.CreditedEv = num.Bytes()
-		}
+		// EV credit: floor(face_value x win_prob / MaxWinProb).
+		// Shared with the sender, which sizes its batch from the same
+		// function — so "the payee credits at least what was funded" is
+		// true by construction rather than by two implementations
+		// happening to round the same way.
+		num := types.CreditedEV(faceValue, winProb)
+		creditTotal.Add(creditTotal, num)
+		ticketStatus.CreditedEv = num.Bytes()
 		if validator.IsWinning(ticket, tsp.GetSig(), recipientRand) {
 			ticketStatus.WasWinning = true
 			st := &store.SignedTicket{
@@ -736,6 +737,7 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 	workID := hex.EncodeToString(rrHash)
 
 	faceValue := new(big.Int).Set(s.defaultFaceValue)
+	var requestedFace *big.Int
 	if got := req.GetFaceValue(); len(got) > 0 {
 		requested := new(big.Int).SetBytes(got)
 		// A sender may size its own tickets, but not below the floor.
@@ -751,6 +753,7 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 				requested, s.minFaceValue)
 		}
 		faceValue = requested
+		requestedFace = requested
 	}
 
 	sess, _, err := s.store.GetOrCreateTicketSession(store.TicketSessionKey{
@@ -780,6 +783,24 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 	faceValue, ok = new(big.Int).SetString(sess.FaceValueWei, 10)
 	if !ok {
 		return nil, status.Error(codes.Internal, "session face value corrupt")
+	}
+	// An explicit request wins over the value stored when the session
+	// was first created.
+	//
+	// "A sender may size its own tickets, but not below the floor" was
+	// only true for the FIRST call: afterwards GetOrCreateTicketSession
+	// returned the original figure and quietly ignored the request. A
+	// sender that needs a larger face value — because a ticket credits
+	// its expected value, roughly face/1024, and the payee caps a
+	// session at MaxSenderNonces tickets — could never get one, so
+	// funding intents above that ceiling were unreachable.
+	//
+	// Safe to honour: credit is computed from each TICKET's own face
+	// value, so tickets already signed keep crediting what they were
+	// worth, and a larger face value raises the SENDER's exposure, not
+	// this payee's. The floor above still applies.
+	if requestedFace != nil {
+		faceValue = requestedFace
 	}
 	winProb, ok := new(big.Int).SetString(sess.WinProb, 10)
 	if !ok {

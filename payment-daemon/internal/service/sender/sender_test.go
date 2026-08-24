@@ -69,7 +69,11 @@ func (fakeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*se
 	return &senderTypes.TicketParams{
 		Recipient:         append([]byte(nil), req.Recipient...),
 		FaceValue:         new(big.Int).Set(req.FaceValue),
-		WinProb:           big.NewInt(0),
+		// MaxWinProb: every ticket credits its full face value, so one
+		// ticket funds a request exactly. A win_prob of 0 credits
+		// nothing at any batch size, which is now refused rather than
+		// returned as a payment that funds no work.
+		WinProb:           new(big.Int).Set(senderTypes.MaxWinProb),
 		RecipientRandHash: []byte("0123456789abcdef0123456789abcdef"),
 		Seed:              []byte("seed-seed-seed-seed-seed-seed-12"),
 		ExpirationBlock:   big.NewInt(123456),
@@ -105,7 +109,11 @@ func (f *rotatingFetcher) Fetch(_ context.Context, req sender.TicketParamsReques
 	return &senderTypes.TicketParams{
 		Recipient:         append([]byte(nil), req.Recipient...),
 		FaceValue:         new(big.Int).Set(req.FaceValue),
-		WinProb:           big.NewInt(0),
+		// MaxWinProb: every ticket credits its full face value, so one
+		// ticket funds a request exactly. A win_prob of 0 credits
+		// nothing at any batch size, which is now refused rather than
+		// returned as a payment that funds no work.
+		WinProb:           new(big.Int).Set(senderTypes.MaxWinProb),
 		RecipientRandHash: hash,
 		Seed:              []byte("seed-seed-seed-seed-seed-seed-12"),
 		ExpirationBlock:   big.NewInt(123456),

@@ -40,6 +40,13 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
+// maxTicketsPerPayment bounds a single minted batch. Funding beyond it
+// is refused rather than under-served: every ticket is independently
+// redeemable at face value, so a very large batch is also an exposure the
+// caller was never shown. An operator wanting more per payment raises the
+// offering's face value, which buys more credit per ticket.
+const maxTicketsPerPayment = 4096
+
 // Service implements pb.PayerDaemonServer.
 type Service struct {
 	pb.UnimplementedPayerDaemonServer
@@ -235,10 +242,56 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		return nil, errors.New("ticket params: seed is empty")
 	}
 
-	tsp, err := s.signOneTicket(session)
-	if err != nil {
-		return nil, fmt.Errorf("sign ticket: %w", err)
+	// Size the batch so the payment actually funds what was asked for.
+	//
+	// A ticket credits its EXPECTED value, not its face value:
+	// floor(face x win_prob / MaxWinProb), which at the default win
+	// probability is about face/1024. One ticket was minted regardless
+	// of funded_value_wei, so a 3,000 wei intent bought 2 wei of credit
+	// and a caller funded 512x less than it believed. The face value
+	// cannot be raised to fix this — the payee fixes it when the session
+	// opens, and a resize must not move work_id — so the batch grows in
+	// TICKETS instead. Same session, same face value, N times the credit.
+	perTicketEV := types.CreditedEV(session.ticketParams.FaceValue, session.ticketParams.WinProb)
+	if perTicketEV.Sign() <= 0 {
+		// Nothing this session can mint credits anything. Failing closed
+		// beats handing back a payment that funds no work: the caller
+		// would discover it as insufficient_balance after the exchange
+		// had already been admitted.
+		return nil, grpcstatus.Errorf(codes.FailedPrecondition,
+			"this ticket session credits 0 wei per ticket (face_value %s, win_prob %s), "+
+				"so no number of tickets can fund %s wei",
+			session.ticketParams.FaceValue, session.ticketParams.WinProb, funding.fundedValueWei)
 	}
+	ticketCount := new(big.Int).Add(
+		new(big.Int).Quo(funding.fundedValueWei, perTicketEV),
+		big.NewInt(1))
+	if new(big.Int).Mod(funding.fundedValueWei, perTicketEV).Sign() == 0 {
+		ticketCount.Sub(ticketCount, big.NewInt(1))
+	}
+	if ticketCount.Sign() <= 0 {
+		ticketCount = big.NewInt(1)
+	}
+	if ticketCount.Cmp(big.NewInt(maxTicketsPerPayment)) > 0 {
+		// Refuse rather than silently under-funding. Every ticket is
+		// independently redeemable at face value, so a batch this large
+		// is also an exposure the caller has not been shown.
+		return nil, grpcstatus.Errorf(codes.FailedPrecondition,
+			"funding %s wei at %s wei of credit per ticket needs %s tickets, above the %d cap; "+
+				"raise the offering's face value or fund less per payment",
+			funding.fundedValueWei, perTicketEV, ticketCount, maxTicketsPerPayment)
+	}
+	n := int(ticketCount.Int64())
+
+	tsps := make([]*types.TicketSenderParams, 0, n)
+	for i := 0; i < n; i++ {
+		tsp, err := s.signOneTicket(session)
+		if err != nil {
+			return nil, fmt.Errorf("sign ticket %d/%d: %w", i+1, n, err)
+		}
+		tsps = append(tsps, tsp)
+	}
+	tsp := tsps[0]
 
 	batch := &types.TicketBatch{
 		TicketParams: session.ticketParams,
@@ -247,7 +300,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 			CreationRound:          s.clock.LastInitializedRound(),
 			CreationRoundBlockHash: s.clock.LastInitializedL1BlockHash(),
 		},
-		TicketSenderParams: []*types.TicketSenderParams{tsp},
+		TicketSenderParams: tsps,
 		ExpectedPrice:      session.acceptedPrice,
 	}
 	wire := batch.ToWirePayment()
@@ -256,8 +309,12 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		return nil, fmt.Errorf("marshal payment: %w", err)
 	}
 
-	ev := types.EV(session.ticketParams.FaceValue, session.ticketParams.WinProb)
-	evBytes := evToBytes(ev)
+	// What the payee will credit for this batch, computed the way the
+	// payee computes it: per-ticket integer EV, summed. Not the rational
+	// face x win / 2^256, which rounds differently and would report a
+	// value the ledger never credits.
+	totalEV := new(big.Int).Mul(perTicketEV, ticketCount)
+	evBytes := totalEV.Bytes()
 
 	s.logger.Info("payment created",
 		"work_id", session.workID,
@@ -265,11 +322,13 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		"offering", acceptedPrice.Offering,
 		"funded_value_wei", funding.fundedValueWei.String(),
 		"ticket_face_value", session.ticketParams.FaceValue.String(),
-		"nonce", tsp.SenderNonce)
+		"tickets", n,
+		"expected_value_wei", totalEV.String(),
+		"first_nonce", tsp.SenderNonce)
 
 	out := &pb.CreatePaymentResponse{
 		PaymentBytes:     bytes,
-		TicketsCreated:   1,
+		TicketsCreated:   uint32(n),
 		ExpectedValue:    &pb.BigUInt{Value: evBytes},
 		FundedValueWei:   &pb.BigUInt{Value: funding.fundedValueWei.Bytes()},
 		AcceptedQuoteRef: cloneQuoteRef(session.acceptedQuote),
@@ -480,21 +539,75 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	}
 	s.mu.Unlock()
 
-	fetchStart := time.Now()
-	params, err := s.fetcher.Fetch(ctx, TicketParamsRequest{
-		BaseURL:    ticketParamsBaseURL,
-		Sender:     append([]byte(nil), s.keystore.Address()...),
-		Recipient:  append([]byte(nil), recipient...),
-		FaceValue:  new(big.Int).Set(faceValue),
-		Capability: capability,
-		Offering:   offering,
-	})
-	s.metrics.ObserveTicketParamsFetch(time.Since(fetchStart))
+	fetch := func(face *big.Int) (*types.TicketParams, error) {
+		fetchStart := time.Now()
+		got, ferr := s.fetcher.Fetch(ctx, TicketParamsRequest{
+			BaseURL:    ticketParamsBaseURL,
+			Sender:     append([]byte(nil), s.keystore.Address()...),
+			Recipient:  append([]byte(nil), recipient...),
+			FaceValue:  new(big.Int).Set(face),
+			Capability: capability,
+			Offering:   offering,
+		})
+		s.metrics.ObserveTicketParamsFetch(time.Since(fetchStart))
+		if ferr != nil {
+			s.metrics.IncTicketParamsFetch(metrics.ResultError)
+			return nil, ferr
+		}
+		s.metrics.IncTicketParamsFetch(metrics.ResultOK)
+		return got, nil
+	}
+
+	params, err := fetch(faceValue)
 	if err != nil {
-		s.metrics.IncTicketParamsFetch(metrics.ResultError)
 		return nil, err
 	}
-	s.metrics.IncTicketParamsFetch(metrics.ResultOK)
+
+	// Open the session at a face value whose EXPECTED value carries the
+	// funding intent, not one whose FACE value merely equals it.
+	//
+	// A ticket credits floor(face x win_prob / MaxWinProb) — roughly
+	// face/1024 at the default probability — so opening at
+	// face == funded left a caller with ~1/1024 of the credit it asked
+	// for. The batch cannot simply grow to compensate: the payee caps a
+	// session at store.MaxSenderNonces tickets, so a session's total
+	// capacity is bounded and funding even the advertised minimum this
+	// way is impossible.
+	//
+	// win_prob is the payee's to choose and is not known until it
+	// answers, so the first fetch discovers it and the second asks for a
+	// face value scaled to match. EV is linear in face value, so one
+	// correction is enough. The tuple's recipient rand is stable, so
+	// re-asking does not move work_id.
+	if perTicket := types.CreditedEV(params.FaceValue, params.WinProb); perTicket.Cmp(faceValue) < 0 {
+		if params.WinProb == nil || params.WinProb.Sign() <= 0 {
+			return nil, grpcstatus.Errorf(codes.FailedPrecondition,
+				"payee quoted win_prob %v, so no ticket on this session can credit anything",
+				params.WinProb)
+		}
+		// scaled = ceil(funded x MaxWinProb / win_prob), the face value
+		// whose per-ticket credit is at least the funding intent.
+		scaled, rem := new(big.Int).QuoRem(
+			new(big.Int).Mul(faceValue, types.MaxWinProb), params.WinProb, new(big.Int))
+		if rem.Sign() != 0 {
+			scaled.Add(scaled, big.NewInt(1))
+		}
+		retry, rerr := fetch(scaled)
+		if rerr != nil {
+			return nil, fmt.Errorf("re-quoting ticket params at %s wei face value to fund %s wei: %w",
+				scaled, faceValue, rerr)
+		}
+		if got := types.CreditedEV(retry.FaceValue, retry.WinProb); got.Cmp(faceValue) < 0 {
+			// Fail closed. Handing back a payment that funds less than
+			// asked is how a caller ends up admitted and then refused
+			// for insufficient balance.
+			return nil, grpcstatus.Errorf(codes.FailedPrecondition,
+				"payee will not quote parameters that fund %s wei: best offer credits %s wei "+
+					"per ticket (face_value %s, win_prob %s)",
+				faceValue, got, retry.FaceValue, retry.WinProb)
+		}
+		params = retry
+	}
 	workID := hex.EncodeToString(params.RecipientRandHash)
 	sess := &senderSession{
 		workID:        workID,

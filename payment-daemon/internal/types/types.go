@@ -95,6 +95,20 @@ func EV(faceValue, winProb *big.Int) *big.Rat {
 	return new(big.Rat).Quo(num, den)
 }
 
+// CreditedEV is the integer wei a payee credits for ONE ticket:
+// floor(face_value x win_prob / MaxWinProb).
+//
+// This is the number that matters, and it is not EV() rounded. EV()
+// returns the exact rational; the receiver floors it per ticket before
+// crediting, so a sender that sized a batch from the rational would
+// promise a total the ledger never credits. Both sides call this.
+func CreditedEV(faceValue, winProb *big.Int) *big.Int {
+	if faceValue == nil || winProb == nil {
+		return big.NewInt(0)
+	}
+	return new(big.Int).Quo(new(big.Int).Mul(faceValue, winProb), MaxWinProb)
+}
+
 // ToWirePayment converts an in-process TicketBatch into a wire
 // `pb.Payment` ready for serialization.
 func (b *TicketBatch) ToWirePayment() *pb.Payment {

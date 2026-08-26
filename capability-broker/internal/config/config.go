@@ -33,6 +33,11 @@ type Config struct {
 	// is "file" (default) or "admin" (pushed by pool-controller).
 	Offers       []Offer `yaml:"offers,omitempty"`
 	OffersSource string  `yaml:"offers_source,omitempty"`
+	// OffersStatePath persists frozen shapes (and admin-pushed offers)
+	// across restarts. Required in production once offers exist: a
+	// frozen shape that vanished on restart would re-freeze from
+	// whichever runner certified first — a silent manifest change.
+	OffersStatePath string `yaml:"offers_state_path,omitempty"`
 	// Capabilities is the legacy tuple grammar (backend URLs, runner
 	// facts restated by the operator). Deleted once attach + freeze
 	// (plan 0043 items 7–8) land.

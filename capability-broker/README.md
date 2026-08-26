@@ -67,11 +67,15 @@ and are frozen into the offer by the first certified runner.
 and requires `admin_auth`. See
 [`examples/host-config.offers.example.yaml`](./examples/host-config.offers.example.yaml).
 
-**Status:** the grammar is validated at load and coexists with
-`capabilities[]` (an offering lives in one or the other). Attach, match,
-freeze, and dispatch over attached runners land with plan 0043 items 6–8;
-until then an offer is configuration only, and `capabilities[]` still
-drives the paid path. `capabilities[]` is deleted when item 8 ships.
+**Status:** attach, match, freeze, eligibility, and advertisement are
+live (items 6–8): a matched runner that certifies freezes the offer, the
+frozen tuple is published on `/registry/offerings` (stamped with the
+protocol module's `spec_version` and carrying `offers_revision`), runner
+churn never changes the payload, and `accept-shape` /
+`confirm-published` / `disable` / `enable` are served under
+`/admin/v1/offers`. Set `offers_state_path` so frozen shapes survive a
+restart. Dispatch of paid work over eligible runners is item 10; until
+then `capabilities[]` still drives the paid path and is deleted there.
 
 When `receipt_sink.url` is configured, the broker also emits best-effort Pool
 work receipts to `pool-controller`:
@@ -170,10 +174,12 @@ is gone on disconnect (kept 24 h as `disconnected` for the console).
   `?include=paths`), `GET /admin/v1/runners/{host_id}`,
   `POST /admin/v1/runners/{host_id}/disconnect`.
 
-Matching attached runners to `offers[]`, freeze, certification, and
-dispatch over them are items 8–10; until then an attached runner is
-visible but receives no work, and the legacy `backend_ids` register still
-drives the paid path.
+Attached runners are matched to `offers[]`, certified (certify-on-match
+until the step engine of item 9 lands), and frozen per plan 0043 §3.4;
+`GET /admin/v1/runners` shows each capability's per-offer state with the
+disagreeing field named. Dispatch of paid work over eligible runners is
+item 10; until then an attached runner receives no paid work and the
+legacy `backend_ids` register still drives the paid path.
 
 Per-backend `max_in_flight` is enforced before dispatch. For long-lived
 remote-runner sessions, the capacity slot is held until session finalization.

@@ -1,6 +1,6 @@
 ---
 spec_name: broker-admin
-version: 1.0.0-draft
+version: 1.0.1-draft
 status: draft
 last_updated: 2026-08-26
 ---
@@ -297,8 +297,10 @@ Effect, atomically:
    certified runner on the new shape → `eligible`.
 3. `/registry/offerings` changes; the coordinator sees a candidate; the
    console holds it as `critical`. `state` returns to `frozen` when the
-   coordinator reports the signed manifest carrying the new shape
-   (`GET /admin/v1/runtime` shows `published_shape_hash`).
+   coordinator confirms the signed manifest carries the new shape:
+   `POST /admin/v1/offers/{offering_id}/confirm-published` with
+   `{ "shape_hash" }` — idempotent; a hash that is not the pending one is
+   a no-op `200`.
 
 Until step 3 completes the broker serves the **old** shape's runners for
 paid work — the signed manifest is what gateways bought against — and
@@ -518,4 +520,5 @@ frontmatter tracks the document.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.1-draft | 2026-08-26 | Add `POST /admin/v1/offers/{id}/confirm-published` — the coordinator's report that the signed manifest now carries the accepted shape, which resolves `superseding → frozen`. Until it lands the broker keeps dispatching the previously published shape. Additive. |
 | 1.0.0-draft | 2026-08-26 | Initial contract (plan 0043 §3.6, §3.7, item 2). Runners (list/get/disconnect), offers (list/get, full-replacement `PUT`, `accept-shape`, disable/enable), enrollment and credentials (`enroll`, list, rotate, revoke, hash-only `PUT` sync), certification (results, per-pair history, `run`), the `spec_version` stamp and frozen-only rule on `/registry/offerings`, error codes, and conformance fixtures. Supersedes `GET/POST /admin/v1/worker-sessions*`. |

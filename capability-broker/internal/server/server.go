@@ -20,6 +20,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/credentialstore"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/offers"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolreport"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolsnapshot"
@@ -99,6 +100,9 @@ type Server struct {
 	credentialStore      *credentialstore.Store
 	// runners is the registry of attached runners (plan 0043 item 7).
 	runners *runners.Registry
+	// offersEngine matches runners to offers, freezes shapes, and
+	// decides eligibility (plan 0043 item 8).
+	offersEngine *offers.Engine
 	// attachedHosts maps a host_id (credential-store enrollment) to the
 	// connections it holds, so revoke = delete + kill (broker-admin
 	// §5.3). Guarded by attachedMu.
@@ -257,6 +261,17 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	if err := s.validateAgainstRegistries(); err != nil {
 		return nil, err
 	}
+
+	if len(cfg.Offers) > 0 && cfg.OffersStatePath == "" && cfg.OffersSource != config.OffersSourceAdmin {
+		log.Printf("warning: offers[] configured without offers_state_path — frozen shapes will not survive a restart, " +
+			"and a re-freeze from a different runner would be a silent manifest change")
+	}
+	offersEngine, err := offers.New(cfg, s.runners, cfg.OffersStatePath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("offers engine: %w", err)
+	}
+	s.offersEngine = offersEngine
+	s.runners.OnChange = func(hostID string) { offersEngine.Rematch(hostID) }
 
 	if err := s.initSessionEngine(); err != nil {
 		return nil, fmt.Errorf("session engine: %w", err)

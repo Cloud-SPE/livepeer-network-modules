@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/credentialstore"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/offers"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/runnerattach"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/runners"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
@@ -239,7 +240,7 @@ type runnerCapabilityView struct {
 	Protocol     string                     `json:"protocol,omitempty"`
 	Attach       runnerAttachView           `json:"attach"`
 	Declared     map[string]any             `json:"declared,omitempty"`
-	Offers       []any                      `json:"offers"`
+	Offers       []offers.PairView          `json:"offers"`
 	Extensions   map[string]json.RawMessage `json:"extensions,omitempty"`
 }
 
@@ -249,7 +250,7 @@ type runnerAttachView struct {
 	Warnings []runnerattach.Reason `json:"warnings,omitempty"`
 }
 
-func runnerViewOf(sn runners.Snapshot, includePaths bool) runnerView {
+func (s *Server) runnerViewOf(sn runners.Snapshot, includePaths bool) runnerView {
 	v := runnerView{
 		HostID: sn.HostID, Enrollment: sn.Enrollment, State: sn.State, ConnectedSince: sn.Since,
 		LastSeen: sn.LastSeen, Connections: sn.Connections, AgentVersion: sn.AgentVersion,
@@ -263,7 +264,12 @@ func runnerViewOf(sn runners.Snapshot, includePaths bool) runnerView {
 		rc := runnerCapabilityView{
 			LocalID: cv.Result.LocalID, CapabilityID: cv.Result.CapabilityID,
 			Attach: runnerAttachView{Status: cv.Result.Status, Reasons: cv.Result.Reasons, Warnings: cv.Result.Warnings},
-			Offers: []any{},
+			Offers: []offers.PairView{},
+		}
+		if s.offersEngine != nil && cv.Capability != nil {
+			if pv := s.offersEngine.PairsFor(sn.HostID, cv.Result.LocalID); pv != nil {
+				rc.Offers = pv
+			}
 		}
 		if c := cv.Capability; c != nil {
 			rc.Protocol = c.Protocol
@@ -321,7 +327,7 @@ func (s *Server) handleRunnersList(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		views = append(views, runnerViewOf(sn, includePaths))
+		views = append(views, s.runnerViewOf(sn, includePaths))
 	}
 	adminJSON(w, http.StatusOK, map[string]any{"runners": views, "next_cursor": nil})
 }
@@ -335,7 +341,7 @@ func (s *Server) handleRunnerGet(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusNotFound, "runner_not_found", "no such runner within retention")
 		return
 	}
-	adminJSON(w, http.StatusOK, runnerViewOf(sn, strings.Contains(r.URL.Query().Get("include"), "paths")))
+	adminJSON(w, http.StatusOK, s.runnerViewOf(sn, strings.Contains(r.URL.Query().Get("include"), "paths")))
 }
 
 func (s *Server) handleRunnerDisconnect(w http.ResponseWriter, r *http.Request) {

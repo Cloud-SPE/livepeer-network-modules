@@ -36,6 +36,14 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /admin/v1/worker-sessions", s.handleWorkerSessions)
 	s.mux.HandleFunc("POST /admin/v1/worker-sessions/{backend_id}/kill", s.handleWorkerSessionKill)
 	s.mux.HandleFunc("GET /internal/v1/worker/session", s.handleWorkerSession)
+	// Offers (broker-admin §4).
+	s.mux.HandleFunc("GET /admin/v1/offers", s.handleOffersList)
+	s.mux.HandleFunc("PUT /admin/v1/offers", s.handleOffersPut)
+	s.mux.HandleFunc("GET /admin/v1/offers/{offering_id}", s.handleOfferGet)
+	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/accept-shape", s.handleOfferAcceptShape)
+	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/confirm-published", s.handleOfferConfirmPublished)
+	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/disable", s.handleOfferDisable)
+	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/enable", s.handleOfferEnable)
 	// Attached runners (broker-admin §3).
 	s.mux.HandleFunc("GET /admin/v1/runners", s.handleRunnersList)
 	s.mux.HandleFunc("GET /admin/v1/runners/{host_id}", s.handleRunnerGet)

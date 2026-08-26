@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -44,6 +45,17 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := registry.BuildOfferings(cfg, s.currentMetadata())
+	if s.offersEngine != nil {
+		payload.OffersRevision = s.offersEngine.Revision()
+		// Advertised offers: frozen (or accepted-pending) shapes only —
+		// a pure function of offer set + frozen shapes, never of live
+		// runner churn (plan 0043 §3.4).
+		for _, adv := range s.offersEngine.AdvertisedOffers() {
+			if t := registry.OfferTuple(adv.Offer, offerShape(adv.Shape)); t != nil {
+				payload.Capabilities = append(payload.Capabilities, *t)
+			}
+		}
+	}
 	// A quarantined tuple is withheld from discovery: advertising a
 	// capability whose runner contradicts its configuration would route
 	// paid work to something that cannot serve it.
@@ -330,6 +342,11 @@ func (s *Server) finishReload(attemptID string, startedAt time.Time, status, rel
 		s.health = healthMgr
 		s.loadedRevision = revision
 		s.loadedAt = s.lastReloadFinishedAt
+		if s.offersEngine != nil {
+			if err := s.offersEngine.Reload(cfg); err != nil {
+				log.Printf("offers engine reload: %v", err)
+			}
+		}
 	}
 	s.recordReloadHistory(runtimeHistoryEntry{
 		AttemptID:      attemptID,

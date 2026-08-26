@@ -15,6 +15,7 @@ import (
 	"net/http"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 )
 
 type ExtraOverlaySource interface {
@@ -37,7 +38,12 @@ func OfferingsHandler(cfg *config.Config, overlays ExtraOverlaySource) http.Hand
 }
 
 type offeringsPayload struct {
+	// SpecVersion is the protocol module's VERSION the broker was built
+	// against (broker-admin §7). The coordinator refuses to merge
+	// brokers whose major differs from its own.
+	SpecVersion    string                  `json:"spec_version"`
 	OrchEthAddress string                  `json:"orch_eth_address"`
+	OffersRevision string                  `json:"offers_revision,omitempty"`
 	Capabilities   []offeringsCapabilityV1 `json:"capabilities"`
 }
 
@@ -200,6 +206,7 @@ func axesFor(c config.Capability) (*offeringsJobAxes, *offeringsSessionAxes) {
 
 func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPayload {
 	out := offeringsPayload{
+		SpecVersion:    version.VERSION,
 		OrchEthAddress: cfg.Identity.OrchEthAddress,
 		Capabilities:   make([]offeringsCapabilityV1, 0, len(cfg.Capabilities)),
 	}

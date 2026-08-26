@@ -25,7 +25,7 @@ authoritative versioning policy — see [core belief #14](../docs/design-docs/co
 | Folder | What it holds |
 |---|---|
 | [`manifest/`](./manifest/) | Manifest JSON Schema, examples, schema changelog |
-| [`protocols/`](./protocols/) | The two core protocols (`paid-job/v1`, `paid-session/v1`), the runtime-descriptor framework, and the offering declared axes |
+| [`protocols/`](./protocols/) | The two core protocols (`paid-job/v1`, `paid-session/v1`), the runtime-descriptor framework, the offering declared axes, and the [runner attach contract](./protocols/runner-attach.md) (+ its JSON Schema and examples under `protocols/runner-attach/`) |
 | [`descriptors/`](./descriptors/) | One spec per runtime-descriptor schema (`sfu-room/v1`, `rtmp-hls/v1`, …) |
 | [`extractors/`](./extractors/) | One spec per work-unit extractor (`openai-usage`, `response-jsonpath`, …) |
 | [`headers/`](./headers/) | `Livepeer-*` header conventions, payment envelope structure |

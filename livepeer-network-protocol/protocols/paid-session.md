@@ -1,8 +1,8 @@
 ---
 spec_name: paid-session
-version: 1.0.10-draft
+version: 1.0.11-draft
 status: draft
-last_updated: 2026-08-20
+last_updated: 2026-08-26
 ---
 
 # Protocol: `paid-session/v1`
@@ -462,89 +462,20 @@ Callback coordinates handed to the runner MUST be derived from operator
 configuration, never from inbound request `Host`/`X-Forwarded-Proto`
 headers.
 
-### 7.1.1 Self-description (optional)
+### 7.1.1 Self-description — superseded
 
-An operator MAY configure a **describe path**. When present the broker
-calls it at startup and on every runtime reload, and the runner responds
-with what it implements:
-
-```json
-{
-  "protocols": ["paid-session/v1"],
-  "capabilities": [
-    {
-      "capability_id": "livepeer:meet/sfu-room",
-      "descriptor_schemas": ["sfu-room/v1"],
-      "work_unit": "participant_seconds",
-      "metering": "runner-reported",
-      "heartbeat": { "interval_seconds": 30 },
-      "readiness": { "path": "/ready" },
-      "session_params_schema": {
-        "required": ["room_name"],
-        "properties": { "room_name": "string", "max_participants": "integer" }
-      },
-      "paths": {
-        "create": "/sessions",
-        "status": "/sessions/{id}",
-        "terminate": "/sessions/{id}"
-      }
-    }
-  ]
-}
-```
-
-The point is to stop operators from hand-transcribing facts only the
-runner knows. `descriptor_schema`, `work_unit`, the runner's own paths,
-and `metering` are runner facts; declaring them a second time in broker
-config creates two sources of truth that can disagree, and the broker's
-runtime cross-checks exist only because they do. A `work_unit` mismatch,
-for instance, rejects every usage event for a session's lifetime — a
-failure worth catching at configuration time instead.
-
-Rules:
-
-- **Advisory, never authoritative.** The broker MUST NOT adopt
-  self-described values into what it advertises. Published offerings are
-  cold-key signed; silently adopting a runner's declaration would let a
-  runner-side change alter what an orchestrator sells. Disagreement is
-  surfaced for an operator to act on, not absorbed.
-- **A contradiction is fatal to that capability.** If the runner's
-  `work_unit`, `descriptor_schemas`, or `capability_id` disagree with the
-  configured tuple, the configuration is already broken — sessions would
-  fail at open or reject every usage event. The broker MUST refuse to
-  serve that capability and MUST say which field disagreed and what each
-  side declared.
-- **Unreachability is not a contradiction.** A runner that cannot be
-  reached (or serves no describe path) is a warning, not a failure: a
-  broker MUST NOT refuse to serve a capability merely because
-  self-description was unavailable.
-- **Readiness may be adopted, because it is not manifest data.** A
-  runner MAY declare a readiness endpoint; the broker MAY use it in
-  place of a probe it would otherwise default to. This does not violate
-  the never-adopt rule above: readiness is live data that changes how
-  liveness is measured, never what the orchestrator advertises and
-  sells. An operator-configured probe always wins.
-- **Advisory fields warn.** A heartbeat cadence slower than the
-  offering's `interval × missed_threshold` is a misconfiguration the
-  operator should see, but the broker enforces its configured threshold
-  either way.
-
-A runner MAY also declare the shape of the `session_params` it expects.
-Today a capability's parameter requirements are undocumented: a gateway
-sends params blind and learns what was required from a create-time
-failure, after payment has been validated. A declared shape lets the
-requirement surface at selection time instead.
-
-`session_params_schema` is a **description, not a validator**. The
-broker MUST continue to pass `session_params` to the runner verbatim and
-MUST NOT reject an open on the strength of it — the runner remains the
-authority on its own inputs, and a broker enforcing a stale copy of that
-contract would be the same two-sources-of-truth mistake this section
-exists to remove. Its purpose is to reach gateways through the offering
-so they can validate before opening.
-
-Describe responses are runner-authored data. The broker validates their
-shape and compares them; it MUST NOT execute or interpret them further.
+> **Superseded 2026-08-26** by the
+> [runner attach contract](./runner-attach.md) (plan 0043 §3.2). Runners
+> no longer serve a describe path; they attach outbound and send one
+> versioned document that declares `descriptor_schemas`, `work_unit`,
+> `metering`, `heartbeat`, `paths`, `readiness`, `session_params_schema`,
+> and `schema_versions` for every protocol. The rules this section used to
+> state — a runner's declaration is never adopted into what is advertised,
+> a contradiction is fatal to that capability, `session_params_schema` is
+> a description and never a validator — survive unchanged in
+> `runner-attach.md` §4–§5; what changed is that the operator no longer
+> restates the facts at all, so there is no second source of truth to
+> cross-check.
 
 ### 7.2 Runner events
 
@@ -735,7 +666,7 @@ is the difference between a diagnosable bug and an afternoon.
 |---|---|---|
 | Make terminate idempotent; terminating an unknown or already-terminated session succeeds | §7.1 | A non-idempotent terminate turns every winddown retry into a spurious error and can leave the broker's state and yours disagreeing. |
 | Actually stop serving on terminate — the broker treats it as authoritative | §5, §9.2 | Serving after terminate is unmetered work; the broker has already closed payment. |
-| Serve the describe path, if configured, with facts matching what the offering declares | §7.1.1 | The broker refuses to serve a capability whose runner contradicts its configuration, naming the field and both values. |
+| Attach with a truthful [attach document](./runner-attach.md) and re-send it on any change | [runner-attach](./runner-attach.md) §2–§4 | An invalid entry is rejected naming the field and both sides; a shape that disagrees with a frozen offer makes you ineligible for it. |
 | Answer the status path truthfully, including after termination | §7.1, §9.2 | Recovery uses it: reporting a session gone that you still serve strands it; reporting alive one you dropped delays the terminal outcome. |
 
 ### What the runner never does
@@ -752,6 +683,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.11-draft | 2026-08-26 | §7.1.1 superseded by `protocols/runner-attach.md` (plan 0043): self-description becomes the mandatory, versioned attach document for every protocol; the describe path is gone. Never-adopt, contradiction-fatal, and schema-not-validator rules carried over. §11 row updated. |
 | 1.0.10-draft | 2026-08-21 | §3.3.1: state that `gateway_session_id` uniqueness is GLOBAL across a broker's retained sessions rather than per-payer, and that a producer MUST generate it with at least 96 bits of CSPRNG entropy (UUIDv4 qualifies). The broker cannot verify entropy and does not try: this is collision and enumeration resistance, not authentication. Confirmed with LOC. |
 | 1.0.9-draft | 2026-08-21 | §3.3.1: `gateway_session_id` is REQUIRED on open and an omitted or empty one MUST be refused with `invalid_request` — uniqueness was enforced only when the field was present, so a client that never sent it opened sessions indefinitely and got settlements nobody could resolve, with no signal at any point. Also states that a gateway needs no rotation notice to rebind: the predecessor is the last `work_id` it held, readable from `GET /v1/session/{id}`, so the §8 socket is an optimisation and not a precondition. Both raised by the meeting team. |
 | 1.0.8-draft | 2026-08-21 | §3.3.1: `GET /v1/settlement/{id}` MUST resolve `gateway_session_id`, not merely echo it — it is the only lookup key a clearinghouse issues itself. Brokers MUST keep it unique across retained sessions (`gateway_session_id_reuse`, 409), and a query matching several sessions MUST answer `ambiguous_identifier` (409) instead of returning one of them. LOC could reject a wrong-session record but had no key that would find the right one; the reference broker's `work_id` lookup returned whichever session sorted last. |

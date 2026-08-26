@@ -1,0 +1,619 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://livepeer-network-protocol.example/protocols/runner-attach/schema.json",
+  "title": "Runner attach document",
+  "description": "The document a runner sends a broker on the tunnel `register` message to declare what it is (protocols/runner-attach.md, contract_version 1.0). Shape only: semantic rules that need broker state (credential store, known extractors/probes/schemas, hardware satisfiability, duplicate detection) live in the spec §4. Everything not listed here and not `x-`-prefixed is an unknown field and rejects the whole document.",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "credential",
+    "host_id",
+    "agent_version",
+    "hardware",
+    "capabilities"
+  ],
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {
+      "description": "Host-level extension. Relayed verbatim to operator surfaces; never interpreted."
+    }
+  },
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+$",
+      "description": "<major>.<minor> of this contract. This schema describes major 1; an unknown major is a document-level rejection (spec §8)."
+    },
+    "credential": {
+      "$ref": "#/$defs/credential"
+    },
+    "host_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "description": "Stable per host across reconnects; audit key. Must equal the enrollment's host id where the credential store records one."
+    },
+    "agent_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Free; audit only. Conventionally <binary>/<semver>."
+    },
+    "hardware": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/hardware_unit"
+      },
+      "description": "GPU inventory of this host. May be empty (CPU work, or a host with nothing to offer yet). gpu_uuid must be unique within the document (spec §4.1)."
+    },
+    "capabilities": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "$ref": "#/$defs/capability"
+      },
+      "description": "One entry per capability the host can serve. The same capability_id may appear more than once with different identity, never twice with the same identity. An empty array is a valid hardware-only attach."
+    }
+  },
+  "$defs": {
+    "credential": {
+      "type": "object",
+      "title": "Attach credential",
+      "description": "Binds the document to one host enrollment in the broker's credential store. Only `bearer` is normative in 1.0; `ed25519` is reserved so the upgrade to per-host keypairs is additive (spec §3.1.1).",
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "bearer",
+            "ed25519"
+          ]
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "bearer: the opaque token the enrollment issued."
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "ed25519 (reserved): identifies the enrolled public key."
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "ed25519 (reserved): base64 signature over the JCS form of the document with this field removed. Absent when the key is presented as a QUIC client certificate instead."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "bearer"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "token"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "key_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "signature"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "ed25519"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "key_id"
+            ],
+            "not": {
+              "required": [
+                "token"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "hardware_unit": {
+      "type": "object",
+      "title": "Hardware unit",
+      "required": [
+        "gpu_uuid",
+        "gpu_model",
+        "vram_bytes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "gpu_uuid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Vendor's stable device id (nvidia-smi GPU UUID on NVIDIA). Pragmatic trust-but-verify identity per plan 0040 §4.2, not proof of ownership."
+        },
+        "gpu_model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Marketing name as the driver reports it. Matched by requirements.gpu_models[] with exact equality after whitespace trim."
+        },
+        "vram_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total device memory."
+        },
+        "driver": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "cuda": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "facts": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "description": "Opaque string map; UI only. Never matched, never frozen."
+        }
+      }
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^/(?!.*(\\.\\.|\\?|#|://)).*$",
+      "description": "Starts with '/', no '..', no query, no fragment, no scheme. Resolved against the tunnel's virtual backend for this host."
+    },
+    "session_id_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^/(?!.*(\\.\\.|\\?|#|://)).*\\{id\\}.*$",
+      "description": "A relative_path that contains the literal '{id}' placeholder."
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*/v[0-9]+$",
+      "description": "Protocol or descriptor-schema tag, <name>/v<N>."
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?(-[0-9A-Za-z.-]+)?$"
+    },
+    "work_unit": {
+      "type": "object",
+      "title": "Work-unit declaration",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Opaque metering dimension name (tokens, seconds, participant_minutes). Frozen."
+        },
+        "extractor": {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z][a-z0-9-]*$",
+              "description": "Must name an extractor the broker implements (extractors/). Remaining keys are that extractor's own parameters, validated by it. Whole object frozen."
+            }
+          },
+          "additionalProperties": true,
+          "description": "paid-job only. The runner never supplies code, only the recipe name and its parameters."
+        }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "title": "Readiness probe declaration",
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "http-status",
+            "http-jsonpath",
+            "http-openai-model-ready",
+            "tcp-connect"
+          ],
+          "description": "A broker-known remote probe. Broker-local kinds (command-exit-0, manual-drain) are not valid from a runner."
+        },
+        "path": {
+          "$ref": "#/$defs/relative_path",
+          "description": "Defaults to '/'."
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "That probe's own parameters; opaque here, validated by the probe."
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "title": "Workload identity",
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 256
+      },
+      "description": "Dotted-path keys to string values (openai.model, provider). Matched by offers[].match; frozen into the offer's extra as nested objects. A key must not be both a leaf and a prefix of another (checked by the broker, not expressible here)."
+    },
+    "schema_versions": {
+      "type": "object",
+      "title": "Implemented spec versions",
+      "minProperties": 1,
+      "maxProperties": 32,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]*/v[0-9]+$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/semver"
+      },
+      "description": "One entry for `protocol` and one per descriptor_schemas[] tag; each major must equal the tag's vN. Frozen at major."
+    },
+    "requirements": {
+      "type": "object",
+      "title": "Hardware requirements",
+      "additionalProperties": false,
+      "properties": {
+        "gpu_vram_min_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "gpu_models": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      },
+      "description": "Validated against this host's own hardware[]: a capability its host cannot run is rejected (requirements_unmet)."
+    },
+    "certification_step_suggestion": {
+      "type": "object",
+      "required": [
+        "name",
+        "type"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "readiness",
+            "request",
+            "usage",
+            "latency"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "config": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false,
+      "description": "Shape mirrors the certification step spec so a console can render it. Suggested only; never adopted or executed automatically."
+    },
+    "capability": {
+      "type": "object",
+      "title": "Capability entry",
+      "required": [
+        "capability_id",
+        "protocol",
+        "work_unit",
+        "paths",
+        "readiness",
+        "identity",
+        "schema_versions"
+      ],
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-(?!certification-suggested$)": {
+          "description": "Capability-level extension. Relayed verbatim; promoted into the offer's extra only via extra_from_runner."
+        }
+      },
+      "properties": {
+        "capability_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Opaque UTF-8 identifier; no closed enum."
+        },
+        "protocol": {
+          "$ref": "#/$defs/tag",
+          "description": "paid-job/v1 or paid-session/v1. Unknown protocols are rejected, never guessed. Frozen."
+        },
+        "local_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "description": "Unique within the document; echoed as Livepeer-Runner-Local-Id on every dispatched request so the agent can route. Defaults to the entry's index."
+        },
+        "transports": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "unary",
+              "stream",
+              "multipart"
+            ]
+          },
+          "description": "paid-job only. Frozen."
+        },
+        "descriptor_schemas": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/tag"
+          },
+          "description": "paid-session only. Each must be known to the broker and present in schema_versions. Frozen."
+        },
+        "work_unit": {
+          "$ref": "#/$defs/work_unit"
+        },
+        "paths": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "invoke": {
+              "$ref": "#/$defs/relative_path"
+            },
+            "options": {
+              "$ref": "#/$defs/relative_path"
+            },
+            "create": {
+              "$ref": "#/$defs/relative_path"
+            },
+            "status": {
+              "$ref": "#/$defs/session_id_path"
+            },
+            "terminate": {
+              "$ref": "#/$defs/session_id_path"
+            }
+          },
+          "description": "Job: invoke (required), options. Session: create, status, terminate (all required; status and terminate carry {id}). Which set applies is enforced by the protocol conditionals below."
+        },
+        "readiness": {
+          "$ref": "#/$defs/readiness"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "schema_versions": {
+          "$ref": "#/$defs/schema_versions"
+        },
+        "metering": {
+          "enum": [
+            "runner-reported",
+            "broker-observed"
+          ],
+          "description": "paid-session only. Frozen. broker-observed is valid only with the offer's attachment inband-ws (checked at match)."
+        },
+        "heartbeat": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "interval_seconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "description": "paid-session only; advisory."
+        },
+        "session_params_schema": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "paid-session only. Opaque description of expected session_params; relayed, never enforced."
+        },
+        "requirements": {
+          "$ref": "#/$defs/requirements"
+        },
+        "devices": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "description": "gpu_uuid values from hardware[] that back this capability. Absent means unspecified (treated as all)."
+        },
+        "x-certification-suggested": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/certification_step_suggestion"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "protocol": {
+                "pattern": "^paid-job/"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "transports"
+            ],
+            "properties": {
+              "work_unit": {
+                "required": [
+                  "extractor"
+                ]
+              },
+              "paths": {
+                "required": [
+                  "invoke"
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "create"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "status"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "terminate"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "descriptor_schemas"
+                  ]
+                },
+                {
+                  "required": [
+                    "metering"
+                  ]
+                },
+                {
+                  "required": [
+                    "heartbeat"
+                  ]
+                },
+                {
+                  "required": [
+                    "session_params_schema"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "protocol": {
+                "pattern": "^paid-session/"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "descriptor_schemas",
+              "metering"
+            ],
+            "properties": {
+              "work_unit": {
+                "not": {
+                  "required": [
+                    "extractor"
+                  ]
+                }
+              },
+              "paths": {
+                "required": [
+                  "create",
+                  "status",
+                  "terminate"
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "invoke"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "options"
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "not": {
+              "required": [
+                "transports"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

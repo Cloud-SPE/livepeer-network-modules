@@ -1,8 +1,8 @@
 ---
 spec_name: offering-axes
-version: 1.0.6-draft
+version: 1.0.7-draft
 status: draft
-last_updated: 2026-08-20
+last_updated: 2026-08-26
 ---
 
 # Offering declared axes
@@ -40,8 +40,9 @@ Declared in the capability tuple's `job` object (REQUIRED for job offerings):
 | `transports` | yes | non-empty subset of `unary`, `stream`, `multipart` | Gateways select per-request; brokers refuse undeclared transports pre-payment. |
 
 That is the entire job surface. Usage units are already declared by
-`work_unit`; the extractor that counts them is host config; idempotency
-windows are operator policy. One offering, many transports — the per-mode
+`work_unit`; the extractor that counts them is declared by the runner at
+attach (`runner-attach.md` §3.2) and frozen into the offer, never
+advertised; idempotency windows are operator policy. One offering, many transports — the per-mode
 offering duplication the old taxonomy forced is structurally gone.
 
 ## 3. Axes for `paid-session/v1` offerings
@@ -59,7 +60,7 @@ offerings):
 | `lease` | no | `{ policy, max_seconds }`; default policy `funding-tracking` | The session spec's normative lease default applies unless overridden here; gateways read it before opening. |
 | `tolerance_band_pct` | no | number; advisory | The divergence tolerance the seller commits to operate within (trust-model doc). A buyer's route selection MAY prefer tighter bands. |
 | `runway_increment_units` | no | integer; advisory | Seller-suggested top-up sizing. Buyers own their actual increment (it is their exposure bound), but a suggestion aids first-contact sizing. |
-| `session_params_schema` | no | object; advisory | The runner's own description of the `session_params` it expects, relayed verbatim (see paid-session §7.1.1). Lets a gateway validate before opening rather than discovering the requirement as a create-time failure after payment was validated. Not operator-authored and never broker-enforced. |
+| `session_params_schema` | no | object; advisory | The runner's own description of the `session_params` it expects, relayed verbatim from the runner's attach document (`runner-attach.md` §3.2). Lets a gateway validate before opening rather than discovering the requirement as a create-time failure after payment was validated. Not operator-authored and never broker-enforced. |
 
 `metering: broker-observed` with `attachment: external` is invalid: a broker
 cannot observe traffic that never transits it.
@@ -221,6 +222,7 @@ refused.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.7-draft | 2026-08-26 | Runner-owned axes (`transports`, `descriptor_schema`, `metering`, `work_unit`, `session_params_schema`, the extractor) now originate in the attach document (`runner-attach.md`) and reach the manifest only through the offer freeze; references to paid-session §7.1.1 repointed. No wire change. |
 | 1.0.6-draft | 2026-08-21 | §6.1: add `payment_cumulative_units` — the running total on the `work_id`, distinct from the session- or exchange-scoped `debited_units` — and state what it does and does not make verifiable: a paid-job charge is fully recomputable from the record, a paid-session charge on a shared identity is attested rather than recomputable, because interleaved sessions do not occupy contiguous stretches of the curve. |
 | 1.0.5-draft | 2026-08-21 | §6.1: the cumulative curve spans EXCHANGES, not only ticks — a paid-job exchange is one increment on its payment session's curve, so the second job on a session costs the difference of two ceilings. A settlement MUST attest what the ledger charged rather than recomputing, and carries the cumulative total so the charge stays verifiable from the record. Found on mainnet: a signed record attested 5 wei for a debit the ledger charged 4. |
 | 1.0.4-draft | 2026-08-20 | §6.2: state the identity invariants explicitly — refill sizing never changes session identity, a payer must not key its session cache on funded value, face value is pinned at first issuance and a larger refill mints more tickets rather than larger ones. All three were true of the implementation by accident and written down nowhere. |

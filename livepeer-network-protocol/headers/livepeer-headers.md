@@ -1,7 +1,7 @@
 ---
 status: draft (rewritten for the v1 protocols)
-spec_version: 1.0.7-draft
-last_updated: 2026-08-20
+spec_version: 1.0.8-draft
+last_updated: 2026-08-26
 ---
 
 # Livepeer wire headers
@@ -40,6 +40,7 @@ Out of scope:
 | `Livepeer-Work-Unit` | response from broker | with `Livepeer-Work-Units` | broker | gateway |
 | `Livepeer-Job-Id` | response from broker | every terminal paid-job response | broker | gateway |
 | `Livepeer-Health-Status` | response on `/registry/health` | yes (on that path) | broker | gateway resolver |
+| `Livepeer-Runner-Local-Id` | broker → runner (dispatch over the attach connection) | yes | broker | runner agent |
 | `Livepeer-Settlement` | response from broker | when applicable | broker | gateway |
 | `Livepeer-Error` | response from broker on error | when error | broker | gateway |
 
@@ -264,6 +265,22 @@ capacity status for each currently-served capability.
 - Alternative: place the JSON in the response body. Header form is preferred for
   consistency with the `Livepeer-*` family and to allow `HEAD` checks.
 
+### `Livepeer-Runner-Local-Id`
+
+Set by the broker on every request it dispatches to a connected runner —
+paid work, readiness probes, certification — over the runner's outbound
+attach connection ([`runner-attach.md`](../protocols/runner-attach.md) §7).
+
+- **Value:** the `local_id` of the capability entry in the runner's attach
+  document (defaulted to the entry's index when the runner did not set
+  one). `[A-Za-z0-9._-]{1,64}`.
+- One host may serve several entries, including the same `capability_id`
+  under two identities, so `Livepeer-Capability` alone cannot select the
+  container. This header is the agent's single routing key; it MUST NOT
+  route on the path alone.
+- Broker → runner only. A broker MUST strip it from inbound paid requests
+  and MUST NOT accept it from a gateway.
+
 ### `Livepeer-Error`
 
 On any non-2xx response, the broker SHOULD set a machine-readable error code.
@@ -334,7 +351,10 @@ Error responses SHOULD include a JSON body with at minimum:
 The broker is a transparent proxy with the following obligations:
 
 - **Strip all `Livepeer-*` headers** before forwarding to the backend. The backend
-  MUST NOT see Livepeer protocol headers.
+  MUST NOT see Livepeer protocol headers — with the one exception of
+  `Livepeer-Runner-Local-Id`, which the broker itself sets on dispatch to a
+  connected runner so the agent can route to the right container
+  ([`runner-attach.md`](../protocols/runner-attach.md) §7).
 - **Inject backend-specific auth** when declared in `host-config.yaml`. For
   example: `Authorization: Bearer <vault-resolved-secret>` when reselling a
   third-party API.
@@ -363,6 +383,7 @@ See [`../conformance/`](../conformance/).
 
 | Spec version | Change |
 |---|---|
+| 1.0.8-draft | Add `Livepeer-Runner-Local-Id`, broker → runner only, set on every request dispatched over a runner's attach connection so a host serving several capability entries can route (runner-attach §7). The forwarding rule's strip-all-`Livepeer-*` obligation gains this one exception. |
 | 0.1.0 | Initial draft. |
 | 0.1.1 | Add `insufficient_balance` error code for long-running sessions terminated by the broker mid-flight (plan 0015). Pre-1.0 minor additions are non-breaking; receivers continue to validate the major version only. |
 | 0.1.2 | Add `ffmpeg_subprocess_failed` and `rtmp_ingest_idle_timeout` error codes for `rtmp-ingress-hls-egress` (plan 0011-followup). Pre-1.0 minor additions are non-breaking. |

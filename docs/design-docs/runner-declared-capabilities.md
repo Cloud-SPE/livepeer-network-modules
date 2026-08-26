@@ -11,6 +11,14 @@ operator to hand-transcribe facts that only the runner actually knows.
 This doc states the split we should be designing to, the drift it causes
 today, and what is missing to close it.
 
+> **Superseding work (2026-08-26).** Plan 0043 replaces the optional describe
+> path with a mandatory, versioned, outbound attach document for every
+> protocol — see
+> [`livepeer-network-protocol/protocols/runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md).
+> Gap 1 below (version negotiation) closes there via `schema_versions`. This
+> doc is retired once plan 0043 item 18 lands; until then it is the record of
+> why the split exists.
+>
 > **Implementation status (2026-08-19).** The design below shipped in the same
 > cycle it was written. Runner self-description is now normative in
 > [`paid-session/v1` §7.1.1](../../livepeer-network-protocol/protocols/paid-session.md)

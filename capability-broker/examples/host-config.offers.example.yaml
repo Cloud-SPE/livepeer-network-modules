@@ -1,0 +1,103 @@
+# Example host-config.yaml in the plan-0043 `offers[]` grammar.
+#
+# The operator authors OFFERS — what is sold, at what price, with what
+# capacity, where — and nothing about the runners. Runners attach outbound
+# with a credential and declare what they are (transports, work unit,
+# extractor, paths, readiness, model identity); the first certified runner
+# freezes those facts into the offer and the signature is the acceptance.
+# See livepeer-network-protocol/protocols/runner-attach.md,
+# broker-admin.md and certification-steps.md.
+#
+# `offers[]` and the legacy `capabilities[]` grammar coexist until attach
+# and freeze ship (plan 0043 items 7–8); a given offering lives in one or
+# the other, never both.
+
+identity:
+  orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
+  label: "broker-a"
+
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+  worker_quic: ":8443"          # runners attach here (QUIC); WS fallback rides the paid listener
+
+admin_auth:
+  method: bearer
+  secret_ref: env://BROKER_ADMIN_TOKEN
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+
+# offers_source: file (default) — this file owns offers[].
+# offers_source: admin          — a pool-controller pushes them over
+#                                 PUT /admin/v1/offers; offers[] below must be empty.
+
+offers:
+  # ---- Chat completions, shared across every attached runner that
+  #      declares identity.openai.model = llama-3-70b ----
+  - offering_id: llama-3-70b-shared
+    capability: openai:chat-completions
+    protocol: paid-job/v1
+    match:
+      identity.openai.model: llama-3-70b   # selector over attached runners' declared identity
+    price:
+      amount_wei: "210000000"              # 210 Mwei per token
+      per_units: 1
+    capacity:
+      max_in_flight: 4                     # per eligible runner
+      queue_limit: 8
+    extra:                                 # operator metadata; runner identity is merged in at freeze
+      region: us-west-2
+      gpu_class: h100
+    extra_from_runner: [x-quantization]    # promote this runner x-* key into the advertised extra
+    certification:                         # every matched runner must pass these before it gets work
+      - { name: ready, type: readiness }
+      - name: smoke
+        type: request
+        config:
+          transport: unary
+          body: { model: "{{identity.openai.model}}", messages: [ { role: user, content: ping } ], max_tokens: 8 }
+          assert: [ "$.choices[0].message.content", { path: "$.usage.total_tokens", min: 1 } ]
+      - { name: usage, type: usage, config: { min_units: 1 } }
+      - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 4000, measure: first_byte } }
+
+  # ---- Audio transcription: a multipart upload with a built-in fixture ----
+  - offering_id: whisper-large-v3
+    capability: openai:audio-transcriptions
+    protocol: paid-job/v1
+    match:
+      identity.openai.model: whisper-large-v3
+    price:
+      amount_wei: "1000000000000"          # per second of input audio (extractor is runner-declared)
+      per_units: 1
+    capacity: { max_in_flight: 2 }
+    extra: { region: us-west-2 }
+    certification:
+      - { name: ready, type: readiness, config: { attempts: 5, interval_ms: 3000 } }
+      - name: smoke
+        type: request
+        config:
+          transport: multipart
+          parts:
+            - { name: model, value: "{{identity.openai.model}}" }
+            - { name: file, fixture: { ref: multipart-audio-duration-v1/wav-16k-mono-3s }, filename: probe.wav, content_type: audio/wav }
+          assert: [ "$.text" ]
+      - { name: usage, type: usage, config: { min_units: 1 } }
+
+  # ---- A paid-session offer. Needs session_store + external_base_url
+  #      (uncomment those at the top level to enable). ----
+  # - offering_id: meet-default
+  #   capability: livepeer:meet/sfu-room
+  #   protocol: paid-session/v1
+  #   price: { amount_wei: "10", per_units: 1 }
+  #   session_policy:
+  #     refill: extensible
+  #     lease_policy: funding-tracking
+  #     heartbeat: { interval_seconds: 10, missed_threshold: 3 }
+  #     max_rotations: 3
+  #   certification:
+  #     - { name: ready, type: readiness }
+  #     - name: open
+  #       type: request
+  #       config: { session_params: { room_name: "cert-{{run.id}}" }, expect_descriptor_schema: sfu-room/v1, hold_ms: 5000 }
+  #     - { name: usage, type: usage, config: { window_ms: 5000 } }

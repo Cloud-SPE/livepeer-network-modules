@@ -24,7 +24,14 @@ type Config struct {
 	SessionStore    SessionStore  `yaml:"session_store,omitempty"`
 	PoolSnapshot    PoolSnapshot  `yaml:"pool_snapshot,omitempty"`
 	ReceiptSink     ReceiptSink   `yaml:"receipt_sink,omitempty"`
-	Capabilities    []Capability  `yaml:"capabilities"`
+	// Offers is the plan-0043 operator grammar (offers.go). OffersSource
+	// is "file" (default) or "admin" (pushed by pool-controller).
+	Offers       []Offer `yaml:"offers,omitempty"`
+	OffersSource string  `yaml:"offers_source,omitempty"`
+	// Capabilities is the legacy tuple grammar (backend URLs, runner
+	// facts restated by the operator). Deleted once attach + freeze
+	// (plan 0043 items 7–8) land.
+	Capabilities []Capability `yaml:"capabilities,omitempty"`
 }
 
 // SessionStore configures the durable paid-session store

@@ -46,6 +46,33 @@ treated as one published offering with multiple runtime backend candidates.
 `/registry/offerings` dedupes the published tuple; request dispatch selects a
 currently-eligible backend at runtime.
 
+### `offers[]` — the plan-0043 grammar
+
+`offers[]` is the operator-only grammar that replaces `capabilities[]`
+(plan 0043 §3.1). An offer carries what is sold and nothing about the
+runner: `offering_id`, `capability`, `protocol`, a `match` selector over
+attached runners' declared identity, `price`, `capacity`, `extra`,
+`extra_from_runner` (which runner `x-*` keys are promoted), an optional
+`session_policy` (the operator-owned paid-session axes), and
+`certification[]` (the steps every matched runner must pass —
+[`certification-steps.md`](../livepeer-network-protocol/protocols/certification-steps.md)).
+Runner facts — transports, work unit, extractor, paths, readiness, model
+identity — arrive in the runner's attach document
+([`runner-attach.md`](../livepeer-network-protocol/protocols/runner-attach.md))
+and are frozen into the offer by the first certified runner.
+
+`offers_source: file` (default) means this file owns them;
+`offers_source: admin` means a pool-controller pushes them over
+`PUT /admin/v1/offers` ([`broker-admin.md`](../livepeer-network-protocol/protocols/broker-admin.md) §4.2)
+and requires `admin_auth`. See
+[`examples/host-config.offers.example.yaml`](./examples/host-config.offers.example.yaml).
+
+**Status:** the grammar is validated at load and coexists with
+`capabilities[]` (an offering lives in one or the other). Attach, match,
+freeze, and dispatch over attached runners land with plan 0043 items 6–8;
+until then an offer is configuration only, and `capabilities[]` still
+drives the paid path. `capabilities[]` is deleted when item 8 ships.
+
 When `receipt_sink.url` is configured, the broker also emits best-effort Pool
 work receipts to `pool-controller`:
 

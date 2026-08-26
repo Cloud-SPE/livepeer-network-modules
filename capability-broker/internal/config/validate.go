@@ -173,8 +173,11 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	if len(c.Capabilities) == 0 {
-		return fmt.Errorf("capabilities: must declare at least one")
+	if err := c.validateOffers(); err != nil {
+		return err
+	}
+	if len(c.Capabilities) == 0 && len(c.Offers) == 0 && c.OffersSource != OffersSourceAdmin {
+		return fmt.Errorf("offers: must declare at least one (or set offers_source: admin)")
 	}
 
 	seenPublished := make(map[string]int, len(c.Capabilities))

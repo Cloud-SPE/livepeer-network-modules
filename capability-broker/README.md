@@ -173,9 +173,21 @@ is gone on disconnect (kept 24 h as `disconnected` for the console).
 - `GET /admin/v1/runners` (`?state=`, `?host_id=`, `?capability_id=`,
   `?include=paths`), `GET /admin/v1/runners/{host_id}`,
   `POST /admin/v1/runners/{host_id}/disconnect`.
+- `GET /admin/v1/certification` (`?host_id=`, `?offering_id=`, `?state=`,
+  `?latest=true`), `GET /admin/v1/certification/{host}/{offering}`,
+  `POST /admin/v1/certification/{host}/{offering}/run`.
+  `certification_fixtures_dir` resolves `fixture: {ref}` files for
+  multipart steps (point it at
+  `livepeer-network-protocol/extractors/fixtures` in the image).
 
-Attached runners are matched to `offers[]`, certified (certify-on-match
-until the step engine of item 9 lands), and frozen per plan 0043 §3.4;
+Attached runners are matched to `offers[]`, certified by the step engine
+(`certification[]` on the offer, executed over the attach connection:
+`readiness` uses the runner's own declared probe, `request` drives a
+real exchange with `{{identity.*}}`/`{{offer.*}}` substitution and
+JSONPath asserts — session offers open, descriptor-check, and terminate
+— `usage` runs the declared extractor against it, `latency` bounds
+p50/p95; certification traffic is never paid, settled, or receipted),
+and frozen per plan 0043 §3.4;
 `GET /admin/v1/runners` shows each capability's per-offer state with the
 disagreeing field named. Dispatch of paid work over eligible runners is
 item 10; until then an attached runner receives no paid work and the

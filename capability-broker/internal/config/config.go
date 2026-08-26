@@ -33,6 +33,10 @@ type Config struct {
 	// is "file" (default) or "admin" (pushed by pool-controller).
 	Offers       []Offer `yaml:"offers,omitempty"`
 	OffersSource string  `yaml:"offers_source,omitempty"`
+	// CertificationFixturesDir resolves certification fixture refs
+	// (<dir>/<name>, certification-steps §4). Empty means ref fixtures
+	// error at run time; inline_base64 fixtures always work.
+	CertificationFixturesDir string `yaml:"certification_fixtures_dir,omitempty"`
 	// OffersStatePath persists frozen shapes (and admin-pushed offers)
 	// across restarts. Required in production once offers exist: a
 	// frozen shape that vanished on restart would re-freeze from

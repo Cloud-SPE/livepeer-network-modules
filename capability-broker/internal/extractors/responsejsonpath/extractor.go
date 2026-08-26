@@ -118,3 +118,8 @@ func toNonNegativeInt(v any) (uint64, error) {
 		return 0, fmt.Errorf("not a number: %T", v)
 	}
 }
+
+// Eval exposes the spec-subset JSONPath evaluator for other broker
+// components (the certification engine's assert[] checks), so assertion
+// semantics can never drift from extraction semantics.
+func Eval(path string, data any) ([]any, error) { return eval(path, data) }

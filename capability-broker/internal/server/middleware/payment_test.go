@@ -1,12 +1,12 @@
 package middleware
 
 import (
-	"io"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"

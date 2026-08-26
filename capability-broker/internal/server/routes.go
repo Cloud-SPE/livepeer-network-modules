@@ -44,6 +44,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/confirm-published", s.handleOfferConfirmPublished)
 	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/disable", s.handleOfferDisable)
 	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/enable", s.handleOfferEnable)
+	// Certification (broker-admin §6).
+	s.mux.HandleFunc("GET /admin/v1/certification", s.handleCertificationList)
+	s.mux.HandleFunc("GET /admin/v1/certification/{host_id}/{offering_id}", s.handleCertificationPair)
+	s.mux.HandleFunc("POST /admin/v1/certification/{host_id}/{offering_id}/run", s.handleCertificationRun)
 	// Attached runners (broker-admin §3).
 	s.mux.HandleFunc("GET /admin/v1/runners", s.handleRunnersList)
 	s.mux.HandleFunc("GET /admin/v1/runners/{host_id}", s.handleRunnerGet)

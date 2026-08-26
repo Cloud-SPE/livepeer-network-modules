@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/certification"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/credentialstore"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
@@ -103,6 +104,8 @@ type Server struct {
 	// offersEngine matches runners to offers, freezes shapes, and
 	// decides eligibility (plan 0043 item 8).
 	offersEngine *offers.Engine
+	// certEngine executes certification runs (plan 0043 item 9).
+	certEngine *certification.Engine
 	// attachedHosts maps a host_id (credential-store enrollment) to the
 	// connections it holds, so revoke = delete + kill (broker-admin
 	// §5.3). Guarded by attachedMu.
@@ -266,11 +269,19 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		log.Printf("warning: offers[] configured without offers_state_path — frozen shapes will not survive a restart, " +
 			"and a re-freeze from a different runner would be a silent manifest change")
 	}
-	offersEngine, err := offers.New(cfg, s.runners, cfg.OffersStatePath, nil)
+	certEngine := certification.New(s.runners, certification.Options{
+		Extractors:  s.extractors,
+		FixturesDir: cfg.CertificationFixturesDir,
+	})
+	s.certEngine = certEngine
+	offersEngine, err := offers.New(cfg, s.runners, cfg.OffersStatePath, certEngine)
 	if err != nil {
 		return nil, fmt.Errorf("offers engine: %w", err)
 	}
 	s.offersEngine = offersEngine
+	// Terminal certification outcomes re-evaluate the pair — this is
+	// where a first pass freezes an unfrozen offer.
+	certEngine.Report = offersEngine.RecordCertification
 	s.runners.OnChange = func(hostID string) { offersEngine.Rematch(hostID) }
 
 	if err := s.initSessionEngine(); err != nil {

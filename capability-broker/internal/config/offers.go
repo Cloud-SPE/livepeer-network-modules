@@ -34,38 +34,38 @@ const (
 
 // Offer is one entry in host-config.yaml offers[].
 type Offer struct {
-	OfferingID string `yaml:"offering_id"`
-	Capability string `yaml:"capability"`
-	Protocol   string `yaml:"protocol"`
+	OfferingID string `yaml:"offering_id" json:"offering_id"`
+	Capability string `yaml:"capability" json:"capability"`
+	Protocol   string `yaml:"protocol" json:"protocol"`
 	// Match selects attached runners by declared identity. Keys are
 	// "identity.<dotted key>" (identity.openai.model); values are exact
 	// strings. Empty matches every runner declaring the capability +
 	// protocol.
-	Match    map[string]string `yaml:"match,omitempty"`
-	Price    Price             `yaml:"price"`
-	Capacity OfferCapacity     `yaml:"capacity,omitempty"`
+	Match    map[string]string `yaml:"match,omitempty" json:"match,omitempty"`
+	Price    Price             `yaml:"price" json:"price"`
+	Capacity OfferCapacity     `yaml:"capacity,omitempty" json:"capacity,omitempty"`
 	// Extra is operator-declared metadata (region, gpu_class). The
 	// runner's frozen identity and any promoted x-* keys are merged into
 	// the advertised extra at freeze time; a collision is a load error.
-	Extra       map[string]any `yaml:"extra,omitempty"`
-	Constraints map[string]any `yaml:"constraints,omitempty"`
+	Extra       map[string]any `yaml:"extra,omitempty" json:"extra,omitempty"`
+	Constraints map[string]any `yaml:"constraints,omitempty" json:"constraints,omitempty"`
 	// ExtraFromRunner lists x-* keys from the runner's attach document
 	// that are promoted into the advertised extra (runner-attach §3.3).
 	// Anything not listed is relayed to operator surfaces only.
-	ExtraFromRunner []string `yaml:"extra_from_runner,omitempty"`
+	ExtraFromRunner []string `yaml:"extra_from_runner,omitempty" json:"extra_from_runner,omitempty"`
 	// SessionPolicy carries the operator-owned commercial axes of a
 	// paid-session offer. Absent means every default.
-	SessionPolicy *SessionPolicy `yaml:"session_policy,omitempty"`
+	SessionPolicy *SessionPolicy `yaml:"session_policy,omitempty" json:"session_policy,omitempty"`
 	// Certification is the step list every matched runner must pass
 	// (protocols/certification-steps.md). Empty certifies on match —
 	// and therefore freezes on the first match.
-	Certification []CertificationStep `yaml:"certification,omitempty"`
+	Certification []CertificationStep `yaml:"certification,omitempty" json:"certification,omitempty"`
 	// RecertifyEverySeconds re-runs certification on eligible runners
 	// periodically. 0 disables.
-	RecertifyEverySeconds int `yaml:"recertify_every_seconds,omitempty"`
+	RecertifyEverySeconds int `yaml:"recertify_every_seconds,omitempty" json:"recertify_every_seconds,omitempty"`
 	// Disabled keeps the offer configured but neither advertised nor
 	// dispatched (broker-admin §4.4).
-	Disabled bool `yaml:"disabled,omitempty"`
+	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitempty"`
 }
 
 // OfferCapacity is operator-owned; a runner never declares capacity
@@ -73,35 +73,35 @@ type Offer struct {
 type OfferCapacity struct {
 	// MaxInFlight bounds concurrent dispatches per eligible runner. 0
 	// means the broker default.
-	MaxInFlight int `yaml:"max_in_flight,omitempty"`
-	QueueLimit  int `yaml:"queue_limit,omitempty"`
+	MaxInFlight int `yaml:"max_in_flight,omitempty" json:"max_in_flight,omitempty"`
+	QueueLimit  int `yaml:"queue_limit,omitempty" json:"queue_limit,omitempty"`
 }
 
 // SessionPolicy is the operator side of the paid-session axes
 // (offering-axes.md §3). The runner side — descriptor_schema, metering,
 // heartbeat cadence, session_params_schema — comes from attach.
 type SessionPolicy struct {
-	Attachment           string           `yaml:"attachment,omitempty"` // external | inband-ws
-	Refill               string           `yaml:"refill,omitempty"`     // extensible | bounded
-	LeasePolicy          string           `yaml:"lease_policy,omitempty"`
-	LeaseMaxSeconds      int              `yaml:"lease_max_seconds,omitempty"`
-	BurnRatePerSec       float64          `yaml:"burn_rate_per_second,omitempty"`
-	MinRunwayUnits       int64            `yaml:"min_runway_units,omitempty"`
-	MaxRotations         int              `yaml:"max_rotations,omitempty"`
-	ToleranceBandPct     float64          `yaml:"tolerance_band_pct,omitempty"`
-	RunwayIncrementUnits int64            `yaml:"runway_increment_units,omitempty"`
-	Heartbeat            SessionHeartbeat `yaml:"heartbeat,omitempty"`
+	Attachment           string           `yaml:"attachment,omitempty" json:"attachment,omitempty"` // external | inband-ws
+	Refill               string           `yaml:"refill,omitempty" json:"refill,omitempty"`         // extensible | bounded
+	LeasePolicy          string           `yaml:"lease_policy,omitempty" json:"lease_policy,omitempty"`
+	LeaseMaxSeconds      int              `yaml:"lease_max_seconds,omitempty" json:"lease_max_seconds,omitempty"`
+	BurnRatePerSec       float64          `yaml:"burn_rate_per_second,omitempty" json:"burn_rate_per_second,omitempty"`
+	MinRunwayUnits       int64            `yaml:"min_runway_units,omitempty" json:"min_runway_units,omitempty"`
+	MaxRotations         int              `yaml:"max_rotations,omitempty" json:"max_rotations,omitempty"`
+	ToleranceBandPct     float64          `yaml:"tolerance_band_pct,omitempty" json:"tolerance_band_pct,omitempty"`
+	RunwayIncrementUnits int64            `yaml:"runway_increment_units,omitempty" json:"runway_increment_units,omitempty"`
+	Heartbeat            SessionHeartbeat `yaml:"heartbeat,omitempty" json:"heartbeat,omitempty"`
 }
 
 // CertificationStep is one entry of an offer's certification[]
 // (certification-steps.md §2). Config is type-tagged and validated per
 // type below; its contents are handed to the step engine as-is.
 type CertificationStep struct {
-	Name      string         `yaml:"name"`
-	Type      string         `yaml:"type"`
-	Required  *bool          `yaml:"required,omitempty"` // nil means true
-	TimeoutMS int            `yaml:"timeout_ms,omitempty"`
-	Config    map[string]any `yaml:"config,omitempty"`
+	Name      string         `yaml:"name" json:"name"`
+	Type      string         `yaml:"type" json:"type"`
+	Required  *bool          `yaml:"required,omitempty" json:"required,omitempty"` // nil means true
+	TimeoutMS int            `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+	Config    map[string]any `yaml:"config,omitempty" json:"config,omitempty"`
 }
 
 // IsRequired applies the default.

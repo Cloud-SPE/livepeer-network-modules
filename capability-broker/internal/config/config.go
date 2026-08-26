@@ -246,8 +246,8 @@ func (s *SessionCap) AdvertisedRefill() string {
 
 // SessionHeartbeat mirrors the offering axes heartbeat object.
 type SessionHeartbeat struct {
-	IntervalSeconds int `yaml:"interval_seconds,omitempty"` // default 10
-	MissedThreshold int `yaml:"missed_threshold,omitempty"` // default 3
+	IntervalSeconds int `yaml:"interval_seconds,omitempty" json:"interval_seconds,omitempty"` // default 10
+	MissedThreshold int `yaml:"missed_threshold,omitempty" json:"missed_threshold,omitempty"` // default 3
 }
 
 // SessionRunnerPaths declares the runner's session API paths relative
@@ -303,8 +303,8 @@ type WorkUnit struct {
 // Price is wei-per-unit; AmountWei is a decimal string to preserve precision
 // beyond JSON's safe-integer range (per manifest schema).
 type Price struct {
-	AmountWei string `yaml:"amount_wei"`
-	PerUnits  uint64 `yaml:"per_units"`
+	AmountWei string `yaml:"amount_wei" json:"amount_wei"`
+	PerUnits  uint64 `yaml:"per_units" json:"per_units"`
 }
 
 // Backend describes how the broker forwards a request to the upstream backend.

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newOffersTestServer: credential store + one offer selecting
@@ -16,6 +17,22 @@ func newOffersTestServer(t *testing.T) *Server {
 	t.Helper()
 	t.Setenv("BROKER_ADMIN_TOKEN", "secret-token")
 	dir := t.TempDir()
+	// The offers state file is written by the attach handler when a
+	// hijacked WS connection unwinds — which httptest.Server.Close does
+	// not wait for. Keep it outside t.TempDir and clean up with retries
+	// so the write cannot race RemoveAll.
+	stateDir, err := os.MkdirTemp("", "offers-state-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for i := 0; i < 50; i++ {
+			if os.RemoveAll(stateDir) == nil {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
 	keyPath := filepath.Join(dir, "seal.key")
 	if err := os.WriteFile(keyPath, []byte(strings.Repeat("ab", 32)), 0o600); err != nil {
 		t.Fatal(err)
@@ -36,7 +53,7 @@ payment_daemon:
 credential_store:
   path: ` + filepath.Join(dir, "creds.db") + `
   sealing_key_file: ` + keyPath + `
-offers_state_path: ` + filepath.Join(dir, "offers-state.json") + `
+offers_state_path: ` + filepath.Join(stateDir, "offers-state.json") + `
 offers:
   - offering_id: llama-shared
     capability: openai:chat-completions
@@ -188,16 +205,56 @@ func TestOfferFreezeAdvertiseAcceptShape(t *testing.T) {
 }
 
 func TestOffersPutValidatesAndRefusesOnFileSource(t *testing.T) {
-	srv := newOffersTestServer(t) // offers_source: file
+	// A file-sourced broker answers 409 before looking at the body
+	// (broker-admin §4.2: the source conflict precedes validation).
+	srv := newOffersTestServer(t)
 	code, res, _ := adminReq(t, srv, http.MethodPut, "/admin/v1/offers",
 		`{"revision":"r1","offers":[]}`, nil)
 	if code != http.StatusConflict || res["code"] != "offers_source_is_file" {
 		t.Fatalf("file source put: %d %v", code, res)
 	}
-	// Invalid offer in a push is refused before anything changes.
-	code, res, _ = adminReq(t, srv, http.MethodPut, "/admin/v1/offers",
+
+	// An admin-sourced broker validates the push grammar in full before
+	// anything changes.
+	srvAdmin := newAdminSourcedTestServer(t)
+	code, res, _ = adminReq(t, srvAdmin, http.MethodPut, "/admin/v1/offers",
 		`{"revision":"r1","offers":[{"offering_id":"x","capability":"c","protocol":"nope/v1","price":{"amount_wei":"1","per_units":1}}]}`, nil)
 	if code != http.StatusBadRequest || res["code"] != "offer_invalid" {
 		t.Fatalf("invalid push: %d %v", code, res)
 	}
+	// A valid push applies and is reported on the offerings payload.
+	code, res, _ = adminReq(t, srvAdmin, http.MethodPut, "/admin/v1/offers",
+		`{"revision":"r2","offers":[{"offering_id":"pushed","capability":"openai:chat-completions","protocol":"paid-job/v1","price":{"amount_wei":"1","per_units":1}}]}`, nil)
+	if code != http.StatusOK || res["applied"] != true || res["changed"].([]any)[0] != "pushed" {
+		t.Fatalf("valid push: %d %v", code, res)
+	}
+	if offeringsPayloadOf(t, srvAdmin)["offers_revision"] != "r2" {
+		t.Fatal("offers_revision not reported")
+	}
+}
+
+// newAdminSourcedTestServer: offers_source admin, empty file offers[].
+func newAdminSourcedTestServer(t *testing.T) *Server {
+	t.Helper()
+	t.Setenv("BROKER_ADMIN_TOKEN", "secret-token")
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "host-config.yaml")
+	cfg := `
+identity:
+  orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
+admin_auth:
+  method: bearer
+  secret_ref: env://BROKER_ADMIN_TOKEN
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+payment_daemon:
+  mock: true
+offers_source: admin
+offers_state_path: ` + filepath.Join(dir, "offers-state.json") + `
+`
+	if err := os.WriteFile(configPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return mustServerFromPath(t, configPath)
 }

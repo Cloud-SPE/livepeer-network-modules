@@ -1,4 +1,4 @@
-.PHONY: validate-examples conformance verify proto proto-check
+.PHONY: validate-examples conformance verify version-check proto proto-check
 
 # Guard against a schema change leaving its own examples invalid.
 validate-examples:
@@ -7,10 +7,14 @@ validate-examples:
 verify:
 	go -C verify test ./...
 
+# Fails when VERSION and version.VERSION drift.
+version-check:
+	go -C version test ./...
+
 conformance:
 	$(MAKE) -C conformance conformance
 
-check: validate-examples verify
+check: validate-examples verify version-check
 
 # ---------------------------------------------------------------------------
 # Code generation

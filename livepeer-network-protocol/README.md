@@ -10,7 +10,7 @@ consumed it; future gateway-side implementations are out-of-repo.
 
 ## Status
 
-Spec-wide version **2.0.0** — see [`VERSION`](./VERSION). The 2.0.0 major bump
+Spec-wide version is in [`VERSION`](./VERSION) and, for Go consumers, `version.VERSION` in [`version/`](./version/) (a test keeps them equal). The 2.0.0 major bump
 removed `interaction_mode` from the manifest in favour of `protocol` plus
 declared axes; pre-2.0 consumers cannot read these manifests. Individual
 protocol and descriptor-schema specs are still at `1.0.x-draft` in their own
@@ -31,6 +31,7 @@ authoritative versioning policy — see [core belief #14](../docs/design-docs/co
 | [`headers/`](./headers/) | `Livepeer-*` header conventions, payment envelope structure |
 | [`proto/`](./proto/) | Canonical `.proto` source for the payment wire format and the daemon gRPC services |
 | [`proto-go/`](./proto-go/) | Generated Go bindings for `proto/`; importable as a Go module |
+| [`version/`](./version/) | Dependency-free Go module exporting `VERSION` — the single source brokers stamp on `/registry/offerings` and the coordinator gates on |
 | [`verify/`](./verify/) | Cross-cutting Go module that recovers the Ethereum address from a manifest signature (resolver / coordinator / gateway double-verify) |
 | [`conformance/`](./conformance/) | Executable conformance suite for the v1 protocols; runs against the reference broker or any implementation by URL |
 | [`docs/`](./docs/) | Cross-cutting design docs ([`wire-compat.md`](./docs/wire-compat.md) — byte-for-byte contract with go-livepeer's `pm/`) |

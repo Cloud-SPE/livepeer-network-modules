@@ -116,6 +116,13 @@ type Ctx struct {
 	// RunID makes request ids unique across runs against a long-lived
 	// broker (idempotency records outlive the suite).
 	RunID string
+
+	// AttachCredential is a bearer credential enrolled on the
+	// broker-under-test for the suite to attach with (runner-attach
+	// §3.1). Empty means the attach scenarios skip. AttachHostID is the
+	// host id that enrollment records.
+	AttachCredential string
+	AttachHostID     string
 }
 
 // NewRunID returns a short random run nonce.

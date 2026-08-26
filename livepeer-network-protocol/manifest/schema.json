@@ -61,7 +61,7 @@
         "spec_version": {
           "type": "string",
           "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$",
-          "description": "Spec-wide SemVer (major.minor or major.minor.patch). Consumers MUST validate the major version; minor and patch are non-breaking by definition. See livepeer-network-protocol/VERSION."
+          "description": "Spec-wide SemVer (major.minor or major.minor.patch). Consumers MUST validate the major version; minor and patch are non-breaking by definition. Single source: livepeer-network-protocol/version (Go const VERSION), mirrored in the VERSION file."
         },
         "publication_seq": {
           "type": "integer",
@@ -337,7 +337,7 @@
         "session_params_schema": {
           "type": "object",
           "additionalProperties": true,
-          "description": "Opaque description of the session_params this capability expects, as declared by the runner (paid-session/v1 \u00a77.1.1). Relayed verbatim to gateways so they can validate before opening rather than discovering the requirement as a create-time failure. Never enforced by the broker or the registry \u2014 the runner remains the authority on its own inputs."
+          "description": "Opaque description of the session_params this capability expects, as declared by the runner in its attach document (protocols/runner-attach.md \u00a73.2) and frozen into the offer. Relayed verbatim to gateways so they can validate before opening rather than discovering the requirement as a create-time failure. Never enforced by the broker or the registry \u2014 the runner remains the authority on its own inputs."
         }
       }
     },

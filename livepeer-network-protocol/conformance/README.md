@@ -2,8 +2,9 @@
 
 Executable conformance for the v1 protocols. Every scenario pins a
 normative clause from `../protocols/paid-job.md` (§7),
-`../protocols/paid-session.md` (§10), or
-`../protocols/runtime-descriptor.md` (§6). The suite is
+`../protocols/paid-session.md` (§10),
+`../protocols/runtime-descriptor.md` (§6), or
+`../protocols/runner-attach.md` (§9). The suite is
 implementation-independent: it never imports the reference broker and
 speaks only the wire contract.
 
@@ -196,3 +197,23 @@ against a mock payment client, so nothing here exercises real ticket
 validation, real balance arithmetic, or the payee daemon's own idempotency.
 The suite tests the *protocol's* handling of payment outcomes, not the
 payment layer itself.
+
+## Runner-attach scenarios
+
+The `attach/*` scenarios play the runner side of
+[`../protocols/runner-attach.md`](../protocols/runner-attach.md): they open
+the broker's WebSocket attach endpoint (`/internal/v1/worker/session`),
+send a `register` frame carrying an attach document, and check the
+`register_result`. They need an enrolled credential:
+
+```
+go run ./cmd/livepeer-conformance --broker-url http://your-broker:8080 \
+    --attach-credential lpc_… --attach-host-id conformance-runner
+```
+
+Without `--attach-credential`, or against a broker that does not serve
+the endpoint, they **skip** with the reason rather than fail — a broker
+that predates plan 0043 is out of scope, not in violation. The scenarios
+that also need a matched offer and the admin API (`replaces-on-resend`,
+`never-mutates-offer`, `routes-by-local-id`) live with the broker-admin
+fixtures and are not in this suite yet.

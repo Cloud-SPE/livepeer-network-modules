@@ -259,12 +259,14 @@ func main() {
 
 func run() int {
 	var (
-		brokerURL = flag.String("broker-url", "", "run against an already-running broker (URL mode)")
-		brokerDir = flag.String("broker-dir", defaultBrokerDir(), "path to the reference broker module (auto mode)")
-		pause     = flag.Bool("pause", false, "URL mode: wait for Enter after printing fake addresses")
-		timeout   = flag.Duration("startup-timeout", 60*time.Second, "auto mode: how long to wait for the broker to become healthy")
-		jobUnit   = flag.String("job-unit", "tokens", "work unit the paid-job offerings declare")
-		sessUnit  = flag.String("session-unit", "participant_minutes", "work unit the paid-session offerings declare")
+		brokerURL  = flag.String("broker-url", "", "run against an already-running broker (URL mode)")
+		brokerDir  = flag.String("broker-dir", defaultBrokerDir(), "path to the reference broker module (auto mode)")
+		pause      = flag.Bool("pause", false, "URL mode: wait for Enter after printing fake addresses")
+		timeout    = flag.Duration("startup-timeout", 60*time.Second, "auto mode: how long to wait for the broker to become healthy")
+		jobUnit    = flag.String("job-unit", "tokens", "work unit the paid-job offerings declare")
+		sessUnit   = flag.String("session-unit", "participant_minutes", "work unit the paid-session offerings declare")
+		attachCred = flag.String("attach-credential", "", "bearer credential enrolled on the broker for the runner-attach scenarios (empty: they skip)")
+		attachHost = flag.String("attach-host-id", "conformance-runner", "host_id the attach credential was enrolled for")
 
 		fakesBind = flag.String("fakes-listen", "127.0.0.1",
 			"interface the suite's fakes bind; use 0.0.0.0 when the broker under test runs elsewhere on a docker network")
@@ -320,6 +322,8 @@ func run() int {
 		JobUnit:               *jobUnit,
 		SessionUnit:           *sessUnit,
 		RunID:                 harness.NewRunID(),
+		AttachCredential:      *attachCred,
+		AttachHostID:          *attachHost,
 	}
 
 	if *brokerURL != "" {

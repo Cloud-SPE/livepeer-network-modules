@@ -133,7 +133,9 @@ func (s *Server) handleWorkerSessionKill(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleWorkerSession(w http.ResponseWriter, r *http.Request) {
 	rawIDs := strings.TrimSpace(r.URL.Query().Get("backend_ids"))
 	if rawIDs == "" {
-		http.Error(w, "backend_ids query parameter is required", http.StatusBadRequest)
+		// No backend ids: this is a runner attaching with a document
+		// (runner-attach §2). Auth is inside the document.
+		s.handleAttachWS(w, r)
 		return
 	}
 	backendIDs := parseCSV(rawIDs)

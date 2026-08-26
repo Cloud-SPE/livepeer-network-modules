@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
 	"github.com/quic-go/quic-go"
@@ -30,11 +32,22 @@ func (s *Server) runWorkerQUIC(ctx context.Context, addr string) error {
 }
 
 func (s *Server) handleWorkerQUICConn(ctx context.Context, conn *quic.Conn) {
-	msg, err := workerconn.ReadQUICRegister(ctx, conn)
+	msg, stream, err := workerconn.AcceptQUICRegister(ctx, conn)
 	if err != nil {
 		_ = conn.CloseWithError(1, err.Error())
 		return
 	}
+	if workerconn.IsAttachRegister(msg) {
+		s.handleAttachQUIC(ctx, conn, msg, stream)
+		return
+	}
+	// Legacy backend-ids register: acknowledge on the stream as before.
+	if err := json.NewEncoder(stream).Encode(workerconn.TunnelMessage{Type: workerconn.MessageTypeResponse, ID: msg.ID, StatusCode: http.StatusOK}); err != nil {
+		_ = stream.Close()
+		_ = conn.CloseWithError(1, err.Error())
+		return
+	}
+	_ = stream.Close()
 	backendIDs := workerconn.RegisterBackendIDs(msg)
 	if len(backendIDs) == 0 {
 		_ = conn.CloseWithError(1, "backend ids are required")

@@ -19,11 +19,18 @@ const (
 	MessageTypeRequest  = "request"
 	MessageTypeResponse = "response"
 	MessageTypeRegister = "register"
+	// MessageTypeRegisterResult answers a register that carried an attach
+	// document (runner-attach §6).
+	MessageTypeRegisterResult = "register_result"
 )
 
 type TunnelMessage struct {
-	Type       string              `json:"type"`
-	ID         string              `json:"id"`
+	Type string `json:"type"`
+	ID   string `json:"id"`
+	// Body carries a runner attach document on a register frame and the
+	// register_result on the reply (runner-attach §2, §6). Absent on the
+	// legacy backend-ids register.
+	Body       json.RawMessage     `json:"body,omitempty"`
 	Method     string              `json:"method,omitempty"`
 	URL        string              `json:"url,omitempty"`
 	Headers    map[string][]string `json:"headers,omitempty"`
@@ -40,17 +47,59 @@ type SessionForwarder struct {
 	pending map[string]chan TunnelMessage
 	closed  bool
 	done    chan struct{}
+	// onRegister receives register frames the runner sends after the
+	// first one (a re-sent attach document, runner-attach §2).
+	onRegister func(TunnelMessage)
+}
+
+// SetRegisterHandler installs the callback for re-sent register frames.
+func (s *SessionForwarder) SetRegisterHandler(fn func(TunnelMessage)) {
+	s.mu.Lock()
+	s.onRegister = fn
+	s.mu.Unlock()
+}
+
+// SendMessage writes a broker→runner frame outside the request path
+// (register_result).
+func (s *SessionForwarder) SendMessage(msg TunnelMessage) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.conn.WriteJSON(msg)
+}
+
+// ReadRegister reads exactly one frame and requires it to be a register.
+// Used once, before the read loop starts, on the attach path.
+func ReadRegister(conn *websocket.Conn, timeout time.Duration) (TunnelMessage, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+	var msg TunnelMessage
+	if err := conn.ReadJSON(&msg); err != nil {
+		return TunnelMessage{}, err
+	}
+	if msg.Type != MessageTypeRegister {
+		return TunnelMessage{}, fmt.Errorf("expected register message first, got %q", msg.Type)
+	}
+	return msg, nil
 }
 
 func NewSessionForwarder(conn *websocket.Conn) *SessionForwarder {
-	s := &SessionForwarder{
+	s := NewSessionForwarderDeferred(conn)
+	s.Start()
+	return s
+}
+
+// NewSessionForwarderDeferred constructs without starting the read
+// loop, so the attach path can read the first register frame itself.
+func NewSessionForwarderDeferred(conn *websocket.Conn) *SessionForwarder {
+	return &SessionForwarder{
 		conn:    conn,
 		pending: make(map[string]chan TunnelMessage),
 		done:    make(chan struct{}),
 	}
-	go s.readLoop()
-	return s
 }
+
+// Start begins the read loop.
+func (s *SessionForwarder) Start() { go s.readLoop() }
 
 func (s *SessionForwarder) Close() error {
 	s.mu.Lock()
@@ -148,6 +197,15 @@ func (s *SessionForwarder) readLoop() {
 		var msg TunnelMessage
 		if err := s.conn.ReadJSON(&msg); err != nil {
 			return
+		}
+		if msg.Type == MessageTypeRegister {
+			s.mu.Lock()
+			fn := s.onRegister
+			s.mu.Unlock()
+			if fn != nil {
+				fn(msg)
+			}
+			continue
 		}
 		if msg.Type != MessageTypeResponse {
 			continue

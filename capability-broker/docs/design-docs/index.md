@@ -13,3 +13,4 @@ Wire spec lives in [`../../../livepeer-network-protocol/`](../../../livepeer-net
 This subfolder grows as design questions specific to the broker accumulate
 (e.g., extractor sandboxing, hot-reload semantics, mock-payment behavior in
 test environments).
+- [`credential-store.md`](./credential-store.md) — runner attach credentials: bearer v1 in a sealed store, and the additive ed25519 keypair path (plan 0043 §3.3).

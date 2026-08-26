@@ -150,6 +150,31 @@ The store holds `sha256(token)` only, sealed at rest. Attach auth consults
 it first on both the WebSocket and QUIC paths, then the legacy
 `worker_session_credential` until `capabilities[]` is deleted.
 
+### Runner attach (plan 0043)
+
+A runner attaches by opening the worker tunnel — `GET
+/internal/v1/worker/session` (WebSocket, **without** `backend_ids`) or the
+`listen.worker_quic` listener — and sending, first, a `register` frame whose
+`body` is an attach document
+([`runner-attach.md`](../livepeer-network-protocol/protocols/runner-attach.md)).
+The broker answers with a `register_result` frame: the document is
+accepted or rejected as a whole (unknown non-`x-` field, bad
+`contract_version` major, credential rejected, duplicate GPU or
+capability), and each capability entry is accepted or rejected on its own
+(unknown extractor, unknown readiness probe, missing `schema_versions`,
+unmet `requirements`, …) with `declared` and `expected` both named. A
+re-sent document replaces the previous one on that connection; the host
+is gone on disconnect (kept 24 h as `disconnected` for the console).
+
+- `GET /admin/v1/runners` (`?state=`, `?host_id=`, `?capability_id=`,
+  `?include=paths`), `GET /admin/v1/runners/{host_id}`,
+  `POST /admin/v1/runners/{host_id}/disconnect`.
+
+Matching attached runners to `offers[]`, freeze, certification, and
+dispatch over them are items 8–10; until then an attached runner is
+visible but receives no work, and the legacy `backend_ids` register still
+drives the paid path.
+
 Per-backend `max_in_flight` is enforced before dispatch. For long-lived
 remote-runner sessions, the capacity slot is held until session finalization.
 `queue_limit` is rendered for policy visibility and future queueing, but v1

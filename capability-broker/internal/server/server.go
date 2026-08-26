@@ -24,6 +24,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolreport"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolsnapshot"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/runners"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
@@ -96,6 +97,8 @@ type Server struct {
 	health               *health.Manager
 	sessionStore         *sessionstore.Store
 	credentialStore      *credentialstore.Store
+	// runners is the registry of attached runners (plan 0043 item 7).
+	runners *runners.Registry
 	// attachedHosts maps a host_id (credential-store enrollment) to the
 	// connections it holds, so revoke = delete + kill (broker-admin
 	// §5.3). Guarded by attachedMu.
@@ -237,6 +240,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		backend:          workerconn.NewForwarder(backend.NewHTTPClient(), workerRegistry),
 		workerRegistry:   workerRegistry,
 		credentialStore:  credStore,
+		runners:          runners.New(0),
 		attachedHosts:    make(map[string][]io.Closer),
 		backendInFlight:  make(map[string]int),
 		secrets:          secretResolver,
@@ -444,6 +448,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.credentialStore != nil {
 		defer func() { _ = s.credentialStore.Close() }()
 	}
+	go s.runRunnerEviction(ctx)
 	if s.sessionStore != nil {
 		defer func() { _ = s.sessionStore.Close() }()
 		// Idempotency-window retention for paid-job and top-up records.

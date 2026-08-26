@@ -36,6 +36,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /admin/v1/worker-sessions", s.handleWorkerSessions)
 	s.mux.HandleFunc("POST /admin/v1/worker-sessions/{backend_id}/kill", s.handleWorkerSessionKill)
 	s.mux.HandleFunc("GET /internal/v1/worker/session", s.handleWorkerSession)
+	// Attached runners (broker-admin §3).
+	s.mux.HandleFunc("GET /admin/v1/runners", s.handleRunnersList)
+	s.mux.HandleFunc("GET /admin/v1/runners/{host_id}", s.handleRunnerGet)
+	s.mux.HandleFunc("POST /admin/v1/runners/{host_id}/disconnect", s.handleRunnerDisconnect)
 	// Credential store (broker-admin §5). 404 when no store is configured.
 	s.mux.HandleFunc("POST /admin/v1/enroll", s.handleEnroll)
 	s.mux.HandleFunc("GET /admin/v1/credentials", s.handleCredentialsList)

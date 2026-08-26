@@ -14,6 +14,13 @@ related:
 
 # Plan 0040 — Pool template onboarding and connected-worker reset
 
+> **Superseded in part (2026-08-26).** §3, §5–§10 are replaced by
+> [plan 0043](0043-connected-runners-and-offer-manifest.md) (attach, credentials,
+> freeze, certification execution, selection) and
+> [plan 0044](0044-zero-touch-pool-onboarding.md) (placement, agent-driven
+> compose, automatic ladder, member portal, payout policy). §4.2 GPU uniqueness
+> and §11 settlement math stand.
+
 ## 1. Purpose
 
 Replace the current Pool member/backend onboarding and broker-render flow with

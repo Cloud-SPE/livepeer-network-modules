@@ -356,7 +356,7 @@ Rules:
   drops to `attached` for that offer and is re-evaluated as above. It does
   not carry its certification across the change.
 - **Supersession is an operator gesture.** Replacing a frozen shape is
-  `POST /admin/v1/offers/{id}/accept-shape` (broker admin contract),
+  `POST /admin/v1/offers/{id}/accept-shape` ([`broker-admin.md`](./broker-admin.md) §4.3),
   followed by a sign. The old shape's runners become ineligible at that
   moment. Nothing in this document can trigger it.
 - **No certified runner, no advertisement.** An offer whose frozen shape
@@ -395,8 +395,8 @@ The broker answers each document with one `register_result` message:
 
 The result reports *attach* outcomes only. Matching, certification, and
 eligibility are broker state that changes after the result is sent; they
-are read from the admin API (`GET /admin/v1/runners`), not from this
-message. A runner does not need them — it serves what it is sent.
+are read from the admin API ([`broker-admin.md`](./broker-admin.md) §3), not
+from this message. A runner does not need them — it serves what it is sent.
 
 Reason `code` values are stable identifiers (§4.1, §4.2); `message` is
 free text and MUST NOT be parsed.

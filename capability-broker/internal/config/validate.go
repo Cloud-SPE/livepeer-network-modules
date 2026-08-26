@@ -96,6 +96,15 @@ func (c *Config) Validate() error {
 	if (c.SessionStore.Path == "") != (c.SessionStore.SealingKeyFile == "") {
 		return fmt.Errorf("session_store: path and sealing_key_file must be set together")
 	}
+	if (c.CredentialStore.Path == "") != (c.CredentialStore.SealingKeyFile == "") {
+		return fmt.Errorf("credential_store: path and sealing_key_file must be set together")
+	}
+	if c.CredentialStore.DefaultExpirySeconds < 0 || c.CredentialStore.MaxExpirySeconds < 0 {
+		return fmt.Errorf("credential_store: expiry seconds must be >= 0")
+	}
+	if c.CredentialStore.MaxExpirySeconds > 0 && c.CredentialStore.DefaultExpirySeconds > c.CredentialStore.MaxExpirySeconds {
+		return fmt.Errorf("credential_store: default_expiry_seconds exceeds max_expiry_seconds")
+	}
 	if c.PoolSnapshot.URL != "" {
 		u, err := url.Parse(c.PoolSnapshot.URL)
 		if err != nil {

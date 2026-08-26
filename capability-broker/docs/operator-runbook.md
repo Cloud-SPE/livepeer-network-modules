@@ -49,6 +49,15 @@ paid-session capability while sessions for it are active leaves those
 sessions unroutable: they wind down via heartbeat enforcement rather than
 crashing, but prefer draining first.
 
+## 1.9 Credential store
+
+`credential_store.path` is a second bbolt file with the same persistence
+and backup rules as the session store; `sealing_key_file` may be the same
+key. Losing the file orphans every runner enrollment (hosts re-enroll);
+losing the key makes it unreadable. Enrollment, rotation, and revocation
+are admin-API gestures — see
+[`design-docs/credential-store.md`](./design-docs/credential-store.md).
+
 ## 2. Durable state store
 
 `session_store` in host-config is the broker's persistence layer:

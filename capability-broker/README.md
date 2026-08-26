@@ -132,6 +132,24 @@ The runtime admin surface also exposes connected-worker operations:
 - `GET /admin/v1/worker-sessions`
 - `POST /admin/v1/worker-sessions/{backend_id}/kill`
 
+### Credential store (plan 0043)
+
+With `credential_store` configured, runners attach with credentials the
+broker minted or a pool-controller synced, instead of a per-backend config
+string ([`docs/design-docs/credential-store.md`](./docs/design-docs/credential-store.md);
+contract in [`broker-admin.md`](../livepeer-network-protocol/protocols/broker-admin.md) §5):
+
+- `POST /admin/v1/enroll` — mint a credential for one host; the token is in
+  this response and nowhere else (`Livepeer-Request-Id` replays it).
+- `GET /admin/v1/credentials`, `GET /admin/v1/credentials/{id}` — no secrets.
+- `POST /admin/v1/credentials/{id}/rotate` — new token, old valid for `grace_seconds`.
+- `POST /admin/v1/credentials/{id}/revoke` — delete the hash and close the host's connections.
+- `PUT /admin/v1/credentials` — pool sync of hashes; a dropped entry is a revoke.
+
+The store holds `sha256(token)` only, sealed at rest. Attach auth consults
+it first on both the WebSocket and QUIC paths, then the legacy
+`worker_session_credential` until `capabilities[]` is deleted.
+
 Per-backend `max_in_flight` is enforced before dispatch. For long-lived
 remote-runner sessions, the capacity slot is held until session finalization.
 `queue_limit` is rendered for policy visibility and future queueing, but v1

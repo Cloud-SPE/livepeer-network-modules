@@ -28,6 +28,15 @@ admin_auth:
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock
 
+# Runner attach credentials (plan 0043 §3.3). Standalone: mint with
+# POST /admin/v1/enroll. Pool: pool-controller syncs hashes over
+# PUT /admin/v1/credentials. Only sha256(token) is stored, sealed.
+credential_store:
+  path: /var/lib/livepeer/broker/credentials.db
+  sealing_key_file: /etc/livepeer/broker-seal.key
+  # default_expiry_seconds: 7776000    # 90 d
+  # max_expiry_seconds: 31536000       # 365 d
+
 # offers_source: file (default) — this file owns offers[].
 # offers_source: admin          — a pool-controller pushes them over
 #                                 PUT /admin/v1/offers; offers[] below must be empty.

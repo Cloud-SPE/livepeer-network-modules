@@ -36,6 +36,13 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /admin/v1/worker-sessions", s.handleWorkerSessions)
 	s.mux.HandleFunc("POST /admin/v1/worker-sessions/{backend_id}/kill", s.handleWorkerSessionKill)
 	s.mux.HandleFunc("GET /internal/v1/worker/session", s.handleWorkerSession)
+	// Credential store (broker-admin §5). 404 when no store is configured.
+	s.mux.HandleFunc("POST /admin/v1/enroll", s.handleEnroll)
+	s.mux.HandleFunc("GET /admin/v1/credentials", s.handleCredentialsList)
+	s.mux.HandleFunc("PUT /admin/v1/credentials", s.handleCredentialsSync)
+	s.mux.HandleFunc("GET /admin/v1/credentials/{credential_id}", s.handleCredentialGet)
+	s.mux.HandleFunc("POST /admin/v1/credentials/{credential_id}/rotate", s.handleCredentialRotate)
+	s.mux.HandleFunc("POST /admin/v1/credentials/{credential_id}/revoke", s.handleCredentialRevoke)
 
 	// Metrics live on a separate listener (cfg.Listen.Metrics, default :9090);
 	// see metrics_server.go. This intentionally does NOT register /metrics on

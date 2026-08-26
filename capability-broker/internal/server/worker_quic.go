@@ -41,7 +41,7 @@ func (s *Server) handleWorkerQUICConn(ctx context.Context, conn *quic.Conn) {
 		return
 	}
 	authz := workerconn.RegisterAuthorization(msg)
-	if !s.workerCredentialAllowed(s.currentConfig(), backendIDs, authz) {
+	if s.authenticateAttachCredential(authz) == nil && !s.workerCredentialAllowed(s.currentConfig(), backendIDs, authz) {
 		_ = conn.CloseWithError(1, "unauthorized")
 		return
 	}
@@ -52,7 +52,9 @@ func (s *Server) handleWorkerQUICConn(ctx context.Context, conn *quic.Conn) {
 			return
 		}
 	}
+	untrack := s.trackAttachedHost(authz, forwarder)
 	defer func() {
+		untrack()
 		for _, id := range backendIDs {
 			s.workerRegistry.Unregister(id)
 		}

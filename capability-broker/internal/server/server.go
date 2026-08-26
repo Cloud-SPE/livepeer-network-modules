@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/credentialstore"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
@@ -93,9 +95,15 @@ type Server struct {
 	poolSnapshot         *poolsnapshot.Cache
 	health               *health.Manager
 	sessionStore         *sessionstore.Store
-	sessionEngine        *sessionengine.Engine
-	sessionWS            *sessionWSHub
-	jobIdem              jobIdemStore
+	credentialStore      *credentialstore.Store
+	// attachedHosts maps a host_id (credential-store enrollment) to the
+	// connections it holds, so revoke = delete + kill (broker-admin
+	// §5.3). Guarded by attachedMu.
+	attachedMu    sync.Mutex
+	attachedHosts map[string][]io.Closer
+	sessionEngine *sessionengine.Engine
+	sessionWS     *sessionWSHub
+	jobIdem       jobIdemStore
 	// quarantined holds capability tuples ("cap|off") the broker will
 	// not serve or advertise, with the reason. Populated when a runner's
 	// self-description contradicts its configuration (paid-session
@@ -183,6 +191,21 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 
 	workerRegistry := workerconn.NewRegistry()
 
+	var credStore *credentialstore.Store
+	if cfg.CredentialStore.Enabled() {
+		key, err := sessionstore.LoadKeyFile(cfg.CredentialStore.SealingKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("credential store: %w", err)
+		}
+		credStore, err = credentialstore.Open(cfg.CredentialStore.Path, key, credentialstore.Options{
+			DefaultExpiry: time.Duration(cfg.CredentialStore.DefaultExpirySeconds) * time.Second,
+			MaxExpiry:     time.Duration(cfg.CredentialStore.MaxExpirySeconds) * time.Second,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("credential store: %w", err)
+		}
+	}
+
 	// Reconcile runner self-descriptions before anything reads the
 	// config: a derived readiness probe must be in place when the
 	// health manager is constructed below.
@@ -213,6 +236,8 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		extractors:       defaultExtractors(),
 		backend:          workerconn.NewForwarder(backend.NewHTTPClient(), workerRegistry),
 		workerRegistry:   workerRegistry,
+		credentialStore:  credStore,
+		attachedHosts:    make(map[string][]io.Closer),
 		backendInFlight:  make(map[string]int),
 		secrets:          secretResolver,
 		receiptSink:      receiptSink,
@@ -415,6 +440,9 @@ func (s *Server) Run(ctx context.Context) error {
 		// this ran, a debit that failed after the work shipped was
 		// simply lost — and the exchange reported as settled anyway.
 		go s.runDebitRetry(ctx)
+	}
+	if s.credentialStore != nil {
+		defer func() { _ = s.credentialStore.Close() }()
 	}
 	if s.sessionStore != nil {
 		defer func() { _ = s.sessionStore.Close() }()

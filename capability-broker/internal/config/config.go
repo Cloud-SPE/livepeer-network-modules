@@ -22,8 +22,13 @@ type Config struct {
 	AdminAuth       AuthConfig    `yaml:"admin_auth,omitempty"`
 	PaymentDaemon   PaymentDaemon `yaml:"payment_daemon,omitempty"`
 	SessionStore    SessionStore  `yaml:"session_store,omitempty"`
-	PoolSnapshot    PoolSnapshot  `yaml:"pool_snapshot,omitempty"`
-	ReceiptSink     ReceiptSink   `yaml:"receipt_sink,omitempty"`
+	// CredentialStore holds runner attach credentials (plan 0043 §3.3).
+	// Required once runners attach with store-issued credentials; when
+	// absent, connected workers authenticate with the legacy per-backend
+	// worker_session_credential config string.
+	CredentialStore CredentialStoreConfig `yaml:"credential_store,omitempty"`
+	PoolSnapshot    PoolSnapshot          `yaml:"pool_snapshot,omitempty"`
+	ReceiptSink     ReceiptSink           `yaml:"receipt_sink,omitempty"`
 	// Offers is the plan-0043 operator grammar (offers.go). OffersSource
 	// is "file" (default) or "admin" (pushed by pool-controller).
 	Offers       []Offer `yaml:"offers,omitempty"`
@@ -33,6 +38,21 @@ type Config struct {
 	// (plan 0043 items 7–8) land.
 	Capabilities []Capability `yaml:"capabilities,omitempty"`
 }
+
+// CredentialStoreConfig configures the sealed runner-credential store
+// (internal/credentialstore). Path is a bbolt file on a persistent
+// volume; SealingKeyFile holds the 32-byte key (raw or hex) — the same
+// format as session_store.sealing_key_file, and it MAY be the same
+// file. Expiry bounds apply to POST /admin/v1/enroll.
+type CredentialStoreConfig struct {
+	Path                 string `yaml:"path,omitempty"`
+	SealingKeyFile       string `yaml:"sealing_key_file,omitempty"`
+	DefaultExpirySeconds int    `yaml:"default_expiry_seconds,omitempty"` // default 90 days
+	MaxExpirySeconds     int    `yaml:"max_expiry_seconds,omitempty"`     // default 365 days
+}
+
+// Enabled reports whether a store is configured.
+func (c CredentialStoreConfig) Enabled() bool { return c.Path != "" }
 
 // SessionStore configures the durable paid-session store
 // (internal/sessionstore). Path is the bbolt database file — it must

@@ -156,7 +156,9 @@ func (s *Server) handleWorkerSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	untrack := s.trackAttachedHost(r.Header.Get("Authorization"), forwarder)
 	defer func() {
+		untrack()
 		for _, id := range backendIDs {
 			s.workerRegistry.Unregister(id)
 		}
@@ -190,6 +192,9 @@ func (s *Server) requireWorkerSessionAuth(w http.ResponseWriter, r *http.Request
 	cfg := s.cfg
 	s.mu.RUnlock()
 	authz := strings.TrimSpace(r.Header.Get("Authorization"))
+	if rec := s.authenticateAttachCredential(authz); rec != nil {
+		return true
+	}
 	if strings.TrimSpace(token) == "" {
 		if authz == "" || s.workerCredentialAllowed(cfg, backendIDs, authz) {
 			return true

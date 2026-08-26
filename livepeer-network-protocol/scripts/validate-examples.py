@@ -9,6 +9,8 @@ Covers:
   protocols/runner-attach/schema.json
                                   <- protocols/runner-attach/examples/*.json (must pass)
                                   <- protocols/runner-attach/examples/invalid/*.json (must FAIL)
+  protocols/certification-steps/schema.json
+                                  <- protocols/certification-steps/examples/{,invalid/}*.json
 
 An invalid example that validates is as much a bug as a valid one that
 does not: the schema is the contract, and the invalid set pins the
@@ -29,6 +31,8 @@ SUITES = [
     (root / "manifest" / "schema.json", root / "manifest" / "examples"),
     (root / "protocols" / "runner-attach" / "schema.json",
      root / "protocols" / "runner-attach" / "examples"),
+    (root / "protocols" / "certification-steps" / "schema.json",
+     root / "protocols" / "certification-steps" / "examples"),
 ]
 
 failed = False

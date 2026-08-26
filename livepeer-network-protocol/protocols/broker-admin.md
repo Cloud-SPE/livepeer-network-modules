@@ -19,7 +19,7 @@ adds and the coordinator gates on it.
 
 The key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as in
 RFC 2119. Companion specs: [`runner-attach.md`](./runner-attach.md)
-(what a runner sends), the certification step spec (what a step is), and
+(what a runner sends), [`certification-steps.md`](./certification-steps.md) (what a step is), and
 [`offering-axes.md`](./offering-axes.md) (what an offer advertises).
 
 ## 0. Contents
@@ -428,7 +428,7 @@ and on request.
   failed) \| `error` (the broker could not run it — tunnel down, fixture
   missing). A run `passed` iff every `required` step passed; a non-required
   failure is recorded and does not block.
-- `evidence` is step-type-defined (certification step spec) and bounded
+- `evidence` is step-type-defined (`certification-steps.md` §3) and bounded
   (≤ 8 KiB per step); bodies are never stored verbatim.
 - `trigger`: `match` \| `runner_change` \| `operator` \| `recertify`.
 

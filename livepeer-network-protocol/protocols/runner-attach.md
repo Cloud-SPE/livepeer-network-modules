@@ -191,7 +191,7 @@ API), never twice with the same `identity` (§4.1).
 | `session_params_schema` | opt, session only | object, ≤ 16 KiB | Opaque description, never a validator (`paid-session` §7.1, carried forward). Relayed to `/registry/offerings`. | — |
 | `requirements` | opt | `{ "gpu_vram_min_bytes"?, "gpu_models"?[] }` | This host's own `hardware[]` (§4.2). Epic 2 additionally matches it against template policy. | — |
 | `devices[]` | opt | unique list of `gpu_uuid` strings | Each MUST appear in `hardware[]`. Names which of this host's GPUs back this capability. Absent means "unspecified"; a broker or pool that needs the binding (share caps, cross-address GPU rules) treats absent as *all* of `hardware[]`. | — |
-| `x-certification-suggested[]` | opt | array of step objects (shape per the certification step spec) | Shown to the offer author; **never** adopted or executed automatically. | — |
+| `x-certification-suggested[]` | opt | array of step objects (shape per [`certification-steps.md`](./certification-steps.md) §2) | Shown to the offer author; **never** adopted or executed automatically. | — |
 | `x-*` | opt | any JSON, ≤ 32 KiB total per capability | Relayed verbatim to operator surfaces. Promoted into the offer's `extra` only for keys the offer lists in `extra_from_runner` (§3.3). | promoted keys only |
 
 "Frozen" is defined in §5. Everything not frozen is live data: it changes

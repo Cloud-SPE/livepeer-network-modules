@@ -3,6 +3,7 @@ package scrape
 import (
 	"context"
 	"errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"log/slog"
 	"sync"
 	"testing"
@@ -67,7 +68,7 @@ func newFake() *fakeClient {
 }
 
 func newOfferings(addr string, caps ...types.BrokerOffering) *types.BrokerOfferings {
-	return &types.BrokerOfferings{OrchEthAddress: addr, Capabilities: caps}
+	return &types.BrokerOfferings{SpecVersion: version.VERSION, OrchEthAddress: addr, Capabilities: caps}
 }
 
 func sampleCap(id, off string) types.BrokerOffering {

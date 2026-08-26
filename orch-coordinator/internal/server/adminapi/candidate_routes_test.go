@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"io"
 	"log/slog"
 	"net/http"
@@ -230,6 +231,7 @@ func primedScrapeService(t *testing.T) *scrape.Service {
 	fc := brokerclient.NewFake()
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	fc.Set("http://x:1", &types.BrokerOfferings{
+		SpecVersion:    version.VERSION,
 		OrchEthAddress: addr,
 		Capabilities: []types.BrokerOffering{{
 			CapabilityID:    "cap",
@@ -259,9 +261,6 @@ func primedScrapeService(t *testing.T) *scrape.Service {
 		Brokers:        []config.Broker{{Name: "b1", BaseURL: "http://x:1"}},
 		ScrapeInterval: time.Second,
 		ScrapeTimeout:  time.Second,
-		WorkerURLOverride: map[string]string{
-			"b1": "https://b1.example/",
-		},
 	}, fc, slog.Default())
 	if err != nil {
 		t.Fatal(err)

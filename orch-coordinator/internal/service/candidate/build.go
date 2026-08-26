@@ -8,14 +8,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
 // SpecVersion is the manifest spec version emitted by this coordinator.
-// Pinned to whatever the spec repo declares. Update in lockstep with
-// livepeer-network-protocol/manifest/changelog.md.
-const SpecVersion = "2.0.0"
+//
+// There is exactly one source: the protocol module's VERSION constant
+// (plan 0043 §3.7, decision 7). It used to be a hand-maintained literal
+// here, which is a second source of truth that drifts silently — a
+// coordinator can publish a spec_version the schema it validates
+// against never described. Brokers stamp the same constant on
+// /registry/offerings and the coordinator refuses to merge a different
+// major (types.BrokerOfferings.Validate).
+const SpecVersion = version.VERSION
 
 const (
 	WarningCodeMetadataNeverSucceeded = "metadata_never_succeeded"
@@ -108,13 +115,15 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 	if issuedAt.IsZero() {
 		issuedAt = time.Now().UTC()
 	}
+	// The effective threshold is resolved once, so what the metadata
+	// publishes is exactly what the debounce applies.
+	renewalThreshold := opts.RenewalThreshold
+	if renewalThreshold <= 0 {
+		renewalThreshold = opts.ManifestTTL / 3
+	}
 	if opts.PrevContentHash != "" && opts.PrevContentHash == contentHash && !opts.PrevIssuedAt.IsZero() {
-		threshold := opts.RenewalThreshold
-		if threshold <= 0 {
-			threshold = opts.ManifestTTL / 3
-		}
 		prevExpiry := opts.PrevIssuedAt.UTC().Add(opts.ManifestTTL)
-		if prevExpiry.Sub(issuedAt) >= threshold {
+		if prevExpiry.Sub(issuedAt) >= renewalThreshold {
 			issuedAt = opts.PrevIssuedAt.UTC()
 		}
 	}
@@ -145,6 +154,8 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		TupleMetadataWarnings:           tupleMetadataWarnings(snap),
 		CoordinatorCommit:               opts.CoordinatorCommit,
 		SchemaVersion:                   SpecVersion,
+		ManifestTTLSeconds:              int64(opts.ManifestTTL / time.Second),
+		RenewalThresholdSeconds:         int64(renewalThreshold / time.Second),
 		HAEndpoints:                     ha,
 	}
 

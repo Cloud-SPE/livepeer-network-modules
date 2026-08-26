@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"regexp"
 	"strings"
 	"time"
@@ -132,7 +133,16 @@ type Estimator struct {
 
 // BrokerOfferings is the full /registry/offerings response.
 type BrokerOfferings struct {
-	OrchEthAddress string           `json:"orch_eth_address"`
+	// SpecVersion is the protocol module's VERSION the broker was built
+	// against (protocols/broker-admin.md §7). The coordinator refuses to
+	// merge a broker whose major differs from its own: those tuples would
+	// be signed into a manifest consumers read under a different contract.
+	SpecVersion    string `json:"spec_version"`
+	OrchEthAddress string `json:"orch_eth_address"`
+	// OffersRevision is informational: the offer-set revision the broker
+	// last applied (broker-admin §4.2). Carried for operator surfaces,
+	// never signed.
+	OffersRevision string           `json:"offers_revision,omitempty"`
 	Capabilities   []BrokerOffering `json:"capabilities"`
 }
 
@@ -189,6 +199,9 @@ type BrokerHealth struct {
 // well-formed protocol tag paired with its declared-axes object, and
 // non-empty work_unit.
 func (b *BrokerOfferings) Validate(expectedOrch string) error {
+	if err := b.validateSpecVersion(); err != nil {
+		return err
+	}
 	if !strings.EqualFold(strings.TrimSpace(b.OrchEthAddress), strings.TrimSpace(expectedOrch)) {
 		return fmt.Errorf("orch identity mismatch: got %q, want %q", b.OrchEthAddress, expectedOrch)
 	}
@@ -217,6 +230,24 @@ func (b *BrokerOfferings) Validate(expectedOrch string) error {
 		if !isNonNegativeDecimalString(c.PricePerUnitWei) {
 			return fmt.Errorf("capabilities[%d].price_per_unit_wei: must be a non-negative decimal string, got %q", i, c.PricePerUnitWei)
 		}
+	}
+	return nil
+}
+
+// validateSpecVersion refuses a broker on a different spec major
+// (plan 0043 §3.7). Minor and patch are non-breaking by definition, so
+// only the major gates. An absent stamp is refused too: it means the
+// broker predates the stamp, and tuples whose contract cannot be
+// verified must not reach a cold-key-signed manifest.
+func (b *BrokerOfferings) validateSpecVersion() error {
+	got := strings.TrimSpace(b.SpecVersion)
+	if got == "" {
+		return fmt.Errorf("spec_version: required — this broker does not stamp it (coordinator is on %s); "+
+			"upgrade the broker to a build that publishes spec_version on /registry/offerings", version.VERSION)
+	}
+	if !version.SameMajor(got) {
+		return fmt.Errorf("spec_version major mismatch: broker publishes %q, coordinator is on %q — "+
+			"a manifest cannot mix majors; upgrade whichever side is behind", got, version.VERSION)
 	}
 	return nil
 }
@@ -383,7 +414,14 @@ type Metadata struct {
 	TupleMetadataWarnings           []TupleMetadataWarning `json:"tuple_metadata_warnings,omitempty"`
 	CoordinatorCommit               string                 `json:"coordinator_commit"`
 	SchemaVersion                   string                 `json:"schema_version"`
-	HAEndpoints                     []HAEndpoint           `json:"ha_endpoints,omitempty"`
+	// ManifestTTLSeconds and RenewalThresholdSeconds publish the sign
+	// policy the coordinator actually applies, so the console reads it
+	// instead of keeping its own copy (plan 0043 §3.7). Both are the
+	// EFFECTIVE values: the threshold is already defaulted to ttl/3 when
+	// the operator left it unset, so a reader never re-derives it.
+	ManifestTTLSeconds      int64        `json:"manifest_ttl_seconds,omitempty"`
+	RenewalThresholdSeconds int64        `json:"renewal_threshold_seconds,omitempty"`
+	HAEndpoints             []HAEndpoint `json:"ha_endpoints,omitempty"`
 }
 
 // MetadataBrokerEntry records per-broker scrape success/failure.

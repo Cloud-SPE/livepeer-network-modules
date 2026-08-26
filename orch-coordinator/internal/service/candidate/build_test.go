@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"io"
 	"reflect"
 	"sort"
@@ -710,5 +711,44 @@ func assertKeys(t *testing.T, entry map[string]any, want ...string) {
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("emitted keys = %v, want %v", got, want)
+	}
+}
+
+// The candidate publishes the sign policy it actually applies, so the
+// console reads it instead of keeping its own copy (plan 0043 §3.7).
+func TestBuild_MetadataPublishesEffectiveSignPolicy(t *testing.T) {
+	base := BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+		PublicationSeq: 7,
+	}
+	// Unset threshold: the published value is the applied default
+	// (ttl/3), never 0 — a reader must not have to re-derive it.
+	c, err := Build(sampleSnap(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Metadata.ManifestTTLSeconds; got != int64((24 * time.Hour).Seconds()) {
+		t.Fatalf("manifest_ttl_seconds = %d", got)
+	}
+	if got := c.Metadata.RenewalThresholdSeconds; got != int64((8 * time.Hour).Seconds()) {
+		t.Fatalf("renewal_threshold_seconds = %d, want the applied ttl/3 default", got)
+	}
+
+	// Explicit threshold is published verbatim.
+	withThreshold := base
+	withThreshold.RenewalThreshold = 90 * time.Minute
+	c, err = Build(sampleSnap(), withThreshold)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Metadata.RenewalThresholdSeconds; got != int64((90 * time.Minute).Seconds()) {
+		t.Fatalf("renewal_threshold_seconds = %d, want 5400", got)
+	}
+
+	// The spec version has one source.
+	if c.Manifest.SpecVersion != version.VERSION || c.Metadata.SchemaVersion != version.VERSION {
+		t.Fatalf("spec version drifted from the protocol module: manifest=%q metadata=%q module=%q",
+			c.Manifest.SpecVersion, c.Metadata.SchemaVersion, version.VERSION)
 	}
 }

@@ -24,10 +24,10 @@ type Registry struct {
 	reg *prometheus.Registry
 
 	// Counters.
-	ScrapeTotal          *prometheus.CounterVec
-	CandidateBuildTotal  *prometheus.CounterVec
-	SignedUploadsTotal   *prometheus.CounterVec
-	PublishesTotal       *prometheus.CounterVec
+	ScrapeTotal         *prometheus.CounterVec
+	CandidateBuildTotal *prometheus.CounterVec
+	SignedUploadsTotal  *prometheus.CounterVec
+	PublishesTotal      *prometheus.CounterVec
 
 	// Histograms.
 	ScrapeDuration         *prometheus.HistogramVec
@@ -35,11 +35,11 @@ type Registry struct {
 	SignedVerifyDuration   prometheus.Histogram
 
 	// Gauges.
-	KnownBrokers         prometheus.Gauge
-	BrokersHealthy       prometheus.Gauge
-	ManifestAgeSeconds   prometheus.Gauge
-	CapabilityTuples     prometheus.Gauge
-	CandidateDriftCount  *prometheus.GaugeVec
+	KnownBrokers        prometheus.Gauge
+	BrokersHealthy      prometheus.Gauge
+	ManifestAgeSeconds  prometheus.Gauge
+	CapabilityTuples    prometheus.Gauge
+	CandidateDriftCount *prometheus.GaugeVec
 }
 
 // New builds a Registry.

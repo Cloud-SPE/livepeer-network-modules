@@ -1,12 +1,15 @@
 package types
 
 import (
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestBrokerOfferings_Validate_HappyPath(t *testing.T) {
 	b := &BrokerOfferings{
+		SpecVersion:    version.VERSION,
 		OrchEthAddress: "0xABCDEF1234567890ABCDEF1234567890ABCDEF12",
 		Capabilities: []BrokerOffering{{
 			CapabilityID:    "cap",
@@ -24,6 +27,7 @@ func TestBrokerOfferings_Validate_HappyPath(t *testing.T) {
 
 func TestBrokerOfferings_Validate_RejectsOrchMismatch(t *testing.T) {
 	b := &BrokerOfferings{
+		SpecVersion:    version.VERSION,
 		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Capabilities:   []BrokerOffering{},
 	}
@@ -34,6 +38,7 @@ func TestBrokerOfferings_Validate_RejectsOrchMismatch(t *testing.T) {
 
 func TestBrokerOfferings_Validate_RejectsBadPrice(t *testing.T) {
 	b := &BrokerOfferings{
+		SpecVersion:    version.VERSION,
 		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Capabilities: []BrokerOffering{{
 			CapabilityID:    "cap",
@@ -51,6 +56,7 @@ func TestBrokerOfferings_Validate_RejectsBadPrice(t *testing.T) {
 
 func TestBrokerOfferings_Validate_RejectsMalformedProtocolTag(t *testing.T) {
 	b := &BrokerOfferings{
+		SpecVersion:    version.VERSION,
 		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Capabilities: []BrokerOffering{{
 			CapabilityID:    "cap",
@@ -91,6 +97,7 @@ func TestBrokerOfferings_Validate_ProtocolAxesPairing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			b := &BrokerOfferings{
+				SpecVersion:    version.VERSION,
 				OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				Capabilities: []BrokerOffering{{
 					CapabilityID:    "cap",
@@ -140,4 +147,49 @@ func TestClassifyBrokerHealthMetadata_AlreadyConfiguredIsHealthy(t *testing.T) {
 	if age != 17 {
 		t.Fatalf("age = %v; want 17", age)
 	}
+}
+
+// The spec-major gate (plan 0043 §3.7): a broker on a different major
+// is refused at the boundary, so its tuples never reach a candidate.
+func TestBrokerOfferings_Validate_SpecVersion(t *testing.T) {
+	const addr = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cap := BrokerOffering{
+		CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
+		Job:      &JobAxes{"transports": []any{"unary"}},
+		WorkUnit: WorkUnit{Name: "tokens"}, PricePerUnitWei: "1",
+	}
+	cases := []struct {
+		name, specVersion, wantErr string
+	}{
+		{"same version", version.VERSION, ""},
+		{"newer minor is fine", bumpMinor(version.VERSION), ""},
+		{"older major refused", "1.9.0", "major mismatch"},
+		{"newer major refused", "99.0.0", "major mismatch"},
+		{"absent refused", "", "required"},
+		{"garbage refused", "not-a-version", "major mismatch"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &BrokerOfferings{SpecVersion: tc.specVersion, OrchEthAddress: addr, Capabilities: []BrokerOffering{cap}}
+			err := b.Validate(addr)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Validate() = %v, want nil", err)
+			case tc.wantErr != "" && err == nil:
+				t.Fatalf("Validate() = nil, want error containing %q", tc.wantErr)
+			case tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr):
+				t.Fatalf("Validate() = %v, want error containing %q", err, tc.wantErr)
+			}
+			// Both sides are always named, so an operator knows which to upgrade.
+			if err != nil && !strings.Contains(err.Error(), version.VERSION) {
+				t.Fatalf("error does not name the coordinator's version: %v", err)
+			}
+		})
+	}
+}
+
+// bumpMinor returns the same major with a far-future minor.
+func bumpMinor(v string) string {
+	major, _, _ := strings.Cut(v, ".")
+	return major + ".99.0"
 }

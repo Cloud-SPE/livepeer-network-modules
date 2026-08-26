@@ -14,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	specversion "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -421,6 +422,7 @@ func newDevFake(orchAddr string, brokers []config.Broker) brokerclient.Client {
 			Extra:           map[string]any{"broker": b.Name},
 		}}
 		f.Set(b.BaseURL, &types.BrokerOfferings{
+			SpecVersion:    specversion.VERSION,
 			OrchEthAddress: orchAddr,
 			Capabilities:   caps,
 		}, nil)

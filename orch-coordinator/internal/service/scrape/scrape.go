@@ -65,12 +65,11 @@ type Snapshot struct {
 // Config holds the scrape-loop tunables. Mirrors the flag surface in
 // cmd/livepeer-orch-coordinator.
 type Config struct {
-	OrchEthAddress    string
-	Brokers           []config.Broker
-	ScrapeInterval    time.Duration
-	ScrapeTimeout     time.Duration
-	FreshnessWindow   time.Duration
-	WorkerURLOverride map[string]string // broker name → worker_url; defaults to base_url
+	OrchEthAddress  string
+	Brokers         []config.Broker
+	ScrapeInterval  time.Duration
+	ScrapeTimeout   time.Duration
+	FreshnessWindow time.Duration
 }
 
 // Observer is a metrics hook the scrape service calls on each cycle.
@@ -136,14 +135,13 @@ func New(cfg Config, client brokerclient.Client, logger *slog.Logger) (*Service,
 }
 
 // deriveWorkerURL chooses the worker_url the coordinator emits in the
-// signed manifest for a given broker. Operators may override per-
-// broker via cfg.WorkerURLOverride; otherwise the broker's base_url
-// is used. The manifest schema requires HTTPS; production deployments
-// MUST configure a public HTTPS-fronted URL via the override map.
+// signed manifest for a given broker: the broker's configured base_url.
+//
+// A per-broker override map used to live here and was never populated
+// by any caller — dead config that read as a supported knob. The
+// manifest schema requires HTTPS, so a production deployment sets
+// brokers[].base_url to the public HTTPS-fronted URL.
 func (s *Service) deriveWorkerURL(b config.Broker) string {
-	if v, ok := s.cfg.WorkerURLOverride[b.Name]; ok && v != "" {
-		return v
-	}
 	return b.BaseURL
 }
 

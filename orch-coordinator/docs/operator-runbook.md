@@ -49,6 +49,25 @@ published manifest expires. Default `0` means one third of the manifest
 TTL. With the default 24 h TTL, an unchanged candidate's window
 refreshes once its remaining validity drops below 8 h.
 
+The **effective** policy is published in each candidate's
+`metadata.json` as `manifest_ttl_seconds` and `renewal_threshold_seconds`
+— already defaulted, so a reader never re-derives it. `secure-orch-console`
+reads those instead of keeping its own copy (plan 0043 §3.7).
+
+## Spec version
+
+The coordinator's `spec_version` has exactly one source: the protocol
+module's `VERSION` constant (`livepeer-network-protocol/version`), which
+it imports. Brokers stamp the same constant on `/registry/offerings`.
+
+A broker whose `spec_version` **major** differs from the coordinator's is
+refused at the scrape boundary: it is marked `schema_error`, its tuples
+are dropped, and the candidate is built without it — a manifest cannot
+mix majors, because consumers read the whole document under one
+contract. A broker that publishes no `spec_version` at all is refused
+the same way: it predates the stamp, so its contract cannot be verified.
+The error names both versions, so it is clear which side to upgrade.
+
 When running the published container image, use `/srv/data`. The image is
 built to run as `nonroot` and pre-owns that path so Docker named volumes are
 initialized with writable ownership.

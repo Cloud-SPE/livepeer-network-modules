@@ -13,8 +13,14 @@
 package runners
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -275,3 +281,78 @@ func snapshot(h *Host) Snapshot {
 	}
 	return s
 }
+
+// --- dispatch ---------------------------------------------------------------
+
+// VirtualScheme addresses an attached runner as a backend URL:
+//
+//	runner://<host_id>/<local_id><path>
+//
+// The paid path already dials backends through a forwarder, so making
+// an attached runner reachable this way means dispatch does not have to
+// learn a second way to reach a backend (plan 0043 item 10).
+const VirtualScheme = "runner"
+
+// LocalIDHeader is the routing key the agent maps back to a container
+// (runner-attach §7).
+const LocalIDHeader = "Livepeer-Runner-Local-Id"
+
+// BackendURL builds the virtual backend URL for one eligible pair.
+func BackendURL(hostID, localID string) string {
+	return VirtualScheme + "://" + url.PathEscape(hostID) + "/" + url.PathEscape(localID)
+}
+
+// ErrNotConnected reports a pair whose connection is gone. Selection is
+// a snapshot, so a runner can disappear between choosing and dialing.
+var ErrNotConnected = errors.New("runners: no attach connection for the selected runner")
+
+// Forward implements backend.Forwarder for runner:// URLs: it resolves
+// the host and local id, sets the routing header, and hands the request
+// to that runner's attach connection.
+func (r *Registry) Forward(ctx context.Context, req backend.ForwardRequest) (*http.Response, error) {
+	u, err := url.Parse(req.URL)
+	if err != nil {
+		return nil, err
+	}
+	hostID, err := url.PathUnescape(u.Host)
+	if err != nil {
+		return nil, err
+	}
+	localID, rest := splitLocalID(u.Path)
+	conn, ok := r.ConnFor(hostID, localID)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s/%s", ErrNotConnected, hostID, localID)
+	}
+	next := req
+	// The runner's own paths are relative; the agent joins them onto the
+	// container's base URL, so what travels is the path and nothing else.
+	next.URL = "http://worker.local" + rest
+	if next.Headers == nil {
+		next.Headers = make(http.Header)
+	} else {
+		next.Headers = next.Headers.Clone()
+	}
+	next.Headers.Set(LocalIDHeader, localID)
+	resp, err := conn.Forward(ctx, next)
+	if err == nil {
+		r.Touch(hostID)
+	}
+	return resp, err
+}
+
+// splitLocalID peels the local id off the front of the path and returns
+// it with the remainder (always rooted).
+func splitLocalID(path string) (localID, rest string) {
+	trimmed := strings.TrimPrefix(path, "/")
+	idPart, remainder, found := strings.Cut(trimmed, "/")
+	id, err := url.PathUnescape(idPart)
+	if err != nil {
+		id = idPart
+	}
+	if !found || remainder == "" {
+		return id, "/"
+	}
+	return id, "/" + remainder
+}
+
+var _ backend.Forwarder = (*Registry)(nil)

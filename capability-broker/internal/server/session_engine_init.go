@@ -19,14 +19,7 @@ import (
 // capability declares the protocol. Config validation has already
 // required session_store and external_base_url in that case.
 func (s *Server) initSessionEngine() error {
-	hasSession := false
-	for i := range s.cfg.Capabilities {
-		if strings.HasPrefix(s.cfg.Capabilities[i].Protocol, "paid-session/") {
-			hasSession = true
-			break
-		}
-	}
-	if !hasSession {
+	if !s.servesProtocol("paid-session/") {
 		return nil
 	}
 	key, err := sessionstore.LoadKeyFile(s.cfg.SessionStore.SealingKeyFile)

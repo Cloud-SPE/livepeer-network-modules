@@ -15,6 +15,11 @@ import (
 type capabilityGroup struct {
 	Published *config.Capability
 	Backends  []*config.Capability
+	// FromOffer marks a group whose backends are eligible attached
+	// runners rather than operator-configured backend URLs. The two are
+	// selected differently: a runner has already passed certification,
+	// so there is no probe verdict left to weigh.
+	FromOffer bool
 }
 
 type backendCandidate struct {
@@ -34,6 +39,12 @@ type backendSelectionDecision struct {
 func (s *Server) groupFor(capID, offID string) (*capabilityGroup, bool) {
 	if capID == "" {
 		return nil, false
+	}
+	// Offers win: an offering that exists in both grammars is a
+	// misconfiguration the loader already rejects, so this only decides
+	// which grammar serves it during the migration.
+	if group, ok := s.offerGroupFor(capID, offID); ok {
+		return group, true
 	}
 	cfg := s.currentConfig()
 	if cfg == nil {
@@ -70,7 +81,13 @@ func (s *Server) groupFor(capID, offID string) (*capabilityGroup, bool) {
 
 func (s *Server) lookupSpec(capID, offID string) (middleware.CapabilitySpec, bool) {
 	group, found := s.groupFor(capID, offID)
-	if !found || group.Published == nil || len(group.Backends) == 0 {
+	if !found || group.Published == nil {
+		return middleware.CapabilitySpec{}, false
+	}
+	// An offer with no runner attached right now still has a price: the
+	// tuple is advertised, so a payment must be validated against it
+	// before the dispatch path answers 503.
+	if !group.FromOffer && len(group.Backends) == 0 {
 		return middleware.CapabilitySpec{}, false
 	}
 	return middleware.CapabilitySpec{
@@ -81,6 +98,9 @@ func (s *Server) lookupSpec(capID, offID string) (middleware.CapabilitySpec, boo
 }
 
 func (s *Server) selectBackend(group *capabilityGroup) (*config.Capability, error) {
+	if group != nil && group.FromOffer {
+		return s.selectRunnerBackend(group)
+	}
 	if group == nil || len(group.Backends) == 0 {
 		return nil, fmt.Errorf("no backend candidates")
 	}

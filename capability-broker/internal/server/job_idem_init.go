@@ -2,7 +2,6 @@ package server
 
 import (
 	"log"
-	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 )
@@ -11,14 +10,7 @@ import (
 // state store when configured (spec-conformant), an in-process map
 // with a logged warning otherwise.
 func (s *Server) initJobIdem() error {
-	hasJob := false
-	for i := range s.cfg.Capabilities {
-		if strings.HasPrefix(s.cfg.Capabilities[i].Protocol, "paid-job/") {
-			hasJob = true
-			break
-		}
-	}
-	if !hasJob {
+	if !s.servesProtocol("paid-job/") {
 		return nil
 	}
 	if s.sessionStore != nil {

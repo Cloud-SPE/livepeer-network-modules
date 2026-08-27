@@ -153,6 +153,9 @@ func attachScenarios() []harness.Scenario {
 			defer conn.Close()
 			doc := minimalJobDoc(c, "k1")
 			bad := jobCap(c, "bad")
+			// A distinct identity, or this trips duplicate_capability
+			// first and never reaches the extractor check.
+			bad["identity"] = map[string]any{"provider": "conformance-second"}
 			bad["work_unit"] = map[string]any{"name": "tokens", "extractor": map[string]any{"type": "no-such-extractor"}}
 			doc["capabilities"] = append(doc["capabilities"].([]any), bad)
 			res, err := conn.Register(doc)

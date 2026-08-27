@@ -200,6 +200,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	}
 
 	workerRegistry := workerconn.NewRegistry()
+	runnerRegistry := runners.New(0)
 
 	var credStore *credentialstore.Store
 	if cfg.CredentialStore.Enabled() {
@@ -244,18 +245,21 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		payment:          paymentClient,
 		settlementSigner: settlementSigner,
 		extractors:       defaultExtractors(),
-		backend:          workerconn.NewForwarder(backend.NewHTTPClient(), workerRegistry),
-		workerRegistry:   workerRegistry,
-		credentialStore:  credStore,
-		runners:          runners.New(0),
-		attachedHosts:    make(map[string][]io.Closer),
-		backendInFlight:  make(map[string]int),
-		secrets:          secretResolver,
-		receiptSink:      receiptSink,
-		poolReporter:     poolReporter,
-		poolSnapshot:     poolSnapshot,
-		health:           health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
-		quarantined:      quarantined,
+		// runner:// (attached runners) → worker:// (legacy connected
+		// workers) → plain HTTP. Each layer claims its own scheme and
+		// delegates the rest.
+		backend:         workerconn.NewForwarder(runnerForwarder{next: backend.NewHTTPClient(), registry: runnerRegistry}, workerRegistry),
+		workerRegistry:  workerRegistry,
+		credentialStore: credStore,
+		runners:         runnerRegistry,
+		attachedHosts:   make(map[string][]io.Closer),
+		backendInFlight: make(map[string]int),
+		secrets:         secretResolver,
+		receiptSink:     receiptSink,
+		poolReporter:    poolReporter,
+		poolSnapshot:    poolSnapshot,
+		health:          health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
+		quarantined:     quarantined,
 		randIntn: func(n int) int {
 			return rand.New(rand.NewSource(time.Now().UnixNano())).Intn(n)
 		},

@@ -87,8 +87,16 @@ func (s *Server) registerJobRoutes() {
 	s.mux.Handle("POST /v1/job", h)
 }
 
-// jobCapability finds the paid-job capability tuple.
+// jobCapability finds the paid-job tuple being served, from either
+// grammar: a configured capability, or a frozen offer with its declared
+// axes (plan 0043 item 10). Nil means the broker does not advertise it
+// at all — distinct from advertising it with nobody currently able to
+// serve it, which is a 503 further down.
 func (s *Server) jobCapability(capID, offID string) *config.Capability {
+	if group, ok := s.offerGroupFor(capID, offID); ok && group.Published != nil &&
+		strings.HasPrefix(group.Published.Protocol, "paid-job/") && group.Published.Job != nil {
+		return group.Published
+	}
 	cfg := s.currentConfig()
 	for i := range cfg.Capabilities {
 		c := &cfg.Capabilities[i]

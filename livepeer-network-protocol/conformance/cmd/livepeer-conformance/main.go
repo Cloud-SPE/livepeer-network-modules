@@ -14,14 +14,17 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -50,6 +53,14 @@ payment_daemon:
   # assertions never execute.
   mock_state_path: %q
 session_store:
+  path: %q
+  sealing_key_file: %q
+# The attach scenarios need a credential to present, so the suite enrolls
+# one over the admin API once the broker is healthy.
+admin_auth:
+  method: bearer
+  secret_ref: env://BROKER_ADMIN_TOKEN
+credential_store:
   path: %q
   sealing_key_file: %q
 capabilities:
@@ -363,6 +374,13 @@ func run() int {
 			os.Exit(130)
 		}()
 		ctx.BrokerURL = url
+		if cred, hostID, err := enrollAttachCredential(url); err != nil {
+			// Not fatal: the attach scenarios skip with the reason, and
+			// every paid-path scenario still runs.
+			fmt.Fprintf(os.Stderr, "attach enrollment unavailable (%v); attach scenarios will skip\n", err)
+		} else {
+			ctx.AttachCredential, ctx.AttachHostID = cred, hostID
+		}
 		// Auto mode owns the process, so restart-dependent scenarios
 		// can run for real instead of skipping.
 		ctx.RestartBroker = ctl.restart
@@ -434,11 +452,15 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 	}
 	signerAddr := crypto.PubkeyToAddress(settleKey.PublicKey).Hex()
 
+	if err := os.Setenv("BROKER_ADMIN_TOKEN", conformanceAdminToken); err != nil {
+		return nil, "", err
+	}
 	cfg := fmt.Sprintf(configTemplate,
 		settleKeyPath,
 		paidPort, paidPort, metricsPort,
 		filepath.Join(dir, "payment-mock.json"),
 		filepath.Join(dir, "state.db"), keyPath,
+		filepath.Join(dir, "credentials.db"), keyPath,
 		jobUnit, backend.URL(),
 		jobUnit, backend.URL(),
 		jobUnit, backend.ErrorURL(),
@@ -533,4 +555,43 @@ func waitHealthy(url string, timeout time.Duration) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return fmt.Errorf("broker did not become healthy within %s", timeout)
+}
+
+// conformanceAdminToken is the admin bearer the generated host-config
+// points at. It never leaves this process tree.
+const conformanceAdminToken = "conformance-admin-token"
+
+// enrollAttachCredential mints the credential the attach scenarios
+// present (runner-attach §3.1.1). Auto mode can do this because it owns
+// the broker; in URL mode the operator passes --attach-credential.
+func enrollAttachCredential(brokerURL string) (credential, hostID string, err error) {
+	body := strings.NewReader(`{"host_id":"conformance-runner","label":"livepeer-conformance"}`)
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(brokerURL, "/")+"/admin/v1/enroll", body)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+conformanceAdminToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusCreated {
+		return "", "", fmt.Errorf("enroll returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var out struct {
+		HostID     string `json:"host_id"`
+		Credential struct {
+			Token string `json:"token"`
+		} `json:"credential"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", "", err
+	}
+	if out.Credential.Token == "" {
+		return "", "", fmt.Errorf("enroll returned no token")
+	}
+	return out.Credential.Token, out.HostID, nil
 }

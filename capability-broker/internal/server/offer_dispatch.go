@@ -82,7 +82,42 @@ func (s *Server) syntheticPublished(view offers.View, shape *offers.Frozen) *con
 	if len(shape.Projection.Transports) > 0 {
 		cap.Job = &config.JobCapability{Transports: shape.Projection.Transports}
 	}
+	if strings.HasPrefix(cap.Protocol, "paid-session/") {
+		cap.Session = offerSessionCap(view, shape)
+	}
 	return cap
+}
+
+// offerSessionCap maps the operator's session_policy and the frozen
+// shape onto the session axes the engine reads. It is the same mapping
+// registry.OfferTuple advertises, so what a gateway is told and what the
+// broker enforces come from one place.
+func offerSessionCap(view offers.View, shape *offers.Frozen) *config.SessionCap {
+	sess := &config.SessionCap{Metering: shape.Projection.Metering}
+	// The manifest tuple carries one descriptor schema; a runner may
+	// declare several and the first (sorted) is the advertised one.
+	if d := shape.Projection.DescriptorSchemas; len(d) > 0 {
+		sess.DescriptorSchema = d[0]
+	}
+	if p := view.Operator.SessionPolicy; p != nil {
+		sess.Attachment = p.Attachment
+		sess.Refill = p.Refill
+		sess.LeasePolicy = p.LeasePolicy
+		sess.LeaseMaxSeconds = p.LeaseMaxSeconds
+		sess.BurnRatePerSec = p.BurnRatePerSec
+		sess.MinRunwayUnits = p.MinRunwayUnits
+		sess.MaxRotations = p.MaxRotations
+		sess.ToleranceBandPct = p.ToleranceBandPct
+		sess.RunwayIncrementUnits = p.RunwayIncrementUnits
+		sess.Heartbeat = p.Heartbeat
+	}
+	if sess.Heartbeat.IntervalSeconds == 0 && shape.HeartbeatIntervalSeconds > 0 {
+		// The freezing runner's advisory cadence, used when the
+		// operator's policy leaves it unset.
+		sess.Heartbeat.IntervalSeconds = shape.HeartbeatIntervalSeconds
+	}
+	sess.SessionParamsSchema = shape.SessionParamsSchema
+	return sess
 }
 
 // syntheticCapability presents one eligible runner as a backend.
@@ -102,7 +137,16 @@ func (s *Server) syntheticCapability(view offers.View, shape *offers.Frozen, pai
 	if live == nil {
 		return nil
 	}
-	if invoke := live.Paths["invoke"]; invoke != "" {
+	if cap.Session != nil {
+		// Session paths are relative to the runner base URL and are
+		// substituted per call, so they ride on the tuple rather than
+		// being folded into it.
+		cap.Session.Runner = config.SessionRunnerPaths{
+			CreatePath:    live.Paths["create"],
+			StatusPath:    live.Paths["status"],
+			TerminatePath: live.Paths["terminate"],
+		}
+	} else if invoke := live.Paths["invoke"]; invoke != "" {
 		cap.Backend.URL += invoke
 	}
 	return cap

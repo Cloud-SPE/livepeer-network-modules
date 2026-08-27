@@ -1176,17 +1176,33 @@ func sessionScenarios() []harness.Scenario {
 
 			// The session cannot be billed any more, so §9.2's terminal
 			// branch is required: never serve work you cannot charge for.
-			st, err := c.SessionStatus(sessionID, credential)
-			if err != nil {
-				return err
+			//
+			// Recovery is asynchronous — a broker whose runners reconnect
+			// after restart cannot reach them at the instant it comes
+			// back — so this waits. The window is deliberately far
+			// shorter than any heartbeat deadline: a broker that only
+			// fails the session closed when the heartbeat sweep notices
+			// has not taken the recovery branch, and still fails here.
+			var sm map[string]any
+			var state string
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				st, err := c.SessionStatus(sessionID, credential)
+				if err != nil {
+					return err
+				}
+				if st.Status != 200 {
+					return fmt.Errorf("status after restart: %d %s", st.Status, st.Body)
+				}
+				sm = st.JSON()
+				state = harness.FieldString(sm, "state")
+				if state == "ended" || state == "failed" || time.Now().After(deadline) {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
 			}
-			if st.Status != 200 {
-				return fmt.Errorf("status after restart: %d %s", st.Status, st.Body)
-			}
-			sm := st.JSON()
-			state := harness.FieldString(sm, "state")
 			if state != "ended" && state != "failed" {
-				return fmt.Errorf("session still %s after losing its payment layer; must reach a terminal outcome", state)
+				return fmt.Errorf("session still %s 5s after losing its payment layer; must reach a terminal outcome", state)
 			}
 			if reason := harness.FieldString(sm, "close_reason"); reason == "" {
 				return fmt.Errorf("terminal with no close_reason")

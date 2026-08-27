@@ -121,6 +121,7 @@ func (s *Server) handleAttachWS(w http.ResponseWriter, r *http.Request) {
 		}
 		hostID = doc.HostID
 		s.runners.Attach(connID, fwd, enr, doc, res)
+		s.onRunnerAttached()
 		return true
 	}
 	if !handle(first) {
@@ -162,6 +163,7 @@ func (s *Server) handleAttachQUIC(ctx context.Context, conn *quic.Conn, first wo
 		}
 		hostID = doc.HostID
 		s.runners.Attach(connID, fwd, enr, doc, res)
+		s.onRunnerAttached()
 		return true
 	}
 	if !reply(stream, first) {

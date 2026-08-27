@@ -17,7 +17,9 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/offers"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/runners"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
@@ -44,7 +46,8 @@ func (s *Server) registerSessionRoutes() {
 	s.mux.HandleFunc("GET /v1/session/{id}/ws", s.handleSessionWS)
 }
 
-// sessionCapability finds the paid-session capability tuple.
+// sessionCapability finds the paid-session capability tuple, from the
+// operator's configured backends or from an offer's attached runners.
 func (s *Server) sessionCapability(capID, offID string) *config.Capability {
 	cfg := s.currentConfig()
 	for i := range cfg.Capabilities {
@@ -54,17 +57,24 @@ func (s *Server) sessionCapability(capID, offID string) *config.Capability {
 			return c
 		}
 	}
-	return nil
+	return s.offerSessionCapability(capID, offID)
 }
 
 // specFromCapability maps host config to the engine's offering spec.
 func specFromCapability(c *config.Capability) *sessionengine.OfferingSpec {
 	price, _ := new(big.Int).SetString(c.Price.AmountWei, 10)
 	hb := time.Duration(c.Session.Heartbeat.IntervalSeconds) * time.Second
+	// An attached runner is pinned into the ref: every later call on
+	// this session must reach the runner that holds it, not whichever
+	// runner the offer would select next.
+	ref := c.ID + "|" + c.OfferingID
+	if host, local, ok := runners.SplitBackendURL(c.Backend.URL); ok {
+		ref = sessionBackendRef(c.ID, c.OfferingID, offers.PairKey{HostID: host, LocalID: local})
+	}
 	return &sessionengine.OfferingSpec{
 		Capability:          c.ID,
 		Offering:            c.OfferingID,
-		BackendRef:          c.ID + "|" + c.OfferingID,
+		BackendRef:          ref,
 		WorkUnit:            c.WorkUnit.Name,
 		PricePerWorkUnitWei: price,
 		PerUnits:            c.Price.PerUnits,
@@ -89,9 +99,14 @@ func specFromCapability(c *config.Capability) *sessionengine.OfferingSpec {
 // runnerClientFor builds the configured-path runner client for a
 // backendRef ("capability|offering"). Auth: backend.auth env:// bearer.
 func (s *Server) runnerClientFor(backendRef string) sessionengine.RunnerClient {
-	capID, offID, _ := strings.Cut(backendRef, "|")
-	c := s.sessionCapability(capID, offID)
-	if c == nil {
+	capID, offID, pair, pinned := splitSessionBackendRef(backendRef)
+	var c *config.Capability
+	if pinned {
+		c = s.pinnedSessionCapability(capID, offID, pair)
+	} else {
+		c = s.sessionCapability(capID, offID)
+	}
+	if c == nil || c.Session == nil {
 		return &unroutableRunner{ref: backendRef}
 	}
 	token := ""
@@ -108,6 +123,9 @@ func (s *Server) runnerClientFor(backendRef string) sessionengine.RunnerClient {
 			Terminate: c.Session.Runner.TerminatePath,
 		},
 		AuthToken: token,
+		// nil for an ordinary backend URL; the tunnel-routing client
+		// for an attached runner.
+		Client: s.runnerHTTPClient(c.Backend.URL),
 	}
 }
 
@@ -148,6 +166,15 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 	offID := r.Header.Get(livepeerheader.Offering)
 	c := s.sessionCapability(capID, offID)
 	if c == nil {
+		// An advertised offer with nothing eligible behind it is
+		// unavailable, not absent: 404 would tell a gateway to stop
+		// believing a manifest that is still true.
+		if s.sessionOfferAdvertised(capID, offID) {
+			livepeerheader.WriteError(w, http.StatusServiceUnavailable,
+				livepeerheader.ErrBackendUnavailable,
+				"no eligible runner is attached for "+capID+"/"+offID)
+			return
+		}
 		livepeerheader.WriteError(w, http.StatusNotFound, livepeerheader.ErrCapabilityNotServed,
 			"no paid-session offering "+capID+"/"+offID)
 		return
@@ -603,6 +630,15 @@ func writeUniformUnauthorized(w http.ResponseWriter) {
 }
 
 func (s *Server) specForRecord(rec *sessionstore.Record) *sessionengine.OfferingSpec {
+	// A stored session already chose its runner. Resolve the ref it
+	// stored, so a restart prices and closes the session against the
+	// runner that holds it rather than re-running selection.
+	if capID, offID, pair, pinned := splitSessionBackendRef(rec.BackendRef); pinned {
+		if c := s.pinnedSessionCapability(capID, offID, pair); c != nil {
+			return specFromCapability(c)
+		}
+		return nil
+	}
 	c := s.sessionCapability(rec.Capability, rec.Offering)
 	if c == nil {
 		return nil

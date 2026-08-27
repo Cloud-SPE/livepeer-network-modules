@@ -35,7 +35,11 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-const configTemplate = `identity:
+// The reference broker's config, in the offer-only grammar. Runner
+// facts are deliberately absent: the suite's own runner declares them at
+// attach, which is the path a real deployment uses and therefore the one
+// worth grading (plan 0043).
+const configHeader = `identity:
   orch_eth_address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
   # The suite runs SIGNED. An unsigned run exercises every rule except
   # the one a clearinghouse actually gates money on, which is the rule
@@ -55,207 +59,123 @@ payment_daemon:
 session_store:
   path: %q
   sealing_key_file: %q
-# The attach scenarios need a credential to present, so the suite enrolls
-# one over the admin API once the broker is healthy.
+# The suite enrols its own runner over the admin API once the broker is
+# healthy.
 admin_auth:
   method: bearer
   secret_ref: env://BROKER_ADMIN_TOKEN
 credential_store:
   path: %q
   sealing_key_file: %q
-capabilities:
-  - id: conformance:job
-    offering_id: all
-    protocol: paid-job/v1
-    job:
-      transports: [unary, stream, multipart]
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-      extractor: { type: openai-usage }
-    price: { amount_wei: "1", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:job
-    offering_id: unary-only
-    protocol: paid-job/v1
-    job:
-      transports: [unary]
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-      extractor: { type: openai-usage }
-    price: { amount_wei: "1", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:job
-    offering_id: always-error
-    protocol: paid-job/v1
-    job:
-      transports: [unary]
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-      extractor: { type: openai-usage }
-    price: { amount_wei: "1", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:job
-    offering_id: slow
-    protocol: paid-job/v1
-    job:
-      transports: [unary]
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-      extractor: { type: openai-usage }
-    price: { amount_wei: "1", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:job
-    offering_id: longstream
-    protocol: paid-job/v1
-    job:
-      transports: [stream]
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-      extractor: { type: openai-usage }
-    price: { amount_wei: "1", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:job
-    offering_id: fractional
-    protocol: paid-job/v1
-    job:
-      transports: [unary]
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-      extractor: { type: openai-usage }
-    # Priced per 1000 units, and deliberately remainder-producing: the
-    # fixture backend claims 42 units, so 42 x 100 / 1000 = 4.2 wei.
-    # Every offering here used to be per_units 1, which is exactly the
-    # denominator at which flooring and ceiling agree — so a rounding
-    # defect could not surface.
-    price: { amount_wei: "100", per_units: 1000 }
-    backend: { transport: http, url: %q }
-  - id: conformance:session
-    offering_id: bounded-refill
-    protocol: paid-session/v1
-    session:
-      descriptor_schema: sfu-room/v1
-      refill: bounded
-      lease_policy: fixed
-      lease_max_seconds: 600
-      runner:
-        create_path: /sessions
-        status_path: /sessions/{id}
-        terminate_path: /sessions/{id}
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-    price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:session
-    offering_id: short-lease
-    protocol: paid-session/v1
-    session:
-      descriptor_schema: sfu-room/v1
-      lease_policy: fixed
-      lease_max_seconds: 1
-      # Heartbeat far away so lease expiry is the trigger under test.
-      heartbeat:
-        interval_seconds: 2
-        missed_threshold: 30
-      runner:
-        create_path: /sessions
-        status_path: /sessions/{id}
-        terminate_path: /sessions/{id}
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-    price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:session
-    offering_id: rtmp-hls
-    protocol: paid-session/v1
-    session:
-      descriptor_schema: rtmp-hls/v1
-      lease_policy: fixed
-      lease_max_seconds: 600
-      runner:
-        create_path: /sessions
-        status_path: /sessions/{id}
-        terminate_path: /sessions/{id}
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-    price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:session
-    offering_id: scope-passthrough
-    protocol: paid-session/v1
-    session:
-      descriptor_schema: scope-passthrough/v1
-      lease_policy: fixed
-      lease_max_seconds: 600
-      runner:
-        create_path: /sessions
-        status_path: /sessions/{id}
-        terminate_path: /sessions/{id}
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-    price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:session
-    offering_id: trickle-egress
-    protocol: paid-session/v1
-    session:
-      descriptor_schema: trickle-egress/v1
-      lease_policy: fixed
-      lease_max_seconds: 600
-      runner:
-        create_path: /sessions
-        status_path: /sessions/{id}
-        terminate_path: /sessions/{id}
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-    price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:session
-    offering_id: fast-heartbeat
-    protocol: paid-session/v1
-    session:
-      descriptor_schema: sfu-room/v1
-      heartbeat:
-        interval_seconds: 1
-        missed_threshold: 2
-      # A fixed lease keeps funding from preempting the heartbeat, so
-      # this offering isolates liveness enforcement.
-      lease_policy: fixed
-      lease_max_seconds: 600
-      runner:
-        create_path: /sessions
-        status_path: /sessions/{id}
-        terminate_path: /sessions/{id}
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-    price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: %q }
-  - id: conformance:session
-    offering_id: default
-    protocol: paid-session/v1
-    session:
-      descriptor_schema: sfu-room/v1
-      runner:
-        create_path: /sessions
-        status_path: /sessions/{id}
-        terminate_path: /sessions/{id}
-    health: { initial_status: ready }
-    work_unit:
-      name: %s
-    price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: %q }
+offers_state_path: %q
+offers:
 `
+
+// offering is one conformance offering. The offer YAML the broker reads
+// and the runner spec the suite attaches with are both generated from
+// this, so the two cannot drift — which is the failure the old
+// hand-maintained pair invited.
+type offering struct {
+	capabilityID     string
+	offeringID       string
+	protocol         string
+	transports       []string // paid-job
+	descriptorSchema string   // paid-session
+	workUnit         string
+	extractor        map[string]any
+	paths            map[string]string
+	baseURL          string
+	priceWei         string
+	perUnits         int
+	sessionPolicy    string // YAML fragment, indented four spaces
+}
+
+func (o offering) offerYAML() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  - offering_id: %s\n", o.offeringID)
+	fmt.Fprintf(&b, "    capability: %s\n", o.capabilityID)
+	fmt.Fprintf(&b, "    protocol: %s\n", o.protocol)
+	// Each offering selects exactly its own runner entry, so the
+	// scenarios keep the per-offering behaviour they assert.
+	fmt.Fprintf(&b, "    match: { identity.variant: %s }\n", o.offeringID)
+	fmt.Fprintf(&b, "    price: { amount_wei: %q, per_units: %d }\n", o.priceWei, o.perUnits)
+	if o.sessionPolicy != "" {
+		b.WriteString("    session_policy:\n")
+		b.WriteString(o.sessionPolicy)
+	}
+	return b.String()
+}
+
+func (o offering) runnerSpec() harness.RunnerSpec {
+	spec := harness.RunnerSpec{
+		LocalID:        o.offeringID,
+		CapabilityID:   o.capabilityID,
+		Protocol:       o.protocol,
+		Identity:       map[string]string{"variant": o.offeringID},
+		WorkUnitName:   o.workUnit,
+		Extractor:      o.extractor,
+		Paths:          o.paths,
+		BaseURL:        o.baseURL,
+		SchemaVersions: map[string]string{o.protocol: "1.0.0"},
+	}
+	if o.descriptorSchema != "" {
+		spec.DescriptorSchemas = []string{o.descriptorSchema}
+		spec.Metering = "runner-reported"
+		spec.SchemaVersions[o.descriptorSchema] = "1.0.0"
+	} else {
+		spec.Transports = o.transports
+	}
+	return spec
+}
+
+// conformanceOfferings is the single list both halves are built from.
+func conformanceOfferings(backend *fakes.JobBackend, runner *fakes.SessionRunner, jobUnit, sessUnit string) []offering {
+	openaiUsage := map[string]any{"type": "openai-usage"}
+	jobPaths := func(path string) map[string]string { return map[string]string{"invoke": path} }
+	sessionPaths := map[string]string{
+		"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}",
+	}
+	job := func(id string, transports []string, path, price string, perUnits int) offering {
+		return offering{
+			capabilityID: "conformance:job", offeringID: id, protocol: "paid-job/v1",
+			transports: transports, workUnit: jobUnit, extractor: openaiUsage,
+			paths: jobPaths(path), baseURL: backend.URL(), priceWei: price, perUnits: perUnits,
+		}
+	}
+	session := func(id, schema, policy string) offering {
+		return offering{
+			capabilityID: "conformance:session", offeringID: id, protocol: "paid-session/v1",
+			descriptorSchema: schema, workUnit: sessUnit, paths: sessionPaths,
+			baseURL: runner.URL(), priceWei: "10", perUnits: 1, sessionPolicy: policy,
+		}
+	}
+	fixedLease := "      lease_policy: fixed\n      lease_max_seconds: 600\n"
+	return []offering{
+		job("all", []string{"unary", "stream", "multipart"}, "/", "1", 1),
+		job("unary-only", []string{"unary"}, "/", "1", 1),
+		// The error, slow and longstream routes are paths on the same
+		// fake: the RUNNER declares which one it serves, which is how a
+		// real runner points at its own endpoint.
+		job("always-error", []string{"unary"}, "/error", "1", 1),
+		job("slow", []string{"unary"}, "/slow", "1", 1),
+		job("longstream", []string{"stream"}, "/longstream", "1", 1),
+		// Priced per many units, so the paid path is exercised at a
+		// denominator where flooring and ceiling disagree.
+		job("fractional", []string{"unary"}, "/", "100", 1000),
+		session("bounded-refill", "sfu-room/v1", "      refill: bounded\n"+fixedLease),
+		// Heartbeat far away so lease expiry is the trigger under test.
+		session("short-lease", "sfu-room/v1",
+			"      lease_policy: fixed\n      lease_max_seconds: 1\n      heartbeat: { interval_seconds: 2, missed_threshold: 30 }\n"),
+		session("rtmp-hls", "rtmp-hls/v1", fixedLease),
+		session("scope-passthrough", "scope-passthrough/v1", fixedLease),
+		session("trickle-egress", "trickle-egress/v1", fixedLease),
+		// A fixed lease keeps funding from preempting the heartbeat, so
+		// this offering isolates liveness enforcement.
+		session("fast-heartbeat", "sfu-room/v1",
+			"      heartbeat: { interval_seconds: 1, missed_threshold: 2 }\n"+fixedLease),
+		session("default", "sfu-room/v1", ""),
+	}
+}
 
 func main() {
 	// os.Exit does not run deferred functions, and this command exits
@@ -374,7 +294,7 @@ func run() int {
 			os.Exit(130)
 		}()
 		ctx.BrokerURL = url
-		if cred, hostID, err := enrollAttachCredential(url); err != nil {
+		if cred, hostID, err := enrollAttachCredential(url, "conformance-runner"); err != nil {
 			// Not fatal: the attach scenarios skip with the reason, and
 			// every paid-path scenario still runs.
 			fmt.Fprintf(os.Stderr, "attach enrollment unavailable (%v); attach scenarios will skip\n", err)
@@ -455,32 +375,36 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 	if err := os.Setenv("BROKER_ADMIN_TOKEN", conformanceAdminToken); err != nil {
 		return nil, "", err
 	}
-	cfg := fmt.Sprintf(configTemplate,
+	offerings := conformanceOfferings(backend, runner, jobUnit, sessUnit)
+	var cfg strings.Builder
+	fmt.Fprintf(&cfg, configHeader,
 		settleKeyPath,
 		paidPort, paidPort, metricsPort,
 		filepath.Join(dir, "payment-mock.json"),
 		filepath.Join(dir, "state.db"), keyPath,
 		filepath.Join(dir, "credentials.db"), keyPath,
-		jobUnit, backend.URL(),
-		jobUnit, backend.URL(),
-		jobUnit, backend.ErrorURL(),
-		jobUnit, backend.SlowURL(),
-		jobUnit, backend.LongStreamURL(),
-		jobUnit, backend.URL(), // fractional
-		sessUnit, runner.URL(), // bounded-refill
-		sessUnit, runner.URL(), // short-lease
-		sessUnit, runner.URL(), // rtmp-hls
-		sessUnit, runner.URL(), // scope-passthrough
-		sessUnit, runner.URL(), // trickle-egress
-		sessUnit, runner.URL(), // fast-heartbeat
-		sessUnit, runner.URL()) // default
+		filepath.Join(dir, "offers.db"))
+	for _, o := range offerings {
+		cfg.WriteString(o.offerYAML())
+	}
 	cfgPath := filepath.Join(dir, "host-config.yaml")
-	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(cfg.String()), 0o600); err != nil {
 		return nil, "", err
 	}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d", paidPort)
 	var cur *exec.Cmd
+
+	// The suite's own runner. It attaches over the wire and declares
+	// every offering, so the offers the scenarios exercise are frozen
+	// by the same path a real deployment uses. A restart drops the
+	// tunnel, so each launch re-attaches.
+	specs := make([]harness.RunnerSpec, 0, len(offerings))
+	for _, o := range offerings {
+		specs = append(specs, o.runnerSpec())
+	}
+	var suiteRunner *harness.Runner
+	suiteCred, suiteHost := "", ""
 
 	launch := func() error {
 		cmd := exec.Command("go", "run", "./cmd/livepeer-capability-broker", "--config", cfgPath)
@@ -494,9 +418,30 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 			return fmt.Errorf("start: %w", err)
 		}
 		cur = cmd
-		return waitHealthy(url, timeout)
+		if err := waitHealthy(url, timeout); err != nil {
+			return err
+		}
+		// The credential store is sealed under the same dir and key
+		// across restarts, so enrolment happens once per run.
+		if suiteCred == "" {
+			cred, hostID, err := enrollAttachCredential(url, "conformance-suite")
+			if err != nil {
+				return fmt.Errorf("enrol suite runner: %w", err)
+			}
+			suiteCred, suiteHost = cred, hostID
+		}
+		r, err := harness.StartRunner(url, suiteCred, suiteHost, specs)
+		if err != nil {
+			return fmt.Errorf("attach suite runner: %w", err)
+		}
+		suiteRunner = r
+		return waitOfferings(url, len(offerings), timeout)
 	}
 	halt := func() {
+		if suiteRunner != nil {
+			suiteRunner.Close()
+			suiteRunner = nil
+		}
 		if cur != nil && cur.Process != nil {
 			_ = syscall.Kill(-cur.Process.Pid, syscall.SIGTERM)
 			_, _ = cur.Process.Wait()
@@ -542,6 +487,34 @@ type brokerControl struct {
 	settlementSigner string
 }
 
+// waitOfferings blocks until the broker publishes want frozen offering
+// tuples. Health only says the process is up; the offers do not exist
+// until the runner has attached, matched and certified, and a scenario
+// that runs before that races the freeze.
+func waitOfferings(url string, want int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var last string
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(strings.TrimRight(url, "/") + "/registry/offerings")
+		if err == nil {
+			var doc struct {
+				Capabilities []json.RawMessage `json:"capabilities"`
+			}
+			dec := json.NewDecoder(resp.Body)
+			decErr := dec.Decode(&doc)
+			_ = resp.Body.Close()
+			if decErr == nil && len(doc.Capabilities) >= want {
+				return nil
+			}
+			last = fmt.Sprintf("%d of %d offerings published", len(doc.Capabilities), want)
+		} else {
+			last = err.Error()
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("offerings not published within %s: %s", timeout, last)
+}
+
 func waitHealthy(url string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -564,8 +537,8 @@ const conformanceAdminToken = "conformance-admin-token"
 // enrollAttachCredential mints the credential the attach scenarios
 // present (runner-attach §3.1.1). Auto mode can do this because it owns
 // the broker; in URL mode the operator passes --attach-credential.
-func enrollAttachCredential(brokerURL string) (credential, hostID string, err error) {
-	body := strings.NewReader(`{"host_id":"conformance-runner","label":"livepeer-conformance"}`)
+func enrollAttachCredential(brokerURL, host string) (credential, hostID string, err error) {
+	body := strings.NewReader(fmt.Sprintf(`{"host_id":%q,"label":"livepeer-conformance"}`, host))
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(brokerURL, "/")+"/admin/v1/enroll", body)
 	if err != nil {
 		return "", "", err

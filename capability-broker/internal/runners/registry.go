@@ -302,6 +302,24 @@ func BackendURL(hostID, localID string) string {
 	return VirtualScheme + "://" + url.PathEscape(hostID) + "/" + url.PathEscape(localID)
 }
 
+// SplitBackendURL is the inverse of BackendURL: it reports the pair a
+// runner:// URL addresses. Any other URL is not a runner's.
+func SplitBackendURL(raw string) (hostID, localID string, ok bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != VirtualScheme {
+		return "", "", false
+	}
+	hostID, err = url.PathUnescape(u.Host)
+	if err != nil {
+		return "", "", false
+	}
+	localID, _ = splitLocalID(u.Path)
+	if hostID == "" || localID == "" {
+		return "", "", false
+	}
+	return hostID, localID, true
+}
+
 // ErrNotConnected reports a pair whose connection is gone. Selection is
 // a snapshot, so a runner can disappear between choosing and dialing.
 var ErrNotConnected = errors.New("runners: no attach connection for the selected runner")

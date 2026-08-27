@@ -31,6 +31,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 	if deps.Sessions == nil {
 		deps.Sessions = NewSessionAuth()
 	}
+	registerOptOutRoutes(mux, deps)
 	mux.HandleFunc("POST /member/v1/auth/nonce", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			MemberEthAddress string `json:"member_eth_address"`

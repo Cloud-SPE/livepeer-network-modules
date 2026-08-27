@@ -213,6 +213,41 @@ func (r *StateRepo) DeleteTemplateOverride(templateID string) error {
 	return deleteKey(r, templateOverridesBucket, templateID)
 }
 
+// Member opt-outs. Only the member writes these, and only ever to
+// decline: there is no opt-in, so an absent record means "the pool's
+// policy applies", not "the member has not chosen yet".
+func (r *StateRepo) PutMemberTemplateOptOut(optOut types.MemberTemplateOptOut) error {
+	if optOut.CreatedAt.IsZero() {
+		optOut.CreatedAt = time.Now().UTC()
+	}
+	return putJSON(r, memberOptOutsBucket, optOut.ID, optOut)
+}
+
+func (r *StateRepo) ListMemberTemplateOptOuts() ([]types.MemberTemplateOptOut, error) {
+	return listJSON(r, memberOptOutsBucket, func(left, right types.MemberTemplateOptOut) bool {
+		return left.ID < right.ID
+	})
+}
+
+func (r *StateRepo) ListMemberTemplateOptOutsFor(memberEthAddress string) ([]types.MemberTemplateOptOut, error) {
+	items, err := r.ListMemberTemplateOptOuts()
+	if err != nil {
+		return nil, err
+	}
+	want := strings.ToLower(strings.TrimSpace(memberEthAddress))
+	out := make([]types.MemberTemplateOptOut, 0, len(items))
+	for _, item := range items {
+		if strings.ToLower(strings.TrimSpace(item.MemberEthAddress)) == want {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func (r *StateRepo) DeleteMemberTemplateOptOut(id string) error {
+	return deleteKey(r, memberOptOutsBucket, id)
+}
+
 func (r *StateRepo) PutTemplateAssignment(assignment types.TemplateAssignment) error {
 	now := time.Now().UTC()
 	if assignment.CreatedAt.IsZero() {

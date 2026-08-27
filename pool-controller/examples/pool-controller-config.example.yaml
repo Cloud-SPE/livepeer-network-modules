@@ -7,6 +7,21 @@ identity:
 # enables and what it charges, through PUT /admin/v1/template-overrides/{id}.
 template_catalog_dir: ../templates
 
+# How many templates a GPU class runs at once (plan 0040 §4.4). Omit to
+# take the built-in stances: the older consumer cards run one workload
+# and nothing else, because they have neither the memory headroom nor
+# the scheduler to share without both tenants suffering; a 4090 or 5090
+# takes a primary plus one low-footprint secondary, which is what
+# stacking exists for. A class named nowhere runs one template.
+#
+# Raising a stance does not by itself stack anything: a template also
+# has to declare that class in its own stacking.secondary_on.
+#
+# placement:
+#   max_templates_per_class:
+#     rtx-4090: 2
+#     h100: 4
+
 admin_auth:
   bearer_token_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
 

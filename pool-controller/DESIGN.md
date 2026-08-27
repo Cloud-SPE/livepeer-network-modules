@@ -44,27 +44,43 @@ Initial implementation scope for plan 0029:
    readiness are not the controller's to send: member hosts attach
    outbound and declare those themselves, and the broker freezes the
    first certified runner's shape into the offer (plan 0043).
-4. Persist startup/reload snapshots of the active Pool config in BoltDB so
+4. Decide which workload runs on which GPU, from facts the pool already
+   holds: the hardware a member's agent declared at attach, the
+   templates this pool enabled, and what members opted out of. No
+   operator chooses a placement — that is what makes onboarding
+   zero-touch. A GPU's driver string is normalised to a pool class
+   (`NVIDIA GeForce RTX 4090` → `rtx-4090`); the highest-priority
+   eligible template claims the card as primary, and another rides
+   alongside only where that template names the class in
+   `stacking.secondary_on` AND the class's stance allows a second.
+   Every decision carries a reason code, so "why is my card idle" has
+   an answer without reading the policy.
+
+   A member may opt OUT of a template and never in: opting in would let
+   scarce high-demand capacity go to whoever asked first rather than to
+   policy, while a member who does not want a workload on their card is
+   entitled to refuse.
+
+   Withdrawing a placement DRAINS it rather than deleting it. The
+   member's container is still serving and the broker is still
+   dispatching to it; removing the record would strand in-flight work.
+
+5. Persist startup/reload snapshots of the active Pool config in BoltDB so
    operator state survives process restarts. There is no rendered broker
    config to snapshot — see item 3.
-5. Persist backend-selection state records keyed by
+6. Persist backend-selection state records keyed by
    `(member, backend, capability_id, offering_id)` so later Pool scoring,
    probe, and outcome-ingest work has a durable state boundary. The key
    survived the deletion of the `MemberBackend` registry it once joined
    against; scoring is being re-expressed against template assignments and
    the broker's attached runners (plan 0044 §3.5).
-6. Expose a read-only admin snapshot of persisted backend-selection state so
+7. Expose a read-only admin snapshot of persisted backend-selection state so
    future broker pollers can integrate against a stable controller surface.
-7. Expose operator override endpoints for quarantine, drain, warm-up, and
+8. Expose operator override endpoints for quarantine, drain, warm-up, and
    max-share-cap updates against persisted backend-selection state.
-8. Expose a conservative backend-outcome ingest API that updates persisted
+9. Expose a conservative backend-outcome ingest API that updates persisted
    backend-selection records with real-traffic timestamps and persisted
    rolling-window / EMA-backed scoring updates.
-9. Add an opt-in synthetic probe scaffold that discovers in-scope
-   OpenAI offerings from config, executes concrete chat/embeddings probes plus
-   partial audio-family probes, explicitly skips unsupported audio subtypes,
-   and writes synthetic-confidence observations back into persisted
-   backend-selection state.
 10. Expose explicit receipt-write APIs so later broker/accounting integrations
    have a durable, idempotent storage boundary.
 11. Expose a manual round-close API that derives member payouts from included

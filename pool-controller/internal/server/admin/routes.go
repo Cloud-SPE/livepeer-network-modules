@@ -49,7 +49,9 @@ func redactHostEnrollments(in []types.HostEnrollment) []hostEnrollmentView {
 
 type Deps struct {
 	// Catalog is the curated template catalog, loaded from files.
-	Catalog           *templates.Catalog
+	Catalog *templates.Catalog
+	// Stances overrides how many templates a GPU class runs at once.
+	Stances           map[string]int
 	Repo              *repo.StateRepo
 	WrapAuth          func(http.HandlerFunc) http.HandlerFunc
 	Session           *SessionAuth
@@ -211,6 +213,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 	// The catalog is read-only over HTTP: it is files in the repo,
 	// reviewed in version control. What an operator changes at runtime
 	// is the override — enable it, price it, add metadata.
+	registerPlacementRoutes(mux, deps, auth)
 	mux.HandleFunc("GET /admin/v1/template-catalog", auth(func(w http.ResponseWriter, _ *http.Request) {
 		overrides, err := deps.Repo.ListTemplateOverrides()
 		if err != nil {

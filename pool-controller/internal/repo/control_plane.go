@@ -23,6 +23,7 @@ const (
 	hostEnrollmentsBucket     = "host_enrollments"
 	hardwareUnitsBucket       = "hardware_units"
 	templateOverridesBucket   = "template_overrides"
+	memberOptOutsBucket       = "member_template_opt_outs"
 	templateAssignmentsBucket = "template_assignments"
 	certificationRunsBucket   = "certification_runs"
 	settlementWindowsBucket   = "settlement_windows"
@@ -37,6 +38,7 @@ func (r *StateRepo) initControlPlaneBuckets(tx *bolt.Tx) error {
 		hostEnrollmentsBucket,
 		hardwareUnitsBucket,
 		templateOverridesBucket,
+		memberOptOutsBucket,
 		templateAssignmentsBucket,
 		certificationRunsBucket,
 		settlementWindowsBucket,

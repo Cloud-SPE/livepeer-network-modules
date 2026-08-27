@@ -3,6 +3,9 @@ package config
 import "strings"
 
 type Config struct {
+	// Placement is the pool's stacking policy (plan 0040 §4.4). Empty
+	// means the built-in stances apply.
+	Placement Placement `yaml:"placement,omitempty" json:"placement,omitempty"`
 	// TemplateCatalogDir is the directory of curated workload
 	// templates (plan 0044 §3.2). Empty means this pool ships no
 	// catalog, which is a valid state for a controller that only does
@@ -111,6 +114,14 @@ func (b Bootstrap) BrokerTargets() []Broker {
 		Auth:      b.BrokerAdminAuth,
 		TimeoutMS: b.BrokerAdminTimeoutMS,
 	}}
+}
+
+// Placement overrides how many templates a GPU class runs at once.
+// Keys are pool GPU classes ("rtx-4090"); a class not named here keeps
+// its built-in stance, and a class the pool has no stance for at all
+// runs one template.
+type Placement struct {
+	MaxTemplatesPerClass map[string]int `yaml:"max_templates_per_class,omitempty" json:"max_templates_per_class,omitempty"`
 }
 
 type WorkUnit struct {

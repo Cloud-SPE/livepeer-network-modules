@@ -510,6 +510,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 	adminserver.Register(mux, adminserver.Deps{
 		Repo:            state.repo,
 		Catalog:         state.catalog,
+		Stances:         placementStances(cfg),
 		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
 		Session:         state.session,
 		RefreshRendered: func(source string) error { return state.RefreshRenderedFromState(source) },
@@ -3198,4 +3199,14 @@ func displayCatalogDir(dir string) string {
 		return "(no template_catalog_dir configured)"
 	}
 	return dir
+}
+
+// placementStances reads the pool's stacking overrides. A controller
+// with no placement config uses the built-in stances from plan 0040
+// §4.4.
+func placementStances(cfg *config.Config) map[string]int {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.Placement.MaxTemplatesPerClass
 }

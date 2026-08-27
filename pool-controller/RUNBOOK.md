@@ -292,6 +292,82 @@ Useful admin reads while triaging:
   `pool-payout-executor` RUNBOOK for response playbooks)
 - `GET /admin/v1/payout-rounds?with_alerts=true` — round-level failure pressure
 
+## Graduating to automatic payouts
+
+Money leaving the pool is the one action nobody can undo, so approval
+starts entirely human and the pool earns its way out of that. Each phase
+below has an exit criterion you can check and a way to stop.
+
+The kill switch at every phase is the same: create the file named by
+`payouts.pause_path`. Its presence refuses every automatic approval
+until it is removed. It needs no deploy, no restart, and no code change,
+which is the point — an operator who does not trust what automation is
+doing must be able to stop it in one command.
+
+`payouts.policy_path` points at `payout-policy.json`. It is strict:
+unknown fields are rejected, `auto_approve.enabled` without
+`max_batch_wei` is refused as a half-written config rather than read as
+"any amount", and a file that cannot be parsed fails the read instead of
+silently becoming a policy that approves nothing while looking
+configured. The file's SHA-256 is recorded beside every decision it
+makes, so an audit can prove which rules were in force at the time.
+
+### Phase 0 — shadow
+
+```json
+{ "shadow": true,
+  "auto_approve": { "enabled": true, "max_batch_wei": "...", "require_scale_gte": 0.99 } }
+```
+
+The policy runs and records what it WOULD have approved. It approves
+nothing. Humans keep approving every batch as before.
+
+**Exit criterion:** at least four consecutive settlement windows where
+every batch the policy would have approved was also approved by a
+person, and every batch a person held was also refused by the policy.
+Zero divergence, in both directions. Read them from the audit trail —
+`kind=payout_policy_decision` beside the human approvals.
+
+Divergence in the direction of "the policy would have approved something
+a person held" is the one that matters. Investigate it before restarting
+the count; it usually means a bound is too loose or an anomaly is not
+being detected.
+
+### Phase 1 — automatic within tight bounds
+
+Set `shadow: false` and keep the bounds well under a typical window:
+`max_batch_wei` around a normal batch, `max_per_member_wei` around a
+normal member's share, `max_batches_per_day` at one or two,
+`require_scale_gte` at 0.99 or higher. Anything larger, anomalous, or
+short still goes to a person, and that is the design rather than a
+limitation.
+
+**Exit criterion:** four more windows with no batch that later needed
+reversing, and no operator intervention that the policy should have
+caught.
+
+### Phase 2 — widen
+
+Raise the bounds to cover the ordinary case, guided by what the audit
+shows about real batch sizes. Do not raise `require_scale_gte` — that
+one is not a bound on size, it is the check that the pool collected what
+it is about to pay out.
+
+**Exit criterion:** the only batches still reaching a human are ones you
+would want a human to see.
+
+### Phase 3 — automatic except by exception
+
+`auto_approve` unbounded except `require_scale_gte` and
+`max_batches_per_day`. Human approval remains for held windows, which
+means: attribution anomalies, and windows whose settlement scale came in
+short. Those are the cases where the pool would be paying out money it
+did not collect, and no bound makes them safe to automate.
+
+**At every phase**, `max_batches_per_day` stays set. It is not a trust
+measure, it is a blast radius: it bounds how much a bug can move before
+someone notices.
+
 ## Recovery notes
 
 - `pool-controller` restarts are safe if `--data-dir` is persisted.

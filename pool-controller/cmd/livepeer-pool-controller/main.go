@@ -512,13 +512,15 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		PublicBrokerQUICAddr: publicBrokerQUICAddr,
 	})
 	adminserver.Register(mux, adminserver.Deps{
-		Repo:            state.repo,
-		Catalog:         state.catalog,
-		Stances:         placementStances(cfg),
-		Ladder:          ladderService(state, cfg),
-		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
-		Session:         state.session,
-		RefreshRendered: func(source string) error { return state.RefreshRenderedFromState(source) },
+		Repo:             state.repo,
+		Catalog:          state.catalog,
+		Stances:          placementStances(cfg),
+		Ladder:           ladderService(state, cfg),
+		PayoutPolicyPath: payoutPolicyPath(cfg),
+		PayoutPausePath:  payoutPausePath(cfg),
+		WrapAuth:         func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
+		Session:          state.session,
+		RefreshRendered:  func(source string) error { return state.RefreshRenderedFromState(source) },
 		GetOfferingsJSON: func() ([]byte, error) {
 			offerings, err := buildOfferingViewsFromState(state.repo, state.catalog)
 			if err != nil {
@@ -3270,4 +3272,18 @@ func runLadderLoop(ctx context.Context, state *runtimeState, cfg *config.Config,
 				summary.Seeded, summary.Evaluated, len(summary.Transitions))
 		}
 	}
+}
+
+func payoutPolicyPath(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Payouts.PolicyPath
+}
+
+func payoutPausePath(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Payouts.PausePath
 }

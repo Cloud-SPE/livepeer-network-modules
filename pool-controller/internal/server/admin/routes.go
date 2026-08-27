@@ -53,7 +53,12 @@ type Deps struct {
 	// Stances overrides how many templates a GPU class runs at once.
 	Stances map[string]int
 	// Ladder moves placements between trust states.
-	Ladder            LadderRunner
+	Ladder LadderRunner
+	// PayoutPolicyPath and PayoutPausePath are payout-policy.json and
+	// its kill switch. Empty means no automatic approval, which is the
+	// state every pool starts in.
+	PayoutPolicyPath  string
+	PayoutPausePath   string
 	Repo              *repo.StateRepo
 	WrapAuth          func(http.HandlerFunc) http.HandlerFunc
 	Session           *SessionAuth
@@ -217,6 +222,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 	// is the override — enable it, price it, add metadata.
 	registerPlacementRoutes(mux, deps, auth)
 	registerLadderRoutes(mux, deps, auth)
+	registerPayoutPolicyRoutes(mux, deps, auth)
 	mux.HandleFunc("GET /admin/v1/template-catalog", auth(func(w http.ResponseWriter, _ *http.Request) {
 		overrides, err := deps.Repo.ListTemplateOverrides()
 		if err != nil {

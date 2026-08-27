@@ -3,6 +3,8 @@ package config
 import "strings"
 
 type Config struct {
+	// Payouts configures automatic payout approval (plan 0044 §3.7).
+	Payouts Payouts `yaml:"payouts,omitempty" json:"payouts,omitempty"`
 	// Ladder is the pool's trust policy (plan 0044 §3.5). Empty takes
 	// the defaults from plan 0040 §8.3.
 	Ladder Ladder `yaml:"ladder,omitempty" json:"ladder,omitempty"`
@@ -141,6 +143,21 @@ type Ladder struct {
 	ActiveShareCapPPM      uint64  `yaml:"active_share_cap_ppm,omitempty" json:"active_share_cap_ppm,omitempty"`
 	// EvaluationIntervalMS is how often the ladder runs. 0 takes 60s.
 	EvaluationIntervalMS int `yaml:"evaluation_interval_ms,omitempty" json:"evaluation_interval_ms,omitempty"`
+}
+
+// Payouts points at payout-policy.json and its pause file. Both empty
+// means approval stays entirely human, which is the default and the
+// state a pool must graduate out of deliberately.
+type Payouts struct {
+	PolicyPath string `yaml:"policy_path,omitempty" json:"policy_path,omitempty"`
+	PausePath  string `yaml:"pause_path,omitempty" json:"pause_path,omitempty"`
+	// AutoCloseWindows closes a settlement window once its rounds are
+	// closed and reconciled, holding it when the scale is short or an
+	// attribution anomaly exists.
+	AutoCloseWindows bool `yaml:"auto_close_windows,omitempty" json:"auto_close_windows,omitempty"`
+	// ScaleToleranceP is how far below 1.0 a settlement scale may fall
+	// before a window is held for a human.
+	ScaleTolerance float64 `yaml:"scale_tolerance,omitempty" json:"scale_tolerance,omitempty"`
 }
 
 type WorkUnit struct {

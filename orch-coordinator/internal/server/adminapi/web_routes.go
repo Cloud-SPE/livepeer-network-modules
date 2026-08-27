@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/providers/brokeradmin"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/published"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/server/adminapi/web"
@@ -36,6 +38,25 @@ type WebDeps struct {
 	OrchEthAddress string
 	SecureOrchURL  string
 	Version        string
+	// Hotzone wires the operator pages that manage runners and offers
+	// over the broker admin API (plan 0043 §3.6). Absent means the
+	// broker admin surface is not configured and those pages are not
+	// registered at all.
+	Hotzone *HotzoneDeps
+}
+
+// HotzoneDeps is the broker-admin half of the console.
+type HotzoneDeps struct {
+	Admin   brokeradmin.Client
+	Brokers []HotzoneBroker
+	Timeout time.Duration
+}
+
+// HotzoneBroker is one broker the console can manage.
+type HotzoneBroker struct {
+	Name          string
+	BaseURL       string
+	Administrable bool
 }
 
 // WebRoutes wires the operator-facing web UI onto the admin mux.
@@ -110,6 +131,16 @@ func (s *Server) WebRoutes(deps WebDeps) error {
 	s.mux.HandleFunc("GET /audit", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		renderPage(w, pages["audit"], buildAuditPage(deps, r))
 	}))
+	if deps.Hotzone != nil {
+		hz := hotzoneDeps{Admin: deps.Hotzone.Admin, Timeout: deps.Hotzone.Timeout}
+		if hz.Timeout <= 0 {
+			hz.Timeout = 10 * time.Second
+		}
+		for _, b := range deps.Hotzone.Brokers {
+			hz.Brokers = append(hz.Brokers, brokerTarget(b))
+		}
+		s.registerHotzoneRoutes(pages, deps, hz)
+	}
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
 	})
@@ -148,6 +179,42 @@ func loadTemplates() (map[string]*template.Template, error) {
 		return nil, fmt.Errorf("read layout: %w", err)
 	}
 	funcs := template.FuncMap{
+		// gib renders a byte count the way an operator reads a GPU spec.
+		"gib": func(b uint64) string {
+			if b == 0 {
+				return "—"
+			}
+			return fmt.Sprintf("%.0f GiB", float64(b)/(1<<30))
+		},
+		// kv renders a declared value compactly: the runner facts these
+		// pages show are strings, string lists, and small objects.
+		"kv": func(v any) string {
+			switch t := v.(type) {
+			case nil:
+				return "—"
+			case string:
+				return t
+			case []any:
+				parts := make([]string, 0, len(t))
+				for _, item := range t {
+					parts = append(parts, fmt.Sprint(item))
+				}
+				return strings.Join(parts, ", ")
+			case map[string]any:
+				keys := make([]string, 0, len(t))
+				for k := range t {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				parts := make([]string, 0, len(keys))
+				for _, k := range keys {
+					parts = append(parts, fmt.Sprintf("%s=%v", k, t[k]))
+				}
+				return strings.Join(parts, " ")
+			default:
+				return fmt.Sprint(t)
+			}
+		},
 		"anchorID": func(parts ...string) string {
 			var b strings.Builder
 			for i, part := range parts {
@@ -166,8 +233,13 @@ func loadTemplates() (map[string]*template.Template, error) {
 			return b.String()
 		},
 	}
+	partial, err := fs.ReadFile(web.FS, "templates/_hotzone.html")
+	if err != nil {
+		return nil, fmt.Errorf("read hotzone partial: %w", err)
+	}
 	out := make(map[string]*template.Template)
-	for _, page := range []string{"overview", "roster", "diff", "audit", "login"} {
+	for _, page := range []string{"overview", "roster", "diff", "audit", "login",
+		"runners", "offers", "enroll", "certification"} {
 		body, err := fs.ReadFile(web.FS, "templates/"+page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", page, err)
@@ -175,6 +247,9 @@ func loadTemplates() (map[string]*template.Template, error) {
 		t, err := template.New(page).Funcs(funcs).Parse(string(layout))
 		if err != nil {
 			return nil, fmt.Errorf("parse layout for %s: %w", page, err)
+		}
+		if _, err := t.Parse(string(partial)); err != nil {
+			return nil, fmt.Errorf("parse hotzone partial for %s: %w", page, err)
 		}
 		if _, err := t.Parse(string(body)); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", page, err)
@@ -784,15 +859,25 @@ func readPublishedPayload(deps WebDeps) *types.ManifestPayload {
 	return &p
 }
 
+// renderPage buffers the render so a template error becomes a clean
+// 500 instead of a half-written page.
+//
+// html/template writes as it executes, so executing straight into the
+// ResponseWriter meant a failure mid-template shipped 200 OK with the
+// page truncated at the failure point and the Go error text pasted into
+// the body — followed by a superfluous WriteHeader. An operator saw a
+// plausible-looking page missing everything below the fault.
 func renderPage(w http.ResponseWriter, tmpl *template.Template, data any) {
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "layout", data); err != nil {
+		http.Error(w, fmt.Sprintf("render: %s", err), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Vary", "Cookie")
-	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
-		http.Error(w, fmt.Sprintf("render: %s", err), http.StatusInternalServerError)
-		return
-	}
+	_, _ = w.Write(buf.Bytes())
 }
 
 func readUploadFlash(r *http.Request) *uploadFlash {

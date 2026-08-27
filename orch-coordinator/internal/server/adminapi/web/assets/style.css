@@ -997,3 +997,21 @@
     padding: 1rem;
   }
 }
+
+/* Hot-zone console: the agent-environment block on Enroll host is the
+   one place an operator copies several lines verbatim, so it gets real
+   pre formatting rather than inheriting inline-code styling. */
+.code-block {
+  background: var(--surface-sunken, rgba(127, 127, 127, 0.12));
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+/* Offer and runner sections stack several tables; keep them apart. */
+.roster + .roster { margin-top: 2rem; }

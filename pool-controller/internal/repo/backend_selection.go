@@ -222,6 +222,30 @@ func (r *StateRepo) GetBackendSelectionState(memberEthAddress, backendID, capabi
 // affected today, because the broker constructs its pool reporter but
 // never emits an outcome through it.
 
+// SeedBackendSelectionState creates the neutral starting row for a
+// placement, or returns the existing one.
+//
+// This is the only thing that creates these rows now. Nothing else
+// does, and ApplyBackendOutcome refuses an unknown one — so a placement
+// without a seeded row means the broker's outcome reports 404 forever
+// and the ladder has no evidence to judge on. The starting values are
+// deliberately neutral: a new runner is neither trusted nor suspected,
+// and it earns its way from the middle.
+func (r *StateRepo) SeedBackendSelectionState(memberEthAddress, backendID, capabilityID, offeringID string) (types.BackendSelectionState, error) {
+	if r == nil || r.db == nil {
+		return types.BackendSelectionState{}, fmt.Errorf("repo is not open")
+	}
+	existing, err := r.GetBackendSelectionState(memberEthAddress, backendID, capabilityID, offeringID)
+	if err == nil {
+		return existing, nil
+	}
+	seeded := defaultBackendSelectionStateValues(memberEthAddress, backendID, capabilityID, offeringID, time.Now().UTC())
+	if err := r.SaveBackendSelectionState(seeded); err != nil {
+		return types.BackendSelectionState{}, err
+	}
+	return r.GetBackendSelectionState(memberEthAddress, backendID, capabilityID, offeringID)
+}
+
 func (r *StateRepo) ApplyBackendOutcome(outcome types.BackendOutcome) (types.BackendSelectionState, error) {
 	if r == nil || r.db == nil {
 		return types.BackendSelectionState{}, fmt.Errorf("repo is not open")

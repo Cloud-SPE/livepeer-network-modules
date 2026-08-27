@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ladder"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	adminserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/admin"
@@ -101,6 +102,9 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	state := &runtimeState{configPath: *configPath, repo: stateRepo, catalog: catalog, adminToken: adminToken}
+	ladderCtx, cancelLadder := context.WithCancel(context.Background())
+	defer cancelLadder()
+	go runLadderLoop(ladderCtx, state, cfg, stderr)
 	state.session = adminserver.NewSessionAuth(func() string {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
@@ -511,6 +515,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		Repo:            state.repo,
 		Catalog:         state.catalog,
 		Stances:         placementStances(cfg),
+		Ladder:          ladderService(state, cfg),
 		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
 		Session:         state.session,
 		RefreshRendered: func(source string) error { return state.RefreshRenderedFromState(source) },
@@ -3209,4 +3214,60 @@ func placementStances(cfg *config.Config) map[string]int {
 		return nil
 	}
 	return cfg.Placement.MaxTemplatesPerClass
+}
+
+// ladderService builds the ladder from the pool's policy.
+func ladderService(state *runtimeState, cfg *config.Config) *ladder.Service {
+	if state == nil || state.repo == nil {
+		return nil
+	}
+	policy := ladder.Policy{}
+	if cfg != nil {
+		policy = ladder.Policy{
+			ProbationSharePPM:      cfg.Ladder.ProbationSharePPM,
+			ProbationMaxInFlight:   cfg.Ladder.ProbationMaxInFlight,
+			ProbationMinJobs:       cfg.Ladder.ProbationMinJobs,
+			ExplorationPPM:         cfg.Ladder.ExplorationPPM,
+			ScoreFloor:             cfg.Ladder.ScoreFloor,
+			RecertifyAfterFailures: cfg.Ladder.RecertifyAfterFailures,
+			ActiveShareCapPPM:      cfg.Ladder.ActiveShareCapPPM,
+		}
+	}
+	return ladder.New(state.repo, state.catalog, policy)
+}
+
+// runLadderLoop advances placements on a timer.
+//
+// A tick that finds nothing to move is the common case and costs a read
+// of the placement set. The loop never fails the process: a pool whose
+// ladder cannot run keeps serving exactly what it was serving, which is
+// the conservative answer — the alternative is promoting or throttling
+// on stale evidence.
+func runLadderLoop(ctx context.Context, state *runtimeState, cfg *config.Config, stderr io.Writer) {
+	interval := 60 * time.Second
+	if cfg != nil && cfg.Ladder.EvaluationIntervalMS > 0 {
+		interval = time.Duration(cfg.Ladder.EvaluationIntervalMS) * time.Millisecond
+	}
+	svc := ladderService(state, cfg)
+	if svc == nil {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		summary, err := svc.RunOnce()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "ladder run error: %v\n", err)
+			continue
+		}
+		if summary.Seeded > 0 || len(summary.Transitions) > 0 {
+			_, _ = fmt.Fprintf(stderr, "ladder: seeded=%d evaluated=%d moved=%d\n",
+				summary.Seeded, summary.Evaluated, len(summary.Transitions))
+		}
+	}
 }

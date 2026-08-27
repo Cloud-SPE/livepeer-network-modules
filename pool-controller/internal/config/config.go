@@ -3,6 +3,9 @@ package config
 import "strings"
 
 type Config struct {
+	// Ladder is the pool's trust policy (plan 0044 §3.5). Empty takes
+	// the defaults from plan 0040 §8.3.
+	Ladder Ladder `yaml:"ladder,omitempty" json:"ladder,omitempty"`
 	// Placement is the pool's stacking policy (plan 0040 §4.4). Empty
 	// means the built-in stances apply.
 	Placement Placement `yaml:"placement,omitempty" json:"placement,omitempty"`
@@ -122,6 +125,22 @@ func (b Bootstrap) BrokerTargets() []Broker {
 // runs one template.
 type Placement struct {
 	MaxTemplatesPerClass map[string]int `yaml:"max_templates_per_class,omitempty" json:"max_templates_per_class,omitempty"`
+}
+
+// Ladder configures how a placement earns its way from a first
+// certification to a real share of traffic. A zero field means "not
+// configured" and takes the default — not "zero", which for a probation
+// share would starve the very evidence promotion needs.
+type Ladder struct {
+	ProbationSharePPM      uint64  `yaml:"probation_share_ppm,omitempty" json:"probation_share_ppm,omitempty"`
+	ProbationMaxInFlight   int     `yaml:"probation_max_in_flight,omitempty" json:"probation_max_in_flight,omitempty"`
+	ProbationMinJobs       int     `yaml:"probation_min_jobs,omitempty" json:"probation_min_jobs,omitempty"`
+	ExplorationPPM         uint64  `yaml:"exploration_ppm,omitempty" json:"exploration_ppm,omitempty"`
+	ScoreFloor             float64 `yaml:"score_floor,omitempty" json:"score_floor,omitempty"`
+	RecertifyAfterFailures int     `yaml:"recertify_after_failures,omitempty" json:"recertify_after_failures,omitempty"`
+	ActiveShareCapPPM      uint64  `yaml:"active_share_cap_ppm,omitempty" json:"active_share_cap_ppm,omitempty"`
+	// EvaluationIntervalMS is how often the ladder runs. 0 takes 60s.
+	EvaluationIntervalMS int `yaml:"evaluation_interval_ms,omitempty" json:"evaluation_interval_ms,omitempty"`
 }
 
 type WorkUnit struct {

@@ -1,0 +1,112 @@
+{
+  "contract_version": "1.0",
+  "credential": {
+    "kind": "bearer",
+    "token": "lpc_testtoken"
+  },
+  "host_id": "host-3f9a",
+  "agent_version": "pool-member-agent/test",
+  "hardware": [
+    {
+      "gpu_uuid": "GPU-8f3c2a1e-4b7d-4e9f-a0c1-2d3e4f5a6b7c",
+      "gpu_model": "NVIDIA H100 80GB HBM3",
+      "vram_bytes": 85899345920,
+      "driver": "560.35.03",
+      "facts": {
+        "source": "nvidia-smi"
+      }
+    }
+  ],
+  "capabilities": [
+    {
+      "capability_id": "openai:chat-completions",
+      "protocol": "paid-job/v1",
+      "local_id": "chat",
+      "transports": [
+        "unary",
+        "stream"
+      ],
+      "work_unit": {
+        "name": "tokens",
+        "extractor": {
+          "field": "total_tokens",
+          "type": "openai-usage"
+        }
+      },
+      "paths": {
+        "invoke": "/v1/chat/completions"
+      },
+      "readiness": {
+        "type": "http-openai-model-ready",
+        "path": "/v1/models",
+        "config": {
+          "model": "llama-3-8b"
+        }
+      },
+      "identity": {
+        "openai.model": "llama-3-8b"
+      },
+      "schema_versions": {
+        "paid-job/v1": "1.0.15"
+      }
+    },
+    {
+      "capability_id": "openai:audio-transcriptions",
+      "protocol": "paid-job/v1",
+      "local_id": "whisper",
+      "transports": [
+        "multipart"
+      ],
+      "work_unit": {
+        "name": "seconds",
+        "extractor": {
+          "file_field": "file",
+          "type": "multipart-audio-duration",
+          "unit": "seconds"
+        }
+      },
+      "paths": {
+        "invoke": "/v1/audio/transcriptions"
+      },
+      "readiness": {
+        "type": "http-openai-model-ready",
+        "path": "/v1/models",
+        "config": {
+          "model": "whisper-large-v3"
+        }
+      },
+      "identity": {
+        "openai.model": "whisper-large-v3"
+      },
+      "schema_versions": {
+        "paid-job/v1": "1.0.15"
+      }
+    },
+    {
+      "capability_id": "video:transcode.abr",
+      "protocol": "paid-job/v1",
+      "local_id": "abr",
+      "transports": [
+        "multipart"
+      ],
+      "work_unit": {
+        "name": "output_seconds",
+        "extractor": {
+          "type": "ffmpeg-progress",
+          "unit": "out_time_seconds"
+        }
+      },
+      "paths": {
+        "invoke": "/transcode"
+      },
+      "readiness": {
+        "type": "http-status",
+        "path": "/healthz"
+      },
+      "identity": {},
+      "schema_versions": {
+        "paid-job/v1": "1.0.15"
+      }
+    }
+  ]
+}

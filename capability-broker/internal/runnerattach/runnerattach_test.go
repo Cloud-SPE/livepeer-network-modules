@@ -274,3 +274,42 @@ func TestProjectionAndDiff(t *testing.T) {
 		t.Fatalf("diff %+v", d)
 	}
 }
+
+// The reference agent's real output must be accepted by the reference
+// broker. Both sides are written against the spec and never import each
+// other, so this is the only place the two implementations actually
+// meet — a profile that drifts from the contract fails here instead of
+// at a member's first attach.
+func TestReferenceAgentDocumentsAreAccepted(t *testing.T) {
+	dir := filepath.Join("..", "..", "..", "pool-member-agent", "testdata", "attach")
+	docs, _ := filepath.Glob(filepath.Join(dir, "*.json"))
+	if len(docs) == 0 {
+		t.Skip("pool-member-agent goldens not present")
+	}
+	known := testKnown()
+	// The agent's profiles name real extractors and probes; the fake
+	// registry above knows only a few, so widen it to what the broker
+	// actually ships for this check.
+	for _, name := range []string{"multipart-audio-duration", "request-formula", "bytes-counted"} {
+		n := name
+		prev := known.Extractor
+		known.Extractor = func(x string) bool { return x == n || prev(x) }
+	}
+	for _, path := range docs {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, res := Evaluate(raw, known)
+			if res.Document != "accepted" || doc == nil {
+				t.Fatalf("agent document rejected: %+v", res.Reasons)
+			}
+			for _, c := range res.Capabilities {
+				if c.Status != "accepted" {
+					t.Fatalf("agent capability %q rejected: %+v", c.LocalID, c.Reasons)
+				}
+			}
+		})
+	}
+}

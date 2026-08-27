@@ -265,8 +265,8 @@ func TestEnrollmentTokenPrefersTheFileOverTheEnvironment(t *testing.T) {
 		t.Fatalf("enrollmentToken() = %q, want the environment token", got)
 	}
 
-	// A named file that is not there must not silently fall back to a
-	// value the operator did not mean to use... but it does today.
+	// A path that names no file leaves the variable as the only token
+	// on offer, which is what a host mid-bundle-install has.
 	t.Setenv("POOL_ENROLLMENT_TOKEN_FILE", filepath.Join(t.TempDir(), "missing"))
 	if got := enrollmentToken(); got != "from-env" {
 		t.Fatalf("enrollmentToken() = %q", got)

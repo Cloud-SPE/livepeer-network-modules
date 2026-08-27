@@ -192,6 +192,44 @@ func (s *Service) CreateEnrollment(req CreateEnrollmentRequest) (CreateEnrollmen
 	return CreateEnrollmentResult{Enrollment: enrollment, Token: token}, nil
 }
 
+// Rotate issues a fresh enrollment token and broker session credential
+// for an existing host, invalidating the old pair.
+//
+// Both secrets rotate together on purpose. They are handed to the same
+// host at the same time and a member who rotates because one may have
+// leaked has no way to know it was only one — rotating half would leave
+// them believing they had recovered when they had not.
+//
+// The new token is returned once and stored only as a hash, so this is
+// the sole moment it exists anywhere the member can read it.
+func (s *Service) Rotate(enrollmentID string) (types.HostEnrollment, string, error) {
+	enrollment, err := s.repo.GetHostEnrollment(strings.TrimSpace(enrollmentID))
+	if err != nil {
+		return types.HostEnrollment{}, "", err
+	}
+	switch enrollment.Status {
+	case types.HostEnrollmentRevoked, types.HostEnrollmentRetired:
+		// Rotating a dead enrollment would quietly revive it.
+		return types.HostEnrollment{}, "", fmt.Errorf("enrollment %s is %s", enrollment.ID, enrollment.Status)
+	}
+	token, err := randomHex(32)
+	if err != nil {
+		return types.HostEnrollment{}, "", err
+	}
+	sessionCred, err := randomHex(32)
+	if err != nil {
+		return types.HostEnrollment{}, "", err
+	}
+	now := s.now()
+	enrollment.EnrollmentTokenHash = HashToken(token)
+	enrollment.BrokerSessionCredential = sessionCred
+	enrollment.UpdatedAt = now
+	if err := s.repo.PutHostEnrollment(enrollment); err != nil {
+		return types.HostEnrollment{}, "", err
+	}
+	return enrollment, token, nil
+}
+
 // GetEnrollmentForToken validates a host enrollment bearer token and returns
 // the matching enrollment. Enrollment tokens are host-side credentials; member
 // dashboard actions should continue to use member authentication.

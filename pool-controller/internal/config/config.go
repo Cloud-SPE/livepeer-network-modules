@@ -33,7 +33,16 @@ type Identity struct {
 type Listen struct {
 	Paid       string `yaml:"paid,omitempty"`
 	Metrics    string `yaml:"metrics,omitempty"`
-	WorkerQUIC string `yaml:"worker_quic,omitempty"`
+	WorkerQUIC string `yaml:"worker_quic,omitempty"` // optional UDP listener for connected workers
+	// Member is the public listener: the portal and /member/v1/*, and
+	// nothing else. When set, the admin mux is NOT mounted on it —
+	// which is the point (plan 0044 §3.6). An operator console reachable
+	// from the same address members use is one misconfigured proxy away
+	// from being reachable BY them.
+	//
+	// Empty keeps both surfaces on the paid listener, which is the
+	// single-address deployment and stays supported.
+	Member string `yaml:"member,omitempty"`
 }
 
 type Scoring struct {

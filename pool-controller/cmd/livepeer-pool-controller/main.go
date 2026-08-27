@@ -123,13 +123,30 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 		metricsAddr = ":9090"
 	}
 
-	srv := &http.Server{
-		Addr:    paidAddr,
-		Handler: newServeMux(state),
+	// Split listeners (plan 0044 §3.6). With a member address set, the
+	// admin surface is not mounted on it at all — separation by address
+	// rather than by middleware, so a mistake in an auth check cannot
+	// expose the console to a member.
+	memberAddr := strings.TrimSpace(cfg.Listen.Member)
+	var srv *http.Server
+	var memberSrv *http.Server
+	if memberAddr != "" && memberAddr != paidAddr {
+		srv = &http.Server{Addr: paidAddr, Handler: newAdminServeMux(state)}
+		memberSrv = &http.Server{Addr: memberAddr, Handler: newMemberServeMux(state)}
+	} else {
+		srv = &http.Server{Addr: paidAddr, Handler: newServeMux(state)}
 	}
 	metricsSrv := newMetricsServer(metricsAddr)
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
+	if memberSrv != nil {
+		go func() {
+			_, _ = fmt.Fprintf(stdout, "listening on %s (member)\n", memberAddr)
+			if err := memberSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("listen member: %w", err)
+			}
+		}()
+	}
 	go func() {
 		_, _ = fmt.Fprintf(stdout, "listening on %s\n", metricsAddr)
 		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -495,8 +512,36 @@ func countPersistedEntities(stateRepo *repo.StateRepo, catalog *templates.Catalo
 	return len(members), len(units), len(brokerpush.BuildOffersFromCatalog(catalog.All(), overrides)), nil
 }
 
+// newServeMux mounts both surfaces on one listener. This is the
+// single-address deployment; see newAdminServeMux / newMemberServeMux
+// for the split.
 func newServeMux(state *runtimeState) *http.ServeMux {
 	mux := http.NewServeMux()
+	registerMemberSurface(mux, state)
+	registerAdminSurface(mux, state)
+	return mux
+}
+
+// newAdminServeMux is the operator console and admin API only.
+func newAdminServeMux(state *runtimeState) *http.ServeMux {
+	mux := http.NewServeMux()
+	// The public read-only surface is registered by the admin surface:
+	// it is the pool's shop window, and a member listener that served
+	// it would be answering questions about other members.
+	registerAdminSurface(mux, state)
+	return mux
+}
+
+// newMemberServeMux is the public member listener. It carries no admin
+// route at all — separation by address, not by an auth check that could
+// be got wrong.
+func newMemberServeMux(state *runtimeState) *http.ServeMux {
+	mux := http.NewServeMux()
+	registerMemberSurface(mux, state)
+	return mux
+}
+
+func registerMemberSurface(mux *http.ServeMux, state *runtimeState) {
 	cfg, _, _ := state.Snapshot()
 	var publicControllerURL, publicBrokerURL, publicBrokerQUICAddr string
 	if cfg != nil {
@@ -511,6 +556,10 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		PublicBrokerURL:      publicBrokerURL,
 		PublicBrokerQUICAddr: publicBrokerQUICAddr,
 	})
+}
+
+func registerAdminSurface(mux *http.ServeMux, state *runtimeState) {
+	cfg, _, _ := state.Snapshot()
 	adminserver.Register(mux, adminserver.Deps{
 		Repo:             state.repo,
 		Catalog:          state.catalog,
@@ -1565,7 +1614,6 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			SnapshotID: latest.ID,
 		})
 	}))
-	return mux
 }
 
 func withAdminAuth(state *runtimeState, next http.HandlerFunc) http.HandlerFunc {

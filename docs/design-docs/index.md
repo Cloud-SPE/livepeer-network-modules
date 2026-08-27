@@ -14,7 +14,14 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [pricing-overview.md](./pricing-overview.md) | active | End-to-end synthesis: how price flows from `host-config.yaml` through manifest, discovery, headers, extractors, protocols, session, debit, settlement, and pool receipts |
 | [backend-health.md](./backend-health.md) | active | Three-layer health model (manifest / live / failure-rate) — which layer answers which routing question |
 | [trust-model.md](./trust-model.md) | active | Cold-key + sign-cycle deep dive; threat model and what each invariant defends against |
-| [runner-declared-capabilities.md](./runner-declared-capabilities.md) | active | What the runner owns vs the operator, and the `paid-session` §7.1.1 self-description that removes the hand-transcribed facts (read-diff-never-adopt) |
+- [`migrating-to-connected-runners.md`](./migrating-to-connected-runners.md)
+  — what an existing deployment must change for plan 0043, and what it
+  can delete. No backward compatibility; read this before upgrading.
+- Runner-declared capabilities → **superseded by plan 0043**. The
+  contract is
+  [`livepeer-network-protocol/protocols/runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md);
+  the original argument is archived at
+  [`../references/archived/runner-declared-capabilities.md`](../references/archived/runner-declared-capabilities.md).
 | [dual-meter-trust.md](./dual-meter-trust.md) | active | Economic trust for the v1 protocols: dual meters, admission-edge billing, claims-vs-bills, tolerance band + bounded exposure |
 | [ui-design-system.md](./ui-design-system.md) | active | Shared visual system for all operator and product UIs, aligned to current Livepeer brand and explorer surfaces |
 | [frontend-dom-and-css-invariants.md](./frontend-dom-and-css-invariants.md) | active | Repo-wide frontend implementation contract: light DOM only, semantic HTML only, no inline CSS, styling only from checked-in CSS files |

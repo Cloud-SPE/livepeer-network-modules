@@ -8,6 +8,10 @@ broker or `payment-daemon`; they run a generated bundle containing
 
 The replacement design and rollout plan lives in
 [`../exec-plans/active/0040-pool-template-connected-worker-reset.md`](../exec-plans/active/0040-pool-template-connected-worker-reset.md).
+Plan 0043 changed how a member's capabilities reach the broker: the
+controller no longer renders the broker's config file, and runners
+declare themselves at attach. See
+[`../exec-plans/active/0043-connected-runners-and-offer-manifest.md`](../exec-plans/active/0043-connected-runners-and-offer-manifest.md).
 
 ## 1. Member signup and activation
 
@@ -21,10 +25,15 @@ Member signup is wallet-first and outbound-only:
    `GET /member/v1/enrollments/{id}/bundle`.
 5. The member runs `docker compose up`; no DNS, TLS, broker, or
    `payment-daemon` setup is required on the member host.
-6. `pool-member-agent` reports GPU inventory to
-   `POST /member/v1/enrollments/{id}/hardware`.
-7. The operator assigns templates to hardware units, runs certification via the
-   broker tunnel, and promotes passing assignments to probationary/active.
+6. `pool-member-agent` attaches outbound to the broker and sends its
+   attach document — GPU inventory and what each local runner is
+   ([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md)).
+   Hardware reaches the controller by relay from the broker, so what the
+   controller records is what the broker matched offers against.
+7. The broker matches the runner to the pool's offers, runs the
+   certification steps the offer carries, and the first pass freezes the
+   runner-declared shape into that offer. The operator promotes passing
+   assignments to probationary/active.
 
 GPU UUID uniqueness is enforced per ETH address boundary in the controller:
 the same self-reported NVIDIA GPU UUID cannot be enrolled under multiple ETH
@@ -47,15 +56,16 @@ sequenceDiagram
     participant Runner as local workload container
     participant PD as payment-daemon
 
-    Agent->>CB: outbound worker session<br/>WebSocket or QUIC
-    Agent->>PC: hardware inventory report
-    PC->>CB: rendered broker config<br/>worker://assignment backends
+    Agent->>CB: attach document<br/>WebSocket or QUIC
+    PC->>CB: PUT offers + credentials<br/>(admin API)
+    CB->>CB: match → certify → freeze
+    PC->>CB: read runners (hardware relay)
 
     GW->>CB: POST /v1/cap + payment
     CB->>CB: selectBackend()<br/>health + pool score + max_in_flight
     CB->>PD: ProcessPayment
     CB->>PC: upsert stub work receipt
-    CB->>Agent: virtual-backend request over tunnel
+    CB->>Agent: request over tunnel<br/>Livepeer-Runner-Local-Id
     Agent->>Runner: local HTTP request
     Runner-->>Agent: response / stream
     Agent-->>CB: response / stream
@@ -72,16 +82,24 @@ virtual backend path. WebRTC media-plane workloads are a separate carve-out:
 UDP/SRTP cannot be solved by the TCP/QUIC byte-stream tunnel alone and needs
 ICE/TURN decisions before pool worker support.
 
-Capacity is operator-controlled. Template defaults and assignment overrides
-render to broker backend fields such as `max_in_flight`; the broker enforces
-that cap before dispatch and holds it through long-lived remote-runner sessions.
+Capacity is operator-controlled and stays that way: it rides the offer
+the controller pushes (`capacity.max_in_flight`), never anything the
+runner declares. The broker enforces the cap before dispatch and holds
+it through long-lived remote-runner sessions. A runner declaring its own
+capacity is deliberately out of scope — it would let a member set what
+the pool sells.
 
 ## 3. Certification and scoring
 
-Certification traffic routes through the broker's virtual-backend dial path,
-because the controller cannot directly reach outbound-only worker services.
-Basic health and smoke checks must pass before an assignment becomes
-probationary. Passing certification starts with small-cap real work; real job
+Certification runs IN the broker, over the runner's own attach
+connection — the controller cannot reach an outbound-only member at all.
+The controller authors the steps as policy on the offer and reads the
+results back; the broker executes them
+([`certification-steps.md`](../../livepeer-network-protocol/protocols/certification-steps.md)).
+Steps are data, so a template ships its own without a controller
+release. Certification traffic is never paid, settled, or receipted.
+A first pass is also what freezes the offer's shape, so an offer with no
+certified runner is never advertised. Passing certification starts with small-cap real work; real job
 outcomes then drive the selection score.
 
 Poor performers are throttled by scoring and can be excluded from selection.
@@ -131,9 +149,13 @@ Code anchors:
 - Enrollment and bundle generation:
   `pool-controller/internal/service/memberenrollment/`
 - Connected pool persistence: `pool-controller/internal/repo/connected_pool.go`
-- Broker config render: `pool-controller/internal/service/brokerrender/`
+- Offer + credential push: `pool-controller/internal/service/brokerpush/`
+- Runner attach: `capability-broker/internal/runnerattach/`, `internal/runners/`
+- Offer engine (match/freeze/eligibility): `capability-broker/internal/offers/`
 - Worker tunnel: `capability-broker/internal/workerconn/`
 - QUIC listener: `capability-broker/internal/server/worker_quic.go`
 - Host agent: `pool-member-agent/`
-- Certification: `pool-controller/internal/service/certification/`
+- Certification policy: `pool-controller/internal/service/brokerpush/certpolicy.go`
+- Certification engine: `capability-broker/internal/certification/`
+- Certification ladder: `pool-controller/internal/service/certification/`
 - Settlement: `pool-controller/internal/service/settlement/`

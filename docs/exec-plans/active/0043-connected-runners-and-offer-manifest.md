@@ -2,7 +2,7 @@
 plan: 0043
 title: Connected runners and the offer-only manifest pipeline
 status: active
-phase: planning
+phase: shipped
 opened: 2026-08-26
 owner: harness
 related:
@@ -17,9 +17,21 @@ audience: broker / coordinator / console / registry / pool maintainers, trust-mo
 
 # Plan 0043 — Connected runners and the offer-only manifest pipeline
 
-**Status:** planning — decisions locked 2026-08-26 (§2); no implementation
-started. This is epic 1 of two; epic 2 (pool onboarding simplification)
-builds on §7.
+**Status:** shipped 2026-08-27 — every item in §5 landed; beads
+`lnm-pkv.1`–`.18`. Two follow-ups were split out rather than folded in:
+`lnm-sk7` (delete the broker's legacy `capabilities[]` grammar, which
+needs the conformance fakes to attach first) and `lnm-za5` (the
+coordinator's now-inert broker metadata-discovery plumbing). One item
+was deliberately not done: overlay `pin[]` keeps its current shape,
+because the declared job/session axes it would gain are dropped by the
+envelope's node projection and no consumer reads them (§3.8).
+
+Operators upgrading: see
+[`../../design-docs/migrating-to-connected-runners.md`](../../design-docs/migrating-to-connected-runners.md).
+There is no backward compatibility.
+
+This is epic 1 of two; epic 2 (pool onboarding simplification) builds
+on §7.
 
 ## 1. Purpose
 

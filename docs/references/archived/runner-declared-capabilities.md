@@ -1,7 +1,7 @@
 ---
 title: Runner-declared capabilities — what the runner owns vs what the operator owns
-status: active
-last-reviewed: 2026-08-19
+status: superseded
+last-reviewed: 2026-08-27
 ---
 
 # Runner-declared capabilities
@@ -11,22 +11,31 @@ operator to hand-transcribe facts that only the runner actually knows.
 This doc states the split we should be designing to, the drift it causes
 today, and what is missing to close it.
 
-> **Superseding work (2026-08-26).** Plan 0043 replaces the optional describe
-> path with a mandatory, versioned, outbound attach document for every
-> protocol — see
-> [`livepeer-network-protocol/protocols/runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md).
-> Gap 1 below (version negotiation) closes there via `schema_versions`. This
-> doc is retired once plan 0043 item 18 lands; until then it is the record of
-> why the split exists.
+> **Superseded 2026-08-27 — shipped as plan 0043.** Every gap this doc
+> named is closed, and the split it argued for is now the system:
 >
-> **Implementation status (2026-08-19).** The design below shipped in the same
-> cycle it was written. Runner self-description is now normative in
-> [`paid-session/v1` §7.1.1](../../livepeer-network-protocol/protocols/paid-session.md)
-> and implemented in `capability-broker/internal/sessionengine/describe.go`
-> plus `internal/server/session_engine_init.go`, with the read-diff-never-adopt
-> rule intact. Gaps 2 (declared `session_params` shape), 3 (runner-declared
-> readiness), and 4 (extractors are `paid-job` only) below are **closed**; gap 1
-> (protocol/schema version negotiation) is still open.
+> - The runner declares what it *is* in one versioned attach document
+>   ([`runner-attach.md`](../../../livepeer-network-protocol/protocols/runner-attach.md)),
+>   sent outbound on its own connection. The operator authors offers —
+>   price, capacity, placement — and nothing else.
+> - **Gap 1, version negotiation:** closed. `schema_versions` is
+>   declared per capability and checked at attach; a major mismatch makes
+>   that capability ineligible rather than failing at create time.
+> - The "read, diff, and require acknowledgement" design this doc
+>   proposed became the *freeze*: the first certified runner freezes its
+>   declared shape into the offer, the signature is the acceptance, and a
+>   later runner that disagrees is ineligible — never a manifest change.
+>   Superseding a frozen shape is an explicit operator gesture.
+> - Certification answers the question this doc left open. It said the
+>   deliverable was "a stated, consolidated contract, not a test harness
+>   for other people's code" — and that is still true of *runner*
+>   implementations. What ships is a step engine that proves a *given*
+>   runner can serve a *given* offer before it gets work
+>   ([`certification-steps.md`](../../../livepeer-network-protocol/protocols/certification-steps.md)),
+>   authored by the offer, never by the runner.
+>
+> Kept for provenance: it records why the split exists, which the specs
+> state but do not argue. Do not implement against it.
 
 It deliberately does **not** propose that this repo test runner
 implementations. Runners live outside this repo by design. The protocol

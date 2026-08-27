@@ -48,7 +48,7 @@ flowchart TD
         direction TB
         CB["Capability Broker<br/>(workload-agnostic,<br/>one per host)"]
         WPD["payment-daemon<br/>receiver"]
-        subgraph backends["Backends declared in host-config.yaml"]
+        subgraph backends["Runners — attached outbound, self-declaring"]
             direction LR
             VLLM["vLLM / TGI / etc.<br/>(local)"]
             OAIAPI["OpenAI API<br/>(SaaS)"]
@@ -146,7 +146,7 @@ flowchart LR
     PCB --> MB2
     PCB --> MB3
 
-    PCC -.->|"render broker host-config"| PCB
+    PCC -.->|"push offers + credentials (admin API)"| PCB
     PCC -.->|"exported payout intents"| PPE
     PCB -.->|"stub/final work receipts"| PCC
     PRD -.->|"round timing"| PRC
@@ -173,19 +173,35 @@ Current Pool implementation boundaries:
 
 **One process per host, workload-agnostic.** No per-capability Go code. Core jobs:
 
-1. Read a single `host-config.yaml`.
+1. Read a single `host-config.yaml` — which since plan 0043 carries
+   **offers only**: what is sold, at what price, with what capacity,
+   where, and gated by which certification steps. Runner facts
+   (transports, work unit, extractor, paths, readiness, model identity)
+   are not in it and never were the operator's to know.
 2. Expose `GET /registry/offerings`, `GET /registry/health`, `GET /healthz`,
    `GET /metrics`, plus one canonical path set per protocol
    (`POST /v1/job` for `paid-job/v1`; `POST /v1/session` and
    `/v1/session/{id}/{status,topup,end,events,ws}` for `paid-session/v1` — see
    [`../../livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/)).
-3. Route inbound requests by **`Livepeer-Capability` header** → look up the
-   **backend descriptor** → run the declared **protocol** → forward →
-   return the response.
-4. Report `actualUnits` to co-located `payment-daemon` (receiver) over unix socket — same
+3. Admit runners that attach outbound with a credential and declare
+   themselves
+   ([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md)),
+   match them to offers, certify them, and freeze the first certified
+   runner's declared shape into the offer. A later runner that disagrees
+   is ineligible — never a manifest change.
+4. Route inbound requests by **`Livepeer-Capability` header** → select an
+   eligible attached runner → run the declared **protocol** → forward
+   over that runner's own connection → return the response.
+5. Report `actualUnits` to co-located `payment-daemon` (receiver) over unix socket — same
    socket regardless of capability.
-5. Execute broker-local health probes on cadence and publish normalized
+6. Execute broker-local health probes on cadence and publish normalized
    per-tuple snapshots on `GET /registry/health`.
+
+**The broker contains no workload-specific knowledge.** It once polled
+per-workload discovery endpoints to hydrate what an offering advertised,
+which meant a new workload needed a broker release; a runner declares
+that itself now, and describing a new workload is an adapter profile in
+the agent.
 
 **The broker contains zero routing semantics upstream of normalized health.**
 Capability-specific readiness logic is allowed inside probe recipes, but it

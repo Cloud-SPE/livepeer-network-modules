@@ -121,8 +121,12 @@ health surface."
 
 In practice:
 
-- each tuple in `host-config.yaml` may choose a broker-side probe recipe
-- the probe recipe may be shallow or specialized depending on workload
+- the **runner declares its own readiness recipe** in its attach document
+  (`readiness{type, path, config}`), because the runner is the only party
+  that knows what ready means for it — model loaded, GPU free, queue
+  depth. An operator-authored HTTP-status recipe approximates a fact the
+  runner has exactly.
+- the recipe may be shallow or specialized depending on workload
 - the broker maps the result onto generic outward states:
   `ready`, `draining`, `degraded`, `unreachable`, `stale`
 
@@ -167,8 +171,13 @@ a green `/healthz`.
 This stack is expected to serve capabilities with different definitions
 of "ready". The extensibility point belongs in the broker:
 
-- **operator-facing choice:** `host-config.yaml` selects the probe recipe
-  and thresholds per tuple
+- **runner-facing declaration:** the attach document names the probe
+  recipe (`http-status`, `http-jsonpath`, `http-openai-model-ready`,
+  `tcp-connect`) and its parameters
+  ([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md) §3.2)
+- **operator-facing choice:** the offer's `certification` steps decide
+  how much readiness is *enough* — attempts, interval, consecutive
+  successes — without restating the recipe
 - **core-module implementation:** capability-broker ships the probe
   recipe library and executes probes on cadence
 - **cross-stack contract:** `/registry/health` exposes only normalized

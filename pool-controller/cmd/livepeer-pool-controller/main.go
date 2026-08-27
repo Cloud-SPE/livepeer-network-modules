@@ -3,17 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"os"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,7 +28,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/autodrain"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/backendverify"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokeradmin"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerrender"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerpush"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/probes"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
@@ -90,7 +89,7 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	}
 	defer func() { _ = stateRepo.Close() }()
 
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	rendered, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
 		return err
 	}
@@ -142,78 +141,66 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func renderBrokerState(stateRepo *repo.StateRepo, cfg *config.Config) ([]byte, *types.DesiredBrokerRuntime, error) {
+func buildBrokerPushState(stateRepo *repo.StateRepo, cfg *config.Config) (brokerpush.State, *types.DesiredBrokerRuntime, error) {
 	if stateRepo == nil {
-		return nil, nil, fmt.Errorf("state repo is nil")
+		return brokerpush.State{}, nil, fmt.Errorf("state repo is nil")
 	}
 	offers, err := stateRepo.ListOffers()
 	if err != nil {
-		return nil, nil, err
+		return brokerpush.State{}, nil, err
 	}
 	members, err := stateRepo.ListMembers()
 	if err != nil {
-		return nil, nil, err
+		return brokerpush.State{}, nil, err
 	}
 	backends, err := stateRepo.ListMemberBackends()
 	if err != nil {
-		return nil, nil, err
+		return brokerpush.State{}, nil, err
 	}
 	assignments, err := stateRepo.ListAssignments()
 	if err != nil {
-		return nil, nil, err
+		return brokerpush.State{}, nil, err
 	}
 	poolMembers, err := stateRepo.ListPoolMembers()
 	if err != nil {
-		return nil, nil, err
+		return brokerpush.State{}, nil, err
 	}
 	hostEnrollments, err := stateRepo.ListHostEnrollments()
 	if err != nil {
-		return nil, nil, err
+		return brokerpush.State{}, nil, err
 	}
 	hardwareUnits, err := stateRepo.ListHardwareUnits()
 	if err != nil {
-		return nil, nil, err
+		return brokerpush.State{}, nil, err
 	}
 	templates, err := stateRepo.ListTemplateCatalogEntries()
 	if err != nil {
-		return nil, nil, err
+		return brokerpush.State{}, nil, err
 	}
 	templateAssignments, err := stateRepo.ListTemplateAssignments()
 	if err != nil {
-		return nil, nil, err
+		return brokerpush.State{}, nil, err
 	}
-	result, err := brokerrender.Render(brokerrender.RenderInput{
-		Bootstrap: brokerrender.BootstrapBrokerSettings{
-			Identity:      cfg.Identity,
-			Listen:        cfg.Listen,
-			PaymentDaemon: cfg.PaymentDaemon,
-			ReceiptSink:   cfg.ReceiptSink,
-			AdminAuth:     cfg.Bootstrap.BrokerAdminAuth,
-		},
-		Offers:              offers,
-		Members:             members,
-		Backends:            backends,
-		Assignments:         assignments,
-		PoolMembers:         poolMembers,
-		HostEnrollments:     hostEnrollments,
-		HardwareUnits:       hardwareUnits,
-		Templates:           templates,
-		TemplateAssignments: templateAssignments,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
+	// The controller pushes what it owns. Runner facts — transports,
+	// work unit, extractor, paths, readiness — are not here and never
+	// were the controller's to know: the broker learns them at attach
+	// and freezes them (plan 0043 §3.2, §3.4).
+	push := brokerpush.State{Offers: offers, Enrollments: hostEnrollments}
 	runtimeInfo := &types.DesiredBrokerRuntime{
-		Revision:        result.Revision,
-		RenderedYAML:    string(result.ConfigYAML),
-		RenderedAt:      time.Now().UTC(),
-		OfferCount:      len(offers),
-		MemberCount:     len(members),
-		BackendCount:    len(backends),
-		AssignmentCount: len(assignments),
-		RenderWarnings:  result.Warnings,
+		Revision:            brokerpush.Revision(brokerpush.BuildOffers(offers)),
+		CredentialsRevision: brokerpush.Revision(brokerpush.BuildCredentials(hostEnrollments)),
+		PushedAt:            time.Now().UTC(),
+		OfferCount:          len(offers),
+		CredentialCount:     len(hostEnrollments),
+		MemberCount:         len(members),
 	}
-	return result.ConfigYAML, runtimeInfo, nil
+	_ = assignments
+	_ = poolMembers
+	_ = hardwareUnits
+	_ = templates
+	_ = templateAssignments
+	_ = backends
+	return push, runtimeInfo, nil
 }
 
 type runtimeState struct {
@@ -223,12 +210,11 @@ type runtimeState struct {
 	adminToken string
 	session    *adminserver.SessionAuth
 	cfg        *config.Config
-	rendered   []byte
 	latest     *repo.Snapshot
 	runtime    *types.DesiredBrokerRuntime
 }
 
-func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source string, runtimeInfo *types.DesiredBrokerRuntime) error {
+func (s *runtimeState) Replace(cfg *config.Config, push brokerpush.State, source string, runtimeInfo *types.DesiredBrokerRuntime) error {
 	var latest *repo.Snapshot
 	if s.repo != nil {
 		repo.ApplyBackendSelectionSettings(cfg.Scoring)
@@ -256,27 +242,33 @@ func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source strin
 			return fmt.Errorf("read active config for snapshot: %w", err)
 		}
 		snap := repo.Snapshot{
-			ID:                 time.Now().UTC().Format(time.RFC3339Nano),
-			CreatedAt:          time.Now().UTC(),
-			Source:             source,
-			MemberCount:        len(members),
-			RenderedBytes:      len(rendered),
-			ConfigYAML:         string(configRaw),
-			RenderedBrokerYAML: string(rendered),
+			ID:          time.Now().UTC().Format(time.RFC3339Nano),
+			CreatedAt:   time.Now().UTC(),
+			Source:      source,
+			MemberCount: len(members),
+			ConfigYAML:  string(configRaw),
 		}
 		if err := s.repo.SaveSnapshot(snap); err != nil {
 			return err
 		}
-		if runtimeInfo != nil {
+		latest = &snap
+	}
+	// Push before publishing the new state, so a failed push leaves the
+	// recorded revision carrying its own error rather than claiming a
+	// broker that never received it.
+	if runtimeInfo != nil {
+		if err := s.pushToBroker(cfg, push, runtimeInfo); err != nil {
+			runtimeInfo.PushError = err.Error()
+			log.Printf("broker push failed (%s): %v", source, err)
+		}
+		if s.repo != nil {
 			if err := s.repo.PutDesiredBrokerRuntime(*runtimeInfo); err != nil {
 				return err
 			}
 		}
-		latest = &snap
 	}
 	s.mu.Lock()
 	s.cfg = cfg
-	s.rendered = append([]byte(nil), rendered...)
 	s.latest = latest
 	if runtimeInfo != nil {
 		copyRuntime := *runtimeInfo
@@ -289,7 +281,35 @@ func (s *runtimeState) Replace(cfg *config.Config, rendered []byte, source strin
 	return s.syncAccountingMetrics()
 }
 
-func (s *runtimeState) Snapshot() (*config.Config, []byte, *repo.Snapshot, *types.DesiredBrokerRuntime) {
+// pushToBroker sends the offer set and the credentials that may attach.
+// A controller with no broker admin URL configured simply records the
+// revision: a single-broker dev deployment can still be inspected.
+func (s *runtimeState) pushToBroker(cfg *config.Config, push brokerpush.State, info *types.DesiredBrokerRuntime) error {
+	if cfg == nil || strings.TrimSpace(cfg.Bootstrap.BrokerAdminURL) == "" {
+		return nil
+	}
+	client := brokeradmin.New(
+		cfg.Bootstrap.BrokerAdminURL,
+		cfg.Bootstrap.BrokerAdminAuth,
+		time.Duration(cfg.Bootstrap.BrokerAdminTimeoutMS)*time.Millisecond,
+	)
+	timeout := time.Duration(cfg.Bootstrap.BrokerAdminTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	res, err := brokerpush.Sync(ctx, client, push)
+	info.ChangedOffers = res.OffersChanged
+	info.RevokedHosts = res.RevokedHosts
+	if err != nil {
+		return err
+	}
+	info.PushError = ""
+	return nil
+}
+
+func (s *runtimeState) Snapshot() (*config.Config, *repo.Snapshot, *types.DesiredBrokerRuntime) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var latest *repo.Snapshot
@@ -302,7 +322,7 @@ func (s *runtimeState) Snapshot() (*config.Config, []byte, *repo.Snapshot, *type
 		copyRuntime := *s.runtime
 		runtimeInfo = &copyRuntime
 	}
-	return s.cfg, append([]byte(nil), s.rendered...), latest, runtimeInfo
+	return s.cfg, latest, runtimeInfo
 }
 
 func (s *runtimeState) BackendSelectionSnapshot() (types.BackendSelectionSnapshot, error) {
@@ -310,7 +330,7 @@ func (s *runtimeState) BackendSelectionSnapshot() (types.BackendSelectionSnapsho
 	if err != nil {
 		return types.BackendSelectionSnapshot{}, err
 	}
-	cfg, _, _, _ := s.Snapshot()
+	cfg, _, _ := s.Snapshot()
 	scoring := config.Scoring{}
 	if cfg != nil {
 		scoring = cfg.Scoring
@@ -340,7 +360,7 @@ func (s *runtimeState) BackendSelectionSummary() (backendSelectionSummaryView, e
 	if err != nil {
 		return backendSelectionSummaryView{}, err
 	}
-	cfg, _, _, _ := s.Snapshot()
+	cfg, _, _ := s.Snapshot()
 	if cfg == nil {
 		return buildBackendSelectionSummary(items, config.Scoring{}), nil
 	}
@@ -377,7 +397,7 @@ func (s *runtimeState) ApplySyntheticProbeObservation(observation types.Syntheti
 }
 
 func (s *runtimeState) RunSyntheticProbesOnce(ctx context.Context) (probes.RunSummary, error) {
-	cfg, _, _, _ := s.Snapshot()
+	cfg, _, _ := s.Snapshot()
 	if cfg == nil {
 		return probes.RunSummary{}, fmt.Errorf("config is not loaded")
 	}
@@ -487,7 +507,7 @@ func (s *runtimeState) Reload() error {
 	if err != nil {
 		return err
 	}
-	rendered, runtimeInfo, err := renderBrokerState(s.repo, cfg)
+	rendered, runtimeInfo, err := buildBrokerPushState(s.repo, cfg)
 	if err != nil {
 		return err
 	}
@@ -508,123 +528,15 @@ func (s *runtimeState) RefreshRenderedFromState(source string) error {
 	if cfg == nil {
 		return fmt.Errorf("config is not loaded")
 	}
-	rendered, runtimeInfo, err := renderBrokerState(s.repo, cfg)
+	rendered, runtimeInfo, err := buildBrokerPushState(s.repo, cfg)
 	if err != nil {
 		return err
 	}
 	return s.Replace(cfg, rendered, source, runtimeInfo)
 }
 
-func (s *runtimeState) ApplyDesiredRuntime(desired *types.DesiredBrokerRuntime) error {
-	if desired == nil || strings.TrimSpace(desired.Revision) == "" {
-		return fmt.Errorf("desired broker runtime is not available")
-	}
-	s.mu.RLock()
-	cfg := s.cfg
-	s.mu.RUnlock()
-	if cfg == nil {
-		return fmt.Errorf("config is not loaded")
-	}
-	if err := runBrokerApplyCommand(cfg, s.configPath, desired); err != nil {
-		return err
-	}
-	if err := s.RefreshRenderedFromState("broker-runtime-apply"); err != nil {
-		return err
-	}
-	_, _, _, current := s.Snapshot()
-	if current == nil || strings.TrimSpace(current.Revision) == "" {
-		return fmt.Errorf("desired broker runtime is not available after apply refresh")
-	}
-	if current.Revision != desired.Revision {
-		return fmt.Errorf("desired broker runtime changed during apply: expected %s got %s", desired.Revision, current.Revision)
-	}
-	if strings.TrimSpace(cfg.Bootstrap.BrokerAdminURL) != "" {
-		client := brokeradmin.New(
-			cfg.Bootstrap.BrokerAdminURL,
-			cfg.Bootstrap.BrokerAdminAuth,
-			time.Duration(cfg.Bootstrap.BrokerAdminTimeoutMS)*time.Millisecond,
-		)
-		status, err := client.ReloadAndConfirm(current.Revision)
-		if status != nil {
-			if recordErr := s.recordBrokerRuntimeStatus(status); recordErr != nil {
-				return recordErr
-			}
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *runtimeState) recordBrokerRuntimeStatus(status *brokeradmin.RuntimeStatus) error {
-	if status == nil || s.repo == nil {
-		return nil
-	}
-	applied, _ := s.repo.GetAppliedBrokerRuntime()
-	applied.BrokerReloadAttemptID = strings.TrimSpace(status.LastReloadAttemptID)
-	applied.BrokerLoadedRevision = strings.TrimSpace(status.LoadedRevision)
-	applied.BrokerLoadedAt = status.LoadedAt
-	applied.BrokerReloadStatus = strings.TrimSpace(status.LastReloadStatus)
-	applied.BrokerReloadError = strings.TrimSpace(status.LastReloadError)
-	return s.repo.PutAppliedBrokerRuntime(applied)
-}
-
-func runBrokerApplyCommand(cfg *config.Config, configPath string, desired *types.DesiredBrokerRuntime) error {
-	if cfg == nil || len(cfg.Bootstrap.BrokerApplyCommand) == 0 {
-		return nil
-	}
-	if desired == nil || strings.TrimSpace(desired.Revision) == "" {
-		return fmt.Errorf("desired broker runtime is not available")
-	}
-	tmpFile, err := os.CreateTemp("", "pool-controller-broker-config-*.yaml")
-	if err != nil {
-		return fmt.Errorf("create broker apply temp file: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmpFile.WriteString(desired.RenderedYAML); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("write broker apply temp file: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("close broker apply temp file: %w", err)
-	}
-	timeout := time.Duration(cfg.Bootstrap.BrokerApplyTimeoutMS) * time.Millisecond
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	args := append([]string(nil), cfg.Bootstrap.BrokerApplyCommand...)
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	hash := sha256.Sum256([]byte(desired.RenderedYAML))
-	cmd.Env = append(os.Environ(),
-		"POOL_CONTROLLER_CONFIG_PATH="+configPath,
-		"POOL_CONTROLLER_BROKER_CONFIG_PATH="+tmpPath,
-		"POOL_CONTROLLER_BROKER_DESIRED_REVISION="+desired.Revision,
-		"POOL_CONTROLLER_BROKER_CONFIG_SHA256="+fmt.Sprintf("%x", hash[:]),
-	)
-	cmd.Stdin = strings.NewReader(desired.RenderedYAML)
-	output, err := cmd.CombinedOutput()
-	trimmedOutput := strings.TrimSpace(string(output))
-	if ctx.Err() == context.DeadlineExceeded {
-		if trimmedOutput != "" {
-			return fmt.Errorf("broker apply command timed out after %s: %s", timeout, trimmedOutput)
-		}
-		return fmt.Errorf("broker apply command timed out after %s", timeout)
-	}
-	if err != nil {
-		if trimmedOutput != "" {
-			return fmt.Errorf("broker apply command failed: %w: %s", err, trimmedOutput)
-		}
-		return fmt.Errorf("broker apply command failed: %w", err)
-	}
-	return nil
-}
-
 func (s *runtimeState) syncSelectionMetrics() error {
-	cfg, _, _, _ := s.Snapshot()
+	cfg, _, _ := s.Snapshot()
 	if cfg == nil {
 		return nil
 	}
@@ -676,7 +588,7 @@ func countPersistedEntities(stateRepo *repo.StateRepo) (memberCount, backendCoun
 func newServeMux(state *runtimeState) *http.ServeMux {
 	mux := http.NewServeMux()
 	verifier := backendverify.New(state.repo)
-	cfg, _, _, _ := state.Snapshot()
+	cfg, _, _ := state.Snapshot()
 	var publicControllerURL, publicBrokerURL, publicBrokerQUICAddr string
 	if cfg != nil {
 		publicControllerURL = cfg.Bootstrap.PublicControllerURL
@@ -695,36 +607,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
 		Session:         state.session,
 		RefreshRendered: func(source string) error { return state.RefreshRenderedFromState(source) },
-		GetRuntimeApplyInfo: func() adminserver.RuntimeApplyInfo {
-			cfg, _, _, _ := state.Snapshot()
-			info := adminserver.RuntimeApplyInfo{Mode: "controller-refresh"}
-			if cfg == nil {
-				return info
-			}
-			info.CommandConfigured = len(cfg.Bootstrap.BrokerApplyCommand) > 0
-			info.BrokerAdminConfigured = strings.TrimSpace(cfg.Bootstrap.BrokerAdminURL) != ""
-			switch {
-			case info.CommandConfigured && info.BrokerAdminConfigured:
-				info.Mode = "command+broker-admin"
-				info.TimeoutMS = cfg.Bootstrap.BrokerApplyTimeoutMS
-				if cfg.Bootstrap.BrokerAdminTimeoutMS > info.TimeoutMS {
-					info.TimeoutMS = cfg.Bootstrap.BrokerAdminTimeoutMS
-				}
-			case info.CommandConfigured:
-				info.Mode = "command"
-				info.TimeoutMS = cfg.Bootstrap.BrokerApplyTimeoutMS
-			case info.BrokerAdminConfigured:
-				info.Mode = "broker-admin"
-				info.TimeoutMS = cfg.Bootstrap.BrokerAdminTimeoutMS
-			}
-			return info
-		},
-		ApplyDesiredRuntime: func(desired *types.DesiredBrokerRuntime) error { return state.ApplyDesiredRuntime(desired) },
-		Verifier:            verifier,
-		GetBrokerConfig: func() []byte {
-			_, rendered, _, _ := state.Snapshot()
-			return rendered
-		},
+		Verifier:        verifier,
 		GetMembersJSON: func() ([]byte, error) {
 			members, err := buildMemberViewsFromState(state.repo)
 			if err != nil {
@@ -744,16 +627,15 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			}{Offerings: offerings})
 		},
 		GetStateJSON: func() ([]byte, error) {
-			cfg, rendered, latest, runtimeInfo := state.Snapshot()
+			cfg, latest, runtimeInfo := state.Snapshot()
 			scoring := config.Scoring{}
 			if cfg != nil {
 				scoring = cfg.Scoring
 			}
 			return json.Marshal(struct {
-				MemberCount   int              `json:"member_count"`
-				RenderedBytes int              `json:"rendered_bytes"`
-				Scoring       config.Scoring   `json:"scoring"`
-				Latest        *snapshotSummary `json:"latest_snapshot,omitempty"`
+				MemberCount int              `json:"member_count"`
+				Scoring     config.Scoring   `json:"scoring"`
+				Latest      *snapshotSummary `json:"latest_snapshot,omitempty"`
 			}{
 				MemberCount: func() int {
 					if runtimeInfo != nil && runtimeInfo.MemberCount > 0 {
@@ -765,17 +647,16 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 					}
 					return memberCount
 				}(),
-				RenderedBytes: len(rendered),
-				Scoring:       scoring,
-				Latest:        summarizeSnapshot(latest),
+				Scoring: scoring,
+				Latest:  summarizeSnapshot(latest),
 			})
 		},
 		GetDesiredRuntime: func() (*types.DesiredBrokerRuntime, error) {
-			_, _, _, runtimeInfo := state.Snapshot()
+			_, _, runtimeInfo := state.Snapshot()
 			return runtimeInfo, nil
 		},
 		KillWorkerSession: func(backendID string) error {
-			cfg, _, _, _ := state.Snapshot()
+			cfg, _, _ := state.Snapshot()
 			if cfg == nil || strings.TrimSpace(cfg.Bootstrap.BrokerAdminURL) == "" {
 				return nil
 			}
@@ -792,7 +673,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		_, _ = io.WriteString(w, "ready\n")
 	})
 	mux.HandleFunc("GET /public/v1/summary", func(w http.ResponseWriter, _ *http.Request) {
-		cfg, _, _, runtimeInfo := state.Snapshot()
+		cfg, _, runtimeInfo := state.Snapshot()
 		rounds, err := state.repo.ListRoundReceipts(1)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -810,16 +691,13 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		if cfg != nil {
 			scoring = cfg.Scoring
 		}
-		if runtimeInfo != nil {
-			memberCount = runtimeInfo.MemberCount
-			backendCount = runtimeInfo.BackendCount
+		memberCount, backendCount, offeringCount, err = countPersistedEntities(state.repo)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if runtimeInfo != nil && runtimeInfo.OfferCount > 0 {
 			offeringCount = runtimeInfo.OfferCount
-		} else {
-			memberCount, backendCount, offeringCount, err = countPersistedEntities(state.repo)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
 		}
 		latestRoundID := ""
 		if len(rounds) > 0 {
@@ -921,7 +799,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		})
 	})
 	mux.HandleFunc("GET /admin/v1/scoring-settings", withAdminAuth(state, func(w http.ResponseWriter, _ *http.Request) {
-		cfg, _, _, _ := state.Snapshot()
+		cfg, _, _ := state.Snapshot()
 		scoring := config.Scoring{}
 		if cfg != nil {
 			scoring = cfg.Scoring
@@ -1780,14 +1658,13 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		_, rendered, latest, runtimeInfo := state.Snapshot()
+		_, latest, runtimeInfo := state.Snapshot()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(struct {
-			MemberCount   int    `json:"member_count"`
-			RenderedBytes int    `json:"rendered_bytes"`
-			Status        string `json:"status"`
-			SnapshotID    string `json:"snapshot_id,omitempty"`
+			MemberCount int    `json:"member_count"`
+			Status      string `json:"status"`
+			SnapshotID  string `json:"snapshot_id,omitempty"`
 		}{
 			MemberCount: func() int {
 				if runtimeInfo != nil && runtimeInfo.MemberCount > 0 {
@@ -1799,9 +1676,9 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 				}
 				return memberCount
 			}(),
-			RenderedBytes: len(rendered),
-			Status:        "reloaded",
-			SnapshotID:    latest.ID,
+
+			Status:     "reloaded",
+			SnapshotID: latest.ID,
 		})
 	}))
 	return mux
@@ -1816,7 +1693,7 @@ func runSyntheticProbeLoop(ctx context.Context, state *runtimeState, stderr io.W
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			cfg, _, _, _ := state.Snapshot()
+			cfg, _, _ := state.Snapshot()
 			if cfg == nil || !cfg.SyntheticProbes.Enabled {
 				timer.Reset(interval)
 				continue
@@ -1851,7 +1728,7 @@ func runPolicyLoop(ctx context.Context, state *runtimeState, stderr io.Writer) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
-			cfg, _, _, _ := state.Snapshot()
+			cfg, _, _ := state.Snapshot()
 			if cfg == nil {
 				timer.Reset(interval)
 				continue
@@ -2318,11 +2195,10 @@ type publicWorstOfferingView struct {
 }
 
 type snapshotSummary struct {
-	ID            string    `json:"id"`
-	CreatedAt     time.Time `json:"created_at"`
-	Source        string    `json:"source"`
-	MemberCount   int       `json:"member_count"`
-	RenderedBytes int       `json:"rendered_bytes"`
+	ID          string    `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	Source      string    `json:"source"`
+	MemberCount int       `json:"member_count"`
 }
 
 type workReceiptView struct {
@@ -2941,11 +2817,10 @@ func summarizeSnapshot(s *repo.Snapshot) *snapshotSummary {
 		return nil
 	}
 	return &snapshotSummary{
-		ID:            s.ID,
-		CreatedAt:     s.CreatedAt,
-		Source:        s.Source,
-		MemberCount:   s.MemberCount,
-		RenderedBytes: s.RenderedBytes,
+		ID:          s.ID,
+		CreatedAt:   s.CreatedAt,
+		Source:      s.Source,
+		MemberCount: s.MemberCount,
 	}
 }
 
@@ -2953,11 +2828,10 @@ func summarizeSnapshots(items []repo.Snapshot) []snapshotSummary {
 	out := make([]snapshotSummary, 0, len(items))
 	for _, item := range items {
 		out = append(out, snapshotSummary{
-			ID:            item.ID,
-			CreatedAt:     item.CreatedAt,
-			Source:        item.Source,
-			MemberCount:   item.MemberCount,
-			RenderedBytes: item.RenderedBytes,
+			ID:          item.ID,
+			CreatedAt:   item.CreatedAt,
+			Source:      item.Source,
+			MemberCount: item.MemberCount,
 		})
 	}
 	return out

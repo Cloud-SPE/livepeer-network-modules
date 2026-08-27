@@ -540,8 +540,6 @@
           api("/admin/v1/member-backends"),
           api("/admin/v1/assignment-candidates"),
           api("/admin/v1/assignments"),
-          api("/admin/v1/broker-runtime"),
-          api("/admin/v1/broker-runtime/history?limit=12"),
           api("/admin/v1/broker-config", { headers: tokenHeaders(false) }),
           api("/admin/v1/pool-members"),
           api("/admin/v1/host-enrollments"),
@@ -1029,7 +1027,6 @@
     on("applyRuntime", "click", async () => {
       try {
         setStatus("Applying desired runtime...");
-        await submitJSON("/admin/v1/broker-runtime/apply", "{}");
       } catch (err) {
         setStatus(err.message, "bad");
       }
@@ -1037,7 +1034,6 @@
     on("markApplied", "click", async () => {
       try {
         setStatus("Marking desired revision applied...");
-        await submitJSON("/admin/v1/broker-runtime/mark-applied", "{}");
       } catch (err) {
         setStatus(err.message, "bad");
       }
@@ -1045,7 +1041,6 @@
     on("markStarted", "click", async () => {
       try {
         setStatus("Marking apply started...");
-        await submitJSON("/admin/v1/broker-runtime/mark-started", "{}");
       } catch (err) {
         setStatus(err.message, "bad");
       }
@@ -1054,7 +1049,6 @@
       try {
         const error = window.prompt("Apply failure reason", "reload failed") || "";
         setStatus("Marking apply failed...");
-        await submitJSON("/admin/v1/broker-runtime/mark-failed", JSON.stringify({ error }));
       } catch (err) {
         setStatus(err.message, "bad");
       }

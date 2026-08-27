@@ -14,10 +14,8 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func seedSingleChatAssignment(t *testing.T, stateRepo *repo.StateRepo, memberEthAddress, displayName, backendID, backendURL string, backendAuth config.AuthConfig) {
@@ -118,12 +116,12 @@ synthetic_probes:
 		Method:    "bearer",
 		SecretRef: "env://SECRET_TOKEN",
 	})
-	rendered, _, err := renderBrokerState(stateRepo, cfg)
+	pushState, _, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
+		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
 	state := &runtimeState{configPath: path, repo: stateRepo}
-	if err := state.Replace(cfg, rendered, "startup", nil); err != nil {
+	if err := state.Replace(cfg, pushState, "startup", nil); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)
 	}
 	if err := stateRepo.SaveWorkReceipt(types.WorkReceipt{
@@ -164,10 +162,8 @@ synthetic_probes:
 		{path: "/public/v1/rounds", wantStatus: http.StatusOK, wantBody: `"pool_revenue_wei":"10000"`},
 		{path: "/public/v1/offerings", wantStatus: http.StatusOK, wantBody: `"backend_count":1`},
 		{path: "/public/v1/member-payouts?member_eth_address=0xabc", wantStatus: http.StatusOK, wantBody: `"member_eth_address":"0xabc"`},
-		{path: "/admin/v1/broker-config", wantStatus: http.StatusOK, wantBody: "capabilities:"},
 		{path: "/admin/v1/offers", wantStatus: http.StatusOK, wantBody: `"status":"active"`},
 		{path: "/admin/v1/audit-events", wantStatus: http.StatusOK, wantBody: `"events":[`},
-		{path: "/admin/v1/broker-runtime/history", wantStatus: http.StatusOK, wantBody: `"items":[`},
 		{path: "/admin/v1/members", wantStatus: http.StatusOK, wantBody: `"secret_ref_set":true`},
 		{path: "/admin/v1/members", wantStatus: http.StatusOK, wantBody: `"status":"active"`},
 		{path: "/admin/v1/assignments", wantStatus: http.StatusOK, wantBody: `"status":"active"`},
@@ -1042,11 +1038,11 @@ func TestAdminOfferAndAssignmentMutationEndpoints(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PutMemberBackend() error = %v", err)
 	}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
+		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+	if err := state.Replace(cfg, pushState, "startup", runtimeInfo); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)
 	}
 	server := httptest.NewServer(newServeMux(state))
@@ -1134,11 +1130,11 @@ func TestAdminAssignmentRejectsIncompatibleBackend(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PutMemberBackend() error = %v", err)
 	}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
+		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+	if err := state.Replace(cfg, pushState, "startup", runtimeInfo); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)
 	}
 	server := httptest.NewServer(newServeMux(state))
@@ -1178,11 +1174,11 @@ func TestJoinRequestApprovalAndStatusMutations(t *testing.T) {
 	}
 	defer func() { _ = stateRepo.Close() }()
 	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
+		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+	if err := state.Replace(cfg, pushState, "startup", runtimeInfo); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)
 	}
 	server := httptest.NewServer(newServeMux(state))
@@ -1353,93 +1349,28 @@ func TestJoinRequestApprovalAndStatusMutations(t *testing.T) {
 	}
 }
 
-func TestBrokerRuntimeEndpoints(t *testing.T) {
+func TestReplacePushesOffersAndCredentials(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := filepath.Join(dir, "data")
 	configPath := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	cfg := &config.Config{
-		Identity: config.Identity{OrchEthAddress: "0x123"},
-		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
-	}
-	stateRepo, err := repo.Open(dataDir)
-	if err != nil {
-		t.Fatalf("repo.Open() error = %v", err)
-	}
-	defer func() { _ = stateRepo.Close() }()
-	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
-	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
-	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
-		t.Fatalf("state.Replace() error = %v", err)
-	}
-	server := httptest.NewServer(newServeMux(state))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/admin/v1/broker-runtime")
-	if err != nil {
-		t.Fatalf("GET /admin/v1/broker-runtime error = %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":true`) || !strings.Contains(string(body), `"apply_mode":"controller-refresh"`) || !strings.Contains(string(body), `"broker_admin_configured":false`) {
-		t.Fatalf("GET /admin/v1/broker-runtime status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Get(server.URL + "/admin/v1/broker-runtime/diff")
-	if err != nil {
-		t.Fatalf("GET /admin/v1/broker-runtime/diff error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":true`) {
-		t.Fatalf("GET /admin/v1/broker-runtime/diff status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Post(server.URL+"/admin/v1/broker-runtime/apply", "application/json", bytes.NewBufferString(`{"actor":"tester"}`))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/broker-runtime/apply error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":false`) || !strings.Contains(string(body), `"last_apply_status":"applied"`) {
-		t.Fatalf("POST /admin/v1/broker-runtime/apply status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	applied, err := stateRepo.GetAppliedBrokerRuntime()
-	if err != nil {
-		t.Fatalf("GetAppliedBrokerRuntime() error = %v", err)
-	}
-	if applied.AppliedRevision == "" || applied.LastApplyStatus != "applied" {
-		t.Fatalf("applied = %#v", applied)
-	}
-}
-
-func TestBrokerRuntimeApplyAuditIncludesBrokerConfirmation(t *testing.T) {
-	dir := t.TempDir()
-	dataDir := filepath.Join(dir, "data")
-	configPath := filepath.Join(dir, "config.yaml")
-	reloaded := false
-	expectedRevision := ""
+	var gotOffers, gotCredentials []byte
+	var reloadCalls int
 	brokerAdmin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/admin/v1/runtime/reload":
-			if r.Method != http.MethodPost {
-				t.Fatalf("reload method = %s, want POST", r.Method)
-			}
-			reloaded = true
+		body, _ := io.ReadAll(r.Body)
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/admin/v1/offers":
+			gotOffers = body
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
-		case "/admin/v1/runtime":
-			if !reloaded {
-				t.Fatalf("runtime status requested before reload")
-			}
+			_, _ = w.Write([]byte(`{"applied":true,"changed":["off-1"]}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/admin/v1/credentials":
+			gotCredentials = body
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"loaded_revision":"` + expectedRevision + `","last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
+			_, _ = w.Write([]byte(`{"applied":true,"revoked_hosts":[]}`))
+		case strings.HasPrefix(r.URL.Path, "/admin/v1/runtime"):
+			// The render/reload cycle is gone; nothing should ask for it.
+			reloadCalls++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -1462,228 +1393,62 @@ func TestBrokerRuntimeApplyAuditIncludesBrokerConfirmation(t *testing.T) {
 		t.Fatalf("repo.Open() error = %v", err)
 	}
 	defer func() { _ = stateRepo.Close() }()
-	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
-	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
-	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
-		t.Fatalf("state.Replace() error = %v", err)
-	}
-	expectedRevision = runtimeInfo.Revision
-	server := httptest.NewServer(newServeMux(state))
-	defer server.Close()
-
-	resp, err := http.Post(server.URL+"/admin/v1/broker-runtime/apply", "application/json", bytes.NewBufferString(`{"actor":"tester"}`))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/broker-runtime/apply error = %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"broker_loaded_revision":"`+runtimeInfo.Revision+`"`) || !strings.Contains(string(body), `"broker_reload_status":"applied"`) {
-		t.Fatalf("POST /admin/v1/broker-runtime/apply status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Get(server.URL + "/admin/v1/audit-events?kind=broker_runtime_apply_succeeded&resource_type=broker_runtime&resource_id=" + runtimeInfo.Revision)
-	if err != nil {
-		t.Fatalf("GET runtime apply audit events error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"broker_loaded_revision":"`+runtimeInfo.Revision+`"`) || !strings.Contains(string(body), `"broker_reload_status":"applied"`) {
-		t.Fatalf("runtime apply audit events status=%d body=%s", resp.StatusCode, string(body))
-	}
-}
-
-func TestApplyDesiredRuntimeDetectsRevisionDrift(t *testing.T) {
-	dir := t.TempDir()
-	dataDir := filepath.Join(dir, "data")
-	configPath := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	cfg := &config.Config{
-		Identity: config.Identity{OrchEthAddress: "0x123"},
-		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
-	}
-	stateRepo, err := repo.Open(dataDir)
-	if err != nil {
-		t.Fatalf("repo.Open() error = %v", err)
-	}
-	defer func() { _ = stateRepo.Close() }()
-	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
-	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
-	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
-		t.Fatalf("state.Replace() error = %v", err)
-	}
-
-	desired := runtimeInfo
+	now := time.Now().UTC()
 	if err := stateRepo.PutOffer(types.Offer{
-		ID:           "offer-1",
-		CapabilityID: "rerank",
-		OfferingID:   "zerank-2-default",
-		Protocol:     "paid-job/v1",
-		WorkUnit: config.WorkUnit{
-			Name:      "requests",
-			Extractor: map[string]any{"type": "request-formula"},
-		},
-		Price: config.Price{AmountWei: "1", PerUnits: 1},
+		ID: "off-1", CapabilityID: "openai:chat-completions", OfferingID: "shared",
+		Protocol: "paid-job/v1", Price: config.Price{AmountWei: "10", PerUnits: 1},
+		Status: types.OfferStatusActive, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("PutOffer() error = %v", err)
 	}
-	if err := stateRepo.PutMember(types.MemberRecord{
-		ID:         "member-1",
-		EthAddress: "0xmember",
-		PayoutMode: "onchain",
-		Status:     types.MemberStatusActive,
+	if err := stateRepo.PutHostEnrollment(types.HostEnrollment{
+		ID: "host-1", MemberEthAddress: "0xaaa", BrokerSessionCredential: "plaintext",
+		Status: types.HostEnrollmentActive, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
-		t.Fatalf("PutMember() error = %v", err)
-	}
-	if err := stateRepo.PutMemberBackend(types.MemberBackend{
-		ID:                 "backend-1",
-		MemberID:           "member-1",
-		Transport:          "http",
-		URL:                "http://backend:8080/v1/rerank",
-		Auth:               config.AuthConfig{Method: "none"},
-		VerificationStatus: types.VerificationPassing,
-		Status:             types.BackendStatusActive,
-		ClaimedCapabilities: []types.ClaimedOffer{{
-			CapabilityID: "rerank",
-			OfferingID:   "zerank-2-default",
-			Protocol:     "paid-job/v1",
-		}},
-	}); err != nil {
-		t.Fatalf("PutMemberBackend() error = %v", err)
-	}
-	if err := stateRepo.PutAssignment(types.Assignment{
-		ID:              "assignment-1",
-		OfferID:         "offer-1",
-		MemberBackendID: "backend-1",
-		Status:          types.AssignmentStatusActive,
-	}); err != nil {
-		t.Fatalf("PutAssignment() error = %v", err)
+		t.Fatalf("PutHostEnrollment() error = %v", err)
 	}
 
-	err = state.ApplyDesiredRuntime(desired)
-	if err == nil || !strings.Contains(err.Error(), "desired broker runtime changed during apply") {
-		t.Fatalf("ApplyDesiredRuntime() err=%v", err)
-	}
-	_, _, _, current := state.Snapshot()
-	if current == nil || current.Revision == desired.Revision {
-		t.Fatalf("current runtime = %#v, desired = %#v", current, desired)
-	}
-}
-
-func TestApplyDesiredRuntimeRunsBrokerApplyCommand(t *testing.T) {
-	dir := t.TempDir()
-	dataDir := filepath.Join(dir, "data")
-	configPath := filepath.Join(dir, "config.yaml")
-	outputPath := filepath.Join(dir, "applied.yaml")
-	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	cfg := &config.Config{
-		Identity: config.Identity{OrchEthAddress: "0x123"},
-		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
-		Bootstrap: config.Bootstrap{
-			BrokerApplyCommand:   []string{"bash", "-lc", fmt.Sprintf("test -n \"$POOL_CONTROLLER_BROKER_DESIRED_REVISION\" && test -n \"$POOL_CONTROLLER_BROKER_CONFIG_SHA256\" && cat \"$POOL_CONTROLLER_BROKER_CONFIG_PATH\" > %q", outputPath)},
-			BrokerApplyTimeoutMS: 30000,
-		},
-	}
-	stateRepo, err := repo.Open(dataDir)
-	if err != nil {
-		t.Fatalf("repo.Open() error = %v", err)
-	}
-	defer func() { _ = stateRepo.Close() }()
 	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
+		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+	if err := state.Replace(cfg, pushState, "startup", runtimeInfo); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)
 	}
 
-	if err := state.ApplyDesiredRuntime(runtimeInfo); err != nil {
-		t.Fatalf("ApplyDesiredRuntime() error = %v", err)
+	if len(gotOffers) == 0 || len(gotCredentials) == 0 {
+		t.Fatalf("push did not happen: offers=%q credentials=%q", gotOffers, gotCredentials)
 	}
-	got, err := os.ReadFile(outputPath)
-	if err != nil {
-		t.Fatalf("ReadFile(%q) error = %v", outputPath, err)
+	if reloadCalls != 0 {
+		t.Fatalf("the reload cycle was called %d time(s); it should be gone", reloadCalls)
 	}
-	if string(got) != runtimeInfo.RenderedYAML {
-		t.Fatalf("applied broker config mismatch:\n got=%q\nwant=%q", string(got), runtimeInfo.RenderedYAML)
+	// The offer push carries the operator's fields and no runner facts.
+	if !strings.Contains(string(gotOffers), `"offering_id":"shared"`) ||
+		!strings.Contains(string(gotOffers), `"amount_wei":"10"`) {
+		t.Fatalf("offer push = %s", gotOffers)
 	}
-}
-
-func TestApplyDesiredRuntimeConfirmsBrokerLoadedRevision(t *testing.T) {
-	dir := t.TempDir()
-	dataDir := filepath.Join(dir, "data")
-	configPath := filepath.Join(dir, "config.yaml")
-	reloaded := false
-	expectedRevision := ""
-	brokerAdmin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/admin/v1/runtime/reload":
-			if r.Method != http.MethodPost {
-				t.Fatalf("reload method = %s, want POST", r.Method)
-			}
-			reloaded = true
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
-		case "/admin/v1/runtime":
-			if !reloaded {
-				t.Fatalf("runtime status requested before reload")
-			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"loaded_revision":"` + expectedRevision + `","last_reload_attempt_id":"reload-1","last_reload_status":"applied"}`))
-		default:
-			http.NotFound(w, r)
+	for _, runnerFact := range []string{`"backend"`, `"work_unit"`, `"transports"`} {
+		if strings.Contains(string(gotOffers), runnerFact) {
+			t.Fatalf("offer push carries the runner fact %s: %s", runnerFact, gotOffers)
 		}
-	}))
-	defer brokerAdmin.Close()
-
-	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
 	}
-	cfg := &config.Config{
-		Identity: config.Identity{OrchEthAddress: "0x123"},
-		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
-		Bootstrap: config.Bootstrap{
-			BrokerAdminURL:       brokerAdmin.URL,
-			BrokerAdminTimeoutMS: 5000,
-		},
+	// The credential push carries a hash, never the secret.
+	if strings.Contains(string(gotCredentials), "plaintext") {
+		t.Fatalf("plaintext credential was pushed: %s", gotCredentials)
 	}
-	stateRepo, err := repo.Open(dataDir)
+	if !strings.Contains(string(gotCredentials), `"host_id":"host-1"`) {
+		t.Fatalf("credential push = %s", gotCredentials)
+	}
+	// The recorded revision reports what the broker said changed.
+	stored, err := stateRepo.GetDesiredBrokerRuntime()
 	if err != nil {
-		t.Fatalf("repo.Open() error = %v", err)
+		t.Fatalf("GetDesiredBrokerRuntime() error = %v", err)
 	}
-	defer func() { _ = stateRepo.Close() }()
-	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
-	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
-	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
-		t.Fatalf("state.Replace() error = %v", err)
-	}
-	expectedRevision = runtimeInfo.Revision
-
-	if err := state.ApplyDesiredRuntime(runtimeInfo); err != nil {
-		t.Fatalf("ApplyDesiredRuntime() error = %v", err)
-	}
-	applied, err := stateRepo.GetAppliedBrokerRuntime()
-	if err != nil {
-		t.Fatalf("GetAppliedBrokerRuntime() error = %v", err)
-	}
-	if applied.BrokerReloadAttemptID != "reload-1" || applied.BrokerLoadedRevision != runtimeInfo.Revision || applied.BrokerReloadStatus != "applied" {
-		t.Fatalf("applied = %#v", applied)
+	if stored.PushError != "" || len(stored.ChangedOffers) != 1 || stored.ChangedOffers[0] != "off-1" {
+		t.Fatalf("recorded runtime = %#v", stored)
 	}
 }
-
 func TestJoinRequestVerificationAndBackendVerificationFlow(t *testing.T) {
 	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1706,11 +1471,11 @@ func TestJoinRequestVerificationAndBackendVerificationFlow(t *testing.T) {
 	}
 	defer func() { _ = stateRepo.Close() }()
 	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
+		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+	if err := state.Replace(cfg, pushState, "startup", runtimeInfo); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)
 	}
 	server := httptest.NewServer(newServeMux(state))
@@ -1807,11 +1572,11 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 	}
 	defer func() { _ = stateRepo.Close() }()
 	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
+	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
+		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
+	if err := state.Replace(cfg, pushState, "startup", runtimeInfo); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)
 	}
 	server := httptest.NewServer(newServeMux(state))
@@ -1932,502 +1697,11 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 		t.Fatalf("assignment-preview status=%d body=%s", resp.StatusCode, string(body))
 	}
 
-	resp, err = http.Get(server.URL + "/admin/v1/broker-runtime")
-	if err != nil {
-		t.Fatalf("GET /admin/v1/broker-runtime error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":true`) {
-		t.Fatalf("GET /admin/v1/broker-runtime dirty status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Post(server.URL+"/admin/v1/broker-runtime/apply", "application/json", bytes.NewBufferString(`{}`))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/broker-runtime/apply error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"dirty":false`) || !strings.Contains(string(body), `"last_apply_status":"applied"`) {
-		t.Fatalf("apply status=%d body=%s", resp.StatusCode, string(body))
-	}
-}
-
-func TestAssignmentCandidatesEndpoint(t *testing.T) {
-	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer probe.Close()
-
-	dir := t.TempDir()
-	dataDir := filepath.Join(dir, "data")
-	configPath := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	cfg := &config.Config{
-		Identity: config.Identity{OrchEthAddress: "0x123"},
-		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
-	}
-	stateRepo, err := repo.Open(dataDir)
-	if err != nil {
-		t.Fatalf("repo.Open() error = %v", err)
-	}
-	defer func() { _ = stateRepo.Close() }()
-	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
-	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
-	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
-		t.Fatalf("state.Replace() error = %v", err)
-	}
-	server := httptest.NewServer(newServeMux(state))
-	defer server.Close()
-
-	offerBody := `{
-	  "id":"rerank-zerank2",
-	  "capability_id":"rerank",
-	  "offering_id":"zerank-2-default",
-	  "protocol":"paid-job/v1",
-	  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
-	  "price":{"amount_wei":"1","per_units":1}
-	}`
-	resp, err := http.Post(server.URL+"/admin/v1/offers", "application/json", bytes.NewBufferString(offerBody))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/offers error = %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /admin/v1/offers status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	joinBody := `{
-	  "id":"join-candidate",
-	  "member_eth_address":"0xmember",
-	  "display_name":"member-a",
-	  "payout_mode":"onchain",
-	  "requested_backends":[
-	    {
-	      "id":"backend-candidate",
-	      "transport":"http",
-	      "url":"` + probe.URL + `/v1/rerank",
-	      "auth":{"method":"none"},
-	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
-	      "claimed_capabilities":[
-	        {"capability_id":"rerank","offering_id":"zerank-2-default","protocol":"paid-job/v1"}
-	      ]
-	    }
-	  ]
-	}`
-	resp, err = http.Post(server.URL+"/member/v1/join-requests", "application/json", bytes.NewBufferString(joinBody))
-	if err != nil {
-		t.Fatalf("POST /member/v1/join-requests error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /member/v1/join-requests status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-candidate/refresh", "application/json", bytes.NewBufferString(`{}`))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/join-requests/join-candidate/refresh error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("refresh join-candidate status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-candidate/approve", "application/json", bytes.NewBufferString(`{}`))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/join-requests/join-candidate/approve error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("approve join-candidate status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Get(server.URL + "/admin/v1/assignment-candidates")
-	if err != nil {
-		t.Fatalf("GET /admin/v1/assignment-candidates error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK ||
-		!strings.Contains(string(body), `"backend_id":"backend-candidate"`) ||
-		!strings.Contains(string(body), `"suggested_offer_ids":["rerank-zerank2"]`) ||
-		!strings.Contains(string(body), `"active_assignments":0`) {
-		t.Fatalf("assignment-candidates body=%s", string(body))
-	}
-}
-
-func TestAssignmentCreateRejectsDuplicateActivePair(t *testing.T) {
-	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer probe.Close()
-
-	dir := t.TempDir()
-	dataDir := filepath.Join(dir, "data")
-	configPath := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	cfg := &config.Config{
-		Identity: config.Identity{OrchEthAddress: "0x123"},
-		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
-	}
-	stateRepo, err := repo.Open(dataDir)
-	if err != nil {
-		t.Fatalf("repo.Open() error = %v", err)
-	}
-	defer func() { _ = stateRepo.Close() }()
-	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
-	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
-	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
-		t.Fatalf("state.Replace() error = %v", err)
-	}
-	server := httptest.NewServer(newServeMux(state))
-	defer server.Close()
-
-	offerBody := `{
-	  "id":"rerank-zerank2",
-	  "capability_id":"rerank",
-	  "offering_id":"zerank-2-default",
-	  "protocol":"paid-job/v1",
-	  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
-	  "price":{"amount_wei":"1","per_units":1}
-	}`
-	resp, err := http.Post(server.URL+"/admin/v1/offers", "application/json", bytes.NewBufferString(offerBody))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/offers error = %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /admin/v1/offers status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	joinBody := `{
-	  "id":"join-dup",
-	  "member_eth_address":"0xmember",
-	  "display_name":"member-a",
-	  "payout_mode":"onchain",
-	  "requested_backends":[
-	    {
-	      "id":"backend-dup",
-	      "transport":"http",
-	      "url":"` + probe.URL + `/v1/rerank",
-	      "auth":{"method":"none"},
-	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
-	      "claimed_capabilities":[
-	        {"capability_id":"rerank","offering_id":"zerank-2-default","protocol":"paid-job/v1"}
-	      ]
-	    }
-	  ]
-	}`
-	resp, err = http.Post(server.URL+"/member/v1/join-requests", "application/json", bytes.NewBufferString(joinBody))
-	if err != nil {
-		t.Fatalf("POST /member/v1/join-requests error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /member/v1/join-requests status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-dup/refresh", "application/json", bytes.NewBufferString(`{}`))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/join-requests/join-dup/refresh error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("refresh join-dup status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-dup/approve", "application/json", bytes.NewBufferString(`{}`))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/join-requests/join-dup/approve error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("approve join-dup status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	assignmentBody := `{"id":"assign-dup-1","offer_id":"rerank-zerank2","member_backend_id":"backend-dup"}`
-	resp, err = http.Post(server.URL+"/admin/v1/assignments", "application/json", bytes.NewBufferString(assignmentBody))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/assignments first error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /admin/v1/assignments first status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	assignmentBody = `{"id":"assign-dup-2","offer_id":"rerank-zerank2","member_backend_id":"backend-dup"}`
-	resp, err = http.Post(server.URL+"/admin/v1/assignments", "application/json", bytes.NewBufferString(assignmentBody))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/assignments duplicate error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "active assignment already exists") {
-		t.Fatalf("POST /admin/v1/assignments duplicate status=%d body=%s", resp.StatusCode, string(body))
-	}
-}
-
-func TestJoinRequestPreviewRanksSuggestedOffers(t *testing.T) {
-	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer probe.Close()
-
-	dir := t.TempDir()
-	dataDir := filepath.Join(dir, "data")
-	configPath := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte("identity:\n  orch_eth_address: 0x123\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	cfg := &config.Config{
-		Identity: config.Identity{OrchEthAddress: "0x123"},
-		Listen:   config.Listen{Paid: ":8080", Metrics: ":9090"},
-	}
-	stateRepo, err := repo.Open(dataDir)
-	if err != nil {
-		t.Fatalf("repo.Open() error = %v", err)
-	}
-	defer func() { _ = stateRepo.Close() }()
-	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	rendered, runtimeInfo, err := renderBrokerState(stateRepo, cfg)
-	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
-	}
-	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
-		t.Fatalf("state.Replace() error = %v", err)
-	}
-	server := httptest.NewServer(newServeMux(state))
-	defer server.Close()
-
-	for _, offerBody := range []string{
-		`{
-		  "id":"rerank-default",
-		  "capability_id":"rerank",
-		  "offering_id":"zerank-2-default",
-		  "protocol":"paid-job/v1",
-		  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
-		  "price":{"amount_wei":"1","per_units":1}
-		}`,
-		`{
-		  "id":"rerank-alt",
-		  "capability_id":"rerank",
-		  "offering_id":"alt-rerank",
-		  "protocol":"paid-job/v1",
-		  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
-		  "price":{"amount_wei":"1","per_units":1}
-		}`,
-	} {
-		resp, err := http.Post(server.URL+"/admin/v1/offers", "application/json", bytes.NewBufferString(offerBody))
-		if err != nil {
-			t.Fatalf("POST /admin/v1/offers error = %v", err)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("POST /admin/v1/offers status=%d body=%s", resp.StatusCode, string(body))
-		}
-	}
-
-	joinBody := `{
-	  "id":"join-rank",
-	  "member_eth_address":"0xmember",
-	  "display_name":"member-rank",
-	  "payout_mode":"onchain",
-	  "requested_backends":[
-	    {
-	      "id":"backend-rank",
-	      "transport":"http",
-	      "url":"` + probe.URL + `/v1/rerank",
-	      "auth":{"method":"none"},
-	      "health_probe":{"type":"http-status","config":{"url":"` + probe.URL + `/healthz"}},
-	      "claimed_capabilities":[
-	        {"capability_id":"rerank","protocol":"paid-job/v1"}
-	      ]
-	    }
-	  ]
-	}`
-	resp, err := http.Post(server.URL+"/member/v1/join-requests", "application/json", bytes.NewBufferString(joinBody))
-	if err != nil {
-		t.Fatalf("POST /member/v1/join-requests error = %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /member/v1/join-requests status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Post(server.URL+"/admin/v1/join-requests/join-rank/refresh", "application/json", bytes.NewBufferString(`{}`))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/join-requests/join-rank/refresh error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("refresh join-rank status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	resp, err = http.Post(server.URL+"/admin/v1/join-request-preview", "application/json", bytes.NewBufferString(`{"join_request_id":"join-rank"}`))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/join-request-preview error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK ||
-		!strings.Contains(string(body), `"suggested_offer_ids":["rerank-alt","rerank-default"]`) ||
-		!strings.Contains(string(body), `"score":61`) ||
-		!strings.Contains(string(body), `claim allows any offering_id; exact protocol; capability_id matched`) {
-		t.Fatalf("join-rank preview status=%d body=%s", resp.StatusCode, string(body))
-	}
-}
-
-func TestRuntimeStateSyncAccountingMetrics(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	dataDir := filepath.Join(dir, "data")
-	if err := os.WriteFile(path, []byte(`
-identity:
-  orch_eth_address: 0x123
-`), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	cfg, err := config.LoadFile(path)
-	if err != nil {
-		t.Fatalf("LoadFile() error = %v", err)
-	}
-	stateRepo, err := repo.Open(dataDir)
-	if err != nil {
-		t.Fatalf("repo.Open() error = %v", err)
-	}
-	defer func() { _ = stateRepo.Close() }()
-	seedSingleChatAssignment(t, stateRepo, "0xabc", "", "b1", "http://backend", config.AuthConfig{})
-	rendered, _, err := renderBrokerState(stateRepo, cfg)
-	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
-	}
-	state := &runtimeState{configPath: path, repo: stateRepo}
-	if err := state.Replace(cfg, rendered, "startup", nil); err != nil {
-		t.Fatalf("state.Replace() error = %v", err)
-	}
-	if err := stateRepo.SaveWorkReceipt(types.WorkReceipt{
-		ID:               "work-1",
-		RequestID:        "req-1",
-		CapabilityID:     "openai:chat-completions",
-		OfferingID:       "default",
-		MemberEthAddress: "0xabc",
-		BackendID:        "b1",
-		Status:           "final",
-	}); err != nil {
-		t.Fatalf("SaveWorkReceipt() error = %v", err)
-	}
-	if err := stateRepo.SaveRoundReceipt(types.RoundReceipt{
-		ID:               "round-1",
-		RoundID:          "123",
-		PoolRevenueWei:   "100",
-		PoolCutWei:       "10",
-		DistributableWei: "90",
-	}); err != nil {
-		t.Fatalf("SaveRoundReceipt() error = %v", err)
-	}
-	if err := stateRepo.SavePayoutIntent(types.PayoutIntent{
-		ID:                 "payout-1",
-		RoundReceiptID:     "round-1",
-		RoundID:            "123",
-		MemberEthAddress:   "0xabc",
-		DestinationAddress: "0xabc",
-		ChainID:            1,
-		Asset:              "ETH",
-		AmountWei:          "90",
-		Status:             "leased",
-	}); err != nil {
-		t.Fatalf("SavePayoutIntent() error = %v", err)
-	}
-
-	if err := state.syncAccountingMetrics(); err != nil {
-		t.Fatalf("syncAccountingMetrics() error = %v", err)
-	}
-
-	if got := testutil.ToFloat64(observability.TestWorkReceiptStatusGauge("final")); got < 1 {
-		t.Fatalf("final work receipt gauge = %v; want >= 1", got)
-	}
-	if got := testutil.ToFloat64(observability.TestRoundReceiptGauge()); got < 1 {
-		t.Fatalf("round receipt gauge = %v; want >= 1", got)
-	}
-	if got := testutil.ToFloat64(observability.TestPayoutIntentStatusGauge("leased")); got < 1 {
-		t.Fatalf("leased payout intent gauge = %v; want >= 1", got)
-	}
-}
-
-func TestServeHandlerAdminAuth(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	dataDir := filepath.Join(dir, "data")
-	t.Setenv("POOL_CONTROLLER_ADMIN_TOKEN", "super-secret")
-	if err := os.WriteFile(path, []byte(`
-identity:
-  orch_eth_address: 0x123
-admin_auth:
-  bearer_token_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
-`), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	cfg, err := config.LoadFile(path)
-	if err != nil {
-		t.Fatalf("LoadFile() error = %v", err)
-	}
-	token, err := resolveAdminToken(cfg)
-	if err != nil {
-		t.Fatalf("resolveAdminToken() error = %v", err)
-	}
-	stateRepo, err := repo.Open(dataDir)
-	if err != nil {
-		t.Fatalf("repo.Open() error = %v", err)
-	}
-	defer func() { _ = stateRepo.Close() }()
-	seedSingleChatAssignment(t, stateRepo, "0xabc", "", "b1", "http://backend", config.AuthConfig{})
-	rendered, _, err := renderBrokerState(stateRepo, cfg)
-	if err != nil {
-		t.Fatalf("renderBrokerState() error = %v", err)
-	}
-	state := &runtimeState{configPath: path, repo: stateRepo, adminToken: token}
-	if err := state.Replace(cfg, rendered, "startup", nil); err != nil {
-		t.Fatalf("state.Replace() error = %v", err)
-	}
-	server := httptest.NewServer(newServeMux(state))
-	defer server.Close()
-
-	resp, err := http.Get(server.URL + "/admin/v1/state")
-	if err != nil {
-		t.Fatalf("GET unauthorized admin endpoint error = %v", err)
-	}
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("unauthorized status = %d, want 401", resp.StatusCode)
-	}
-	_ = resp.Body.Close()
-
 	resp, err = http.Get(server.URL + "/public/v1/summary")
 	if err != nil {
 		t.Fatalf("GET public summary error = %v", err)
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, _ = io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("public summary status = %d, want 200", resp.StatusCode)

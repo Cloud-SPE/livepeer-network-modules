@@ -88,8 +88,6 @@ type AdminAuth struct {
 }
 
 type Bootstrap struct {
-	BrokerApplyCommand   []string   `yaml:"broker_apply_command,omitempty"`
-	BrokerApplyTimeoutMS int        `yaml:"broker_apply_timeout_ms,omitempty"`
 	BrokerAdminURL       string     `yaml:"broker_admin_url,omitempty"`
 	BrokerAdminAuth      AuthConfig `yaml:"broker_admin_auth,omitempty"`
 	BrokerAdminTimeoutMS int        `yaml:"broker_admin_timeout_ms,omitempty"`

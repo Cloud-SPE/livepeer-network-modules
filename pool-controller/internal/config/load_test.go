@@ -28,40 +28,8 @@ identity:
 	if got := cfg.Scoring.CooldownDurationMS; got != 300000 {
 		t.Fatalf("Scoring.CooldownDurationMS = %d, want 300000", got)
 	}
-	if got := cfg.Bootstrap.BrokerApplyTimeoutMS; got != 30000 {
-		t.Fatalf("Bootstrap.BrokerApplyTimeoutMS = %d, want 30000", got)
-	}
 	if got := cfg.Bootstrap.BrokerAdminTimeoutMS; got != 5000 {
 		t.Fatalf("Bootstrap.BrokerAdminTimeoutMS = %d, want 5000", got)
-	}
-}
-
-func TestLoadBrokerApplyCommandValidation(t *testing.T) {
-	cfg, err := Load([]byte(`
-identity:
-  orch_eth_address: 0x123
-bootstrap:
-  broker_apply_command:
-    - /bin/echo
-    - apply
-`))
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if got := len(cfg.Bootstrap.BrokerApplyCommand); got != 2 {
-		t.Fatalf("len(Bootstrap.BrokerApplyCommand) = %d, want 2", got)
-	}
-
-	_, err = Load([]byte(`
-identity:
-  orch_eth_address: 0x123
-bootstrap:
-  broker_apply_command:
-    - /bin/echo
-    - "   "
-`))
-	if err == nil || !strings.Contains(err.Error(), "bootstrap.broker_apply_command[1]") {
-		t.Fatalf("Load() error = %v, want broker_apply_command validation", err)
 	}
 }
 

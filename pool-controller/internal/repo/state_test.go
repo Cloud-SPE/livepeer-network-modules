@@ -117,14 +117,12 @@ func TestStateRepoSaveAndListSnapshots(t *testing.T) {
 		CreatedAt:     time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC),
 		Source:        "startup",
 		MemberCount:   1,
-		RenderedBytes: 10,
 	}
 	second := Snapshot{
 		ID:            "2026-05-16T13:00:00Z",
 		CreatedAt:     time.Date(2026, 5, 16, 13, 0, 0, 0, time.UTC),
 		Source:        "reload",
 		MemberCount:   2,
-		RenderedBytes: 20,
 	}
 	if err := repo.SaveSnapshot(first); err != nil {
 		t.Fatalf("SaveSnapshot(first) error = %v", err)

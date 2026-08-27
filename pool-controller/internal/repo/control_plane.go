@@ -45,7 +45,6 @@ func (r *StateRepo) initControlPlaneBuckets(tx *bolt.Tx) error {
 		settlementWindowsBucket,
 		payoutBatchesBucket,
 		desiredBrokerRuntimeBucket,
-		appliedBrokerRuntimeBucket,
 	} {
 		if _, err := tx.CreateBucketIfNotExists([]byte(bucket)); err != nil {
 			return err

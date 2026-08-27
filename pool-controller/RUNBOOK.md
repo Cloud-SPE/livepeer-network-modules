@@ -17,7 +17,12 @@ in the request path, but it is the source of record for:
 - lease state
 
 It is also the operator control plane for broker runtime convergence when the
-Pool broker is managed through `POST /admin/v1/broker-runtime/apply`.
+Pool broker state is **pushed**, not rendered. The controller sends its
+offer set and the credentials that may attach over the broker admin API
+(`PUT /admin/v1/offers`, `PUT /admin/v1/credentials`) whenever pool state
+changes. There is no rendered broker config file, no staging command, and
+no reload: runners tell the broker what they are, and the broker freezes
+those facts into the offer (plan 0043).
 
 ## Production topology
 
@@ -82,14 +87,10 @@ Secure-orch side:
 3. Create orch-owned offers in `pool-controller`.
 4. Accept member join requests and verify backends.
 5. Create assignments from approved backends to orch-owned offers.
-6. Apply desired broker runtime through `POST /admin/v1/broker-runtime/apply`.
-7. Confirm broker convergence from:
-  - `GET /admin/v1/broker-runtime`
-  - `GET /admin/v1/broker-runtime/history`
-  - broker `GET /admin/v1/runtime`
-8. Bring up or refresh `orch-coordinator` against the broker public URL.
-9. Run the secure-orch sign/publish cycle.
-10. Run a low-risk production smoke request through the gateway path.
+6. Confirm the push landed: the recorded revision carries `push_error`
+   when the broker did not accept it, and `changed_offers` / `revoked_hosts`
+   when it did. Runner and certification state is read from the broker —
+   see the coordinator's Runners, Offers and Certification pages.
 
 ## Required runtime inputs
 
@@ -148,7 +149,6 @@ Useful admin reads:
 
 The normal production action is:
 
-- `POST /admin/v1/broker-runtime/apply`
 
 That flow now means:
 
@@ -164,8 +164,6 @@ Do not treat shell-command exit alone as proof of convergence.
 
 Primary runtime reads:
 
-- `GET /admin/v1/broker-runtime`
-- `GET /admin/v1/broker-runtime/history`
 
 Broker-side corroboration:
 
@@ -173,9 +171,6 @@ Broker-side corroboration:
 
 The manual runtime endpoints remain fallback/debug controls only:
 
-- `POST /admin/v1/broker-runtime/mark-started`
-- `POST /admin/v1/broker-runtime/mark-failed`
-- `POST /admin/v1/broker-runtime/mark-applied`
 
 Use them only when the operator intentionally needs to bypass the normal
 broker-admin apply path for investigation or break-glass handling.
@@ -225,8 +220,6 @@ Regardless of pattern, success still requires broker-confirmed:
 
 - `GET /admin/v1/state`
 - `GET /admin/v1/snapshots`
-- `GET /admin/v1/broker-runtime`
-- `GET /admin/v1/broker-runtime/history`
 - `GET /admin/v1/payout-intents`
 - `GET /admin/v1/member-payouts`
 - `GET /admin/v1/payout-rounds`

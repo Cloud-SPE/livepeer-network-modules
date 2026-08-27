@@ -18,13 +18,11 @@ type StateRepo struct {
 }
 
 type Snapshot struct {
-	ID                 string    `json:"id"`
-	CreatedAt          time.Time `json:"created_at"`
-	Source             string    `json:"source"`
-	MemberCount        int       `json:"member_count"`
-	RenderedBytes      int       `json:"rendered_bytes"`
-	ConfigYAML         string    `json:"config_yaml"`
-	RenderedBrokerYAML string    `json:"rendered_broker_yaml"`
+	ID          string    `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	Source      string    `json:"source"`
+	MemberCount int       `json:"member_count"`
+	ConfigYAML  string    `json:"config_yaml"`
 }
 
 func Open(dir string) (*StateRepo, error) {

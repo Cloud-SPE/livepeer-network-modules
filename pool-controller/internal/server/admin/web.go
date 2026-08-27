@@ -27,7 +27,6 @@ var uiPages = []string{
 	"join-requests",
 	"members",
 	"assignments",
-	"broker-runtime",
 	"audit",
 }
 

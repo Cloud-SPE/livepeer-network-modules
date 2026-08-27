@@ -150,7 +150,6 @@ func TestConsolePagesRenderWithActiveNav(t *testing.T) {
 		{"/admin/join-requests", "/admin/join-requests", `id="joinRequests"`},
 		{"/admin/members", "/admin/members", `id="members"`},
 		{"/admin/assignments", "/admin/assignments", `id="assignmentCandidates"`},
-		{"/admin/broker-runtime", "/admin/broker-runtime", `id="runtimeYaml"`},
 		{"/admin/audit", "/admin/audit", `id="auditEvents"`},
 	}
 	for _, p := range pages {

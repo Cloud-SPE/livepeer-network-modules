@@ -30,12 +30,6 @@ scoring:
   public_worst_offerings_limit: 5
 
 bootstrap:
-  broker_apply_timeout_ms: 30000
-  # broker-apply is shipped inside the pool-controller image and takes the
-  # target broker host-config path as its single argument.
-  broker_apply_command:
-    - /usr/local/bin/broker-apply
-    - /etc/livepeer/host-config.yaml
   broker_admin_url: http://broker-admin.local
   broker_admin_timeout_ms: 5000
 

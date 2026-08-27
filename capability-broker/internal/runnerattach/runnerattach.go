@@ -82,23 +82,29 @@ type Hardware struct {
 
 // Capability is one capability entry as accepted (§3.2).
 type Capability struct {
-	Index               int                        `json:"-"`
-	CapabilityID        string                     `json:"capability_id"`
-	Protocol            string                     `json:"protocol"`
-	LocalID             string                     `json:"local_id"`
-	Transports          []string                   `json:"transports,omitempty"`
-	DescriptorSchemas   []string                   `json:"descriptor_schemas,omitempty"`
-	WorkUnit            WorkUnit                   `json:"work_unit"`
-	Paths               map[string]string          `json:"paths"`
-	Readiness           Readiness                  `json:"readiness"`
-	Identity            map[string]string          `json:"identity"`
-	SchemaVersions      map[string]string          `json:"schema_versions"`
-	Metering            string                     `json:"metering,omitempty"`
-	Heartbeat           *Heartbeat                 `json:"heartbeat,omitempty"`
-	SessionParamsSchema json.RawMessage            `json:"session_params_schema,omitempty"`
-	Requirements        *Requirements              `json:"requirements,omitempty"`
-	Devices             []string                   `json:"devices,omitempty"`
-	Extensions          map[string]json.RawMessage `json:"-"` // x-* incl. x-certification-suggested
+	Index               int               `json:"-"`
+	CapabilityID        string            `json:"capability_id"`
+	Protocol            string            `json:"protocol"`
+	LocalID             string            `json:"local_id"`
+	Transports          []string          `json:"transports,omitempty"`
+	DescriptorSchemas   []string          `json:"descriptor_schemas,omitempty"`
+	WorkUnit            WorkUnit          `json:"work_unit"`
+	Paths               map[string]string `json:"paths"`
+	Readiness           Readiness         `json:"readiness"`
+	Identity            map[string]string `json:"identity"`
+	SchemaVersions      map[string]string `json:"schema_versions"`
+	Metering            string            `json:"metering,omitempty"`
+	Heartbeat           *Heartbeat        `json:"heartbeat,omitempty"`
+	SessionParamsSchema json.RawMessage   `json:"session_params_schema,omitempty"`
+	Requirements        *Requirements     `json:"requirements,omitempty"`
+	Devices             []string          `json:"devices,omitempty"`
+	// Draining says this runner is winding down and should be sent no
+	// new work. It is deliberately NOT part of the frozen shape: what a
+	// runner sells has not changed, only whether it is currently taking
+	// orders, and freezing it would make a temporary withdrawal look
+	// like a different offering.
+	Draining   bool                       `json:"draining,omitempty"`
+	Extensions map[string]json.RawMessage `json:"-"` // x-* incl. x-certification-suggested
 }
 
 type WorkUnit struct {

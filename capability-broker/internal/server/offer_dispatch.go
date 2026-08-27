@@ -159,6 +159,14 @@ func (s *Server) runnerCapability(pair offers.PairKey) *runnerLiveCapability {
 	}
 	for _, cv := range sn.Capabilities {
 		if cv.Capability != nil && cv.Capability.LocalID == pair.LocalID {
+			if cv.Capability.Draining {
+				// Winding down: still certified, still advertised, but
+				// taking no new work. Treating this as "not there"
+				// keeps the offer in the manifest while emptying the
+				// dispatch group, so a gateway gets 503 and a backoff
+				// rather than a 404 on a tuple that is still sold.
+				return nil
+			}
 			return &runnerLiveCapability{Paths: cv.Capability.Paths}
 		}
 	}

@@ -56,6 +56,26 @@ type config struct {
 	RunnersFile    string
 	Runners        []attach.Runner
 	RefreshEvery   time.Duration
+
+	// Desired-state loop (plan 0044 §3.4). Empty ControllerURL means
+	// this host is configured by hand: the agent attaches with whatever
+	// runners it was told about and never polls. That is the standalone
+	// mode, and it stays supported — a pool is one way to run a runner,
+	// not the only way.
+	ControllerURL   string
+	EnrollmentID    string
+	EnrollmentToken string
+	ComposeFile     string
+	ComposeBinary   string
+	ComposeArgs     []string
+	PollEvery       time.Duration
+	PollTimeout     time.Duration
+}
+
+// PoolManaged reports whether this host takes its runner set from a
+// pool controller rather than from local configuration.
+func (c config) PoolManaged() bool {
+	return c.ControllerURL != "" && c.EnrollmentID != "" && c.EnrollmentToken != ""
 }
 
 type tunnelMessage struct {
@@ -118,7 +138,19 @@ func run(ctx context.Context, args []string) error {
 		log.Printf("warning: no runners declared — attaching with hardware only; " +
 			"this host announces itself but serves nothing until runners are configured")
 	}
-	err = tunnelLoop(ctx, cfg)
+	state := &runnerState{}
+	state.set(cfg.Runners, "")
+	if cfg.PoolManaged() {
+		// The pool owns the runner set. Whatever was configured locally
+		// is a starting point at most: the first reconcile replaces it.
+		log.Printf("pool-managed: polling %s for enrollment %s every %s",
+			cfg.ControllerURL, cfg.EnrollmentID, cfg.PollEvery)
+		loopCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go desiredLoop(loopCtx, cfg, state, nil)
+	}
+
+	err = tunnelLoop(ctx, cfg, state)
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
@@ -140,7 +172,15 @@ func loadConfig(args []string) (config, error) {
 		BrokerQUICAddr: strings.TrimSpace(os.Getenv("LIVEPEER_BROKER_QUIC_ADDR")),
 		HostID:         strings.TrimSpace(os.Getenv("LIVEPEER_HOST_ID")),
 		RunnersFile:    strings.TrimSpace(os.Getenv("LIVEPEER_RUNNERS_FILE")),
-		RefreshEvery:   *refreshEvery,
+
+		ControllerURL:   strings.TrimRight(strings.TrimSpace(os.Getenv("POOL_CONTROLLER_URL")), "/"),
+		EnrollmentID:    strings.TrimSpace(os.Getenv("POOL_ENROLLMENT_ID")),
+		EnrollmentToken: enrollmentToken(),
+		ComposeFile:     envOr("POOL_COMPOSE_FILE", "runners.compose.yaml"),
+		ComposeBinary:   strings.TrimSpace(os.Getenv("POOL_COMPOSE_BINARY")),
+		PollEvery:       envDuration("POOL_POLL_EVERY", 30*time.Second),
+		PollTimeout:     envDuration("POOL_POLL_TIMEOUT", 30*time.Second),
+		RefreshEvery:    *refreshEvery,
 	}
 	if cfg.RefreshEvery <= 0 {
 		cfg.RefreshEvery = time.Minute
@@ -230,11 +270,11 @@ func buildDocument(ctx context.Context, cfg config) (*attach.Document, error) {
 	}, cfg.Runners)
 }
 
-func tunnelLoop(ctx context.Context, cfg config) error {
+func tunnelLoop(ctx context.Context, cfg config, state *runnerState) error {
 	backoff := time.Second
 	for {
 		start := time.Now()
-		if err := runTunnel(ctx, cfg); err != nil && !errors.Is(err, context.Canceled) {
+		if err := runTunnel(ctx, cfg, state); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("attach session ended: %v", err)
 		}
 		if ctx.Err() != nil {
@@ -256,7 +296,17 @@ func tunnelLoop(ctx context.Context, cfg config) error {
 	}
 }
 
-func runTunnel(ctx context.Context, cfg config) error {
+func runTunnel(ctx context.Context, cfg config, state *runnerState) error {
+	// The runner set comes from the shared state, so a session started
+	// after a placement change declares the new set rather than the one
+	// this process booted with.
+	if state != nil {
+		runners, revision := state.get()
+		cfg.Runners = runners
+		if revision != "" {
+			log.Printf("attaching with desired state %s (%d runner(s))", revision, len(runners))
+		}
+	}
 	doc, err := buildDocument(ctx, cfg)
 	if err != nil {
 		// A document this agent knows is invalid is a configuration bug:
@@ -721,4 +771,16 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// enrollmentToken reads the token the bundle shipped. A file is
+// preferred over the environment: the token is a credential, and an
+// environment variable is visible to every process on the host.
+func enrollmentToken() string {
+	if path := strings.TrimSpace(os.Getenv("POOL_ENROLLMENT_TOKEN_FILE")); path != "" {
+		if raw, err := os.ReadFile(path); err == nil {
+			return strings.TrimSpace(string(raw))
+		}
+	}
+	return strings.TrimSpace(os.Getenv("POOL_ENROLLMENT_TOKEN"))
 }

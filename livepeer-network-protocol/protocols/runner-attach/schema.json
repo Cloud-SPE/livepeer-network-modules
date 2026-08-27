@@ -473,6 +473,10 @@
         "requirements": {
           "$ref": "#/$defs/requirements"
         },
+        "draining": {
+          "type": "boolean",
+          "description": "This runner is winding down and MUST be sent no new work. It stays certified and its offer stays advertised — only dispatch stops — so a temporary withdrawal is not mistaken for a change in what is sold. Not part of the frozen shape."
+        },
         "devices": {
           "type": "array",
           "minItems": 1,

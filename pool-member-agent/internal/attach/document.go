@@ -21,7 +21,7 @@ import (
 )
 
 // ContractVersion is the attach-contract version this agent speaks.
-const ContractVersion = "1.0"
+const ContractVersion = "1.1"
 
 // Document is the attach document (runner-attach §3).
 type Document struct {
@@ -146,6 +146,11 @@ type Runner struct {
 	Provider string `json:"provider,omitempty"`
 	// Devices are the gpu_uuids backing this runner.
 	Devices []string `json:"devices,omitempty"`
+	// Draining withdraws this runner from dispatch without withdrawing
+	// the offer. Set it, re-register, let in-flight work finish, and
+	// only then stop the container — stopping first would drop requests
+	// the broker had already sent (runner-attach §7.1).
+	Draining bool `json:"draining,omitempty"`
 	// Requirements let a runner state what its host must have; the
 	// broker rejects the entry when this host cannot satisfy it (§4.2).
 	Requirements *Requirements `json:"requirements,omitempty"`

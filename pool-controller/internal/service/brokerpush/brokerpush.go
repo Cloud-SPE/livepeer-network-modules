@@ -29,8 +29,11 @@ import (
 )
 
 // State is the controller state a push is built from.
+// State is what the controller pushes. Offers are already in wire
+// shape: they are derived from the enabled template set, not stored,
+// so there is nothing gained by carrying the intermediate form.
 type State struct {
-	Offers      []types.Offer
+	Offers      []brokeradmin.OfferPush
 	Enrollments []types.HostEnrollment
 }
 
@@ -58,7 +61,7 @@ type Pusher interface {
 // serve. The reverse order would leave a runner attached and matching
 // nothing for one cycle.
 func Sync(ctx context.Context, client Pusher, state State) (Result, error) {
-	offers := BuildOffers(state.Offers)
+	offers := state.Offers
 	creds := BuildCredentials(state.Enrollments)
 	out := Result{
 		OffersRevision:      Revision(offers),
@@ -81,62 +84,6 @@ func Sync(ctx context.Context, client Pusher, state State) (Result, error) {
 		out.RevokedHosts = credRes.RevokedHosts
 	}
 	return out, nil
-}
-
-// BuildOffers projects pool offers into the broker's offers[] grammar.
-//
-// What is NOT here is the point: no backend URL, no transports, no work
-// unit, no extractor. Those are runner facts the broker learns at attach
-// and freezes; the controller could only ever have been guessing at
-// them, and a guess that disagreed with the runner used to be a
-// configuration error nobody could see.
-func BuildOffers(offers []types.Offer) []brokeradmin.OfferPush {
-	out := make([]brokeradmin.OfferPush, 0, len(offers))
-	for _, o := range offers {
-		if strings.TrimSpace(o.OfferingID) == "" || strings.TrimSpace(o.CapabilityID) == "" {
-			continue
-		}
-		push := brokeradmin.OfferPush{
-			OfferingID:  o.OfferingID,
-			Capability:  o.CapabilityID,
-			Protocol:    o.Protocol,
-			Price:       brokeradmin.OfferPushPrice{AmountWei: o.Price.AmountWei, PerUnits: o.Price.PerUnits},
-			Extra:       o.Extra,
-			Constraints: o.Constraints,
-			Match:       MatchFor(o),
-			// The pool authors the steps; the broker executes them
-			// (decision 6b). A runner may suggest steps and never
-			// self-certify.
-			Certification: CertificationPolicy(o.CapabilityID, identityValue(o.Extra, "openai", "model")),
-			Disabled:      o.Status != types.OfferStatusActive,
-		}
-		if push.Price.PerUnits == 0 {
-			push.Price.PerUnits = 1
-		}
-		out = append(out, push)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].OfferingID < out[j].OfferingID })
-	return out
-}
-
-// MatchFor derives the offer's runner selector from the workload
-// identity the operator already declared in `extra`.
-//
-// The broker freezes a runner's declared identity INTO the offer's
-// extra, so an offer that names a model in extra is exactly an offer
-// that wants runners serving that model. Deriving the selector keeps the
-// two from disagreeing; an offer that names no identity matches every
-// runner declaring its capability, which is what a single-model pool
-// wants.
-func MatchFor(o types.Offer) map[string]string {
-	match := map[string]string{}
-	if model := identityValue(o.Extra, "openai", "model"); model != "" {
-		match["identity.openai.model"] = model
-	}
-	if len(match) == 0 {
-		return nil
-	}
-	return match
 }
 
 func identityValue(extra map[string]any, group, key string) string {

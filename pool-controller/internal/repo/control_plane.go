@@ -10,13 +10,13 @@ import (
 )
 
 // Buckets. The legacy member model's four buckets (join_requests,
-// members, member_backends, assignments) are no longer declared or
-// opened. Existing databases keep those bytes: nothing enumerates
+// members, member_backends, assignments) and the offers bucket are no
+// longer declared or opened — an offer is derived from the enabled
+// template set, never stored. Existing databases keep those bytes: nothing enumerates
 // buckets, so they are inert, and there is no migration machinery in
 // this module to convert them with. Deleting a user's rows on upgrade
 // is not a decision this code should make silently.
 const (
-	offersBucket              = "offers"
 	auditEventsBucket         = "audit_events"
 	poolMembersBucket         = "pool_members_v2"
 	memberNoncesBucket        = "member_nonces"
@@ -31,7 +31,6 @@ const (
 
 func (r *StateRepo) initControlPlaneBuckets(tx *bolt.Tx) error {
 	for _, bucket := range []string{
-		offersBucket,
 		auditEventsBucket,
 		poolMembersBucket,
 		memberNoncesBucket,

@@ -1,23 +1,31 @@
 [
   {
     "name": "ready",
-    "type": "readiness"
+    "type": "readiness",
+    "required": true
   },
   {
     "name": "smoke",
     "type": "request",
+    "required": true,
     "config": {
+      "assert": [
+        {
+          "min": 1,
+          "path": "$.data[0].embedding"
+        },
+        "$.usage.total_tokens"
+      ],
       "body": {
         "input": "ping",
         "model": "{{identity.openai.model}}"
-      },
-      "expect_content_type": "audio/",
-      "max_response_bytes": 4194304
+      }
     }
   },
   {
     "name": "usage",
     "type": "usage",
+    "required": true,
     "config": {
       "min_units": 1
     }

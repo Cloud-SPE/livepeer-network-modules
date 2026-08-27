@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokeradmin"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerpush"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/certification"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/settlement"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
@@ -410,17 +412,19 @@ func Register(mux *http.ServeMux, deps Deps) {
 			Intents []types.PayoutIntent `json:"intents"`
 		}{Batch: batch, Intents: intents}, nil)
 	}))
+	// The offers a broker is told to serve, derived from the enabled
+	// templates. This is the same computation the push performs, so
+	// what an operator reads here is exactly what the fleet was sent —
+	// there is no stored offer set that could disagree.
 	mux.HandleFunc("GET /admin/v1/offers", auth(func(w http.ResponseWriter, _ *http.Request) {
-		items, err := deps.Repo.ListOffers()
+		overrides, err := deps.Repo.ListTemplateOverrides()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			Offers []types.Offer `json:"offers"`
-		}{Offers: items})
+		writeAdminJSON(w, struct {
+			Offers []brokeradmin.OfferPush `json:"offers"`
+		}{Offers: brokerpush.BuildOffersFromCatalog(deps.Catalog.All(), overrides)}, nil)
 	}))
 	mux.HandleFunc("GET /admin/v1/offerings", auth(func(w http.ResponseWriter, _ *http.Request) {
 		if deps.GetOfferingsJSON == nil {
@@ -623,8 +627,17 @@ type templateCatalogView struct {
 	// catalog's suggestion — what this pool would actually charge.
 	EffectivePrice  templates.Price `json:"effective_price"`
 	PriceOverridden bool            `json:"price_overridden,omitempty"`
-	Extra           map[string]any  `json:"extra,omitempty"`
-	UpdatedAt       *time.Time      `json:"override_updated_at,omitempty"`
+	// Extra is the catalog's metadata with the pool's merged over it —
+	// what is actually advertised.
+	Extra map[string]any `json:"extra,omitempty"`
+	// ExtraOverride is the pool's own half, unmerged. It exists because
+	// a PUT replaces the whole override record: without seeing what the
+	// pool set, a client toggling `enabled` would have to either drop
+	// the extra override or echo the merged map back, and echoing it
+	// would silently freeze today's catalog values into the pool's
+	// state where a later catalog edit could never reach them.
+	ExtraOverride map[string]any `json:"extra_override,omitempty"`
+	UpdatedAt     *time.Time     `json:"override_updated_at,omitempty"`
 }
 
 func catalogViews(catalog *templates.Catalog, overrides []types.TemplateOverride) []templateCatalogView {
@@ -642,6 +655,7 @@ func catalogViews(catalog *templates.Catalog, overrides []types.TemplateOverride
 				view.EffectivePrice = templates.Price{AmountWei: override.Price.AmountWei, PerUnits: override.Price.PerUnits}
 				view.PriceOverridden = true
 			}
+			view.ExtraOverride = override.Extra
 			if len(override.Extra) > 0 {
 				merged := make(map[string]any, len(tmpl.Extra)+len(override.Extra))
 				for k, v := range tmpl.Extra {

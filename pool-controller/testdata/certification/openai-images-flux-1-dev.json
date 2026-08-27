@@ -1,28 +1,31 @@
 [
   {
     "name": "ready",
-    "type": "readiness"
+    "type": "readiness",
+    "required": true
   },
   {
     "name": "smoke",
     "type": "request",
+    "required": true,
     "config": {
       "assert": [
         {
-          "min": 1,
-          "path": "$.data[0].embedding"
-        },
-        "$.usage.total_tokens"
+          "min": 0,
+          "path": "$.data[0]"
+        }
       ],
       "body": {
-        "input": "ping",
-        "model": "{{identity.openai.model}}"
+        "model": "{{identity.openai.model}}",
+        "n": 1,
+        "prompt": "a probe"
       }
     }
   },
   {
     "name": "usage",
     "type": "usage",
+    "required": true,
     "config": {
       "min_units": 1
     }

@@ -87,28 +87,15 @@ func seedSingleChatAssignment(t *testing.T, stateRepo *repo.StateRepo, memberEth
 	}); err != nil {
 		t.Fatalf("PutHardwareUnit() error = %v", err)
 	}
-	if err := stateRepo.PutOffer(types.Offer{
-		ID:           "offer-1",
-		CapabilityID: "openai:chat-completions",
-		OfferingID:   "default",
-		Protocol:     "paid-job/v1",
-		WorkUnit: config.WorkUnit{
-			Name:      "tokens",
-			Extractor: map[string]any{"type": "openai-usage", "field": "total_tokens"},
-		},
-		Price: config.Price{
-			AmountWei: "1",
-			PerUnits:  1,
-		},
-		Extra: map[string]any{
-			"openai":   map[string]any{"model": "llama-3-70b"},
-			"provider": "vllm",
-		},
-		Status:    types.OfferStatusActive,
-		CreatedAt: now,
-		UpdatedAt: now,
+	// Adopting the template is the whole of the operator's commercial
+	// gesture: the offer the broker is told to serve is derived from
+	// this override plus the catalog, never stored.
+	if err := stateRepo.PutTemplateOverride(types.TemplateOverride{
+		TemplateID: "chat-default",
+		Enabled:    true,
+		UpdatedAt:  now,
 	}); err != nil {
-		t.Fatalf("PutOffer() error = %v", err)
+		t.Fatalf("PutTemplateOverride() error = %v", err)
 	}
 	if err := stateRepo.PutTemplateAssignment(types.TemplateAssignment{
 		ID:               "assignment-1",
@@ -130,6 +117,12 @@ protocol: paid-job/v1
 price_default:
   amount_wei: "1"
   per_units: 1
+extra:
+  openai:
+    model: llama-3-70b
+  provider: vllm
+certification:
+  - { name: ready, type: readiness, required: true }
 requirements:
   gpu_models: ["NVIDIA GeForce RTX 4090"]
 stacking:
@@ -185,7 +178,7 @@ identity:
 	defer func() { _ = stateRepo.Close() }()
 	catalog := seedSingleChatAssignment(t, stateRepo, "0xabc", "member-a")
 	seedChatSelectionState(t, stateRepo, "0xabc", "assignment-1")
-	pushState, _, err := buildBrokerPushState(stateRepo, cfg)
+	pushState, _, err := buildBrokerPushState(stateRepo, catalog, cfg)
 	if err != nil {
 		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
@@ -235,7 +228,10 @@ identity:
 		{path: "/public/v1/rounds", wantStatus: http.StatusOK, wantBody: `"pool_revenue_wei":"10000"`},
 		{path: "/public/v1/offerings", wantStatus: http.StatusOK, wantBody: `"runner_count":1`},
 		{path: "/public/v1/member-payouts?member_eth_address=0xabc", wantStatus: http.StatusOK, wantBody: `"member_eth_address":"0xabc"`},
-		{path: "/admin/v1/offers", wantStatus: http.StatusOK, wantBody: `"status":"active"`},
+		// The derived set, not a stored one: what an operator reads
+		// here is exactly what the broker fleet was pushed.
+		{path: "/admin/v1/offers", wantStatus: http.StatusOK, wantBody: `"offering_id":"default"`},
+		{path: "/admin/v1/offers", wantStatus: http.StatusOK, wantBody: `"identity.openai.model":"llama-3-70b"`},
 		{path: "/admin/v1/audit-events", wantStatus: http.StatusOK, wantBody: `"events":[`},
 		{path: "/admin/v1/pool-members", wantStatus: http.StatusOK, wantBody: `"status":"active"`},
 		{path: "/admin/v1/host-enrollments", wantStatus: http.StatusOK, wantBody: `"status":"active"`},
@@ -1131,11 +1127,9 @@ identity:
 // broker with, stored in plaintext, and hashed by brokerpush.BuildCredentials
 // before it is allowed off the box.
 //
-// KNOWN FAILING — this is a finding, not a flaky test. GET
-// /admin/v1/host-enrollments marshals types.HostEnrollment whole, so it serves
-// the live credential in cleartext to anything holding the admin token. The
-// legacy suite refused to leak even the far weaker secret_ref on the equivalent
-// surface, so this is a regression in posture, not an intended relaxation.
+// The endpoint used to marshal types.HostEnrollment whole and serve the live
+// credential to anything holding the admin token; it now redacts the field on
+// the way out, and this test is what holds that shut.
 func TestAdminHostEnrollmentsDoNotEchoBrokerSessionCredential(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
@@ -1158,8 +1152,11 @@ func TestAdminHostEnrollmentsDoNotEchoBrokerSessionCredential(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PutHostEnrollment() error = %v", err)
 	}
-	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
+	// This pool sells nothing; the subject here is the enrollment
+	// surface, and an empty catalog derives an empty offer set.
+	catalog := writeCatalog(t)
+	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg, catalog: catalog}
+	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, catalog, cfg)
 	if err != nil {
 		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
@@ -1244,19 +1241,15 @@ stacking:
 	}); err != nil {
 		t.Fatalf("PutHardwareUnit() error = %v", err)
 	}
-	// The offer is the operator's commercial declaration. It is no
-	// longer created over HTTP, so the test writes it the way the
-	// controller stores it.
-	if err := stateRepo.PutOffer(types.Offer{
-		ID: "offer-1", CapabilityID: "rerank", OfferingID: "zerank-2-default",
-		Protocol: "paid-job/v1",
-		WorkUnit: config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula", "expression": "1"}},
-		Price:    config.Price{AmountWei: "1", PerUnits: 1},
-		Status:   types.OfferStatusActive, CreatedAt: now, UpdatedAt: now,
+	// Adopting the catalog template is the operator's commercial
+	// declaration; the offer behind the offerings view is derived from
+	// it, so without this override the offering does not exist.
+	if err := stateRepo.PutTemplateOverride(types.TemplateOverride{
+		TemplateID: "rerank-4090", Enabled: true, UpdatedAt: now,
 	}); err != nil {
-		t.Fatalf("PutOffer() error = %v", err)
+		t.Fatalf("PutTemplateOverride() error = %v", err)
 	}
-	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
+	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, catalog, cfg)
 	if err != nil {
 		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
@@ -1340,12 +1333,20 @@ func TestReplacePushesOffersAndCredentials(t *testing.T) {
 	}
 	defer func() { _ = stateRepo.Close() }()
 	now := time.Now().UTC()
-	if err := stateRepo.PutOffer(types.Offer{
-		ID: "off-1", CapabilityID: "openai:chat-completions", OfferingID: "shared",
-		Protocol: "paid-job/v1", Price: config.Price{AmountWei: "10", PerUnits: 1},
-		Status: types.OfferStatusActive, CreatedAt: now, UpdatedAt: now,
+	catalog := writeCatalog(t, `id: chat-shared
+capability: openai:chat-completions
+offering_id: shared
+protocol: paid-job/v1
+price_default:
+  amount_wei: "10"
+  per_units: 1
+stacking:
+  primary: true
+`)
+	if err := stateRepo.PutTemplateOverride(types.TemplateOverride{
+		TemplateID: "chat-shared", Enabled: true, UpdatedAt: now,
 	}); err != nil {
-		t.Fatalf("PutOffer() error = %v", err)
+		t.Fatalf("PutTemplateOverride() error = %v", err)
 	}
 	if err := stateRepo.PutHostEnrollment(types.HostEnrollment{
 		ID: "host-1", MemberEthAddress: "0xaaa", BrokerSessionCredential: "plaintext",
@@ -1355,7 +1356,7 @@ func TestReplacePushesOffersAndCredentials(t *testing.T) {
 	}
 
 	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
-	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
+	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, catalog, cfg)
 	if err != nil {
 		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
@@ -1440,15 +1441,6 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 		t.Fatalf("PutHardwareUnit() error = %v", err)
 	}
 
-	if err := stateRepo.PutOffer(types.Offer{
-		ID: "rerank-zerank2", CapabilityID: "rerank", OfferingID: "zerank-2-default",
-		Protocol: "paid-job/v1",
-		WorkUnit: config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula", "expression": "1"}},
-		Price:    config.Price{AmountWei: "1", PerUnits: 1},
-		Status:   types.OfferStatusActive, CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		t.Fatalf("PutOffer() error = %v", err)
-	}
 	catalog := writeCatalog(t, `id: rerank-zerank2-4090
 capability: rerank
 offering_id: zerank-2-default
@@ -1461,9 +1453,14 @@ requirements:
 stacking:
   primary: true
 `)
+	if err := stateRepo.PutTemplateOverride(types.TemplateOverride{
+		TemplateID: "rerank-zerank2-4090", Enabled: true, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("PutTemplateOverride() error = %v", err)
+	}
 
 	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg, catalog: catalog}
-	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
+	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, catalog, cfg)
 	if err != nil {
 		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}

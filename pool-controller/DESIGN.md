@@ -22,14 +22,28 @@ Initial implementation scope for plan 0029:
    no compatibility loader for it.
 2. Validate that each published `(capability_id, offering_id)` tuple is unique
    at the published manifest layer while allowing repeated runner candidates.
-3. Push the Pool's offer set and the credentials that may attach to the
-   Pool broker over its admin API (`PUT /admin/v1/offers`,
-   `PUT /admin/v1/credentials`). The controller sends only operator-owned
-   facts — offering id, capability, protocol, match selector, price,
-   capacity, metadata, certification. Transports, work unit, extractor,
-   endpoint paths and readiness are not the controller's to send: member
-   hosts attach outbound and declare those themselves, and the broker
-   freezes the first certified runner's shape into the offer (plan 0043).
+3. Push the Pool's offer set and the credentials that may attach to every
+   broker in the fleet over their admin APIs (`PUT /admin/v1/offers`,
+   `PUT /admin/v1/credentials`). Each broker is pushed independently and
+   all are attempted even when one fails, so an unreachable machine does
+   not leave the rest of the pool on a stale offer set; the revision
+   makes a repeated push free.
+
+   An offer is not stored. It is derived on every push from the pool's
+   enabled templates — the curated catalog in `templates/` plus this
+   pool's `{enabled, price, extra}` override — so a catalog change and a
+   price change reach the broker by the same path and there is no third
+   copy to drift. A template the pool never adopted is not pushed; one it
+   explicitly disabled IS pushed, marked disabled, because the broker
+   then keeps the offer and its frozen shape instead of forgetting which
+   runner was ever certified against it.
+
+   The controller sends only operator-owned facts — offering id,
+   capability, protocol, match selector, price, capacity, metadata,
+   certification. Transports, work unit, extractor, endpoint paths and
+   readiness are not the controller's to send: member hosts attach
+   outbound and declare those themselves, and the broker freezes the
+   first certified runner's shape into the offer (plan 0043).
 4. Persist startup/reload snapshots of the active Pool config in BoltDB so
    operator state survives process restarts. There is no rendered broker
    config to snapshot — see item 3.

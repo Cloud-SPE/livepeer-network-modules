@@ -3,40 +3,18 @@ package repo
 import (
 	"testing"
 
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
+// Offers are no longer persisted — they are derived from the enabled
+// template set on every read and every push — so the only control-plane
+// entity this file still guards is the audit trail.
 func TestStateRepoControlPlaneEntitiesPersist(t *testing.T) {
 	repo, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
 	defer func() { _ = repo.Close() }()
-
-	offer := types.Offer{
-		ID:           "offer-1",
-		CapabilityID: "rerank",
-		OfferingID:   "zerank-2-default",
-		Protocol:     "paid-job/v1",
-		WorkUnit: config.WorkUnit{
-			Name: "requests",
-			Extractor: map[string]any{
-				"type": "request-formula",
-			},
-		},
-		Price: config.Price{AmountWei: "1", PerUnits: 1},
-	}
-	if err := repo.PutOffer(offer); err != nil {
-		t.Fatalf("PutOffer() error = %v", err)
-	}
-	gotOffer, err := repo.GetOffer("offer-1")
-	if err != nil {
-		t.Fatalf("GetOffer() error = %v", err)
-	}
-	if gotOffer.Status != types.OfferStatusActive {
-		t.Fatalf("offer status = %q, want %q", gotOffer.Status, types.OfferStatusActive)
-	}
 
 	if err := repo.AppendAuditEvent(types.AuditEvent{ID: "audit-1", Kind: "offer_created"}); err != nil {
 		t.Fatalf("AppendAuditEvent() error = %v", err)

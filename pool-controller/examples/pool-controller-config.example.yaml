@@ -31,8 +31,24 @@ scoring:
   public_worst_offerings_limit: 5
 
 bootstrap:
+  # One broker: the short form. Every enabled template is pushed here.
   broker_admin_url: http://broker-admin.local
   broker_admin_timeout_ms: 5000
+
+  # A fleet: list them instead, and the short form above is ignored.
+  # Each broker is pushed independently and every one is attempted even
+  # when an earlier one fails, so an unreachable machine does not leave
+  # the rest of the pool serving a stale offer set. The push carries a
+  # revision, so retrying a broker that already has this content is free.
+  #
+  # brokers:
+  #   - name: broker-eu
+  #     admin_url: http://broker-eu.internal:8080
+  #     auth: { bearer_token_ref: env://BROKER_EU_ADMIN_TOKEN }
+  #     timeout_ms: 5000
+  #   - name: broker-us
+  #     admin_url: http://broker-us.internal:8080
+  #     auth: { bearer_token_ref: env://BROKER_US_ADMIN_TOKEN }
 
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock

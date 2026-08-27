@@ -1,53 +1,20 @@
 {{define "content"}}
-<section>
-  <h2>Offer Editor</h2>
-  <div class="small" id="offerEditorState">Creating a new offer.</div>
-  <div class="form-grid">
-    <label>Offer ID
-      <input id="offerId" value="rerank-zerank2">
-    </label>
-    <label>Capability ID
-      <input id="offerCapability" value="rerank">
-    </label>
-    <label>Offering ID
-      <input id="offerOffering" value="zerank-2-default">
-    </label>
-    <label>Protocol
-      <input id="offerProtocol" value="paid-job/v1">
-    </label>
-    <label>Work Unit
-      <input id="offerWorkUnitName" value="requests">
-    </label>
-    <label>Extractor Type
-      <input id="offerExtractorType" value="request-formula">
-    </label>
-    <label>Extractor Expression
-      <input id="offerExtractorExpression" value="1">
-    </label>
-    <label>Amount Wei
-      <input id="offerAmountWei" value="372000000000">
-    </label>
-    <label>Per Units
-      <input id="offerPerUnits" type="number" min="1" value="1">
-    </label>
-  </div>
-  <div class="actions">
-    <button id="createOffer">Create Offer</button>
-    <button id="updateOffer" class="secondary">Update Offer</button>
-    <button id="resetOfferForm" class="secondary">Reset Form</button>
-    <button id="syncOfferPayload" class="secondary">Refresh JSON</button>
-  </div>
-  <details>
-    <summary>Advanced JSON</summary>
-    <label>Offer JSON
-      <textarea id="offerPayload"></textarea>
-    </label>
-    <button id="submitOfferRaw" class="secondary">Submit Raw JSON</button>
-  </details>
+<section class="summary">
+  <p class="eyebrow">Workload catalog</p>
+  <h1>Offers</h1>
+  <p class="muted">The catalog lives in <code>templates/</code> and is reviewed in version control, so an operator no longer authors offers. What a pool decides per template is small: whether to enable it, and what it charges. The offer set the brokers receive is derived from those two decisions.</p>
 </section>
 
 <section>
-  <h2>Offers</h2>
+  <h2>Template catalog</h2>
+  <p class="muted">A template sits in one of three states. <strong>Not adopted</strong> — no override exists and no offer is pushed for it. <strong>Disabled</strong> — the offer is still pushed so the broker keeps it, but it is not advertised. <strong>Enabled</strong> — advertised at the price shown. Saving a price on a template that was never adopted adopts and enables it.</p>
+  <p class="small muted">Price and enablement are the only fields this panel writes. An <code>extra</code> metadata override is authored elsewhere and is carried through unchanged when you save from here.</p>
+  <div id="templateCatalog" class="card-list"></div>
+</section>
+
+<section>
+  <h2>Derived offer set</h2>
+  <p class="muted">Read-only. The controller recomputes this from the adopted templates on every read using the same code the broker push runs, so it is exactly what the fleet was sent — there is no stored offer that could disagree, and nothing here is editable. To change an offer, change its template above.</p>
   <div id="offers" class="card-list"></div>
 </section>
 {{end}}

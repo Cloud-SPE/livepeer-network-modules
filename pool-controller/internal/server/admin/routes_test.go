@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokeradmin"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
@@ -366,4 +367,66 @@ func putOverride(t *testing.T, baseURL, id, body string) int {
 	_, _ = io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	return resp.StatusCode
+}
+
+// GET /admin/v1/offers derives its answer the same way the push does,
+// so what an operator reads here is exactly what the fleet was sent.
+// The three states a template can be in have to be distinguishable on
+// this surface, because it is the only place an operator sees them.
+func TestOffersEndpointServesTheDerivedSet(t *testing.T) {
+	stateRepo, catalog := seedAdminCertificationRepo(t)
+	mux := http.NewServeMux()
+	Register(mux, Deps{Repo: stateRepo, Catalog: catalog, WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next }})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// Not adopted: the template exists in the catalog and is not sold.
+	if offers := offersFromServer(t, server.URL); len(offers) != 0 {
+		t.Fatalf("an unadopted template is being offered: %+v", offers)
+	}
+
+	if status := putOverride(t, server.URL, "chat-4090", `{"enabled":true,"price":{"amount_wei":"9","per_units":2}}`); status != http.StatusOK {
+		t.Fatalf("PUT override status = %d", status)
+	}
+	offers := offersFromServer(t, server.URL)
+	if len(offers) != 1 || offers[0].OfferingID != "default" || offers[0].Disabled {
+		t.Fatalf("offers after enabling = %+v", offers)
+	}
+	if offers[0].Price.AmountWei != "9" || offers[0].Price.PerUnits != 2 {
+		t.Fatalf("the pool's price did not reach the derived offer: %+v", offers[0].Price)
+	}
+
+	// Disabled is not removed. The broker keeps the offer and its
+	// frozen runner shape; dropping it from the set would delete both,
+	// so re-enabling would silently start a fresh freeze.
+	if status := putOverride(t, server.URL, "chat-4090", `{"enabled":false}`); status != http.StatusOK {
+		t.Fatalf("PUT override status = %d", status)
+	}
+	offers = offersFromServer(t, server.URL)
+	if len(offers) != 1 {
+		t.Fatalf("disabling a template dropped its offer instead of disabling it: %+v", offers)
+	}
+	if !offers[0].Disabled {
+		t.Fatalf("offer = %+v, want disabled", offers[0])
+	}
+}
+
+func offersFromServer(t *testing.T, baseURL string) []brokeradmin.OfferPush {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/admin/v1/offers")
+	if err != nil {
+		t.Fatalf("GET /admin/v1/offers error = %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("offers status=%d body=%s", resp.StatusCode, string(body))
+	}
+	var view struct {
+		Offers []brokeradmin.OfferPush `json:"offers"`
+	}
+	if err := json.Unmarshal(body, &view); err != nil {
+		t.Fatalf("json.Unmarshal(offers) error = %v body=%s", err, string(body))
+	}
+	return view.Offers
 }

@@ -61,12 +61,56 @@ type AdminAuth struct {
 }
 
 type Bootstrap struct {
+	// BrokerAdminURL names a single broker. Brokers below supersedes it
+	// for a pool that runs more than one; the single-broker keys stay
+	// because a dev deployment is one broker and should not have to
+	// learn a list to start.
 	BrokerAdminURL       string     `yaml:"broker_admin_url,omitempty"`
 	BrokerAdminAuth      AuthConfig `yaml:"broker_admin_auth,omitempty"`
 	BrokerAdminTimeoutMS int        `yaml:"broker_admin_timeout_ms,omitempty"`
-	PublicControllerURL  string     `yaml:"public_controller_url,omitempty"`
-	PublicBrokerURL      string     `yaml:"public_broker_url,omitempty"`
-	PublicBrokerQUICAddr string     `yaml:"public_broker_quic_addr,omitempty"`
+	// Brokers is the pool's broker fleet. Every enabled template is
+	// pushed to each of them (plan 0044 §3.2).
+	Brokers              []Broker `yaml:"brokers,omitempty"`
+	PublicControllerURL  string   `yaml:"public_controller_url,omitempty"`
+	PublicBrokerURL      string   `yaml:"public_broker_url,omitempty"`
+	PublicBrokerQUICAddr string   `yaml:"public_broker_quic_addr,omitempty"`
+}
+
+// Broker is one push target. Name is for logs and status only; the URL
+// is the identity.
+type Broker struct {
+	Name      string     `yaml:"name,omitempty" json:"name,omitempty"`
+	AdminURL  string     `yaml:"admin_url" json:"admin_url"`
+	Auth      AuthConfig `yaml:"auth,omitempty" json:"auth,omitempty"`
+	TimeoutMS int        `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+}
+
+// BrokerTargets is the fleet to push to, however it was configured. A
+// pool that set neither gets an empty list and pushes nowhere, which is
+// a valid standalone deployment rather than an error.
+func (b Bootstrap) BrokerTargets() []Broker {
+	if len(b.Brokers) > 0 {
+		out := make([]Broker, 0, len(b.Brokers))
+		for _, broker := range b.Brokers {
+			if strings.TrimSpace(broker.AdminURL) == "" {
+				continue
+			}
+			if strings.TrimSpace(broker.Name) == "" {
+				broker.Name = broker.AdminURL
+			}
+			out = append(out, broker)
+		}
+		return out
+	}
+	if strings.TrimSpace(b.BrokerAdminURL) == "" {
+		return nil
+	}
+	return []Broker{{
+		Name:      b.BrokerAdminURL,
+		AdminURL:  b.BrokerAdminURL,
+		Auth:      b.BrokerAdminAuth,
+		TimeoutMS: b.BrokerAdminTimeoutMS,
+	}}
 }
 
 type WorkUnit struct {

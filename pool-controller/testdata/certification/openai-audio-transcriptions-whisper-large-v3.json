@@ -2,6 +2,7 @@
   {
     "name": "ready",
     "type": "readiness",
+    "required": true,
     "config": {
       "attempts": 5,
       "interval_ms": 3000
@@ -10,6 +11,7 @@
   {
     "name": "smoke",
     "type": "request",
+    "required": true,
     "config": {
       "assert": [
         "$.text"
@@ -34,6 +36,7 @@
   {
     "name": "usage",
     "type": "usage",
+    "required": true,
     "config": {
       "min_units": 1
     }

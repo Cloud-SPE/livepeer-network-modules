@@ -81,57 +81,29 @@
       return div;
     }
 
-    function offerPayloadFromForm() {
-      return {
-        id: $("offerId").value.trim(),
-        capability_id: $("offerCapability").value.trim(),
-        offering_id: $("offerOffering").value.trim(),
-        protocol: $("offerProtocol").value.trim(),
-        work_unit: {
-          name: $("offerWorkUnitName").value.trim(),
-          extractor: {
-            type: $("offerExtractorType").value.trim(),
-            expression: $("offerExtractorExpression").value.trim()
-          }
-        },
-        price: {
-          amount_wei: $("offerAmountWei").value.trim(),
-          per_units: Number($("offerPerUnits").value || "0")
-        }
-      };
+    // Card bodies are assembled as HTML strings, and template text now
+    // comes from YAML files rather than from this codebase, so anything
+    // interpolated from a response goes through here first.
+    function esc(value) {
+      return String(value === null || value === undefined ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
     }
 
-    function syncPayloadTextarea(id, payload) {
-      $(id).value = JSON.stringify(payload, null, 2);
-      return $(id).value;
+    function priceLabel(price) {
+      if (!price) return "unpriced";
+      return esc(price.amount_wei || "0") + " wei / " + esc(price.per_units || 1) + " units";
     }
 
-    function resetOfferForm() {
-      $("offerId").value = "rerank-zerank2";
-      $("offerCapability").value = "rerank";
-      $("offerOffering").value = "zerank-2-default";
-      $("offerProtocol").value = "paid-job/v1";
-      $("offerWorkUnitName").value = "requests";
-      $("offerExtractorType").value = "request-formula";
-      $("offerExtractorExpression").value = "1";
-      $("offerAmountWei").value = "372000000000";
-      $("offerPerUnits").value = "1";
-      $("offerEditorState").textContent = "Creating a new offer.";
-      syncPayloadTextarea("offerPayload", offerPayloadFromForm());
-    }
-
-    function loadOfferIntoForm(item) {
-      $("offerId").value = item.id || "";
-      $("offerCapability").value = item.capability_id || "";
-      $("offerOffering").value = item.offering_id || "";
-      $("offerProtocol").value = item.protocol || "";
-      $("offerWorkUnitName").value = (item.work_unit && item.work_unit.name) || "";
-      $("offerExtractorType").value = (item.work_unit && item.work_unit.extractor && item.work_unit.extractor.type) || "";
-      $("offerExtractorExpression").value = (item.work_unit && item.work_unit.extractor && item.work_unit.extractor.expression) || "";
-      $("offerAmountWei").value = (item.price && item.price.amount_wei) || "";
-      $("offerPerUnits").value = String((item.price && item.price.per_units) || 1);
-      $("offerEditorState").textContent = "Editing existing offer " + item.id + ".";
-      syncPayloadTextarea("offerPayload", offerPayloadFromForm());
+    // The layout prints the logged-in operator; carrying it into an
+    // override makes the stored updated_by name a person instead of
+    // leaving the audit trail anonymous.
+    function currentActor() {
+      const el = document.querySelector(".identity-chip code");
+      return el ? el.textContent.trim() : "";
     }
 
     function renderOverview() {
@@ -179,9 +151,10 @@
         '<div class="small">host ' + (item.enrollment_id || "") + '</div>'
       );
       renderSimpleCards("poolTemplates", latestTemplateCatalog, item =>
-        "<strong>" + item.id + "</strong>" +
-        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + (item.protocol || "") + '</span></div>' +
-        '<div class="small">' + (item.capability_id || "") + " / " + (item.offering_id || "") + '</div>'
+        "<strong>" + esc(item.display_name || item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + templateState(item) + '</span><span class="pill">' + esc(item.protocol) + '</span></div>' +
+        '<div class="small">' + esc(item.capability) + " / " + esc(item.offering_id) + '</div>' +
+        '<div class="small">' + priceLabel(item.effective_price) + '</div>'
       );
       renderSimpleCards("poolAssignments", latestTemplateAssignments, item =>
         "<strong>" + item.id + "</strong>" +
@@ -294,8 +267,9 @@
         latestSettlementWindows = settlementWindows.settlement_windows || [];
         latestPayoutBatches = payoutBatches.payout_batches || [];
         latestAuditEvents = auditEvents.events || [];
-        renderAuditEvents(auditEvents.events || []);
-        renderOffers(offers.offers || []);
+        renderAuditEvents(latestAuditEvents);
+        renderOffers(latestOffers);
+        renderTemplateCatalog(latestTemplateCatalog);
         renderConnectedPool();
         renderOverview();
         setStatus("Control-plane state refreshed.", "ok");
@@ -304,30 +278,131 @@
       }
     }
 
+    // The offer set has no identity of its own any more: the controller
+    // recomputes it from the adopted templates on every read, which is
+    // the same computation the broker push runs. So this renders what the
+    // fleet was actually sent, and it is deliberately read-only — the
+    // template panel is the only place an operator can change it.
     function renderOffers(items) {
-      const host = $("offers");
-      if (!host) return;
-      host.innerHTML = "";
-      items.forEach(item => {
-        const el = card(
-          "<strong>" + item.id + "</strong>" +
-          '<div class="row"><span class="pill">' + item.capability_id + '</span><span class="pill">' + item.offering_id + '</span><span class="pill">' + item.status + '</span></div>' +
-          '<div class="small">protocol: ' + item.protocol + '</div>' +
-          '<div class="mono">price: ' + item.price.amount_wei + " / " + item.price.per_units + '</div>' +
+      renderSimpleCards("offers", items, item => {
+        const match = Object.keys(item.match || {}).map(key => esc(key) + "=" + esc(item.match[key])).join(", ");
+        const certification = (item.certification || []).map(step => esc(step.name || step.type || "step")).join(", ");
+        const promoted = (item.extra_from_runner || []).map(esc).join(", ");
+        const capacity = item.capacity;
+        return "<strong>" + esc(item.offering_id) + "</strong>" +
           '<div class="row">' +
-            '<button data-offer-edit="' + item.id + '" class="secondary">Load Into Editor</button>' +
-            '<button data-offer-active="' + item.id + '" class="secondary">Set Active</button>' +
-            '<button data-offer-disabled="' + item.id + '" class="secondary">Disable</button>' +
-          '</div>'
-        );
-        host.appendChild(el);
+            '<span class="pill">' + esc(item.capability) + '</span>' +
+            '<span class="pill">' + esc(item.protocol) + '</span>' +
+            '<span class="pill">' + (item.disabled ? "pushed, not advertised" : "advertised") + '</span>' +
+          '</div>' +
+          '<div class="mono">price: ' + priceLabel(item.price) + '</div>' +
+          (capacity ? '<div class="small">capacity: ' + esc(capacity.max_in_flight || 0) + " in flight, queue " + esc(capacity.queue_limit || 0) + '</div>' : '<div class="small">capacity: broker default</div>') +
+          '<div class="small">match: ' + (match || "any runner serving the capability") + '</div>' +
+          '<div class="small">certification: ' + (certification || "none") + '</div>' +
+          (promoted ? '<div class="small">runner may promote: ' + promoted + '</div>' : "");
       });
-      host.querySelectorAll("[data-offer-edit]").forEach(btn => btn.onclick = () => {
-        const item = items.find(offer => offer.id === btn.dataset.offerEdit);
-        if (item) loadOfferIntoForm(item);
+    }
+
+    // The three states an operator has to be able to tell apart. No
+    // override at all means the pool never adopted the template and no
+    // offer is pushed for it; an override with enabled false still pushes
+    // the offer, so the broker keeps it and stops advertising it.
+    function templateState(item) {
+      if (!item.override_updated_at) return "not adopted";
+      return item.enabled ? "enabled" : "disabled";
+    }
+
+    function templateByID(id) {
+      return (latestTemplateCatalog || []).find(item => item.id === id) || null;
+    }
+
+    // A PUT replaces the whole override, so a toggle that only means
+    // "enable this" still has to carry everything else the pool set
+    // forward — the price, or the offer drops back to the catalog's
+    // suggestion, and extra_override, or the pool's advertised metadata
+    // is lost. extra_override is the pool's own half unmerged, which is
+    // why it can be echoed back: nothing of the catalog's rides along to
+    // be frozen where a later catalog edit could not reach it.
+    function templateOverrideBody(item, enabled, price) {
+      const body = { enabled: enabled, updated_by: currentActor() };
+      if (price) {
+        body.price = price;
+      } else if (item.price_overridden && item.effective_price) {
+        body.price = { amount_wei: item.effective_price.amount_wei, per_units: item.effective_price.per_units };
+      }
+      // Absent and empty are not the same record: send extra only where
+      // the pool actually set some.
+      if (hasExtraOverride(item)) body.extra = item.extra_override;
+      return body;
+    }
+
+    function hasExtraOverride(item) {
+      return !!item.extra_override && Object.keys(item.extra_override).length > 0;
+    }
+
+    async function putTemplateOverride(id, body) {
+      try {
+        setStatus("Saving template override...");
+        await api("/admin/v1/template-overrides/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify(body) });
+        await refreshAll();
+      } catch (err) {
+        setStatus(err.message, "bad");
+      }
+    }
+
+    function renderTemplateCatalog(items) {
+      renderSimpleCards("templateCatalog", items, item => {
+        const price = item.effective_price || {};
+        const id = esc(item.id);
+        return "<strong>" + esc(item.display_name || item.id) + "</strong>" +
+          '<div class="row">' +
+            '<span class="pill">' + templateState(item) + '</span>' +
+            '<span class="pill">' + esc(item.capability) + '</span>' +
+            '<span class="pill">' + esc(item.protocol) + '</span>' +
+          '</div>' +
+          '<div class="mono">' + id + " to " + esc(item.offering_id) + '</div>' +
+          (item.description ? '<div class="small">' + esc(item.description) + '</div>' : "") +
+          '<div class="small">price: ' + priceLabel(price) + " (" + (item.price_overridden ? "pool override" : "catalog default") + ")</div>" +
+          (hasExtraOverride(item) ? '<div class="row"><span class="pill">extra override: ' + Object.keys(item.extra_override).length + ' key(s)</span></div>' : "") +
+          (item.override_updated_at ? '<div class="small muted">override updated ' + esc(item.override_updated_at) + '</div>' : "") +
+          '<div class="row">' +
+            '<label class="small">amount wei <input data-template-amount value="' + esc(price.amount_wei || "0") + '"></label>' +
+            '<label class="small">per units <input data-template-per type="number" min="1" value="' + esc(price.per_units || 1) + '"></label>' +
+          '</div>' +
+          '<div class="row">' +
+            '<button data-template-save="' + id + '">Save price</button>' +
+            '<button class="secondary" data-template-enable="' + id + '">' + (item.enabled ? "Disable" : "Enable") + '</button>' +
+            (item.override_updated_at ? '<button class="secondary" data-template-revert="' + id + '">Revert to catalog default</button>' : "") +
+          '</div>';
       });
-      host.querySelectorAll("[data-offer-active]").forEach(btn => btn.onclick = () => patchOfferStatus(btn.dataset.offerActive, "active"));
-      host.querySelectorAll("[data-offer-disabled]").forEach(btn => btn.onclick = () => patchOfferStatus(btn.dataset.offerDisabled, "disabled"));
+      const host = $("templateCatalog");
+      if (!host) return;
+      host.querySelectorAll("[data-template-save]").forEach(btn => btn.onclick = () => {
+        const item = templateByID(btn.dataset.templateSave);
+        if (!item) return;
+        const scope = btn.closest(".card");
+        const amount = scope.querySelector("[data-template-amount]").value.trim();
+        const perUnits = Number(scope.querySelector("[data-template-per]").value || "1");
+        // Pricing a template the pool never adopted is how it gets
+        // adopted; pricing one the operator deliberately turned off must
+        // not quietly turn it back on.
+        const enabled = item.override_updated_at ? item.enabled : true;
+        void putTemplateOverride(item.id, templateOverrideBody(item, enabled, { amount_wei: amount, per_units: perUnits }));
+      });
+      host.querySelectorAll("[data-template-enable]").forEach(btn => btn.onclick = () => {
+        const item = templateByID(btn.dataset.templateEnable);
+        if (!item) return;
+        void putTemplateOverride(item.id, templateOverrideBody(item, !item.enabled, null));
+      });
+      host.querySelectorAll("[data-template-revert]").forEach(btn => btn.onclick = async () => {
+        try {
+          setStatus("Reverting template to catalog default...");
+          await api("/admin/v1/template-overrides/" + encodeURIComponent(btn.dataset.templateRevert), { method: "DELETE" });
+          await refreshAll();
+        } catch (err) {
+          setStatus(err.message, "bad");
+        }
+      });
     }
 
     function renderAuditEvents(items) {
@@ -355,20 +430,6 @@
       });
     }
 
-    async function submitJSON(path, payload, method = "POST") {
-      await api(path, { method, body: payload });
-      await refreshAll();
-    }
-
-    async function patchOfferStatus(id, status) {
-      try {
-        setStatus("Updating offer status...");
-        await submitJSON("/admin/v1/offers/" + id, JSON.stringify({ status }), "PATCH");
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    }
-
     on("refresh", "click", () => { void refreshAll(); });
     on("applyAuditFilters", "click", () => { void refreshAll(); });
     on("clearAuditFilters", "click", () => {
@@ -377,34 +438,6 @@
       if ($("auditResourceID")) $("auditResourceID").value = "";
       if ($("auditLimit")) $("auditLimit").value = "20";
       void refreshAll();
-    });
-    on("syncOfferPayload", "click", () => syncPayloadTextarea("offerPayload", offerPayloadFromForm()));
-    on("createOffer", "click", async () => {
-      try {
-        setStatus("Creating offer...");
-        await submitJSON("/admin/v1/offers", syncPayloadTextarea("offerPayload", offerPayloadFromForm()));
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    });
-    on("updateOffer", "click", async () => {
-      try {
-        const id = val("offerId");
-        if (!id) throw new Error("Offer ID is required");
-        setStatus("Updating offer...");
-        await submitJSON("/admin/v1/offers/" + encodeURIComponent(id), syncPayloadTextarea("offerPayload", offerPayloadFromForm()), "PATCH");
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    });
-    on("resetOfferForm", "click", () => resetOfferForm());
-    on("submitOfferRaw", "click", async () => {
-      try {
-        setStatus("Submitting raw offer JSON...");
-        await submitJSON("/admin/v1/offers", $("offerPayload").value);
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
     });
     on("applyRuntime", "click", async () => {
       try {
@@ -436,5 +469,4 @@
       }
     });
 
-    if ($("offerId")) resetOfferForm();
     refreshAll();

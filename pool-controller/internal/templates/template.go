@@ -42,6 +42,15 @@ type Template struct {
 	// runner may suggest steps and never self-certify.
 	Certification []types.CertificationStep `yaml:"certification,omitempty" json:"certification,omitempty"`
 
+	// Match selects which attached runners this template wants, by the
+	// identity they declared (runner-attach §3.2). Two templates of the
+	// same capability — a 20B and a 70B chat model, say — are told
+	// apart only by this: without it both would match every chat runner
+	// in the pool and the broker would freeze whichever arrived first.
+	// Left empty, the offer takes any runner serving the capability,
+	// which is what a single-model pool wants.
+	Match map[string]string `yaml:"match,omitempty" json:"match,omitempty"`
+
 	// Requirements gate which GPUs may run this at all.
 	Requirements Requirements `yaml:"requirements,omitempty" json:"requirements,omitempty"`
 

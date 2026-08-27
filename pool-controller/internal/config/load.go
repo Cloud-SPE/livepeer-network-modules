@@ -115,6 +115,40 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("bootstrap.broker_admin_auth.method %q is not supported", cfg.Bootstrap.BrokerAdminAuth.Method)
 		}
 	}
+	// A pool that declared a fleet and got no usable target from it has
+	// almost certainly typed a key wrong. Pushing nowhere is a valid
+	// standalone configuration, but only when the operator asked for
+	// nothing — reaching it by way of a misspelling would leave every
+	// broker on a stale offer set with nothing said anywhere.
+	if len(cfg.Bootstrap.Brokers) > 0 {
+		for i, broker := range cfg.Bootstrap.Brokers {
+			if strings.TrimSpace(broker.AdminURL) == "" {
+				return fmt.Errorf("bootstrap.brokers[%d]: admin_url is required", i)
+			}
+			u, err := url.Parse(broker.AdminURL)
+			if err != nil {
+				return fmt.Errorf("bootstrap.brokers[%d].admin_url is invalid: %w", i, err)
+			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return fmt.Errorf("bootstrap.brokers[%d].admin_url scheme must be http or https (got %q)", i, u.Scheme)
+			}
+			switch broker.Auth.Method {
+			case "", "none":
+			case "bearer":
+				if broker.Auth.SecretRef == "" {
+					return fmt.Errorf("bootstrap.brokers[%d].auth.secret_ref is required when method=bearer", i)
+				}
+				if !strings.Contains(broker.Auth.SecretRef, "://") {
+					return fmt.Errorf("bootstrap.brokers[%d].auth.secret_ref should be a URI-style reference (got %q)", i, broker.Auth.SecretRef)
+				}
+			default:
+				return fmt.Errorf("bootstrap.brokers[%d].auth.method %q is not supported", i, broker.Auth.Method)
+			}
+			if broker.TimeoutMS < 0 {
+				return fmt.Errorf("bootstrap.brokers[%d].timeout_ms must be >= 0", i)
+			}
+		}
+	}
 	if cfg.Bootstrap.BrokerAdminTimeoutMS < 0 {
 		return fmt.Errorf("bootstrap.broker_admin_timeout_ms must be >= 0")
 	}

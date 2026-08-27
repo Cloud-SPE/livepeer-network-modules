@@ -193,6 +193,22 @@ func TestValidateRejects(t *testing.T) {
 			wantErr: "repeats step name",
 		},
 		{
+			// A selector is matched against the identity a runner
+			// declared at attach, so a key outside identity.* can never
+			// match anything and would leave the offer unserved.
+			name:    "match key outside identity",
+			mutate:  func(tm *Template) { tm.Match = map[string]string{"openai.model": "gpt-oss-20b"} },
+			wantErr: "identity.<dotted key>",
+		},
+		{
+			// An empty value would match every runner of the
+			// capability, which is what omitting match already means —
+			// so it is far likelier a truncated config than an intent.
+			name:    "match value is empty",
+			mutate:  func(tm *Template) { tm.Match = map[string]string{"identity.openai.model": "  "} },
+			wantErr: "has no value",
+		},
+		{
 			// Neither primary nor stackable anywhere means no GPU can
 			// ever run it: a config error, not a template that simply
 			// never matches.
@@ -212,5 +228,27 @@ func TestValidateRejects(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want it to mention %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// The selector has to survive the YAML round trip: a wrong tag would
+// drop it silently, and an offer with no match takes any runner of its
+// capability — so two models of one capability would both be served by
+// whichever runner attached first.
+func TestLoadReadsMatchFromYAML(t *testing.T) {
+	dir := writeTemplates(t, map[string]string{
+		"chat.yaml": validTemplate("chat-20b", "openai:chat-completions", "gpt-oss-20b") +
+			"match:\n  identity.openai.model: gpt-oss-20b\n",
+	})
+	catalog, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	tmpl, ok := catalog.Get("chat-20b")
+	if !ok {
+		t.Fatal("template did not load")
+	}
+	if tmpl.Match["identity.openai.model"] != "gpt-oss-20b" {
+		t.Fatalf("match = %v", tmpl.Match)
 	}
 }

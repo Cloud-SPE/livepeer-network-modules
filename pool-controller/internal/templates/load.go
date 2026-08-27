@@ -16,6 +16,7 @@ var (
 	stepNameRE   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	promotedRE   = regexp.MustCompile(`^x-[A-Za-z0-9._-]+$`)
 	priceWeiRE   = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
+	matchKeyRE   = regexp.MustCompile(`^identity\.[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
 )
 
 // validStepTypes mirrors the broker's certification-steps contract. A
@@ -164,6 +165,14 @@ func (t Template) Validate() error {
 			return fmt.Errorf("template %s: extra_from_runner repeats %q", t.ID, key)
 		}
 		seenPromoted[key] = true
+	}
+	for key, value := range t.Match {
+		if !matchKeyRE.MatchString(key) {
+			return fmt.Errorf("template %s: match key %q must be identity.<dotted key> (runner-attach §3.2)", t.ID, key)
+		}
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("template %s: match.%s has no value", t.ID, key)
+		}
 	}
 	seenStep := map[string]bool{}
 	for i, step := range t.Certification {

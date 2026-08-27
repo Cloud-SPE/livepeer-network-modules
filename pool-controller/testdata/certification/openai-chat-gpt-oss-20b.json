@@ -1,11 +1,13 @@
 [
   {
     "name": "ready",
-    "type": "readiness"
+    "type": "readiness",
+    "required": true
   },
   {
     "name": "smoke",
     "type": "request",
+    "required": true,
     "config": {
       "assert": [
         "$.choices[0].message.content",
@@ -30,6 +32,7 @@
   {
     "name": "usage",
     "type": "usage",
+    "required": true,
     "config": {
       "min_units": 1
     }

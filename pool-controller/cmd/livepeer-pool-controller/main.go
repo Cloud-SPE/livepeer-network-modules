@@ -96,7 +96,7 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	}
 	log.Printf("template catalog: %d templates from %s", catalog.Len(), displayCatalogDir(cfg.TemplateCatalogDir))
 
-	rendered, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
+	rendered, runtimeInfo, err := buildBrokerPushState(stateRepo, catalog, cfg)
 	if err != nil {
 		return err
 	}
@@ -144,14 +144,19 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func buildBrokerPushState(stateRepo *repo.StateRepo, cfg *config.Config) (brokerpush.State, *types.DesiredBrokerRuntime, error) {
+func buildBrokerPushState(stateRepo *repo.StateRepo, catalog *templates.Catalog, cfg *config.Config) (brokerpush.State, *types.DesiredBrokerRuntime, error) {
 	if stateRepo == nil {
 		return brokerpush.State{}, nil, fmt.Errorf("state repo is nil")
 	}
-	offers, err := stateRepo.ListOffers()
+	// An offer is not stored: it is what an enabled template becomes.
+	// Deriving it on every push means a catalog change and a price
+	// change reach the broker by the same path, and there is no third
+	// copy of the truth to drift.
+	overrides, err := stateRepo.ListTemplateOverrides()
 	if err != nil {
 		return brokerpush.State{}, nil, err
 	}
+	offers := brokerpush.BuildOffersFromCatalog(catalog.All(), overrides)
 	poolMembers, err := stateRepo.ListPoolMembers()
 	if err != nil {
 		return brokerpush.State{}, nil, err
@@ -174,7 +179,7 @@ func buildBrokerPushState(stateRepo *repo.StateRepo, cfg *config.Config) (broker
 	// and freezes them (plan 0043 §3.2, §3.4).
 	push := brokerpush.State{Offers: offers, Enrollments: hostEnrollments}
 	runtimeInfo := &types.DesiredBrokerRuntime{
-		Revision:            brokerpush.Revision(brokerpush.BuildOffers(offers)),
+		Revision:            brokerpush.Revision(offers),
 		CredentialsRevision: brokerpush.Revision(brokerpush.BuildCredentials(hostEnrollments)),
 		PushedAt:            time.Now().UTC(),
 		OfferCount:          len(offers),
@@ -253,32 +258,71 @@ func (s *runtimeState) Replace(cfg *config.Config, push brokerpush.State, source
 	return s.syncAccountingMetrics()
 }
 
-// pushToBroker sends the offer set and the credentials that may attach.
-// A controller with no broker admin URL configured simply records the
-// revision: a single-broker dev deployment can still be inspected.
+// pushToBroker sends the offer set and the credentials that may attach
+// to every broker in the fleet.
+//
+// Each broker is pushed independently and the whole fleet is attempted
+// even when one fails: brokers are separate machines, and letting the
+// first unreachable one stop the others would leave the rest of the
+// pool serving a stale offer set for no reason. The revision makes each
+// push idempotent, so retrying a broker that already has this content
+// is free.
+//
+// A controller with no broker configured simply records the revision —
+// a standalone deployment can still be inspected.
 func (s *runtimeState) pushToBroker(cfg *config.Config, push brokerpush.State, info *types.DesiredBrokerRuntime) error {
-	if cfg == nil || strings.TrimSpace(cfg.Bootstrap.BrokerAdminURL) == "" {
+	if cfg == nil {
 		return nil
 	}
-	client := brokeradmin.New(
-		cfg.Bootstrap.BrokerAdminURL,
-		cfg.Bootstrap.BrokerAdminAuth,
-		time.Duration(cfg.Bootstrap.BrokerAdminTimeoutMS)*time.Millisecond,
-	)
-	timeout := time.Duration(cfg.Bootstrap.BrokerAdminTimeoutMS) * time.Millisecond
-	if timeout <= 0 {
-		timeout = 10 * time.Second
+	targets := cfg.Bootstrap.BrokerTargets()
+	if len(targets) == 0 {
+		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	res, err := brokerpush.Sync(ctx, client, push)
-	info.ChangedOffers = res.OffersChanged
-	info.RevokedHosts = res.RevokedHosts
-	if err != nil {
-		return err
+	changedOffers := map[string]struct{}{}
+	revokedHosts := map[string]struct{}{}
+	var failures []string
+	for _, target := range targets {
+		timeout := time.Duration(target.TimeoutMS) * time.Millisecond
+		if timeout <= 0 {
+			timeout = 10 * time.Second
+		}
+		client := brokeradmin.New(target.AdminURL, target.Auth, timeout)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		res, err := brokerpush.Sync(ctx, client, push)
+		cancel()
+		for _, id := range res.OffersChanged {
+			changedOffers[id] = struct{}{}
+		}
+		for _, id := range res.RevokedHosts {
+			revokedHosts[id] = struct{}{}
+		}
+		if err != nil {
+			log.Printf("broker push failed for %s: %v", target.Name, err)
+			failures = append(failures, target.Name+": "+err.Error())
+		}
+	}
+	info.ChangedOffers = sortedKeys(changedOffers)
+	info.RevokedHosts = sortedKeys(revokedHosts)
+	if len(failures) > 0 {
+		// Name how many of how many, so a partial push does not read
+		// like a total one.
+		return fmt.Errorf("%d of %d brokers rejected the push: %s",
+			len(failures), len(targets), strings.Join(failures, "; "))
 	}
 	info.PushError = ""
 	return nil
+}
+
+func sortedKeys(in map[string]struct{}) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for key := range in {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *runtimeState) Snapshot() (*config.Config, *repo.Snapshot, *types.DesiredBrokerRuntime) {
@@ -365,7 +409,7 @@ func (s *runtimeState) Reload() error {
 	if err != nil {
 		return err
 	}
-	rendered, runtimeInfo, err := buildBrokerPushState(s.repo, cfg)
+	rendered, runtimeInfo, err := buildBrokerPushState(s.repo, s.catalog, cfg)
 	if err != nil {
 		return err
 	}
@@ -386,7 +430,7 @@ func (s *runtimeState) RefreshRenderedFromState(source string) error {
 	if cfg == nil {
 		return fmt.Errorf("config is not loaded")
 	}
-	rendered, runtimeInfo, err := buildBrokerPushState(s.repo, cfg)
+	rendered, runtimeInfo, err := buildBrokerPushState(s.repo, s.catalog, cfg)
 	if err != nil {
 		return err
 	}
@@ -428,7 +472,7 @@ func (s *runtimeState) syncAccountingMetrics() error {
 // mean operator-registered member backend URLs; the equivalent unit in
 // the connected-runner model is the GPU a member has attached, so the
 // count now comes from hardware units.
-func countPersistedEntities(stateRepo *repo.StateRepo) (memberCount, hardwareCount, offerCount int, err error) {
+func countPersistedEntities(stateRepo *repo.StateRepo, catalog *templates.Catalog) (memberCount, hardwareCount, offerCount int, err error) {
 	if stateRepo == nil {
 		return 0, 0, 0, nil
 	}
@@ -440,11 +484,11 @@ func countPersistedEntities(stateRepo *repo.StateRepo) (memberCount, hardwareCou
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	offers, err := stateRepo.ListOffers()
+	overrides, err := stateRepo.ListTemplateOverrides()
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	return len(members), len(units), len(offers), nil
+	return len(members), len(units), len(brokerpush.BuildOffersFromCatalog(catalog.All(), overrides)), nil
 }
 
 func newServeMux(state *runtimeState) *http.ServeMux {
@@ -493,7 +537,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 					if runtimeInfo != nil && runtimeInfo.MemberCount > 0 {
 						return runtimeInfo.MemberCount
 					}
-					memberCount, _, _, err := countPersistedEntities(state.repo)
+					memberCount, _, _, err := countPersistedEntities(state.repo, state.catalog)
 					if err != nil {
 						return 0
 					}
@@ -539,7 +583,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		if cfg != nil {
 			scoring = cfg.Scoring
 		}
-		memberCount, backendCount, offeringCount, err = countPersistedEntities(state.repo)
+		memberCount, backendCount, offeringCount, err = countPersistedEntities(state.repo, state.catalog)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1502,7 +1546,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 				if runtimeInfo != nil && runtimeInfo.MemberCount > 0 {
 					return runtimeInfo.MemberCount
 				}
-				memberCount, _, _, err := countPersistedEntities(state.repo)
+				memberCount, _, _, err := countPersistedEntities(state.repo, state.catalog)
 				if err != nil {
 					return 0
 				}
@@ -1584,82 +1628,6 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func offerFromRequest(req offerMutationRequest) (types.Offer, error) {
-	req.ID = strings.TrimSpace(req.ID)
-	req.CapabilityID = strings.TrimSpace(req.CapabilityID)
-	req.OfferingID = strings.TrimSpace(req.OfferingID)
-	req.Protocol = strings.TrimSpace(req.Protocol)
-	if req.ID == "" {
-		return types.Offer{}, fmt.Errorf("id is required")
-	}
-	if req.CapabilityID == "" || req.OfferingID == "" || req.Protocol == "" {
-		return types.Offer{}, fmt.Errorf("capability_id, offering_id, and protocol are required")
-	}
-	if req.WorkUnit.Name == "" || len(req.WorkUnit.Extractor) == 0 {
-		return types.Offer{}, fmt.Errorf("work_unit.name and work_unit.extractor are required")
-	}
-	if req.Price.AmountWei == "" || req.Price.PerUnits == 0 {
-		return types.Offer{}, fmt.Errorf("price.amount_wei and price.per_units > 0 are required")
-	}
-	status := types.OfferStatusActive
-	if strings.TrimSpace(req.Status) != "" {
-		status = types.OfferStatus(strings.TrimSpace(req.Status))
-	}
-	return types.Offer{
-		ID:           req.ID,
-		CapabilityID: req.CapabilityID,
-		OfferingID:   req.OfferingID,
-		Protocol:     req.Protocol,
-		Job:          req.Job,
-		WorkUnit:     config.NormalizeWorkUnit(req.WorkUnit),
-		Price:        req.Price,
-		Extra:        req.Extra,
-		Constraints:  req.Constraints,
-		Status:       status,
-	}, nil
-}
-
-func updatedOfferFromRequest(current types.Offer, req offerMutationRequest) (types.Offer, error) {
-	if strings.TrimSpace(req.CapabilityID) != "" {
-		current.CapabilityID = strings.TrimSpace(req.CapabilityID)
-	}
-	if strings.TrimSpace(req.OfferingID) != "" {
-		current.OfferingID = strings.TrimSpace(req.OfferingID)
-	}
-	if strings.TrimSpace(req.Protocol) != "" {
-		current.Protocol = strings.TrimSpace(req.Protocol)
-	}
-	if req.Job != nil {
-		current.Job = req.Job
-	}
-	if req.WorkUnit.Name != "" {
-		current.WorkUnit = config.NormalizeWorkUnit(req.WorkUnit)
-	}
-	if req.Price.AmountWei != "" {
-		current.Price = req.Price
-	}
-	if req.Extra != nil {
-		current.Extra = req.Extra
-	}
-	if req.Constraints != nil {
-		current.Constraints = req.Constraints
-	}
-	if strings.TrimSpace(req.Status) != "" {
-		current.Status = types.OfferStatus(strings.TrimSpace(req.Status))
-	}
-	if current.CapabilityID == "" || current.OfferingID == "" || current.Protocol == "" {
-		return types.Offer{}, fmt.Errorf("capability_id, offering_id, and protocol are required")
-	}
-	if current.WorkUnit.Name == "" || len(current.WorkUnit.Extractor) == 0 {
-		return types.Offer{}, fmt.Errorf("work_unit.name and work_unit.extractor are required")
-	}
-	current.WorkUnit = config.NormalizeWorkUnit(current.WorkUnit)
-	if current.Price.AmountWei == "" || current.Price.PerUnits == 0 {
-		return types.Offer{}, fmt.Errorf("price.amount_wei and price.per_units > 0 are required")
-	}
-	return current, nil
 }
 
 func resolveAdminToken(cfg *config.Config) (string, error) {
@@ -2044,19 +2012,6 @@ type payoutIntentRequeueRequest struct {
 	IDs []string `json:"ids"`
 }
 
-type offerMutationRequest struct {
-	ID           string              `json:"id"`
-	CapabilityID string              `json:"capability_id"`
-	OfferingID   string              `json:"offering_id"`
-	Protocol     string              `json:"protocol"`
-	Job          *types.OfferJobAxes `json:"job,omitempty"`
-	WorkUnit     config.WorkUnit     `json:"work_unit"`
-	Price        config.Price        `json:"price"`
-	Extra        map[string]any      `json:"extra,omitempty"`
-	Constraints  map[string]any      `json:"constraints,omitempty"`
-	Status       string              `json:"status,omitempty"`
-}
-
 type backendStatusRequest struct {
 	Status string `json:"status"`
 }
@@ -2078,10 +2033,11 @@ func buildOfferingViewsFromState(stateRepo *repo.StateRepo, catalog *templates.C
 	if stateRepo == nil {
 		return nil, nil
 	}
-	offers, err := stateRepo.ListOffers()
+	overrides, err := stateRepo.ListTemplateOverrides()
 	if err != nil {
 		return nil, err
 	}
+	offers := brokerpush.BuildOffersFromCatalog(catalog.All(), overrides)
 	assignments, err := stateRepo.ListTemplateAssignments()
 	if err != nil {
 		return nil, err
@@ -2118,12 +2074,12 @@ func buildOfferingViewsFromState(stateRepo *repo.StateRepo, catalog *templates.C
 	out := make([]offeringView, 0, len(offers))
 	for _, offer := range offers {
 		view := offeringView{
-			CapabilityID: offer.CapabilityID,
+			CapabilityID: offer.Capability,
 			OfferingID:   offer.OfferingID,
 			Protocol:     offer.Protocol,
 			Runners:      make([]offeringRunnerView, 0),
 		}
-		for _, templateID := range templatesByOffering[offer.CapabilityID+"|"+offer.OfferingID] {
+		for _, templateID := range templatesByOffering[offer.Capability+"|"+offer.OfferingID] {
 			for _, assignment := range assignmentsByTemplate[templateID] {
 				unit := unitsByID[assignment.HardwareUnitID]
 				view.Runners = append(view.Runners, offeringRunnerView{

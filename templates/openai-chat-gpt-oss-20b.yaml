@@ -33,6 +33,15 @@ capacity: { max_in_flight: 4, queue_limit: 4 }
 # longer matches.
 extra_from_runner: [x-quantization]
 
+# Chat is the family a pool is most likely to sell in tiers, and two
+# chat templates are told apart only by this selector: without it both
+# would match every runner declaring openai:chat-completions and the
+# broker would freeze whichever attached first. The runner declares the
+# model it is actually serving in its attach identity; this says which
+# of those this offering wants.
+match:
+  identity.openai.model: gpt-oss-20b
+
 certification:
   # Transcribed from brokerpush.CertificationPolicy, case
   # "openai:chat-completions".

@@ -1,73 +1,155 @@
 # pool-controller
 
-`pool-controller` is the Pool-side control-plane component. The current Pool
-path is the connected-worker replacement from
-`docs/exec-plans/active/0040-pool-template-connected-worker-reset.md`, as
-extended by `docs/exec-plans/active/0043-connected-runners-and-offer-manifest.md`
-and `docs/exec-plans/active/0044-zero-touch-pool-onboarding.md`: members
-sign in with an ETH wallet, download a generated compose bundle, and connect
-outbound to the Pool broker. Pool members do not run a broker or
-`payment-daemon`.
+`pool-controller` is the Pool-side control-plane component. It holds the pool's
+policy, decides what runs where, and owns the money. It is deliberately *not*
+in the request data path: if it is down, the broker keeps serving from what it
+last accepted.
 
-It
-owns the persisted Pool control-plane state for:
+The current design is the connected-worker reset of
+`docs/exec-plans/active/0040-pool-template-connected-worker-reset.md`, extended
+by `docs/exec-plans/active/0043-connected-runners-and-offer-manifest.md` and
+`docs/exec-plans/active/0044-zero-touch-pool-onboarding.md`. The narrative
+version, with the flows drawn out, is
+[`docs/design-docs/pool-overlay-flows.md`](../docs/design-docs/pool-overlay-flows.md).
 
-- orch-owned offers
-- wallet-authenticated pool members
+## The model in five sentences
+
+A member signs in with an ETH wallet, enrols a host, and runs one command; the
+bundle contains only `pool-member-agent`. The operator's single policy gesture
+is **which workload templates are enabled at what price** — templates are YAML
+files in the repo-root `templates/` catalog, and per-pool state is nothing but
+`{enabled, price, extra}` overrides. An enabled, priced template is *derived*
+into an offer and pushed to every broker in the fleet; nothing stores an offer.
+Placement is policy over declared facts — a GPU's class, the templates it
+satisfies, the member's opt-outs — so no operator picks what runs on a card,
+and every decision carries a reason code. The agent then pulls its own desired
+state and reconciles the host, the trust ladder advances placements on its own,
+and the operator is left with the exceptions: lifting a suspension, overriding
+a duplicate GPU claim, banning a member, approving payouts until those
+graduate.
+
+> **The shipped catalog cannot start a runner yet.** None of the five templates
+> in `templates/` carries a `runner_compose` block — the v1 images and model ids
+> are still open (`lnm-v12`) — so the compose service rendered for them has no
+> `image`. Everything up to and including the placement decision works; a pool
+> that wants a runner to actually start must add `runner_compose.image` to a
+> template of its own.
+
+## What it owns
+
+Persisted control-plane state in BoltDB:
+
+- wallet-authenticated pool members, and the sign-in nonces
 - host enrollments and enrollment credentials
 - GPU hardware inventory
-- template catalog and template-to-hardware assignments
+- per-pool template overrides (`{enabled, price, extra}`) and member
+  per-template opt-outs
+- template assignments — one template placed on one GPU — and their ladder
+  state
 - certification runs
-- accepted work receipts, settlement windows, payout batches, and payout intents
-- desired broker runtime
+- accepted work receipts, round receipts, settlement windows, payout batches,
+  and payout intents
+- backend-selection state and the audit log
+
+Read at boot, not stored: the workload catalog (`template_catalog_dir`) and
+`payout-policy.json`. Both are policy, and the way a pool records a decision is
+a reviewed diff, not a live edit to a database.
 
 The supported production path is:
 
 - bootstrap-only controller config
 - persisted control-plane state in BoltDB
-- the offer set and attach credentials pushed to the broker over its admin
+- the offer set and attach credentials pushed to each broker over its admin
   API — nothing is rendered to a broker config file
 
-The legacy member model is gone, not merely unsupported. Plan 0044 §5 phase A
-deleted `JoinRequest`, `MemberBackend`, the old `Assignment`, admission review,
-backend verification, auto-approval, auto-drain, the nested
+## The legacy member model is gone
+
+Not merely unsupported: plan 0044 §5 phase A deleted `JoinRequest`,
+`MemberBackend`, the old `Assignment`, admission review, backend verification,
+auto-approval, auto-drain, `offerservice`, the nested
 `members[].backends[].offerings[]` config and its compatibility loader, and
 every route and console page that drove them. The pool never dials a
 member-supplied endpoint, so there is nothing to verify before admission and
-nothing for an operator to approve.
-
-What replaces it: a member signs in with their wallet, enrols a host, and the
-host reports its GPUs; the operator's only policy gesture is which templates
-are enabled at what price. Plan 0044 §3.3 then matches GPUs to templates
-deterministically (`requirements` + `priority` + `stacking`, members opting
-*out* of a template but never in) and the agent pulls its own desired state —
-that placement engine, the desired-state endpoint, and the member portal land
-in later slices of 0044, so until they ship, placing a template on a GPU
-(`POST /admin/v1/template-assignments`) is still a manual operator step.
-Do not add anything back to the deleted model.
+nothing for an operator to approve. Do not add anything back to it.
 
 Operator runbook:
 - [`RUNBOOK.md`](./RUNBOOK.md)
 
-The first implementation slice is intentionally narrow:
+## Templates, placement, and desired state
 
-- load a Pool operator config,
-- validate offer/offering records,
-- deterministically push the offer set and attach credentials to the Pool's
-  broker,
-- persist startup/reload snapshots in BoltDB for operator inspection,
-- persist backend-selection state records keyed by member/backend/offering,
-- expose a read-only admin snapshot scaffold for future Pool scoring work.
-- accept conservative backend-outcome ingests that nudge persisted real-success
-  and real-latency scores for future Pool scoring work.
-- add an opt-in synthetic probe scaffold for in-scope OpenAI families,
-  with concrete chat/embeddings probes and partial audio-family coverage.
+`internal/templates` loads `*.yaml` from `template_catalog_dir` at boot. A
+missing directory is fine — an accounting-only controller has no catalog and
+must still boot. A *malformed* template is a hard error, because a silently
+skipped one leaves a member running nothing with no explanation.
+
+`internal/placement` turns declared facts into placements. A GPU's driver
+marketing string normalises to a pool class (`rtx-4090`, `a100`, …; laptop and
+Max-Q parts get no class rather than the wrong one). Among templates whose
+`requirements` the GPU satisfies and the member has not opted out of, the
+highest `priority` takes the primary slot; another stacks alongside only where
+it names this class in `stacking.secondary_on` and the class's stance allows a
+rider. Members opt **out**, never in — opting in would be a member choosing
+what the pool sells.
+
+`GET /admin/v1/placement-plan` shows what that policy would do, with reason
+codes on every GPU including the ones that got nothing;
+`POST /admin/v1/placement-plan/apply` commits it. A template that should stop
+running is drained, not deleted.
+
+`internal/desiredstate` renders each placement into a compose fragment with the
+GPU pinned **by UUID** — not `gpus: all`, or two workloads on a two-card host
+would both claim both devices — plus the models to fetch and the capability and
+identity the runner must declare at attach. The agent fetches that document
+(ETag), writes one `runners.compose.yaml`, and reports back. Withdrawal is
+sequenced by the agent: `draining` goes into the attach document *before* the
+container stops, so the broker stops dispatching while the runner can still
+serve (`runner-attach` §7.1).
+
+## The trust ladder
+
+`internal/ladder` runs on a timer (default 60s, `ladder.evaluation_interval_ms`)
+and moves placements between trust states:
+
+```
+certified ─▶ probationary ─(closed settlement round ∧ ≥N jobs)─▶ active
+active ─(score below floor)─▶ throttled ─(recovers)─▶ active
+any ─(K consecutive failures)─▶ recertify
+any ─(serious failure)─▶ suspended ─(operator lifts)─▶ probationary
+```
+
+Promotion needs **both** halves. A job count alone can be run up in minutes by
+a host about to fail; a closed round alone proves only that time passed.
+Together they are evidence the pool actually billed for.
+
+Every transition records `{state, reason_code, evidence, at}` from a closed set
+of reason codes, so an operator reading the audit log and a member reading
+their own status page see the same sentence. Weights and caps reach the broker
+through the selection snapshot it already polls.
+
+Configuration lives under `ladder:` — `probation_share_ppm`,
+`probation_max_in_flight`, `probation_min_jobs`, `exploration_ppm`,
+`score_floor`, `recertify_after_failures`, `active_share_cap_ppm`. A zero field
+means "not configured" and takes the 0040 §8.3 default; it does not mean zero.
+
+## Listeners
+
+Separated by address, not by an auth check — an operator console reachable from
+the same address members use is one misconfigured proxy away from being
+reachable *by* them.
+
+- `listen.paid` — operator console, `/admin/*`, and the read-only
+  `/public/v1/*` shop window.
+- `listen.member` — the member portal and `/member/v1/*`, and nothing else.
+  The admin mux is never mounted on it.
+- `listen.metrics` — Prometheus, default `:9090`.
+
+Leaving `listen.member` empty keeps both surfaces on the paid listener. That is
+the single-address deployment and stays supported.
 
 Current scoring boundary:
 
 - repeated `backend_failure` outcomes already use a persisted 5-minute rolling
   window to open Pool cooldown
-- synthetic probes already enforce the 3-failure exclusion threshold
 - `real_success_score` now recomputes from a persisted 5-minute rolling window
   of `success` vs `backend_failure` outcomes, then blends with longer-lived EMA
   memory
@@ -76,7 +158,7 @@ Current scoring boundary:
   with longer-lived EMA memory
 - EMA memory now uses a 24-hour half-life and drifts toward neutral `0.5`
   between observations
-- recovered or first-probed backends re-enter with warm-up-capped weight
+- recovered or newly seeded backends re-enter with warm-up-capped weight
 - warm-up now auto-graduates after enough recent routed samples
 - manual warm-up overrides are now distinct from automatic warm-up recovery and
   can be cleared without losing automatic state
@@ -87,8 +169,13 @@ Current scoring boundary:
   exported to brokers via the selection snapshot so broker fallback reasoning
   stays aligned
 
+Scoring feeds the ladder rather than replacing it. The scorer answers "how is
+this runner doing right now"; the ladder answers "what share of the pool's
+traffic and money has it earned", and it is the ladder's answer the broker
+routes on.
+
 This component is not in the request data path. If `pool-controller` is down,
-the broker keeps serving the last generated config already loaded in memory.
+the broker keeps serving what it last accepted.
 
 ## Current commands
 
@@ -127,69 +214,112 @@ For production, prefer `admin_auth.bearer_token_ref`. Literal
 `listen.metrics` is now active. `pool-controller` serves Prometheus metrics on
 that separate listener, defaulting to `:9090`.
 
-Current admin endpoints:
+Current admin endpoints (paid/admin listener):
+
+Health and state
 
 - `GET /healthz`
 - `GET /readyz`
 - `GET /metrics` on the metrics listener
-- `GET /admin/v1/broker-config`
-- `GET /admin/v1/offerings`
 - `GET /admin/v1/state`
+- `GET /admin/v1/snapshots`
+- `POST /admin/v1/reload`
+- `GET /admin/v1/audit-events`
+
+Console pages
+
+- `GET /admin`, `GET /admin/pool`, `GET /admin/offers`, `GET /admin/audit`
+- `GET /admin/login`, `POST /admin/login`, `POST /admin/logout`
+- `GET /admin/assets/`
+
+Catalog and offers
+
+- `GET /admin/v1/template-catalog` — the loaded template files
+- `PUT /admin/v1/template-overrides/{id}` — enable / price / extra
+- `DELETE /admin/v1/template-overrides/{id}`
+- `GET /admin/v1/offers` — what the enabled templates derive into
+- `GET /admin/v1/offerings`
+
+Members, hosts, placement, ladder
+
+- `GET /admin/v1/pool-members`
+- `PATCH /admin/v1/pool-members/{address}`
+- `GET /admin/v1/host-enrollments`
+- `POST /admin/v1/host-enrollments/{id}/revoke`
+- `GET /admin/v1/hardware-units`
+- `GET /admin/v1/placement-plan` — what placement policy would do, with reasons
+- `POST /admin/v1/placement-plan/apply`
+- `GET /admin/v1/template-assignments`
+- `POST /admin/v1/template-assignments` — direct placement, for the cases
+  policy cannot reach
+- `POST /admin/v1/template-assignments/{id}/certification/start`
+- `GET /admin/v1/certification-runs`
+- `POST /admin/v1/certification-runs/{id}/complete`
+- `POST /admin/v1/ladder/run` — run a ladder pass now instead of on the timer
+- `GET /admin/v1/exceptions` — the operator queue: suspensions, duplicate GPUs
+
+Scoring
+
 - `GET /admin/v1/scoring-settings`
 - `GET /admin/v1/backend-selection-snapshot`
 - `GET /admin/v1/backend-selection-summary`
-- `GET /admin/v1/snapshots`
-- `GET /admin/v1/work-receipts`
-- `GET /admin/v1/round-receipts`
+- `POST /admin/v1/backend-outcomes`
+- `POST /admin/v1/backend-overrides/quarantine` · `/clear-quarantine`
+- `POST /admin/v1/backend-overrides/drain` · `/clear-drain`
+- `POST /admin/v1/backend-overrides/warmup` · `/clear-warmup`
+- `POST /admin/v1/backend-overrides/max-share-cap` · `/clear-max-share-cap`
+
+Receipts, settlement, payouts
+
+- `GET`/`POST /admin/v1/work-receipts`
+- `GET`/`POST /admin/v1/round-receipts`
+- `POST /admin/v1/round-close`
+- `GET /admin/v1/settlement-windows`
+- `POST /admin/v1/settlement-windows/close`
+- `GET /admin/v1/payout-batches`
+- `POST /admin/v1/payout-batches/{id}/approve`
+- `POST /admin/v1/payout-batches/{id}/policy-review` — what
+  `payout-policy.json` says about this batch
+- `GET /admin/v1/payout-policy`
 - `GET /admin/v1/payout-intents`
+- `POST /admin/v1/payout-intents/derive` · `/export` · `/claim` · `/renew` ·
+  `/release` · `/requeue` · `/status`
 - `GET /admin/v1/member-payouts`
 - `GET /admin/v1/payout-rounds`
 - `GET /admin/v1/payout-alerts`
-- `GET /admin/v1/pool-members`
-- `GET /admin/v1/host-enrollments`
-- `GET /admin/v1/hardware-units`
-- `GET /admin/v1/template-catalog`
-- `GET /admin/v1/template-assignments`
-- `GET /admin/v1/certification-runs`
-- `GET /admin/v1/settlement-windows`
-- `GET /admin/v1/payout-batches`
-- `POST /admin/v1/work-receipts`
-- `POST /admin/v1/backend-outcomes`
-- `POST /admin/v1/synthetic-probes/run`
-- `POST /admin/v1/round-receipts`
-- `POST /admin/v1/round-close`
-- `POST /admin/v1/payout-intents/derive`
-- `POST /admin/v1/payout-intents/export`
-- `POST /admin/v1/payout-intents/claim`
-- `POST /admin/v1/payout-intents/renew`
-- `POST /admin/v1/payout-intents/release`
-- `POST /admin/v1/payout-intents/requeue`
-- `POST /admin/v1/payout-intents/status`
-- `POST /admin/v1/backend-overrides/quarantine`
-- `POST /admin/v1/backend-overrides/clear-quarantine`
-- `POST /admin/v1/backend-overrides/drain`
-- `POST /admin/v1/backend-overrides/clear-drain`
-- `POST /admin/v1/backend-overrides/warmup`
-- `POST /admin/v1/backend-overrides/clear-warmup`
-- `POST /admin/v1/backend-overrides/max-share-cap`
-- `POST /admin/v1/backend-overrides/clear-max-share-cap`
-- `POST /admin/v1/template-assignments/{id}/certification/start`
-- `POST /admin/v1/certification-runs/{id}/complete`
-- `POST /admin/v1/host-enrollments/{id}/revoke`
-- `POST /admin/v1/settlement-windows/close`
-- `POST /admin/v1/payout-batches/{id}/approve`
-- `POST /admin/v1/reload`
 
-Current member endpoints:
+Current member endpoints (member listener, or the paid listener when
+`listen.member` is unset):
 
 - `POST /member/v1/auth/nonce`
 - `POST /member/v1/auth/verify`
 - `POST /member/v1/enrollments`
 - `GET /member/v1/enrollments/{id}/bundle`
 - `POST /member/v1/enrollments/{id}/hardware`
+- `GET /member/v1/enrollments/{id}/desired-state` — what this host should run
+  (ETag; the revision doubles as the tag, so a quiet host mostly gets 304)
+- `POST /member/v1/enrollments/{id}/status` — the agent's report of what it
+  achieved
+- `GET /member/v1/enrollments/{id}/status` — hosts, GPUs, placements, and the
+  ladder state **with its reason code and evidence**
+- `GET /member/v1/enrollments/{id}/earnings`
+- `GET`/`POST /member/v1/enrollments/{id}/opt-outs`,
+  `DELETE /member/v1/enrollments/{id}/opt-outs/{optOutID}`
+- `POST /member/v1/enrollments/{id}/rotate` — new enrollment credential; the
+  agent calls this itself, well inside the token's lifetime
+- `POST /member/v1/enrollments/{id}/retire` — placements drain first
+
+All of them are enrollment-token authenticated and scoped to that enrollment.
+Privacy is the rule that shapes the contract: a member sees their own amounts,
+never a share of a pool total. A share plus a public total is another member's
+income by subtraction.
 
 There is no `/member/v1/join-requests` surface any more; wallet sign-in plus a
 host enrolment is the whole member-facing path.
+
+The member portal's HTML, CSS and JS are in `internal/ui/web/`, but the routes
+that serve those pages and their assets have not landed yet (`lnm-6at.12`).
+The API above is complete.
 
 `GET /admin/v1/backend-selection-summary` rolls the current Pool routing state
 into operator-focused aggregates:
@@ -210,26 +340,16 @@ quarantined, or in warm-up.
 `GET /admin/v1/scoring-settings` is the authoritative runtime view of the
 active scorer knobs after defaults and reload have been applied.
 
-Synthetic probe behavior:
-
-- disabled by default via `synthetic_probes.enabled: false`
-- background runs only happen when explicitly enabled in config
-- `POST /admin/v1/synthetic-probes/run` can trigger a one-shot run on demand
-- current concrete probes:
-  - `openai:chat-completions`
-  - `openai:embeddings`
-  - `video:transcode.abr` via `GET /v1/video/transcode/abr/presets`,
-    requiring at least one declared preset
-- current concrete audio probes:
-  - `openai:audio-transcriptions`
-  - `openai:audio-translations`
-  - `openai:audio-speech`
-- other `openai:audio-*` subtypes now fall back to family recipes based on
-  the offer's declared `job.transports`:
-  - a `multipart` transport uses the transcription / translation probe recipe
-  - a `unary` transport uses the speech / TTS probe recipe
-- unsupported audio families still return skipped results with
-  `audio_probe_not_implemented`
+Synthetic probes are gone. The controller used to dial member backends with
+its own probe traffic to decide whether they were healthy; it cannot do that
+any more, and should not want to. Members are outbound-only, so there is no
+address to dial, and the question a probe answered is now answered better by
+two things that already exist: **certification**, which the broker runs over
+the runner's own attach connection using the steps the template declares, and
+the **ladder**, which judges a placement on real billed work rather than on
+synthetic traffic nobody paid for. `synthetic_probes` config, the
+`/admin/v1/synthetic-probes/run` route, and the per-family probe recipes were
+all deleted with that path.
 
 Offer protocol vocabulary:
 
@@ -257,13 +377,19 @@ Current Pool media limitation:
   worker support; UDP/SRTP is not solved by the connected-worker byte-stream
   tunnel.
 
-Broker push contract (plan 0043):
+Broker push contract (plan 0043, extended by 0044):
 
-- `pool-controller` pushes what it owns to the broker over the admin API:
+- `pool-controller` pushes what it owns to **every broker in the fleet**
+  (`bootstrap.brokers`, or the single-broker `bootstrap.broker_admin_url` a
+  dev deployment can keep using) over the admin API:
   `PUT /admin/v1/offers` (the offer set) and `PUT /admin/v1/credentials`
   (the credentials that may attach, as hashes only). Both are full
   replacements and idempotent; a credential that disappears from a push
   is a revoke, which closes that host's connections.
+- The offer set is **derived, not stored**: it is exactly the enabled,
+  priced templates from the catalog. Enabling a template or changing its price
+  override is therefore the whole of the operator's gesture — there is no
+  separate offer record to keep in step with it.
 - Offers are pushed before credentials, so a host whose credential was
   just accepted attaches into a broker that already knows what it might
   serve.
@@ -288,6 +414,10 @@ Current public endpoints:
 - `GET /public/v1/offerings`
 - `GET /public/v1/member-payouts?member_eth_address=0x...`
 
+These are registered on the admin/paid listener, not the member one. The member
+listener deliberately serves no cross-member figure — a member reads their own
+earnings authenticated, through `GET /member/v1/enrollments/{id}/earnings`.
+
 `GET /public/v1/summary` now includes a compact `worst_offerings` list so
 non-admin dashboards can surface the most unhealthy offerings without exposing
 the full admin backend-selection summary. That compact list now includes both
@@ -310,14 +440,17 @@ Current Prometheus metric families include:
 - `livepeer_pool_backend_selection_average_recent_window_age_seconds{capability,offering}`
 - `livepeer_pool_scoring_setting{setting}`
 - `livepeer_pool_backend_outcome_ingest_total{capability,offering,outcome}`
-- `livepeer_pool_synthetic_probe_runs_total{result}`
-- `livepeer_pool_synthetic_probe_run_duration_seconds{result}`
-- `livepeer_pool_synthetic_probe_results_total{capability,offering,status,reason}`
 - `livepeer_pool_work_receipt_status_total{status}`
 - `livepeer_pool_round_receipt_total`
 - `livepeer_pool_payout_intent_status_total{status}`
 - `livepeer_pool_receipt_write_total{kind,status}`
 - `livepeer_pool_payout_intent_action_total{action,status}`
+- `livepeer_pool_payout_intent_failed_age_seconds_max`
+- `livepeer_pool_payout_intent_retry_count_max`
+- `livepeer_pool_payout_intent_with_retries_total`
+
+The `livepeer_pool_synthetic_probe_*` families are gone with the probes
+themselves.
 
 ## Operator-workflow policy automation
 

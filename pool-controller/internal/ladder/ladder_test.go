@@ -44,7 +44,7 @@ func TestEvaluateStateMachine(t *testing.T) {
 			// evidence promotion needs.
 			name:        "testing starts probation on the probation share and in-flight cap",
 			state:       types.TemplateAssignmentTesting,
-			evidence:    Evidence{},
+			evidence:    Evidence{CertificationPassed: true},
 			wantTo:      types.TemplateAssignmentProbationary,
 			wantReason:  ReasonProbationStarted,
 			wantShare:   testPolicy.ProbationSharePPM,
@@ -314,8 +314,8 @@ func TestWithDefaultsTreatsZeroAsUnconfigured(t *testing.T) {
 		// partial policy gets the same treatment as one that filled it
 		// in first.
 		now := time.Now().UTC()
-		got := Evaluate(assignment(types.TemplateAssignmentTesting), Evidence{},
-			Policy{ScoreFloor: 0.55}, now)
+		got := Evaluate(assignment(types.TemplateAssignmentTesting),
+			Evidence{CertificationPassed: true}, Policy{ScoreFloor: 0.55}, now)
 		if got == nil || got.SharePPM != DefaultPolicy.ProbationSharePPM {
 			t.Fatalf("Evaluate() with a partial policy = %+v, want share %d",
 				got, DefaultPolicy.ProbationSharePPM)
@@ -353,7 +353,14 @@ func TestEvaluateAllIsDeterministicAndSilentWhenNothingMoves(t *testing.T) {
 		}
 		want := []string{"alpha", "mid", "zeta"}
 		for i := 0; i < 5; i++ {
-			got := EvaluateAll(items, map[string]Evidence{}, testPolicy, now)
+			// A passing run per placement, because promotion out of
+			// testing now requires one — the state means "being
+			// tested", not "passed".
+			passed := map[string]Evidence{
+				"zeta": {CertificationPassed: true}, "alpha": {CertificationPassed: true},
+				"mid": {CertificationPassed: true},
+			}
+			got := EvaluateAll(items, passed, testPolicy, now)
 			if len(got) != 3 {
 				t.Fatalf("EvaluateAll() returned %d transitions, want 3", len(got))
 			}

@@ -26,6 +26,8 @@ protocol: paid-job/v1
 price_default:
   amount_wei: "5"
   per_units: 1
+stacking:
+  primary: true
 `
 
 // ladderFixture is one open repo plus the catalog the ladder reads
@@ -53,6 +55,22 @@ func ladderFixture(t *testing.T, extraTemplates ...string) (*repo.StateRepo, *te
 		t.Fatalf("templates.Load() error = %v", err)
 	}
 	return stateRepo, catalog
+}
+
+// putPassedCertification records the run whose success is what lets a
+// placement leave certification_testing. Without it the ladder is right
+// to leave the placement where it is.
+func putPassedCertification(t *testing.T, stateRepo *repo.StateRepo, assignmentID string, at time.Time) {
+	t.Helper()
+	if err := stateRepo.PutCertificationRun(types.CertificationRun{
+		ID:           "cert-" + assignmentID,
+		AssignmentID: assignmentID,
+		Status:       types.CertificationPassed,
+		StartedAt:    at.Add(-time.Minute),
+		CompletedAt:  at,
+	}); err != nil {
+		t.Fatalf("PutCertificationRun() error = %v", err)
+	}
 }
 
 func putAssignment(t *testing.T, stateRepo *repo.StateRepo, id string,
@@ -258,8 +276,12 @@ func TestRunOnceAppliesAPromotionEverywhereItHasToLand(t *testing.T) {
 	if evidence, _ := details["evidence"].(string); evidence == "" {
 		t.Fatalf("audit event carries no evidence: %+v", details)
 	}
-	if details["share_ppm"] != testPolicy.ActiveShareCapPPM {
-		t.Fatalf("audit share_ppm = %v, want %d", details["share_ppm"], testPolicy.ActiveShareCapPPM)
+	// The audit trail round-trips through JSON, so the number comes back
+	// as a float64. Comparing it as one is the only way to assert the
+	// share that was actually recorded rather than the Go type it had
+	// before it was written.
+	if share, ok := details["share_ppm"].(float64); !ok || uint64(share) != testPolicy.ActiveShareCapPPM {
+		t.Fatalf("audit share_ppm = %#v, want %d", details["share_ppm"], testPolicy.ActiveShareCapPPM)
 	}
 }
 
@@ -375,6 +397,7 @@ func TestRunOnceStartsProbationWithItsShareAndInFlightCap(t *testing.T) {
 	stateRepo, catalog := ladderFixture(t)
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	assignment := putAssignment(t, stateRepo, "assign-1", types.TemplateAssignmentTesting, "chat-4090")
+	putPassedCertification(t, stateRepo, "assign-1", now)
 
 	if _, err := serviceAt(stateRepo, catalog, testPolicy, now).RunOnce(); err != nil {
 		t.Fatalf("RunOnce() error = %v", err)

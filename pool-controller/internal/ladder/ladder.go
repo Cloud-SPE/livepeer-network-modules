@@ -116,6 +116,14 @@ type Evidence struct {
 	// CertificationFailures is how many times certification has failed
 	// for this placement.
 	CertificationFailures int
+	// CertificationPassed says the most recent run actually passed.
+	//
+	// The assignment being in the testing state means it is BEING
+	// tested, not that it succeeded — so promotion out of testing has
+	// to wait for this. Reading the state alone would send a runner
+	// mid-certification straight onto real traffic on the strength of
+	// nothing having gone wrong yet.
+	CertificationPassed bool
 }
 
 // Transition is one step, with the evidence that justified it.
@@ -157,7 +165,15 @@ func Evaluate(assignment types.TemplateAssignment, ev Evidence, policy Policy, n
 
 	switch assignment.State {
 	case types.TemplateAssignmentTesting:
-		// Certification passed; start earning on a small share.
+		if ev.CertificationFailures >= 2 {
+			return step(types.TemplateAssignmentSuspended, ReasonSuspendedCertFails,
+				fmt.Sprintf("%d certification failures", ev.CertificationFailures), 0, 0)
+		}
+		if !ev.CertificationPassed {
+			// Still running, or never run. Nothing has been proved, so
+			// nothing is promoted.
+			return nil
+		}
 		return step(types.TemplateAssignmentProbationary, ReasonProbationStarted,
 			"certification passed", policy.ProbationSharePPM, policy.ProbationMaxInFlight)
 

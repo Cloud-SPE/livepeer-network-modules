@@ -181,6 +181,10 @@ func Register(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /admin", uiPage("overview", "Overview"))
 	mux.HandleFunc("GET /admin/pool", uiPage("pool", "Pool"))
 	mux.HandleFunc("GET /admin/offers", uiPage("offers", "Offers"))
+	mux.HandleFunc("GET /admin/placement", uiPage("placement", "Placement"))
+	mux.HandleFunc("GET /admin/ladder", uiPage("ladder", "Ladder"))
+	mux.HandleFunc("GET /admin/exceptions", uiPage("exceptions", "Exceptions"))
+	mux.HandleFunc("GET /admin/payouts", uiPage("payouts", "Payouts"))
 	mux.HandleFunc("GET /admin/audit", uiPage("audit", "Audit"))
 	mux.HandleFunc("GET /admin/v1/pool-members", auth(func(w http.ResponseWriter, _ *http.Request) {
 		items, err := deps.Repo.ListPoolMembers()

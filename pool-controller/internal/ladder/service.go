@@ -68,6 +68,11 @@ func (s *Service) RunOnce() (Summary, error) {
 		return summary, err
 	}
 	closedRound := hasClosedWindow(windows)
+	runs, err := s.repo.ListCertificationRuns()
+	if err != nil {
+		return summary, err
+	}
+	certByAssignment := latestCertification(runs)
 
 	now := s.now()
 	evidence := make(map[string]Evidence, len(assignments))
@@ -96,11 +101,14 @@ func (s *Service) RunOnce() (Summary, error) {
 			state = seeded
 			summary.Seeded++
 		}
+		cert := certByAssignment[assignment.ID]
 		evidence[assignment.ID] = Evidence{
-			JobsServed:          state.RecentRoutableOutcomeCount,
-			RoundClosed:         closedRound,
-			CompositeScore:      state.EffectiveSelectionScore,
-			ConsecutiveFailures: state.RecentBackendFailureCount,
+			JobsServed:            state.RecentRoutableOutcomeCount,
+			RoundClosed:           closedRound,
+			CompositeScore:        state.EffectiveSelectionScore,
+			ConsecutiveFailures:   state.RecentBackendFailureCount,
+			CertificationPassed:   cert.passed,
+			CertificationFailures: cert.failures,
 		}
 		live = append(live, assignment)
 	}
@@ -150,16 +158,19 @@ func (s *Service) apply(transition Transition, now time.Time) error {
 		if state, err := s.repo.GetBackendSelectionState(
 			assignment.MemberEthAddress, BackendID(assignment), tmpl.Capability, tmpl.OfferingID); err == nil {
 			state.MaxShareCap = float64(transition.SharePPM) / 1_000_000
-			// A suspended runner is excluded outright rather than given
-			// a share of zero: zero is a weight, and a weight can be
-			// rounded back up by a selector that refuses to starve
-			// anyone.
-			if transition.To == types.TemplateAssignmentSuspended {
-				state.State = types.BackendSelectionStateExcluded
-				state.ExclusionReason = transition.ReasonCode
-			} else {
+			// Zero is not a cap. The broker reads MaxShareCap == 0 as
+			// "no cap configured" and leaves the runner UNCAPPED — so
+			// any state that entitles a runner to no traffic has to be
+			// expressed as exclusion, not as a share of nothing.
+			// Getting this wrong would hand unlimited traffic to a
+			// runner sent back for re-certification precisely because
+			// it kept failing.
+			if earning(transition.To) {
 				state.State = types.BackendSelectionStateEligible
 				state.ExclusionReason = ""
+			} else {
+				state.State = types.BackendSelectionStateExcluded
+				state.ExclusionReason = transition.ReasonCode
 			}
 			if err := s.repo.SaveBackendSelectionState(state); err != nil {
 				return err
@@ -197,4 +208,56 @@ func hasClosedWindow(windows []types.SettlementWindow) bool {
 		}
 	}
 	return false
+}
+
+// earning reports whether a placement in this state should be sent
+// work at all.
+func earning(state types.TemplateAssignmentState) bool {
+	switch state {
+	case types.TemplateAssignmentProbationary,
+		types.TemplateAssignmentActive,
+		types.TemplateAssignmentThrottled:
+		return true
+	default:
+		return false
+	}
+}
+
+type certOutcome struct {
+	passed   bool
+	failures int
+}
+
+// latestCertification summarises each placement's runs: whether the
+// most recent one passed, and how many have failed.
+func latestCertification(runs []types.CertificationRun) map[string]certOutcome {
+	type latest struct {
+		at  time.Time
+		run types.CertificationRun
+	}
+	newest := map[string]latest{}
+	failures := map[string]int{}
+	for _, run := range runs {
+		if run.AssignmentID == "" {
+			continue
+		}
+		if run.Status == types.CertificationFailed {
+			failures[run.AssignmentID]++
+		}
+		at := run.CompletedAt
+		if at.IsZero() {
+			at = run.StartedAt
+		}
+		if prev, ok := newest[run.AssignmentID]; !ok || at.After(prev.at) {
+			newest[run.AssignmentID] = latest{at: at, run: run}
+		}
+	}
+	out := make(map[string]certOutcome, len(newest))
+	for id, item := range newest {
+		out[id] = certOutcome{
+			passed:   item.run.Status == types.CertificationPassed,
+			failures: failures[id],
+		}
+	}
+	return out
 }

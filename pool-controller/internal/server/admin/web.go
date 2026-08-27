@@ -24,6 +24,10 @@ var uiPages = []string{
 	"overview",
 	"pool",
 	"offers",
+	"placement",
+	"ladder",
+	"exceptions",
+	"payouts",
 	"audit",
 }
 

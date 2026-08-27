@@ -70,6 +70,12 @@ type config struct {
 	ComposeArgs     []string
 	PollEvery       time.Duration
 	PollTimeout     time.Duration
+	// RotateEvery is how often the agent refreshes its own enrollment
+	// credential. Default 24h — well inside any plausible lifetime,
+	// because a host that waits for expiry has already stopped earning
+	// by the time anyone can act on it.
+	RotateEvery         time.Duration
+	EnrollmentTokenFile string
 }
 
 // PoolManaged reports whether this host takes its runner set from a
@@ -173,14 +179,16 @@ func loadConfig(args []string) (config, error) {
 		HostID:         strings.TrimSpace(os.Getenv("LIVEPEER_HOST_ID")),
 		RunnersFile:    strings.TrimSpace(os.Getenv("LIVEPEER_RUNNERS_FILE")),
 
-		ControllerURL:   strings.TrimRight(strings.TrimSpace(os.Getenv("POOL_CONTROLLER_URL")), "/"),
-		EnrollmentID:    strings.TrimSpace(os.Getenv("POOL_ENROLLMENT_ID")),
-		EnrollmentToken: enrollmentToken(),
-		ComposeFile:     envOr("POOL_COMPOSE_FILE", "runners.compose.yaml"),
-		ComposeBinary:   strings.TrimSpace(os.Getenv("POOL_COMPOSE_BINARY")),
-		PollEvery:       envDuration("POOL_POLL_EVERY", 30*time.Second),
-		PollTimeout:     envDuration("POOL_POLL_TIMEOUT", 30*time.Second),
-		RefreshEvery:    *refreshEvery,
+		ControllerURL:       strings.TrimRight(strings.TrimSpace(os.Getenv("POOL_CONTROLLER_URL")), "/"),
+		EnrollmentID:        strings.TrimSpace(os.Getenv("POOL_ENROLLMENT_ID")),
+		EnrollmentToken:     enrollmentToken(),
+		ComposeFile:         envOr("POOL_COMPOSE_FILE", "runners.compose.yaml"),
+		ComposeBinary:       strings.TrimSpace(os.Getenv("POOL_COMPOSE_BINARY")),
+		PollEvery:           envDuration("POOL_POLL_EVERY", 30*time.Second),
+		PollTimeout:         envDuration("POOL_POLL_TIMEOUT", 30*time.Second),
+		RotateEvery:         envDuration("POOL_ROTATE_EVERY", 24*time.Hour),
+		EnrollmentTokenFile: strings.TrimSpace(os.Getenv("POOL_ENROLLMENT_TOKEN_FILE")),
+		RefreshEvery:        *refreshEvery,
 	}
 	if cfg.RefreshEvery <= 0 {
 		cfg.RefreshEvery = time.Minute

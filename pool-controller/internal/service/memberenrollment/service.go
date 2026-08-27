@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -337,62 +336,66 @@ func bundleEnv(input BundleInput) string {
 		"POOL_ENROLLMENT_ID=" + input.Enrollment.ID + "\n" +
 		"POOL_MEMBER_ETH_ADDRESS=" + input.Enrollment.MemberEthAddress + "\n" +
 		"POOL_BROKER_SESSION_CREDENTIAL=" + input.Enrollment.BrokerSessionCredential + "\n" +
-		"POOL_WORKER_BACKENDS=" + workerBackendsEnv(input) + "\n" +
 		"POOL_ENROLLMENT_TOKEN_FILE=/run/livepeer/enrollment-token\n"
 }
 
 func bundleReadme(input BundleInput) string {
 	return "# Livepeer Pool member host\n\n" +
-		"Run `docker compose up -d` from this directory. The member agent will connect outbound to the Pool broker and report visible GPUs.\n\n" +
+		"Run `docker compose up -d` from this directory. That is the whole of it.\n\n" +
+		"The agent connects outbound to the Pool broker, reports the GPUs it can\n" +
+		"see, and asks the Pool what it should be running. Nothing needs to be\n" +
+		"opened to the internet on this host.\n\n" +
+		"## What the Pool runs here\n\n" +
+		"The agent writes `runners.compose.yaml` and starts the containers the\n" +
+		"Pool has placed on your GPUs. You can read that file at any time to see\n" +
+		"exactly what is running and why — each service names the template and\n" +
+		"the assignment it came from.\n\n" +
+		"## What the Pool asks of your host\n\n" +
+		"The agent mounts the Docker socket, because starting and stopping those\n" +
+		"containers is its job. That is a real grant of privilege on this\n" +
+		"machine and you should know you are making it. The agent starts only\n" +
+		"images from the Pool's published template catalog, pinned to the GPUs\n" +
+		"assigned to you.\n\n" +
+		"## Leaving\n\n" +
+		"`docker compose down` stops everything. To leave properly, retire the\n" +
+		"host from the member portal first: your placements drain, in-flight\n" +
+		"work finishes, and you stop being sent new jobs before the containers\n" +
+		"go away.\n\n" +
 		"Enrollment: `" + input.Enrollment.ID + "`\n"
 }
 
+// bundleCompose ships the AGENT and nothing else.
+//
+// It used to ship a service per placement, which meant the bundle went
+// stale the moment the pool placed anything new: a member would have
+// had to re-download and re-apply it for every change. The agent now
+// pulls its desired state and writes runners.compose.yaml itself (plan
+// 0044 §3.4), so the bundle is a bootstrap — the one thing that has to
+// arrive out of band — and the runner set is live state.
+//
+// The generated file is included from here rather than merged into it,
+// so `docker compose up` in this directory starts the agent and
+// whatever the agent has decided should run alongside it.
 func bundleCompose(input BundleInput) string {
-	out := "services:\n" +
+	return "include:\n" +
+		"  - path: ./runners.compose.yaml\n" +
+		"    required: false\n" +
+		"services:\n" +
 		"  pool_member_agent:\n" +
-		"    image: ${POOL_MEMBER_AGENT_IMAGE:-livepeer-pool-member-agent:dev}\n" +
+		"    image: ghcr.io/cloud-spe/livepeer-pool-member-agent:latest\n" +
 		"    restart: unless-stopped\n" +
 		"    gpus: all\n" +
 		"    env_file: .env\n" +
 		"    volumes:\n" +
 		"      - ./enrollment-token:/run/livepeer/enrollment-token:ro\n" +
-		"      - ./pool-member-agent.yaml:/etc/livepeer/pool-member-agent.yaml:ro\n"
-	for _, assignment := range input.Assignments {
-		template, ok := templateByID(input.Templates, assignment.TemplateID)
-		if !ok {
-			continue
-		}
-		image := strings.TrimSpace(template.RunnerCompose.Image)
-		if image == "" {
-			continue
-		}
-		service := runnerServiceName(assignment.ID)
-		out += "  " + service + ":\n" +
-			"    image: " + image + "\n" +
-			"    restart: unless-stopped\n" +
-			"    gpus: all\n"
-		if cmd := template.RunnerCompose.Command; len(cmd) > 0 {
-			out += "    command:\n"
-			for _, item := range cmd {
-				out += "      - " + item + "\n"
-			}
-		}
-		if env := template.RunnerCompose.Env; len(env) > 0 {
-			// Sorted: a bundle is fetched repeatedly by the update
-			// script, and map order would make every fetch look like a
-			// change.
-			keys := make([]string, 0, len(env))
-			for k := range env {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			out += "    environment:\n"
-			for _, k := range keys {
-				out += "      " + k + ": " + env[k] + "\n"
-			}
-		}
-	}
-	return out
+		"      - ./pool-member-agent.yaml:/etc/livepeer/pool-member-agent.yaml:ro\n" +
+		// The agent writes the runner compose file and drives docker,
+		// so it needs the socket and a place to write. This is the
+		// whole of what the pool asks of the host, and the member
+		// README says so plainly rather than burying it.
+		"      - /var/run/docker.sock:/var/run/docker.sock\n" +
+		"      - ./:/workspace\n" +
+		"    working_dir: /workspace\n"
 }
 
 func bundleUpdateScript() string {
@@ -412,54 +415,4 @@ func bundleAgentConfig(input BundleInput) string {
 		"controller_url: " + input.ControllerURL + "\n" +
 		"broker_url: " + input.BrokerURL + "\n" +
 		"token_file: /run/livepeer/enrollment-token\n"
-}
-
-func workerBackendsEnv(input BundleInput) string {
-	var parts []string
-	for _, assignment := range input.Assignments {
-		template, ok := templateByID(input.Templates, assignment.TemplateID)
-		if !ok {
-			continue
-		}
-		internalURL := strings.TrimSpace(template.RunnerCompose.InternalURL)
-		image := strings.TrimSpace(template.RunnerCompose.Image)
-		// Include the backend when the template gives any way to reach a runner:
-		// an explicit internal_url (operator runs their own runner; the bundle
-		// ships nothing) or a shipped image (the bundle spins one up and the
-		// agent talks to it at the default service URL). Skip only when neither
-		// is present -- there is nothing to route to. This decouples backend
-		// inclusion from shipping a runner image (bundleCompose still gates the
-		// runner service on image).
-		if internalURL == "" && image == "" {
-			continue
-		}
-		if internalURL == "" {
-			internalURL = "http://" + runnerServiceName(assignment.ID) + ":8080"
-		}
-		parts = append(parts, assignment.ID+"="+internalURL)
-	}
-	return strings.Join(parts, ",")
-}
-
-func templateByID(items []templates.Template, id string) (templates.Template, bool) {
-	for _, item := range items {
-		if item.ID == id {
-			return item, true
-		}
-	}
-	return templates.Template{}, false
-}
-
-func runnerServiceName(id string) string {
-	id = strings.ToLower(strings.TrimSpace(id))
-	var b strings.Builder
-	b.WriteString("runner_")
-	for _, r := range id {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('_')
-		}
-	}
-	return strings.TrimRight(b.String(), "_")
 }

@@ -85,6 +85,11 @@ func desiredLoop(ctx context.Context, cfg config, state *runnerState, reattach f
 	runner := desiredstate.ComposeRunner{Binary: cfg.ComposeBinary, Args: cfg.ComposeArgs}
 	ticker := time.NewTicker(cfg.PollEvery)
 	defer ticker.Stop()
+	// Rotate on a cadence well inside any plausible token lifetime.
+	// A host that waits for expiry has already stopped earning by the
+	// time anyone can act.
+	rotate := time.NewTicker(cfg.RotateEvery)
+	defer rotate.Stop()
 	for {
 		if err := reconcileOnce(ctx, client, runner, cfg, state, reattach); err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -95,6 +100,12 @@ func desiredLoop(ctx context.Context, cfg config, state *runnerState, reattach f
 		select {
 		case <-ctx.Done():
 			return
+		case <-rotate.C:
+			if _, err := client.Rotate(ctx, cfg.EnrollmentTokenFile); err != nil {
+				log.Printf("credential rotation failed: %v", err)
+			} else {
+				log.Printf("enrollment credential rotated")
+			}
 		case <-ticker.C:
 		}
 	}
@@ -108,6 +119,14 @@ func reconcileOnce(ctx context.Context, client *desiredstate.Client, runner desi
 		return nil
 	}
 	if err != nil {
+		// A 401 means this host's token no longer works. Rotating on
+		// the strength of a token that has already been rejected is
+		// pointless, so this is the one failure the agent cannot
+		// recover from on its own — it says so rather than retrying
+		// silently until someone notices the host stopped earning.
+		if strings.Contains(err.Error(), "401") {
+			log.Printf("desired-state: enrollment token rejected; this host needs re-enrolling from the member portal")
+		}
 		return err
 	}
 	log.Printf("desired state %s: %d service(s)", doc.Revision, len(doc.Services))

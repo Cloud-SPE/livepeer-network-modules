@@ -266,3 +266,37 @@ func TestServiceNameIsComposeSafe(t *testing.T) {
 		t.Fatal("two assignments map to one service name")
 	}
 }
+
+// The agent rewrites its compose file from every document it fetches,
+// and `compose up` acts on the diff. Environment keys therefore have to
+// come out sorted rather than in map order, or an unchanged placement
+// would look like a change on every poll and restart the container.
+func TestRenderedComposeEnvironmentIsSorted(t *testing.T) {
+	cat := catalogOf(t, map[string]string{"t.yaml": "" +
+		"id: t\n" +
+		"capability: openai:chat-completions\n" +
+		"offering_id: o\n" +
+		"protocol: paid-job/v1\n" +
+		"price_default: { amount_wei: \"1\", per_units: 1 }\n" +
+		"stacking: { primary: true }\n" +
+		"runner_compose:\n" +
+		"  image: img\n" +
+		"  env: { QUANT: fp8, MODEL: small, ALPHA: \"1\" }\n",
+	})
+	doc, err := Build(Input{
+		EnrollmentID: "host-1",
+		Assignments: []types.TemplateAssignment{{
+			ID: "unit-a|t", HardwareUnitID: "unit-a", TemplateID: "t",
+			MemberEthAddress: "0xa", State: types.TemplateAssignmentActive,
+		}},
+		Hardware: []types.HardwareUnit{{ID: "unit-a", GPUUUID: "GPU-a", MemberEthAddress: "0xa"}},
+		Catalog:  cat,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	want := "    environment:\n      ALPHA: 1\n      MODEL: small\n      QUANT: fp8\n"
+	if !strings.Contains(doc.Services[0].ComposeFragment, want) {
+		t.Fatalf("environment not sorted:\n%s", doc.Services[0].ComposeFragment)
+	}
+}

@@ -132,21 +132,29 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 	if !bytes.Contains(envBody, []byte("POOL_BROKER_QUIC_ADDR=broker.example.com:8443")) {
 		t.Fatalf(".env missing broker quic addr: %s", string(envBody))
 	}
-	if !bytes.Contains(envBody, []byte("POOL_BROKER_SESSION_CREDENTIAL=")) || !bytes.Contains(envBody, []byte("POOL_WORKER_BACKENDS=assign-chat-1=http://chat-runner:9000")) {
-		t.Fatalf(".env missing broker session fields: %s", string(envBody))
+	if !bytes.Contains(envBody, []byte("POOL_BROKER_SESSION_CREDENTIAL=")) {
+		t.Fatalf(".env missing broker session credential: %s", string(envBody))
+	}
+	// The bundle no longer names the runners. It ships the agent, and
+	// the agent asks the pool what to run — so a placement change does
+	// not stale the bundle a member already downloaded.
+	if bytes.Contains(envBody, []byte("POOL_WORKER_BACKENDS")) {
+		t.Fatalf(".env still declares a static runner set: %s", string(envBody))
 	}
 	composeBody := zipFileBody(t, zr, "docker-compose.yaml")
 	if !bytes.Contains(composeBody, []byte("gpus: all")) {
 		t.Fatalf("compose missing gpu access: %s", string(composeBody))
 	}
-	if !bytes.Contains(composeBody, []byte("runner_assign_chat_1:")) || !bytes.Contains(composeBody, []byte("image: runner-chat:latest")) {
-		t.Fatalf("compose missing assigned runner: %s", string(composeBody))
+	// The agent writes runners.compose.yaml itself; the bundle includes
+	// it optionally so a first boot with no placements still starts.
+	if !bytes.Contains(composeBody, []byte("runners.compose.yaml")) {
+		t.Fatalf("compose does not include the agent-written runner file: %s", string(composeBody))
 	}
-	// The update script refetches this bundle on a schedule, so the
-	// rendering has to be byte-stable: environment keys come out sorted
-	// rather than in map order, or every fetch would look like a change.
-	if !bytes.Contains(composeBody, []byte("    environment:\n      MODEL: small\n      QUANT: fp8\n")) {
-		t.Fatalf("compose environment is not rendered in sorted order: %s", string(composeBody))
+	if !bytes.Contains(composeBody, []byte("/var/run/docker.sock")) {
+		t.Fatalf("agent cannot start runners without the docker socket: %s", string(composeBody))
+	}
+	if bytes.Contains(composeBody, []byte("runner_assign_chat_1:")) {
+		t.Fatalf("bundle still ships a per-placement service: %s", string(composeBody))
 	}
 }
 

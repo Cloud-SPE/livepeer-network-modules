@@ -1,17 +1,21 @@
 package certification
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
 func TestServiceStartAndCompleteCertificationPass(t *testing.T) {
-	stateRepo := seedCertificationRepo(t)
+	stateRepo, catalog := seedCertificationRepo(t)
 	now := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
-	svc := NewWithClock(stateRepo, func() time.Time { return now })
+	svc := NewWithClock(stateRepo, catalog, func() time.Time { return now })
 
 	run, err := svc.StartAssignmentCertification("assign-1")
 	if err != nil {
@@ -46,8 +50,8 @@ func TestServiceStartAndCompleteCertificationPass(t *testing.T) {
 }
 
 func TestServiceCompleteCertificationFailureThrottles(t *testing.T) {
-	stateRepo := seedCertificationRepo(t)
-	svc := New(stateRepo)
+	stateRepo, catalog := seedCertificationRepo(t)
+	svc := New(stateRepo, catalog)
 	run, err := svc.StartAssignmentCertification("assign-1")
 	if err != nil {
 		t.Fatalf("StartAssignmentCertification() error = %v", err)
@@ -63,7 +67,7 @@ func TestServiceCompleteCertificationFailureThrottles(t *testing.T) {
 	}
 }
 
-func seedCertificationRepo(t *testing.T) *repo.StateRepo {
+func seedCertificationRepo(t *testing.T) (*repo.StateRepo, *templates.Catalog) {
 	t.Helper()
 	stateRepo, err := repo.Open(t.TempDir())
 	if err != nil {
@@ -83,17 +87,6 @@ func seedCertificationRepo(t *testing.T) *repo.StateRepo {
 	}); err != nil {
 		t.Fatalf("PutHardwareUnit() error = %v", err)
 	}
-	if err := stateRepo.PutTemplateCatalogEntry(types.TemplateCatalogEntry{
-		ID:           "chat-4090",
-		CapabilityID: "openai:chat-completions",
-		OfferingID:   "default",
-		Protocol:     "paid-job/v1",
-		Status:       types.TemplateStatusActive,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}); err != nil {
-		t.Fatalf("PutTemplateCatalogEntry() error = %v", err)
-	}
 	if err := stateRepo.PutTemplateAssignment(types.TemplateAssignment{
 		ID:               "assign-1",
 		HardwareUnitID:   "gpu-1",
@@ -107,5 +100,44 @@ func seedCertificationRepo(t *testing.T) *repo.StateRepo {
 	}); err != nil {
 		t.Fatalf("PutTemplateAssignment() error = %v", err)
 	}
-	return stateRepo
+	return stateRepo, loadCatalog(t, "chat-4090")
+}
+
+// loadCatalog builds a catalog the way production does — from files —
+// so a test cannot certify against a template shape the loader would
+// have rejected.
+func loadCatalog(t *testing.T, ids ...string) *templates.Catalog {
+	t.Helper()
+	dir := t.TempDir()
+	for i, id := range ids {
+		body := "id: " + id + "\n" +
+			"capability: openai:chat-completions\n" +
+			"offering_id: offering-" + id + "\n" +
+			"protocol: paid-job/v1\n" +
+			"price_default:\n  amount_wei: \"1\"\n  per_units: 1\n" +
+			"stacking:\n  primary: true\n"
+		if err := os.WriteFile(filepath.Join(dir, id+".yaml"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write template %d: %v", i, err)
+		}
+	}
+	catalog, err := templates.Load(dir)
+	if err != nil {
+		t.Fatalf("templates.Load() error = %v", err)
+	}
+	return catalog
+}
+
+// A run certifies against a recipe. An assignment naming a template
+// this build does not ship has no recipe, so it must not start one.
+func TestServiceRejectsTemplateOutsideCatalog(t *testing.T) {
+	stateRepo, _ := seedCertificationRepo(t)
+	svc := New(stateRepo, loadCatalog(t, "something-else"))
+	_, err := svc.StartAssignmentCertification("assign-1")
+	if err == nil || !strings.Contains(err.Error(), "not in the catalog") {
+		t.Fatalf("StartAssignmentCertification() error = %v, want a catalog rejection", err)
+	}
+	runs, err := stateRepo.ListCertificationRuns()
+	if err != nil || len(runs) != 0 {
+		t.Fatalf("a rejected start left runs behind: %#v err=%v", runs, err)
+	}
 }

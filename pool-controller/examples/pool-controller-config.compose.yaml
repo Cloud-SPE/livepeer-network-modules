@@ -2,6 +2,11 @@ identity:
   orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
   label: pool-orch
 
+# The curated workload catalog (plan 0044 §3.2). Templates are files,
+# reviewed in version control; this pool decides which of them it
+# enables and what it charges, through PUT /admin/v1/template-overrides/{id}.
+template_catalog_dir: /etc/livepeer/templates
+
 admin_auth:
   bearer_token_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
 

@@ -2,14 +2,19 @@ package admin
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
@@ -70,9 +75,9 @@ func TestApprovePayoutBatchMaterializesExportedIntents(t *testing.T) {
 }
 
 func TestTemplateAssignmentCertificationRoutes(t *testing.T) {
-	stateRepo := seedAdminCertificationRepo(t)
+	stateRepo, catalog := seedAdminCertificationRepo(t)
 	mux := http.NewServeMux()
-	Register(mux, Deps{Repo: stateRepo, WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next }, RefreshRendered: func(string) error { return nil }})
+	Register(mux, Deps{Repo: stateRepo, Catalog: catalog, WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next }, RefreshRendered: func(string) error { return nil }})
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -139,7 +144,7 @@ func TestSettlementWindowCloseRoute(t *testing.T) {
 }
 
 func TestHostEnrollmentRevokeKillsWorkerSessions(t *testing.T) {
-	stateRepo := seedAdminCertificationRepo(t)
+	stateRepo, catalog := seedAdminCertificationRepo(t)
 	now := time.Now().UTC()
 	if err := stateRepo.PutHostEnrollment(types.HostEnrollment{ID: "host-1", MemberEthAddress: "0x1111111111111111111111111111111111111111", Status: types.HostEnrollmentActive, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatalf("PutHostEnrollment() error = %v", err)
@@ -148,6 +153,7 @@ func TestHostEnrollmentRevokeKillsWorkerSessions(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, Deps{
 		Repo:     stateRepo,
+		Catalog:  catalog,
 		WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next },
 		KillWorkerSession: func(id string) error {
 			killed = append(killed, id)
@@ -170,7 +176,7 @@ func TestHostEnrollmentRevokeKillsWorkerSessions(t *testing.T) {
 	}
 }
 
-func seedAdminCertificationRepo(t *testing.T) *repo.StateRepo {
+func seedAdminCertificationRepo(t *testing.T) (*repo.StateRepo, *templates.Catalog) {
 	t.Helper()
 	stateRepo, err := repo.Open(t.TempDir())
 	if err != nil {
@@ -181,11 +187,183 @@ func seedAdminCertificationRepo(t *testing.T) *repo.StateRepo {
 	if err := stateRepo.PutHardwareUnit(types.HardwareUnit{ID: "gpu-1", EnrollmentID: "host-1", MemberEthAddress: "0x1111111111111111111111111111111111111111", GPUUUID: "GPU-1", State: types.HardwareUnitRegistered, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatalf("PutHardwareUnit() error = %v", err)
 	}
-	if err := stateRepo.PutTemplateCatalogEntry(types.TemplateCatalogEntry{ID: "chat-4090", CapabilityID: "openai:chat-completions", OfferingID: "default", Protocol: "paid-job/v1", Status: types.TemplateStatusActive, CreatedAt: now, UpdatedAt: now}); err != nil {
-		t.Fatalf("PutTemplateCatalogEntry() error = %v", err)
-	}
 	if err := stateRepo.PutTemplateAssignment(types.TemplateAssignment{ID: "assign-1", HardwareUnitID: "gpu-1", HostEnrollmentID: "host-1", MemberEthAddress: "0x1111111111111111111111111111111111111111", TemplateID: "chat-4090", State: types.TemplateAssignmentPending, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatalf("PutTemplateAssignment() error = %v", err)
 	}
-	return stateRepo
+	return stateRepo, loadAdminCatalog(t, `id: chat-4090
+capability: openai:chat-completions
+offering_id: default
+protocol: paid-job/v1
+price_default:
+  amount_wei: "5"
+  per_units: 1
+extra:
+  provider: vllm
+  tier: gold
+stacking:
+  primary: true
+`)
+}
+
+// loadAdminCatalog builds the catalog the way the controller does, from
+// files, so a route test cannot serve a template the loader would have
+// refused at boot.
+func loadAdminCatalog(t *testing.T, bodies ...string) *templates.Catalog {
+	t.Helper()
+	dir := t.TempDir()
+	for i, body := range bodies {
+		name := filepath.Join(dir, fmt.Sprintf("tmpl-%02d.yaml", i))
+		if err := os.WriteFile(name, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	catalog, err := templates.Load(dir)
+	if err != nil {
+		t.Fatalf("templates.Load() error = %v", err)
+	}
+	return catalog
+}
+
+// catalogViewsFromServer reads the joined catalog view the console uses.
+func catalogViewsFromServer(t *testing.T, baseURL string) []struct {
+	ID              string          `json:"id"`
+	Enabled         bool            `json:"enabled"`
+	EffectivePrice  templates.Price `json:"effective_price"`
+	PriceOverridden bool            `json:"price_overridden"`
+	Extra           map[string]any  `json:"extra"`
+	UpdatedAt       *time.Time      `json:"override_updated_at"`
+} {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/admin/v1/template-catalog")
+	if err != nil {
+		t.Fatalf("GET /admin/v1/template-catalog error = %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("template-catalog status=%d body=%s", resp.StatusCode, string(body))
+	}
+	var view struct {
+		Templates []struct {
+			ID              string          `json:"id"`
+			Enabled         bool            `json:"enabled"`
+			EffectivePrice  templates.Price `json:"effective_price"`
+			PriceOverridden bool            `json:"price_overridden"`
+			Extra           map[string]any  `json:"extra"`
+			UpdatedAt       *time.Time      `json:"override_updated_at"`
+		} `json:"templates"`
+	}
+	if err := json.Unmarshal(body, &view); err != nil {
+		t.Fatalf("json.Unmarshal(template-catalog) error = %v body=%s", err, string(body))
+	}
+	return view.Templates
+}
+
+// The catalog view is the join an operator actually reads: the reviewed
+// template plus this pool's own decision about it.
+func TestTemplateCatalogViewMergesOverride(t *testing.T) {
+	stateRepo, catalog := seedAdminCertificationRepo(t)
+	mux := http.NewServeMux()
+	Register(mux, Deps{Repo: stateRepo, Catalog: catalog, WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next }})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// With no override the pool has made no decision: not enabled, and
+	// the catalog's suggested price stands as the effective one.
+	views := catalogViewsFromServer(t, server.URL)
+	if len(views) != 1 || views[0].ID != "chat-4090" {
+		t.Fatalf("catalog views = %+v", views)
+	}
+	if views[0].Enabled || views[0].PriceOverridden || views[0].UpdatedAt != nil {
+		t.Fatalf("an untouched template already reads as decided: %+v", views[0])
+	}
+	if views[0].EffectivePrice.AmountWei != "5" || views[0].EffectivePrice.PerUnits != 1 {
+		t.Fatalf("effective price without an override = %+v", views[0].EffectivePrice)
+	}
+
+	// An override that sets no price keeps the catalog's; its extra
+	// merges key by key, and the pool's word wins where they collide.
+	resp := putOverride(t, server.URL, "chat-4090", `{"enabled":true,"extra":{"tier":"silver","region":"eu"}}`)
+	if resp != http.StatusOK {
+		t.Fatalf("PUT override status = %d", resp)
+	}
+	views = catalogViewsFromServer(t, server.URL)
+	if !views[0].Enabled {
+		t.Fatalf("override did not enable the template: %+v", views[0])
+	}
+	if views[0].PriceOverridden || views[0].EffectivePrice.AmountWei != "5" {
+		t.Fatalf("a priceless override changed the effective price: %+v", views[0])
+	}
+	if views[0].Extra["provider"] != "vllm" {
+		t.Fatalf("merge dropped a catalog key the override never mentioned: %+v", views[0].Extra)
+	}
+	if views[0].Extra["tier"] != "silver" || views[0].Extra["region"] != "eu" {
+		t.Fatalf("override did not win the merge: %+v", views[0].Extra)
+	}
+	if views[0].UpdatedAt == nil || views[0].UpdatedAt.IsZero() {
+		t.Fatalf("override view carries no updated_at: %+v", views[0])
+	}
+
+	// A priced override is what the pool charges, and says so.
+	if code := putOverride(t, server.URL, "chat-4090", `{"enabled":true,"price":{"amount_wei":"42","per_units":1000}}`); code != http.StatusOK {
+		t.Fatalf("PUT priced override status = %d", code)
+	}
+	views = catalogViewsFromServer(t, server.URL)
+	if !views[0].PriceOverridden || views[0].EffectivePrice.AmountWei != "42" || views[0].EffectivePrice.PerUnits != 1000 {
+		t.Fatalf("priced override = %+v", views[0])
+	}
+
+	// Deleting returns the template to the catalog's default, which is
+	// not the same as disabling it.
+	req, err := http.NewRequest(http.MethodDelete, server.URL+"/admin/v1/template-overrides/chat-4090", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	delResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE override error = %v", err)
+	}
+	delBody, _ := io.ReadAll(delResp.Body)
+	_ = delResp.Body.Close()
+	if delResp.StatusCode != http.StatusOK || !strings.Contains(string(delBody), `"status":"reverted_to_catalog_default"`) {
+		t.Fatalf("DELETE override status=%d body=%s", delResp.StatusCode, string(delBody))
+	}
+	views = catalogViewsFromServer(t, server.URL)
+	if views[0].PriceOverridden || views[0].EffectivePrice.AmountWei != "5" || views[0].Extra["tier"] != "gold" {
+		t.Fatalf("delete did not revert to the catalog default: %+v", views[0])
+	}
+}
+
+// An override names a template the catalog defines; anything else is a
+// typo that would otherwise sit in the database describing nothing.
+func TestTemplateOverrideRejectsUnknownTemplate(t *testing.T) {
+	stateRepo, catalog := seedAdminCertificationRepo(t)
+	mux := http.NewServeMux()
+	Register(mux, Deps{Repo: stateRepo, Catalog: catalog, WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next }})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	if code := putOverride(t, server.URL, "chat-4091", `{"enabled":true}`); code != http.StatusNotFound {
+		t.Fatalf("PUT unknown template status = %d, want 404", code)
+	}
+	stored, err := stateRepo.ListTemplateOverrides()
+	if err != nil || len(stored) != 0 {
+		t.Fatalf("a rejected override was persisted: %#v err=%v", stored, err)
+	}
+}
+
+func putOverride(t *testing.T, baseURL, id, body string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPut, baseURL+"/admin/v1/template-overrides/"+id, bytes.NewBufferString(body))
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PUT override error = %v", err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	return resp.StatusCode
 }

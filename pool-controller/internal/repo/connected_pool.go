@@ -186,34 +186,31 @@ func (r *StateRepo) ListHardwareUnitsByEnrollment(enrollmentID string) ([]types.
 	return out, nil
 }
 
-func (r *StateRepo) PutTemplateCatalogEntry(entry types.TemplateCatalogEntry) error {
-	now := time.Now().UTC()
-	if entry.CreatedAt.IsZero() {
-		entry.CreatedAt = now
-	}
-	entry.UpdatedAt = now
-	if entry.Status == "" {
-		entry.Status = types.TemplateStatusActive
-	}
-	return putJSON(r, templateCatalogBucket, entry.ID, entry)
+// Template overrides. The catalog itself is files on disk (see
+// internal/templates); the database holds only what a pool decided
+// about each one, so an operator's enable-and-price gesture is the only
+// thing that has to survive a restart.
+func (r *StateRepo) PutTemplateOverride(override types.TemplateOverride) error {
+	override.UpdatedAt = time.Now().UTC()
+	return putJSON(r, templateOverridesBucket, override.TemplateID, override)
 }
 
-func (r *StateRepo) GetTemplateCatalogEntry(id string) (types.TemplateCatalogEntry, error) {
-	var out types.TemplateCatalogEntry
-	err := getJSON(r, templateCatalogBucket, id, &out)
+func (r *StateRepo) GetTemplateOverride(templateID string) (types.TemplateOverride, error) {
+	var out types.TemplateOverride
+	err := getJSON(r, templateOverridesBucket, templateID, &out)
 	return out, err
 }
 
-func (r *StateRepo) ListTemplateCatalogEntries() ([]types.TemplateCatalogEntry, error) {
-	return listJSON(r, templateCatalogBucket, func(left, right types.TemplateCatalogEntry) bool {
-		if left.CapabilityID != right.CapabilityID {
-			return left.CapabilityID < right.CapabilityID
-		}
-		if left.OfferingID != right.OfferingID {
-			return left.OfferingID < right.OfferingID
-		}
-		return left.ID < right.ID
+func (r *StateRepo) ListTemplateOverrides() ([]types.TemplateOverride, error) {
+	return listJSON(r, templateOverridesBucket, func(left, right types.TemplateOverride) bool {
+		return left.TemplateID < right.TemplateID
 	})
+}
+
+// DeleteTemplateOverride returns the pool to the catalog's defaults for
+// this template, which is not the same as disabling it.
+func (r *StateRepo) DeleteTemplateOverride(templateID string) error {
+	return deleteKey(r, templateOverridesBucket, templateID)
 }
 
 func (r *StateRepo) PutTemplateAssignment(assignment types.TemplateAssignment) error {

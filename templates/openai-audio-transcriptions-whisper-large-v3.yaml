@@ -1,0 +1,103 @@
+# Audio transcription — the catalog's one stackable workload.
+#
+# Family: `openai:audio-transcriptions` (plan 0040 §4.3, row 4).
+
+id: openai-audio-transcriptions-whisper-large-v3
+capability: openai:audio-transcriptions
+offering_id: whisper-large-v3
+protocol: paid-job/v1
+display_name: Audio transcription (whisper-large-v3)
+description: >-
+  OpenAI-compatible /v1/audio/transcriptions, multipart upload. Metered in
+  input audio seconds by the runner's multipart-audio-duration extractor, so
+  the bill is fixed by the file the caller sent and does not move with how
+  fast or slow the runner is.
+
+# Starting point, not a rate card. 4.0e10 wei per audio second is the rounded
+# `whisper-large-v3` row of
+# docs/references/2026-06-15-openai-compatible-market-pricing.md (30% under
+# OpenAI's $0.006/min batch transcription). Do not re-anchor this to a
+# realtime/streaming price: that reference is explicit that batch and realtime
+# transcription are different products at very different rates.
+price_default: { amount_wei: "40000000000", per_units: 1 }
+
+# Deliberately the tightest concurrency relative to the model's size. When this
+# template rides as a secondary (see stacking below) its whole justification is
+# that it does not disturb the primary, and concurrency is the knob that would.
+capacity: { max_in_flight: 2, queue_limit: 2 }
+
+certification:
+  # Transcribed from brokerpush.CertificationPolicy, case
+  # "openai:audio-transcriptions" / "openai:audio-translations".
+  - name: ready
+    type: readiness
+    required: true
+    # Longer than the other families: Whisper weights load slowly, and a
+    # single-shot readiness check would fail a runner that is merely still
+    # starting. Five attempts at 3s.
+    config: { attempts: 5, interval_ms: 3000 }
+  - name: smoke
+    type: request
+    required: true
+    config:
+      transport: multipart
+      parts:
+        - { name: model, value: "{{identity.openai.model}}" }
+        - name: file
+          filename: probe.wav
+          content_type: audio/wav
+          # A built-in broker fixture, not a file the pool ships: the runner
+          # must receive the same 3s clip whoever is certifying it.
+          fixture: { ref: multipart-audio-duration-v1/wav-16k-mono-3s }
+      # Only that text came back. 0040 §8.2 rules out subjective quality
+      # scoring in v1, so there is no assertion on what the text says.
+      assert:
+        - "$.text"
+  # The fixture is 3s, so a correct duration extractor reports 3 units and a
+  # broken one reports 0 — which is exactly what min_units catches.
+  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+
+# 0040 §4.3: "RTX 3090 baseline; RTX 2080 possible only when dedicated;
+# stackable on RTX 4090 / RTX 5090 when policy allows."
+#
+# rtx-2080 is listed, and the "only when dedicated" half of that sentence
+# needs no separate flag: 0040 §4.4 already says 2080-class cards run one
+# template only, so any 2080 that lands here is dedicated by construction.
+# GTX 1080 is absent — it is the one class 0040 does not name for this family.
+requirements:
+  gpu_classes: [rtx-2080, rtx-3090, rtx-4090, rtx-5090]
+  # Set for the 2080 floor (8 GiB reported), not for the 3090 baseline, since
+  # this list is the widest of any non-transcode family.
+  gpu_vram_min_bytes: 8000000000
+
+# Low on purpose. On a 4090 or 5090 this template should lose the primary slot
+# to chat, images, or embeddings and take the secondary slot instead; the only
+# cards where it wins primary are the ones where nothing higher qualifies.
+priority: 12
+
+# The one meaningful secondary_on in the catalog. 0040 §4.4 allows a
+# 4090/5090-class card one primary plus optional low-footprint secondaries and
+# names audio transcription as the example, because Whisper's weights are
+# small, its requests are short and bounded by the input file, and its
+# concurrency is capped at 2 above — so it fills the gaps in a chat or image
+# primary's duty cycle rather than competing with it.
+#
+# primary is also true: on a 2080 or 3090 there is no primary for it to ride
+# alongside, and this template is the card's whole assignment.
+#
+# secondary_on lists classes, not templates. Stacking is capacity policy the
+# pool sets, never a member's choice (0040 §4.4) — a member with a 4090 cannot
+# add this to their own card.
+stacking:
+  primary: true
+  secondary_on: [rtx-4090, rtx-5090]
+
+# runner_compose omitted: v1 images and model IDs are still open (0040 §14).
+
+# Probation caps apply to the assignment, so a secondary assignment probates
+# separately from the primary already running on the same card.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

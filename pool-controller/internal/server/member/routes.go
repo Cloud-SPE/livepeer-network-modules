@@ -9,10 +9,13 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/memberenrollment"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
 type Deps struct {
+	// Catalog is the curated template catalog, loaded from files.
+	Catalog              *templates.Catalog
 	Repo                 *repo.StateRepo
 	Enrollment           *memberenrollment.Service
 	Sessions             *SessionAuth
@@ -137,7 +140,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		assignments := listEnrollmentAssignments(deps.Repo, enrollment.ID)
-		templates, _ := deps.Repo.ListTemplateCatalogEntries()
+		catalog := deps.Catalog.All()
 		body, err := memberenrollment.RenderBundleZip(memberenrollment.BundleInput{
 			ControllerURL:  defaultString(deps.PublicControllerURL, requestBaseURL(r)),
 			BrokerURL:      defaultString(deps.PublicBrokerURL, requestBaseURL(r)),
@@ -145,7 +148,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 			Enrollment:     enrollment,
 			Token:          token,
 			Assignments:    assignments,
-			Templates:      templates,
+			Templates:      catalog,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

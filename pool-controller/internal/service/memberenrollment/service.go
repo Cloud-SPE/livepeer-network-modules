@@ -8,10 +8,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -64,7 +66,7 @@ type BundleInput struct {
 	Enrollment     types.HostEnrollment
 	Token          string
 	Assignments    []types.TemplateAssignment
-	Templates      []types.TemplateCatalogEntry
+	Templates      []templates.Template
 }
 
 func New(stateRepo *repo.StateRepo) *Service {
@@ -322,7 +324,7 @@ func bundleCompose(input BundleInput) string {
 		if !ok {
 			continue
 		}
-		image := stringComposeValue(template.RunnerCompose, "image")
+		image := strings.TrimSpace(template.RunnerCompose.Image)
 		if image == "" {
 			continue
 		}
@@ -331,16 +333,24 @@ func bundleCompose(input BundleInput) string {
 			"    image: " + image + "\n" +
 			"    restart: unless-stopped\n" +
 			"    gpus: all\n"
-		if cmd := stringSliceComposeValue(template.RunnerCompose, "command"); len(cmd) > 0 {
+		if cmd := template.RunnerCompose.Command; len(cmd) > 0 {
 			out += "    command:\n"
 			for _, item := range cmd {
 				out += "      - " + item + "\n"
 			}
 		}
-		if env := stringMapComposeValue(template.RunnerCompose, "environment"); len(env) > 0 {
+		if env := template.RunnerCompose.Env; len(env) > 0 {
+			// Sorted: a bundle is fetched repeatedly by the update
+			// script, and map order would make every fetch look like a
+			// change.
+			keys := make([]string, 0, len(env))
+			for k := range env {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
 			out += "    environment:\n"
-			for k, v := range env {
-				out += "      " + k + ": " + v + "\n"
+			for _, k := range keys {
+				out += "      " + k + ": " + env[k] + "\n"
 			}
 		}
 	}
@@ -373,8 +383,8 @@ func workerBackendsEnv(input BundleInput) string {
 		if !ok {
 			continue
 		}
-		internalURL := stringComposeValue(template.RunnerCompose, "internal_url")
-		image := stringComposeValue(template.RunnerCompose, "image")
+		internalURL := strings.TrimSpace(template.RunnerCompose.InternalURL)
+		image := strings.TrimSpace(template.RunnerCompose.Image)
 		// Include the backend when the template gives any way to reach a runner:
 		// an explicit internal_url (operator runs their own runner; the bundle
 		// ships nothing) or a shipped image (the bundle spins one up and the
@@ -393,13 +403,13 @@ func workerBackendsEnv(input BundleInput) string {
 	return strings.Join(parts, ",")
 }
 
-func templateByID(items []types.TemplateCatalogEntry, id string) (types.TemplateCatalogEntry, bool) {
+func templateByID(items []templates.Template, id string) (templates.Template, bool) {
 	for _, item := range items {
 		if item.ID == id {
 			return item, true
 		}
 	}
-	return types.TemplateCatalogEntry{}, false
+	return templates.Template{}, false
 }
 
 func runnerServiceName(id string) string {
@@ -414,57 +424,4 @@ func runnerServiceName(id string) string {
 		}
 	}
 	return strings.TrimRight(b.String(), "_")
-}
-
-func stringComposeValue(m map[string]any, key string) string {
-	if m == nil {
-		return ""
-	}
-	value, ok := m[key]
-	if !ok || value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
-}
-
-func stringSliceComposeValue(m map[string]any, key string) []string {
-	value, ok := m[key]
-	if !ok {
-		return nil
-	}
-	raw, ok := value.([]any)
-	if !ok {
-		if stringsValue, ok := value.([]string); ok {
-			return stringsValue
-		}
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, item := range raw {
-		if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func stringMapComposeValue(m map[string]any, key string) map[string]string {
-	value, ok := m[key]
-	if !ok {
-		return nil
-	}
-	raw, ok := value.(map[string]any)
-	if !ok {
-		if stringMap, ok := value.(map[string]string); ok {
-			return stringMap
-		}
-		return nil
-	}
-	out := make(map[string]string, len(raw))
-	for k, v := range raw {
-		if s := strings.TrimSpace(fmt.Sprint(v)); s != "" {
-			out[k] = s
-		}
-	}
-	return out
 }

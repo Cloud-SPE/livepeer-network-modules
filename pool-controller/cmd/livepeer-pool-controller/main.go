@@ -26,6 +26,7 @@ import (
 	memberserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/member"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokeradmin"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerpush"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
@@ -85,11 +86,21 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	}
 	defer func() { _ = stateRepo.Close() }()
 
+	// The catalog is read once, at startup. A template is a reviewed
+	// artefact of this build, so a change to one is a deploy — reloading
+	// it under a running controller would let the pool's advertised
+	// terms change without anything recording that they had.
+	catalog, err := templates.Load(cfg.TemplateCatalogDir)
+	if err != nil {
+		return fmt.Errorf("load template catalog: %w", err)
+	}
+	log.Printf("template catalog: %d templates from %s", catalog.Len(), displayCatalogDir(cfg.TemplateCatalogDir))
+
 	rendered, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
 		return err
 	}
-	state := &runtimeState{configPath: *configPath, repo: stateRepo, adminToken: adminToken}
+	state := &runtimeState{configPath: *configPath, repo: stateRepo, catalog: catalog, adminToken: adminToken}
 	state.session = adminserver.NewSessionAuth(func() string {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
@@ -153,10 +164,6 @@ func buildBrokerPushState(stateRepo *repo.StateRepo, cfg *config.Config) (broker
 	if err != nil {
 		return brokerpush.State{}, nil, err
 	}
-	templates, err := stateRepo.ListTemplateCatalogEntries()
-	if err != nil {
-		return brokerpush.State{}, nil, err
-	}
 	templateAssignments, err := stateRepo.ListTemplateAssignments()
 	if err != nil {
 		return brokerpush.State{}, nil, err
@@ -175,7 +182,6 @@ func buildBrokerPushState(stateRepo *repo.StateRepo, cfg *config.Config) (broker
 		MemberCount:         len(poolMembers),
 	}
 	_ = hardwareUnits
-	_ = templates
 	_ = templateAssignments
 	return push, runtimeInfo, nil
 }
@@ -184,6 +190,10 @@ type runtimeState struct {
 	mu         sync.RWMutex
 	configPath string
 	repo       *repo.StateRepo
+	// catalog is the curated template set, loaded from files at
+	// startup. It is not per-request state: changing what a pool sells
+	// is a deploy, not an API call.
+	catalog    *templates.Catalog
 	adminToken string
 	session    *adminserver.SessionAuth
 	cfg        *config.Config
@@ -448,17 +458,19 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 	}
 	memberserver.Register(mux, memberserver.Deps{
 		Repo:                 state.repo,
+		Catalog:              state.catalog,
 		PublicControllerURL:  publicControllerURL,
 		PublicBrokerURL:      publicBrokerURL,
 		PublicBrokerQUICAddr: publicBrokerQUICAddr,
 	})
 	adminserver.Register(mux, adminserver.Deps{
 		Repo:            state.repo,
+		Catalog:         state.catalog,
 		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return withAdminAuth(state, next) },
 		Session:         state.session,
 		RefreshRendered: func(source string) error { return state.RefreshRenderedFromState(source) },
 		GetOfferingsJSON: func() ([]byte, error) {
-			offerings, err := buildOfferingViewsFromState(state.repo)
+			offerings, err := buildOfferingViewsFromState(state.repo, state.catalog)
 			if err != nil {
 				return nil, err
 			}
@@ -573,7 +585,7 @@ func newServeMux(state *runtimeState) *http.ServeMux {
 		}{Rounds: buildPublicRoundViews(items)})
 	})
 	mux.HandleFunc("GET /public/v1/offerings", func(w http.ResponseWriter, _ *http.Request) {
-		offerings, err := buildOfferingViewsFromState(state.repo)
+		offerings, err := buildOfferingViewsFromState(state.repo, state.catalog)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -2062,15 +2074,11 @@ type joinRequestReviewRequest struct {
 // now the template assignment on a hardware unit, and what can honestly
 // be published about it is whose it is and which GPU it runs on — never
 // an address a caller could dial.
-func buildOfferingViewsFromState(stateRepo *repo.StateRepo) ([]offeringView, error) {
+func buildOfferingViewsFromState(stateRepo *repo.StateRepo, catalog *templates.Catalog) ([]offeringView, error) {
 	if stateRepo == nil {
 		return nil, nil
 	}
 	offers, err := stateRepo.ListOffers()
-	if err != nil {
-		return nil, err
-	}
-	templates, err := stateRepo.ListTemplateCatalogEntries()
 	if err != nil {
 		return nil, err
 	}
@@ -2089,9 +2097,9 @@ func buildOfferingViewsFromState(stateRepo *repo.StateRepo) ([]offeringView, err
 
 	// A template names the (capability, offering) pair it serves, so it
 	// is the join between an operator's offer and the GPUs running it.
-	templatesByOffering := make(map[string][]string, len(templates))
-	for _, tmpl := range templates {
-		key := tmpl.CapabilityID + "|" + tmpl.OfferingID
+	templatesByOffering := map[string][]string{}
+	for _, tmpl := range catalog.All() {
+		key := tmpl.Capability + "|" + tmpl.OfferingID
 		templatesByOffering[key] = append(templatesByOffering[key], tmpl.ID)
 	}
 	assignmentsByTemplate := make(map[string][]types.TemplateAssignment)
@@ -3225,4 +3233,13 @@ func usageError(w io.Writer) error {
 	_, _ = fmt.Fprintln(w, "  serve")
 	_, _ = fmt.Fprintln(w, "  version")
 	return errors.New("invalid command")
+}
+
+// displayCatalogDir names the catalog source for the startup log,
+// including the case where a pool has not adopted one.
+func displayCatalogDir(dir string) string {
+	if strings.TrimSpace(dir) == "" {
+		return "(no template_catalog_dir configured)"
+	}
+	return dir
 }

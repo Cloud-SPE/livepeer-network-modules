@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
@@ -86,23 +87,47 @@ func TestStateRepoConnectedPoolEntitiesPersist(t *testing.T) {
 		t.Fatalf("hardware units = %#v", units)
 	}
 
-	template := types.TemplateCatalogEntry{
-		ID:               "image-realvisxl",
-		CapabilityID:     "image-generation",
-		OfferingID:       "realvisxl",
-		Protocol:         "paid-job/v1",
-		PrimaryAllowed:   true,
-		AllowedGPUModels: []string{"RTX 4090"},
+	// The catalog itself is files on disk; the only template state the
+	// database carries is the pool's own decision about one.
+	override := types.TemplateOverride{
+		TemplateID: "image-realvisxl",
+		Enabled:    true,
+		Price:      &config.Price{AmountWei: "12", PerUnits: 1},
+		Extra:      map[string]any{"provider": "comfy"},
+		UpdatedBy:  "operator-a",
 	}
-	if err := repo.PutTemplateCatalogEntry(template); err != nil {
-		t.Fatalf("PutTemplateCatalogEntry() error = %v", err)
+	if err := repo.PutTemplateOverride(override); err != nil {
+		t.Fatalf("PutTemplateOverride() error = %v", err)
 	}
-	gotTemplate, err := repo.GetTemplateCatalogEntry("image-realvisxl")
+	gotOverride, err := repo.GetTemplateOverride("image-realvisxl")
 	if err != nil {
-		t.Fatalf("GetTemplateCatalogEntry() error = %v", err)
+		t.Fatalf("GetTemplateOverride() error = %v", err)
 	}
-	if gotTemplate.Status != types.TemplateStatusActive {
-		t.Fatalf("template status = %q, want %q", gotTemplate.Status, types.TemplateStatusActive)
+	if !gotOverride.Enabled || gotOverride.Price == nil || gotOverride.Price.AmountWei != "12" {
+		t.Fatalf("override = %#v", gotOverride)
+	}
+	if gotOverride.Extra["provider"] != "comfy" || gotOverride.UpdatedBy != "operator-a" {
+		t.Fatalf("override lost its operator metadata: %#v", gotOverride)
+	}
+	// The store stamps the write time, so a console can show when the
+	// pool last changed its mind without the caller supplying it.
+	if gotOverride.UpdatedAt.IsZero() {
+		t.Fatalf("override was stored without an updated_at: %#v", gotOverride)
+	}
+	overrides, err := repo.ListTemplateOverrides()
+	if err != nil {
+		t.Fatalf("ListTemplateOverrides() error = %v", err)
+	}
+	if len(overrides) != 1 || overrides[0].TemplateID != "image-realvisxl" {
+		t.Fatalf("overrides = %#v", overrides)
+	}
+	// Deleting reverts to the catalog's default, which is the absence of
+	// a record rather than a disabled one.
+	if err := repo.DeleteTemplateOverride("image-realvisxl"); err != nil {
+		t.Fatalf("DeleteTemplateOverride() error = %v", err)
+	}
+	if overrides, err := repo.ListTemplateOverrides(); err != nil || len(overrides) != 0 {
+		t.Fatalf("after delete overrides = %#v err = %v", overrides, err)
 	}
 
 	assignment := types.TemplateAssignment{

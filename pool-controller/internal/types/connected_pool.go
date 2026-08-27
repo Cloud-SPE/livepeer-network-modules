@@ -4,7 +4,6 @@ import "time"
 
 type HostEnrollmentStatus string
 type HardwareUnitState string
-type TemplateStatus string
 type TemplateAssignmentRole string
 type TemplateAssignmentState string
 type CertificationStatus string
@@ -30,10 +29,7 @@ const (
 	HardwareUnitRetired      HardwareUnitState = "retired"
 )
 
-const (
-	TemplateStatusActive   TemplateStatus = "active"
-	TemplateStatusDisabled TemplateStatus = "disabled"
-)
+const ()
 
 const (
 	TemplateAssignmentPrimary   TemplateAssignmentRole = "primary"
@@ -127,36 +123,20 @@ type HardwareUnit struct {
 	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
-type TemplateCatalogEntry struct {
-	ID                 string              `json:"id"`
-	CapabilityID       string              `json:"capability_id"`
-	OfferingID         string              `json:"offering_id"`
-	Protocol           string              `json:"protocol"`
-	DisplayName        string              `json:"display_name,omitempty"`
-	Description        string              `json:"description,omitempty"`
-	AllowedGPUClasses  []string            `json:"allowed_gpu_classes,omitempty"`
-	AllowedGPUModels   []string            `json:"allowed_gpu_models,omitempty"`
-	PrimaryAllowed     bool                `json:"primary_allowed"`
-	SecondaryAllowed   bool                `json:"secondary_allowed"`
-	MaxInFlightDefault int                 `json:"max_in_flight_default,omitempty"`
-	QueueLimitDefault  int                 `json:"queue_limit_default,omitempty"`
-	ProbationSharePPM  uint64              `json:"probation_share_ppm,omitempty"`
-	ActiveSharePPM     uint64              `json:"active_share_ppm,omitempty"`
-	CommissionBPS      uint32              `json:"commission_bps,omitempty"`
-	RunnerCompose      map[string]any      `json:"runner_compose,omitempty"`
-	CertificationSteps []CertificationStep `json:"certification_steps,omitempty"`
-	Status             TemplateStatus      `json:"status"`
-	CreatedAt          time.Time           `json:"created_at"`
-	UpdatedAt          time.Time           `json:"updated_at"`
-}
-
+// CertificationStep is one step of a template's certification recipe.
+//
+// The yaml tags are load-bearing: templates are authored as YAML files,
+// and without them yaml.v3 would lowercase the Go field names, so
+// `timeout_ms` would be a parse error and the only accepted spelling
+// would be `timeoutms`. The loader sets KnownFields(true), so that
+// mismatch fails the boot rather than silently dropping a timeout.
 type CertificationStep struct {
-	Name        string         `json:"name"`
-	Type        string         `json:"type"`
-	Config      map[string]any `json:"config,omitempty"`
-	TimeoutMS   int            `json:"timeout_ms,omitempty"`
-	Required    bool           `json:"required"`
-	Description string         `json:"description,omitempty"`
+	Name        string         `yaml:"name" json:"name"`
+	Type        string         `yaml:"type" json:"type"`
+	Config      map[string]any `yaml:"config,omitempty" json:"config,omitempty"`
+	TimeoutMS   int            `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+	Required    bool           `yaml:"required" json:"required"`
+	Description string         `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 type TemplateAssignment struct {

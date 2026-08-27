@@ -3,13 +3,18 @@ package config
 import "strings"
 
 type Config struct {
-	Identity      Identity      `yaml:"identity"`
-	AdminAuth     AdminAuth     `yaml:"admin_auth,omitempty"`
-	Listen        Listen        `yaml:"listen,omitempty"`
-	Scoring       Scoring       `yaml:"scoring,omitempty"`
-	PaymentDaemon PaymentDaemon `yaml:"payment_daemon,omitempty"`
-	ReceiptSink   ReceiptSink   `yaml:"receipt_sink,omitempty"`
-	Bootstrap     Bootstrap     `yaml:"bootstrap,omitempty"`
+	// TemplateCatalogDir is the directory of curated workload
+	// templates (plan 0044 §3.2). Empty means this pool ships no
+	// catalog, which is a valid state for a controller that only does
+	// accounting — it is not an error, and must not stop it booting.
+	TemplateCatalogDir string        `yaml:"template_catalog_dir,omitempty" json:"template_catalog_dir,omitempty"`
+	Identity           Identity      `yaml:"identity"`
+	AdminAuth          AdminAuth     `yaml:"admin_auth,omitempty"`
+	Listen             Listen        `yaml:"listen,omitempty"`
+	Scoring            Scoring       `yaml:"scoring,omitempty"`
+	PaymentDaemon      PaymentDaemon `yaml:"payment_daemon,omitempty"`
+	ReceiptSink        ReceiptSink   `yaml:"receipt_sink,omitempty"`
+	Bootstrap          Bootstrap     `yaml:"bootstrap,omitempty"`
 }
 
 type Identity struct {

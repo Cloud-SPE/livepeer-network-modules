@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/certification"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/offerservice"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/settlement"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ui/web"
 )
@@ -45,6 +46,8 @@ func redactHostEnrollments(in []types.HostEnrollment) []hostEnrollmentView {
 }
 
 type Deps struct {
+	// Catalog is the curated template catalog, loaded from files.
+	Catalog           *templates.Catalog
 	Repo              *repo.StateRepo
 	WrapAuth          func(http.HandlerFunc) http.HandlerFunc
 	Session           *SessionAuth
@@ -60,8 +63,6 @@ type RuntimeApplyInfo struct {
 	CommandConfigured     bool   `json:"apply_command_configured"`
 	BrokerAdminConfigured bool   `json:"broker_admin_configured"`
 }
-
-type offerMutationRequest = offerservice.Mutation
 
 type brokerRuntimeMarkAppliedRequest struct {
 	Revision string `json:"revision,omitempty"`
@@ -205,31 +206,52 @@ func Register(mux *http.ServeMux, deps Deps) {
 			HardwareUnits []types.HardwareUnit `json:"hardware_units"`
 		}{HardwareUnits: items}, err)
 	}))
+	// The catalog is read-only over HTTP: it is files in the repo,
+	// reviewed in version control. What an operator changes at runtime
+	// is the override — enable it, price it, add metadata.
 	mux.HandleFunc("GET /admin/v1/template-catalog", auth(func(w http.ResponseWriter, _ *http.Request) {
-		items, err := deps.Repo.ListTemplateCatalogEntries()
+		overrides, err := deps.Repo.ListTemplateOverrides()
+		if err != nil {
+			writeAdminJSON(w, nil, err)
+			return
+		}
 		writeAdminJSON(w, struct {
-			Templates []types.TemplateCatalogEntry `json:"templates"`
-		}{Templates: items}, err)
+			Templates []templateCatalogView `json:"templates"`
+		}{Templates: catalogViews(deps.Catalog, overrides)}, nil)
 	}))
-	mux.HandleFunc("POST /admin/v1/template-catalog", auth(func(w http.ResponseWriter, r *http.Request) {
-		var item types.TemplateCatalogEntry
-		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+	mux.HandleFunc("PUT /admin/v1/template-overrides/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.PathValue("id"))
+		if _, ok := deps.Catalog.Get(id); !ok {
+			http.Error(w, "no template "+id+" in the catalog", http.StatusNotFound)
+			return
+		}
+		var override types.TemplateOverride
+		if err := json.NewDecoder(r.Body).Decode(&override); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		now := time.Now().UTC()
-		if item.CreatedAt.IsZero() {
-			item.CreatedAt = now
-		}
-		item.UpdatedAt = now
-		if item.Status == "" {
-			item.Status = types.TemplateStatusActive
-		}
-		if err := deps.Repo.PutTemplateCatalogEntry(item); err != nil {
+		override.TemplateID = id
+		if err := validateTemplateOverride(override); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeAdminJSON(w, item, nil)
+		if err := deps.Repo.PutTemplateOverride(override); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		stored, err := deps.Repo.GetTemplateOverride(id)
+		writeAdminJSON(w, stored, err)
+	}))
+	mux.HandleFunc("DELETE /admin/v1/template-overrides/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.PathValue("id"))
+		if err := deps.Repo.DeleteTemplateOverride(id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeAdminJSON(w, struct {
+			Status     string `json:"status"`
+			TemplateID string `json:"template_id"`
+		}{Status: "reverted_to_catalog_default", TemplateID: id}, nil)
 	}))
 	mux.HandleFunc("GET /admin/v1/template-assignments", auth(func(w http.ResponseWriter, _ *http.Request) {
 		items, err := deps.Repo.ListTemplateAssignments()
@@ -266,7 +288,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 	}))
 	mux.HandleFunc("POST /admin/v1/template-assignments/{id}/certification/start", auth(func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.PathValue("id"))
-		run, err := certification.New(deps.Repo).StartAssignmentCertification(id)
+		run, err := certification.New(deps.Repo, deps.Catalog).StartAssignmentCertification(id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -293,7 +315,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		run, err := certification.New(deps.Repo).CompleteRun(certification.CompleteRequest{
+		run, err := certification.New(deps.Repo, deps.Catalog).CompleteRun(certification.CompleteRequest{
 			RunID:         strings.TrimSpace(r.PathValue("id")),
 			Passed:        req.Passed,
 			Results:       req.Results,
@@ -450,78 +472,6 @@ func Register(mux *http.ServeMux, deps Deps) {
 			Events []types.AuditEvent `json:"events"`
 		}{Events: items})
 	}))
-	mux.HandleFunc("POST /admin/v1/offers", auth(func(w http.ResponseWriter, r *http.Request) {
-		var req offerMutationRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		offer, err := offerservice.Create(deps.Repo, req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "offer_created",
-			OccurredAt:   time.Now().UTC(),
-			ResourceID:   offer.ID,
-			ResourceType: "offer",
-			Details: map[string]any{
-				"capability_id": offer.CapabilityID,
-				"offering_id":   offer.OfferingID,
-				"protocol":      offer.Protocol,
-				"status":        offer.Status,
-			},
-		})
-		if err := deps.RefreshRendered("offer-created"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(offer)
-	}))
-	mux.HandleFunc("PATCH /admin/v1/offers/", auth(func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/admin/v1/offers/")
-		if id == "" {
-			http.Error(w, "offer id is required", http.StatusBadRequest)
-			return
-		}
-		current, err := deps.Repo.GetOffer(id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		var req offerMutationRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		updated, err := offerservice.Update(deps.Repo, current, req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "offer_updated",
-			OccurredAt:   time.Now().UTC(),
-			ResourceID:   updated.ID,
-			ResourceType: "offer",
-			Details: map[string]any{
-				"capability_id": updated.CapabilityID,
-				"offering_id":   updated.OfferingID,
-				"protocol":      updated.Protocol,
-				"status":        updated.Status,
-			},
-		})
-		if err := deps.RefreshRendered("offer-updated"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(updated)
-	}))
 }
 
 func buildRuntimeHistory(events []types.AuditEvent, limit int) []runtimeHistoryItem {
@@ -663,3 +613,75 @@ func killEnrollmentAssignments(stateRepo *repo.StateRepo, enrollmentID string, k
 	}
 	return killed
 }
+
+// templateCatalogView is a catalog template with the pool's decision
+// folded in, so a console does not have to join the two itself.
+type templateCatalogView struct {
+	templates.Template
+	Enabled bool `json:"enabled"`
+	// EffectivePrice is the override's price when set, otherwise the
+	// catalog's suggestion — what this pool would actually charge.
+	EffectivePrice  templates.Price `json:"effective_price"`
+	PriceOverridden bool            `json:"price_overridden,omitempty"`
+	Extra           map[string]any  `json:"extra,omitempty"`
+	UpdatedAt       *time.Time      `json:"override_updated_at,omitempty"`
+}
+
+func catalogViews(catalog *templates.Catalog, overrides []types.TemplateOverride) []templateCatalogView {
+	byID := make(map[string]types.TemplateOverride, len(overrides))
+	for _, o := range overrides {
+		byID[o.TemplateID] = o
+	}
+	all := catalog.All()
+	out := make([]templateCatalogView, 0, len(all))
+	for _, tmpl := range all {
+		view := templateCatalogView{Template: tmpl, EffectivePrice: tmpl.PriceDefault, Extra: tmpl.Extra}
+		if override, ok := byID[tmpl.ID]; ok {
+			view.Enabled = override.Enabled
+			if override.Price != nil {
+				view.EffectivePrice = templates.Price{AmountWei: override.Price.AmountWei, PerUnits: override.Price.PerUnits}
+				view.PriceOverridden = true
+			}
+			if len(override.Extra) > 0 {
+				merged := make(map[string]any, len(tmpl.Extra)+len(override.Extra))
+				for k, v := range tmpl.Extra {
+					merged[k] = v
+				}
+				// The pool's word wins on a key they both set: an
+				// override exists precisely to disagree with the catalog.
+				for k, v := range override.Extra {
+					merged[k] = v
+				}
+				view.Extra = merged
+			}
+			updated := override.UpdatedAt
+			view.UpdatedAt = &updated
+		}
+		out = append(out, view)
+	}
+	return out
+}
+
+func validateTemplateOverride(override types.TemplateOverride) error {
+	if override.Price != nil {
+		if !priceWeiRE.MatchString(override.Price.AmountWei) {
+			return fmt.Errorf("price.amount_wei must be a non-negative decimal string (got %q)", override.Price.AmountWei)
+		}
+		if override.Price.PerUnits == 0 {
+			return fmt.Errorf("price.per_units must be > 0")
+		}
+	}
+	for _, reserved := range []string{"protocol", "job", "session"} {
+		if _, clash := override.Extra[reserved]; clash {
+			return fmt.Errorf("extra.%s is reserved — the declaration owns that key", reserved)
+		}
+	}
+	for key := range override.Extra {
+		if strings.HasPrefix(key, "x-") {
+			return fmt.Errorf("extra.%s — x-* keys are runner extensions; the template promotes them with extra_from_runner", key)
+		}
+	}
+	return nil
+}
+
+var priceWeiRE = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)

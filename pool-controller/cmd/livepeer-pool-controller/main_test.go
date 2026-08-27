@@ -15,8 +15,29 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
+
+// writeCatalog builds the file-backed catalog the controller loads at
+// startup. Templates are no longer database rows, so a test that needs
+// one writes the same YAML a deployment would ship and loads it through
+// the real loader — a fixture the loader would reject is not a fixture.
+func writeCatalog(t *testing.T, bodies ...string) *templates.Catalog {
+	t.Helper()
+	dir := t.TempDir()
+	for i, body := range bodies {
+		name := filepath.Join(dir, fmt.Sprintf("tmpl-%02d.yaml", i))
+		if err := os.WriteFile(name, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	catalog, err := templates.Load(dir)
+	if err != nil {
+		t.Fatalf("templates.Load() error = %v", err)
+	}
+	return catalog
+}
 
 // memberSessionSecret is the one secret the connected model still stores per
 // host. The admin surface must never echo it back, so tests seed it and then
@@ -29,7 +50,7 @@ const memberSessionSecret = "broker-session-plaintext"
 // (capability, offering) pair, and an assignment places that template on that
 // GPU. There is no URL or auth anywhere in the chain — a runner is reachable
 // only through the broker's tunnel.
-func seedSingleChatAssignment(t *testing.T, stateRepo *repo.StateRepo, memberEthAddress, displayName string) {
+func seedSingleChatAssignment(t *testing.T, stateRepo *repo.StateRepo, memberEthAddress, displayName string) *templates.Catalog {
 	t.Helper()
 	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
 	if err := stateRepo.PutPoolMember(types.PoolMember{
@@ -89,19 +110,6 @@ func seedSingleChatAssignment(t *testing.T, stateRepo *repo.StateRepo, memberEth
 	}); err != nil {
 		t.Fatalf("PutOffer() error = %v", err)
 	}
-	if err := stateRepo.PutTemplateCatalogEntry(types.TemplateCatalogEntry{
-		ID:               "chat-default",
-		CapabilityID:     "openai:chat-completions",
-		OfferingID:       "default",
-		Protocol:         "paid-job/v1",
-		PrimaryAllowed:   true,
-		AllowedGPUModels: []string{"NVIDIA GeForce RTX 4090"},
-		Status:           types.TemplateStatusActive,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-	}); err != nil {
-		t.Fatalf("PutTemplateCatalogEntry() error = %v", err)
-	}
 	if err := stateRepo.PutTemplateAssignment(types.TemplateAssignment{
 		ID:               "assignment-1",
 		HardwareUnitID:   "gpu-1",
@@ -115,6 +123,18 @@ func seedSingleChatAssignment(t *testing.T, stateRepo *repo.StateRepo, memberEth
 	}); err != nil {
 		t.Fatalf("PutTemplateAssignment() error = %v", err)
 	}
+	return writeCatalog(t, `id: chat-default
+capability: openai:chat-completions
+offering_id: default
+protocol: paid-job/v1
+price_default:
+  amount_wei: "1"
+  per_units: 1
+requirements:
+  gpu_models: ["NVIDIA GeForce RTX 4090"]
+stacking:
+  primary: true
+`)
 }
 
 // seedChatSelectionState writes the backend-selection row the scoring
@@ -163,13 +183,13 @@ identity:
 		t.Fatalf("repo.Open() error = %v", err)
 	}
 	defer func() { _ = stateRepo.Close() }()
-	seedSingleChatAssignment(t, stateRepo, "0xabc", "member-a")
+	catalog := seedSingleChatAssignment(t, stateRepo, "0xabc", "member-a")
 	seedChatSelectionState(t, stateRepo, "0xabc", "assignment-1")
 	pushState, _, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
 		t.Fatalf("buildBrokerPushState() error = %v", err)
 	}
-	state := &runtimeState{configPath: path, repo: stateRepo}
+	state := &runtimeState{configPath: path, repo: stateRepo, catalog: catalog}
 	if err := state.Replace(cfg, pushState, "startup", nil); err != nil {
 		t.Fatalf("state.Replace() error = %v", err)
 	}
@@ -1098,10 +1118,12 @@ identity:
 	}
 }
 
-// TestAdminOfferAndPlacementMutationEndpoints is the port of the old
-// offer+assignment mutation test onto the connected-runner model: the operator
-// still creates the offer, but placement is now a template put on a member's
-// GPU rather than an offer wired to a member-supplied backend URL.
+// TestAdminPlacementMutationEndpoints is the port of the old
+// offer+assignment mutation test onto the connected-runner model. Both the
+// offer and the template it names are now seeded rather than POSTed: offers
+// are no longer mutable over HTTP and the catalog is files in the repo, so
+// placement — a template put on a member's GPU — is the only mutation left
+// on this path.
 // TestAdminHostEnrollmentsDoNotEchoBrokerSessionCredential is the port of the
 // legacy suite's guard that /admin/v1/members never echoed a member's
 // secret_ref. The connected model's equivalent secret is the host's broker
@@ -1164,7 +1186,7 @@ func TestAdminHostEnrollmentsDoNotEchoBrokerSessionCredential(t *testing.T) {
 	}
 }
 
-func TestAdminOfferAndPlacementMutationEndpoints(t *testing.T) {
+func TestAdminPlacementMutationEndpoints(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := filepath.Join(dir, "data")
 	configPath := filepath.Join(dir, "config.yaml")
@@ -1180,7 +1202,22 @@ func TestAdminOfferAndPlacementMutationEndpoints(t *testing.T) {
 		t.Fatalf("repo.Open() error = %v", err)
 	}
 	defer func() { _ = stateRepo.Close() }()
-	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
+	// The catalog is loaded from files at startup, not written over the
+	// API, so the placement route's template has to exist before the
+	// server does.
+	catalog := writeCatalog(t, `id: rerank-4090
+capability: rerank
+offering_id: zerank-2-default
+protocol: paid-job/v1
+price_default:
+  amount_wei: "1"
+  per_units: 1
+requirements:
+  gpu_models: ["NVIDIA GeForce RTX 4090"]
+stacking:
+  primary: true
+`)
+	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg, catalog: catalog}
 	now := time.Now().UTC()
 	// The member side of the chain is not something an operator creates; it
 	// arrives through enrollment, so the test seeds it directly.
@@ -1207,6 +1244,18 @@ func TestAdminOfferAndPlacementMutationEndpoints(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PutHardwareUnit() error = %v", err)
 	}
+	// The offer is the operator's commercial declaration. It is no
+	// longer created over HTTP, so the test writes it the way the
+	// controller stores it.
+	if err := stateRepo.PutOffer(types.Offer{
+		ID: "offer-1", CapabilityID: "rerank", OfferingID: "zerank-2-default",
+		Protocol: "paid-job/v1",
+		WorkUnit: config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula", "expression": "1"}},
+		Price:    config.Price{AmountWei: "1", PerUnits: 1},
+		Status:   types.OfferStatusActive, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("PutOffer() error = %v", err)
+	}
 	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
 		t.Fatalf("buildBrokerPushState() error = %v", err)
@@ -1217,35 +1266,12 @@ func TestAdminOfferAndPlacementMutationEndpoints(t *testing.T) {
 	server := httptest.NewServer(newServeMux(state))
 	defer server.Close()
 
-	offerBody := `{"id":"offer-1","capability_id":"rerank","offering_id":"zerank-2-default","protocol":"paid-job/v1","work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},"price":{"amount_wei":"1","per_units":1}}`
-	resp, err := http.Post(server.URL+"/admin/v1/offers", "application/json", bytes.NewBufferString(offerBody))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/offers error = %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"id":"offer-1"`) {
-		t.Fatalf("POST /admin/v1/offers status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	// The template is what ties an offer to the GPUs that can serve it.
-	templateBody := `{"id":"rerank-4090","capability_id":"rerank","offering_id":"zerank-2-default","protocol":"paid-job/v1","primary_allowed":true,"allowed_gpu_models":["NVIDIA GeForce RTX 4090"]}`
-	resp, err = http.Post(server.URL+"/admin/v1/template-catalog", "application/json", bytes.NewBufferString(templateBody))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/template-catalog error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"status":"active"`) {
-		t.Fatalf("POST /admin/v1/template-catalog status=%d body=%s", resp.StatusCode, string(body))
-	}
-
 	assignBody := `{"id":"assignment-1","hardware_unit_id":"gpu-1","host_enrollment_id":"host-1","member_eth_address":"0xabc","template_id":"rerank-4090"}`
-	resp, err = http.Post(server.URL+"/admin/v1/template-assignments", "application/json", bytes.NewBufferString(assignBody))
+	resp, err := http.Post(server.URL+"/admin/v1/template-assignments", "application/json", bytes.NewBufferString(assignBody))
 	if err != nil {
 		t.Fatalf("POST /admin/v1/template-assignments error = %v", err)
 	}
-	body, _ = io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"id":"assignment-1"`) {
 		t.Fatalf("POST /admin/v1/template-assignments status=%d body=%s", resp.StatusCode, string(body))
@@ -1371,9 +1397,9 @@ func TestReplacePushesOffersAndCredentials(t *testing.T) {
 }
 
 // TestOperatorFlowEndToEnd walks the operator's whole path on the
-// connected-runner model: publish an offer, publish the template that says
-// which GPUs may serve it, place that template on a member's GPU, and see the
-// placement surface on the offerings view. The member-side half (nonce,
+// connected-runner model: the pool ships an offer and the catalog template
+// that says which GPUs may serve it, the operator places that template on a
+// member's GPU, and the placement surfaces on the offerings view. The member-side half (nonce,
 // signature, enrollment, hardware report) has its own end-to-end test in
 // internal/server/member; here it is seeded so the operator surfaces stay the
 // subject.
@@ -1414,7 +1440,29 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 		t.Fatalf("PutHardwareUnit() error = %v", err)
 	}
 
-	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg}
+	if err := stateRepo.PutOffer(types.Offer{
+		ID: "rerank-zerank2", CapabilityID: "rerank", OfferingID: "zerank-2-default",
+		Protocol: "paid-job/v1",
+		WorkUnit: config.WorkUnit{Name: "requests", Extractor: map[string]any{"type": "request-formula", "expression": "1"}},
+		Price:    config.Price{AmountWei: "1", PerUnits: 1},
+		Status:   types.OfferStatusActive, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("PutOffer() error = %v", err)
+	}
+	catalog := writeCatalog(t, `id: rerank-zerank2-4090
+capability: rerank
+offering_id: zerank-2-default
+protocol: paid-job/v1
+price_default:
+  amount_wei: "1"
+  per_units: 1
+requirements:
+  gpu_models: ["NVIDIA GeForce RTX 4090"]
+stacking:
+  primary: true
+`)
+
+	state := &runtimeState{configPath: configPath, repo: stateRepo, cfg: cfg, catalog: catalog}
 	pushState, runtimeInfo, err := buildBrokerPushState(stateRepo, cfg)
 	if err != nil {
 		t.Fatalf("buildBrokerPushState() error = %v", err)
@@ -1425,48 +1473,12 @@ func TestOperatorFlowEndToEnd(t *testing.T) {
 	server := httptest.NewServer(newServeMux(state))
 	defer server.Close()
 
-	offerBody := `{
-	  "id":"rerank-zerank2",
-	  "capability_id":"rerank",
-	  "offering_id":"zerank-2-default",
-	  "protocol":"paid-job/v1",
-	  "work_unit":{"name":"requests","extractor":{"type":"request-formula","expression":"1"}},
-	  "price":{"amount_wei":"1","per_units":1}
-	}`
-	resp, err := http.Post(server.URL+"/admin/v1/offers", "application/json", bytes.NewBufferString(offerBody))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/offers error = %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /admin/v1/offers status=%d body=%s", resp.StatusCode, string(body))
-	}
-
-	templateBody := `{
-	  "id":"rerank-zerank2-4090",
-	  "capability_id":"rerank",
-	  "offering_id":"zerank-2-default",
-	  "protocol":"paid-job/v1",
-	  "primary_allowed":true,
-	  "allowed_gpu_models":["NVIDIA GeForce RTX 4090"]
-	}`
-	resp, err = http.Post(server.URL+"/admin/v1/template-catalog", "application/json", bytes.NewBufferString(templateBody))
-	if err != nil {
-		t.Fatalf("POST /admin/v1/template-catalog error = %v", err)
-	}
-	body, _ = io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("POST /admin/v1/template-catalog status=%d body=%s", resp.StatusCode, string(body))
-	}
-
 	// Before any placement the offering exists but nothing serves it.
-	resp, err = http.Get(server.URL + "/public/v1/offerings")
+	resp, err := http.Get(server.URL + "/public/v1/offerings")
 	if err != nil {
 		t.Fatalf("GET /public/v1/offerings error = %v", err)
 	}
-	body, _ = io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if !strings.Contains(string(body), `"runner_count":0`) {
 		t.Fatalf("offerings before placement body=%s", string(body))

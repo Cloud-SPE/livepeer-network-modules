@@ -1,0 +1,79 @@
+# Text embeddings — the pool's cheapest, densest GPU workload.
+#
+# Family: `openai:embeddings` (plan 0040 §4.3, row 2).
+
+id: openai-embeddings-nomic-embed-text
+capability: openai:embeddings
+offering_id: nomic-embed-text-v2-moe
+protocol: paid-job/v1
+display_name: Text embeddings (nomic-embed-text-v2-moe)
+description: >-
+  OpenAI-compatible /v1/embeddings. Metered in tokens from the response's
+  usage block, so a caller that batches 100 inputs into one request pays the
+  same as 100 single-input requests.
+
+# Starting point, not a rate card. 8.0e9 wei per 1000 tokens is the rounded
+# `nomic-embed-text-v2-moe` row of
+# docs/references/2026-06-15-openai-compatible-market-pricing.md (30% under
+# OpenAI text-embedding-3-small). Embeddings are the family where callers
+# comparison-shop hardest, so this is the one price a pool should expect to
+# revisit.
+price_default: { amount_wei: "8000000000", per_units: 1000 }
+
+# The widest concurrency in the catalog. An embedding forward pass is
+# milliseconds and the model is small enough that many requests share the
+# resident weights, so the card is idle between them unless the queue is kept
+# fed — this is the one family where a queue earns its keep.
+capacity: { max_in_flight: 8, queue_limit: 8 }
+
+certification:
+  # Transcribed from brokerpush.CertificationPolicy, case "openai:embeddings".
+  # No latency step: the Go policy does not define one for this family, and a
+  # step invented here would certify against a bound nobody agreed to.
+  - { name: ready, type: readiness, required: true }
+  - name: smoke
+    type: request
+    required: true
+    config:
+      body:
+        model: "{{identity.openai.model}}"
+        input: "ping"
+      # The vector must be non-empty AND the usage block must exist: a runner
+      # that returns embeddings but no usage cannot be billed, which is a
+      # certification failure rather than a quality one.
+      assert:
+        - { path: "$.data[0].embedding", min: 1 }
+        - "$.usage.total_tokens"
+  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+
+# 0040 §4.3 sets the floor at RTX 3090. Embedding models themselves fit in far
+# less, but the pool is not sizing for the model — it is sizing for a card
+# that can hold the weights resident while serving eight concurrent requests
+# without paging. A 2080-class card can run the model and will thrash under
+# that concurrency, which reads to a caller as latency rather than as an error.
+requirements:
+  gpu_classes: [rtx-3090, rtx-4090, rtx-5090]
+  # Under the ~25.7e9 bytes a 24 GB card actually reports, so a 3090 clears it.
+  gpu_vram_min_bytes: 24000000000
+
+# Above transcode, below chat and images. On a 3090 this is usually the best
+# available use of the card; on a 4090/5090 the higher-value families should
+# take the primary slot.
+priority: 20
+
+# Primary only. 0040 §4.4 names audio transcription as the low-footprint
+# secondary; embeddings look similarly cheap per request but are not, because
+# the throughput above depends on the weights staying resident — exactly the
+# thing a co-resident primary would evict.
+stacking: { primary: true, secondary_on: [] }
+
+# runner_compose omitted: v1 images and model IDs are still open (0040 §14).
+
+# Short probation. Embedding failures are immediate and deterministic (wrong
+# vector width, missing usage), so 20 jobs is a real sample here where it
+# would not be for transcode.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

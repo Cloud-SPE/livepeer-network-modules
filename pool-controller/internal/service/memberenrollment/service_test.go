@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -99,12 +100,12 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 			ID:         "assign-chat-1",
 			TemplateID: "chat-4090",
 		}},
-		Templates: []types.TemplateCatalogEntry{{
+		Templates: []templates.Template{{
 			ID: "chat-4090",
-			RunnerCompose: map[string]any{
-				"image":        "runner-chat:latest",
-				"internal_url": "http://chat-runner:9000",
-				"environment":  map[string]any{"MODEL": "small"},
+			RunnerCompose: templates.RunnerCompose{
+				Image:       "runner-chat:latest",
+				InternalURL: "http://chat-runner:9000",
+				Env:         map[string]string{"QUANT": "fp8", "MODEL": "small"},
 			},
 		}},
 	})
@@ -140,6 +141,12 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 	}
 	if !bytes.Contains(composeBody, []byte("runner_assign_chat_1:")) || !bytes.Contains(composeBody, []byte("image: runner-chat:latest")) {
 		t.Fatalf("compose missing assigned runner: %s", string(composeBody))
+	}
+	// The update script refetches this bundle on a schedule, so the
+	// rendering has to be byte-stable: environment keys come out sorted
+	// rather than in map order, or every fetch would look like a change.
+	if !bytes.Contains(composeBody, []byte("    environment:\n      MODEL: small\n      QUANT: fp8\n")) {
+		t.Fatalf("compose environment is not rendered in sorted order: %s", string(composeBody))
 	}
 }
 

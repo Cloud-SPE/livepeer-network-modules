@@ -279,24 +279,24 @@ Useful admin reads while triaging:
 - Do not delete the BoltDB state unless you intentionally want to discard
   payout and receipt history.
 
-Broker apply failure triage:
+Broker push failure triage:
 
-1. `GET /admin/v1/broker-runtime`
-   Check:
-   - `dirty`
-   - `broker_dirty`
-   - `broker_reload_status`
-   - `broker_reload_error`
-   - `broker_reload_attempt_id`
-2. `GET /admin/v1/broker-runtime/history`
-   Confirm the latest controller-side attempt details.
-3. broker `GET /admin/v1/runtime`
-   Confirm the broker's own latest attempt, loaded revision, and history.
-4. inspect the configured `broker_apply_command`
-   Confirm the desired YAML was staged at the correct path for the broker.
+1. The recorded runtime revision carries `push_error` when the last push
+   was refused. The broker names the offer and the field it rejected, so
+   the message is usually the fix.
+2. Broker `GET /admin/v1/offers` — confirm which offers the broker holds
+   and whether each is frozen and advertised. An offer with no certified
+   runner is deliberately not advertised.
+3. Broker `GET /admin/v1/runners` — confirm the hosts attached and why a
+   capability is ineligible. The disagreeing field is named there.
+4. Broker `GET /admin/v1/certification` — confirm what a runner proved.
 
-If the broker loaded revision does not match the controller desired revision,
-do not publish from `orch-coordinator` until convergence is fixed.
+The coordinator's Runners, Offers and Certification pages present all
+three over the same API; use them before curling.
+
+A push that fails leaves the broker serving what it last accepted, which
+is safe: paid traffic keeps flowing to already-eligible runners and the
+signed manifest is unaffected.
 
 If broker reload fails but the prior broker runtime is still serving traffic,
 prefer fix-forward and re-apply over manual state edits.

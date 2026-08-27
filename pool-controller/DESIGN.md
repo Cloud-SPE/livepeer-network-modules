@@ -69,11 +69,20 @@ Initial implementation scope for plan 0029:
    operator state survives process restarts. There is no rendered broker
    config to snapshot — see item 3.
 6. Persist backend-selection state records keyed by
-   `(member, backend, capability_id, offering_id)` so later Pool scoring,
-   probe, and outcome-ingest work has a durable state boundary. The key
-   survived the deletion of the `MemberBackend` registry it once joined
-   against; scoring is being re-expressed against template assignments and
-   the broker's attached runners (plan 0044 §3.5).
+   `(member, backend, capability_id, offering_id)` so Pool scoring and
+   outcome-ingest work has a durable state boundary. The key survived the
+   deletion of the `MemberBackend` registry it once joined against, and is now
+   keyed against placements: `internal/ladder` seeds a row for every template
+   assignment and judges it there. Nothing else creates these rows now that the
+   legacy member model is gone, and the outcome-ingest API refuses an unknown
+   one — so without that seeding the broker's outcome reports would 404 forever
+   and the ladder would have no evidence to judge on.
+
+   The synthetic probes this state was also built for are gone. Members are
+   outbound-only, so there is no address for the controller to probe, and the
+   question a probe answered is answered better by certification (run by the
+   broker, over the runner's own attach connection) and by the ladder, which
+   judges real billed work.
 7. Expose a read-only admin snapshot of persisted backend-selection state so
    future broker pollers can integrate against a stable controller surface.
 8. Expose operator override endpoints for quarantine, drain, warm-up, and
@@ -124,15 +133,13 @@ Initial implementation scope for plan 0029:
 The offer push is intentionally deterministic and idempotent so it can be
 re-sent on any pool-state change and diffed safely. It once keyed off member
 approval and backend drain events; those gestures no longer exist, so the
-triggers are now offer edits, template placement, certification results, and
-host revocation.
+triggers are now template enable/price changes, placement decisions,
+certification results, ladder transitions, and host revocation.
 
 Current scoring implementation notes:
 
 - Pool cooldown uses a persisted 5-minute rolling window of repeated
   `backend_failure` outcomes.
-- Synthetic probes already update persisted confidence and exclusion state, but
-  they do not yet participate in a longer-horizon EMA memory model.
 - `real_success_score` is now recomputed from a 5-minute rolling window of
   `success` and `backend_failure` outcomes, then blended with EMA memory.
 - `real_latency_score` is now recomputed from a 5-minute rolling window of
@@ -140,8 +147,8 @@ Current scoring implementation notes:
   EMA memory.
 - EMA memory now uses a 24-hour half-life and drifts toward neutral `0.5`
   between observations.
-- First-probe success and recovery from synthetic/cooldown exclusion now
-  re-enter through a warm-up-capped weight.
+- Recovery from cooldown exclusion, and a newly seeded placement, re-enter
+  through a warm-up-capped weight.
 - Warm-up now auto-graduates after enough recent routed samples.
 - Manual warm-up override is now separate from automatic warm-up recovery so
   operator policy can be cleared independently of runtime recovery state.

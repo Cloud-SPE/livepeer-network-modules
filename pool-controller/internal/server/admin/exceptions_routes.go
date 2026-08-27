@@ -97,7 +97,11 @@ func registerExceptionRoutes(mux *http.ServeMux, deps Deps, auth func(http.Handl
 		}
 		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
 			Kind: "member_status_changed", OccurredAt: now, Actor: strings.TrimSpace(req.Actor),
-			ResourceID: member.EthAddress, ResourceType: "pool_member",
+			// Lowercased, matching the id the member is looked up by:
+			// recording the enrolled (possibly checksummed) spelling
+			// would hide a member's status changes from anyone querying
+			// the trail by their canonical address.
+			ResourceID: strings.ToLower(member.EthAddress), ResourceType: "pool_member",
 			Details: map[string]any{"status": string(next), "reason": req.Reason, "drained_placements": drained},
 		})
 		writeAdminJSON(w, struct {
@@ -133,13 +137,17 @@ func (d Deps) exceptions(now time.Time) (exceptionsView, error) {
 		if unit.State == types.HardwareUnitSuspended {
 			view.SuspendedGPUs = append(view.SuspendedGPUs, unit)
 		}
-		if unit.GPUUUID == "" {
+		// Trimmed, because the uniqueness guard compares the trimmed
+		// value: grouping on the raw one would show " GPU-1" and
+		// "GPU-1" as two contested cards where the guard sees one.
+		uuid := strings.TrimSpace(unit.GPUUUID)
+		if uuid == "" {
 			continue
 		}
-		if byUUID[unit.GPUUUID] == nil {
-			byUUID[unit.GPUUUID] = map[string]bool{}
+		if byUUID[uuid] == nil {
+			byUUID[uuid] = map[string]bool{}
 		}
-		byUUID[unit.GPUUUID][strings.ToLower(unit.MemberEthAddress)] = true
+		byUUID[uuid][strings.ToLower(strings.TrimSpace(unit.MemberEthAddress))] = true
 	}
 	for uuid, addrs := range byUUID {
 		if len(addrs) < 2 {
@@ -152,6 +160,9 @@ func (d Deps) exceptions(now time.Time) (exceptionsView, error) {
 		sortStrings(entry.Members)
 		view.DuplicateGPUs = append(view.DuplicateGPUs, entry)
 	}
+	// Map iteration order would make an operator diffing today's queue
+	// against yesterday's see churn that is not there.
+	sortDuplicates(view.DuplicateGPUs)
 	windows, err := d.Repo.ListSettlementWindows()
 	if err != nil {
 		return view, err
@@ -198,6 +209,14 @@ func (d Deps) drainMemberPlacements(member string, now time.Time) int {
 func sortStrings(in []string) {
 	for i := 1; i < len(in); i++ {
 		for j := i; j > 0 && in[j] < in[j-1]; j-- {
+			in[j], in[j-1] = in[j-1], in[j]
+		}
+	}
+}
+
+func sortDuplicates(in []duplicateGPUView) {
+	for i := 1; i < len(in); i++ {
+		for j := i; j > 0 && in[j].GPUUUID < in[j-1].GPUUUID; j-- {
 			in[j], in[j-1] = in[j-1], in[j]
 		}
 	}

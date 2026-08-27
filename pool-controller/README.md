@@ -146,6 +146,25 @@ reachable *by* them.
 Leaving `listen.member` empty keeps both surfaces on the paid listener. That is
 the single-address deployment and stays supported.
 
+## Configuration blocks
+
+| Block | What it decides |
+|---|---|
+| `identity` | The orch address and label this pool speaks as. |
+| `template_catalog_dir` | Where the workload catalog is read from at boot. Empty is valid: an accounting-only controller has no catalog. |
+| `placement.max_templates_per_class` | How many templates a GPU class runs at once. Omit for the built-in stances. |
+| `ladder` | The trust policy (see above). Omit for the 0040 §8.3 defaults. |
+| `payouts` | `policy_path`, `pause_path`, `auto_close_windows`, `scale_tolerance`. All empty means approval stays entirely human, which is where a pool starts. |
+| `listen` | `paid`, `member`, `metrics`, `worker_quic`. |
+| `admin_auth` | `bearer_token_ref` in production; literal `bearer_token` is for local testing. |
+| `scoring` | Cooldown, EMA, latency target, warm-up, summary list limits. |
+| `bootstrap` | The broker fleet to push to, and the public URLs written into member bundles. |
+
+`examples/pool-controller-config.example.yaml` documents `identity`,
+`template_catalog_dir`, `placement`, `admin_auth`, `listen`, `scoring` and
+`bootstrap`. It does not yet show `listen.member`, `ladder:` or `payouts:`;
+read `internal/config/config.go` for those until it does.
+
 Current scoring boundary:
 
 - repeated `backend_failure` outcomes already use a persisted 5-minute rolling
@@ -472,8 +491,25 @@ The equivalents in the new model are:
   ladder in plan 0044 §3.5, with a reason code and evidence on every
   transition. Only lifting a suspension is an operator gesture.
 
-Neither replacement has landed yet — they are later slices of plan 0044. Until
-then, there is no automated policy loop at all.
+Both have landed. `internal/placement` decides placements from declared facts,
+and `internal/ladder` advances them on a timer — the automation now lives in
+named policy engines rather than in a `policy:` block of loose thresholds,
+which is the point: each decision is reproducible from its inputs and carries
+the reason code that justified it.
+
+What is *not* automated, deliberately:
+
+- **Applying a placement plan.** `POST /admin/v1/placement-plan/apply` is a
+  call, not a loop. Placement is deterministic, so the plan is worth reading
+  before it is committed — and the endpoint that shows it
+  (`GET /admin/v1/placement-plan`) exists for exactly that.
+- **Approving a payout batch.** Human by default. `payout-policy.json` can
+  take it over within bounds, and the graduation plan for widening those
+  bounds is in [`RUNBOOK.md`](./RUNBOOK.md).
+- **Closing a settlement window.** `internal/service/settlement/autoclose.go`
+  implements the hold-on-anomaly decision and `payouts.auto_close_windows` /
+  `payouts.scale_tolerance` exist in config, but **nothing calls them yet**:
+  closing a window is still `POST /admin/v1/settlement-windows/close`.
 
 ## Commands
 

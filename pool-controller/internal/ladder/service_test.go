@@ -468,24 +468,24 @@ func TestApplySuspensionExcludesRatherThanZeroWeights(t *testing.T) {
 }
 
 // TestRunOnceDoesNotPromoteAPlacementWhoseCertificationIsStillRunning
-// is a DELIBERATE FAILURE: it documents a real defect.
+// guards a bug this test found.
 //
 // certification_testing does not mean "certification passed" — the
 // certification service sets it when a run STARTS, and sets
 // probationary itself when the run passes. The ladder's testing arm
-// nonetheless moves any placement in that state to probationary with
-// the evidence string "certification passed", so:
+// used to move any placement in that state to probationary with the
+// evidence string "certification passed", so:
 //
-//   - a run still in flight is promoted before it has proved anything,
-//     with an audit record asserting a pass that never happened; and
+//   - a run still in flight was promoted before it had proved
+//     anything, with an audit record asserting a pass that never
+//     happened; and
 //   - the ladder's own recertify decision (ReasonRecertifyFailures
-//     parks a placement in certification_testing) is undone on the very
-//     next tick, so K consecutive failures buys no re-certification at
-//     all.
+//     parks a placement in certification_testing) was undone on the
+//     very next tick, so K consecutive failures bought no
+//     re-certification at all.
 //
-// The ladder needs to leave a placement in certification_testing alone
-// and let the certification service move it, or gate the testing arm on
-// a passed run.
+// The arm is now gated on Evidence.CertificationPassed. This keeps it
+// that way.
 func TestRunOnceDoesNotPromoteAPlacementWhoseCertificationIsStillRunning(t *testing.T) {
 	stateRepo, catalog := ladderFixture(t)
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
@@ -511,19 +511,20 @@ func TestRunOnceDoesNotPromoteAPlacementWhoseCertificationIsStillRunning(t *test
 	}
 }
 
-// TestRecertifyDoesNotLeaveTheRunnerUncapped is a DELIBERATE FAILURE:
-// it documents a second real defect on the same path.
+// TestRecertifyDoesNotLeaveTheRunnerUncapped guards a second bug this
+// test found, on the same path.
 //
-// The apply path writes MaxShareCap = share_ppm / 1e6 and marks the
-// selection state eligible for every destination except suspended. For
-// a recertify transition the share is 0 — and the broker reads a
+// The apply path writes MaxShareCap = share_ppm / 1e6 and used to mark
+// the selection state eligible for every destination except suspended.
+// For a recertify transition the share is 0 — and the broker reads a
 // max_share_cap of 0 as NO CAP, not as no traffic
 // (capability-broker/internal/server/capability_group.go,
 // applyMaxShareCaps: `if capLimit <= 0 ... continue`). So a placement
-// sent back for re-certification after K consecutive failures is left
-// eligible with its share bound removed, which is the opposite of what
+// sent back for re-certification after K consecutive failures was left
+// eligible with its share bound REMOVED, which is the opposite of what
 // the transition means. The same reasoning the apply path already
-// applies to suspension — "zero is a weight" — applies here.
+// applied to suspension — "zero is a weight" — applies here, and the
+// path now excludes any state that entitles a runner to no traffic.
 func TestRecertifyDoesNotLeaveTheRunnerUncapped(t *testing.T) {
 	stateRepo, catalog := ladderFixture(t)
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)

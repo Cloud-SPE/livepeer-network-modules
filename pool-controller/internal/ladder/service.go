@@ -2,6 +2,7 @@ package ladder
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -114,7 +115,21 @@ func (s *Service) RunOnce() (Summary, error) {
 	}
 	summary.Evaluated = len(live)
 
-	transitions := EvaluateAll(live, evidence, s.policy, now)
+	// A template may state its own rungs (plan 0044 §3.2). They were
+	// parsed and validated and read by nothing, so a catalog that said
+	// "this workload needs 30 jobs before you trust it" was silently
+	// getting the pool default.
+	transitions := make([]Transition, 0, len(live))
+	for _, assignment := range live {
+		policy := s.policy
+		if tmpl, ok := s.catalog.Get(assignment.TemplateID); ok {
+			policy = policyFor(s.policy, tmpl)
+		}
+		if t := Evaluate(assignment, evidence[assignment.ID], policy, now); t != nil {
+			transitions = append(transitions, *t)
+		}
+	}
+	sort.Slice(transitions, func(i, j int) bool { return transitions[i].AssignmentID < transitions[j].AssignmentID })
 	for _, transition := range transitions {
 		if err := s.apply(transition, now); err != nil {
 			return summary, err
@@ -258,6 +273,29 @@ func latestCertification(runs []types.CertificationRun) map[string]certOutcome {
 			passed:   item.run.Status == types.CertificationPassed,
 			failures: failures[id],
 		}
+	}
+	return out
+}
+
+// policyFor layers a template's own rungs over the pool's.
+//
+// The template is the more specific statement — it knows what this
+// workload needs to prove — so where it says something it wins. Where
+// it says nothing the pool's policy stands, which is why a zero is read
+// as "unset" here exactly as it is everywhere else in this package.
+func policyFor(base Policy, tmpl templates.Template) Policy {
+	out := base
+	if tmpl.Probation.SharePPM > 0 {
+		out.ProbationSharePPM = tmpl.Probation.SharePPM
+	}
+	if tmpl.Probation.MaxInFlight > 0 {
+		out.ProbationMaxInFlight = tmpl.Probation.MaxInFlight
+	}
+	if tmpl.Probation.MinJobs > 0 {
+		out.ProbationMinJobs = tmpl.Probation.MinJobs
+	}
+	if tmpl.Active.ShareCapPPM > 0 {
+		out.ActiveShareCapPPM = tmpl.Active.ShareCapPPM
 	}
 	return out
 }

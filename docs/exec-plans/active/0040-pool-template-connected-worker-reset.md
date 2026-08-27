@@ -14,12 +14,39 @@ related:
 
 # Plan 0040 — Pool template onboarding and connected-worker reset
 
-> **Superseded in part (2026-08-26).** §3, §5–§10 are replaced by
-> [plan 0043](0043-connected-runners-and-offer-manifest.md) (attach, credentials,
-> freeze, certification execution, selection) and
-> [plan 0044](0044-zero-touch-pool-onboarding.md) (placement, agent-driven
-> compose, automatic ladder, member portal, payout policy). §4.2 GPU uniqueness
-> and §11 settlement math stand.
+> **Superseded (2026-08-27) by
+> [plan 0044 — Zero-touch pool onboarding](0044-zero-touch-pool-onboarding.md),**
+> whose epic is now built. 0044 (with
+> [plan 0043](0043-connected-runners-and-offer-manifest.md), which supersedes the
+> broker-facing half) is the current design of record. Read this plan for the
+> reasoning behind the reset and for the four sections below that are still
+> live policy; read 0044 for what the system does.
+>
+> **Still current, and referenced from live code and templates:**
+>
+> - **§4.2** — GPU UUID uniqueness across ETH addresses.
+> - **§4.3** — the GPU-class vocabulary and the five workload families the
+>   `templates/` catalog ships.
+> - **§4.4** — the stacking stances (primary + low-footprint secondary), which
+>   `placement.max_templates_per_class` configures.
+> - **§8.3** — the probation numbers, which are the ladder's defaults.
+> - **§11** — settlement math.
+>
+> **Replaced:** §3, §5–§10, and §12–§13. The UI target in §12 is superseded by
+> 0044 §3.6 (member portal on its own listener, rebuilt operator console), and
+> the phase plan in §13 by 0044 §5. Specifically — the operator assigns a template to
+> a GPU (now deterministic placement policy, 0044 §3.3); the bundle ships a
+> service per assignment and the member re-runs `update.sh` after a
+> reassignment (now the agent pulls its own desired state, 0044 §3.4); the
+> operator promotes a passing assignment by hand (now the automatic ladder,
+> 0044 §3.5); templates live in the controller's database alongside a separate
+> offer catalog (now files in `templates/`, with an offer *derived* from an
+> enabled one, 0044 §3.2); the controller runs certification (now the broker
+> does, over the attach connection, 0043).
+>
+> No further work is planned against this plan. New work goes to 0044 or a
+> successor. The `status: active` frontmatter is left as it was rather than
+> invented into a value nothing else in this tree uses.
 
 ## 1. Purpose
 

@@ -15,8 +15,9 @@ authoritative for component-specific flags and troubleshooting.
 
 This guide covers the production path for a Pool-based orch where:
 
-- `pool-controller` owns offers, member onboarding, template assignments
-  (a pool template placed on a member GPU), and desired broker runtime
+- `pool-controller` owns the pool's policy: which workload templates are
+  enabled at what price, which template lands on which member GPU (a
+  *placement*), how a placement earns its share of traffic, and the money
 - `capability-broker` serves the paid data path and exposes the broker-private
   runtime reload surface
 - `orch-coordinator` scrapes the broker and publishes the signed manifest
@@ -136,11 +137,27 @@ Bring up:
 
 Do not expose live traffic yet.
 
-### 4.3 Create orch-owned offers
+### 4.3 Enable the workload templates this pool sells
 
-Use `pool-controller` admin UI/API to create the canonical offer catalog.
+The workload catalog is a directory of YAML files (`template_catalog_dir`,
+repo-root `templates/`), read at boot. There is no offer catalog to author: an
+offer is *derived* from an enabled, priced template and pushed to every broker
+in the fleet.
 
-Do not let member capability claims define public offerings.
+1. `GET /admin/v1/template-catalog` — what this build loaded
+2. `PUT /admin/v1/template-overrides/{id}` — enable it and set its price. The
+   `price_default` in a template file is a starting point from a dated market
+   reference, not a rate card.
+3. `GET /admin/v1/offers` — what those enabled templates derive into
+
+Do not let member capability claims define public offerings. A member's runner
+declares what it *is*; the pool decides what it *sells*.
+
+> Each of the five templates in the repo catalog ships without a
+> `runner_compose` block — the v1 images and model ids are still open
+> (`lnm-v12`). Enabling one makes the pool advertise it, but the compose
+> service rendered for a member host has no `image` and nothing will start.
+> Supply `runner_compose.image` on the templates you enable.
 
 ### 4.4 Onboard members
 
@@ -152,19 +169,39 @@ from what the member's runners actually prove under certification.
 Normal control-plane sequence:
 
 1. member signs in with their wallet and enrols a host
-   (`POST /member/v1/enrollments`), then runs the returned bundle
-2. the host reports its GPUs
-   (`POST /member/v1/enrollments/{id}/hardware`)
-3. operator places a template on each reported GPU
-   (`POST /admin/v1/template-assignments`) and starts its certification
-4. the runner attaches to the broker; a template becomes eligible to serve
-   only once its certification passes
+   (`POST /member/v1/enrollments`), then runs the returned bundle — which
+   contains the agent and nothing else
+2. the host's GPUs reach the controller, and placement policy matches them to
+   enabled templates: highest `priority` among the templates whose
+   `requirements` the card satisfies and the member has not opted out of takes
+   the primary slot, with a secondary only where the template names that GPU
+   class and the class's stance allows a rider
+3. the agent pulls its desired state and starts the runners; it re-attaches
+   declaring what it now serves
+4. the broker certifies each runner against the offer it matched; a placement
+   becomes eligible to serve only once certification passes
+5. the ladder promotes it from `probationary` to `active` on its own, once a
+   settlement round has closed **and** it has completed the template's
+   `min_jobs` with no serious failure
 
-Step 3 is the last operator gesture on the member's path. Plan 0044 §3.3
-replaces it with a deterministic placement engine — template `requirements` +
-`priority` + `stacking` decide which template lands on which GPU, and members
-may opt *out* of a template but never opt in. Until that ships, placement is
-manual.
+No operator gesture appears anywhere in that sequence. The operator's touches
+are the exceptions: lifting a suspension, overriding a duplicate GPU UUID
+claim, banning or retiring a member, and approving payout batches until those
+graduate.
+
+Two things to know before relying on it:
+
+- **Applying a placement plan is a call, not a loop.** Review
+  `GET /admin/v1/placement-plan` — it carries a reason code for every GPU,
+  including the ones that got nothing — then commit it with
+  `POST /admin/v1/placement-plan/apply`. `POST /admin/v1/template-assignments`
+  remains for the cases policy cannot reach.
+- **Confirm how GPU inventory actually reaches your controller.** The agent no
+  longer posts hardware itself, and `brokerpush.RelayHardware` — which reads it
+  from the broker's runner view — is implemented but not yet called by any
+  loop or route. `POST /member/v1/enrollments/{id}/hardware` still exists.
+  Check `GET /admin/v1/hardware-units` on a real enrolment before assuming
+  placement has anything to work with.
 
 ### 4.5 Broker convergence
 
@@ -306,16 +343,31 @@ This is not a publication failure by itself. It is expected staging state: a
 reported GPU serves nothing until a template is placed on it and that placement
 certifies.
 
+Placement is deterministic policy, so "running nothing" always has a reason —
+read it rather than guessing.
+
 Playbook:
 
-1. `GET /admin/v1/hardware-units` — confirm the host reported the GPU and see
-   what state the unit is in
-2. `GET /admin/v1/template-assignments` — confirm a template is placed on it;
-   place one from `GET /admin/v1/template-catalog` if not
-3. `GET /admin/v1/certification-runs` — a placed template only becomes
-   eligible once its certification passes
-4. or leave the GPU deliberately unplaced
-5. do not expect coordinator-visible inventory change until a placement has
+1. `GET /admin/v1/hardware-units` — confirm the GPU reached the controller at
+   all, and see what state the unit is in
+2. `GET /admin/v1/placement-plan` — the reason code for this GPU. The common
+   answers, in rough order of frequency:
+   - `not_enabled` at the top of the response: no template is switched on
+   - the card's driver string did not normalise to a pool class — laptop and
+     Max-Q parts deliberately get no class rather than the wrong one
+   - no enabled template's `requirements` match (class or VRAM floor)
+   - the member opted out
+   - it lost the primary slot and no template names its class as a secondary
+3. `POST /admin/v1/placement-plan/apply` if the plan is right and simply has
+   not been committed
+4. `GET /admin/v1/template-assignments` — confirm the placement exists, and
+   whether the agent has actually started it
+5. `GET /admin/v1/certification-runs` — a placement only becomes eligible once
+   its certification passes
+6. check the template has a `runner_compose.image`. Without one the rendered
+   compose service has no image and nothing can start on the member host
+7. or leave the GPU deliberately unplaced
+8. do not expect coordinator-visible inventory change until a placement has
    certified and the offer push has landed
 
 ### 7.4 Certification failed
@@ -332,7 +384,11 @@ Playbook:
    - runner not ready (image, model download, GPU not visible to the container)
    - a capability shape the offer does not accept
    - a latency or usage check the template requires
-4. fix the runner and re-run certification for that template assignment
+4. fix the runner and re-run certification for that placement. Repeated
+   certification failures are also what the ladder acts on by itself: K
+   consecutive failures send a placement back to recertify, and a serious
+   failure suspends it. A suspension is one of the few things only an operator
+   can lift.
 
 ### 7.5 Host revoked or retired after publication
 
@@ -343,9 +399,9 @@ Playbook:
 1. revoke the host enrolment
    (`POST /admin/v1/host-enrollments/{id}/revoke`) in `pool-controller`.
    Member-level suspension has no admin route of its own yet — the
-   `PoolMember.status` field exists but the legacy `PATCH /admin/v1/members/{id}`
-   that set it was removed with the join-request model, and the operator
-   exception queue that replaces it lands with plan 0044 §5 phase E
+   `PoolMember.status` field is now set through
+   `PATCH /admin/v1/pool-members/{address}`, and the operator exception queue
+   is `GET /admin/v1/exceptions`
 2. confirm the affected template assignments reflect the change
 3. the change pushes automatically; to cut a host off immediately,
    revoke its credential — that deletes the secret and closes its

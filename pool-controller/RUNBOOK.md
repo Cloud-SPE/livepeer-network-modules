@@ -5,12 +5,14 @@
 `pool-controller` is the Pool accounting and admin source of truth. It is not
 in the request path, but it is the source of record for:
 
-- orch-owned offers
+- which workload templates this pool has enabled, and at what price
+  (the catalog itself is files, read at boot; only the overrides are state)
 - pool members and their enrolled hosts
 - hardware units (GPUs) reported by those hosts
-- template assignments — a pool template placed on a GPU — and the
-  certification runs that qualify them
-- desired broker runtime
+- template assignments — a pool template placed on a GPU — their ladder state,
+  and the certification runs that qualify them
+- member per-template opt-outs
+- the audit log
 - work receipts
 - round receipts
 - payout intents
@@ -44,8 +46,9 @@ The Pool production shape spans two sides:
 `pool-controller` does not replace the secure-orch sign cycle. The normal
 publication flow remains:
 
-1. `pool-controller` manages offers, members, and template assignments, and
-   pushes the offer set + attach credentials to the broker
+1. `pool-controller` holds the pool's policy — enabled templates, placements,
+   ladder state — and pushes the derived offer set + attach credentials to
+   every broker in the fleet
 2. `capability-broker` advertises the resulting inventory
 3. `orch-coordinator` scrapes broker offerings/health and builds the candidate
 4. secure-orch signs
@@ -58,6 +61,12 @@ Bootstrap config:
 - `identity.orch_eth_address`
 - durable `--data-dir`
 - `admin_auth.bearer_token_ref: env://...`
+- `template_catalog_dir` — the workload catalog, read at boot. Empty is valid
+  for an accounting-only controller; a *malformed* template is a hard error, on
+  purpose, because a silently skipped one leaves members running nothing with
+  no explanation
+- `listen.member` if this deployment splits the member surface onto its own
+  address (recommended)
 
 Broker admin integration (the push path — there is no rendered file and no
 apply command):
@@ -86,12 +95,17 @@ Secure-orch side:
 
 1. Bring up secure-orch/protocol host first.
 2. Bring up `pool-controller` with durable storage and admin auth.
-3. Create orch-owned offers in `pool-controller`.
+3. Enable the workload templates this pool sells and price them
+   (`GET /admin/v1/template-catalog`, then
+   `PUT /admin/v1/template-overrides/{id}`). The offer set is derived from
+   those, not authored separately.
 4. Have members sign in with their wallet and enrol a host
-   (`POST /member/v1/enrollments`); the host reports its GPUs to
-   `POST /member/v1/enrollments/{id}/hardware`.
-5. Place templates on the reported GPUs
-   (`POST /admin/v1/template-assignments`) and start certification.
+   (`POST /member/v1/enrollments`) and run the bundle. The bundle contains
+   the agent and nothing else.
+5. Review `GET /admin/v1/placement-plan` and commit it with
+   `POST /admin/v1/placement-plan/apply`. From there the agent pulls its own
+   desired state, the broker certifies what attaches, and the ladder promotes
+   it — no further operator step is on the member's path.
 6. Confirm the push landed: the recorded revision carries `push_error`
    when the broker did not accept it, and `changed_offers` / `revoked_hosts`
    when it did. Runner and certification state is read from the broker —
@@ -132,28 +146,58 @@ for `pool-controller`.
 
 ## Primary operator workflow
 
-### 1. Offer and member control plane
+### 1. Templates, members, and placement
 
 Members onboard themselves: they sign in with their wallet, enrol a host, and
-the host reports its GPUs. There is no join request, no operator approval step,
-and no member-supplied backend URL to verify — the pool never dials a member
-endpoint, the member's runners attach to the broker.
+run the bundle. There is no join request, no operator approval step, and no
+member-supplied backend URL to verify — the pool never dials a member endpoint;
+the member's runners attach to the broker.
 
-The operator sequence is:
+**Policy is set once, in the catalog.** Templates are YAML files under
+`template_catalog_dir`, read at boot. The only per-pool state is
+`{enabled, price, extra}`, and an enabled, priced template is *derived* into an
+offer and pushed to every broker in the fleet. There is no separate offer
+record to keep in step.
 
-1. create/update offers
-2. watch enrolled hosts and their reported GPUs appear
-3. place a template on each GPU and start its certification
-4. act only on exceptions — today that means revoking a host enrolment
-   (`POST /admin/v1/host-enrollments/{id}/revoke`). Member-level suspension
-   has no admin route of its own: the legacy `PATCH /admin/v1/members/{id}`
-   went with the join-request model, and the operator exception queue that
-   replaces it is plan 0044 §5 phase E
+1. `GET /admin/v1/template-catalog` — what this build loaded
+2. `PUT /admin/v1/template-overrides/{id}` — enable and price it.
+   `DELETE` the override to switch it off.
+3. `GET /admin/v1/offers` — what those enabled templates derive into
 
-Step 3 is the one operator gesture still on the member's path. Plan 0044 §3.3
-replaces it with a deterministic placement engine (template `requirements` +
-`priority` + `stacking`, with members able to opt *out* of a template but never
-opt in); until that lands, placement stays manual.
+> None of the five templates in the repo catalog carries a `runner_compose`
+> block: the v1 images and model ids are still open (`lnm-v12`). Enabling one
+> makes the pool advertise it, but the compose service rendered for a member
+> host has no `image` and nothing will start there. Add
+> `runner_compose.image` to the templates you enable.
+
+**Placement is policy, not a gesture.** For each GPU, among enabled templates
+whose `requirements` it satisfies and the member has not opted out of, the
+highest `priority` takes the primary slot; another stacks only where it names
+that GPU's class in `stacking.secondary_on` and the class's stance allows a
+rider. Members opt *out*, never in.
+
+- `GET /admin/v1/placement-plan` — what the policy would do, with a reason code
+  on every GPU including the ones that get nothing, plus a pool-wide
+  `not_enabled` list
+- `POST /admin/v1/placement-plan/apply` — commit it. A placement leaving the
+  plan is **drained**, not deleted
+- `POST /admin/v1/template-assignments` — direct placement, for the cases
+  policy cannot reach
+
+Applying is a call rather than a loop on purpose: placement is deterministic,
+so the plan is worth reading before it is committed.
+
+**Act only on exceptions.** `GET /admin/v1/exceptions` is the queue —
+suspensions and duplicate GPU UUID claims.
+
+- `PATCH /admin/v1/pool-members/{address}` — suspend or reactivate a member.
+  A suspension requires a reason (one with none is a decision nobody can review
+  later, including the operator who made it) and drains that member's
+  placements rather than stopping them dead
+- `POST /admin/v1/host-enrollments/{id}/revoke` — revoke a host enrolment;
+  that deletes the credential and closes its connections
+- `POST /admin/v1/ladder/run` — run a ladder pass now rather than waiting for
+  the timer
 
 Useful admin reads:
 
@@ -162,74 +206,106 @@ Useful admin reads:
 - `GET /admin/v1/host-enrollments`
 - `GET /admin/v1/hardware-units`
 - `GET /admin/v1/template-catalog`
+- `GET /admin/v1/placement-plan`
 - `GET /admin/v1/template-assignments`
 - `GET /admin/v1/certification-runs`
+- `GET /admin/v1/exceptions`
+- `GET /admin/v1/audit-events`
 
 The `/admin/pool` console page presents the same state; use it before curling.
 
-### 2. Broker runtime convergence
+### 1.1 The trust ladder
 
-The normal production action is:
+The controller advances placements on a timer (default 60s), so promotion and
+throttling are not operator actions:
 
-
-That flow now means:
-
-1. `pool-controller` renders the desired broker YAML
-2. optional apply command stages the file
-3. `pool-controller` triggers broker reload
-4. broker reports a broker-local reload `attempt_id`
-5. `pool-controller` confirms:
-   - broker reload attempt matches the triggered `attempt_id`
-   - broker `loaded_revision == desired_revision`
-
-Do not treat shell-command exit alone as proof of convergence.
-
-Primary runtime reads:
-
-
-Broker-side corroboration:
-
-- broker `GET /admin/v1/runtime`
-
-The manual runtime endpoints remain fallback/debug controls only:
-
-
-Use them only when the operator intentionally needs to bypass the normal
-broker-admin apply path for investigation or break-glass handling.
-
-### 2.1 Apply-command deployment patterns
-
-
-#### Same-host file replace
-
-Use when broker and controller share the same host filesystem contract.
-
-Example:
-
-```bash
-install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /etc/livepeer/host-config.yaml
+```
+certified ─▶ probationary ─(closed settlement round ∧ ≥N jobs)─▶ active
+active ─(score below floor)─▶ throttled ─(recovers)─▶ active
+any ─(K consecutive failures)─▶ recertify
+any ─(serious failure)─▶ suspended ─(operator lifts)─▶ probationary
 ```
 
-#### Shared-volume container staging
+Promotion needs **both** halves. A job count alone can be run up in minutes by
+a host about to fail; a closed round alone proves only that time passed.
 
-Use when broker and controller are separate containers sharing a writable
-volume.
+Every transition writes `{state, reason_code, evidence, at}`, and the member
+sees the same reason code you do — so "why am I throttled" is answered by the
+record rather than by an operator writing an explanation.
 
-Example:
+Tune under `ladder:`: `probation_share_ppm`, `probation_max_in_flight`,
+`probation_min_jobs`, `exploration_ppm`, `score_floor`,
+`recertify_after_failures`, `active_share_cap_ppm`, `evaluation_interval_ms`.
+A zero field means "not configured" and takes the default; it does not mean
+zero. `ladder run error` on stderr means the pool is frozen at whatever it was
+routing — alert on it.
 
-```bash
-install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /shared/broker/host-config.yaml
-```
+### 1.2 Listeners
 
-#### External wrapper
+`listen.member` puts the member portal and `/member/v1/*` on their own address,
+with no `/admin/*` route and no cross-member figure. Leaving it empty keeps
+both surfaces on `listen.paid`, which is the supported single-address
+deployment. Prefer the split in production: an operator console reachable from
+the same address members use is one misconfigured proxy away from being
+reachable *by* them, and an address boundary survives a proxy mistake that an
+auth check does not. Test it rather than reasoning about it.
 
-Use when a checked-in wrapper script handles staging into the broker’s real
-config path.
+### 2. Broker convergence
 
-Regardless of pattern, success still requires broker-confirmed:
+There is no rendered broker config file, no staging command, and no reload
+(plan 0043). The controller pushes what it owns — the derived offer set and the
+credential hashes that may attach — to each broker over the broker admin API
+(`PUT /admin/v1/offers`, `PUT /admin/v1/credentials`). Both are full,
+idempotent replacements; a credential that disappears from a push is a revoke,
+which closes that host's connections. Offers go first, so a host whose
+credential was just accepted attaches into a broker that already knows what it
+might serve.
 
-- `last_reload_attempt_id`
-- `loaded_revision`
+**The normal production action is none.** The push happens on state change.
+`brokerrender`, `runtimeservice`, the `/admin/v1/broker-runtime/*` routes,
+`bootstrap.broker_apply_command` and `cmd/broker-apply` were deleted with that
+path; if you are looking for them, you want the push above instead.
+
+Confirm convergence from both sides:
+
+- controller: the recorded runtime revision — `push_error` when the broker
+  refused (it names the offer and the field), `changed_offers` and
+  `revoked_hosts` when it accepted
+- broker `GET /admin/v1/offers` — which offers it holds, and whether each is
+  frozen and advertised. An offer with no certified runner is deliberately not
+  advertised
+- broker `GET /admin/v1/runners` — who is attached and, for a capability that
+  is not serving, the field the broker disagreed with
+- broker `GET /admin/v1/certification` — what each runner actually proved
+
+The coordinator's Runners, Offers and Certification pages present all of these
+over the same API. Do not treat an absent `push_error` on a stale revision as
+convergence — check the broker's own view.
+
+A failed push leaves the broker serving what it last accepted. That is safe:
+paid traffic keeps flowing to already-eligible runners and the signed manifest
+is unaffected. Prefer fix-forward over editing state by hand.
+
+### 3. Payouts
+
+Approval is human by default. `payout-policy.json` (`payouts.policy_path`) can
+take it over within bounds it states explicitly, and every decision carries the
+hash of the policy that made it.
+
+- `GET /admin/v1/payout-policy` — the policy in force, and its hash
+- `POST /admin/v1/payout-batches/{id}/policy-review` — what the policy says
+  about this batch, without approving it
+- `POST /admin/v1/payout-batches/{id}/approve` — the human gesture
+- `payouts.pause_path` — the kill switch. Verify it works before you need it
+
+A missing policy file is not an error: it means no automatic approval, which is
+where every pool starts. Read "Graduating to automatic payouts" below before
+enabling `auto_approve`.
+
+`settlement.EvaluateClose` implements automatic window close with
+hold-on-anomaly and hold-on-short-scale, and `payouts.auto_close_windows` /
+`payouts.scale_tolerance` exist in config, but **nothing calls them yet**:
+closing a window is still `POST /admin/v1/settlement-windows/close`.
 
 ## Health checks
 
@@ -260,8 +336,6 @@ High-value Pool routing metrics now include:
 - average recent-window age by offering
 - the live scorer settings currently applied after defaults and reload
 - backend outcome ingest counts by outcome class
-- synthetic probe run totals and durations
-- per-capability synthetic probe result counts by `status` and `reason`
 - persisted work-receipt counts by `status`
 - persisted payout-intent counts by `status`
 - persisted payout-intent retry pressure: `livepeer_pool_payout_intent_retry_count_max`,
@@ -370,9 +444,13 @@ someone notices.
 
 ## Recovery notes
 
-- `pool-controller` restarts are safe if `--data-dir` is persisted.
-- If `pool-controller` is down, previously loaded broker config remains in the
-  broker process; traffic can continue.
+- `pool-controller` restarts are safe if `--data-dir` is persisted. The
+  template catalog and `payout-policy.json` are read at boot, so a change to
+  either needs a restart (or `POST /admin/v1/reload`) to take effect.
+- If `pool-controller` is down, the broker keeps serving what it last accepted;
+  traffic can continue. Member hosts also keep running what they were running:
+  the agent treats an unreachable controller as "no new instruction", not as a
+  reason to stop.
 - Do not delete the BoltDB state unless you intentionally want to discard
   payout and receipt history.
 
@@ -395,22 +473,35 @@ A push that fails leaves the broker serving what it last accepted, which
 is safe: paid traffic keeps flowing to already-eligible runners and the
 signed manifest is unaffected.
 
-If broker reload fails but the prior broker runtime is still serving traffic,
-prefer fix-forward and re-apply over manual state edits.
-
 Common operator playbooks:
 
-- desired revision drifted during apply:
-  - inspect runtime history plus recent audit events
-  - identify the mutating offer, member, or template-assignment change
-  - re-apply only after the desired revision stabilizes
-- enrolled GPU running nothing:
-  - `GET /admin/v1/hardware-units` — confirm the host reported it and what
-    state the unit is in
-  - `GET /admin/v1/template-assignments` — confirm a template is placed on it;
-    place one if not
-  - `GET /admin/v1/certification-runs` — a placed template only becomes
-    eligible once its certification passes
+- enrolled GPU running nothing — placement is deterministic, so there is always
+  a reason; read it rather than guessing:
+  - `GET /admin/v1/hardware-units` — confirm the GPU reached the controller and
+    what state the unit is in
+  - `GET /admin/v1/placement-plan` — the reason code for this GPU. Usually: no
+    template enabled (`not_enabled`), the driver string did not normalise to a
+    pool class (laptop and Max-Q parts deliberately get none), no enabled
+    template's `requirements` match, the member opted out, or it lost the
+    primary slot and nothing names its class as a secondary
+  - `POST /admin/v1/placement-plan/apply` if the plan is right and simply has
+    not been committed
+  - `GET /admin/v1/template-assignments` — confirm the placement exists and the
+    agent started it
+  - `GET /admin/v1/certification-runs` — a placement only becomes eligible once
+    its certification passes
+  - check the template has a `runner_compose.image`; without one nothing can
+    start on the member host
+- host is running the wrong thing, or a withdrawal has not taken effect:
+  - the agent polls every `POOL_POLL_EVERY` (default 30s) and reports back;
+    check the reported revision against the current one
+  - a withdrawn service is marked `draining` in the attach document *before*
+    the container stops, so it can linger deliberately while in-flight work
+    finishes
+- member stuck in `probationary`:
+  - promotion needs a closed settlement round **and** the template's
+    `min_jobs`. A member with neither is usually not getting traffic, not
+    failing
 - certification failing:
   - read the failed run's checks; the broker names the capability field it
     disagreed with (broker `GET /admin/v1/runners`)

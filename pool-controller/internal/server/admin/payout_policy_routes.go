@@ -70,12 +70,46 @@ func registerPayoutPolicyRoutes(mux *http.ServeMux, deps Deps, auth func(http.Ha
 		})
 
 		if decision.Approved {
+			// An approved batch has to be EXPORTED, not merely marked.
+			// Materialising the intents is what actually moves money;
+			// flipping the status alone would leave an auto-approved
+			// batch sitting approved and never paying out, which is
+			// worse than refusing it — the pool would believe it had
+			// paid and the member would be waiting.
+			//
+			// This is deliberately the same sequence the human approval
+			// path performs, so the two cannot drift into approving
+			// different things.
+			intents := materializePayoutIntents(batch, now)
+			for _, intent := range intents {
+				if err := deps.Repo.SavePayoutIntent(intent); err != nil {
+					writeAdminJSON(w, nil, err)
+					return
+				}
+			}
 			batch.Status = types.PayoutBatchApproved
+			// The policy is the approver, named as such: an audit that
+			// could not tell an automatic approval from a person's
+			// would make the graduation plan unmeasurable.
+			batch.ApprovedBy = "payout-policy:" + decision.PolicyHash
+			batch.ApprovedAt = now
 			batch.UpdatedAt = now
 			if err := deps.Repo.PutPayoutBatch(batch); err != nil {
 				writeAdminJSON(w, nil, err)
 				return
 			}
+			_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+				Kind:         "payout_batch_approved",
+				OccurredAt:   now,
+				Actor:        batch.ApprovedBy,
+				ResourceID:   batch.ID,
+				ResourceType: "payout_batch",
+				Details: map[string]any{
+					"settlement_window_id": batch.SettlementWindowID,
+					"payout_intents":       len(intents),
+					"automatic":            true,
+				},
+			})
 		}
 		writeAdminJSON(w, decision, nil)
 	}))

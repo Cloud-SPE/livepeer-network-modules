@@ -54,15 +54,30 @@ From the repo root:
 `pool-controller` no longer renders broker config from a nested controller YAML.
 The production path is:
 
-1. bootstrap `pool-controller`
-2. create offers through the control-plane
-3. members sign in with their wallet and enrol a host; the host reports its
-   GPUs. There is no join request and no approval step — the pool never dials
-   a member endpoint, so there is nothing to verify before admission
-4. place a template on each reported GPU
-   (`POST /admin/v1/template-assignments`) and start its certification
-5. members attach; the broker certifies them and freezes each offer's
+1. bootstrap `pool-controller` with `template_catalog_dir` pointing at the
+   workload catalog (repo-root `templates/`)
+2. enable the templates this pool sells and price them
+   (`PUT /admin/v1/template-overrides/{id}`). The offer set is *derived* from
+   the enabled ones — there is no separate offer catalog to author
+3. members sign in with their wallet and enrol a host, then run the bundle,
+   which contains the agent and nothing else. There is no join request and no
+   approval step — the pool never dials a member endpoint, so there is nothing
+   to verify before admission
+4. placement policy matches each reported GPU to enabled templates by
+   `requirements` + `priority` + `stacking`; review
+   `GET /admin/v1/placement-plan` and commit it with
+   `POST /admin/v1/placement-plan/apply`
+5. the agent pulls its desired state and starts the runners, then re-attaches
+   declaring them; the broker certifies each and freezes the offer's
    runner-declared shape
+6. the ladder promotes a passing placement from `probationary` to `active` on
+   its own, once a settlement round has closed and it has completed the
+   template's `min_jobs`
+
+> The five templates in `templates/` carry no `runner_compose` block yet — the
+> v1 images and model ids are still open (`lnm-v12`) — so nothing will actually
+> start on a member host from the shipped catalog. For an end-to-end scenario,
+> add `runner_compose.image` to the template you enable.
 
 The controller pushes its offers and credentials to the broker over the
 admin API whenever pool state changes (plan 0043). There is no rendered
@@ -70,8 +85,8 @@ broker config and no apply step; runner facts come from the runners.
 
 See:
 
-- [`pool-controller/RUNBOOK.md`](../../pool-controller/RUNBOOK.md)
-- [`docs/design-docs/pool-orchestrator-production-rollout.md`](../../docs/design-docs/pool-orchestrator-production-rollout.md)
+- [`pool-controller/RUNBOOK.md`](../../../pool-controller/RUNBOOK.md)
+- [`docs/design-docs/pool-orchestrator-production-rollout.md`](../../../docs/design-docs/pool-orchestrator-production-rollout.md)
 
 ## Configure coordinator
 

@@ -2,8 +2,10 @@
 
 This is `pool-controller/` — the Pool member-management and accounting
 component introduced by plan 0029. It no longer generates a broker config
-file: it pushes the pool's offer set and attach credentials to the broker over
-the broker admin API (plan 0043).
+file: it pushes the pool's offer set and attach credentials to every broker in
+the fleet over the broker admin API (plan 0043). Since plan 0044 it also owns
+placement, the trust ladder, the member API, and payout policy — the pool's
+policy, not just its books.
 
 Component-local guidance. The repo-root [`../AGENTS.md`](../AGENTS.md) stays
 authoritative for cross-cutting rules.
@@ -21,6 +23,29 @@ authoritative for cross-cutting rules.
   all of that was deleted with the legacy member model (plan 0044 §5 phase A).
   Trust comes from certification, run by the broker over the runner's own
   attach connection.
+- **The catalog is files, and an offer is derived.** Workload templates live in
+  `templates/` and are read at boot; the only per-pool state is
+  `{enabled, price, extra}`. Nothing stores an offer — it is computed from the
+  enabled templates on every push. Do not add a second copy for anything to
+  drift against.
+- **Placement is policy over declared facts, never a gesture.** Hardware the
+  agent declared, templates this pool enabled, opt-outs the member set. Every
+  decision carries a reason code, because "why is that card idle" must have an
+  answer. Members opt *out* of a template, never in — opting in would be a
+  member choosing what the pool sells.
+- **Zero-touch means exceptions only.** If you are adding an operator step to
+  the member's path, you are undoing plan 0044. Lifting a suspension,
+  overriding a duplicate GPU claim, banning a member, approving a payout batch
+  — those are the exceptions; everything else automates.
+- **Separate the member surface by address, not by an auth check.**
+  `listen.member` carries the portal and `/member/v1/*` and nothing else. An
+  address boundary survives a proxy mistake that an `if isAdmin` does not.
+- **Every transition carries its evidence.** Ladder moves record
+  `{state, reason_code, evidence, at}` from a closed set of codes, so the
+  operator console and the member's own status page say the same sentence.
+- **Fail closed on money.** `payout-policy.json` is strict, hashed into the
+  audit record, and refuses by default. A missing policy means no automatic
+  approval — never "approve everything".
 - **Keep Pool-specific policy here.** Generic request routing behavior belongs
   in `../capability-broker/`; Pool membership and settlement policy belong here.
 
@@ -30,6 +55,8 @@ authoritative for cross-cutting rules.
 |---|---|
 | What is this component? | [`README.md`](./README.md) |
 | Implementation shape | [`DESIGN.md`](./DESIGN.md) |
+| Operator procedures | [`RUNBOOK.md`](./RUNBOOK.md) |
+| The workload catalog | [`../templates/`](../templates/) |
 | Example operator config | [`examples/pool-controller-config.example.yaml`](./examples/pool-controller-config.example.yaml) |
 | Current member model + rollout | [`../docs/exec-plans/active/0044-zero-touch-pool-onboarding.md`](../docs/exec-plans/active/0044-zero-touch-pool-onboarding.md) |
 | How a member joins and gets paid | [`../docs/design-docs/pool-overlay-flows.md`](../docs/design-docs/pool-overlay-flows.md) |

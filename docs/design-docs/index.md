@@ -26,8 +26,8 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [ui-design-system.md](./ui-design-system.md) | active | Shared visual system for all operator and product UIs, aligned to current Livepeer brand and explorer surfaces |
 | [frontend-dom-and-css-invariants.md](./frontend-dom-and-css-invariants.md) | active | Repo-wide frontend implementation contract: light DOM only, semantic HTML only, no inline CSS, styling only from checked-in CSS files |
 | [pool-node-production-readiness.md](./pool-node-production-readiness.md) | active | Cross-cutting production gate for the Pool stack: persistence, secrets, retry policy, alerting, privacy, and live runtime validation |
-| [pool-orchestrator-production-rollout.md](./pool-orchestrator-production-rollout.md) | active | Cross-cutting operator rollout path for the Pool-based orch: controller, broker apply, coordinator publish, and secure-orch sign cycle |
-| [pool-overlay-flows.md](./pool-overlay-flows.md) | active | Sequence + state diagrams for the three pool-specific flows: member signup, payout cycle, and work routing / worker selection |
+| [pool-orchestrator-production-rollout.md](./pool-orchestrator-production-rollout.md) | active | Cross-cutting operator rollout path for the Pool-based orch: controller, template catalog, offer/credential push, coordinator publish, and secure-orch sign cycle |
+| [pool-overlay-flows.md](./pool-overlay-flows.md) | active | How the pool works end to end: zero-touch member onboarding, the template catalog and placement policy, the agent's desired-state loop, the trust ladder, and the payout cycle |
 
 Stubs (to be written as we drill in):
 

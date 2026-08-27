@@ -58,6 +58,29 @@ func (a *SessionAuth) MemberID(sessionID string) (string, bool) {
 	return session.memberID, true
 }
 
+// Delete ends a session. Signing out has to invalidate the session
+// server-side and not merely drop the cookie: a cookie the browser
+// forgot is still a valid credential to anyone who captured it.
+func (a *SessionAuth) Delete(sessionID string) {
+	if a == nil || sessionID == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.sessions, sessionID)
+}
+
+func clearMemberSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     memberSessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
+}
+
 func setMemberSessionCookie(w http.ResponseWriter, id string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     memberSessionCookieName,

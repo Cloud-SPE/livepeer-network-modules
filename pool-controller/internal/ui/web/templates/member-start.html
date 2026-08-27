@@ -49,7 +49,7 @@
 
 <section>
   <h2>Already have a host?</h2>
-  <p class="muted">This browser keeps the credentials of hosts you enrolled here so the portal can read their status. A host you enrolled in another browser is not listed until you add its credential back.</p>
+  <p class="muted">This browser keeps the credentials of hosts you enrolled here so the portal can read their status. A host enrolled in another browser is not listed until you add its credential back. The agent also rotates its own token on a cadence, so a copy kept here goes stale in about a day &mdash; the host&rsquo;s current one is always in the <code>enrollment-token</code> file beside its compose file.</p>
   <div class="form-grid">
     <label>Enrollment ID
       <input id="startAdoptID" placeholder="enr-…" autocomplete="off" spellcheck="false">
@@ -61,6 +61,6 @@
   <div class="actions">
     <button id="startAdopt" class="secondary">Add this host to this browser</button>
   </div>
-  <p class="small muted">If the token is lost, rotate it from <a href="/member/settings" class="inline-link">Settings</a> on a browser that still has it, or ask the operator to revoke the host and enrol it again.</p>
+  <p class="small muted">On the host: <code>cat enrollment-token</code> in the directory you unzipped the bundle into. If that is gone too, ask the operator to revoke the host and enrol it again.</p>
 </section>
 {{end}}

@@ -48,6 +48,39 @@ type placementStatusView struct {
 }
 
 func registerStatusRoutes(mux *http.ServeMux, deps Deps) {
+	// A signed-in member's own hosts. Without this the portal has no
+	// way to discover what to ask about: the agent holds the enrollment
+	// token and the browser holds only a session.
+	mux.HandleFunc("GET /member/v1/enrollments", func(w http.ResponseWriter, r *http.Request) {
+		memberID, ok := memberIDFromRequest(deps.Sessions, r)
+		if !ok {
+			http.Error(w, "sign in first", http.StatusUnauthorized)
+			return
+		}
+		member, err := deps.Repo.GetPoolMember(memberID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		all, err := deps.Repo.ListHostEnrollments()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		mine := make([]types.HostEnrollment, 0, len(all))
+		for _, enrollment := range all {
+			if strings.EqualFold(strings.TrimSpace(enrollment.MemberEthAddress), strings.TrimSpace(member.EthAddress)) {
+				// Redacted for the same reason the admin surface
+				// redacts: the broker session credential is a live
+				// secret and a read must never hand it back.
+				mine = append(mine, redactEnrollment(enrollment))
+			}
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Enrollments []types.HostEnrollment `json:"enrollments"`
+		}{Enrollments: mine})
+	})
+
 	mux.HandleFunc("GET /member/v1/enrollments/{id}/status", func(w http.ResponseWriter, r *http.Request) {
 		enrollment, ok := authorizeEnrollment(deps, r)
 		if !ok {

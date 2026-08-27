@@ -5,6 +5,14 @@ cross-cutting: it binds `pool-controller`, `pool-reconciler`,
 `pool-payout-executor`, `capability-broker`, `payment-daemon`, and
 `protocol-daemon`.
 
+Since plan 0044 the gate is wider than the payout path it started as. A pool
+that onboards members without an operator touch is a pool that can also
+*mis*-place a workload, promote a bad host, or pay out without a person, all
+without an operator touch. Sections 7–9 below are that surface: they gate the
+catalog, the listener split, and how far payout automation is allowed to go.
+The design those sections check is described in
+[`pool-overlay-flows.md`](./pool-overlay-flows.md).
+
 ## Current implementation status
 
 Implemented and validated:

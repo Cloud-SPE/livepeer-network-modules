@@ -1,0 +1,37 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Selection ladder</p>
+  <h1>Ladder</h1>
+  <p class="muted">Placements earn traffic by evidence, one rung at a time. The ladder seeds selection state for every placement, judges each against its evidence, and moves only what the evidence justifies — so running it by hand is idempotent and does not wait for the worker's tick.</p>
+</section>
+
+<section>
+  <h2>Run</h2>
+  <div class="actions">
+    <button id="ladderRun">Run ladder now</button>
+  </div>
+  <div class="metric-grid">
+    <article class="metric-card">
+      <p class="metric-label">Seeded</p>
+      <p class="metric-value"><span id="ladderSeeded">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Evaluated</p>
+      <p class="metric-value"><span id="ladderEvaluated">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Transitions</p>
+      <p class="metric-value"><span id="ladderTransitionCount">—</span></p>
+    </article>
+  </div>
+  <p class="small muted" id="ladderMeta">No run in this browser session yet. The ladder also runs on its own schedule, and no route returns past runs — this page shows what your run produced. For the durable history, filter the Audit page by kind ladder_transition.</p>
+</section>
+
+<section>
+  <h2>Transitions</h2>
+  <p class="muted">Each row is one placement moving rungs: where it came from, where it went, the reason code, and the evidence sentence that justified it. Most runs move nothing — the ladder is evaluated far more often than it moves.</p>
+  <div id="ladderTransitions" class="card-list">
+    <div class="card"><span class="muted">Run the ladder to see what moves. Past runs live in the audit trail under kind <code>ladder_transition</code>.</span></div>
+  </div>
+</section>
+{{end}}

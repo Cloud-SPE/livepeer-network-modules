@@ -201,7 +201,7 @@
   // that does it. A phrase to type is required where the action cannot be
   // undone by clicking again.
   function confirmInline(anchor, options) {
-    const scope = anchor.closest(".card") || anchor.parentElement;
+    const scope = anchor.closest(".card") || anchor.closest("section") || anchor.parentElement;
     if (!scope) return;
     const previous = scope.querySelector(".confirm");
     if (previous) previous.remove();
@@ -491,7 +491,7 @@
           host: host,
           status: null,
           error: err.status === 401
-            ? "This browser's credential for the host is no longer accepted. It was rotated elsewhere, or the operator revoked the host."
+            ? "This browser's credential for the host is no longer accepted. The agent rotates its own enrollment token on a cadence (daily by default), so a copy kept here goes stale by design; it can also have been revoked by the operator. Read the current token from the host's enrollment-token file and add it again."
             : (err.message || String(err))
         };
       }
@@ -506,9 +506,13 @@
 
   // ---------- hosts page ----------
 
+  // The controller reports the host's last check-in as last_seen_at. Nothing
+  // writes it today, so an empty value is stated as "not recorded" rather than
+  // rendered as a dead agent — claiming a host is down on the strength of a
+  // field nobody fills would be worse than saying nothing.
   function agentLine(status) {
     if (!hasTime(status.last_seen_at)) {
-      return '<span class="pill pill-warn">agent has never attached</span>';
+      return '<span class="pill">agent check-in not recorded</span>';
     }
     const minutes = (Date.now() - Date.parse(status.last_seen_at)) / 60000;
     const tone = minutes < 5 ? "ok" : (minutes < 30 ? "warn" : "bad");
@@ -565,7 +569,7 @@
           '<div class="mono">' + esc(entry.host.id) + "</div>" +
           '<div class="row"><span class="pill pill-bad">unreadable</span></div>' +
           '<p class="small">' + esc(entry.error) + "</p>" +
-          '<p class="small muted">Add the current token again from <a href="/member" class="inline-link">Get started</a>, or rotate it from a browser that still holds it.</p>';
+          '<p class="small muted">The host itself always has the current token, in the <code>enrollment-token</code> file beside its compose file. Add it again from <a href="/member" class="inline-link">Get started</a>.</p>';
       }
       const status = entry.status;
       const gpus = status.gpus || [];
@@ -701,7 +705,7 @@
       if (!host) return;
       button.onclick = () => confirmInline(button, {
         title: "Rotate the credential for " + hostName(host) + "?",
-        bodyHTML: "The new token is shown <strong>once</strong>. The controller keeps only a hash of it and can never show it again — if you lose it, this host cannot be reached and has to be enrolled from scratch.<br><br>The current token stops working the moment this completes, so the running agent will fail to attach until it is given the new one and restarted.",
+        bodyHTML: "The new token is shown <strong>once</strong>. The controller keeps only a hash of it and can never show it again — if you lose it, the only copy left is the one on the host itself.<br><br>The current token stops working the moment this completes, so the running agent will fail to attach until the new one is written to its <code>enrollment-token</code> file and it is restarted. The agent already rotates its own credential on a cadence, so rotate here only when you have reason to think the token leaked — not as routine maintenance.",
         phrase: "ROTATE",
         confirmLabel: "Rotate and show the new token once",
         run: async () => {
@@ -719,7 +723,7 @@
               scope.appendChild(panel);
               bindSecretDismiss(panel);
             }
-            setStatus("Credential rotated. Put the new token in the host's enrollment-token file and restart the agent.");
+            setStatus("Credential rotated. Write the new token into the host's enrollment-token file and restart the agent, or it will not be able to attach.");
           } catch (err) {
             setStatus(err.message || String(err), "bad");
           }
@@ -774,7 +778,7 @@
     target.querySelectorAll("[data-forget]").forEach((button) => {
       button.onclick = () => confirmInline(button, {
         title: "Forget this host on this browser?",
-        bodyHTML: "The host keeps running and keeps earning. Only this browser's copy of its token goes, and without it the portal cannot show the host again until you paste the token back — and no one, including the operator, can print it for you.",
+        bodyHTML: "The host keeps running and keeps earning. Only this browser's copy of its token goes. The host still has the current one in its <code>enrollment-token</code> file, so you can add it back from there; no one, including the operator, can print it for you.",
         confirmLabel: "Forget it here",
         run: async () => {
           forgetHost(button.getAttribute("data-forget"));
@@ -834,7 +838,7 @@
     on("settingsForgetAll", "click", (event) => {
       confirmInline(event.currentTarget, {
         title: "Forget every host on this browser?",
-        bodyHTML: "Your hosts keep running and keep earning. This browser loses every stored token, and the portal cannot show any host until the tokens are pasted back. The controller cannot reissue them — only rotation from a browser that still has one can.",
+        bodyHTML: "Your hosts keep running and keep earning. This browser loses every stored token, and the portal cannot show any host until they are pasted back. Each host has its current token in its <code>enrollment-token</code> file; the controller keeps only hashes and cannot reissue one.",
         confirmLabel: "Forget all of them",
         run: async () => {
           saveHosts([]);

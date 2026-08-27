@@ -33,6 +33,11 @@ func registerDesiredStateRoutes(mux *http.ServeMux, deps Deps) {
 			http.Error(w, "valid enrollment bearer token is required", http.StatusUnauthorized)
 			return
 		}
+		// A desired-state fetch IS the host checking in — it is the one
+		// thing a running agent does on a schedule. Nothing else was
+		// writing LastSeenAt, so every host read as never-seen and the
+		// portal could not tell a dead agent from a healthy one.
+		deps.touchEnrollment(enrollment, time.Now().UTC())
 		doc, err := deps.desiredStateFor(enrollment)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -164,4 +169,22 @@ func drainElapsed(assignment types.TemplateAssignment, now time.Time) bool {
 		return true
 	}
 	return now.Sub(assignment.DrainingSince) >= DrainGrace
+}
+
+// touchEnrollment records that this host is alive. It is deliberately
+// best-effort: failing a desired-state fetch because a liveness stamp
+// could not be written would take a working host offline to record that
+// it was working.
+func (d Deps) touchEnrollment(enrollment types.HostEnrollment, now time.Time) {
+	if d.Repo == nil {
+		return
+	}
+	// Only when it has actually moved, so a fast poll does not rewrite
+	// the row every few seconds.
+	if now.Sub(enrollment.LastSeenAt) < time.Minute {
+		return
+	}
+	enrollment.LastSeenAt = now
+	enrollment.UpdatedAt = now
+	_ = d.Repo.PutHostEnrollment(enrollment)
 }

@@ -31,7 +31,7 @@
 
 <section>
   <h2>Host credentials</h2>
-  <p class="muted">Rotating issues a new enrollment token and revokes the old one immediately. The running agent will stop being able to attach until it is given the new token, so rotate when you can restart the host.</p>
+  <p class="muted">Rotating issues a new enrollment token and revokes the old one immediately. The agent already rotates its own credential on a cadence without being asked; rotate here when you have reason to think a token leaked. The running agent stops being able to attach until the new token is written to its <code>enrollment-token</code> file, so do it when you can restart the host.</p>
   <div id="settingsCredentials" class="card-list"></div>
 </section>
 
@@ -43,7 +43,7 @@
 
 <section>
   <h2>This browser</h2>
-  <p class="muted">Host credentials are kept in this browser so the portal can read your hosts' status; the controller keeps only a hash of them and cannot hand one back. Clearing them here does not affect a running host — it only stops this browser from showing it.</p>
+  <p class="muted">Host credentials are kept in this browser so the portal can read your hosts&rsquo; status; the controller keeps only a hash of them and cannot hand one back. Clearing them here does not affect a running host &mdash; it only stops this browser from showing it. A copy also goes stale on its own once the agent rotates, and is replaced by reading the host&rsquo;s <code>enrollment-token</code> file.</p>
   <div id="settingsLocal" class="card-list"></div>
   <div class="actions">
     <button id="settingsForgetAll" class="secondary">Forget every host on this browser</button>

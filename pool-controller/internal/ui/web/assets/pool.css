@@ -70,6 +70,33 @@
     font-weight: 500;
   }
 
+  /* Pill state variants. Placement rejections, drains, shadow mode, and
+     a paused payout policy all have to read as different weights at a
+     glance; the colors are the shared tokens, no new values. */
+  .pill.pill-ok {
+    background: var(--ok-tint);
+    color: var(--ok);
+    border-color: transparent;
+  }
+
+  .pill.pill-warn {
+    background: var(--warn-tint);
+    color: var(--warn);
+    border-color: transparent;
+  }
+
+  .pill.pill-danger {
+    background: var(--danger-tint);
+    color: var(--danger);
+    border-color: transparent;
+  }
+
+  .pill.pill-accent {
+    background: var(--accent-tint);
+    color: var(--accent);
+    border-color: transparent;
+  }
+
   /* Preview checklists. */
   .check-list {
     display: grid;

@@ -41,14 +41,11 @@ listen:
 payment_daemon:
   mock: true
 ` + store + `
-capabilities:
-  - id: rerank
-    offering_id: shared
+offers:
+  - offering_id: shared
+    capability: rerank
     protocol: paid-job/v1
-    job: { transports: [unary] }
-    work_unit: { name: requests, extractor: { type: request-formula, expression: "1" } }
     price: { amount_wei: "1", per_units: 1 }
-    backend: { id: backend-a, transport: http, url: http://backend-a }
 `
 	if err := os.WriteFile(configPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)

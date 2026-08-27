@@ -6,28 +6,32 @@ import (
 	"testing"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/runnerattach"
 )
 
-func TestBuildOfferings_EmitsEmptyConstraintsBlock(t *testing.T) {
+func TestOfferTuple_EmitsEmptyConstraintsBlock(t *testing.T) {
 	cfg := &config.Config{
 		Identity: config.Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
-		Capabilities: []config.Capability{{
-			ID:         "rerank",
+		Offers: []config.Offer{{
 			OfferingID: "zerank-2-default",
+			Capability: "rerank",
 			Protocol:   "paid-job/v1",
-			Job:        &config.JobCapability{Transports: []string{"unary"}},
-			WorkUnit:   config.WorkUnit{Name: "requests"},
 			Price:      config.Price{AmountWei: "1", PerUnits: 1},
 		}},
 	}
 
-	payload := buildOfferings(cfg)
-	if len(payload.Capabilities) != 1 {
-		t.Fatalf("capabilities count = %d; want 1", len(payload.Capabilities))
+	payload := BuildOfferings(cfg)
+	tuple := OfferTuple(cfg.Offers[0], FrozenShape{Projection: runnerattach.Projection{
+		Transports: []string{"unary"},
+		WorkUnit:   runnerattach.WorkUnit{Name: "requests"},
+	}})
+	if tuple == nil {
+		t.Fatal("no tuple composed for a paid-job offer")
 	}
-	if payload.Capabilities[0].Constraints == nil {
+	if tuple.Constraints == nil {
 		t.Fatal("constraints is nil; want empty map")
 	}
+	payload.Capabilities = append(payload.Capabilities, *tuple)
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
@@ -37,78 +41,24 @@ func TestBuildOfferings_EmitsEmptyConstraintsBlock(t *testing.T) {
 	}
 }
 
-func TestBuildOfferings_DedupesRepeatedPublishedTuple(t *testing.T) {
-	cfg := &config.Config{
-		Identity: config.Identity{OrchEthAddress: "0x1234567890abcdef1234567890abcdef12345678"},
-		Capabilities: []config.Capability{
-			{
-				ID:         "openai:chat-completions",
-				OfferingID: "shared",
-				Protocol:   "paid-job/v1",
-				Job:        &config.JobCapability{Transports: []string{"unary"}},
-				WorkUnit:   config.WorkUnit{Name: "tokens"},
-				Price:      config.Price{AmountWei: "1", PerUnits: 1},
-				Backend:    config.Backend{ID: "a", Transport: "http", URL: "http://backend-a"},
-				Extra: map[string]any{
-					"openai":   map[string]any{"model": "llama-3-70b"},
-					"provider": "vllm",
-				},
-			},
-			{
-				ID:         "openai:chat-completions",
-				OfferingID: "shared",
-				Protocol:   "paid-job/v1",
-				Job:        &config.JobCapability{Transports: []string{"unary"}},
-				WorkUnit:   config.WorkUnit{Name: "tokens"},
-				Price:      config.Price{AmountWei: "1", PerUnits: 1},
-				Backend:    config.Backend{ID: "b", Transport: "http", URL: "http://backend-b"},
-				Extra: map[string]any{
-					"openai":   map[string]any{"model": "llama-3-70b"},
-					"provider": "vllm",
-				},
-			},
-		},
-	}
-
-	payload := buildOfferings(cfg)
-	if got := len(payload.Capabilities); got != 1 {
-		t.Fatalf("capabilities count = %d; want 1", got)
-	}
-}
-
-// TestBuildOfferings_EmitsDeclaredAxes pins the contract the coordinator
+// TestOfferTuple_EmitsDeclaredAxes pins the contract the coordinator
 // depends on: every paid-* offering advertises exactly one axes object,
 // in the manifest's published vocabulary. Emitting protocol without axes
 // produces manifests that fail schema validation downstream.
-func TestBuildOfferings_EmitsDeclaredAxes(t *testing.T) {
-	cfg := &config.Config{
-		Identity: config.Identity{OrchEthAddress: "0xabc"},
-		Capabilities: []config.Capability{
-			{
-				ID: "cap:job", OfferingID: "default", Protocol: "paid-job/v1",
-				Job:      &config.JobCapability{Transports: []string{"unary", "stream"}},
-				WorkUnit: config.WorkUnit{Name: "tokens"},
-				Price:    config.Price{AmountWei: "1", PerUnits: 1},
-			},
-			{
-				ID: "cap:sess", OfferingID: "default", Protocol: "paid-session/v1",
-				Session: &config.SessionCap{
-					DescriptorSchema:     "sfu-room/v1",
-					Heartbeat:            config.SessionHeartbeat{IntervalSeconds: 5, MissedThreshold: 4},
-					LeaseMaxSeconds:      1800,
-					RunwayIncrementUnits: 500,
-				},
-				WorkUnit: config.WorkUnit{Name: "participant_minutes"},
-				Price:    config.Price{AmountWei: "10", PerUnits: 1},
-			},
+func TestOfferTuple_EmitsDeclaredAxes(t *testing.T) {
+	job := OfferTuple(
+		config.Offer{
+			OfferingID: "default", Capability: "cap:job", Protocol: "paid-job/v1",
+			Price: config.Price{AmountWei: "1", PerUnits: 1},
 		},
+		FrozenShape{Projection: runnerattach.Projection{
+			Transports: []string{"unary", "stream"},
+			WorkUnit:   runnerattach.WorkUnit{Name: "tokens"},
+		}},
+	)
+	if job == nil {
+		t.Fatal("no tuple composed for a paid-job offer")
 	}
-	got := BuildOfferings(cfg)
-	if len(got.Capabilities) != 2 {
-		t.Fatalf("want 2 capabilities, got %d", len(got.Capabilities))
-	}
-
-	job := got.Capabilities[0]
 	if job.Session != nil {
 		t.Fatal("paid-job offering carries session axes")
 	}
@@ -116,26 +66,48 @@ func TestBuildOfferings_EmitsDeclaredAxes(t *testing.T) {
 		t.Fatalf("job axes wrong: %+v", job.Job)
 	}
 
-	sess := got.Capabilities[1]
+	sess := OfferTuple(
+		config.Offer{
+			OfferingID: "default", Capability: "cap:sess", Protocol: "paid-session/v1",
+			Price: config.Price{AmountWei: "10", PerUnits: 1},
+			SessionPolicy: &config.SessionPolicy{
+				Heartbeat:            config.SessionHeartbeat{IntervalSeconds: 5, MissedThreshold: 4},
+				LeaseMaxSeconds:      1800,
+				RunwayIncrementUnits: 500,
+			},
+		},
+		FrozenShape{Projection: runnerattach.Projection{
+			DescriptorSchemas: []string{"sfu-room/v1"},
+			Metering:          "runner-reported",
+			WorkUnit:          runnerattach.WorkUnit{Name: "participant_minutes"},
+		}},
+	)
+	if sess == nil {
+		t.Fatal("no tuple composed for a paid-session offer")
+	}
 	if sess.Job != nil {
 		t.Fatal("paid-session offering carries job axes")
 	}
 	if sess.Session == nil {
 		t.Fatal("paid-session offering has no session axes")
 	}
+	// The runner-declared half of the axes is relayed from the frozen
+	// shape, not re-derived: what is advertised is what was certified.
 	if sess.Session.DescriptorSchema != "sfu-room/v1" {
 		t.Fatalf("descriptor_schema %q", sess.Session.DescriptorSchema)
 	}
+	if sess.Session.Metering != "runner-reported" {
+		t.Fatalf("metering %q", sess.Session.Metering)
+	}
 	// Required-by-schema fields must be present even when the operator
-	// left them unset — that is what the Advertised* defaults are for.
-	if sess.Session.Metering != "runner-reported" || sess.Session.Attachment != "external" ||
-		sess.Session.Refill != "extensible" {
+	// left them unset — that is what the tuple defaults are for.
+	if sess.Session.Attachment != "external" || sess.Session.Refill != "extensible" {
 		t.Fatalf("defaulted axes wrong: %+v", sess.Session)
 	}
 	if sess.Session.Heartbeat == nil || sess.Session.Heartbeat.MissedThreshold != 4 {
 		t.Fatalf("heartbeat %+v", sess.Session.Heartbeat)
 	}
-	// Host config's flat lease cap becomes the manifest's lease object.
+	// The operator's flat lease cap becomes the manifest's lease object.
 	if sess.Session.Lease == nil || sess.Session.Lease.Policy != "funding-tracking" ||
 		sess.Session.Lease.MaxSeconds != 1800 {
 		t.Fatalf("lease %+v", sess.Session.Lease)
@@ -149,22 +121,21 @@ func TestBuildOfferings_EmitsDeclaredAxes(t *testing.T) {
 // they can validate before opening, instead of learning the requirement
 // from a create-time failure after payment was validated. The broker
 // relays it and never enforces it.
-func TestBuildOfferings_RelaysSessionParamsSchema(t *testing.T) {
+func TestOfferTuple_RelaysSessionParamsSchema(t *testing.T) {
 	schema := json.RawMessage(`{"required":["room_name"]}`)
-	cfg := &config.Config{
-		Identity: config.Identity{OrchEthAddress: "0xabc"},
-		Capabilities: []config.Capability{{
-			ID: "cap:sess", OfferingID: "default", Protocol: "paid-session/v1",
-			Session: &config.SessionCap{
-				DescriptorSchema:    "sfu-room/v1",
-				SessionParamsSchema: schema,
-			},
-			WorkUnit: config.WorkUnit{Name: "participant_seconds"},
-			Price:    config.Price{AmountWei: "10", PerUnits: 1},
-		}},
+	offer := config.Offer{
+		OfferingID: "default", Capability: "cap:sess", Protocol: "paid-session/v1",
+		Price: config.Price{AmountWei: "10", PerUnits: 1},
 	}
-	got := BuildOfferings(cfg)
-	sess := got.Capabilities[0].Session
+	shape := FrozenShape{
+		Projection: runnerattach.Projection{
+			DescriptorSchemas: []string{"sfu-room/v1"},
+			Metering:          "runner-reported",
+			WorkUnit:          runnerattach.WorkUnit{Name: "participant_seconds"},
+		},
+		SessionParamsSchema: schema,
+	}
+	sess := OfferTuple(offer, shape).Session
 	if sess == nil || len(sess.SessionParamsSchema) == 0 {
 		t.Fatalf("session params schema not advertised: %+v", sess)
 	}
@@ -174,8 +145,8 @@ func TestBuildOfferings_RelaysSessionParamsSchema(t *testing.T) {
 
 	// A capability whose runner declared nothing advertises nothing —
 	// the field must stay absent rather than becoming empty JSON.
-	cfg.Capabilities[0].Session.SessionParamsSchema = nil
-	if s := BuildOfferings(cfg).Capabilities[0].Session.SessionParamsSchema; len(s) != 0 {
+	shape.SessionParamsSchema = nil
+	if s := OfferTuple(offer, shape).Session.SessionParamsSchema; len(s) != 0 {
 		t.Fatalf("absent schema became %q", s)
 	}
 }

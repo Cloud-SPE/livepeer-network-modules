@@ -125,8 +125,9 @@ the **Ingress** step below.
 Run **one broker per data center / home setup**. Each broker box has its
 own:
 
-- `host-config.yaml` describing which capabilities it advertises and
-  where the backing workloads live
+- `host-config.yaml` describing which **offers** it sells — capability,
+  price, capacity, and which attached runners each offer is for. Where the
+  workloads live is not in it: the runners say that themselves.
 - hot-wallet keystore at `/opt/livepeer/payment-keystore.json` (**not**
   the cold orch key — separate, funded with ETH for ticket-redemption gas)
 - public hostname matching the `base_url` you listed for it in your
@@ -138,7 +139,7 @@ own:
 /opt/livepeer/
 ├── payment-keystore.json
 ├── payment-keystore-password
-└── host-config.yaml             # capability mix for THIS broker box
+└── host-config.yaml             # the offers THIS broker box sells
 ```
 
 **Capability mix.** What each broker advertises is up to you — it varies
@@ -147,35 +148,34 @@ by hardware. Reference host-configs live under
 
 | Variant                                              | Status      | Capability                                                          |
 | ---------------------------------------------------- | ----------- | ------------------------------------------------------------------- |
-| [`openai-chat.example.yaml`](./capability-broker/host-configs/openai-chat.example.yaml)   | Stable      | `openai:chat-completions` (vLLM, stream + reqresp paired offerings) |
+| [`openai-chat.example.yaml`](./capability-broker/host-configs/openai-chat.example.yaml)   | Stable      | `openai:chat-completions` (vLLM) |
 
 The backend workloads (vLLM, external APIs, local media services, etc.)
 live alongside the broker on the same Docker network, OR on separate
-boxes the broker proxies to. Either way, the broker reaches them via the
-`backend.url` field in `host-config.yaml`.
+boxes. Either way the broker never dials them: each host runs an agent
+that **attaches outbound** to the broker with an enrolled credential, and
+the broker sends work back down that connection. No inbound port, no DNS
+entry, and no backend URL in your config.
 
-**Work-unit extractors.** The example host-configs demonstrate multiple
-extraction patterns, one per `extractor.type`:
+**Work-unit extractors.** The runner names the extractor it is metered by,
+because it is the only party that knows what its responses carry —
+`openai-usage` to read `total_tokens` from an OpenAI usage block,
+`request-formula` to count something on the inbound request, and so on.
+You choose the price; the runner supplies the unit that price is counted
+in. An extractor the broker does not implement is rejected when the runner
+attaches, with the field and both sides named.
 
-- `response-header` — backend reports work units in a response header
-  (for example, seconds of audio)
-- `request-formula` with a JSONPath expression — count something on the
-  inbound request
-- `openai-usage` — read `total_tokens` straight from the OpenAI usage
-  block (vLLM chat)
-
-Pick whichever your backend can support; mix freely.
-
-**Health probes.** Each capability also declares a `health.probe` block.
-The broker probes the backend on cadence and exposes the result on
-`GET /registry/health` — gateways consult that surface before routing
-paid traffic and skip offerings that are `unreachable`, `degraded`, or
-`draining`. When a backend dies, the route disappears from gateway
-selection without forcing a fresh sign cycle on your manifest. The
-example host-configs ship probes that fit each backend
-(`http-openai-model-ready` for vLLM, `http-status` against `/healthz`
-for the backend). See the capability-broker scenario README for
-the full probe-type table and
+**Certification, not probes.** The broker does not poll your backends. An
+offer's `certification:` steps decide whether a matched runner may serve it
+at all: `readiness` runs the recipe *the runner declared* (for vLLM that is
+`http-openai-model-ready` against `/v1/models`), then `request` and `usage`
+prove it actually serves and meters paid work. After that, an offer is
+available exactly when a certified runner's attach tunnel is up — reported
+on `GET /registry/health`, which gateways consult before routing paid
+traffic and which skips offerings that are `unreachable`, `degraded`, or
+`draining`. A runner that drops disappears from gateway selection without
+forcing a fresh sign cycle on your manifest. See the capability-broker
+scenario README and
 [`docs/design-docs/backend-health.md`](../../../docs/design-docs/backend-health.md)
 for the three-layer model (manifest / live / failure-rate).
 

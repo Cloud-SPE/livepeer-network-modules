@@ -34,7 +34,7 @@ import (
 // eligible right now — which is health (503 + backoff), never a
 // manifest change.
 func (s *Server) offerGroupFor(capID, offID string) (*capabilityGroup, bool) {
-	if s.offersEngine == nil || capID == "" || offID == "" {
+	if s == nil || s.offersEngine == nil || capID == "" || offID == "" {
 		return nil, false
 	}
 	view, ok := s.offersEngine.ViewOf(offID)
@@ -48,7 +48,7 @@ func (s *Server) offerGroupFor(capID, offID string) (*capabilityGroup, bool) {
 	if shape == nil {
 		return nil, false
 	}
-	group := &capabilityGroup{FromOffer: true}
+	group := &capabilityGroup{}
 	for _, pair := range s.offersEngine.EligiblePairs(offID) {
 		cap := s.syntheticCapability(view, shape, pair)
 		if cap == nil {
@@ -192,18 +192,22 @@ func (s *Server) selectRunnerBackend(group *capabilityGroup) (*config.Capability
 			denied[reason]++
 			continue
 		}
-		weight, reason := s.runnerSelectionWeight(backendID, capID, offID)
+		weight, maxShare, reason := s.runnerSelectionWeight(backendID, capID, offID)
 		if weight <= 0 {
 			observability.RecordBackendSelectionDenied(capID, offID, backendID, reason)
 			denied[reason]++
 			continue
 		}
-		candidates = append(candidates, backendCandidate{cap: cap, weight: weight, maxShareCap: 0, reason: reason})
+		candidates = append(candidates, backendCandidate{cap: cap, weight: weight, maxShareCap: maxShare, reason: reason})
 	}
 	if len(candidates) == 0 {
 		observability.RecordBackendSelectionExhausted(capID, offID, summarizeDeniedReasons(denied))
 		return nil, fmt.Errorf("no eligible runner has capacity")
 	}
+	// The operator's fairness policy binds here too: certification says
+	// a runner MAY serve the offer, the pool snapshot says how much of
+	// it any one member is allowed to take.
+	applyMaxShareCaps(candidates)
 	pick := candidates[0]
 	if len(candidates) > 1 {
 		total := 0
@@ -231,20 +235,20 @@ func (s *Server) selectRunnerBackend(group *capabilityGroup) (*config.Capability
 // falling back to an equal share. A snapshot that explicitly excludes a
 // runner is honoured; a snapshot that has never heard of it is not
 // treated as a denial — a standalone broker has no snapshot at all.
-func (s *Server) runnerSelectionWeight(backendID, capID, offID string) (int, string) {
+func (s *Server) runnerSelectionWeight(backendID, capID, offID string) (int, float64, string) {
 	snapshot := s.currentPoolSnapshot()
 	if snapshot == nil {
-		return 1, "no_pool_snapshot"
+		return 1, 0, "no_pool_snapshot"
 	}
 	status := snapshot.StatusFor(backendID, capID, offID)
 	if !status.Configured {
-		return 1, "not_in_pool_snapshot"
+		return 1, 0, "not_in_pool_snapshot"
 	}
 	decision := s.backendDecision(readyRunnerSnapshot(), &status)
 	if !decision.eligible {
-		return 0, decision.reason
+		return 0, 0, decision.reason
 	}
-	return decision.weight, decision.reason
+	return decision.weight, decision.maxShareCap, decision.reason
 }
 
 // readyRunnerSnapshot is the health verdict for an eligible attached
@@ -275,19 +279,12 @@ func (f runnerForwarder) Forward(ctx context.Context, req backend.ForwardRequest
 
 var _ backend.Forwarder = runnerForwarder{}
 
-// servesProtocol reports whether either grammar declares a protocol, so
-// the paid surface is registered for an offers-only broker too. Scanning
-// capabilities[] alone meant an offer could be advertised, frozen, and
-// certified while POST /v1/job was never routed.
+// servesProtocol reports whether any offer declares a protocol, so the
+// paid surface is registered for the protocols this broker sells.
 func (s *Server) servesProtocol(prefix string) bool {
 	cfg := s.currentConfig()
 	if cfg == nil {
 		return false
-	}
-	for i := range cfg.Capabilities {
-		if strings.HasPrefix(cfg.Capabilities[i].Protocol, prefix) {
-			return true
-		}
 	}
 	for i := range cfg.Offers {
 		if strings.HasPrefix(cfg.Offers[i].Protocol, prefix) {

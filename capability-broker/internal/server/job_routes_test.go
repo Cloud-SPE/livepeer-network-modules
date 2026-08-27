@@ -3,13 +3,13 @@ package server
 import (
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,53 +26,85 @@ import (
 
 // End-to-end paid-job surface: transport negotiation, extractor claim,
 // idempotent replay, request-id reuse rejection — over real HTTP with
-// a fake backend and the mock payment daemon.
+// an attached runner and the mock payment daemon.
 
+// newJobTestServer stands the paid-job surface up the way the broker
+// now serves it: the operator declares an offer, a runner attaches and
+// declares its own transports, extractor and path, and the first
+// certified runner freezes that shape. backendCalls counts what reached
+// the runner.
 func newJobTestServer(t *testing.T, backendCalls *atomic.Int64) *httptest.Server {
 	t.Helper()
-	be := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		backendCalls.Add(1)
-		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
-			w.Header().Set("Content-Type", "text/event-stream")
-			fmt.Fprint(w, "data: {\"chunk\":1}\n\ndata: {\"usage\":{\"total_tokens\":21}}\n\ndata: [DONE]\n\n")
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[{"text":"hi"}],"usage":{"total_tokens":42}}`)
-	}))
-	t.Cleanup(be.Close)
+	srv, _ := newJobOfferBroker(t, backendCalls, nil, "")
+	return srv
+}
+
+// newJobOfferBroker is the shared constructor behind every paid-job
+// fixture here. pc replaces the configured payment client (the only way
+// to reach the path where work ships and the ledger call does not land);
+// settlementKeyFile delegates a signing key.
+func newJobOfferBroker(t *testing.T, backendCalls *atomic.Int64, pc payment.Client,
+	settlementKeyFile string) (*httptest.Server, *Server) {
+	t.Helper()
+	t.Setenv("BROKER_ADMIN_TOKEN", "secret-token")
 
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "seal.key")
 	if err := os.WriteFile(keyPath, make([]byte, 32), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The offers state file is written as a hijacked attach connection
+	// unwinds, which httptest.Server.Close does not wait for. Keep it
+	// out of t.TempDir so that write cannot race RemoveAll.
+	stateDir, err := os.MkdirTemp("", "job-offers-state-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for i := 0; i < 50; i++ {
+			if os.RemoveAll(stateDir) == nil {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
 	cfg := &config.Config{
-		Identity:      config.Identity{OrchEthAddress: "0x" + strings.Repeat("cd", 20)},
+		Identity: config.Identity{
+			OrchEthAddress:    "0x" + strings.Repeat("cd", 20),
+			SettlementKeyFile: settlementKeyFile,
+		},
+		AdminAuth:     config.AuthConfig{Method: "bearer", SecretRef: "env://BROKER_ADMIN_TOKEN"},
 		PaymentDaemon: config.PaymentDaemon{Mock: true},
 		SessionStore: config.SessionStore{
 			Path:           filepath.Join(dir, "state.db"),
 			SealingKeyFile: keyPath,
 		},
-		Capabilities: []config.Capability{{
-			ID:         "openai:chat-completions",
+		// Runners authenticate their attach against the store; the same
+		// sealing key serves both, which the grammar allows.
+		CredentialStore: config.CredentialStoreConfig{
+			Path:           filepath.Join(dir, "creds.db"),
+			SealingKeyFile: keyPath,
+		},
+		OffersStatePath: filepath.Join(stateDir, "offers-state.json"),
+		Offers: []config.Offer{{
 			OfferingID: "default",
+			Capability: "openai:chat-completions",
 			Protocol:   "paid-job/v1",
-			Job:        &config.JobCapability{Transports: []string{"unary", "stream"}},
-			WorkUnit: config.WorkUnit{
-				Name:      "tokens",
-				Extractor: map[string]any{"type": "openai-usage"},
+			Match:      map[string]string{"identity.openai.model": "test-model"},
+			Price:      config.Price{AmountWei: "1", PerUnits: 1},
+			// Operator metadata only; the runner's identity is what
+			// actually lands in the advertised extra at freeze.
+			Extra: map[string]any{
+				"openai":   map[string]any{"model": "test-model"},
+				"provider": "vllm",
 			},
-			Health:  config.Health{InitialStatus: "ready"},
-			Price:   config.Price{AmountWei: "1", PerUnits: 1},
-			Backend: config.Backend{Transport: "http", URL: be.URL},
-			Extra:   map[string]any{"openai": map[string]any{"model": "test-model"}, "provider": "vllm"},
 		}},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config: %v", err)
 	}
-	s, err := New(cfg, Options{})
+	s, err := New(cfg, Options{PaymentClient: pc})
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -83,7 +115,55 @@ func newJobTestServer(t *testing.T, backendCalls *atomic.Int64) *httptest.Server
 	})
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
-	return srv
+	attachJobRunner(t, s, srv, backendCalls)
+	return srv, s
+}
+
+// attachJobRunner enrols a host and attaches the runner that serves the
+// chat offer, answering like the container behind a real agent. It
+// returns once the offer has frozen on this runner's shape — before
+// that the tuple is unadvertised and dispatch has nowhere to go.
+func attachJobRunner(t *testing.T, s *Server, ts *httptest.Server, backendCalls *atomic.Int64) {
+	t.Helper()
+	_, enr, _ := adminReq(t, s, http.MethodPost, "/admin/v1/enroll", `{"host_id":"h1"}`, nil)
+	token := enr["credential"].(map[string]any)["token"].(string)
+	c := dialAttach(t, ts)
+	results := runnerSideFull(t, c,
+		func(_, _ string, headers map[string][]string, _ []byte) (int, http.Header, []byte) {
+			if backendCalls != nil {
+				backendCalls.Add(1)
+			}
+			if strings.Contains(strings.Join(headers["Accept"], ","), "text/event-stream") {
+				body := []byte("data: {\"chunk\":1}\n\ndata: {\"usage\":{\"total_tokens\":21}}\n\ndata: [DONE]\n\n")
+				return http.StatusOK, http.Header{
+					"Content-Type":   {"text/event-stream"},
+					"Content-Length": {strconv.Itoa(len(body))},
+				}, body
+			}
+			body := []byte(`{"choices":[{"text":"hi"}],"usage":{"total_tokens":42}}`)
+			// Content-Length is what a real container sends, and the
+			// broker's trailer behaviour turns on it.
+			return http.StatusOK, http.Header{
+				"Content-Type":   {"application/json"},
+				"Content-Length": {strconv.Itoa(len(body))},
+			}, body
+		})
+	res := registerVia(t, c, results, attachDoc(token, "h1", func(m map[string]any) {
+		cap0 := m["capabilities"].([]any)[0].(map[string]any)
+		cap0["identity"] = map[string]any{"openai.model": "test-model"}
+		cap0["transports"] = []any{"unary", "stream"}
+	}))
+	if res["document"] != "accepted" {
+		t.Fatalf("attach: %v", res)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(s.offersEngine.EligiblePairs("default")) == 1 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the attached runner never became eligible for the chat offer")
 }
 
 func jobReq(t *testing.T, srv *httptest.Server, requestID, accept string) *http.Response {
@@ -551,59 +631,10 @@ func TestUnaryJobAdvertisesNoUndeliverableTrailer(t *testing.T) {
 }
 
 // newJobTestServerWith exposes the *Server and lets a test supply the
-// payment client, which is the only way to reach the path where work
-// ships and the ledger call does not land.
+// payment client.
 func newJobTestServerWith(t *testing.T, backendCalls *atomic.Int64, pc payment.Client) (*httptest.Server, *Server) {
 	t.Helper()
-	be := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		backendCalls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[{"text":"hi"}],"usage":{"total_tokens":42}}`)
-	}))
-	t.Cleanup(be.Close)
-
-	dir := t.TempDir()
-	keyPath := filepath.Join(dir, "seal.key")
-	if err := os.WriteFile(keyPath, make([]byte, 32), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &config.Config{
-		Identity:      config.Identity{OrchEthAddress: "0x" + strings.Repeat("cd", 20)},
-		PaymentDaemon: config.PaymentDaemon{Mock: true},
-		SessionStore: config.SessionStore{
-			Path:           filepath.Join(dir, "state.db"),
-			SealingKeyFile: keyPath,
-		},
-		Capabilities: []config.Capability{{
-			ID:         "openai:chat-completions",
-			OfferingID: "default",
-			Protocol:   "paid-job/v1",
-			Job:        &config.JobCapability{Transports: []string{"unary", "stream"}},
-			WorkUnit: config.WorkUnit{
-				Name:      "tokens",
-				Extractor: map[string]any{"type": "openai-usage"},
-			},
-			Health:  config.Health{InitialStatus: "ready"},
-			Price:   config.Price{AmountWei: "1", PerUnits: 1},
-			Backend: config.Backend{Transport: "http", URL: be.URL},
-			Extra:   map[string]any{"openai": map[string]any{"model": "test-model"}, "provider": "vllm"},
-		}},
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("config: %v", err)
-	}
-	s, err := New(cfg, Options{PaymentClient: pc})
-	if err != nil {
-		t.Fatalf("server: %v", err)
-	}
-	t.Cleanup(func() {
-		if s.sessionStore != nil {
-			_ = s.sessionStore.Close()
-		}
-	})
-	srv := httptest.NewServer(s.mux)
-	t.Cleanup(srv.Close)
-	return srv, s
+	return newJobOfferBroker(t, backendCalls, pc, "")
 }
 
 // The lifecycle the gateway team asked for: a debit that does not land

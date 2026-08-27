@@ -1,6 +1,6 @@
 # Runs the conformance suite against a broker on an ordinary docker
 # network — no host networking. The suite binds its fakes on 0.0.0.0 and
-# advertises them under its own service name, so the broker reaches them
+# advertises them under its own service name, so a runner reaches them
 # at http://conformance:8091 and http://conformance:8092.
 #
 #   openssl rand -hex 32 > seal.key
@@ -11,11 +11,21 @@
 # would not resolve (`run --use-aliases` is the exception).
 #
 # Override BROKER_IMAGE / CONFORMANCE_IMAGE to test locally built images.
+#
+# NOTE — this stack is URL mode, and URL mode does not attach a serving
+# runner. The broker below advertises nothing until a runner enrols
+# (POST /admin/v1/enroll with BROKER_ADMIN_TOKEN) and attaches with the
+# `identity.variant` values host-config.yaml matches on; until then every
+# scenario 503s. Add that runner as a third service. For a self-contained
+# run, use auto mode instead (`livepeer-conformance` with no --broker-url):
+# it generates the config AND attaches its own runner.
 
 services:
   broker:
     image: ${BROKER_IMAGE:-tztcloud/livepeer-capability-broker:dev}
     command: ["--config", "/cfg/host-config.yaml"]
+    environment:
+      BROKER_ADMIN_TOKEN: ${BROKER_ADMIN_TOKEN:-conformance-admin-token}
     volumes:
       - ./host-config.yaml:/cfg/host-config.yaml:ro
       - ./seal.key:/cfg/seal.key:ro
@@ -29,7 +39,6 @@ services:
       - --fakes-advertise=conformance
       - --fakes-backend-port=8091
       - --fakes-runner-port=8092
-      # The broker starts first and probes addresses that are not up
-      # yet; give its health probes a couple of cycles on the live
-      # fakes before the first scenario runs.
+      # The fakes come up after the broker; give a runner a moment to
+      # attach and certify against them before the first scenario runs.
       - --warmup=20s

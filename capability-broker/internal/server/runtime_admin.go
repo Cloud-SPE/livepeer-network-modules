@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/registry"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
@@ -62,12 +61,7 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRegistryHealth(w http.ResponseWriter, r *http.Request) {
-	healthMgr := s.currentHealth()
-	if healthMgr == nil {
-		http.Error(w, "health manager is not available", http.StatusInternalServerError)
-		return
-	}
-	registry.WriteHealthResponse(w, healthMgr, s.currentPoolSnapshot())
+	registry.WriteHealthResponse(w, s.offerHealth(), s.currentPoolSnapshot())
 }
 
 func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
@@ -187,58 +181,27 @@ func (s *Server) runtimeStatus() runtimeStatusResponse {
 	}
 }
 
+// requireWorkerSessionAuth guards the legacy worker tunnel. The
+// per-backend worker_session_credential died with the capabilities[]
+// grammar that declared it, so what remains is an enrolled attach
+// credential or the admin token.
 func (s *Server) requireWorkerSessionAuth(w http.ResponseWriter, r *http.Request, backendIDs []string) bool {
 	s.mu.RLock()
 	token := s.adminToken
-	cfg := s.cfg
 	s.mu.RUnlock()
 	authz := strings.TrimSpace(r.Header.Get("Authorization"))
 	if rec := s.authenticateAttachCredential(authz); rec != nil {
 		return true
 	}
-	if strings.TrimSpace(token) == "" {
-		if authz == "" || s.workerCredentialAllowed(cfg, backendIDs, authz) {
-			return true
-		}
-		w.Header().Set("WWW-Authenticate", `Bearer realm="capability-broker-worker"`)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return false
+	if strings.TrimSpace(token) == "" && authz == "" {
+		return true
 	}
-	if authz == "Bearer "+token || s.workerCredentialAllowed(cfg, backendIDs, authz) {
+	if strings.TrimSpace(token) != "" && authz == "Bearer "+token {
 		return true
 	}
 	w.Header().Set("WWW-Authenticate", `Bearer realm="capability-broker-worker"`)
 	http.Error(w, "unauthorized", http.StatusUnauthorized)
 	return false
-}
-
-func (s *Server) workerCredentialAllowed(cfg *config.Config, backendIDs []string, authz string) bool {
-	if cfg == nil || !strings.HasPrefix(authz, "Bearer ") {
-		return false
-	}
-	token := strings.TrimSpace(strings.TrimPrefix(authz, "Bearer "))
-	if token == "" {
-		return false
-	}
-	needed := make(map[string]bool, len(backendIDs))
-	for _, id := range backendIDs {
-		needed[id] = false
-	}
-	for _, cap := range cfg.Capabilities {
-		if _, ok := needed[cap.Backend.ID]; !ok {
-			continue
-		}
-		if strings.TrimSpace(cap.Backend.WorkerSessionCredential) != token {
-			return false
-		}
-		needed[cap.Backend.ID] = true
-	}
-	for _, ok := range needed {
-		if !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func (s *Server) requireAdminAuth(w http.ResponseWriter, r *http.Request) bool {
@@ -288,32 +251,22 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 
 	cfg, err := config.Load(s.configPath)
 	if err != nil {
-		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
+		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil)
 		return s.runtimeStatus(), err
 	}
 	loadedRevision, loadedConfigPath, err := loadRuntimeRevision(s.configPath, cfg)
 	if err != nil {
-		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
+		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil)
 		return s.runtimeStatus(), err
 	}
-	if err := validateConfigAgainstRegistries(cfg, s.extractors); err != nil {
-		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
-		return s.runtimeStatus(), err
-	}
-	var previousSnapshots []health.Snapshot
-	if previous := s.currentHealth(); previous != nil {
-		previousSnapshots = previous.Snapshot().Capabilities
-	}
-	healthMgr := health.NewWithTransport(cfg, previousSnapshots, s.workerRegistry.HTTPTransport(nil))
-	s.finishReload(attemptID, startedAt, "applied", "", loadedRevision, cfg, healthMgr)
+	s.finishReload(attemptID, startedAt, "applied", "", loadedRevision, cfg)
 	s.mu.Lock()
 	s.loadedConfigPath = loadedConfigPath
 	s.mu.Unlock()
-	s.startHealthLoop(healthMgr)
 	return s.runtimeStatus(), nil
 }
 
-func (s *Server) finishReload(attemptID string, startedAt time.Time, status, reloadError, revision string, cfg *config.Config, healthMgr *health.Manager) {
+func (s *Server) finishReload(attemptID string, startedAt time.Time, status, reloadError, revision string, cfg *config.Config) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastReloadAttemptID = attemptID
@@ -323,7 +276,6 @@ func (s *Server) finishReload(attemptID string, startedAt time.Time, status, rel
 	s.lastReloadError = reloadError
 	if status == "applied" {
 		s.cfg = cfg
-		s.health = healthMgr
 		s.loadedRevision = revision
 		s.loadedAt = s.lastReloadFinishedAt
 		if s.offersEngine != nil {

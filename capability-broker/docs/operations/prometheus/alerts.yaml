@@ -93,9 +93,10 @@ groups:
           summary: "Broker is publishing zero offerings for 15m"
           description: |
             /registry/offerings has returned an empty capability list for
-            15m. If this broker is expected to advertise capabilities, its
-            host-config has no (or all-deduplicated) capabilities, or a
-            reload wiped them. Downstream resolvers will not route to it.
+            15m. Only frozen offers with a certified runner are published,
+            so either the host-config declares no offers, or no runner has
+            attached and certified against the ones it does declare.
+            Downstream resolvers will not route to it.
 
   # --- v1 protocol surfaces -------------------------------------------------
 

@@ -7,9 +7,14 @@ Initial implementation scope for plan 0029:
 2. Validate that each published `(capability_id, offering_id)` tuple is unique
    at the published manifest layer while allowing repeated backend candidates,
    and ensure each member/backend record is structurally complete.
-3. Generate a broker `host-config.yaml` with one `capabilities[]` entry per
-   backend candidate, carrying through transport, URL, auth, pricing, health,
-   and metadata.
+3. Push the Pool's offer set and the credentials that may attach to the
+   Pool broker over its admin API (`PUT /admin/v1/offers`,
+   `PUT /admin/v1/credentials`). The controller sends only operator-owned
+   facts — offering id, capability, protocol, match selector, price,
+   capacity, metadata, certification. Transports, work unit, extractor,
+   endpoint paths and readiness are not the controller's to send: member
+   hosts attach outbound and declare those themselves, and the broker
+   freezes the first certified runner's shape into the offer (plan 0043).
 4. Persist startup/reload snapshots of the active Pool config and rendered
    broker config in BoltDB so operator state survives process restarts.
 5. Persist backend-selection state records keyed by

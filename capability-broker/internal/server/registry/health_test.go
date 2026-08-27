@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolsnapshot"
 )
@@ -20,23 +19,46 @@ func (s stubPoolStatusSource) StatusFor(backendID, capabilityID, offeringID stri
 	return s.status[backendID+"|"+capabilityID+"|"+offeringID]
 }
 
+// healthHandler serves one prepared verdict the way the broker's route
+// does. WriteHealthResponse owns the wire shape and takes the verdict as
+// input; where health comes from — attached runners now, a prober once —
+// is the caller's business and deliberately not exercised here.
+func healthHandler(snap health.Response, pool PoolStatusSource) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		WriteHealthResponse(w, snap, pool)
+	}
+}
+
+// verdict assembles the whole-broker response from per-backend
+// snapshots, deriving broker_status through the same aggregation the
+// route applies so these fixtures cannot drift from production.
+func verdict(snaps ...health.Snapshot) health.Response {
+	return health.Response{
+		BrokerStatus: string(health.BrokerStatus(snaps)),
+		GeneratedAt:  time.Now().UTC(),
+		Capabilities: snaps,
+	}
+}
+
+// readySnapshot is a backend the broker considers fit to serve. These
+// tests are about what the pool overlay does to such a backend, so the
+// backend's own verdict is held constant at ready.
+func readySnapshot(capabilityID, offeringID, backendID string) health.Snapshot {
+	return health.Snapshot{
+		ID:         capabilityID,
+		OfferingID: offeringID,
+		BackendID:  backendID,
+		Status:     health.StatusReady,
+		Reason:     "initial_status",
+	}
+}
+
 func TestHealthHandler_EmbedsPoolSnapshotStatusWhenConfigured(t *testing.T) {
-	mgr := health.New(&config.Config{
-		Capabilities: []config.Capability{
-			{
-				ID:         "openai:chat-completions",
-				OfferingID: "default",
-				Backend:    config.Backend{ID: "backend-a", URL: "http://backend-a"},
-				Health: config.Health{
-					InitialStatus: "ready",
-				},
-			},
-		},
-	})
+	snap := verdict(readySnapshot("openai:chat-completions", "default", "backend-a"))
 
 	req := httptest.NewRequest(http.MethodGet, "/registry/health", nil)
 	rec := httptest.NewRecorder()
-	HealthHandler(mgr, stubPoolStatusSource{
+	healthHandler(snap, stubPoolStatusSource{
 		status: map[string]poolsnapshot.Status{
 			"backend-a|openai:chat-completions|default": {
 				Configured:                            true,
@@ -200,38 +222,15 @@ func TestHealthHandler_EmbedsPoolSnapshotStatusWhenConfigured(t *testing.T) {
 }
 
 func TestHealthHandler_SelectionReasonReflectsPoolDecision(t *testing.T) {
-	mgr := health.New(&config.Config{
-		Capabilities: []config.Capability{
-			{
-				ID:         "openai:chat-completions",
-				OfferingID: "expired",
-				Backend:    config.Backend{ID: "backend-expired", URL: "http://expired"},
-				Health: config.Health{
-					InitialStatus: "ready",
-				},
-			},
-			{
-				ID:         "openai:chat-completions",
-				OfferingID: "degraded",
-				Backend:    config.Backend{ID: "backend-degraded", URL: "http://degraded"},
-				Health: config.Health{
-					InitialStatus: "ready",
-				},
-			},
-			{
-				ID:         "openai:chat-completions",
-				OfferingID: "excluded",
-				Backend:    config.Backend{ID: "backend-excluded", URL: "http://excluded"},
-				Health: config.Health{
-					InitialStatus: "ready",
-				},
-			},
-		},
-	})
+	snap := verdict(
+		readySnapshot("openai:chat-completions", "expired", "backend-expired"),
+		readySnapshot("openai:chat-completions", "degraded", "backend-degraded"),
+		readySnapshot("openai:chat-completions", "excluded", "backend-excluded"),
+	)
 
 	req := httptest.NewRequest(http.MethodGet, "/registry/health", nil)
 	rec := httptest.NewRecorder()
-	HealthHandler(mgr, stubPoolStatusSource{
+	healthHandler(snap, stubPoolStatusSource{
 		status: map[string]poolsnapshot.Status{
 			"backend-expired|openai:chat-completions|expired": {
 				Configured:          true,
@@ -324,22 +323,11 @@ func TestHealthHandler_SelectionReasonReflectsPoolDecision(t *testing.T) {
 }
 
 func TestHealthHandler_OmitsPoolStatusWhenSnapshotUnconfigured(t *testing.T) {
-	mgr := health.New(&config.Config{
-		Capabilities: []config.Capability{
-			{
-				ID:         "openai:chat-completions",
-				OfferingID: "default",
-				Backend:    config.Backend{ID: "backend-a", URL: "http://backend-a"},
-				Health: config.Health{
-					InitialStatus: "ready",
-				},
-			},
-		},
-	})
+	snap := verdict(readySnapshot("openai:chat-completions", "default", "backend-a"))
 
 	req := httptest.NewRequest(http.MethodGet, "/registry/health", nil)
 	rec := httptest.NewRecorder()
-	HealthHandler(mgr, stubPoolStatusSource{}).ServeHTTP(rec, req)
+	healthHandler(snap, stubPoolStatusSource{}).ServeHTTP(rec, req)
 
 	var out struct {
 		Capabilities []struct {
@@ -360,32 +348,15 @@ func TestHealthHandler_OmitsPoolStatusWhenSnapshotUnconfigured(t *testing.T) {
 }
 
 func TestHealthHandler_EmbedsOfferingLevelPoolAggregate(t *testing.T) {
-	mgr := health.New(&config.Config{
-		Capabilities: []config.Capability{
-			{
-				ID:         "openai:chat-completions",
-				OfferingID: "default",
-				Backend:    config.Backend{ID: "backend-a", URL: "http://backend-a"},
-				Health:     config.Health{InitialStatus: "ready"},
-			},
-			{
-				ID:         "openai:chat-completions",
-				OfferingID: "default",
-				Backend:    config.Backend{ID: "backend-b", URL: "http://backend-b"},
-				Health:     config.Health{InitialStatus: "ready"},
-			},
-			{
-				ID:         "openai:chat-completions",
-				OfferingID: "default",
-				Backend:    config.Backend{ID: "backend-c", URL: "http://backend-c"},
-				Health:     config.Health{InitialStatus: "ready"},
-			},
-		},
-	})
+	snap := verdict(
+		readySnapshot("openai:chat-completions", "default", "backend-a"),
+		readySnapshot("openai:chat-completions", "default", "backend-b"),
+		readySnapshot("openai:chat-completions", "default", "backend-c"),
+	)
 
 	req := httptest.NewRequest(http.MethodGet, "/registry/health", nil)
 	rec := httptest.NewRecorder()
-	HealthHandler(mgr, stubPoolStatusSource{
+	healthHandler(snap, stubPoolStatusSource{
 		status: map[string]poolsnapshot.Status{
 			"backend-a|openai:chat-completions|default": {
 				Configured:                            true,

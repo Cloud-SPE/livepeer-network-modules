@@ -93,19 +93,12 @@ func (s *Server) registerJobRoutes() {
 // at all — distinct from advertising it with nobody currently able to
 // serve it, which is a 503 further down.
 func (s *Server) jobCapability(capID, offID string) *config.Capability {
-	if group, ok := s.offerGroupFor(capID, offID); ok && group.Published != nil &&
-		strings.HasPrefix(group.Published.Protocol, "paid-job/") && group.Published.Job != nil {
-		return group.Published
+	group, ok := s.offerGroupFor(capID, offID)
+	if !ok || group.Published == nil ||
+		!strings.HasPrefix(group.Published.Protocol, "paid-job/") || group.Published.Job == nil {
+		return nil
 	}
-	cfg := s.currentConfig()
-	for i := range cfg.Capabilities {
-		c := &cfg.Capabilities[i]
-		if c.ID == capID && c.OfferingID == offID &&
-			strings.HasPrefix(c.Protocol, "paid-job/") && c.Job != nil {
-			return c
-		}
-	}
-	return nil
+	return group.Published
 }
 
 // negotiateTransport picks the transport per paid-job §2.

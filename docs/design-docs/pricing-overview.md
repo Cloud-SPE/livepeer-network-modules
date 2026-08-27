@@ -77,30 +77,39 @@ sender/receiver split.
 
 ### 1. The operator declares the price
 
-A capability entry in `host-config.yaml` declares its retail price as a
-wei-denominated ratio plus an opaque work-unit name. Example from
-[`host-config.example.yaml:45-67`](../../capability-broker/examples/host-config.example.yaml):
+An **offer** in `host-config.yaml` declares its retail price as a
+wei-denominated ratio. Price is the operator's to set — it is the whole
+reason the offer exists — but the work unit that price is *counted in* is
+not: the runner declares the unit it meters and the extractor that
+produces it, and the first runner to certify freezes that into the offer.
+So the operator sets the rate and the runner supplies the denominator.
+Example from
+[`host-config.example.yaml`](../../capability-broker/examples/host-config.example.yaml):
 
 ```yaml
-capabilities:
-  - id: "kibble:doggo-bark-counter:v1"
-    offering_id: "default"
+offers:
+  - offering_id: "doggo-default"
+    capability: "kibble:doggo-bark-counter:v1"
     protocol: "paid-job/v1"
-    work_unit:
-      name: "barks"
-      extractor: { type: "response-jsonpath", path: "$.bark_count" }
     price:
       amount_wei: "100"
       per_units: 1
+    certification:
+      - { name: ready, type: readiness }
 ```
 
-The Go grammar is declared in
-[`capability-broker/internal/config/config.go`](../../capability-broker/internal/config/config.go):
+That prices one bark at 100 wei — where "bark" is whatever the attached
+runner declared as its work unit, and the manifest advertises the frozen
+pair.
 
-- `Capability` struct — `config.go:43-54`
-- `WorkUnit` struct (name + extractor map) — `config.go:87-90`
+The Go grammar is declared in
+[`capability-broker/internal/config/offers.go`](../../capability-broker/internal/config/offers.go):
+
+- `Offer` struct — `offers.go`
 - `Price` struct (`amount_wei` as decimal string, `per_units` as uint64) —
-  `config.go:94-97`
+  [`config.go`](../../capability-broker/internal/config/config.go)
+- `WorkUnit` (name + extractor map) is populated from the runner's attach
+  declaration, not from this file
 
 The string form for `amount_wei` is deliberate — it preserves precision
 beyond JSON's safe-integer range (per the manifest schema).
@@ -1229,17 +1238,34 @@ under capability `openai:chat-completions`, differentiated by
 `offering_id`:
 
 ```yaml
-capabilities:
-  - id: "openai:chat-completions"
-    offering_id: "llama-3.3-70b-h100"     # premium: 10% off Together
+offers:
+  - offering_id: "llama-3.3-70b-h100"        # premium: 10% off Together
+    capability: "openai:chat-completions"
+    protocol: "paid-job/v1"
+    match: { identity.gpu_class: "h100" }    # see note below on identity keys
     # price targets retail ≈ $0.79/M output
-  - id: "openai:chat-completions"
-    offering_id: "llama-3.3-70b-a100"     # mid: 12% off
+  - offering_id: "llama-3.3-70b-a100"        # mid: 12% off
+    capability: "openai:chat-completions"
+    protocol: "paid-job/v1"
+    match: { identity.gpu_class: "a100" }
     # price targets retail ≈ $0.77/M output
-  - id: "openai:chat-completions"
-    offering_id: "llama-3.3-70b-2x3090-awq"  # budget: 20% off, quantized
+  - offering_id: "llama-3.3-70b-2x3090-awq"  # budget: 20% off, quantized
+    capability: "openai:chat-completions"
+    protocol: "paid-job/v1"
+    match: { identity.gpu_class: "3090" }
     # price targets retail ≈ $0.70/M output, slower / quantized
 ```
+
+Each tier is one offer with a distinct `offering_id` (ids are unique across
+the file). What separates them is which runners each `match` selects — so a
+new box joins a tier by attaching and declaring itself into it, not by an
+operator adding a row.
+
+`identity` is a free-form string→string map the runner declares
+([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md)
+§3.2); `gpu_class` above is only a tier key an agent profile would have to
+emit. Match on whatever the runners you actually run declare — the shipped
+OpenAI adapter profile emits `openai.model` and `provider`.
 
 The gateway adapter then picks the offering matching the customer's
 SLA / latency / quality preference.

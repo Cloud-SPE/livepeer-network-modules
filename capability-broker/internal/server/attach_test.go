@@ -50,7 +50,7 @@ func dialAttach(t *testing.T, ts *httptest.Server) *websocket.Conn {
 
 func register(t *testing.T, c *websocket.Conn, doc []byte) map[string]any {
 	t.Helper()
-	if err := c.WriteJSON(map[string]any{"type": "register", "id": "r", "body": json.RawMessage(doc)}); err != nil {
+	if err := wsWriteJSON(c, map[string]any{"type": "register", "id": "r", "body": json.RawMessage(doc)}); err != nil {
 		t.Fatal(err)
 	}
 	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))

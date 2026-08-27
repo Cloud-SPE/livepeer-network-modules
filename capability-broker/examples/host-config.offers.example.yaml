@@ -1,16 +1,19 @@
-# Example host-config.yaml in the plan-0043 `offers[]` grammar.
+# A compact host-config.yaml, focused on `offers[]` and certification.
+# `host-config.example.yaml` next to this file is the fully annotated
+# reference; this one is the shortest thing that runs.
 #
 # The operator authors OFFERS — what is sold, at what price, with what
 # capacity, where — and nothing about the runners. Runners attach outbound
 # with a credential and declare what they are (transports, work unit,
 # extractor, paths, readiness, model identity); the first certified runner
-# freezes those facts into the offer and the signature is the acceptance.
-# See livepeer-network-protocol/protocols/runner-attach.md,
-# broker-admin.md and certification-steps.md.
+# freezes those facts into the offer and the frozen shape is what the
+# manifest advertises from then on. See
+# livepeer-network-protocol/protocols/runner-attach.md, broker-admin.md and
+# certification-steps.md.
 #
-# `offers[]` and the legacy `capabilities[]` grammar coexist until attach
-# and freeze ship (plan 0043 items 7–8); a given offering lives in one or
-# the other, never both.
+# `offers[]` is the whole operator grammar. There is no `capabilities[]`
+# list, no `backend:` block and no health probe to configure: a runner is
+# reachable when its attach tunnel is up and fit when certification says so.
 
 identity:
   orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
@@ -37,6 +40,10 @@ credential_store:
   # default_expiry_seconds: 7776000    # 90 d
   # max_expiry_seconds: 31536000       # 365 d
 
+# Frozen offer shapes survive a restart here. Without it a restarted broker
+# re-freezes from whichever runner certifies first — a silent manifest change.
+offers_state_path: /var/lib/livepeer/broker/offers.db
+
 # offers_source: file (default) — this file owns offers[].
 # offers_source: admin          — a pool-controller pushes them over
 #                                 PUT /admin/v1/offers; offers[] below must be empty.
@@ -56,6 +63,9 @@ offers:
       max_in_flight: 4                     # per eligible runner
       queue_limit: 8
     extra:                                 # operator metadata; runner identity is merged in at freeze
+      provider: vllm
+      openai:
+        model: llama-3-70b
       region: us-west-2
       gpu_class: h100
     extra_from_runner: [x-quantization]    # promote this runner x-* key into the advertised extra
@@ -80,7 +90,13 @@ offers:
       amount_wei: "1000000000000"          # per second of input audio (extractor is runner-declared)
       per_units: 1
     capacity: { max_in_flight: 2 }
-    extra: { region: us-west-2 }
+    extra:
+      provider: whisper
+      openai:
+        model: whisper-large-v3
+      audio:
+        task: transcription
+      region: us-west-2
     certification:
       - { name: ready, type: readiness, config: { attempts: 5, interval_ms: 3000 } }
       - name: smoke

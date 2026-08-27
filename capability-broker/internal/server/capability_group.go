@@ -1,25 +1,22 @@
 package server
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolsnapshot"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/selection"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 )
 
+// capabilityGroup is one advertised offer plus the attached runners
+// eligible to serve it. Published carries the tuple as advertised —
+// price and capacity from the operator, everything else from the frozen
+// shape — and Backends is one synthesized entry per eligible runner.
 type capabilityGroup struct {
 	Published *config.Capability
 	Backends  []*config.Capability
-	// FromOffer marks a group whose backends are eligible attached
-	// runners rather than operator-configured backend URLs. The two are
-	// selected differently: a runner has already passed certification,
-	// so there is no probe verdict left to weigh.
-	FromOffer bool
 }
 
 type backendCandidate struct {
@@ -36,47 +33,12 @@ type backendSelectionDecision struct {
 	reason      string
 }
 
+// groupFor resolves an advertised offering to the runners serving it.
 func (s *Server) groupFor(capID, offID string) (*capabilityGroup, bool) {
 	if capID == "" {
 		return nil, false
 	}
-	// Offers win: an offering that exists in both grammars is a
-	// misconfiguration the loader already rejects, so this only decides
-	// which grammar serves it during the migration.
-	if group, ok := s.offerGroupFor(capID, offID); ok {
-		return group, true
-	}
-	cfg := s.currentConfig()
-	if cfg == nil {
-		return nil, false
-	}
-	group := &capabilityGroup{}
-	var fallback *config.Capability
-	for i := range cfg.Capabilities {
-		c := &cfg.Capabilities[i]
-		if c.ID != capID {
-			continue
-		}
-		if fallback == nil {
-			fallback = c
-		}
-		if c.OfferingID == offID {
-			if group.Published == nil {
-				group.Published = c
-			}
-			group.Backends = append(group.Backends, c)
-		}
-	}
-	if fallback == nil {
-		return nil, false
-	}
-	if group.Published == nil {
-		group.Published = fallback
-	}
-	if len(group.Backends) == 0 {
-		return &capabilityGroup{Published: group.Published}, true
-	}
-	return group, true
+	return s.offerGroupFor(capID, offID)
 }
 
 func (s *Server) lookupSpec(capID, offID string) (middleware.CapabilitySpec, bool) {
@@ -87,9 +49,6 @@ func (s *Server) lookupSpec(capID, offID string) (middleware.CapabilitySpec, boo
 	// An offer with no runner attached right now still has a price: the
 	// tuple is advertised, so a payment must be validated against it
 	// before the dispatch path answers 503.
-	if !group.FromOffer && len(group.Backends) == 0 {
-		return middleware.CapabilitySpec{}, false
-	}
 	return middleware.CapabilitySpec{
 		WorkUnit:            group.Published.WorkUnit.Name,
 		PricePerWorkUnitWei: mustBig(group.Published.Price.AmountWei),
@@ -97,81 +56,9 @@ func (s *Server) lookupSpec(capID, offID string) (middleware.CapabilitySpec, boo
 	}, true
 }
 
+// selectBackend picks one of the group's eligible runners.
 func (s *Server) selectBackend(group *capabilityGroup) (*config.Capability, error) {
-	if group != nil && group.FromOffer {
-		return s.selectRunnerBackend(group)
-	}
-	if group == nil || len(group.Backends) == 0 {
-		return nil, fmt.Errorf("no backend candidates")
-	}
-	candidates := make([]backendCandidate, 0, len(group.Backends))
-	deniedReasons := map[string]int{}
-	healthMgr := s.currentHealth()
-	if healthMgr == nil {
-		return nil, fmt.Errorf("health manager is not available")
-	}
-	snapshots := healthMgr.SnapshotsFor(group.Published.ID, group.Published.OfferingID)
-	byBackend := map[string]health.Snapshot{}
-	for _, snap := range snapshots {
-		byBackend[snap.BackendID] = snap
-	}
-	for _, cap := range group.Backends {
-		backendID := backendIDForCapability(cap)
-		if cap.Backend.MaxInFlight > 0 && s.currentBackendInFlight(backendID) >= cap.Backend.MaxInFlight {
-			const reason = "max_in_flight_reached"
-			observability.RecordBackendSelectionDenied(cap.ID, cap.OfferingID, backendID, reason)
-			deniedReasons[reason]++
-			continue
-		}
-		snap, ok := byBackend[backendID]
-		if !ok {
-			snap = health.Snapshot{Status: health.StatusStale}
-		}
-		var poolStatus *poolsnapshot.Status
-		if poolSnapshot := s.currentPoolSnapshot(); poolSnapshot != nil {
-			if status := poolSnapshot.StatusFor(backendID, group.Published.ID, group.Published.OfferingID); status.Configured {
-				poolStatus = &status
-			}
-		}
-		decision := s.backendDecision(snap, poolStatus)
-		if !decision.eligible || decision.weight == 0 {
-			observability.RecordBackendSelectionDenied(cap.ID, cap.OfferingID, backendID, decision.reason)
-			deniedReasons[decision.reason]++
-			continue
-		}
-		candidates = append(candidates, backendCandidate{cap: cap, weight: decision.weight, maxShareCap: decision.maxShareCap, reason: decision.reason})
-	}
-	if len(candidates) == 0 {
-		observability.RecordBackendSelectionExhausted(group.Published.ID, group.Published.OfferingID, summarizeDeniedReasons(deniedReasons))
-		return nil, fmt.Errorf("no healthy backend candidates")
-	}
-	if len(candidates) == 1 {
-		backendID := backendIDForCapability(candidates[0].cap)
-		observability.RecordBackendSelectionFinal(group.Published.ID, group.Published.OfferingID, backendID, candidates[0].reason)
-		return candidates[0].cap, nil
-	}
-	applyMaxShareCaps(candidates)
-	total := 0
-	for _, c := range candidates {
-		total += c.weight
-	}
-	pickFn := s.randIntn
-	if pickFn == nil {
-		pickFn = func(n int) int { return 0 }
-	}
-	pick := pickFn(total)
-	for _, c := range candidates {
-		if pick < c.weight {
-			backendID := backendIDForCapability(c.cap)
-			observability.RecordBackendSelectionFinal(group.Published.ID, group.Published.OfferingID, backendID, c.reason)
-			return c.cap, nil
-		}
-		pick -= c.weight
-	}
-	last := candidates[len(candidates)-1]
-	backendID := backendIDForCapability(last.cap)
-	observability.RecordBackendSelectionFinal(group.Published.ID, group.Published.OfferingID, backendID, last.reason)
-	return last.cap, nil
+	return s.selectRunnerBackend(group)
 }
 
 func backendIDForCapability(cap *config.Capability) string {
@@ -184,10 +71,6 @@ func backendIDForCapability(cap *config.Capability) string {
 	return cap.Backend.URL
 }
 
-func backendSelectionWeight(snap health.Snapshot) int {
-	return selection.ProbeWeight(snap)
-}
-
 func (s *Server) backendDecision(snap health.Snapshot, pool *poolsnapshot.Status) backendSelectionDecision {
 	decision := selection.DecisionFor(snap, pool)
 	return backendSelectionDecision{
@@ -196,10 +79,6 @@ func (s *Server) backendDecision(snap health.Snapshot, pool *poolsnapshot.Status
 		maxShareCap: decision.MaxShareCap,
 		reason:      decision.Reason,
 	}
-}
-
-func backendSelectionDenyReason(snap health.Snapshot) string {
-	return selection.ProbeReason(snap)
 }
 
 func summarizeDeniedReasons(reasons map[string]int) string {
@@ -214,6 +93,13 @@ func summarizeDeniedReasons(reasons map[string]int) string {
 	return "mixed_denial_reasons"
 }
 
+// applyMaxShareCaps bounds any one backend's share of the weighted draw.
+//
+// The pool controller sets a max share to stop a single member absorbing
+// a capability's whole flow — the point is fairness across members, not
+// backend health, so it applies to attached runners exactly as it did to
+// configured backends. Capping one candidate lowers the total, which can
+// push another over its own cap, so this iterates until nothing moves.
 func applyMaxShareCaps(candidates []backendCandidate) {
 	if len(candidates) < 2 {
 		return
@@ -235,6 +121,9 @@ func applyMaxShareCaps(candidates []backendCandidate) {
 			}
 			maxWeight := int(math.Floor((capLimit / (1 - capLimit)) * float64(others)))
 			if maxWeight < 1 {
+				// Never cap a candidate out of the draw entirely: a
+				// share bound is a limit on how much it takes, not a
+				// decision that it may not serve.
 				maxWeight = 1
 			}
 			if candidates[i].weight > maxWeight {

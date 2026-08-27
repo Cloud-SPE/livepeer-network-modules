@@ -1,40 +1,16 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
-	"math/big"
 	"net/url"
 	"regexp"
-	"sort"
 	"strings"
 )
 
 var (
-	protocolRE   = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
-	schemaTagRE  = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
 	ethAddressRE = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
 	priceWeiRE   = regexp.MustCompile(`^[0-9]+$`)
 )
-
-var validHealthStatuses = map[string]bool{
-	"":            true,
-	"ready":       true,
-	"draining":    true,
-	"degraded":    true,
-	"unreachable": true,
-	"stale":       true,
-}
-
-var validProbeTypes = map[string]bool{
-	"":                        true,
-	"http-status":             true,
-	"http-jsonpath":           true,
-	"http-openai-model-ready": true,
-	"tcp-connect":             true,
-	"command-exit-0":          true,
-	"manual-drain":            true,
-}
 
 var deprecatedOpenAICapabilityIDSuffixes = []string{
 	"openai:chat-completions:",
@@ -43,15 +19,6 @@ var deprecatedOpenAICapabilityIDSuffixes = []string{
 	"openai:audio-speech:",
 	"openai:images-generations:",
 	"openai:realtime:",
-}
-
-var openAICapabilityIDsRequiringModel = map[string]struct{}{
-	"openai:chat-completions":     {},
-	"openai:embeddings":           {},
-	"openai:audio-transcriptions": {},
-	"openai:audio-speech":         {},
-	"openai:images-generations":   {},
-	"openai:realtime":             {},
 }
 
 var audioTaskByCapabilityID = map[string]string{
@@ -185,484 +152,64 @@ func (c *Config) Validate() error {
 	if err := c.validateOffers(); err != nil {
 		return err
 	}
-	if len(c.Capabilities) == 0 && len(c.Offers) == 0 && c.OffersSource != OffersSourceAdmin {
+	if len(c.Offers) == 0 && c.OffersSource != OffersSourceAdmin {
 		return fmt.Errorf("offers: must declare at least one (or set offers_source: admin)")
 	}
 
-	seenPublished := make(map[string]int, len(c.Capabilities))
-	seenBackendsPerTuple := make(map[string]map[string]struct{}, len(c.Capabilities))
-	for i := range c.Capabilities {
-		cap := &c.Capabilities[i]
-		ctx := fmt.Sprintf("capabilities[%d]", i)
-		if cap.ID != "" || cap.OfferingID != "" {
-			ctx = fmt.Sprintf("capabilities[%d] (%s/%s)", i, cap.ID, cap.OfferingID)
-		}
-
-		if cap.ID == "" {
-			return fmt.Errorf("%s: id is required", ctx)
-		}
-		for _, prefix := range deprecatedOpenAICapabilityIDSuffixes {
-			if strings.HasPrefix(cap.ID, prefix) {
-				return fmt.Errorf("%s: id %q uses deprecated OpenAI capability syntax; use %q and set extra.openai.model instead",
-					ctx, cap.ID, strings.TrimSuffix(prefix, ":"))
-			}
-		}
-		if cap.OfferingID == "" {
-			return fmt.Errorf("%s: offering_id is required", ctx)
-		}
-		if err := validateCapabilityExtra(ctx, cap); err != nil {
-			return err
-		}
-		key := cap.ID + "|" + cap.OfferingID
-
-		if !protocolRE.MatchString(cap.Protocol) {
-			return fmt.Errorf("%s: protocol must match <name>/v<major> (got %q)", ctx, cap.Protocol)
-		}
-		switch {
-		case strings.HasPrefix(cap.Protocol, "paid-job/"):
-			if cap.Session != nil {
-				return fmt.Errorf("%s: session axes are invalid on a paid-job offering", ctx)
-			}
-			if cap.Job == nil || len(cap.Job.Transports) == 0 {
-				return fmt.Errorf("%s: job.transports is required for paid-job offerings", ctx)
-			}
-			seenT := map[string]bool{}
-			for _, tr := range cap.Job.Transports {
-				switch tr {
-				case "unary", "stream", "multipart":
-				default:
-					return fmt.Errorf("%s: job.transports entry %q must be unary|stream|multipart", ctx, tr)
-				}
-				if seenT[tr] {
-					return fmt.Errorf("%s: job.transports entry %q duplicated", ctx, tr)
-				}
-				seenT[tr] = true
-			}
-		case strings.HasPrefix(cap.Protocol, "paid-session/"):
-			if cap.Job != nil {
-				return fmt.Errorf("%s: job axes are invalid on a paid-session offering", ctx)
-			}
-			if cap.Session == nil {
-				return fmt.Errorf("%s: session block is required for paid-session offerings", ctx)
-			}
-			if !schemaTagRE.MatchString(cap.Session.DescriptorSchema) {
-				return fmt.Errorf("%s: session.descriptor_schema must match <name>/v<major> (got %q)", ctx, cap.Session.DescriptorSchema)
-			}
-			switch cap.Session.AdvertisedAttachment() {
-			case "external", "inband-ws":
-			default:
-				return fmt.Errorf("%s: session.attachment must be external or inband-ws (got %q)", ctx, cap.Session.Attachment)
-			}
-			switch cap.Session.AdvertisedMetering() {
-			case "runner-reported":
-			case "broker-observed":
-				// Schema rule: a broker cannot observe traffic that never
-				// transits it.
-				if cap.Session.AdvertisedAttachment() != "inband-ws" {
-					return fmt.Errorf("%s: session.metering=broker-observed requires attachment=inband-ws", ctx)
-				}
-			default:
-				return fmt.Errorf("%s: session.metering must be runner-reported or broker-observed (got %q)", ctx, cap.Session.Metering)
-			}
-			switch cap.Session.AdvertisedLeasePolicy() {
-			case "funding-tracking":
-			case "fixed":
-				if cap.Session.LeaseMaxSeconds <= 0 {
-					return fmt.Errorf("%s: session.lease_policy=fixed requires lease_max_seconds > 0", ctx)
-				}
-			default:
-				return fmt.Errorf("%s: session.lease_policy must be funding-tracking or fixed (got %q)", ctx, cap.Session.LeasePolicy)
-			}
-			switch cap.Session.AdvertisedRefill() {
-			case "extensible", "bounded":
-			default:
-				return fmt.Errorf("%s: session.refill must be extensible or bounded (got %q)", ctx, cap.Session.Refill)
-			}
-			if cap.Session.ToleranceBandPct < 0 {
-				return fmt.Errorf("%s: session.tolerance_band_pct must be >= 0", ctx)
-			}
-			if cap.Session.Runner.CreatePath == "" || cap.Session.Runner.TerminatePath == "" {
-				return fmt.Errorf("%s: session.runner.create_path and terminate_path are required", ctx)
-			}
-			if c.SessionStore.Path == "" {
-				return fmt.Errorf("%s: session_store must be configured when a paid-session capability is declared", ctx)
-			}
-			if c.ExternalBaseURL == "" {
-				return fmt.Errorf("%s: external_base_url must be configured when a paid-session capability is declared", ctx)
-			}
-		}
-
-		if cap.WorkUnit.Name == "" {
-			return fmt.Errorf("%s: work_unit.name is required", ctx)
-		}
-		// Extractors are a paid-job concept: they compute work units from
-		// an exchange the broker forwarded. paid-session usage arrives as
-		// runner-reported cumulative claims, so a session capability has
-		// nothing for an extractor to run on. Requiring one made
-		// operators declare a type that is never called, which is exactly
-		// the kind of config that drifts into a lie.
-		if strings.HasPrefix(cap.Protocol, "paid-session/") {
-			if len(cap.WorkUnit.Extractor) > 0 {
-				return fmt.Errorf("%s: work_unit.extractor is not valid for paid-session capabilities "+
-					"(usage comes from runner-reported claims; the broker never runs an extractor here)", ctx)
-			}
-		} else {
-			if len(cap.WorkUnit.Extractor) == 0 {
-				return fmt.Errorf("%s: work_unit.extractor is required", ctx)
-			}
-			if _, ok := cap.WorkUnit.Extractor["type"].(string); !ok {
-				return fmt.Errorf("%s: work_unit.extractor.type must be a string", ctx)
-			}
-		}
-
-		// `extra` is opaque operator metadata; the declaration keys
-		// belong to the tuple itself. Caught here so an operator learns
-		// at config load rather than by having the whole signed manifest
-		// refused downstream, which would take every offering with it.
-		for _, reserved := range []string{"protocol", "job", "session"} {
-			if _, clash := cap.Extra[reserved]; clash {
-				return fmt.Errorf("%s: extra.%s is reserved — the declaration owns that key", ctx, reserved)
-			}
-		}
-
-		if !priceWeiRE.MatchString(cap.Price.AmountWei) {
-			return fmt.Errorf("%s: price.amount_wei must be a non-negative decimal string (got %q)", ctx, cap.Price.AmountWei)
-		}
-		if cap.Price.PerUnits == 0 {
-			return fmt.Errorf("%s: price.per_units must be > 0", ctx)
-		}
-		// The payment envelope carries the price as an int64
-		// (PriceInfo.price_per_unit). A price that does not fit is
-		// unrepresentable on the wire, so refuse it at load rather than
-		// narrowing it silently at request time.
-		if amount, ok := new(big.Int).SetString(cap.Price.AmountWei, 10); ok && !amount.IsInt64() {
-			return fmt.Errorf("%s: price.amount_wei %s exceeds the payment wire's int64 range",
-				ctx, cap.Price.AmountWei)
-		}
-
-		if cap.Backend.Transport == "" {
-			return fmt.Errorf("%s: backend.transport is required", ctx)
-		}
-		if cap.Backend.MaxInFlight < 0 {
-			return fmt.Errorf("%s: backend.max_in_flight must be >= 0", ctx)
-		}
-		if cap.Backend.QueueLimit < 0 {
-			return fmt.Errorf("%s: backend.queue_limit must be >= 0", ctx)
-		}
-		if cap.Backend.ID == "" && cap.Backend.URL != "" {
-			cap.Backend.ID = cap.Backend.URL
-		}
-		switch cap.Backend.Transport {
-		case "http":
-			if cap.Backend.URL == "" {
-				return fmt.Errorf("%s: backend.url is required for transport=http", ctx)
-			}
-			u, err := url.Parse(cap.Backend.URL)
-			if err != nil {
-				return fmt.Errorf("%s: backend.url is invalid: %w", ctx, err)
-			}
-			if u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "worker" {
-				return fmt.Errorf("%s: backend.url scheme must be http, https, or worker (got %q)", ctx, u.Scheme)
-			}
-		default:
-			// ffmpeg-subprocess and session-runner were removed with the
-			// v0 media plane. Accepting them here let a config load,
-			// validate, and get advertised on /registry/offerings, then
-			// fail at request time — worse than refusing it up front.
-			return fmt.Errorf("%s: backend.transport %q is not supported (only 'http'); "+
-				"ffmpeg-subprocess and session-runner were removed with the v0 interaction-mode media plane", ctx, cap.Backend.Transport)
-		}
-
-		switch cap.Backend.Auth.Method {
-		case "", "none":
-			// OK; "none" or unset => no auth.
-		case "bearer":
-			if cap.Backend.Auth.SecretRef == "" {
-				return fmt.Errorf("%s: backend.auth.secret_ref is required when method=bearer", ctx)
-			}
-			if !strings.Contains(cap.Backend.Auth.SecretRef, "://") {
-				return fmt.Errorf("%s: backend.auth.secret_ref should be a URI-style reference (got %q)", ctx, cap.Backend.Auth.SecretRef)
-			}
-		default:
-			return fmt.Errorf("%s: backend.auth.method %q is not supported", ctx, cap.Backend.Auth.Method)
-		}
-
-		if !validHealthStatuses[cap.Health.InitialStatus] {
-			return fmt.Errorf("%s: health.initial_status %q is invalid", ctx, cap.Health.InitialStatus)
-		}
-		if cap.Health.InitialStatus == "" {
-			cap.Health.InitialStatus = "stale"
-		}
-
-		switch {
-		case cap.Health.Drain.Enabled:
-			if cap.Health.Probe.Type == "" {
-				cap.Health.Probe.Type = "manual-drain"
-			}
-		case cap.Health.Probe.Type == "":
-			if cap.Backend.Transport == "http" && cap.Backend.URL != "" {
-				cap.Health.Probe.Type = "http-status"
-				if cap.Health.Probe.Config == nil {
-					cap.Health.Probe.Config = map[string]any{}
-				}
-				if _, ok := cap.Health.Probe.Config["url"]; !ok {
-					cap.Health.Probe.Config["url"] = cap.Backend.URL
-				}
-			}
-		}
-
-		if !validProbeTypes[cap.Health.Probe.Type] {
-			return fmt.Errorf("%s: health.probe.type %q is invalid", ctx, cap.Health.Probe.Type)
-		}
-		if cap.Health.Probe.Type != "" && cap.Health.Probe.Type != "manual-drain" {
-			if cap.Health.Probe.IntervalMS == 0 {
-				cap.Health.Probe.IntervalMS = 5000
-			}
-			if cap.Health.Probe.TimeoutMS == 0 {
-				cap.Health.Probe.TimeoutMS = 1500
-			}
-			if cap.Health.Probe.UnhealthyAfter == 0 {
-				cap.Health.Probe.UnhealthyAfter = 2
-			}
-			if cap.Health.Probe.HealthyAfter == 0 {
-				cap.Health.Probe.HealthyAfter = 1
-			}
-			if cap.Health.Probe.IntervalMS <= 0 {
-				return fmt.Errorf("%s: health.probe.interval_ms must be > 0", ctx)
-			}
-			if cap.Health.Probe.TimeoutMS <= 0 {
-				return fmt.Errorf("%s: health.probe.timeout_ms must be > 0", ctx)
-			}
-			if cap.Health.Probe.UnhealthyAfter < 1 {
-				return fmt.Errorf("%s: health.probe.unhealthy_after must be >= 1", ctx)
-			}
-			if cap.Health.Probe.HealthyAfter < 1 {
-				return fmt.Errorf("%s: health.probe.healthy_after must be >= 1", ctx)
-			}
-		}
-		if cap.Health.Probe.Config == nil {
-			cap.Health.Probe.Config = map[string]any{}
-		}
-		switch cap.Health.Probe.Type {
-		case "http-status", "http-jsonpath", "http-openai-model-ready":
-			if _, ok := cap.Health.Probe.Config["url"]; !ok && cap.Backend.URL != "" {
-				cap.Health.Probe.Config["url"] = cap.Backend.URL
-			}
-			rawURL, _ := cap.Health.Probe.Config["url"].(string)
-			if cap.Health.Probe.Type != "" && cap.Health.Probe.Type != "manual-drain" && rawURL == "" {
-				return fmt.Errorf("%s: health.probe.config.url is required for %s", ctx, cap.Health.Probe.Type)
-			}
-			if cap.Health.Probe.Type == "http-jsonpath" {
-				if _, ok := cap.Health.Probe.Config["path"].(string); !ok {
-					return fmt.Errorf("%s: health.probe.config.path must be a string for http-jsonpath", ctx)
-				}
-			}
-			if cap.Health.Probe.Type == "http-openai-model-ready" {
-				if _, ok := cap.Health.Probe.Config["expect_model"].(string); !ok {
-					return fmt.Errorf("%s: health.probe.config.expect_model must be a string for http-openai-model-ready", ctx)
-				}
-			}
-		case "tcp-connect":
-			if _, ok := cap.Health.Probe.Config["address"]; !ok && cap.Backend.URL != "" {
-				if u, err := url.Parse(cap.Backend.URL); err == nil && u.Host != "" {
-					cap.Health.Probe.Config["address"] = u.Host
-				}
-			}
-			rawAddr, _ := cap.Health.Probe.Config["address"].(string)
-			if rawAddr == "" {
-				return fmt.Errorf("%s: health.probe.config.address is required for tcp-connect", ctx)
-			}
-		case "command-exit-0":
-			cmd, ok := cap.Health.Probe.Config["command"].([]any)
-			if !ok || len(cmd) == 0 {
-				return fmt.Errorf("%s: health.probe.config.command must be a non-empty list for command-exit-0", ctx)
-			}
-		}
-
-		if previousIndex, ok := seenPublished[key]; ok {
-			if err := validateRepeatedPublishedTuple(c.Capabilities[previousIndex], *cap, ctx); err != nil {
-				return err
-			}
-		} else {
-			seenPublished[key] = i
-		}
-		if seenBackendsPerTuple[key] == nil {
-			seenBackendsPerTuple[key] = map[string]struct{}{}
-		}
-		if cap.Backend.ID != "" {
-			if _, dup := seenBackendsPerTuple[key][cap.Backend.ID]; dup {
-				return fmt.Errorf("%s: duplicate backend.id %q under published tuple %s/%s", ctx, cap.Backend.ID, cap.ID, cap.OfferingID)
-			}
-			seenBackendsPerTuple[key][cap.Backend.ID] = struct{}{}
-		}
-	}
-
 	return nil
 }
 
-func validateRepeatedPublishedTuple(previous, current Capability, ctx string) error {
-	if previous.Protocol != current.Protocol {
-		return fmt.Errorf("%s: repeated published tuple must reuse the same protocol", ctx)
+func validateExtraGrammar(ctx, capabilityID string, extra map[string]any) error {
+	if raw, ok := extra["openai"]; ok {
+		if _, ok := raw.(map[string]any); !ok {
+			return fmt.Errorf("%s: extra.openai must be a map for %s", ctx, capabilityID)
+		}
 	}
-	if previous.WorkUnit.Name != current.WorkUnit.Name {
-		return fmt.Errorf("%s: repeated published tuple must reuse the same work_unit.name", ctx)
+	if raw, ok := extra["features"]; ok {
+		features, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.features must be a map for %s", ctx, capabilityID)
+		}
+		for key, value := range features {
+			if _, ok := value.(bool); !ok {
+				return fmt.Errorf("%s: extra.features.%s must be a boolean for %s", ctx, key, capabilityID)
+			}
+		}
 	}
-	if !jsonMapsEqual(previous.WorkUnit.Extractor, current.WorkUnit.Extractor) {
-		return fmt.Errorf("%s: repeated published tuple must reuse the same work_unit.extractor", ctx)
-	}
-	if previous.Price != current.Price {
-		return fmt.Errorf("%s: repeated published tuple must reuse the same price", ctx)
-	}
-	if !jsonMapsEqual(previous.Extra, current.Extra) {
-		return fmt.Errorf("%s: repeated published tuple must reuse the same extra metadata", ctx)
-	}
-	if !jsonMapsEqual(previous.Constraints, current.Constraints) {
-		return fmt.Errorf("%s: repeated published tuple must reuse the same constraints", ctx)
+	for key, byCapability := range map[string]map[string]string{
+		"audio":  audioTaskByCapabilityID,
+		"video":  videoTaskByCapabilityID,
+		"vtuber": vtuberTaskByCapabilityID,
+	} {
+		raw, present := extra[key]
+		if !present {
+			continue
+		}
+		nested, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: extra.%s must be a map for %s", ctx, key, capabilityID)
+		}
+		task := strings.TrimSpace(asString(nested["task"]))
+		want, known := byCapability[capabilityID]
+		if task != "" && known && task != want {
+			return fmt.Errorf("%s: extra.%s.task %q is invalid for %s; want %q", ctx, key, task, capabilityID, want)
+		}
 	}
 	return nil
 }
 
-func jsonMapsEqual(left, right map[string]any) bool {
-	if len(left) == 0 && len(right) == 0 {
-		return true
-	}
-	leftJSON, err := stableJSON(left)
-	if err != nil {
-		return false
-	}
-	rightJSON, err := stableJSON(right)
-	if err != nil {
-		return false
-	}
-	return leftJSON == rightJSON
-}
-
-func stableJSON(v any) (string, error) {
-	normalized := normalizeForJSON(v)
-	raw, err := json.Marshal(normalized)
-	if err != nil {
-		return "", err
-	}
-	return string(raw), nil
-}
-
-func normalizeForJSON(v any) any {
-	switch typed := v.(type) {
-	case map[string]any:
-		keys := make([]string, 0, len(typed))
-		for k := range typed {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		out := make(map[string]any, len(typed))
-		for _, k := range keys {
-			out[k] = normalizeForJSON(typed[k])
-		}
-		return out
-	case []any:
-		out := make([]any, 0, len(typed))
-		for _, item := range typed {
-			out = append(out, normalizeForJSON(item))
-		}
-		return out
-	default:
-		return typed
-	}
-}
-
-func validateCapabilityExtra(ctx string, cap *Capability) error {
-	provider := strings.TrimSpace(asString(cap.Extra["provider"]))
-	if strings.HasPrefix(cap.ID, "openai:") {
-		openaiRaw, ok := cap.Extra["openai"]
-		if !ok {
-			return fmt.Errorf("%s: extra.openai is required for %s", ctx, cap.ID)
-		}
-		openaiExtra, ok := openaiRaw.(map[string]any)
-		if !ok {
-			return fmt.Errorf("%s: extra.openai must be a map for %s", ctx, cap.ID)
-		}
-		if provider == "" {
-			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
-		}
-		if _, needsModel := openAICapabilityIDsRequiringModel[cap.ID]; needsModel {
-			model := strings.TrimSpace(asString(openaiExtra["model"]))
-			if model == "" {
-				return fmt.Errorf("%s: extra.openai.model is required for %s", ctx, cap.ID)
-			}
-		}
-		if featuresRaw, ok := cap.Extra["features"]; ok {
-			features, ok := featuresRaw.(map[string]any)
-			if !ok {
-				return fmt.Errorf("%s: extra.features must be a map for %s", ctx, cap.ID)
-			}
-			for key, value := range features {
-				if _, ok := value.(bool); !ok {
-					return fmt.Errorf("%s: extra.features.%s must be a boolean for %s", ctx, key, cap.ID)
-				}
-			}
+// validateCapabilityID rejects capability ids the manifest no longer
+// admits. The model used to be encoded in the id itself
+// ("openai:chat-completions:llama-3-70b"); it is now a runner-declared
+// identity fact that an offer selects on, so the suffixed form would
+// advertise a capability no gateway resolves.
+func validateCapabilityID(ctx, capabilityID string) error {
+	for _, prefix := range deprecatedOpenAICapabilityIDSuffixes {
+		if strings.HasPrefix(capabilityID, prefix) {
+			return fmt.Errorf("%s: capability %q uses the deprecated model-in-id syntax; use %q and select the model with match: {identity.openai.model: ...}",
+				ctx, capabilityID, strings.TrimSuffix(prefix, ":"))
 		}
 	}
-	if requiredTask, ok := audioTaskByCapabilityID[cap.ID]; ok {
-		if provider == "" {
-			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
-		}
-		audioRaw, ok := cap.Extra["audio"]
-		if !ok {
-			return fmt.Errorf("%s: extra.audio is required for %s", ctx, cap.ID)
-		}
-		audioExtra, ok := audioRaw.(map[string]any)
-		if !ok {
-			return fmt.Errorf("%s: extra.audio must be a map for %s", ctx, cap.ID)
-		}
-		task := strings.TrimSpace(asString(audioExtra["task"]))
-		if task == "" {
-			return fmt.Errorf("%s: extra.audio.task is required for %s", ctx, cap.ID)
-		}
-		if task != requiredTask {
-			return fmt.Errorf("%s: extra.audio.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
-		}
-	}
-	if requiredTask, ok := videoTaskByCapabilityID[cap.ID]; ok {
-		if provider == "" {
-			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
-		}
-		videoRaw, ok := cap.Extra["video"]
-		if !ok {
-			return fmt.Errorf("%s: extra.video is required for %s", ctx, cap.ID)
-		}
-		videoExtra, ok := videoRaw.(map[string]any)
-		if !ok {
-			return fmt.Errorf("%s: extra.video must be a map for %s", ctx, cap.ID)
-		}
-		task := strings.TrimSpace(asString(videoExtra["task"]))
-		if task == "" {
-			return fmt.Errorf("%s: extra.video.task is required for %s", ctx, cap.ID)
-		}
-		if task != requiredTask {
-			return fmt.Errorf("%s: extra.video.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
-		}
-	}
-	if requiredTask, ok := vtuberTaskByCapabilityID[cap.ID]; ok {
-		if provider == "" {
-			return fmt.Errorf("%s: extra.provider is required for %s", ctx, cap.ID)
-		}
-		vtuberRaw, ok := cap.Extra["vtuber"]
-		if !ok {
-			return fmt.Errorf("%s: extra.vtuber is required for %s", ctx, cap.ID)
-		}
-		vtuberExtra, ok := vtuberRaw.(map[string]any)
-		if !ok {
-			return fmt.Errorf("%s: extra.vtuber must be a map for %s", ctx, cap.ID)
-		}
-		task := strings.TrimSpace(asString(vtuberExtra["task"]))
-		if task == "" {
-			return fmt.Errorf("%s: extra.vtuber.task is required for %s", ctx, cap.ID)
-		}
-		if task != requiredTask {
-			return fmt.Errorf("%s: extra.vtuber.task %q is invalid for %s; want %q", ctx, task, cap.ID, requiredTask)
-		}
-	}
-
 	return nil
 }
 

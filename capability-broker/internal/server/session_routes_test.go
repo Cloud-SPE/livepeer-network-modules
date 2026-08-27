@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
@@ -77,37 +78,51 @@ func newSessionTestServer(t *testing.T) (*httptest.Server, *fakeSessionRunner) {
 // standard fake does not produce.
 func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *httptest.Server {
 	t.Helper()
-	runnerSrv := httptest.NewServer(runnerHandler)
-	t.Cleanup(runnerSrv.Close)
+	t.Setenv("BROKER_ADMIN_TOKEN", "secret-token")
 
 	dir := t.TempDir()
 	keyPath := filepath.Join(dir, "seal.key")
 	if err := os.WriteFile(keyPath, make([]byte, 32), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The offers state file is written as a hijacked attach connection
+	// unwinds, which httptest.Server.Close does not wait for. Keep it
+	// out of t.TempDir so that write cannot race RemoveAll.
+	stateDir, err := os.MkdirTemp("", "session-offers-state-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for i := 0; i < 50; i++ {
+			if os.RemoveAll(stateDir) == nil {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
 	cfg := &config.Config{
 		Identity:        config.Identity{OrchEthAddress: "0x" + strings.Repeat("ab", 20)},
 		ExternalBaseURL: "https://broker.example.com",
+		AdminAuth:       config.AuthConfig{Method: "bearer", SecretRef: "env://BROKER_ADMIN_TOKEN"},
 		PaymentDaemon:   config.PaymentDaemon{Mock: true},
 		SessionStore: config.SessionStore{
 			Path:           filepath.Join(dir, "sessions.db"),
 			SealingKeyFile: keyPath,
 		},
-		Capabilities: []config.Capability{{
-			ID:         "livepeer:meet/sfu-room",
+		CredentialStore: config.CredentialStoreConfig{
+			Path:           filepath.Join(dir, "creds.db"),
+			SealingKeyFile: keyPath,
+		},
+		OffersStatePath: filepath.Join(stateDir, "offers-state.json"),
+		// The operator sells the session; the descriptor schema, the
+		// work unit and the runner's own session paths all arrive over
+		// attach and are frozen into the offer.
+		Offers: []config.Offer{{
 			OfferingID: "default",
+			Capability: "livepeer:meet/sfu-room",
 			Protocol:   "paid-session/v1",
-			Session: &config.SessionCap{
-				DescriptorSchema: "sfu-room/v1",
-				Runner: config.SessionRunnerPaths{
-					CreatePath:    "/sessions",
-					StatusPath:    "/sessions/{id}",
-					TerminatePath: "/sessions/{id}",
-				},
-			},
-			WorkUnit: config.WorkUnit{Name: "participant_minutes"},
-			Price:    config.Price{AmountWei: "10", PerUnits: 1},
-			Backend:  config.Backend{Transport: "http", URL: runnerSrv.URL},
+			Price:      config.Price{AmountWei: "10", PerUnits: 1},
 		}},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -124,7 +139,61 @@ func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *h
 	})
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
+	attachSessionRunner(t, s, srv, runnerHandler)
 	return srv
+}
+
+// attachSessionRunner enrols a host and attaches the runner that serves
+// the sfu-room offer, serving tunnel requests with the caller's
+// ordinary http.Handler. It returns once the offer has frozen on this
+// runner's shape.
+func attachSessionRunner(t *testing.T, s *Server, ts *httptest.Server, runnerHandler http.Handler) {
+	t.Helper()
+	_, enr, _ := adminReq(t, s, http.MethodPost, "/admin/v1/enroll", `{"host_id":"h1"}`, nil)
+	token := enr["credential"].(map[string]any)["token"].(string)
+	c := dialAttach(t, ts)
+	results := runnerSideHandler(t, c, runnerHandler)
+	res := registerVia(t, c, results, sessionAttachDoc(token, "h1"))
+	if res["document"] != "accepted" {
+		t.Fatalf("attach: %v", res)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(s.offersEngine.EligiblePairs("default")) == 1 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the attached runner never became eligible for the sfu-room offer")
+}
+
+// sessionAttachDoc is attachDoc's paid-session counterpart: the runner
+// declares the descriptor schema it speaks, its metering mode, and the
+// three session paths the broker drives it through.
+func sessionAttachDoc(token, hostID string) []byte {
+	m := map[string]any{
+		"contract_version": "1.0",
+		"credential":       map[string]any{"kind": "bearer", "token": token},
+		"host_id":          hostID,
+		"agent_version":    "test/1",
+		"hardware":         []any{map[string]any{"gpu_uuid": "GPU-1", "gpu_model": "Test GPU", "vram_bytes": 8 << 30}},
+		"capabilities": []any{map[string]any{
+			"capability_id":      "livepeer:meet/sfu-room",
+			"protocol":           "paid-session/v1",
+			"local_id":           "sfu",
+			"descriptor_schemas": []any{"sfu-room/v1"},
+			"metering":           "runner-reported",
+			"work_unit":          map[string]any{"name": "participant_minutes"},
+			"paths": map[string]any{
+				"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}",
+			},
+			"readiness":       map[string]any{"type": "http-status", "path": "/ready"},
+			"identity":        map[string]any{},
+			"schema_versions": map[string]any{"paid-session/v1": "1.0.15", "sfu-room/v1": "1.0.0"},
+		}},
+	}
+	b, _ := json.Marshal(m)
+	return b
 }
 
 func sessionOpenReq(t *testing.T, srv *httptest.Server, requestID string) *http.Response {

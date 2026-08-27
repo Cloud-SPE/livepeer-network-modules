@@ -60,7 +60,10 @@ offers:
     protocol: paid-job/v1
     match: { identity.openai.model: llama }
     price: { amount_wei: "210", per_units: 1 }
-    extra: { region: us-west-2 }
+    # extra.openai/provider are required of an openai:* offer by
+    # config validation even though the runner's identity supplies
+    # the authoritative values at freeze.
+    extra: { region: us-west-2, provider: vllm, openai: { model: llama } }
     extra_from_runner: [x-quant]
 `
 	if err := os.WriteFile(configPath, []byte(cfg), 0o644); err != nil {

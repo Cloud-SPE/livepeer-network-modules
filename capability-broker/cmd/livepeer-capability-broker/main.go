@@ -64,7 +64,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("config load failed: %v", err)
 	}
-	log.Printf("config loaded from %s; %d capabilities declared", *configPath, len(cfg.Capabilities))
+	log.Printf("config loaded from %s; %d offers declared", *configPath, len(cfg.Offers))
 
 	if *listenAddr != "" {
 		cfg.Listen.Paid = *listenAddr

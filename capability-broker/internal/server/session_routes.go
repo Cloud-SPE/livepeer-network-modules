@@ -46,17 +46,9 @@ func (s *Server) registerSessionRoutes() {
 	s.mux.HandleFunc("GET /v1/session/{id}/ws", s.handleSessionWS)
 }
 
-// sessionCapability finds the paid-session capability tuple, from the
-// operator's configured backends or from an offer's attached runners.
+// sessionCapability finds the paid-session tuple an offer serves,
+// pinned to one eligible attached runner.
 func (s *Server) sessionCapability(capID, offID string) *config.Capability {
-	cfg := s.currentConfig()
-	for i := range cfg.Capabilities {
-		c := &cfg.Capabilities[i]
-		if c.ID == capID && c.OfferingID == offID &&
-			strings.HasPrefix(c.Protocol, "paid-session/") && c.Session != nil {
-			return c
-		}
-	}
 	return s.offerSessionCapability(capID, offID)
 }
 
@@ -106,7 +98,11 @@ func (s *Server) runnerClientFor(backendRef string) sessionengine.RunnerClient {
 	} else {
 		c = s.sessionCapability(capID, offID)
 	}
-	if c == nil || c.Session == nil {
+	if c == nil || c.Session == nil || c.Session.Runner.CreatePath == "" {
+		// No tuple, or a tuple resolved from the frozen shape while the
+		// runner is away: the shape prices the session but only a live
+		// runner declares the paths to reach it. Say unroutable rather
+		// than dial a URL with no path on it.
 		return &unroutableRunner{ref: backendRef}
 	}
 	token := ""
@@ -170,8 +166,13 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 		// unavailable, not absent: 404 would tell a gateway to stop
 		// believing a manifest that is still true.
 		if s.sessionOfferAdvertised(capID, offID) {
+			// Same code the paid-job path uses for the same condition:
+			// the offering is real and priced, there is just nothing
+			// free to serve it. `backend_unavailable` is a 502 by the
+			// header spec and would misreport this as a runner error.
+			w.Header().Set(livepeerheader.Backoff, "5")
 			livepeerheader.WriteError(w, http.StatusServiceUnavailable,
-				livepeerheader.ErrBackendUnavailable,
+				livepeerheader.ErrCapacityExhausted,
 				"no eligible runner is attached for "+capID+"/"+offID)
 			return
 		}

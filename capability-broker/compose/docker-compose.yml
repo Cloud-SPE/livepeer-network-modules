@@ -9,16 +9,25 @@
 #   - payment-daemon UDS at /var/run/livepeer/payment-daemon.sock
 #     (mounted from the host or a sibling container; or set
 #     `payment_daemon.mock: true` in host-config.yaml for smoke usage)
-#   - a PERSISTENT state volume at /var/lib/livepeer when any
-#     paid-session capability is served. It holds paid-session authority
-#     and paid-job idempotency records; losing it orphans every active
-#     session (runners keep serving, payee sessions stay open) and
-#     re-uses debit sequence numbers the payment daemon already recorded.
-#     Snapshot it together with, or after, payment-daemon state — never
-#     from before it. See docs/operator-runbook.md §2.
-#   - the descriptor sealing key at /etc/livepeer/broker-seal.key
-#     (32 raw bytes or 64 hex chars). Not rotatable in place: records
-#     sealed under the old key fail closed on read.
+#   - a PERSISTENT state volume at /var/lib/livepeer. It holds
+#     paid-session authority, paid-job idempotency records, the attach
+#     credential store, and the frozen offer shapes. Losing it orphans
+#     every active session (runners keep serving, payee sessions stay
+#     open), re-uses debit sequence numbers the payment daemon already
+#     recorded, makes every host re-enrol, and re-freezes each offer from
+#     whichever runner certifies first. Snapshot it together with, or
+#     after, payment-daemon state — never from before it. See
+#     docs/operator-runbook.md §2.
+#   - the sealing key at /etc/livepeer/broker-seal.key (32 raw bytes or
+#     64 hex chars), which seals descriptors and attach credentials at
+#     rest. Not rotatable in place: records sealed under the old key fail
+#     closed on read.
+#   - BROKER_ADMIN_TOKEN in the environment when host-config.yaml sets
+#     `admin_auth.method: bearer`. Required to enrol a runner with
+#     POST /admin/v1/enroll — and until a runner attaches and certifies,
+#     the broker advertises nothing.
+#   - UDP 8443 published when host-config.yaml sets `listen.worker_quic`.
+#     Runners that cannot use QUIC attach over WebSocket on 8080 instead.
 
 services:
   capability-broker:
@@ -29,8 +38,10 @@ services:
       - --metrics=:9090
     environment:
       LOG_LEVEL: ${BROKER_LOG_LEVEL}
+      BROKER_ADMIN_TOKEN: ${BROKER_ADMIN_TOKEN:-}
     ports:
       - "${BROKER_LISTEN_PORT}:8080"
+      - "${BROKER_QUIC_PORT:-8443}:8443/udp"
       - "${BROKER_METRICS_PORT}:9090"
     volumes:
       - ${BROKER_CONFIG}:/etc/livepeer/host-config.yaml:ro

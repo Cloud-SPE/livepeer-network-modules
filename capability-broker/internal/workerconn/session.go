@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -164,11 +165,28 @@ func (s *SessionForwarder) Forward(ctx context.Context, req backend.ForwardReque
 		if err != nil {
 			return nil, fmt.Errorf("decode worker response body: %w", err)
 		}
-		return &http.Response{
+		header := http.Header(resp.Headers)
+		if header == nil {
+			// A runner may answer with no headers at all; the response
+			// still has to be writable.
+			header = http.Header{}
+		}
+		out := &http.Response{
 			StatusCode: resp.StatusCode,
-			Header:     http.Header(resp.Headers),
+			Header:     header,
 			Body:       io.NopCloser(bytes.NewReader(respBody)),
-		}, nil
+		}
+		// The tunnel already holds the whole body, so the broker knows
+		// the exact length. Leaving ContentLength at zero means
+		// "unknown", which sends the gateway a chunked reply for a
+		// response that was never streamed — and made length-delimited
+		// delivery depend on every runner remembering to relay a
+		// Content-Length header it should not have to think about.
+		if len(out.Header.Values("Transfer-Encoding")) == 0 {
+			out.ContentLength = int64(len(respBody))
+			out.Header.Set("Content-Length", strconv.Itoa(len(respBody)))
+		}
+		return out, nil
 	}
 }
 

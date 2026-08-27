@@ -35,12 +35,20 @@ The one-line summary:
    `offering_id`, `capability`, `protocol`, `price`, `capacity`, `extra`,
    and a `match` selector over the runner identity you expect. Delete
    `backend`, `job`, `session`, `work_unit` and `health` — the runner
-   declares those. See
-   [`capability-broker/examples/host-config.offers.example.yaml`](../../capability-broker/examples/host-config.offers.example.yaml).
+   declares those. `offering_id` is now unique across the whole file, so
+   two old entries that shared `(id, offering_id)` collapse into one offer
+   that many runners serve. See
+   [`capability-broker/examples/host-config.example.yaml`](../../capability-broker/examples/host-config.example.yaml)
+   for the annotated reference, or
+   [`host-config.offers.example.yaml`](../../capability-broker/examples/host-config.offers.example.yaml)
+   for the shortest thing that runs.
 
-2. **Add a credential store.** `credential_store.{path, sealing_key_file}`
-   on a persistent volume. Back it up with the session store: losing it
-   means every host re-enrolls.
+2. **Add a credential store and an offers state path.**
+   `credential_store.{path, sealing_key_file}` and `offers_state_path`, both
+   on a persistent volume. Back them up with the session store: losing the
+   credential store means every host re-enrolls, and losing the offers state
+   means each offer re-freezes from whichever runner certifies first — a
+   silent manifest change.
 
 3. **Enrol each host.** `POST /admin/v1/enroll`, or the coordinator
    console's *Enroll host* page. The credential is shown **once**.

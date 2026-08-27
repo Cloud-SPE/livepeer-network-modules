@@ -1,13 +1,16 @@
 package server
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,10 +18,34 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// wsWriteMu serialises the two writers a runner's websocket has in
+// these tests: the test goroutine sending register frames and
+// runnerSide's goroutine answering tunnel requests. gorilla permits
+// only one concurrent writer per connection.
+var wsWriteMu sync.Mutex
+
+func wsWriteJSON(c *websocket.Conn, v any) error {
+	wsWriteMu.Lock()
+	defer wsWriteMu.Unlock()
+	return c.WriteJSON(v)
+}
+
 // runnerSide is the single reader on the runner's websocket, like the
 // agent: it answers tunnel request frames via the in-test handler and
 // relays register_result frames to the returned channel.
 func runnerSide(t *testing.T, c *websocket.Conn, handler func(method, path string, headers map[string][]string, body []byte) (int, string, []byte)) <-chan workerconn.TunnelMessage {
+	t.Helper()
+	return runnerSideFull(t, c, func(method, path string, headers map[string][]string, body []byte) (int, http.Header, []byte) {
+		status, contentType, respBody := handler(method, path, headers, body)
+		return status, http.Header{"Content-Type": {contentType}}, respBody
+	})
+}
+
+// runnerSideFull is runnerSide with the response headers left to the
+// caller. A real agent relays whatever the container answered, and some
+// broker behaviour keys on headers the container sets — Content-Length
+// decides whether the broker's own reply can carry trailers at all.
+func runnerSideFull(t *testing.T, c *websocket.Conn, handler func(method, path string, headers map[string][]string, body []byte) (int, http.Header, []byte)) <-chan workerconn.TunnelMessage {
 	t.Helper()
 	results := make(chan workerconn.TunnelMessage, 4)
 	go func() {
@@ -33,13 +60,13 @@ func runnerSide(t *testing.T, c *websocket.Conn, handler func(method, path strin
 				results <- msg
 			case workerconn.MessageTypeRequest:
 				body, _ := base64.StdEncoding.DecodeString(msg.BodyBase64)
-				status, contentType, respBody := handler(msg.Method, msg.URL, msg.Headers, body)
+				status, respHeaders, respBody := handler(msg.Method, msg.URL, msg.Headers, body)
 				reply := workerconn.TunnelMessage{
 					Type: workerconn.MessageTypeResponse, ID: msg.ID, StatusCode: status,
-					Headers:    map[string][]string{"Content-Type": {contentType}},
+					Headers:    respHeaders,
 					BodyBase64: base64.StdEncoding.EncodeToString(respBody),
 				}
-				if err := c.WriteJSON(reply); err != nil {
+				if err := wsWriteJSON(c, reply); err != nil {
 					return
 				}
 			}
@@ -48,11 +75,36 @@ func runnerSide(t *testing.T, c *websocket.Conn, handler func(method, path strin
 	return results
 }
 
+// runnerSideHandler serves tunnel requests with an ordinary
+// http.Handler. A fake runner then reads exactly as it did when it was
+// a real HTTP server behind a backend URL — the agent is a transport,
+// not a rewrite of what the container answers.
+func runnerSideHandler(t *testing.T, c *websocket.Conn, h http.Handler) <-chan workerconn.TunnelMessage {
+	t.Helper()
+	return runnerSideFull(t, c, func(method, rawURL string, headers map[string][]string, body []byte) (int, http.Header, []byte) {
+		path := rawURL
+		if i := strings.Index(path, "worker.local"); i >= 0 {
+			path = path[i+len("worker.local"):]
+		}
+		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		for k, vs := range headers {
+			for _, v := range vs {
+				req.Header.Add(k, v)
+			}
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		res := rec.Result()
+		out, _ := io.ReadAll(res.Body)
+		return res.StatusCode, res.Header.Clone(), out
+	})
+}
+
 // registerVia writes a register frame and waits for the result relayed
 // by runnerSide.
 func registerVia(t *testing.T, c *websocket.Conn, results <-chan workerconn.TunnelMessage, doc []byte) map[string]any {
 	t.Helper()
-	if err := c.WriteJSON(map[string]any{"type": "register", "id": "r", "body": json.RawMessage(doc)}); err != nil {
+	if err := wsWriteJSON(c, map[string]any{"type": "register", "id": "r", "body": json.RawMessage(doc)}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -112,6 +164,7 @@ offers:
     protocol: paid-job/v1
     match: { identity.openai.model: llama }
     price: { amount_wei: "210", per_units: 1 }
+    extra: { provider: vllm, openai: { model: llama } }
     certification:
       - { name: ready, type: readiness, config: { attempts: 2, interval_ms: 100 } }
       - name: smoke

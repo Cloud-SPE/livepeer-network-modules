@@ -19,10 +19,10 @@ import (
 // (protocols/broker-admin.md §4). `match` selects which attached runners
 // an offer wants by their declared identity.
 //
-// `offers[]` is additive to the legacy `capabilities[]` grammar until
-// plan 0043 items 7–8 (attach + freeze) land, at which point
-// `capabilities[]` is deleted. A config may carry both meanwhile; the
-// two are validated independently and must not share an offering id.
+// `offers[]` is the whole of the operator's declaration. There is no
+// second grammar: the legacy `capabilities[]` tuples, with their backend
+// URLs and hand-copied runner facts, were deleted once attach and freeze
+// landed (plan 0043 items 7–8, `lnm-sk7`).
 
 // OffersSourceFile means offers[] comes from this file; OffersSourceAdmin
 // means a pool-controller pushes them over PUT /admin/v1/offers
@@ -138,9 +138,7 @@ func keySet(keys ...string) map[string]bool {
 	return m
 }
 
-// validateOffers checks offers[] and offers_source. It is independent of
-// the capabilities[] validation and runs whether or not that array is
-// present.
+// validateOffers checks offers[] and offers_source.
 func (c *Config) validateOffers() error {
 	switch c.OffersSource {
 	case "":
@@ -174,11 +172,6 @@ func (c *Config) validateOffers() error {
 		seen[o.OfferingID] = i
 		if strings.TrimSpace(o.Capability) == "" {
 			return fmt.Errorf("%s: capability is required", ctx)
-		}
-		for _, cap := range c.Capabilities {
-			if cap.OfferingID == o.OfferingID && cap.ID == o.Capability {
-				return fmt.Errorf("%s: also declared under capabilities[] — an offering is either an offer or a legacy tuple, not both", ctx)
-			}
 		}
 		isJob, isSession := o.Protocol == "paid-job/v1", o.Protocol == "paid-session/v1"
 		if !isJob && !isSession {
@@ -224,6 +217,12 @@ func (c *Config) validateOffers() error {
 			if strings.HasPrefix(k, "x-") {
 				return fmt.Errorf("%s: extra.%s — x-* keys are runner extensions; promote them with extra_from_runner instead", ctx, k)
 			}
+		}
+		if err := validateCapabilityID(ctx, o.Capability); err != nil {
+			return err
+		}
+		if err := validateExtraGrammar(ctx, o.Capability, o.Extra); err != nil {
+			return err
 		}
 		promoted := map[string]bool{}
 		for _, k := range o.ExtraFromRunner {

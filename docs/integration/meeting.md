@@ -61,5 +61,6 @@ lease, top-up, end and settlement today.
 
 It does not meter, because it emits no usage events. Full session
 metering needs your real runtime posting them — which is what LOC's
-pilot item 6 is asking for. Point the offering's `backend.url` at your
-runtime and the rest of the path is unchanged.
+pilot item 6 is asking for. Attach your own runtime as a runner (it
+declares its own session paths and metering) and the rest of the path is
+unchanged; the offer, its price and its session policy do not move.

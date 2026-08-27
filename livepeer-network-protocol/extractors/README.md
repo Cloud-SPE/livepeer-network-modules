@@ -1,13 +1,18 @@
 # extractors/
 
-Declarative work-unit counting recipes. `paid-job/v1` capabilities pick an
-extractor in their host-config; the broker runs the recipe against the
-request/response to compute `actualUnits`. **No code per capability.**
+Declarative work-unit counting recipes. A `paid-job/v1` **runner** names the
+extractor it is metered by in its attach document
+([`../protocols/runner-attach.md`](../protocols/runner-attach.md) §3.2) — the
+runner knows what its own responses carry, and transcribing that into operator
+config is how `tokens` vs `participant_minutes` drift happened. The broker runs
+the named recipe against the request/response to compute `actualUnits`. **No
+code per capability**, and no extractor a runner ships itself: naming a type the
+broker does not implement rejects that capability at attach.
 
 **Extractors are a `paid-job/v1` concept only.** `paid-session/v1` usage comes
 from runner-reported cumulative claims (`paid-session` §7.2), so a session
-capability declaring `work_unit.extractor` is a configuration error — the
-broker never runs one. Which extractor a job offering uses is deliberately
+runner declaring `work_unit.extractor` is rejected at attach — the broker never
+runs one. Which extractor a job offering uses is deliberately
 *not* advertised: it is a seller-side implementation choice no counterparty
 gates on (see [`../protocols/offering-axes.md`](../protocols/offering-axes.md)).
 

@@ -3,7 +3,9 @@
 #
 # Pair this with:
 #   infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai-chat.example.yaml
-# and a reachable vLLM deployment behind the broker's `backend.url`.
+# and a vLLM deployment whose host runs an agent that attaches outbound to
+# the broker and declares that model. The broker never dials it, so the vLLM
+# box needs no inbound reachability.
 #
 # Replace `orch_eth_address` with the real orchestrator identity whose manifest
 # will be signed on secure-orch. Replace the broker `base_url` with the broker's

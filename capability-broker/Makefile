@@ -15,7 +15,7 @@ build: ## Build dev image locally
 		-f Dockerfile \
 		..
 
-run: ## Run the broker locally with the example host-config (foreground)
+run: ## Run with examples/host-config.example.yaml (needs BROKER_ADMIN_TOKEN, a seal key + a payment daemon — see the file header)
 	docker run --rm \
 		-p 8080:8080 \
 		-p 9090:9090 \

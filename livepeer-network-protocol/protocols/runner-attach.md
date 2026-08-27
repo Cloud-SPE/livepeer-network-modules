@@ -1,8 +1,8 @@
 ---
 spec_name: runner-attach
-version: 1.0.0-draft
+version: 1.0.1-draft
 status: draft
-last_updated: 2026-08-26
+last_updated: 2026-08-27
 contract_version: "1.0"
 ---
 
@@ -422,6 +422,18 @@ alone.
 The header is broker → runner only. It MUST NOT be accepted from a gateway
 and MUST be stripped if present on an inbound paid request.
 
+### 7.1 Response framing
+
+A runner's response travels back over the connection as a complete unit,
+so the broker knows the body's length before it writes anything to the
+gateway. The broker MUST length-delimit the reply it relays, whatever the
+runner sent. A runner therefore need not set `Content-Length`, and MUST
+NOT be relied upon to: an agent that omits it must not cause the gateway
+to receive a chunked reply for a response that was never streamed.
+
+A runner that declares `Transfer-Encoding` keeps it, and the broker leaves
+the framing alone.
+
 ## 8. Versioning
 
 `contract_version` is `<major>.<minor>` and versions **this document's
@@ -491,4 +503,5 @@ Derivative of the numbered sections; where it conflicts, they win.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.1-draft | 2026-08-27 | Added §7.1: the broker MUST length-delimit the reply it relays from a runner, because the response crosses the connection as a complete unit and its length is therefore known. A runner need not set `Content-Length` and MUST NOT be relied upon to — an omitted one previously turned a non-streamed reply into a chunked one for the gateway. No change to the document shape, so `contract_version` stays `1.0`. |
 | 1.0.0-draft | 2026-08-26 | Initial contract (plan 0043 §3.2, decisions 2–5). One versioned document for every protocol, sent on the tunnel `register` message; host level (`contract_version`, `credential`, `host_id`, `agent_version`, `hardware[]`) and capability level (`capability_id`, `protocol`, `local_id`, `transports`/`descriptor_schemas`, `work_unit{name, extractor}`, `paths`, `readiness`, `identity`, `schema_versions`, `metering`, `heartbeat`, `session_params_schema`, `requirements`, `devices`, `x-*`). Unknown non-`x-` field rejects the document; invalid value rejects the capability; frozen projection defined; `register_result` shape; `Livepeer-Runner-Local-Id` routing header. Supersedes `paid-session/v1` §7.1.1. Deviations from the plan-0043 sketch: `metering` is required (the manifest requires it and no operator field supplies it); `local_id` and `devices[]` added for routing and GPU binding; `schema_versions` frozen at major only. |

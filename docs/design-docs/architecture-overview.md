@@ -194,8 +194,11 @@ Current Pool implementation boundaries:
    over that runner's own connection → return the response.
 5. Report `actualUnits` to co-located `payment-daemon` (receiver) over unix socket — same
    socket regardless of capability.
-6. Execute broker-local health probes on cadence and publish normalized
-   per-tuple snapshots on `GET /registry/health`.
+6. Publish normalized per-tuple availability on `GET /registry/health`,
+   derived from state the broker already holds: certification says whether
+   a runner can serve an offer, the attach tunnel says whether it is
+   reachable right now. There is no probe cadence and therefore no window
+   in which a published verdict is stale.
 
 **The broker contains no workload-specific knowledge.** It once polled
 per-workload discovery endpoints to hydrate what an offering advertised,
@@ -204,9 +207,10 @@ that itself now, and describing a new workload is an adapter profile in
 the agent.
 
 **The broker contains zero routing semantics upstream of normalized health.**
-Capability-specific readiness logic is allowed inside probe recipes, but it
-must stop at the broker boundary and publish only the shared outward states
-`ready`, `draining`, `degraded`, `unreachable`, and `stale`.
+Capability-specific readiness logic lives in the runner's own declared
+readiness recipe and in the offer's certification steps, but it must stop at
+the broker boundary and publish only the shared outward states `ready`,
+`draining`, `degraded`, `unreachable`, and `stale`.
 
 Replaces: `openai-worker-node`, `vtuber-worker-node`, `video-worker-node`.
 
@@ -223,18 +227,18 @@ sequenceDiagram
     autonumber
     participant GW as gateway adapter
     participant Broker as Capability Broker
-    participant Cfg as host-config.yaml<br/>(loaded once)
+    participant Offer as offer + frozen shape<br/>(operator price · runner declaration)
     participant PD as payment-daemon<br/>(receiver, unix socket)
-    participant Backend as backend<br/>(vLLM / OpenAI / FFmpeg / …)
+    participant Runner as attached runner<br/>(vLLM / OpenAI / FFmpeg / …)
 
     GW->>Broker: POST /v1/job<br/>Livepeer-Protocol: paid-job/v1<br/>Livepeer-Capability: <id><br/>Livepeer-Offering: <id><br/>Livepeer-Request-Id: <uuid><br/>Livepeer-Payment: ticket
-    Broker->>Cfg: lookup (capability_id, offering_id)
-    Cfg-->>Broker: { protocol, work_unit, extractor,<br/>price, backend descriptor }
+    Broker->>Offer: lookup (capability_id, offering_id)
+    Offer-->>Broker: { protocol, price } from the offer<br/>{ work_unit, extractor, path } from the frozen<br/>runner declaration
     Broker->>PD: ProcessPayment(payment_bytes, work_id)
     PD-->>Broker: ok (sender, credited_ev, balance)
 
-    Broker->>Backend: forward (transport from descriptor)
-    Backend-->>Broker: response payload
+    Broker->>Runner: forward over the runner's attach tunnel<br/>(transport from the frozen shape)
+    Runner-->>Broker: response payload
 
     Broker->>Broker: extractor → actualUnits<br/>(openai-usage / response-jsonpath /<br/>bytes-counted / seconds-elapsed / …)
     Broker->>PD: ReportUsage(work_id, actualUnits)
@@ -275,46 +279,73 @@ consumes it. No broker, clearinghouse, or registry release.
 See [`./interaction-modes.md`](./interaction-modes.md) and
 [`./dual-meter-trust.md`](./dual-meter-trust.md).
 
-## Layer 3 — Declarative capability config
+## Layer 3 — Declarative offer config
 
-`host-config.yaml`. Three concerns: identity, capabilities, backends.
+`host-config.yaml`. Two concerns: identity, and offers.
+
+An **offer** is a commercial fact and nothing else: what is sold, under
+which capability, at what price, with what capacity, in what place, gated
+by what certification. That is the operator's whole surface. The runner's
+own facts — transports, descriptor schema, work unit and extractor,
+endpoint paths, readiness recipe, model identity, GPU inventory — are not
+here, because they are not the operator's to know. They arrive in the
+runner's attach document
+([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md)),
+and the first runner to certify freezes them into the offer so the
+published tuple cannot silently change under a gateway that already
+routed to it.
 
 ```yaml
 identity:
   orch_eth_address: 0xabc...
 
-capabilities:
-  - id: "openai:chat-completions"
+credential_store:
+  path: /var/lib/livepeer/broker/credentials.db
+  sealing_key_file: /etc/livepeer/broker-seal.key
+offers_state_path: /var/lib/livepeer/broker/offers.db
+
+offers:
+  - offering_id: "llama-3-70b-shared"
+    capability: "openai:chat-completions"
     protocol: "paid-job/v1"
-    work_unit:
-      name: "tokens"
-      extractor: { type: "openai-usage" }
-    health:
-      probe:
-        type: "http-openai-model-ready"
-        path: "/healthz"
-        expect_model: "llama-3-70b"
-        timeout_ms: 1500
-        interval_ms: 5000
-        unhealthy_after: 2
+    # Selects attached runners by the identity they declared — never a URL
+    # the operator typed. Adding capacity is attaching another host.
+    match:
+      identity.openai.model: "llama-3-70b"
     price:
-      amount_wei: 1500000
+      amount_wei: "1500000"
       per_units: 1
-    backend:
-      transport: "http"
-      url: "http://10.0.0.5:8000/v1/chat/completions"
-      auth: "none"
+    capacity:
+      max_in_flight: 4
+      queue_limit: 8
     extra:
       openai:
         model: "llama-3-70b"
       provider: "vllm"
       region: "us-west-2"
       gpu_class: "h100"
+    # Proves a matched runner can actually serve and meter the offer
+    # before it is advertised. `readiness` runs the runner's own declared
+    # recipe, so it stays correct when the runner changes what "ready"
+    # means for it.
+    certification:
+      - { name: ready, type: readiness }
+      - { name: smoke, type: request, config: { transport: unary } }
+      - { name: usage, type: usage, config: { min_units: 1 } }
 ```
 
-The `extractor` library is a small fixed set of recipes (`openai-usage`,
-`response-jsonpath`, `request-formula`, `bytes-counted`, `seconds-elapsed`,
-`ffmpeg-progress`). Adding an extractor is a broker change but extremely rare.
+There is no `capabilities[]` list, no `backend:` block, and no health
+probe to configure: those were the places where an operator hand-copied a
+fact the runner already knew, and a mistyped model name or extractor
+produced an offering the manifest advertised and the backend could not
+serve.
+
+The `extractor` library is still a small fixed set of recipes
+(`openai-usage`, `response-jsonpath`, `request-formula`, `bytes-counted`,
+`seconds-elapsed`, `ffmpeg-progress`) — but the runner names which one it
+is metered by, and a runner declaring an extractor the broker does not
+implement is rejected at attach. Adding an extractor is a broker change
+but extremely rare.
 
 ### OpenAI-compatible `extra` shape
 
@@ -342,61 +373,46 @@ extra:
 
 Rules:
 
-- `extra.openai.model` is required for current `openai:*` offerings.
-- `extra.provider` is required for current `openai:*` offerings.
+- `extra.openai.model` is required on the offer for current `openai:*`
+  offerings.
+- `extra.provider` is required on the offer for current `openai:*` offerings.
 - `served_model_name`, `backend_model`, and `features.*` are optional stable
   enrichment fields.
 - `features.*`, when present, are booleans.
 - Operator-owned deployment labels such as `region`, `gpu_class`, and
   `latency_tier` may also live in `extra`.
-- For `provider: "vllm"` and `provider: "ollama"` on HTTP backends, the broker
-  may probe `GET /v1/models` at startup and fill missing
-  `served_model_name`, `backend_model`, and stable `features.*` fields when the
-  configured `extra.openai.model` is found upstream.
-- For runner families with stable options or presets surfaces, the broker may
-  fill missing `extra.audio.*`, `extra.video.*`, or `extra.vtuber.*` fields
-  from those family-specific endpoints using the same fill-only merge policy.
-- The broker refreshes this metadata on a bounded cadence while running.
-  Discovery freshness, provider, last result, and last error are exposed via
-  `GET /registry/health`; they do not change the tuple's market identity.
-- Prometheus also exposes
-  `livepeer_metadata_refresh_total{family,provider,result}` so discovery drift
-  and probe failures are visible without polling per-offering health.
-- It also exposes refresh latency and freshness signals via
-  `livepeer_metadata_refresh_duration_seconds{family,provider,result}`,
-  `livepeer_metadata_refresh_last_attempt_timestamp_seconds{family,capability,offering,provider}`,
-  and
-  `livepeer_metadata_refresh_last_success_timestamp_seconds{family,capability,offering,provider}`,
-  plus `livepeer_metadata_refresh_last_success_age_seconds{family,capability,offering,provider}`.
-- For alerting on the current discovery state, it also exposes
-  `livepeer_metadata_refresh_current_result{family,capability,offering,provider,result}`,
-  where the active result label is `1` and previous results are reset to `0`
-  when the offering transitions.
-- To surface sustained discovery breakage, it also exposes
-  `livepeer_metadata_refresh_consecutive_failures{family,capability,offering,provider}`,
-  and the same `consecutive_failures` value appears in
-  `GET /registry/health` metadata for each applicable offering.
-- On unhealthy refreshes, the broker preserves `last_success_at` instead of
-  overwriting it, so age-based alerting tracks time since the last healthy
-  metadata refresh rather than time since the last failed probe.
-- `GET /registry/health` also publishes metadata-level
-  `last_success_age_seconds` so operators inspecting the JSON health surface
-  can see the same freshness signal without Prometheus.
-- `last_result` is family-aware rather than a single generic status. For
-  example, OpenAI-compatible offerings may report `model_not_found` or
-  `models_probe_failed`, while runner families may report
-  `audio_options_probe_failed`, `video_presets_empty`, or
-  `vtuber_options_probe_failed`.
+- The rest of this shape comes from the runner. Its declared `identity` is
+  merged into the advertised `extra` at freeze time, and `x-*` extension
+  keys the operator names in `extra_from_runner` are promoted alongside it;
+  a collision between an operator key and a runner key is a load error, not
+  a silent overwrite.
+
+The broker used to fill these fields itself, by polling per-workload
+discovery surfaces — `GET /v1/models` for vLLM and Ollama,
+options/presets endpoints for the audio, video and vtuber families — on a
+bounded cadence, and reporting the freshness of that polling through
+`GET /registry/health` and a family of `livepeer_metadata_refresh_*`
+metrics. That is gone. It meant the broker carried hardcoded knowledge of
+every workload's discovery contract, so a new workload needed a broker
+release; and it was an inference about the runner where the runner had the
+fact outright. A runner now declares its own identity and extensions in
+its attach document, and describing a new workload is an adapter profile
+in the agent.
 
 Boundary:
 
-- In a standalone broker rollout, `host-config.yaml` owns operator intent:
-  capability family, offering ID, protocol + declared axes, price, metering, backend
-  URL, and routing constraints. In a pool-managed rollout, the analogous
-  operator intent lives in `pool-controller` persisted control-plane state.
-- Runtime discovery may validate and enrich an offering, but it does not invent
-  or rewrite its market identity. The broker must not rewrite
-  `extra.openai.model`, `offering_id`, `price`, or `constraints`.
+- In a standalone broker rollout, `host-config.yaml` owns operator intent
+  and only operator intent: capability family, offering ID, protocol,
+  price, capacity, commercial session policy, routing constraints, and the
+  certification a runner must pass. In a pool-managed rollout, the analogous
+  operator intent lives in `pool-controller` persisted control-plane state
+  and is pushed over the broker admin API.
+- The runner owns runner intent: how it is reached, what it can do, how it
+  is metered, and what "ready" means for it. Neither side may author the
+  other's half.
+- Freezing is what keeps those two halves honest. The first certified
+  runner's declared shape becomes the offer's shape; a later runner that
+  disagrees is ineligible rather than a manifest change.
 - Volatile runtime facts such as full model inventories, queue depth,
   throughput, utilization, or context window belong in live health, metrics,
   or diagnostics, not in the signed manifest.
@@ -406,7 +422,8 @@ Boundary:
 The same pattern applies across every runner family in the rewrite:
 
 - `host-config.yaml` defines the offering's market identity.
-- Family-specific discovery validates and enriches only stable metadata.
+- The runner's attach declaration supplies the stable metadata that
+  describes the runner itself; freezing pins it.
 - Volatile runtime state belongs in `GET /registry/health` or metrics, not in
   the signed manifest.
 
@@ -552,39 +569,45 @@ Live only:
 Any new backend family should define four things before implementation:
 
 1. the base `capability_id`
-2. the minimal stable `extra.<family>` schema
-3. the discovery source that fills stable enrichment fields
-4. the live-health source for volatile runtime state
+2. the minimal stable `extra.<family>` schema the operator authors
+3. the adapter profile that lets a runner declare itself for this family —
+   endpoint paths, transports, work unit, extractor, readiness recipe
+4. the certification steps that prove a runner of this family actually
+   serves and meters the work
 
 This keeps new workloads consistent with the broker's publication boundary:
 stable capability facts in `/registry/offerings`, live availability facts in
 `/registry/health`, and no direct runner-owned manifest identity.
 
-Live health follows the same pattern: the broker owns a small fixed
-library of **probe recipes** and `host-config.yaml` selects one per tuple.
-Examples might include:
+Live health follows the same pattern, but the recipe is the **runner's**,
+not the operator's. The broker owns a small fixed library of readiness
+recipes and the runner names the one that describes it:
 
 - `http-status` — shallow HTTP reachability
 - `http-jsonpath` — response field must match an expected value
 - `http-openai-model-ready` — backend is up and a specific model is loaded
 - `tcp-connect` — port accepts connections
-- `command-exit-0` — local process or sidecar probe
-- `runner-options-match` — backend reports the expected offering or mode
-- `manual-drain` — operator intent overrides automatic readiness
+
+The broker no longer polls any of these on a cadence. A readiness recipe
+runs as a **certification** step, to decide whether a runner may serve an
+offer at all; after that, the offer's live availability is read off two
+facts the broker already holds — certification state, and whether the
+runner's attach tunnel is up. An operator can still force a tuple down by
+disabling the offer.
 
 The important boundary is:
 
-- **capabilities choose a probe recipe**
-- **the broker executes the probe**
+- **the runner declares which readiness recipe describes it**
+- **the broker executes it, as a certification step**
 - **the broker normalizes the result to generic outward states**
 
 That lets the core modules support specialized health behavior without
 teaching the coordinator, resolver, or gateways what "model loaded",
 "pipeline warmed", or "TURN path ready" mean for any specific workload.
 
-Just like extractors, new probe recipe types are broker changes and
-should be rare. Day-to-day operator work is selecting and tuning existing
-recipes in YAML, not writing new code.
+Just like extractors, new readiness recipe types are broker changes and
+should be rare. Day-to-day operator work is authoring offers and their
+certification steps, not writing new code.
 
 For a standalone broker rollout, this YAML is the operator's day-to-day
 surface. In a pool-managed rollout, the analogous operator surface is the
@@ -665,8 +688,9 @@ adapter from this, not from any per-capability lookup table.
 **Operator-driven cycle:**
 
 1. Operator updates the broker-facing operator surface:
-   - standalone rollout: edit `host-config.yaml` on broker host(s)
-   - pool-managed rollout: mutate `pool-controller` state and apply broker runtime
+   - standalone rollout: edit `offers[]` in `host-config.yaml` on broker host(s)
+   - pool-managed rollout: mutate `pool-controller` state; the controller
+     pushes the offer set over `PUT /admin/v1/offers`
 2. Broker re-advertises locally; orch-coordinator scrapes; coordinator builds
    candidate manifest and exposes it for download.
 3. Operator pulls candidate to secure-orch (download via console, scp, USB — operator's
@@ -691,7 +715,7 @@ sequenceDiagram
     participant Chain as ServiceRegistry
 
     Note over Op,Broker: 1. Operator updates broker-facing state
-    Op->>Broker: edit host-config.yaml or apply via pool-controller
+    Op->>Broker: edit offers[] in host-config.yaml,<br/>or pool-controller pushes them
     Broker->>Broker: reload runtime /registry/offerings
 
     Note over Coord,Broker: 2. Coordinator scrapes, builds candidate

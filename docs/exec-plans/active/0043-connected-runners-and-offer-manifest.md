@@ -18,13 +18,19 @@ audience: broker / coordinator / console / registry / pool maintainers, trust-mo
 # Plan 0043 — Connected runners and the offer-only manifest pipeline
 
 **Status:** shipped 2026-08-27 — every item in §5 landed; beads
-`lnm-pkv.1`–`.18`. Two follow-ups were split out rather than folded in:
-`lnm-sk7` (delete the broker's legacy `capabilities[]` grammar, which
-needs the conformance fakes to attach first) and `lnm-za5` (the
-coordinator's now-inert broker metadata-discovery plumbing). One item
-was deliberately not done: overlay `pin[]` keeps its current shape,
-because the declared job/session axes it would gain are dropped by the
-envelope's node projection and no consumer reads them (§3.8).
+`lnm-pkv.1`–`.18`. `lnm-sk7` followed on 2026-08-27: the conformance
+suite now attaches its own runner and the broker's legacy
+`capabilities[]` grammar is deleted, along with the HTTP health prober
+it fed — `/registry/health` keeps its contract but is now computed from
+the offer set and the attach tunnels (§3.4). One follow-up remains
+split out: `lnm-za5`, the coordinator's now-inert broker
+metadata-discovery plumbing. The legacy worker tunnel that served
+`worker://` backend URLs is inert but not yet removed, because
+`pool-controller` still speaks its admin surface — tracked as
+`lnm-wyu`. One item was deliberately not done: overlay `pin[]` keeps
+its current shape, because the declared job/session axes it would gain
+are dropped by the envelope's node projection and no consumer reads
+them (§3.8).
 
 Operators upgrading: see
 [`../../design-docs/migrating-to-connected-runners.md`](../../design-docs/migrating-to-connected-runners.md).

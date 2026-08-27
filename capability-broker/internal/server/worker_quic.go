@@ -54,7 +54,7 @@ func (s *Server) handleWorkerQUICConn(ctx context.Context, conn *quic.Conn) {
 		return
 	}
 	authz := workerconn.RegisterAuthorization(msg)
-	if s.authenticateAttachCredential(authz) == nil && !s.workerCredentialAllowed(s.currentConfig(), backendIDs, authz) {
+	if s.authenticateAttachCredential(authz) == nil && !s.adminTokenMatches(authz) {
 		_ = conn.CloseWithError(1, "unauthorized")
 		return
 	}

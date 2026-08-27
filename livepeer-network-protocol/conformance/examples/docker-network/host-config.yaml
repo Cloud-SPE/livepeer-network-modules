@@ -1,148 +1,131 @@
 # Reference-broker config for the networked conformance run (see
-# ../../README.md). The two hosts here are compose service names:
-# "broker" is the broker under test, "conformance" is the suite
-# container hosting the fake job backend (:8091) and fake session
-# runner (:8092).
+# ../../README.md), in the offer-only grammar.
 #
-# Note the probe overrides on the always-error, slow, and longstream
-# offerings: their backend URL is a route that 500s or answers slowly,
-# so a probe aimed at it would mark the offering unreachable and every
-# scenario using it would 503. Probe the base URL instead.
+# The operator side is all that is here: which offerings are sold, under
+# which capability, at what price, with which session policy. Everything
+# the runner knows about itself — transports, descriptor schema, work
+# unit, extractor, endpoint paths, readiness — is absent by design. It
+# arrives when a runner attaches (protocols/runner-attach.md) and the
+# first certified runner freezes it into the offer.
+#
+# `match: { identity.variant: <offering_id> }` is how each offer picks
+# exactly one runner entry, which is what keeps the per-offering
+# behaviours the scenarios assert (an always-erroring route, a slow one,
+# a long stream) separable: the RUNNER declares which route it serves,
+# the way a real runner points at its own endpoint.
+#
+# IMPORTANT: this file alone does not serve traffic. A runner must attach
+# and certify before any offer is advertised. In URL mode the suite does
+# NOT attach a serving runner — it only runs scenarios against a broker
+# that already has its own. Auto mode (`livepeer-conformance` with no
+# --broker-url) generates an equivalent config AND attaches the suite's
+# own runner, so it is the self-contained path; use this file when you
+# are wiring your own runner into the compose network.
 identity:
   orch_eth_address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
 external_base_url: "http://broker:8080"
 listen:
   paid: "0.0.0.0:8080"
   metrics: "0.0.0.0:9090"
+  worker_quic: "0.0.0.0:8443"
 payment_daemon:
   mock: true
   mock_state_path: /var/lib/livepeer/payment-mock.json
 session_store:
   path: /var/lib/livepeer/state.db
   sealing_key_file: /cfg/seal.key
-capabilities:
-  - id: conformance:job
-    offering_id: all
+# The runner enrols over the admin API, then attaches with what it is
+# handed back.
+admin_auth:
+  method: bearer
+  secret_ref: env://BROKER_ADMIN_TOKEN
+credential_store:
+  path: /var/lib/livepeer/credentials.db
+  sealing_key_file: /cfg/seal.key
+offers_state_path: /var/lib/livepeer/offers.db
+offers:
+  - offering_id: all
+    capability: conformance:job
     protocol: paid-job/v1
-    job: { transports: [unary, stream, multipart] }
-    health: { initial_status: ready }
-    work_unit: { name: tokens, extractor: { type: openai-usage } }
+    match: { identity.variant: all }
     price: { amount_wei: "1", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8091" }
-  - id: conformance:job
-    offering_id: unary-only
+  - offering_id: unary-only
+    capability: conformance:job
     protocol: paid-job/v1
-    job: { transports: [unary] }
-    health: { initial_status: ready }
-    work_unit: { name: tokens, extractor: { type: openai-usage } }
+    match: { identity.variant: unary-only }
     price: { amount_wei: "1", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8091" }
-  - id: conformance:job
-    offering_id: always-error
+  - offering_id: always-error
+    capability: conformance:job
     protocol: paid-job/v1
-    job: { transports: [unary] }
-    health: { initial_status: ready, probe: { type: http-status, config: { url: "http://conformance:8091" } } }
-    work_unit: { name: tokens, extractor: { type: openai-usage } }
+    match: { identity.variant: always-error }
     price: { amount_wei: "1", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8091/error" }
-  - id: conformance:job
-    offering_id: slow
+  - offering_id: slow
+    capability: conformance:job
     protocol: paid-job/v1
-    job: { transports: [unary] }
-    health: { initial_status: ready, probe: { type: http-status, config: { url: "http://conformance:8091" } } }
-    work_unit: { name: tokens, extractor: { type: openai-usage } }
+    match: { identity.variant: slow }
     price: { amount_wei: "1", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8091/slow" }
-  - id: conformance:job
-    offering_id: longstream
+  - offering_id: longstream
+    capability: conformance:job
     protocol: paid-job/v1
-    job: { transports: [stream] }
-    health: { initial_status: ready, probe: { type: http-status, config: { url: "http://conformance:8091" } } }
-    work_unit: { name: tokens, extractor: { type: openai-usage } }
+    match: { identity.variant: longstream }
     price: { amount_wei: "1", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8091/longstream" }
-  - id: conformance:session
-    offering_id: bounded-refill
+  # Priced per many units, so the paid path is exercised at a denominator
+  # where flooring and ceiling disagree.
+  - offering_id: fractional
+    capability: conformance:job
+    protocol: paid-job/v1
+    match: { identity.variant: fractional }
+    price: { amount_wei: "100", per_units: 1000 }
+  - offering_id: bounded-refill
+    capability: conformance:session
     protocol: paid-session/v1
-    session:
-      descriptor_schema: sfu-room/v1
+    match: { identity.variant: bounded-refill }
+    price: { amount_wei: "10", per_units: 1 }
+    session_policy:
       refill: bounded
       lease_policy: fixed
       lease_max_seconds: 600
-      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
-    health: { initial_status: ready }
-    work_unit: { name: participant_minutes }
-    price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8092" }
-  - id: conformance:session
-    offering_id: short-lease
+  # Heartbeat far away so lease expiry is the trigger under test.
+  - offering_id: short-lease
+    capability: conformance:session
     protocol: paid-session/v1
-    session:
-      descriptor_schema: sfu-room/v1
+    match: { identity.variant: short-lease }
+    price: { amount_wei: "10", per_units: 1 }
+    session_policy:
       lease_policy: fixed
       lease_max_seconds: 1
       heartbeat: { interval_seconds: 2, missed_threshold: 30 }
-      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
-    health: { initial_status: ready }
-    work_unit: { name: participant_minutes }
-    price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8092" }
-  - id: conformance:session
-    offering_id: rtmp-hls
+  - offering_id: rtmp-hls
+    capability: conformance:session
     protocol: paid-session/v1
-    session:
-      descriptor_schema: rtmp-hls/v1
-      lease_policy: fixed
-      lease_max_seconds: 600
-      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
-    health: { initial_status: ready }
-    work_unit: { name: participant_minutes }
+    match: { identity.variant: rtmp-hls }
     price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8092" }
-  - id: conformance:session
-    offering_id: scope-passthrough
+    session_policy: { lease_policy: fixed, lease_max_seconds: 600 }
+  - offering_id: scope-passthrough
+    capability: conformance:session
     protocol: paid-session/v1
-    session:
-      descriptor_schema: scope-passthrough/v1
-      lease_policy: fixed
-      lease_max_seconds: 600
-      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
-    health: { initial_status: ready }
-    work_unit: { name: participant_minutes }
+    match: { identity.variant: scope-passthrough }
     price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8092" }
-  - id: conformance:session
-    offering_id: trickle-egress
+    session_policy: { lease_policy: fixed, lease_max_seconds: 600 }
+  - offering_id: trickle-egress
+    capability: conformance:session
     protocol: paid-session/v1
-    session:
-      descriptor_schema: trickle-egress/v1
-      lease_policy: fixed
-      lease_max_seconds: 600
-      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
-    health: { initial_status: ready }
-    work_unit: { name: participant_minutes }
+    match: { identity.variant: trickle-egress }
     price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8092" }
-  - id: conformance:session
-    offering_id: fast-heartbeat
+    session_policy: { lease_policy: fixed, lease_max_seconds: 600 }
+  # A fixed lease keeps funding from preempting the heartbeat, so this
+  # offering isolates liveness enforcement.
+  - offering_id: fast-heartbeat
+    capability: conformance:session
     protocol: paid-session/v1
-    session:
-      descriptor_schema: sfu-room/v1
+    match: { identity.variant: fast-heartbeat }
+    price: { amount_wei: "10", per_units: 1 }
+    session_policy:
       heartbeat: { interval_seconds: 1, missed_threshold: 2 }
       lease_policy: fixed
       lease_max_seconds: 600
-      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
-    health: { initial_status: ready }
-    work_unit: { name: participant_minutes }
-    price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8092" }
-  - id: conformance:session
-    offering_id: default
+  - offering_id: default
+    capability: conformance:session
     protocol: paid-session/v1
-    session:
-      descriptor_schema: sfu-room/v1
-      runner: { create_path: /sessions, status_path: "/sessions/{id}", terminate_path: "/sessions/{id}" }
-    health: { initial_status: ready }
-    work_unit: { name: participant_minutes }
+    match: { identity.variant: default }
     price: { amount_wei: "10", per_units: 1 }
-    backend: { transport: http, url: "http://conformance:8092" }

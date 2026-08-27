@@ -35,13 +35,13 @@ is accepted.
 | Lifecycle | `active` → (`rotate`) `rotating` with a grace window where old and new both attach → `active`; `expires_at` (default 90 d, max 365 d); `revoke` = delete the hash **and** close every connection for the host. |
 | Pool sync | `PUT /admin/v1/credentials` carries only hashes; a synced entry that disappears from a push is a revoke. Locally enrolled credentials are never touched by sync. |
 
-Attach auth order on both transports (`/internal/v1/worker/session`
-WebSocket and the QUIC listener): the store first; then, until plan 0043
-item 8 deletes `capabilities[]`, the legacy per-backend
-`worker_session_credential` config string. A connection that
-authenticated through the store is tracked by `host_id` so revoke can
-kill it; a legacy connection is not (it is killed by backend id via the
-worker-sessions route, which item 11 removes).
+Attach auth on both transports (`/internal/v1/worker/session` WebSocket
+and the QUIC listener) consults the store, and the only other accepted
+bearer is the admin token. The per-backend `worker_session_credential`
+config string is gone: it died with the `capabilities[]` grammar that was
+the only place an operator could write one. Every connection that
+authenticated through the store is tracked by `host_id`, so revoke can
+close it.
 
 ## The keypair path (documented, not built)
 

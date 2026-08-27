@@ -28,6 +28,8 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 | Day-2 operations (state store, session + job knobs) | [`docs/operator-runbook.md`](./docs/operator-runbook.md) |
 | Build / run / test gestures | [`Makefile`](./Makefile) |
 | Example operator config | [`examples/host-config.example.yaml`](./examples/host-config.example.yaml) |
+| Compact quick-start config | [`examples/host-config.offers.example.yaml`](./examples/host-config.offers.example.yaml) |
+| What a runner declares | [`../livepeer-network-protocol/protocols/runner-attach.md`](../livepeer-network-protocol/protocols/runner-attach.md) |
 | The wire spec this implements | [`../livepeer-network-protocol/`](../livepeer-network-protocol/) |
 
 ## Doing work in this component
@@ -43,11 +45,23 @@ Inherited from the repo root (agent-first harness pattern). Plus:
   `paid-session/v1` (`/v1/session/*`). The v0 seven-mode interaction
   taxonomy and its `POST /v1/cap` dispatch surface were removed in 2026-08;
   do not reintroduce a mode axis. New capability shapes are expressed as
-  axes on the existing protocols (`job.transports`, the `session` block),
-  not as new drivers.
-- **Extractors are paid-job only.** `work_unit.extractor` is required for
-  `paid-job/v1` and rejected for `paid-session/v1`, whose usage arrives as
-  runner-reported cumulative claims.
+  axes on the existing protocols (transports for jobs, descriptor schemas
+  for sessions), not as new drivers.
+- **The operator authors offers; the runner declares itself.** `offers[]`
+  is the whole config grammar: what is sold, at what price, with what
+  capacity, gated by what certification. Transports, descriptor schemas,
+  work unit, extractor, paths, readiness and model identity come from the
+  runner's attach document and are frozen by the first certified runner.
+  Do not add an operator config field for something a runner already
+  knows — that is the mistake the deleted `capabilities[]` grammar made.
+- **Extractors are paid-job only.** A `paid-job/v1` runner must declare
+  `work_unit.extractor`; a `paid-session/v1` runner declaring one is
+  rejected at attach, because session usage arrives as runner-reported
+  cumulative claims and there is no exchange to run an extractor on.
+- **Runner facts are validated at attach, not at startup.** A runner
+  naming an extractor or readiness probe the broker does not implement is
+  rejected in its `register_result` with the field and both sides named.
+  The broker no longer fails startup over config it cannot check.
 - **Headers are validated in middleware**, not in handlers. The
   `Livepeer-*` header pipeline is a middleware chain; handlers see only
   fully-validated requests.

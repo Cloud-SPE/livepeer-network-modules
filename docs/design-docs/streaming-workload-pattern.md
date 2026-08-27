@@ -151,9 +151,12 @@ Responsibilities:
 - emit idempotent usage and control-plane events to the gateway
 - close receiver-side payment state when the session ends
 
-> The broker carries no per-capability semantics — the debit cadence and units
-> come from the `host-config.yaml` declaration. The same broker code runs the
-> vtuber session, the RTMP live ingest, and any future streaming capability.
+> The broker carries no per-capability semantics. The commercial half — price,
+> lease policy, heartbeat cadence — comes from the offer in `host-config.yaml`;
+> the runner half — descriptor schema, session paths, how it meters — comes
+> from the runner's own attach declaration, frozen at certification. The same
+> broker code runs the vtuber session, the RTMP live ingest, and any future
+> streaming capability.
 
 ### Receiver-side `payment-daemon`
 

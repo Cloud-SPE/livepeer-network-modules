@@ -20,7 +20,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/credentialstore"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/offers"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolreport"
@@ -90,7 +89,6 @@ type Server struct {
 	receiptSink          receipts.Client
 	poolReporter         poolreport.Client
 	poolSnapshot         *poolsnapshot.Cache
-	health               *health.Manager
 	sessionStore         *sessionstore.Store
 	credentialStore      *credentialstore.Store
 	// runners is the registry of attached runners (plan 0043 item 7).
@@ -239,14 +237,9 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		receiptSink:     receiptSink,
 		poolReporter:    poolReporter,
 		poolSnapshot:    poolSnapshot,
-		health:          health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
 		randIntn: func(n int) int {
 			return rand.New(rand.NewSource(time.Now().UnixNano())).Intn(n)
 		},
-	}
-
-	if err := s.validateAgainstRegistries(); err != nil {
-		return nil, err
 	}
 
 	if len(cfg.Offers) > 0 && cfg.OffersStatePath == "" && cfg.OffersSource != config.OffersSourceAdmin {
@@ -377,43 +370,20 @@ func newPaymentClient(cfg *config.Config) (payment.Client, error) {
 	}
 }
 
-// validateAgainstRegistries fails-fast if any configured capability
-// references an unregistered extractor.
-func (s *Server) validateAgainstRegistries() error {
-	cfg := s.currentConfig()
-	return validateConfigAgainstRegistries(cfg, s.extractors)
-}
-
-func validateConfigAgainstRegistries(cfg *config.Config, extractorRegistry *extractors.Registry) error {
-	if cfg == nil {
-		return fmt.Errorf("config is not loaded")
-	}
-	for i := range cfg.Capabilities {
-		c := &cfg.Capabilities[i]
-		// paid-session capabilities carry no extractor (see config
-		// validation): usage is runner-reported.
-		if strings.HasPrefix(c.Protocol, "paid-session/") {
-			continue
-		}
-		extractorType, _ := c.WorkUnit.Extractor["type"].(string)
-		if !extractorRegistry.Has(extractorType) {
-			return fmt.Errorf("capability %s/%s: work_unit.extractor.type %q is not implemented by this broker (registered: %v)",
-				c.ID, c.OfferingID, extractorType, extractorRegistry.Names())
-		}
-	}
-	return nil
+// adminTokenMatches reports whether an Authorization header carries the
+// admin bearer token. A broker with no admin token configured accepts
+// no token — never every token.
+func (s *Server) adminTokenMatches(authz string) bool {
+	s.mu.RLock()
+	token := strings.TrimSpace(s.adminToken)
+	s.mu.RUnlock()
+	return token != "" && strings.TrimSpace(authz) == "Bearer "+token
 }
 
 func (s *Server) currentConfig() *config.Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.cfg
-}
-
-func (s *Server) currentHealth() *health.Manager {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.health
 }
 
 func (s *Server) currentPoolSnapshot() *poolsnapshot.Cache {
@@ -533,29 +503,9 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) attachRunContext(ctx context.Context) {
 	s.mu.Lock()
 	s.runCtx = ctx
-	healthMgr := s.health
 	s.mu.Unlock()
-	s.startHealthLoop(healthMgr)
 }
 
-func (s *Server) startHealthLoop(healthMgr *health.Manager) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.healthCancel != nil {
-		s.healthCancel()
-		s.healthCancel = nil
-	}
-	if s.runCtx == nil || healthMgr == nil {
-		return
-	}
-	childCtx, cancel := context.WithCancel(s.runCtx)
-	s.healthCancel = cancel
-	go healthMgr.Run(childCtx)
-}
-
-// parseKeyValidity reads the delegation window the operator published
-// alongside the settlement key. Empty means unbounded — a deployment
-// that has not published a delegation yet.
 func parseKeyValidity(id config.Identity) (time.Time, time.Time, error) {
 	parse := func(field, raw string) (time.Time, error) {
 		raw = strings.TrimSpace(raw)

@@ -21,28 +21,31 @@ gateway ─┐
    orch-coordinator (public)
          │  capability-broker URL
          ▼
-   capability-broker  ─►  workloads
-   payment-daemon         (vLLM / ABR / etc., declared in host-config.yaml)
+   capability-broker  ◄─  workloads attach outbound
+   payment-daemon         (vLLM / ABR / etc., each behind an agent)
 ```
 
 ## What runs here
 
 | Service                   | Purpose                                                    |
 | ------------------------- | ---------------------------------------------------------- |
-| `capability-broker`       | Advertises capabilities, routes inbound work to workloads  |
+| `capability-broker`       | Sells offers, routes inbound work to attached runners      |
 | `payment-daemon` receiver | Redeems Livepeer payment tickets on-chain for this broker  |
 
-What runs **alongside** this stack (declared in `host-config.yaml`):
+What runs **alongside** this stack (and is *not* in `host-config.yaml`):
 
 - The actual capability workloads — vLLM, ABR, vtuber pipeline, etc. They
-  can be containers on this same box (declare them in your own compose)
-  or remote services this broker proxies to.
+  can be containers on this same box or on other machines. Each host runs
+  an agent that attaches outbound to this broker and declares what it runs;
+  the broker never dials them, so they need no inbound port and no DNS
+  entry.
 
 ## Listeners
 
 | Port | Visibility | Purpose                                                                      |
 | ---- | ---------- | ---------------------------------------------------------------------------- |
-| 8080 | **Public** | Broker API (`/registry/offerings`, `/registry/health`, `/healthz`, paid traffic) |
+| 8080 | **Public** | Broker API (`/registry/offerings`, `/registry/health`, `/healthz`, paid traffic) and the WebSocket runner-attach fallback |
+| 8443/udp | **Public** | Runner attach over QUIC (preferred; the WebSocket on 8080 is the egress-friendly fallback) |
 | 9090 | Private    | Prometheus metrics                                                           |
 
 Production must terminate TLS in front of 8080. A reverse-proxy (Traefik)
@@ -56,8 +59,9 @@ reference is documented separately.
 | `GET /registry/health` | Per-`(capability, offering)` live-health snapshot — `ready` / `draining` / `degraded` / `unreachable` / `stale` |
 
 `/registry/health` is what resolvers and gateways consult before routing
-paid traffic. The values it reports come from the `health.probe` block on
-each capability in `host-config.yaml` (see below). See
+paid traffic. Nothing is polled to produce it: an offer is `ready` when a
+runner that certified for it still has its attach tunnel up, and
+`unreachable` when none does (see below). See
 [`docs/design-docs/backend-health.md`](../../../../docs/design-docs/backend-health.md)
 for the full three-layer model (manifest / live / failure-rate).
 
@@ -67,8 +71,13 @@ for the full three-layer model (manifest / live / failure-rate).
 /opt/livepeer/
 ├── payment-keystore.json          # hot wallet for ticket redemption
 ├── payment-keystore-password
-└── host-config.yaml               # capability mix for this broker
+├── broker-seal.key                # seals the attach-credential store
+└── host-config.yaml               # the offers this broker sells
 ```
+
+`broker-seal.key` is 32 bytes of randomness
+(`openssl rand -hex 32 > /opt/livepeer/broker-seal.key`). Back it up: losing
+it means every workload host has to re-enrol.
 
 ### Keys on this box
 
@@ -84,10 +93,12 @@ Do not copy your cold orch keystore to this box.
 
 ### host-config.yaml
 
-Defines which capabilities this broker advertises and where each workload
-lives. The shape varies by what your hardware can host — OpenAI/vLLM,
-video ABR, vtuber, etc. Each broker box in your fleet has its own
-host-config reflecting the hardware in that location.
+Defines the **offers** this broker sells: capability, price, capacity,
+metadata, which attached runners each offer is for (`match`), and the
+`certification` a runner must pass to serve it. It does not say where any
+workload lives — the runner declares its own endpoint, transports, work
+unit, extractor and readiness when it attaches. Each broker box in your
+fleet has its own host-config reflecting what that location sells.
 
 Example host-configs live in [`host-configs/`](./host-configs/). Copy one
 to `/opt/livepeer/host-config.yaml` (or wherever `BROKER_CONFIG` points)
@@ -95,79 +106,79 @@ and edit:
 
 | Variant                                            | Status | Capability                                          | Pair with |
 | -------------------------------------------------- | ------ | --------------------------------------------------- | --------- |
-| [`openai-chat.example.yaml`](./host-configs/openai-chat.example.yaml) | Stable | `openai:chat-completions` (vLLM, two `paid-job/v1` offerings) | your vLLM deployment |
+| [`openai-chat.example.yaml`](./host-configs/openai-chat.example.yaml) | Stable | `openai:chat-completions` (vLLM, one `paid-job/v1` offer) | your vLLM deployment |
 
-The backend service must be reachable from the broker via the
-`backend.url` host names in the host-config. Either run it in the same
-compose project (so it shares the default network) or attach both stacks
-to the same Docker network.
+The backend service does not need to be reachable *from* the broker. Run an
+agent next to it (`pool-member-agent`), give it an enrolled credential, and
+it attaches outbound; the broker sends work back down that connection.
 
 ### Notes on the example host-configs
 
-- **The example host-config demonstrates multiple work-unit extractor
-  shapes.** The included chat variant uses `openai-usage`; other broker
-  deployments can use `response-header`, `request-formula`, or other
-  extractors as long as the backend contract supports them.
-- **Each capability declares a `health.probe`.** The probe runs on
-  cadence and feeds the broker's `/registry/health` surface. If a probe
-  fails enough times in a row the offering is reported `unreachable` and
-  gateways skip routing here until it recovers — the signed manifest is
-  not touched. See "Health probes" below.
-- **One offering can serve several transports.** The chat host-config
-  keeps two offerings for the same Qwen model, but that is now a pricing
-  choice rather than a protocol requirement: a single `paid-job/v1`
-  offering declaring `job.transports: [unary, stream]` serves both
-  streaming and non-streaming callers, who select per request with
-  ordinary HTTP negotiation. Under the old mode taxonomy the split was
-  forced, because the mode was part of the offering's identity. Keep two
-  only if you want to price or constrain them differently.
+- **The runner names the work-unit extractor, not you.** The chat variant's
+  vLLM runner declares `openai-usage`; other runners declare
+  `request-formula`, `bytes-counted`, and so on. You set the price, the
+  runner supplies the unit it is counted in, and an extractor the broker
+  does not implement is rejected when the runner attaches — with the field
+  and both sides named — rather than at broker startup.
+- **Certification replaces the health probe.** Each offer's
+  `certification:` list is what a matched runner must pass before it is
+  advertised or given paid work. If it fails, the offering is reported
+  `unreachable` and gateways skip routing here — the signed manifest is not
+  touched. See "Readiness and certification" below.
+- **One offer serves every transport its runner declares.** This
+  host-config used to keep two offerings for the same Qwen model, one
+  `[unary]` and one `[unary, stream]`. Transports are the runner's to
+  declare now, so that split is not expressible — and it was already
+  unnecessary: a single offering declaring both served streaming and
+  non-streaming callers, who select per request with ordinary HTTP
+  negotiation. Split into two offers only to price or constrain them
+  differently, and give each a distinct `offering_id`.
 - **`constraints` is operator-supplied metadata.** Gateways may use it
   to route requests to brokers with the hardware they expect (e.g.
   `gpu: "4090"`, `gpu_model: "1080"`, `gpu_vendor: "NVIDIA"`).
 
-### Health probes
+### Readiness and certification
 
-Every capability gets a `health.probe` block. The broker runs it on
-cadence and exposes the result on `GET /registry/health` so resolvers
-and gateways can skip an offering whose backend has gone dark — without
-forcing a fresh sign cycle on the manifest.
+The broker does not poll your backends. It never learned their URLs, and a
+probe result is stale the moment it lands — whereas for an attached runner
+both questions a probe existed to answer are already settled: certification
+says whether it can serve the offer, and the attach tunnel says whether it
+is reachable right now.
 
-| Probe `type`                | Use when                                                                                  |
+Readiness still has a recipe, but the **runner** picks it, because the
+runner is the only party that knows what ready means for it:
+
+| Readiness `type`            | Declared by a runner that…                                                                |
 | --------------------------- | ----------------------------------------------------------------------------------------- |
-| `http-status`               | The backend exposes a plain `/healthz` (or similar) that returns 2xx when ready.          |
-| `http-jsonpath`             | The backend's health endpoint returns JSON and you need to assert a specific field value. |
-| `http-openai-model-ready`   | OpenAI-compatible backend (vLLM, OpenAI SaaS) — probe `/v1/models` and assert the model is listed. |
-| `tcp-connect`               | Non-HTTP backends — broker just opens a TCP socket.                                       |
-| `command-exit-0`            | Side-channel checks that need a shell command (e.g. inspect a local file).                |
-| `manual-drain`              | Operator-driven; `status: draining` until the operator clears it.                         |
+| `http-status`               | exposes a plain `/healthz` (or similar) returning 2xx when ready.                          |
+| `http-jsonpath`             | returns JSON from its health endpoint and needs a specific field asserted.                 |
+| `http-openai-model-ready`   | is OpenAI-compatible (vLLM, OpenAI SaaS) — checks `/v1/models` lists the model.            |
+| `tcp-connect`               | is not HTTP — just opens a TCP socket.                                                     |
 
-Shared knobs (defaults shown):
+What you write is how much readiness is *enough*, plus the exchanges that
+prove the runner really serves and meters work:
 
 ```yaml
-health:
-  probe:
-    type: http-status          # required
-    interval_ms: 5000          # cadence between probes
-    timeout_ms: 1500           # single probe timeout
-    unhealthy_after: 2         # consecutive failures → unreachable
-    healthy_after: 1           # consecutive successes → ready
+certification:
+  - { name: ready, type: readiness, config: { attempts: 10, interval_ms: 3000 } }
+  - name: smoke
+    type: request
     config:
-      url: http://backend:8080/healthz  # type-specific config
+      transport: unary
+      body: { model: "{{identity.openai.model}}", messages: [ { role: user, content: "ping" } ], max_tokens: 8 }
+      assert: [ "$.choices[0].message.content" ]
+  - { name: usage, type: usage, config: { min_units: 1 } }
 ```
 
-If you omit `health.probe` entirely on an `http`-transport capability,
-the broker falls back to `http-status` against `backend.url`. That URL
-is almost always a `POST`-only endpoint, so the GET probe gets 405
-(Method Not Allowed) → reported as `degraded`, and the resolver only
-admits offerings whose status is `ready`. Always point the probe at a
-real health surface.
+Set `recertify_every_seconds` to re-prove periodically, so a model that was
+unloaded or a GPU that dropped out stops receiving paid work on its own.
 
 Operator surfaces for the three health layers:
 
 | Layer            | Operator action                                  | Where             |
 | ---------------- | ------------------------------------------------ | ----------------- |
-| 1 (manifest)     | Edit `host-config.yaml`, run sign cycle          | secure-orch-console |
-| 2 (live)         | Restart broker, mark drain, fix backend          | broker `/registry/health` + container orchestration |
+| 1 (manifest)     | Edit `offers[]` in `host-config.yaml`, run sign cycle | secure-orch-console |
+| 2 (live)         | Re-attach or fix the runner, disable the offer   | broker `/registry/health` + `/admin/v1/runners` |
 | 3 (failure-rate) | Inspect dashboards, declare incident             | metrics / alerting stack |
 
 See [`docs/design-docs/backend-health.md`](../../../../docs/design-docs/backend-health.md)
@@ -195,6 +206,11 @@ You must set these in `.env` before bring-up:
 
 - `ORCH_ADDRESS` — your cold orch on-chain address
 - `CHAIN_RPC` — Arbitrum RPC endpoint for ticket redemption
+- `BROKER_ADMIN_TOKEN` — bearer for the private admin surface. Required:
+  enrolling a runner (`POST /admin/v1/enroll`) is how anything gets served,
+  and the broker refuses to start with `admin_auth: bearer` and no token.
+- `BROKER_SEAL_KEY` — only if `broker-seal.key` lives somewhere other than
+  `/opt/livepeer/`
 - `PAYMENT_KEYSTORE` / `PAYMENT_KEYSTORE_PASSWORD_FILE` — only if your hot
   wallet keystore lives somewhere other than `/opt/livepeer/`
 - `BROKER_CONFIG` — only if `host-config.yaml` lives somewhere other than
@@ -206,12 +222,21 @@ You must set these in `.env` before bring-up:
 # Broker process is up
 curl -sf http://127.0.0.1:8080/healthz
 
-# Broker capability advertisement (shape depends on host-config.yaml)
+# Broker capability advertisement. Empty until a runner has attached AND
+# passed the offer's certification — an offer nobody can serve is never
+# published, deliberately.
 curl -s http://127.0.0.1:8080/registry/offerings | jq .
 
+# Who is attached, and why an offer is or is not being served by them
+curl -s -H "Authorization: Bearer $BROKER_ADMIN_TOKEN" \
+  http://127.0.0.1:8080/admin/v1/runners | jq .
+curl -s -H "Authorization: Bearer $BROKER_ADMIN_TOKEN" \
+  http://127.0.0.1:8080/admin/v1/certification | jq .
+
 # Per-(capability, offering) live health — every entry should reach `ready`
-# once probes settle. `unreachable` here means the backend is not answering
-# the probe URL you configured in host-config.yaml.
+# once a runner has attached and certified. `unreachable` here means no
+# certified runner currently has a live tunnel for that offer; check
+# `GET /admin/v1/runners` for why.
 curl -s http://127.0.0.1:8080/registry/health | jq .
 
 # Prometheus metrics

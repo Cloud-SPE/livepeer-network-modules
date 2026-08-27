@@ -12,26 +12,10 @@ package registry
 
 import (
 	"encoding/json"
-	"net/http"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 )
-
-// OfferingsHandler returns the configured capability list as the manifest
-// payload (sans signature and worker_url — the orch-coordinator fills in
-// worker_url based on which broker it scraped).
-//
-// The response shape conforms to the manifest payload at
-// livepeer-network-protocol/manifest/schema.json (#/$defs/manifest).
-func OfferingsHandler(cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		payload := BuildOfferings(cfg)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(payload)
-	}
-}
 
 type offeringsPayload struct {
 	// SpecVersion is the protocol module's VERSION the broker was built
@@ -165,100 +149,16 @@ type offeringsLease struct {
 	MaxSeconds int    `json:"max_seconds,omitempty"`
 }
 
-// axesFor maps a host-config capability to its advertised axes object.
-func axesFor(c config.Capability) (*offeringsJobAxes, *offeringsSessionAxes) {
-	if c.Job != nil {
-		return &offeringsJobAxes{Transports: c.Job.Transports}, nil
-	}
-	if c.Session == nil {
-		return nil, nil
-	}
-	sess := &offeringsSessionAxes{
-		SessionParamsSchema:  c.Session.SessionParamsSchema,
-		DescriptorSchema:     c.Session.DescriptorSchema,
-		MaxRotations:         c.Session.MaxRotations,
-		Attachment:           c.Session.AdvertisedAttachment(),
-		Metering:             c.Session.AdvertisedMetering(),
-		Refill:               c.Session.AdvertisedRefill(),
-		ToleranceBandPct:     c.Session.ToleranceBandPct,
-		RunwayIncrementUnits: c.Session.RunwayIncrementUnits,
-	}
-	if hb := c.Session.Heartbeat; hb.IntervalSeconds > 0 || hb.MissedThreshold > 0 {
-		sess.Heartbeat = &offeringsHeartbeat{
-			IntervalSeconds: hb.IntervalSeconds,
-			MissedThreshold: hb.MissedThreshold,
-		}
-	}
-	// Host config carries a flat cap; the manifest models lease as an
-	// object with an explicit policy.
-	if c.Session.LeaseMaxSeconds > 0 || c.Session.LeasePolicy != "" {
-		sess.Lease = &offeringsLease{
-			Policy:     c.Session.AdvertisedLeasePolicy(),
-			MaxSeconds: c.Session.LeaseMaxSeconds,
-		}
-	}
-	return nil, sess
-}
-
+// BuildOfferings returns the manifest envelope. The tuples themselves
+// are composed by the caller from the offer set and its frozen shapes
+// (OfferTuple): what is advertised is what a runner was certified
+// against, never what a config file claimed.
 func BuildOfferings(cfg *config.Config) offeringsPayload {
-	out := offeringsPayload{
+	return offeringsPayload{
 		SpecVersion:    version.VERSION,
 		OrchEthAddress: cfg.Identity.OrchEthAddress,
-		Capabilities:   make([]offeringsCapabilityV1, 0, len(cfg.Capabilities)),
+		Capabilities:   make([]offeringsCapabilityV1, 0, len(cfg.Offers)),
 	}
-	seen := map[string]struct{}{}
-	for _, c := range cfg.Capabilities {
-		key := c.ID + "|" + c.OfferingID
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		extra := cloneMap(c.Extra)
-		constraints := c.Constraints
-		if constraints == nil {
-			constraints = map[string]any{}
-		}
-		jobAxes, sessionAxes := axesFor(c)
-		out.Capabilities = append(out.Capabilities, offeringsCapabilityV1{
-			CapabilityID: c.ID,
-			OfferingID:   c.OfferingID,
-			Protocol:     c.Protocol,
-			Job:          jobAxes,
-			Session:      sessionAxes,
-			WorkUnit: offeringsWorkUnit{
-				Name:      c.WorkUnit.Name,
-				Estimator: estimatorFor(c.WorkUnit.Extractor),
-			},
-			PricePerUnitWei: c.Price.AmountWei,
-			PerUnits:        c.Price.PerUnits,
-			Extra:           extra,
-			Constraints:     constraints,
-		})
-	}
-	return out
-}
-
-func buildOfferings(cfg *config.Config) offeringsPayload {
-	return BuildOfferings(cfg)
-}
-
-func mergeExtraMaps(base, overlay map[string]any) map[string]any {
-	if len(base) == 0 && len(overlay) == 0 {
-		return nil
-	}
-	out := cloneMap(base)
-	if out == nil {
-		out = map[string]any{}
-	}
-	for key, value := range overlay {
-		if nestedOverlay, ok := value.(map[string]any); ok {
-			nestedBase, _ := out[key].(map[string]any)
-			out[key] = mergeExtraMaps(nestedBase, nestedOverlay)
-			continue
-		}
-		out[key] = value
-	}
-	return out
 }
 
 func cloneMap(in map[string]any) map[string]any {

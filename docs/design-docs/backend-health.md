@@ -142,8 +142,11 @@ Examples of legitimate specialized checks:
 The coordinator, resolver, and gateways should not need to understand
 those semantics. They consume only the broker's normalized result.
 
-**Freshness budget:** seconds. Backend reachability is probed on cadence
-(periodic + on-demand) and cached briefly.
+**Freshness budget:** seconds — but not because anything is polled. A
+runner's reachability is whether its attach tunnel is up, and its fitness
+for an offer is what certification decided; both are read live on every
+request to `/registry/health`. The freshness budget is a statement about
+how long a *reader* may cache the answer, not about a probe interval.
 
 **Who consumes it:**
 
@@ -179,7 +182,8 @@ of "ready". The extensibility point belongs in the broker:
   how much readiness is *enough* — attempts, interval, consecutive
   successes — without restating the recipe
 - **core-module implementation:** capability-broker ships the probe
-  recipe library and executes probes on cadence
+  recipe library and runs a recipe when it certifies a runner — never on a
+  background cadence against a configured URL
 - **cross-stack contract:** `/registry/health` exposes only normalized
   status, freshness, and reason
 

@@ -24,58 +24,54 @@ Plus `GET /metrics` on a **separate** metrics listener (`--metrics`,
 default `:9090`) — deliberately not mounted on the paid listener, so
 scrapes never traverse the payment middleware chain.
 
-Dispatches inbound requests to backends declared in `host-config.yaml`.
-Validates payment via a co-located `payment-daemon` (over unix socket; a
-stub client is available for dev via `payment_daemon.mock`).
+Dispatches inbound requests to attached runners over the connection those
+runners opened. Validates payment via a co-located `payment-daemon` (over
+unix socket; a stub client is available for dev via `payment_daemon.mock`).
 
-Work units come from a different place per protocol, and the config grammar
-enforces the split:
-
-- `paid-job/v1` meters the exchange the broker forwarded, so
-  `work_unit.extractor` is **required**.
-- `paid-session/v1` meters runner-reported cumulative claims, so
-  `work_unit.extractor` is **rejected** — there is no exchange for an
-  extractor to run on.
-
-Declaring any `paid-session/v1` capability also makes `session_store`
-(durable bbolt path + sealing key) and `external_base_url` required; see
+Declaring any `paid-session/v1` offer makes `session_store` (durable bbolt
+path + sealing key) and `external_base_url` required; see
 [`docs/operator-runbook.md`](./docs/operator-runbook.md) §2.
 
-Repeated `capabilities[]` entries with the same `(id, offering_id)` are
-treated as one published offering with multiple runtime backend candidates.
-`/registry/offerings` dedupes the published tuple; request dispatch selects a
-currently-eligible backend at runtime.
+### `offers[]` — the operator grammar
 
-### `offers[]` — the plan-0043 grammar
-
-`offers[]` is the operator-only grammar that replaces `capabilities[]`
-(plan 0043 §3.1). An offer carries what is sold and nothing about the
-runner: `offering_id`, `capability`, `protocol`, a `match` selector over
-attached runners' declared identity, `price`, `capacity`, `extra`,
-`extra_from_runner` (which runner `x-*` keys are promoted), an optional
-`session_policy` (the operator-owned paid-session axes), and
-`certification[]` (the steps every matched runner must pass —
+`offers[]` is the operator's entire config surface (plan 0043 §3.1). An
+offer carries what is sold and nothing about the runner: `offering_id`,
+`capability`, `protocol`, a `match` selector over attached runners'
+declared identity, `price`, `capacity`, `extra`, `extra_from_runner`
+(which runner `x-*` keys are promoted), an optional `session_policy` (the
+operator-owned paid-session axes), and `certification[]` (the steps every
+matched runner must pass —
 [`certification-steps.md`](../livepeer-network-protocol/protocols/certification-steps.md)).
-Runner facts — transports, work unit, extractor, paths, readiness, model
-identity — arrive in the runner's attach document
+`offering_id` is unique across the file: one offer per id, and runners
+multiply an offer rather than entries doing it.
+
+Runner facts — transports, descriptor schemas, work unit, extractor,
+paths, readiness, model identity — arrive in the runner's attach document
 ([`runner-attach.md`](../livepeer-network-protocol/protocols/runner-attach.md))
-and are frozen into the offer by the first certified runner.
+and are frozen into the offer by the first certified runner. That split is
+also where the metering rule now lives: a `paid-job/v1` runner declares the
+extractor that meters the exchange the broker forwarded, while a
+`paid-session/v1` runner declares `metering` instead and is rejected at
+attach if it sends an extractor — there is no exchange for one to run on.
+A runner declaring an extractor the broker does not implement is likewise
+rejected at attach, rather than the broker failing a startup check on
+config an operator hand-copied.
 
 `offers_source: file` (default) means this file owns them;
 `offers_source: admin` means a pool-controller pushes them over
 `PUT /admin/v1/offers` ([`broker-admin.md`](../livepeer-network-protocol/protocols/broker-admin.md) §4.2)
 and requires `admin_auth`. See
-[`examples/host-config.offers.example.yaml`](./examples/host-config.offers.example.yaml).
+[`examples/host-config.example.yaml`](./examples/host-config.example.yaml)
+for the annotated reference, or
+[`examples/host-config.offers.example.yaml`](./examples/host-config.offers.example.yaml)
+for the shortest thing that runs.
 
-**Status:** attach, match, freeze, eligibility, and advertisement are
-live (items 6–8): a matched runner that certifies freezes the offer, the
-frozen tuple is published on `/registry/offerings` (stamped with the
-protocol module's `spec_version` and carrying `offers_revision`), runner
-churn never changes the payload, and `accept-shape` /
-`confirm-published` / `disable` / `enable` are served under
-`/admin/v1/offers`. Set `offers_state_path` so frozen shapes survive a
-restart. Dispatch of paid work over eligible runners is item 10; until
-then `capabilities[]` still drives the paid path and is deleted there.
+Set `offers_state_path` so frozen shapes survive a restart: a shape that
+vanished would re-freeze from whichever runner certified first, which is a
+silent manifest change. `accept-shape`, `confirm-published`, `disable` and
+`enable` are served under `/admin/v1/offers`; the frozen tuple is published
+on `/registry/offerings` stamped with the protocol module's `spec_version`
+and carrying `offers_revision`, and runner churn never changes that payload.
 
 When `receipt_sink.url` is configured, the broker also emits best-effort Pool
 work receipts to `pool-controller`:
@@ -96,9 +92,9 @@ Broker runtime admin surface:
 - The bearer token must come from `admin_auth.secret_ref: env://...`.
 - `POST /admin/v1/runtime/reload` validates the reloaded config before swap and
   preserves the previous runtime if reload fails.
-- Successful reloads keep matching backend health/probe state when possible and
-  resume health probing against the new runtime
-  without requiring a broker restart.
+- Successful reloads keep attached runners and their certification state
+  where the new offer set still matches them, so a config edit does not make
+  every host re-attach and re-certify.
 - `GET /admin/v1/runtime` now includes a bounded recent reload history so
   operator tooling can inspect the latest broker-local attempts directly.
 - Each reload attempt is stamped with a broker-local `attempt_id`; controller
@@ -119,17 +115,17 @@ slice also lets Pool snapshot state affect multi-backend selection:
 - `eligible` / `degraded` entries scale broker-local health weight by the
   snapshot's `effective_selection_score`
 
-For connected Pool workers, `pool-controller` renders backend URLs as
-`worker://{template_assignment_id}`. The broker treats those as virtual
-backends reached through an outbound worker session instead of dialing a public
-member URL. Worker sessions are authenticated with the rendered
-`backend.worker_session_credential` and expose assigned local runner services
-through either:
+Pool members never expose a public URL. A member's host attaches outbound and
+the broker reaches it back down that same connection, through either:
 
 - `listen.worker_quic` over QUIC, preferred for multiplexed streaming and large
   multipart bodies; or
 - `GET /internal/v1/worker/session` over WebSocket as the egress-friendly
   fallback.
+
+Attach is authenticated with a credential from the credential store below.
+The per-backend `worker_session_credential` config string died with the
+`capabilities[]` grammar that declared it.
 
 The runtime admin surface also exposes connected-worker operations:
 
@@ -151,8 +147,8 @@ contract in [`broker-admin.md`](../livepeer-network-protocol/protocols/broker-ad
 - `PUT /admin/v1/credentials` — pool sync of hashes; a dropped entry is a revoke.
 
 The store holds `sha256(token)` only, sealed at rest. Attach auth consults
-it first on both the WebSocket and QUIC paths, then the legacy
-`worker_session_credential` until `capabilities[]` is deleted.
+it on both the WebSocket and QUIC paths; the only other accepted bearer is
+the admin token.
 
 ### Runner attach (plan 0043)
 
@@ -189,14 +185,15 @@ JSONPath asserts — session offers open, descriptor-check, and terminate
 p50/p95; certification traffic is never paid, settled, or receipted),
 and frozen per plan 0043 §3.4;
 `GET /admin/v1/runners` shows each capability's per-offer state with the
-disagreeing field named. Dispatch of paid work over eligible runners is
-item 10; until then an attached runner receives no paid work and the
-legacy `backend_ids` register still drives the paid path.
+disagreeing field named. Paid work is dispatched only to runners that are
+eligible for the offer it was sold under.
 
-Per-backend `max_in_flight` is enforced before dispatch. For long-lived
-remote-runner sessions, the capacity slot is held until session finalization.
-`queue_limit` is rendered for policy visibility and future queueing, but v1
-dispatch currently fail-fasts when no eligible capacity is available.
+The offer's `capacity.max_in_flight` is enforced before dispatch, per
+eligible runner — capacity is operator-owned, so a runner never declares
+its own. For long-lived remote-runner sessions, the capacity slot is held
+until session finalization. `capacity.queue_limit` is rendered for policy
+visibility and future queueing, but v1 dispatch currently fail-fasts when
+no eligible capacity is available.
 
 **This binary contains zero capability-specific code.** All workload knowledge
 lives in the two protocol engines and the extractor implementations, both
@@ -219,6 +216,8 @@ Per repo-root core belief #15, every gesture is Docker-first.
 ```bash
 make build               # build tztcloud/livepeer-capability-broker:v2.0.0
 make run                 # run with examples/host-config.example.yaml
+                         # (see that file's "RUNNING THIS FILE" header for
+                         #  the env, key file and payment daemon it expects)
 make help                # show all targets
 ```
 
@@ -227,14 +226,14 @@ No host Go install required.
 ## Configuration
 
 A single declarative YAML file: [`examples/host-config.example.yaml`](./examples/host-config.example.yaml).
-The example starts with minimal `paid-job/v1` entries for smoke bring-up
-and keeps more involved shipped shapes commented out until you wire the
-necessary backend infrastructure.
+The example starts with minimal `paid-job/v1` offers for smoke bring-up and
+keeps more involved shipped shapes commented out until you have runners to
+attach behind them.
 
-For OpenAI-compatible offerings, use the base capability family in `id`
-(`openai:chat-completions`, `openai:embeddings`, etc.) and put model identity
-in `extra.openai.model`. Deprecated suffixed forms such as
-`openai:chat-completions:<model>` are rejected by config validation.
+For OpenAI-compatible offerings, use the base capability family in
+`offers[].capability` (`openai:chat-completions`, `openai:embeddings`, etc.)
+and put model identity in `extra.openai.model`. Deprecated suffixed forms
+such as `openai:chat-completions:<model>` are rejected by config validation.
 
 Current broker validation for `openai:*` offerings requires:
 
@@ -260,15 +259,19 @@ where a new workload's facts are described. That polling, its
 `--metadata-refresh-interval` flag, its `metadata` block on
 `GET /registry/health`, and its `livepeer_metadata_refresh_*` metrics are
 removed (plan 0043 item 11).
-When repeated published tuples are configured, the same health payload exposes a
-`backends[]` array per published capability so operator tooling can see each
-candidate backend's individual status. When `pool_snapshot.url` is configured,
+`GET /registry/health` reports one entry per advertised offer per eligible
+runner. Its JSON contract is unchanged — the roster, the registry daemon's
+live-health layer and the chain probe all read it — but nothing is polled to
+produce it: certification says whether a runner can serve the offer and the
+attach tunnel says whether it is reachable, and both are read live on every
+request, so there is no interval in which the answer is stale.
+When `pool_snapshot.url` is configured,
 each backend may also include a `pool` object with snapshot freshness
 (`fresh`, `stale`, `expired`, `bootstrap_pending`, or `fetch_error`), cached
 timestamps, and whether the latest snapshot contained an entry for that
 backend+offering tuple. In that mode, `selection_eligible`,
 `selection_weight`, and `selection_reason` describe the broker's final
-Pool-aware routing decision, not just broker-local probe health. If every
+Pool-aware routing decision, not just the runner's local eligibility. If every
 backend for a published tuple is blocked by Pool snapshot state or Pool
 exclusion state, the tuple-level `status`/`reason` in `/registry/health` also
 drop out of `ready` so downstream resolvers stop routing an unroutable tuple.
@@ -322,14 +325,20 @@ capability-broker/
 │   ├── sessionengine/  # paid-session/v1 authority (leases, descriptors)
 │   ├── sessionstore/   # durable bbolt state: sessions + job idempotency
 │   ├── extractors/     # work-unit extractor library (paid-job only)
-│   ├── backend/        # outbound forwarding to declared backends
-│   ├── health/         # per-backend probes
-│   ├── selection/      # backend eligibility + weighting
-│   ├── workerconn/     # connected-worker QUIC / WebSocket sessions
+│   ├── backend/        # outbound forwarding over a runner's connection
+│   ├── offers/         # offer engine: match, certify, freeze, eligibility
+│   ├── certification/  # certification step engine
+│   ├── runnerattach/   # attach-document parsing + validation
+│   ├── runners/        # attached-runner registry
+│   ├── credentialstore/# sealed attach credentials
+│   ├── health/         # health vocabulary + aggregation (no prober)
+│   ├── selection/      # runner eligibility + weighting
+│   ├── workerconn/     # runner QUIC / WebSocket sessions
 │   ├── payment/        # payment-daemon client (mock for dev)
 │   └── observability/  # metrics, logging, request-id
 ├── examples/
-│   └── host-config.example.yaml
+│   ├── host-config.example.yaml         # annotated reference
+│   └── host-config.offers.example.yaml  # compact quick-start
 ├── docs/
 └── Dockerfile / Makefile / go.mod
 ```

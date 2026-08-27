@@ -229,7 +229,7 @@ These terms are **not** interchangeable.
 
 | Term | Chosen by | Meaning |
 |---|---|---|
-| `price_per_work_unit_wei` | host config (`host-config.yaml`) | published retail price for one work unit |
+| `price_per_work_unit_wei` | host config (`offers[].price` in `host-config.yaml`) | published retail price for one work unit |
 | accepted price basis in `CreatePayment(...)` | gateway | the unit price / quote identity the gateway accepted |
 | funded budget in `CreatePayment(...)` | gateway | initial funded EV for this request or session window |
 | actual ticket `FaceValue` inside returned `TicketParams` | receiver daemon | winning-ticket size chosen so redemption remains truthful |
@@ -269,14 +269,23 @@ This is the most important operator distinction.
 
 ### Retail price
 
-Retail charge comes from `host-config.yaml`:
+Retail charge comes from the offer in `host-config.yaml` — the operator's
+half of the tuple:
 
-- `capabilities[].id`
-- `capabilities[].work_unit.name`
-- `capabilities[].price.amount_wei`
-- `capabilities[].price.per_units`
+- `offers[].capability`
+- `offers[].offering_id`
+- `offers[].price.amount_wei`
+- `offers[].price.per_units`
 
-Changing these changes what gateways should charge for work.
+Changing these changes what gateways should charge for work, and is an
+ordinary config edit.
+
+The work-unit *name* those wei are counted in is **not** here: the runner
+declares it (with the extractor that produces it) at attach, and the first
+runner to certify freezes it into the offer. So changing the unit is not a
+price edit at all — it is a different runner shape, and a runner that
+presents one the offer did not freeze is refused rather than silently
+repricing the tuple.
 
 ### Acceptance floor / redeemability
 
@@ -386,8 +395,10 @@ Repo docs therefore keep these roles distinct:
 
 ## Backend-author checklist
 
-A new backend integration is not ready until its docs and host-config example
-answer all of these clearly:
+A new backend integration is not ready until its docs, its offer example and
+its runner adapter profile answer all of these clearly. Note which side owns
+each answer: 1–2 and 6–9 are the operator's, 3–5 are declared by the runner
+and frozen into the offer.
 
 1. What `capability_id` string does it advertise?
 2. What `offering_id` does it route on?

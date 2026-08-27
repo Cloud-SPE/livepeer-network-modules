@@ -42,10 +42,6 @@ type Config struct {
 	// frozen shape that vanished on restart would re-freeze from
 	// whichever runner certified first — a silent manifest change.
 	OffersStatePath string `yaml:"offers_state_path,omitempty"`
-	// Capabilities is the legacy tuple grammar (backend URLs, runner
-	// facts restated by the operator). Deleted once attach + freeze
-	// (plan 0043 items 7–8) land.
-	Capabilities []Capability `yaml:"capabilities,omitempty"`
 }
 
 // CredentialStoreConfig configures the sealed runner-credential store
@@ -307,15 +303,14 @@ type Price struct {
 
 // Backend describes how the broker forwards a request to the upstream backend.
 type Backend struct {
-	ID                      string     `yaml:"id,omitempty"`
-	Transport               string     `yaml:"transport"`
-	URL                     string     `yaml:"url,omitempty"`
-	Auth                    AuthConfig `yaml:"auth,omitempty"`
-	HostEnrollmentID        string     `yaml:"host_enrollment_id,omitempty"`
-	HardwareUnitID          string     `yaml:"hardware_unit_id,omitempty"`
-	GPUUUID                 string     `yaml:"gpu_uuid,omitempty"`
-	TemplateID              string     `yaml:"template_id,omitempty"`
-	WorkerSessionCredential string     `yaml:"worker_session_credential,omitempty"`
-	MaxInFlight             int        `yaml:"max_in_flight,omitempty"`
-	QueueLimit              int        `yaml:"queue_limit,omitempty"`
+	ID               string     `yaml:"id,omitempty"`
+	Transport        string     `yaml:"transport"`
+	URL              string     `yaml:"url,omitempty"`
+	Auth             AuthConfig `yaml:"auth,omitempty"`
+	HostEnrollmentID string     `yaml:"host_enrollment_id,omitempty"`
+	HardwareUnitID   string     `yaml:"hardware_unit_id,omitempty"`
+	GPUUUID          string     `yaml:"gpu_uuid,omitempty"`
+	TemplateID       string     `yaml:"template_id,omitempty"`
+	MaxInFlight      int        `yaml:"max_in_flight,omitempty"`
+	QueueLimit       int        `yaml:"queue_limit,omitempty"`
 }

@@ -15,9 +15,11 @@ capability-broker/
 │   └── main.go                           # entry point; flag parsing; wires everything
 └── internal/
     ├── config/                           # host-config.yaml loader + validator
-    │   ├── config.go                     # types (protocol + job/session axes)
+    │   ├── config.go                     # top-level types (identity, stores, sinks)
+    │   ├── offers.go                     # offers[] — the operator grammar
+    │   ├── auth.go                       # scalar-or-mapping auth refs
     │   ├── parse.go                      # YAML parse (KnownFields) + Load
-    │   └── validate.go                   # cross-field validation; per-protocol rules
+    │   └── validate.go                   # cross-field validation; extra{} grammar
     ├── server/                           # HTTP server + routing + middleware
     │   ├── server.go                     # http.Server wiring
     │   ├── routes.go                     # unpaid routes: registry, health, admin, worker
@@ -63,7 +65,7 @@ capability-broker/
     │   ├── headers.go                    # Livepeer-* stripping
     │   └── secret.go                     # backend-auth injection (env://, bearer)
     ├── workerconn/                       # connected-worker sessions (QUIC + WS)
-    ├── health/                           # per-backend probes
+    ├── health/                           # health vocabulary + aggregation (no prober)
     ├── selection/                        # eligibility + weighting decisions
     ├── poolsnapshot/                     # pool-controller snapshot cache
     ├── poolreport/ + receipts/           # Pool outcome + work-receipt emission
@@ -128,14 +130,15 @@ without one is a 400.
 6. **Middleware: payment** — decodes the `Livepeer-Payment` envelope; calls
    `PaymentClient.OpenSession` + `ProcessPayment` + `DebitBalance(estimate)`.
    Rejects with 401 + `Livepeer-Error: payment_invalid` on failure.
-7. **Backend selection** — `(capability_id, offering_id)` → capability group
-   → `selection.DecisionFor` over probe health and (when configured) the
-   Pool snapshot → one eligible backend, with a `max_in_flight` slot
-   reserved.
-8. **Forward** — `Livepeer-*` headers stripped, declared backend auth
-   injected, request forwarded via `backend/http.Forward` (bodies bounded at
+7. **Runner selection** — `(capability_id, offering_id)` → the offer's
+   eligible attached runners → `selection.DecisionFor` over that eligibility
+   and (when configured) the Pool snapshot → one runner, with a
+   `capacity.max_in_flight` slot reserved.
+8. **Forward** — `Livepeer-*` headers stripped, request forwarded down that
+   runner's attach tunnel to the path the runner declared (bodies bounded at
    64 MiB).
-9. **Extract** — the offering's declared extractor computes `actualUnits`;
+9. **Extract** — the extractor frozen from the runner's declaration computes
+   `actualUnits`;
    the broker sets `Livepeer-Work-Units` (header for `unary`/`multipart`,
    HTTP trailer for `stream`) and `Livepeer-Work-Unit`.
 10. **Middleware: payment (post-serve)** — `Reconcile(actualUnits)` +

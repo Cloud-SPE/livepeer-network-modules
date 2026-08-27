@@ -42,9 +42,10 @@ not a hardware-attestation guarantee.
 
 ## 2. Connected-worker routing
 
-The broker remains the paid Livepeer edge. Pool workers connect outbound to the
-broker and expose assigned local services through a virtual backend URL:
-`worker://{template_assignment_id}`.
+The broker remains the paid Livepeer edge. Pool workers connect outbound to
+the broker, declare their local runners in the attach document, and receive
+dispatched work back down that same connection — routed by
+`Livepeer-Runner-Local-Id`, never by a URL the controller rendered.
 
 ```mermaid
 sequenceDiagram
@@ -62,7 +63,7 @@ sequenceDiagram
     PC->>CB: read runners (hardware relay)
 
     GW->>CB: POST /v1/cap + payment
-    CB->>CB: selectBackend()<br/>health + pool score + max_in_flight
+    CB->>CB: pick an eligible runner<br/>certified + attached + pool score<br/>+ capacity.max_in_flight
     CB->>PD: ProcessPayment
     CB->>PC: upsert stub work receipt
     CB->>Agent: request over tunnel<br/>Livepeer-Runner-Local-Id

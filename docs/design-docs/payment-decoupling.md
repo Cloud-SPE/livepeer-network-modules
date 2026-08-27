@@ -141,8 +141,8 @@ The runtime safety properties survive:
 ## What this enables
 
 The first-order win: **adding a brand-new capability under an existing
-protocol is a `host-config.yaml` edit, with no broker, gateway, or
-daemon release.**
+protocol is an offer in `host-config.yaml` plus a runner that declares
+itself — with no broker, gateway, or daemon release.**
 
 The second-order wins:
 

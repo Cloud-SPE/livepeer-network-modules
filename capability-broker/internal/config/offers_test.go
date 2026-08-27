@@ -138,36 +138,27 @@ func TestOffersSessionValidates(t *testing.T) {
 	}
 }
 
-func TestOffersCoexistWithLegacyButNotSameOffering(t *testing.T) {
-	cfg := baseOfferConfig(jobOffer("shared"))
-	cfg.Capabilities = []Capability{{
-		ID: "openai:chat-completions", OfferingID: "legacy", Protocol: "paid-job/v1",
-		Job:      &JobCapability{Transports: []string{"unary"}},
-		WorkUnit: WorkUnit{Name: "tokens", Extractor: map[string]any{"type": "openai-usage"}},
-		Price:    Price{AmountWei: "1", PerUnits: 1},
-		Backend:  Backend{Transport: "http", URL: "http://b:8000/v1/chat/completions"},
-		Extra:    map[string]any{"openai": map[string]any{"model": "m"}, "provider": "vllm"},
-	}}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("coexist: %v", err)
-	}
-	cfg.Capabilities[0].OfferingID = "shared"
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "also declared under capabilities[]") {
-		t.Fatalf("same offering in both: %v", err)
-	}
-}
-
-// The shipped example must load: it is the operator's starting point.
-func TestExampleOffersConfigLoads(t *testing.T) {
-	path := filepath.Join("..", "..", "examples", "host-config.offers.example.yaml")
-	if _, err := os.Stat(path); err != nil {
-		t.Skip("example not present")
-	}
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load(%s) = %v", path, err)
-	}
-	if len(cfg.Offers) == 0 {
-		t.Fatal("example declares no offers")
+// Every shipped example must load. An operator's first act is to copy
+// one of these, so an example the loader rejects costs them a debugging
+// session before they have run anything.
+func TestExampleConfigsLoad(t *testing.T) {
+	for _, name := range []string{
+		"host-config.example.yaml",
+		"host-config.offers.example.yaml",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join("..", "..", "examples", name)
+			if _, err := os.Stat(path); err != nil {
+				t.Skip("example not present")
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load(%s) = %v", path, err)
+			}
+			// An example that declares nothing to sell teaches nothing.
+			if len(cfg.Offers) == 0 && cfg.OffersSource != OffersSourceAdmin {
+				t.Fatal("example declares no offers and does not source them from admin")
+			}
+		})
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
@@ -203,68 +201,16 @@ func TestCoverageIsStableAcrossReads(t *testing.T) {
 // one, so an unsigned server cannot exercise any of this.
 func newSignedJobTestServer(t *testing.T, backendCalls *atomic.Int64) (*httptest.Server, *Server) {
 	t.Helper()
-	be := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		backendCalls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[{"text":"hi"}],"usage":{"total_tokens":42}}`)
-	}))
-	t.Cleanup(be.Close)
-
-	dir := t.TempDir()
-	sealPath := filepath.Join(dir, "seal.key")
-	if err := os.WriteFile(sealPath, make([]byte, 32), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	key, err := crypto.GenerateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
-	settlePath := filepath.Join(dir, "settlement.key")
+	settlePath := filepath.Join(t.TempDir(), "settlement.key")
 	if err := os.WriteFile(settlePath,
 		[]byte(hex.EncodeToString(crypto.FromECDSA(key))), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	cfg := &config.Config{
-		Identity: config.Identity{
-			OrchEthAddress:    "0x" + strings.Repeat("cd", 20),
-			SettlementKeyFile: settlePath,
-		},
-		PaymentDaemon: config.PaymentDaemon{Mock: true},
-		SessionStore: config.SessionStore{
-			Path:           filepath.Join(dir, "state.db"),
-			SealingKeyFile: sealPath,
-		},
-		Capabilities: []config.Capability{{
-			ID:         "openai:chat-completions",
-			OfferingID: "default",
-			Protocol:   "paid-job/v1",
-			Job:        &config.JobCapability{Transports: []string{"unary", "stream"}},
-			WorkUnit: config.WorkUnit{
-				Name:      "tokens",
-				Extractor: map[string]any{"type": "openai-usage"},
-			},
-			Health:  config.Health{InitialStatus: "ready"},
-			Price:   config.Price{AmountWei: "1", PerUnits: 1},
-			Backend: config.Backend{Transport: "http", URL: be.URL},
-			Extra:   map[string]any{"openai": map[string]any{"model": "test-model"}, "provider": "vllm"},
-		}},
-	}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("config: %v", err)
-	}
-	s, err := New(cfg, Options{})
-	if err != nil {
-		t.Fatalf("server: %v", err)
-	}
-	t.Cleanup(func() {
-		if s.sessionStore != nil {
-			_ = s.sessionStore.Close()
-		}
-	})
-	srv := httptest.NewServer(s.mux)
-	t.Cleanup(srv.Close)
-	return srv, s
+	return newJobOfferBroker(t, backendCalls, nil, settlePath)
 }
 
 // Every field is required and strictly parsed. The old handler failed

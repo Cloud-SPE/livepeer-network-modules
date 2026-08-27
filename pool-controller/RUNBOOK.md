@@ -43,7 +43,8 @@ The Pool production shape spans two sides:
 `pool-controller` does not replace the secure-orch sign cycle. The normal
 publication flow remains:
 
-1. `pool-controller` manages offers, members, assignments, and broker apply
+1. `pool-controller` manages offers, members, and assignments, and pushes the
+   offer set + attach credentials to the broker
 2. `capability-broker` advertises the resulting inventory
 3. `orch-coordinator` scrapes broker offerings/health and builds the candidate
 4. secure-orch signs
@@ -57,13 +58,14 @@ Bootstrap config:
 - durable `--data-dir`
 - `admin_auth.bearer_token_ref: env://...`
 
-Broker apply integration:
+Broker admin integration (the push path — there is no rendered file and no
+apply command):
 
-  stages the rendered broker YAML where the broker host expects it
-- `bootstrap.broker_apply_timeout_ms`
 - `bootstrap.broker_admin_url`
 - `bootstrap.broker_admin_auth`
 - `bootstrap.broker_admin_timeout_ms`
+- `bootstrap.public_broker_url` / `bootstrap.public_broker_quic_addr` — where
+  member hosts attach
 
 Broker private admin surface:
 

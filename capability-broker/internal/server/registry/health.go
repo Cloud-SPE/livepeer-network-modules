@@ -146,15 +146,10 @@ type poolAggregateStatus struct {
 	TopExclusionReasons                   map[string]int `json:"top_exclusion_reasons,omitempty"`
 }
 
-// HealthHandler returns the broker's normalized live-health snapshot.
-func HealthHandler(mgr *health.Manager, pool PoolStatusSource) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		WriteHealthResponse(w, mgr, pool)
-	}
-}
-
-func WriteHealthResponse(w http.ResponseWriter, mgr *health.Manager, pool PoolStatusSource) {
-	snap := mgr.Snapshot()
+// WriteHealthResponse renders the broker's normalized live-health
+// document. It takes the verdict rather than producing it: the caller
+// owns where health comes from, and this owns the wire shape.
+func WriteHealthResponse(w http.ResponseWriter, snap health.Response, pool PoolStatusSource) {
 	statuses := make(map[string]string, len(snap.Capabilities))
 	grouped := make(map[string]*healthCapabilityStatus, len(snap.Capabilities))
 	out := healthResponse{

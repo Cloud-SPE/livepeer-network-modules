@@ -84,9 +84,9 @@ advertise them explicitly:
 | `--fakes-backend-port` | `0` (ephemeral) | pin the fake job backend's port |
 | `--fakes-runner-port` | `0` (ephemeral) | pin the fake session runner's port |
 
-Pin the ports when the broker's config has to name the fakes before the
-suite starts — which is the usual case, since the offerings' `backend.url`
-values are written up front:
+Pin the ports when the runner that serves the offerings has to name the
+fakes before the suite starts — which is the usual case, since the runner's
+declared endpoints are written up front:
 
 ```
 docker run --rm --network lpm_default --name conformance \
@@ -96,28 +96,30 @@ docker run --rm --network lpm_default --name conformance \
     --fakes-backend-port 8091 --fakes-runner-port 8092 --warmup 20s
 ```
 
-The broker's offerings then point at `http://conformance:8091` (job
-backend) and `http://conformance:8092` (session runner). Host networking
-is no longer required.
+The runner behind the broker's offerings then points at
+`http://conformance:8091` (job backend) and `http://conformance:8092`
+(session runner). Host networking is no longer required.
 
-`examples/docker-network/` holds a working compose file and reference-broker
-config for exactly this shape; it is what the flags above were validated
-against (29 passed, 3 URL-mode skips).
+`examples/docker-network/` holds a compose file and a reference-broker
+config for exactly this shape. Note what URL mode does **not** do: it never
+attaches a serving runner. The broker under test advertises nothing until
+one of yours enrols and certifies, so that example needs a runner service of
+your own alongside it. Auto mode is the self-contained path — it generates
+the config and attaches the suite's own runner.
 
-Two things bite brokers that health-probe their backends, which the fakes
-did not expose while they only ever ran alongside a broker the suite
-started itself:
+Two things bite a broker that came up before the runner behind it did:
 
-- **`--warmup`.** A broker that came up before the suite has been probing
-  addresses nothing was listening on, so its backends are unselectable and
-  the first scenarios get `503`. `--warmup 20s` waits for a couple of probe
-  cycles on the now-live fakes. Not needed when the broker starts after the
-  fakes, or when you use `--pause`.
-- **Probe the base URL, not the special routes.** The `always-error`,
-  `slow`, and `longstream` offerings point at backend routes that 500 or
-  answer slowly *on purpose*. Aim their health probe at the fake backend's
-  base URL — probing the route itself marks the offering unreachable and
-  its scenarios fail with `503` instead of the behaviour under test.
+- **`--warmup`.** A broker whose runner has not attached and certified yet
+  advertises nothing, so the first scenarios get `503`. `--warmup 20s` gives
+  the attach and its certification steps time to land on the now-live fakes.
+  Not needed when the broker starts after the fakes, or when you use
+  `--pause`.
+- **Certify against the base URL, not the special routes.** The
+  `always-error`, `slow`, and `longstream` offerings are served by runner
+  entries whose declared endpoint is a route that 500s or answers slowly *on
+  purpose*. Their runner's readiness recipe must point at the fake backend's
+  base URL — a readiness step aimed at the route itself never certifies, and
+  the scenarios fail with `503` instead of the behaviour under test.
 
 ## Scenarios that need more than HTTP
 

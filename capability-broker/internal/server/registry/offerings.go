@@ -18,19 +18,15 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 )
 
-type ExtraOverlaySource interface {
-	ExtraFor(capabilityID, offeringID string) map[string]any
-}
-
 // OfferingsHandler returns the configured capability list as the manifest
 // payload (sans signature and worker_url — the orch-coordinator fills in
 // worker_url based on which broker it scraped).
 //
 // The response shape conforms to the manifest payload at
 // livepeer-network-protocol/manifest/schema.json (#/$defs/manifest).
-func OfferingsHandler(cfg *config.Config, overlays ExtraOverlaySource) http.HandlerFunc {
+func OfferingsHandler(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		payload := BuildOfferings(cfg, overlays)
+		payload := BuildOfferings(cfg)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(payload)
@@ -204,7 +200,7 @@ func axesFor(c config.Capability) (*offeringsJobAxes, *offeringsSessionAxes) {
 	return nil, sess
 }
 
-func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPayload {
+func BuildOfferings(cfg *config.Config) offeringsPayload {
 	out := offeringsPayload{
 		SpecVersion:    version.VERSION,
 		OrchEthAddress: cfg.Identity.OrchEthAddress,
@@ -217,7 +213,7 @@ func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPa
 			continue
 		}
 		seen[key] = struct{}{}
-		extra := mergeExtraMaps(c.Extra, overlayFor(overlays, c.ID, c.OfferingID))
+		extra := cloneMap(c.Extra)
 		constraints := c.Constraints
 		if constraints == nil {
 			constraints = map[string]any{}
@@ -242,15 +238,8 @@ func BuildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPa
 	return out
 }
 
-func buildOfferings(cfg *config.Config, overlays ExtraOverlaySource) offeringsPayload {
-	return BuildOfferings(cfg, overlays)
-}
-
-func overlayFor(src ExtraOverlaySource, capabilityID, offeringID string) map[string]any {
-	if src == nil {
-		return nil
-	}
-	return src.ExtraFor(capabilityID, offeringID)
+func buildOfferings(cfg *config.Config) offeringsPayload {
+	return BuildOfferings(cfg)
 }
 
 func mergeExtraMaps(base, overlay map[string]any) map[string]any {

@@ -104,7 +104,6 @@ Per-offering knobs (host-config `session:` block):
 | `burn_rate_per_second` | 1 | Units/second estimate used to convert runway into lease time. |
 | `min_runway_units` | 0 (off) | Post-debit `SufficientBalance` floor; breach winds the session down with `insufficient_balance`. |
 | `runner.create_path` / `status_path` / `terminate_path` | — | The runner's session API paths (`{id}` substituted). No default URL space exists. |
-| `runner.describe_path` | unset | Optional. When set, the broker reads the runner's own declaration at startup and reload and **refuses to start** if it contradicts this capability's configuration — see below. |
 
 Terminal `close_reason` values you will see in status responses and logs:
 `gateway_close`, `runner_ended`, `runner_failed`, `lease_expired`,
@@ -128,34 +127,12 @@ exist only because they can disagree — a `work_unit` mismatch rejects
 **every** usage event for a session's lifetime, which is an expensive way
 to learn about a typo.
 
-Setting `session.runner.describe_path` turns that class of failure into a
-startup error:
-
-- **Contradictions quarantine that capability.** A runner declaring a
-  different `work_unit`, `descriptor_schema`, or `capability_id` than the
-  offering means the configuration cannot work, so the broker withholds
-  that tuple: it is neither served nor advertised, and the log names the
-  field with both values. The broker still starts and every other
-  capability keeps serving — one bad tuple must not take down the rest.
-  A quarantined tuple answers session opens with `capability_not_served`
-  and disappears from `/registry/offerings`, so the network stops routing
-  paid work to something that cannot serve it.
-- **Unreachable is not a contradiction.** A runner that is down, or
-  serves no describe path, produces a warning and nothing more. Never
-  configure a describe path expecting it to gate availability.
-- **Advisory mismatches warn**: `metering`, path disagreements, and a
-  runner whose emit cadence is slower than
-  `heartbeat.interval_seconds × missed_threshold` (which would tear its
-  own sessions down).
-- **Readiness is the one thing that may be adopted.** If the runner
-  declares a readiness endpoint and you have not written a probe, the
-  broker points its health probe there instead of at the backend root —
-  the runner knows what "ready" means for it better than a default
-  does. Your own probe always wins. This is safe because readiness is
-  live data, not manifest data.
-- **Nothing else is adopted.** Published offerings are cold-key signed,
-  so a runner's declaration is never absorbed into what you advertise —
-  a runner cannot change what you sell.
+Runner facts are no longer configured here at all: a runner attaches and
+declares them, and the broker freezes them into the offer
+(`runner-attach.md`). A capability the broker rejects at attach is
+visible on the coordinator's Runners page with the disagreeing field
+named — see plan 0043 item 11 for what replaced the describe path and
+its quarantine behaviour.
 
 ## 4. paid-job operations
 

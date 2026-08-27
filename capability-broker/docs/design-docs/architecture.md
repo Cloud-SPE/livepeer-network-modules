@@ -26,7 +26,6 @@ capability-broker/
     │   ├── session_ws.go                 # inband-ws session attachment
     │   ├── capability_group.go           # published tuple → candidate backends
     │   ├── backend_capacity.go           # max_in_flight reservation
-    │   ├── offering_metadata.go          # periodic backend metadata discovery
     │   ├── runtime_admin.go              # GET/POST /admin/v1/runtime[/reload]
     │   ├── worker_quic.go                # connected-worker QUIC listener
     │   ├── middleware/

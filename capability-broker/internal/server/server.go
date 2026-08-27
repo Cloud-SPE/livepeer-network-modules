@@ -41,11 +41,6 @@ import (
 type Options struct {
 	ConfigPath string
 
-	// MetadataRefreshInterval controls periodic stable-metadata refresh for
-	// discovery-capable offerings. Zero falls back to the broker default.
-	// Negative values disable periodic refresh after the initial bootstrap pass.
-	MetadataRefreshInterval time.Duration
-
 	// InterimDebit governs the long-running session ticker per plan
 	// 0015. Zero values are a safe disabled state (v0.2 single-debit
 	// fall-through).
@@ -83,7 +78,6 @@ type Server struct {
 	lastReloadError      string
 	reloadHistory        []runtimeHistoryEntry
 	opts                 Options
-	metadata             *metadataCatalog
 	mux                  *http.ServeMux
 	srv                  *http.Server
 	metricsSrv           *http.Server
@@ -114,12 +108,7 @@ type Server struct {
 	sessionEngine *sessionengine.Engine
 	sessionWS     *sessionWSHub
 	jobIdem       jobIdemStore
-	// quarantined holds capability tuples ("cap|off") the broker will
-	// not serve or advertise, with the reason. Populated when a runner's
-	// self-description contradicts its configuration (paid-session
-	// §7.1.1) — fatal to that capability, not to the broker.
-	quarantined map[string]string
-	randIntn    func(int) int
+	randIntn      func(int) int
 }
 
 // New constructs a Server from a validated config and registers routes. It
@@ -135,8 +124,6 @@ type Server struct {
 // fails fast if it is unreachable; the broker should not bind its paid
 // listener with no working payment surface.
 func New(cfg *config.Config, opts Options) (*Server, error) {
-	metadata := newMetadataCatalog()
-	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
 	loadedRevision, loadedConfigPath, err := loadRuntimeRevision(opts.ConfigPath, cfg)
 	if err != nil {
 		return nil, err
@@ -217,11 +204,6 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		}
 	}
 
-	// Reconcile runner self-descriptions before anything reads the
-	// config: a derived readiness probe must be in place when the
-	// health manager is constructed below.
-	quarantined := applyRunnerDescriptions(cfg)
-
 	s := &Server{
 		cfg:                 cfg,
 		configPath:          opts.ConfigPath,
@@ -239,7 +221,6 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			LoadedRevision: loadedRevision,
 		}},
 		opts:             opts,
-		metadata:         metadata,
 		mux:              mux,
 		srv:              srv,
 		payment:          paymentClient,
@@ -259,7 +240,6 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		poolReporter:    poolReporter,
 		poolSnapshot:    poolSnapshot,
 		health:          health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
-		quarantined:     quarantined,
 		randIntn: func(n int) int {
 			return rand.New(rand.NewSource(time.Now().UnixNano())).Intn(n)
 		},
@@ -436,12 +416,6 @@ func (s *Server) currentHealth() *health.Manager {
 	return s.health
 }
 
-func (s *Server) currentMetadata() *metadataCatalog {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.metadata
-}
-
 func (s *Server) currentPoolSnapshot() *poolsnapshot.Cache {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -538,9 +512,6 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	s.attachRunContext(ctx)
-	if s.metadata != nil {
-		go s.runMetadataRefresh(ctx, s.metadataRefreshInterval())
-	}
 	if s.poolSnapshot != nil {
 		go s.poolSnapshot.Run(ctx)
 	}
@@ -580,38 +551,6 @@ func (s *Server) startHealthLoop(healthMgr *health.Manager) {
 	childCtx, cancel := context.WithCancel(s.runCtx)
 	s.healthCancel = cancel
 	go healthMgr.Run(childCtx)
-}
-
-func (s *Server) metadataRefreshInterval() time.Duration {
-	if s.opts.MetadataRefreshInterval < 0 {
-		return 0
-	}
-	if s.opts.MetadataRefreshInterval == 0 {
-		return 5 * time.Minute
-	}
-	return s.opts.MetadataRefreshInterval
-}
-
-func (s *Server) runMetadataRefresh(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	client := &http.Client{Timeout: 2 * time.Second}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			cfg := s.currentConfig()
-			metadata := s.currentMetadata()
-			if cfg == nil || metadata == nil {
-				continue
-			}
-			refreshMetadataCatalog(ctx, client, cfg, metadata)
-		}
-	}
 }
 
 // parseKeyValidity reads the delegation window the operator published

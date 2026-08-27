@@ -13,22 +13,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/selection"
 )
 
-type MetadataStatusSource interface {
-	StatusFor(capabilityID, offeringID string) (MetadataStatus, bool)
-}
-
 type PoolStatusSource interface {
 	StatusFor(backendID, capabilityID, offeringID string) poolsnapshot.Status
-}
-
-type MetadataStatus struct {
-	Provider            string
-	Applicable          bool
-	LastAttemptAt       time.Time
-	LastSuccessAt       time.Time
-	LastError           string
-	LastResult          string
-	ConsecutiveFailures int
 }
 
 type healthResponse struct {
@@ -161,13 +147,13 @@ type poolAggregateStatus struct {
 }
 
 // HealthHandler returns the broker's normalized live-health snapshot.
-func HealthHandler(mgr *health.Manager, metadata MetadataStatusSource, pool PoolStatusSource) http.HandlerFunc {
+func HealthHandler(mgr *health.Manager, pool PoolStatusSource) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		WriteHealthResponse(w, mgr, metadata, pool)
+		WriteHealthResponse(w, mgr, pool)
 	}
 }
 
-func WriteHealthResponse(w http.ResponseWriter, mgr *health.Manager, metadata MetadataStatusSource, pool PoolStatusSource) {
+func WriteHealthResponse(w http.ResponseWriter, mgr *health.Manager, pool PoolStatusSource) {
 	snap := mgr.Snapshot()
 	statuses := make(map[string]string, len(snap.Capabilities))
 	grouped := make(map[string]*healthCapabilityStatus, len(snap.Capabilities))
@@ -191,24 +177,6 @@ func WriteHealthResponse(w http.ResponseWriter, mgr *health.Manager, metadata Me
 				Backends:   make([]backendStatus, 0, 1),
 			}
 			entry = grouped[key]
-			if st, ok := metadata.StatusFor(cap.ID, cap.OfferingID); ok {
-				lastSuccessAgeSeconds := 0.0
-				if st.LastSuccessAt.IsZero() {
-					lastSuccessAgeSeconds = -1
-				} else {
-					lastSuccessAgeSeconds = out.GeneratedAt.Sub(st.LastSuccessAt).Seconds()
-				}
-				entry.Metadata = &metadataStatus{
-					Provider:              st.Provider,
-					Applicable:            st.Applicable,
-					LastAttemptAt:         st.LastAttemptAt,
-					LastSuccessAt:         st.LastSuccessAt,
-					LastSuccessAgeSeconds: lastSuccessAgeSeconds,
-					LastError:             st.LastError,
-					LastResult:            st.LastResult,
-					ConsecutiveFailures:   st.ConsecutiveFailures,
-				}
-			}
 		}
 		var poolStatusValue *poolsnapshot.Status
 		if pool != nil {

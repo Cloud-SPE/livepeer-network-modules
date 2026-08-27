@@ -28,16 +28,10 @@ var version = "dev"
 
 func main() {
 	var (
-		configPath              = flag.String("config", "/etc/livepeer/host-config.yaml", "path to host-config.yaml")
-		listenAddr              = flag.String("listen", "", "HTTP listen address (overrides config)")
-		metricsAddr             = flag.String("metrics", "", "Prometheus metrics listen address (overrides config)")
-		showVersion             = flag.Bool("version", false, "print version and exit")
-		metadataRefreshInterval = flag.Duration(
-			"metadata-refresh-interval",
-			5*time.Minute,
-			"stable metadata refresh cadence for discovery-capable offerings; negative disables periodic refresh after startup",
-		)
-
+		configPath  = flag.String("config", "/etc/livepeer/host-config.yaml", "path to host-config.yaml")
+		listenAddr  = flag.String("listen", "", "HTTP listen address (overrides config)")
+		metricsAddr = flag.String("metrics", "", "Prometheus metrics listen address (overrides config)")
+		showVersion = flag.Bool("version", false, "print version and exit")
 		// Plan 0015 — interim-debit cadence flags.
 		interimDebitInterval = flag.Duration(
 			"interim-debit-interval",
@@ -80,8 +74,7 @@ func main() {
 	}
 
 	srv, err := server.New(cfg, server.Options{
-		ConfigPath:              *configPath,
-		MetadataRefreshInterval: *metadataRefreshInterval,
+		ConfigPath: *configPath,
 		InterimDebit: middleware.InterimDebitConfig{
 			Interval:            *interimDebitInterval,
 			MinRunwayUnits:      *interimDebitMinRunwayUnits,

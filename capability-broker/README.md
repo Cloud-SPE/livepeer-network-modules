@@ -97,7 +97,7 @@ Broker runtime admin surface:
 - `POST /admin/v1/runtime/reload` validates the reloaded config before swap and
   preserves the previous runtime if reload fails.
 - Successful reloads keep matching backend health/probe state when possible and
-  resume health probing and periodic metadata refresh against the new runtime
+  resume health probing against the new runtime
   without requiring a broker restart.
 - `GET /admin/v1/runtime` now includes a bounded recent reload history so
   operator tooling can inspect the latest broker-local attempts directly.
@@ -247,57 +247,19 @@ Optional stable enrichment fields are:
 - `backend_model`
 - `features.*` (booleans only)
 
-For `provider: "vllm"` and `provider: "ollama"` on HTTP OpenAI-compatible
-backends, the broker probes `GET /v1/models`. When the configured
-`extra.openai.model` is present upstream, the broker fills missing
-`served_model_name`, `backend_model`, and capability-appropriate
-`features.*` fields in `/registry/offerings`. Operator-declared values still
-win; discovery fills gaps only.
+These now come from the runner, not from the broker probing it.
 
-The same overlay pattern also applies to backend families that expose a
-stable metadata or options surface. Historical in-repo examples included
-audio, video, and vtuber workload binaries; those component trees have been
-removed, but the broker-side discovery pattern remains available for any
-backend that still exposes the corresponding contract.
-
-The broker refreshes eligible metadata periodically while running. Per-offering
-refresh status and the last discovery result are exposed on
-`GET /registry/health` under each capability's `metadata` object for every
-family that participates in discovery.
-
-Use `--metadata-refresh-interval=<duration>` to tune that cadence. The default
-is `5m`. Set a negative duration to disable periodic refresh after the initial
-startup discovery pass.
-
-Current `metadata.last_result` values are family-aware. Examples:
-
-- `model_not_found`
-- `models_probe_failed`
-- `audio_options_empty`
-- `audio_options_probe_failed`
-- `video_presets_empty`
-- `video_presets_probe_failed`
-- `vtuber_options_empty`
-- `vtuber_options_probe_failed`
-
-Prometheus also exposes
-`livepeer_metadata_refresh_total{family,provider,result}` so discovery
-regressions are visible without polling `GET /registry/health`.
-It also exposes:
-
-- `livepeer_metadata_refresh_duration_seconds{family,provider,result}`
-- `livepeer_metadata_refresh_last_attempt_timestamp_seconds{family,capability,offering,provider}`
-- `livepeer_metadata_refresh_last_success_timestamp_seconds{family,capability,offering,provider}`
-- `livepeer_metadata_refresh_last_success_age_seconds{family,capability,offering,provider}`
-- `livepeer_metadata_refresh_current_result{family,capability,offering,provider,result}`
-- `livepeer_metadata_refresh_consecutive_failures{family,capability,offering,provider}`
-
-`GET /registry/health` also exposes metadata-level `consecutive_failures` per
-offering so the human-facing status surface and Prometheus stay aligned.
-On unhealthy refreshes, `last_success_at` is preserved rather than overwritten,
-so the age gauge measures time since the last healthy metadata refresh.
-The same health payload now includes metadata-level `last_success_age_seconds`
-for operators who are inspecting JSON directly instead of scraping metrics.
+The broker used to poll workload-specific endpoints — `GET /v1/models`,
+`/openai-audio-speech/options`, `/v1/video/transcode/abr/presets` and
+others — to hydrate `extra` on published offerings, which meant the
+broker carried hardcoded knowledge of every workload's discovery
+contract. A runner now declares its own identity and extensions in its
+attach document (`runner-attach.md` §3.2), the first certified runner
+freezes them into the offer, and the adapter profile in the agent is
+where a new workload's facts are described. That polling, its
+`--metadata-refresh-interval` flag, its `metadata` block on
+`GET /registry/health`, and its `livepeer_metadata_refresh_*` metrics are
+removed (plan 0043 item 11).
 When repeated published tuples are configured, the same health payload exposes a
 `backends[]` array per published capability so operator tooling can see each
 candidate backend's individual status. When `pool_snapshot.url` is configured,

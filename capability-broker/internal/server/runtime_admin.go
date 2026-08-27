@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -44,7 +43,7 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "runtime config is not loaded", http.StatusInternalServerError)
 		return
 	}
-	payload := registry.BuildOfferings(cfg, s.currentMetadata())
+	payload := registry.BuildOfferings(cfg)
 	if s.offersEngine != nil {
 		payload.OffersRevision = s.offersEngine.Revision()
 		// Advertised offers: frozen (or accepted-pending) shapes only —
@@ -55,18 +54,6 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 				payload.Capabilities = append(payload.Capabilities, *t)
 			}
 		}
-	}
-	// A quarantined tuple is withheld from discovery: advertising a
-	// capability whose runner contradicts its configuration would route
-	// paid work to something that cannot serve it.
-	if q := s.quarantineReasons(); len(q) > 0 {
-		kept := payload.Capabilities[:0]
-		for _, c := range payload.Capabilities {
-			if _, bad := q[c.CapabilityID+"|"+c.OfferingID]; !bad {
-				kept = append(kept, c)
-			}
-		}
-		payload.Capabilities = kept
 	}
 	observability.SetPublishedOfferings(len(payload.Capabilities))
 	w.Header().Set("Content-Type", "application/json")
@@ -80,7 +67,7 @@ func (s *Server) handleRegistryHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "health manager is not available", http.StatusInternalServerError)
 		return
 	}
-	registry.WriteHealthResponse(w, healthMgr, s.currentMetadata(), s.currentPoolSnapshot())
+	registry.WriteHealthResponse(w, healthMgr, s.currentPoolSnapshot())
 }
 
 func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
@@ -309,8 +296,6 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
 		return s.runtimeStatus(), err
 	}
-	metadata := newMetadataCatalog()
-	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
 	if err := validateConfigAgainstRegistries(cfg, s.extractors); err != nil {
 		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
 		return s.runtimeStatus(), err
@@ -323,7 +308,6 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 	s.finishReload(attemptID, startedAt, "applied", "", loadedRevision, cfg, healthMgr)
 	s.mu.Lock()
 	s.loadedConfigPath = loadedConfigPath
-	s.metadata = metadata
 	s.mu.Unlock()
 	s.startHealthLoop(healthMgr)
 	return s.runtimeStatus(), nil

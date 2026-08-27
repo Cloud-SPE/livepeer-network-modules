@@ -173,7 +173,7 @@ side.
 
 - `livepeer-network-protocol/manifest/schema.json` — the authoritative
   schema for the capability tuples in this body and in the signed manifest.
-- [manifest-schema.md](manifest-schema.md) — this daemon's own v3
+- [../livepeer-network-protocol/manifest/schema.json](../livepeer-network-protocol/manifest/schema.json) — this daemon's own v3
   node-oriented manifest shape (a *different*, node-grouped projection;
   do not conflate the two).
 - [adding-a-new-workload.md](adding-a-new-workload.md) — onramp recipe for

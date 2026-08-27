@@ -1,3 +1,12 @@
+> **Archived 2026-08-27.** This described the daemon's own v3.0.1 manifest
+> schema and its signature scheme — a second manifest shape beside the
+> protocol module's envelope, with a second validator and a second
+> canonicalization of the same document. The envelope is the only
+> manifest now (plan 0043 decision 8), and the daemon's v3 decoder is
+> deleted. The live contract is
+> [`livepeer-network-protocol/manifest/schema.json`](../../../../livepeer-network-protocol/manifest/schema.json)
+> and its changelog. Kept for provenance; do not implement against it.
+
 ---
 title: Manifest schema
 status: accepted

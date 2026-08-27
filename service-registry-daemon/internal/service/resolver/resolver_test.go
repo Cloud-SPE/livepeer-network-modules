@@ -107,19 +107,50 @@ func (f *fakeLiveHealthFetcher) Fetch(ctx context.Context, workerURL string) (*t
 	return &types.RouteHealthSnapshot{}, nil
 }
 
-// signManifestForFixture builds a manifest signed by f.signer for f.addr.
+// signManifestForFixture hosts a signed coordinator envelope covering
+// what the given nodes serve — the only manifest shape the daemon reads
+// (plan 0043 decision 8). Fixtures still describe the node-shaped result
+// they expect; this flattens it to the envelope's per-tuple worker_url.
 func (f *fixture) signManifestForFixture(nodes []types.Node) []byte {
 	f.t.Helper()
-	m := &types.Manifest{
-		SchemaVersion: types.SchemaVersion,
-		EthAddress:    string(f.addr),
-		IssuedAt:      f.clk.Now(),
-		Nodes:         nodes,
-		Signature: types.Signature{
-			Alg: types.SignatureAlgEthPersonal,
+	env := types.CoordinatorSignedManifest{
+		Manifest: types.CoordinatorManifestPayload{
+			SpecVersion:    "2.4.1",
+			PublicationSeq: 1,
+			IssuedAt:       f.clk.Now().UTC(),
+			ExpiresAt:      f.clk.Now().UTC().Add(24 * time.Hour),
+			Orch:           types.CoordinatorOrch{EthAddress: string(f.addr), ServiceURI: f.uri},
+		},
+		Signature: types.CoordinatorEnvelopeSignature{
+			Algorithm:        types.CoordinatorSignatureAlg,
+			Canonicalization: "JCS",
 		},
 	}
-	canonical, err := types.CanonicalBytes(m)
+	for _, n := range nodes {
+		for _, c := range n.Capabilities {
+			offerings := c.Offerings
+			if len(offerings) == 0 {
+				offerings = []types.Offering{{ID: "default", PricePerWorkUnitWei: "1"}}
+			}
+			for _, o := range offerings {
+				price := o.PricePerWorkUnitWei
+				if price == "" {
+					price = "1"
+				}
+				env.Manifest.Capabilities = append(env.Manifest.Capabilities, types.CoordinatorCapability{
+					CapabilityID:    c.Name,
+					OfferingID:      o.ID,
+					Protocol:        "paid-job/v1",
+					Job:             json.RawMessage(`{"transports":["unary"]}`),
+					WorkUnit:        types.CoordinatorWorkUnit{Name: c.WorkUnit},
+					PricePerUnitWei: price,
+					PerUnits:        1,
+					WorkerURL:       n.URL,
+				})
+			}
+		}
+	}
+	canonical, err := types.CoordinatorCanonicalBytes(env.Manifest)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -127,9 +158,8 @@ func (f *fixture) signManifestForFixture(nodes []types.Node) []byte {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	m.Signature.Value = "0x" + hex(sig)
-	m.Signature.SignedCanonicalBytesSHA256 = types.CanonicalSHA256(canonical)
-	body, err := json.Marshal(m)
+	env.Signature.Value = "0x" + hex(sig)
+	body, err := json.Marshal(env)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -436,29 +466,6 @@ func TestResolveByAddress_LegacyFallbackDeniedWithoutFlag(t *testing.T) {
 	}
 	if !errors.Is(err, types.ErrManifestUnavailable) {
 		t.Fatalf("expected ErrManifestUnavailable, got %v", err)
-	}
-}
-
-func TestResolveByAddress_SignatureMismatchRejected(t *testing.T) {
-	f := newFixture(t)
-	// Build a manifest signed by a *different* key.
-	other, _ := signer.GenerateRandom()
-	m := &types.Manifest{
-		SchemaVersion: types.SchemaVersion,
-		EthAddress:    string(f.addr), // claims f.addr
-		IssuedAt:      f.clk.Now(),
-		Nodes:         []types.Node{{ID: "n1", URL: f.uri, Capabilities: []types.Capability{}}},
-		Signature:     types.Signature{Alg: types.SignatureAlgEthPersonal},
-	}
-	canonical, _ := types.CanonicalBytes(m)
-	sig, _ := other.SignCanonical(canonical)
-	m.Signature.Value = "0x" + hex(sig)
-	body, _ := json.Marshal(m)
-	f.fetcher.Bodies[f.uri] = body
-
-	_, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
-	if !errors.Is(err, types.ErrSignatureMismatch) {
-		t.Fatalf("expected ErrSignatureMismatch, got %v", err)
 	}
 }
 
@@ -815,8 +822,8 @@ func TestResolveByAddress_RequestedTupleFilteringPreservesSiblingNodes(t *testin
 	if len(res.Nodes) != 2 {
 		t.Fatalf("expected non-target sibling nodes to remain after filtering, got %+v", res.Nodes)
 	}
-	if res.Nodes[0].ID != "n2" || res.Nodes[1].ID != "n3" {
-		t.Fatalf("expected node order [n2 n3], got %+v", []string{res.Nodes[0].ID, res.Nodes[1].ID})
+	if res.Nodes[0].ID != "node-2" || res.Nodes[1].ID != "node-3" {
+		t.Fatalf("expected node order [node-2 node-3], got %+v", []string{res.Nodes[0].ID, res.Nodes[1].ID})
 	}
 }
 
@@ -918,8 +925,8 @@ func TestResolveByAddress_RequestedTupleKeepsHealthyTargetNode(t *testing.T) {
 	if len(res.Nodes) != 3 {
 		t.Fatalf("expected healthy target node and siblings to remain, got %+v", res.Nodes)
 	}
-	if res.Nodes[0].ID != "n1" || res.Nodes[1].ID != "n2" || res.Nodes[2].ID != "n3" {
-		t.Fatalf("expected node order [n1 n2 n3], got %+v", []string{res.Nodes[0].ID, res.Nodes[1].ID, res.Nodes[2].ID})
+	if res.Nodes[0].ID != "node-1" || res.Nodes[1].ID != "node-2" || res.Nodes[2].ID != "node-3" {
+		t.Fatalf("expected node order [node-1 node-2 node-3], got %+v", []string{res.Nodes[0].ID, res.Nodes[1].ID, res.Nodes[2].ID})
 	}
 }
 

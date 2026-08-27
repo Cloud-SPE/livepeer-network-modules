@@ -15,8 +15,8 @@ The on-chain `serviceURI` is a single string per registry contract. Resolver dep
 Resolver behavior:
 
 1. Fetch `serviceURI` verbatim (HTTP GET, size-capped, timeout-capped).
-2. JSON-decode and validate per [manifest-schema.md](manifest-schema.md).
-3. Verify signature per [signature-scheme.md](signature-scheme.md).
+2. JSON-decode and validate per [../livepeer-network-protocol/manifest/schema.json](../livepeer-network-protocol/manifest/schema.json).
+3. Verify signature per [references/archived/signature-scheme.md](references/archived/signature-scheme.md).
 4. Cache and return the parsed `[]Node`.
 
 If the manifest fetch fails (404, timeout, parse error, signature mismatch):

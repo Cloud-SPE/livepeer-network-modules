@@ -323,48 +323,12 @@ func (s *Server) GetAuditLog(_ context.Context, req GetAuditLogRequest) ([]types
 
 // ----- Publisher-side RPCs -----
 
-// BuildManifest constructs an unsigned manifest from spec.
-func (s *Server) BuildManifest(_ context.Context, spec publisher.BuildSpec) (*types.Manifest, error) {
-	if s.publisherSvc == nil {
-		return nil, errors.New("grpc: publisher not mounted")
-	}
-	return s.publisherSvc.BuildManifest(spec)
-}
-
 // GetIdentity returns the loaded publisher cold-key identity.
 func (s *Server) GetIdentity(_ context.Context) (types.EthAddress, error) {
 	if s.publisherSvc == nil {
 		return "", errors.New("grpc: publisher not mounted")
 	}
 	return s.publisherSvc.Identity()
-}
-
-// SignManifest signs an in-memory manifest produced by BuildManifest.
-//
-// Note: we accept the typed *types.Manifest struct here rather than
-// a JSON-bytes wire form because DecodeManifest requires a full
-// signature for validation, and BuildManifest output is intentionally
-// unsigned. The gRPC adapter (added under `make proto`) is responsible
-// for translating the wire form to/from this struct. See
-// docs/exec-plans/active/0001-repo-scaffold.md for the wiring plan.
-func (s *Server) SignManifest(_ context.Context, m *types.Manifest) (*types.Manifest, error) {
-	if s.publisherSvc == nil {
-		return nil, errors.New("grpc: publisher not mounted")
-	}
-	if m == nil {
-		return nil, errors.New("grpc: nil manifest")
-	}
-	return s.publisherSvc.SignManifest(m)
-}
-
-// BuildAndSign is the one-shot Build+Sign path used by
-// livepeer-registry-refresh. Output is byte-identical to BuildManifest
-// followed by SignManifest.
-func (s *Server) BuildAndSign(_ context.Context, spec publisher.BuildSpec) (*types.Manifest, error) {
-	if s.publisherSvc == nil {
-		return nil, errors.New("grpc: publisher not mounted")
-	}
-	return s.publisherSvc.BuildAndSign(spec)
 }
 
 // Health returns a coarse aliveness status.

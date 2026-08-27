@@ -64,7 +64,7 @@ Lints enforce this in CI. See [docs/design-docs/architecture.md](docs/design-doc
 | How does information flow end-to-end? | `docs/design-docs/architecture.md#information-flow` (Mermaid diagrams) |
 | Why is X done this way? | `docs/design-docs/` |
 | What's in flight? | `docs/exec-plans/active/` |
-| What's the manifest schema? | `docs/design-docs/manifest-schema.md` |
+| What's the manifest schema? | `../livepeer-network-protocol/manifest/schema.json` |
 | How does legacy fallback work? | `docs/design-docs/serviceuri-modes.md` |
 | What's the gRPC contract? | `docs/product-specs/grpc-surface.md` |
 | What metrics are emitted? | `docs/design-docs/observability.md` |

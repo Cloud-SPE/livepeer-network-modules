@@ -165,7 +165,7 @@ change, or a proto regen.
   string conventions.
 - [`worker-offerings-endpoint.md`](worker-offerings-endpoint.md) — the
   uniform endpoint workers expose for orch-coordinator scrape.
-- [`manifest-schema.md`](manifest-schema.md) — the wire shape your offerings
+- [`../livepeer-network-protocol/manifest/schema.json`](../livepeer-network-protocol/manifest/schema.json) — the wire shape your offerings
   end up in.
 - `livepeer-network-suite` plan 0003 — cross-repo coordination story for the
   v3.0.1 archetype-A reset.

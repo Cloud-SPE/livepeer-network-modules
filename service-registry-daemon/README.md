@@ -152,7 +152,7 @@ For the full mental model — **component map, publish/resolve sequence diagrams
 ## Highlights
 
 - **Explicit resolver registry order** — each resolver deployment reads a primary `--service-registry-address` and may optionally fall back to `--ai-service-registry-address` when the primary registry has no pointer. The returned on-chain `serviceURI` is treated as the manifest URL to fetch. See [`docs/design-docs/serviceuri-modes.md`](docs/design-docs/serviceuri-modes.md).
-- **Signed claims, recovered against chain identity** — every manifest is signed `eth-personal-sign` over canonical bytes. The resolver recovers the signer and verifies it matches the eth address whose `serviceURI` pointed us there. Mismatch is rejected with `signature_mismatch` and never cached. See [`docs/design-docs/signature-scheme.md`](docs/design-docs/signature-scheme.md).
+- **Signed claims, recovered against chain identity** — every manifest is signed `eth-personal-sign` over canonical bytes. The resolver recovers the signer and verifies it matches the eth address whose `serviceURI` pointed us there. Mismatch is rejected with `signature_mismatch` and never cached. See [`references/archived/references/archived/signature-scheme.md`](references/archived/references/archived/signature-scheme.md).
 - **Workload-agnostic capability namespace** — `openai:chat-completions`, `livepeer:transcoder/h264`, `myco:custom-pipeline-v3` are all opaque to the daemon. No code change needed to ship a new capability type. See [`docs/design-docs/workload-agnostic-strings.md`](docs/design-docs/workload-agnostic-strings.md).
 - **Static overlay as policy authority** — the on-chain manifest is canonical for what the operator advertises; operator-curated `nodes.yaml` is canonical for what the consumer accepts (`enabled`, `tier_allowed`, `weight`, `unsigned_allowed`). Augment, don't replace. Loaded once at startup — edit the file and restart (no hot-reload). See [`docs/design-docs/static-overlay.md`](docs/design-docs/static-overlay.md).
 - **Last-good fallback with audit trail** — refresh failures don't evict the cache. Resolver returns the last-good entry with `freshness_status: stale_failing` so consumers can apply their own circuit-breaker policy. Every cache transition is logged to a queryable audit bucket. See [`docs/design-docs/resolver-cache.md`](docs/design-docs/resolver-cache.md).
@@ -275,7 +275,7 @@ See [`docs/product-specs/legacy-compat.md`](docs/product-specs/legacy-compat.md)
 - [PLANS.md](PLANS.md) — how work is planned
 - [PRODUCT_SENSE.md](PRODUCT_SENSE.md) — who this is for, what "good" looks like
 - [docs/design-docs/architecture.md#information-flow](docs/design-docs/architecture.md#information-flow) — Mermaid component map + publish / resolve / trust diagrams
-- [docs/design-docs/manifest-schema.md](docs/design-docs/manifest-schema.md) — manifest format
+- [../livepeer-network-protocol/manifest/schema.json](../livepeer-network-protocol/manifest/schema.json) — manifest format
 - [docs/design-docs/serviceuri-modes.md](docs/design-docs/serviceuri-modes.md) — four resolver modes (three legacy-compat + chainless static-overlay synth)
 - [docs/product-specs/grpc-surface.md](docs/product-specs/grpc-surface.md) — gRPC API
 - [docs/design-docs/observability.md](docs/design-docs/observability.md) — Prometheus metrics catalog + sample queries

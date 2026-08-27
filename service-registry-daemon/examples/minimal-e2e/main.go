@@ -18,7 +18,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/manifestcache"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/grpc"
-	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/publisher"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/resolver"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
@@ -47,69 +46,60 @@ func run() error {
 	uri := "https://orch.example.com/.well-known/livepeer-registry.json"
 	c.PreLoad(addr, uri)
 
-	// 2. Publisher builds + signs a manifest covering AI + transcoding.
-	pub := publisher.New(publisher.Config{
-		Chain:  c,
-		Signer: sk,
-		Audit:  audit.New(store.NewMemory()),
-		Clock:  clk,
-	})
-	m, err := pub.BuildManifest(publisher.BuildSpec{
-		// BuildManifest validates the proposed identity against the
-		// loaded signer before it builds anything; the field is required.
-		EthAddress: addr,
-		Nodes: []types.Node{
-			{
-				ID:  "ai-east",
-				URL: "https://ai-east.example.com:8935",
-				Capabilities: []types.Capability{
-					{
-						Name:      "openai:chat-completions",
-						WorkUnit:  "token",
-						Offerings: []types.Offering{{ID: "gpt-oss-20b", PricePerWorkUnitWei: "1000"}},
-					},
-					{
-						Name:      "openai:embeddings",
-						WorkUnit:  "token",
-						Offerings: []types.Offering{{ID: "text-embedding-3-small", PricePerWorkUnitWei: "900"}},
-					},
+	// 2. A coordinator-shaped signed envelope. This is the only manifest
+	// shape the daemon reads now (plan 0043 §3.8): orch-coordinator
+	// builds it, the cold key on secure-orch signs it, and the daemon
+	// resolves it. The daemon no longer builds or signs manifests —
+	// doing so was a second signing path beside the cold key.
+	env := types.CoordinatorSignedManifest{
+		Manifest: types.CoordinatorManifestPayload{
+			SpecVersion:    "2.4.1",
+			PublicationSeq: 1,
+			IssuedAt:       clk.Now().UTC(),
+			ExpiresAt:      clk.Now().UTC().Add(24 * time.Hour),
+			Orch:           types.CoordinatorOrch{EthAddress: string(addr), ServiceURI: uri},
+			Capabilities: []types.CoordinatorCapability{
+				{
+					CapabilityID:    "openai:chat-completions",
+					OfferingID:      "gpt-oss-20b",
+					Protocol:        "paid-job/v1",
+					Job:             json.RawMessage(`{"transports":["unary","stream"]}`),
+					WorkUnit:        types.CoordinatorWorkUnit{Name: "tokens"},
+					PricePerUnitWei: "1000",
+					PerUnits:        1,
+					WorkerURL:       "https://ai-east.example.com:8935",
 				},
-			},
-			{
-				ID:  "ai-west",
-				URL: "https://ai-west.example.com:8935",
-				Capabilities: []types.Capability{
-					{
-						Name:      "openai:chat-completions",
-						WorkUnit:  "token",
-						Offerings: []types.Offering{{ID: "gpt-oss-20b", PricePerWorkUnitWei: "1100"}},
-					},
-				},
-			},
-			{
-				ID:  "transcoder-1",
-				URL: "https://orch.example.com:8935",
-				Capabilities: []types.Capability{
-					{
-						Name:     "livepeer:transcoder/h264",
-						WorkUnit: "frame",
-						Offerings: []types.Offering{
-							{ID: "h264-main", PricePerWorkUnitWei: "2000"},
-						},
-					},
+				{
+					CapabilityID:    "livepeer:transcoder/h264",
+					OfferingID:      "h264-main",
+					Protocol:        "paid-job/v1",
+					Job:             json.RawMessage(`{"transports":["unary"]}`),
+					WorkUnit:        types.CoordinatorWorkUnit{Name: "frame"},
+					PricePerUnitWei: "2000",
+					PerUnits:        1,
+					WorkerURL:       "https://transcode.example.com:8935",
 				},
 			},
 		},
-	})
+		Signature: types.CoordinatorEnvelopeSignature{
+			Algorithm:        types.CoordinatorSignatureAlg,
+			Canonicalization: "JCS",
+		},
+	}
+	canonical, err := types.CoordinatorCanonicalBytes(env.Manifest)
 	if err != nil {
 		return err
 	}
-	signed, err := pub.SignManifest(m)
+	sig, err := sk.SignCanonical(canonical)
 	if err != nil {
 		return err
 	}
-	body, _ := json.Marshal(signed)
-	fmt.Printf("Signed manifest: %d bytes, sig=%s...\n", len(body), signed.Signature.Value[:14])
+	env.Signature.Value = "0x" + hexString(sig)
+	body, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Signed envelope: %d bytes, sig=%s...\n", len(body), env.Signature.Value[:14])
 
 	// 3. Resolver against the same chain + a Static fetcher carrying our manifest.
 	fetcher := &manifestfetcher.Static{
@@ -163,4 +153,14 @@ func run() error {
 	h := srv.Health(ctx)
 	fmt.Println("Health:", h.String())
 	return nil
+}
+
+// hexString renders signature bytes for display.
+func hexString(b []byte) string {
+	const digits = "0123456789abcdef"
+	out := make([]byte, 0, len(b)*2)
+	for _, c := range b {
+		out = append(out, digits[c>>4], digits[c&0x0f])
+	}
+	return string(out)
 }

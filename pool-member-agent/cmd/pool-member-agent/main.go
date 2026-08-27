@@ -138,7 +138,7 @@ func run(ctx context.Context, args []string) error {
 		log.Printf("warning: no runners declared — attaching with hardware only; " +
 			"this host announces itself but serves nothing until runners are configured")
 	}
-	state := &runnerState{}
+	state := newRunnerState()
 	state.set(cfg.Runners, "")
 	if cfg.PoolManaged() {
 		// The pool owns the runner set. Whatever was configured locally
@@ -314,9 +314,9 @@ func runTunnel(ctx context.Context, cfg config, state *runnerState) error {
 		return fmt.Errorf("build attach document: %w", err)
 	}
 	if cfg.BrokerQUICAddr != "" {
-		return runQUICTunnel(ctx, cfg, doc)
+		return runQUICTunnel(ctx, cfg, state, doc)
 	}
-	return runWSTunnel(ctx, cfg, doc)
+	return runWSTunnel(ctx, cfg, state, doc)
 }
 
 // logRegisterResult turns the broker's verdict into the operator's
@@ -345,7 +345,7 @@ func logRegisterResult(res *registerResult) error {
 	return nil
 }
 
-func runWSTunnel(ctx context.Context, cfg config, doc *attach.Document) error {
+func runWSTunnel(ctx context.Context, cfg config, state *runnerState, doc *attach.Document) error {
 	sessionURL, err := workerSessionURL(cfg.BrokerURL)
 	if err != nil {
 		return err
@@ -369,7 +369,7 @@ func runWSTunnel(ctx context.Context, cfg config, doc *attach.Document) error {
 	routes := attach.RouteTable(cfg.Runners)
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go refreshLoop(sessionCtx, cfg, doc, send)
+	go refreshLoop(sessionCtx, cfg, state, doc, send)
 
 	for {
 		var msg tunnelMessage
@@ -407,18 +407,34 @@ func sendRegister(send func(tunnelMessage) error, doc *attach.Document) error {
 // refreshLoop re-sends the document when it changes (runner-attach §2:
 // each document fully replaces the previous one on that connection).
 // Hardware appearing or disappearing is the common case.
-func refreshLoop(ctx context.Context, cfg config, current *attach.Document, send func(tunnelMessage) error) {
+func refreshLoop(ctx context.Context, cfg config, state *runnerState, current *attach.Document, send func(tunnelMessage) error) {
 	last, err := json.Marshal(current)
 	if err != nil {
 		return
+	}
+	var wake <-chan struct{}
+	if state != nil {
+		wake = state.wake()
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-wake:
+			// A placement changed. Re-register now rather than at the
+			// next tick: the pool may be withdrawing a runner, and the
+			// broker has to stop dispatching before the container does.
 		case <-time.After(cfg.RefreshEvery):
 		}
-		next, err := buildDocument(ctx, cfg)
+		// Rebuild from the shared state, not from the config this
+		// session started with — otherwise a pool-managed host would
+		// re-send the runner set it booted with forever.
+		sessionCfg := cfg
+		if state != nil {
+			runners, _ := state.get()
+			sessionCfg.Runners = runners
+		}
+		next, err := buildDocument(ctx, sessionCfg)
 		if err != nil {
 			log.Printf("rebuild attach document: %v", err)
 			continue
@@ -436,7 +452,7 @@ func refreshLoop(ctx context.Context, cfg config, current *attach.Document, send
 	}
 }
 
-func runQUICTunnel(ctx context.Context, cfg config, doc *attach.Document) error {
+func runQUICTunnel(ctx context.Context, cfg config, state *runnerState, doc *attach.Document) error {
 	conn, err := quic.DialAddr(ctx, cfg.BrokerQUICAddr, quicClientTLSConfig(), nil)
 	if err != nil {
 		return err
@@ -446,6 +462,15 @@ func runQUICTunnel(ctx context.Context, cfg config, doc *attach.Document) error 
 		return err
 	}
 	routes := attach.RouteTable(cfg.Runners)
+	sessionCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// QUIC re-registers on the same terms as the websocket. It did not
+	// before, which meant a QUIC-attached host could never announce a
+	// change — including a drain, which the broker has to see before
+	// the container stops.
+	go refreshLoop(sessionCtx, cfg, state, doc, func(msg tunnelMessage) error {
+		return quicSend(sessionCtx, conn, msg)
+	})
 	for {
 		stream, err := conn.AcceptStream(ctx)
 		if err != nil {
@@ -453,6 +478,18 @@ func runQUICTunnel(ctx context.Context, cfg config, doc *attach.Document) error 
 		}
 		go handleQUICRequest(ctx, stream, routes)
 	}
+}
+
+// quicSend writes one message on its own stream. QUIC has no single
+// long-lived channel back to the broker the way the websocket does, so
+// a re-register opens a stream, says its piece, and closes.
+func quicSend(ctx context.Context, conn *quic.Conn, msg tunnelMessage) error {
+	stream, err := conn.OpenStreamSync(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stream.Close() }()
+	return json.NewEncoder(stream).Encode(msg)
 }
 
 // quicRegister opens a stream, sends the document, and reads the

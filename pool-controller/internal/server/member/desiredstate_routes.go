@@ -117,7 +117,14 @@ func (d Deps) applyStatusReport(enrollment types.HostEnrollment, report statusRe
 				next.State = types.TemplateAssignmentTesting
 			}
 		case "stopped", "removed":
-			if assignment.State == types.TemplateAssignmentDraining {
+			// A draining service is retired only once its grace has
+			// elapsed. The agent reports "stopped" as soon as it has
+			// been told to drain — the container is still up and the
+			// broker may still be finishing work it dispatched — so
+			// retiring on that first report would withdraw the
+			// placement while requests were in flight, which is the
+			// thing draining exists to avoid.
+			if assignment.State == types.TemplateAssignmentDraining && drainElapsed(assignment, now) {
 				next.State = types.TemplateAssignmentRetired
 			}
 		case "failed":
@@ -142,4 +149,19 @@ func (d Deps) applyStatusReport(enrollment types.HostEnrollment, report statusRe
 		Details:      map[string]any{"revision": report.Revision, "services": len(report.Services)},
 	})
 	return applied, nil
+}
+
+// DrainGrace is how long a withdrawn placement keeps serving before it
+// is retired. It bounds how long the broker has to finish work it had
+// already dispatched; a request that outlives it was going to time out
+// anyway.
+const DrainGrace = 2 * time.Minute
+
+func drainElapsed(assignment types.TemplateAssignment, now time.Time) bool {
+	if assignment.DrainingSince.IsZero() {
+		// No recorded start: treat the drain as complete rather than
+		// stranding the placement forever on a missing timestamp.
+		return true
+	}
+	return now.Sub(assignment.DrainingSince) >= DrainGrace
 }

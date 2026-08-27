@@ -44,10 +44,14 @@ func desiredDoc() desiredstate.Document {
 			{
 				Name: "runner-unit-a-chat-a", ComposeFragment: "  runner-unit-a-chat-a:\n    image: a\n",
 				DeviceIDs: []string{"GPU-aaa"}, TemplateID: "chat-a", AssignmentID: "unit-a|chat-a",
+				Capability: "openai:chat-completions", Protocol: "paid-job/v1",
+				Identity: map[string]string{"openai.model": "gpt-oss-20b"},
 			},
 			{
 				Name: "runner-unit-b-chat-b", ComposeFragment: "  runner-unit-b-chat-b:\n    image: b\n",
 				DeviceIDs: []string{"GPU-bbb"}, TemplateID: "chat-b", AssignmentID: "unit-b|chat-b",
+				Capability: "openai:chat-completions", Protocol: "paid-job/v1",
+				Identity: map[string]string{"openai.model": "gpt-oss-20b"},
 				Draining: true,
 			},
 		},
@@ -198,10 +202,13 @@ func TestRunnersForCarriesDrainingAndDevices(t *testing.T) {
 	if runners[0].Profile != attach.ProfileOpenAICompatible {
 		t.Fatalf("profile = %q", runners[0].Profile)
 	}
+	// The profile follows the CAPABILITY the controller named, not the
+	// template id: a pool that renames a template must not silently
+	// change what its runners declare on the wire.
 	if got := runnersFor(desiredstate.Document{Services: []desiredstate.Service{
-		{Name: "runner-x", TemplateID: "video-transcode-abr"},
+		{Name: "runner-x", TemplateID: "anything", Capability: "video:transcode.abr"},
 	}}); got[0].Profile != attach.ProfileTranscode {
-		t.Fatalf("transcode template got profile %q", got[0].Profile)
+		t.Fatalf("transcode capability got profile %q", got[0].Profile)
 	}
 }
 

@@ -1,0 +1,52 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Your choices</p>
+  <h1>Settings</h1>
+  <p class="muted">Three things are yours to decide: which workloads you decline, when a host credential is replaced, and when a host leaves the pool. Each is confirmed before it takes effect.</p>
+</section>
+
+<section>
+  <h2>Declined templates</h2>
+  <p class="muted">You may refuse a template and placement will honour it. You cannot request one: which GPU runs which workload is the pool's policy, not a queue you can join. A refusal with no GPU named covers every GPU on your address.</p>
+  <div id="settingsOptOuts" class="card-list"></div>
+
+  <h3>Decline a template</h3>
+  <div class="form-grid">
+    <label>Template ID
+      <input id="optOutTemplateID" list="optOutTemplateOptions" placeholder="llama-3-70b-shared" autocomplete="off" spellcheck="false">
+      <datalist id="optOutTemplateOptions"></datalist>
+    </label>
+    <label>Scope
+      <select id="optOutHardwareUnitID"></select>
+    </label>
+    <label>Reason <span class="muted">(optional)</span>
+      <input id="optOutReason" placeholder="too much VRAM pressure" autocomplete="off">
+    </label>
+  </div>
+  <div class="actions">
+    <button id="optOutCreate" class="primary-button">Decline this template</button>
+  </div>
+  <p class="small muted">The list suggests templates currently placed on your own GPUs. Any template ID the pool's catalog carries is accepted; one it does not is rejected rather than stored.</p>
+</section>
+
+<section>
+  <h2>Host credentials</h2>
+  <p class="muted">Rotating issues a new enrollment token and revokes the old one immediately. The running agent will stop being able to attach until it is given the new token, so rotate when you can restart the host.</p>
+  <div id="settingsCredentials" class="card-list"></div>
+</section>
+
+<section>
+  <h2>Retire a host</h2>
+  <p class="muted">Retiring is your own exit. Placements are set to drain, not stopped: work already dispatched finishes where it was sent, and the host goes quiet once it has. It is not instant and it is not a kill switch.</p>
+  <div id="settingsRetire" class="card-list"></div>
+</section>
+
+<section>
+  <h2>This browser</h2>
+  <p class="muted">Host credentials are kept in this browser so the portal can read your hosts' status; the controller keeps only a hash of them and cannot hand one back. Clearing them here does not affect a running host — it only stops this browser from showing it.</p>
+  <div id="settingsLocal" class="card-list"></div>
+  <div class="actions">
+    <button id="settingsForgetAll" class="secondary">Forget every host on this browser</button>
+  </div>
+</section>
+{{end}}

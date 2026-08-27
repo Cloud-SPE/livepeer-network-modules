@@ -182,7 +182,7 @@ var (
 	hwFields   = set("gpu_uuid", "gpu_model", "vram_bytes", "driver", "cuda", "facts")
 	capFields  = set("capability_id", "protocol", "local_id", "transports", "descriptor_schemas", "work_unit",
 		"paths", "readiness", "identity", "schema_versions", "metering", "heartbeat", "session_params_schema",
-		"requirements", "devices")
+		"requirements", "devices", "draining")
 	wuFields   = set("name", "extractor")
 	pathFields = set("invoke", "options", "create", "status", "terminate")
 	rdFields   = set("type", "path", "config")

@@ -32,6 +32,12 @@ type Service struct {
 	Draining        bool     `json:"draining,omitempty"`
 	TemplateID      string   `json:"template_id"`
 	AssignmentID    string   `json:"assignment_id"`
+	// Capability, Protocol and Identity are what this runner must
+	// declare at attach. The controller supplies them because it is the
+	// only side that knows what the offer selects on.
+	Capability string            `json:"capability"`
+	Protocol   string            `json:"protocol,omitempty"`
+	Identity   map[string]string `json:"identity,omitempty"`
 }
 
 type Model struct {

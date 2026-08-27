@@ -29,13 +29,41 @@ type runnerState struct {
 	// revision is the desired state these runners came from, logged so
 	// an operator can tie a running container to a pool decision.
 	revision string
+	// changed wakes a live tunnel session. Without it a drain would sit
+	// unannounced until the next refresh tick, and the broker would
+	// keep dispatching to a runner the pool has already withdrawn for
+	// as long as that tick is — which is precisely the window
+	// runner-attach §7.1 exists to close.
+	changed chan struct{}
+}
+
+func newRunnerState() *runnerState {
+	return &runnerState{changed: make(chan struct{}, 1)}
 }
 
 func (s *runnerState) set(runners []attach.Runner, revision string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.runners = runners
 	s.revision = revision
+	ch := s.changed
+	s.mu.Unlock()
+	if ch == nil {
+		return
+	}
+	// Non-blocking: the channel carries "something changed", not a
+	// queue of changes, so a session that has not woken yet will pick
+	// up the latest state when it does.
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+// wake is the signal a live session waits on.
+func (s *runnerState) wake() <-chan struct{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.changed
 }
 
 func (s *runnerState) get() ([]attach.Runner, string) {
@@ -108,22 +136,36 @@ func reconcileOnce(ctx context.Context, client *desiredstate.Client, runner desi
 func runnersFor(doc desiredstate.Document) []attach.Runner {
 	out := make([]attach.Runner, 0, len(doc.Services))
 	for _, service := range doc.Services {
-		out = append(out, attach.Runner{
-			LocalID:  service.Name,
-			URL:      "http://" + service.Name + ":8080",
-			Devices:  service.DeviceIDs,
-			Draining: service.Draining,
-			Profile:  profileFor(service.TemplateID),
-		})
+		runner := attach.Runner{
+			LocalID:      service.Name,
+			URL:          "http://" + service.Name + ":8080",
+			Devices:      service.DeviceIDs,
+			Draining:     service.Draining,
+			CapabilityID: service.Capability,
+			Profile:      profileFor(service.Capability),
+		}
+		// The model is the fact an offer's match selects on, and the
+		// controller is the only side that knows which one this
+		// placement is for. An agent that guessed would either match
+		// nothing or match an offering it is not running.
+		if service.Identity != nil {
+			runner.Model = service.Identity["openai.model"]
+			if runner.Model == "" {
+				runner.Model = service.Identity["model"]
+			}
+			runner.Provider = service.Identity["provider"]
+		}
+		out = append(out, runner)
 	}
 	return out
 }
 
-// profileFor picks the capability shape from the template id. The
-// template names the workload family, and the agent only needs to know
-// which wire shape to declare.
-func profileFor(templateID string) string {
-	if strings.Contains(templateID, "transcode") {
+// profileFor picks the wire shape from the capability the controller
+// named. Keying on the capability rather than the template id means a
+// pool that renames a template does not silently change what its
+// runners declare.
+func profileFor(capability string) string {
+	if strings.HasPrefix(capability, "video:") || strings.Contains(capability, "transcode") {
 		return attach.ProfileTranscode
 	}
 	return attach.ProfileOpenAICompatible

@@ -49,6 +49,18 @@ type Service struct {
 	// for an operator correlating a container back to a decision.
 	TemplateID   string `json:"template_id"`
 	AssignmentID string `json:"assignment_id"`
+
+	// Capability and Identity are what the agent must DECLARE to the
+	// broker for this runner. Without them the agent cannot build a
+	// valid attach document at all: an offer selects its runners on
+	// declared identity, so a runner that declares none matches
+	// nothing — and the openai profile refuses to build without a
+	// model. The controller knows both from the template (its
+	// capability, and the identity its `match` selects on), so it says
+	// so rather than leaving the agent to guess.
+	Capability string            `json:"capability"`
+	Protocol   string            `json:"protocol,omitempty"`
+	Identity   map[string]string `json:"identity,omitempty"`
 }
 
 // Model is a weight file that must be on disk before the service starts.
@@ -99,6 +111,9 @@ func Build(in Input) (Document, error) {
 		}
 		services = append(services, Service{
 			Name:            ServiceName(assignment.ID),
+			Capability:      tmpl.Capability,
+			Protocol:        tmpl.Protocol,
+			Identity:        identityFor(tmpl),
 			ComposeFragment: renderCompose(ServiceName(assignment.ID), tmpl, unit),
 			DeviceIDs:       []string{unit.GPUUUID},
 			Models:          modelsOf(tmpl),
@@ -192,4 +207,20 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 		fmt.Fprintf(&b, "              device_ids: [%q]\n", uuid)
 	}
 	return b.String()
+}
+
+// identityFor is what this runner must declare so the offer's match
+// selects it. The template states the selector as `identity.<key>`;
+// the runner declares the bare key, so the prefix is stripped here
+// rather than in the agent — the controller owns the mapping between
+// what an offer selects on and what a runner says.
+func identityFor(tmpl templates.Template) map[string]string {
+	if len(tmpl.Match) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(tmpl.Match))
+	for key, value := range tmpl.Match {
+		out[strings.TrimPrefix(key, "identity.")] = value
+	}
+	return out
 }

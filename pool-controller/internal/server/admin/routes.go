@@ -223,6 +223,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 	registerPlacementRoutes(mux, deps, auth)
 	registerLadderRoutes(mux, deps, auth)
 	registerPayoutPolicyRoutes(mux, deps, auth)
+	registerExceptionRoutes(mux, deps, auth)
 	mux.HandleFunc("GET /admin/v1/template-catalog", auth(func(w http.ResponseWriter, _ *http.Request) {
 		overrides, err := deps.Repo.ListTemplateOverrides()
 		if err != nil {

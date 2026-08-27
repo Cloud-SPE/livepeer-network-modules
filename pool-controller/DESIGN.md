@@ -1,12 +1,27 @@
 # pool-controller design
 
+> **Scope note.** The numbered list below is the plan-0029 implementation
+> record. The accounting half (items 10–24 — receipts, round close, payout
+> intents, leases, alerts) is still what the controller does. The member half
+> has been replaced twice since: plan 0040 turned members into connected hosts
+> that attach outbound, and plan 0044 §5 phase A deleted the join-request →
+> verify → approve → assign model outright — `JoinRequest`, `MemberBackend`,
+> the legacy `Assignment`, admission review, backend verification, and the
+> config compatibility loader are all gone. Items below are reconciled with
+> that; where you need the current picture rather than the history, read
+> [`../docs/design-docs/pool-overlay-flows.md`](../docs/design-docs/pool-overlay-flows.md)
+> and
+> [`../docs/exec-plans/active/0044-zero-touch-pool-onboarding.md`](../docs/exec-plans/active/0044-zero-touch-pool-onboarding.md).
+
 Initial implementation scope for plan 0029:
 
-1. Parse Pool operator config describing members, their backends, and declared
-   capability offerings.
+1. Hold the pool's member records: a member (wallet address), the hosts that
+   member enrolled, the GPUs those hosts reported, and the pool templates
+   placed on those GPUs. Members create themselves by wallet sign-in; there is
+   no operator-authored `members[].backends[].offerings[]` config any more, and
+   no compatibility loader for it.
 2. Validate that each published `(capability_id, offering_id)` tuple is unique
-   at the published manifest layer while allowing repeated backend candidates,
-   and ensure each member/backend record is structurally complete.
+   at the published manifest layer while allowing repeated runner candidates.
 3. Push the Pool's offer set and the credentials that may attach to the
    Pool broker over its admin API (`PUT /admin/v1/offers`,
    `PUT /admin/v1/credentials`). The controller sends only operator-owned
@@ -15,11 +30,15 @@ Initial implementation scope for plan 0029:
    endpoint paths and readiness are not the controller's to send: member
    hosts attach outbound and declare those themselves, and the broker
    freezes the first certified runner's shape into the offer (plan 0043).
-4. Persist startup/reload snapshots of the active Pool config and rendered
-   broker config in BoltDB so operator state survives process restarts.
+4. Persist startup/reload snapshots of the active Pool config in BoltDB so
+   operator state survives process restarts. There is no rendered broker
+   config to snapshot — see item 3.
 5. Persist backend-selection state records keyed by
    `(member, backend, capability_id, offering_id)` so later Pool scoring,
-   probe, and outcome-ingest work has a durable state boundary.
+   probe, and outcome-ingest work has a durable state boundary. The key
+   survived the deletion of the `MemberBackend` registry it once joined
+   against; scoring is being re-expressed against template assignments and
+   the broker's attached runners (plan 0044 §3.5).
 6. Expose a read-only admin snapshot of persisted backend-selection state so
    future broker pollers can integrate against a stable controller surface.
 7. Expose operator override endpoints for quarantine, drain, warm-up, and
@@ -72,8 +91,11 @@ Initial implementation scope for plan 0029:
 24. Surface retry churn at the member-summary layer so operators can identify
     problematic payout recipients without drilling into raw intent rows.
 
-The generator is intentionally deterministic so later services can regenerate
-config on member approval/drain events and compare diffs safely.
+The offer push is intentionally deterministic and idempotent so it can be
+re-sent on any pool-state change and diffed safely. It once keyed off member
+approval and backend drain events; those gestures no longer exist, so the
+triggers are now offer edits, template placement, certification results, and
+host revocation.
 
 Current scoring implementation notes:
 

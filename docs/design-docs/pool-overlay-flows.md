@@ -15,7 +15,10 @@ declare themselves at attach. See
 
 ## 1. Member signup and activation
 
-Member signup is wallet-first and outbound-only:
+Member signup is wallet-first and outbound-only. There is no join request and
+no admission review: the pool never dials a member-supplied endpoint, so there
+is nothing to verify before admission. Trust is established afterwards, by the
+broker, from what the member's runners prove under certification.
 
 1. The member requests a nonce from `POST /member/v1/auth/nonce`.
 2. The member signs the nonce with EIP-191 `personal_sign` and verifies it with
@@ -32,8 +35,11 @@ Member signup is wallet-first and outbound-only:
    controller records is what the broker matched offers against.
 7. The broker matches the runner to the pool's offers, runs the
    certification steps the offer carries, and the first pass freezes the
-   runner-declared shape into that offer. The operator promotes passing
-   assignments to probationary/active.
+   runner-declared shape into that offer. The operator promotes a passing
+   *template assignment* — a pool template placed on one GPU — to
+   probationary, then active. Plan 0044 §3.5 makes both transitions
+   automatic (one full Livepeer round and N accepted jobs with no serious
+   failure), leaving the operator only the exceptions.
 
 GPU UUID uniqueness is enforced per ETH address boundary in the controller:
 the same self-reported NVIDIA GPU UUID cannot be enrolled under multiple ETH
@@ -105,8 +111,8 @@ outcomes then drive the selection score.
 
 Poor performers are throttled by scoring and can be excluded from selection.
 No single member should dominate pool work as adoption grows; share caps,
-assignment capacity, warmup, cooldowns, and score-weighted selection are the
-control surfaces.
+per-template-assignment capacity (`max_in_flight` / `queue_limit`), warmup,
+cooldowns, and score-weighted selection are the control surfaces.
 
 ## 4. Settlement and payouts
 

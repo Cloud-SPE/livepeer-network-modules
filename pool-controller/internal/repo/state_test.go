@@ -5,103 +5,33 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
-type legacySelectionConfig struct {
-	Members []legacySelectionMember
-}
-
-type legacySelectionMember struct {
-	EthAddress string
-	Backends   []legacySelectionBackend
-}
-
-type legacySelectionBackend struct {
-	ID        string
-	Transport string
-	URL       string
-	Auth      config.AuthConfig
-	Offerings []legacySelectionOffering
-}
-
-type legacySelectionOffering struct {
-	CapabilityID string
-	OfferingID   string
-	Protocol     string
-	WorkUnit     config.WorkUnit
-	Price        config.Price
-}
-
-func syncSelectionStatesFromLegacyConfig(t *testing.T, repo *StateRepo, cfg *legacySelectionConfig) {
+// seedNeutralSelectionState writes the starting row a scoring test acts on.
+// Production no longer seeds backend-selection states at all (see the note
+// above ApplyBackendOutcome), and ApplyBackendOutcome refuses a row it has
+// never seen, so the scoring math can only be exercised from a row the test
+// persists itself. The values are the neutral start point every backend used
+// to get on admission: 0.5 across the board, no warm-up, eligible.
+func seedNeutralSelectionState(t *testing.T, repo *StateRepo, memberEthAddress, backendID, capabilityID, offeringID string) {
 	t.Helper()
 	now := time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC)
-	offersByKey := map[string]types.Offer{}
-	offers := make([]types.Offer, 0)
-	members := make([]types.MemberRecord, 0, len(cfg.Members))
-	backends := make([]types.MemberBackend, 0)
-	assignments := make([]types.Assignment, 0)
-
-	for memberIndex, member := range cfg.Members {
-		memberID := "member-test-" + member.EthAddress
-		members = append(members, types.MemberRecord{
-			ID:         memberID,
-			EthAddress: member.EthAddress,
-			PayoutMode: "onchain",
-			Status:     types.MemberStatusActive,
-			CreatedAt:  now,
-			UpdatedAt:  now,
-		})
-		for backendIndex, backend := range member.Backends {
-			backendID := backend.ID
-			if backendID == "" {
-				backendID = "backend-test"
-			}
-			if backendIndex > 0 || memberIndex > 0 {
-				backendID = memberID + "-" + backendID
-			}
-			backends = append(backends, types.MemberBackend{
-				ID:        backendID,
-				MemberID:  memberID,
-				Transport: backend.Transport,
-				URL:       backend.URL,
-				Auth:      backend.Auth,
-				Status:    types.BackendStatusActive,
-				CreatedAt: now,
-				UpdatedAt: now,
-			})
-			for _, offering := range backend.Offerings {
-				key := offering.CapabilityID + "|" + offering.OfferingID + "|" + offering.Protocol
-				offer, ok := offersByKey[key]
-				if !ok {
-					offer = types.Offer{
-						ID:           key,
-						CapabilityID: offering.CapabilityID,
-						OfferingID:   offering.OfferingID,
-						Protocol:     offering.Protocol,
-						WorkUnit:     offering.WorkUnit,
-						Price:        offering.Price,
-						Status:       types.OfferStatusActive,
-						CreatedAt:    now,
-						UpdatedAt:    now,
-					}
-					offersByKey[key] = offer
-					offers = append(offers, offer)
-				}
-				assignments = append(assignments, types.Assignment{
-					ID:              offer.ID + "|" + backendID,
-					OfferID:         offer.ID,
-					MemberBackendID: backendID,
-					Status:          types.AssignmentStatusActive,
-					CreatedAt:       now,
-					UpdatedAt:       now,
-				})
-			}
-		}
+	seed := defaultBackendSelectionStateValues(memberEthAddress, backendID, capabilityID, offeringID, now)
+	if err := repo.SaveBackendSelectionState(seed); err != nil {
+		t.Fatalf("SaveBackendSelectionState(seed) error = %v", err)
 	}
-	if err := repo.SyncBackendSelectionStatesFromEntities(offers, members, backends, assignments); err != nil {
-		t.Fatalf("SyncBackendSelectionStatesFromEntities() error = %v", err)
+	stored, err := repo.GetBackendSelectionState(memberEthAddress, backendID, capabilityID, offeringID)
+	if err != nil {
+		t.Fatalf("GetBackendSelectionState(seed) error = %v", err)
+	}
+	if stored.State != types.BackendSelectionStateEligible ||
+		stored.SyntheticConfidence != 0.5 || stored.RealSuccessScore != 0.5 || stored.RealLatencyScore != 0.5 ||
+		stored.WarmupModifier != 1.0 || stored.EffectiveSelectionScore != 0.5 {
+		t.Fatalf("seeded selection state is not neutral: %#v", stored)
+	}
+	if stored.CreatedAt.IsZero() || stored.UpdatedAt.IsZero() {
+		t.Fatalf("seeded selection state timestamps not initialized: %#v", stored)
 	}
 }
 
@@ -113,16 +43,16 @@ func TestStateRepoSaveAndListSnapshots(t *testing.T) {
 	defer func() { _ = repo.Close() }()
 
 	first := Snapshot{
-		ID:            "2026-05-16T12:00:00Z",
-		CreatedAt:     time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC),
-		Source:        "startup",
-		MemberCount:   1,
+		ID:          "2026-05-16T12:00:00Z",
+		CreatedAt:   time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC),
+		Source:      "startup",
+		MemberCount: 1,
 	}
 	second := Snapshot{
-		ID:            "2026-05-16T13:00:00Z",
-		CreatedAt:     time.Date(2026, 5, 16, 13, 0, 0, 0, time.UTC),
-		Source:        "reload",
-		MemberCount:   2,
+		ID:          "2026-05-16T13:00:00Z",
+		CreatedAt:   time.Date(2026, 5, 16, 13, 0, 0, 0, time.UTC),
+		Source:      "reload",
+		MemberCount: 2,
 	}
 	if err := repo.SaveSnapshot(first); err != nil {
 		t.Fatalf("SaveSnapshot(first) error = %v", err)
@@ -148,146 +78,6 @@ func TestStateRepoSaveAndListSnapshots(t *testing.T) {
 	}
 	if items[0].ID != second.ID || items[1].ID != first.ID {
 		t.Fatalf("snapshot order = %#v", items)
-	}
-}
-
-func TestStateRepoSyncBackendSelectionStates(t *testing.T) {
-	repo, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	defer func() { _ = repo.Close() }()
-
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{
-			{
-				EthAddress: "0xabc",
-				Backends: []legacySelectionBackend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						Offerings: []legacySelectionOffering{
-							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
-							{CapabilityID: "openai:embeddings", OfferingID: "default"},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
-
-	items, err := repo.ListBackendSelectionStates()
-	if err != nil {
-		t.Fatalf("ListBackendSelectionStates() error = %v", err)
-	}
-	if len(items) != 2 {
-		t.Fatalf("len(ListBackendSelectionStates()) = %d, want 2", len(items))
-	}
-	if items[0].State != types.BackendSelectionStateEligible {
-		t.Fatalf("items[0].State = %q, want %q", items[0].State, types.BackendSelectionStateEligible)
-	}
-	if items[0].SyntheticConfidence != 0.5 || items[0].RealSuccessScore != 0.5 || items[0].RealLatencyScore != 0.5 {
-		t.Fatalf("default neutral scores = %#v", items[0])
-	}
-	if items[0].WarmupModifier != 1.0 {
-		t.Fatalf("items[0].WarmupModifier = %v, want 1.0", items[0].WarmupModifier)
-	}
-	if items[0].EffectiveSelectionScore != 0.5 {
-		t.Fatalf("items[0].EffectiveSelectionScore = %v, want 0.5", items[0].EffectiveSelectionScore)
-	}
-	if items[0].CreatedAt.IsZero() || items[0].UpdatedAt.IsZero() {
-		t.Fatalf("timestamps not initialized: %#v", items[0])
-	}
-
-	override := items[0]
-	override.State = types.BackendSelectionStateDegraded
-	override.SyntheticConfidence = 0.25
-	override.RealSuccessScore = 0.25
-	override.RealLatencyScore = 0.25
-	if err := repo.SaveBackendSelectionState(override); err != nil {
-		t.Fatalf("SaveBackendSelectionState() error = %v", err)
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
-
-	items, err = repo.ListBackendSelectionStates()
-	if err != nil {
-		t.Fatalf("ListBackendSelectionStates(second) error = %v", err)
-	}
-	if items[0].State != types.BackendSelectionStateDegraded {
-		t.Fatalf("items[0].State after resync = %q, want %q", items[0].State, types.BackendSelectionStateDegraded)
-	}
-	if math.Abs(items[0].EffectiveSelectionScore-0.25) > 1e-9 {
-		t.Fatalf("items[0].EffectiveSelectionScore after resync = %v, want 0.25", items[0].EffectiveSelectionScore)
-	}
-}
-
-func TestStateRepoSyncBackendSelectionStatesFromEntities(t *testing.T) {
-	repo, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	defer func() { _ = repo.Close() }()
-
-	offers := []types.Offer{
-		{
-			ID:           "offer-1",
-			CapabilityID: "openai:chat-completions",
-			OfferingID:   "default",
-			Protocol:     "paid-job/v1",
-			Status:       types.OfferStatusActive,
-		},
-		{
-			ID:           "offer-disabled",
-			CapabilityID: "openai:embeddings",
-			OfferingID:   "default",
-			Protocol:     "paid-job/v1",
-			Status:       types.OfferStatusDisabled,
-		},
-	}
-	members := []types.MemberRecord{
-		{
-			ID:         "member-1",
-			EthAddress: "0xabc",
-			Status:     types.MemberStatusActive,
-		},
-	}
-	backends := []types.MemberBackend{
-		{
-			ID:       "backend-1",
-			MemberID: "member-1",
-			Status:   types.BackendStatusActive,
-		},
-	}
-	assignments := []types.Assignment{
-		{
-			ID:              "assignment-1",
-			OfferID:         "offer-1",
-			MemberBackendID: "backend-1",
-			Status:          types.AssignmentStatusActive,
-		},
-		{
-			ID:              "assignment-disabled-offer",
-			OfferID:         "offer-disabled",
-			MemberBackendID: "backend-1",
-			Status:          types.AssignmentStatusActive,
-		},
-	}
-
-	if err := repo.SyncBackendSelectionStatesFromEntities(offers, members, backends, assignments); err != nil {
-		t.Fatalf("SyncBackendSelectionStatesFromEntities() error = %v", err)
-	}
-
-	items, err := repo.ListBackendSelectionStates()
-	if err != nil {
-		t.Fatalf("ListBackendSelectionStates() error = %v", err)
-	}
-	if len(items) != 1 {
-		t.Fatalf("len(ListBackendSelectionStates()) = %d, want 1", len(items))
-	}
-	if items[0].MemberEthAddress != "0xabc" || items[0].BackendID != "backend-1" || items[0].CapabilityID != "openai:chat-completions" || items[0].OfferingID != "default" {
-		t.Fatalf("unexpected selection identity: %#v", items[0])
 	}
 }
 
@@ -358,23 +148,7 @@ func TestStateRepoApplyBackendOutcome(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{
-			{
-				EthAddress: "0xabc",
-				Backends: []legacySelectionBackend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						Offerings: []legacySelectionOffering{
-							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
-						},
-					},
-				},
-			},
-		},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
+	seedNeutralSelectionState(t, repo, "0xabc", "backend-a", "openai:chat-completions", "default")
 
 	occurredAt := time.Date(2026, 5, 17, 16, 30, 0, 0, time.UTC)
 	updated, err := repo.ApplyBackendOutcome(types.BackendOutcome{
@@ -437,122 +211,6 @@ func TestStateRepoApplyBackendOutcome(t *testing.T) {
 	}
 }
 
-func TestStateRepoApplySyntheticProbeObservation(t *testing.T) {
-	repo, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	defer func() { _ = repo.Close() }()
-
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{
-			{
-				EthAddress: "0xabc",
-				Backends: []legacySelectionBackend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						Offerings: []legacySelectionOffering{
-							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
-						},
-					},
-				},
-			},
-		},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
-
-	at := time.Date(2026, 5, 17, 17, 0, 0, 0, time.UTC)
-	updated, err := repo.ApplySyntheticProbeObservation(types.SyntheticProbeObservation{
-		MemberEthAddress: "0xabc",
-		BackendID:        "backend-a",
-		CapabilityID:     "openai:chat-completions",
-		OfferingID:       "default",
-		Success:          true,
-		Result:           "probe_ok",
-		ObservedAt:       at,
-	})
-	if err != nil {
-		t.Fatalf("ApplySyntheticProbeObservation(success) error = %v", err)
-	}
-	if updated.LastSyntheticAt == nil || !updated.LastSyntheticAt.Equal(at) {
-		t.Fatalf("LastSyntheticAt = %#v, want %v", updated.LastSyntheticAt, at)
-	}
-	if updated.LastSyntheticResult != "probe_ok" {
-		t.Fatalf("LastSyntheticResult = %q, want probe_ok", updated.LastSyntheticResult)
-	}
-	if updated.ConsecutiveSyntheticFailures != 0 {
-		t.Fatalf("ConsecutiveSyntheticFailures = %d, want 0", updated.ConsecutiveSyntheticFailures)
-	}
-	if updated.SyntheticConfidence <= 0.5 {
-		t.Fatalf("SyntheticConfidence after success = %v, want > 0.5", updated.SyntheticConfidence)
-	}
-	if updated.WarmupModifier != 0.25 {
-		t.Fatalf("WarmupModifier after first synthetic success = %v, want 0.25", updated.WarmupModifier)
-	}
-	if !updated.AutomaticWarmup || updated.WarmupSource != "automatic" {
-		t.Fatalf("warmup flags after first synthetic success = automatic:%v source:%q, want automatic", updated.AutomaticWarmup, updated.WarmupSource)
-	}
-	if updated.RoutingReason != "pool_warmup" {
-		t.Fatalf("RoutingReason after first synthetic success = %q, want pool_warmup", updated.RoutingReason)
-	}
-
-	for i := 0; i < 3; i++ {
-		updated, err = repo.ApplySyntheticProbeObservation(types.SyntheticProbeObservation{
-			MemberEthAddress: "0xabc",
-			BackendID:        "backend-a",
-			CapabilityID:     "openai:chat-completions",
-			OfferingID:       "default",
-			Success:          false,
-			Result:           "probe_failed",
-			ObservedAt:       at.Add(time.Duration(i+1) * time.Minute),
-		})
-		if err != nil {
-			t.Fatalf("ApplySyntheticProbeObservation(failure %d) error = %v", i+1, err)
-		}
-	}
-	if updated.ConsecutiveSyntheticFailures != 3 {
-		t.Fatalf("ConsecutiveSyntheticFailures = %d, want 3", updated.ConsecutiveSyntheticFailures)
-	}
-	if updated.State != types.BackendSelectionStateExcluded {
-		t.Fatalf("State after threshold = %q, want excluded", updated.State)
-	}
-	if updated.ExclusionReason != "synthetic_probe_failure_threshold" {
-		t.Fatalf("ExclusionReason = %q, want synthetic_probe_failure_threshold", updated.ExclusionReason)
-	}
-	if updated.RoutingReason != "synthetic_probe_failure_threshold" {
-		t.Fatalf("RoutingReason after threshold = %q, want synthetic_probe_failure_threshold", updated.RoutingReason)
-	}
-
-	updated, err = repo.ApplySyntheticProbeObservation(types.SyntheticProbeObservation{
-		MemberEthAddress: "0xabc",
-		BackendID:        "backend-a",
-		CapabilityID:     "openai:chat-completions",
-		OfferingID:       "default",
-		Success:          true,
-		Result:           "probe_ok",
-		ObservedAt:       at.Add(10 * time.Minute),
-	})
-	if err != nil {
-		t.Fatalf("ApplySyntheticProbeObservation(recovery) error = %v", err)
-	}
-	if updated.State != types.BackendSelectionStateDegraded {
-		t.Fatalf("State after recovery = %q, want degraded warm-up reentry", updated.State)
-	}
-	if updated.ExclusionReason != "" {
-		t.Fatalf("ExclusionReason after recovery = %q, want empty", updated.ExclusionReason)
-	}
-	if updated.WarmupModifier != 0.25 {
-		t.Fatalf("WarmupModifier after recovery = %v, want 0.25", updated.WarmupModifier)
-	}
-	if !updated.AutomaticWarmup || updated.WarmupSource != "automatic" {
-		t.Fatalf("warmup flags after recovery = automatic:%v source:%q, want automatic", updated.AutomaticWarmup, updated.WarmupSource)
-	}
-	if updated.RoutingReason != "pool_warmup" {
-		t.Fatalf("RoutingReason after recovery = %q, want pool_warmup", updated.RoutingReason)
-	}
-}
-
 func TestStateRepoApplyBackendOutcomeTransitionsByEffectiveScore(t *testing.T) {
 	repo, err := Open(t.TempDir())
 	if err != nil {
@@ -560,23 +218,7 @@ func TestStateRepoApplyBackendOutcomeTransitionsByEffectiveScore(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{
-			{
-				EthAddress: "0xabc",
-				Backends: []legacySelectionBackend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						Offerings: []legacySelectionOffering{
-							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
-						},
-					},
-				},
-			},
-		},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
+	seedNeutralSelectionState(t, repo, "0xabc", "backend-a", "openai:chat-completions", "default")
 
 	degraded, err := repo.GetBackendSelectionState("0xabc", "backend-a", "openai:chat-completions", "default")
 	if err != nil {
@@ -654,17 +296,7 @@ func TestStateRepoApplyBackendOutcomeDriftsEMAAfterInactivity(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{{
-			EthAddress: "0xabc",
-			Backends: []legacySelectionBackend{{
-				ID:        "backend-a",
-				Transport: "http",
-				Offerings: []legacySelectionOffering{{CapabilityID: "openai:chat-completions", OfferingID: "default"}},
-			}},
-		}},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
+	seedNeutralSelectionState(t, repo, "0xabc", "backend-a", "openai:chat-completions", "default")
 
 	start := time.Date(2026, 5, 17, 10, 0, 0, 0, time.UTC)
 	updated, err := repo.ApplyBackendOutcome(types.BackendOutcome{
@@ -707,17 +339,7 @@ func TestStateRepoApplyBackendOutcomeExitsWarmupAfterEnoughSamples(t *testing.T)
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{{
-			EthAddress: "0xabc",
-			Backends: []legacySelectionBackend{{
-				ID:        "backend-a",
-				Transport: "http",
-				Offerings: []legacySelectionOffering{{CapabilityID: "openai:chat-completions", OfferingID: "default"}},
-			}},
-		}},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
+	seedNeutralSelectionState(t, repo, "0xabc", "backend-a", "openai:chat-completions", "default")
 
 	item, err := repo.GetBackendSelectionState("0xabc", "backend-a", "openai:chat-completions", "default")
 	if err != nil {
@@ -756,23 +378,7 @@ func TestStateRepoApplyBackendOutcomePreservesManualQuarantine(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{
-			{
-				EthAddress: "0xabc",
-				Backends: []legacySelectionBackend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						Offerings: []legacySelectionOffering{
-							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
-						},
-					},
-				},
-			},
-		},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
+	seedNeutralSelectionState(t, repo, "0xabc", "backend-a", "openai:chat-completions", "default")
 
 	item, err := repo.GetBackendSelectionState("0xabc", "backend-a", "openai:chat-completions", "default")
 	if err != nil {
@@ -810,23 +416,7 @@ func TestStateRepoApplyBackendOutcomeTransitionsStateBands(t *testing.T) {
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{
-			{
-				EthAddress: "0xabc",
-				Backends: []legacySelectionBackend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						Offerings: []legacySelectionOffering{
-							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
-						},
-					},
-				},
-			},
-		},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
+	seedNeutralSelectionState(t, repo, "0xabc", "backend-a", "openai:chat-completions", "default")
 
 	item, err := repo.GetBackendSelectionState("0xabc", "backend-a", "openai:chat-completions", "default")
 	if err != nil {
@@ -888,23 +478,7 @@ func TestStateRepoApplyBackendOutcomeOpensCooldownAfterRepeatedBackendFailures(t
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{
-			{
-				EthAddress: "0xabc",
-				Backends: []legacySelectionBackend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						Offerings: []legacySelectionOffering{
-							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
-						},
-					},
-				},
-			},
-		},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
+	seedNeutralSelectionState(t, repo, "0xabc", "backend-a", "openai:chat-completions", "default")
 
 	base := time.Date(2026, 5, 17, 16, 30, 0, 0, time.UTC)
 	var updated types.BackendSelectionState
@@ -947,23 +521,7 @@ func TestStateRepoApplyBackendOutcomePrunesFailuresOutsideCooldownWindow(t *test
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{
-			{
-				EthAddress: "0xabc",
-				Backends: []legacySelectionBackend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						Offerings: []legacySelectionOffering{
-							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
-						},
-					},
-				},
-			},
-		},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
+	seedNeutralSelectionState(t, repo, "0xabc", "backend-a", "openai:chat-completions", "default")
 
 	base := time.Date(2026, 5, 17, 16, 30, 0, 0, time.UTC)
 	oldFailures := []time.Time{
@@ -1012,23 +570,7 @@ func TestStateRepoApplyBackendOutcomeDoesNotApplyImplicitTimeDecay(t *testing.T)
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{
-			{
-				EthAddress: "0xabc",
-				Backends: []legacySelectionBackend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						Offerings: []legacySelectionOffering{
-							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
-						},
-					},
-				},
-			},
-		},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
+	seedNeutralSelectionState(t, repo, "0xabc", "backend-a", "openai:chat-completions", "default")
 
 	at := time.Date(2026, 5, 17, 16, 30, 0, 0, time.UTC)
 	updated, err := repo.ApplyBackendOutcome(types.BackendOutcome{
@@ -1070,23 +612,7 @@ func TestStateRepoSaveBackendSelectionStatePreservesOperatorOverrides(t *testing
 	}
 	defer func() { _ = repo.Close() }()
 
-	cfg := &legacySelectionConfig{
-		Members: []legacySelectionMember{
-			{
-				EthAddress: "0xabc",
-				Backends: []legacySelectionBackend{
-					{
-						ID:        "backend-a",
-						Transport: "http",
-						Offerings: []legacySelectionOffering{
-							{CapabilityID: "openai:chat-completions", OfferingID: "default"},
-						},
-					},
-				},
-			},
-		},
-	}
-	syncSelectionStatesFromLegacyConfig(t, repo, cfg)
+	seedNeutralSelectionState(t, repo, "0xabc", "backend-a", "openai:chat-completions", "default")
 
 	item, err := repo.GetBackendSelectionState("0xabc", "backend-a", "openai:chat-completions", "default")
 	if err != nil {

@@ -7,83 +7,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/memberenrollment"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
 )
-
-func TestValidateJoinRequestRejectsOutOfPoolScopeClaim(t *testing.T) {
-	cases := []struct {
-		name          string
-		capabilityID  string
-		protocol      string
-		wantSubstring string
-	}{
-		{
-			name:          "video live rtmp capability",
-			capabilityID:  "video:live.rtmp",
-			protocol:      "paid-job/v1",
-			wantSubstring: "video:live.rtmp",
-		},
-		{
-			name:          "paid session protocol",
-			capabilityID:  "openai:chat-completions",
-			protocol:      "paid-session/v1",
-			wantSubstring: "paid-session/v1",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			req := types.JoinRequest{
-				MemberEthAddress: "0xabc",
-				PayoutMode:       "onchain",
-				RequestedBackends: []types.RequestedBackend{{
-					ID:        "backend-1",
-					Transport: "http",
-					URL:       "http://backend",
-					ClaimedCapabilities: []types.ClaimedOffer{{
-						CapabilityID: tc.capabilityID,
-						Protocol:     tc.protocol,
-					}},
-				}},
-			}
-			err := validateJoinRequest(req)
-			if err == nil {
-				t.Fatalf("validateJoinRequest() expected rejection, got nil")
-			}
-			if !strings.Contains(err.Error(), tc.wantSubstring) {
-				t.Fatalf("validateJoinRequest() err = %q, missing %q", err.Error(), tc.wantSubstring)
-			}
-			if !strings.Contains(err.Error(), "0032") {
-				t.Fatalf("validateJoinRequest() err = %q, expected reference to plan 0032", err.Error())
-			}
-		})
-	}
-}
-
-func TestValidateJoinRequestAllowsSupportedClaim(t *testing.T) {
-	req := types.JoinRequest{
-		MemberEthAddress: "0xabc",
-		PayoutMode:       "onchain",
-		RequestedBackends: []types.RequestedBackend{{
-			ID:        "backend-1",
-			Transport: "http",
-			URL:       "http://backend",
-			ClaimedCapabilities: []types.ClaimedOffer{{
-				CapabilityID: "openai:chat-completions",
-				Protocol:     "paid-job/v1",
-			}},
-		}},
-	}
-	if err := validateJoinRequest(req); err != nil {
-		t.Fatalf("validateJoinRequest() unexpected error = %v", err)
-	}
-}
 
 func TestConnectedMemberSignupBundleAndHardwareRoutes(t *testing.T) {
 	stateRepo, err := repo.Open(t.TempDir())

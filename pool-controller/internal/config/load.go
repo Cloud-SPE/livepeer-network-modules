@@ -37,12 +37,6 @@ func applyDefaults(cfg *Config) {
 	if cfg.Listen.Metrics == "" {
 		cfg.Listen.Metrics = ":9090"
 	}
-	if cfg.SyntheticProbes.IntervalMS == 0 {
-		cfg.SyntheticProbes.IntervalMS = 30000
-	}
-	if cfg.SyntheticProbes.TimeoutMS == 0 {
-		cfg.SyntheticProbes.TimeoutMS = 3000
-	}
 	if cfg.Scoring.CooldownDurationMS == 0 {
 		cfg.Scoring.CooldownDurationMS = 300000
 	}
@@ -138,12 +132,6 @@ func validate(cfg *Config) error {
 		if err := validateHostPort("bootstrap.public_broker_quic_addr", cfg.Bootstrap.PublicBrokerQUICAddr); err != nil {
 			return err
 		}
-	}
-	if cfg.SyntheticProbes.IntervalMS < 0 {
-		return fmt.Errorf("synthetic_probes.interval_ms must be >= 0")
-	}
-	if cfg.SyntheticProbes.TimeoutMS < 0 {
-		return fmt.Errorf("synthetic_probes.timeout_ms must be >= 0")
 	}
 	if cfg.Scoring.CooldownDurationMS < 0 {
 		return fmt.Errorf("scoring.cooldown_duration_ms must be >= 0")

@@ -205,117 +205,22 @@ func (r *StateRepo) GetBackendSelectionState(memberEthAddress, backendID, capabi
 	return out, nil
 }
 
-func (r *StateRepo) SyncBackendSelectionStatesFromEntities(offers []types.Offer, members []types.MemberRecord, backends []types.MemberBackend, assignments []types.Assignment) error {
-	if r == nil || r.db == nil {
-		return fmt.Errorf("repo is not open")
-	}
-	now := time.Now().UTC()
-	offersByID := make(map[string]types.Offer, len(offers))
-	for _, offer := range offers {
-		offersByID[offer.ID] = offer
-	}
-	membersByID := make(map[string]types.MemberRecord, len(members))
-	for _, member := range members {
-		membersByID[member.ID] = member
-	}
-	backendsByID := make(map[string]types.MemberBackend, len(backends))
-	for _, backend := range backends {
-		backendsByID[backend.ID] = backend
-	}
-
-	type selectionIdentity struct {
-		MemberEthAddress string
-		BackendID        string
-		CapabilityID     string
-		OfferingID       string
-	}
-	items := make([]selectionIdentity, 0)
-	for _, assignment := range assignments {
-		if assignment.Status != types.AssignmentStatusActive {
-			continue
-		}
-		offer, ok := offersByID[assignment.OfferID]
-		if !ok || offer.Status != types.OfferStatusActive {
-			continue
-		}
-		backend, ok := backendsByID[assignment.MemberBackendID]
-		if !ok || backend.Status != types.BackendStatusActive {
-			continue
-		}
-		member, ok := membersByID[backend.MemberID]
-		if !ok || member.Status != types.MemberStatusActive {
-			continue
-		}
-		items = append(items, selectionIdentity{
-			MemberEthAddress: member.EthAddress,
-			BackendID:        backend.ID,
-			CapabilityID:     offer.CapabilityID,
-			OfferingID:       offer.OfferingID,
-		})
-	}
-
-	return r.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(backendSelectionStatesBucket))
-		for _, item := range items {
-			key := backendSelectionStateKey(item.MemberEthAddress, item.BackendID, item.CapabilityID, item.OfferingID)
-			if raw := b.Get([]byte(key)); raw != nil {
-				var existing types.BackendSelectionState
-				if err := json.Unmarshal(raw, &existing); err != nil {
-					return fmt.Errorf("decode backend selection state %q: %w", key, err)
-				}
-				changed := false
-				if existing.Key == "" {
-					existing.Key = key
-					changed = true
-				}
-				if existing.MemberEthAddress == "" {
-					existing.MemberEthAddress = item.MemberEthAddress
-					changed = true
-				}
-				if existing.BackendID == "" {
-					existing.BackendID = item.BackendID
-					changed = true
-				}
-				if existing.CapabilityID == "" {
-					existing.CapabilityID = item.CapabilityID
-					changed = true
-				}
-				if existing.OfferingID == "" {
-					existing.OfferingID = item.OfferingID
-					changed = true
-				}
-				if existing.State == "" {
-					existing.State = types.BackendSelectionStateEligible
-					changed = true
-				}
-				if existing.CreatedAt.IsZero() {
-					existing.CreatedAt = now
-					changed = true
-				}
-				if changed {
-					existing.UpdatedAt = now
-					next, err := json.Marshal(existing)
-					if err != nil {
-						return fmt.Errorf("marshal backend selection state %q: %w", key, err)
-					}
-					if err := b.Put([]byte(key), next); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-			state := defaultBackendSelectionStateValues(item.MemberEthAddress, item.BackendID, item.CapabilityID, item.OfferingID, now)
-			next, err := json.Marshal(state)
-			if err != nil {
-				return fmt.Errorf("marshal backend selection state %q: %w", key, err)
-			}
-			if err := b.Put([]byte(key), next); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
+// Nothing seeds backend-selection states any more.
+//
+// SyncBackendSelectionStatesFromEntities used to create one row per
+// active (member, member-backend, offer) triple. Those three concepts
+// were the legacy member model and are gone; the new model's placement
+// is a template on a GPU, and what a selection state should be keyed on
+// there is a question the automatic ladder answers (plan 0044 §3.5,
+// bead lnm-6at.8) — it owns probation shares, score floors and reason
+// codes, so inventing a seeder here would be guessing at its shape.
+//
+// Consequence until then: ApplyBackendOutcome below still refuses an
+// unknown row, so POST /admin/v1/backend-outcomes answers 404. That is
+// honest — the
+// controller genuinely does not know that backend — and no caller is
+// affected today, because the broker constructs its pool reporter but
+// never emits an outcome through it.
 
 func (r *StateRepo) ApplyBackendOutcome(outcome types.BackendOutcome) (types.BackendSelectionState, error) {
 	if r == nil || r.db == nil {
@@ -396,71 +301,6 @@ func (r *StateRepo) ApplyBackendOutcome(outcome types.BackendOutcome) (types.Bac
 			return err
 		}
 		return saveBackendSelectionRuntime(runtimeBucket, key, runtimeState)
-	})
-	if err != nil {
-		return types.BackendSelectionState{}, err
-	}
-	return updated, nil
-}
-
-func (r *StateRepo) ApplySyntheticProbeObservation(observation types.SyntheticProbeObservation) (types.BackendSelectionState, error) {
-	if r == nil || r.db == nil {
-		return types.BackendSelectionState{}, fmt.Errorf("repo is not open")
-	}
-	observation.MemberEthAddress = strings.TrimSpace(observation.MemberEthAddress)
-	observation.BackendID = strings.TrimSpace(observation.BackendID)
-	observation.CapabilityID = strings.TrimSpace(observation.CapabilityID)
-	observation.OfferingID = strings.TrimSpace(observation.OfferingID)
-	observation.Result = strings.TrimSpace(observation.Result)
-	if observation.MemberEthAddress == "" || observation.BackendID == "" || observation.CapabilityID == "" || observation.OfferingID == "" {
-		return types.BackendSelectionState{}, fmt.Errorf("member_eth_address, backend_id, capability_id, and offering_id are required")
-	}
-	observedAt := observation.ObservedAt.UTC()
-	if observedAt.IsZero() {
-		observedAt = time.Now().UTC()
-	}
-	key := backendSelectionStateKey(observation.MemberEthAddress, observation.BackendID, observation.CapabilityID, observation.OfferingID)
-
-	var updated types.BackendSelectionState
-	err := r.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(backendSelectionStatesBucket))
-		raw := b.Get([]byte(key))
-		if raw == nil {
-			return fmt.Errorf("backend selection state %q: not found", key)
-		}
-		if err := json.Unmarshal(raw, &updated); err != nil {
-			return fmt.Errorf("decode backend selection state %q: %w", key, err)
-		}
-		hadSyntheticObservation := updated.LastSyntheticAt != nil && !updated.LastSyntheticAt.IsZero()
-		updated.LastSyntheticAt = &observedAt
-		if observation.Success {
-			updated.LastSyntheticResult = defaultSyntheticResult(observation.Result, "success")
-			updated.ConsecutiveSyntheticFailures = 0
-			updated.SyntheticConfidence = clampUnit(updated.SyntheticConfidence + 0.10)
-			if !hadSyntheticObservation {
-				updated.AutomaticWarmup = true
-			}
-			if updated.State == types.BackendSelectionStateExcluded && updated.ExclusionReason == "synthetic_probe_failure_threshold" {
-				updated.State = types.BackendSelectionStateEligible
-				updated.ExclusionReason = ""
-				updated.AutomaticWarmup = true
-			}
-		} else {
-			updated.LastSyntheticResult = defaultSyntheticResult(observation.Result, "failure")
-			updated.ConsecutiveSyntheticFailures++
-			updated.SyntheticConfidence = clampUnit(updated.SyntheticConfidence - 0.15)
-			if updated.ConsecutiveSyntheticFailures >= 3 {
-				updated.State = types.BackendSelectionStateExcluded
-				updated.ExclusionReason = "synthetic_probe_failure_threshold"
-			}
-		}
-		updated = normalizeBackendSelectionState(updated, observedAt)
-		updated.UpdatedAt = time.Now().UTC()
-		next, err := json.Marshal(updated)
-		if err != nil {
-			return fmt.Errorf("marshal backend selection state %q: %w", key, err)
-		}
-		return b.Put([]byte(key), next)
 	})
 	if err != nil {
 		return types.BackendSelectionState{}, err

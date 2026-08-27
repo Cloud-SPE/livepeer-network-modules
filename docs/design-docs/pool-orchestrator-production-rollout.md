@@ -15,8 +15,8 @@ authoritative for component-specific flags and troubleshooting.
 
 This guide covers the production path for a Pool-based orch where:
 
-- `pool-controller` owns offers, member onboarding, assignments, and desired
-  broker runtime
+- `pool-controller` owns offers, member onboarding, template assignments
+  (a pool template placed on a member GPU), and desired broker runtime
 - `capability-broker` serves the paid data path and exposes the broker-private
   runtime reload surface
 - `orch-coordinator` scrapes the broker and publishes the signed manifest
@@ -144,12 +144,27 @@ Do not let member capability claims define public offerings.
 
 ### 4.4 Onboard members
 
+Members onboard themselves. There is no join request and no approval gate: the
+pool never dials a member-supplied endpoint, so there is nothing for the
+operator to verify before admission. Trust is established later, by the broker,
+from what the member's runners actually prove under certification.
+
 Normal control-plane sequence:
 
-1. member submits join request
-2. operator refreshes verification if needed
-3. operator approves or rejects
-4. operator assigns approved backend(s) to orch-owned offer(s)
+1. member signs in with their wallet and enrols a host
+   (`POST /member/v1/enrollments`), then runs the returned bundle
+2. the host reports its GPUs
+   (`POST /member/v1/enrollments/{id}/hardware`)
+3. operator places a template on each reported GPU
+   (`POST /admin/v1/template-assignments`) and starts its certification
+4. the runner attaches to the broker; a template becomes eligible to serve
+   only once its certification passes
+
+Step 3 is the last operator gesture on the member's path. Plan 0044 §3.3
+replaces it with a deterministic placement engine — template `requirements` +
+`priority` + `stacking` decide which template lands on which GPU, and members
+may opt *out* of a template but never opt in. Until that ships, placement is
+manual.
 
 ### 4.5 Broker convergence
 
@@ -201,8 +216,9 @@ Before live traffic:
 ### 5.1 Control-plane checks
 
 - expected offers exist in `pool-controller`
-- approved members are present
-- expected assignments are active
+- expected members and host enrolments are present
+- each expected GPU appears as a hardware unit with a template assignment
+- each template assignment has a passing certification run
 
 ### 5.2 Broker convergence checks
 
@@ -284,57 +300,61 @@ different quantization — the offer is advertising it.
   the signature is the acceptance
 - runners on the old shape become ineligible at that moment
 
-### 7.3 Member approved but unassigned
+### 7.3 Enrolled GPU running nothing
 
-This is not a publication failure by itself. It is expected staging state.
-
-Action:
-
-- either assign the backend to an active offer
-- or leave it intentionally unpublished
+This is not a publication failure by itself. It is expected staging state: a
+reported GPU serves nothing until a template is placed on it and that placement
+certifies.
 
 Playbook:
 
-1. inspect `GET /admin/v1/assignment-candidates`
-2. inspect backend verification status and claim-to-offer suggestions
-3. either:
-   - create an assignment and apply broker runtime
-   - or leave the backend unassigned intentionally
-4. do not expect coordinator-visible inventory change until assignment + apply
-   have both completed
+1. `GET /admin/v1/hardware-units` — confirm the host reported the GPU and see
+   what state the unit is in
+2. `GET /admin/v1/template-assignments` — confirm a template is placed on it;
+   place one from `GET /admin/v1/template-catalog` if not
+3. `GET /admin/v1/certification-runs` — a placed template only becomes
+   eligible once its certification passes
+4. or leave the GPU deliberately unplaced
+5. do not expect coordinator-visible inventory change until a placement has
+   certified and the offer push has landed
 
-### 7.4 Join request rejected or verification failed
+### 7.4 Certification failed
 
-This is an onboarding review outcome, not a runtime failure.
+This is a runner-capability outcome, not an onboarding review outcome. Nothing
+on the controller side needs re-approving.
 
 Playbook:
 
-1. inspect join preview and backend verification error details
-2. confirm whether the failure is:
-   - endpoint reachability
-   - probe configuration
-   - incompatible claim shape
-   - operator policy rejection
-3. communicate the reason back to the member/operator workflow
-4. refresh verification only after the underlying backend or claim issue is
-   corrected
+1. read the failed run's checks
+2. corroborate with broker `GET /admin/v1/runners`, which names the capability
+   field the broker disagreed with, and broker `GET /admin/v1/certification`
+3. confirm whether the failure is:
+   - runner not ready (image, model download, GPU not visible to the container)
+   - a capability shape the offer does not accept
+   - a latency or usage check the template requires
+4. fix the runner and re-run certification for that template assignment
 
-### 7.5 Member suspended or backend disabled after publication
+### 7.5 Host revoked or retired after publication
 
 This is an active routing change and requires runtime reconciliation.
 
 Playbook:
 
-1. change member/backend status in `pool-controller`
-2. confirm assignment and candidate state reflect the change
+1. revoke the host enrolment
+   (`POST /admin/v1/host-enrollments/{id}/revoke`) in `pool-controller`.
+   Member-level suspension has no admin route of its own yet — the
+   `PoolMember.status` field exists but the legacy `PATCH /admin/v1/members/{id}`
+   that set it was removed with the join-request model, and the operator
+   exception queue that replaces it lands with plan 0044 §5 phase E
+2. confirm the affected template assignments reflect the change
 3. the change pushes automatically; to cut a host off immediately,
    revoke its credential — that deletes the secret and closes its
    connections
 4. verify broker convergence
 5. confirm broker `/registry/health` and coordinator view reflect the new
    routable set
-6. if the change was emergency containment, leave the member/backend suspended
-   until a new verification cycle completes
+6. if the change was emergency containment, leave the host revoked until the
+   affected templates have re-certified
 
 ### 7.6 Secure-orch sign/publish blocked
 

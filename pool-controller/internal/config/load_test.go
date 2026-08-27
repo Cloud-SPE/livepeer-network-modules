@@ -19,12 +19,6 @@ identity:
 	if got := cfg.Listen.Metrics; got != ":9090" {
 		t.Fatalf("Listen.Metrics = %q, want :9090", got)
 	}
-	if got := cfg.SyntheticProbes.IntervalMS; got != 30000 {
-		t.Fatalf("SyntheticProbes.IntervalMS = %d, want 30000", got)
-	}
-	if got := cfg.SyntheticProbes.TimeoutMS; got != 3000 {
-		t.Fatalf("SyntheticProbes.TimeoutMS = %d, want 3000", got)
-	}
 	if got := cfg.Scoring.CooldownDurationMS; got != 300000 {
 		t.Fatalf("Scoring.CooldownDurationMS = %d, want 300000", got)
 	}

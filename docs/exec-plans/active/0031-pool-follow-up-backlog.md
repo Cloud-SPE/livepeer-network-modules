@@ -111,41 +111,55 @@ Status: incomplete and deferred.
 These items are explicitly called out as not implemented yet in `0029`, but
 they are the next meaningful Pool product surface after routing quality.
 
-The control-plane reset for this group now has its own concrete implementation
-plan in [`0033-pool-control-plane-onboarding-and-assignment.md`](./0033-pool-control-plane-onboarding-and-assignment.md).
+The control-plane reset for this group was first attempted by
+[`0033-pool-control-plane-onboarding-and-assignment.md`](../completed/0033-pool-control-plane-onboarding-and-assignment.md),
+which built the join-request → verify → approve → assign model. That model has
+since been deleted in full (see
+[`0044-zero-touch-pool-onboarding.md`](./0044-zero-touch-pool-onboarding.md)
+§4–§5 phase A): the pool never dials a member endpoint, so there is nothing to
+verify before admission and nothing for an operator to approve. Read 0033 as
+history only.
 
-1. Member self-service portal / wallet sign-in UX. **Deferred.**
-2. ~~Automated member approval workflow.~~ **Shipped.** Config-gated via
-   `policy.auto_approve_join_requests`; the policy worker auto-approves any
-   pending JoinRequest the admission-review preview already considers
-   Approvable. Implementation lives in
-   `pool-controller/internal/service/autoapprove`.
-3. ~~Policy-driven auto-drain / auto-suspend orchestration.~~ **Shipped (drain).**
-   Config-gated via `policy.auto_drain_backends`,
-   `policy.backend_failure_rate_threshold`, and `policy.backend_min_samples`;
-   the policy worker drains any active backend whose worst per-offering
-   recent failure rate exceeds the threshold. Implementation lives in
-   `pool-controller/internal/service/autodrain`. Auto-suspend (member-level)
-   is still deferred.
+1. Member self-service portal / wallet sign-in UX. **Deferred — now owned by
+   plan 0044 §3.6 (phase F), where it is required rather than optional.**
+2. ~~Automated member approval workflow.~~ **Obsolete — the gesture it
+   automated no longer exists.** `policy.auto_approve_join_requests` and the
+   `autoapprove` worker are gone along with `JoinRequest` and admission review.
+   The equivalent policy in the new model is not "approve this member" but
+   "which templates are enabled at what price": an enabled template with a
+   price becomes an offer, and the placement engine (0044 §3.3) matches GPUs to
+   it deterministically by `requirements` + `priority` + `stacking`. Members may
+   opt *out* of a template, never opt in.
+3. ~~Policy-driven auto-drain / auto-suspend orchestration.~~ **Obsolete as
+   written.** `policy.auto_drain_backends`,
+   `policy.backend_failure_rate_threshold`, `policy.backend_min_samples` and
+   the `autodrain` worker are gone with `MemberBackend`. Draining is now a
+   property of a *template assignment* on a GPU: 0044 §3.5 throttles a poor
+   scorer, forces recertification after repeated failures, and suspends on
+   invalid output — automatically, with a reason code and evidence on every
+   transition. Only lifting a suspension stays an operator gesture.
 4. Multi-listener split between admin/member/public binaries if the current
-   single-process surface becomes an operational constraint. **Deferred.**
+   single-process surface becomes an operational constraint. **No longer
+   optional — plan 0044 §3.6 (phase F) makes the member/admin listener split
+   mandatory, because the member portal is public and the admin mux must never
+   be mounted on it.**
 
 Recommended order inside this group:
 
-1. ~~approval workflow~~
-2. ~~policy-driven auto-drain / suspend~~ (drain done; member-level
-   suspend still open)
-3. member self-service UX
-4. binary/listener split
+1. ~~approval workflow~~ (deleted, not shipped)
+2. ~~policy-driven auto-drain / suspend~~ (deleted; replaced by the automatic
+   ladder in 0044 §3.5)
+3. member/admin listener split
+4. member self-service UX
 
 Reason:
 
-- approval and policy automation affect actual Pool operations
-- UX can follow once the approval/policy state model is stable
-- binary/listener split is mostly deployment hardening, not product behavior
+- the split has to land first, because the portal it protects is public
+- UX follows once the ladder state model (states, reason codes, evidence) is
+  stable, since that is most of what the portal renders
 
-Status: items 2 and 3 (auto-drain portion) shipped; items 1 and 4 still
-deferred.
+Status: items 2 and 3 were shipped and then deleted with the legacy member
+model; items 1 and 4 are still open and now belong to plan 0044 phase F.
 
 ### P3 — payout and accounting follow-up
 
@@ -176,7 +190,8 @@ Status: item 1 shipped; items 2 and 3 remain operator-driven decisions.
 These remain deferred unless priorities change:
 
 1. Online sampling / shadow-backend response diffing.
-2. Fully automatic member self-service approval.
+2. ~~Fully automatic member self-service approval.~~ Moot: approval was
+   deleted, not automated. Zero-touch onboarding is plan 0044.
 3. Member-set pricing.
 4. HA / clustered `pool-controller`.
 5. Manifest / resolver / gateway protocol changes for Pool-aware routing.

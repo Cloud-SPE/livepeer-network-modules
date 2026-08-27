@@ -3,15 +3,13 @@ package config
 import "strings"
 
 type Config struct {
-	Identity        Identity        `yaml:"identity"`
-	AdminAuth       AdminAuth       `yaml:"admin_auth,omitempty"`
-	Listen          Listen          `yaml:"listen,omitempty"`
-	SyntheticProbes SyntheticProbes `yaml:"synthetic_probes,omitempty"`
-	Scoring         Scoring         `yaml:"scoring,omitempty"`
-	Policy          Policy          `yaml:"policy,omitempty"`
-	PaymentDaemon   PaymentDaemon   `yaml:"payment_daemon,omitempty"`
-	ReceiptSink     ReceiptSink     `yaml:"receipt_sink,omitempty"`
-	Bootstrap       Bootstrap       `yaml:"bootstrap,omitempty"`
+	Identity      Identity      `yaml:"identity"`
+	AdminAuth     AdminAuth     `yaml:"admin_auth,omitempty"`
+	Listen        Listen        `yaml:"listen,omitempty"`
+	Scoring       Scoring       `yaml:"scoring,omitempty"`
+	PaymentDaemon PaymentDaemon `yaml:"payment_daemon,omitempty"`
+	ReceiptSink   ReceiptSink   `yaml:"receipt_sink,omitempty"`
+	Bootstrap     Bootstrap     `yaml:"bootstrap,omitempty"`
 }
 
 type Identity struct {
@@ -23,12 +21,6 @@ type Listen struct {
 	Paid       string `yaml:"paid,omitempty"`
 	Metrics    string `yaml:"metrics,omitempty"`
 	WorkerQUIC string `yaml:"worker_quic,omitempty"`
-}
-
-type SyntheticProbes struct {
-	Enabled    bool `yaml:"enabled,omitempty"`
-	IntervalMS int  `yaml:"interval_ms,omitempty"`
-	TimeoutMS  int  `yaml:"timeout_ms,omitempty"`
 }
 
 type Scoring struct {
@@ -45,30 +37,6 @@ type Scoring struct {
 	TopExcludedLimit          int     `yaml:"top_excluded_limit,omitempty" json:"top_excluded_limit,omitempty"`
 	WorstOfferingsLimit       int     `yaml:"worst_offerings_limit,omitempty" json:"worst_offerings_limit,omitempty"`
 	PublicWorstOfferingsLimit int     `yaml:"public_worst_offerings_limit,omitempty" json:"public_worst_offerings_limit,omitempty"`
-}
-
-// Policy controls operator-workflow automation evaluated by the
-// pool-controller's policy worker. Each flag defaults to off; when on,
-// the worker runs its rule against current state on every
-// EvaluationIntervalMS tick.
-//
-// AutoApproveJoinRequests, when true, approves any pending JoinRequest
-// whose admission preview already says Approvable. The decision uses
-// the same checks an operator would perform via the admin UI; this
-// removes the manual click without weakening any precondition.
-//
-// AutoDrainBackends, when true, transitions any BackendStatusActive
-// backend whose recent failure rate (RecentBackendFailureCount /
-// RecentRoutableOutcomeCount) exceeds BackendFailureRateThreshold to
-// BackendStatusDraining. BackendMinSamples gates the rule on a minimum
-// number of recent routable outcomes so brand-new or quiet backends are
-// not drained on a single bad sample.
-type Policy struct {
-	AutoApproveJoinRequests     bool    `yaml:"auto_approve_join_requests,omitempty"`
-	AutoDrainBackends           bool    `yaml:"auto_drain_backends,omitempty"`
-	BackendFailureRateThreshold float64 `yaml:"backend_failure_rate_threshold,omitempty"`
-	BackendMinSamples           int     `yaml:"backend_min_samples,omitempty"`
-	EvaluationIntervalMS        int     `yaml:"evaluation_interval_ms,omitempty"`
 }
 
 type PaymentDaemon struct {

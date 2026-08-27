@@ -105,9 +105,16 @@ Scope of this extension:
   (cards, pills, preview checks, control-plane forms) onto the shared tokens.
 - Adopt the shared shell + multi-page navigation: a `layout.html` shell
   (topbar + sidebar nav with active states + content + footer + theme toggle +
-  mobile drawer) and one page per task — Overview, Offers, Join requests,
-  Members & backends, Assignments, Broker runtime, Audit — served via the same
+  mobile drawer) and one page per task, served via the same
   `html/template` + `go:embed` asset architecture (`internal/ui/web`).
+  The page set at the time of writing was Overview, Offers, Join requests,
+  Members & backends, Assignments, Broker runtime, Audit; the shell contract is
+  what this plan owns, not that list. Broker runtime went with plan 0043 (the
+  controller pushes offers instead of rendering a config), and Join requests,
+  Members & backends, and Assignments went with plan 0044 §5 phase A, which
+  deleted the legacy member model outright. The current set is Overview, Pool,
+  Offers, Audit; plan 0044 phase H rebuilds the console around members, hosts
+  and GPUs, templates, exceptions, settlement, and payouts.
 
 Auth — same login model as the trust-spine consoles:
 

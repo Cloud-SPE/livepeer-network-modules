@@ -147,9 +147,7 @@ func TestConsolePagesRenderWithActiveNav(t *testing.T) {
 	pages := []struct{ path, href, marker string }{
 		{"/admin", "/admin", `id="ovOffers"`},
 		{"/admin/offers", "/admin/offers", `id="offerId"`},
-		{"/admin/join-requests", "/admin/join-requests", `id="joinRequests"`},
-		{"/admin/members", "/admin/members", `id="members"`},
-		{"/admin/assignments", "/admin/assignments", `id="assignmentCandidates"`},
+		{"/admin/pool", "/admin/pool", `id="poolMembers"`},
 		{"/admin/audit", "/admin/audit", `id="auditEvents"`},
 	}
 	for _, p := range pages {

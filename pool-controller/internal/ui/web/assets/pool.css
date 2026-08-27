@@ -25,7 +25,7 @@
     padding: 0.45rem 0.7rem;
   }
 
-  /* Dynamically-built list cards (offers, members, backends, assignments). */
+  /* Dynamically-built list cards (offers, pool members, hardware, templates). */
   .card-list {
     display: grid;
     gap: 0.75rem;
@@ -70,7 +70,7 @@
     font-weight: 500;
   }
 
-  /* Preview checklists (join review, assignment draft preview). */
+  /* Preview checklists. */
   .check-list {
     display: grid;
     gap: 0.5rem;
@@ -90,7 +90,7 @@
     font-size: 0.8rem;
   }
 
-  /* Static control-plane forms (offer editor, join request, assignment draft). */
+  /* Static control-plane forms (offer editor, audit filters). */
   .form-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

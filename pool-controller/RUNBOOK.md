@@ -6,9 +6,10 @@
 in the request path, but it is the source of record for:
 
 - orch-owned offers
-- join requests
-- approved members and backends
-- backend-to-offer assignments
+- pool members and their enrolled hosts
+- hardware units (GPUs) reported by those hosts
+- template assignments — a pool template placed on a GPU — and the
+  certification runs that qualify them
 - desired broker runtime
 - work receipts
 - round receipts
@@ -43,8 +44,8 @@ The Pool production shape spans two sides:
 `pool-controller` does not replace the secure-orch sign cycle. The normal
 publication flow remains:
 
-1. `pool-controller` manages offers, members, and assignments, and pushes the
-   offer set + attach credentials to the broker
+1. `pool-controller` manages offers, members, and template assignments, and
+   pushes the offer set + attach credentials to the broker
 2. `capability-broker` advertises the resulting inventory
 3. `orch-coordinator` scrapes broker offerings/health and builds the candidate
 4. secure-orch signs
@@ -86,8 +87,11 @@ Secure-orch side:
 1. Bring up secure-orch/protocol host first.
 2. Bring up `pool-controller` with durable storage and admin auth.
 3. Create orch-owned offers in `pool-controller`.
-4. Accept member join requests and verify backends.
-5. Create assignments from approved backends to orch-owned offers.
+4. Have members sign in with their wallet and enrol a host
+   (`POST /member/v1/enrollments`); the host reports its GPUs to
+   `POST /member/v1/enrollments/{id}/hardware`.
+5. Place templates on the reported GPUs
+   (`POST /admin/v1/template-assignments`) and start certification.
 6. Confirm the push landed: the recorded revision carries `push_error`
    when the broker did not accept it, and `changed_offers` / `revoked_hosts`
    when it did. Runner and certification state is read from the broker —
@@ -104,8 +108,8 @@ Secure-orch side:
 Important boundary:
 
 - the supported production config is bootstrap-only
-- legacy nested `members[].backends[].offerings[]` config is migration-only and
-  should not be used as the steady-state operator workflow
+- legacy nested `members[].backends[].offerings[]` config is not supported at
+  all: the compatibility loader that once ingested it has been removed
 
 ## Start
 
@@ -130,21 +134,38 @@ for `pool-controller`.
 
 ### 1. Offer and member control plane
 
-The normal operator sequence is:
+Members onboard themselves: they sign in with their wallet, enrol a host, and
+the host reports its GPUs. There is no join request, no operator approval step,
+and no member-supplied backend URL to verify — the pool never dials a member
+endpoint, the member's runners attach to the broker.
+
+The operator sequence is:
 
 1. create/update offers
-2. review join requests
-3. refresh backend verification if needed
-4. approve or reject the member
-5. assign approved backends to active offers
+2. watch enrolled hosts and their reported GPUs appear
+3. place a template on each GPU and start its certification
+4. act only on exceptions — today that means revoking a host enrolment
+   (`POST /admin/v1/host-enrollments/{id}/revoke`). Member-level suspension
+   has no admin route of its own: the legacy `PATCH /admin/v1/members/{id}`
+   went with the join-request model, and the operator exception queue that
+   replaces it is plan 0044 §5 phase E
+
+Step 3 is the one operator gesture still on the member's path. Plan 0044 §3.3
+replaces it with a deterministic placement engine (template `requirements` +
+`priority` + `stacking`, with members able to opt *out* of a template but never
+opt in); until that lands, placement stays manual.
 
 Useful admin reads:
 
 - `GET /admin/v1/offers`
-- `GET /admin/v1/join-requests`
-- `GET /admin/v1/members`
-- `GET /admin/v1/member-backends`
-- `GET /admin/v1/assignments`
+- `GET /admin/v1/pool-members`
+- `GET /admin/v1/host-enrollments`
+- `GET /admin/v1/hardware-units`
+- `GET /admin/v1/template-catalog`
+- `GET /admin/v1/template-assignments`
+- `GET /admin/v1/certification-runs`
+
+The `/admin/pool` console page presents the same state; use it before curling.
 
 ### 2. Broker runtime convergence
 
@@ -305,19 +326,24 @@ Common operator playbooks:
 
 - desired revision drifted during apply:
   - inspect runtime history plus recent audit events
-  - identify the mutating offer/member/assignment change
+  - identify the mutating offer, member, or template-assignment change
   - re-apply only after the desired revision stabilizes
-- approved but unassigned backend:
-  - inspect `GET /admin/v1/assignment-candidates`
-  - create assignment if the backend should publish
-  - then run broker apply
-- verification or join-request rejection:
-  - inspect join preview and backend verification error details
-  - correct endpoint/probe/claim issues before retrying approval
-- suspended member or disabled backend:
+- enrolled GPU running nothing:
+  - `GET /admin/v1/hardware-units` — confirm the host reported it and what
+    state the unit is in
+  - `GET /admin/v1/template-assignments` — confirm a template is placed on it;
+    place one if not
+  - `GET /admin/v1/certification-runs` — a placed template only becomes
+    eligible once its certification passes
+- certification failing:
+  - read the failed run's checks; the broker names the capability field it
+    disagreed with (broker `GET /admin/v1/runners`)
+  - fix the runner (image, model, capability shape) and re-run certification —
+    there is nothing to "re-approve" on the controller side
+- host revoked or retired:
   - treat it as a routing-state change
-  - apply broker runtime again before expecting broker/coordinator visibility to
-    match
+  - confirm the offer push landed before expecting broker/coordinator
+    visibility to match
 
 ## Backup scope
 

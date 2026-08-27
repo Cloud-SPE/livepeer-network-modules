@@ -24,9 +24,6 @@ var uiPages = []string{
 	"overview",
 	"pool",
 	"offers",
-	"join-requests",
-	"members",
-	"assignments",
 	"audit",
 }
 

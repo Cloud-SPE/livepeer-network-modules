@@ -56,8 +56,11 @@ The production path is:
 
 1. bootstrap `pool-controller`
 2. create offers through the control-plane
-3. approve members and backends
-4. create assignments
+3. members sign in with their wallet and enrol a host; the host reports its
+   GPUs. There is no join request and no approval step — the pool never dials
+   a member endpoint, so there is nothing to verify before admission
+4. place a template on each reported GPU
+   (`POST /admin/v1/template-assignments`) and start its certification
 5. members attach; the broker certifies them and freezes each offer's
    runner-declared shape
 

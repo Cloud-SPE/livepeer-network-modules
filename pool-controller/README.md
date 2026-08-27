@@ -2,7 +2,9 @@
 
 `pool-controller` is the Pool-side control-plane component. The current Pool
 path is the connected-worker replacement from
-`docs/exec-plans/active/0040-pool-template-connected-worker-reset.md`: members
+`docs/exec-plans/active/0040-pool-template-connected-worker-reset.md`, as
+extended by `docs/exec-plans/active/0043-connected-runners-and-offer-manifest.md`
+and `docs/exec-plans/active/0044-zero-touch-pool-onboarding.md`: members
 sign in with an ETH wallet, download a generated compose bundle, and connect
 outbound to the Pool broker. Pool members do not run a broker or
 `payment-daemon`.
@@ -23,12 +25,26 @@ The supported production path is:
 
 - bootstrap-only controller config
 - persisted control-plane state in BoltDB
-- broker runtime rendered from connected-worker assignments
+- the offer set and attach credentials pushed to the broker over its admin
+  API — nothing is rendered to a broker config file
 
-Legacy nested `members[].backends[].offerings[]` config and join-request
-onboarding are no longer the supported Pool path. Older compatibility surfaces
-may remain while salvageable code is retired, but the connected-worker model is
-the source of truth for new work.
+The legacy member model is gone, not merely unsupported. Plan 0044 §5 phase A
+deleted `JoinRequest`, `MemberBackend`, the old `Assignment`, admission review,
+backend verification, auto-approval, auto-drain, the nested
+`members[].backends[].offerings[]` config and its compatibility loader, and
+every route and console page that drove them. The pool never dials a
+member-supplied endpoint, so there is nothing to verify before admission and
+nothing for an operator to approve.
+
+What replaces it: a member signs in with their wallet, enrols a host, and the
+host reports its GPUs; the operator's only policy gesture is which templates
+are enabled at what price. Plan 0044 §3.3 then matches GPUs to templates
+deterministically (`requirements` + `priority` + `stacking`, members opting
+*out* of a template but never in) and the agent pulls its own desired state —
+that placement engine, the desired-state endpoint, and the member portal land
+in later slices of 0044, so until they ship, placing a template on a GPU
+(`POST /admin/v1/template-assignments`) is still a manual operator step.
+Do not add anything back to the deleted model.
 
 Operator runbook:
 - [`RUNBOOK.md`](./RUNBOOK.md)
@@ -36,8 +52,9 @@ Operator runbook:
 The first implementation slice is intentionally narrow:
 
 - load a Pool operator config,
-- validate member/backend/offering records,
-- deterministically render broker config for the Pool's broker,
+- validate offer/offering records,
+- deterministically push the offer set and attach credentials to the Pool's
+  broker,
 - persist startup/reload snapshots in BoltDB for operator inspection,
 - persist backend-selection state records keyed by member/backend/offering,
 - expose a read-only admin snapshot scaffold for future Pool scoring work.
@@ -116,7 +133,6 @@ Current admin endpoints:
 - `GET /readyz`
 - `GET /metrics` on the metrics listener
 - `GET /admin/v1/broker-config`
-- `GET /admin/v1/members`
 - `GET /admin/v1/offerings`
 - `GET /admin/v1/state`
 - `GET /admin/v1/scoring-settings`
@@ -170,6 +186,10 @@ Current member endpoints:
 - `POST /member/v1/auth/verify`
 - `POST /member/v1/enrollments`
 - `GET /member/v1/enrollments/{id}/bundle`
+- `POST /member/v1/enrollments/{id}/hardware`
+
+There is no `/member/v1/join-requests` surface any more; wallet sign-in plus a
+host enrolment is the whole member-facing path.
 
 `GET /admin/v1/backend-selection-summary` rolls the current Pool routing state
 into operator-focused aggregates:
@@ -301,40 +321,28 @@ Current Prometheus metric families include:
 
 ## Operator-workflow policy automation
 
-The policy worker runs alongside the synthetic-probe loop and evaluates
-opt-in automation rules on every `policy.evaluation_interval_ms` tick
-(default 60s). Both rules are off by default; flipping them on in
-`policy:` requires no restart in normal operation — the worker reads
-the current snapshot each tick.
+There is no `policy:` config block and no policy worker. The opt-in rules that
+lived here — `auto_approve_join_requests`, `auto_drain_backends`,
+`backend_failure_rate_threshold`, `backend_min_samples`,
+`evaluation_interval_ms` — were deleted with the legacy member model, because
+the gestures they automated no longer exist: there is no join request to
+approve, and no `MemberBackend` to drain.
 
-```yaml
-policy:
-  auto_approve_join_requests: true
-  auto_drain_backends: true
-  backend_failure_rate_threshold: 0.5
-  backend_min_samples: 20
-  evaluation_interval_ms: 60000
-```
+The equivalents in the new model are:
 
-- `auto_approve_join_requests` — when on, the worker auto-approves any
-  pending `JoinRequest` whose admission-review preview already says
-  `Approvable`. The reason recorded on the request and on the audit
-  event is `auto-approved by policy`. Audit kind:
-  `join_request_auto_approved`.
-- `auto_drain_backends` — when on, the worker transitions any backend
-  in `BackendStatusActive` whose worst per-offering recent failure rate
-  (`recent_backend_failure_count / recent_routable_outcome_count`)
-  exceeds `backend_failure_rate_threshold` to `BackendStatusDraining`.
-  `backend_min_samples` gates the rule on a minimum number of routable
-  outcomes in the window so brand-new or quiet backends are not drained
-  on a single bad sample. Audit kind: `backend_auto_drained` with
-  `failure_rate` and `failure_rate_threshold` in the details.
+- **Instead of auto-approving members:** the operator sets policy once, by
+  enabling templates and pricing them. An enabled, priced template becomes an
+  `offers[]` entry pushed to the broker, and GPUs are matched to it
+  deterministically (plan 0044 §3.3).
+- **Instead of auto-draining backends:** a poor-scoring *template assignment*
+  on a GPU is throttled, forced to recertify, or suspended by the automatic
+  ladder in plan 0044 §3.5, with a reason code and evidence on every
+  transition. Only lifting a suspension is an operator gesture.
 
-Auto-disable (member-level suspend) is **not** automated; the worker
-only drains backends. An operator must decide whether to keep a
-drained backend out or re-enable it.
+Neither replacement has landed yet — they are later slices of plan 0044. Until
+then, there is no automated policy loop at all.
 
-## Migration-only compatibility commands
+## Commands
 
 Normal production operations should use:
 

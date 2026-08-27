@@ -135,16 +135,19 @@ flowchart LR
 
     subgraph members["Pool members"]
         direction LR
-        MB1["member backend A"]
-        MB2["member backend B"]
-        MB3["member backend N"]
+        MR1["member runner A<br/>(GPU host)"]
+        MR2["member runner B"]
+        MR3["member runner N"]
     end
 
     GW["gateway"] --> PCB
     PCB --> PPD
-    PCB --> MB1
-    PCB --> MB2
-    PCB --> MB3
+    MR1 -.->|"outbound attach + capabilities"| PCB
+    MR2 -.-> PCB
+    MR3 -.-> PCB
+    PCB -->|"dispatch over the attached tunnel"| MR1
+    PCB --> MR2
+    PCB --> MR3
 
     PCC -.->|"push offers + credentials (admin API)"| PCB
     PCC -.->|"exported payout intents"| PPE
@@ -159,9 +162,10 @@ flowchart LR
 
 Current Pool implementation boundaries:
 
-- `pool-controller` owns member records, receipt persistence, round receipts,
-  payout intents, retry history, public summaries, and broker-config
-  generation.
+- `pool-controller` owns member and host-enrolment records, the templates
+  placed on member GPUs, receipt persistence, round receipts, payout intents,
+  retry history, public summaries, and the offer set + attach credentials it
+  pushes to the broker.
 - `pool-reconciler` closes rounds from `protocol-daemon` timing,
   `payment-daemon` realized revenue, and `pool-controller` work receipts.
 - `pool-payout-executor` executes native-`ETH` payouts on Arbitrum and writes

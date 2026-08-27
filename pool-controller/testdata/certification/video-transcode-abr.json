@@ -1,0 +1,45 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness"
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "timeout_ms": 60000,
+    "config": {
+      "expect_content_type": "video/",
+      "parts": [
+        {
+          "name": "profiles",
+          "value": "[{\"name\":\"720p30\",\"width\":1280,\"height\":720,\"fps\":30}]"
+        },
+        {
+          "content_type": "video/mp4",
+          "filename": "probe.mp4",
+          "fixture": {
+            "ref": "video/mp4-2s-720p"
+          },
+          "name": "source"
+        }
+      ],
+      "transport": "multipart"
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "config": {
+      "min_units": 1
+    }
+  },
+  {
+    "name": "latency",
+    "type": "latency",
+    "required": false,
+    "config": {
+      "p50_max_ms": 20000,
+      "samples": 2
+    }
+  }
+]

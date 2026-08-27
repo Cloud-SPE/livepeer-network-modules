@@ -1,0 +1,30 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness"
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "config": {
+      "assert": [
+        {
+          "min": 1,
+          "path": "$.data[0].embedding"
+        },
+        "$.usage.total_tokens"
+      ],
+      "body": {
+        "input": "ping",
+        "model": "{{identity.openai.model}}"
+      }
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "config": {
+      "min_units": 1
+    }
+  }
+]

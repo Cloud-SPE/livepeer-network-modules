@@ -1,0 +1,30 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness"
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "config": {
+      "assert": [
+        {
+          "min": 0,
+          "path": "$.data[0]"
+        }
+      ],
+      "body": {
+        "model": "{{identity.openai.model}}",
+        "n": 1,
+        "prompt": "a probe"
+      }
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "config": {
+      "min_units": 1
+    }
+  }
+]

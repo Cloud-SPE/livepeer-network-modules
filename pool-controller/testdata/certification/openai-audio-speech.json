@@ -1,0 +1,25 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness"
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "config": {
+      "body": {
+        "input": "ping",
+        "model": "{{identity.openai.model}}"
+      },
+      "expect_content_type": "audio/",
+      "max_response_bytes": 4194304
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "config": {
+      "min_units": 1
+    }
+  }
+]

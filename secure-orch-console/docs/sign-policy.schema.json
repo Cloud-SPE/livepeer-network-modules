@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/docs/sign-policy.schema.json",
-  "title": "secure-orch sign policy (plan 0042 §7)",
+  "title": "secure-orch sign policy (plan 0042 \u00a77)",
   "description": "Operator-authored policy envelope for the secure-orch agent's auto-sign decisions. Strict: unknown fields fail validation; a parse or schema failure pauses auto-signing (fail closed).",
   "type": "object",
   "additionalProperties": false,
@@ -10,8 +10,7 @@
     "auto_sign",
     "benign_bounds",
     "rate_limit",
-    "stability_window_seconds",
-    "renewal_threshold_fraction"
+    "stability_window_seconds"
   ],
   "properties": {
     "policy_version": {
@@ -20,7 +19,10 @@
     "auto_sign": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["renewal", "benign"],
+      "required": [
+        "renewal",
+        "benign"
+      ],
       "properties": {
         "renewal": {
           "type": "boolean",
@@ -35,7 +37,11 @@
     "benign_bounds": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["price_delta_max_pct", "allow_tuple_removal", "worker_url_domain_allowlist"],
+      "required": [
+        "price_delta_max_pct",
+        "allow_tuple_removal",
+        "worker_url_domain_allowlist"
+      ],
       "properties": {
         "price_delta_max_pct": {
           "type": "number",
@@ -45,7 +51,7 @@
         },
         "allow_tuple_removal": {
           "type": "boolean",
-          "description": "Treat a disappearing (capability_id, offering_id) tuple as benign — removal reduces exposure."
+          "description": "Treat a disappearing (capability_id, offering_id) tuple as benign \u2014 removal reduces exposure."
         },
         "worker_url_domain_allowlist": {
           "type": "array",
@@ -61,7 +67,10 @@
     "rate_limit": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["max_auto_signs_per_hour", "on_breach"],
+      "required": [
+        "max_auto_signs_per_hour",
+        "on_breach"
+      ],
       "properties": {
         "max_auto_signs_per_hour": {
           "type": "integer",
@@ -78,12 +87,6 @@
       "type": "integer",
       "minimum": 0,
       "description": "How long a pulled candidate's ETag must stay unchanged before the agent acts on it."
-    },
-    "renewal_threshold_fraction": {
-      "type": "number",
-      "exclusiveMinimum": 0,
-      "exclusiveMaximum": 1,
-      "description": "Fraction of the manifest TTL below which an unchanged candidate classifies as renewal. Keep aligned with the coordinator's --renewal-threshold (both default to 1/3)."
     }
   }
 }

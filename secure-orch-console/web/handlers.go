@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -135,6 +136,9 @@ func (s *Server) handleManifestsPage(w http.ResponseWriter, r *http.Request) {
 		case item != nil:
 			view.Held = heldItemViewFrom(item)
 		}
+	}
+	if s.agent != nil {
+		view.AutoSignPaused = s.agent.RateLimitPaused()
 	}
 	s.mu.Lock()
 	cand := s.candidate
@@ -738,6 +742,28 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusBadRequest, "sign", errors.New("no candidate loaded"))
 		return
 	}
+	// A spec_version change needs its own gesture: the operator types
+	// the version they are moving to (plan 0043 §3.7).
+	//
+	// The version used to be forbidden outright, which meant a protocol
+	// upgrade could never be signed at all. It is a real operator
+	// action now — but it changes the contract every consumer reads the
+	// manifest under, so it must not ride along inside a routine
+	// signature. Typing the target is what makes it deliberate.
+	if newVersion, changed := s.specVersionChange(cand.bytes); changed {
+		typed := strings.TrimSpace(r.PostForm.Get("confirm_spec_version"))
+		if typed != newVersion {
+			s.audit.Append(audit.Event{
+				Kind:       audit.KindAbort,
+				Actor:      actorFromRequest(r),
+				EthAddress: s.signer.Address().String(),
+				Note:       "spec_version confirm gesture failed",
+			})
+			s.fail(w, r, http.StatusBadRequest, "confirm gesture",
+				fmt.Errorf("this candidate changes spec_version to %q; type it to confirm", newVersion))
+			return
+		}
+	}
 	envelope, err := signCandidate(cand.bytes, s.signer)
 	if err != nil {
 		s.audit.Append(audit.Event{
@@ -1071,4 +1097,41 @@ func readManifestFromTar(buf []byte, filename string) ([]byte, error) {
 			return io.ReadAll(io.LimitReader(tr, 16<<20))
 		}
 	}
+}
+
+// specVersionChange reports the candidate's spec_version and whether it
+// differs from the last-signed manifest. A first signature is not a
+// change: there is nothing to differ from.
+func (s *Server) specVersionChange(candidateBytes []byte) (newVersion string, changed bool) {
+	last, err := os.ReadFile(s.cfg.LastSignedPath)
+	if err != nil || len(last) == 0 {
+		return "", false
+	}
+	res, err := diff.Compute(last, candidateBytes)
+	if err != nil {
+		return "", false
+	}
+	if res.Header.SpecVersionStable {
+		return "", false
+	}
+	return res.Header.AfterSpecVersion, true
+}
+
+// handleClearRateLimit releases a latched auto-sign pause.
+//
+// The limiter latches deliberately: exceeding the bound means something
+// upstream is producing candidates faster than the operator expects,
+// and throttling quietly would hide it. Clearing is therefore an
+// operator gesture after looking, not an automatic recovery — but until
+// now the only way to perform it was restarting the console, which
+// discarded everything else the agent knew.
+func (s *Server) handleClearRateLimit(w http.ResponseWriter, r *http.Request) {
+	if s.agent == nil {
+		s.fail(w, r, http.StatusNotFound, "clear rate limit", errors.New("this console runs without an agent"))
+		return
+	}
+	// Clearing a pause that already lifted is not an error; the redirect
+	// lands on a page that shows the current state either way.
+	s.agent.ClearRateLimit(actorFromRequest(r))
+	http.Redirect(w, r, "/manifests", http.StatusSeeOther)
 }

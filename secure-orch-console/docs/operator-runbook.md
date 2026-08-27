@@ -134,10 +134,39 @@ Candidate classes and dispositions:
 
 | Class | Meaning | Phase 1 | Phase 2 |
 |---|---|---|---|
-| `renewal` | content identical, remaining validity below threshold | auto-sign | auto-sign |
+| `renewal` | content identical, remaining validity below the coordinator's published threshold | auto-sign | auto-sign |
 | `benign` | every change within `benign_bounds` | hold + `would_auto_sign` shadow audit | auto-sign |
-| `critical` | any change beyond the bounds | hold + alert | hold + alert |
-| `forbidden` | `eth_address` or `spec_version` changed | refuse + alert | refuse + alert |
+| `critical` | any change beyond the bounds, **including a `spec_version` change** | hold + alert | hold + alert |
+| `forbidden` | `eth_address` changed | refuse + alert | refuse + alert |
+
+`spec_version` moved from `forbidden` to `critical` (plan 0043 §3.7).
+The version has one source now — the protocol module's `VERSION`, which
+the broker stamps and the coordinator imports — so it changes when the
+operator upgrades, which is a real thing they do. Refusing it outright
+meant an upgrade could never be signed at all. Signing one requires a
+second gesture: **type the new version string** into the sign form,
+alongside the usual last-4 of the signer address. `eth_address` stays
+forbidden, because a signing key signs for exactly one orchestrator.
+
+The renewal threshold is no longer a console-side setting. The
+coordinator publishes the effective value in each candidate's
+`metadata.json` as `renewal_threshold_seconds`, and the agent reads it
+from there; a candidate without it falls back to the coordinator's own
+`ttl/3` default. The old `renewal_threshold_fraction` policy field is
+removed — it had to be kept equal to the coordinator's flag by hand, and
+when the two drifted, renewals arrived before the console considered
+them due and sat until they expired.
+
+### Clearing a rate-limit pause
+
+The agent latches auto-signing when it exceeds
+`rate_limit.max_auto_signs_per_hour`, rather than throttling: a burst
+usually means something upstream is republishing, and signing slower
+would hide it. Candidates still reach the held queue; nothing signs
+itself. After looking at why it latched, clear it from the Manifests
+page — the gesture is audited with the actor and forgets the window, so
+the next breach latches on fresh evidence. Restarting the console is no
+longer the only way out.
 
 ### Burn-in procedure (phase 1 → phase 2)
 

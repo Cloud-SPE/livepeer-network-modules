@@ -1098,3 +1098,93 @@ func (s *fakeProtocolDaemonServer) GetTxIntent(ctx context.Context, req *protoco
 		AttemptCount:          1,
 	}, nil
 }
+
+// A spec_version change is signable now, but only with its own gesture:
+// the operator types the version they are moving to (plan 0043 §3.7).
+// It used to be forbidden outright, which meant a protocol upgrade could
+// never be signed at all.
+func TestServer_SpecVersionChangeRequiresTypedConfirmation(t *testing.T) {
+	srv, _, cleanup := newHarness(t, "127.0.0.1:0")
+	defer cleanup()
+	if _, err := srv.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go srv.Serve(ctx)
+	if err := waitFor("http://" + srv.Addr() + "/healthz"); err != nil {
+		t.Fatal(err)
+	}
+	url := "http://" + srv.Addr()
+	addr := strings.ToLower(srv.signer.Address().String())
+	last4 := lastFourHex(addr)
+
+	manifest := func(specVersion string, seq int) []byte {
+		return []byte(`{"manifest":{"spec_version":"` + specVersion + `","publication_seq":` +
+			strconv.Itoa(seq) + `,"issued_at":"2026-05-06T00:00:00Z","expires_at":"2026-06-06T00:00:00Z","orch":{"eth_address":"` +
+			addr + `"},"capabilities":[{"capability_id":"openai:chat","offering_id":"small","price_per_unit_wei":"1000"}]}}`)
+	}
+
+	// First signature establishes a last-signed at 2.4.1.
+	uploadCandidate(t, url, "manifest.json", manifest("2.4.1", 1))
+	resp, err := http.Post(url+"/sign", "application/x-www-form-urlencoded",
+		strings.NewReader("confirm_last4="+last4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first sign status %d", resp.StatusCode)
+	}
+
+	// A candidate on a new spec version: the page asks for it by name.
+	uploadCandidate(t, url, "manifest.json", manifest("3.0.0", 2))
+	page, err := http.Get(url + "/manifests")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(page.Body)
+	_ = page.Body.Close()
+	if !strings.Contains(string(body), "confirm_spec_version") || !strings.Contains(string(body), "3.0.0") {
+		t.Fatalf("page does not ask for the new spec_version: %s", body)
+	}
+
+	// The address gesture alone is not enough.
+	resp, err = http.Post(url+"/sign", "application/x-www-form-urlencoded",
+		strings.NewReader("confirm_last4="+last4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("sign without the version gesture status %d, want 400", resp.StatusCode)
+	}
+	if !strings.Contains(string(refused), "3.0.0") {
+		t.Fatalf("refusal does not name the version to type: %s", refused)
+	}
+
+	// The wrong version is refused too — this is a typing gesture, not a
+	// checkbox.
+	resp, err = http.Post(url+"/sign", "application/x-www-form-urlencoded",
+		strings.NewReader("confirm_last4="+last4+"&confirm_spec_version=2.4.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("sign with the wrong version status %d, want 400", resp.StatusCode)
+	}
+
+	// Typing the new version signs it.
+	resp, err = http.Post(url+"/sign", "application/x-www-form-urlencoded",
+		strings.NewReader("confirm_last4="+last4+"&confirm_spec_version=3.0.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("sign with the version gesture status %d: %s", resp.StatusCode, signed)
+	}
+}

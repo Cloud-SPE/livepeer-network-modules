@@ -13,10 +13,12 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"math/rand"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/audit"
@@ -61,6 +63,10 @@ type Agent struct {
 
 	metrics *Metrics
 
+	// rlMu guards rl and rlPauseAudited: the run loop touches them each
+	// cycle, and the console clears a latched pause from an HTTP
+	// goroutine.
+	rlMu           sync.Mutex
 	rl             *policy.RateLimiter
 	rlMax          int
 	policyHash     string
@@ -71,6 +77,10 @@ type Agent struct {
 
 	publishedIssued time.Time
 	publishedExpiry time.Time
+	// publishedRenewalThreshold is the coordinator's own threshold from
+	// the last candidate seen (plan 0043 §3.7), so the expiry warning
+	// and the renewal classification agree on when a re-sign is due.
+	publishedRenewalThreshold time.Duration
 
 	lastETag     string
 	pending      *Candidate
@@ -147,7 +157,7 @@ func (a *Agent) Cycle(ctx context.Context) {
 	a.pull(ctx)
 	a.maybeHandle(ctx, pol)
 	a.updateGauges()
-	a.checkExpiryWarning(pol)
+	a.checkExpiryWarning()
 }
 
 // updateGauges refreshes the per-cycle gauges (§9).
@@ -168,12 +178,16 @@ func (a *Agent) updateGauges() {
 // webhook once per crossing. The Prometheus gauge backs the
 // operator's own alerting; this makes the warning reach the webhook
 // even without a scrape stack.
-func (a *Agent) checkExpiryWarning(pol policy.Policy) {
+func (a *Agent) checkExpiryWarning() {
 	if a.publishedExpiry.IsZero() || !a.publishedExpiry.After(a.publishedIssued) {
 		return
 	}
 	ttl := a.publishedExpiry.Sub(a.publishedIssued)
-	warnAt := time.Duration(pol.RenewalThresholdFraction * float64(ttl) / 2)
+	threshold := a.publishedRenewalThreshold
+	if threshold <= 0 {
+		threshold = ttl / 3
+	}
+	warnAt := threshold / 2
 	remaining := a.publishedExpiry.Sub(a.now())
 	if remaining < warnAt {
 		if !a.expiryWarned {
@@ -349,7 +363,8 @@ func (a *Agent) handle(ctx context.Context, cand *Candidate, pol policy.Policy) 
 	in := policy.ClassifyInput{Bounds: pol.BenignBounds, FirstSign: envelope == nil}
 	var lastSeqPtr *uint64
 	if envelope != nil {
-		remaining, threshold := a.renewalClock(envelope, pol)
+		remaining, threshold := a.renewalClock(envelope, cand)
+		a.publishedRenewalThreshold = threshold
 		in.RemainingValidity = remaining
 		in.RenewalThreshold = threshold
 		seq, _, err := envelopeSeqAndHash(envelope)
@@ -372,15 +387,27 @@ func (a *Agent) handle(ctx context.Context, cand *Candidate, pol policy.Policy) 
 		a.audit(audit.Event{Kind: audit.KindRefused, Seq: &seq, CanonHash: cand.CanonicalSHA256, Fields: map[string]any{"etag": cand.ETag, "findings": findingsField(cls.Findings)}})
 		a.alert("forbidden_candidate", map[string]any{"etag": cand.ETag, "findings": findingsField(cls.Findings)})
 	case policy.ActionAutoSign:
-		if a.rl.Allow(a.now()) {
+		// The lock covers only the limiter decision. autoSign records
+		// the signature through the same mutex, so holding it across
+		// the call would deadlock.
+		a.rlMu.Lock()
+		allowed := a.rl.Allow(a.now())
+		if allowed {
 			a.rlPauseAudited = false
+		}
+		shouldAudit := !allowed && a.rl.Paused() && !a.rlPauseAudited
+		if shouldAudit {
+			a.rlPauseAudited = true
+		}
+		a.rlMu.Unlock()
+
+		if allowed {
 			a.autoSign(ctx, cand, lastSeqPtr, cls)
 			return
 		}
-		if a.rl.Paused() && !a.rlPauseAudited {
+		if shouldAudit {
 			a.audit(audit.Event{Kind: audit.KindRateLimitPause, Fields: map[string]any{"max_per_hour": a.rlMax}})
 			a.alert("rate_limit_pause", map[string]any{"max_per_hour": a.rlMax})
-			a.rlPauseAudited = true
 		}
 		// Paused auto-signing degrades to hold: the candidate still
 		// reaches the operator, nothing signs.
@@ -395,7 +422,22 @@ func (a *Agent) handle(ctx context.Context, cand *Candidate, pol policy.Policy) 
 // issued_at→expires_at span, so the agent needs no TTL flag of its
 // own. Unparseable timestamps degrade to renewal-due — for an
 // unchanged candidate the worst case is one early re-sign.
-func (a *Agent) renewalClock(envelope []byte, pol policy.Policy) (remaining, threshold time.Duration) {
+// renewalClock reports how much validity the published manifest has
+// left, and the threshold below which an unchanged candidate is a
+// renewal rather than a no-op.
+//
+// The threshold comes from the CANDIDATE (plan 0043 §3.7): the
+// coordinator applies it when deciding whether to refresh an unchanged
+// candidate's window, and publishes the effective value in
+// metadata.json. It used to be a console-side fraction that an operator
+// had to keep equal to the coordinator's flag by hand — and when the
+// two drifted, renewals arrived before the console considered them due
+// and sat in the queue until they expired.
+//
+// A candidate that carries no threshold is from a coordinator older
+// than that field; ttl/3 is the coordinator's own default, so the
+// fallback keeps the two aligned rather than inventing a third rule.
+func (a *Agent) renewalClock(envelope []byte, cand *Candidate) (remaining, threshold time.Duration) {
 	issuedStr, expiresStr := expirySplit(envelope)
 	issued, err1 := time.Parse(time.RFC3339Nano, issuedStr)
 	expires, err2 := time.Parse(time.RFC3339Nano, expiresStr)
@@ -403,7 +445,35 @@ func (a *Agent) renewalClock(envelope []byte, pol policy.Policy) (remaining, thr
 		return 0, time.Nanosecond
 	}
 	ttl := expires.Sub(issued)
-	return expires.Sub(a.now()), time.Duration(pol.RenewalThresholdFraction * float64(ttl))
+	return expires.Sub(a.now()), renewalThresholdFor(cand, ttl)
+}
+
+// renewalThresholdFor reads the coordinator's published threshold,
+// falling back to its documented default.
+func renewalThresholdFor(cand *Candidate, ttl time.Duration) time.Duration {
+	if cand != nil {
+		if secs := candidateRenewalThresholdSeconds(cand.MetadataBytes); secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	return ttl / 3
+}
+
+// candidateRenewalThresholdSeconds pulls renewal_threshold_seconds out
+// of a candidate's metadata.json. Metadata is operator-facing
+// provenance, never signed, so a malformed one is not fatal: it just
+// means the default applies.
+func candidateRenewalThresholdSeconds(metadataBytes []byte) int64 {
+	if len(metadataBytes) == 0 {
+		return 0
+	}
+	var meta struct {
+		RenewalThresholdSeconds int64 `json:"renewal_threshold_seconds"`
+	}
+	if err := json.Unmarshal(metadataBytes, &meta); err != nil {
+		return 0
+	}
+	return meta.RenewalThresholdSeconds
 }
 
 func (a *Agent) autoSign(ctx context.Context, cand *Candidate, lastSeq *uint64, cls policy.Classification) {
@@ -418,7 +488,9 @@ func (a *Agent) autoSign(ctx context.Context, cand *Candidate, lastSeq *uint64, 
 		a.logger.Error("agent: write last-signed", "err", err)
 		return
 	}
+	a.rlMu.Lock()
 	a.rl.RecordSign(a.now())
+	a.rlMu.Unlock()
 	_, sha, err := envelopeSeqAndHash(envelope)
 	if err != nil {
 		a.logger.Error("agent: hash signed envelope", "err", err)
@@ -488,4 +560,42 @@ func findingsField(fs []policy.Finding) []map[string]any {
 		})
 	}
 	return out
+}
+
+// --- operator controls -----------------------------------------------------
+
+// RateLimitPaused reports whether the auto-sign rate limiter has
+// latched. The limiter latches rather than throttling: exceeding the
+// bound means something upstream is misbehaving, and quietly signing
+// slower would hide it.
+func (a *Agent) RateLimitPaused() bool {
+	a.rlMu.Lock()
+	defer a.rlMu.Unlock()
+	return a.rl.Paused()
+}
+
+// ClearRateLimit releases a latched pause after an operator has looked
+// at why it latched (plan 0043 §3.7).
+//
+// Until now the only way out was restarting the console, which also
+// discarded everything else the agent knew. Clearing is a deliberate,
+// audited gesture: it names the actor, and it forgets the window so the
+// next breach latches on fresh evidence rather than on signatures the
+// operator has already accounted for.
+func (a *Agent) ClearRateLimit(actor string) bool {
+	a.rlMu.Lock()
+	wasPaused := a.rl.Paused()
+	if wasPaused {
+		a.rl.Clear()
+		a.rlPauseAudited = false
+	}
+	a.rlMu.Unlock()
+	if wasPaused {
+		a.audit(audit.Event{
+			Kind:  audit.KindAgentResumed,
+			Actor: actor,
+			Note:  "auto-sign rate limit cleared by operator",
+		})
+	}
+	return wasPaused
 }

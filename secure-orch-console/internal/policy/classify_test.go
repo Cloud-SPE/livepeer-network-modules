@@ -393,20 +393,27 @@ func TestClassify_HighestClassWins(t *testing.T) {
 	}
 }
 
-func TestClassify_ForbiddenHeaderChanges(t *testing.T) {
+func TestClassify_HeaderChanges(t *testing.T) {
 	before := manifestJSON(t, "0.1.0", 4, ethA, baseTuple())
 	for _, tc := range []struct {
 		name  string
 		after []byte
 		code  string
+		want  Class
 	}{
-		{"eth_address change", manifestJSON(t, "0.1.0", 5, ethB, baseTuple()), CodeEthAddressChanged},
-		{"spec_version change", manifestJSON(t, "0.2.0", 5, ethA, baseTuple()), CodeSpecVersionChanged},
+		// A signing key signs for exactly one orchestrator, so a changed
+		// address is somebody else's manifest: never signable.
+		{"eth_address change", manifestJSON(t, "0.1.0", 5, ethB, baseTuple()), CodeEthAddressChanged, ClassForbidden},
+		// The spec version has one source now and changes when the
+		// operator upgrades. Refusing it outright meant an upgrade could
+		// never be signed; it is held for a deliberate gesture instead
+		// (plan 0043 §3.7).
+		{"spec_version change", manifestJSON(t, "0.2.0", 5, ethA, baseTuple()), CodeSpecVersionChanged, ClassCritical},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Classify(computeDiff(t, before, tc.after), ClassifyInput{Bounds: defaultBounds()})
-			if got.Class != ClassForbidden {
-				t.Fatalf("class=%s want forbidden", got.Class)
+			if got.Class != tc.want {
+				t.Fatalf("class=%s want %s", got.Class, tc.want)
 			}
 			if got.Findings[0].Code != tc.code {
 				t.Fatalf("code=%s want %s", got.Findings[0].Code, tc.code)

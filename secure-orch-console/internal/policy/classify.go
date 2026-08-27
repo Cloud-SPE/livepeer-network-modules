@@ -31,9 +31,10 @@ const (
 	// ClassCritical — at least one change exceeds the bounds; hold
 	// for a discrete operator action.
 	ClassCritical
-	// ClassForbidden — identity (eth_address) or spec_version
-	// changed; the candidate is rejected outright, never held as
-	// signable.
+	// ClassForbidden — identity (eth_address) changed; the candidate
+	// is rejected outright, never held as signable. A signing key can
+	// only ever sign for one orchestrator, so a changed address is
+	// somebody else's manifest.
 	ClassForbidden
 )
 
@@ -125,7 +126,14 @@ func Classify(d *diff.Result, in ClassifyInput) Classification {
 			fmt.Sprintf("orch.eth_address %q → %q", d.Header.BeforeEthAddress, d.Header.AfterEthAddress)))
 	}
 	if !d.Header.SpecVersionStable {
-		findings = append(findings, finding(ClassForbidden, CodeSpecVersionChanged, "", "",
+		// Critical, not forbidden (plan 0043 §3.7). The spec version now
+		// has one source — the protocol module's VERSION, which the
+		// broker stamps and the coordinator imports — so it changes when
+		// the operator upgrades, which is a real thing they do. Refusing
+		// it outright meant an upgrade could never be signed at all;
+		// holding it for a deliberate gesture is the honest grade. The
+		// console requires the new version to be typed before signing.
+		findings = append(findings, finding(ClassCritical, CodeSpecVersionChanged, "", "",
 			fmt.Sprintf("spec_version %q → %q", d.Header.BeforeSpecVersion, d.Header.AfterSpecVersion)))
 	}
 

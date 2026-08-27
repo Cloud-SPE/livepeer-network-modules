@@ -45,7 +45,8 @@ Built under plan 0044, not yet validated in production:
 - the desired-state contract and the agent loop that acts on it, including
   drain-before-stop via the `draining` flag in `runner-attach` 1.1.0-draft
 - the trust ladder, running on a 60s timer inside `pool-controller`
-- the member/admin listener split and the member API
+- the member/admin listener split, the member API, the member portal, and the
+  operator console's placement / ladder / exceptions / payout-policy pages
 - `payout-policy.json` with shadow mode and bounded auto-approve
 
 Known gaps to hold against a production date:
@@ -70,8 +71,8 @@ Known gaps to hold against a production date:
   `LIVEPEER_BROKER_URL`, `LIVEPEER_BROKER_QUIC_ADDR` and
   `LIVEPEER_ATTACH_CREDENTIAL_FILE`. Verify a freshly downloaded bundle
   actually attaches before onboarding a real member.
-- **The member portal pages are not served yet** (`lnm-6at.12`), nor is the
-  rebuilt operator console (`lnm-6at.16`). The APIs behind both exist.
+- The member portal and the rebuilt operator console have now landed, but
+  neither has been exercised against a real member on real hardware.
 
 Recovery/runbook status:
 
@@ -225,7 +226,12 @@ same care as any other artifact that changes what the pool sells.
   aggregate. Test it, do not reason about it.
 - Verify member session hardening end to end: single-use nonce with TTL,
   per-address rate limit, cookie expiry and rotation, CSRF on mutating forms,
-  login-attempt limits.
+  login-attempt limits, and that signing out invalidates the session
+  server-side rather than only dropping the cookie.
+- Confirm the two authenticators on the member API behave as intended: the
+  agent's enrollment bearer token, and a signed-in member's session cookie for
+  their **own** enrollments only. The ownership check is the whole security of
+  the second path — test that one member's session cannot read another's host.
 - Confirm member actions land in the audit log — opt-out, credential rotation,
   host retirement.
 - Confirm host retirement drains before it stops: the placement is marked

@@ -129,12 +129,25 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 	if !bytes.Contains(envBody, []byte("POOL_ENROLLMENT_TOKEN_FILE=/run/livepeer/enrollment-token")) {
 		t.Fatalf(".env missing token file: %s", string(envBody))
 	}
-	if !bytes.Contains(envBody, []byte("POOL_BROKER_QUIC_ADDR=broker.example.com:8443")) {
+	// The agent reads LIVEPEER_* to attach and POOL_* to reach the
+	// controller. Emitting only the POOL_ names — which is what this
+	// bundle used to do — leaves a member running `docker compose up`
+	// against an agent that has no broker URL and no credential.
+	if !bytes.Contains(envBody, []byte("LIVEPEER_BROKER_QUIC_ADDR=broker.example.com:8443")) {
 		t.Fatalf(".env missing broker quic addr: %s", string(envBody))
 	}
-	if !bytes.Contains(envBody, []byte("POOL_BROKER_SESSION_CREDENTIAL=")) {
-		t.Fatalf(".env missing broker session credential: %s", string(envBody))
+	if !bytes.Contains(envBody, []byte("LIVEPEER_BROKER_URL=https://broker")) {
+		t.Fatalf(".env missing broker url: %s", string(envBody))
 	}
+	if !bytes.Contains(envBody, []byte("LIVEPEER_ATTACH_CREDENTIAL=")) {
+		t.Fatalf(".env missing the attach credential: %s", string(envBody))
+	}
+	// The host id must BE the enrolment id, or the GPUs this agent
+	// reports attach to an enrolment that does not exist.
+	if !bytes.Contains(envBody, []byte("LIVEPEER_HOST_ID="+created.Enrollment.ID)) {
+		t.Fatalf(".env host id is not the enrolment id: %s", string(envBody))
+	}
+
 	// The bundle no longer names the runners. It ships the agent, and
 	// the agent asks the pool what to run — so a placement change does
 	// not stale the bundle a member already downloaded.

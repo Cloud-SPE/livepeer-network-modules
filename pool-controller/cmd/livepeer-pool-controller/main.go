@@ -27,6 +27,7 @@ import (
 	memberserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/member"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokeradmin"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerpush"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/settlement"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
@@ -105,6 +106,8 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	ladderCtx, cancelLadder := context.WithCancel(context.Background())
 	defer cancelLadder()
 	go runLadderLoop(ladderCtx, state, cfg, stderr)
+	go runHardwareRelayLoop(ladderCtx, state, cfg, stderr)
+	go runWindowCloseLoop(ladderCtx, state, cfg, stderr)
 	state.session = adminserver.NewSessionAuth(func() string {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
@@ -3334,4 +3337,103 @@ func payoutPausePath(cfg *config.Config) string {
 		return ""
 	}
 	return cfg.Payouts.PausePath
+}
+
+// runHardwareRelayLoop pulls the GPUs members have attached.
+//
+// The agent does not report hardware to the controller — it declares it
+// to the BROKER in its attach document, and the broker is the only
+// thing that has seen it. Without this loop the controller knows about
+// no GPUs at all, so placement has nothing to place on and a member who
+// did everything right sees an empty portal.
+func runHardwareRelayLoop(ctx context.Context, state *runtimeState, cfg *config.Config, stderr io.Writer) {
+	if cfg == nil || state == nil || state.repo == nil {
+		return
+	}
+	targets := cfg.Bootstrap.BrokerTargets()
+	if len(targets) == 0 {
+		return
+	}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		for _, target := range targets {
+			timeout := time.Duration(target.TimeoutMS) * time.Millisecond
+			if timeout <= 0 {
+				timeout = 10 * time.Second
+			}
+			client := brokeradmin.New(target.AdminURL, target.Auth, timeout)
+			relayCtx, cancel := context.WithTimeout(ctx, timeout)
+			result, err := brokerpush.RelayHardware(relayCtx, client, state.repo, time.Now().UTC())
+			cancel()
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "hardware relay from %s failed: %v\n", target.Name, err)
+				continue
+			}
+			if result.Upserted > 0 || len(result.Conflicts) > 0 {
+				_, _ = fmt.Fprintf(stderr, "hardware relay from %s: upserted=%d conflicts=%d\n",
+					target.Name, result.Upserted, len(result.Conflicts))
+			}
+		}
+	}
+}
+
+// runWindowCloseLoop closes settlement windows that are ready.
+//
+// Enabled explicitly: closing a window is the step before money moves,
+// and a pool should say out loud that it wants that to happen without a
+// person. A window that is short or anomalous is held either way.
+func runWindowCloseLoop(ctx context.Context, state *runtimeState, cfg *config.Config, stderr io.Writer) {
+	if cfg == nil || !cfg.Payouts.AutoCloseWindows || state == nil || state.repo == nil {
+		return
+	}
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		windows, err := state.repo.ListSettlementWindows()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "window close: list failed: %v\n", err)
+			continue
+		}
+		now := time.Now().UTC()
+		for _, window := range windows {
+			if window.Status != types.SettlementWindowClosing {
+				continue
+			}
+			decision := settlement.EvaluateClose(window, cfg.Payouts.ScaleTolerance, now)
+			next := window
+			if decision.Closed {
+				next.Status = types.SettlementWindowPendingApproval
+			} else {
+				// Held: it stays where it is and an operator sees it on
+				// the exception queue. Recording the reason is the
+				// whole value — "held" with no cause is a window nobody
+				// can act on.
+				next.Anomaly = string(decision.Reason) + ": " + decision.Detail
+			}
+			next.UpdatedAt = now
+			if err := state.repo.PutSettlementWindow(next); err != nil {
+				_, _ = fmt.Fprintf(stderr, "window close: %s: %v\n", window.ID, err)
+				continue
+			}
+			_ = state.repo.AppendAuditEvent(types.AuditEvent{
+				Kind: "settlement_window_auto_close", OccurredAt: now,
+				ResourceID: window.ID, ResourceType: "settlement_window",
+				Details: map[string]any{
+					"closed": decision.Closed, "held": decision.Held,
+					"reason": string(decision.Reason), "detail": decision.Detail,
+				},
+			})
+		}
+	}
 }

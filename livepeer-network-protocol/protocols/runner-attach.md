@@ -443,7 +443,7 @@ Withdrawal is therefore the agent's to sequence: set `draining`,
 re-register, let in-flight work finish, then stop the container.
 Stopping first would drop requests the broker had already dispatched.
 
-### 7.1 Response framing
+### 7.2 Response framing
 
 A runner's response travels back over the connection as a complete unit,
 so the broker knows the body's length before it writes anything to the
@@ -525,5 +525,5 @@ Derivative of the numbered sections; where it conflicts, they win.
 | Version | Date | Change |
 |---|---|---|
 | 1.1.0-draft | 2026-08-27 | Added `draining` to a capability entry (§7.1): the runner is winding down and takes no new work, while staying certified and advertised. Live state, not shape — it is excluded from the frozen projection, so setting and clearing it never re-triggers certification. `contract_version` goes to 1.1: this adds a field a runner may send, so an older broker ignoring it is the pre-existing behaviour and a newer one gains the withdrawal it needs to drain a host without flickering the manifest. |
-| 1.0.1-draft | 2026-08-27 | Added §7.1: the broker MUST length-delimit the reply it relays from a runner, because the response crosses the connection as a complete unit and its length is therefore known. A runner need not set `Content-Length` and MUST NOT be relied upon to — an omitted one previously turned a non-streamed reply into a chunked one for the gateway. No change to the document shape, so `contract_version` stays `1.0`. |
+| 1.0.1-draft | 2026-08-27 | Added response framing (renumbered §7.2 when draining took §7.1): the broker MUST length-delimit the reply it relays from a runner, because the response crosses the connection as a complete unit and its length is therefore known. A runner need not set `Content-Length` and MUST NOT be relied upon to — an omitted one previously turned a non-streamed reply into a chunked one for the gateway. No change to the document shape, so `contract_version` stays `1.0`. |
 | 1.0.0-draft | 2026-08-26 | Initial contract (plan 0043 §3.2, decisions 2–5). One versioned document for every protocol, sent on the tunnel `register` message; host level (`contract_version`, `credential`, `host_id`, `agent_version`, `hardware[]`) and capability level (`capability_id`, `protocol`, `local_id`, `transports`/`descriptor_schemas`, `work_unit{name, extractor}`, `paths`, `readiness`, `identity`, `schema_versions`, `metering`, `heartbeat`, `session_params_schema`, `requirements`, `devices`, `x-*`). Unknown non-`x-` field rejects the document; invalid value rejects the capability; frozen projection defined; `register_result` shape; `Livepeer-Runner-Local-Id` routing header. Supersedes `paid-session/v1` §7.1.1. Deviations from the plan-0043 sketch: `metering` is required (the manifest requires it and no operator field supplies it); `local_id` and `devices[]` added for routing and GPU binding; `schema_versions` frozen at major only. |

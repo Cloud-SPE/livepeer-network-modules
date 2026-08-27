@@ -196,8 +196,9 @@ suspensions and duplicate GPU UUID claims.
   placements rather than stopping them dead
 - `POST /admin/v1/host-enrollments/{id}/revoke` — revoke a host enrolment;
   that deletes the credential and closes its connections
+- `GET /admin/v1/ladder/state` — where placements stand, read-only
 - `POST /admin/v1/ladder/run` — run a ladder pass now rather than waiting for
-  the timer
+  the timer. Read the state first: looking should not be acting
 
 Useful admin reads:
 
@@ -212,7 +213,10 @@ Useful admin reads:
 - `GET /admin/v1/exceptions`
 - `GET /admin/v1/audit-events`
 
-The `/admin/pool` console page presents the same state; use it before curling.
+The console presents the same state, and is usually faster than curling:
+`/admin/pool` (members, hosts, GPUs), `/admin/offers`, `/admin/placement` (the
+plan with its rejections and reason codes), `/admin/ladder` (transitions with
+the evidence sentence), `/admin/exceptions`, `/admin/payouts`, `/admin/audit`.
 
 ### 1.1 The trust ladder
 

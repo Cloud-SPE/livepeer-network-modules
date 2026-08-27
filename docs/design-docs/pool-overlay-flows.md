@@ -153,6 +153,12 @@ The agent additionally rotates its own enrollment credential on a cadence well
 inside the token's lifetime (default 24h). A host that waits for expiry has
 already stopped earning by the time anyone can act on it.
 
+A desired-state fetch also stamps the host's `last_seen_at`. It is the one
+thing a running agent does on a schedule, which makes it the honest liveness
+signal; it is written best-effort and no more than once a minute, because
+failing a fetch over a liveness write would take a working host offline in
+order to record that it was working.
+
 ## 3. Connected-worker routing
 
 The broker remains the paid Livepeer edge. Pool workers connect outbound to
@@ -250,6 +256,18 @@ An exploration allowance (`exploration_ppm`) deliberately spends traffic on
 runners the pool is less sure of, so scoring cannot starve a recovering runner
 of the very traffic it needs to recover.
 
+Two details of the ladder's contract with the broker are easy to get wrong and
+worth stating:
+
+- **Being tested is not having passed.** A placement leaves certification only
+  on a run that actually passed. Treating "no failure yet" as success would put
+  a runner still mid-certification onto real traffic.
+- **Zero is not a cap.** The broker reads `MaxShareCap == 0` as *no cap
+  configured*, so any state that entitles a runner to no traffic is expressed
+  as **exclusion**, never as a share of nothing. Expressed the other way, a
+  runner sent back for re-certification precisely because it kept failing would
+  have been handed unlimited traffic.
+
 Share caps, per-placement capacity (`max_in_flight` / `queue_limit`), warmup,
 cooldowns, and score-weighted selection remain the control surfaces that stop
 any one member dominating pool work as adoption grows.
@@ -324,11 +342,25 @@ reachable from the same address members use is one misconfigured proxy away
 from being reachable *by* them. An address boundary survives a proxy mistake
 that an `if isAdmin` check does not.
 
+The portal itself is server-rendered on that listener: `/member/signin`,
+`/member` (get started), `/member/hosts`, `/member/earnings`,
+`/member/settings`.
+
+Two authenticators reach the same member API, and the second one is not
+optional. The agent holds an **enrollment bearer token** — and rotates it every
+24 hours, so any copy a browser kept would stop working within a day *by
+design*. A signed-in member's **session cookie** therefore authenticates their
+own enrollments too; the ownership check is the whole security of that path, so
+a session authorises its member's hosts and nothing else.
+`GET /member/v1/enrollments` lists them, because a browser holding only a
+session has no other way to discover what to ask about.
+
 The member API gives a member everything about their own participation and
 nothing about anyone else's:
 
 | Route | What it is for |
 |---|---|
+| `GET /member/v1/enrollments` | The hosts this session's member owns |
 | `GET /member/v1/enrollments/{id}/status` | Hosts, GPUs, placements, ladder state **with reason code and evidence** |
 | `GET /member/v1/enrollments/{id}/earnings` | This member's own amounts and payout history |
 | `GET /member/v1/enrollments/{id}/desired-state` | What the agent should be running here |
@@ -341,17 +373,21 @@ Privacy is the rule that shapes the whole contract. Earnings are reported as
 this member's own amounts and never as a share of a pool total — a share plus a
 public total is another member's income by subtraction.
 
-Operator surfaces: the console pages (`/admin`, `/admin/pool`, `/admin/offers`,
-`/admin/audit`) plus `/admin/v1/*` for templates and overrides
-(`GET /admin/v1/template-catalog`, `PUT`/`DELETE /admin/v1/template-overrides/{id}`),
-the placement plan, the ladder (`POST /admin/v1/ladder/run`), the exception
-queue (`GET /admin/v1/exceptions`), settlement, payouts and the payout policy,
-and the audit log (`GET /admin/v1/audit-events`).
+The operator console covers the same model: `/admin` (overview), `/admin/pool`,
+`/admin/offers`, `/admin/placement` (the plan, its rejections, and their reason
+codes), `/admin/ladder` (transitions with the evidence sentence),
+`/admin/exceptions`, `/admin/payouts` (with the policy's shadow / live / paused
+state resolved into one banner), and `/admin/audit`. Behind them:
+`GET /admin/v1/template-catalog` and `PUT`/`DELETE /admin/v1/template-overrides/{id}`,
+`GET /admin/v1/placement-plan` and `/apply`, `GET /admin/v1/ladder/state` and
+`POST /admin/v1/ladder/run`, `GET /admin/v1/exceptions`,
+`PATCH /admin/v1/pool-members/{address}`, settlement, payouts and
+`GET /admin/v1/payout-policy`, and `GET /admin/v1/audit-events`.
 
-*In flight:* the member portal's HTML/CSS/JS exist in
-`pool-controller/internal/ui/web/`, but the routes that serve those pages and
-their assets have not landed (`lnm-6at.12`); the console rebuild is
-`lnm-6at.16`. The member **API** above is complete and tested.
+Reading the ladder and running it are deliberately separate calls.
+`GET /admin/v1/ladder/state` exists because the only way to see where
+placements stood used to be to run the ladder — which meant looking was
+acting.
 
 Code anchors:
 

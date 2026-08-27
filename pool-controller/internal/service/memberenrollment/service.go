@@ -330,13 +330,28 @@ func randomHex(n int) (string, error) {
 }
 
 func bundleEnv(input BundleInput) string {
+	// Two families of name, and they are not interchangeable.
+	//
+	// LIVEPEER_* is what the agent reads to ATTACH to the broker; POOL_*
+	// is what it reads to talk to this controller. The bundle used to
+	// emit only the POOL_ names, so a member ran `docker compose up` and
+	// the agent found no broker URL and no credential — a fresh bundle
+	// could not attach at all.
+	//
+	// LIVEPEER_HOST_ID is the enrolment id on purpose. The broker relays
+	// hardware keyed by the host id the agent declares, and the
+	// controller stores GPUs against the enrolment; if the agent
+	// invented its own id from the hostname, its cards would attach to
+	// an enrolment that does not exist and placement would find nothing
+	// to place on.
 	return "POOL_CONTROLLER_URL=" + input.ControllerURL + "\n" +
-		"POOL_BROKER_URL=" + input.BrokerURL + "\n" +
-		"POOL_BROKER_QUIC_ADDR=" + input.BrokerQUICAddr + "\n" +
 		"POOL_ENROLLMENT_ID=" + input.Enrollment.ID + "\n" +
 		"POOL_MEMBER_ETH_ADDRESS=" + input.Enrollment.MemberEthAddress + "\n" +
-		"POOL_BROKER_SESSION_CREDENTIAL=" + input.Enrollment.BrokerSessionCredential + "\n" +
-		"POOL_ENROLLMENT_TOKEN_FILE=/run/livepeer/enrollment-token\n"
+		"POOL_ENROLLMENT_TOKEN_FILE=/run/livepeer/enrollment-token\n" +
+		"LIVEPEER_HOST_ID=" + input.Enrollment.ID + "\n" +
+		"LIVEPEER_BROKER_URL=" + input.BrokerURL + "\n" +
+		"LIVEPEER_BROKER_QUIC_ADDR=" + input.BrokerQUICAddr + "\n" +
+		"LIVEPEER_ATTACH_CREDENTIAL=" + input.Enrollment.BrokerSessionCredential + "\n"
 }
 
 func bundleReadme(input BundleInput) string {

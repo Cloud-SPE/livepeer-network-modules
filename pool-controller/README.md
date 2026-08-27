@@ -126,6 +126,14 @@ of reason codes, so an operator reading the audit log and a member reading
 their own status page see the same sentence. Weights and caps reach the broker
 through the selection snapshot it already polls.
 
+Two invariants in that hand-off:
+
+- **Being tested is not having passed.** A placement leaves certification only
+  on a run that actually passed — "nothing has gone wrong yet" is not evidence.
+- **Zero is not a cap.** The broker reads `MaxShareCap == 0` as *no cap
+  configured*, so any state entitling a runner to no traffic is written as
+  **exclusion**, never as a share of nothing.
+
 Configuration lives under `ladder:` — `probation_share_ppm`,
 `probation_max_in_flight`, `probation_min_jobs`, `exploration_ppm`,
 `score_floor`, `recertify_after_failures`, `active_share_cap_ppm`. A zero field
@@ -247,7 +255,13 @@ Health and state
 
 Console pages
 
-- `GET /admin`, `GET /admin/pool`, `GET /admin/offers`, `GET /admin/audit`
+- `GET /admin` (overview), `GET /admin/pool`, `GET /admin/offers`
+- `GET /admin/placement` — the plan, its rejections, and their reason codes
+- `GET /admin/ladder` — transitions with the evidence sentence
+- `GET /admin/exceptions` — the operator queue
+- `GET /admin/payouts` — batches, with the policy's shadow / live / paused
+  state resolved into one banner
+- `GET /admin/audit`
 - `GET /admin/login`, `POST /admin/login`, `POST /admin/logout`
 - `GET /admin/assets/`
 
@@ -274,7 +288,10 @@ Members, hosts, placement, ladder
 - `POST /admin/v1/template-assignments/{id}/certification/start`
 - `GET /admin/v1/certification-runs`
 - `POST /admin/v1/certification-runs/{id}/complete`
-- `POST /admin/v1/ladder/run` — run a ladder pass now instead of on the timer
+- `GET /admin/v1/ladder/state` — where placements stand, read-only
+- `POST /admin/v1/ladder/run` — run a ladder pass now instead of on the timer.
+  Kept separate from the read above: the only way to see the ladder used to be
+  to run it, which meant looking was acting
 - `GET /admin/v1/exceptions` — the operator queue: suspensions, duplicate GPUs
 
 Scoring
@@ -310,9 +327,20 @@ Receipts, settlement, payouts
 Current member endpoints (member listener, or the paid listener when
 `listen.member` is unset):
 
+Portal pages
+
+- `GET /member/signin`, `GET /member` (get started), `GET /member/hosts`,
+  `GET /member/earnings`, `GET /member/settings`
+- `POST /member/logout` — invalidates the session server-side, not just the
+  cookie
+- `GET /member/assets/`
+
+API
+
 - `POST /member/v1/auth/nonce`
 - `POST /member/v1/auth/verify`
 - `POST /member/v1/enrollments`
+- `GET /member/v1/enrollments` — the hosts this session's member owns
 - `GET /member/v1/enrollments/{id}/bundle`
 - `POST /member/v1/enrollments/{id}/hardware`
 - `GET /member/v1/enrollments/{id}/desired-state` — what this host should run
@@ -328,7 +356,19 @@ Current member endpoints (member listener, or the paid listener when
   agent calls this itself, well inside the token's lifetime
 - `POST /member/v1/enrollments/{id}/retire` — placements drain first
 
-All of them are enrollment-token authenticated and scoped to that enrollment.
+Two authenticators reach these, and the second is not optional. The agent holds
+an enrollment bearer token — and rotates it every 24 hours, so any copy a
+browser kept would stop working within a day *by design*. A signed-in member's
+session cookie therefore authenticates their **own** enrollments as well; the
+ownership check is the whole security of that path, and
+`GET /member/v1/enrollments` exists because a browser holding only a session
+has no other way to discover what to ask about.
+
+A desired-state fetch also stamps the host's `last_seen_at` — best-effort, no
+more than once a minute. It is the one thing a running agent does on a
+schedule, so it is the honest liveness signal; failing a fetch over a liveness
+write would take a working host offline in order to record that it was working.
+
 Privacy is the rule that shapes the contract: a member sees their own amounts,
 never a share of a pool total. A share plus a public total is another member's
 income by subtraction.
@@ -336,9 +376,6 @@ income by subtraction.
 There is no `/member/v1/join-requests` surface any more; wallet sign-in plus a
 host enrolment is the whole member-facing path.
 
-The member portal's HTML, CSS and JS are in `internal/ui/web/`, but the routes
-that serve those pages and their assets have not landed yet (`lnm-6at.12`).
-The API above is complete.
 
 `GET /admin/v1/backend-selection-summary` rolls the current Pool routing state
 into operator-focused aggregates:

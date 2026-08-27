@@ -33,9 +33,6 @@ func TestNoop_AllMethodsAreSafe(t *testing.T) {
 	r.ObserveChainRead(time.Millisecond)
 	r.SetChainLastSuccess(time.Now())
 	r.SetManifestFetcherLastSuccess(time.Now())
-	r.IncPublisherBuild()
-	r.IncPublisherSign("ok")
-	r.IncPublisherProbe("ok")
 	r.SetUptimeSeconds(10)
 	r.SetBuildInfo("v0.0.0", "test", "go1.25")
 }

@@ -6,6 +6,13 @@ last-reviewed: 2026-04-28
 
 # gRPC surface
 
+> **Plan 0043 (decision 8).** The daemon no longer builds or signs
+> manifests. `orch-coordinator` builds the candidate and the cold key on
+> `secure-orch-console` signs it, so `BuildManifest`, `SignManifest`,
+> `BuildAndSign`, `ProbeWorker` and the `livepeer-registry-refresh` CLI
+> were deleted along with the daemon's own v3.0.1 manifest schema. What
+> remains on `Publisher` is `GetIdentity` and `Health`.
+
 This is the design-side rationale for the gRPC API. The product-side contract (rules consumers can rely on) lives in [docs/product-specs/grpc-surface.md](../product-specs/grpc-surface.md). The actual `.proto` is at `proto-contracts/livepeer/registry/v1/` (sibling module).
 
 ## Two services, one binary
@@ -33,10 +40,6 @@ A binary launched in one mode does NOT mount the other service. A consumer accid
 | RPC | Purpose |
 |---|---|
 | `GetIdentity() → IdentityResult` | Return the loaded cold-key orch identity for SPA preflight. |
-| `BuildManifest(spec) → BuildResult` | Build a manifest from operator config. The proposal must include `proposed_eth_address`; the daemon rejects mismatches against the loaded signer. Returns the JSON bytes + canonical-bytes hash. Does NOT sign. |
-| `SignManifest(manifest_bytes) → SignedManifest` | Sign canonical bytes with the loaded keystore key. Returns the signed manifest JSON. |
-| `BuildAndSign(spec) → SignedManifest` | One-shot validation + build + sign. Same identity check as `BuildManifest`, plus daemon-side sign-time enforcement. |
-| `ProbeWorker(url) → ProbeResult` | Reserved for future worker HTTP probing. The v1 server returns `chain_write_failed` / failed-precondition. |
 | `Health() → HealthResult` | Same as resolver. |
 
 ## Wire types

@@ -704,10 +704,9 @@ sequenceDiagram
     Op->>SOC: import candidate manifest
     SOC->>SOC: render diff vs currently-published manifest
     Op->>SOC: review + tap Sign
-    SOC->>PRD: Publisher.BuildAndSign
-    PRD->>Cold: sign canonical bytes (HSM)
-    Cold-->>PRD: signature
-    PRD-->>SOC: signed manifest
+    SOC->>Cold: sign canonical bytes (cold key / HSM)
+    Cold-->>SOC: signature
+    SOC->>SOC: write last-signed envelope
 
     Note over Op,Coord: 4. Operator ships signed manifest back
     Op->>Coord: POST /admin/manifest (signed)

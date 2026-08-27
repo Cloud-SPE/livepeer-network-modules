@@ -79,7 +79,6 @@ Rules:
 - `pool-controller` bootstrap config with:
   - `identity.orch_eth_address`
   - `admin_auth.bearer_token_ref`
-  - optional `bootstrap.broker_apply_command`
   - `bootstrap.broker_admin_url`
   - `bootstrap.broker_admin_auth`
 
@@ -152,102 +151,30 @@ Normal control-plane sequence:
 3. operator approves or rejects
 4. operator assigns approved backend(s) to orch-owned offer(s)
 
-### 4.5 Apply broker runtime
+### 4.5 Broker convergence
 
-Normal production action:
+The controller pushes its offers and credentials to the broker over the
+admin API whenever pool state changes; there is no rendered config file,
+no staging command, and no reload (plan 0043).
 
-1. `POST /admin/v1/broker-runtime/apply`
-2. `pool-controller` stages desired broker YAML if an apply command is
-   configured
-3. `pool-controller` triggers broker reload
-4. broker returns a broker-local reload `attempt_id`
-5. `pool-controller` confirms:
-   - broker `last_reload_attempt_id` matches the triggered attempt
-   - broker `loaded_revision == desired_revision`
+Normal production action: none. The push happens on state change.
 
-Required reads after apply:
+Required reads to confirm convergence:
 
-- `GET /admin/v1/broker-runtime`
-- `GET /admin/v1/broker-runtime/history`
-- broker `GET /admin/v1/runtime`
+- controller: the recorded runtime revision — `push_error` when the
+  broker refused (it names the offer and field), `changed_offers` and
+  `revoked_hosts` when it accepted
+- broker `GET /admin/v1/offers` — which offers are frozen and advertised
+- broker `GET /admin/v1/runners` — who is attached and, for a capability
+  not serving, the disagreeing field
+- broker `GET /admin/v1/certification` — what each runner proved
 
-Do not treat apply-command exit alone as convergence.
+The coordinator's console presents all three over the same API.
 
-### 4.5.1 Broker apply deployment patterns
-
-The operator must choose one explicit staging pattern for
-`bootstrap.broker_apply_command`.
-
-#### Pattern A — same-host file replace
-
-Use when `pool-controller` and `capability-broker` run on the same host and the
-broker loads `host-config.yaml` from a stable on-disk path.
-
-Shape:
-
-- broker reads a fixed path such as `/etc/livepeer/host-config.yaml`
-- apply command copies `POOL_CONTROLLER_BROKER_CONFIG_PATH` to that path
-- controller then calls broker `POST /admin/v1/runtime/reload`
-
-Typical command shape:
-
-```bash
-install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /etc/livepeer/host-config.yaml
-```
-
-Use when:
-
-- host-level deployment
-- systemd-managed broker
-- compose with bind-mounted config path
-
-#### Pattern B — shared-volume container staging
-
-Use when `pool-controller` and `capability-broker` run as separate containers on
-the same machine and share a writable volume for broker config.
-
-Shape:
-
-- both containers mount the same volume
-- broker reads a stable in-container path from that volume
-- apply command writes the desired YAML into the shared volume path
-- controller then calls broker reload
-
-Typical command shape:
-
-```bash
-install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /shared/broker/host-config.yaml
-```
-
-Use when:
-
-- docker compose public/data-plane deployment
-- no host-level config-management system is in front of the containers
-
-#### Pattern C — external config-management hook
-
-Use when config staging is delegated to an external control system.
-
-Shape:
-
-- apply command is a wrapper script
-- wrapper script moves the rendered YAML into the broker’s expected config
-  location by whatever production mechanism the operator uses
-- controller still requires broker reload + broker attempt/revision confirmation
-
-This is acceptable only if the wrapper is deterministic and checked in as part
-of the deployment system of record.
-
-#### Not yet defined here
-
-This guide does not yet lock a multi-node clustered rollout controller for:
-
-- kubernetes ConfigMap rollouts
-- per-site fan-out to multiple brokers from one `pool-controller`
-- automatic broker fleet orchestration across regions
-
-For now, choose an explicit single-target broker apply mechanism and document it
-alongside the deployment.
+A failed push leaves the broker serving what it last accepted: paid
+traffic and the signed manifest are unaffected. Do not treat an absent
+`push_error` on a stale revision as convergence — check the broker's own
+view.
 
 ### 4.6 Refresh coordinator state
 
@@ -279,13 +206,12 @@ Before live traffic:
 
 ### 5.2 Broker convergence checks
 
-- `GET /admin/v1/broker-runtime`:
-  - `dirty=false`
-  - `broker_dirty=false`
-  - `broker_reload_status=applied`
-- broker `GET /admin/v1/runtime`:
-  - expected `loaded_revision`
-  - expected `last_reload_attempt_id`
+- controller: the recorded runtime revision has no `push_error`
+- broker `GET /admin/v1/offers`:
+  - every enabled offer is `frozen` and `advertised`
+  - `runners.eligible > 0` on each
+- broker `GET /admin/v1/runners`: expected hosts `connected`, each
+  capability `accepted` at attach
 
 ### 5.3 Coordinator checks
 
@@ -311,58 +237,52 @@ exercising the real production path.
 
 ## 7. Failure handling
 
-### 7.1 Broker apply failed
+### 7.1 Broker push failed
 
 Check:
 
-- `GET /admin/v1/broker-runtime`
-- `GET /admin/v1/broker-runtime/history`
-- broker `GET /admin/v1/runtime`
+- the controller's recorded runtime revision — `push_error` names the
+  offer and the field the broker refused
+- broker `GET /admin/v1/offers`
+- broker `GET /admin/v1/runners`
 
 Focus on:
 
-- `broker_reload_attempt_id`
-- `broker_reload_status`
-- `broker_reload_error`
-- `broker_loaded_revision`
+- an offer refused at validation (the message says which key)
+- an offer frozen with no eligible runner — check certification
+- a runner attached but ineligible — the disagreeing field is named on
+  the runner view
 
-If the broker did not confirm the intended attempt/revision:
+If the broker does not hold the offers you expect:
 
 - do not treat the rollout as converged
-- do not publish a new candidate on the assumption that the new broker state is
-  live
-- fix forward and re-apply
+- do not publish a new candidate on the assumption that the new broker
+  state is live
+- fix forward; the next state change re-pushes
 
 Playbook:
 
-1. stop any publication change that depends on the failed runtime
-2. confirm the desired revision in `pool-controller`
-3. confirm the broker-local latest `attempt_id`, status, and loaded revision
-4. verify the staged file path and contents used by `broker_apply_command`
-5. correct the staging or broker config issue
-6. run `POST /admin/v1/broker-runtime/apply` again
-7. re-check controller and broker history before proceeding
+1. stop any publication change that depends on the refused offers
+2. read `push_error` on the controller's recorded runtime revision
+3. correct the offer the broker named (price, capacity, certification
+   step, or a key it does not accept)
+4. the next control-plane change re-pushes; there is no manual apply
+5. re-check `GET /admin/v1/offers` on the broker before proceeding
 
-### 7.2 Desired revision drifted during apply
+### 7.2 An offer is frozen against the wrong shape
 
-If `pool-controller` reports drift during apply:
+A frozen shape comes from the first runner that certified. If that runner
+declared something the operator did not intend — a different model, a
+different quantization — the offer is advertising it.
 
-- reload state from `pool-controller`
-- inspect recent offer/member/assignment mutations
-- re-run apply only after the desired runtime stabilizes
-
-Playbook:
-
-1. fetch `GET /admin/v1/broker-runtime`
-2. fetch `GET /admin/v1/broker-runtime/history`
-3. inspect recent `GET /admin/v1/audit-events` for:
-   - offer changes
-   - member/backend status changes
-   - assignment changes
-4. decide whether the newest desired revision is the intended one
-5. if yes, apply again against the new desired revision
-6. if no, revert the accidental control-plane mutation through the normal API
-   surface, then apply again
+- inspect `GET /admin/v1/offers`: `frozen.projection` is what is
+  advertised, `frozen_by` is the runner that set it
+- `candidates[]` lists certified runners whose declaration disagrees,
+  with the diff
+- accept the intended shape from the coordinator's **Offers** page
+  (`POST /admin/v1/offers/{id}/accept-shape`), then sign the candidate —
+  the signature is the acceptance
+- runners on the old shape become ineligible at that moment
 
 ### 7.3 Member approved but unassigned
 
@@ -407,7 +327,9 @@ Playbook:
 
 1. change member/backend status in `pool-controller`
 2. confirm assignment and candidate state reflect the change
-3. run `POST /admin/v1/broker-runtime/apply`
+3. the change pushes automatically; to cut a host off immediately,
+   revoke its credential — that deletes the secret and closes its
+   connections
 4. verify broker convergence
 5. confirm broker `/registry/health` and coordinator view reflect the new
    routable set

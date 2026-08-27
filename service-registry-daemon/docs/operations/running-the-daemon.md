@@ -47,8 +47,7 @@ round-anchored refreshes via `chain-commons.services.roundclock`.
 | `--keystore-path` | (required) | V3 JSON keystore for the orchestrator's eth key |
 | `--keystore-password-file` | (or `LIVEPEER_KEYSTORE_PASSWORD` env) | Password for the keystore |
 | `--orch-address` | (derived from keystore) | Override for hot/cold split (advanced) |
-| `--manifest-out` | `""` | If set, the daemon writes the signed `registry-manifest.json` here whenever `SignManifest` is invoked. Operator's HTTP server serves this file at the exact URL later published on-chain. |
-| `--worker-probe-timeout` | `5s` | Shared with resolver mode (see the resolver table). The publisher-side `ProbeWorker` gRPC method is still unimplemented and returns `chain_write_failed`. |
+| `--worker-probe-timeout` | `5s` | Resolver-side worker probing (see the resolver table). |
 
 ## Metrics flags (both modes)
 

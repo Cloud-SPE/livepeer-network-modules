@@ -58,10 +58,12 @@ The production path is:
 2. create offers through the control-plane
 3. approve members and backends
 4. create assignments
-5. use `POST /admin/v1/broker-runtime/apply`
+5. members attach; the broker certifies them and freezes each offer's
+   runner-declared shape
 
-The controller now derives desired broker runtime from persisted state and
-confirms convergence against broker-reported runtime revision and attempt ID.
+The controller pushes its offers and credentials to the broker over the
+admin API whenever pool state changes (plan 0043). There is no rendered
+broker config and no apply step; runner facts come from the runners.
 
 See:
 

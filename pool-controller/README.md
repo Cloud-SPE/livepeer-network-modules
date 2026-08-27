@@ -170,7 +170,6 @@ Current member endpoints:
 - `POST /member/v1/auth/verify`
 - `POST /member/v1/enrollments`
 - `GET /member/v1/enrollments/{id}/bundle`
-- `POST /member/v1/enrollments/{id}/hardware`
 
 `GET /admin/v1/backend-selection-summary` rolls the current Pool routing state
 into operator-focused aggregates:
@@ -219,10 +218,10 @@ Offer protocol vocabulary:
 - Paid-job offers may declare `job.transports` (any of `unary`, `stream`,
   `multipart`). An offer that declares none is rendered as
   `job: {transports: [unary]}` -- the narrowest safe assumption for the
-  request/response workloads pool members serve -- and the substitution is
-  reported in `GET /admin/v1/broker-runtime` under `render_warnings`.
-- `paid-session/*` offers are rejected at admission and refused by the broker
-  renderer: the pool member contract carries no runtime descriptor schema or
+  request/response workloads pool members serve. Since plan 0043 the
+  transports an offer advertises come from the runner that freezes it,
+  so this default only affects admission-time validation.
+- `paid-session/*` offers are rejected at admission: the pool member contract carries no runtime descriptor schema or
   runner create/status/terminate paths, and pool-controller configures neither
   `external_base_url` nor `session_store` -- the broker requires all of them
   before it will load a session capability.
@@ -238,50 +237,29 @@ Current Pool media limitation:
   worker support; UDP/SRTP is not solved by the connected-worker byte-stream
   tunnel.
 
-Broker runtime apply contract:
+Broker push contract (plan 0043):
 
-- `POST /admin/v1/broker-runtime/apply` is now the primary operator action for
-  runtime convergence.
-- `GET /admin/v1/broker-runtime` and `GET /admin/v1/broker-runtime/history`
-  are the primary read surfaces for current convergence state and recent apply
-  attempts.
-- When `bootstrap.broker_apply_command` is configured, `pool-controller`
-  writes the desired broker config to a temp file, executes that command, then
-  re-renders desired state and refuses to mark success if the desired revision
-  drifted during the apply attempt.
-- When `bootstrap.broker_admin_url` is configured, `pool-controller` also:
-  - `POST`s `/admin/v1/runtime/reload`
-  - `GET`s `/admin/v1/runtime`
-  - requires the broker-reported `loaded_revision` to match the controller's
-    desired revision before apply is considered successful
-  - requires the broker-reported `last_reload_attempt_id` to match the reload
-    attempt triggered by `pool-controller`
-- `capability-broker` now exposes broker-local reload history on
-  `GET /admin/v1/runtime`, and `pool-controller` mirrors controller-side apply
-  history on `GET /admin/v1/broker-runtime/history`.
-- Manual runtime endpoints remain available only as fallback/debug controls:
-  - `POST /admin/v1/broker-runtime/mark-started`
-  - `POST /admin/v1/broker-runtime/mark-failed`
-  - `POST /admin/v1/broker-runtime/mark-applied`
-  They are not the normal production operator path when broker admin reload is
-  configured.
-- The apply command receives:
-  - `POOL_CONTROLLER_CONFIG_PATH`
-  - `POOL_CONTROLLER_BROKER_CONFIG_PATH`
-  - `POOL_CONTROLLER_BROKER_DESIRED_REVISION`
-  - `POOL_CONTROLLER_BROKER_CONFIG_SHA256`
-- The rendered broker YAML is also provided on stdin.
-- `bootstrap.broker_apply_timeout_ms` controls the command timeout and defaults
-  to `30000`.
-- `bootstrap.broker_admin_timeout_ms` controls the broker admin HTTP timeout
-  and defaults to `5000`.
-- `listen.worker_quic` is rendered into the broker host config as
-  `listen.worker_quic`; the controller itself does not bind that UDP listener.
-- `bootstrap.public_controller_url`, `bootstrap.public_broker_url`, and
-  `bootstrap.public_broker_quic_addr` are copied into downloaded member bundles
-  as `POOL_CONTROLLER_URL`, `POOL_BROKER_URL`, and `POOL_BROKER_QUIC_ADDR`.
-  Set these when the public member signup URL and public broker URL are not the
-  same origin, or when connected workers should use QUIC.
+- `pool-controller` pushes what it owns to the broker over the admin API:
+  `PUT /admin/v1/offers` (the offer set) and `PUT /admin/v1/credentials`
+  (the credentials that may attach, as hashes only). Both are full
+  replacements and idempotent; a credential that disappears from a push
+  is a revoke, which closes that host's connections.
+- Offers are pushed before credentials, so a host whose credential was
+  just accepted attaches into a broker that already knows what it might
+  serve.
+- There is no rendered broker config file, no staging command, and no
+  reload: runners tell the broker what they are, and the broker freezes
+  those facts into the offer. `brokerrender`, `runtimeservice`, the
+  `/admin/v1/broker-runtime/*` routes and `bootstrap.broker_apply_command`
+  are deleted.
+- The recorded runtime revision carries `push_error` when the broker
+  refused (naming the offer and field), and `changed_offers` /
+  `revoked_hosts` when it accepted. A failed push leaves the broker
+  serving what it last accepted, so paid traffic and the signed manifest
+  are unaffected.
+- Runner state — who is attached, what they declared, how they certified
+  — is read back from the broker (`GET /admin/v1/runners`,
+  `/admin/v1/certification`) and surfaced on the coordinator's console.
 
 Current public endpoints:
 
@@ -362,7 +340,6 @@ Normal production operations should use:
 
 - `serve`
 - admin/member APIs
-- `POST /admin/v1/broker-runtime/apply`
 
 Current receipt-write contract:
 

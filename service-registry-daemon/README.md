@@ -10,7 +10,7 @@ One binary, two modes:
 
 | Mode | Role | Exposes | Uses |
 |---|---|---|---|
-| `--mode=publisher` | Orchestrator-side (operator that wants their capabilities discoverable) | `Publisher` gRPC — `BuildManifest`, `SignManifest`, reserved `ProbeWorker` stub | Local keystore |
+| `--mode=publisher` | Orchestrator-side identity endpoint | `Publisher` gRPC — `GetIdentity`, `Health` | Local keystore |
 | `--mode=resolver`  | Consumer-side (gateway / bridge / AI router that wants to find orchestrators) | `Resolver` gRPC — `ResolveByAddress`, `Select`, `ListKnown`, `Refresh`, `GetAuditLog` | Chain RPC (read-only), HTTP for manifest fetch, BoltDB cache, optional static `nodes.yaml` overlay |
 
 Under the hood the daemon implements a **signed-manifest discovery flow**:
@@ -69,16 +69,22 @@ export LIVEPEER_KEYSTORE_PASSWORD="$(cat /etc/livepeer/ks-password)"
   --mode=publisher \
   --socket=/var/run/livepeer-service-registry-publisher.sock \
   --chain-rpc=https://arb1.arbitrum.io/rpc \
-  --keystore-path=/etc/livepeer/keystore.json \
-  --manifest-out=/var/www/livepeer/.well-known/livepeer-registry.json
-```
+  --keystore-path=/etc/livepeer/keystore.json
+  ```
 
-The publisher writes the signed manifest JSON to `--manifest-out` whenever `SignManifest` is invoked over gRPC; the operator's existing HTTP server (Caddy / nginx / etc.) serves it at the on-chain `serviceURI`. The publisher does NOT compete with the operator's TLS / port story.
+**This daemon no longer builds or signs manifests** (plan 0043 decision
+8). `orch-coordinator` builds the manifest candidate and the cold key on
+`secure-orch-console` signs it; the operator's existing HTTP server
+(Caddy / nginx / etc.) serves the result at the on-chain `serviceURI`.
+Building and signing here was a second path to a document that must have
+exactly one, and a second manifest shape beside the protocol module's
+envelope — so `BuildManifest`, `SignManifest`, `BuildAndSign`,
+`ProbeWorker` and the `livepeer-registry-refresh` CLI are gone. What
+publisher mode still answers is `GetIdentity` and `Health`: questions
+about this daemon, not about a manifest.
 
-The current v3.0.1 binary is signing-only in publisher mode. On-chain
-`ServiceRegistry.setServiceURI` submission now belongs to
-`protocol-daemon`; this daemon only builds and signs manifests.
-`ProbeWorker` remains reserved and returns failed-precondition today.
+On-chain `ServiceRegistry.setServiceURI` submission belongs to
+`protocol-daemon`.
 
 See [`docs/operations/running-the-daemon.md`](docs/operations/running-the-daemon.md) for the full flag reference.
 
@@ -189,7 +195,6 @@ Tech debt is tracked in [`docs/exec-plans/tech-debt-tracker.md`](docs/exec-plans
 │
 ├── cmd/
 │   ├── livepeer-service-registry-daemon/  # main binary
-│   └── livepeer-registry-refresh/         # secure-orch manifest re-sign CLI
 │
 │   # .proto sources + generated stubs are NOT in this repo — they live
 │   # in the sibling `proto-contracts/` module (livepeer/registry/v1),

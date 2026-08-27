@@ -36,9 +36,6 @@ type Counter struct {
 	ChainReads          atomic.Int64
 	ChainWrites         atomic.Int64
 	ChainObserves       atomic.Int64
-	PublisherBuilds     atomic.Int64
-	PublisherSigns      atomic.Int64
-	PublisherProbes     atomic.Int64
 
 	CacheEntriesV   atomic.Int64
 	OverlayEntriesV atomic.Int64
@@ -95,10 +92,6 @@ func (c *Counter) IncChainWrite(_ string)                    { c.ChainWrites.Add
 func (c *Counter) ObserveChainRead(_ time.Duration)          { c.ChainObserves.Add(1) }
 func (c *Counter) SetChainLastSuccess(_ time.Time)           {}
 func (c *Counter) SetManifestFetcherLastSuccess(_ time.Time) {}
-
-func (c *Counter) IncPublisherBuild()         { c.PublisherBuilds.Add(1) }
-func (c *Counter) IncPublisherSign(_ string)  { c.PublisherSigns.Add(1) }
-func (c *Counter) IncPublisherProbe(_ string) { c.PublisherProbes.Add(1) }
 
 func (c *Counter) SetUptimeSeconds(_ float64)                {}
 func (c *Counter) SetBuildInfo(_ string, _ string, _ string) {}

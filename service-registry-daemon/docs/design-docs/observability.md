@@ -125,14 +125,9 @@ The daemon also enforces a hard cardinality cap (`--metrics-max-series-per-metri
 
 | Metric | Type | Labels | What it answers |
 |---|---|---|---|
-| `livepeer_registry_publisher_builds_total` | Counter | — | `BuildManifest` invocations. |
-| `livepeer_registry_publisher_signs_total` | Counter | `outcome` | Sign rate; keystore-lock alarm. |
-| `livepeer_registry_publisher_probe_workers_total` | Counter | `outcome` | Worker discovery health. |
 
 ### Label values
 
-- `publisher_signs_total outcome`: `ok` `keystore_locked` `parse_error`
-- `publisher_probe_workers_total outcome`: `ok` `http_error` `timeout`
 
 ## gRPC
 
@@ -148,7 +143,7 @@ The two histograms cover the full latency range. Default buckets work for resolv
 ### Label values
 
 - `service`: `Resolver` `Publisher`
-- `method`: any RPC method name (e.g. `ResolveByAddress`, `BuildManifest`)
+- `method`: any RPC method name (e.g. `ResolveByAddress`, `Select`)
 - `code`: any gRPC status code (`OK` `NotFound` `InvalidArgument` `Unavailable` …)
 - `registry_code`: stable code from [`docs/product-specs/grpc-surface.md`](../product-specs/grpc-surface.md), or `_unset_` on success
 

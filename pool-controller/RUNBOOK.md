@@ -59,7 +59,6 @@ Bootstrap config:
 
 Broker apply integration:
 
-- `bootstrap.broker_apply_command`:
   stages the rendered broker YAML where the broker host expects it
 - `bootstrap.broker_apply_timeout_ms`
 - `bootstrap.broker_admin_url`
@@ -177,7 +176,6 @@ broker-admin apply path for investigation or break-glass handling.
 
 ### 2.1 Apply-command deployment patterns
 
-Choose one explicit staging pattern for `bootstrap.broker_apply_command`.
 
 #### Same-host file replace
 

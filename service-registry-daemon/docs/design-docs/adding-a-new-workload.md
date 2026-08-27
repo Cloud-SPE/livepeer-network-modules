@@ -125,7 +125,7 @@ Once your worker is up:
 3. When the operator wants to publish, they download
    `raw-registry-manifest.json` from
    the coordinator, hand-carry it to the secure-orch host, run
-   `livepeer-registry-refresh` against this daemon's publisher mode, and
+   the orch-coordinator → secure-orch-console sign cycle, and
    carry the signed manifest back to the coordinator for atomic-swap onto
    the public path.
 4. Gateways using a resolver sidecar discover the new offerings on next

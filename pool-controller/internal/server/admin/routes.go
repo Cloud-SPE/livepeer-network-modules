@@ -299,11 +299,29 @@ func Register(mux *http.ServeMux, deps Deps) {
 		if item.Role == "" {
 			item.Role = types.TemplateAssignmentPrimary
 		}
+		if err := validateTemplateAssignment(deps, &item); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err := deps.Repo.PutTemplateAssignment(item); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := deps.RefreshRendered("template-assignment-created"); err != nil {
+		// Applying a plan is on the record; writing one assignment by
+		// hand moves the same member's hardware and belongs there too.
+		// Without this the audit trail reads as though placement were
+		// entirely automatic.
+		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+			Kind:         "template_assignment_created",
+			OccurredAt:   now,
+			ResourceType: "template_assignment",
+			ResourceID:   item.ID,
+			Details: map[string]any{
+				"template_id": item.TemplateID, "hardware_unit_id": item.HardwareUnitID,
+				"role": string(item.Role), "member_eth_address": item.MemberEthAddress,
+			},
+		})
+		if err := deps.refresh("template-assignment-created"); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -316,7 +334,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := deps.RefreshRendered("certification-started"); err != nil {
+		if err := deps.refresh("certification-started"); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -348,7 +366,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := deps.RefreshRendered("certification-completed"); err != nil {
+		if err := deps.refresh("certification-completed"); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

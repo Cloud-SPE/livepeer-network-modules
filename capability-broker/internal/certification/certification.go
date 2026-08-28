@@ -87,6 +87,12 @@ type Options struct {
 	// Retention bounds kept non-latest results (default 50 per pair).
 	KeepPerPair int
 	Now         func() time.Time
+	// CallbackBaseURL is the broker's externally reachable base URL. A
+	// session capability's usage step hands the runner a callback under
+	// it (certification-steps §3.3). Empty means no callback can be
+	// minted, and a session usage step errors saying so rather than
+	// handing the runner a URL it cannot reach.
+	CallbackBaseURL string
 }
 
 // Engine executes certification runs.
@@ -104,6 +110,9 @@ type Engine struct {
 	seq     int
 	ctx     context.Context
 	cancel  context.CancelFunc
+	// taps collects usage a session runner reports during its own
+	// certification run.
+	taps *usageTaps
 }
 
 // New constructs the engine.
@@ -119,7 +128,7 @@ func New(reg *runners.Registry, opts Options) *Engine {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{
-		registry: reg, opts: opts,
+		registry: reg, opts: opts, taps: newUsageTaps(),
 		results: map[offers.PairKey][]*Result{},
 		running: map[offers.PairKey]context.CancelFunc{},
 		backoff: map[offers.PairKey]time.Duration{},

@@ -154,23 +154,21 @@ certification:
       # it emits, so the step accepts whatever it declared rather than pinning
       # rtmp-hls/v1 from here.
       hold_ms: 5000
-  # NOT required, for two reasons that both need saying.
+  # NOT required, and the reason is the workload rather than the plumbing.
   #
-  # First, the workload: this offering meters OUTPUT seconds, and a session
-  # opened by certification has no publisher pushing into it, so a correct
-  # runner may honestly report zero. That is the opposite of the NeMo streaming
-  # template, whose `seconds` meter counts session wall time and therefore
-  # ticks with no client at all — which is why its usage step IS required.
-  # Gating this one would refuse eligibility to runners that are working
-  # perfectly.
-  #
-  # Second, the implementation: the broker's session usage certification has no
-  # event tap yet and records `error: not implemented` (bead lnm-9y4). A
-  # required step would fail every run in the meantime.
+  # This offering meters OUTPUT seconds, and a session opened by certification
+  # has no publisher pushing into it, so a correct runner may honestly report
+  # zero. That is the opposite of the NeMo streaming template, whose `seconds`
+  # meter counts session wall time and therefore ticks with no client at all —
+  # which is why its usage step IS required. Gating this one would refuse
+  # eligibility to runners that are working perfectly.
   #
   # The consequence is real and should not be glossed: this is the only
-  # template in the catalog that can certify without ever proving it can bill.
-  # Make it required once lnm-9y4 lands and a probe publisher exists.
+  # template in the catalog that can certify without proving it can bill. The
+  # broker can now verify session usage — a runner reports to a certification
+  # callback and the step reads it (certification-steps.md §3.3) — so what is
+  # still missing is only a probe publisher to give this workload something to
+  # transcode. Make the step required once one exists.
   - { name: usage, type: usage, required: false, config: { min_units: 1, window_ms: 15000 } }
 
 # The rig wrote `gpu_model: 2080`, honoured as the pool's `rtx-2080` class —

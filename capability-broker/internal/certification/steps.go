@@ -37,6 +37,13 @@ type runExec struct {
 	// lastRequest is the nearest preceding request step's outcome, for
 	// usage/latency source: previous_request.
 	lastRequest *exchange
+
+	// tapID is the usage callback minted for the session this run
+	// opened, empty for a job capability. The session step opens it and
+	// the usage step drains it, which is why it lives on the run and
+	// not on the exchange: the two steps are separate config entries
+	// and the runner reports between them.
+	tapID string
 }
 
 // exchange is a completed request-step exchange.
@@ -59,6 +66,16 @@ const (
 )
 
 func (x *runExec) run() ([]StepResult, string, *runnerattach.Reason) {
+	// A run that opens a session but never reaches its usage step — a
+	// failed assert, a cancelled context, a recipe with no usage step
+	// at all — would otherwise leave its tap in the engine until the
+	// sweeper found it.
+	defer func() {
+		if x.tapID != "" && x.engine != nil && x.engine.taps != nil {
+			x.engine.taps.close(x.tapID)
+			x.tapID = ""
+		}
+	}()
 	var out []StepResult
 	skipping := false
 	failed := false
@@ -361,11 +378,26 @@ func checkAssert(a any, data any) string {
 // (certification-steps §3.2 session form).
 func (x *runExec) sessionRequest(cfg map[string]any, sr *StepResult, timeout time.Duration) {
 	params, _ := json.Marshal(valueOr(cfg, "session_params", map[string]any{}))
-	createBody, _ := json.Marshal(map[string]any{
+	create := map[string]any{
 		"session_id": "cert-" + x.runID, "work_id": "cert-" + x.runID,
 		"capability": x.cap.CapabilityID, "offering": x.offer.OfferingID,
 		"session_params": json.RawMessage(params),
-	})
+	}
+	// A session runner reports usage to its callback, not in the create
+	// response, so the callback has to exist before the session opens
+	// or there is nothing for a later usage step to read. The runner
+	// treats the URL as opaque, which is what makes this the same code
+	// path it takes in production.
+	if tapID, token, err := x.openUsageTap("cert-" + x.runID); err != nil {
+		sr.Status = StepError
+		sr.Message = err.Error()
+		return
+	} else if tapID != "" {
+		create["callback_url"] = certURLFor(x.engine, tapID)
+		create["callback_token"] = token
+		x.tapID = tapID
+	}
+	createBody, _ := json.Marshal(create)
 	headers := http.Header{}
 	headers.Set("Content-Type", "application/json")
 	start := time.Now()
@@ -462,12 +494,7 @@ func (x *runExec) stepUsage(step config.CertificationStep, sr *StepResult, timeo
 		return
 	}
 	if x.cap.IsSession() {
-		// Session usage needs the runner's usage events, which arrive on
-		// the paid callback surface the certification path deliberately
-		// does not mint. Runner-reported usage is proven by the paid
-		// path's own machinery; here it is recorded as not-run.
-		sr.Status = StepError
-		sr.Message = "session usage verification requires the item-9 event tap; not implemented"
+		x.sessionUsage(step, sr, minUnits)
 		return
 	}
 	units, extractorType, err := x.runExtractor(src)
@@ -855,3 +882,130 @@ func errString(err error) string {
 	}
 	return err.Error()
 }
+
+// --- session usage (certification-steps §3.3, session form) ----------------
+
+// openUsageTap mints the callback a session runner reports usage to.
+//
+// An empty id is not an error here. A job capability needs no callback,
+// and a broker with no external_base_url cannot mint one — but neither
+// fact should stop a session step from testing what it tests, which is
+// that the runner opens, describes, and terminates a session. Whether
+// the runner can be BILLED is the usage step's question, and that is
+// where a missing callback is reported.
+func (x *runExec) openUsageTap(sessionID string) (string, string, error) {
+	if !x.cap.IsSession() || x.engine == nil || x.engine.taps == nil {
+		return "", "", nil
+	}
+	if !x.canMintCallback() {
+		return "", "", nil
+	}
+	return x.engine.taps.open(x.runID, sessionID, x.engine.opts.Now())
+}
+
+// canMintCallback reports whether a runner could reach a callback here.
+func (x *runExec) canMintCallback() bool {
+	return x.engine != nil && strings.TrimSpace(x.engine.opts.CallbackBaseURL) != ""
+}
+
+// certURLFor builds the callback URL handed to the runner.
+func certURLFor(e *Engine, tapID string) string {
+	if e == nil {
+		return ""
+	}
+	return TapURL(e.opts.CallbackBaseURL, tapID)
+}
+
+// sessionUsage decides the usage step for a session capability.
+//
+// The evidence is what the runner reported to its callback while the
+// session was open. A session that reported nothing fails: an offer
+// whose runner never reports usage is an offer the broker cannot bill,
+// and advertising it would sell work that can never be settled.
+func (x *runExec) sessionUsage(step config.CertificationStep, sr *StepResult, minUnits uint64) {
+	if x.tapID == "" {
+		sr.Status = StepError
+		if !x.canMintCallback() {
+			// The operator's gap, not the runner's: with no
+			// external_base_url there is no address to hand a runner,
+			// so nothing could have reported. Saying so beats failing
+			// the runner for silence it had no way to break.
+			sr.Message = "no external_base_url is configured, so a session runner has nowhere " +
+				"to report usage and billing cannot be verified"
+			return
+		}
+		sr.Message = "no preceding session step opened a usage callback"
+		return
+	}
+	// A runner reports on its own schedule, and paid-session/v1 §7.2
+	// puts the final usage on close — which the preceding step's
+	// terminate has only just triggered. Deciding the instant that
+	// returns would fail a correct runner for being a few milliseconds
+	// behind the broker, so window_ms is how long the recipe is willing
+	// to wait for the evidence it asked for.
+	window := time.Duration(intOr(step.Config, "window_ms", defaultUsageWindowMS)) * time.Millisecond
+	x.awaitUsage(x.tapID, minUnits, window)
+	obs := x.engine.taps.close(x.tapID)
+	x.tapID = ""
+	sr.Evidence = map[string]any{"work_unit": obs.unit, "units": obs.highest, "events": obs.count}
+	if !obs.at.IsZero() {
+		sr.Evidence["event_at"] = obs.at.Format(time.RFC3339Nano)
+	}
+	if obs.count == 0 {
+		sr.Status = StepFailed
+		sr.Message = "the runner reported no usage for the certification session, so work it " +
+			"serves could not be billed"
+		return
+	}
+	// The declared work unit is what the offer is priced in. A runner
+	// reporting a different one is reporting something the broker
+	// cannot charge for, which is a shape mismatch rather than a
+	// shortfall.
+	if want := strings.TrimSpace(x.cap.WorkUnit.Name); want != "" && obs.unit != "" && obs.unit != want {
+		sr.Status = StepFailed
+		sr.Message = fmt.Sprintf("the runner reported usage in %q but the capability declares %q", obs.unit, want)
+		return
+	}
+	if obs.highest < minUnits {
+		sr.Status = StepFailed
+		sr.Message = fmt.Sprintf("units %d below min_units %d", obs.highest, minUnits)
+		return
+	}
+	sr.Status = StepPassed
+}
+
+// awaitUsage waits until the tap holds enough to decide, or the window
+// closes. It returns nothing: the caller reads the tap, so a window
+// that expires with partial evidence still judges that evidence rather
+// than discarding it.
+func (x *runExec) awaitUsage(tapID string, minUnits uint64, window time.Duration) {
+	if window <= 0 {
+		return
+	}
+	deadline := time.Now().Add(window)
+	for {
+		// Wait for the first event, and — since a session meter is
+		// cumulative — keep waiting inside the window while the claim
+		// is still short, rather than failing a runner that is simply
+		// partway through reporting.
+		if obs := x.engine.taps.peek(tapID); obs.count > 0 && obs.highest >= minUnits {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			return
+		}
+		select {
+		case <-x.ctx.Done():
+			return
+		case <-time.After(usagePollInterval):
+		}
+	}
+}
+
+// usagePollInterval trades a little latency for not spinning. A usage
+// window is seconds long; 50ms is invisible against it.
+const usagePollInterval = 50 * time.Millisecond
+
+// defaultUsageWindowMS is certification-steps §3.3's default: how long
+// a session usage step waits for the runner's report.
+const defaultUsageWindowMS = 10000

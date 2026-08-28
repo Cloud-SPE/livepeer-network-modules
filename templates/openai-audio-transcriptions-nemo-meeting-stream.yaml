@@ -168,11 +168,12 @@ certification:
   # counts OUTPUT seconds, which a session with no publisher will honestly
   # report as zero.
   #
-  # Caveat while bead lnm-9y4 is open: the broker's session usage
-  # certification has no event tap yet and records `error: not implemented`,
-  # so this required step will fail every run until that lands. Enable this
-  # template after it does, or drop `required` to false in a deployment
-  # override — do not silently weaken it here.
+  # window_ms is how long the step waits for the runner's report after the
+  # `open` step terminates the session. paid-session.md §7.2 puts the final
+  # usage on close, so the evidence can legitimately arrive a moment after
+  # terminate returns; 10s is generous against a 6s hold and costs nothing
+  # when the runner is prompt, because the step decides as soon as it has
+  # enough.
   - { name: usage, type: usage, required: true, config: { min_units: 1, window_ms: 10000 } }
 
 # Deliberately empty — the operator has NOT decided this axis. The rig set

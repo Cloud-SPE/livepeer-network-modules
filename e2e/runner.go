@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -26,6 +27,14 @@ type fakeRunner struct {
 	result   map[string]any
 	requests []string
 	closed   bool
+
+	// Session state: what the broker handed this runner at create, and
+	// how the broker answered its usage report.
+	sessions       bool
+	reports        bool
+	callbackURL    string
+	callbackToken  string
+	callbackStatus int
 }
 
 // tunnelFrame is the attach tunnel's message shape.
@@ -145,7 +154,19 @@ func (r *fakeRunner) serve() {
 		}
 		r.mu.Lock()
 		r.requests = append(r.requests, local+" "+frame.URL)
+		isSession := r.sessions
 		r.mu.Unlock()
+
+		if isSession {
+			if status, out, ok := r.handleSession(frame); ok {
+				r.send(tunnelFrame{
+					Type: "response", ID: frame.ID, StatusCode: status,
+					Headers:    map[string][]string{"Content-Type": {"application/json"}},
+					BodyBase64: base64.StdEncoding.EncodeToString([]byte(out)),
+				})
+				continue
+			}
+		}
 
 		body := `{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":7}}`
 		r.send(tunnelFrame{
@@ -226,4 +247,129 @@ func mustField(t *testing.T, m map[string]any, key string) string {
 		t.Fatalf("expected %q in:\n%s", key, raw)
 	}
 	return v
+}
+
+// sessionDocument is the attach document a paid-session host sends.
+func sessionDocument(hostID, credential, localID, gpuUUID string) map[string]any {
+	return map[string]any{
+		"contract_version": "1.1",
+		"credential":       map[string]any{"kind": "bearer", "token": credential},
+		"host_id":          hostID,
+		"agent_version":    "e2e/1",
+		"hardware": []any{map[string]any{
+			"gpu_uuid": gpuUUID, "gpu_model": "NVIDIA GeForce RTX 4090",
+			"vram_bytes": 25769803776,
+		}},
+		"capabilities": []any{map[string]any{
+			"capability_id": "livepeer:meet/sfu-room",
+			"protocol":      "paid-session/v1",
+			"local_id":      localID,
+			// No transports: a paid-session capability declares
+			// descriptor schemas instead, and the broker rejects the
+			// whole host document if it carries both.
+			"descriptor_schemas": []any{"sfu-room/v1"},
+			"metering":           "runner-reported",
+			"work_unit":          map[string]any{"name": "seconds"},
+			"paths": map[string]any{
+				"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}",
+			},
+			"readiness": map[string]any{"type": "http-status", "path": "/healthz"},
+			"identity":  map[string]any{"provider": "e2e"},
+			// One entry for the protocol and one for every descriptor
+			// schema; a missing entry rejects the capability.
+			"schema_versions": map[string]any{"paid-session/v1": "1.0.0", "sfu-room/v1": "1.0.0"},
+			"devices":         []any{gpuUUID},
+		}},
+	}
+}
+
+// serveSessions makes the runner answer paid-session lifecycle calls and
+// report usage to whatever callback the broker hands it.
+//
+// It reports on a real outbound HTTP request, to the URL in the create
+// body, exactly as it would against a paid session's callback. That is
+// the point: if the broker's external_base_url is wrong, or the route
+// is not registered, or the token does not verify, this is where it
+// shows — and nowhere in the unit tests, where the callback is a
+// function call.
+func (r *fakeRunner) serveSessions() {
+	r.mu.Lock()
+	r.sessions = true
+	r.reports = true
+	r.mu.Unlock()
+}
+
+// serveSilentSessions is a runner that works but cannot be billed: it
+// opens and terminates sessions correctly and never reports usage.
+func (r *fakeRunner) serveSilentSessions() {
+	r.mu.Lock()
+	r.sessions = true
+	r.reports = false
+	r.mu.Unlock()
+}
+
+// handleSession answers one session-shaped request. Returns false when
+// the request is not a session call.
+func (r *fakeRunner) handleSession(frame tunnelFrame) (int, string, bool) {
+	path := frame.URL
+	if idx := strings.Index(path, "://"); idx >= 0 {
+		if slash := strings.Index(path[idx+3:], "/"); slash >= 0 {
+			path = path[idx+3+slash:]
+		}
+	}
+	switch {
+	case frame.Method == http.MethodPost && path == "/sessions":
+		var body struct {
+			CallbackURL   string `json:"callback_url"`
+			CallbackToken string `json:"callback_token"`
+		}
+		if raw, err := base64.StdEncoding.DecodeString(frame.BodyBase64); err == nil {
+			_ = json.Unmarshal(raw, &body)
+		}
+		r.mu.Lock()
+		r.callbackURL, r.callbackToken = body.CallbackURL, body.CallbackToken
+		reports := r.reports
+		r.mu.Unlock()
+		if reports && body.CallbackURL != "" {
+			go r.reportUsage(body.CallbackURL, body.CallbackToken, "seconds", 5)
+		}
+		return http.StatusOK,
+			`{"runner_session_id":"rs-1","runtime":{"schema":"sfu-room/v1","public":{"join_url":"wss://x/join"}}}`,
+			true
+	case frame.Method == http.MethodDelete && strings.HasPrefix(path, "/sessions/"):
+		return http.StatusNoContent, "", true
+	}
+	return 0, "", false
+}
+
+// reportUsage posts a cumulative usage claim, the envelope
+// paid-session/v1 §7.2 describes.
+func (r *fakeRunner) reportUsage(url, token, unit string, total uint64) {
+	body, _ := json.Marshal(map[string]any{
+		"event_id": "ev-1", "sequence": 1, "event_type": "usage",
+		"usage": map[string]any{"unit": unit, "total": total},
+	})
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		r.t.Logf("usage callback to %s failed: %v", url, err)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	r.mu.Lock()
+	r.callbackStatus = resp.StatusCode
+	r.mu.Unlock()
+}
+
+// callback reports what the broker handed the runner and how the report
+// was received.
+func (r *fakeRunner) callback() (url, token string, status int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.callbackURL, r.callbackToken, r.callbackStatus
 }

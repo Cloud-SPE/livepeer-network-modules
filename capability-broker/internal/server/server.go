@@ -249,6 +249,10 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	certEngine := certification.New(s.runners, certification.Options{
 		Extractors:  s.extractors,
 		FixturesDir: cfg.CertificationFixturesDir,
+		// A session runner under certification reports usage to a
+		// callback under this base, the same way it reports to a paid
+		// session's callback.
+		CallbackBaseURL: cfg.ExternalBaseURL,
 	})
 	s.certEngine = certEngine
 	offersEngine, err := offers.New(cfg, s.runners, cfg.OffersStatePath, certEngine)

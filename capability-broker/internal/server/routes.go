@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/certification"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/registry"
 )
 
@@ -36,6 +37,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /admin/v1/worker-sessions", s.handleWorkerSessions)
 	s.mux.HandleFunc("POST /admin/v1/worker-sessions/{backend_id}/kill", s.handleWorkerSessionKill)
 	s.mux.HandleFunc("GET /internal/v1/worker/session", s.handleWorkerSession)
+	// Usage callback for a session under certification (certification-steps §3.3).
+	s.mux.HandleFunc("POST "+certification.TapPathPrefix+"{tap_id}", s.handleCertificationUsage)
 	// Offers (broker-admin §4).
 	s.mux.HandleFunc("GET /admin/v1/offers", s.handleOffersList)
 	s.mux.HandleFunc("PUT /admin/v1/offers", s.handleOffersPut)

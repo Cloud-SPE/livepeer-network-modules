@@ -160,6 +160,14 @@ func (s *Service) apply(transition Transition, now time.Time) error {
 		assignment.ActivatedAt = now
 		assignment.ShareCapPPM = transition.SharePPM
 		assignment.MaxInFlight = 0
+	case types.TemplateAssignmentSuspended:
+		// The cause travels with the suspension. Which of the two
+		// reasons it was decides what should happen next, and a
+		// suspension that records only its state leaves an operator —
+		// and a later reinstate — with nothing to go on.
+		assignment.SuspensionReason = transition.ReasonCode
+		assignment.SuspendedAt = now
+		assignment.ShareCapPPM = transition.SharePPM
 	default:
 		assignment.ShareCapPPM = transition.SharePPM
 	}

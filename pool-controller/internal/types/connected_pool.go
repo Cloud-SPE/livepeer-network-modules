@@ -156,6 +156,25 @@ type TemplateAssignment struct {
 	DrainingSince       time.Time               `json:"draining_since,omitempty"`
 	UpdateRequiredAt    time.Time               `json:"update_required_at,omitempty"`
 	LastCertifiedAt     time.Time               `json:"last_certified_at,omitempty"`
+	// SuspensionReason is the ladder's reason code for the CURRENT
+	// suspension, and SuspendedAt when it happened.
+	//
+	// Recorded but not yet acted on. The two causes want opposite
+	// remedies: repeated certification failure is fixed by re-running
+	// certification, whereas invalid output is not — the smoke step
+	// checks that a response came back with the right shape, and a
+	// runner returning fluent, confident, wrong answers passes it every
+	// time. Reinstating currently re-certifies in both cases, which is
+	// right for the first and thin for the second.
+	//
+	// Nothing produces an invalid-output signal today, so the gap is
+	// latent. It is recorded now so the audit trail is honest
+	// immediately, and so whoever builds that detector finds the cause
+	// already here rather than inheriting a default that quietly does
+	// the wrong thing.
+	SuspensionReason string    `json:"suspension_reason,omitempty"`
+	SuspendedAt      time.Time `json:"suspended_at,omitempty"`
+
 	// ReinstatedAt is when an operator last lifted a suspension.
 	//
 	// The ladder counts certification failures only after it. Without

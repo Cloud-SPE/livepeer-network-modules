@@ -62,6 +62,18 @@ type duplicateGPUView struct {
 	Attempts             int       `json:"attempts"`
 	FirstSeenAt          time.Time `json:"first_seen_at"`
 	LastSeenAt           time.Time `json:"last_seen_at"`
+	// Whether the incumbent is actually USING the card.
+	//
+	// Neither side can prove possession on demand, so the only real
+	// evidence is work: a card that has certified and served jobs is
+	// almost certainly in the hands of whoever holds it, while one
+	// claimed weeks ago and never started is probably a stale enrolment
+	// — most often a member who sold the hardware and never retired the
+	// host, which is the case the challenger is usually right about.
+	IncumbentProven     bool      `json:"incumbent_proven"`
+	IncumbentJobsServed int       `json:"incumbent_jobs_served"`
+	IncumbentLastSeenAt time.Time `json:"incumbent_last_seen_at,omitempty"`
+	IncumbentClaimedAt  time.Time `json:"incumbent_claimed_at,omitempty"`
 }
 
 // stalledDrainAfter is how long a drain may run before it is worth a
@@ -142,11 +154,17 @@ func registerExceptionRoutes(mux *http.ServeMux, deps Deps, auth func(http.Handl
 		}
 
 		now := time.Now().UTC()
+		suspendedFor := assignment.SuspensionReason
 		assignment.State = target
 		// The boundary the ladder counts failures from. Without it the
 		// historical failures that caused the suspension would
 		// re-suspend this placement on the next tick.
 		assignment.ReinstatedAt = now
+		// The suspension is lifted, so its cause is history rather than
+		// current state. It stays in the audit trail, which is where
+		// someone reviewing whether this was wise should look.
+		assignment.SuspensionReason = ""
+		assignment.SuspendedAt = time.Time{}
 		assignment.UpdatedAt = now
 		share, maxInFlight := deps.probationLimits()
 		if target == types.TemplateAssignmentProbationary {
@@ -172,6 +190,9 @@ func registerExceptionRoutes(mux *http.ServeMux, deps Deps, auth func(http.Handl
 			Details: map[string]any{
 				"to": string(target), "reason": strings.TrimSpace(req.Reason),
 				"member_eth_address": assignment.MemberEthAddress,
+				// What it was suspended FOR, so the trail reads as one
+				// story rather than two unconnected events.
+				"suspended_for": suspendedFor,
 			},
 		})
 		writeAdminJSON(w, assignment, nil)
@@ -330,6 +351,11 @@ func (d Deps) exceptions(now time.Time) (exceptionsView, error) {
 			view.SuspendedGPUs = append(view.SuspendedGPUs, unit)
 		}
 	}
+	assignments, err := d.Repo.ListTemplateAssignments()
+	if err != nil {
+		return view, err
+	}
+
 	conflicts, err := d.Repo.ListHardwareClaimConflicts()
 	if err != nil {
 		return view, err
@@ -338,7 +364,7 @@ func (d Deps) exceptions(now time.Time) (exceptionsView, error) {
 		if !conflict.Open() {
 			continue
 		}
-		view.DuplicateGPUs = append(view.DuplicateGPUs, duplicateGPUView{
+		entry := duplicateGPUView{
 			ConflictID:           conflict.ID,
 			GPUUUID:              conflict.GPUUUID,
 			IncumbentEthAddress:  conflict.IncumbentEthAddress,
@@ -347,11 +373,9 @@ func (d Deps) exceptions(now time.Time) (exceptionsView, error) {
 			Attempts:             conflict.Attempts,
 			FirstSeenAt:          conflict.FirstSeenAt,
 			LastSeenAt:           conflict.LastSeenAt,
-		})
-	}
-	assignments, err := d.Repo.ListTemplateAssignments()
-	if err != nil {
-		return view, err
+		}
+		d.describeIncumbent(&entry, units, assignments)
+		view.DuplicateGPUs = append(view.DuplicateGPUs, entry)
 	}
 	statusOf := make(map[string]types.MemberStatus, len(members))
 	for _, member := range members {
@@ -497,4 +521,48 @@ func (d Deps) reinstateSelectionState(assignment types.TemplateAssignment, targe
 		state.MaxShareCap = 0
 	}
 	_ = d.Repo.SaveBackendSelectionState(state)
+}
+
+// describeIncumbent fills in what the current holder has actually done
+// with the card, so an operator is choosing between two claims on
+// evidence rather than on which arrived first.
+func (d Deps) describeIncumbent(entry *duplicateGPUView, units []types.HardwareUnit, assignments []types.TemplateAssignment) {
+	var unit types.HardwareUnit
+	found := false
+	for _, candidate := range units {
+		if strings.TrimSpace(candidate.GPUUUID) != entry.GPUUUID {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(candidate.MemberEthAddress), entry.IncumbentEthAddress) {
+			continue
+		}
+		unit, found = candidate, true
+		break
+	}
+	if !found {
+		return
+	}
+	entry.IncumbentClaimedAt = unit.CreatedAt
+	entry.IncumbentLastSeenAt = unit.LastSeenAt
+	for _, assignment := range assignments {
+		if assignment.HardwareUnitID != unit.ID {
+			continue
+		}
+		switch assignment.State {
+		case types.TemplateAssignmentProbationary,
+			types.TemplateAssignmentActive,
+			types.TemplateAssignmentThrottled:
+			entry.IncumbentProven = true
+		}
+		if !assignment.LastCertifiedAt.IsZero() {
+			entry.IncumbentProven = true
+		}
+		if tmpl, ok := d.Catalog.Get(assignment.TemplateID); ok {
+			if state, err := d.Repo.GetBackendSelectionState(
+				assignment.MemberEthAddress, ladder.BackendID(assignment),
+				tmpl.Capability, tmpl.OfferingID); err == nil {
+				entry.IncumbentJobsServed += state.RecentRoutableOutcomeCount
+			}
+		}
+	}
 }

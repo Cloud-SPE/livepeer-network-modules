@@ -394,6 +394,23 @@ The two real causes look identical on the wire:
 
 Only a person can tell them apart, which is why there is no rule.
 
+Most disputes should never reach you. A claim that never certifies is
+released automatically after `claims.grace_hours` (seven days by
+default), because a claim that has not proved itself cannot be earning
+either: a runner is pinned to its device, and a container pinned to
+hardware that is not present does not start. So a uuid learned from a
+log or a previous owner can block someone, but only until the grace
+runs out — and the block heals without you. What reaches this queue in
+steady state is a dispute between two members who are BOTH running the
+card, which is the case actually worth your time.
+
+The queue tells you whether the incumbent is working: `incumbent_proven`,
+jobs served, when they last checked in, and when they claimed it.
+Neither side can prove possession on demand, so work is the only real
+evidence. A card claimed weeks ago that never started is usually a stale
+enrolment — a member who sold the hardware and never retired the host —
+and the challenger is usually right.
+
 `POST /admin/v1/gpu-conflicts/{id}/transfer` retires the incumbent's
 unit so the challenger's next attach succeeds. It does not hand the card
 over — it stops refusing. `POST .../reject` records that the claim was
@@ -431,6 +448,15 @@ tests, re-proving costs one automated probe, and the ladder promotes it
 from there on its own. Pass `{"to":"probationary_real_traffic"}` when you
 know certification was never the issue — a placement suspended by
 mistake, say.
+
+The suspension records what it was for, and the reinstate audit event
+carries it forward. Today that is always repeated certification failure,
+which re-certifying genuinely settles. If a future release adds
+detection for invalid output or fraud, note that re-certifying does NOT
+settle that: the smoke step checks a response came back with the right
+shape, and a runner returning fluent, confident, wrong answers passes it
+every time. The reason is recorded now so that gap is visible rather
+than inherited.
 
 Reinstating stamps the placement with the moment it happened, and the
 ladder counts certification failures only after it. Without that the

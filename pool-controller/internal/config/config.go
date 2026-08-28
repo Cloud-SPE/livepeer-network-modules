@@ -3,6 +3,8 @@ package config
 import "strings"
 
 type Config struct {
+	// Claims is the unproven-GPU-claim policy.
+	Claims Claims `yaml:"claims,omitempty" json:"claims,omitempty"`
 	// Payouts configures automatic payout approval (plan 0044 §3.7).
 	Payouts Payouts `yaml:"payouts,omitempty" json:"payouts,omitempty"`
 	// Ladder is the pool's trust policy (plan 0044 §3.5). Empty takes
@@ -128,6 +130,20 @@ func (b Bootstrap) BrokerTargets() []Broker {
 		Auth:      b.BrokerAdminAuth,
 		TimeoutMS: b.BrokerAdminTimeoutMS,
 	}}
+}
+
+// Claims controls how long a GPU claim may go unproven before the pool
+// releases its uuid. A claim that never certifies cannot earn — the
+// runner is pinned to the device and will not start without it — so all
+// an unproven claim can do is block the real owner. Releasing it makes
+// that block heal itself.
+type Claims struct {
+	// GraceHours is the window. 0 takes the built-in default of seven
+	// days, which is long enough that a member who enrols on a Friday
+	// and installs on a Monday is never caught by it.
+	GraceHours int `yaml:"grace_hours,omitempty" json:"grace_hours,omitempty"`
+	// SweepIntervalMinutes is how often the sweep runs. 0 takes 60.
+	SweepIntervalMinutes int `yaml:"sweep_interval_minutes,omitempty" json:"sweep_interval_minutes,omitempty"`
 }
 
 // Placement overrides how many templates a GPU class runs at once.

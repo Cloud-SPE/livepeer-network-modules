@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/claims"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ladder"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/observability"
@@ -108,6 +109,7 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	go runLadderLoop(ladderCtx, state, cfg, stderr)
 	go runHardwareRelayLoop(ladderCtx, state, cfg, stderr)
 	go runWindowCloseLoop(ladderCtx, state, cfg, stderr)
+	go runClaimExpiryLoop(ladderCtx, state, cfg, stderr)
 	state.session = adminserver.NewSessionAuth(func() string {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
@@ -3454,6 +3456,47 @@ func runWindowCloseLoop(ctx context.Context, state *runtimeState, cfg *config.Co
 					"reason": string(decision.Reason), "detail": decision.Detail,
 				},
 			})
+		}
+	}
+}
+
+// runClaimExpiryLoop releases GPU claims that never proved themselves.
+//
+// Without it a uuid learned from a log or a previous owner blocks the
+// real owner until an operator resolves it by hand. The claim cannot
+// earn — a runner pinned to a device that is not there does not start —
+// so letting an unproven one lapse costs the pool nothing and turns a
+// standing block into a temporary one.
+func runClaimExpiryLoop(ctx context.Context, state *runtimeState, cfg *config.Config, stderr io.Writer) {
+	if state == nil || state.repo == nil {
+		return
+	}
+	grace := claims.DefaultGrace
+	interval := time.Hour
+	if cfg != nil {
+		if cfg.Claims.GraceHours > 0 {
+			grace = time.Duration(cfg.Claims.GraceHours) * time.Hour
+		}
+		if cfg.Claims.SweepIntervalMinutes > 0 {
+			interval = time.Duration(cfg.Claims.SweepIntervalMinutes) * time.Minute
+		}
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		summary, err := claims.Sweep(state.repo, grace, time.Now().UTC())
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "claim expiry sweep failed: %v\n", err)
+			continue
+		}
+		for _, expired := range summary.Expired {
+			_, _ = fmt.Fprintf(stderr, "released unproven gpu claim %s held by %s since %s\n",
+				expired.GPUUUID, expired.MemberEthAddress, expired.ClaimedAt.Format(time.RFC3339))
 		}
 	}
 }

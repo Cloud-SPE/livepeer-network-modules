@@ -7,6 +7,22 @@ identity:
 # enables and what it charges, through PUT /admin/v1/template-overrides/{id}.
 template_catalog_dir: ../templates
 
+# A GPU's identity is self-asserted: the member's agent reports a uuid
+# and the pool has only their word for it. Uniqueness of that uuid is
+# what stops one card earning twice under two wallets — but it also
+# means the first claim wins, so a uuid learned from a log or a previous
+# owner could block the real owner indefinitely.
+#
+# It cannot EARN, though: a runner is pinned to its device and will not
+# start without it, so an unproven claim never certifies. Releasing such
+# a claim after a grace period turns a standing block into a temporary
+# one, and leaves only genuine disputes — two members both running the
+# card — for an operator.
+#
+# claims:
+#   grace_hours: 168            # seven days
+#   sweep_interval_minutes: 60
+
 # How many templates a GPU class runs at once (plan 0040 §4.4). Omit to
 # take the built-in stances: the older consumer cards run one workload
 # and nothing else, because they have neither the memory headroom nor

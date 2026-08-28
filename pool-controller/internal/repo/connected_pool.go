@@ -147,6 +147,16 @@ func (r *StateRepo) ensureGPUUUIDAvailable(unit types.HardwareUnit) error {
 		if strings.TrimSpace(existing.GPUUUID) != gpuUUID {
 			continue
 		}
+		// A retired unit holds nothing. This is what makes releasing a
+		// card possible at all: an operator resolving a contested GPU
+		// as a transfer retires the incumbent's unit so the new owner's
+		// next attach succeeds, and an unproven claim that expires
+		// releases the same way. Without this, retiring was a state
+		// change that changed nothing — the card stayed locked to a
+		// member who no longer had it, forever.
+		if existing.State == types.HardwareUnitRetired {
+			continue
+		}
 		if strings.ToLower(strings.TrimSpace(existing.MemberEthAddress)) != member {
 			return fmt.Errorf("gpu_uuid %q is already bound to member %s", gpuUUID, existing.MemberEthAddress)
 		}

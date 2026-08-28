@@ -1146,3 +1146,53 @@ func TestReinstatedPlacementSurvivesTheNextLadderTick(t *testing.T) {
 		t.Fatalf("exclusion_reason = %q, want awaiting_recertification", state.ExclusionReason)
 	}
 }
+
+// Reinstating a member does not reinstate their placements, and nothing
+// else tells the operator that second step is outstanding — so a member
+// who is back but earning nothing looks, from every other screen, like
+// a member who is fine.
+func TestStalledDrainsNameTheReinstateThatIsStillOwed(t *testing.T) {
+	stateRepo, err := repo.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("repo.Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = stateRepo.Close() })
+	now := time.Now().UTC()
+
+	if err := stateRepo.PutPoolMember(types.PoolMember{
+		ID: "0xaaa", EthAddress: "0xaaa", Status: types.MemberStatusActive,
+	}); err != nil {
+		t.Fatalf("PutPoolMember() error = %v", err)
+	}
+	// Long enough to be stalled, and a second that has only just begun.
+	if err := stateRepo.PutTemplateAssignment(types.TemplateAssignment{
+		ID: "stalled", MemberEthAddress: "0xaaa", TemplateID: "t", HardwareUnitID: "gpu-1",
+		State: types.TemplateAssignmentDraining, DrainingSince: now.Add(-2 * time.Hour),
+	}); err != nil {
+		t.Fatalf("PutTemplateAssignment() error = %v", err)
+	}
+	if err := stateRepo.PutTemplateAssignment(types.TemplateAssignment{
+		ID: "fresh", MemberEthAddress: "0xaaa", TemplateID: "t", HardwareUnitID: "gpu-2",
+		State: types.TemplateAssignmentDraining, DrainingSince: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("PutTemplateAssignment() error = %v", err)
+	}
+
+	view := getExceptions(t, exceptionsServer(t, stateRepo))
+	if len(view.StalledDrains) != 1 {
+		t.Fatalf("StalledDrains = %+v, want only the long-running one — a drain in normal "+
+			"progress must not appear or the queue becomes noise", view.StalledDrains)
+	}
+	stalled := view.StalledDrains[0]
+	if stalled.AssignmentID != "stalled" {
+		t.Fatalf("stalled assignment = %q", stalled.AssignmentID)
+	}
+	// The member being active is what makes this actionable rather than
+	// merely broken, and the detail has to say which it is.
+	if stalled.MemberStatus != string(types.MemberStatusActive) {
+		t.Fatalf("member status = %q, want active", stalled.MemberStatus)
+	}
+	if !strings.Contains(stalled.Detail, "reinstate") {
+		t.Fatalf("detail = %q, want it to name the outstanding reinstate", stalled.Detail)
+	}
+}

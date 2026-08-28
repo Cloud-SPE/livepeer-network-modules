@@ -405,6 +405,20 @@ A conflict you rejected that comes back is reopened, because a host
 still trying after a rejection is new information — worth looking at
 before rejecting it again.
 
+### A placement still draining
+
+Suspending a member drains their placements. Reinstating the member does
+NOT bring them back — each placement has to be reinstated too, and
+nothing else on any screen would tell you that step is outstanding. A
+member who is back but earning nothing looks, from everywhere else, like
+a member who is fine.
+
+The queue lists any placement draining longer than a drain should take,
+and says which case it is: `member is active but this placement is still
+draining` means the reinstate below is owed. Anything else means the
+drain itself is stuck — the host is gone, or not reporting — and the
+member is not earning either way.
+
 ### Lifting a suspension
 
 A placement is suspended for invalid output, a fraud signal, or repeated

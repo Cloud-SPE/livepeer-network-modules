@@ -100,6 +100,17 @@ func Build(in Input) (Document, error) {
 		if !ok {
 			continue
 		}
+		// A card the pool has taken back — retired after a transfer, or
+		// suspended — must stop serving even though the placement on it
+		// has not been withdrawn yet.
+		//
+		// Placement would drain it on its next plan, but nothing applies
+		// that plan on a timer, so between the two this host would keep
+		// being told to run a container for hardware it no longer holds.
+		// Rendering it as draining rather than dropping it is the same
+		// rule as everywhere else: the broker stops dispatching first
+		// and work already in flight finishes.
+		withdrawn := assignment.State == types.TemplateAssignmentDraining || !servingUnit(unit)
 		tmpl, known := in.Catalog.Get(assignment.TemplateID)
 		if !known {
 			// A placement naming a template this build does not ship
@@ -117,7 +128,7 @@ func Build(in Input) (Document, error) {
 			ComposeFragment: renderCompose(ServiceName(assignment.ID), tmpl, unit),
 			DeviceIDs:       []string{unit.GPUUUID},
 			Models:          modelsOf(tmpl),
-			Draining:        assignment.State == types.TemplateAssignmentDraining,
+			Draining:        withdrawn,
 			TemplateID:      tmpl.ID,
 			AssignmentID:    assignment.ID,
 		})
@@ -223,4 +234,16 @@ func identityFor(tmpl templates.Template) map[string]string {
 		out[strings.TrimPrefix(key, "identity.")] = value
 	}
 	return out
+}
+
+// servingUnit reports whether a GPU may still carry work. It mirrors
+// the placement engine's own test — a unit the engine would refuse to
+// place on must not keep running what was placed on it earlier.
+func servingUnit(unit types.HardwareUnit) bool {
+	switch unit.State {
+	case types.HardwareUnitSuspended, types.HardwareUnitRetired:
+		return false
+	default:
+		return true
+	}
 }

@@ -25,6 +25,17 @@ type exceptionsView struct {
 	SuspendedGPUs    []types.HardwareUnit `json:"suspended_hardware"`
 	HeldWindows      []heldWindowView     `json:"held_windows"`
 	DuplicateGPUs    []duplicateGPUView   `json:"duplicate_gpus"`
+	// StalledDrains are placements draining longer than a drain should
+	// take.
+	//
+	// The case this exists for: suspending a member drains their
+	// placements, and reinstating the member does NOT bring them back —
+	// each placement has to be reinstated too, and nothing else would
+	// tell the operator that second step is outstanding. It also
+	// catches a drain that is simply stuck, which is equally worth
+	// someone's attention: the member is not earning and the pool is
+	// not being served.
+	StalledDrains []stalledDrainView `json:"stalled_drains"`
 }
 
 type heldWindowView struct {
@@ -51,6 +62,23 @@ type duplicateGPUView struct {
 	Attempts             int       `json:"attempts"`
 	FirstSeenAt          time.Time `json:"first_seen_at"`
 	LastSeenAt           time.Time `json:"last_seen_at"`
+}
+
+// stalledDrainAfter is how long a drain may run before it is worth a
+// person. It is generously past the grace a withdrawn placement gets,
+// so a drain in normal progress never appears here.
+const stalledDrainAfter = 30 * time.Minute
+
+type stalledDrainView struct {
+	AssignmentID     string    `json:"assignment_id"`
+	MemberEthAddress string    `json:"member_eth_address"`
+	MemberStatus     string    `json:"member_status"`
+	TemplateID       string    `json:"template_id"`
+	HardwareUnitID   string    `json:"hardware_unit_id"`
+	DrainingSince    time.Time `json:"draining_since"`
+	// Detail names the likely cause, because "still draining" alone
+	// does not tell an operator what to do about it.
+	Detail string `json:"detail"`
 }
 
 type memberStatusRequest struct {
@@ -281,6 +309,7 @@ func (d Deps) exceptions(now time.Time) (exceptionsView, error) {
 		SuspendedMembers: []types.PoolMember{},
 		SuspendedGPUs:    []types.HardwareUnit{},
 		HeldWindows:      []heldWindowView{},
+		StalledDrains:    []stalledDrainView{},
 		DuplicateGPUs:    []duplicateGPUView{},
 	}
 	members, err := d.Repo.ListPoolMembers()
@@ -320,6 +349,40 @@ func (d Deps) exceptions(now time.Time) (exceptionsView, error) {
 			LastSeenAt:           conflict.LastSeenAt,
 		})
 	}
+	assignments, err := d.Repo.ListTemplateAssignments()
+	if err != nil {
+		return view, err
+	}
+	statusOf := make(map[string]types.MemberStatus, len(members))
+	for _, member := range members {
+		statusOf[strings.ToLower(strings.TrimSpace(member.EthAddress))] = member.Status
+	}
+	for _, assignment := range assignments {
+		if assignment.State != types.TemplateAssignmentDraining {
+			continue
+		}
+		if assignment.DrainingSince.IsZero() || now.Sub(assignment.DrainingSince) < stalledDrainAfter {
+			continue
+		}
+		status := statusOf[strings.ToLower(strings.TrimSpace(assignment.MemberEthAddress))]
+		detail := "draining longer than expected; the host may be gone or not reporting"
+		if status == types.MemberStatusActive {
+			// The suspend-then-reinstate gap: the member is back, their
+			// work is not, and reinstating a member deliberately does
+			// not reinstate placements.
+			detail = "member is active but this placement is still draining — reinstate it to bring it back"
+		}
+		view.StalledDrains = append(view.StalledDrains, stalledDrainView{
+			AssignmentID:     assignment.ID,
+			MemberEthAddress: assignment.MemberEthAddress,
+			MemberStatus:     string(status),
+			TemplateID:       assignment.TemplateID,
+			HardwareUnitID:   assignment.HardwareUnitID,
+			DrainingSince:    assignment.DrainingSince,
+			Detail:           detail,
+		})
+	}
+
 	windows, err := d.Repo.ListSettlementWindows()
 	if err != nil {
 		return view, err

@@ -24,6 +24,25 @@ type hostStatusView struct {
 	Status       string          `json:"status"`
 	LastSeenAt   time.Time       `json:"last_seen_at,omitempty"`
 	GPUs         []gpuStatusView `json:"gpus"`
+	// ContestedGPUs are cards this member reported that another member
+	// already holds. Without this the member sees nothing at all: their
+	// agent declared the GPU, the pool refused to record it, and the
+	// card simply never appears — the common case of someone who bought
+	// second-hand hardware doing everything right and being told
+	// nothing.
+	ContestedGPUs []contestedGPUView `json:"contested_gpus,omitempty"`
+}
+
+// contestedGPUView tells the member their claim is disputed and no
+// more. It deliberately does NOT name the other member: that a card is
+// contested is this member's business, who holds it is not — naming
+// them would let anyone learn which address owns a given GPU simply by
+// claiming it.
+type contestedGPUView struct {
+	GPUUUID     string    `json:"gpu_uuid"`
+	FirstSeenAt time.Time `json:"first_seen_at"`
+	Status      string    `json:"status"`
+	Detail      string    `json:"detail"`
 }
 
 type gpuStatusView struct {
@@ -182,6 +201,7 @@ func (d Deps) hostStatus(enrollment types.HostEnrollment) (hostStatusView, error
 	}
 	assignments := listEnrollmentAssignments(d.Repo, enrollment.ID)
 	reasons := d.latestLadderReasons(enrollment.MemberEthAddress)
+	view.ContestedGPUs = d.contestedGPUsFor(enrollment)
 	for _, unit := range units {
 		gpu := gpuStatusView{
 			HardwareUnitID: unit.ID, GPUModel: unit.GPUModel,
@@ -314,4 +334,42 @@ func (d Deps) retireEnrollment(enrollment types.HostEnrollment, now time.Time) (
 func redactEnrollment(in types.HostEnrollment) types.HostEnrollment {
 	in.BrokerSessionCredential = ""
 	return in
+}
+
+// contestedGPUsFor reports this member's own refused claims.
+func (d Deps) contestedGPUsFor(enrollment types.HostEnrollment) []contestedGPUView {
+	conflicts, err := d.Repo.ListHardwareClaimConflicts()
+	if err != nil {
+		return nil
+	}
+	member := strings.ToLower(strings.TrimSpace(enrollment.MemberEthAddress))
+	out := make([]contestedGPUView, 0)
+	for _, conflict := range conflicts {
+		if strings.ToLower(strings.TrimSpace(conflict.ChallengerEthAddress)) != member {
+			continue
+		}
+		// Only this host's claims, so a member with several hosts sees
+		// the dispute against the machine it concerns.
+		if conflict.ChallengerHostID != "" && conflict.ChallengerHostID != enrollment.ID {
+			continue
+		}
+		view := contestedGPUView{GPUUUID: conflict.GPUUUID, FirstSeenAt: conflict.FirstSeenAt}
+		switch conflict.Resolution {
+		case types.ConflictRejected:
+			view.Status = "rejected"
+			view.Detail = "The pool did not accept this claim. If you believe the card is yours, contact the operator."
+		case types.ConflictTransferred:
+			// Resolved in this member's favour: the next attach lands.
+			continue
+		default:
+			view.Status = "under_review"
+			view.Detail = "Another member already has this GPU registered. An operator is reviewing it; " +
+				"if you bought this card second-hand, the previous owner may not have retired their host."
+		}
+		out = append(out, view)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

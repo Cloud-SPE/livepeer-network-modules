@@ -300,3 +300,66 @@ func TestRenderedComposeEnvironmentIsSorted(t *testing.T) {
 		t.Fatalf("environment not sorted:\n%s", doc.Services[0].ComposeFragment)
 	}
 }
+
+// A GPU the pool has taken back must stop serving.
+//
+// `transfer` on a contested card retires the incumbent's unit, but the
+// placement on it is not withdrawn in the same gesture — the placement
+// engine would drain it on its next plan, and nothing applies that plan
+// on a timer. Without this the incumbent's agent keeps running a
+// container for hardware that now belongs to someone else, for as long
+// as it takes an operator to notice.
+func TestBuildDrainsAPlacementOnAWithdrawnCard(t *testing.T) {
+	cat := catalogOf(t, map[string]string{"t.yaml": "" +
+		"id: t\ncapability: openai:chat-completions\noffering_id: o\n" +
+		"protocol: paid-job/v1\nprice_default: { amount_wei: \"1\", per_units: 1 }\n" +
+		"stacking: { primary: true }\nrunner_compose: { image: img }\n",
+	})
+	for _, state := range []types.HardwareUnitState{
+		types.HardwareUnitRetired,
+		types.HardwareUnitSuspended,
+	} {
+		doc, err := Build(Input{
+			EnrollmentID: "host-1",
+			Assignments: []types.TemplateAssignment{{
+				ID: "unit-a|t", HardwareUnitID: "unit-a", TemplateID: "t",
+				MemberEthAddress: "0xa",
+				// Still active: the pool took the CARD back, and nothing
+				// has withdrawn the placement yet.
+				State: types.TemplateAssignmentActive,
+			}},
+			Hardware: []types.HardwareUnit{{
+				ID: "unit-a", GPUUUID: "GPU-a", MemberEthAddress: "0xa", State: state,
+			}},
+			Catalog: cat,
+		})
+		if err != nil {
+			t.Fatalf("Build() error = %v", err)
+		}
+		if len(doc.Services) != 1 {
+			t.Fatalf("state %s: services = %d, want the placement still listed so it can drain", state, len(doc.Services))
+		}
+		if !doc.Services[0].Draining {
+			t.Fatalf("state %s: the placement is not draining — this host keeps serving a card it no longer holds", state)
+		}
+	}
+
+	// The same placement on a healthy card is untouched.
+	doc, err := Build(Input{
+		EnrollmentID: "host-1",
+		Assignments: []types.TemplateAssignment{{
+			ID: "unit-a|t", HardwareUnitID: "unit-a", TemplateID: "t",
+			MemberEthAddress: "0xa", State: types.TemplateAssignmentActive,
+		}},
+		Hardware: []types.HardwareUnit{{
+			ID: "unit-a", GPUUUID: "GPU-a", MemberEthAddress: "0xa", State: types.HardwareUnitActive,
+		}},
+		Catalog: cat,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if doc.Services[0].Draining {
+		t.Fatal("a placement on a healthy card was marked draining")
+	}
+}

@@ -58,9 +58,24 @@ type Service struct {
 	// model. The controller knows both from the template (its
 	// capability, and the identity its `match` selects on), so it says
 	// so rather than leaving the agent to guess.
+	// RequiredEnv names values the member must set on their own host
+	// for this service to run. The agent renders them as ${NAME}
+	// passthrough, so the values live in the member's .env and never
+	// reach the pool — these are the names, not the values.
+	RequiredEnv []RequiredEnvVar `json:"required_env,omitempty"`
+
 	Capability string            `json:"capability"`
 	Protocol   string            `json:"protocol,omitempty"`
 	Identity   map[string]string `json:"identity,omitempty"`
+}
+
+// RequiredEnvVar is one value the member has to supply.
+type RequiredEnvVar struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	Secret      bool   `json:"secret,omitempty"`
+	Example     string `json:"example,omitempty"`
 }
 
 // Model is a weight file that must be on disk before the service starts.
@@ -128,6 +143,7 @@ func Build(in Input) (Document, error) {
 			ComposeFragment: renderCompose(ServiceName(assignment.ID), tmpl, unit),
 			DeviceIDs:       []string{unit.GPUUUID},
 			Models:          modelsOf(tmpl),
+			RequiredEnv:     memberEnvOf(tmpl),
 			Draining:        withdrawn,
 			TemplateID:      tmpl.ID,
 			AssignmentID:    assignment.ID,
@@ -201,15 +217,30 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 			fmt.Fprintf(&b, "      - %s\n", item)
 		}
 	}
-	if env := tmpl.RunnerCompose.Env; len(env) > 0 {
-		keys := make([]string, 0, len(env))
-		for key := range env {
-			keys = append(keys, key)
+	// One environment block, whoever supplied the values. The pool's
+	// own settings and the member's passthroughs are the same compose
+	// key, and emitting two would be duplicate-key YAML the agent could
+	// not load.
+	//
+	// Member values are rendered as ${NAME}: docker substitutes them
+	// from the member's own .env at `compose up`, so the pool renders
+	// the reference and never the secret.
+	env := make(map[string]string, len(tmpl.RunnerCompose.Env)+len(tmpl.RunnerCompose.MemberEnv))
+	for name, value := range tmpl.RunnerCompose.Env {
+		env[name] = value
+	}
+	for _, v := range tmpl.RunnerCompose.MemberEnv {
+		env[v.Name] = "${" + v.Name + "}"
+	}
+	if len(env) > 0 {
+		names := make([]string, 0, len(env))
+		for name := range env {
+			names = append(names, name)
 		}
-		sort.Strings(keys)
+		sort.Strings(names)
 		b.WriteString("    environment:\n")
-		for _, key := range keys {
-			fmt.Fprintf(&b, "      %s: %s\n", key, env[key])
+		for _, name := range names {
+			fmt.Fprintf(&b, "      %s: %s\n", name, env[name])
 		}
 	}
 	if uuid := strings.TrimSpace(unit.GPUUUID); uuid != "" {
@@ -246,4 +277,18 @@ func servingUnit(unit types.HardwareUnit) bool {
 	default:
 		return true
 	}
+}
+
+func memberEnvOf(tmpl templates.Template) []RequiredEnvVar {
+	if len(tmpl.RunnerCompose.MemberEnv) == 0 {
+		return nil
+	}
+	out := make([]RequiredEnvVar, 0, len(tmpl.RunnerCompose.MemberEnv))
+	for _, v := range tmpl.RunnerCompose.MemberEnv {
+		out = append(out, RequiredEnvVar{
+			Name: v.Name, Description: v.Description,
+			Required: v.Required, Secret: v.Secret, Example: v.Example,
+		})
+	}
+	return out
 }

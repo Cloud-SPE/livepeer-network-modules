@@ -128,7 +128,22 @@ type RunnerCompose struct {
 	Image   string            `yaml:"image,omitempty" json:"image,omitempty"`
 	Command []string          `yaml:"command,omitempty" json:"command,omitempty"`
 	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
-	Models  []Model           `yaml:"models,omitempty" json:"models,omitempty"`
+	// MemberEnv names configuration the MEMBER must supply, not the
+	// pool.
+	//
+	// Some workloads are self-contained: the image is the whole thing.
+	// Others are an adapter in front of something the member brings —
+	// their own vLLM, or a third-party API. The pool cannot know that
+	// address and must not hold that key: a catalog file is reviewed in
+	// git and a controller database is not where someone's OpenRouter
+	// credential belongs.
+	//
+	// So these are DECLARED here and supplied on the member's own host.
+	// The rendered compose passes them through as ${NAME}, which docker
+	// reads from the member's .env — the value never reaches the pool at
+	// all.
+	MemberEnv []MemberEnvVar `yaml:"member_env,omitempty" json:"member_env,omitempty"`
+	Models    []Model        `yaml:"models,omitempty" json:"models,omitempty"`
 	// InternalURL names a runner the operator hosts themselves.
 	InternalURL string `yaml:"internal_url,omitempty" json:"internal_url,omitempty"`
 }
@@ -171,4 +186,20 @@ type SessionPolicy struct {
 type SessionHeartbeat struct {
 	IntervalSeconds int `yaml:"interval_seconds,omitempty" json:"interval_seconds,omitempty"`
 	MissedThreshold int `yaml:"missed_threshold,omitempty" json:"missed_threshold,omitempty"`
+}
+
+// MemberEnvVar is one value the member has to provide for a workload to
+// run on their host.
+type MemberEnvVar struct {
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Required false means the workload runs without it.
+	Required bool `yaml:"required,omitempty" json:"required,omitempty"`
+	// Secret marks a credential, so a portal masks it and nothing logs
+	// it. The pool never receives the value either way; this says how
+	// to talk about it.
+	Secret bool `yaml:"secret,omitempty" json:"secret,omitempty"`
+	// Example is shown to the member. It must never be a real
+	// credential.
+	Example string `yaml:"example,omitempty" json:"example,omitempty"`
 }

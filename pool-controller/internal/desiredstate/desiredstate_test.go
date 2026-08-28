@@ -363,3 +363,76 @@ func TestBuildDrainsAPlacementOnAWithdrawnCard(t *testing.T) {
 		t.Fatal("a placement on a healthy card was marked draining")
 	}
 }
+
+// A workload the member has to configure — an adapter in front of their
+// own vLLM, or a proxy to a third-party API — must render as a
+// passthrough, never as a value.
+//
+// The pool cannot know that address and must not hold that key: a
+// catalog file is reviewed in git and the controller's database is not
+// where someone's API credential belongs. So the compose carries
+// ${NAME} and docker substitutes it from the member's own .env.
+func TestMemberSuppliedConfigIsRenderedAsPassthroughNotValue(t *testing.T) {
+	cat := catalogOf(t, map[string]string{"shim.yaml": "" +
+		"id: shim\ncapability: openai:chat-completions\noffering_id: o\n" +
+		"protocol: paid-job/v1\nprice_default: { amount_wei: \"1\", per_units: 1 }\n" +
+		"stacking: { primary: true }\n" +
+		"runner_compose:\n" +
+		"  image: shim:v1\n" +
+		"  env: { POOL_FIXED: yes }\n" +
+		"  member_env:\n" +
+		"    - name: UPSTREAM_BASE_URL\n" +
+		"      description: Where your vLLM or third-party API lives.\n" +
+		"      required: true\n" +
+		"    - name: UPSTREAM_API_KEY\n" +
+		"      description: Credential for that API, if it needs one.\n" +
+		"      secret: true\n",
+	})
+	doc, err := Build(Input{
+		EnrollmentID: "host-1",
+		Assignments: []types.TemplateAssignment{{
+			ID: "unit-a|shim", HardwareUnitID: "unit-a", TemplateID: "shim",
+			MemberEthAddress: "0xa", State: types.TemplateAssignmentActive,
+		}},
+		Hardware: []types.HardwareUnit{{ID: "unit-a", GPUUUID: "GPU-a", MemberEthAddress: "0xa"}},
+		Catalog:  cat,
+	})
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	fragment := doc.Services[0].ComposeFragment
+
+	// Exactly one environment block: two would be duplicate-key YAML
+	// and the agent could not load the file at all.
+	if got := strings.Count(fragment, "environment:"); got != 1 {
+		t.Fatalf("environment blocks = %d, want exactly 1:\n%s", got, fragment)
+	}
+	for _, want := range []string{
+		"POOL_FIXED: yes",
+		"UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL}",
+		"UPSTREAM_API_KEY: ${UPSTREAM_API_KEY}",
+	} {
+		if !strings.Contains(fragment, want) {
+			t.Fatalf("fragment is missing %q:\n%s", want, fragment)
+		}
+	}
+
+	// And the member is told what to set, with the secret marked so a
+	// portal can mask it.
+	required := doc.Services[0].RequiredEnv
+	if len(required) != 2 {
+		t.Fatalf("RequiredEnv = %+v, want both names carried to the member", required)
+	}
+	var sawSecret bool
+	for _, v := range required {
+		if v.Name == "UPSTREAM_API_KEY" {
+			sawSecret = v.Secret
+			if v.Description == "" {
+				t.Fatal("a secret with no description is a masked field the member cannot act on")
+			}
+		}
+	}
+	if !sawSecret {
+		t.Fatal("the credential is not marked secret; a portal would render it in the clear")
+	}
+}

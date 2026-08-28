@@ -16,6 +16,7 @@ var (
 	stepNameRE   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	promotedRE   = regexp.MustCompile(`^x-[A-Za-z0-9._-]+$`)
 	priceWeiRE   = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
+	envNameRE    = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 	matchKeyRE   = regexp.MustCompile(`^identity\.[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
 )
 
@@ -238,6 +239,27 @@ func (t Template) Validate() error {
 	}
 	if t.CommissionBPS > 10_000 {
 		return fmt.Errorf("template %s: commission_bps must be <= 10000", t.ID)
+	}
+	seenEnv := map[string]bool{}
+	for i, v := range t.RunnerCompose.MemberEnv {
+		if !envNameRE.MatchString(v.Name) {
+			return fmt.Errorf("template %s: runner_compose.member_env[%d].name %q must be an environment variable name", t.ID, i, v.Name)
+		}
+		if seenEnv[v.Name] {
+			return fmt.Errorf("template %s: runner_compose.member_env repeats %q", t.ID, v.Name)
+		}
+		seenEnv[v.Name] = true
+		if _, clash := t.RunnerCompose.Env[v.Name]; clash {
+			// The pool has fixed this value AND asked the member for
+			// it. One of them is silently ignored, and which one is a
+			// detail of the renderer rather than a decision anyone made.
+			return fmt.Errorf("template %s: %q is both set in runner_compose.env and asked of the member", t.ID, v.Name)
+		}
+		// A member cannot be asked for a secret without being told what
+		// it is for; a masked field with no explanation is a dead end.
+		if v.Secret && strings.TrimSpace(v.Description) == "" {
+			return fmt.Errorf("template %s: runner_compose.member_env[%d] (%s) is secret and has no description", t.ID, i, v.Name)
+		}
 	}
 	for i, model := range t.RunnerCompose.Models {
 		if strings.TrimSpace(model.Name) == "" {

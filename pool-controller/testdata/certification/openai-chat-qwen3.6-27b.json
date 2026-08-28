@@ -2,7 +2,11 @@
   {
     "name": "ready",
     "type": "readiness",
-    "required": true
+    "required": true,
+    "config": {
+      "attempts": 10,
+      "interval_ms": 3000
+    }
   },
   {
     "name": "smoke",
@@ -35,6 +39,28 @@
     "required": true,
     "config": {
       "min_units": 1
+    }
+  },
+  {
+    "name": "stream",
+    "type": "request",
+    "required": false,
+    "config": {
+      "assert": [
+        "$[0].choices[0].delta"
+      ],
+      "body": {
+        "max_tokens": 8,
+        "messages": [
+          {
+            "content": "ping",
+            "role": "user"
+          }
+        ],
+        "model": "{{identity.openai.model}}",
+        "stream": true
+      },
+      "transport": "stream"
     }
   },
   {

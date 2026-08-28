@@ -42,10 +42,12 @@ func BuildOffersFromCatalog(catalog []templates.Template, overrides []types.Temp
 			Match:           matchForTemplate(tmpl, override),
 			Price:           priceFor(tmpl, override),
 			Extra:           mergeExtra(tmpl.Extra, override.Extra),
+			Constraints:     cloneAny(tmpl.Constraints),
 			ExtraFromRunner: append([]string(nil), tmpl.ExtraFromRunner...),
 			Certification:   certificationFor(tmpl),
 			Disabled:        !override.Enabled,
 		}
+		push.SessionPolicy = sessionPolicyFor(tmpl)
 		if tmpl.Capacity.MaxInFlight > 0 || tmpl.Capacity.QueueLimit > 0 {
 			push.Capacity = &brokeradmin.OfferPushCapacity{
 				MaxInFlight: tmpl.Capacity.MaxInFlight,
@@ -134,6 +136,49 @@ func certificationFor(tmpl templates.Template) []brokeradmin.OfferPushCertStep {
 			TimeoutMS: step.TimeoutMS,
 			Config:    step.Config,
 		})
+	}
+	return out
+}
+
+// sessionPolicyFor carries the operator's session axes to the broker.
+//
+// Authored and dropped would be the worst outcome: an operator sets a
+// fixed lease, the template validates, the push succeeds, and the
+// broker serves the default because nothing carried it across.
+func sessionPolicyFor(tmpl templates.Template) *brokeradmin.OfferPushSessionPolicy {
+	p := tmpl.SessionPolicy
+	if p == nil {
+		return nil
+	}
+	out := &brokeradmin.OfferPushSessionPolicy{
+		Attachment:           p.Attachment,
+		Refill:               p.Refill,
+		LeasePolicy:          p.LeasePolicy,
+		LeaseMaxSeconds:      p.LeaseMaxSeconds,
+		BurnRatePerSec:       p.BurnRatePerSec,
+		MinRunwayUnits:       p.MinRunwayUnits,
+		MaxRotations:         p.MaxRotations,
+		ToleranceBandPct:     p.ToleranceBandPct,
+		RunwayIncrementUnits: p.RunwayIncrementUnits,
+	}
+	if p.Heartbeat.IntervalSeconds > 0 || p.Heartbeat.MissedThreshold > 0 {
+		out.Heartbeat = &brokeradmin.OfferPushHeartbeat{
+			IntervalSeconds: p.Heartbeat.IntervalSeconds,
+			MissedThreshold: p.Heartbeat.MissedThreshold,
+		}
+	}
+	return out
+}
+
+// cloneAny copies the advertised constraints so a pushed offer does not
+// share a map with the loaded catalog.
+func cloneAny(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
 	}
 	return out
 }

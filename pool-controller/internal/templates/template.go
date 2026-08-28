@@ -34,7 +34,17 @@ type Template struct {
 	// Extra is operator metadata advertised with the offer. Runner-owned
 	// facts never appear here — the broker freezes those from the attach
 	// document. ExtraFromRunner names the x-* keys a runner may promote.
-	Extra           map[string]any `yaml:"extra,omitempty" json:"extra,omitempty"`
+	Extra map[string]any `yaml:"extra,omitempty" json:"extra,omitempty"`
+
+	// Constraints are the advertised axes a buyer routes on — region,
+	// tier, GPU vendor. They reach the manifest, so a gateway choosing
+	// between orchestrators sees them.
+	//
+	// Distinct from Extra, which describes what is being sold. A
+	// constraint is something the caller filters by: losing `region`
+	// does not make the offering wrong, it makes it unfindable by
+	// anyone who cares where their work runs.
+	Constraints     map[string]any `yaml:"constraints,omitempty" json:"constraints,omitempty"`
 	ExtraFromRunner []string       `yaml:"extra_from_runner,omitempty" json:"extra_from_runner,omitempty"`
 
 	// Certification is the pool's proof that a matched runner can serve
@@ -50,6 +60,17 @@ type Template struct {
 	// Left empty, the offer takes any runner serving the capability,
 	// which is what a single-model pool wants.
 	Match map[string]string `yaml:"match,omitempty" json:"match,omitempty"`
+
+	// SessionPolicy is the operator's half of a paid-session offering
+	// (offering-axes.md §3). It is meaningless on paid-job and rejected
+	// there: a job has no lease to bound and no heartbeat to miss.
+	//
+	// Without this a pool could author a session template and the
+	// broker would receive an offer with no axes at all, silently
+	// taking every default — so a streaming workload that needs a fixed
+	// lease or a faster heartbeat could be declared and would not be
+	// honoured.
+	SessionPolicy *SessionPolicy `yaml:"session_policy,omitempty" json:"session_policy,omitempty"`
 
 	// Requirements gate which GPUs may run this at all.
 	Requirements Requirements `yaml:"requirements,omitempty" json:"requirements,omitempty"`
@@ -129,4 +150,25 @@ type Probation struct {
 
 type Active struct {
 	ShareCapPPM uint64 `yaml:"share_cap_ppm,omitempty" json:"share_cap_ppm,omitempty"`
+}
+
+// SessionPolicy mirrors the broker's offer-side session axes. The pool
+// owns these; what the runner declares (descriptor schemas, metering,
+// its own heartbeat cadence) is frozen from the attach document.
+type SessionPolicy struct {
+	Attachment           string           `yaml:"attachment,omitempty" json:"attachment,omitempty"`
+	Refill               string           `yaml:"refill,omitempty" json:"refill,omitempty"`
+	LeasePolicy          string           `yaml:"lease_policy,omitempty" json:"lease_policy,omitempty"`
+	LeaseMaxSeconds      int              `yaml:"lease_max_seconds,omitempty" json:"lease_max_seconds,omitempty"`
+	BurnRatePerSec       float64          `yaml:"burn_rate_per_second,omitempty" json:"burn_rate_per_second,omitempty"`
+	MinRunwayUnits       int64            `yaml:"min_runway_units,omitempty" json:"min_runway_units,omitempty"`
+	MaxRotations         int              `yaml:"max_rotations,omitempty" json:"max_rotations,omitempty"`
+	ToleranceBandPct     float64          `yaml:"tolerance_band_pct,omitempty" json:"tolerance_band_pct,omitempty"`
+	RunwayIncrementUnits int64            `yaml:"runway_increment_units,omitempty" json:"runway_increment_units,omitempty"`
+	Heartbeat            SessionHeartbeat `yaml:"heartbeat,omitempty" json:"heartbeat,omitempty"`
+}
+
+type SessionHeartbeat struct {
+	IntervalSeconds int `yaml:"interval_seconds,omitempty" json:"interval_seconds,omitempty"`
+	MissedThreshold int `yaml:"missed_threshold,omitempty" json:"missed_threshold,omitempty"`
 }

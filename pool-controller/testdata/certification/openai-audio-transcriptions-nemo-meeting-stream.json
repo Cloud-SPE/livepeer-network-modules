@@ -4,28 +4,21 @@
     "type": "readiness",
     "required": true,
     "config": {
-      "attempts": 10,
+      "attempts": 5,
       "interval_ms": 3000
     }
   },
   {
-    "name": "smoke",
+    "name": "open",
     "type": "request",
     "required": true,
-    "timeout_ms": 90000,
     "config": {
-      "assert": [
-        {
-          "min": 0,
-          "path": "$.data[0]"
-        }
-      ],
-      "body": {
+      "hold_ms": 6000,
+      "session_params": {
+        "encoding": "pcm_s16le",
         "model": "{{identity.openai.model}}",
-        "n": 1,
-        "prompt": "a probe"
-      },
-      "transport": "unary"
+        "sample_rate": 16000
+      }
     }
   },
   {
@@ -33,7 +26,8 @@
     "type": "usage",
     "required": true,
     "config": {
-      "min_units": 1
+      "min_units": 1,
+      "window_ms": 10000
     }
   }
 ]

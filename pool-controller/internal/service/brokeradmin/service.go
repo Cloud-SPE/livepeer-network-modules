@@ -181,17 +181,20 @@ func applyAuth(req *http.Request, auth config.AuthConfig) error {
 // validates the push with the same decoder it uses for its config file
 // and rejects unknown fields.
 type OfferPush struct {
-	OfferingID      string              `json:"offering_id"`
-	Capability      string              `json:"capability"`
-	Protocol        string              `json:"protocol"`
-	Match           map[string]string   `json:"match,omitempty"`
-	Price           OfferPushPrice      `json:"price"`
-	Capacity        *OfferPushCapacity  `json:"capacity,omitempty"`
-	Extra           map[string]any      `json:"extra,omitempty"`
-	Constraints     map[string]any      `json:"constraints,omitempty"`
-	ExtraFromRunner []string            `json:"extra_from_runner,omitempty"`
-	Certification   []OfferPushCertStep `json:"certification,omitempty"`
-	Disabled        bool                `json:"disabled,omitempty"`
+	OfferingID      string             `json:"offering_id"`
+	Capability      string             `json:"capability"`
+	Protocol        string             `json:"protocol"`
+	Match           map[string]string  `json:"match,omitempty"`
+	Price           OfferPushPrice     `json:"price"`
+	Capacity        *OfferPushCapacity `json:"capacity,omitempty"`
+	Extra           map[string]any     `json:"extra,omitempty"`
+	Constraints     map[string]any     `json:"constraints,omitempty"`
+	ExtraFromRunner []string           `json:"extra_from_runner,omitempty"`
+	// SessionPolicy is the operator half of a paid-session offering.
+	// Omitted for paid-job, where it has no meaning.
+	SessionPolicy *OfferPushSessionPolicy `json:"session_policy,omitempty"`
+	Certification []OfferPushCertStep     `json:"certification,omitempty"`
+	Disabled      bool                    `json:"disabled,omitempty"`
 }
 
 type OfferPushPrice struct {
@@ -207,6 +210,27 @@ type OfferPushCapacity struct {
 // OfferPushCertStep is a certification step as the offer carries it.
 // The controller authors these as POLICY — which steps must pass — and
 // the broker executes them (plan 0043 decision 6b).
+// OfferPushSessionPolicy mirrors the broker's offer session axes. The
+// field names are the broker's own, because this is its wire shape and
+// a rename here would silently drop an axis.
+type OfferPushSessionPolicy struct {
+	Attachment           string              `json:"attachment,omitempty"`
+	Refill               string              `json:"refill,omitempty"`
+	LeasePolicy          string              `json:"lease_policy,omitempty"`
+	LeaseMaxSeconds      int                 `json:"lease_max_seconds,omitempty"`
+	BurnRatePerSec       float64             `json:"burn_rate_per_second,omitempty"`
+	MinRunwayUnits       int64               `json:"min_runway_units,omitempty"`
+	MaxRotations         int                 `json:"max_rotations,omitempty"`
+	ToleranceBandPct     float64             `json:"tolerance_band_pct,omitempty"`
+	RunwayIncrementUnits int64               `json:"runway_increment_units,omitempty"`
+	Heartbeat            *OfferPushHeartbeat `json:"heartbeat,omitempty"`
+}
+
+type OfferPushHeartbeat struct {
+	IntervalSeconds int `json:"interval_seconds,omitempty"`
+	MissedThreshold int `json:"missed_threshold,omitempty"`
+}
+
 type OfferPushCertStep struct {
 	Name      string         `json:"name"`
 	Type      string         `json:"type"`

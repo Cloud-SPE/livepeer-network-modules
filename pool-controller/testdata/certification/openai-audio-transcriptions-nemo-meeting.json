@@ -40,14 +40,5 @@
     "config": {
       "min_units": 1
     }
-  },
-  {
-    "name": "latency",
-    "type": "latency",
-    "required": false,
-    "config": {
-      "p50_max_ms": 6000,
-      "samples": 3
-    }
   }
 ]

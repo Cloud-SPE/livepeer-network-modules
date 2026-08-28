@@ -1,0 +1,225 @@
+# Live streaming transcription — NeMo Nemotron, as run on the operator's
+# "ai-rig-broker".
+#
+# The rig declared this with `interaction_mode: ws-realtime@v0`: a WebSocket
+# the caller holds open, PCM in, transcript out, billed by elapsed time, capped
+# at an hour.
+#
+# Why paid-session/v1 and not paid-job/v1
+# ---------------------------------------
+# offering-axes.md §1 says `protocol` answers exactly one question — one-shot
+# versus long-lived — and it is the only thing that answers it. Four facts from
+# the rig's own config put this on the long-lived side:
+#
+#   1. `max_session_seconds: 3600`. A job has no lease to bound; a thing with a
+#      maximum duration is a thing with a lifetime.
+#   2. Metering is `seconds-elapsed`, not a count extracted from a response. A
+#      paid-job exchange is metered once, from its response, by the runner's
+#      declared extractor (offering-axes.md §2) — and for `paid-session` the
+#      attach contract makes `work_unit.extractor` MUST-be-absent
+#      (runner-attach.md §3.2), because there is no single response to extract
+#      from. Wall-clock burn is a session's usage tick.
+#   3. An hour at this price is far more than any one payment envelope should
+#      fund up front, so the caller must be able to top up mid-stream. Refill
+#      is a session axis; a job has nothing to refill.
+#   4. Nobody would learn the runner died until the caller complained. A
+#      session has a heartbeat and a broker that must terminate an unmetered
+#      runtime (paid-session.md §5); a job just returns or does not.
+#
+# The `stream` transport of paid-job is not the same shape and would not do:
+# it is one request whose response arrives in pieces, with one metering event
+# at the end. This offering has no request whose end is in sight.
+#
+# `attachment: inband-ws` is the direct translation of the rig's
+# `streaming.transport: websocket` — offering-axes.md §3 defines it as "the
+# session's data plane is a broker-relayed WebSocket (the old `ws-realtime`
+# shape)".
+
+id: openai-audio-transcriptions-nemo-meeting-stream
+capability: openai:audio-transcriptions
+offering_id: nemo-meeting-stream
+protocol: paid-session/v1
+display_name: Live streaming transcription (NeMo Nemotron)
+description: >-
+  A long-lived transcription session over a broker-relayed WebSocket: 16 kHz
+  PCM in, incremental transcript out, metered in elapsed seconds and bounded by
+  a one-hour lease. Top-up is allowed mid-session, so a call that runs long
+  does not get cut off at its opening funding.
+
+# The operator's real rate: 1e12 wei per elapsed second — ~$0.103 per minute at
+# the 2026-06-15 ETH basis in
+# docs/references/2026-06-15-openai-compatible-market-pricing.md. That
+# reference's only realtime anchor is `gpt-realtime-whisper` at $0.017/min, so
+# this sells at roughly 6x it. Realtime diarized streaming holds a GPU and a
+# socket for the whole call while batch transcription does not, so a large
+# premium is expected; 6x is the operator's number and not one derived here.
+price_default: { amount_wei: "1000000000000", per_units: 1 }
+
+# The rig's `backend.max_in_flight: 1` — one live session per runner. This is
+# the strictest capacity in the catalog and the most load-bearing: a second
+# concurrent stream on the same card degrades BOTH callers in real time, where
+# a queued batch job only waits. queue_limit is unset because queueing a live
+# session is meaningless; a caller who cannot be served now wants a 503 with a
+# backoff, not a place in line.
+capacity: { max_in_flight: 1 }
+
+extra:
+  provider: nemo
+  audio:
+    task: transcription
+    # The rig's `streaming:` block, minus the two fields that became declared
+    # axes: `transport: websocket` is now `session_policy.attachment:
+    # inband-ws`, and `max_session_seconds: 3600` is
+    # `session_policy.lease_max_seconds`. What is left is the audio format the
+    # caller must actually send, which no other field carries and which a
+    # gateway needs BEFORE it opens a funded session.
+    streaming:
+      sample_rate: 16000
+      encoding: pcm_s16le
+
+# Distinguishes this from the two other openai:audio-transcriptions offerings
+# in the catalog. Note it is a different model from the batch NeMo offering —
+# `nvidia/nemotron-speech-streaming-en-0.6b` is a streaming-specific model —
+# so this selector picks a genuinely different runner, not a different mode of
+# the same one.
+match:
+  identity.openai.model: nvidia/nemotron-speech-streaming-en-0.6b
+
+# The operator's half of the session axes (template.go: the pool owns these;
+# descriptor schema, metering and the runner's own heartbeat cadence are frozen
+# from the attach document and so are absent here).
+session_policy:
+  # The rig's `streaming.transport: websocket`. `external` would mean the media
+  # never transits the broker, which is not this workload: the caller speaks
+  # WebSocket to the broker and the broker relays.
+  attachment: inband-ws
+  # A meeting outlasts its opening payment. `bounded` would refuse top-up after
+  # open (offering-axes.md §3) and would end an hour-long call at whatever the
+  # first envelope funded — the one behaviour this workload cannot have.
+  refill: extensible
+  # paid-session.md §5's normative default, stated rather than inherited so a
+  # reader can see it was chosen: the lease tracks funding, so a caller that
+  # stops topping up winds down instead of running unpaid.
+  lease_policy: funding-tracking
+  # The rig's `max_session_seconds: 3600`. Under funding-tracking this is the
+  # cap on the computed expiry, so a generously funded session still ends at an
+  # hour — which is exactly what the operator wrote.
+  lease_max_seconds: 3600
+  # One work unit per wall-clock second: the rig metered `seconds-elapsed` at
+  # granularity 1. This is what turns funded units into a lease — with it,
+  # runway_units and lease seconds are the same number.
+  burn_rate_per_second: 1.0
+  # A minute of audio left is the point at which a caller must already be
+  # topping up; below that the balance reports `low` and
+  # `will_refuse_next_refill` gives the gateway time to drain gracefully
+  # (paid-session.md §6) rather than cutting off mid-sentence.
+  min_runway_units: 60
+  # Advisory only — the buyer owns its real increment because it is the buyer's
+  # exposure bound (offering-axes.md §3). Five minutes is a sane first-contact
+  # size for a workload that burns one unit a second.
+  runway_increment_units: 300
+  # Faster than the 10/3 default. Any accepted event refreshes liveness
+  # (paid-session.md §5) and this runner emits usage every second, so a 5s
+  # interval is loose relative to its own cadence — while capping unmetered
+  # runtime at ~15s instead of 30s. That ceiling is the whole point: a dead
+  # runner holding an open socket is billing nobody and serving nobody.
+  heartbeat: { interval_seconds: 5, missed_threshold: 3 }
+  # max_rotations and tolerance_band_pct are unset: the rig expressed no view
+  # on either, and both have defined defaults (3, and none) that are not
+  # improved by a number invented here.
+
+certification:
+  # As everywhere: the step runs the probe the runner declared (the rig used
+  # http-status on /healthz); the template sets only how much readiness is
+  # enough (certification-steps.md §3.1).
+  - { name: ready, type: readiness, required: true, config: { attempts: 5, interval_ms: 3000 } }
+  # The paid-session form of `request` (certification-steps.md §3.2): open a
+  # session, validate the descriptor envelope, hold it, terminate, and confirm
+  # the status path agrees. This is the only way to prove a session runner
+  # works without paying it.
+  - name: open
+    type: request
+    required: true
+    config:
+      # Passed verbatim to the runner. The values are the rig's own declared
+      # stream format; the runner's `session_params_schema` is the authority on
+      # the key names and is advisory, never a validator (runner-attach.md
+      # §3.2). Written as numbers, not substitutions, because substitution is
+      # textual and would turn 16000 into a string.
+      session_params:
+        model: "{{identity.openai.model}}"
+        sample_rate: 16000
+        encoding: pcm_s16le
+      # Long enough for a per-second meter to emit at least one usage tick
+      # before terminate, which is what the next step reads.
+      hold_ms: 6000
+      # expect_descriptor_schema is deliberately absent: descriptor schemas are
+      # runner-declared and frozen (runner-attach.md §3.2, §5), so naming one
+      # here would be the operator authoring the runner's half. Absent, the
+      # step accepts any schema the runner declared.
+  # The session form of `usage`: wait for the runner's first usage event and
+  # check the claim. This also proves the event's `work_unit` matches the
+  # declared one — the mismatch that silently bills a session in the wrong
+  # dimension (paid-session.md §7.2).
+  #
+  # Required here, unlike the live-ingest template's usage step, and the
+  # difference is the meter: this offering counts `seconds` of session wall
+  # time, so a runner ticks even with no audio arriving. video-transcode-live
+  # counts OUTPUT seconds, which a session with no publisher will honestly
+  # report as zero.
+  #
+  # Caveat while bead lnm-9y4 is open: the broker's session usage
+  # certification has no event tap yet and records `error: not implemented`,
+  # so this required step will fail every run until that lands. Enable this
+  # template after it does, or drop `required` to false in a deployment
+  # override — do not silently weaken it here.
+  - { name: usage, type: usage, required: true, config: { min_units: 1, window_ms: 10000 } }
+
+# Deliberately empty — the operator has NOT decided this axis. The rig set
+# `constraints.gpu` on its Whisper, Kokoro and Florence offerings and on
+# nothing NeMo, and an empty list means "no constraint on this axis", never
+# "nothing qualifies" (template.go).
+#
+# This one deserves a second look sooner than its batch sibling does: a live
+# stream that cannot keep up with realtime is not slow, it is broken, and with
+# no class list this template is eligible on a GTX 1080.
+requirements: {}
+
+# Deliberately low, and NOT where this workload belongs on merit.
+#
+# On merit a live session should outrank every batch family — around 24, just
+# under chat — because it is the one workload that cannot absorb contention.
+# It is set below every template with a stated hardware policy instead,
+# because `requirements` below is empty: this template matches every card in
+# the pool, and priority is what decides who takes a card's primary slot. An
+# unconstrained template ranked on merit would take a GTX 1080's primary slot
+# away from a template that was actually told which cards it is for.
+#
+# Among the three unconstrained templates in this catalog the ranking is by how
+# badly a wrong placement fails: batch NeMo (12) on a weak card is merely slow,
+# a live stream (11) cannot hold realtime, and FLUX (10) will not finish inside
+# a caller's timeout at all. Least-harmful-first is the only ordering available
+# while the operator has not said which cards these run on.
+#
+# Raise this to ~24 in the same diff that fills in `requirements`. The two are
+# one decision, and splitting them is how a live stream ends up assigned to a
+# card that cannot keep up with realtime.
+priority: 11
+
+# Primary only, and the strongest case for it in the catalog. The session holds
+# the card, the socket and the sole in-flight slot for up to an hour; anything
+# co-resident shows up as dropped audio in a live call.
+stacking: { primary: true, secondary_on: [] }
+
+# runner_compose omitted: the images that serve this workload are unresolved
+# (tracked as lnm-v12). The rig named a compose service, not a published image
+# reference, and inventing a ghcr tag here would fail at `compose up` on a
+# member's host instead of in review.
+
+# min_jobs counts sessions here, not requests, and each one may run an hour —
+# so 10 is already a long probation in wall-clock terms.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 10 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

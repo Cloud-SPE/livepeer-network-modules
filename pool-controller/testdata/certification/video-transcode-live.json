@@ -1,0 +1,28 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness",
+    "required": true,
+    "config": {
+      "attempts": 5,
+      "interval_ms": 3000
+    }
+  },
+  {
+    "name": "open",
+    "type": "request",
+    "required": true,
+    "config": {
+      "hold_ms": 5000
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "required": false,
+    "config": {
+      "min_units": 1,
+      "window_ms": 15000
+    }
+  }
+]

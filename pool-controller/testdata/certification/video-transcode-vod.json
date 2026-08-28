@@ -5,7 +5,6 @@
     "required": true,
     "config": {
       "attempts": 3,
-      "consecutive": 1,
       "interval_ms": 2000
     }
   },
@@ -19,7 +18,7 @@
       "parts": [
         {
           "name": "profiles",
-          "value": "[{\"name\":\"720p30\",\"width\":1280,\"height\":720,\"fps\":30},{\"name\":\"480p30\",\"width\":854,\"height\":480,\"fps\":30}]"
+          "value": "[{\"name\":\"720p30\",\"width\":1280,\"height\":720,\"fps\":30}]"
         },
         {
           "content_type": "video/mp4",
@@ -46,7 +45,7 @@
     "type": "latency",
     "required": false,
     "config": {
-      "p50_max_ms": 30000,
+      "p50_max_ms": 20000,
       "samples": 2
     }
   }

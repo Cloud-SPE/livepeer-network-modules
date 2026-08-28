@@ -153,6 +153,11 @@ func (t Template) Validate() error {
 			return fmt.Errorf("template %s: extra.%s — x-* keys are runner extensions; promote them with extra_from_runner", t.ID, key)
 		}
 	}
+	for _, reserved := range []string{"protocol", "job", "session"} {
+		if _, clash := t.Constraints[reserved]; clash {
+			return fmt.Errorf("template %s: constraints.%s is reserved", t.ID, reserved)
+		}
+	}
 	seenPromoted := map[string]bool{}
 	for _, key := range t.ExtraFromRunner {
 		if !promotedRE.MatchString(key) {
@@ -165,6 +170,35 @@ func (t Template) Validate() error {
 			return fmt.Errorf("template %s: extra_from_runner repeats %q", t.ID, key)
 		}
 		seenPromoted[key] = true
+	}
+	// A session policy on a job offering would be silently ignored by
+	// the broker, which is worse than refusing it: the operator would
+	// believe they had set a lease.
+	if t.SessionPolicy != nil && t.Protocol != "paid-session/v1" {
+		return fmt.Errorf("template %s: session_policy is only valid for paid-session/v1", t.ID)
+	}
+	if p := t.SessionPolicy; p != nil {
+		switch p.Attachment {
+		case "", "external", "inband-ws":
+		default:
+			return fmt.Errorf("template %s: session_policy.attachment must be external or inband-ws (got %q)", t.ID, p.Attachment)
+		}
+		switch p.Refill {
+		case "", "extensible", "bounded":
+		default:
+			return fmt.Errorf("template %s: session_policy.refill must be extensible or bounded (got %q)", t.ID, p.Refill)
+		}
+		switch p.LeasePolicy {
+		case "", "funding-tracking", "fixed":
+		default:
+			return fmt.Errorf("template %s: session_policy.lease_policy must be funding-tracking or fixed (got %q)", t.ID, p.LeasePolicy)
+		}
+		if p.LeaseMaxSeconds < 0 || p.MinRunwayUnits < 0 || p.MaxRotations < 0 || p.RunwayIncrementUnits < 0 {
+			return fmt.Errorf("template %s: session_policy values must be >= 0", t.ID)
+		}
+		if p.Heartbeat.IntervalSeconds < 0 || p.Heartbeat.MissedThreshold < 0 {
+			return fmt.Errorf("template %s: session_policy.heartbeat values must be >= 0", t.ID)
+		}
 	}
 	for key, value := range t.Match {
 		if !matchKeyRE.MatchString(key) {

@@ -2,24 +2,25 @@
   {
     "name": "ready",
     "type": "readiness",
-    "required": true
+    "required": true,
+    "config": {
+      "attempts": 3,
+      "interval_ms": 2000
+    }
   },
   {
     "name": "smoke",
     "type": "request",
     "required": true,
     "config": {
-      "assert": [
-        {
-          "min": 1,
-          "path": "$.data[0].embedding"
-        },
-        "$.usage.total_tokens"
-      ],
       "body": {
         "input": "ping",
-        "model": "{{identity.openai.model}}"
-      }
+        "model": "{{identity.openai.model}}",
+        "voice": "{{offer.extra.audio.voices.default}}"
+      },
+      "expect_content_type": "audio/",
+      "max_response_bytes": 4194304,
+      "transport": "unary"
     }
   },
   {

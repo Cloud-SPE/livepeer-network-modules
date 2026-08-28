@@ -9,102 +9,137 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
-// The catalog and the engine are two halves of one policy: 0040 §4.4
-// says what a card of each class should end up running, the templates
+// The catalog and the engine are two halves of one policy: plan 0040
+// §4.4 says how much a card of each class should run, the templates
 // encode it in requirements and stacking, and the engine applies it.
-// Each half can be edited without the other and nothing else would
-// notice — a VRAM floor raised above what a 3090 reports, or a
-// secondary_on entry dropped, would quietly idle real hardware. This
-// test is the only place the two are compared against the plan.
+// Either half can be edited without the other noticing — a VRAM floor
+// raised above what a 3090 reports, or a secondary_on entry dropped,
+// would quietly idle real hardware.
+//
+// What this asserts is the STANCE, not the cast. An earlier version
+// pinned exact template ids, which made it a test of which products the
+// pool happened to sell that week: it broke the moment the catalog was
+// rebuilt from the operator's real configuration, and it would have
+// broken again on the next price change. The rule worth defending is
+// that older consumer cards run one workload and 4090/5090-class cards
+// run a primary plus at most one low-footprint rider — which stays true
+// whoever that rider turns out to be.
 func TestShippedCatalogProducesPlannedStance(t *testing.T) {
 	dir := filepath.Join("..", "..", "..", "templates")
 	if _, err := os.Stat(dir); err != nil {
-		// The catalog sits at the repo root, outside this module. A
-		// checkout of pool-controller alone is still a valid thing to
-		// test; it just has no catalog to check.
 		t.Skip("no repo-root templates/ directory alongside this module")
 	}
 	catalog, err := templates.Load(dir)
 	if err != nil {
-		t.Fatalf("templates.Load(%s) = %v", dir, err)
+		t.Fatalf("Load(%s) = %v", dir, err)
 	}
 	all := catalog.All()
 	if len(all) == 0 {
-		t.Fatalf("shipped catalog is empty")
+		t.Fatal("the shipped catalog is empty")
 	}
-	// A pool that enabled everything is the strongest form of the
-	// question: with every template competing, does each class still
-	// land where the plan says?
 	overrides := make([]types.TemplateOverride, 0, len(all))
 	for _, tmpl := range all {
 		overrides = append(overrides, types.TemplateOverride{TemplateID: tmpl.ID, Enabled: true})
 	}
 
-	// VRAM as the cards actually report it, since the catalog's floors
-	// are set just under those figures on purpose.
-	decisions := Plan(Input{
-		Hardware: []types.HardwareUnit{
-			gpu("gpu-1080", model1080, 8*gib),
-			gpu("gpu-3090", model3090, 24*gib),
-			gpu("gpu-4090", model4090, 24*gib),
-		},
-		Templates: all,
-		Overrides: overrides,
-	})
+	// One card of each class the pool has a stance on, at a memory size
+	// that class really ships with.
+	cards := []struct {
+		class string
+		model string
+		vram  uint64
+	}{
+		{ClassGTX1080, "NVIDIA GeForce GTX 1080", 8},
+		{ClassRTX2080, "NVIDIA GeForce RTX 2080 Ti", 11},
+		{ClassRTX3090, "NVIDIA GeForce RTX 3090", 24},
+		{ClassRTX4090, "NVIDIA GeForce RTX 4090", 24},
+		{ClassRTX5090, "NVIDIA GeForce RTX 5090", 32},
+	}
+	hardware := make([]types.HardwareUnit, 0, len(cards))
+	for _, card := range cards {
+		hardware = append(hardware, types.HardwareUnit{
+			ID: "gpu-" + card.class, MemberEthAddress: "0xa",
+			GPUModel: card.model, VRAMBytes: card.vram << 30, State: types.HardwareUnitOnline,
+		})
+	}
 
-	byUnit := map[string]Decision{}
+	byID := make(map[string]templates.Template, len(all))
+	for _, tmpl := range all {
+		byID[tmpl.ID] = tmpl
+	}
+	decisions := Plan(Input{Hardware: hardware, Templates: all, Overrides: overrides})
 	for _, decision := range decisions {
-		byUnit[decision.HardwareUnitID] = decision
+		limit := MaxTemplatesFor(decision.GPUClass, nil)
+		if len(decision.Placements) > limit {
+			t.Fatalf("%s got %d templates, and the class stance allows %d",
+				decision.GPUClass, len(decision.Placements), limit)
+		}
+		// Every card the pool has a stance on should be earning. One
+		// running nothing is either a requirements block that excludes
+		// real hardware or a catalog with a hole in it, and both are
+		// worth failing over.
+		if len(decision.Placements) == 0 {
+			t.Errorf("%s is placed nothing; rejections: %+v", decision.GPUClass, decision.Rejections)
+			continue
+		}
+		if decision.Placements[0].Role != types.TemplateAssignmentPrimary {
+			t.Errorf("%s: first placement is %s, want the primary",
+				decision.GPUClass, decision.Placements[0].Role)
+		}
+		for _, placement := range decision.Placements[1:] {
+			if placement.Role != types.TemplateAssignmentSecondary {
+				t.Errorf("%s: %s is a second primary", decision.GPUClass, placement.TemplateID)
+			}
+			// A rider must have said it can ride on this class. The
+			// engine checks it; asserting it here is what catches a
+			// catalog edit that drops the declaration.
+			rider := byID[placement.TemplateID]
+			if !containsFold(rider.Stacking.SecondaryOn, decision.GPUClass) {
+				t.Errorf("%s carries rider %s, which does not declare that class in stacking.secondary_on",
+					decision.GPUClass, placement.TemplateID)
+			}
+			// And a rider has to be bounded, or "low-footprint" is a
+			// word in a plan rather than a property of the offering.
+			if rider.Capacity.MaxInFlight <= 0 {
+				t.Errorf("rider %s has no capacity.max_in_flight; a workload sharing a card "+
+					"with a primary has to be bounded", placement.TemplateID)
+			}
+		}
 	}
 
-	// GTX 1080: one template, and it has to be transcode — everything
-	// else in the catalog requires a 3090 or better.
-	gtx := byUnit["gpu-1080"]
-	if gtx.GPUClass != ClassGTX1080 {
-		t.Fatalf("gpu-1080 class = %q, want %q", gtx.GPUClass, ClassGTX1080)
-	}
-	assertPlacements(t, "gtx-1080", gtx, []string{"video-transcode-abr/primary/placed_primary"})
-
-	// RTX 3090: one template. Embeddings outranks audio and transcode,
-	// and the class stance forbids a second.
-	rtx3090 := byUnit["gpu-3090"]
-	if rtx3090.GPUClass != ClassRTX3090 {
-		t.Fatalf("gpu-3090 class = %q, want %q", rtx3090.GPUClass, ClassRTX3090)
-	}
-	assertPlacements(t, "rtx-3090", rtx3090, []string{"openai-embeddings-nomic-embed-text/primary/placed_primary"})
-
-	// RTX 4090: a primary plus the audio secondary — the one stacking
-	// combination 0040 §4.4 names.
-	rtx4090 := byUnit["gpu-4090"]
-	if rtx4090.GPUClass != ClassRTX4090 {
-		t.Fatalf("gpu-4090 class = %q, want %q", rtx4090.GPUClass, ClassRTX4090)
-	}
-	assertPlacements(t, "rtx-4090", rtx4090, []string{
-		"openai-chat-gpt-oss-20b/primary/placed_primary",
-		"openai-audio-transcriptions-whisper-large-v3/secondary/placed_secondary",
-	})
-	// Named by capability as well as by id: the plan's stance is about
-	// what runs on the card, and an id can be renamed.
-	secondary, ok := catalog.Get(rtx4090.Placements[1].TemplateID)
-	if !ok {
-		t.Fatalf("secondary %q is not in the catalog", rtx4090.Placements[1].TemplateID)
-	}
-	if secondary.Capability != "openai:audio-transcriptions" {
-		t.Errorf("4090 secondary is %q, want the audio-transcription family 0040 §4.4 allows as a rider",
-			secondary.Capability)
+	// The older classes run one workload and nothing else (0040 §4.4).
+	for _, decision := range decisions {
+		switch decision.GPUClass {
+		case ClassGTX1080, ClassRTX2080, ClassRTX3090:
+			if len(decision.Placements) != 1 {
+				t.Errorf("%s runs %d templates; §4.4 gives this class one",
+					decision.GPUClass, len(decision.Placements))
+			}
+		}
 	}
 }
 
-func assertPlacements(t *testing.T, class string, decision Decision, want []string) {
-	t.Helper()
-	got := placementStrings(decision)
-	if len(got) != len(want) {
-		t.Errorf("%s runs %v, want %v (0040 §4.4)", class, got, want)
-		return
+// Every template that offers itself as a rider has to be placeable as
+// one. A secondary_on naming a class the template's own requirements
+// exclude is a contradiction the catalog can hold quietly.
+func TestShippedRidersCanActuallyRideWhereTheySay(t *testing.T) {
+	dir := filepath.Join("..", "..", "..", "templates")
+	if _, err := os.Stat(dir); err != nil {
+		t.Skip("no repo-root templates/ directory alongside this module")
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("%s placement[%d] = %q, want %q", class, i, got[i], want[i])
+	catalog, err := templates.Load(dir)
+	if err != nil {
+		t.Fatalf("Load(%s) = %v", dir, err)
+	}
+	for _, tmpl := range catalog.All() {
+		for _, class := range tmpl.Stacking.SecondaryOn {
+			if len(tmpl.Requirements.GPUClasses) == 0 {
+				continue // no constraint on that axis
+			}
+			if !containsFold(tmpl.Requirements.GPUClasses, class) {
+				t.Errorf("%s offers to ride on %s but its requirements.gpu_classes exclude it: %v",
+					tmpl.ID, class, tmpl.Requirements.GPUClasses)
+			}
 		}
 	}
 }

@@ -580,7 +580,7 @@ func (s *Store) SyncReplace(revision string, entries []SyncEntry) (revokedHosts 
 			rec.TokenSHA256 = e.TokenSHA256
 			rec.Label = e.Label
 			rec.MemberEthAddress = e.MemberEthAddress
-			rec.ExpiresAt = e.ExpiresAt
+			rec.ExpiresAt = s.syncExpiry(rec, e, now)
 			rec.State = StateActive
 			rec.Rotation = nil
 			rec.SyncRevision = revision
@@ -592,6 +592,38 @@ func (s *Store) SyncReplace(revision string, entries []SyncEntry) (revokedHosts 
 	})
 	sort.Strings(revokedHosts)
 	return revokedHosts, err
+}
+
+// syncExpiry decides how long a synced credential lives.
+//
+// The pool that pushes a credential does not have to say when it
+// expires — nothing in the controller's enrollment model carries a
+// credential lifetime, so the field arrives zero on every ordinary
+// push. Storing that zero verbatim made the credential expire before
+// it was ever used: Authenticate reads `!now.Before(ExpiresAt)`, and
+// every time is on or after the zero time. A member's first attach
+// failed with credential_rejected and nothing in either service looked
+// wrong.
+//
+// So a zero means "the pool is not specifying one" and gets the store's
+// default, exactly as Enroll treats an absent expires_in. A pool that
+// DOES specify one is honoured but still clamped to MaxExpiry: the
+// bound is the store's to enforce, and a push is not a way around it.
+//
+// An existing expiry is left alone when the push carries none, so a
+// routine re-push of an unchanged credential does not silently extend
+// its life.
+func (s *Store) syncExpiry(rec *Record, e SyncEntry, now time.Time) time.Time {
+	if !e.ExpiresAt.IsZero() {
+		if max := now.Add(s.opts.MaxExpiry); e.ExpiresAt.After(max) {
+			return max
+		}
+		return e.ExpiresAt
+	}
+	if !rec.ExpiresAt.IsZero() {
+		return rec.ExpiresAt
+	}
+	return now.Add(s.opts.DefaultExpiry)
 }
 
 // SyncRevision returns the last applied sync revision.

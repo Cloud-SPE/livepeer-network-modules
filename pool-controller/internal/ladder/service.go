@@ -73,7 +73,6 @@ func (s *Service) RunOnce() (Summary, error) {
 	if err != nil {
 		return summary, err
 	}
-	certByAssignment := latestCertification(runs)
 
 	now := s.now()
 	evidence := make(map[string]Evidence, len(assignments))
@@ -102,7 +101,7 @@ func (s *Service) RunOnce() (Summary, error) {
 			state = seeded
 			summary.Seeded++
 		}
-		cert := certByAssignment[assignment.ID]
+		cert := certificationSince(runs, assignment.ID, assignment.ReinstatedAt)
 		evidence[assignment.ID] = Evidence{
 			JobsServed:            state.RecentRoutableOutcomeCount,
 			RoundClosed:           closedRound,
@@ -243,35 +242,32 @@ type certOutcome struct {
 	failures int
 }
 
-// latestCertification summarises each placement's runs: whether the
-// most recent one passed, and how many have failed.
-func latestCertification(runs []types.CertificationRun) map[string]certOutcome {
-	type latest struct {
-		at  time.Time
-		run types.CertificationRun
-	}
-	newest := map[string]latest{}
-	failures := map[string]int{}
+// certificationSince summarises one placement's runs, ignoring anything
+// before an operator lifted its suspension.
+//
+// A reinstated placement has to be judged on what it does next. Counting
+// the failures that got it suspended would re-suspend it immediately and
+// make the operator's gesture a no-op they could watch repeat.
+func certificationSince(runs []types.CertificationRun, assignmentID string, since time.Time) certOutcome {
+	var out certOutcome
+	var newestAt time.Time
 	for _, run := range runs {
-		if run.AssignmentID == "" {
+		if run.AssignmentID != assignmentID {
 			continue
-		}
-		if run.Status == types.CertificationFailed {
-			failures[run.AssignmentID]++
 		}
 		at := run.CompletedAt
 		if at.IsZero() {
 			at = run.StartedAt
 		}
-		if prev, ok := newest[run.AssignmentID]; !ok || at.After(prev.at) {
-			newest[run.AssignmentID] = latest{at: at, run: run}
+		if !since.IsZero() && !at.After(since) {
+			continue
 		}
-	}
-	out := make(map[string]certOutcome, len(newest))
-	for id, item := range newest {
-		out[id] = certOutcome{
-			passed:   item.run.Status == types.CertificationPassed,
-			failures: failures[id],
+		if run.Status == types.CertificationFailed {
+			out.failures++
+		}
+		if at.After(newestAt) {
+			newestAt = at
+			out.passed = run.Status == types.CertificationPassed
 		}
 	}
 	return out

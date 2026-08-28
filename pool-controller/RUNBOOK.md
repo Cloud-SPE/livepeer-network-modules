@@ -370,6 +370,66 @@ Useful admin reads while triaging:
   `pool-payout-executor` RUNBOOK for response playbooks)
 - `GET /admin/v1/payout-rounds?with_alerts=true` — round-level failure pressure
 
+## The exception queue
+
+`GET /admin/v1/exceptions` is what policy deliberately refuses to
+decide. Everything else about onboarding is automatic; these are the
+cases where a judgement about a person is required, and the queue exists
+so they are not discovered by accident.
+
+### A contested GPU
+
+Two ETH addresses claim one `gpu_uuid`. The second claim was REFUSED —
+the incumbent keeps the card — and the refusal is recorded here. That
+asymmetry is deliberate: if a challenger's claim were written, anyone
+could take a member's card contested, and stop them earning, just by
+declaring its uuid.
+
+The two real causes look identical on the wire:
+
+- a member sold or gave away the hardware and never retired the
+  enrolment, so the new owner's agent is reporting a card the pool still
+  has under the old owner;
+- someone is cloning a uuid to farm a second identity.
+
+Only a person can tell them apart, which is why there is no rule.
+
+`POST /admin/v1/gpu-conflicts/{id}/transfer` retires the incumbent's
+unit so the challenger's next attach succeeds. It does not hand the card
+over — it stops refusing. `POST .../reject` records that the claim was
+refused on purpose. Both require a `reason`: either outcome takes a card
+away from someone, and a decision with no recorded cause cannot be
+reviewed later, including by you.
+
+A conflict you rejected that comes back is reopened, because a host
+still trying after a rejection is new information — worth looking at
+before rejecting it again.
+
+### Lifting a suspension
+
+A placement is suspended for invalid output, a fraud signal, or repeated
+certification failure. `POST /admin/v1/template-assignments/{id}/reinstate`
+lifts it.
+
+It goes back to `certification_testing`, not straight to earning. The
+things that get a placement suspended are exactly what certification
+tests, re-proving costs one automated probe, and the ladder promotes it
+from there on its own. Pass `{"to":"probationary_real_traffic"}` when you
+know certification was never the issue — a placement suspended by
+mistake, say.
+
+Reinstating stamps the placement with the moment it happened, and the
+ladder counts certification failures only after it. Without that the
+failures that caused the suspension would re-suspend it on the next
+tick, and your decision would visibly do nothing, once a minute, until
+you noticed. The history is kept rather than reset, so the earlier
+failures are still there when someone asks whether the reinstate was
+wise.
+
+If the placement's MEMBER is suspended, reinstate the member first: the
+route refuses, because returning work to someone the pool has stopped
+dealing with is not something one gesture should do by implication.
+
 ## Graduating to automatic payouts
 
 Money leaving the pool is the one action nobody can undo, so approval

@@ -213,6 +213,74 @@ func (r *StateRepo) DeleteTemplateOverride(templateID string) error {
 	return deleteKey(r, templateOverridesBucket, templateID)
 }
 
+// Contested GPUs. The claim was refused; this is the record of it.
+//
+// RecordHardwareClaimConflict upserts on (gpu, challenger): a host that
+// keeps re-attempting is one dispute seen repeatedly, not a queue of
+// disputes, and an operator looking at the queue needs to see the
+// former.
+func (r *StateRepo) RecordHardwareClaimConflict(conflict types.HardwareClaimConflict) (types.HardwareClaimConflict, error) {
+	if strings.TrimSpace(conflict.GPUUUID) == "" || strings.TrimSpace(conflict.ChallengerEthAddress) == "" {
+		return types.HardwareClaimConflict{}, fmt.Errorf("gpu_uuid and challenger_eth_address are required")
+	}
+	conflict.GPUUUID = strings.TrimSpace(conflict.GPUUUID)
+	conflict.ChallengerEthAddress = strings.ToLower(strings.TrimSpace(conflict.ChallengerEthAddress))
+	conflict.IncumbentEthAddress = strings.ToLower(strings.TrimSpace(conflict.IncumbentEthAddress))
+	conflict.ID = HardwareClaimConflictID(conflict.GPUUUID, conflict.ChallengerEthAddress)
+
+	now := conflict.LastSeenAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+		conflict.LastSeenAt = now
+	}
+	if existing, err := r.GetHardwareClaimConflict(conflict.ID); err == nil {
+		// A resolved dispute that recurs is reopened: the operator's
+		// decision was about the claim they saw, and a host still
+		// trying after a rejection is new information.
+		conflict.FirstSeenAt = existing.FirstSeenAt
+		conflict.Attempts = existing.Attempts + 1
+		if !existing.Open() && existing.Resolution == types.ConflictRejected {
+			conflict.Resolution = types.ConflictOpen
+			conflict.Reason = "re-claimed after rejection"
+		} else if !existing.Open() {
+			conflict.Resolution = existing.Resolution
+			conflict.ResolvedBy = existing.ResolvedBy
+			conflict.ResolvedAt = existing.ResolvedAt
+			conflict.Reason = existing.Reason
+		}
+	} else {
+		conflict.FirstSeenAt = now
+		conflict.Attempts = 1
+	}
+	if conflict.Resolution == "" {
+		conflict.Resolution = types.ConflictOpen
+	}
+	if err := putJSON(r, hardwareConflictsBucket, conflict.ID, conflict); err != nil {
+		return types.HardwareClaimConflict{}, err
+	}
+	return conflict, nil
+}
+
+func HardwareClaimConflictID(gpuUUID, challenger string) string {
+	return strings.TrimSpace(gpuUUID) + "|" + strings.ToLower(strings.TrimSpace(challenger))
+}
+
+func (r *StateRepo) GetHardwareClaimConflict(id string) (types.HardwareClaimConflict, error) {
+	var out types.HardwareClaimConflict
+	err := getJSON(r, hardwareConflictsBucket, id, &out)
+	return out, err
+}
+
+func (r *StateRepo) ListHardwareClaimConflicts() ([]types.HardwareClaimConflict, error) {
+	return listJSON(r, hardwareConflictsBucket, func(left, right types.HardwareClaimConflict) bool {
+		return left.ID < right.ID
+	})
+}
+
+func (r *StateRepo) PutHardwareClaimConflict(conflict types.HardwareClaimConflict) error {
+	return putJSON(r, hardwareConflictsBucket, conflict.ID, conflict)
+}
+
 // Member opt-outs. Only the member writes these, and only ever to
 // decline: there is no opt-in, so an absent record means "the pool's
 // policy applies", not "the member has not chosen yet".

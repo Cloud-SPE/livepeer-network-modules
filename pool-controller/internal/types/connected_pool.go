@@ -156,8 +156,18 @@ type TemplateAssignment struct {
 	DrainingSince       time.Time               `json:"draining_since,omitempty"`
 	UpdateRequiredAt    time.Time               `json:"update_required_at,omitempty"`
 	LastCertifiedAt     time.Time               `json:"last_certified_at,omitempty"`
-	CreatedAt           time.Time               `json:"created_at"`
-	UpdatedAt           time.Time               `json:"updated_at"`
+	// ReinstatedAt is when an operator last lifted a suspension.
+	//
+	// The ladder counts certification failures only after it. Without
+	// that boundary a placement suspended for two failed runs would be
+	// re-suspended by the same historical count on the very next tick,
+	// and the operator's decision would visibly do nothing, once a
+	// minute, forever. Keeping the boundary rather than resetting the
+	// counters leaves the history intact for whoever reviews whether
+	// the reinstate was wise.
+	ReinstatedAt time.Time `json:"reinstated_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type CertificationRun struct {

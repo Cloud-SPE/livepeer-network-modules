@@ -241,3 +241,244 @@ func TestStateRepoHardwareUnitRejectsDuplicateGPUAcrossMembers(t *testing.T) {
 		t.Fatalf("duplicate error = %v", err)
 	}
 }
+
+// Contested GPUs. A contested card is a REFUSED claim, not a duplicate
+// row: the uniqueness guard above is what makes it so, deliberately,
+// because otherwise anyone could take a member's card contested — and
+// stop it earning — just by declaring its uuid. So the tests below are
+// about the record of the refusal, and mostly about it staying ONE
+// record however hard the challenger's agent tries.
+
+// openConflictRepo is a repo plus one recorded dispute over GPU-same:
+// 0xbbb claiming a card 0xaaa holds.
+func openConflictRepo(t *testing.T, at time.Time) (*StateRepo, types.HardwareClaimConflict) {
+	t.Helper()
+	stateRepo, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = stateRepo.Close() })
+	conflict, err := stateRepo.RecordHardwareClaimConflict(types.HardwareClaimConflict{
+		GPUUUID:              "GPU-same",
+		ChallengerEthAddress: "0xbbb",
+		ChallengerHostID:     "host-2",
+		IncumbentEthAddress:  "0xaaa",
+		LastSeenAt:           at,
+	})
+	if err != nil {
+		t.Fatalf("RecordHardwareClaimConflict() error = %v", err)
+	}
+	return stateRepo, conflict
+}
+
+// A host whose agent re-attaches every thirty seconds is one dispute
+// seen repeatedly, not a dispute a second. If each attempt appended a
+// row, a single misconfigured host would bury every other exception an
+// operator has to look at within an hour.
+func TestRecordHardwareClaimConflictUpsertsOnGPUAndChallenger(t *testing.T) {
+	first := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	stateRepo, conflict := openConflictRepo(t, first)
+	if conflict.Attempts != 1 {
+		t.Fatalf("attempts = %d on the first sighting, want 1", conflict.Attempts)
+	}
+	if !conflict.FirstSeenAt.Equal(first) || !conflict.LastSeenAt.Equal(first) {
+		t.Fatalf("first_seen = %s last_seen = %s, want both %s",
+			conflict.FirstSeenAt, conflict.LastSeenAt, first)
+	}
+
+	later := first.Add(30 * time.Second)
+	again, err := stateRepo.RecordHardwareClaimConflict(types.HardwareClaimConflict{
+		GPUUUID:              "GPU-same",
+		ChallengerEthAddress: "0xbbb",
+		ChallengerHostID:     "host-2",
+		IncumbentEthAddress:  "0xaaa",
+		LastSeenAt:           later,
+	})
+	if err != nil {
+		t.Fatalf("RecordHardwareClaimConflict(again) error = %v", err)
+	}
+	if again.ID != conflict.ID {
+		t.Fatalf("id = %q on the second sighting, want the same record %q", again.ID, conflict.ID)
+	}
+	if again.Attempts != 2 {
+		t.Fatalf("attempts = %d, want 2: the count is how an operator tells a single "+
+			"mistaken enrolment from a host retrying for a week", again.Attempts)
+	}
+	// FirstSeenAt is the age of the dispute. Overwriting it would make
+	// a week-old dispute look thirty seconds old at every retry.
+	if !again.FirstSeenAt.Equal(first) {
+		t.Fatalf("first_seen = %s, want it preserved at %s", again.FirstSeenAt, first)
+	}
+	if !again.LastSeenAt.Equal(later) {
+		t.Fatalf("last_seen = %s, want it advanced to %s", again.LastSeenAt, later)
+	}
+
+	all, err := stateRepo.ListHardwareClaimConflicts()
+	if err != nil {
+		t.Fatalf("ListHardwareClaimConflicts() error = %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("conflicts = %+v, want exactly one record for one dispute", all)
+	}
+}
+
+// Case and whitespace are not a distinction between claimants: the
+// agent's spelling of an address or a uuid must not be able to split
+// one dispute into two queue entries, which would be a way to hide a
+// dispute in plain sight.
+func TestRecordHardwareClaimConflictNormalisesAddressesAndUUID(t *testing.T) {
+	at := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	stateRepo, first := openConflictRepo(t, at)
+
+	messy, err := stateRepo.RecordHardwareClaimConflict(types.HardwareClaimConflict{
+		GPUUUID:              "  GPU-same ",
+		ChallengerEthAddress: " 0xBBB ",
+		IncumbentEthAddress:  " 0xAAA ",
+		LastSeenAt:           at.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("RecordHardwareClaimConflict(messy) error = %v", err)
+	}
+	if messy.ID != first.ID {
+		t.Fatalf("id = %q, want the same dispute %q", messy.ID, first.ID)
+	}
+	if messy.Attempts != 2 {
+		t.Fatalf("attempts = %d, want 2 — the messy spelling is the same dispute", messy.Attempts)
+	}
+	if messy.GPUUUID != "GPU-same" {
+		t.Fatalf("gpu_uuid = %q, want it trimmed", messy.GPUUUID)
+	}
+	if messy.ChallengerEthAddress != "0xbbb" || messy.IncumbentEthAddress != "0xaaa" {
+		t.Fatalf("challenger = %q incumbent = %q, want both lowercased",
+			messy.ChallengerEthAddress, messy.IncumbentEthAddress)
+	}
+	if messy.ID != HardwareClaimConflictID(" GPU-same ", "0xBBB") {
+		t.Fatalf("id = %q, want HardwareClaimConflictID to agree on the same normalisation", messy.ID)
+	}
+	all, _ := stateRepo.ListHardwareClaimConflicts()
+	if len(all) != 1 {
+		t.Fatalf("conflicts = %+v, want one", all)
+	}
+}
+
+// A different challenger on the same card is a genuinely different
+// dispute: the operator has to decide about each claimant separately.
+func TestRecordHardwareClaimConflictSeparatesDifferentChallengers(t *testing.T) {
+	at := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	stateRepo, _ := openConflictRepo(t, at)
+	if _, err := stateRepo.RecordHardwareClaimConflict(types.HardwareClaimConflict{
+		GPUUUID:              "GPU-same",
+		ChallengerEthAddress: "0xccc",
+		IncumbentEthAddress:  "0xaaa",
+		LastSeenAt:           at,
+	}); err != nil {
+		t.Fatalf("RecordHardwareClaimConflict(other challenger) error = %v", err)
+	}
+	all, _ := stateRepo.ListHardwareClaimConflicts()
+	if len(all) != 2 {
+		t.Fatalf("conflicts = %+v, want one per challenger", all)
+	}
+}
+
+// A rejection was a decision about the claim the operator saw. A host
+// still trying afterwards is new information — possibly a member who
+// really did buy the card and is now stuck — so the dispute comes back
+// to the queue rather than being silently swallowed forever.
+func TestRejectedConflictReopensWhenTheChallengerKeepsTrying(t *testing.T) {
+	at := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	stateRepo, conflict := openConflictRepo(t, at)
+
+	conflict.Resolution = types.ConflictRejected
+	conflict.ResolvedBy = "ops@pool"
+	conflict.ResolvedAt = at.Add(time.Hour)
+	conflict.Reason = "uuid looks cloned"
+	if err := stateRepo.PutHardwareClaimConflict(conflict); err != nil {
+		t.Fatalf("PutHardwareClaimConflict() error = %v", err)
+	}
+
+	reopened, err := stateRepo.RecordHardwareClaimConflict(types.HardwareClaimConflict{
+		GPUUUID:              "GPU-same",
+		ChallengerEthAddress: "0xbbb",
+		IncumbentEthAddress:  "0xaaa",
+		LastSeenAt:           at.Add(2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("RecordHardwareClaimConflict(after rejection) error = %v", err)
+	}
+	if !reopened.Open() {
+		t.Fatalf("resolution = %q after a re-claim, want it back on the queue: a host still "+
+			"trying after a rejection is something a person should see", reopened.Resolution)
+	}
+	if reopened.Reason == "" || !strings.Contains(reopened.Reason, "rejection") {
+		t.Fatalf("reason = %q, want it to say the dispute came back after a rejection", reopened.Reason)
+	}
+	if reopened.Attempts != 2 {
+		t.Fatalf("attempts = %d, want the count carried across the reopen", reopened.Attempts)
+	}
+	if !reopened.FirstSeenAt.Equal(at) {
+		t.Fatalf("first_seen = %s, want the original %s: reopening is not a new dispute",
+			reopened.FirstSeenAt, at)
+	}
+}
+
+// A transfer is settled. The incumbent's unit was retired, so the
+// challenger's next attach is expected — reopening on it would hand the
+// operator back a decision they already made, every thirty seconds.
+func TestTransferredConflictDoesNotReopen(t *testing.T) {
+	at := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	stateRepo, conflict := openConflictRepo(t, at)
+
+	conflict.Resolution = types.ConflictTransferred
+	conflict.ResolvedBy = "ops@pool"
+	conflict.ResolvedAt = at.Add(time.Hour)
+	conflict.Reason = "member sold the card"
+	if err := stateRepo.PutHardwareClaimConflict(conflict); err != nil {
+		t.Fatalf("PutHardwareClaimConflict() error = %v", err)
+	}
+
+	after, err := stateRepo.RecordHardwareClaimConflict(types.HardwareClaimConflict{
+		GPUUUID:              "GPU-same",
+		ChallengerEthAddress: "0xbbb",
+		IncumbentEthAddress:  "0xaaa",
+		LastSeenAt:           at.Add(2 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("RecordHardwareClaimConflict(after transfer) error = %v", err)
+	}
+	if after.Open() {
+		t.Fatalf("resolution = %q, want it to stay transferred: the operator already decided "+
+			"this one and the challenger attaching again is the expected outcome", after.Resolution)
+	}
+	if after.Resolution != types.ConflictTransferred {
+		t.Fatalf("resolution = %q, want transferred", after.Resolution)
+	}
+	// The decision itself survives: who made it and why is what makes a
+	// later dispute over the same card reviewable.
+	if after.ResolvedBy != "ops@pool" || after.Reason != "member sold the card" {
+		t.Fatalf("resolved_by = %q reason = %q, want the original decision preserved",
+			after.ResolvedBy, after.Reason)
+	}
+}
+
+// A record with no gpu or no challenger names no dispute, so it cannot
+// be one — and would collide with every other malformed write on the
+// same derived id.
+func TestRecordHardwareClaimConflictRequiresBothSides(t *testing.T) {
+	stateRepo, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() { _ = stateRepo.Close() })
+	for _, conflict := range []types.HardwareClaimConflict{
+		{ChallengerEthAddress: "0xbbb", IncumbentEthAddress: "0xaaa"},
+		{GPUUUID: "GPU-same", IncumbentEthAddress: "0xaaa"},
+		{GPUUUID: "   ", ChallengerEthAddress: "   "},
+	} {
+		if _, err := stateRepo.RecordHardwareClaimConflict(conflict); err == nil {
+			t.Fatalf("RecordHardwareClaimConflict(%+v) succeeded, want an error", conflict)
+		}
+	}
+	if all, _ := stateRepo.ListHardwareClaimConflicts(); len(all) != 0 {
+		t.Fatalf("conflicts = %+v, want nothing written by a refused record", all)
+	}
+}

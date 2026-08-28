@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ladder"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokeradmin"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerpush"
@@ -54,6 +55,9 @@ type Deps struct {
 	Stances map[string]int
 	// Ladder moves placements between trust states.
 	Ladder LadderRunner
+	// LadderPolicy is the pool's ladder configuration, for the shares
+	// an operator gesture has to reproduce.
+	LadderPolicy func() ladder.Policy
 	// PayoutPolicyPath and PayoutPausePath are payout-policy.json and
 	// its kill switch. Empty means no automatic approval, which is the
 	// state every pool starts in.

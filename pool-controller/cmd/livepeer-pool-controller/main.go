@@ -3274,6 +3274,11 @@ func ladderService(state *runtimeState, cfg *config.Config) *ladder.Service {
 	if state == nil || state.repo == nil {
 		return nil
 	}
+	return ladder.New(state.repo, state.catalog, ladderPolicy(cfg))
+}
+
+// ladderPolicy reads the pool's ladder configuration.
+func ladderPolicy(cfg *config.Config) ladder.Policy {
 	policy := ladder.Policy{}
 	if cfg != nil {
 		policy = ladder.Policy{
@@ -3286,7 +3291,7 @@ func ladderService(state *runtimeState, cfg *config.Config) *ladder.Service {
 			ActiveShareCapPPM:      cfg.Ladder.ActiveShareCapPPM,
 		}
 	}
-	return ladder.New(state.repo, state.catalog, policy)
+	return policy
 }
 
 // runLadderLoop advances placements on a timer.
@@ -3374,6 +3379,21 @@ func runHardwareRelayLoop(ctx context.Context, state *runtimeState, cfg *config.
 			if err != nil {
 				_, _ = fmt.Fprintf(stderr, "hardware relay from %s failed: %v\n", target.Name, err)
 				continue
+			}
+			// Conflicts were computed and thrown away, so a contested
+			// GPU was visible only in a log line nobody reads. They are
+			// the operator's queue, so they have to be durable.
+			now := time.Now().UTC()
+			for _, conflict := range result.Conflicts {
+				if _, err := state.repo.RecordHardwareClaimConflict(types.HardwareClaimConflict{
+					GPUUUID:              conflict.GPUUUID,
+					ChallengerEthAddress: conflict.ClaimedBy,
+					ChallengerHostID:     conflict.HostID,
+					IncumbentEthAddress:  conflict.AlreadyHeld,
+					LastSeenAt:           now,
+				}); err != nil {
+					_, _ = fmt.Fprintf(stderr, "record gpu conflict %s: %v\n", conflict.GPUUUID, err)
+				}
 			}
 			if result.Upserted > 0 || len(result.Conflicts) > 0 {
 				_, _ = fmt.Fprintf(stderr, "hardware relay from %s: upserted=%d conflicts=%d\n",

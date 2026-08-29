@@ -13,7 +13,6 @@ admin_auth:
 listen:
   paid: ":8080"
   metrics: ":9090"
-  worker_quic: ":8443"
 
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock

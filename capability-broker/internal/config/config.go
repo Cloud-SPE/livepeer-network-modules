@@ -6,6 +6,7 @@ package config
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -114,9 +115,30 @@ type Identity struct {
 
 // Listen declares the broker's bind addresses. If omitted, defaults are used.
 type Listen struct {
-	Paid       string `yaml:"paid,omitempty"`        // default ":8080"
-	Metrics    string `yaml:"metrics,omitempty"`     // default ":9090"
-	WorkerQUIC string `yaml:"worker_quic,omitempty"` // optional UDP listener for connected workers
+	Paid    string `yaml:"paid,omitempty"`    // default ":8080"
+	Metrics string `yaml:"metrics,omitempty"` // default ":9090"
+	// AttachQUIC is the optional UDP listener a member's agent may
+	// attach over instead of WebSocket.
+	//
+	// It was spelled `worker_quic` while the same listener also carried
+	// the legacy worker tunnel. That tunnel is gone and the name was
+	// left describing something the broker no longer does, but the key
+	// is in every deployed config and in the bundles this broker has
+	// already minted — so the old spelling is still accepted, with a
+	// warning, rather than turning an upgrade into a broker that
+	// silently stops listening for attaches.
+	AttachQUIC string `yaml:"attach_quic,omitempty"`
+	// WorkerQUIC is the deprecated spelling of AttachQUIC. Read it
+	// through Listen.QUICAddr, never directly.
+	WorkerQUIC string `yaml:"worker_quic,omitempty"`
+}
+
+// QUICAddr is the attach listener address, whichever key set it.
+func (l Listen) QUICAddr() string {
+	if addr := strings.TrimSpace(l.AttachQUIC); addr != "" {
+		return addr
+	}
+	return strings.TrimSpace(l.WorkerQUIC)
 }
 
 // PaymentDaemon describes how to reach the co-located payment-daemon. v0.1
@@ -313,4 +335,22 @@ type Backend struct {
 	TemplateID       string     `yaml:"template_id,omitempty"`
 	MaxInFlight      int        `yaml:"max_in_flight,omitempty"`
 	QueueLimit       int        `yaml:"queue_limit,omitempty"`
+}
+
+// Deprecations lists config a future release will stop accepting.
+//
+// Warned rather than rejected: an operator who upgrades should find out
+// from a log line at the next restart, not from a broker that refuses
+// to start on a config that worked yesterday.
+func (c *Config) Deprecations() []string {
+	var out []string
+	if strings.TrimSpace(c.Listen.WorkerQUIC) != "" {
+		msg := "listen.worker_quic is deprecated; rename it to listen.attach_quic — " +
+			"the listener now serves runner attaches only, the worker tunnel it was named for is gone"
+		if strings.TrimSpace(c.Listen.AttachQUIC) != "" {
+			msg += " (listen.attach_quic is set and wins; worker_quic is being ignored)"
+		}
+		out = append(out, msg)
+	}
+	return out
 }

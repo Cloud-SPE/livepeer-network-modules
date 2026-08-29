@@ -163,7 +163,7 @@ the single-address deployment and stays supported.
 | `placement.max_templates_per_class` | How many templates a GPU class runs at once. Omit for the built-in stances. |
 | `ladder` | The trust policy (see above). Omit for the 0040 §8.3 defaults. |
 | `payouts` | `policy_path`, `pause_path`, `auto_close_windows`, `scale_tolerance`. All empty means approval stays entirely human, which is where a pool starts. |
-| `listen` | `paid`, `member`, `metrics`, `worker_quic`. |
+| `listen` | `paid`, `member`, `metrics`. |
 | `admin_auth` | `bearer_token_ref` in production; literal `bearer_token` is for local testing. |
 | `scoring` | Cooldown, EMA, latency target, warm-up, summary list limits. |
 | `bootstrap` | The broker fleet to push to, and the public URLs written into member bundles. |

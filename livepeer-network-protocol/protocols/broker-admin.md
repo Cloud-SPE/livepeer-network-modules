@@ -1,8 +1,8 @@
 ---
 spec_name: broker-admin
-version: 1.0.1-draft
+version: 1.1.0-draft
 status: draft
-last_updated: 2026-08-26
+last_updated: 2026-08-29
 ---
 
 # Broker admin API contract
@@ -40,10 +40,11 @@ RFC 2119. Companion specs: [`runner-attach.md`](./runner-attach.md)
 - **Path prefix** `/admin/v1/`. Rides the paid listener but MUST be
   disabled unless `admin_auth.method: bearer` is configured, and SHOULD be
   fenced by network policy (broker operator runbook §1.1). The pre-existing
-  routes `GET /admin/v1/runtime`, `POST /admin/v1/runtime/reload`,
-  `GET /admin/v1/worker-sessions`, `POST /admin/v1/worker-sessions/{id}/kill`
-  keep their shape; `worker-sessions` is superseded by §3 and removed with
-  plan 0043 item 11.
+  routes `GET /admin/v1/runtime` and `POST /admin/v1/runtime/reload` keep
+  their shape. `GET /admin/v1/worker-sessions` and
+  `POST /admin/v1/worker-sessions/{id}/kill` were superseded by §3 and are
+  now deleted: a host is disconnected by revoking its credential (§5), and
+  listed by §3, not by the backend ids the removed tunnel was keyed on.
 - **Auth:** `Authorization: Bearer <token>`. One token per broker. The
   coordinator holds it as `coordinator-config.brokers[].admin_token_ref`;
   the pool controller holds its own. A missing or wrong token is `401`
@@ -520,5 +521,6 @@ frontmatter tracks the document.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.0-draft | 2026-08-29 | Delete `GET /admin/v1/worker-sessions` and `POST /admin/v1/worker-sessions/{id}/kill`. 1.0.0-draft already recorded them as superseded by §3; they are now gone from the broker. The tunnel they managed was keyed on the backend ids of `worker://` backends, which the `capabilities[]` grammar produced and which no longer exists — so the kill route had nothing to key on and reported kills it never performed. A host is disconnected by revoking its credential (§5) or via `POST /admin/v1/runners/{host_id}/disconnect` (§3), and listed by §3. Removal, not additive: a caller of either route now gets 404. |
 | 1.0.1-draft | 2026-08-26 | Add `POST /admin/v1/offers/{id}/confirm-published` — the coordinator's report that the signed manifest now carries the accepted shape, which resolves `superseding → frozen`. Until it lands the broker keeps dispatching the previously published shape. Additive. |
 | 1.0.0-draft | 2026-08-26 | Initial contract (plan 0043 §3.6, §3.7, item 2). Runners (list/get/disconnect), offers (list/get, full-replacement `PUT`, `accept-shape`, disable/enable), enrollment and credentials (`enroll`, list, rotate, revoke, hash-only `PUT` sync), certification (results, per-pair history, `run`), the `spec_version` stamp and frozen-only rule on `/registry/offerings`, error codes, and conformance fixtures. Supersedes `GET/POST /admin/v1/worker-sessions*`. |

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 )
 
@@ -135,25 +133,21 @@ func TestRuntimeStatusAndReload(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	if err := srv.workerRegistry.Register("worker-backend-a", runtimeAdminStubForwarder{}); err != nil {
-		t.Fatalf("worker registry Register() error = %v", err)
-	}
-	req = httptest.NewRequest(http.MethodGet, "/admin/v1/worker-sessions", nil)
-	req.Header.Set("Authorization", "Bearer secret-token")
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	body, _ = io.ReadAll(rec.Result().Body)
-	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"worker-backend-a"`) {
-		t.Fatalf("GET /admin/v1/worker-sessions status=%d body=%s", rec.Code, string(body))
-	}
-
-	req = httptest.NewRequest(http.MethodPost, "/admin/v1/worker-sessions/worker-backend-a/kill", nil)
-	req.Header.Set("Authorization", "Bearer secret-token")
-	rec = httptest.NewRecorder()
-	srv.mux.ServeHTTP(rec, req)
-	body, _ = io.ReadAll(rec.Result().Body)
-	if rec.Code != http.StatusOK || !strings.Contains(string(body), `"status":"killed"`) {
-		t.Fatalf("POST /admin/v1/worker-sessions/{id}/kill status=%d body=%s", rec.Code, string(body))
+	// The worker-session admin surface is gone with the tunnel it
+	// managed. It has to be gone from the mux too: a route that still
+	// answers 200 is one a controller keeps calling, and this one
+	// reported kills that never happened.
+	for _, path := range []string{
+		"/admin/v1/worker-sessions",
+		"/admin/v1/worker-sessions/worker-backend-a/kill",
+	} {
+		req = httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		rec = httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s status=%d, want 404 — the worker tunnel is deleted", path, rec.Code)
+		}
 	}
 }
 
@@ -178,12 +172,6 @@ func attachRuntimeAdminRunner(t *testing.T, srv *Server, ts *httptest.Server) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("the attached runner never became eligible")
-}
-
-type runtimeAdminStubForwarder struct{}
-
-func (runtimeAdminStubForwarder) Forward(context.Context, backend.ForwardRequest) (*http.Response, error) {
-	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok"))}, nil
 }
 
 func TestRuntimeAdminRequiresAuth(t *testing.T) {

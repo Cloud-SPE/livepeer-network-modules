@@ -108,19 +108,29 @@ func (s *Server) handleAttachWS(w http.ResponseWriter, r *http.Request) {
 	connID := "ws-" + strconv.FormatUint(atomic.AddUint64(&attachConnSeq, 1), 10)
 	hostID := ""
 	rejections := 0
+	// Register before acknowledging. `accepted` is the broker telling a
+	// runner it is attached, so it has to be true by the time the frame
+	// goes out: between the old send-then-attach order the host was
+	// absent from /admin/v1/runners and invisible to ConnFor, so a
+	// dispatch in that window found no runner to send to.
 	handle := func(msg workerconn.TunnelMessage) bool {
 		doc, res, enr := s.evaluateAttach(msg.Body)
-		_ = fwd.SendMessage(resultFrame(msg.ID, res))
-		if doc == nil {
-			rejections++
-			return false
+		accepted := doc != nil && (hostID == "" || hostID == doc.HostID)
+		if accepted {
+			hostID = doc.HostID
+			s.runners.Attach(connID, fwd, enr, doc, res)
 		}
-		if hostID != "" && hostID != doc.HostID {
+		_ = fwd.SendMessage(resultFrame(msg.ID, res))
+		if !accepted {
+			if doc == nil {
+				rejections++
+			}
 			// A connection serves exactly one host (§2).
 			return false
 		}
-		hostID = doc.HostID
-		s.runners.Attach(connID, fwd, enr, doc, res)
+		// After the acknowledgement: matching can dispatch to this
+		// runner, and it should not arrive before the runner has been
+		// told it is attached.
 		s.onRunnerAttached()
 		return true
 	}
@@ -154,15 +164,20 @@ func (s *Server) handleAttachQUIC(ctx context.Context, conn *quic.Conn, first wo
 	fwd := workerconn.NewQUICSessionForwarder(conn)
 	connID := "quic-" + strconv.FormatUint(atomic.AddUint64(&attachConnSeq, 1), 10)
 	hostID := ""
+	// Same order as the WebSocket path, for the same reason: the
+	// acknowledgement must not outrun the registration it reports.
 	reply := func(st *quic.Stream, msg workerconn.TunnelMessage) bool {
 		doc, res, enr := s.evaluateAttach(msg.Body)
+		accepted := doc != nil && (hostID == "" || hostID == doc.HostID)
+		if accepted {
+			hostID = doc.HostID
+			s.runners.Attach(connID, fwd, enr, doc, res)
+		}
 		_ = json.NewEncoder(st).Encode(resultFrame(msg.ID, res))
 		_ = st.Close()
-		if doc == nil || (hostID != "" && hostID != doc.HostID) {
+		if !accepted {
 			return false
 		}
-		hostID = doc.HostID
-		s.runners.Attach(connID, fwd, enr, doc, res)
 		s.onRunnerAttached()
 		return true
 	}

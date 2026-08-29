@@ -6,7 +6,7 @@ import (
 )
 
 // registerRoutes wires the broker's unpaid surfaces: registry, health,
-// admin, ticket-params, and worker-session endpoints.
+// admin, ticket-params, and runner attach endpoints.
 //
 // The paid dispatch surface (POST/GET /v1/cap and friends) was removed
 // with the v0 interaction-mode taxonomy. The paid routes now belong to
@@ -34,9 +34,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /v1/payment/ticket-params", ticketParamsHandler(s.payment))
 	s.mux.HandleFunc("GET /admin/v1/runtime", s.handleRuntimeStatus)
 	s.mux.HandleFunc("POST /admin/v1/runtime/reload", s.handleRuntimeReload)
-	s.mux.HandleFunc("GET /admin/v1/worker-sessions", s.handleWorkerSessions)
-	s.mux.HandleFunc("POST /admin/v1/worker-sessions/{backend_id}/kill", s.handleWorkerSessionKill)
-	s.mux.HandleFunc("GET /internal/v1/worker/session", s.handleWorkerSession)
+	// The runner attach endpoint. The path keeps its old spelling on
+	// purpose: it is in every bundle this broker has minted and in
+	// every agent already running, and renaming a wire path to match a
+	// deleted feature's departure would strand them all.
+	s.mux.HandleFunc("GET /internal/v1/worker/session", s.handleAttachWS)
 	// Usage callback for a session under certification (certification-steps §3.3).
 	s.mux.HandleFunc("POST "+certification.TapPathPrefix+"{tap_id}", s.handleCertificationUsage)
 	// Offers (broker-admin §4).

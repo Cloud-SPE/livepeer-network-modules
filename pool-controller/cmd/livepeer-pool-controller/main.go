@@ -609,14 +609,6 @@ func registerAdminSurface(mux *http.ServeMux, state *runtimeState) {
 				Latest:  summarizeSnapshot(latest),
 			})
 		},
-		KillWorkerSession: func(backendID string) error {
-			cfg, _, _ := state.Snapshot()
-			if cfg == nil || strings.TrimSpace(cfg.Bootstrap.BrokerAdminURL) == "" {
-				return nil
-			}
-			client := brokeradmin.New(cfg.Bootstrap.BrokerAdminURL, cfg.Bootstrap.BrokerAdminAuth, time.Duration(cfg.Bootstrap.BrokerAdminTimeoutMS)*time.Millisecond)
-			return client.KillWorkerSession(backendID)
-		},
 	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -118,19 +118,22 @@ slice also lets Pool snapshot state affect multi-backend selection:
 Pool members never expose a public URL. A member's host attaches outbound and
 the broker reaches it back down that same connection, through either:
 
-- `listen.worker_quic` over QUIC, preferred for multiplexed streaming and large
+- `listen.attach_quic` over QUIC, preferred for multiplexed streaming and large
   multipart bodies; or
 - `GET /internal/v1/worker/session` over WebSocket as the egress-friendly
   fallback.
 
+The WebSocket path keeps its old spelling because it is in every bundle
+the broker has minted and every agent already running; renaming it would
+strand them.
+
 Attach is authenticated with a credential from the credential store below.
 The per-backend `worker_session_credential` config string died with the
-`capabilities[]` grammar that declared it.
-
-The runtime admin surface also exposes connected-worker operations:
-
-- `GET /admin/v1/worker-sessions`
-- `POST /admin/v1/worker-sessions/{backend_id}/kill`
+`capabilities[]` grammar that declared it, and the connected-worker tunnel
+it reached — `worker://` backends, the `backend_ids` register, and the
+`GET`/`POST /admin/v1/worker-sessions*` routes — is deleted. `listen.attach_quic`
+was spelled `listen.worker_quic` while that listener carried both; the old
+key is still read, with a deprecation warning.
 
 ### Credential store (plan 0043)
 
@@ -152,9 +155,9 @@ the admin token.
 
 ### Runner attach (plan 0043)
 
-A runner attaches by opening the worker tunnel — `GET
-/internal/v1/worker/session` (WebSocket, **without** `backend_ids`) or the
-`listen.worker_quic` listener — and sending, first, a `register` frame whose
+A runner attaches by opening the attach tunnel — `GET
+/internal/v1/worker/session` (WebSocket) or the `listen.attach_quic`
+listener — and sending, first, a `register` frame whose
 `body` is an attach document
 ([`runner-attach.md`](../livepeer-network-protocol/protocols/runner-attach.md)).
 The broker answers with a `register_result` frame: the document is

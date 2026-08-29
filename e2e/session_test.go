@@ -45,9 +45,9 @@ func TestSessionRunnerCertifiesThroughItsUsageCallback(t *testing.T) {
 		t.Fatalf("reload: %d %s", status, raw)
 	}
 
-	runner := attach(t, p.brokerURL, sessionDocument(h.ID, h.AttachCredential, "e2e-stream", e2eSessionGPU))
+	runner := attach(t, p.brokerURL,
+		sessionDocument(h.ID, h.AttachCredential, "e2e-stream", e2eSessionGPU), modeSession)
 	runner.requireAccepted()
-	runner.serveSessions()
 
 	// The broker certifies on match. A session recipe opens a session,
 	// holds it, terminates, and then reads what the runner reported —
@@ -161,9 +161,9 @@ func TestSessionRunnerThatCannotBeBilledIsRefused(t *testing.T) {
 
 	// Same runner, one difference: it opens and terminates sessions
 	// correctly but never reports what they used.
-	runner := attach(t, p.brokerURL, sessionDocument(h.ID, h.AttachCredential, "e2e-stream", e2eSessionGPU))
+	runner := attach(t, p.brokerURL,
+		sessionDocument(h.ID, h.AttachCredential, "e2e-stream", e2eSessionGPU), modeSilentSession)
 	runner.requireAccepted()
-	runner.serveSilentSessions()
 
 	eventually(t, "the certification run to finish", 60*time.Second, func() error {
 		_, raw := p.broker(http.MethodGet, "/admin/v1/certification", "")

@@ -30,7 +30,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
 )
 
 // Options aggregates non-host-config knobs the server takes at
@@ -83,7 +82,6 @@ type Server struct {
 	payment              payment.Client
 	extractors           *extractors.Registry
 	backend              backend.Forwarder
-	workerRegistry       *workerconn.Registry
 	backendInFlight      map[string]int
 	secrets              backend.SecretResolver
 	receiptSink          receipts.Client
@@ -184,7 +182,6 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			"and a clearinghouse will refuse them for anything financially material")
 	}
 
-	workerRegistry := workerconn.NewRegistry()
 	runnerRegistry := runners.New(0)
 
 	var credStore *credentialstore.Store
@@ -224,11 +221,9 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		payment:          paymentClient,
 		settlementSigner: settlementSigner,
 		extractors:       defaultExtractors(),
-		// runner:// (attached runners) → worker:// (legacy connected
-		// workers) → plain HTTP. Each layer claims its own scheme and
-		// delegates the rest.
-		backend:         workerconn.NewForwarder(runnerForwarder{next: backend.NewHTTPClient(), registry: runnerRegistry}, workerRegistry),
-		workerRegistry:  workerRegistry,
+		// runner:// (attached runners) → plain HTTP. The runner layer
+		// claims its own scheme and delegates the rest.
+		backend:         runnerForwarder{next: backend.NewHTTPClient(), registry: runnerRegistry},
 		credentialStore: credStore,
 		runners:         runnerRegistry,
 		attachedHosts:   make(map[string][]io.Closer),
@@ -475,9 +470,9 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
-	if strings.TrimSpace(s.cfg.Listen.WorkerQUIC) != "" {
+	if addr := s.cfg.Listen.QUICAddr(); addr != "" {
 		go func() {
-			if err := s.runWorkerQUIC(ctx, s.cfg.Listen.WorkerQUIC); err != nil {
+			if err := s.runAttachQUIC(ctx, addr); err != nil {
 				errCh <- fmt.Errorf("listen worker quic: %w", err)
 				return
 			}

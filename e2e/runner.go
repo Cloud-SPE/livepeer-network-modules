@@ -30,8 +30,8 @@ type fakeRunner struct {
 
 	// Session state: what the broker handed this runner at create, and
 	// how the broker answered its usage report.
-	sessions       bool
-	reports        bool
+	mode           runnerMode
+	results        chan map[string]any
 	callbackURL    string
 	callbackToken  string
 	callbackStatus int
@@ -50,8 +50,29 @@ type tunnelFrame struct {
 	Error      string              `json:"error,omitempty"`
 }
 
+// runnerMode is what this runner serves.
+type runnerMode int
+
+const (
+	// modeJob answers dispatched job requests with a usage-bearing body.
+	modeJob runnerMode = iota
+	// modeSession answers the paid-session lifecycle and reports usage.
+	modeSession
+	// modeSilentSession opens and terminates sessions correctly and
+	// never reports usage — a runner that works but cannot be billed.
+	modeSilentSession
+)
+
 // attach dials the broker and registers the given document.
-func attach(t *testing.T, brokerURL string, document map[string]any) *fakeRunner {
+//
+// The read loop starts BEFORE the register frame goes out, and the
+// register result arrives on a channel like any other frame. That is
+// not incidental: the broker registers a runner before acknowledging
+// it, so work can be dispatched while the acknowledgement is still in
+// flight. A helper that read frames itself while waiting for the result
+// would swallow that first request and the broker would time out
+// waiting for a reply it was never going to get.
+func attach(t *testing.T, brokerURL string, document map[string]any, mode runnerMode) *fakeRunner {
 	t.Helper()
 	url := strings.Replace(strings.TrimRight(brokerURL, "/"), "http", "ws", 1) + "/internal/v1/worker/session"
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
@@ -63,10 +84,10 @@ func attach(t *testing.T, brokerURL string, document map[string]any) *fakeRunner
 		}
 		t.Fatalf("dial attach (%d): %v", status, err)
 	}
-	r := &fakeRunner{t: t, conn: conn}
+	r := &fakeRunner{t: t, conn: conn, mode: mode, results: make(chan map[string]any, 4)}
 	t.Cleanup(r.close)
-	r.register(document)
 	go r.serve()
+	r.register(document)
 	return r
 }
 
@@ -83,24 +104,13 @@ func (r *fakeRunner) register(document map[string]any) {
 		r.t.Fatalf("marshal document: %v", err)
 	}
 	r.send(tunnelFrame{Type: "register", ID: "register", Body: body})
-	_ = r.conn.SetReadDeadline(time.Now().Add(20 * time.Second))
-	for {
-		var frame tunnelFrame
-		if err := r.conn.ReadJSON(&frame); err != nil {
-			r.t.Fatalf("read register_result: %v", err)
-		}
-		if frame.Type != "register_result" {
-			continue
-		}
-		var result map[string]any
-		if err := json.Unmarshal(frame.Body, &result); err != nil {
-			r.t.Fatalf("decode register_result: %v", err)
-		}
-		_ = r.conn.SetReadDeadline(time.Time{})
+	select {
+	case result := <-r.results:
 		r.mu.Lock()
 		r.result = result
 		r.mu.Unlock()
-		return
+	case <-time.After(20 * time.Second):
+		r.t.Fatal("the broker never answered the register frame")
 	}
 }
 
@@ -138,26 +148,41 @@ func (r *fakeRunner) acceptedLocalIDs() []string {
 	return out
 }
 
-// serve answers dispatched work the way a real runner would.
+// serve is the runner's single reader: it hands register results to
+// whoever is waiting and answers dispatched work.
 func (r *fakeRunner) serve() {
 	for {
 		var frame tunnelFrame
 		if err := r.conn.ReadJSON(&frame); err != nil {
 			return
 		}
-		if frame.Type != "request" {
+		switch frame.Type {
+		case "register_result":
+			var result map[string]any
+			if err := json.Unmarshal(frame.Body, &result); err != nil {
+				r.t.Logf("decode register_result: %v", err)
+				continue
+			}
+			select {
+			case r.results <- result:
+			default:
+			}
+			continue
+		case "request":
+		default:
 			continue
 		}
+
 		local := ""
 		if v := frame.Headers["Livepeer-Runner-Local-Id"]; len(v) > 0 {
 			local = v[0]
 		}
 		r.mu.Lock()
 		r.requests = append(r.requests, local+" "+frame.URL)
-		isSession := r.sessions
+		mode := r.mode
 		r.mu.Unlock()
 
-		if isSession {
+		if mode != modeJob {
 			if status, out, ok := r.handleSession(frame); ok {
 				r.send(tunnelFrame{
 					Type: "response", ID: frame.ID, StatusCode: status,
@@ -283,8 +308,9 @@ func sessionDocument(hostID, credential, localID, gpuUUID string) map[string]any
 	}
 }
 
-// serveSessions makes the runner answer paid-session lifecycle calls and
-// report usage to whatever callback the broker hands it.
+// handleSession answers the paid-session lifecycle and, unless the
+// runner is deliberately silent, reports usage to whatever callback the
+// broker handed it.
 //
 // It reports on a real outbound HTTP request, to the URL in the create
 // body, exactly as it would against a paid session's callback. That is
@@ -292,22 +318,6 @@ func sessionDocument(hostID, credential, localID, gpuUUID string) map[string]any
 // is not registered, or the token does not verify, this is where it
 // shows — and nowhere in the unit tests, where the callback is a
 // function call.
-func (r *fakeRunner) serveSessions() {
-	r.mu.Lock()
-	r.sessions = true
-	r.reports = true
-	r.mu.Unlock()
-}
-
-// serveSilentSessions is a runner that works but cannot be billed: it
-// opens and terminates sessions correctly and never reports usage.
-func (r *fakeRunner) serveSilentSessions() {
-	r.mu.Lock()
-	r.sessions = true
-	r.reports = false
-	r.mu.Unlock()
-}
-
 // handleSession answers one session-shaped request. Returns false when
 // the request is not a session call.
 func (r *fakeRunner) handleSession(frame tunnelFrame) (int, string, bool) {
@@ -328,7 +338,7 @@ func (r *fakeRunner) handleSession(frame tunnelFrame) (int, string, bool) {
 		}
 		r.mu.Lock()
 		r.callbackURL, r.callbackToken = body.CallbackURL, body.CallbackToken
-		reports := r.reports
+		reports := r.mode == modeSession
 		r.mu.Unlock()
 		if reports && body.CallbackURL != "" {
 			go r.reportUsage(body.CallbackURL, body.CallbackToken, "seconds", 5)

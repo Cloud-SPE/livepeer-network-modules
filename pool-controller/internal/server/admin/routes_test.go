@@ -3,6 +3,7 @@ package admin
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -144,22 +145,23 @@ func TestSettlementWindowCloseRoute(t *testing.T) {
 	}
 }
 
-func TestHostEnrollmentRevokeKillsWorkerSessions(t *testing.T) {
+// Revoking a host has to reach the broker at once. Nothing else stops
+// a revoked host serving: the credential it attached with stays valid
+// on the broker until a push says otherwise, so a revoke that only
+// wrote a local row would leave the runner attached and earning.
+func TestHostEnrollmentRevokePushesToTheBroker(t *testing.T) {
 	stateRepo, catalog := seedAdminCertificationRepo(t)
 	now := time.Now().UTC()
 	if err := stateRepo.PutHostEnrollment(types.HostEnrollment{ID: "host-1", MemberEthAddress: "0x1111111111111111111111111111111111111111", Status: types.HostEnrollmentActive, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatalf("PutHostEnrollment() error = %v", err)
 	}
-	var killed []string
+	var pushes []string
 	mux := http.NewServeMux()
 	Register(mux, Deps{
-		Repo:     stateRepo,
-		Catalog:  catalog,
-		WrapAuth: func(next http.HandlerFunc) http.HandlerFunc { return next },
-		KillWorkerSession: func(id string) error {
-			killed = append(killed, id)
-			return nil
-		},
+		Repo:            stateRepo,
+		Catalog:         catalog,
+		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return next },
+		RefreshRendered: func(source string) error { pushes = append(pushes, source); return nil },
 	})
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -172,8 +174,52 @@ func TestHostEnrollmentRevokeKillsWorkerSessions(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"status":"revoked"`) {
 		t.Fatalf("revoke status=%d body=%s", resp.StatusCode, string(body))
 	}
-	if len(killed) != 1 || killed[0] != "assign-1" {
-		t.Fatalf("killed = %#v", killed)
+	if len(pushes) != 1 || pushes[0] != "host-enrollment-revoked" {
+		t.Fatalf("pushes = %#v; revoking must push the revocation to the broker", pushes)
+	}
+	if strings.Contains(string(body), "broker_push_error") {
+		t.Errorf("unexpected push error in %s", body)
+	}
+}
+
+// A push that fails still revokes locally, and says so. The host is
+// still attached somewhere, and an operator who is told "revoked" and
+// nothing else would believe it was cut off.
+func TestHostEnrollmentRevokeReportsAFailedPush(t *testing.T) {
+	stateRepo, catalog := seedAdminCertificationRepo(t)
+	now := time.Now().UTC()
+	if err := stateRepo.PutHostEnrollment(types.HostEnrollment{ID: "host-1", MemberEthAddress: "0x1111111111111111111111111111111111111111", Status: types.HostEnrollmentActive, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("PutHostEnrollment() error = %v", err)
+	}
+	mux := http.NewServeMux()
+	Register(mux, Deps{
+		Repo:            stateRepo,
+		Catalog:         catalog,
+		WrapAuth:        func(next http.HandlerFunc) http.HandlerFunc { return next },
+		RefreshRendered: func(string) error { return errors.New("broker unreachable") },
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	resp, err := http.Post(server.URL+"/admin/v1/host-enrollments/host-1/revoke", "application/json", bytes.NewBufferString(`{}`))
+	if err != nil {
+		t.Fatalf("revoke error = %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("revoke status=%d body=%s", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(string(body), "broker unreachable") {
+		t.Fatalf("a failed push was not reported: %s", body)
+	}
+	// Local revocation still stands: the operator's decision is
+	// recorded even when it could not be delivered yet.
+	enrollment, err := stateRepo.GetHostEnrollment("host-1")
+	if err != nil {
+		t.Fatalf("GetHostEnrollment() error = %v", err)
+	}
+	if enrollment.Status != types.HostEnrollmentRevoked {
+		t.Fatalf("status = %q, want revoked", enrollment.Status)
 	}
 }
 

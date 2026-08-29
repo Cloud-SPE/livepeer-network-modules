@@ -75,7 +75,7 @@ func TestPoolOnboardsAMemberEndToEnd(t *testing.T) {
 	// The host attaches. This document is the member's agent speaking,
 	// authenticated by the credential the controller pushed.
 	runner := attach(t, p.brokerURL, hostDocument(
-		h.ID, h.AttachCredential, "e2e-chat", "openai:chat-completions", "e2e-model", e2eGPUUUID))
+		h.ID, h.AttachCredential, "e2e-chat", "openai:chat-completions", "e2e-model", e2eGPUUUID), modeJob)
 	runner.requireAccepted()
 	if got := runner.acceptedLocalIDs(); len(got) != 1 {
 		t.Fatalf("expected the one capability to be accepted, got %v", got)
@@ -131,7 +131,7 @@ func TestPoolOnboardsAMemberEndToEnd(t *testing.T) {
 	// And the seam that has broken twice: the attach document an agent
 	// builds FROM that desired state, accepted by the broker.
 	fromDesired := attach(t, p.brokerURL, hostDocument(
-		h.ID, h.AttachCredential, svc.Name, svc.Capability, svc.Identity["openai.model"], svc.DeviceIDs[0]))
+		h.ID, h.AttachCredential, svc.Name, svc.Capability, svc.Identity["openai.model"], svc.DeviceIDs[0]), modeJob)
 	fromDesired.requireAccepted()
 
 	// Certification: the pool proves the runner works before selling

@@ -69,7 +69,6 @@ type Deps struct {
 	RefreshRendered   func(string) error
 	GetOfferingsJSON  func() ([]byte, error)
 	GetStateJSON      func() ([]byte, error)
-	KillWorkerSession func(string) error
 }
 
 type RuntimeApplyInfo struct {
@@ -213,11 +212,24 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		killed := killEnrollmentAssignments(deps.Repo, id, deps.KillWorkerSession)
+		// Revoking has to reach the broker NOW, not at the next
+		// reload. The push carries the credential as revoked, and the
+		// broker closes every connection holding it — which is the
+		// only thing that actually stops a revoked host serving. Until
+		// this call was here, "revoke" left the runner attached and
+		// earning until someone happened to reload.
+		pushErr := ""
+		if err := deps.refresh("host-enrollment-revoked"); err != nil {
+			pushErr = err.Error()
+		}
 		writeAdminJSON(w, struct {
 			Enrollment hostEnrollmentView `json:"enrollment"`
-			Killed     []string           `json:"killed_worker_sessions,omitempty"`
-		}{Enrollment: redactHostEnrollment(enrollment), Killed: killed}, nil)
+			// Named rather than swallowed: the enrollment is revoked
+			// here either way, but a failed push means the host is
+			// still attached somewhere and the operator has to know
+			// that revoking did not finish.
+			BrokerPushError string `json:"broker_push_error,omitempty"`
+		}{Enrollment: redactHostEnrollment(enrollment), BrokerPushError: pushErr}, nil)
 	}))
 	mux.HandleFunc("GET /admin/v1/hardware-units", auth(func(w http.ResponseWriter, _ *http.Request) {
 		items, err := deps.Repo.ListHardwareUnits()
@@ -632,29 +644,6 @@ func materializePayoutIntents(batch types.PayoutBatch, now time.Time) []types.Pa
 		})
 	}
 	return intents
-}
-
-func killEnrollmentAssignments(stateRepo *repo.StateRepo, enrollmentID string, kill func(string) error) []string {
-	if stateRepo == nil || kill == nil {
-		return nil
-	}
-	units, err := stateRepo.ListHardwareUnitsByEnrollment(enrollmentID)
-	if err != nil {
-		return nil
-	}
-	var killed []string
-	for _, unit := range units {
-		assignments, err := stateRepo.ListTemplateAssignmentsByHardwareUnit(unit.ID)
-		if err != nil {
-			continue
-		}
-		for _, assignment := range assignments {
-			if err := kill(assignment.ID); err == nil {
-				killed = append(killed, assignment.ID)
-			}
-		}
-	}
-	return killed
 }
 
 // templateCatalogView is a catalog template with the pool's decision

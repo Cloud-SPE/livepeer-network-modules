@@ -62,15 +62,17 @@ func TestHTTPClientReportBackendOutcome(t *testing.T) {
 
 func TestReportBestEffortRecordsEmitMetrics(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		done := make(chan struct{})
 		before := testutil.ToFloat64(observability.TestBackendOutcomeEmitCounter("success", "success"))
-		ReportBestEffort(stubClientFunc(func(context.Context, BackendOutcome) error {
-			close(done)
+		// Wait on the reporter's own signal, not on the stub being
+		// called. The metric is recorded AFTER the client returns, so a
+		// test that closed its own channel inside the stub resumed one
+		// statement too early and read the counter before the emit.
+		done := ReportBestEffort(stubClientFunc(func(context.Context, BackendOutcome) error {
 			return nil
 		}), BackendOutcome{Outcome: OutcomeSuccess})
 		select {
 		case <-done:
-		case <-time.After(time.Second):
+		case <-time.After(5 * time.Second):
 			t.Fatal("timed out waiting for success emit")
 		}
 		after := testutil.ToFloat64(observability.TestBackendOutcomeEmitCounter("success", "success"))
@@ -80,15 +82,13 @@ func TestReportBestEffortRecordsEmitMetrics(t *testing.T) {
 	})
 
 	t.Run("error", func(t *testing.T) {
-		done := make(chan struct{})
 		before := testutil.ToFloat64(observability.TestBackendOutcomeEmitCounter("backend_failure", "error"))
-		ReportBestEffort(stubClientFunc(func(context.Context, BackendOutcome) error {
-			close(done)
+		done := ReportBestEffort(stubClientFunc(func(context.Context, BackendOutcome) error {
 			return errors.New("boom")
 		}), BackendOutcome{Outcome: OutcomeBackendFailure})
 		select {
 		case <-done:
-		case <-time.After(time.Second):
+		case <-time.After(5 * time.Second):
 			t.Fatal("timed out waiting for error emit")
 		}
 		after := testutil.ToFloat64(observability.TestBackendOutcomeEmitCounter("backend_failure", "error"))
@@ -96,6 +96,17 @@ func TestReportBestEffortRecordsEmitMetrics(t *testing.T) {
 			t.Fatalf("error emit delta = %v; want 1", after-before)
 		}
 	})
+}
+
+// A nil client is a broker with no pool to report to. It must not
+// block a caller that waits on the signal, or a standalone deployment
+// would hang wherever reporting is wired in.
+func TestReportBestEffortWithNoClientCompletes(t *testing.T) {
+	select {
+	case <-ReportBestEffort(nil, BackendOutcome{Outcome: OutcomeSuccess}):
+	case <-time.After(5 * time.Second):
+		t.Fatal("a nil client never signalled completion")
+	}
 }
 
 type stubClientFunc func(context.Context, BackendOutcome) error

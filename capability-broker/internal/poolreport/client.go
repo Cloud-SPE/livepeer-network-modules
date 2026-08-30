@@ -89,11 +89,25 @@ func (c *HTTPClient) ReportBackendOutcome(ctx context.Context, outcome BackendOu
 	return nil
 }
 
-func ReportBestEffort(client Client, outcome BackendOutcome) {
+// ReportBestEffort sends an outcome without making the caller wait.
+//
+// Best-effort is the point: a dispatch that succeeded must not be held
+// up, or turned into a failure, because the pool controller is slow or
+// down. The report is scoring input, not part of the exchange.
+//
+// The returned channel closes once the attempt has finished and its
+// metric has been recorded. Nothing in the serving path reads it —
+// there is nothing to do with the answer — but without it no caller can
+// observe that a report completed at all, which made even testing this
+// a race against the goroutine.
+func ReportBestEffort(client Client, outcome BackendOutcome) <-chan struct{} {
+	done := make(chan struct{})
 	if client == nil {
-		return
+		close(done)
+		return done
 	}
 	go func() {
+		defer close(done)
 		if err := client.ReportBackendOutcome(context.Background(), outcome); err != nil {
 			observability.RecordBackendOutcomeEmit(outcome.Outcome, "error")
 			log.Printf("warning: backend outcome emit failed backend_id=%s capability=%s offering=%s outcome=%s: %v",
@@ -102,4 +116,5 @@ func ReportBestEffort(client Client, outcome BackendOutcome) {
 		}
 		observability.RecordBackendOutcomeEmit(outcome.Outcome, "success")
 	}()
+	return done
 }

@@ -194,8 +194,13 @@ suspensions and duplicate GPU UUID claims.
   A suspension requires a reason (one with none is a decision nobody can review
   later, including the operator who made it) and drains that member's
   placements rather than stopping them dead
-- `POST /admin/v1/host-enrollments/{id}/revoke` — revoke a host enrolment;
-  that deletes the credential and closes its connections
+- `POST /admin/v1/host-enrollments/{id}/revoke` — revoke a host enrolment.
+  The controller pushes the revocation to every broker immediately rather
+  than waiting for the next state change, and the broker deletes the
+  credential hash and closes every connection holding it. If a broker was
+  unreachable the response carries `broker_push_error`: the enrolment is
+  revoked here, but that host is still attached somewhere and the push has
+  to land before it stops serving
 - `GET /admin/v1/ladder/state` — where placements stand, read-only
 - `POST /admin/v1/ladder/run` — run a ladder pass now rather than waiting for
   the timer. Read the state first: looking should not be acting
@@ -306,10 +311,19 @@ A missing policy file is not an error: it means no automatic approval, which is
 where every pool starts. Read "Graduating to automatic payouts" below before
 enabling `auto_approve`.
 
-`settlement.EvaluateClose` implements automatic window close with
-hold-on-anomaly and hold-on-short-scale, and `payouts.auto_close_windows` /
-`payouts.scale_tolerance` exist in config, but **nothing calls them yet**:
-closing a window is still `POST /admin/v1/settlement-windows/close`.
+Automatic window close is wired and **off by default**. Set
+`payouts.auto_close_windows: true` and the controller sweeps every five
+minutes: a window in `closing` is evaluated by `settlement.EvaluateClose`
+against `payouts.scale_tolerance` and either moves to `pending_approval`
+or is held with the reason recorded in its `anomaly` field, where the
+exception queue shows it. Closing is opt-in because it is the step before
+money moves, and a pool should say out loud that it wants that to happen
+without a person.
+
+Left off, closing a window stays the manual
+`POST /admin/v1/settlement-windows/close`. Either way, close is not
+approval: the payout batch still goes through policy review and the
+human gesture above.
 
 ## Health checks
 

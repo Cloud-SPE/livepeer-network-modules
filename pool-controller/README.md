@@ -543,10 +543,12 @@ What is *not* automated, deliberately:
 - **Approving a payout batch.** Human by default. `payout-policy.json` can
   take it over within bounds, and the graduation plan for widening those
   bounds is in [`RUNBOOK.md`](./RUNBOOK.md).
-- **Closing a settlement window.** `internal/service/settlement/autoclose.go`
-  implements the hold-on-anomaly decision and `payouts.auto_close_windows` /
-  `payouts.scale_tolerance` exist in config, but **nothing calls them yet**:
-  closing a window is still `POST /admin/v1/settlement-windows/close`.
+- **Closing a settlement window.** Wired, and off unless
+  `payouts.auto_close_windows` is set: a five-minute sweep runs
+  `internal/service/settlement/autoclose.go` over every window in
+  `closing`, moving it to `pending_approval` or holding it with the
+  reason on the record. Opt-in because closing is the step before money
+  moves. Left off, it is `POST /admin/v1/settlement-windows/close`.
 
 ## Commands
 

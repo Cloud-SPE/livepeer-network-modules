@@ -21,29 +21,20 @@ import (
 func sampleSnap() scrape.Snapshot {
 	now := mustTime("2026-05-06T12:00:00Z")
 	return scrape.Snapshot{
-		OrchEthAddress:       "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		WindowStart:          now.Add(-30 * time.Second),
-		WindowEnd:            now,
-		MetadataWarningAfter: 30 * time.Second,
-		MetadataStaleAfter:   2 * time.Minute,
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		WindowStart:    now.Add(-30 * time.Second),
+		WindowEnd:      now,
 		Brokers: []scrape.BrokerStatus{
 			{
-				Name:                     "b1",
-				BaseURL:                  "http://b1:8080",
-				Freshness:                scrape.FreshnessOK,
-				LastSuccessAt:            now,
-				MetadataApplicableTuples: 1,
+				Name:          "b1",
+				BaseURL:       "http://b1:8080",
+				Freshness:     scrape.FreshnessOK,
+				LastSuccessAt: now,
 				TupleHealth: map[string]types.BrokerHealthCapability{
 					"openai:chat-completions|vllm-h100-batch4": {
 						ID:         "openai:chat-completions",
 						OfferingID: "vllm-h100-batch4",
 						Status:     "ready",
-						Metadata: &types.BrokerHealthMetadata{
-							Applicable:            true,
-							LastResult:            "enriched",
-							LastSuccessAt:         now.Add(-10 * time.Second),
-							LastSuccessAgeSeconds: 10,
-						},
 					},
 				},
 			},
@@ -181,25 +172,19 @@ func TestBuild_DebouncesIssuedAtWhenOnlyVolatileMetadataChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Second scrape: window advances and broker metadata health degrades,
-	// but the capability content (orch + capabilities tuples) is unchanged.
+	// Second scrape: the window advances and the tuple's live health
+	// degrades, but the capability content (orch + capabilities tuples)
+	// is unchanged. Neither is manifest content, so neither may move
+	// issued_at — a signed manifest that re-issues on every scrape burns
+	// a signature for nothing and looks like a change to a gateway.
 	second := sampleSnap()
 	second.WindowStart = first.WindowEnd
 	second.WindowEnd = first.WindowEnd.Add(60 * time.Second)
-	second.Brokers[0].MetadataUnhealthyTuples = 1
-	second.Brokers[0].MetadataWorstAgeSeconds = 180
 	second.Brokers[0].TupleHealth["openai:chat-completions|vllm-h100-batch4"] = types.BrokerHealthCapability{
 		ID:         "openai:chat-completions",
 		OfferingID: "vllm-h100-batch4",
-		Status:     "ready",
-		Metadata: &types.BrokerHealthMetadata{
-			Applicable:            true,
-			LastResult:            "models_probe_failed",
-			LastSuccessAt:         second.WindowEnd.Add(-3 * time.Minute),
-			LastSuccessAgeSeconds: 180,
-			ConsecutiveFailures:   2,
-			LastError:             "probe failed",
-		},
+		Status:     "unreachable",
+		Reason:     "no_eligible_runner",
 	}
 
 	opts.PrevContentHash = c1.ContentHash
@@ -214,9 +199,10 @@ func TestBuild_DebouncesIssuedAtWhenOnlyVolatileMetadataChanges(t *testing.T) {
 	if !bytes.Equal(c1.ManifestBytes, c2.ManifestBytes) {
 		t.Fatal("manifest_bytes drifted on volatile-metadata-only change")
 	}
-	// Sidecar SHOULD reflect the new metadata health regardless.
-	if len(c2.Metadata.TupleMetadataWarnings) == 0 {
-		t.Fatal("expected metadata sidecar to surface new tuple warning")
+	// The sidecar still moves: it is not signed and its whole job is to
+	// report the scrape that just happened.
+	if !c2.Metadata.ScrapeWindowEnd.After(c1.Metadata.ScrapeWindowEnd) {
+		t.Fatal("sidecar did not advance its scrape window")
 	}
 }
 
@@ -342,60 +328,6 @@ func TestBuild_PreservesOpenAICapabilityIDAndModelExtra(t *testing.T) {
 	openaiExtra, _ := got.Extra["openai"].(map[string]any)
 	if openaiExtra["model"] != "llama-3-70b" {
 		t.Fatalf("model extra = %#v", openaiExtra["model"])
-	}
-}
-
-func TestBuild_EmitsTupleMetadataWarnings(t *testing.T) {
-	snap := sampleSnap()
-	now := snap.WindowEnd
-	snap.Brokers[0].MetadataUnhealthyTuples = 1
-	snap.Brokers[0].MetadataStaleTuples = 1
-	snap.Brokers[0].MetadataWorstAgeSeconds = 180
-	snap.Brokers[0].TupleHealth["openai:chat-completions|vllm-h100-batch4"] = types.BrokerHealthCapability{
-		ID:         "openai:chat-completions",
-		OfferingID: "vllm-h100-batch4",
-		Status:     "ready",
-		Metadata: &types.BrokerHealthMetadata{
-			Applicable:            true,
-			LastResult:            "models_probe_failed",
-			LastSuccessAt:         now.Add(-3 * time.Minute),
-			LastSuccessAgeSeconds: 180,
-			ConsecutiveFailures:   2,
-			LastError:             "probe failed",
-		},
-	}
-
-	c, err := Build(snap, BuildOptions{
-		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		ManifestTTL:    24 * time.Hour,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Metadata.MetadataWarningThresholdSeconds; got != 30 {
-		t.Fatalf("warning threshold seconds = %d; want 30", got)
-	}
-	if got := c.Metadata.MetadataStaleThresholdSeconds; got != 120 {
-		t.Fatalf("stale threshold seconds = %d; want 120", got)
-	}
-	if len(c.Metadata.Warnings) == 0 {
-		t.Fatal("expected top-level metadata warnings")
-	}
-	if len(c.Metadata.TupleMetadataWarnings) != 1 {
-		t.Fatalf("tuple metadata warnings = %d; want 1", len(c.Metadata.TupleMetadataWarnings))
-	}
-	w := c.Metadata.TupleMetadataWarnings[0]
-	if w.Code != WarningCodeMetadataStale {
-		t.Fatalf("warning code = %q; want %q", w.Code, WarningCodeMetadataStale)
-	}
-	if w.MetadataState != types.MetadataStateStale {
-		t.Fatalf("metadata state = %q; want stale", w.MetadataState)
-	}
-	if w.ConsecutiveFailures != 2 {
-		t.Fatalf("consecutive failures = %d; want 2", w.ConsecutiveFailures)
-	}
-	if c.Metadata.SourceBrokers[0].MetadataWorstAgeSeconds != 180 {
-		t.Fatalf("broker metadata worst age = %v; want 180", c.Metadata.SourceBrokers[0].MetadataWorstAgeSeconds)
 	}
 }
 

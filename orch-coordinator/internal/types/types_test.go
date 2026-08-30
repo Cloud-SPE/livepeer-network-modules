@@ -4,7 +4,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestBrokerOfferings_Validate_HappyPath(t *testing.T) {
@@ -134,23 +133,6 @@ func TestParseSignedManifest_RejectsTrailingData(t *testing.T) {
 	}
 }
 
-func TestClassifyBrokerHealthMetadata_AlreadyConfiguredIsHealthy(t *testing.T) {
-	state, age := ClassifyBrokerHealthMetadata(&BrokerHealthMetadata{
-		Applicable:            true,
-		LastSuccessAt:         time.Now().UTC(),
-		LastSuccessAgeSeconds: 17,
-		LastResult:            "already_configured",
-	}, time.Minute, 5*time.Minute)
-	if state != MetadataStateOK {
-		t.Fatalf("state = %q; want %q", state, MetadataStateOK)
-	}
-	if age != 17 {
-		t.Fatalf("age = %v; want 17", age)
-	}
-}
-
-// The spec-major gate (plan 0043 §3.7): a broker on a different major
-// is refused at the boundary, so its tuples never reach a candidate.
 func TestBrokerOfferings_Validate_SpecVersion(t *testing.T) {
 	const addr = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	cap := BrokerOffering{

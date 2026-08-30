@@ -17,10 +17,8 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 		WorkerURL: "https://w",
 	}}}
 	snap := scrape.Snapshot{
-		WindowStart:          now.Add(-30 * time.Second),
-		WindowEnd:            now,
-		MetadataWarningAfter: 30 * time.Second,
-		MetadataStaleAfter:   time.Minute,
+		WindowStart: now.Add(-30 * time.Second),
+		WindowEnd:   now,
 		Brokers: []scrape.BrokerStatus{
 			{
 				Name:      "b1",
@@ -33,12 +31,6 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 						Status:     "ready",
 						Reason:     "probe_ok",
 						StaleAfter: now.Add(time.Minute),
-						Metadata: &types.BrokerHealthMetadata{
-							Applicable:            true,
-							LastResult:            "enriched",
-							LastSuccessAt:         now.Add(-10 * time.Second),
-							LastSuccessAgeSeconds: 10,
-						},
 					},
 				},
 			},
@@ -54,14 +46,6 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 						Status:     "degraded",
 						Reason:     "timeout",
 						StaleAfter: now.Add(time.Minute),
-						Metadata: &types.BrokerHealthMetadata{
-							Applicable:            true,
-							LastResult:            "models_probe_failed",
-							LastSuccessAt:         now.Add(-2 * time.Minute),
-							LastSuccessAgeSeconds: 120,
-							ConsecutiveFailures:   2,
-							LastError:             "probe failed",
-						},
 					},
 				},
 			},
@@ -92,11 +76,13 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 	if got := v.Rows[0].Brokers[0].LiveStatus; got != "ready" {
 		t.Fatalf("live status = %q, want ready", got)
 	}
-	if got := v.Rows[0].Brokers[0].MetadataState; got != types.MetadataStateOK {
-		t.Fatalf("metadata state = %q, want ok", got)
+	// The second broker reports the same tuple degraded, which is what a
+	// roster is for: one row, one cell per broker, disagreements visible.
+	if got := v.Rows[0].Brokers[1].LiveStatus; got != "degraded" {
+		t.Fatalf("second broker live status = %q, want degraded", got)
 	}
-	if got := v.Rows[0].Brokers[1].MetadataState; got != types.MetadataStateStale {
-		t.Fatalf("metadata state = %q, want stale", got)
+	if got := v.Rows[0].Brokers[1].LiveReason; got != "timeout" {
+		t.Fatalf("second broker live reason = %q, want timeout", got)
 	}
 	if v.Rows[0].Drift != "added" {
 		t.Fatalf("drift: %s", v.Rows[0].Drift)

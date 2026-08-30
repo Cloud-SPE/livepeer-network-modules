@@ -246,14 +246,6 @@ func primedScrapeService(t *testing.T) *scrape.Service {
 		BrokerStatus: "ready",
 		Capabilities: []types.BrokerHealthCapability{{
 			ID: "cap", OfferingID: "off", Status: "ready",
-			Metadata: &types.BrokerHealthMetadata{
-				Applicable:            true,
-				LastResult:            "models_probe_failed",
-				LastSuccessAt:         time.Now().UTC().Add(-3 * time.Minute),
-				LastSuccessAgeSeconds: 180,
-				ConsecutiveFailures:   2,
-				LastError:             "probe failed",
-			},
 		}},
 	}, nil)
 	svc, err := scrape.New(scrape.Config{

@@ -759,16 +759,6 @@ func collectBrokerAlerts(brokers []scrape.BrokerStatus) []alertItem {
 				Message: broker.Name + " scrape error: " + broker.LastError,
 				Href:    "#broker-" + anchorID(broker.Name),
 			})
-		case broker.MetadataUnhealthyTuples > 0:
-			alerts = append(alerts, alertItem{
-				Message: broker.Name + " reports " + fmt.Sprintf("%d", broker.MetadataUnhealthyTuples) + " unhealthy tuple(s).",
-				Href:    "#broker-" + anchorID(broker.Name),
-			})
-		case broker.MetadataStaleTuples > 0:
-			alerts = append(alerts, alertItem{
-				Message: broker.Name + " reports " + fmt.Sprintf("%d", broker.MetadataStaleTuples) + " stale tuple(s).",
-				Href:    "#broker-" + anchorID(broker.Name),
-			})
 		}
 		if len(alerts) >= 6 {
 			break

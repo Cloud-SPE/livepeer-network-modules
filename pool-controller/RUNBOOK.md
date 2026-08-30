@@ -81,9 +81,14 @@ Broker private admin surface:
 
 - `capability-broker` `admin_auth.method: bearer`
 - `capability-broker` `admin_auth.secret_ref: env://...`
-- private reachability from `pool-controller` to:
-  - `POST /admin/v1/runtime/reload`
-  - `GET /admin/v1/runtime`
+- private reachability from `pool-controller` to, on each broker:
+  - `PUT /admin/v1/offers`, `PUT /admin/v1/credentials` — what it pushes
+  - `GET /admin/v1/runners`, `GET /admin/v1/certification` — what it reads
+    back to relay hardware and show a member where their host stands
+
+  Not `/admin/v1/runtime[/reload]`. The controller reloaded the broker when
+  it rendered the broker's config; it no longer renders one, so it no longer
+  reloads it. A push takes effect on acceptance.
 
 Secure-orch side:
 

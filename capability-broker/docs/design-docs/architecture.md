@@ -22,29 +22,54 @@ capability-broker/
     │   └── validate.go                   # cross-field validation; extra{} grammar
     ├── server/                           # HTTP server + routing + middleware
     │   ├── server.go                     # http.Server wiring
-    │   ├── routes.go                     # unpaid routes: registry, health, admin, worker
+    │   ├── routes.go                     # unpaid routes: registry, health, admin, attach
     │   ├── job_routes.go                 # paid-job/v1: POST /v1/job + idempotency
     │   ├── session_routes.go             # paid-session/v1: /v1/session/*
     │   ├── session_ws.go                 # inband-ws session attachment
-    │   ├── capability_group.go           # published tuple → candidate backends
+    │   ├── attach.go                     # runner attach over WS and QUIC (§2)
+    │   ├── attach_quic.go                # the QUIC attach listener
+    │   ├── offer_dispatch.go             # offer → eligible attached runner
+    │   ├── offer_session.go              # pinned session backend refs
+    │   ├── offer_health.go               # health from offers + attach tunnels
+    │   ├── offers_admin.go               # /admin/v1/offers*
+    │   ├── credential_admin.go           # /admin/v1/enroll, /admin/v1/credentials*
+    │   ├── certification_admin.go        # /admin/v1/certification*
+    │   ├── certification_usage.go        # session usage callback (§3.3)
+    │   ├── capability_group.go           # published tuple → candidate runners
     │   ├── backend_capacity.go           # max_in_flight reservation
+    │   ├── debitretry.go                 # durable retry for a debit that did not land
+    │   ├── nonadmission.go               # signed evidence of a refused exchange
+    │   ├── exchange_lookup.go            # GET /v1/exchange/{request_id}
     │   ├── runtime_admin.go              # GET/POST /admin/v1/runtime[/reload]
-    │   ├── worker_quic.go                # connected-worker QUIC listener
     │   ├── middleware/
     │   │   ├── headers.go                # Livepeer-* header parsing + validation
     │   │   ├── payment.go                # OpenSession / Debit / Reconcile / CloseSession
     │   │   ├── settlement.go             # settlement header emission
+    │   │   ├── pendingdebit.go           # the outstanding-debit context slot
     │   │   ├── workid.go                 # work-id derivation
     │   │   ├── requestid.go              # Livepeer-Request-Id propagation
     │   │   └── recover.go                # panic recovery + Livepeer-Error: internal_error
     │   └── registry/
     │       ├── offerings.go              # GET /registry/offerings
+    │       ├── offer_tuples.go           # frozen shape → advertised manifest tuple
     │       ├── health.go                 # GET /registry/health
     │       └── healthz.go                # GET /healthz
+    ├── offers/                           # the offer state machine
+    │   └── engine.go                     # match → certify → freeze → advertise
+    ├── runnerattach/                     # attach document evaluation
+    │   └── runnerattach.go               # §4 pipeline: parse, allowlist, per-capability verdict
+    ├── runners/                          # attached hosts and their connections
+    │   └── registry.go                   # attach/detach, dispatch lookup, snapshots
+    ├── certification/                    # proving a matched runner can serve
+    │   ├── certification.go              # run lifecycle, retention, outcome reporting
+    │   ├── steps.go                      # readiness / request / usage / latency steps
+    │   └── usagetap.go                   # per-run usage callback for session runners
+    ├── credentialstore/                  # sealed bearer credentials for attach
+    │   └── credentialstore.go            # enroll, rotate, revoke, controller sync
     ├── sessionengine/                    # paid-session/v1 authority
     │   ├── engine.go                     # open / topup / end / event / winddown
     │   ├── descriptor.go                 # descriptor minting + sealing
-    │   ├── describe.go                   # runner self-description reconciliation
+    │   ├── settlement.go                 # session settlement records
     │   └── runnerclient.go               # runner create/status/terminate calls
     ├── sessionstore/                     # durable bbolt state
     │   ├── sessionstore.go               # session records, debit sequence counters
@@ -64,11 +89,14 @@ capability-broker/
     │   ├── http.go                       # HTTP forwarder
     │   ├── headers.go                    # Livepeer-* stripping
     │   └── secret.go                     # backend-auth injection (env://, bearer)
-    ├── workerconn/                       # connected-worker sessions (QUIC + WS)
+    ├── workerconn/                       # the attach tunnel wire (QUIC + WS frames)
+    ├── settlement/                       # canonical payload + delegated signing
     ├── health/                           # health vocabulary + aggregation (no prober)
     ├── selection/                        # eligibility + weighting decisions
     ├── poolsnapshot/                     # pool-controller snapshot cache
-    ├── poolreport/ + receipts/           # Pool outcome + work-receipt emission
+    ├── livepeerheader/                   # the Livepeer-* header vocabulary and errors
+    ├── poolreport/                       # backend-outcome emission to a pool controller
+    ├── receipts/                         # work-receipt emission
     └── observability/
         ├── metrics.go                    # Prometheus collector registration
         ├── protocol_metrics.go           # livepeer_protocol_* families
@@ -92,9 +120,16 @@ Paid listener (`--listen`, default `:8080`):
 | `GET /registry/offerings` | — | Unpaid capability inventory. |
 | `GET /registry/health` | — | Unpaid live availability. |
 | `GET /healthz` | — | Process health. |
+| `GET /v1/exchange/{request_id}` | — | What happened to an exchange, keyed on the consumer's id. |
+| `GET /v1/settlement/{id}` | — | The signed settlement for a job or session. |
+| `POST /v1/non-admission/{request_id}` | — | Signed evidence that nothing was admitted. |
 | `GET|POST /admin/v1/runtime[/reload]` | — | Private; gated by `admin_auth`. |
-| `GET /admin/v1/worker-sessions`, `POST .../{backend_id}/kill` | — | Private. |
-| `GET /internal/v1/worker/session` | — | Connected-worker WebSocket fallback. |
+| `GET|PUT /admin/v1/offers`, `/admin/v1/runners`, `/admin/v1/credentials`, `/admin/v1/certification` | — | Private; the broker-admin contract. |
+| `GET /internal/v1/worker/session` | — | Runner attach over WebSocket. The path keeps its old spelling because every minted bundle and running agent uses it. |
+| `POST /internal/v1/certification/usage/{tap_id}` | — | Usage callback for a session under certification. |
+
+The QUIC attach listener (`listen.attach_quic`, optional) carries the same
+attach document and the same tunnel as the WebSocket path.
 
 Metrics listener (`--metrics`, default `:9090`) serves `GET /metrics` and
 `GET /healthz`. `/metrics` is deliberately not mounted on the paid listener

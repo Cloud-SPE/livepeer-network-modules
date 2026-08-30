@@ -89,7 +89,7 @@ listen:
   metrics: ":9090"
   # Runners attach here over QUIC. The WebSocket fallback rides the paid
   # listener, so an egress-restricted host still gets in without UDP.
-  worker_quic: ":8443"
+  attach_quic: ":8443"
 
 # Runner attach credentials. Standalone: mint one per host with
 # POST /admin/v1/enroll and hand it to the host's agent. Pool-managed:

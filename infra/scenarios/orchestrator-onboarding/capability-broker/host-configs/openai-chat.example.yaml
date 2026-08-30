@@ -27,7 +27,7 @@ listen:
   paid: ":8080"
   metrics: ":9090"
   # Runners attach here over QUIC; the WebSocket fallback rides :8080.
-  worker_quic: ":8443"
+  attach_quic: ":8443"
 
 # Needed to mint a runner's attach credential with POST /admin/v1/enroll.
 admin_auth:

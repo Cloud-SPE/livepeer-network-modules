@@ -22,7 +22,7 @@ identity:
 listen:
   paid: ":8080"
   metrics: ":9090"
-  worker_quic: ":8443"          # runners attach here (QUIC); WS fallback rides the paid listener
+  attach_quic: ":8443"          # runners attach here (QUIC); WS fallback rides the paid listener
 
 admin_auth:
   method: bearer

@@ -574,7 +574,7 @@ func jobScenarios() []harness.Scenario {
 // openHappySession opens a session and returns (openResult, create record).
 func openHappySession(c *harness.Ctx, tag string) (*harness.HTTPResult, fakes.CreateSeen, error) {
 	r, err := c.OpenSession(c.RequestID(tag), harness.PaymentEnvelope(tag),
-		`{"gateway_session_id":"gws-`+tag+`","session_params":{"room_hint":"conf"}}`)
+		`{"gateway_session_id":"`+c.GatewaySessionID(tag)+`","session_params":{"room_hint":"conf"}}`)
 	if err != nil {
 		return nil, fakes.CreateSeen{}, err
 	}
@@ -654,7 +654,7 @@ func sessionScenarios() []harness.Scenario {
 			// channel the settlement signature exists to distrust — and
 			// a work_id can cover several sessions, so a query by it can
 			// return a correctly signed record for the wrong one.
-			gatewayID := "gws-settle-" + c.RequestID("gwslookup")
+			gatewayID := c.GatewaySessionID("settle-" + c.RequestID("gwslookup"))
 			r, err := c.OpenSession(c.RequestID("gwslookup"), harness.PaymentEnvelope("gwslookup"),
 				`{"gateway_session_id":"`+gatewayID+`","session_params":{}}`)
 			if err != nil {
@@ -795,7 +795,8 @@ func sessionScenarios() []harness.Scenario {
 		{Name: "paid-session/open-idempotent-no-sibling", Spec: "paid-session §3.1", Run: func(c *harness.Ctx) error {
 			reqID := c.RequestID("openreplay")
 			payment := harness.PaymentEnvelope("openreplay")
-			body := `{"gateway_session_id":"gws-or","session_params":{}}`
+			orID := c.GatewaySessionID("or")
+			body := `{"gateway_session_id":"` + orID + `","session_params":{}}`
 			first, err := c.OpenSession(reqID, payment, body)
 			if err != nil || (first.Status != 201 && first.Status != 200) {
 				return fmt.Errorf("first open %d err %v", first.Status, err)
@@ -823,7 +824,7 @@ func sessionScenarios() []harness.Scenario {
 			// different open must be refused, not answered with the
 			// first session's keys.
 			third, err := c.OpenSession(reqID, harness.PaymentEnvelope("openreplay-different"),
-				`{"gateway_session_id":"gws-or","session_params":{"changed":true}}`)
+				`{"gateway_session_id":"`+orID+`","session_params":{"changed":true}}`)
 			if err != nil {
 				return err
 			}
@@ -838,7 +839,7 @@ func sessionScenarios() []harness.Scenario {
 				return fmt.Errorf("%w: no short-lease offering configured (see README)", harness.ErrSkip)
 			}
 			r, err := c.OpenSessionOffering(c.SessionOfferingShortLease, c.RequestID("lease"),
-				harness.PaymentEnvelope("lease"), `{"gateway_session_id":"gws-lease","session_params":{}}`)
+				harness.PaymentEnvelope("lease"), `{"gateway_session_id":"`+c.GatewaySessionID("lease")+`","session_params":{}}`)
 			if err != nil {
 				return err
 			}
@@ -916,7 +917,7 @@ func sessionScenarios() []harness.Scenario {
 				return fmt.Errorf("%w: no bounded-refill offering configured (see README)", harness.ErrSkip)
 			}
 			r, err := c.OpenSessionOffering(c.SessionOfferingBounded, c.RequestID("bounded"),
-				harness.PaymentEnvelope("bounded"), `{"gateway_session_id":"gws-b","session_params":{}}`)
+				harness.PaymentEnvelope("bounded"), `{"gateway_session_id":"`+c.GatewaySessionID("b")+`","session_params":{}}`)
 			if err != nil {
 				return err
 			}
@@ -1221,7 +1222,7 @@ func sessionScenarios() []harness.Scenario {
 				return fmt.Errorf("%w: no fast-heartbeat offering configured (see README)", harness.ErrSkip)
 			}
 			r, err := c.OpenSessionOffering(c.SessionOfferingFastHB, c.RequestID("hb"),
-				harness.PaymentEnvelope("hb"), `{"gateway_session_id":"gws-hb","session_params":{}}`)
+				harness.PaymentEnvelope("hb"), `{"gateway_session_id":"`+c.GatewaySessionID("hb")+`","session_params":{}}`)
 			if err != nil {
 				return err
 			}
@@ -1366,7 +1367,7 @@ func schemaFixture(name, offering, schema string, publicFields []string) harness
 			}
 			r, err := c.OpenSessionOffering(off, c.RequestID(name),
 				harness.PaymentEnvelope(name),
-				fmt.Sprintf(`{"gateway_session_id":"gws-%s","session_params":{"conformance_mode":%q}}`, name, offering))
+				fmt.Sprintf(`{"gateway_session_id":%q,"session_params":{"conformance_mode":%q}}`, c.GatewaySessionID(name), offering))
 			if err != nil {
 				return err
 			}
@@ -1416,7 +1417,7 @@ func schemaFixture(name, offering, schema string, publicFields []string) harness
 func expectOpenRejected(c *harness.Ctx, mode string) error {
 	terminatedBefore := len(c.Runner.Terminated())
 	r, err := c.OpenSession(c.RequestID(mode), harness.PaymentEnvelope(mode),
-		fmt.Sprintf(`{"gateway_session_id":"gws-%s","session_params":{"conformance_mode":%q}}`, mode, mode))
+		fmt.Sprintf(`{"gateway_session_id":%q,"session_params":{"conformance_mode":%q}}`, c.GatewaySessionID(mode), mode))
 	if err != nil {
 		return err
 	}

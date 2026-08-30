@@ -207,6 +207,12 @@ func run() int {
 		fakesRunnerPort  = flag.Int("fakes-runner-port", 0, "fixed port for the fake session runner (0 = ephemeral)")
 		warmup           = flag.Duration("warmup", 0,
 			"URL mode: wait this long after the fakes are up before running scenarios, so a broker whose health probes have been failing against them recovers")
+		serveRunner = flag.Bool("serve-runner", false,
+			"attach the suite's runner to --broker-url and stay up serving it, instead of running scenarios")
+		attachRunner = flag.Bool("attach-runner", false,
+			"URL mode: attach the suite's own runner to --broker-url before running scenarios, for a broker that has none of its own")
+		settlementSigner = flag.String("settlement-signer", "",
+			"URL mode: eth address of the broker's delegated settlement key, so the settlement-signature scenarios run instead of skipping")
 	)
 	flag.Parse()
 
@@ -257,6 +263,14 @@ func run() int {
 		AttachHostID:          *attachHost,
 	}
 
+	if *serveRunner {
+		if *brokerURL == "" {
+			fmt.Fprintln(os.Stderr, "--serve-runner needs --broker-url: it attaches to a broker, it does not start one")
+			return 2
+		}
+		return serveSuiteRunner(*brokerURL, backend, runner, *jobUnit, *sessUnit, *timeout)
+	}
+
 	if *brokerURL != "" {
 		fmt.Printf("fake job backend:     %s (error route: %s)\n", backend.URL(), backend.ErrorURL())
 		fmt.Printf("fake session runner:  %s (paths: /sessions, /sessions/{id})\n", runner.URL())
@@ -273,6 +287,29 @@ func run() int {
 			time.Sleep(*warmup)
 		}
 		ctx.BrokerURL = *brokerURL
+		// The broker does not publish its delegated settlement key on
+		// any unauthenticated surface, so URL mode has to be told. Left
+		// empty the two signature scenarios skip, saying they are
+		// skipping — which is better than passing without checking.
+		ctx.SettlementSigner = *settlementSigner
+		if *attachRunner {
+			attached, err := attachSuiteRunner(*brokerURL, backend, runner, *jobUnit, *sessUnit, *timeout)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "attach the suite's runner:", err)
+				return 2
+			}
+			defer attached.Close()
+			// The attach scenarios need a credential of their own.
+			// Reusing the serving runner's would have them revoking and
+			// disconnecting the runner every other scenario depends on.
+			if ctx.AttachCredential == "" {
+				if c, h, err := enrollAttachCredential(*brokerURL, "conformance-attach-"+ctx.RunID); err == nil {
+					ctx.AttachCredential, ctx.AttachHostID = c, h
+				} else {
+					fmt.Fprintf(os.Stderr, "attach enrollment unavailable (%v); attach scenarios will skip\n", err)
+				}
+			}
+		}
 	} else {
 		ctl, url, err := startReferenceBroker(*brokerDir, backend, runner, *timeout, *jobUnit, *sessUnit)
 		if err != nil {

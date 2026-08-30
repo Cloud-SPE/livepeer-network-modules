@@ -24,8 +24,37 @@ prints a PASS/FAIL report, and exits non-zero on any failure.
 ## URL mode (any broker implementation)
 
 ```
+# Your broker, your runner: point the suite at a deployment that already
+# has runners attached and serving the offerings below.
 go run ./cmd/livepeer-conformance --broker-url http://your-broker:8080 --pause
+
+# Your broker, the suite's runner: for a broker binary with nothing
+# attached to it, --attach-runner supplies one against the suite's fakes.
+go run ./cmd/livepeer-conformance --broker-url http://your-broker:8080 --attach-runner
 ```
+
+`--attach-runner` exists because a broker in the offer-only grammar
+advertises nothing until a runner attaches — an offer's shape is frozen
+from what a runner declares, not from config — so a stack that starts only
+a broker has nothing to test against. It enrols over the broker's admin
+API (`POST /admin/v1/enroll`) and attaches the same runner auto mode uses,
+then waits for every offering to be advertised before the first scenario
+runs.
+
+It attaches in **this** process, and that matters. Half the session
+scenarios assert on what the runner saw — that the broker terminated a
+session, that it never called the runner on a rejected event — by reading
+these fakes directly. A runner in a separate container talks to its own
+fakes while the scenarios read a different, idle set, and every one of
+those assertions fails, reporting a broker fault that is really a topology
+mistake. `--serve-runner` does attach-and-stay-up in a container of its
+own; use it only where nothing asserts on runner-side state.
+
+`--settlement-signer <0x…>` is the eth address of the broker's delegated
+settlement key. Without it the two settlement-signature scenarios skip:
+the broker publishes that key on no unauthenticated surface, so the suite
+has to be told, and skipping is better than passing without checking the
+one thing a clearinghouse gates money on.
 
 Work units are configurable so you can run against your own offerings
 without patching scenarios: `--job-unit` (default `tokens`) and
@@ -101,11 +130,11 @@ The runner behind the broker's offerings then points at
 (session runner). Host networking is no longer required.
 
 `examples/docker-network/` holds a compose file and a reference-broker
-config for exactly this shape. Note what URL mode does **not** do: it never
-attaches a serving runner. The broker under test advertises nothing until
-one of yours enrols and certifies, so that example needs a runner service of
-your own alongside it. Auto mode is the self-contained path — it generates
-the config and attaches the suite's own runner.
+config for exactly this shape. It passes `--attach-runner`, so the two
+services are the whole stack: the broker under test, and the suite
+supplying both the runner and the scenarios. Only the broker-restart
+scenarios skip there, because the suite does not own that process; auto
+mode covers those.
 
 Two things bite a broker that came up before the runner behind it did:
 

@@ -15,19 +15,25 @@
 # the way a real runner points at its own endpoint.
 #
 # IMPORTANT: this file alone does not serve traffic. A runner must attach
-# and certify before any offer is advertised. In URL mode the suite does
-# NOT attach a serving runner — it only runs scenarios against a broker
-# that already has its own. Auto mode (`livepeer-conformance` with no
-# --broker-url) generates an equivalent config AND attaches the suite's
-# own runner, so it is the self-contained path; use this file when you
-# are wiring your own runner into the compose network.
+# and certify before any offer is advertised — that is the whole point of
+# the offer-only grammar. compose.yaml passes --attach-runner, which
+# makes the suite enrol over the admin API below and attach with the
+# `identity.variant` values these offers match on. Auto mode
+# (`livepeer-conformance` with no --broker-url) does the same thing
+# against a broker it starts itself. Point the suite at a broker that
+# already has its own runner by omitting --attach-runner.
 identity:
   orch_eth_address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+  # Settlement records go out UNSIGNED without this, and a clearinghouse
+  # refuses an unsigned record for anything financially material. The
+  # suite's two settlement-signature scenarios skip when it is absent,
+  # so a stack without it silently tests less than it appears to.
+  settlement_key_file: /cfg/settle.key
 external_base_url: "http://broker:8080"
 listen:
   paid: "0.0.0.0:8080"
   metrics: "0.0.0.0:9090"
-  worker_quic: "0.0.0.0:8443"
+  attach_quic: "0.0.0.0:8443"
 payment_daemon:
   mock: true
   mock_state_path: /var/lib/livepeer/payment-mock.json

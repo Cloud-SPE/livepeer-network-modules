@@ -1,9 +1,10 @@
 # Runs the conformance suite against a broker on an ordinary docker
 # network — no host networking. The suite binds its fakes on 0.0.0.0 and
-# advertises them under its own service name, so a runner reaches them
+# advertises them under its own service name, so the broker reaches them
 # at http://conformance:8091 and http://conformance:8092.
 #
 #   openssl rand -hex 32 > seal.key
+#   openssl rand -hex 32 > settle.key
 #   docker compose up --abort-on-container-exit --exit-code-from conformance
 #
 # Use `up`, not `run`: a one-off `docker compose run` container is not
@@ -12,13 +13,22 @@
 #
 # Override BROKER_IMAGE / CONFORMANCE_IMAGE to test locally built images.
 #
-# NOTE — this stack is URL mode, and URL mode does not attach a serving
-# runner. The broker below advertises nothing until a runner enrols
-# (POST /admin/v1/enroll with BROKER_ADMIN_TOKEN) and attaches with the
-# `identity.variant` values host-config.yaml matches on; until then every
-# scenario 503s. Add that runner as a third service. For a self-contained
-# run, use auto mode instead (`livepeer-conformance` with no --broker-url):
-# it generates the config AND attaches its own runner.
+# --attach-runner is what makes this stack work. A broker in the
+# offer-only grammar advertises NOTHING until a runner attaches: an
+# offer's shape is frozen from what a runner declares, not from config.
+# So the suite supplies one, in this same container.
+#
+# Same container, deliberately. Half the session scenarios assert on what
+# the RUNNER saw — that the broker terminated a session, that it never
+# called the runner on a rejected event — by reading these fakes. Move
+# the runner to a container of its own and the broker talks to ITS fakes
+# while the scenarios read a different, idle set, and every one of those
+# assertions fails reporting a broker fault that is really a topology
+# mistake. (Use --serve-runner for a standalone runner container only
+# where nothing asserts on runner-side state.)
+#
+# Two scenarios still skip here: the broker restart cases, which need the
+# suite to own the broker process. Auto mode covers those.
 
 services:
   broker:
@@ -29,16 +39,21 @@ services:
     volumes:
       - ./host-config.yaml:/cfg/host-config.yaml:ro
       - ./seal.key:/cfg/seal.key:ro
+      - ./settle.key:/cfg/settle.key:ro
 
   conformance:
     image: ${CONFORMANCE_IMAGE:-tztcloud/livepeer-conformance:dev}
     depends_on: [broker]
     command:
       - --broker-url=http://broker:8080
+      - --attach-runner
       - --fakes-listen=0.0.0.0
       - --fakes-advertise=conformance
       - --fakes-backend-port=8091
       - --fakes-runner-port=8092
-      # The fakes come up after the broker; give a runner a moment to
-      # attach and certify against them before the first scenario runs.
-      - --warmup=20s
+      # The eth address of the key in settle.key. Without it the two
+      # settlement-signature scenarios SKIP — the broker publishes its
+      # delegated key on no unauthenticated surface, so the suite has to
+      # be told, and a skip is better than a pass that checked nothing.
+      # Derive it from the key with any secp256k1 tool.
+      # - --settlement-signer=0x...

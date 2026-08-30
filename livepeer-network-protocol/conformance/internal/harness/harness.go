@@ -137,6 +137,17 @@ func (c *Ctx) RequestID(tag string) string {
 	return "conf-" + c.RunID + "-" + tag
 }
 
+// GatewaySessionID mints a run-scoped gateway session id.
+//
+// Run-scoped for the same reason request ids are, and it was missed:
+// the broker binds a gateway_session_id to a session for the life of
+// the session store, so a fixed id works once and then every later run
+// against the same broker fails with gateway_session_id_reuse. Auto
+// mode never noticed because it starts a broker with an empty store.
+func (c *Ctx) GatewaySessionID(tag string) string {
+	return "gws-" + c.RunID + "-" + tag
+}
+
 // PaymentEnvelope base64-encodes a stub payment envelope. The mock
 // payment daemon accepts any non-empty envelope; a real deployment
 // would substitute genuine payment material here.

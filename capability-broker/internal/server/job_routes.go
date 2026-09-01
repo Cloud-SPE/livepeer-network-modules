@@ -425,6 +425,11 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		// land. It sits inside this layer but the durable record lives
 		// here, so the failure has to travel outward.
 		ctx, pendingSlot := middleware.WithPendingDebitSlot(r.Context())
+		// And one for handleJob to say which runner it chose, so the
+		// outcome can be reported from here — the one place every
+		// transport's exchange is classified — rather than from each
+		// terminal return inside the handler.
+		ctx, dispatchSlot := middleware.WithDispatchSlot(ctx)
 		next.ServeHTTP(jrec, r.WithContext(ctx))
 		switch st := jrec.status(); {
 		case st < 400:
@@ -434,6 +439,7 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		default:
 			observability.RecordJobExchange(transport, "backend_error")
 		}
+		s.reportJobOutcome(dispatchSlot.Get(), jrec.status())
 		if pd := pendingSlot.Get(); pd != nil {
 			// Delivered but unsettled. The outcome is recorded so a
 			// replay still returns it; the record stays non-terminal so
@@ -529,6 +535,14 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	// From here the exchange is the runner's. Everything above was the
+	// broker refusing on its own account, and none of it is reported.
+	hostID, localID := splitBackendID(c.Backend.ID)
+	dispatch := &middleware.Dispatch{
+		BackendID: c.Backend.ID, HostID: hostID, LocalID: localID,
+		CapabilityID: capID, OfferingID: offID,
+	}
+	middleware.DispatchSlotFrom(r.Context()).Set(dispatch)
 
 	extractor, err := s.extractors.Build(c.WorkUnit.Extractor)
 	if err != nil {
@@ -549,6 +563,10 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 			"inject backend auth: "+err.Error())
 		return
 	}
+	// Forward returns when the runner's response HEADERS arrive, on
+	// every transport, so this is time to first byte for unary and
+	// stream alike — the one latency the pool is told about.
+	dispatch.DispatchedAt = time.Now()
 	resp, err := s.backend.Forward(r.Context(), backend.ForwardRequest{
 		URL:     c.Backend.URL,
 		Method:  r.Method,
@@ -561,6 +579,8 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 			"backend forward: "+err.Error())
 		return
 	}
+	dispatch.FirstByteAt = time.Now()
+	dispatch.Forwarded = true
 	defer resp.Body.Close()
 
 	if negotiateTransport(r) == "stream" {

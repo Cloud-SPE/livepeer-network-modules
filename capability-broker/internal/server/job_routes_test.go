@@ -46,6 +46,16 @@ func newJobTestServer(t *testing.T, backendCalls *atomic.Int64) *httptest.Server
 func newJobOfferBroker(t *testing.T, backendCalls *atomic.Int64, pc payment.Client,
 	settlementKeyFile string) (*httptest.Server, *Server) {
 	t.Helper()
+	srv, s := newJobOfferBrokerBare(t, pc, settlementKeyFile)
+	attachJobRunner(t, s, srv, backendCalls)
+	return srv, s
+}
+
+// newJobOfferBrokerBare is the same broker with NO runner attached, for
+// tests that need to control the runner — its status, its enrolment —
+// rather than take the fixture's.
+func newJobOfferBrokerBare(t *testing.T, pc payment.Client, settlementKeyFile string) (*httptest.Server, *Server) {
+	t.Helper()
 	t.Setenv("BROKER_ADMIN_TOKEN", "secret-token")
 
 	dir := t.TempDir()
@@ -115,7 +125,6 @@ func newJobOfferBroker(t *testing.T, backendCalls *atomic.Int64, pc payment.Clie
 	})
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
-	attachJobRunner(t, s, srv, backendCalls)
 	return srv, s
 }
 

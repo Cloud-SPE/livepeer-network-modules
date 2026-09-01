@@ -71,13 +71,19 @@ certification:
         model: "{{identity.openai.model}}"
         prompt: "a probe"
         n: 1
-      # Deliberately weak, and known to be: `min: 0` asserts that data[0]
-      # exists, not that it decodes to an image of the right size. Asserting
-      # the latter needs a step type that can decode a b64_json payload, and
-      # none of the four types in certification-steps.md §3 can. Revisit when
-      # one exists (this gap is part of lnm-v12).
+        # Pin the response shape so the assertion below is deterministic:
+        # the OpenAI images API returns either `b64_json` or `url` depending
+        # on this field, and a probe that accepts either proves less.
+        response_format: b64_json
+      # Strengthened 2026-09-01 (plan 0045 §4). The previous assert was
+      # `{path: $.data[0], min: 0}`, which passes on an empty object — it
+      # proved a response came back, not that it carried an image. This one
+      # requires the image payload to be present. It still cannot prove the
+      # payload DECODES to an image of the right size: none of the step types
+      # in certification-steps.md §3 can decode a b64_json body, so that
+      # remains a claim this catalog cannot check.
       assert:
-        - { path: "$.data[0]", min: 0 }
+        - "$.data[0].b64_json"
   # The rig metered this with a request-formula over `$.n` defaulting to 1, so
   # a passing usage step proves the count was read from the request the broker
   # actually sent. Which formula is runner-declared and frozen.

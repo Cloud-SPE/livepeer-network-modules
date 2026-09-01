@@ -15,15 +15,13 @@
     "timeout_ms": 90000,
     "config": {
       "assert": [
-        {
-          "min": 0,
-          "path": "$.data[0]"
-        }
+        "$.data[0].b64_json"
       ],
       "body": {
         "model": "{{identity.openai.model}}",
         "n": 1,
-        "prompt": "a probe"
+        "prompt": "a probe",
+        "response_format": "b64_json"
       },
       "transport": "unary"
     }

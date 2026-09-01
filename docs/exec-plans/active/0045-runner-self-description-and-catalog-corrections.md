@@ -2,7 +2,7 @@
 plan: 0045
 title: Runner self-description and catalog corrections
 status: active
-phase: planning
+phase: implementing
 opened: 2026-09-01
 owner: harness
 related:
@@ -14,8 +14,9 @@ audience: broker / agent / pool-controller maintainers, runner image authors, op
 
 # Plan 0045 — Runner self-description and catalog corrections
 
-**Status:** planning — six decisions locked with the operator on 2026-09-01;
-no implementation started.
+**Status:** implementing — six decisions locked with the operator on
+2026-09-01; every in-repo piece landed the same day. What remains lives in
+other repositories and is listed under §10.
 
 ## 1. Purpose
 
@@ -312,3 +313,31 @@ run-scoped URLs, one mechanism.
   too.
 - Session backend outcomes (§2 is paid-job only).
 - AMD vendor images and classes.
+
+## 10. Implementation record
+
+Landed in this repository, 2026-09-01, in this order:
+
+| § | Commit | What |
+|---|---|---|
+| 2 | `6529bbb` | Broker reports dispatch outcomes; TTFB; refusals excluded; paid-job only. |
+| 5, 6 | `170fd3c` | Three templates get hardware policy; `vision:image-analysis` rename and price; new dated pricing reference. |
+| 4 | `16111f6` | Per-vendor image map with load-time validation; `no_image_for_vendor`; Intel classes; vendor-branched device block; `member_env` deleted. |
+| 3 | `949d669` | `runner-contract.md`; agent is a relay; profiles deleted; `draining` reaches the wire. |
+| 7 | `68e5abf` | Run-scoped fixture and sink URLs; `{{fixture_url.*}}` / `{{sink_url}}`; transcode smoke steps in the real shape. |
+
+**Remaining, outside this repository:**
+
+- **`livepeer-modules-transcode-runners`** (§7, `lnm-z72`): the nine runner
+  images must (a) return a streamed `ffmpeg -progress` body from
+  `POST /v1/video/transcode` and `/abr` and terminate with the claim, and
+  (b) serve `GET /.well-known/livepeer-runner`. Until then the transcode
+  templates fail certification loudly, naming the image.
+- **The OpenAI adapter image** (§4): one image, family as configuration,
+  serving its contract and proxying to ollama / vLLM / SGLang / passthrough.
+  It does not exist yet and its home — a module here, or a runners
+  repository — is undecided. The seven OpenAI-family templates stay
+  image-less until it does.
+- **Agent hardware inventory** (§4, found on the way): `collectNVIDIAGPUs`
+  is the only inventory, so an Intel host reports no hardware and is never
+  placed. Needed before an Intel card can earn.

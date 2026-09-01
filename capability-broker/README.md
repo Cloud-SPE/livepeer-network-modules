@@ -257,8 +257,9 @@ others — to hydrate `extra` on published offerings, which meant the
 broker carried hardcoded knowledge of every workload's discovery
 contract. A runner now declares its own identity and extensions in its
 attach document (`runner-attach.md` §3.2), the first certified runner
-freezes them into the offer, and the adapter profile in the agent is
-where a new workload's facts are described. That polling, its
+freezes them into the offer, and the runner's own contract — served at
+`GET /.well-known/livepeer-runner` (`runner-contract.md`) — is where a new
+workload's facts are described. That polling, its
 `--metadata-refresh-interval` flag, its `metadata` block on
 `GET /registry/health`, and its `livepeer_metadata_refresh_*` metrics are
 removed (plan 0043 item 11).

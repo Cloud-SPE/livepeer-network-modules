@@ -22,7 +22,7 @@ The one-line summary:
 | Component | Gone | Replaced by |
 |---|---|---|
 | `capability-broker` | `capabilities[].backend/job/session/work_unit/health`, `runner.describe_path` and its quarantine, per-workload metadata polling, `--metadata-refresh-interval` | `offers[]`; runners attach and declare themselves |
-| `pool-member-agent` | controller `/hardware` report, `POST_*` backend-id registration | one attach document per connection; adapter profiles |
+| `pool-member-agent` | controller `/hardware` report, `POST_*` backend-id registration | one attach document per connection; the runner self-description contract (`runner-contract.md`) relayed by the agent |
 | `pool-controller` | `brokerrender`, `runtimeservice`, `/admin/v1/broker-runtime/*`, `broker_apply_command`, `cmd/broker-apply` | `PUT /admin/v1/offers` and `PUT /admin/v1/credentials` |
 | `orch-coordinator` | hardcoded `spec_version`, dead `worker_url` override | imported `VERSION`; per-broker `admin_token_ref`; four hot-zone console pages |
 | `secure-orch-console` | `renewal_threshold_fraction` | the threshold published in each candidate's `metadata.json` |

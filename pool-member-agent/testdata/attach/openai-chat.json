@@ -2,19 +2,15 @@
   "contract_version": "1.1",
   "credential": {
     "kind": "bearer",
-    "token": "lpc_testtoken"
+    "token": "lpc_test"
   },
-  "host_id": "host-3f9a",
+  "host_id": "host-1",
   "agent_version": "pool-member-agent/test",
   "hardware": [
     {
       "gpu_uuid": "GPU-8f3c2a1e-4b7d-4e9f-a0c1-2d3e4f5a6b7c",
-      "gpu_model": "NVIDIA H100 80GB HBM3",
-      "vram_bytes": 85899345920,
-      "driver": "560.35.03",
-      "facts": {
-        "source": "nvidia-smi"
-      }
+      "gpu_model": "NVIDIA GeForce RTX 4090",
+      "vram_bytes": 25769803776
     }
   ],
   "capabilities": [

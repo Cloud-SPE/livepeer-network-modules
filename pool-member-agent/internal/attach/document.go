@@ -1,10 +1,10 @@
 // Package attach builds the runner attach document this agent sends a
 // broker (livepeer-network-protocol/protocols/runner-attach.md).
 //
-// The agent is the only party that knows what the host actually runs, so
-// it is the only party that fills this in. The operator never types a
-// runner fact: they declare "this container, this profile, this model"
-// and the profile expands to the capability entry the contract wants.
+// The RUNNER is the only party that knows what it is, so it says so:
+// it serves its own capability entry (contract.go) and the agent relays
+// it, adding only what the host knows — which container, which GPUs,
+// whether it is being withdrawn. Nobody types a runner fact anywhere.
 //
 // Everything here is wire shape. The broker validates it (§4) and
 // answers with a register_result naming any field it rejected; the agent
@@ -68,6 +68,11 @@ type Capability struct {
 	SessionParamsSchema json.RawMessage   `json:"session_params_schema,omitempty"`
 	Requirements        *Requirements     `json:"requirements,omitempty"`
 	Devices             []string          `json:"devices,omitempty"`
+	// Draining tells the broker to stop dispatching here while the
+	// container is still up, so in-flight work finishes (runner-attach
+	// §3.2). Set from the pool's desired state; this is the field the
+	// old profile expansion silently dropped.
+	Draining bool `json:"draining,omitempty"`
 
 	// Extensions are runner-authored `x-*` keys. Relayed verbatim by the
 	// broker; promoted into an offer's advertised extra only when that
@@ -125,37 +130,14 @@ func (c Capability) MarshalJSON() ([]byte, error) {
 	return json.Marshal(merged)
 }
 
-// Runner is what an operator (or the pool controller, generating this
-// file) declares about one local container. It is deliberately small:
-// where it runs, which profile it is, and what it loaded.
+// Runner is what the HOST knows about one container. Everything about
+// what the container serves comes from its contract; this is where it
+// is, which GPUs back it, and whether the pool is withdrawing it.
 type Runner struct {
-	// LocalID is the agent's routing key; the broker echoes it on every
-	// dispatched request as Livepeer-Runner-Local-Id (§7).
-	LocalID string `json:"local_id"`
-	// Profile expands to a capability entry: openai-compatible | transcode.
-	Profile string `json:"profile"`
-	// URL is the container's base URL on the host network. Never sent to
-	// the broker — the tunnel is the only way in.
-	URL string `json:"url"`
-	// CapabilityID overrides the profile's default; for openai-compatible
-	// it also selects the endpoint family (chat, embeddings, audio, …).
-	CapabilityID string `json:"capability_id,omitempty"`
-	// Model is the loaded model, the fact an offer's match selects on.
-	Model string `json:"model,omitempty"`
-	// Provider labels the serving stack (vllm, ollama, …), advisory.
-	Provider string `json:"provider,omitempty"`
-	// Devices are the gpu_uuids backing this runner.
-	Devices []string `json:"devices,omitempty"`
-	// Draining withdraws this runner from dispatch without withdrawing
-	// the offer. Set it, re-register, let in-flight work finish, and
-	// only then stop the container — stopping first would drop requests
-	// the broker had already sent (runner-attach §7.1).
-	Draining bool `json:"draining,omitempty"`
-	// Requirements let a runner state what its host must have; the
-	// broker rejects the entry when this host cannot satisfy it (§4.2).
-	Requirements *Requirements `json:"requirements,omitempty"`
-	// Extensions are `x-*` keys relayed verbatim.
-	Extensions map[string]any `json:"extensions,omitempty"`
+	LocalID  string   `json:"local_id"`
+	URL      string   `json:"url"`
+	Devices  []string `json:"devices,omitempty"`
+	Draining bool     `json:"draining,omitempty"`
 }
 
 // Host is the non-runner half of the document.
@@ -176,7 +158,10 @@ var localIDRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 // authority on which extractors and probes it implements, and a wrong
 // guess here would silently drop a capability the broker would have
 // accepted.
-func Build(host Host, runners []Runner) (*Document, error) {
+// Build assembles the attach document from the host and the runners
+// whose contracts were resolved. It never fetches: Resolve does, and
+// keeping the two apart is what makes this testable without a server.
+func Build(host Host, resolved []Resolved) (*Document, error) {
 	if host.HostID == "" {
 		return nil, fmt.Errorf("attach: host_id is required")
 	}
@@ -198,7 +183,8 @@ func Build(host Host, runners []Runner) (*Document, error) {
 		doc.Hardware = []Hardware{}
 	}
 	seen := map[string]bool{}
-	for i, r := range runners {
+	for i, rs := range resolved {
+		r := rs.Runner
 		if r.LocalID == "" {
 			r.LocalID = fmt.Sprintf("runner-%d", i)
 		}
@@ -209,14 +195,10 @@ func Build(host Host, runners []Runner) (*Document, error) {
 			return nil, fmt.Errorf("attach: duplicate local_id %q", r.LocalID)
 		}
 		seen[r.LocalID] = true
-		cap, err := expand(r)
-		if err != nil {
-			return nil, fmt.Errorf("attach: runner %q: %w", r.LocalID, err)
+		if rs.Contract == nil {
+			return nil, fmt.Errorf("attach: runner %q has no contract; Resolve it first", r.LocalID)
 		}
-		// Only claim devices this host actually reported: a device_unknown
-		// rejection is avoidable here and confusing there.
-		cap.Devices = intersectDevices(r.Devices, doc.Hardware)
-		doc.Capabilities = append(doc.Capabilities, *cap)
+		doc.Capabilities = append(doc.Capabilities, capabilityOf(r, rs.Contract, doc.Hardware))
 	}
 	return doc, nil
 }

@@ -199,23 +199,45 @@ func TestRunnersForCarriesDrainingAndDevices(t *testing.T) {
 	if len(runners[1].Devices) != 1 || runners[1].Devices[0] != "GPU-bbb" {
 		t.Fatalf("devices = %v, want the second card", runners[1].Devices)
 	}
-	if runners[0].Profile != attach.ProfileOpenAICompatible {
-		t.Fatalf("profile = %q", runners[0].Profile)
-	}
-	// The profile follows the CAPABILITY the controller named, not the
-	// template id: a pool that renames a template must not silently
-	// change what its runners declare on the wire.
-	if got := runnersFor(desiredstate.Document{Services: []desiredstate.Service{
-		{Name: "runner-x", TemplateID: "anything", Capability: "video:transcode.abr"},
-	}}); got[0].Profile != attach.ProfileTranscode {
-		t.Fatalf("transcode capability got profile %q", got[0].Profile)
+	// And that is ALL the desired state contributes. What each service
+	// serves is the runner's to say, read from its contract at attach;
+	// a Runner carrying a capability or a model here would be the
+	// controller authoring a runner fact, which is the thing the
+	// contract exists to prevent (runner-contract.md §1).
+	raw, _ := json.Marshal(runners[0])
+	for _, forbidden := range []string{"capability", "model", "profile", "provider"} {
+		if strings.Contains(strings.ToLower(string(raw)), forbidden) {
+			t.Fatalf("desired state put a runner fact (%s) on the host's half of the document: %s", forbidden, raw)
+		}
 	}
 }
 
 // The runner set the desired-state loop produces is the set the tunnel
-// declares, so it has to be a set the agent can actually attach with.
+// declares, so it has to be a set the agent can actually attach with —
+// once each service has answered for itself. The contract server here
+// stands in for the containers; the loop only knows their URLs.
 func TestRunnersForProducesAnAttachableDocument(t *testing.T) {
+	contract := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != attach.ContractPath {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"capability_id":"openai:chat-completions","protocol":"paid-job/v1",
+			"transports":["unary"],"work_unit":{"name":"tokens","extractor":{"type":"openai-usage"}},
+			"paths":{"invoke":"/v1/chat/completions"},"readiness":{"type":"http-status","path":"/healthz"},
+			"identity":{"openai.model":"m"},"schema_versions":{"paid-job/v1":"1.0.0"}}`))
+	}))
+	defer contract.Close()
+
 	runners := runnersFor(desiredDoc())
+	for i := range runners {
+		runners[i].URL = contract.URL // the compose-network address, on a test host
+	}
+	resolved, errs := attach.Resolve(context.Background(), nil, runners)
+	if len(errs) != 0 {
+		t.Fatalf("resolve: %v", errs)
+	}
 	_, err := attach.Build(attach.Host{
 		HostID:     "host-1",
 		Credential: attach.Credential{Kind: "bearer", Token: "cred"},
@@ -223,7 +245,7 @@ func TestRunnersForProducesAnAttachableDocument(t *testing.T) {
 			{GPUUUID: "GPU-aaa", GPUModel: "NVIDIA GeForce RTX 4090", VRAMBytes: 24 << 30},
 			{GPUUUID: "GPU-bbb", GPUModel: "NVIDIA GeForce RTX 4090", VRAMBytes: 24 << 30},
 		},
-	}, runners)
+	}, resolved)
 	if err != nil {
 		t.Fatalf("attach.Build() rejected the pool's own runner set: %v\n"+
 			"a pool-managed host cannot attach at all, so it never serves work", err)

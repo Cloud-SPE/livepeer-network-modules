@@ -152,40 +152,21 @@ func reconcileOnce(ctx context.Context, client *desiredstate.Client, runner desi
 // The URL is the compose service name: the agent reaches its own
 // containers on the compose network, and that address never leaves this
 // host — the broker sees only the tunnel.
+// runnersFor turns the pool's desired state into the host's half of the
+// attach document. What each service SERVES is not in here and never
+// was the controller's to say: the runner states it in its contract,
+// which the agent fetches from the service at attach (attach.Resolve).
+// The controller's capability/identity on the service are for the
+// member's own reporting and the operator's correlation.
 func runnersFor(doc desiredstate.Document) []attach.Runner {
 	out := make([]attach.Runner, 0, len(doc.Services))
 	for _, service := range doc.Services {
-		runner := attach.Runner{
-			LocalID:      service.Name,
-			URL:          "http://" + service.Name + ":8080",
-			Devices:      service.DeviceIDs,
-			Draining:     service.Draining,
-			CapabilityID: service.Capability,
-			Profile:      profileFor(service.Capability),
-		}
-		// The model is the fact an offer's match selects on, and the
-		// controller is the only side that knows which one this
-		// placement is for. An agent that guessed would either match
-		// nothing or match an offering it is not running.
-		if service.Identity != nil {
-			runner.Model = service.Identity["openai.model"]
-			if runner.Model == "" {
-				runner.Model = service.Identity["model"]
-			}
-			runner.Provider = service.Identity["provider"]
-		}
-		out = append(out, runner)
+		out = append(out, attach.Runner{
+			LocalID:  service.Name,
+			URL:      "http://" + service.Name + ":8080",
+			Devices:  service.DeviceIDs,
+			Draining: service.Draining,
+		})
 	}
 	return out
-}
-
-// profileFor picks the wire shape from the capability the controller
-// named. Keying on the capability rather than the template id means a
-// pool that renames a template does not silently change what its
-// runners declare.
-func profileFor(capability string) string {
-	if strings.HasPrefix(capability, "video:") || strings.Contains(capability, "transcode") {
-		return attach.ProfileTranscode
-	}
-	return attach.ProfileOpenAICompatible
 }

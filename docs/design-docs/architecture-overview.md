@@ -207,8 +207,8 @@ Current Pool implementation boundaries:
 **The broker contains no workload-specific knowledge.** It once polled
 per-workload discovery endpoints to hydrate what an offering advertised,
 which meant a new workload needed a broker release; a runner declares
-that itself now, and describing a new workload is an adapter profile in
-the agent.
+that itself now, and describing a new workload is the runner serving its
+own contract at `/.well-known/livepeer-runner` — no agent change at all.
 
 **The broker contains zero routing semantics upstream of normalized health.**
 Capability-specific readiness logic lives in the runner's own declared
@@ -400,8 +400,8 @@ metrics. That is gone. It meant the broker carried hardcoded knowledge of
 every workload's discovery contract, so a new workload needed a broker
 release; and it was an inference about the runner where the runner had the
 fact outright. A runner now declares its own identity and extensions in
-its attach document, and describing a new workload is an adapter profile
-in the agent.
+its attach document, and describing a new workload is the runner's own
+contract, which the agent relays without knowing what is in it.
 
 Boundary:
 
@@ -574,8 +574,9 @@ Any new backend family should define four things before implementation:
 
 1. the base `capability_id`
 2. the minimal stable `extra.<family>` schema the operator authors
-3. the adapter profile that lets a runner declare itself for this family —
+3. the contract the runner serves to declare itself for this family —
    endpoint paths, transports, work unit, extractor, readiness recipe
+   (`runner-contract.md`)
 4. the certification steps that prove a runner of this family actually
    serves and meters the work
 

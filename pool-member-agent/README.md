@@ -38,7 +38,7 @@ Attach (always):
 | `LIVEPEER_ATTACH_CREDENTIAL_FILE` | File holding the attach credential from the bundle. (`LIVEPEER_ATTACH_CREDENTIAL` inline exists for throwaway runs.) |
 | `LIVEPEER_HOST_ID` | Stable host id; defaults to the hostname. Must match the enrollment when the store records one. |
 | `LIVEPEER_RUNNERS_FILE` | JSON array of runner declarations (below). Locally declared runners; a pool-managed host has these replaced on the first reconcile. |
-| `LIVEPEER_RUNNER_*` | Single-runner shorthand: `_PROFILE`, `_URL`, `_MODEL`, `_CAPABILITY_ID`, `_LOCAL_ID`, `_PROVIDER`. |
+| `LIVEPEER_RUNNER_URL` | Single-runner shorthand: the runner's base URL. Its contract says the rest. `LIVEPEER_RUNNER_LOCAL_ID` names it (default `runner-0`). |
 | `LIVEPEER_REFRESH_EVERY` | How often to rebuild the document and re-send it if it changed. Default `1m`. |
 
 Pool-managed (set all three and the reconcile loop starts):
@@ -59,31 +59,41 @@ Pool-managed (set all three and the reconcile loop starts):
 This is the local path — the orchestrator's own hardware, or a dev host. A
 pool-managed host does not use it: the controller supplies the runner set.
 
-An operator says where a container is, which profile it is, and what it
-loaded. The **profile** supplies every fact only the runner knows —
-endpoint path, transports, work unit, extractor, readiness recipe — so
-none of it is ever hand-transcribed into broker config:
+An operator says **where** a container is. That is all. What it serves —
+endpoint path, transports, work unit, extractor, readiness recipe, the
+model it loaded — is the runner's to say, and it says so by serving its
+own capability entry at `GET /.well-known/livepeer-runner`
+([`runner-contract.md`](../livepeer-network-protocol/protocols/runner-contract.md)).
+The agent reads that once at attach and relays it, adding only what the
+host knows: which container (`local_id`), which GPUs back it (`devices`),
+and whether the pool is withdrawing it (`draining`).
 
 ```json
 [
-  { "local_id": "chat",    "profile": "openai-compatible", "url": "http://vllm:8000",
-    "model": "llama-3-70b", "provider": "vllm",
-    "devices": ["GPU-8f3c…"], "extensions": { "x-quantization": "fp8" } },
-  { "local_id": "whisper", "profile": "openai-compatible", "url": "http://whisper:9000",
-    "capability_id": "openai:audio-transcriptions", "model": "whisper-large-v3" },
-  { "local_id": "abr",     "profile": "transcode",        "url": "http://ffmpeg:8080" }
+  { "local_id": "chat",    "url": "http://vllm:8000",
+    "devices": ["GPU-8f3c…"] },
+  { "local_id": "whisper", "url": "http://whisper:9000" },
+  { "local_id": "vod",     "url": "http://transcode:8080" }
 ]
 ```
 
-**Profiles**
+There is no other mechanism. The adapter profiles this agent used to
+carry — `openai-compatible`, `transcode` — put runner facts in the agent,
+where changing one meant shipping a new agent to every member. They are
+gone, and a runner that does not serve its contract is **omitted and
+named**:
 
-- `openai-compatible` — `capability_id` selects the endpoint family:
-  `openai:chat-completions` (default), `openai:embeddings`,
-  `openai:audio-transcriptions`, `openai:audio-translations`,
-  `openai:audio-speech`, `openai:images-generations`. Each carries its
-  own path, transports, work unit, and extractor.
-- `transcode` — `video:transcode.abr` over multipart, metered in
-  `output_seconds` by the `ffmpeg-progress` extractor.
+```
+RUNNER HAS NO CONTRACT: runner "vod" at http://transcode:8080 has no usable
+contract: GET http://transcode:8080/.well-known/livepeer-runner returned
+404; a runner must serve its contract there — it cannot attach until it
+serves GET /.well-known/livepeer-runner (runner-contract.md)
+```
+
+That line is the inventory of runners to fix. It does not fail the
+attach: the host's other runners still serve, and a host with nothing
+resolved attaches hardware-only, visible on the broker as connected and
+serving nothing.
 
 ## The desired-state loop
 

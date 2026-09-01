@@ -239,17 +239,15 @@ func loadRunners(path string) ([]attach.Runner, error) {
 		}
 		return runners, nil
 	}
-	profile := strings.TrimSpace(os.Getenv("LIVEPEER_RUNNER_PROFILE"))
-	if profile == "" {
+	// One runner from the environment. Its URL is the whole declaration:
+	// what it serves is read from the runner itself at attach.
+	url := strings.TrimRight(strings.TrimSpace(os.Getenv("LIVEPEER_RUNNER_URL")), "/")
+	if url == "" {
 		return nil, nil
 	}
 	return []attach.Runner{{
-		LocalID:      envOr("LIVEPEER_RUNNER_LOCAL_ID", "runner-0"),
-		Profile:      profile,
-		URL:          strings.TrimRight(os.Getenv("LIVEPEER_RUNNER_URL"), "/"),
-		CapabilityID: strings.TrimSpace(os.Getenv("LIVEPEER_RUNNER_CAPABILITY_ID")),
-		Model:        strings.TrimSpace(os.Getenv("LIVEPEER_RUNNER_MODEL")),
-		Provider:     strings.TrimSpace(os.Getenv("LIVEPEER_RUNNER_PROVIDER")),
+		LocalID: envOr("LIVEPEER_RUNNER_LOCAL_ID", "runner-0"),
+		URL:     url,
 	}}, nil
 }
 
@@ -270,13 +268,27 @@ func buildDocument(ctx context.Context, cfg config) (*attach.Document, error) {
 		log.Printf("hardware inventory unavailable (%v); attaching with no GPUs", err)
 		hw = nil
 	}
+	// Every runner says what it is, or is named and left out. A missing
+	// contract is the operator's signal — this log line IS the inventory
+	// of runners that do not adhere — and it must not keep the rest of
+	// the host from attaching. A host with nothing resolved attaches
+	// hardware-only, which is visible on the broker as connected and
+	// serving nothing, rather than not visible at all.
+	resolved, errs := attach.Resolve(ctx, contractClient, cfg.Runners)
+	for _, err := range errs {
+		log.Printf("RUNNER HAS NO CONTRACT: %v", err)
+	}
 	return attach.Build(attach.Host{
 		HostID:       cfg.HostID,
 		AgentVersion: "pool-member-agent/" + version,
 		Credential:   attach.Credential{Kind: "bearer", Token: cfg.Credential},
 		Hardware:     hw,
-	}, cfg.Runners)
+	}, resolved)
 }
+
+// contractClient reads runner contracts. Short, because a runner that
+// does not answer its own well-known path in seconds is not going to.
+var contractClient = &http.Client{Timeout: 5 * time.Second}
 
 func tunnelLoop(ctx context.Context, cfg config, state *runnerState) error {
 	backoff := time.Second

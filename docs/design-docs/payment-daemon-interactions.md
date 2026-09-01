@@ -396,7 +396,7 @@ Repo docs therefore keep these roles distinct:
 ## Backend-author checklist
 
 A new backend integration is not ready until its docs, its offer example and
-its runner adapter profile answer all of these clearly. Note which side owns
+its runner's contract (`runner-contract.md`) answer all of these clearly. Note which side owns
 each answer: 1–2 and 6–9 are the operator's, 3–5 are declared by the runner
 and frozen into the offer.
 

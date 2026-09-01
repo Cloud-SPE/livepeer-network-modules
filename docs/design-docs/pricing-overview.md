@@ -1263,9 +1263,9 @@ operator adding a row.
 
 `identity` is a free-form string→string map the runner declares
 ([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md)
-§3.2); `gpu_class` above is only a tier key an agent profile would have to
-emit. Match on whatever the runners you actually run declare — the shipped
-OpenAI adapter profile emits `openai.model` and `provider`.
+§3.2); `gpu_class` above is only a tier key a runner's contract would have to
+emit. Match on whatever the runners you actually run declare — the OpenAI
+adapter's contract emits `openai.model` and `provider`.
 
 The gateway adapter then picks the offering matching the customer's
 SLA / latency / quality preference.

@@ -79,29 +79,24 @@ certification:
     # OpenAI ping, not for ffmpeg.
     timeout_ms: 60000
     config:
-      # The same caveat as the VOD template, and it applies identically here:
-      # the rig declared `http-reqresp@v0` (JSON) while its audio offerings
-      # declared `http-multipart@v0`, so this runner probably speaks JSON. The
-      # step is multipart regardless, because certification-steps.md §4 can
-      # only put the `video/mp4-2s-720p` fixture into multipart `parts[]` and
-      # a JSON body would have to name a source URL the pool invented.
+      # The runner's real request shape (plan 0045 §7), as on the VOD template:
+      # JSON naming a source URL and a destination URL, encode streamed back
+      # as FFmpeg progress and metered live. Both URLs are run-scoped and
+      # broker-minted (certification-steps.md §4).
       #
-      # A `unary`-only runner therefore errors `transport_not_declared` (§3.2)
-      # and the offering does not advertise — a loud, named failure instead of
-      # a fabricated request shape that 400s for a reason nobody can read.
-      transport: multipart
-      parts:
+      # As published, the abr runner is asynchronous and serves no contract;
+      # it fails this step loudly until rewritten (lnm-z72).
+      transport: stream
+      body:
+        source_url: "{{fixture_url.video/mp4-2s-720p}}"
+        output_url: "{{sink_url}}"
         # A two-rung ladder rather than the single rung the VOD probe sends:
         # this offering's whole product is producing several renditions from
         # one source, and a one-rendition probe would certify a runner that
         # cannot do the thing being sold.
-        - name: profiles
-          value: '[{"name":"720p30","width":1280,"height":720,"fps":30},{"name":"480p30","width":854,"height":480,"fps":30}]'
-        - name: source
-          filename: probe.mp4
-          content_type: video/mp4
-          fixture: { ref: video/mp4-2s-720p }
-      expect_content_type: "video/"
+        profiles:
+          - { name: 720p30, width: 1280, height: 720, fps: 30 }
+          - { name: 480p30, width: 854, height: 480, fps: 30 }
   # Constant-formula metering again: with an expression of "1", proving the
   # extractor fires and proving it counted right are the same question.
   - { name: usage, type: usage, required: true, config: { min_units: 1 } }

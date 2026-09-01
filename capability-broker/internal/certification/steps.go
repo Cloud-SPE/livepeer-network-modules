@@ -9,8 +9,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -44,6 +42,11 @@ type runExec struct {
 	// not on the exchange: the two steps are separate config entries
 	// and the runner reports between them.
 	tapID string
+
+	// scopeID is this run's fixture/sink capability (runscope.go),
+	// opened for every run because a JSON request step may need it,
+	// not only a session step. Empty when no base URL is configured.
+	scopeID string
 }
 
 // exchange is a completed request-step exchange.
@@ -75,7 +78,21 @@ func (x *runExec) run() ([]StepResult, string, *runnerattach.Reason) {
 			x.engine.taps.close(x.tapID)
 			x.tapID = ""
 		}
+		if x.scopeID != "" && x.engine != nil && x.engine.scopes != nil {
+			x.engine.scopes.close(x.scopeID)
+			x.scopeID = ""
+		}
 	}()
+	// The run's fixture and sink URLs exist before the first step, so a
+	// recipe can hand a URL-fetching runner a real file in its very
+	// first request. Without a base URL there is nothing to hand out;
+	// the token substitution says so, naming the config, when a recipe
+	// actually asks.
+	if x.engine != nil && x.engine.scopes != nil && x.canMintCallback() {
+		if id, err := x.engine.scopes.open(x.runID, x.engine.opts.Now()); err == nil {
+			x.scopeID = id
+		}
+	}
 	var out []StepResult
 	skipping := false
 	failed := false
@@ -682,19 +699,7 @@ func (x *runExec) resolveFixture(fx map[string]any) ([]byte, string, error) {
 		return data, ct, nil
 	}
 	ref, _ := fx["ref"].(string)
-	if x.fixturesDir == "" {
-		return nil, "", fmt.Errorf("fixture_missing: no certification fixtures_dir configured for ref %q", ref)
-	}
-	// ref is <dir>/<name-without-extension>; find the file by glob.
-	matches, _ := filepath.Glob(filepath.Join(x.fixturesDir, filepath.Clean(ref)+".*"))
-	if len(matches) == 0 {
-		matches, _ = filepath.Glob(filepath.Join(x.fixturesDir, filepath.Clean(ref)))
-	}
-	if len(matches) == 0 {
-		return nil, "", fmt.Errorf("fixture_missing: %q not under %s", ref, x.fixturesDir)
-	}
-	sort.Strings(matches)
-	data, err := os.ReadFile(matches[0])
+	data, _, err := readFixture(x.fixturesDir, ref)
 	if err != nil {
 		return nil, "", err
 	}
@@ -718,7 +723,12 @@ func (x *runExec) substituteConfig(cfg map[string]any) (map[string]any, error) {
 		token := out[start+2 : start+end]
 		value, ok := x.tokenValue(strings.TrimSpace(token))
 		if !ok {
-			return nil, fmt.Errorf("substitution_missing: {{%s}}", strings.TrimSpace(token))
+			tok := strings.TrimSpace(token)
+			if (tok == "sink_url" || strings.HasPrefix(tok, "fixture_url.")) && !x.canMintCallback() {
+				return nil, fmt.Errorf("substitution_missing: {{%s}} needs external_base_url, which is not configured, "+
+					"so the broker has no address to hand the runner", tok)
+			}
+			return nil, fmt.Errorf("substitution_missing: {{%s}}", tok)
 		}
 		escaped, _ := json.Marshal(value)
 		out = out[:start] + strings.Trim(string(escaped), `"`) + out[start+end+2:]
@@ -734,6 +744,23 @@ func (x *runExec) tokenValue(token string) (string, bool) {
 	switch {
 	case token == "run.id":
 		return x.runID, true
+	case token == "sink_url":
+		if x.scopeID == "" {
+			return "", false
+		}
+		return SinkURL(x.engine.opts.CallbackBaseURL, x.scopeID), true
+	case strings.HasPrefix(token, "fixture_url."):
+		if x.scopeID == "" {
+			return "", false
+		}
+		ref := strings.TrimPrefix(token, "fixture_url.")
+		// Resolve at substitution time so an unknown ref is the recipe's
+		// error, named here, rather than a 404 the runner reports back
+		// as its own failure.
+		if _, _, err := readFixture(x.fixturesDir, ref); err != nil {
+			return "", false
+		}
+		return FixtureURL(x.engine.opts.CallbackBaseURL, x.scopeID, ref), true
 	case token == "offer.offering_id":
 		return x.offer.OfferingID, true
 	case token == "offer.capability_id":

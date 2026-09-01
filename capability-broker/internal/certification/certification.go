@@ -113,6 +113,8 @@ type Engine struct {
 	// taps collects usage a session runner reports during its own
 	// certification run.
 	taps *usageTaps
+	// scopes holds each running run's fixture/sink URLs (runscope.go).
+	scopes *runScopes
 }
 
 // New constructs the engine.
@@ -128,7 +130,7 @@ func New(reg *runners.Registry, opts Options) *Engine {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{
-		registry: reg, opts: opts, taps: newUsageTaps(),
+		registry: reg, opts: opts, taps: newUsageTaps(), scopes: newRunScopes(),
 		results: map[offers.PairKey][]*Result{},
 		running: map[offers.PairKey]context.CancelFunc{},
 		backoff: map[offers.PairKey]time.Duration{},

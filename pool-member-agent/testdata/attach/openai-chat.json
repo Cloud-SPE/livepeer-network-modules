@@ -36,7 +36,7 @@
         }
       },
       "requirements": {
-        "gpu_vram_min_bytes": 68719476736
+        "gpu_vram_min_bytes": 17179869184
       },
       "schema_versions": {
         "paid-job/v1": "1.0.15"

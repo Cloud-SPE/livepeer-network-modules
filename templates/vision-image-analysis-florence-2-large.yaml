@@ -83,13 +83,12 @@ certification:
           - role: user
             content:
               - { type: text, text: "describe this image" }
-              # A 32x32 PNG inline as a data URL. It is written out here rather
-              # than referenced as a fixture because the broker's built-in
-              # fixtures (including `image/png-64`) can only be referenced from
-              # multipart `parts[]` — certification-steps.md §4 gives no way to
-              # put a fixture inside a JSON `body`, and this request shape has
-              # no parts. Any valid image will do: the assertion below is that
-              # a description came back at all, not that it is a good one.
+              # A 32x32 PNG inline as a data URL. `{{fixture_url.image/png-64}}`
+              # would also work (certification-steps.md §4), but that makes the
+              # probe depend on the runner reaching the broker's base URL, and
+              # an image-understanding runner has no other reason to; inline
+              # needs nothing. Any valid image will do: the assertion below is
+              # that a description came back at all, not that it is a good one.
               - type: image_url
                 image_url:
                   url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAASElEQVR42mNg4BCQUNAwsHDwCIhIyCioaOiYMGPBig07Dpy4cOPBiw8/KJYftWDUglELRi0YtWDUglELRi0YtWDUglELhooFACLx0Ez8llH7AAAAAElFTkSuQmCC"

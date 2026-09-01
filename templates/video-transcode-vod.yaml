@@ -86,36 +86,30 @@ certification:
     # step-level override rather than the 30s type default.
     timeout_ms: 60000
     config:
-      # READ THIS BEFORE ENABLING. The rig declared `http-reqresp@v0` for this
-      # offering — JSON in, JSON out — while its audio offerings declared
-      # `http-multipart@v0`, so the distinction was deliberate and this runner
-      # probably speaks JSON, not multipart.
+      # The runner's real request shape (plan 0045 §7): JSON in, naming a
+      # source URL to fetch and a destination URL to write, with the encode
+      # streamed back as FFmpeg progress so the broker meters it live
+      # (`ffmpeg-progress`, declared by the runner). Both URLs are minted by
+      # the broker for this one run — certification-steps.md §4,
+      # `{{fixture_url.*}}` and `{{sink_url}}` — so the runner fetches a real
+      # 2s clip and writes somewhere real, and nothing here is a URL the pool
+      # invented.
       #
-      # This step is multipart anyway, because a JSON one cannot be written
-      # honestly. A transcode probe needs a real media file, and
-      # certification-steps.md §4 can only put a fixture into multipart
-      # `parts[]` — there is no way to reference `video/mp4-2s-720p` from a
-      # JSON `body`. The alternative is a body naming a source URL, and any
-      # URL written here is one the pool invented and no runner can fetch.
-      #
-      # So: if the runner declares `multipart`, this certifies it against the
-      # broker's own fixture. If it declares only `unary`, the step errors
-      # `transport_not_declared` (§3.2), the offering does not advertise, and
-      # the operator gets a message naming the exact reason — which is the
-      # failure worth having. Replace this step with the runner's real JSON
-      # request shape and a reachable source when that shape is written down.
-      transport: multipart
-      parts:
-        - { name: profiles, value: '[{"name":"720p30","width":1280,"height":720,"fps":30}]' }
-        - name: source
-          filename: probe.mp4
-          content_type: video/mp4
-          fixture: { ref: video/mp4-2s-720p }
-      # Video came back at all. There is no assertion on the rendition's
-      # dimensions: no step type in certification-steps.md §3 can decode a
-      # media response, so anything stronger would be a claim this catalog
-      # cannot check.
-      expect_content_type: "video/"
+      # As published, the transcode runners are asynchronous (202 + job_id,
+      # status polled) and serve no contract. They FAIL this step, loudly,
+      # naming the runner — which is the design until they are rewritten
+      # (lnm-z72). This template describes the runner we ship next, not the
+      # one on the registry today.
+      transport: stream
+      body:
+        source_url: "{{fixture_url.video/mp4-2s-720p}}"
+        output_url: "{{sink_url}}"
+        profiles:
+          - { name: 720p30, width: 1280, height: 720, fps: 30 }
+      # No assertion on the response body: it is progress, and the usage step
+      # below is what proves the encode produced output. There is still no
+      # step type that decodes media, so the rendition's dimensions remain a
+      # claim this catalog cannot check.
   # The runner's extractor is the constant formula, so this step proves the
   # metering path fires at all rather than that it counted correctly — with a
   # constant expression those are the same question, which is one of the

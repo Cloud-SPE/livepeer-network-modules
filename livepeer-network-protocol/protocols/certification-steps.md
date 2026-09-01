@@ -1,8 +1,8 @@
 ---
 spec_name: certification-steps
-version: 1.0.0-draft
+version: 1.1.0-draft
 status: draft
-last_updated: 2026-08-26
+last_updated: 2026-09-01
 ---
 
 # Certification steps
@@ -209,6 +209,36 @@ broker replaces:
 | `{{offer.offering_id}}`, `{{offer.capability_id}}` | The offer's ids. |
 | `{{offer.extra.<key>}}` | An operator `extra` value (dotted path). |
 | `{{run.id}}` | The run id, for runners that log it. |
+| `{{fixture_url.<ref>}}` | A URL, scoped to this run, from which the runner can **fetch** the built-in fixture `<ref>` (same refs as `fixture.ref`). For runners that take a source URL rather than a body. Unknown ref: `substitution_missing` at substitution time, so the recipe fails here rather than the runner reporting a 404 as its own fault. |
+| `{{sink_url}}` | A URL, scoped to this run, the runner can **PUT** or **POST** its output to. The broker accepts and discards, counting bytes. For runners that take a destination URL. |
+
+**Run-scoped URLs.** Some runners do not take a body at all: a transcode
+runner takes a *source* URL and a *destination* URL, and the media never
+travels in the request. A multipart fixture cannot certify such a runner,
+and any URL a recipe author writes into a JSON body is one the pool
+invented that no runner can fetch. So the broker mints two URLs per
+certification run — a fixture source and an output sink — exactly as it
+mints the session usage callback (§3.3): opened when the run starts,
+unguessable, closed when the run ends, swept if abandoned. They exist for
+the length of one run and for one runner, which is what keeps a fixture
+source from being a public file server and a sink from being an open
+write target. Both require the broker's `external_base_url`, since a
+runner reaches them over ordinary HTTP; without it the substitution is
+`substitution_missing` and names the missing config.
+
+A JSON transcode smoke step therefore reads:
+
+```yaml
+- name: smoke
+  type: request
+  required: true
+  config:
+    transport: stream
+    body:
+      source_url: "{{fixture_url.video/mp4-2s-720p}}"
+      output_url: "{{sink_url}}"
+      preset: "720p"
+```
 
 A token whose value is absent makes the step `error`
 (`substitution_missing`) — it is a template bug, not a runner failure.
@@ -420,4 +450,5 @@ its steps.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.0-draft | 2026-09-01 | §4: `{{fixture_url.<ref>}}` and `{{sink_url}}`, run-scoped URLs the broker mints so a runner that takes source and destination URLs can be certified against a real file. Mirrors the §3.3 usage callback. Additive (plan 0045 §7). |
 | 1.0.0-draft | 2026-08-26 | Initial spec (plan 0043 §3.5, item 3). Step envelope; `readiness` (runner-declared probe, author sets sufficiency), `request` (job: transport/body/parts/status/JSONPath asserts; session: create/descriptor/terminate), `usage` (declared extractor or runner usage event ≥ `min_units`), `latency` (p50/p95 over N samples, total or first-byte); built-in and inline fixtures; `{{identity.*}}`/`{{offer.*}}` substitution; execution order and required/skip rule; result record, triggers, retry backoff; first-pass freeze rule; the five controller probe families as YAML; 16 conformance fixtures. |

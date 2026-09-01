@@ -41,6 +41,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /internal/v1/worker/session", s.handleAttachWS)
 	// Usage callback for a session under certification (certification-steps §3.3).
 	s.mux.HandleFunc("POST "+certification.TapPathPrefix+"{tap_id}", s.handleCertificationUsage)
+	// Run-scoped fixture source and output sink for runners that fetch
+	// their input and write their output (certification-steps §4).
+	s.mux.HandleFunc("GET "+certification.FixturePathPrefix+"{scope}/{ref...}", s.handleCertificationFixture)
+	s.mux.HandleFunc("PUT "+certification.SinkPathPrefix+"{scope}", s.handleCertificationSink)
+	s.mux.HandleFunc("POST "+certification.SinkPathPrefix+"{scope}", s.handleCertificationSink)
 	// Offers (broker-admin §4).
 	s.mux.HandleFunc("GET /admin/v1/offers", s.handleOffersList)
 	s.mux.HandleFunc("PUT /admin/v1/offers", s.handleOffersPut)

@@ -14,22 +14,19 @@
     "required": true,
     "timeout_ms": 60000,
     "config": {
-      "expect_content_type": "video/",
-      "parts": [
-        {
-          "name": "profiles",
-          "value": "[{\"name\":\"720p30\",\"width\":1280,\"height\":720,\"fps\":30}]"
-        },
-        {
-          "content_type": "video/mp4",
-          "filename": "probe.mp4",
-          "fixture": {
-            "ref": "video/mp4-2s-720p"
-          },
-          "name": "source"
-        }
-      ],
-      "transport": "multipart"
+      "body": {
+        "output_url": "{{sink_url}}",
+        "profiles": [
+          {
+            "fps": 30,
+            "height": 720,
+            "name": "720p30",
+            "width": 1280
+          }
+        ],
+        "source_url": "{{fixture_url.video/mp4-2s-720p}}"
+      },
+      "transport": "stream"
     }
   },
   {

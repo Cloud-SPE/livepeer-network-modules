@@ -32,7 +32,7 @@ const chatContract = `{
   "readiness": {"type": "http-openai-model-ready", "path": "/v1/models", "config": {"model": "llama-3-70b"}},
   "identity": {"openai.model": "llama-3-70b", "provider": "vllm"},
   "schema_versions": {"paid-job/v1": "1.0.15"},
-  "requirements": {"gpu_vram_min_bytes": 68719476736},
+  "requirements": {"gpu_vram_min_bytes": 17179869184},
   "x-quantization": "fp8"
 }`
 
@@ -105,7 +105,7 @@ func TestContractIsRelayedVerbatim(t *testing.T) {
 	if c.Identity["openai.model"] != "llama-3-70b" || c.Identity["provider"] != "vllm" {
 		t.Fatalf("identity = %v", c.Identity)
 	}
-	if c.Requirements == nil || c.Requirements.GPUVRAMMinBytes != 68719476736 {
+	if c.Requirements == nil || c.Requirements.GPUVRAMMinBytes != 17179869184 {
 		t.Fatalf("requirements = %+v", c.Requirements)
 	}
 	if c.Extensions["x-quantization"] != "fp8" {

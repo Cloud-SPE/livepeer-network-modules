@@ -1,13 +1,16 @@
 # Image understanding — Florence-2-large, as run on the operator's
 # "ai-rig-broker".
 #
-# WARNING BEFORE YOU ENABLE THIS: the price below is a placeholder the operator
-# marked as such in their own config, and it is off by roughly six orders of
-# magnitude. See `price_default`. Enabling this template as shipped sells GPU
-# work for nothing.
+# Renamed from `openai-vision-florence-2-large` on 2026-09-01 (plan 0045 §6).
+# OpenAI has no vision endpoint, so `openai:vision` claimed one that does not
+# exist — and Florence-2 is not a chat model, so `openai:chat-completions` was
+# wrong in the other direction. `capability_id` is opaque to the protocol
+# (runner-attach.md §3.2: "no closed enum"), and this catalog already names
+# products rather than endpoints (`video:transcode.vod`, `livepeer:meet/sfu-
+# room`), so the id now says what the thing does.
 
-id: openai-vision-florence-2-large
-capability: openai:vision
+id: vision-image-analysis-florence-2-large
+capability: vision:image-analysis
 offering_id: florence-2-large
 protocol: paid-job/v1
 display_name: Image understanding (Florence-2-large)
@@ -16,24 +19,27 @@ description: >-
   in as message content, a description comes back. Metered in images, claimed
   by the runner in a response header.
 
-# PLACEHOLDER — NOT A RATE. The rig's config carries this value with a comment
-# saying it is a placeholder to be re-derived, and it is repeated here in that
-# spirit rather than laundered into a real-looking number.
+# Derived 2026-09-01 (plan 0045 §6), replacing the placeholder `25000000` the
+# rig's config carried with a comment saying it was a placeholder to be
+# re-derived. That figure was about $0.000000043 per image at the 2026-06-15
+# ETH basis — roughly 4 cents per MILLION images.
 #
-# How wrong: 25e6 wei per image is about $0.000000043 at the 2026-06-15 ETH
-# basis in docs/references/2026-06-15-openai-compatible-market-pricing.md —
-# roughly 4 cents per MILLION images. For comparison, the FLUX image-generation
-# template in this same catalog charges 12177e9 wei per image, ~487,000x more.
-# Vision analysis is genuinely cheaper than diffusion — one forward pass of a
-# 0.8B model against dozens of denoise steps — but not by that factor.
+# Anchor: $0.0015/image, Google Cloud Vision. The closest comparable, because it
+# does captioning, OCR and object detection in one call, which is Florence's
+# surface. A frontier VLM's per-token vision pricing was rejected as the anchor
+# because it would price a 0.77B specialist like GPT-4o. 30% under, per the
+# reference's method, is $0.00105/image.
 #
-# There is no `openai:vision` row in that pricing reference to anchor against,
-# which is presumably why the operator left a placeholder. Deriving one is the
-# work; until it is done this template should stay disabled at the pool level
-# (enablement and price are per-deployment database state, not catalog state —
-# template.go's opening comment), which is the mechanism that exists precisely
-# so a not-yet-priced template can sit in the catalog without selling anything.
-price_default: { amount_wei: "25000000", per_units: 1 }
+# Computed as exactly 15x the reference's whisper figure ($0.00007 per audio
+# second -> 40592888126 wei), so it inherits the 2026-06-15 basis with no
+# rounding drift and can be checked against a row already in that document.
+# Derivation and provenance: docs/references/2026-09-01-vision-pricing-and-
+# flux-anchor.md. The June reference is point-in-time and is not edited.
+#
+# Sanity: this lands image analysis at about 1/20th of a FLUX image in the same
+# catalog, which is the right shape — generating an image is far more work than
+# describing one — where the placeholder had it at 1/487,000th.
+price_default: { amount_wei: "608893321890", per_units: 1 }
 
 # The rig pinned no concurrency. Two in flight is pool policy: Florence-2-large
 # is a 0.8B model and a single analysis is one short forward pass, so the card
@@ -66,9 +72,10 @@ certification:
     required: true
     config:
       # The rig serves this at the chat-completions path, so the probe is a
-      # chat request carrying an image — which is what makes this capability
-      # `openai:vision` rather than `openai:chat-completions`: the offer is for
-      # the image-understanding product, not for conversation.
+      # chat request carrying an image. That is the wire shape, not the
+      # product: the runner declares its own `paths.invoke` and the frozen
+      # offer publishes it, so a buyer still knows to use an OpenAI client
+      # while the capability id says what is actually sold.
       transport: unary
       body:
         model: "{{identity.openai.model}}"

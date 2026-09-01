@@ -99,26 +99,25 @@ certification:
   # reports 3 and a broken one reports 0.
   - { name: usage, type: usage, required: true, config: { min_units: 1 } }
 
-# Deliberately empty — the operator has NOT decided this axis. Unlike Whisper,
-# Kokoro and Florence, the rig's config carried no `constraints.gpu` for the
-# NeMo offerings, and Requirements' documented meaning is that an empty list is
-# "no constraint on this axis", never "nothing qualifies" (template.go).
+# Decided 2026-09-01 (plan 0045 §5). The rig's config carried no
+# `constraints.gpu` for the NeMo offerings, and this shipped empty while that
+# stood — which made it the default winner on every card the rest of the
+# catalog declines: nothing else admits an a100, h100, l40s or rtx-3090, so an
+# H100 in the fleet was placed on batch ASR of a 0.6B model.
 #
-# Know what that buys: with no class list this template is eligible on every
-# card the pool has, including a GTX 1080. That is the honest encoding of an
-# undecided constraint, but it is probably not what the operator wants — the
-# first thing to fix once they say which cards run NeMo is this block.
-requirements: {}
+# Deliberately WIDE, because this is batch. A weak card makes a transcription
+# slow, which is recoverable — the caller waits, the latency step is
+# non-required, the ladder scores it down. Contrast the streaming sibling,
+# which is narrow for the opposite reason. With this list it loses 2080s to
+# transcode (21/22/26) and strong cards to everything else, so it lands on
+# 3090s — which is where a light batch workload belongs.
+requirements:
+  gpu_classes: [rtx-2080, rtx-3090, rtx-4090, rtx-5090]
 
-# Low on purpose while `requirements` is open: a template that can match any
-# card should not outrank templates whose hardware policy is actually known.
-#
-# It is nonetheless the highest of this catalog's three unconstrained
-# templates, which are ranked by how badly a wrong placement fails: batch
-# diarization on a weak card is merely slow and still correct, while the live
-# NeMo stream (11) cannot hold realtime and FLUX (10) will not finish inside a
-# caller's timeout. So this is the one that should land on a card nothing
-# better claimed.
+# Unchanged at 12 when `requirements` was filled in: below every template with
+# a heavier or more latency-sensitive workload, so this takes a card only when
+# nothing better claimed it. Now that the class list is real, that is exactly
+# the right place for batch ASR.
 priority: 12
 
 # Primary only. Whisper and Kokoro ride as secondaries because their weights

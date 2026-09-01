@@ -67,6 +67,16 @@ func TestShippedCatalogProducesPlannedStance(t *testing.T) {
 	for _, tmpl := range all {
 		byID[tmpl.ID] = tmpl
 	}
+	// Classes the catalog DECLINES, on purpose (plan 0045 §5). Nothing
+	// admits them: the lightest workload starts at rtx-2080, and the
+	// datacenter cards have no template of their own yet. A declined
+	// card must be rejected everywhere WITH a reason — an operator has
+	// to be able to see why a real card sits idle — and never placed on
+	// something it cannot run. The old stance gave a 1080 one workload
+	// only because an unconstrained template was the default winner on
+	// every card the rest of the catalog turned down.
+	declined := map[string]bool{ClassGTX1080: true}
+
 	decisions := Plan(Input{Hardware: hardware, Templates: all, Overrides: overrides})
 	for _, decision := range decisions {
 		limit := MaxTemplatesFor(decision.GPUClass, nil)
@@ -74,10 +84,25 @@ func TestShippedCatalogProducesPlannedStance(t *testing.T) {
 			t.Fatalf("%s got %d templates, and the class stance allows %d",
 				decision.GPUClass, len(decision.Placements), limit)
 		}
-		// Every card the pool has a stance on should be earning. One
-		// running nothing is either a requirements block that excludes
-		// real hardware or a catalog with a hole in it, and both are
-		// worth failing over.
+		if declined[decision.GPUClass] {
+			if len(decision.Placements) != 0 {
+				t.Errorf("%s is a declined class but was placed %+v", decision.GPUClass, decision.Placements)
+			}
+			if len(decision.Rejections) != len(all) {
+				t.Errorf("%s: %d rejections for %d templates; a declined card must be turned down by every template, each with a reason",
+					decision.GPUClass, len(decision.Rejections), len(all))
+			}
+			for _, rejection := range decision.Rejections {
+				if rejection.Reason == "" {
+					t.Errorf("%s: %s rejected with no reason", decision.GPUClass, rejection.TemplateID)
+				}
+			}
+			continue
+		}
+		// Every other card the pool has a stance on should be earning.
+		// One running nothing is either a requirements block that
+		// excludes real hardware or a catalog with a hole in it, and
+		// both are worth failing over.
 		if len(decision.Placements) == 0 {
 			t.Errorf("%s is placed nothing; rejections: %+v", decision.GPUClass, decision.Rejections)
 			continue
@@ -107,10 +132,11 @@ func TestShippedCatalogProducesPlannedStance(t *testing.T) {
 		}
 	}
 
-	// The older classes run one workload and nothing else (0040 §4.4).
+	// The older classes the catalog still serves run one workload and
+	// nothing else (0040 §4.4). The 1080 is declined, above.
 	for _, decision := range decisions {
 		switch decision.GPUClass {
-		case ClassGTX1080, ClassRTX2080, ClassRTX3090:
+		case ClassRTX2080, ClassRTX3090:
 			if len(decision.Placements) != 1 {
 				t.Errorf("%s runs %d templates; §4.4 gives this class one",
 					decision.GPUClass, len(decision.Placements))

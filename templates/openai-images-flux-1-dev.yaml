@@ -1,7 +1,6 @@
 # Image generation — FLUX.1-dev, as run on the operator's "ai-rig-broker".
 #
-# The one template in this catalog whose hardware policy the operator has NOT
-# decided. Read the `requirements` block before enabling it.
+# Hardware policy decided 2026-09-01 (plan 0045 §5); see `requirements`.
 
 id: openai-images-flux-1-dev
 capability: openai:images-generations
@@ -42,10 +41,9 @@ extra:
   image:
     task: generation
 
-# The rig's `constraints:` block, kept whole. `gpu_vendor` is doing more work
-# here than on the other templates: `requirements` below constrains NOTHING,
-# so this string is currently the only record anywhere of the operator's
-# NVIDIA intent. It is still advertised metadata rather than a gate — a
+# The rig's `constraints:` block, kept whole. `gpu_vendor` is advertised
+# metadata for routing; the gate is `requirements.gpu_classes` below, which
+# is NVIDIA-only. It is still advertised metadata rather than a gate — a
 # constraint tells a buyer what they are routing to, it does not stop this
 # template being placed on an AMD card.
 constraints:
@@ -85,43 +83,32 @@ certification:
   # actually sent. Which formula is runner-declared and frozen.
   - { name: usage, type: usage, required: true, config: { min_units: 1 } }
 
-# NOTHING IS CONSTRAINED HERE, AND THAT IS ON PURPOSE.
+# Decided 2026-09-01 (plan 0045 §5). The rig's config read `gpu:
+# "YOUR_GPU_MODEL"` — a placeholder from whatever example it was copied from —
+# and this template shipped with `requirements: {}` while that stood.
 #
-# The rig's config for this offering reads `gpu: "YOUR_GPU_MODEL"` — the
-# placeholder from whatever example it was copied from. The operator has not
-# decided which cards run FLUX, and a class list invented here would be a
-# hardware policy nobody set, enforced on every member of the pool.
+# What the empty list actually did was not "permissive": it made this template
+# the default winner on every card the rest of the catalog declines. Nothing
+# else admits an a100, h100, l40s or rtx-3090, so the highest-priority template
+# admitting everything took them — and on a GTX 1080 a FLUX generation does
+# not finish inside any reasonable caller timeout at all.
 #
-# An empty Requirements means "no constraint on this axis", never "nothing
-# qualifies" (template.go), so as written this template is eligible on every
-# card the pool has — including a GTX 1080, where a FLUX generation will not
-# finish inside any reasonable caller timeout. `priority` below is set low to
-# limit the damage, but priority only breaks ties: on a card that qualifies for
-# nothing else, this template still wins.
-#
-# The fix is one line, and it is the operator's line to write. The obvious
-# candidate, given every other GPU workload on this rig, is:
-#
-#     gpu_classes: [rtx-4090, rtx-5090]
-#
-# It is left commented out rather than applied because a guess that happens to
-# be right is still a guess, and this catalog is meant to be readable as a
-# record of what the operator decided.
-requirements: {}
+# FLUX.1-dev is ~12B parameters and ~24GB in bf16. An 8GB card cannot run it;
+# the pair below is the catalog's other heavy-model family and the operator's
+# actual rigs. No gpu_vram_min_bytes: on this narrow a class list it can only
+# exclude cards the class already vouches for.
+requirements:
+  gpu_classes: [rtx-4090, rtx-5090]
 
-# The lowest in the catalog, and deliberately below every template whose
-# hardware policy IS known: a template that can match any card should not take
-# primary slots away from templates that were told which cards they are for.
+# Raised 10 -> 28 in the same change that filled in `requirements`; the two are
+# one decision. Just under chat (30): on a 5090 both qualify and chat is the
+# rig's flagship, so chat holds the primary slot and FLUX takes the card only
+# where chat does not.
 #
-# Lowest even among the three unconstrained templates, which are ranked by how
-# badly a wrong placement fails: batch NeMo (12) on a weak card is merely slow,
-# a live NeMo stream (11) cannot hold realtime, and a FLUX generation on a GTX
-# 1080 will not finish inside a caller's timeout at all — it is the misplacement
-# that produces errors rather than slowness.
-#
-# Raise this to ~28 (just under chat) at the same time as the requirements
-# block above is filled in — the two are one decision.
-priority: 10
+# Above vision (20) on a 4090. That ordering is a COMMERCIAL call, not a
+# technical one — it says image generation earns that card more than image
+# analysis does. If that is wrong, move this number, not the class list.
+priority: 28
 
 # Primary only, and the strictest case for it. The model occupies the card for
 # the duration of every job, so this is not the low-footprint rider a secondary

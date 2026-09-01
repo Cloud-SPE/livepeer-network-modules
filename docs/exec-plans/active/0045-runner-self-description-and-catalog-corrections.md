@@ -206,8 +206,9 @@ derivable here, and **flux at 28 is a commercial call** — it puts generation
 ahead of vision on a 4090. If that is wrong, move the priority, not the class
 list.
 
-**Deliberate consequence.** `a100`, `h100` and `l40s` become unplaceable:
-nothing in the catalog sells their time. That is correct and visible —
+**Deliberate consequence.** `a100`, `h100`, `l40s` — and `gtx-1080`, since the
+lightest workload now starts at `rtx-2080` — become unplaceable: nothing in
+the catalog sells their time. That is correct and visible —
 placement records a per-unit rejection with a reason, surfaced on the
 exception queue. An idle H100 someone can see beats an H100 quietly doing 0.6B
 ASR. But any datacenter card in the fleet stops earning when this lands, and
@@ -306,6 +307,8 @@ run-scoped URLs, one mechanism.
 ## 9. Open, deliberately
 
 - Datacenter cards (`a100`, `h100`, `l40s`) have no template. Wanted: one of
-  their own, not a loosened list.
+  their own, not a loosened list. `gtx-1080` is declined by the same logic
+  from the other end — if 8GB cards should earn, that is a template decision
+  too.
 - Session backend outcomes (§2 is paid-job only).
 - AMD vendor images and classes.

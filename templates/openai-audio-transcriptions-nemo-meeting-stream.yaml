@@ -176,36 +176,27 @@ certification:
   # enough.
   - { name: usage, type: usage, required: true, config: { min_units: 1, window_ms: 10000 } }
 
-# Deliberately empty — the operator has NOT decided this axis. The rig set
-# `constraints.gpu` on its Whisper, Kokoro and Florence offerings and on
-# nothing NeMo, and an empty list means "no constraint on this axis", never
-# "nothing qualifies" (template.go).
+# Decided 2026-09-01 (plan 0045 §5). The rig's config carried no
+# `constraints.gpu` for the NeMo offerings, and this shipped empty while that
+# stood — eligible on every card in the pool, including a GTX 1080.
 #
-# This one deserves a second look sooner than its batch sibling does: a live
-# stream that cannot keep up with realtime is not slow, it is broken, and with
-# no class list this template is eligible on a GTX 1080.
-requirements: {}
+# Deliberately NARROW, because this is a paid session metered per wall-clock
+# second. A card that cannot hold realtime does not degrade, it fails: audio
+# arrives faster than it is consumed and the session falls behind without
+# bound, billing the caller by the second while it does. Scoring cannot fix
+# that. So where the batch sibling is wide, this one starts at a card with real
+# margin. The exact floor is a fleet measurement; move it with evidence.
+requirements:
+  gpu_classes: [rtx-3090, rtx-4090, rtx-5090]
 
-# Deliberately low, and NOT where this workload belongs on merit.
+# Raised 11 -> 24 in the same change that filled in `requirements`; the two are
+# one decision, and splitting them is how a live stream ends up on a card that
+# cannot keep up with realtime.
 #
-# On merit a live session should outrank every batch family — around 24, just
-# under chat — because it is the one workload that cannot absorb contention.
-# It is set below every template with a stated hardware policy instead,
-# because `requirements` below is empty: this template matches every card in
-# the pool, and priority is what decides who takes a card's primary slot. An
-# unconstrained template ranked on merit would take a GTX 1080's primary slot
-# away from a template that was actually told which cards it is for.
-#
-# Among the three unconstrained templates in this catalog the ranking is by how
-# badly a wrong placement fails: batch NeMo (12) on a weak card is merely slow,
-# a live stream (11) cannot hold realtime, and FLUX (10) will not finish inside
-# a caller's timeout at all. Least-harmful-first is the only ordering available
-# while the operator has not said which cards these run on.
-#
-# Raise this to ~24 in the same diff that fills in `requirements`. The two are
-# one decision, and splitting them is how a live stream ends up assigned to a
-# card that cannot keep up with realtime.
-priority: 11
+# Above batch (12): a live session should win a card both fit, because it is
+# the one workload that cannot absorb contention. Below transcode-live (26),
+# which is the same argument one product up, and below chat (30).
+priority: 24
 
 # Primary only, and the strongest case for it in the catalog. The session holds
 # the card, the socket and the sole in-flight slot for up to an hour; anything

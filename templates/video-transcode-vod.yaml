@@ -139,8 +139,13 @@ certification:
 # widened so they could ride a newer card as a secondary; this one cannot ride
 # anything (see stacking), so a wider list would only let transcode take
 # primary slots on cards the operator never offered for it.
+# Intel added 2026-09-01 (plan 0045 §4): the intel build of this runner
+# exists, and a class list that named no Intel card would leave every one of
+# those images unrunnable — ClassOf returns ClassUnknown for a card no class
+# matches, and placement rejects it. Which Intel cards belong here is a fleet
+# question; these are the classes placement knows today.
 requirements:
-  gpu_classes: [rtx-2080]
+  gpu_classes: [rtx-2080, arc-a770, arc-b580, flex-170]
 
 # Above the catalog's three unconstrained templates (12/11/10), which is the
 # point: those match a 2080 too, and without this the rig's own workload would
@@ -158,10 +163,22 @@ priority: 22
 # secondary_on entry here would describe a stacking that can never happen.
 stacking: { primary: true, secondary_on: [] }
 
-# runner_compose omitted: the images that serve this workload are unresolved
-# (tracked as lnm-v12). The rig named a compose service, not a published image
-# reference, and inventing a ghcr tag here would fail at `compose up` on a
-# member's host instead of in review.
+# The runner, per vendor (plan 0045 §4). Same product on either card, a
+# different build for each; the controller picks at desired-state render,
+# where it knows the card, and placement refuses a card whose vendor has no
+# entry here rather than letting it fail at compose up on a member's host.
+# Confirmed against livepeer-modules-transcode-runners: transcode-runner-* serves
+# `POST /v1/video/transcode`. AMD waits for a later iteration and has no key.
+#
+# NOTE — plan 0045 §7: as published, these runners are asynchronous (202 +
+# job_id, status polled) and therefore cannot be billed under paid-job; and
+# they do not yet serve the runner self-description contract (§3). Until both
+# land, the agent refuses this image LOUDLY, naming it. That is the design:
+# the failure message is the impacted-runner inventory.
+runner_compose:
+  image:
+    nvidia: tztcloud/transcode-runner-nvidia:v1.4.1
+    intel: tztcloud/transcode-runner-intel:v1.4.1
 
 # min_jobs is the highest in the catalog. Transcode failures are bursty — one
 # bad container produces many quick errors, and a codec the runner cannot

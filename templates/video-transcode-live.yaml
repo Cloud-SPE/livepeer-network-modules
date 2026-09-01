@@ -180,8 +180,13 @@ certification:
 # it either keeps up with the publisher or drops frames — and it is scoped to
 # the oldest cards in the fleet. That may be exactly right for a single
 # 720p ingest and exactly wrong for anything above it.
+# Intel added 2026-09-01 (plan 0045 §4): the intel build of this runner
+# exists, and a class list that named no Intel card would leave every one of
+# those images unrunnable — ClassOf returns ClassUnknown for a card no class
+# matches, and placement rejects it. Which Intel cards belong here is a fleet
+# question; these are the classes placement knows today.
 requirements:
-  gpu_classes: [rtx-2080]
+  gpu_classes: [rtx-2080, arc-a770, arc-b580, flex-170]
 
 # The highest of the three transcode templates and the highest anything gets
 # outside the chat rig. On a 2080 that could take a live ingest or a batch job,
@@ -194,10 +199,22 @@ priority: 26
 # the encoder and the sole in-flight slot for its whole duration.
 stacking: { primary: true, secondary_on: [] }
 
-# runner_compose omitted: the images that serve this workload are unresolved
-# (tracked as lnm-v12). The rig named a compose service and a bespoke
-# transport, not a published image reference, and inventing a ghcr tag here
-# would fail at `compose up` on a member's host instead of in review.
+# The runner, per vendor (plan 0045 §4). Same product on either card, a
+# different build for each; the controller picks at desired-state render,
+# where it knows the card, and placement refuses a card whose vendor has no
+# entry here rather than letting it fail at compose up on a member's host.
+# Confirmed against livepeer-modules-transcode-runners: live-runner-* serves
+# `POST /v1/video/live/sessions`. AMD waits for a later iteration and has no key.
+#
+# NOTE — plan 0045 §7: as published, these runners are asynchronous (202 +
+# job_id, status polled) and therefore cannot be billed under paid-job; and
+# they do not yet serve the runner self-description contract (§3). Until both
+# land, the agent refuses this image LOUDLY, naming it. That is the design:
+# the failure message is the impacted-runner inventory.
+runner_compose:
+  image:
+    nvidia: tztcloud/live-runner-nvidia:v1.4.1
+    intel: tztcloud/live-runner-intel:v1.4.1
 
 # min_jobs counts SESSIONS, and a live session may run for hours — so 5 is
 # already a long probation in wall-clock terms, and a larger number would keep

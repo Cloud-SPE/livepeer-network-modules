@@ -2,6 +2,7 @@ package templates
 
 import (
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/gpu"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,7 +17,6 @@ var (
 	stepNameRE   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 	promotedRE   = regexp.MustCompile(`^x-[A-Za-z0-9._-]+$`)
 	priceWeiRE   = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
-	envNameRE    = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 	matchKeyRE   = regexp.MustCompile(`^identity\.[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
 )
 
@@ -240,25 +240,28 @@ func (t Template) Validate() error {
 	if t.CommissionBPS > 10_000 {
 		return fmt.Errorf("template %s: commission_bps must be <= 10000", t.ID)
 	}
-	seenEnv := map[string]bool{}
-	for i, v := range t.RunnerCompose.MemberEnv {
-		if !envNameRE.MatchString(v.Name) {
-			return fmt.Errorf("template %s: runner_compose.member_env[%d].name %q must be an environment variable name", t.ID, i, v.Name)
+	// The image map and the class list have to agree, or a card is placed
+	// on a workload it has no image for and the failure surfaces as a
+	// compose pull on a member's host instead of here (plan 0045 §4).
+	for vendor, image := range t.RunnerCompose.Image {
+		if !gpu.Known(vendor) {
+			return fmt.Errorf("template %s: runner_compose.image names vendor %q; known vendors are %v",
+				t.ID, vendor, gpu.Vendors())
 		}
-		if seenEnv[v.Name] {
-			return fmt.Errorf("template %s: runner_compose.member_env repeats %q", t.ID, v.Name)
+		if strings.TrimSpace(image) == "" {
+			return fmt.Errorf("template %s: runner_compose.image.%s is empty", t.ID, vendor)
 		}
-		seenEnv[v.Name] = true
-		if _, clash := t.RunnerCompose.Env[v.Name]; clash {
-			// The pool has fixed this value AND asked the member for
-			// it. One of them is silently ignored, and which one is a
-			// detail of the renderer rather than a decision anyone made.
-			return fmt.Errorf("template %s: %q is both set in runner_compose.env and asked of the member", t.ID, v.Name)
-		}
-		// A member cannot be asked for a secret without being told what
-		// it is for; a masked field with no explanation is a dead end.
-		if v.Secret && strings.TrimSpace(v.Description) == "" {
-			return fmt.Errorf("template %s: runner_compose.member_env[%d] (%s) is secret and has no description", t.ID, i, v.Name)
+	}
+	if t.RunnerCompose.HasImage() {
+		for _, class := range t.Requirements.GPUClasses {
+			vendor := gpu.VendorOfClass(class)
+			if vendor == "" {
+				continue // a class placement has not learned yet is not this check's business
+			}
+			if t.RunnerCompose.ImageFor(vendor) == "" {
+				return fmt.Errorf("template %s: requirements.gpu_classes admits %s (%s) but runner_compose.image has no %s image; "+
+					"a card placed on it would fail at compose up on a member's host", t.ID, class, vendor, vendor)
+			}
 		}
 	}
 	for i, model := range t.RunnerCompose.Models {

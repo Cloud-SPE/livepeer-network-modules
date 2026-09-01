@@ -35,7 +35,7 @@ price_default:
 stacking:
   primary: true
 runner_compose:
-  image: ghcr.io/example/a:1
+  image: { nvidia: ghcr.io/example/a:1 }
 `
 
 // newDesiredStateFixture stands up two enrolled hosts, one GPU each, so

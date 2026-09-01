@@ -120,8 +120,13 @@ certification:
 # Not widened to newer classes: this template cannot stack (see below), so a
 # wider list would only take primary slots on cards the operator never offered
 # for transcode.
+# Intel added 2026-09-01 (plan 0045 §4): the intel build of this runner
+# exists, and a class list that named no Intel card would leave every one of
+# those images unrunnable — ClassOf returns ClassUnknown for a card no class
+# matches, and placement rejects it. Which Intel cards belong here is a fleet
+# question; these are the classes placement knows today.
 requirements:
-  gpu_classes: [rtx-2080]
+  gpu_classes: [rtx-2080, arc-a770, arc-b580, flex-170]
 
 # Just under its VOD sibling, and the gap is the price's doing rather than the
 # product's: both charge per job, an ABR job does several times the encoding,
@@ -135,10 +140,22 @@ priority: 21
 # describe stacking that cannot happen on the only class this template runs on.
 stacking: { primary: true, secondary_on: [] }
 
-# runner_compose omitted: the images that serve this workload are unresolved
-# (tracked as lnm-v12). The rig named a compose service, not a published image
-# reference, and inventing a ghcr tag here would fail at `compose up` on a
-# member's host instead of in review.
+# The runner, per vendor (plan 0045 §4). Same product on either card, a
+# different build for each; the controller picks at desired-state render,
+# where it knows the card, and placement refuses a card whose vendor has no
+# entry here rather than letting it fail at compose up on a member's host.
+# Confirmed against livepeer-modules-transcode-runners: abr-runner-* serves
+# `POST /v1/video/transcode/abr`. AMD waits for a later iteration and has no key.
+#
+# NOTE — plan 0045 §7: as published, these runners are asynchronous (202 +
+# job_id, status polled) and therefore cannot be billed under paid-job; and
+# they do not yet serve the runner self-description contract (§3). Until both
+# land, the agent refuses this image LOUDLY, naming it. That is the design:
+# the failure message is the impacted-runner inventory.
+runner_compose:
+  image:
+    nvidia: tztcloud/abr-runner-nvidia:v1.4.1
+    intel: tztcloud/abr-runner-intel:v1.4.1
 
 # High min_jobs for the same reason as VOD: transcode failures are bursty and
 # codec-dependent, so a small sample promotes on luck.

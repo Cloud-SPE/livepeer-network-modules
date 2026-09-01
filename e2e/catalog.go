@@ -33,7 +33,7 @@ requirements:
 priority: 10
 stacking: { primary: true, secondary_on: [] }
 runner_compose:
-  image: example.invalid/e2e-chat:1
+  image: { nvidia: example.invalid/e2e-chat:1 }
   env:
     E2E_FIXTURE: "1"
 probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
@@ -76,7 +76,7 @@ requirements:
 priority: 20
 stacking: { primary: true, secondary_on: [] }
 runner_compose:
-  image: example.invalid/e2e-stream:1
+  image: { nvidia: example.invalid/e2e-stream:1 }
 probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
 active: { share_cap_ppm: 150000 }
 commission_bps: 1000

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	gpuv "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/gpu"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
@@ -24,6 +25,11 @@ const (
 	ReasonNotStackable     = "not_stackable_on_this_class"
 	ReasonStackingFull     = "stacking_limit_reached"
 	ReasonHardwareNotReady = "hardware_not_placeable"
+	// ReasonNoImageForVendor: the template ships a runner, but not one
+	// built for this card's vendor. Rejected here rather than rendered,
+	// because the alternative is a compose pull that fails on a
+	// member's host (plan 0045 §4).
+	ReasonNoImageForVendor = "no_image_for_vendor"
 )
 
 // Placement is one template placed on one GPU.
@@ -247,6 +253,20 @@ func requirementsFail(tmpl templates.Template, unit types.HardwareUnit, class st
 	}
 	if req.GPUVRAMMinBytes > 0 && unit.VRAMBytes > 0 && unit.VRAMBytes < req.GPUVRAMMinBytes {
 		return ReasonInsufficientVRAM, "card reports " + strconv.FormatUint(unit.VRAMBytes/(1<<30), 10) + "GiB"
+	}
+	// The hardware gate's last axis: the template has to ship a build
+	// for this card's vendor. A template with no image at all is not
+	// gated — it places and renders no service, as before — so a
+	// catalog entry whose images are still unresolved keeps its slot
+	// rather than silently handing the card to something else.
+	if tmpl.RunnerCompose.HasImage() {
+		vendor := gpuv.VendorOfModel(unit.GPUModel)
+		if vendor == "" {
+			return ReasonNoImageForVendor, "card names no vendor the pool can render for: " + unit.GPUModel
+		}
+		if tmpl.RunnerCompose.ImageFor(vendor) == "" {
+			return ReasonNoImageForVendor, "no " + vendor + " image"
+		}
 	}
 	return "", ""
 }

@@ -103,7 +103,7 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 		Templates: []templates.Template{{
 			ID: "chat-4090",
 			RunnerCompose: templates.RunnerCompose{
-				Image:       "runner-chat:latest",
+				Image:       map[string]string{"nvidia": "runner-chat:latest"},
 				InternalURL: "http://chat-runner:9000",
 				Env:         map[string]string{"QUANT": "fp8", "MODEL": "small"},
 			},

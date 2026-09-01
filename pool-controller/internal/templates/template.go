@@ -14,6 +14,8 @@
 // or a GPU requirement is not.
 package templates
 
+import "strings"
+
 import "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 
 // Template is one entry of the curated catalog.
@@ -125,28 +127,33 @@ type Stacking struct {
 // their own runner supplies a URL instead of an image, in which case
 // the bundle ships no service at all.
 type RunnerCompose struct {
-	Image   string            `yaml:"image,omitempty" json:"image,omitempty"`
+	// Image is the runner image PER VENDOR: the same product is served by
+	// a different build on an NVIDIA card than on an Intel one, and the
+	// controller picks at desired-state render, where it knows the card.
+	//
+	// A map rather than a templated string on purpose (plan 0045 §4). A
+	// template with no image for a vendor must make that card ineligible
+	// at placement, which a map makes checkable when the catalog loads;
+	// a string like "{{gpu.vendor}}" always produces a name, and it is
+	// wrong on a member's host rather than in review. Keys are gpu
+	// vendors; a template that names none renders no service.
+	Image   map[string]string `yaml:"image,omitempty" json:"image,omitempty"`
 	Command []string          `yaml:"command,omitempty" json:"command,omitempty"`
 	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
-	// MemberEnv names configuration the MEMBER must supply, not the
-	// pool.
-	//
-	// Some workloads are self-contained: the image is the whole thing.
-	// Others are an adapter in front of something the member brings —
-	// their own vLLM, or a third-party API. The pool cannot know that
-	// address and must not hold that key: a catalog file is reviewed in
-	// git and a controller database is not where someone's OpenRouter
-	// credential belongs.
-	//
-	// So these are DECLARED here and supplied on the member's own host.
-	// The rendered compose passes them through as ${NAME}, which docker
-	// reads from the member's .env — the value never reaches the pool at
-	// all.
-	MemberEnv []MemberEnvVar `yaml:"member_env,omitempty" json:"member_env,omitempty"`
-	Models    []Model        `yaml:"models,omitempty" json:"models,omitempty"`
+	Models  []Model           `yaml:"models,omitempty" json:"models,omitempty"`
 	// InternalURL names a runner the operator hosts themselves.
 	InternalURL string `yaml:"internal_url,omitempty" json:"internal_url,omitempty"`
 }
+
+// ImageFor is the image this template runs on a card of the given
+// vendor, or empty when it has none — which placement treats as "this
+// card cannot run it", never as "run it anyway".
+func (rc RunnerCompose) ImageFor(vendor string) string {
+	return strings.TrimSpace(rc.Image[strings.ToLower(strings.TrimSpace(vendor))])
+}
+
+// HasImage reports whether the template ships a runner at all.
+func (rc RunnerCompose) HasImage() bool { return len(rc.Image) > 0 }
 
 // Model is a weight file the agent must have on disk before the runner
 // can start. Size is declared so the agent can report progress and
@@ -186,20 +193,4 @@ type SessionPolicy struct {
 type SessionHeartbeat struct {
 	IntervalSeconds int `yaml:"interval_seconds,omitempty" json:"interval_seconds,omitempty"`
 	MissedThreshold int `yaml:"missed_threshold,omitempty" json:"missed_threshold,omitempty"`
-}
-
-// MemberEnvVar is one value the member has to provide for a workload to
-// run on their host.
-type MemberEnvVar struct {
-	Name        string `yaml:"name" json:"name"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	// Required false means the workload runs without it.
-	Required bool `yaml:"required,omitempty" json:"required,omitempty"`
-	// Secret marks a credential, so a portal masks it and nothing logs
-	// it. The pool never receives the value either way; this says how
-	// to talk about it.
-	Secret bool `yaml:"secret,omitempty" json:"secret,omitempty"`
-	// Example is shown to the member. It must never be a real
-	// credential.
-	Example string `yaml:"example,omitempty" json:"example,omitempty"`
 }

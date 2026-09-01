@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/gpu"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
@@ -58,24 +59,9 @@ type Service struct {
 	// model. The controller knows both from the template (its
 	// capability, and the identity its `match` selects on), so it says
 	// so rather than leaving the agent to guess.
-	// RequiredEnv names values the member must set on their own host
-	// for this service to run. The agent renders them as ${NAME}
-	// passthrough, so the values live in the member's .env and never
-	// reach the pool — these are the names, not the values.
-	RequiredEnv []RequiredEnvVar `json:"required_env,omitempty"`
-
 	Capability string            `json:"capability"`
 	Protocol   string            `json:"protocol,omitempty"`
 	Identity   map[string]string `json:"identity,omitempty"`
-}
-
-// RequiredEnvVar is one value the member has to supply.
-type RequiredEnvVar struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Required    bool   `json:"required,omitempty"`
-	Secret      bool   `json:"secret,omitempty"`
-	Example     string `json:"example,omitempty"`
 }
 
 // Model is a weight file that must be on disk before the service starts.
@@ -143,7 +129,6 @@ func Build(in Input) (Document, error) {
 			ComposeFragment: renderCompose(ServiceName(assignment.ID), tmpl, unit),
 			DeviceIDs:       []string{unit.GPUUUID},
 			Models:          modelsOf(tmpl),
-			RequiredEnv:     memberEnvOf(tmpl),
 			Draining:        withdrawn,
 			TemplateID:      tmpl.ID,
 			AssignmentID:    assignment.ID,
@@ -207,7 +192,12 @@ func modelsOf(tmpl templates.Template) []Model {
 func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "  %s:\n", name)
-	if image := strings.TrimSpace(tmpl.RunnerCompose.Image); image != "" {
+	// The image is the vendor's build. Placement already refused a card
+	// the template has no image for (ReasonNoImageForVendor), so an
+	// empty lookup here is a template with no runner_compose at all,
+	// which renders no image line — as before.
+	vendor := gpu.VendorOfModel(unit.GPUModel)
+	if image := tmpl.RunnerCompose.ImageFor(vendor); image != "" {
 		fmt.Fprintf(&b, "    image: %s\n", image)
 	}
 	b.WriteString("    restart: unless-stopped\n")
@@ -225,12 +215,9 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 	// Member values are rendered as ${NAME}: docker substitutes them
 	// from the member's own .env at `compose up`, so the pool renders
 	// the reference and never the secret.
-	env := make(map[string]string, len(tmpl.RunnerCompose.Env)+len(tmpl.RunnerCompose.MemberEnv))
+	env := make(map[string]string, len(tmpl.RunnerCompose.Env))
 	for name, value := range tmpl.RunnerCompose.Env {
 		env[name] = value
-	}
-	for _, v := range tmpl.RunnerCompose.MemberEnv {
-		env[v.Name] = "${" + v.Name + "}"
 	}
 	if len(env) > 0 {
 		names := make([]string, 0, len(env))
@@ -243,10 +230,28 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 			fmt.Fprintf(&b, "      %s: %s\n", name, env[name])
 		}
 	}
-	if uuid := strings.TrimSpace(unit.GPUUUID); uuid != "" {
-		b.WriteString("    deploy:\n      resources:\n        reservations:\n          devices:\n")
-		b.WriteString("            - driver: nvidia\n              capabilities: [gpu]\n")
-		fmt.Fprintf(&b, "              device_ids: [%q]\n", uuid)
+	// How the card reaches the container is the vendor's to say, and
+	// the two known vendors do it differently. NVIDIA pins one card by
+	// UUID through its container runtime, which is what makes a
+	// two-card host two services that cannot contend. Intel exposes the
+	// DRI render nodes, and compose has no per-card selector for them —
+	// so on a multi-card Intel host every service sees every card, and
+	// the one-service-per-GPU invariant the UUID pin enforces is not
+	// enforced there. Stated here rather than papered over: it is a
+	// real limit of the runtime, not of this renderer.
+	switch vendor {
+	case gpu.VendorNVIDIA:
+		if uuid := strings.TrimSpace(unit.GPUUUID); uuid != "" {
+			b.WriteString("    deploy:\n      resources:\n        reservations:\n          devices:\n")
+			b.WriteString("            - driver: nvidia\n              capabilities: [gpu]\n")
+			fmt.Fprintf(&b, "              device_ids: [%q]\n", uuid)
+		}
+	case gpu.VendorIntel:
+		b.WriteString("    devices:\n      - /dev/dri:/dev/dri\n")
+	case gpu.VendorAMD:
+		// ROCm's standard exposure. No AMD image ships yet; rendering the
+		// right devices when one does costs nothing now.
+		b.WriteString("    devices:\n      - /dev/dri:/dev/dri\n      - /dev/kfd:/dev/kfd\n")
 	}
 	return b.String()
 }
@@ -277,18 +282,4 @@ func servingUnit(unit types.HardwareUnit) bool {
 	default:
 		return true
 	}
-}
-
-func memberEnvOf(tmpl templates.Template) []RequiredEnvVar {
-	if len(tmpl.RunnerCompose.MemberEnv) == 0 {
-		return nil
-	}
-	out := make([]RequiredEnvVar, 0, len(tmpl.RunnerCompose.MemberEnv))
-	for _, v := range tmpl.RunnerCompose.MemberEnv {
-		out = append(out, RequiredEnvVar{
-			Name: v.Name, Description: v.Description,
-			Required: v.Required, Secret: v.Secret, Example: v.Example,
-		})
-	}
-	return out
 }

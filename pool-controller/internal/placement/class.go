@@ -25,6 +25,14 @@ const (
 	ClassA100    = "a100"
 	ClassH100    = "h100"
 	ClassL40S    = "l40s"
+	// Intel (plan 0045 §4). The Arc pair are the consumer cards a member
+	// is likely to contribute; Flex 170 is Intel's media-transcode
+	// datacenter part, which is what the transcode runners' intel build
+	// targets. The exact set is a fleet question — add a class when a
+	// real card reports a string these do not match.
+	ClassArcA770 = "arc-a770"
+	ClassArcB580 = "arc-b580"
+	ClassFlex170 = "flex-170"
 	// ClassUnknown is a card the pool has no policy for. It is not an
 	// error and not a rejection of the member — it is a card no
 	// template has claimed it can use, which is the safe answer for
@@ -58,6 +66,11 @@ var modelPatterns = []struct {
 	{regexp.MustCompile(`(?i)\brtx\s*3090\b`), ClassRTX3090},
 	{regexp.MustCompile(`(?i)\brtx\s*2080\b`), ClassRTX2080},
 	{regexp.MustCompile(`(?i)\bgtx\s*1080\b`), ClassGTX1080},
+	// Intel's strings carry trademark noise — "Intel(R) Arc(TM) A770
+	// Graphics" — so the model token is matched on its own.
+	{regexp.MustCompile(`(?i)\barc\b.*\ba770\b|\ba770\b`), ClassArcA770},
+	{regexp.MustCompile(`(?i)\barc\b.*\bb580\b|\bb580\b`), ClassArcB580},
+	{regexp.MustCompile(`(?i)\bflex\s*170\b`), ClassFlex170},
 }
 
 // ClassOf normalises what a driver reported into a pool GPU class.

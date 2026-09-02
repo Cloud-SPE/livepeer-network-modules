@@ -212,7 +212,9 @@ stacking: { primary: true, secondary_on: [] }
 # different build for each; the controller picks at desired-state render,
 # where it knows the card, and placement refuses a card whose vendor has no
 # entry here rather than letting it fail at compose up on a member's host.
-# Confirmed against livepeer-modules-transcode-runners: live-runner-* serves
+# Confirmed against livepeer-modules-transcode (its predecessor,
+# livepeer-modules-transcode-runners, is stale since June 2026 and is being
+# archived — decision 11 on lnm-of6): live-runner-* serves
 # `POST /v1/video/live/sessions`. AMD waits for a later iteration and has no key.
 #
 # NOTE — plan 0045 §7: as published, these runners are asynchronous (202 +

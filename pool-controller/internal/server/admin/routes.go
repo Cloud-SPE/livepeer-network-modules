@@ -61,14 +61,14 @@ type Deps struct {
 	// PayoutPolicyPath and PayoutPausePath are payout-policy.json and
 	// its kill switch. Empty means no automatic approval, which is the
 	// state every pool starts in.
-	PayoutPolicyPath  string
-	PayoutPausePath   string
-	Repo              *repo.StateRepo
-	WrapAuth          func(http.HandlerFunc) http.HandlerFunc
-	Session           *SessionAuth
-	RefreshRendered   func(string) error
-	GetOfferingsJSON  func() ([]byte, error)
-	GetStateJSON      func() ([]byte, error)
+	PayoutPolicyPath string
+	PayoutPausePath  string
+	Repo             *repo.StateRepo
+	WrapAuth         func(http.HandlerFunc) http.HandlerFunc
+	Session          *SessionAuth
+	RefreshRendered  func(string) error
+	GetOfferingsJSON func() ([]byte, error)
+	GetStateJSON     func() ([]byte, error)
 }
 
 type RuntimeApplyInfo struct {

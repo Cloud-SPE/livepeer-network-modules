@@ -125,7 +125,7 @@ var stepConfigKeys = map[string]map[string]bool{
 	"readiness": keySet("attempts", "interval_ms", "consecutive"),
 	"request": keySet("transport", "path", "method", "headers", "body", "parts", "expect_status",
 		"expect_content_type", "assert", "max_response_bytes",
-		"session_params", "expect_descriptor_schema", "hold_ms", "expect_status_after_terminate"),
+		"session_params", "expect_descriptor_schema", "hold_ms", "reach", "expect_status_after_terminate"),
 	"usage":   keySet("source", "min_units", "window_ms"),
 	"latency": keySet("request", "samples", "warmup", "concurrency", "p50_max_ms", "p95_max_ms", "measure"),
 }

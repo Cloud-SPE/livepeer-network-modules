@@ -159,6 +159,13 @@ certification:
       # runner declares what it accepts in the descriptor's `audio`.
       session_params:
         language: en
+      # Reachability (plan 0046, certification-steps.md §3.2): while the
+      # session is open the broker connects from ITS vantage to the
+      # descriptor's `url` with the stream-attach grant and expects the
+      # upgrade. This is what turns "the member says it is public" into a
+      # fact: a wrong port-forward or a missing certificate fails here,
+      # naming the host, instead of failing every caller.
+      reach: { field: url, grant: stream-attach }
       # Long enough that a runner emitting a first usage report on session
       # start (zero units, but a report) has done so before terminate.
       hold_ms: 6000

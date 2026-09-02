@@ -351,7 +351,15 @@ func bundleEnv(input BundleInput) string {
 		"LIVEPEER_HOST_ID=" + input.Enrollment.ID + "\n" +
 		"LIVEPEER_BROKER_URL=" + input.BrokerURL + "\n" +
 		"LIVEPEER_BROKER_QUIC_ADDR=" + input.BrokerQUICAddr + "\n" +
-		"LIVEPEER_ATTACH_CREDENTIAL=" + input.Enrollment.BrokerSessionCredential + "\n"
+		"LIVEPEER_ATTACH_CREDENTIAL=" + input.Enrollment.BrokerSessionCredential + "\n" +
+		// Public edge (plan 0046). Empty means this host is not public
+		// and the pool places no session work on it. To become public:
+		// set the https origin callers reach this host at, put tls.crt
+		// and tls.key in ./edge, and open the port. Issuing the name and
+		// certificate is the member's until the pool issues them
+		// (plan 0046 §7).
+		"LIVEPEER_PUBLIC_URL=\n" +
+		"LIVEPEER_EDGE_PORT=8443\n"
 }
 
 func bundleReadme(input BundleInput) string {
@@ -401,7 +409,14 @@ func bundleCompose(input BundleInput) string {
 		"    restart: unless-stopped\n" +
 		"    gpus: all\n" +
 		"    env_file: .env\n" +
+		// The agent's edge (plan 0046 §2): the one TLS listener on the
+		// host that callers of a session runner reach. Published even
+		// on a host that never becomes public — the port is inert until
+		// LIVEPEER_PUBLIC_URL is set and a certificate is mounted.
+		"    ports:\n" +
+		"      - \"${LIVEPEER_EDGE_PORT:-8443}:8443\"\n" +
 		"    volumes:\n" +
+		"      - ./edge:/etc/livepeer/edge:ro\n" +
 		"      - ./enrollment-token:/run/livepeer/enrollment-token:ro\n" +
 		"      - ./pool-member-agent.yaml:/etc/livepeer/pool-member-agent.yaml:ro\n" +
 		// The agent writes the runner compose file and drives docker,

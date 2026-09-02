@@ -464,6 +464,24 @@ func (x *runExec) sessionRequest(cfg map[string]any, sr *StepResult, timeout tim
 	}
 	x.lastRequest = &exchange{cfg: cfg, status: ex.status, body: ex.body, header: ex.header,
 		duration: time.Since(start), sessionID: created.RunnerSessionID}
+	// Reachability, while the session is live (plan 0046 §2): the
+	// broker connects from its own vantage to the descriptor's public
+	// address, with the grant a caller would present, and expects the
+	// first sign of life. A member with a wrong port-forward fails here
+	// by name instead of failing every real caller.
+	var reached map[string]any
+	if reach, ok := cfg["reach"].(map[string]any); ok {
+		ev, msg := reachDescriptor(x.ctx, desc, reach)
+		if msg != "" {
+			sr.Status = StepFailed
+			sr.Message = "reach: " + msg
+			sr.Evidence = ev
+			termPath := strings.ReplaceAll(x.cap.Paths["terminate"], "{id}", created.RunnerSessionID)
+			_, _ = x.forward(http.MethodDelete, termPath, nil, nil, timeout, defaultMaxRespBytes)
+			return
+		}
+		reached = ev
+	}
 	if hold := intOr(cfg, "hold_ms", 0); hold > 0 {
 		select {
 		case <-x.ctx.Done():
@@ -480,6 +498,9 @@ func (x *runExec) sessionRequest(cfg map[string]any, sr *StepResult, timeout tim
 	sr.Status = StepPassed
 	sr.Evidence = map[string]any{"descriptor_schema": desc.Schema, "duration_ms": time.Since(start).Milliseconds(),
 		"asserted": assertedPaths(cfg), "terminated": true}
+	for k, v := range reached {
+		sr.Evidence[k] = v
+	}
 }
 
 // --- usage (certification-steps §3.3) --------------------------------------

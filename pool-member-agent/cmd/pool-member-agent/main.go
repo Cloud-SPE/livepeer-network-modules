@@ -146,6 +146,9 @@ func run(ctx context.Context, args []string) error {
 	}
 	state := newRunnerState()
 	state.set(cfg.Runners, "")
+	if err := startEdge(ctx, state); err != nil {
+		log.Print(err)
+	}
 	if cfg.PoolManaged() {
 		// The pool owns the runner set. Whatever was configured locally
 		// is a starting point at most: the first reconcile replaces it.

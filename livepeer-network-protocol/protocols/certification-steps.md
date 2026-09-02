@@ -1,8 +1,8 @@
 ---
 spec_name: certification-steps
-version: 1.1.0-draft
+version: 1.2.0-draft
 status: draft
-last_updated: 2026-09-01
+last_updated: 2026-09-02
 ---
 
 # Certification steps
@@ -130,6 +130,7 @@ checks the descriptor, and terminates.
 | `expect_descriptor_schema` | any of the runner's `descriptor_schemas` | Tag the create response's `runtime.schema` MUST equal. |
 | `assert[]` | `[]` | JSONPath assertions over `runtime.public`. |
 | `hold_ms` | 0 | Keep the session open this long before terminate (lets a `usage` step observe events). |
+| `reach` | absent | Session only. `{ field, grant, timeout_ms }`: while the session is open, the broker connects from its own vantage to `runtime.public.<field>` (default `url`) presenting the secret of the grant whose operations include `grant` (optional) as a bearer, and expects the first sign of life — a completed upgrade for `wss`/`ws`, a 2xx GET for `https`/`http`. Fails the step, naming the host, when nobody answers. The broker reads only the one field and one grant the step names (runtime-descriptor §4). Plan 0046. |
 | `expect_status_after_terminate` | `terminated` | What `paths.status` must report after terminate, within `timeout_ms`. |
 
 Default `timeout_ms`: 30000. Passes when create succeeds, the descriptor
@@ -450,5 +451,6 @@ its steps.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.0-draft | 2026-09-02 | Session `request` gains `reach` (plan 0046): the broker dials the descriptor's public address with the named grant while the session is open, so reachability is proved rather than claimed. Additive. |
 | 1.1.0-draft | 2026-09-01 | §4: `{{fixture_url.<ref>}}` and `{{sink_url}}`, run-scoped URLs the broker mints so a runner that takes source and destination URLs can be certified against a real file. Mirrors the §3.3 usage callback. Additive (plan 0045 §7). |
 | 1.0.0-draft | 2026-08-26 | Initial spec (plan 0043 §3.5, item 3). Step envelope; `readiness` (runner-declared probe, author sets sufficiency), `request` (job: transport/body/parts/status/JSONPath asserts; session: create/descriptor/terminate), `usage` (declared extractor or runner usage event ≥ `min_units`), `latency` (p50/p95 over N samples, total or first-byte); built-in and inline fixtures; `{{identity.*}}`/`{{offer.*}}` substitution; execution order and required/skip rule; result record, triggers, retry backoff; first-pass freeze rule; the five controller probe families as YAML; 16 conformance fixtures. |

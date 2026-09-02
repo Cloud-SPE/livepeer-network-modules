@@ -83,8 +83,8 @@ type Snapshot struct {
 	// the host is not public.
 	PublicURL    string
 	Hardware     []runnerattach.Hardware
-	Capabilities    []CapabilityView
-	Extensions      map[string]interface{}
+	Capabilities []CapabilityView
+	Extensions   map[string]interface{}
 }
 
 // Registry holds every host.

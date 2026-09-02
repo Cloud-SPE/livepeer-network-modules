@@ -219,6 +219,14 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 	for name, value := range tmpl.RunnerCompose.Env {
 		env[name] = value
 	}
+	// A session runner builds its descriptor url from this and never
+	// guesses a hostname (plan 0046 §2): the host's public origin plus
+	// the path the agent's edge routes to this service. Only rendered
+	// for a public host — placement refuses a session template on any
+	// other, so an absent value here is a bug upstream, not a fallback.
+	if tmpl.Protocol == "paid-session/v1" && strings.TrimSpace(unit.PublicURL) != "" {
+		env["LIVEPEER_PUBLIC_URL"] = strings.TrimRight(strings.TrimSpace(unit.PublicURL), "/") + "/r/" + name
+	}
 	if len(env) > 0 {
 		names := make([]string, 0, len(env))
 		for name := range env {

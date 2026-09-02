@@ -16,9 +16,10 @@ offering_id: florence-2-large
 protocol: paid-job/v1
 display_name: Image understanding (Florence-2-large)
 description: >-
-  Image analysis over an OpenAI chat-completions request shape: an image goes
-  in as message content, a description comes back. Metered in images, claimed
-  by the runner in a response header.
+  Structured image analysis: an image and a task go in (caption, OCR, object
+  detection, dense region captions), a result with text and, where the task
+  produces them, regions comes back. Metered in images, claimed by the runner
+  in a response header.
 
 # Derived 2026-09-01 (plan 0045 §6), replacing the placeholder `25000000` the
 # rig's config carried with a comment saying it was a placeholder to be
@@ -61,8 +62,13 @@ extra:
 constraints:
   gpu_vendor: NVIDIA
 
+# `identity.model`, not `identity.openai.model` (decision 2 of the 2026-09-02
+# walkthrough, option C): this is not an OpenAI capability, so the runner
+# declares its identity under the plain key. A runner still declaring the
+# openai-namespaced key does not match this offer, which is the point — the
+# selector is where the vocabulary is enforced.
 match:
-  identity.openai.model: florence-2-large
+  identity.model: florence-2-large
 
 certification:
   # Runs the runner's declared probe (the rig used http-status on /healthz);
@@ -72,30 +78,33 @@ certification:
     type: request
     required: true
     config:
-      # The rig serves this at the chat-completions path, so the probe is a
-      # chat request carrying an image. That is the wire shape, not the
-      # product: the runner declares its own `paths.invoke` and the frozen
-      # offer publishes it, so a buyer still knows to use an OpenAI client
-      # while the capability id says what is actually sold.
+      # The runner's structured analyze request (decision 2, option C): the
+      # capability IS `POST /v1/vision/analyze`, and the runner declares that
+      # path in its contract. The chat-shaped route the rig also served is not
+      # a declared capability and is not probed — a probe that passed on it
+      # would certify a surface this offer does not sell.
       transport: unary
       body:
-        model: "{{identity.openai.model}}"
-        messages:
-          - role: user
-            content:
-              - { type: text, text: "describe this image" }
-              # A 32x32 PNG inline as a data URL. `{{fixture_url.image/png-64}}`
-              # would also work (certification-steps.md §4), but that makes the
-              # probe depend on the runner reaching the broker's base URL, and
-              # an image-understanding runner has no other reason to; inline
-              # needs nothing. Any valid image will do: the assertion below is
-              # that a description came back at all, not that it is a good one.
-              - type: image_url
-                image_url:
-                  url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAASElEQVR42mNg4BCQUNAwsHDwCIhIyCioaOiYMGPBig07Dpy4cOPBiw8/KJYftWDUglELRi0YtWDUglELRi0YtWDUglELhooFACLx0Ez8llH7AAAAAElFTkSuQmCC"
-        max_tokens: 64
+        model: "{{identity.model}}"
+        # A 32x32 PNG inline as a data URL. `{{fixture_url.image/png-64}}`
+        # would also work (certification-steps.md §4), but that makes the
+        # probe depend on the runner reaching the broker's base URL, and an
+        # image-understanding runner has no other reason to; inline needs
+        # nothing. Any valid image will do: the assertion below is that a
+        # result came back at all, not that it is a good one.
+        image: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAASElEQVR42mNg4BCQUNAwsHDwCIhIyCioaOiYMGPBig07Dpy4cOPBiw8/KJYftWDUglELRi0YtWDUglELRi0YtWDUglELhooFACLx0Ez8llH7AAAAAElFTkSuQmCC"
+        # The cheapest task in the runner's vocabulary (caption, ocr,
+        # object_detection, dense_region_caption, ...). Caption because it is
+        # what the runner defaults to and what every Florence build supports;
+        # a probe on a region task would certify less broadly, not more.
+        task: caption
+      # One result per image; `response` is the task's text. `usage.images`
+      # is the runner's own count and must agree with the header the usage
+      # step below reads — a probe that checked only one of them would let
+      # the two drift.
       assert:
-        - "$.choices[0].message.content"
+        - "$.results[0].response"
+        - "$.usage.images"
   # The rig metered this from a response header. Which header and which
   # extractor reads it are runner-declared and frozen (runner-attach.md §3.2);
   # a passing step proves the header is actually being emitted, which is the
@@ -132,10 +141,12 @@ priority: 20
 # are, and it has not been observed sharing a card here.
 stacking: { primary: true, secondary_on: [] }
 
-# runner_compose omitted: the images that serve this workload are unresolved
-# (tracked as lnm-v12). The rig named a compose service, not a published image
-# reference, and inventing a ghcr tag here would fail at `compose up` on a
-# member's host instead of in review.
+# runner_compose omitted: the image that serves this workload is
+# moatus/florence-2-runner, and as published it serves no runner contract,
+# declares `openai:vision`, and reports its identity under the OpenAI key. The
+# tag it ships the contract under (lnm-6ig) is the tag that belongs here;
+# inventing one now would fail at `compose up` on a member's host instead of
+# in review (tracked with the other unresolved images as lnm-v12).
 
 probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
 

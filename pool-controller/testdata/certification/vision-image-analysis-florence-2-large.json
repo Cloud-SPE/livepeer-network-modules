@@ -14,28 +14,13 @@
     "required": true,
     "config": {
       "assert": [
-        "$.choices[0].message.content"
+        "$.results[0].response",
+        "$.usage.images"
       ],
       "body": {
-        "max_tokens": 64,
-        "messages": [
-          {
-            "content": [
-              {
-                "text": "describe this image",
-                "type": "text"
-              },
-              {
-                "image_url": {
-                  "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAASElEQVR42mNg4BCQUNAwsHDwCIhIyCioaOiYMGPBig07Dpy4cOPBiw8/KJYftWDUglELRi0YtWDUglELRi0YtWDUglELhooFACLx0Ez8llH7AAAAAElFTkSuQmCC"
-                },
-                "type": "image_url"
-              }
-            ],
-            "role": "user"
-          }
-        ],
-        "model": "{{identity.openai.model}}"
+        "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAASElEQVR42mNg4BCQUNAwsHDwCIhIyCioaOiYMGPBig07Dpy4cOPBiw8/KJYftWDUglELRi0YtWDUglELRi0YtWDUglELhooFACLx0Ez8llH7AAAAAElFTkSuQmCC",
+        "model": "{{identity.model}}",
+        "task": "caption"
       },
       "transport": "unary"
     }

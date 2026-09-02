@@ -309,11 +309,42 @@ run-scoped URLs, one mechanism.
 ## 9. Open, deliberately
 
 - Datacenter cards (`a100`, `h100`, `l40s`) have no template. Wanted: one of
-  their own, not a loosened list. `gtx-1080` is declined by the same logic
-  from the other end — if 8GB cards should earn, that is a template decision
-  too.
-- Session backend outcomes (§2 is paid-job only).
+  their own, not a loosened list (`lnm-um1`, decision 9 below). `gtx-1080`
+  was declined by the same logic from the other end until decision 9 admitted
+  it for transcode only.
 - AMD vendor images and classes.
+- CPU as a placeable compute unit — AV1 VOD via SVT-AV1 (`lnm-iqn`, decision 7).
+- The member's public edge for external session data planes (`lnm-7cj`,
+  decision 13).
+
+## 11. The 2026-09-02 walkthrough: thirteen decisions
+
+Surveying the external repositories (§10) raised twelve questions and the
+implementation raised a thirteenth. Each was walked with the operator one at
+a time and locked; the full text of each is on `lnm-of6`. In one line each:
+
+| # | Decision | Where it landed |
+|---|---|---|
+| 1 | The colon form is the canonical capability vocabulary: prefix is the wire family for a real standard API (`openai:`) else the product domain; suffix is the endpoint name or what it does, `.` for variants, one `:`, never `/`. `livepeer:meet/sfu-room` → `meet:sfu-room`. Three runners had no template: embeddings, audio-translations, rerank. | runner-attach §3.2; `0c2effb`, `a45e0ad` |
+| 2 | Florence: option C — `vision:image-analysis` IS `POST /v1/vision/analyze`; `identity.model`; analyze-shaped smoke. | `1e48512` |
+| 3 | Ownership: in-repo work here; one dated migration packet per external repo under `docs/references/`; the repo owner does the work; landing is confirmed against the read-only checkout. | this section; the six packets |
+| 4 | All six packets go out together, each stating its dependency: in-repo prerequisites → runners (independently verifiable) → NeMo streaming → consumers. | the packets |
+| 5 | `pcm-transcript/v1` descriptor schema; the broker's closed descriptor allowlist deleted — a well-formed, versioned tag is carried. | `e23a19c`; `lnm-1ju` closed |
+| 6 | NeMo streaming leaves the OpenAI family: `audio:transcribe.live` / paid-session / `pcm-transcript/v1`, `identity.model` on the runner's own string. One image serves both NeMo templates by `CAPABILITY_NAME`. | `7cd5e0e` |
+| 7 | Intel classes `arc-a770`, `arc-b580`, `flex-170` stand; consumer and enterprise both in scope; classes grow from the exception queue. CPU compute units are a separate feature after this plan. | `lnm-iqn` filed |
+| 8 | Transcode image tags stay `v1.4.1` as placeholders; the transcode packet names the post-rewrite tag as the real one. | templates as written |
+| 9 | Datacenter cards stay declined (their own template is a product decision, `lnm-um1`). `gtx-1080` admitted for the three transcode templates — Pascal NVENC is the 2080's peer for H.264/HEVC — and by no AI template: vLLM needs CC 7.0+, and whether any other image runs on `sm_61` is the runner author's fact; every packet asks. | `cf429ea` |
+| 10 | One `BackendOutcome` per session at winddown, mapped from the close reason; policy and payment terminations are not routable samples; session templates' `min_jobs` lowered. | `3fab05a`; `lnm-10b` closed |
+| 11 | `livepeer-modules-transcode-runners` is stale (June); templates recite `livepeer-modules-transcode`; the transcode packet asks for the stale repo to be archived. | `8b80ea0` |
+| 12 | Florence's other routes are not this repository's concern; the packet requires the locked needs and recommends deleting the rest as the author's call. | the Florence packet |
+| 13 | Realtime transcription is in scope and assumes the member exposes a public wss/TLS endpoint: every session data plane is `external`. `inband-ws` and `broker-observed` — accepted by the broker, served by nothing — are deleted from the vocabulary. The member-side public edge (agent-owned TLS, pool-issued name, `public_url` host fact, placement gate, certification dial) is its own feature after this plan. | `7cd5e0e`; `lnm-7cj` filed |
+
+Two seams the implementation found on the way, both fixed in the commits
+above: the controller's catalog loader keyed offering-id uniqueness on
+`(capability, offering_id)` while the broker admits one offer per id across
+the catalog, so a valid-looking catalog was refused wholesale at push
+(`a45e0ad`); and `session_ws.go` is the paid-session §8 control socket, not
+a data-plane relay, which is what made decision 13 necessary.
 
 ## 10. Implementation record
 
@@ -326,6 +357,19 @@ Landed in this repository, 2026-09-01, in this order:
 | 4 | `16111f6` | Per-vendor image map with load-time validation; `no_image_for_vendor`; Intel classes; vendor-branched device block; `member_env` deleted. |
 | 3 | `949d669` | `runner-contract.md`; agent is a relay; profiles deleted; `draining` reaches the wire. |
 | 7 | `68e5abf` | Run-scoped fixture and sink URLs; `{{fixture_url.*}}` / `{{sink_url}}`; transcode smoke steps in the real shape. |
+
+And on 2026-09-02, from the walkthrough in §11:
+
+| Decision | Commit | What |
+|---|---|---|
+| 9 | `cf429ea` | `gtx-1080` admitted for transcode; the stance test declines an A100 everywhere with a reason. |
+| 11 | `8b80ea0` | Transcode templates cite the live repository. |
+| 1 | `0c2effb` | Capability id vocabulary rule in runner-attach §3.2; `meet:sfu-room` swept through. |
+| 5 | `e23a19c` | `pcm-transcript/v1`; the broker carries any versioned descriptor schema. |
+| 6, 13 | `7cd5e0e` | `inband-ws` and `broker-observed` deleted; NeMo streaming becomes `audio:transcribe.live`. |
+| 2 | `1e48512` | Florence certifies on the analyze route with `identity.model`. |
+| 1 | `a45e0ad` | Embeddings, audio-translations, rerank templates; offering ids catalog-global in the loader. |
+| 10 | `3fab05a` | A `BackendOutcome` per session at winddown. |
 
 **Remaining, outside this repository:**
 

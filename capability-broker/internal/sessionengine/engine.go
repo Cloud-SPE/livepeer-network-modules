@@ -152,7 +152,10 @@ type Config struct {
 	ReleaseCapacity func(capacityRef string)
 	// OnWinddown observes each terminal winddown's stable reason; nil
 	// is a no-op. Used for metrics; never for control flow.
-	OnWinddown func(reason string)
+	// The record is the terminal one — state, close reason and EndedAt
+	// already written — so an observer can attribute the session
+	// (BackendRef, Capability, Offering) without a second store read.
+	OnWinddown func(rec sessionstore.Record, reason string)
 	// OnEvent observes session happenings for push surfaces (the
 	// control-WS binding). kind is a frame type; data its body. nil is
 	// a no-op. Observability only — never control flow, and the HTTP
@@ -1165,6 +1168,7 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 	if reason == ReasonRunnerFailed || reason == ReasonRecoveryFailed {
 		state = sessionstore.StateFailed
 	}
+	var ended sessionstore.Record
 	_ = e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
 		r.State = state
 		r.CloseReason = reason
@@ -1174,10 +1178,11 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		r.PaymentClosed = paymentClosed
 		r.EndedAt = now
 		r.CapacityRef = ""
+		ended = *r
 		return nil
 	})
 	if e.cfg.OnWinddown != nil {
-		e.cfg.OnWinddown(reason)
+		e.cfg.OnWinddown(ended, reason)
 	}
 	if e.cfg.OnEvent != nil {
 		e.cfg.OnEvent(sessionID, "session.ended", map[string]any{

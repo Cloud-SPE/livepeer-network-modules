@@ -22,6 +22,11 @@ const (
 	OutcomeSuccess        = "success"
 	OutcomeBackendFailure = "backend_failure"
 	OutcomeCallerFailure  = "caller_failure"
+	// The two session-shaped outcomes. The controller records them but
+	// counts neither as a routable sample: a session the pool's own
+	// lease ended, or the money ended, says nothing about the runner.
+	OutcomePolicyTermination  = "policy_termination"
+	OutcomePaymentTermination = "payment_termination"
 )
 
 type BackendOutcome struct {

@@ -262,12 +262,7 @@ func defaultHostID() string {
 // plus the declared runners. Hardware is re-read every time, so a GPU
 // that appears or fails shows up on the next refresh.
 func buildDocument(ctx context.Context, cfg config) (*attach.Document, error) {
-	hw, err := collectNVIDIAGPUs(ctx)
-	if err != nil {
-		// A CPU-only host is legitimate; GPU work simply will not match.
-		log.Printf("hardware inventory unavailable (%v); attaching with no GPUs", err)
-		hw = nil
-	}
+	hw := collectHardware(ctx, cfg.HostID)
 	// Every runner says what it is, or is named and left out. A missing
 	// contract is the operator's signal — this log line IS the inventory
 	// of runners that do not adhere — and it must not keep the rest of

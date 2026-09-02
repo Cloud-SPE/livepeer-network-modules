@@ -419,6 +419,8 @@ And on 2026-09-02, from the walkthrough in §11:
   `broker_url/v1/cap`, `runners.toml` uses `/options` as readiness, and its
   Florence manifest hard-codes `florence-2`. Same class of defect as
   `transcode-gateway`.
-- **Agent hardware inventory** (§4, found on the way): `collectNVIDIAGPUs`
+- ~~**Agent hardware inventory** (§4, found on the way): `collectNVIDIAGPUs`
   is the only inventory, so an Intel host reports no hardware and is never
-  placed. Needed before an Intel card can earn.
+  placed.~~ Landed 2026-09-02 (`lnm-3v7`): the agent reads discrete Intel
+  GPUs from sysfs, names the parts the pool has classes for, and reports an
+  unknown discrete part by its PCI id so placement's rejection names it.

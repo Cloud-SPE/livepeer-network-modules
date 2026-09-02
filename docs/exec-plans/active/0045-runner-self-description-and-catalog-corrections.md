@@ -355,8 +355,25 @@ Landed in this repository, 2026-09-01, in this order:
   dispatch surface — it polls `brokerURL/v1/video/transcode/abr/status` and
   its live path reads `GET /v1/cap/{bsess}`. Independent of this plan, and
   broken today; the port target is paid-job `stream` and paid-session.
-- **No runner exists anywhere for NeMo (two templates) or Florence-2.** Three
-  catalog templates have no image in any repository.
+- **`shane-demo/florence-2-runner`** (`lnm-6ig`): `moatus/florence-2-runner`
+  exists and already matches the template's model. It serves the deleted
+  `/openai:vision/options` describe surface and hard-codes its capability as
+  `florence-2` (`init=False`, not env-overridable). Needs the contract and
+  the `vision:image-analysis` id — and the name currently disagrees three
+  ways between runner, catalog, and the workflow kit.
+- **`shane-demo/audio-diarized-transcription-runner`** (`lnm-yqc`): the NeMo
+  runner, serving both NeMo templates. Batch is close: the id is already
+  `openai:audio-transcriptions`, env-overridable, and its logical model id
+  is exactly what the template matches. Streaming is not: the runner has a
+  live-session surface whose paths map onto create/status/terminate, but no
+  `runner_session_id`, descriptor, usage callback, or heartbeat — and the
+  broker has no descriptor schema for PCM16 audio ingest. That schema is a
+  protocol addition and the right amount of friction.
+- **`shane-demo/livepeer-workflow-kit`** (`lnm-iyb`): the most recently touched
+  of the three and still on the v0 surface — `runtime.py` calls
+  `broker_url/v1/cap`, `runners.toml` uses `/options` as readiness, and its
+  Florence manifest hard-codes `florence-2`. Same class of defect as
+  `transcode-gateway`.
 - **Agent hardware inventory** (§4, found on the way): `collectNVIDIAGPUs`
   is the only inventory, so an Intel host reports no hardware and is never
   placed. Needed before an Intel card can earn.

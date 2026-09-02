@@ -328,16 +328,35 @@ Landed in this repository, 2026-09-01, in this order:
 
 **Remaining, outside this repository:**
 
-- **`livepeer-modules-transcode-runners`** (§7, `lnm-z72`): the nine runner
+- **`livepeer-modules-transcode`** (§7, `lnm-z72`) — the live repository;
+  `livepeer-modules-transcode-runners` is a stale June extraction and the
+  §7 evidence was re-verified against the live one on 2026-09-02. The runner
   images must (a) return a streamed `ffmpeg -progress` body from
-  `POST /v1/video/transcode` and `/abr` and terminate with the claim, and
+  `POST /v1/video/transcode` and `/abr` and terminate with the claim — the
+  runner already parses that progress internally, so this is plumbing — and
   (b) serve `GET /.well-known/livepeer-runner`. Until then the transcode
   templates fail certification loudly, naming the image.
-- **The OpenAI adapter image** (§4): one image, family as configuration,
-  serving its contract and proxying to ollama / vLLM / SGLang / passthrough.
-  It does not exist yet and its home — a module here, or a runners
-  repository — is undecided. The seven OpenAI-family templates stay
-  image-less until it does.
+- **`livepeer-modules-openai-runners`** (§3, §4): the OpenAI runner images
+  **already exist**, one per capability, and `openai-chat-runner` is already
+  the adapter — a Go proxy with `UPSTREAM_KIND`/`UPSTREAM_URL` in front of
+  vLLM or Ollama; passthrough is one more `UPSTREAM_KIND`. §4's "one adapter
+  image, family as configuration" is **withdrawn**: it was made without this
+  repository in view, and re-architecting seven working images into one buys
+  nothing once each serves its contract. What that repository needs: each
+  image serves `/.well-known/livepeer-runner` in place of `GET
+  /<capability>/options` (the deleted describe surface, whose fields map onto
+  the contract nearly one to one); its capability ids move to the catalog's
+  colon form (`openai-chat-completions` → `openai:chat-completions`,
+  `image-generation` → `openai:images-generations`, `openai-text-embeddings`
+  → `openai:embeddings`), which `RUNNERS.md` has already half-started; and its
+  `BROKER-CONTRACT.md`, which still describes the broker dialling runners and
+  merging `/options` into host-config, is rewritten to attach and contract.
+- **`livepeer-modules-transcode-gateway`**: written against the deleted v0
+  dispatch surface — it polls `brokerURL/v1/video/transcode/abr/status` and
+  its live path reads `GET /v1/cap/{bsess}`. Independent of this plan, and
+  broken today; the port target is paid-job `stream` and paid-session.
+- **No runner exists anywhere for NeMo (two templates) or Florence-2.** Three
+  catalog templates have no image in any repository.
 - **Agent hardware inventory** (§4, found on the way): `collectNVIDIAGPUs`
   is the only inventory, so an Intel host reports no hardware and is never
   placed. Needed before an Intel card can earn.

@@ -40,8 +40,6 @@ type Known struct {
 	// ProbeTypes are the remote readiness probe types (§3.2). Broker-local
 	// kinds (command-exit-0, manual-drain) are excluded by the caller.
 	ProbeTypes map[string]bool
-	// DescriptorSchemas the broker will carry (protocol module descriptors/).
-	DescriptorSchemas map[string]bool
 	// Protocols are the paid protocols served (paid-job/v1, paid-session/v1).
 	Protocols map[string]bool
 	// Credential resolves a bearer token to an enrollment; nil host id
@@ -451,13 +449,17 @@ func validateCapability(c *Capability, doc *Document, known Known, field string)
 		if len(c.DescriptorSchemas) == 0 {
 			add("schema_violation", "/descriptor_schemas", "", "non-empty list of <name>/v<N>")
 		}
+		// No list of known schemas to check against, on purpose. The
+		// broker never interprets a descriptor body beyond the generic
+		// envelope (runtime-descriptor §4), so a tag it has not seen is
+		// a schema it can carry; the only thing a closed list bought
+		// was a typo guard, at the price of a broker release per new
+		// schema. A misspelt tag still fails: schema_versions must
+		// carry an entry for it (schema_version_missing, below).
 		seenD := map[string]bool{}
 		for _, d := range c.DescriptorSchemas {
-			switch {
-			case !tagRE.MatchString(d) || seenD[d]:
+			if !tagRE.MatchString(d) || seenD[d] {
 				add("schema_violation", "/descriptor_schemas", d, "unique <name>/v<N> tags")
-			case !known.DescriptorSchemas[d]:
-				add("descriptor_schema_unknown", "/descriptor_schemas", d, keys(known.DescriptorSchemas))
 			}
 			seenD[d] = true
 		}

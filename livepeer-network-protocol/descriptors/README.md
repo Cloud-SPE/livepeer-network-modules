@@ -12,7 +12,10 @@ protocol's in
 
 A schema is owned by its capability. Adding one requires changes only in the
 runner that emits it and the gateway that consumes it — no broker,
-clearinghouse, or registry work.
+clearinghouse, or registry work. (True since 2026-09-02: the broker kept a
+closed list of tags before that, so every schema was a broker release. It
+now accepts any well-formed tag the runner also versions in
+`schema_versions`, and never interprets the body — runtime-descriptor §4.)
 
 | Schema | Workload shape | Grant operations |
 |---|---|---|
@@ -20,6 +23,7 @@ clearinghouse, or registry work.
 | [`rtmp-hls/v1`](./rtmp-hls.md) | RTMP ingest → HLS playback | `stream-key-issue` |
 | [`scope-passthrough/v1`](./scope-passthrough.md) | Interactive HTTP+WebRTC API surface | `scope-api-access` |
 | [`trickle-egress/v1`](./trickle-egress.md) | Generative A/V session, buyer-supplied egress | `control-attach` |
+| [`pcm-transcript/v1`](./pcm-transcript.md) | Live transcript over one PCM-in / events-out WebSocket | `stream-attach`, `stream-status` |
 
 Conventions the four v1 schemas established (follow unless a workload truly
 differs): exactly one grant per schema; `max_uses` absent (admission

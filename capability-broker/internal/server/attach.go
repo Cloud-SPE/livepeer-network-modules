@@ -27,13 +27,6 @@ import (
 // attached runners, matching, freeze, and certification are plan 0043
 // item 8 — this file admits runners and makes them visible.
 
-// knownDescriptorSchemas is what this broker will carry for a
-// paid-session capability. The broker validates descriptor envelopes
-// generically; the tag set is the protocol module's descriptors/ tree.
-var knownDescriptorSchemas = map[string]bool{
-	"sfu-room/v1": true, "rtmp-hls/v1": true, "scope-passthrough/v1": true, "trickle-egress/v1": true,
-}
-
 // remoteProbeTypes are the readiness probe kinds a runner may declare
 // (runner-attach §3.2): the broker-local kinds are excluded.
 var remoteProbeTypes = map[string]bool{
@@ -44,10 +37,9 @@ var attachConnSeq uint64
 
 func (s *Server) attachKnown() runnerattach.Known {
 	return runnerattach.Known{
-		Extractor:         s.extractors.Has,
-		ProbeTypes:        remoteProbeTypes,
-		DescriptorSchemas: knownDescriptorSchemas,
-		Protocols:         map[string]bool{"paid-job/v1": true, "paid-session/v1": true},
+		Extractor:  s.extractors.Has,
+		ProbeTypes: remoteProbeTypes,
+		Protocols:  map[string]bool{"paid-job/v1": true, "paid-session/v1": true},
 		Credential: func(kind, token string) (string, bool, bool) {
 			if kind != credentialstore.KindBearer {
 				return "", false, false

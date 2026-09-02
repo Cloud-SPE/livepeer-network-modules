@@ -206,7 +206,7 @@ capability must get an OpenAI response.
 | `protocol` | ✔ | `<name>/v<N>` | The broker's known protocols (`paid-job/v1`, `paid-session/v1`). Unknown → capability rejected, never guessed. | ✔ |
 | `local_id` | opt | string, 1–64 chars, `[A-Za-z0-9._-]` | Unique within the document. Echoed on every dispatched request so the agent can route (§7). Defaults to the entry's index as a decimal string. | — |
 | `transports[]` | ✔ for `paid-job` | non-empty unique subset of `unary`, `stream`, `multipart` | `offering-axes.md` §2. | ✔ |
-| `descriptor_schemas[]` | ✔ for `paid-session` | non-empty unique list of `<name>/v<N>` tags | Each MUST be known to the broker and present in `schema_versions`. | ✔ |
+| `descriptor_schemas[]` | ✔ for `paid-session` | non-empty unique list of `<name>/v<N>` tags | Each MUST be well-formed and present in `schema_versions`. The broker keeps no list of schemas: it never interprets a descriptor body (runtime-descriptor §4), so a tag it has not seen is a schema it can carry. | ✔ |
 | `work_unit.name` | ✔ | string, 1–64 chars | Opaque metering dimension name. | ✔ |
 | `work_unit.extractor` | ✔ for `paid-job`; MUST be absent for `paid-session` | `{ "type": "<extractor>", …params }` | `type` MUST name an extractor the broker implements (`extractors/`); params are that extractor's own, validated by it. The runner never supplies code. | ✔ (whole object) |
 | `paths` | ✔ | object of relative paths | Job: `invoke` required, `options` optional. Session: `create`, `status`, `terminate` required; `status` and `terminate` MUST contain the literal `{id}` placeholder. Every path MUST start with `/`, MUST NOT contain `..`, `?`, `#`, or a scheme. | — |
@@ -302,7 +302,6 @@ field, what was declared, and what the broker expected.
 |---|---|
 | `schema_violation` | Shape failure scoped to this entry (missing required for its protocol, bad enum, bound exceeded, `extractor` on a session capability, `metering` on a job capability). |
 | `protocol_unknown` | `protocol` the broker does not implement. |
-| `descriptor_schema_unknown` | A `descriptor_schemas[]` tag the broker does not implement. |
 | `extractor_unknown` | `work_unit.extractor.type` the broker does not implement. |
 | `extractor_config_invalid` | The named extractor rejected its own parameters. |
 | `readiness_type_unknown` | `readiness.type` not a remote probe the broker implements. |
@@ -551,7 +550,7 @@ Derivative of the numbered sections; where it conflicts, they win.
 
 | Version | Date | Change |
 |---|---|---|
-| 1.1.2-draft | 2026-09-02 | Prose only, no wire change. §3.2 gains the capability id vocabulary rule (plan 0045, decision 1 of the 2026-09-02 walkthrough): prefix is the wire family for a real standard API (`openai:`) else the product domain; suffix is the endpoint name or what it does, `.` for variants, one `:`, never `/`. `livepeer:meet/sfu-room` becomes `meet:sfu-room` in the examples. The broker still treats the id as opaque. |
+| 1.1.2-draft | 2026-09-02 | Prose only, no wire change. §3.2 gains the capability id vocabulary rule (plan 0045, decision 1 of the 2026-09-02 walkthrough): prefix is the wire family for a real standard API (`openai:`) else the product domain; suffix is the endpoint name or what it does, `.` for variants, one `:`, never `/`. `livepeer:meet/sfu-room` becomes `meet:sfu-room` in the examples. The broker still treats the id as opaque. Same day, decision 5: `descriptor_schemas[]` no longer has to be "known to the broker" — a well-formed tag with a `schema_versions` entry is accepted, and the `descriptor_schema_unknown` reason code is removed. This is a loosening, so a runner valid before is valid after; `contract_version` stays 1.1. |
 | 1.1.1-draft | 2026-09-01 | Prose only, no wire change. §3.3's namespacing advice said "across adapter profiles"; the profiles are deleted by plan 0045 §3 and a runner now serves its own capability entry (`runner-contract.md`), so it says "across runner images". |
 | 1.1.0-draft | 2026-08-27 | Added `draining` to a capability entry (§7.1): the runner is winding down and takes no new work, while staying certified and advertised. Live state, not shape — it is excluded from the frozen projection, so setting and clearing it never re-triggers certification. `contract_version` goes to 1.1: this adds a field a runner may send, so an older broker ignoring it is the pre-existing behaviour and a newer one gains the withdrawal it needs to drain a host without flickering the manifest. |
 | 1.0.1-draft | 2026-08-27 | Added response framing (renumbered §7.2 when draining took §7.1): the broker MUST length-delimit the reply it relays from a runner, because the response crosses the connection as a complete unit and its length is therefore known. A runner need not set `Content-Length` and MUST NOT be relied upon to — an omitted one previously turned a non-streamed reply into a chunked one for the gateway. No change to the document shape, so `contract_version` stays `1.0`. |

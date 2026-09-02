@@ -11,10 +11,9 @@ import (
 func testKnown() Known {
 	ext := map[string]bool{"openai-usage": true, "response-jsonpath": true, "ffmpeg-progress": true, "seconds-elapsed": true}
 	return Known{
-		Extractor:         func(n string) bool { return ext[n] },
-		ProbeTypes:        map[string]bool{"http-status": true, "http-jsonpath": true, "http-openai-model-ready": true, "tcp-connect": true},
-		DescriptorSchemas: map[string]bool{"sfu-room/v1": true, "rtmp-hls/v1": true},
-		Protocols:         map[string]bool{"paid-job/v1": true, "paid-session/v1": true},
+		Extractor:  func(n string) bool { return ext[n] },
+		ProbeTypes: map[string]bool{"http-status": true, "http-jsonpath": true, "http-openai-model-ready": true, "tcp-connect": true},
+		Protocols:  map[string]bool{"paid-job/v1": true, "paid-session/v1": true},
 		Credential: func(kind, token string) (string, bool, bool) {
 			if kind != "bearer" {
 				return "", false, false
@@ -239,6 +238,52 @@ func TestSessionRules(t *testing.T) {
 	}
 	if !codes["schema_version_missing"] || !codes["path_invalid"] {
 		t.Fatalf("codes %v", codes)
+	}
+}
+
+// A descriptor schema the broker has never heard of is a schema it can
+// carry: it never interprets the body, so the only check is that the
+// runner versions the tag. Before 2026-09-02 a closed list made every
+// new schema a broker release, which is the cost plan 0045 removes for
+// capabilities and decision 5 removes here.
+func TestUnlistedDescriptorSchemaIsCarriedWhenVersioned(t *testing.T) {
+	session := func(tag string, versioned bool) []byte {
+		return minimal(func(m map[string]any) {
+			sv := map[string]any{"paid-session/v1": "1.0.11"}
+			if versioned {
+				sv[tag] = "1.0.0"
+			}
+			m["capabilities"] = []any{map[string]any{
+				"capability_id": "audio:transcribe.live", "protocol": "paid-session/v1",
+				"descriptor_schemas": []any{tag},
+				"metering":           "runner-reported",
+				"work_unit":          map[string]any{"name": "audio_seconds"},
+				"paths":              map[string]any{"create": "/s", "status": "/s/{id}", "terminate": "/s/{id}"},
+				"readiness":          map[string]any{"type": "http-status", "path": "/ready"},
+				"identity":           map[string]any{"model": "m"},
+				"schema_versions":    sv,
+			}}
+		})
+	}
+	doc, res := Evaluate(session("pcm-transcript/v1", true), testKnown())
+	if res.Document != "accepted" || len(doc.Capabilities) != 1 || len(res.Capabilities[0].Reasons) != 0 {
+		t.Fatalf("a versioned, well-formed tag must be carried: %+v", res)
+	}
+	_, res = Evaluate(session("pcm-transcript/v1", false), testKnown())
+	codes := map[string]bool{}
+	for _, r := range res.Capabilities[0].Reasons {
+		codes[r.Code] = true
+	}
+	if !codes["schema_version_missing"] || codes["descriptor_schema_unknown"] {
+		t.Fatalf("an unversioned tag is schema_version_missing and nothing else: %v", codes)
+	}
+	_, res = Evaluate(session("pcm transcript", true), testKnown())
+	codes = map[string]bool{}
+	for _, r := range res.Capabilities[0].Reasons {
+		codes[r.Code] = true
+	}
+	if !codes["schema_violation"] {
+		t.Fatalf("a malformed tag is still a schema_violation: %v", codes)
 	}
 }
 

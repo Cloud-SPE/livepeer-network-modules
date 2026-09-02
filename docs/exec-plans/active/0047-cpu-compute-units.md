@@ -62,4 +62,4 @@ the first kind.
 
 | § | Commit | What |
 |---|---|---|
-| all | (this commit) | Contract fields; agent cpuinfo inventory; broker validation; controller types, relay, `cpu` image key, core tiers, kind rule in placement and Validate, no device block; the AV1-on-CPU VOD template. |
+| all | `477c96d` | Contract fields; agent cpuinfo inventory; broker validation; controller types, relay, `cpu` image key, core tiers, kind rule in placement and Validate, no device block; the AV1-on-CPU VOD template. |

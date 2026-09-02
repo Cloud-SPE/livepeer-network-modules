@@ -313,9 +313,11 @@ run-scoped URLs, one mechanism.
   was declined by the same logic from the other end until decision 9 admitted
   it for transcode only.
 - AMD vendor images and classes.
-- CPU as a placeable compute unit — AV1 VOD via SVT-AV1 (`lnm-iqn`, decision 7).
+- CPU as a placeable compute unit — AV1 VOD via SVT-AV1 (`lnm-iqn`, decision 7):
+  plan 0047, landed 2026-09-02 with the image unresolved.
 - The member's public edge for external session data planes (`lnm-7cj`,
-  decision 13).
+  decision 13): plan 0046, landed 2026-09-02 except who issues the
+  member's name and certificate (0046 §7).
 
 ## 11. The 2026-09-02 walkthrough: thirteen decisions
 

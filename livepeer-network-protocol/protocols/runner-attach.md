@@ -1,8 +1,8 @@
 ---
 spec_name: runner-attach
-version: 1.1.1-draft
+version: 1.1.2-draft
 status: draft
-last_updated: 2026-09-01
+last_updated: 2026-09-02
 contract_version: "1.1"
 ---
 
@@ -172,6 +172,33 @@ additive:
 One entry per capability the host can serve. The same `capability_id` MAY
 appear more than once with different `identity` (two models behind one
 API), never twice with the same `identity` (§4.1).
+
+**Capability id vocabulary.** The broker treats `capability_id` as opaque
+and never enforces a shape — that is core belief #1 — but a runner, a
+catalog, and a gateway have to agree on the string, and three spellings
+of one capability were found in the wild (`openai-chat-completions`,
+`openai.chat.completions`, `openai:chat-completions`). The network's ids
+follow one rule, and a runner SHOULD emit them in this form:
+
+- **prefix** — the wire family when the capability implements a real,
+  externally specified API (`openai:`); otherwise the product domain
+  (`video:`, `vision:`, `audio:`, `text:`, `meet:`). `livepeer:` is not a
+  prefix: it names the network, not a product.
+- **suffix** — for `openai:`, the endpoint name with `/` folded to `-`
+  (`chat-completions`, `audio-transcriptions`, `images-generations`);
+  otherwise what the capability does (`transcode`, `image-analysis`,
+  `rerank`, `sfu-room`), with `.` for variants of one product
+  (`video:transcode.vod`, `video:transcode.abr`, `video:transcode.live`,
+  `audio:transcribe.live`).
+- exactly one `:`, never `/`.
+
+A capability that is not the OpenAI endpoint it resembles does not take
+the `openai:` prefix — an image-analysis model that happens to accept a
+chat-shaped request is `vision:image-analysis`, and a live transcript
+stream is `audio:transcribe.live` even though the same model's batch
+endpoint is `openai:audio-transcriptions`. The prefix is a promise about
+the wire, and a caller who sends an OpenAI request to an `openai:`
+capability must get an OpenAI response.
 
 | Field | Req | Type | Validated against | Frozen |
 |---|---|---|---|---|
@@ -524,6 +551,7 @@ Derivative of the numbered sections; where it conflicts, they win.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.2-draft | 2026-09-02 | Prose only, no wire change. §3.2 gains the capability id vocabulary rule (plan 0045, decision 1 of the 2026-09-02 walkthrough): prefix is the wire family for a real standard API (`openai:`) else the product domain; suffix is the endpoint name or what it does, `.` for variants, one `:`, never `/`. `livepeer:meet/sfu-room` becomes `meet:sfu-room` in the examples. The broker still treats the id as opaque. |
 | 1.1.1-draft | 2026-09-01 | Prose only, no wire change. §3.3's namespacing advice said "across adapter profiles"; the profiles are deleted by plan 0045 §3 and a runner now serves its own capability entry (`runner-contract.md`), so it says "across runner images". |
 | 1.1.0-draft | 2026-08-27 | Added `draining` to a capability entry (§7.1): the runner is winding down and takes no new work, while staying certified and advertised. Live state, not shape — it is excluded from the frozen projection, so setting and clearing it never re-triggers certification. `contract_version` goes to 1.1: this adds a field a runner may send, so an older broker ignoring it is the pre-existing behaviour and a newer one gains the withdrawal it needs to drain a host without flickering the manifest. |
 | 1.0.1-draft | 2026-08-27 | Added response framing (renumbered §7.2 when draining took §7.1): the broker MUST length-delimit the reply it relays from a runner, because the response crosses the connection as a complete unit and its length is therefore known. A runner need not set `Content-Length` and MUST NOT be relied upon to — an omitted one previously turned a non-streamed reply into a chunked one for the gateway. No change to the document shape, so `contract_version` stays `1.0`. |

@@ -6,7 +6,7 @@
   "hardware": [],
   "capabilities": [
     {
-      "capability_id": "livepeer:meet/sfu-room",
+      "capability_id": "meet:sfu-room",
       "protocol": "paid-session/v1",
       "descriptor_schemas": ["sfu-room/v1"],
       "work_unit": { "name": "participant_seconds" },

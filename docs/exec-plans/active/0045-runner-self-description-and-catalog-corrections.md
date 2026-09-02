@@ -226,7 +226,8 @@ exist, and Florence-2 is not a chat model.
 `capability_id` is **"Opaque; no closed enum"** (runner-attach §3.2 and
 `schema.json`), so no convention is imposed by the protocol, and the catalog
 itself already names products rather than endpoints — `video:transcode.vod`,
-`livepeer:meet/sfu-room`.
+`meet:sfu-room` (then spelled `livepeer:meet/sfu-room`; renamed by decision 1
+of the 2026-09-02 walkthrough, which wrote the rule into runner-attach §3.2).
 
 **Decided: rename to `vision:image-analysis`**, following the catalog's own
 `<domain>:<what it does>` shape. Considered and rejected: `openai:chat-

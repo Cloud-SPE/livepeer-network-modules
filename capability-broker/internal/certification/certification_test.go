@@ -296,7 +296,7 @@ func TestSessionRequestOpensChecksDescriptorTerminates(t *testing.T) {
 		}
 	})}
 	cap := &runnerattach.Capability{
-		CapabilityID: "livepeer:meet/sfu-room", Protocol: "paid-session/v1", LocalID: "sfu",
+		CapabilityID: "meet:sfu-room", Protocol: "paid-session/v1", LocalID: "sfu",
 		DescriptorSchemas: []string{"sfu-room/v1"}, Metering: "runner-reported",
 		WorkUnit:  runnerattach.WorkUnit{Name: "participant_seconds"},
 		Paths:     map[string]string{"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}"},

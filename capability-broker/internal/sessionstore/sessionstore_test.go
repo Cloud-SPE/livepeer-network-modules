@@ -38,7 +38,7 @@ func sampleRecord() *Record {
 		GatewaySessionID:  "gws_1",
 		RunnerSessionID:   "rns_1",
 		WorkID:            "work_1",
-		Capability:        "livepeer:meet/sfu-room",
+		Capability:        "meet:sfu-room",
 		Offering:          "default",
 		BackendRef:        "backend-a",
 		Sender:            []byte{0xAA, 0xBB},

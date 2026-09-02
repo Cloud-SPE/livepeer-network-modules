@@ -5,9 +5,10 @@
 # OpenAI has no vision endpoint, so `openai:vision` claimed one that does not
 # exist — and Florence-2 is not a chat model, so `openai:chat-completions` was
 # wrong in the other direction. `capability_id` is opaque to the protocol
-# (runner-attach.md §3.2: "no closed enum"), and this catalog already names
-# products rather than endpoints (`video:transcode.vod`, `livepeer:meet/sfu-
-# room`), so the id now says what the thing does.
+# (runner-attach.md §3.2: "no closed enum"), and the network's vocabulary rule
+# (runner-attach.md §3.2, decision 1 of the 2026-09-02 walkthrough) gives a
+# non-OpenAI capability the product domain as its prefix (`video:transcode.vod`,
+# `meet:sfu-room`), so the id says what the thing does.
 
 id: vision-image-analysis-florence-2-large
 capability: vision:image-analysis

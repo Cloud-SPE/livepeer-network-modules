@@ -81,7 +81,7 @@ go -C payment-daemon build -o /tmp/chain-probe ./cmd/livepeer-chain-probe
 # own runner, because the stub emits no usage events and so never meters
 MEET_RUNNER_URL=http://127.0.0.1:9501 ./up.sh
 /tmp/chain-probe --recipient=$ORCH_ETH_ADDRESS --protocol=session \
-  --capability=livepeer:meet/sfu-room --offering=default \
+  --capability=meet:sfu-room --offering=default \
   --work-unit=participant-seconds --price-wei=100 --per-units=1000 \
   --runner-bind=127.0.0.1:9501 --payee-admin-token=$PAYEE_ADMIN_TOKEN
 ```

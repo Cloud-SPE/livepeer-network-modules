@@ -112,7 +112,7 @@ offers:
   # ---- A paid-session offer. Needs session_store + external_base_url
   #      (uncomment those at the top level to enable). ----
   # - offering_id: meet-default
-  #   capability: livepeer:meet/sfu-room
+  #   capability: meet:sfu-room
   #   protocol: paid-session/v1
   #   price: { amount_wei: "10", per_units: 1 }
   #   session_policy:

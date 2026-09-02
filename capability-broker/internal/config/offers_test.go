@@ -109,7 +109,7 @@ func TestOffersRejections(t *testing.T) {
 func TestOffersSessionValidates(t *testing.T) {
 	cfg := baseOfferConfig(Offer{
 		OfferingID: "meet-default",
-		Capability: "livepeer:meet/sfu-room",
+		Capability: "meet:sfu-room",
 		Protocol:   "paid-session/v1",
 		Price:      Price{AmountWei: "10", PerUnits: 1},
 		SessionPolicy: &SessionPolicy{Refill: "bounded", LeasePolicy: "fixed", LeaseMaxSeconds: 600,

@@ -412,7 +412,7 @@ offers:
   # paths, and how it meters.
   #
   # - offering_id: "meet-default"
-  #   capability: "livepeer:meet/sfu-room"
+  #   capability: "meet:sfu-room"
   #   protocol: "paid-session/v1"
   #   price: { amount_wei: "10", per_units: 1 }
   #   session_policy:

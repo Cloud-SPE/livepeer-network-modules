@@ -20,7 +20,7 @@ import (
 // callback rather than in a response body.
 func sessionCapability() *runnerattach.Capability {
 	return &runnerattach.Capability{
-		CapabilityID: "livepeer:meet/sfu-room", Protocol: "paid-session/v1", LocalID: "sfu",
+		CapabilityID: "meet:sfu-room", Protocol: "paid-session/v1", LocalID: "sfu",
 		DescriptorSchemas: []string{"sfu-room/v1"}, Metering: "runner-reported",
 		WorkUnit:  runnerattach.WorkUnit{Name: "participant_seconds"},
 		Paths:     map[string]string{"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}"},
@@ -30,7 +30,7 @@ func sessionCapability() *runnerattach.Capability {
 
 // sessionOffer opens a session, holds it, then checks usage.
 func sessionOffer() config.Offer {
-	return config.Offer{OfferingID: "meet", Capability: "livepeer:meet/sfu-room", Protocol: "paid-session/v1",
+	return config.Offer{OfferingID: "meet", Capability: "meet:sfu-room", Protocol: "paid-session/v1",
 		Certification: []config.CertificationStep{
 			{Name: "open", Type: "request", Config: map[string]any{
 				"expect_descriptor_schema": "sfu-room/v1", "hold_ms": 50,

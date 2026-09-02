@@ -286,7 +286,7 @@ func sessionDocument(hostID, credential, localID, gpuUUID string) map[string]any
 			"vram_bytes": 25769803776,
 		}},
 		"capabilities": []any{map[string]any{
-			"capability_id": "livepeer:meet/sfu-room",
+			"capability_id": "meet:sfu-room",
 			"protocol":      "paid-session/v1",
 			"local_id":      localID,
 			// No transports: a paid-session capability declares

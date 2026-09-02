@@ -120,7 +120,7 @@ func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *h
 		// attach and are frozen into the offer.
 		Offers: []config.Offer{{
 			OfferingID: "default",
-			Capability: "livepeer:meet/sfu-room",
+			Capability: "meet:sfu-room",
 			Protocol:   "paid-session/v1",
 			Price:      config.Price{AmountWei: "10", PerUnits: 1},
 		}},
@@ -178,7 +178,7 @@ func sessionAttachDoc(token, hostID string) []byte {
 		"agent_version":    "test/1",
 		"hardware":         []any{map[string]any{"gpu_uuid": "GPU-1", "gpu_model": "Test GPU", "vram_bytes": 8 << 30}},
 		"capabilities": []any{map[string]any{
-			"capability_id":      "livepeer:meet/sfu-room",
+			"capability_id":      "meet:sfu-room",
 			"protocol":           "paid-session/v1",
 			"local_id":           "sfu",
 			"descriptor_schemas": []any{"sfu-room/v1"},
@@ -200,7 +200,7 @@ func sessionOpenReq(t *testing.T, srv *httptest.Server, requestID string) *http.
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/session",
 		strings.NewReader(`{"gateway_session_id":"gws-1","session_params":{"room_hint":"standup"}}`))
-	req.Header.Set(livepeerheader.Capability, "livepeer:meet/sfu-room")
+	req.Header.Set(livepeerheader.Capability, "meet:sfu-room")
 	req.Header.Set(livepeerheader.Offering, "default")
 	req.Header.Set(livepeerheader.Protocol, "paid-session/v1")
 	req.Header.Set(livepeerheader.RequestID, requestID)
@@ -372,7 +372,7 @@ func TestTopUpResponseReturnsTheSuccessorWorkID(t *testing.T) {
 			ExpectedPrice: &paymentsv1.PriceInfo{
 				PricePerUnit:  10,
 				PixelsPerUnit: 1,
-				Constraint: "cap=livepeer:meet/sfu-room;off=default;wu=participant_minutes;" +
+				Constraint: "cap=meet:sfu-room;off=default;wu=participant_minutes;" +
 					"est=100;qid=q;qv=1;cfp=aa;rfp=bb",
 			},
 		})
@@ -384,7 +384,7 @@ func TestTopUpResponseReturnsTheSuccessorWorkID(t *testing.T) {
 
 	openReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/session",
 		strings.NewReader(`{"gateway_session_id":"gws-rebind","session_params":{}}`))
-	openReq.Header.Set(livepeerheader.Capability, "livepeer:meet/sfu-room")
+	openReq.Header.Set(livepeerheader.Capability, "meet:sfu-room")
 	openReq.Header.Set(livepeerheader.Offering, "default")
 	openReq.Header.Set(livepeerheader.Protocol, "paid-session/v1")
 	openReq.Header.Set(livepeerheader.RequestID, "req-topup-rebind")
@@ -429,7 +429,7 @@ func sessionOpenWithGatewayID(t *testing.T, srv *httptest.Server, requestID, gat
 	t.Helper()
 	body := `{"gateway_session_id":"` + gatewayID + `","session_params":{}}`
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/session", strings.NewReader(body))
-	req.Header.Set(livepeerheader.Capability, "livepeer:meet/sfu-room")
+	req.Header.Set(livepeerheader.Capability, "meet:sfu-room")
 	req.Header.Set(livepeerheader.Offering, "default")
 	req.Header.Set(livepeerheader.Protocol, "paid-session/v1")
 	req.Header.Set(livepeerheader.RequestID, requestID)
@@ -514,7 +514,7 @@ func TestSessionOpenRequiresGatewaySessionID(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/session", strings.NewReader(tc.body))
-			req.Header.Set(livepeerheader.Capability, "livepeer:meet/sfu-room")
+			req.Header.Set(livepeerheader.Capability, "meet:sfu-room")
 			req.Header.Set(livepeerheader.Offering, "default")
 			req.Header.Set(livepeerheader.Protocol, "paid-session/v1")
 			req.Header.Set(livepeerheader.RequestID, "gws-required-"+tc.name)

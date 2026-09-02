@@ -45,7 +45,7 @@ commission_bps: 1000
 // callback rather than in a response body, which is the half of
 // certification the job template above cannot exercise at all.
 const fixtureSessionTemplate = `id: e2e-stream
-capability: livepeer:meet/sfu-room
+capability: meet:sfu-room
 offering_id: e2e-stream
 protocol: paid-session/v1
 display_name: E2E session

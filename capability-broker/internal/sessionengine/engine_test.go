@@ -243,7 +243,7 @@ func newHarness(t *testing.T) *harness {
 		nowVal: time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
 	}
 	h.spec = &OfferingSpec{
-		Capability:          "livepeer:meet/sfu-room",
+		Capability:          "meet:sfu-room",
 		Offering:            "default",
 		BackendRef:          "b1",
 		WorkUnit:            "participant_minutes",

@@ -79,7 +79,10 @@ type Snapshot struct {
 	Connections     int
 	AgentVersion    string
 	ContractVersion string
-	Hardware        []runnerattach.Hardware
+	// PublicURL is the host's outside-facing origin (§3.1); empty when
+	// the host is not public.
+	PublicURL    string
+	Hardware     []runnerattach.Hardware
 	Capabilities    []CapabilityView
 	Extensions      map[string]interface{}
 }
@@ -257,6 +260,9 @@ func snapshot(h *Host) Snapshot {
 			continue
 		}
 		s.AgentVersion, s.ContractVersion = c.doc.AgentVersion, c.doc.ContractVersion
+		if s.PublicURL == "" {
+			s.PublicURL = c.doc.PublicURL
+		}
 		if s.Extensions == nil && len(c.doc.Extensions) > 0 {
 			s.Extensions = map[string]interface{}{}
 			for k, v := range c.doc.Extensions {

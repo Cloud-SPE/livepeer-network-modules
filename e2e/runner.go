@@ -277,10 +277,13 @@ func mustField(t *testing.T, m map[string]any, key string) string {
 // sessionDocument is the attach document a paid-session host sends.
 func sessionDocument(hostID, credential, localID, gpuUUID string) map[string]any {
 	return map[string]any{
-		"contract_version": "1.1",
+		"contract_version": "1.2",
 		"credential":       map[string]any{"kind": "bearer", "token": credential},
 		"host_id":          hostID,
 		"agent_version":    "e2e/1",
+		// A session host must be public (plan 0046): the caller reaches the
+		// runner directly, and placement refuses a host that says nothing.
+		"public_url": "https://e2e-member.example",
 		"hardware": []any{map[string]any{
 			"gpu_uuid": gpuUUID, "gpu_model": "NVIDIA GeForce RTX 4090",
 			"vram_bytes": 25769803776,

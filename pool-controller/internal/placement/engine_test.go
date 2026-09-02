@@ -659,3 +659,49 @@ func suspend(unit types.HardwareUnit, state types.HardwareUnitState) types.Hardw
 	unit.State = state
 	return unit
 }
+
+// A session's caller connects to the runner directly, so a host that
+// declares no public_url cannot serve a paid-session template however
+// good its card is — and a job template on the same host is unaffected.
+func TestSessionTemplatesRequireAPublicHost(t *testing.T) {
+	session := templates.Template{
+		ID: "t-live", Protocol: "paid-session/v1", Priority: 30,
+		Requirements: templates.Requirements{GPUClasses: []string{ClassRTX4090}},
+		Stacking:     templates.Stacking{Primary: true},
+	}
+	job := templates.Template{
+		ID: "t-chat", Protocol: "paid-job/v1", Priority: 20,
+		Requirements: templates.Requirements{GPUClasses: []string{ClassRTX4090}},
+		Stacking:     templates.Stacking{Primary: true},
+	}
+	overrides := []types.TemplateOverride{{TemplateID: "t-live", Enabled: true}, {TemplateID: "t-chat", Enabled: true}}
+	card := func(public string) types.HardwareUnit {
+		return types.HardwareUnit{ID: "gpu-1", GPUModel: "NVIDIA GeForce RTX 4090", VRAMBytes: 24 << 30,
+			State: types.HardwareUnitOnline, PublicURL: public}
+	}
+
+	private := Plan(Input{Hardware: []types.HardwareUnit{card("")}, Templates: []templates.Template{session, job}, Overrides: overrides})
+	if len(private[0].Placements) != 1 || private[0].Placements[0].TemplateID != "t-chat" {
+		t.Fatalf("a private host must fall through to the job template: %+v", private[0].Placements)
+	}
+	found := false
+	for _, r := range private[0].Rejections {
+		if r.TemplateID == "t-live" && r.Reason == ReasonHostNotPublic {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the session template must be rejected as %s: %+v", ReasonHostNotPublic, private[0].Rejections)
+	}
+	public := Plan(Input{Hardware: []types.HardwareUnit{card("https://m1.example")}, Templates: []templates.Template{session, job}, Overrides: overrides})
+	if len(public[0].Placements) != 1 || public[0].Placements[0].TemplateID != "t-live" {
+		t.Fatalf("a public host takes the session template: %+v", public[0].Placements)
+	}
+	// Validate agrees, as it must for every rule the planner applies.
+	if err := Validate(session, card(""), types.TemplateAssignmentPrimary); err == nil {
+		t.Fatal("Validate accepted a session template on a private host")
+	}
+	if err := Validate(session, card("https://m1.example"), types.TemplateAssignmentPrimary); err != nil {
+		t.Fatalf("Validate refused a public host: %v", err)
+	}
+}

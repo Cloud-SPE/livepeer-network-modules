@@ -277,7 +277,11 @@ func buildDocument(ctx context.Context, cfg config) (*attach.Document, error) {
 		HostID:       cfg.HostID,
 		AgentVersion: "pool-member-agent/" + version,
 		Credential:   attach.Credential{Kind: "bearer", Token: cfg.Credential},
-		Hardware:     hw,
+		// The origin the agent's edge serves (plan 0046 §2). Empty is a
+		// host that is not public, which the pool places no session
+		// work on — stated by absence, never by a guessed hostname.
+		PublicURL: envOr("LIVEPEER_PUBLIC_URL", ""),
+		Hardware:  hw,
 	}, resolved)
 }
 

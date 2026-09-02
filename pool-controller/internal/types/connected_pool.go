@@ -117,7 +117,12 @@ type HardwareUnit struct {
 	DriverVersion    string            `json:"driver_version,omitempty"`
 	CUDAVersion      string            `json:"cuda_version,omitempty"`
 	RuntimeFacts     map[string]string `json:"runtime_facts,omitempty"`
-	State            HardwareUnitState `json:"state"`
+	// PublicURL is the HOST's outside-facing origin, copied onto each of
+	// its units at relay the way MemberEthAddress is, because the
+	// planner's input is units. Empty: the host is not public, and no
+	// paid-session template places here (plan 0046 §2).
+	PublicURL string            `json:"public_url,omitempty"`
+	State     HardwareUnitState `json:"state"`
 	LastSeenAt       time.Time         `json:"last_seen_at,omitempty"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`

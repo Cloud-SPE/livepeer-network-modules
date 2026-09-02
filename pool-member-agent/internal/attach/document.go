@@ -15,22 +15,34 @@ package attach
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 )
 
-// ContractVersion is the attach-contract version this agent speaks.
-const ContractVersion = "1.1"
+// ContractVersion is the attach-contract version this agent speaks when
+// it uses a 1.2 field; ContractVersionBase is what it sends otherwise.
+// runner-attach §8: send the lowest minor that carries the fields used,
+// so a 1.1 broker keeps accepting a host that has nothing new to say.
+const (
+	ContractVersion     = "1.2"
+	ContractVersionBase = "1.1"
+)
 
 // Document is the attach document (runner-attach §3).
 type Document struct {
-	ContractVersion string       `json:"contract_version"`
-	Credential      Credential   `json:"credential"`
-	HostID          string       `json:"host_id"`
-	AgentVersion    string       `json:"agent_version"`
-	Hardware        []Hardware   `json:"hardware"`
-	Capabilities    []Capability `json:"capabilities"`
+	ContractVersion string     `json:"contract_version"`
+	Credential      Credential `json:"credential"`
+	HostID          string     `json:"host_id"`
+	AgentVersion    string     `json:"agent_version"`
+	// PublicURL is the https origin this host's session runners are
+	// reachable at from outside (§3.1, contract 1.2). The agent's edge
+	// serves it; a runner builds its descriptor url from it. Empty means
+	// not public, and the pool places no session work here.
+	PublicURL    string       `json:"public_url,omitempty"`
+	Hardware     []Hardware   `json:"hardware"`
+	Capabilities []Capability `json:"capabilities"`
 }
 
 // Credential binds the document to one host enrollment (§3.1.1).
@@ -145,6 +157,7 @@ type Host struct {
 	HostID       string
 	AgentVersion string
 	Credential   Credential
+	PublicURL    string
 	Hardware     []Hardware
 }
 
@@ -172,12 +185,19 @@ func Build(host Host, resolved []Resolved) (*Document, error) {
 		host.Credential.Kind = "bearer"
 	}
 	doc := &Document{
-		ContractVersion: ContractVersion,
+		ContractVersion: ContractVersionBase,
 		Credential:      host.Credential,
 		HostID:          host.HostID,
 		AgentVersion:    host.AgentVersion,
 		Hardware:        host.Hardware,
 		Capabilities:    []Capability{},
+	}
+	if u := strings.TrimSpace(host.PublicURL); u != "" {
+		if err := ValidatePublicURL(u); err != nil {
+			return nil, err
+		}
+		doc.PublicURL = u
+		doc.ContractVersion = ContractVersion
 	}
 	if doc.Hardware == nil {
 		doc.Hardware = []Hardware{}
@@ -232,4 +252,26 @@ func RouteTable(runners []Runner) map[string]string {
 		out[id] = strings.TrimRight(r.URL, "/")
 	}
 	return out
+}
+
+// ValidatePublicURL is the §3.1 shape: an https origin and nothing
+// else. A path here would be silently folded into every runner's
+// advertised url, and an http scheme would advertise a media endpoint
+// with no TLS — both worth refusing before the document leaves the host.
+func ValidatePublicURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("public_url: %w", err)
+	}
+	switch {
+	case u.Scheme != "https":
+		return fmt.Errorf("public_url %q: scheme must be https", raw)
+	case u.Host == "":
+		return fmt.Errorf("public_url %q: no host", raw)
+	case u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil:
+		return fmt.Errorf("public_url %q: an origin only — no path, query, fragment or userinfo", raw)
+	case len(raw) > 256:
+		return fmt.Errorf("public_url: longer than 256 characters")
+	}
+	return nil
 }

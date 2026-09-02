@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -50,13 +51,17 @@ type Known struct {
 
 // Document is an accepted attach document.
 type Document struct {
-	ContractVersion string                     `json:"contract_version"`
-	Credential      Credential                 `json:"credential"`
-	HostID          string                     `json:"host_id"`
-	AgentVersion    string                     `json:"agent_version"`
-	Hardware        []Hardware                 `json:"hardware"`
-	Capabilities    []Capability               `json:"capabilities"`
-	Extensions      map[string]json.RawMessage `json:"-"`
+	ContractVersion string     `json:"contract_version"`
+	Credential      Credential `json:"credential"`
+	HostID          string     `json:"host_id"`
+	AgentVersion    string     `json:"agent_version"`
+	// PublicURL is the host's outside-facing https origin (§3.1, 1.2):
+	// where its session runners are reached by callers. Relayed to the
+	// controller, which gates paid-session placement on it.
+	PublicURL    string                     `json:"public_url,omitempty"`
+	Hardware     []Hardware                 `json:"hardware"`
+	Capabilities []Capability               `json:"capabilities"`
+	Extensions   map[string]json.RawMessage `json:"-"`
 }
 
 // Credential is the §3.1.1 object. Token is never stored past
@@ -175,7 +180,7 @@ var transports = map[string]bool{"unary": true, "stream": true, "multipart": tru
 // Field sets for unknown-field detection (§4.1). Anything not here and
 // not x-* is unknown; contents of opaque blobs are not walked.
 var (
-	hostFields = set("contract_version", "credential", "host_id", "agent_version", "hardware", "capabilities")
+	hostFields = set("contract_version", "credential", "host_id", "agent_version", "public_url", "hardware", "capabilities")
 	credFields = set("kind", "token", "key_id", "signature")
 	hwFields   = set("gpu_uuid", "gpu_model", "vram_bytes", "driver", "cuda", "facts")
 	capFields  = set("capability_id", "protocol", "local_id", "transports", "descriptor_schemas", "work_unit",
@@ -273,6 +278,11 @@ func Evaluate(raw []byte, known Known) (*Document, *Result) {
 		return nil, res
 	}
 	res.HostID = doc.HostID
+	if doc.PublicURL != "" {
+		if msg := publicURLViolation(doc.PublicURL); msg != "" {
+			res.Reasons = append(res.Reasons, Reason{Code: "schema_violation", Field: "/public_url", Declared: doc.PublicURL, Expected: msg})
+		}
+	}
 	if doc.AgentVersion == "" || len(doc.AgentVersion) > 128 {
 		return reject("schema_violation", "/agent_version", "required, ≤ 128 chars")
 	}
@@ -840,3 +850,23 @@ func diffInto(out *[]Reason, prefix string, a, b any) {
 // ErrNoStore is returned by a Credential func adapter when the broker has
 // no credential store configured.
 var ErrNoStore = errors.New("runnerattach: no credential store")
+
+// publicURLViolation is the §3.1 shape for public_url: an https origin
+// and nothing else. Empty return means valid.
+func publicURLViolation(raw string) string {
+	if len(raw) > 256 {
+		return "≤ 256 chars"
+	}
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return "a URL"
+	case u.Scheme != "https":
+		return "https scheme"
+	case u.Host == "":
+		return "a host"
+	case u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil:
+		return "an origin only: no path, query, fragment or userinfo"
+	}
+	return ""
+}

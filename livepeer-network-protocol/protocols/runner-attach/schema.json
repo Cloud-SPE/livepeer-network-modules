@@ -40,6 +40,12 @@
       "maxLength": 128,
       "description": "Free; audit only. Conventionally <binary>/<semver>."
     },
+    "public_url": {
+      "type": "string",
+      "maxLength": 256,
+      "pattern": "^https://[^/?#]+$",
+      "description": "Contract 1.2. The https origin at which this host's paid-session runners are reachable from outside; the base a runner builds its descriptor url from. Absent means not public: placement rejects paid-session templates on the host (host_not_public)."
+    },
     "hardware": {
       "type": "array",
       "maxItems": 64,

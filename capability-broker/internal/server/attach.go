@@ -238,6 +238,7 @@ type runnerView struct {
 	Connections     int                     `json:"connections"`
 	AgentVersion    string                  `json:"agent_version,omitempty"`
 	ContractVersion string                  `json:"contract_version,omitempty"`
+	PublicURL       string                  `json:"public_url,omitempty"`
 	Hardware        []runnerattach.Hardware `json:"hardware"`
 	Capabilities    []runnerCapabilityView  `json:"capabilities"`
 	Extensions      map[string]any          `json:"extensions,omitempty"`
@@ -263,7 +264,7 @@ func (s *Server) runnerViewOf(sn runners.Snapshot, includePaths bool) runnerView
 	v := runnerView{
 		HostID: sn.HostID, Enrollment: sn.Enrollment, State: sn.State, ConnectedSince: sn.Since,
 		LastSeen: sn.LastSeen, Connections: sn.Connections, AgentVersion: sn.AgentVersion,
-		ContractVersion: sn.ContractVersion, Hardware: sn.Hardware, Capabilities: []runnerCapabilityView{},
+		ContractVersion: sn.ContractVersion, PublicURL: sn.PublicURL, Hardware: sn.Hardware, Capabilities: []runnerCapabilityView{},
 		Extensions: sn.Extensions,
 	}
 	if v.Hardware == nil {

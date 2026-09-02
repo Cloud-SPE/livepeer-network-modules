@@ -110,6 +110,7 @@ func RelayHardware(ctx context.Context, reader Reader, store HardwareStore, now 
 				DriverVersion:    hw.Driver,
 				CUDAVersion:      hw.CUDA,
 				RuntimeFacts:     hw.Facts,
+				PublicURL:        strings.TrimSpace(run.PublicURL),
 				LastSeenAt:       now,
 			}
 			if held {

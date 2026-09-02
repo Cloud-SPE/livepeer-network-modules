@@ -358,3 +358,32 @@ func TestReferenceAgentDocumentsAreAccepted(t *testing.T) {
 		})
 	}
 }
+
+// public_url (§3.1, contract 1.2) is an https origin and nothing else:
+// a path would fold into every runner's advertised url, and http would
+// advertise a media endpoint with no TLS.
+func TestPublicURLIsAnHTTPSOrigin(t *testing.T) {
+	for raw, ok := range map[string]bool{
+		"https://m1.example":         true,
+		"https://m1.example:8443":    true,
+		"http://m1.example":          false,
+		"https://m1.example/edge":    false,
+		"https://m1.example/?x=1":    false,
+		"https://user:pw@m1.example": false,
+		"not a url":                  false,
+	} {
+		_, res := Evaluate(minimal(func(m map[string]any) {
+			m["contract_version"] = "1.2"
+			m["public_url"] = raw
+		}), testKnown())
+		var violated bool
+		for _, r := range res.Reasons {
+			if r.Field == "/public_url" {
+				violated = true
+			}
+		}
+		if violated == ok {
+			t.Errorf("%q: violated=%v, want valid=%v (%+v)", raw, violated, ok, res.Reasons)
+		}
+	}
+}

@@ -30,6 +30,10 @@ const (
 	// because the alternative is a compose pull that fails on a
 	// member's host (plan 0045 §4).
 	ReasonNoImageForVendor = "no_image_for_vendor"
+	// ReasonHostNotPublic: a paid-session template on a host that
+	// declares no public_url. Every session data plane is external
+	// (offering-axes §3), so a host nobody can reach cannot serve one.
+	ReasonHostNotPublic = "host_not_public"
 )
 
 // Placement is one template placed on one GPU.
@@ -250,6 +254,14 @@ func requirementsFail(tmpl templates.Template, unit types.HardwareUnit, class st
 	}
 	if len(req.GPUModels) > 0 && !containsFold(req.GPUModels, unit.GPUModel) {
 		return ReasonModelNotAllowed, unit.GPUModel
+	}
+	// A session's caller connects to the runner directly, so the host
+	// has to be reachable from outside. The fact is the host's
+	// public_url (runner-attach §3.1), relayed onto its units; a host
+	// without one sits on the exception queue for every session
+	// template rather than being placed on work nobody can reach.
+	if tmpl.Protocol == "paid-session/v1" && strings.TrimSpace(unit.PublicURL) == "" {
+		return ReasonHostNotPublic, "host declares no public_url"
 	}
 	if req.GPUVRAMMinBytes > 0 && unit.VRAMBytes > 0 && unit.VRAMBytes < req.GPUVRAMMinBytes {
 		return ReasonInsufficientVRAM, "card reports " + strconv.FormatUint(unit.VRAMBytes/(1<<30), 10) + "GiB"

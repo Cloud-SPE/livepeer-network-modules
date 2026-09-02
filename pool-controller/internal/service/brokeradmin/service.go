@@ -197,9 +197,10 @@ type RunnerView struct {
 		Label            string `json:"label,omitempty"`
 		MemberEthAddress string `json:"member_eth_address,omitempty"`
 	} `json:"enrollment"`
-	State    string    `json:"state"`
-	LastSeen time.Time `json:"last_seen"`
-	Hardware []struct {
+	State     string    `json:"state"`
+	LastSeen  time.Time `json:"last_seen"`
+	PublicURL string    `json:"public_url,omitempty"`
+	Hardware  []struct {
 		GPUUUID   string            `json:"gpu_uuid"`
 		GPUModel  string            `json:"gpu_model"`
 		VRAMBytes uint64            `json:"vram_bytes"`

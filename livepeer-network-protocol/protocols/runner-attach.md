@@ -1,9 +1,9 @@
 ---
 spec_name: runner-attach
-version: 1.1.2-draft
+version: 1.2.0-draft
 status: draft
 last_updated: 2026-09-02
-contract_version: "1.1"
+contract_version: "1.2"
 ---
 
 # Runner attach contract
@@ -131,6 +131,7 @@ and an unknown field rejects the whole document (§4.1).
 | `host_id` | ✔ | string, 1–128 chars, `[A-Za-z0-9._-]` | Free. Stable per host across reconnects; audit key. MUST equal the enrollment's host id where the credential store records one. |
 | `agent_version` | ✔ | string, ≤ 128 chars | Free; audit only. Conventionally `<binary>/<semver>`. |
 | `hardware[]` | ✔ (MAY be empty) | array of hardware units, ≤ 64 | GPU-uniqueness rules of plan 0040 §4.2; each capability's `requirements`. |
+| `public_url` | opt (1.2) | string, ≤ 256 chars, an `https://` origin with no path, query or fragment | The origin at which this host's paid-session runners are reachable from outside — the base a runner builds its descriptor `url` from, and the fact placement gates `paid-session` templates on (a host without it is `host_not_public`). Absent means not public. Never a tunnel address: the broker does not relay session media. |
 | `capabilities[]` | ✔ (MAY be empty) | array of capability entries, ≤ 64 | §3.2. An empty array is a valid *hardware-only* attach (a host announcing itself before it has any runner to offer; epic 2 uses this for template matching). |
 | `x-*` | opt | any JSON | Relayed to operator surfaces verbatim; never interpreted (§3.3). |
 
@@ -549,6 +550,7 @@ Derivative of the numbered sections; where it conflicts, they win.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.0-draft | 2026-09-02 | `public_url` added at host level (plan 0046, decision 13 of the 2026-09-02 walkthrough): every paid-session data plane is external, so whether a host is reachable from outside is a fact the pool must see and gate on. `contract_version` goes to 1.2 — an optional field a runner may send; an agent that sets it sends 1.2, one that does not keeps sending 1.1 (§8). |
 | 1.1.2-draft | 2026-09-02 | Prose only, no wire change. §3.2 gains the capability id vocabulary rule (plan 0045, decision 1 of the 2026-09-02 walkthrough): prefix is the wire family for a real standard API (`openai:`) else the product domain; suffix is the endpoint name or what it does, `.` for variants, one `:`, never `/`. `livepeer:meet/sfu-room` becomes `meet:sfu-room` in the examples. The broker still treats the id as opaque. Same day, decision 5: `descriptor_schemas[]` no longer has to be "known to the broker" — a well-formed tag with a `schema_versions` entry is accepted, and the `descriptor_schema_unknown` reason code is removed. This is a loosening, so a runner valid before is valid after; `contract_version` stays 1.1. Decision 13: `metering` loses `broker-observed` (offering-axes 1.0.8 — the relayed data plane it described was never built); a runner that declared it was never matchable, so nothing valid becomes invalid. |
 | 1.1.1-draft | 2026-09-01 | Prose only, no wire change. §3.3's namespacing advice said "across adapter profiles"; the profiles are deleted by plan 0045 §3 and a runner now serves its own capability entry (`runner-contract.md`), so it says "across runner images". |
 | 1.1.0-draft | 2026-08-27 | Added `draining` to a capability entry (§7.1): the runner is winding down and takes no new work, while staying certified and advertised. Live state, not shape — it is excluded from the frozen projection, so setting and clearing it never re-triggers certification. `contract_version` goes to 1.1: this adds a field a runner may send, so an older broker ignoring it is the pre-existing behaviour and a newer one gains the withdrawal it needs to drain a host without flickering the manifest. |

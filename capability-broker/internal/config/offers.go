@@ -81,7 +81,7 @@ type OfferCapacity struct {
 // (offering-axes.md §3). The runner side — descriptor_schema, metering,
 // heartbeat cadence, session_params_schema — comes from attach.
 type SessionPolicy struct {
-	Attachment           string           `yaml:"attachment,omitempty" json:"attachment,omitempty"` // external | inband-ws
+	Attachment           string           `yaml:"attachment,omitempty" json:"attachment,omitempty"` // external (the only value; offering-axes §3)
 	Refill               string           `yaml:"refill,omitempty" json:"refill,omitempty"`         // extensible | bounded
 	LeasePolicy          string           `yaml:"lease_policy,omitempty" json:"lease_policy,omitempty"`
 	LeaseMaxSeconds      int              `yaml:"lease_max_seconds,omitempty" json:"lease_max_seconds,omitempty"`
@@ -258,9 +258,9 @@ func (c *Config) validateOffers() error {
 
 func validateSessionPolicy(p *SessionPolicy) error {
 	switch p.Attachment {
-	case "", "external", "inband-ws":
+	case "", "external":
 	default:
-		return fmt.Errorf("attachment must be external or inband-ws (got %q)", p.Attachment)
+		return fmt.Errorf("attachment must be external (got %q)", p.Attachment)
 	}
 	switch p.Refill {
 	case "", "extensible", "bounded":

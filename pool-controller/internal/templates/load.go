@@ -180,9 +180,9 @@ func (t Template) Validate() error {
 	}
 	if p := t.SessionPolicy; p != nil {
 		switch p.Attachment {
-		case "", "external", "inband-ws":
+		case "", "external":
 		default:
-			return fmt.Errorf("template %s: session_policy.attachment must be external or inband-ws (got %q)", t.ID, p.Attachment)
+			return fmt.Errorf("template %s: session_policy.attachment must be external (got %q)", t.ID, p.Attachment)
 		}
 		switch p.Refill {
 		case "", "extensible", "bounded":

@@ -1,0 +1,224 @@
+# Live diarized transcription — NeMo Nemotron streaming, as run on the
+# operator's "ai-rig-broker".
+#
+# One WebSocket the caller holds open for the length of a meeting: PCM in,
+# transcript segments and speaker changes out, as they happen. Its batch
+# sibling (openai-audio-transcriptions-nemo-meeting.yaml) is the OpenAI
+# endpoint over the same weights family; this is not an OpenAI endpoint at
+# all, which is why it left that capability (below).
+#
+# Renamed 2026-09-02 from openai-audio-transcriptions-nemo-meeting-stream
+# (decision 6 of the 2026-09-02 walkthrough on lnm-of6).
+#
+# Why `audio:transcribe.live` and not `openai:audio-transcriptions`
+# ------------------------------------------------------------------
+# The `openai:` prefix is a promise about the wire (runner-attach.md §3.2,
+# vocabulary rule): a caller who sends an OpenAI request gets an OpenAI
+# response. OpenAI's transcription endpoint is a multipart upload with a
+# transcript in the reply. This offering is a socket carrying binary audio
+# frames and JSON events, which no OpenAI client can drive; it shared a
+# capability id with the batch endpoint only because both were "transcription"
+# to the rig that declared them. A gateway selecting the capability for its
+# OpenAI-compatible route would have been handed a WebSocket. So: product
+# domain prefix, `.live` for the variant.
+#
+# Why paid-session/v1 and not paid-job/v1
+# ---------------------------------------
+# offering-axes.md §1 says `protocol` answers exactly one question — one-shot
+# versus long-lived — and it is the only thing that answers it. This has a
+# lease, a heartbeat, mid-stream top-up, and usage that accrues while it runs;
+# a job has none of those. The `stream` transport of paid-job would not do:
+# it is one request whose response arrives in pieces, with one metering event
+# at the end, and this offering has no request whose end is in sight.
+
+id: audio-transcribe-live-nemo-meeting
+capability: audio:transcribe.live
+offering_id: nemo-meeting-live
+protocol: paid-session/v1
+display_name: Live diarized transcription (NeMo Nemotron)
+description: >-
+  A long-lived transcription session over one WebSocket the caller connects to
+  directly: 16 kHz PCM in, incremental transcript segments and speaker changes
+  out, metered in seconds of audio ingested and bounded by a one-hour lease.
+  Top-up is allowed mid-session, so a call that runs long does not get cut off
+  at its opening funding.
+
+# The operator's real rate: 1e12 wei per second of audio — ~$0.103 per minute
+# at the 2026-06-15 ETH basis in
+# docs/references/2026-06-15-openai-compatible-market-pricing.md. That
+# reference's only realtime anchor is `gpt-realtime-whisper` at $0.017/min, so
+# this sells at roughly 6x it. Realtime diarized streaming holds a GPU and a
+# socket for the whole call while batch transcription does not, so a large
+# premium is expected; 6x is the operator's number and not one derived here.
+#
+# The unit changed 2026-09-02 from elapsed wall-clock seconds to seconds of
+# AUDIO INGESTED (descriptors/pcm-transcript.md, Metering): a caller holding
+# the socket open in silence sends no bytes and pays nothing. At real time the
+# two are the same number, which is why the price did not move.
+price_default: { amount_wei: "1000000000000", per_units: 1 }
+
+# The rig's `backend.max_in_flight: 1` — one live session per runner. This is
+# the strictest capacity in the catalog and the most load-bearing: a second
+# concurrent stream on the same card degrades BOTH callers in real time, where
+# a queued batch job only waits. queue_limit is unset because queueing a live
+# session is meaningless; a caller who cannot be served now wants a 503 with a
+# backoff, not a place in line.
+capacity: { max_in_flight: 1 }
+
+extra:
+  provider: nemo
+  # The upstream weights. The served identity below is the runner's own
+  # string; this is where the HF path lives (decision 6).
+  backend_model: nvidia/nemotron-speech-streaming-en-0.6b
+  audio:
+    task: transcription
+    # What the caller must send. The descriptor repeats it per session
+    # (pcm-transcript/v1 `audio`), but a gateway needs it BEFORE it opens a
+    # funded session, and nothing else in the manifest carries it.
+    input: { encoding: pcm_s16le, sample_rate_hz: 16000, channels: 1 }
+
+# The only audio:transcribe.live offering today, but the selector is not
+# optional: a second live-transcription runner (a different model, a
+# different language set) attaching to this pool must not be frozen into this
+# price under this name. The value is the runner's own model string, not the
+# HF path (runner-attach.md §3.2 identity; decision 6).
+match:
+  identity.model: nemotron-speech-streaming-en-0.6b
+
+# The operator's half of the session axes (template.go: the pool owns these;
+# descriptor schema, metering and the runner's own heartbeat cadence are frozen
+# from the attach document and so are absent here).
+session_policy:
+  # The caller connects to the runner's socket directly at the URL the
+  # descriptor publishes; the broker is never in the media path. This is the
+  # only attachment there is (offering-axes.md §3, since 1.0.8) — the relayed
+  # `inband-ws` this template used to declare was accepted by the broker and
+  # served by nothing.
+  #
+  # What it assumes: the member exposes that socket publicly, over TLS. Nothing
+  # in the pool makes that true yet — the agent-owned edge, the pool-issued
+  # name, the placement gate, and the certification dial are the member-edge
+  # feature (lnm-7cj), which follows plan 0045. Until it lands this template
+  # loads, and no host is placed on it, by design.
+  attachment: external
+  # A meeting outlasts its opening payment. `bounded` would refuse top-up after
+  # open (offering-axes.md §3) and would end an hour-long call at whatever the
+  # first envelope funded — the one behaviour this workload cannot have.
+  refill: extensible
+  # paid-session.md §5's normative default, stated rather than inherited so a
+  # reader can see it was chosen: the lease tracks funding, so a caller that
+  # stops topping up winds down instead of running unpaid.
+  lease_policy: funding-tracking
+  # The rig's `max_session_seconds: 3600`. Under funding-tracking this is the
+  # cap on the computed expiry, so a generously funded session still ends at an
+  # hour — which is exactly what the operator wrote.
+  lease_max_seconds: 3600
+  # One work unit per second of audio, and audio arrives at real time, so one
+  # unit per wall-clock second is the burn the lease is computed from. A
+  # caller bursting a recording through faster than real time burns faster and
+  # the runway math still holds; the lease cap does not stretch for it.
+  burn_rate_per_second: 1.0
+  # A minute of audio left is the point at which a caller must already be
+  # topping up; below that the balance reports `low` and
+  # `will_refuse_next_refill` gives the gateway time to drain gracefully
+  # (paid-session.md §6) rather than cutting off mid-sentence.
+  min_runway_units: 60
+  # Advisory only — the buyer owns its real increment because it is the buyer's
+  # exposure bound (offering-axes.md §3). Five minutes is a sane first-contact
+  # size for a workload that burns one unit a second.
+  runway_increment_units: 300
+  # Faster than the 10/3 default. Any accepted event refreshes liveness
+  # (paid-session.md §5) and this runner reports usage continuously while
+  # audio flows, so a 5s interval is loose relative to its own cadence — while
+  # capping unmetered runtime at ~15s instead of 30s. That ceiling is the whole
+  # point: a dead runner holding an open socket is billing nobody and serving
+  # nobody.
+  heartbeat: { interval_seconds: 5, missed_threshold: 3 }
+  # max_rotations and tolerance_band_pct are unset: the rig expressed no view
+  # on either, and both have defined defaults (3, and none) that are not
+  # improved by a number invented here.
+
+certification:
+  # As everywhere: the step runs the probe the runner declared (the rig used
+  # http-status on /healthz); the template sets only how much readiness is
+  # enough (certification-steps.md §3.1).
+  - { name: ready, type: readiness, required: true, config: { attempts: 5, interval_ms: 3000 } }
+  # The paid-session form of `request` (certification-steps.md §3.2): open a
+  # session, validate the descriptor envelope, hold it, terminate, and confirm
+  # the status path agrees. This is the only way to prove a session runner
+  # works without paying it.
+  - name: open
+    type: request
+    required: true
+    config:
+      # Passed verbatim to the runner as `session_params`. Per
+      # pcm-transcript/v1 these configure the session at create — they are not
+      # socket query strings — and the runner's `session_params_schema` is the
+      # authority on the key names (advisory, never a validator:
+      # runner-attach.md §3.2). The audio format is NOT a parameter: the
+      # runner declares what it accepts in the descriptor's `audio`.
+      session_params:
+        language: en
+      # Long enough that a runner emitting a first usage report on session
+      # start (zero units, but a report) has done so before terminate.
+      hold_ms: 6000
+      # expect_descriptor_schema is deliberately absent: descriptor schemas are
+      # runner-declared and frozen (runner-attach.md §3.2, §5), so naming one
+      # here would be the operator authoring the runner's half. Absent, the
+      # step accepts any schema the runner declared.
+  # NOT required, and the reason is the meter. This offering counts seconds of
+  # audio INGESTED, and certification sends no audio: nothing in the pool can
+  # reach the runner's socket until the member-edge feature (lnm-7cj) gives
+  # the broker a public URL to dial. A runner that reports a truthful zero
+  # would fail a required step for being honest. The step stays so that a
+  # runner which does report is checked for the right work unit; it becomes
+  # required when certification can push a fixture through the socket.
+  - { name: usage, type: usage, required: false, config: { min_units: 1, window_ms: 10000 } }
+
+# Decided 2026-09-01 (plan 0045 §5). The rig's config carried no
+# `constraints.gpu` for the NeMo offerings, and this shipped empty while that
+# stood — eligible on every card in the pool, including a GTX 1080.
+#
+# Deliberately NARROW, because this is a paid session metered as audio flows.
+# A card that cannot hold realtime does not degrade, it fails: audio arrives
+# faster than it is consumed and the session falls behind without bound,
+# billing the caller for every second it ingests while the transcript drifts
+# further from live. Scoring cannot fix that. So where the batch sibling is
+# wide, this one starts at a card with real margin. The exact floor is a
+# fleet measurement; move it with evidence.
+requirements:
+  gpu_classes: [rtx-3090, rtx-4090, rtx-5090]
+
+# Raised 11 -> 24 in the same change that filled in `requirements`; the two are
+# one decision, and splitting them is how a live stream ends up on a card that
+# cannot keep up with realtime.
+#
+# Above batch (12): a live session should win a card both fit, because it is
+# the one workload that cannot absorb contention. Below transcode-live (26),
+# which is the same argument one product up, and below chat (30).
+priority: 24
+
+# Primary only, and the strongest case for it in the catalog. The session holds
+# the card, the socket and the sole in-flight slot for up to an hour; anything
+# co-resident shows up as dropped audio in a live call.
+stacking: { primary: true, secondary_on: [] }
+
+# runner_compose omitted: the image that serves this workload is
+# moatus/audio-diarized-transcription-runner, and it does not yet serve the
+# runner contract or the pcm-transcript/v1 socket shape (grant on upgrade, one
+# session per URL, parameters at create). The tag it ships those under is the
+# tag that belongs here (lnm-yqc; tracked with the other unresolved images as
+# lnm-v12). One image serves both NeMo templates; each container declares its
+# own capability by CAPABILITY_NAME.
+
+# min_jobs counts sessions here, not requests, and each one may run an hour —
+# so 10 is already a long probation in wall-clock terms. Lowered 2026-09-02
+# from the catalog's usual 20 with decision 10: a session is one outcome
+# sample however long it ran, so a session runner accrues evidence far more
+# slowly than a job runner, and a number tuned for jobs would keep a good
+# runner in probation for days of real meetings.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 8 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

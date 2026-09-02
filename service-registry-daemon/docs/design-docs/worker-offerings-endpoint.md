@@ -68,8 +68,8 @@ Content-Type: application/json
       "protocol": "paid-session/v1",
       "session": {                            // paid-session/* only
         "descriptor_schema": "vtuber-session/v1",   // <name>/v<major>
-        "attachment": "external",               // external | inband-ws
-        "metering": "runner-reported",          // runner-reported | broker-observed
+        "attachment": "external",               // external (the only value)
+        "metering": "runner-reported",          // runner-reported (the only value)
         "refill": "extensible",                 // extensible | bounded
         "heartbeat": { "interval_seconds": 10, "missed_threshold": 3 },
         "lease": { "policy": "funding-tracking" }  // funding-tracking | fixed

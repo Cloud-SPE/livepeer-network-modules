@@ -313,13 +313,13 @@ func TestClassify_SessionAxesChangesAreCritical(t *testing.T) {
 		{
 			// Who counts the money.
 			name:       "metering origin",
-			after:      mutate(func(s map[string]any) { s["metering"] = "broker-observed" }),
+			after:      mutate(func(s map[string]any) { s["metering"] = "not-runner-reported" }),
 			wantDetail: "session axes changed: metering",
 		},
 		{
 			// Whether the data plane transits the broker at all.
 			name:       "attachment declared",
-			after:      mutate(func(s map[string]any) { s["attachment"] = "inband-ws" }),
+			after:      mutate(func(s map[string]any) { s["attachment"] = "not-external" }),
 			wantDetail: "session axes changed: attachment",
 		},
 		{

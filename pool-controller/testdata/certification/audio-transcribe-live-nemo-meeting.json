@@ -15,16 +15,14 @@
     "config": {
       "hold_ms": 6000,
       "session_params": {
-        "encoding": "pcm_s16le",
-        "model": "{{identity.openai.model}}",
-        "sample_rate": 16000
+        "language": "en"
       }
     }
   },
   {
     "name": "usage",
     "type": "usage",
-    "required": true,
+    "required": false,
     "config": {
       "min_units": 1,
       "window_ms": 10000

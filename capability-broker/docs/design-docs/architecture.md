@@ -25,7 +25,7 @@ capability-broker/
     │   ├── routes.go                     # unpaid routes: registry, health, admin, attach
     │   ├── job_routes.go                 # paid-job/v1: POST /v1/job + idempotency
     │   ├── session_routes.go             # paid-session/v1: /v1/session/*
-    │   ├── session_ws.go                 # inband-ws session attachment
+    │   ├── session_ws.go                 # paid-session §8 control socket (usage ticks, top-ups); no media relay
     │   ├── attach.go                     # runner attach over WS and QUIC (§2)
     │   ├── attach_quic.go                # the QUIC attach listener
     │   ├── offer_dispatch.go             # offer → eligible attached runner

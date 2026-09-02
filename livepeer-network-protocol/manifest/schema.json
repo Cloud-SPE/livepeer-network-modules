@@ -263,18 +263,16 @@
         },
         "attachment": {
           "enum": [
-            "external",
-            "inband-ws"
+            "external"
           ],
           "default": "external",
-          "description": "'external': runtime coordinates come from the descriptor; data never transits the broker. 'inband-ws': the data plane is a broker-relayed WebSocket."
+          "description": "Runtime coordinates come from the descriptor; data never transits the broker. The only value since offering-axes 1.0.8."
         },
         "metering": {
           "enum": [
-            "runner-reported",
-            "broker-observed"
+            "runner-reported"
           ],
-          "description": "Origin of the seller's usage claims. 'broker-observed' is valid only with attachment 'inband-ws' \u2014 a broker cannot observe traffic that never transits it."
+          "description": "Origin of the seller's usage claims: runner events. The only value since offering-axes 1.0.8 \u2014 no session traffic transits the broker."
         },
         "max_rotations": {
           "type": "integer",

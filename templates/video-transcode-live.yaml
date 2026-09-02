@@ -85,16 +85,14 @@ constraints:
 # descriptor schemas, `metering`, its own heartbeat cadence — is frozen from
 # the attach document and deliberately absent.
 session_policy:
-  # The opposite of the NeMo streaming template's `inband-ws`, and the
-  # difference is real: RTMP arrives at the runner and HLS leaves it, so the
-  # media never transits the broker. offering-axes.md §3 calls that `external`
-  # — "runtime coordinates come from the descriptor and data never transits
-  # the broker" — which is exactly what a descriptor carrying `rtmp_url` and
-  # `hls_url` is for.
-  #
-  # This also constrains the runner: `metering: broker-observed` is invalid
-  # with external attachment (§3), so a runner declaring it is refused at
-  # match. That check is the broker's, not this file's.
+  # RTMP arrives at the runner and HLS leaves it; the media never transits
+  # the broker. offering-axes.md §3 calls that `external` — "runtime
+  # coordinates come from the descriptor and data never transits the broker"
+  # — which is exactly what a descriptor carrying `rtmp_url` and `hls_url` is
+  # for. Since 2026-09-02 it is the only attachment there is (decision 13 on
+  # lnm-of6): the relayed alternative was never built. It means the member
+  # exposes the runner's ingest and playback addresses publicly, which is the
+  # pool's member-edge feature (lnm-7cj), not this file's.
   attachment: external
   # A broadcast outlasts its opening payment by design. `bounded` would refuse
   # top-up after open and end the stream at whatever the first envelope funded.

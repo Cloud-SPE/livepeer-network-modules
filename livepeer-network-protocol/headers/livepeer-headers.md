@@ -288,8 +288,8 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 - **Value:** one of the codes in [Error codes](#error-codes) below.
 - The response body SHOULD also include a JSON object with structured error info
   (see [Error body](#error-body)).
-- For in-flight terminations (a `stream` transport body, an `inband-ws`
-  session), the response is already flowing when the broker decides to
+- For in-flight terminations (a `stream` transport body), the response is
+  already flowing when the broker decides to
   terminate. Broker emits the error
   code as an HTTP trailer where the wire allows (`Trailer: Livepeer-Error`
   + the value when the body is complete) or as the WebSocket close

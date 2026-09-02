@@ -121,7 +121,7 @@ func (r *responseRecorder) commit() {
 }
 
 // Hijack passes through to the underlying ResponseWriter if it supports
-// http.Hijacker. Required so the ws-realtime mode driver can upgrade the
+// http.Hijacker. Kept so a handler that upgrades the connection can hijack the
 // connection through the middleware chain. Marks the recorder as
 // "headers written" with status 101 so post-handler observability sees a
 // reasonable value.

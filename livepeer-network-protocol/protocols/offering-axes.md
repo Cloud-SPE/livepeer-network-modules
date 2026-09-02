@@ -1,8 +1,8 @@
 ---
 spec_name: offering-axes
-version: 1.0.7-draft
+version: 1.0.8-draft
 status: draft
-last_updated: 2026-08-26
+last_updated: 2026-09-02
 ---
 
 # Offering declared axes
@@ -53,17 +53,14 @@ offerings):
 | Field | Req | Values / default | Who reads it |
 |---|---|---|---|
 | `descriptor_schema` | yes | `name/vN` tag | Gateways MUST NOT open sessions whose schema they don't implement; brokers reject runner descriptors that don't match it. |
-| `attachment` | no | `external` (default) \| `inband-ws` | `external`: runtime coordinates come from the descriptor and data never transits the broker. `inband-ws`: the session's data plane is a broker-relayed WebSocket (the old `ws-realtime` shape). |
-| `metering` | yes | `runner-reported` \| `broker-observed` | Where the seller's usage claims originate: runner events (§7 of the session spec) or broker-side observation of traffic it relays (only meaningful with `inband-ws` attachment). |
+| `attachment` | no | `external` (the only value) | Runtime coordinates come from the descriptor and data never transits the broker. The caller connects to the runner directly, at the address the descriptor publishes; a pool member serving a session workload therefore exposes a public endpoint (the pool's member-edge feature). A broker-relayed data plane (`inband-ws`) was declared here until 2026-09-02 and never implemented; it is gone rather than pending. |
+| `metering` | yes | `runner-reported` (the only value) | The seller's usage claims originate as runner events (§7 of the session spec). `broker-observed` was declared until 2026-09-02 for a relayed data plane that was never built; with no traffic transiting the broker there is nothing for it to observe. |
 | `refill` | no | `extensible` (default) \| `bounded` | `bounded` offerings reject top-up after open. The clearinghouse gates refill on this instead of a mode-name list. |
 | `heartbeat` | no | `{ interval_seconds, missed_threshold }`; defaults 10 / 3 | Gateways predict liveness enforcement; brokers enforce it. |
 | `lease` | no | `{ policy, max_seconds }`; default policy `funding-tracking` | The session spec's normative lease default applies unless overridden here; gateways read it before opening. |
 | `tolerance_band_pct` | no | number; advisory | The divergence tolerance the seller commits to operate within (trust-model doc). A buyer's route selection MAY prefer tighter bands. |
 | `runway_increment_units` | no | integer; advisory | Seller-suggested top-up sizing. Buyers own their actual increment (it is their exposure bound), but a suggestion aids first-contact sizing. |
 | `session_params_schema` | no | object; advisory | The runner's own description of the `session_params` it expects, relayed verbatim from the runner's attach document (`runner-attach.md` §3.2). Lets a gateway validate before opening rather than discovering the requirement as a create-time failure after payment was validated. Not operator-authored and never broker-enforced. |
-
-`metering: broker-observed` with `attachment: external` is invalid: a broker
-cannot observe traffic that never transits it.
 
 ### 3.1 `session.max_rotations`
 
@@ -222,6 +219,7 @@ refused.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.8-draft | 2026-09-02 | `attachment: inband-ws` and `metering: broker-observed` removed (plan 0045, decision 13 of the 2026-09-02 walkthrough). Both were accepted by brokers and served by none: the broker's session WebSocket is the §8 control socket, not a media relay. Every session data plane is external; a pool member exposes it through the pool's member-edge feature. The enums keep one value each so a future value is an addition, not a redefinition. |
 | 1.0.7-draft | 2026-08-26 | Runner-owned axes (`transports`, `descriptor_schema`, `metering`, `work_unit`, `session_params_schema`, the extractor) now originate in the attach document (`runner-attach.md`) and reach the manifest only through the offer freeze; references to paid-session §7.1.1 repointed. No wire change. |
 | 1.0.6-draft | 2026-08-21 | §6.1: add `payment_cumulative_units` — the running total on the `work_id`, distinct from the session- or exchange-scoped `debited_units` — and state what it does and does not make verifiable: a paid-job charge is fully recomputable from the record, a paid-session charge on a shared identity is attested rather than recomputable, because interleaved sessions do not occupy contiguous stretches of the curve. |
 | 1.0.5-draft | 2026-08-21 | §6.1: the cumulative curve spans EXCHANGES, not only ticks — a paid-job exchange is one increment on its payment session's curve, so the second job on a session costs the difference of two ceilings. A settlement MUST attest what the ledger charged rather than recomputing, and carries the cumulative total so the charge stays verifiable from the record. Found on mainnet: a signed record attested 5 wei for a debit the ledger charged 4. |

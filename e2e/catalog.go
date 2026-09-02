@@ -55,7 +55,7 @@ capacity: { max_in_flight: 2, queue_limit: 4 }
 match:
   identity.provider: e2e
 session_policy:
-  attachment: inband-ws
+  attachment: external
   refill: extensible
   lease_policy: funding-tracking
   lease_max_seconds: 3600

@@ -463,12 +463,16 @@ func validateCapability(c *Capability, doc *Document, known Known, field string)
 			}
 			seenD[d] = true
 		}
+		// One value. No session traffic transits the broker, so the
+		// runner is the only party that can count it; "broker-observed"
+		// described a relayed data plane that was never built and was
+		// removed from the vocabulary with it (offering-axes 1.0.8).
 		switch c.Metering {
-		case "runner-reported", "broker-observed":
+		case "runner-reported":
 		case "":
-			add("schema_violation", "/metering", "", "runner-reported | broker-observed (required for paid-session)")
+			add("schema_violation", "/metering", "", "runner-reported (required for paid-session)")
 		default:
-			add("schema_violation", "/metering", c.Metering, "runner-reported | broker-observed")
+			add("schema_violation", "/metering", c.Metering, "runner-reported")
 		}
 		if c.WorkUnit.Extractor != nil {
 			add("schema_violation", "/work_unit/extractor", "", "absent on paid-session — usage is runner-reported")

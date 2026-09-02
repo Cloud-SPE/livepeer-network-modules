@@ -247,8 +247,8 @@ The protocol controls *when* and *how* work units are reported. Specs in
 - `paid-job/v1` — one exchange; the declared extractor runs at the terminal
   accounting point (response end or stream termination) and the debit
   settles once.
-- `paid-session/v1` — cumulative usage claims (runner-reported or
-  broker-observed per the offering's declared metering axis) drive debits
+- `paid-session/v1` — cumulative usage claims (runner-reported; the
+  runner is the usage authority) drive debits
   against funded runway for the session's lifetime.
 
 Pricing math is identical across protocols; they differ only in *when* the

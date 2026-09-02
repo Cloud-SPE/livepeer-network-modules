@@ -17,7 +17,7 @@ func TestSessionPolicyReachesTheBroker(t *testing.T) {
 		Protocol: "paid-session/v1", PriceDefault: templates.Price{AmountWei: "1", PerUnits: 1},
 		Stacking: templates.Stacking{Primary: true},
 		SessionPolicy: &templates.SessionPolicy{
-			Attachment: "inband-ws", Refill: "bounded",
+			Attachment: "external", Refill: "bounded",
 			LeasePolicy: "fixed", LeaseMaxSeconds: 3600,
 			MaxRotations: 2,
 			Heartbeat:    templates.SessionHeartbeat{IntervalSeconds: 5, MissedThreshold: 3},
@@ -33,7 +33,7 @@ func TestSessionPolicyReachesTheBroker(t *testing.T) {
 		t.Fatal("session_policy did not reach the broker: the pool's lease and heartbeat " +
 			"would be silently replaced by defaults")
 	}
-	if policy.Attachment != "inband-ws" || policy.Refill != "bounded" {
+	if policy.Attachment != "external" || policy.Refill != "bounded" {
 		t.Fatalf("attachment/refill = %q/%q", policy.Attachment, policy.Refill)
 	}
 	if policy.LeasePolicy != "fixed" || policy.LeaseMaxSeconds != 3600 {

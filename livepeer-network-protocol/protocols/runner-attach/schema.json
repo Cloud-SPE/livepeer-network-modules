@@ -449,10 +449,9 @@
         },
         "metering": {
           "enum": [
-            "runner-reported",
-            "broker-observed"
+            "runner-reported"
           ],
-          "description": "paid-session only. Frozen. broker-observed is valid only with the offer's attachment inband-ws (checked at match)."
+          "description": "paid-session only. Frozen. The only value: the runner is the sole party that can count traffic that never transits the broker."
         },
         "heartbeat": {
           "type": "object",

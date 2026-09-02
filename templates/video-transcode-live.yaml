@@ -185,8 +185,17 @@ certification:
 # those images unrunnable — ClassOf returns ClassUnknown for a card no class
 # matches, and placement rejects it. Which Intel cards belong here is a fleet
 # question; these are the classes placement knows today.
+# gtx-1080 added 2026-09-02 (plan 0045 §5, decision 9 on lnm-of6). For the
+# H.264/HEVC this offering sells, Pascal NVENC is the 2080's peer rather than
+# its lesser: it encodes both codecs, runs 1080p well past real time, and takes
+# the same number of concurrent sessions under current drivers. What Turing
+# added (HEVC B-frames, a little quality per bit) is a scoring difference, and
+# the non-required latency step ranks it down rather than refusing the card.
+# Neither class does AV1. The 1080 is admitted by NO AI template: vLLM needs
+# compute capability 7.0+, and whether any other image runs on sm_61 depends
+# on that image's CUDA base — a fact its author owns, not this catalog.
 requirements:
-  gpu_classes: [rtx-2080, arc-a770, arc-b580, flex-170]
+  gpu_classes: [gtx-1080, rtx-2080, arc-a770, arc-b580, flex-170]
 
 # The highest of the three transcode templates and the highest anything gets
 # outside the chat rig. On a 2080 that could take a live ingest or a batch job,

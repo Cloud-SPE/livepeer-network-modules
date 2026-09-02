@@ -3,6 +3,7 @@ package placement
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
@@ -54,6 +55,7 @@ func TestShippedCatalogProducesPlannedStance(t *testing.T) {
 		{ClassRTX3090, "NVIDIA GeForce RTX 3090", 24},
 		{ClassRTX4090, "NVIDIA GeForce RTX 4090", 24},
 		{ClassRTX5090, "NVIDIA GeForce RTX 5090", 32},
+		{ClassA100, "NVIDIA A100-SXM4-80GB", 80},
 	}
 	hardware := make([]types.HardwareUnit, 0, len(cards))
 	for _, card := range cards {
@@ -67,15 +69,16 @@ func TestShippedCatalogProducesPlannedStance(t *testing.T) {
 	for _, tmpl := range all {
 		byID[tmpl.ID] = tmpl
 	}
-	// Classes the catalog DECLINES, on purpose (plan 0045 §5). Nothing
-	// admits them: the lightest workload starts at rtx-2080, and the
-	// datacenter cards have no template of their own yet. A declined
-	// card must be rejected everywhere WITH a reason — an operator has
-	// to be able to see why a real card sits idle — and never placed on
-	// something it cannot run. The old stance gave a 1080 one workload
-	// only because an unconstrained template was the default winner on
-	// every card the rest of the catalog turned down.
-	declined := map[string]bool{ClassGTX1080: true}
+	// Classes the catalog DECLINES, on purpose (plan 0045 §5, decision 9
+	// on lnm-of6): the datacenter cards have no template of their own,
+	// because nothing the pool sells today deserves one (lnm-um1). A
+	// declined card must be rejected everywhere WITH a reason — an
+	// operator has to be able to see why a real card sits idle — and
+	// never placed on something it under-uses. Before §5 an A100 ran
+	// batch ASR of a 0.6B model, only because an unconstrained template
+	// was the default winner on every card the rest of the catalog
+	// turned down.
+	declined := map[string]bool{ClassA100: true}
 
 	decisions := Plan(Input{Hardware: hardware, Templates: all, Overrides: overrides})
 	for _, decision := range decisions {
@@ -133,13 +136,25 @@ func TestShippedCatalogProducesPlannedStance(t *testing.T) {
 	}
 
 	// The older classes the catalog still serves run one workload and
-	// nothing else (0040 §4.4). The 1080 is declined, above.
+	// nothing else (0040 §4.4).
 	for _, decision := range decisions {
 		switch decision.GPUClass {
-		case ClassRTX2080, ClassRTX3090:
+		case ClassGTX1080, ClassRTX2080, ClassRTX3090:
 			if len(decision.Placements) != 1 {
 				t.Errorf("%s runs %d templates; §4.4 gives this class one",
 					decision.GPUClass, len(decision.Placements))
+			}
+		}
+		// And the 1080 runs ENCODE work only (decision 9): for
+		// H.264/HEVC Pascal NVENC is the 2080's peer, while no AI
+		// template may admit it — vLLM needs compute capability 7.0+,
+		// and whether any other image runs on sm_61 is a fact the
+		// runner author owns. A catalog edit that puts an AI workload
+		// on this card is the thing this assertion refuses.
+		if decision.GPUClass == ClassGTX1080 && len(decision.Placements) == 1 {
+			if cap := byID[decision.Placements[0].TemplateID].Capability; !strings.HasPrefix(cap, "video:transcode.") {
+				t.Errorf("gtx-1080 placed on %s (%s); this card is admitted by transcode templates only",
+					decision.Placements[0].TemplateID, cap)
 			}
 		}
 	}

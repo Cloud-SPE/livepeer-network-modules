@@ -157,8 +157,15 @@ func collectHardware(ctx context.Context, hostID string) []attach.Hardware {
 		hw = append(hw, units...)
 	}
 	if len(hw) == 0 {
-		// A CPU-only host is legitimate; GPU work simply will not match.
-		log.Printf("no GPUs found; attaching with no hardware")
+		log.Printf("no GPUs found")
+	}
+	// Every host has a CPU, and a socket is a compute unit of its own
+	// (plan 0047): reported always, admitted only by cpu_classes
+	// templates.
+	if units, err := collectCPUs("/proc", hostID); err != nil {
+		log.Printf("cpu inventory unavailable (%v)", err)
+	} else {
+		hw = append(hw, units...)
 	}
 	return hw
 }

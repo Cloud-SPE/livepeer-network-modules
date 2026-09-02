@@ -8,6 +8,7 @@
 package placement
 
 import (
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"regexp"
 	"strings"
 )
@@ -18,6 +19,13 @@ import (
 // classes that vocabulary uses.
 const (
 	ClassGTX1080 = "gtx-1080"
+	// CPU core tiers (plan 0047): the largest tier a socket meets. A
+	// template lists the tiers it admits; a socket under 8 cores is not
+	// a tier the pool sells for.
+	ClassCPU8    = "cpu-8"
+	ClassCPU16   = "cpu-16"
+	ClassCPU32   = "cpu-32"
+	ClassCPU64   = "cpu-64"
 	ClassRTX2080 = "rtx-2080"
 	ClassRTX3090 = "rtx-3090"
 	ClassRTX4090 = "rtx-4090"
@@ -127,4 +135,28 @@ func MaxTemplatesFor(class string, overrides map[string]int) int {
 		return limit
 	}
 	return 1
+}
+
+// CPUClassOf is the largest core tier a socket meets, or ClassUnknown
+// under the smallest tier.
+func CPUClassOf(cores int) string {
+	switch {
+	case cores >= 64:
+		return ClassCPU64
+	case cores >= 32:
+		return ClassCPU32
+	case cores >= 16:
+		return ClassCPU16
+	case cores >= 8:
+		return ClassCPU8
+	}
+	return ClassUnknown
+}
+
+// ClassOfUnit is ClassOf for a card and CPUClassOf for a socket.
+func ClassOfUnit(unit types.HardwareUnit) string {
+	if unit.IsCPU() {
+		return CPUClassOf(unit.Cores)
+	}
+	return ClassOf(unit.GPUModel)
 }

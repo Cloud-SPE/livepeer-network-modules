@@ -81,6 +81,11 @@ type Hardware struct {
 	Driver    string            `json:"driver,omitempty"`
 	CUDA      string            `json:"cuda,omitempty"`
 	Facts     map[string]string `json:"facts,omitempty"`
+	// Contract 1.2: a cpu socket is a compute unit too (§3.1).
+	Kind    string   `json:"kind,omitempty"`
+	Cores   int      `json:"cores,omitempty"`
+	Threads int      `json:"threads,omitempty"`
+	ISA     []string `json:"isa,omitempty"`
 }
 
 // Capability is one capability entry as accepted (§3.2).
@@ -182,7 +187,7 @@ var transports = map[string]bool{"unary": true, "stream": true, "multipart": tru
 var (
 	hostFields = set("contract_version", "credential", "host_id", "agent_version", "public_url", "hardware", "capabilities")
 	credFields = set("kind", "token", "key_id", "signature")
-	hwFields   = set("gpu_uuid", "gpu_model", "vram_bytes", "driver", "cuda", "facts")
+	hwFields   = set("gpu_uuid", "gpu_model", "vram_bytes", "driver", "cuda", "facts", "kind", "cores", "threads", "isa")
 	capFields  = set("capability_id", "protocol", "local_id", "transports", "descriptor_schemas", "work_unit",
 		"paths", "readiness", "identity", "schema_versions", "metering", "heartbeat", "session_params_schema",
 		"requirements", "devices", "draining")
@@ -314,6 +319,18 @@ func Evaluate(raw []byte, known Known) (*Document, *Result) {
 		}
 		if len(h.Facts) > 32 {
 			return reject("schema_violation", field+"/facts", "at most 32 keys")
+		}
+		switch h.Kind {
+		case "", "gpu":
+		case "cpu":
+			if h.Cores < 1 {
+				return reject("schema_violation", field+"/cores", "≥ 1 for a cpu unit")
+			}
+		default:
+			return reject("schema_violation", field+"/kind", "gpu | cpu")
+		}
+		if len(h.ISA) > 16 {
+			return reject("schema_violation", field+"/isa", "at most 16 entries")
 		}
 		if prev, dup := seenGPU[h.GPUUUID]; dup {
 			res.Document = "rejected"

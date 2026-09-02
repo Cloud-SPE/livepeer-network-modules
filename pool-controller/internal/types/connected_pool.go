@@ -107,6 +107,17 @@ type HostEnrollment struct {
 	UpdatedAt               time.Time            `json:"updated_at"`
 }
 
+// HardwareKind is what a compute unit is.
+type HardwareKind string
+
+const (
+	HardwareKindGPU HardwareKind = "gpu"
+	HardwareKindCPU HardwareKind = "cpu"
+)
+
+// IsCPU reports whether this unit is a CPU socket.
+func (u HardwareUnit) IsCPU() bool { return u.Kind == HardwareKindCPU }
+
 type HardwareUnit struct {
 	ID               string            `json:"id"`
 	EnrollmentID     string            `json:"enrollment_id"`
@@ -121,7 +132,14 @@ type HardwareUnit struct {
 	// its units at relay the way MemberEthAddress is, because the
 	// planner's input is units. Empty: the host is not public, and no
 	// paid-session template places here (plan 0046 §2).
-	PublicURL  string            `json:"public_url,omitempty"`
+	PublicURL string `json:"public_url,omitempty"`
+	// Kind: a compute unit was a GPU first (plan 0047). "cpu" makes this
+	// a socket — the GPU-named fields keep their names, and the CPU's
+	// own facts ride below. Empty means gpu.
+	Kind       HardwareKind      `json:"kind,omitempty"`
+	Cores      int               `json:"cores,omitempty"`
+	Threads    int               `json:"threads,omitempty"`
+	ISA        []string          `json:"isa,omitempty"`
 	State      HardwareUnitState `json:"state"`
 	LastSeenAt time.Time         `json:"last_seen_at,omitempty"`
 	CreatedAt  time.Time         `json:"created_at"`

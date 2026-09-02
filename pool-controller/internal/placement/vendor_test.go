@@ -34,6 +34,10 @@ func TestEveryPlacementClassHasAVendorAndTheReverse(t *testing.T) {
 	for _, mp := range modelPatterns {
 		placementClasses[mp.class] = true
 	}
+	// CPU tiers come from core counts, not model strings (plan 0047).
+	for _, cores := range []int{8, 16, 32, 64} {
+		placementClasses[CPUClassOf(cores)] = true
+	}
 	for class := range placementClasses {
 		if gpuv.VendorOfClass(class) == "" {
 			t.Errorf("placement knows class %q but gpu has no vendor for it", class)

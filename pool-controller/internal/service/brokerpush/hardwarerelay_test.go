@@ -48,6 +48,10 @@ func runnerWithGPU(host, member, gpu string) brokeradmin.RunnerView {
 		Driver    string            `json:"driver,omitempty"`
 		CUDA      string            `json:"cuda,omitempty"`
 		Facts     map[string]string `json:"facts,omitempty"`
+		Kind      string            `json:"kind,omitempty"`
+		Cores     int               `json:"cores,omitempty"`
+		Threads   int               `json:"threads,omitempty"`
+		ISA       []string          `json:"isa,omitempty"`
 	}{GPUUUID: gpu, GPUModel: "NVIDIA H100", VRAMBytes: 85899345920, Driver: "560.35.03"})
 	return r
 }

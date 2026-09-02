@@ -59,6 +59,13 @@ type Hardware struct {
 	Driver    string            `json:"driver,omitempty"`
 	CUDA      string            `json:"cuda,omitempty"`
 	Facts     map[string]string `json:"facts,omitempty"`
+	// A compute unit was a GPU first (§3.1, contract 1.2). Kind "cpu"
+	// makes this a socket: the id, model and memory fields keep their
+	// names, and the CPU's own facts ride below.
+	Kind    string   `json:"kind,omitempty"`
+	Cores   int      `json:"cores,omitempty"`
+	Threads int      `json:"threads,omitempty"`
+	ISA     []string `json:"isa,omitempty"`
 }
 
 // Capability is one capability entry (§3.2). Extensions are merged in at
@@ -191,6 +198,11 @@ func Build(host Host, resolved []Resolved) (*Document, error) {
 		AgentVersion:    host.AgentVersion,
 		Hardware:        host.Hardware,
 		Capabilities:    []Capability{},
+	}
+	for _, hw := range host.Hardware {
+		if hw.Kind == "cpu" {
+			doc.ContractVersion = ContractVersion
+		}
 	}
 	if u := strings.TrimSpace(host.PublicURL); u != "" {
 		if err := ValidatePublicURL(u); err != nil {

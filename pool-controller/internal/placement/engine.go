@@ -34,6 +34,10 @@ const (
 	// declares no public_url. Every session data plane is external
 	// (offering-axes §3), so a host nobody can reach cannot serve one.
 	ReasonHostNotPublic = "host_not_public"
+	// ReasonKindNotAllowed: the template admits the other kind of
+	// compute unit — a socket offered to a GPU template, or a card to a
+	// CPU-only one. The two never compete.
+	ReasonKindNotAllowed = "kind_not_allowed"
 )
 
 // Placement is one template placed on one GPU.
@@ -143,7 +147,7 @@ func enabledTemplates(all []templates.Template, overrides []types.TemplateOverri
 func planUnit(unit types.HardwareUnit, enabled []templates.Template,
 	optOuts []types.MemberTemplateOptOut, stances map[string]int) Decision {
 
-	class := ClassOf(unit.GPUModel)
+	class := ClassOfUnit(unit)
 	decision := Decision{
 		HardwareUnitID:   unit.ID,
 		HostEnrollmentID: unit.EnrollmentID,
@@ -244,6 +248,28 @@ func planUnit(unit types.HardwareUnit, enabled []templates.Template,
 // axes are checked separately and both must pass.
 func requirementsFail(tmpl templates.Template, unit types.HardwareUnit, class string) (string, string) {
 	req := tmpl.Requirements
+	// A socket and a card are different kinds of unit and a template
+	// admits one kind by listing its classes (plan 0047). A socket is
+	// never the default winner of an unconstrained template — that was
+	// the §5 failure mode for cards, and it would be worse here.
+	if unit.IsCPU() {
+		if len(req.CPUClasses) == 0 {
+			return ReasonKindNotAllowed, "template admits no cpu unit"
+		}
+		if class == ClassUnknown {
+			return ReasonUnknownGPUClass, unit.GPUModel + " (" + strconv.Itoa(unit.Cores) + " cores)"
+		}
+		if !containsFold(req.CPUClasses, class) {
+			return ReasonClassNotAllowed, class
+		}
+		if tmpl.RunnerCompose.HasImage() && tmpl.RunnerCompose.ImageFor(gpuv.VendorCPU) == "" {
+			return ReasonNoImageForVendor, "no cpu image"
+		}
+		return "", ""
+	}
+	if len(req.CPUClasses) > 0 && len(req.GPUClasses) == 0 && len(req.GPUModels) == 0 {
+		return ReasonKindNotAllowed, "template admits cpu units only"
+	}
 	if len(req.GPUClasses) > 0 {
 		if class == ClassUnknown {
 			return ReasonUnknownGPUClass, unit.GPUModel

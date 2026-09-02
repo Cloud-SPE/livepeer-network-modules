@@ -14,6 +14,10 @@
     "required": true,
     "config": {
       "hold_ms": 6000,
+      "reach": {
+        "field": "url",
+        "grant": "stream-attach"
+      },
       "session_params": {
         "language": "en"
       }

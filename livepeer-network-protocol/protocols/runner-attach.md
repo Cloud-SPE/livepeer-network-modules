@@ -145,6 +145,10 @@ and an unknown field rejects the whole document (§4.1).
 | `driver` | opt | string, ≤ 64 chars | Driver version string. |
 | `cuda` | opt | string, ≤ 64 chars | CUDA (or equivalent runtime) version string. |
 | `facts` | opt | object of string → string, ≤ 32 keys | Opaque; UI only. Never matched, never frozen. |
+| `kind` | opt (1.2) | `gpu` (default) \| `cpu` | What this unit is. A `cpu` unit is a socket: `gpu_uuid` is its stable id (`cpu-<host_id>-<socket>`), `gpu_model` the CPU's model string, `vram_bytes` 0. The field names are the GPU's because renaming them is a major; a compute unit was a GPU first. |
+| `cores` | ✔ for `cpu` | integer ≥ 1 | Physical cores on this socket. The pool's CPU classes are core tiers. |
+| `threads` | opt | integer ≥ 1 | Hardware threads on this socket. |
+| `isa` | opt | array of string, ≤ 16 | Instruction-set extensions the pool may select on (`avx2`, `avx512`, `amx`). |
 
 A document whose `hardware[]` is empty MAY still carry capabilities: CPU
 work exists. What it MUST NOT do is carry a capability whose
@@ -550,7 +554,7 @@ Derivative of the numbered sections; where it conflicts, they win.
 
 | Version | Date | Change |
 |---|---|---|
-| 1.2.0-draft | 2026-09-02 | `public_url` added at host level (plan 0046, decision 13 of the 2026-09-02 walkthrough): every paid-session data plane is external, so whether a host is reachable from outside is a fact the pool must see and gate on. `contract_version` goes to 1.2 — an optional field a runner may send; an agent that sets it sends 1.2, one that does not keeps sending 1.1 (§8). |
+| 1.2.0-draft | 2026-09-02 | `public_url` added at host level (plan 0046, decision 13 of the 2026-09-02 walkthrough): every paid-session data plane is external, so whether a host is reachable from outside is a fact the pool must see and gate on. `contract_version` goes to 1.2 — an optional field a runner may send; an agent that sets it sends 1.2, one that does not keeps sending 1.1 (§8). Same minor, same day: a hardware unit gains `kind`, `cores`, `threads`, `isa` so a CPU socket is a placeable compute unit (plan 0047, `lnm-iqn`). |
 | 1.1.2-draft | 2026-09-02 | Prose only, no wire change. §3.2 gains the capability id vocabulary rule (plan 0045, decision 1 of the 2026-09-02 walkthrough): prefix is the wire family for a real standard API (`openai:`) else the product domain; suffix is the endpoint name or what it does, `.` for variants, one `:`, never `/`. `livepeer:meet/sfu-room` becomes `meet:sfu-room` in the examples. The broker still treats the id as opaque. Same day, decision 5: `descriptor_schemas[]` no longer has to be "known to the broker" — a well-formed tag with a `schema_versions` entry is accepted, and the `descriptor_schema_unknown` reason code is removed. This is a loosening, so a runner valid before is valid after; `contract_version` stays 1.1. Decision 13: `metering` loses `broker-observed` (offering-axes 1.0.8 — the relayed data plane it described was never built); a runner that declared it was never matchable, so nothing valid becomes invalid. |
 | 1.1.1-draft | 2026-09-01 | Prose only, no wire change. §3.3's namespacing advice said "across adapter profiles"; the profiles are deleted by plan 0045 §3 and a runner now serves its own capability entry (`runner-contract.md`), so it says "across runner images". |
 | 1.1.0-draft | 2026-08-27 | Added `draining` to a capability entry (§7.1): the runner is winding down and takes no new work, while staying certified and advertised. Live state, not shape — it is excluded from the frozen projection, so setting and clearing it never re-triggers certification. `contract_version` goes to 1.1: this adds a field a runner may send, so an older broker ignoring it is the pre-existing behaviour and a newer one gains the withdrawal it needs to drain a host without flickering the manifest. |

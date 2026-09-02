@@ -108,6 +108,11 @@ type Requirements struct {
 	GPUModels       []string `yaml:"gpu_models,omitempty" json:"gpu_models,omitempty"`
 	GPUClasses      []string `yaml:"gpu_classes,omitempty" json:"gpu_classes,omitempty"`
 	GPUVRAMMinBytes uint64   `yaml:"gpu_vram_min_bytes,omitempty" json:"gpu_vram_min_bytes,omitempty"`
+	// CPUClasses admits cpu units (plan 0047): core tiers, cpu-8 .. cpu-64.
+	// A template that lists none never places on a socket, and a
+	// template that lists only these never places on a card — the two
+	// kinds do not compete for one another's units.
+	CPUClasses []string `yaml:"cpu_classes,omitempty" json:"cpu_classes,omitempty"`
 }
 
 // Stacking is the pool's capacity policy, not the member's choice

@@ -111,6 +111,10 @@ func RelayHardware(ctx context.Context, reader Reader, store HardwareStore, now 
 				CUDAVersion:      hw.CUDA,
 				RuntimeFacts:     hw.Facts,
 				PublicURL:        strings.TrimSpace(run.PublicURL),
+				Kind:             types.HardwareKind(hw.Kind),
+				Cores:            hw.Cores,
+				Threads:          hw.Threads,
+				ISA:              hw.ISA,
 				LastSeenAt:       now,
 			}
 			if held {

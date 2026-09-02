@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
@@ -703,5 +704,64 @@ func TestSessionTemplatesRequireAPublicHost(t *testing.T) {
 	}
 	if err := Validate(session, card("https://m1.example"), types.TemplateAssignmentPrimary); err != nil {
 		t.Fatalf("Validate refused a public host: %v", err)
+	}
+}
+
+// A socket is a compute unit of its own (plan 0047): admitted only by a
+// template that lists cpu_classes, never the default winner of an
+// unconstrained one; and a CPU-only template never takes a card.
+func TestSocketsAndCardsDoNotCompete(t *testing.T) {
+	cpuTmpl := templates.Template{ID: "t-av1", Priority: 50,
+		Requirements: templates.Requirements{CPUClasses: []string{ClassCPU16, ClassCPU32}},
+		Stacking:     templates.Stacking{Primary: true}}
+	gpuTmpl := templates.Template{ID: "t-vod", Priority: 40,
+		Requirements: templates.Requirements{GPUClasses: []string{ClassRTX2080}},
+		Stacking:     templates.Stacking{Primary: true}}
+	open := templates.Template{ID: "t-open", Priority: 60, Stacking: templates.Stacking{Primary: true}}
+	all := []templates.Template{cpuTmpl, gpuTmpl, open}
+	overrides := []types.TemplateOverride{{TemplateID: "t-av1", Enabled: true}, {TemplateID: "t-vod", Enabled: true}, {TemplateID: "t-open", Enabled: true}}
+	socket := types.HardwareUnit{ID: "cpu-1", Kind: types.HardwareKindCPU, GPUModel: "AMD EPYC 9354", Cores: 32, State: types.HardwareUnitOnline}
+	card := types.HardwareUnit{ID: "gpu-1", GPUModel: "NVIDIA GeForce RTX 2080 Ti", VRAMBytes: 11 << 30, State: types.HardwareUnitOnline}
+
+	out := Plan(Input{Hardware: []types.HardwareUnit{card, socket}, Templates: all, Overrides: overrides})
+	byUnit := map[string]Decision{}
+	for _, d := range out {
+		byUnit[d.HardwareUnitID] = d
+	}
+	if d := byUnit["cpu-1"]; d.GPUClass != ClassCPU32 || len(d.Placements) != 1 || d.Placements[0].TemplateID != "t-av1" {
+		t.Fatalf("socket: %+v", d)
+	}
+	for _, r := range byUnit["cpu-1"].Rejections {
+		if r.TemplateID == "t-open" && r.Reason != ReasonKindNotAllowed {
+			t.Fatalf("an unconstrained template must not take a socket: %+v", r)
+		}
+	}
+	// The card: the unconstrained template wins it as before, and the
+	// CPU-only one is rejected by kind, not by class.
+	if d := byUnit["gpu-1"]; len(d.Placements) != 1 || d.Placements[0].TemplateID != "t-open" {
+		t.Fatalf("card: %+v", d)
+	}
+	for _, r := range byUnit["gpu-1"].Rejections {
+		if r.TemplateID == "t-av1" && r.Reason != ReasonKindNotAllowed {
+			t.Fatalf("a cpu-only template on a card: %+v", r)
+		}
+	}
+	// A small socket is named on the exception queue, not silently skipped.
+	small := socket
+	small.ID, small.Cores = "cpu-2", 4
+	out = Plan(Input{Hardware: []types.HardwareUnit{small}, Templates: all, Overrides: overrides})
+	named := false
+	for _, r := range out[0].Rejections {
+		if r.TemplateID == "t-av1" && r.Reason == ReasonUnknownGPUClass && strings.Contains(r.Detail, "4 cores") {
+			named = true
+		}
+	}
+	if len(out[0].Placements) != 0 || !named {
+		t.Fatalf("small socket: %+v", out[0])
+	}
+	for cores, want := range map[int]string{4: ClassUnknown, 8: ClassCPU8, 15: ClassCPU8, 16: ClassCPU16, 48: ClassCPU32, 96: ClassCPU64} {
+		if got := CPUClassOf(cores); got != want {
+			t.Errorf("CPUClassOf(%d) = %s, want %s", cores, got, want)
+		}
 	}
 }

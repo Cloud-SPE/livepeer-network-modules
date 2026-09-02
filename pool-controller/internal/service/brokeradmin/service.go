@@ -207,6 +207,10 @@ type RunnerView struct {
 		Driver    string            `json:"driver,omitempty"`
 		CUDA      string            `json:"cuda,omitempty"`
 		Facts     map[string]string `json:"facts,omitempty"`
+		Kind      string            `json:"kind,omitempty"`
+		Cores     int               `json:"cores,omitempty"`
+		Threads   int               `json:"threads,omitempty"`
+		ISA       []string          `json:"isa,omitempty"`
 	} `json:"hardware"`
 	Capabilities []struct {
 		LocalID      string `json:"local_id"`

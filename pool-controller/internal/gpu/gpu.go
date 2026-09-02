@@ -24,15 +24,18 @@ const (
 	VendorNVIDIA = "nvidia"
 	VendorIntel  = "intel"
 	VendorAMD    = "amd"
+	// VendorCPU is the image-map key for a cpu unit (plan 0047): not a
+	// GPU vendor, but the same question — which build runs here.
+	VendorCPU = "cpu"
 )
 
-// Vendors lists the known vendors, sorted.
-func Vendors() []string { return []string{VendorAMD, VendorIntel, VendorNVIDIA} }
+// Vendors lists the known image-map keys, sorted.
+func Vendors() []string { return []string{VendorAMD, VendorCPU, VendorIntel, VendorNVIDIA} }
 
-// Known reports whether v is a vendor the pool can render for.
+// Known reports whether v is a key the pool can render for.
 func Known(v string) bool {
 	switch v {
-	case VendorNVIDIA, VendorIntel, VendorAMD:
+	case VendorNVIDIA, VendorIntel, VendorAMD, VendorCPU:
 		return true
 	}
 	return false
@@ -72,6 +75,8 @@ var classVendors = map[string]string{
 	"arc-a770": VendorIntel,
 	"arc-b580": VendorIntel,
 	"flex-170": VendorIntel,
+	// CPU core tiers (placement/class.go). One image key serves them all.
+	"cpu-8": VendorCPU, "cpu-16": VendorCPU, "cpu-32": VendorCPU, "cpu-64": VendorCPU,
 }
 
 // VendorOfClass is the vendor a pool GPU class implies, or empty for a

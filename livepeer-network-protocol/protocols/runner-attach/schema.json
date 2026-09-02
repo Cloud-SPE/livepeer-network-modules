@@ -184,6 +184,27 @@
           "type": "string",
           "maxLength": 64
         },
+        "kind": {
+          "enum": ["gpu", "cpu"],
+          "default": "gpu",
+          "description": "Contract 1.2. A cpu unit is a socket: gpu_uuid is its stable id (cpu-<host_id>-<socket>), gpu_model the CPU model string, vram_bytes 0."
+        },
+        "cores": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Contract 1.2. Physical cores on this socket; required for kind cpu. The pool's CPU classes are core tiers."
+        },
+        "threads": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Contract 1.2. Hardware threads on this socket."
+        },
+        "isa": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "type": "string" },
+          "description": "Contract 1.2. Instruction-set extensions (avx2, avx512, amx)."
+        },
         "facts": {
           "type": "object",
           "maxProperties": 32,

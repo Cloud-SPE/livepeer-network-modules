@@ -257,6 +257,14 @@ func (t Template) Validate() error {
 			return fmt.Errorf("template %s: runner_compose.image.%s is empty", t.ID, vendor)
 		}
 	}
+	if t.RunnerCompose.HasImage() && len(t.Requirements.CPUClasses) > 0 && t.RunnerCompose.ImageFor(gpu.VendorCPU) == "" {
+		return fmt.Errorf("template %s: requirements.cpu_classes admits sockets but runner_compose.image has no cpu image", t.ID)
+	}
+	for _, class := range t.Requirements.CPUClasses {
+		if gpu.VendorOfClass(class) != gpu.VendorCPU {
+			return fmt.Errorf("template %s: requirements.cpu_classes names %q; cpu classes are core tiers cpu-8, cpu-16, cpu-32, cpu-64", t.ID, class)
+		}
+	}
 	if t.RunnerCompose.HasImage() {
 		for _, class := range t.Requirements.GPUClasses {
 			vendor := gpu.VendorOfClass(class)

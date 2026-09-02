@@ -197,6 +197,12 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 	// empty lookup here is a template with no runner_compose at all,
 	// which renders no image line — as before.
 	vendor := gpu.VendorOfModel(unit.GPUModel)
+	if unit.IsCPU() {
+		// A socket has no device to pin and no vendor build to choose
+		// between: the cpu image, and the container sees the host's
+		// cores the way any container does.
+		vendor = gpu.VendorCPU
+	}
 	if image := tmpl.RunnerCompose.ImageFor(vendor); image != "" {
 		fmt.Fprintf(&b, "    image: %s\n", image)
 	}

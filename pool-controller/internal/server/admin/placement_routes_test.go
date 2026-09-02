@@ -70,7 +70,7 @@ func seedPlacementServer(t *testing.T) (*repo.StateRepo, *httptest.Server) {
 	catalog := loadAdminCatalog(t,
 		`id: t-chat
 capability: openai:chat-completions
-offering_id: default
+offering_id: chat-default
 protocol: paid-job/v1
 price_default: { amount_wei: "5" }
 priority: 30
@@ -80,7 +80,7 @@ stacking: { primary: true }
 `,
 		`id: t-audio
 capability: openai:audio-transcriptions
-offering_id: default
+offering_id: audio-default
 protocol: paid-job/v1
 price_default: { amount_wei: "3" }
 priority: 12
@@ -92,7 +92,7 @@ stacking:
 `,
 		`id: t-transcode
 capability: video:transcode.abr
-offering_id: default
+offering_id: transcode-default
 protocol: paid-job/v1
 price_default: { amount_wei: "1" }
 priority: 10

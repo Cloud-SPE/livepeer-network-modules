@@ -76,14 +76,19 @@ func Load(dir string) (*Catalog, error) {
 		if prev, dup := cat.items[tmpl.ID]; dup {
 			return nil, fmt.Errorf("%s: template id %q already declared by %q", path, tmpl.ID, prev.DisplayName)
 		}
-		// Two templates selling the same (capability, offering) would
-		// race to define one offer; the broker admits exactly one.
-		key := tmpl.Capability + "|" + tmpl.OfferingID
-		if prev, dup := byOffering[key]; dup {
-			return nil, fmt.Errorf("%s: template %q sells %s/%s, already sold by %q",
-				path, tmpl.ID, tmpl.Capability, tmpl.OfferingID, prev)
+		// An offering id is unique across the WHOLE catalog, not per
+		// capability: the broker admits one offer per id (offers.go,
+		// "runners multiply an offer, entries do not") and rejects the
+		// entire push otherwise. This check used to key on
+		// (capability, offering_id), which let two templates through
+		// that the broker then refused together — the e2e seam test
+		// caught it on 2026-09-02 when a translations template reused
+		// its transcription sibling's id.
+		if prev, dup := byOffering[tmpl.OfferingID]; dup {
+			return nil, fmt.Errorf("%s: template %q sells offering id %q, already sold by %q (%s) — one offer per id across the catalog",
+				path, tmpl.ID, tmpl.OfferingID, prev, cat.items[prev].Capability)
 		}
-		byOffering[key] = tmpl.ID
+		byOffering[tmpl.OfferingID] = tmpl.ID
 		cat.items[tmpl.ID] = tmpl
 		cat.order = append(cat.order, tmpl.ID)
 	}

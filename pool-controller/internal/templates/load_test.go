@@ -102,17 +102,26 @@ func TestLoadRejectsDuplicateID(t *testing.T) {
 	}
 }
 
-// Two templates selling the same (capability, offering) would race to
-// define one offer, and the broker admits exactly one — so the conflict
-// has to surface here rather than as an arbitrary winner at push time.
+// The broker admits one offer per offering id across its whole offer
+// list and rejects the entire push otherwise — so the conflict has to
+// surface here rather than as a refused catalog at push time. Across
+// capabilities too: a per-capability key let two templates through that
+// the broker then refused together.
 func TestLoadRejectsDuplicateOffering(t *testing.T) {
-	dir := writeTemplates(t, map[string]string{
-		"one.yaml": validTemplate("chat-a", "openai:chat-completions", "default"),
-		"two.yaml": validTemplate("chat-b", "openai:chat-completions", "default"),
-	})
-	_, err := Load(dir)
-	if err == nil || !strings.Contains(err.Error(), "already sold by") {
-		t.Fatalf("Load() error = %v, want a duplicate-offering rejection", err)
+	for name, other := range map[string]string{
+		"same capability":      validTemplate("chat-b", "openai:chat-completions", "default"),
+		"different capability": validTemplate("embed-b", "openai:embeddings", "default"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := writeTemplates(t, map[string]string{
+				"one.yaml": validTemplate("chat-a", "openai:chat-completions", "default"),
+				"two.yaml": other,
+			})
+			_, err := Load(dir)
+			if err == nil || !strings.Contains(err.Error(), "already sold by") {
+				t.Fatalf("Load() error = %v, want a duplicate-offering rejection", err)
+			}
+		})
 	}
 }
 

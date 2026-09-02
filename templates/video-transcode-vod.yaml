@@ -5,9 +5,11 @@
 # they stopped being able to hold a useful model.
 #
 # The rig ran this offering as `offering_id: default`, and so did its ABR
-# sibling. That is legal here — the loader's uniqueness key is
-# (capability, offering_id) and the two capability ids differ (load.go) — but
-# it is renamed to `vod-default` anyway. An offering id is not rig-local: it
+# sibling. That is not legal: the broker admits one offer per offering id
+# across the whole catalog, and since 2026-09-02 the loader enforces the same
+# rule (load.go) — before that it keyed on (capability, offering_id) and would
+# have let the pair through to be refused together at push. Renamed to
+# `vod-default` for that reason and a second one: an offering id is not rig-local, it
 # travels in the `Livepeer-Offering` header, it is what the controller sorts
 # offers by when it pushes them (brokerpush/catalog.go), and it is what an
 # operator reads in a console listing every offering the pool sells. Two rows

@@ -19,6 +19,9 @@ WORKDIR /src
 
 COPY payment-daemon/go.mod payment-daemon/go.sum ./payment-daemon/
 COPY livepeer-network-protocol/proto-go/ ./livepeer-network-protocol/proto-go/
+# chain-commons is consumed via a relative replace (../chain-commons); the
+# sibling module must be visible to the builder (context = monorepo root).
+COPY chain-commons/ ./chain-commons/
 RUN cd payment-daemon && go mod download
 
 COPY payment-daemon/ ./payment-daemon/
@@ -50,6 +53,9 @@ FROM golang:${GO_VERSION}-alpine AS test
 WORKDIR /src
 COPY payment-daemon/go.mod payment-daemon/go.sum ./payment-daemon/
 COPY livepeer-network-protocol/proto-go/ ./livepeer-network-protocol/proto-go/
+# chain-commons is consumed via a relative replace (../chain-commons); the
+# sibling module must be visible to the builder (context = monorepo root).
+COPY chain-commons/ ./chain-commons/
 RUN cd payment-daemon && go mod download
 COPY payment-daemon/ ./payment-daemon/
 RUN cd payment-daemon && go test ./...

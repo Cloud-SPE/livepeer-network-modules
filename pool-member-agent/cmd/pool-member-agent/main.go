@@ -388,7 +388,6 @@ func runWSTunnel(ctx context.Context, cfg config, state *runnerState, doc *attac
 		return err
 	}
 
-	routes := attach.RouteTable(cfg.Runners)
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go refreshLoop(sessionCtx, cfg, state, doc, send)
@@ -409,7 +408,7 @@ func runWSTunnel(ctx context.Context, cfg config, state *runnerState, doc *attac
 			}
 		case "request":
 			go func(m tunnelMessage) {
-				resp := forwardTunnelRequest(sessionCtx, routes, m)
+				resp := forwardTunnelRequest(sessionCtx, state.routes(), m)
 				if err := send(resp); err != nil {
 					log.Printf("tunnel response write failed: %v", err)
 				}
@@ -483,7 +482,6 @@ func runQUICTunnel(ctx context.Context, cfg config, state *runnerState, doc *att
 	if err := quicRegister(ctx, conn, doc); err != nil {
 		return err
 	}
-	routes := attach.RouteTable(cfg.Runners)
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	// QUIC re-registers on the same terms as the websocket. It did not
@@ -498,7 +496,7 @@ func runQUICTunnel(ctx context.Context, cfg config, state *runnerState, doc *att
 		if err != nil {
 			return err
 		}
-		go handleQUICRequest(ctx, stream, routes)
+		go handleQUICRequest(ctx, stream, state.routes())
 	}
 }
 
@@ -679,6 +677,11 @@ func forwardTunnelRequest(ctx context.Context, routes map[string]string, msg tun
 func routeFor(routes map[string]string, headers map[string][]string) (string, error) {
 	localID := headerValue(headers, LocalIDHeader)
 	if base := routes[localID]; base != "" {
+		return base, nil
+	}
+	// A container serving several capabilities attaches each under a
+	// derived id (attach.LocalIDFor); all of them are the one container.
+	if base := routes[attach.BaseLocalID(localID)]; base != "" {
 		return base, nil
 	}
 	if localID == "" && len(routes) == 1 {

@@ -105,6 +105,11 @@ func TestRouteFor(t *testing.T) {
 	}
 	// A single runner still answers when the header is absent, so a
 	// bare probe reaches it.
+	// A derived id from a multi-capability container routes to the
+	// container (attach.LocalIDFor / BaseLocalID).
+	if got, err := routeFor(two, map[string][]string{LocalIDHeader: {"chat-70b.1"}}); err != nil || got != "http://b" {
+		t.Fatalf("routeFor(two, chat-70b.1) = %q, %v", got, err)
+	}
 	if got, err := routeFor(one, nil); err != nil || got != "http://solo" {
 		t.Fatalf("routeFor(one, no header) = %q, %v", got, err)
 	}

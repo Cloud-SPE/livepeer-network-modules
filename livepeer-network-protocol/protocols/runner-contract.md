@@ -1,8 +1,8 @@
 ---
 spec_name: runner-contract
-version: 1.0.0-draft
+version: 1.1.0-draft
 status: draft
-last_updated: 2026-09-01
+last_updated: 2026-09-04
 ---
 
 # Runner contract
@@ -101,6 +101,17 @@ Minimal session runner:
 }
 ```
 
+A container that serves more than one capability — the audio runner's
+transcriptions and translations, a vendor-backed runner with several
+models — returns a JSON **array** of such objects, one per capability,
+each validated on its own; two entries MUST NOT share a `capability_id`.
+The agent attaches each as its own capability entry: the first under the
+container's `local_id`, the rest under `<local_id>.<n>`, and routes all of
+them to the container. Between the array and `CAPABILITY_NAME`-style
+selection, prefer the latter on a pool host — the pool places one
+template per service, and a container that advertises two capabilities
+from every service doubles the broker's view of it.
+
 The agent performs only the check that the body could be relayed at
 all: `capability_id`, `protocol`, `paths`, `work_unit.name` and
 `readiness.type` present. Everything else is validated by the broker
@@ -159,4 +170,5 @@ the whole of plan 0043 item 11.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.0-draft | 2026-09-04 | The body MAY be an array of entries for a container that serves several capabilities; each is attached under a derived `local_id` (`<id>.<n>`) and routed to the container. Additive. |
 | 1.0.0-draft | 2026-09-01 | Initial contract (plan 0045 §3). Supersedes `pool-member-agent` adapter profiles. |

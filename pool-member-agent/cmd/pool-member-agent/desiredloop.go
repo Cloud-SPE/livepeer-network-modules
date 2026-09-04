@@ -41,6 +41,17 @@ func newRunnerState() *runnerState {
 	return &runnerState{changed: make(chan struct{}, 1)}
 }
 
+// routes is the local-id route table for the runner set as it is NOW.
+// Built per request rather than per tunnel session: on a pool-managed
+// host the set comes from desired state and changes while the tunnel
+// is up, and a table built at connect would leave a service placed
+// afterwards attached but unroutable.
+func (s *runnerState) routes() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return attach.RouteTable(s.runners)
+}
+
 func (s *runnerState) set(runners []attach.Runner, revision string) {
 	s.mu.Lock()
 	s.runners = runners

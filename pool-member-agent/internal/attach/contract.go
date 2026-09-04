@@ -1,6 +1,7 @@
 package attach
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -132,7 +134,12 @@ func (c *Contract) Validate() error {
 }
 
 // Fetch reads a runner's contract from its base URL.
-func Fetch(ctx context.Context, client *http.Client, baseURL string) (*Contract, error) {
+// Fetch reads the contract(s) a runner serves. The body is one entry,
+// or an array of entries for a container that serves more than one
+// capability — the audio runner's transcriptions and translations, a
+// vendor-backed runner with several models. Each element is validated
+// as a contract of its own.
+func Fetch(ctx context.Context, client *http.Client, baseURL string) ([]*Contract, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -160,14 +167,61 @@ func Fetch(ctx context.Context, client *http.Client, baseURL string) (*Contract,
 	if len(body) > maxContractBytes {
 		return nil, fmt.Errorf("contract exceeds %d bytes", maxContractBytes)
 	}
-	var c Contract
-	if err := json.Unmarshal(body, &c); err != nil {
-		return nil, fmt.Errorf("contract is not valid: %w", err)
+	trimmed := bytes.TrimSpace(body)
+	var raws []json.RawMessage
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		if err := json.Unmarshal(trimmed, &raws); err != nil {
+			return nil, fmt.Errorf("contract array is not valid: %w", err)
+		}
+		if len(raws) == 0 {
+			return nil, errors.New("contract array is empty; a runner that serves nothing has nothing to attach")
+		}
+	} else {
+		raws = []json.RawMessage{trimmed}
 	}
-	if err := c.Validate(); err != nil {
-		return nil, fmt.Errorf("contract is not valid: %w", err)
+	out := make([]*Contract, 0, len(raws))
+	seen := map[string]bool{}
+	for i, raw := range raws {
+		var c Contract
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, fmt.Errorf("contract[%d] is not valid: %w", i, err)
+		}
+		if err := c.Validate(); err != nil {
+			return nil, fmt.Errorf("contract[%d] is not valid: %w", i, err)
+		}
+		// Two entries with one capability id from one container would be
+		// the same runner twice under two local ids, and the broker would
+		// dispatch to both as if they were two cards.
+		if seen[c.CapabilityID] {
+			return nil, fmt.Errorf("contract[%d] repeats capability_id %q; one entry per capability", i, c.CapabilityID)
+		}
+		seen[c.CapabilityID] = true
+		out = append(out, &c)
 	}
-	return &c, nil
+	return out, nil
+}
+
+// LocalIDFor is the local id of the n-th contract entry a runner
+// serves: the runner's own id for the first, and <id>.<n> after it, so
+// a second capability from one container is a distinct runner to the
+// broker (runner-attach §3.2: local_id is unique per document) while
+// the agent can still route it — BaseLocalID recovers the container.
+func LocalIDFor(localID string, n int) string {
+	if n == 0 {
+		return localID
+	}
+	return fmt.Sprintf("%s.%d", localID, n)
+}
+
+// BaseLocalID strips the .<n> suffix LocalIDFor adds; the result names
+// the configured container.
+func BaseLocalID(localID string) string {
+	if i := strings.LastIndexByte(localID, '.'); i > 0 {
+		if _, err := strconv.Atoi(localID[i+1:]); err == nil {
+			return localID[:i]
+		}
+	}
+	return localID
 }
 
 // Resolved is one runner the agent can attach: the host's facts plus
@@ -204,12 +258,16 @@ func Resolve(ctx context.Context, client *http.Client, runners []Runner) ([]Reso
 		if r.LocalID == "" {
 			r.LocalID = fmt.Sprintf("runner-%d", i)
 		}
-		c, err := Fetch(ctx, client, r.URL)
+		cs, err := Fetch(ctx, client, r.URL)
 		if err != nil {
 			errs = append(errs, &ResolveError{LocalID: r.LocalID, URL: r.URL, Err: err})
 			continue
 		}
-		out = append(out, Resolved{Runner: r, Contract: c})
+		for n, c := range cs {
+			entry := r
+			entry.LocalID = LocalIDFor(r.LocalID, n)
+			out = append(out, Resolved{Runner: entry, Contract: c})
+		}
 	}
 	return out, errs
 }

@@ -301,3 +301,40 @@ func TestGoldenDocuments(t *testing.T) {
 		}
 	}
 }
+
+// A container serving two capabilities returns an array: each entry
+// attaches on its own, the second under a derived local id that
+// BaseLocalID maps back to the container, and a repeated capability id
+// is refused rather than attached twice.
+func TestContractArrayAttachesEachEntry(t *testing.T) {
+	translations := strings.Replace(strings.Replace(chatContract,
+		`"openai:chat-completions"`, `"openai:audio-translations"`, 1),
+		`"/v1/chat/completions"`, `"/v1/audio/translations"`, 1)
+	srv := serveContract(t, "["+chatContract+","+translations+"]", http.StatusOK)
+	doc, err := Build(testHost(), mustResolve(t, Runner{LocalID: "whisper", URL: srv.URL}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Capabilities) != 2 {
+		t.Fatalf("capabilities = %d, want one per entry", len(doc.Capabilities))
+	}
+	first, second := doc.Capabilities[0], doc.Capabilities[1]
+	if first.LocalID != "whisper" || second.LocalID != "whisper.1" {
+		t.Fatalf("local ids = %q, %q", first.LocalID, second.LocalID)
+	}
+	if second.CapabilityID != "openai:audio-translations" || second.Paths["invoke"] != "/v1/audio/translations" {
+		t.Fatalf("second entry = %+v", second)
+	}
+	if BaseLocalID("whisper.1") != "whisper" || BaseLocalID("whisper") != "whisper" || BaseLocalID("v1.2") != "v1" {
+		t.Fatal("BaseLocalID")
+	}
+	dup := serveContract(t, "["+chatContract+","+chatContract+"]", http.StatusOK)
+	if _, errs := Resolve(context.Background(), nil, []Runner{{LocalID: "chat", URL: dup.URL}}); len(errs) != 1 ||
+		!strings.Contains(errs[0].Error(), "repeats capability_id") {
+		t.Fatalf("a repeated capability id must be refused: %v", errs)
+	}
+	empty := serveContract(t, "[]", http.StatusOK)
+	if _, errs := Resolve(context.Background(), nil, []Runner{{LocalID: "chat", URL: empty.URL}}); len(errs) != 1 {
+		t.Fatalf("an empty array must be refused: %v", errs)
+	}
+}

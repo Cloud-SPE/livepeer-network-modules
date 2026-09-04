@@ -17,7 +17,21 @@ executor:
   chain_id: 42161
   keystore_path: ./keystore.json
   keystore_password_path: ./keystore-password
+  # Blocks a payout must be mined before it is reported paid; the intent
+  # processor waits for confirmation_blocks - 1 blocks after inclusion
+  # (minimum one).
   confirmation_blocks: 1
+  # Durable transaction-intent store (tx hash + nonce per payout). Default:
+  # payout-intents.db beside state_path. Keep it with state_path.
+  # intent_store_path: ./var/pool-payout-executor/payout-intents.db
+  # A broadcast payout unmined for this long is re-signed at the same nonce
+  # with 11% more gas, up to max_replacements times (chain-commons defaults
+  # 300 s / 3). Uncomment to tune.
+  # replace_after_seconds: 300
+  # max_replacements: 3
+  # How long a confirm pass waits for an in-flight payout before reporting
+  # it pending (ms). The processor keeps tracking in the background.
+  # confirm_wait_ms: 2000
   state_path: ./var/pool-payout-executor/state.db
   run_history_limit: 100
   backoff_base_ms: 5000

@@ -15,7 +15,6 @@ import (
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 
-	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 	ccconfig "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
 	cctesting "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
 
@@ -186,7 +185,7 @@ func TestBalanceAtAndFromAddress(t *testing.T) {
 	if err != nil || bal.Int64() != 12345 {
 		t.Fatalf("BalanceAt() = %v, %v", bal, err)
 	}
-	if c.FromAddress() != crypto.PubkeyToAddress(c.key.PublicKey) {
+	if c.FromAddress() != c.ks.Address() {
 		t.Fatal("FromAddress() mismatch")
 	}
 	c.Close()
@@ -194,147 +193,45 @@ func TestBalanceAtAndFromAddress(t *testing.T) {
 	nilClient.Close() // must not panic
 }
 
-func TestSendNativeTransfer_HappyPath(t *testing.T) {
+func TestKeystoreAdapter(t *testing.T) {
 	fake := cctesting.NewFakeRPC()
-	fake.DefaultNonce = 7
-	fake.DefaultGasEstimate = 21000
-	fake.HeaderByNumberFunc = func(context.Context, *big.Int) (*ethtypes.Header, error) {
-		return &ethtypes.Header{Number: big.NewInt(100), BaseFee: big.NewInt(10)}, nil
-	}
-	var sent *ethtypes.Transaction
-	fake.SendTransactionFunc = func(_ context.Context, tx *ethtypes.Transaction) error { sent = tx; return nil }
 	c := newClient(t, fake)
-	to := ethcommon.HexToAddress("0x000000000000000000000000000000000000dEaD")
-	res, err := c.SendNativeTransfer(context.Background(), to, big.NewInt(1000))
+	ks := c.Keystore()
+	if ks.Address() != c.FromAddress() {
+		t.Fatalf("Keystore().Address() = %s, want %s", ks.Address(), c.FromAddress())
+	}
+	if c.RPC() != fake {
+		t.Fatal("RPC() must return the injected transport")
+	}
+	if c.ChainID() != 42161 {
+		t.Fatalf("ChainID() = %d", c.ChainID())
+	}
+
+	tx := ethtypes.NewTx(&ethtypes.DynamicFeeTx{ChainID: big.NewInt(42161), Nonce: 1, Gas: 21000, GasTipCap: big.NewInt(1), GasFeeCap: big.NewInt(2), To: &ethcommon.Address{}, Value: big.NewInt(1)})
+	signed, err := ks.SignTx(tx, 42161)
 	if err != nil {
-		t.Fatalf("SendNativeTransfer() error = %v", err)
+		t.Fatalf("SignTx() error = %v", err)
 	}
-	if sent == nil {
-		t.Fatal("no transaction reached the rpc")
-	}
-	if res.Nonce != 7 || sent.Nonce() != 7 {
-		t.Fatalf("nonce = %d/%d, want 7", res.Nonce, sent.Nonce())
-	}
-	if res.TxHash != sent.Hash().Hex() {
-		t.Fatalf("tx hash = %s, want %s", res.TxHash, sent.Hash().Hex())
-	}
-	if sent.Gas() != 21000+2100 {
-		t.Fatalf("gas = %d, want estimate + 10%%", sent.Gas())
-	}
-	// feeCap = 2*baseFee + tip = 20 + 1 gwei
-	wantFeeCap := new(big.Int).Add(big.NewInt(20), big.NewInt(1_000_000_000))
-	if sent.GasFeeCap().Cmp(wantFeeCap) != 0 {
-		t.Fatalf("fee cap = %s, want %s", sent.GasFeeCap(), wantFeeCap)
-	}
-	if sent.ChainId().Uint64() != 42161 || *sent.To() != to || sent.Value().Int64() != 1000 {
-		t.Fatalf("tx fields wrong: chain=%d to=%s value=%s", sent.ChainId().Uint64(), sent.To(), sent.Value())
-	}
-	signer := ethtypes.LatestSignerForChainID(sent.ChainId())
-	from, err := ethtypes.Sender(signer, sent)
+	from, err := ethtypes.Sender(ethtypes.LatestSignerForChainID(big.NewInt(42161)), signed)
 	if err != nil || from != c.FromAddress() {
-		t.Fatalf("sender = %s, %v; want %s", from, err, c.FromAddress())
+		t.Fatalf("recovered sender = %s, %v; want %s", from, err, c.FromAddress())
 	}
-}
 
-func TestSendNativeTransfer_NoBaseFeeAndZeroGas(t *testing.T) {
-	fake := cctesting.NewFakeRPC()
-	fake.DefaultGasEstimate = 0
-	c := newClient(t, fake)
-	_, err := c.SendNativeTransfer(context.Background(), ethcommon.Address{}, big.NewInt(1))
-	if err == nil || !strings.Contains(err.Error(), "estimate gas returned 0") {
-		t.Fatalf("zero gas error = %v", err)
+	sig, err := ks.Sign([]byte("hello"))
+	if err != nil || len(sig) != 65 {
+		t.Fatalf("Sign() = %d bytes, %v", len(sig), err)
 	}
-}
-
-func TestSendNativeTransfer_ErrorsSurfaceAndDoNotSend(t *testing.T) {
-	steps := []string{"PendingNonceAt", "SuggestGasTipCap", "HeaderByNumber", "EstimateGas", "SendTransaction"}
-	wants := []string{"pending nonce", "suggest gas tip cap", "latest header", "estimate gas", "send tx"}
-	for i, step := range steps {
-		t.Run(step, func(t *testing.T) {
-			fake := cctesting.NewFakeRPC()
-			fake.DefaultGasEstimate = 21000
-			fake.InjectError(step, errors.New("boom"))
-			sends := 0
-			fake.SendTransactionFunc = func(context.Context, *ethtypes.Transaction) error { sends++; return nil }
-			c := newClient(t, fake)
-			_, err := c.SendNativeTransfer(context.Background(), ethcommon.Address{}, big.NewInt(1))
-			if err == nil || !strings.Contains(err.Error(), wants[i]) {
-				t.Fatalf("error = %v, want %q", err, wants[i])
-			}
-			if step != "SendTransaction" && sends != 0 {
-				t.Fatalf("a failure at %s still sent %d tx", step, sends)
-			}
-			// The injected error is consumed; the next attempt succeeds, so
-			// a transient failure leaves the client usable.
-			if _, err := c.SendNativeTransfer(context.Background(), ethcommon.Address{}, big.NewInt(1)); err != nil {
-				t.Fatalf("retry after %s failure: %v", step, err)
-			}
-		})
+	prefix := []byte("\x19Ethereum Signed Message:\n5")
+	pub, err := crypto.SigToPub(crypto.Keccak256(prefix, []byte("hello")), sig)
+	if err != nil || crypto.PubkeyToAddress(*pub) != c.FromAddress() {
+		t.Fatalf("Sign() does not recover to the wallet: %v", err)
 	}
-}
-
-func receiptRPC(status uint64, block int64) *cctesting.FakeRPC {
-	fake := cctesting.NewFakeRPC()
-	fake.TransactionReceiptFunc = func(_ context.Context, hash chain.TxHash) (*ethtypes.Receipt, error) {
-		return &ethtypes.Receipt{Status: status, BlockNumber: big.NewInt(block), TxHash: hash}, nil
+	raw, err := c.ks.RawSign([]byte("hello"))
+	if err != nil || len(raw) != 65 {
+		t.Fatalf("RawSign() = %d bytes, %v", len(raw), err)
 	}
-	return fake
-}
-
-func TestConfirmTransaction(t *testing.T) {
-	const hash = "0x00000000000000000000000000000000000000000000000000000000000000aa"
-	t.Run("one confirmation is the receipt itself", func(t *testing.T) {
-		c := newClient(t, receiptRPC(ethtypes.ReceiptStatusSuccessful, 50))
-		ok, err := c.ConfirmTransaction(context.Background(), hash, 1)
-		if err != nil || !ok {
-			t.Fatalf("= %v, %v; want true", ok, err)
-		}
-	})
-	t.Run("reverted receipt is not confirmed", func(t *testing.T) {
-		c := newClient(t, receiptRPC(ethtypes.ReceiptStatusFailed, 50))
-		ok, err := c.ConfirmTransaction(context.Background(), hash, 1)
-		if err != nil || ok {
-			t.Fatalf("= %v, %v; want false", ok, err)
-		}
-	})
-	t.Run("waits for enough blocks", func(t *testing.T) {
-		fake := receiptRPC(ethtypes.ReceiptStatusSuccessful, 50)
-		head := int64(51)
-		fake.HeaderByNumberFunc = func(context.Context, *big.Int) (*ethtypes.Header, error) {
-			return &ethtypes.Header{Number: big.NewInt(head)}, nil
-		}
-		c := newClient(t, fake)
-		ok, err := c.ConfirmTransaction(context.Background(), hash, 3) // needs head+1 >= 53
-		if err != nil || ok {
-			t.Fatalf("early = %v, %v; want false", ok, err)
-		}
-		head = 52
-		ok, err = c.ConfirmTransaction(context.Background(), hash, 3)
-		if err != nil || !ok {
-			t.Fatalf("late = %v, %v; want true", ok, err)
-		}
-	})
-	t.Run("missing receipt", func(t *testing.T) {
-		fake := cctesting.NewFakeRPC()
-		c := newClient(t, fake)
-		if _, err := c.ConfirmTransaction(context.Background(), hash, 1); err == nil || !strings.Contains(err.Error(), "transaction receipt") {
-			t.Fatalf("error = %v", err)
-		}
-		fake.TransactionReceiptFunc = func(context.Context, chain.TxHash) (*ethtypes.Receipt, error) { return nil, nil }
-		if _, err := c.ConfirmTransaction(context.Background(), hash, 1); err == nil || !strings.Contains(err.Error(), "not found") {
-			t.Fatalf("nil receipt error = %v", err)
-		}
-	})
-	t.Run("header failure", func(t *testing.T) {
-		fake := receiptRPC(ethtypes.ReceiptStatusSuccessful, 50)
-		fake.InjectError("HeaderByNumber", errors.New("boom"))
-		c := newClient(t, fake)
-		if _, err := c.ConfirmTransaction(context.Background(), hash, 2); err == nil || !strings.Contains(err.Error(), "latest header") {
-			t.Fatalf("error = %v", err)
-		}
-		fake.HeaderByNumberFunc = func(context.Context, *big.Int) (*ethtypes.Header, error) { return &ethtypes.Header{}, nil }
-		if _, err := c.ConfirmTransaction(context.Background(), hash, 2); err == nil || !strings.Contains(err.Error(), "no number") {
-			t.Fatalf("no-number error = %v", err)
-		}
-	})
+	pub, err = crypto.SigToPub(crypto.Keccak256([]byte("hello")), raw)
+	if err != nil || crypto.PubkeyToAddress(*pub) != c.FromAddress() {
+		t.Fatalf("RawSign() does not recover to the wallet: %v", err)
+	}
 }

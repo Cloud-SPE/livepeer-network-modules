@@ -1,10 +1,10 @@
 // Package ethclient is the payout executor's chain client: it holds the
-// hot wallet key and submits native transfers over chain-commons's
-// multi-RPC transport, which fails over between the entries of
-// executor.rpc_urls (or CHAIN_RPC_URLS) on every call.
-//
-// Send-then-confirm is still the executor's own loop here; plan 0048
-// stage 4 replaces it with chain-commons's durable tx intents.
+// hot wallet key and the chain-commons multi-RPC transport, which fails
+// over between the entries of executor.rpc_urls (or CHAIN_RPC_URLS) on
+// every call. Sending and confirming payouts is not done here: the
+// internal/payouts engine hands that to chain-commons's durable
+// transaction intents, using the transport and keystore this client
+// exposes.
 package ethclient
 
 import (
@@ -16,13 +16,13 @@ import (
 	"os"
 	"strings"
 
-	ethereum "github.com/ethereum/go-ethereum"
 	ethkeystore "github.com/ethereum/go-ethereum/accounts/keystore"
 	ethcommon "github.com/ethereum/go-ethereum/common"
-	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 	ccconfig "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
+	cckeystore "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/keystore"
 	ccmetrics "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/metrics"
 	ccrpc "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 	ccrpcmulti "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc/multi"
@@ -33,14 +33,9 @@ import (
 
 type Client struct {
 	rpc     ccrpc.RPC
-	key     *ecdsa.PrivateKey
+	ks      *ecdsaKeystore
 	from    ethcommon.Address
 	chainID *big.Int
-}
-
-type SentTransfer struct {
-	TxHash string `json:"tx_hash"`
-	Nonce  uint64 `json:"nonce"`
 }
 
 // Options tunes New. Zero values mean: slog.Default() for the transport
@@ -107,7 +102,7 @@ func NewWithRPC(ctx context.Context, cfg config.Executor, rpc ccrpc.RPC) (*Clien
 	}
 	return &Client{
 		rpc:     rpc,
-		key:     key,
+		ks:      newECDSAKeystore(key),
 		from:    crypto.PubkeyToAddress(key.PublicKey),
 		chainID: chainID.BigInt(),
 	}, nil
@@ -163,85 +158,14 @@ func (c *Client) BalanceAt(ctx context.Context) (*big.Int, error) {
 	return c.rpc.BalanceAt(ctx, c.from, nil)
 }
 
-func (c *Client) SendNativeTransfer(ctx context.Context, to ethcommon.Address, amountWei *big.Int) (SentTransfer, error) {
-	nonce, err := c.rpc.PendingNonceAt(ctx, c.from)
-	if err != nil {
-		return SentTransfer{}, fmt.Errorf("pending nonce: %w", err)
-	}
-	tipCap, err := c.rpc.SuggestGasTipCap(ctx)
-	if err != nil {
-		return SentTransfer{}, fmt.Errorf("suggest gas tip cap: %w", err)
-	}
-	header, err := c.rpc.HeaderByNumber(ctx, nil)
-	if err != nil {
-		return SentTransfer{}, fmt.Errorf("latest header: %w", err)
-	}
-	baseFee := big.NewInt(0)
-	if header != nil && header.BaseFee != nil {
-		baseFee = new(big.Int).Set(header.BaseFee)
-	}
-	feeCap := new(big.Int).Add(new(big.Int).Mul(baseFee, big.NewInt(2)), tipCap)
-	gasLimit, err := c.rpc.EstimateGas(ctx, ethereum.CallMsg{
-		From:      c.from,
-		To:        &to,
-		GasTipCap: tipCap,
-		GasFeeCap: feeCap,
-		Value:     amountWei,
-	})
-	if err != nil {
-		return SentTransfer{}, fmt.Errorf("estimate gas: %w", err)
-	}
-	if gasLimit == 0 {
-		return SentTransfer{}, fmt.Errorf("estimate gas returned 0")
-	}
-	gasLimit += gasLimit / 10
-	tx := ethtypes.NewTx(&ethtypes.DynamicFeeTx{
-		ChainID:   c.chainID,
-		Nonce:     nonce,
-		GasTipCap: tipCap,
-		GasFeeCap: feeCap,
-		Gas:       gasLimit,
-		To:        &to,
-		Value:     amountWei,
-		Data:      nil,
-	})
-	signed, err := ethtypes.SignTx(tx, ethtypes.LatestSignerForChainID(c.chainID), c.key)
-	if err != nil {
-		return SentTransfer{}, fmt.Errorf("sign tx: %w", err)
-	}
-	if err := c.rpc.SendTransaction(ctx, signed); err != nil {
-		return SentTransfer{}, fmt.Errorf("send tx: %w", err)
-	}
-	return SentTransfer{TxHash: signed.Hash().Hex(), Nonce: nonce}, nil
-}
+// RPC returns the shared failover transport.
+func (c *Client) RPC() ccrpc.RPC { return c.rpc }
 
-func (c *Client) ConfirmTransaction(ctx context.Context, txHash string, confirmationBlocks uint64) (bool, error) {
-	receipt, err := c.rpc.TransactionReceipt(ctx, ethcommon.HexToHash(txHash))
-	if err != nil {
-		return false, fmt.Errorf("transaction receipt: %w", err)
-	}
-	if receipt == nil {
-		return false, fmt.Errorf("transaction receipt not found")
-	}
-	if receipt.Status != ethtypes.ReceiptStatusSuccessful {
-		return false, nil
-	}
-	if confirmationBlocks <= 1 {
-		return true, nil
-	}
-	header, err := c.rpc.HeaderByNumber(ctx, nil)
-	if err != nil {
-		return false, fmt.Errorf("latest header: %w", err)
-	}
-	if header == nil || header.Number == nil {
-		return false, fmt.Errorf("latest header has no number")
-	}
-	head := header.Number.Uint64()
-	if head+1 < receipt.BlockNumber.Uint64()+confirmationBlocks {
-		return false, nil
-	}
-	return true, nil
-}
+// Keystore returns the hot wallet as a chain-commons keystore.
+func (c *Client) Keystore() cckeystore.Keystore { return c.ks }
+
+// ChainID is the chain id the transport reported at open.
+func (c *Client) ChainID() chain.ChainID { return chain.ChainID(c.chainID.Uint64()) }
 
 func resolveSecret(ref string) (string, error) {
 	key := strings.TrimPrefix(ref, "env://")

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	ethcommon "github.com/ethereum/go-ethereum/common"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/poolcontroller"
@@ -174,13 +178,22 @@ func TestRunExecutorCommandsAgainstPoolController(t *testing.T) {
 }
 
 func TestRunReconcileOnceDryRun(t *testing.T) {
-	t.Setenv("POOL_EXECUTOR_TEST_KEY", "4c0883a69102937d6231471b5dbb6204fe512961708279ee7c36f6ddf6e702a8")
+	f := useSimEngine(t)
+	ctx := context.Background()
+	// A payout the previous implementation sent and that has since mined
+	// deep enough: the dry-run confirm must preview it as paid without
+	// touching the intent store.
+	tx, err := f.sim.SendValue(ctx, f.sim.Accounts[0], f.sim.Accounts[1].Address, big.NewInt(1800))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim.Mine(3)
 
 	controllerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/admin/v1/payout-intents" && r.URL.Query().Get("status") == "submitted":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"intents":[{"id":"payout-submitted-1","round_id":"124","member_eth_address":"0xabc","destination_address":"0x1111111111111111111111111111111111111111","chain_id":42161,"asset":"native_eth","amount_wei":"1800","status":"submitted","tx_hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`)
+			_, _ = io.WriteString(w, `{"intents":[{"id":"payout-submitted-1","round_id":"124","member_eth_address":"0xabc","destination_address":"0x1111111111111111111111111111111111111111","chain_id":42161,"asset":"native_eth","amount_wei":"1800","status":"submitted","tx_hash":"`+tx.Hash().Hex()+`"}]}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/admin/v1/payout-intents" && r.URL.Query().Get("status") == "exported":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"intents":[{"id":"payout-exported-1","round_id":"124","member_eth_address":"0xdef","destination_address":"0x2222222222222222222222222222222222222222","chain_id":42161,"asset":"native_eth","amount_wei":"200","status":"exported"}]}`)
@@ -192,52 +205,13 @@ func TestRunReconcileOnceDryRun(t *testing.T) {
 	}))
 	defer controllerServer.Close()
 
-	rpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID     any      `json:"id"`
-			Method string   `json:"method"`
-			Params []string `json:"params"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode rpc request: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		switch req.Method {
-		case "eth_chainId":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      req.ID,
-				"result":  "0xa4b1",
-			})
-		case "eth_getTransactionReceipt":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      req.ID,
-				"result": map[string]any{
-					"status":            "0x1",
-					"blockNumber":       "0x10",
-					"transactionHash":   "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-					"transactionIndex":  "0x0",
-					"blockHash":         "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-					"gasUsed":           "0x5208",
-					"cumulativeGasUsed": "0x5208",
-					"logs":              []any{},
-					"logsBloom":         "0x" + strings.Repeat("0", 512),
-				},
-			})
-		default:
-			t.Fatalf("unexpected rpc method %q", req.Method)
-		}
-	}))
-	defer rpcServer.Close()
-
 	configPath := filepath.Join(t.TempDir(), "executor.yaml")
 	statePath := filepath.Join(t.TempDir(), "executor-state.db")
 	if err := os.WriteFile(configPath, []byte(`
 pool_controller:
   url: `+controllerServer.URL+`
 executor:
-  rpc_urls: [`+rpcServer.URL+`]
+  rpc_urls: [http://127.0.0.1:1]
   private_key_ref: env://POOL_EXECUTOR_TEST_KEY
   chain_id: 42161
   state_path: `+statePath+`
@@ -258,16 +232,25 @@ executor:
 	if !strings.Contains(out.String(), `"status": "dry_run"`) || !strings.Contains(out.String(), `"total_wei": "200"`) {
 		t.Fatalf("reconcile-once output missing send preview:\n%s", out.String())
 	}
+	if n := f.rpc.Calls("SendTransaction"); n != 0 {
+		t.Fatalf("dry run broadcast %d transactions", n)
+	}
 }
 
 func TestRunReconcileLoopDryRun(t *testing.T) {
-	t.Setenv("POOL_EXECUTOR_TEST_KEY", "4c0883a69102937d6231471b5dbb6204fe512961708279ee7c36f6ddf6e702a8")
+	f := useSimEngine(t)
+	ctx := context.Background()
+	tx, err := f.sim.SendValue(ctx, f.sim.Accounts[0], f.sim.Accounts[1].Address, big.NewInt(1800))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.sim.Mine(3)
 
 	controllerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/admin/v1/payout-intents" && r.URL.Query().Get("status") == "submitted":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"intents":[{"id":"payout-submitted-1","round_id":"124","member_eth_address":"0xabc","destination_address":"0x1111111111111111111111111111111111111111","chain_id":42161,"asset":"native_eth","amount_wei":"1800","status":"submitted","tx_hash":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`)
+			_, _ = io.WriteString(w, `{"intents":[{"id":"payout-submitted-1","round_id":"124","member_eth_address":"0xabc","destination_address":"0x1111111111111111111111111111111111111111","chain_id":42161,"asset":"native_eth","amount_wei":"1800","status":"submitted","tx_hash":"`+tx.Hash().Hex()+`"}]}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/admin/v1/payout-intents" && r.URL.Query().Get("status") == "exported":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"intents":[{"id":"payout-exported-1","round_id":"124","member_eth_address":"0xdef","destination_address":"0x2222222222222222222222222222222222222222","chain_id":42161,"asset":"native_eth","amount_wei":"200","status":"exported"}]}`)
@@ -279,47 +262,13 @@ func TestRunReconcileLoopDryRun(t *testing.T) {
 	}))
 	defer controllerServer.Close()
 
-	rpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID     any    `json:"id"`
-			Method string `json:"method"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode rpc request: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		switch req.Method {
-		case "eth_chainId":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0xa4b1"})
-		case "eth_getTransactionReceipt":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      req.ID,
-				"result": map[string]any{
-					"status":            "0x1",
-					"blockNumber":       "0x10",
-					"transactionHash":   "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-					"transactionIndex":  "0x0",
-					"blockHash":         "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-					"gasUsed":           "0x5208",
-					"cumulativeGasUsed": "0x5208",
-					"logs":              []any{},
-					"logsBloom":         "0x" + strings.Repeat("0", 512),
-				},
-			})
-		default:
-			t.Fatalf("unexpected rpc method %q", req.Method)
-		}
-	}))
-	defer rpcServer.Close()
-
 	configPath := filepath.Join(t.TempDir(), "executor.yaml")
 	statePath := filepath.Join(t.TempDir(), "executor-state.db")
 	if err := os.WriteFile(configPath, []byte(`
 pool_controller:
   url: `+controllerServer.URL+`
 executor:
-  rpc_urls: [`+rpcServer.URL+`]
+  rpc_urls: [http://127.0.0.1:1]
   private_key_ref: env://POOL_EXECUTOR_TEST_KEY
   chain_id: 42161
   state_path: `+statePath+`
@@ -354,8 +303,10 @@ executor:
 }
 
 func TestRunReconcileLoopAppliesConfirmBackoff(t *testing.T) {
-	t.Setenv("POOL_EXECUTOR_TEST_KEY", "4c0883a69102937d6231471b5dbb6204fe512961708279ee7c36f6ddf6e702a8")
-
+	useSimEngine(t)
+	// A submitted payout whose transaction no endpoint has seen: not
+	// mined, so the preview reports it pending, and the second iteration
+	// backs off instead of asking again.
 	controllerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/admin/v1/payout-intents" && r.URL.Query().Get("status") == "submitted":
@@ -372,33 +323,13 @@ func TestRunReconcileLoopAppliesConfirmBackoff(t *testing.T) {
 	}))
 	defer controllerServer.Close()
 
-	rpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID     any    `json:"id"`
-			Method string `json:"method"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode rpc request: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		switch req.Method {
-		case "eth_chainId":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0xa4b1"})
-		case "eth_getTransactionReceipt":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": nil})
-		default:
-			t.Fatalf("unexpected rpc method %q", req.Method)
-		}
-	}))
-	defer rpcServer.Close()
-
 	configPath := filepath.Join(t.TempDir(), "executor.yaml")
 	statePath := filepath.Join(t.TempDir(), "executor-state.db")
 	if err := os.WriteFile(configPath, []byte(`
 pool_controller:
   url: `+controllerServer.URL+`
 executor:
-  rpc_urls: [`+rpcServer.URL+`]
+  rpc_urls: [http://127.0.0.1:1]
   private_key_ref: env://POOL_EXECUTOR_TEST_KEY
   chain_id: 42161
   state_path: `+statePath+`
@@ -412,8 +343,8 @@ executor:
 	if err := run([]string{"reconcile-loop", "--config", configPath, "--dry-run", "--iterations", "2", "--interval-ms", "1"}, &out, io.Discard); err != nil {
 		t.Fatalf("run(reconcile-loop dry-run backoff) error = %v", err)
 	}
-	if strings.Count(out.String(), `"status": "would_mark_failed"`) != 1 {
-		t.Fatalf("expected one initial failure preview:\n%s", out.String())
+	if strings.Count(out.String(), `"status": "pending_confirmation"`) != 1 {
+		t.Fatalf("expected one initial pending preview:\n%s", out.String())
 	}
 	if strings.Count(out.String(), `"status": "backoff_skipped"`) != 1 {
 		t.Fatalf("expected one backoff skip:\n%s", out.String())
@@ -509,7 +440,7 @@ func TestSendNativeBatchReleasesLeaseWhenNothingEligible(t *testing.T) {
 		RoundID: "124",
 		Status:  "exported",
 		Limit:   1,
-	}, false)
+	}, false, nil)
 	if err != nil {
 		t.Fatalf("sendNativeBatch() error = %v", err)
 	}
@@ -522,7 +453,7 @@ func TestSendNativeBatchReleasesLeaseWhenNothingEligible(t *testing.T) {
 }
 
 func TestSendNativeBatchReleasesUntouchedLeaseRemainderAfterPartialSubmit(t *testing.T) {
-	t.Setenv("POOL_EXECUTOR_TEST_KEY", "4c0883a69102937d6231471b5dbb6204fe512961708279ee7c36f6ddf6e702a8")
+	f := useSimEngine(t)
 
 	var releaseBody poolcontroller.ReleasePayoutIntentsRequest
 	controllerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -555,68 +486,19 @@ func TestSendNativeBatchReleasesUntouchedLeaseRemainderAfterPartialSubmit(t *tes
 	}))
 	defer controllerServer.Close()
 
-	rpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID     any    `json:"id"`
-			Method string `json:"method"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatalf("decode rpc request: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		switch req.Method {
-		case "eth_chainId":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0xa4b1"})
-		case "eth_getBalance":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0xffffffffffff"})
-		case "eth_getTransactionCount":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0x7"})
-		case "eth_maxPriorityFeePerGas":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0x1"})
-		case "eth_getBlockByNumber":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{
-				"parentHash":       "0x1111111111111111111111111111111111111111111111111111111111111111",
-				"sha3Uncles":       "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-				"miner":            "0x0000000000000000000000000000000000000000",
-				"stateRoot":        "0x2222222222222222222222222222222222222222222222222222222222222222",
-				"transactionsRoot": "0x3333333333333333333333333333333333333333333333333333333333333333",
-				"receiptsRoot":     "0x4444444444444444444444444444444444444444444444444444444444444444",
-				"logsBloom":        "0x" + strings.Repeat("0", 512),
-				"difficulty":       "0x0",
-				"number":           "0x10",
-				"gasLimit":         "0x1c9c380",
-				"gasUsed":          "0x0",
-				"timestamp":        "0x1",
-				"extraData":        "0x",
-				"mixHash":          "0x5555555555555555555555555555555555555555555555555555555555555555",
-				"nonce":            "0x0000000000000000",
-				"baseFeePerGas":    "0x1",
-			}})
-		case "eth_estimateGas":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0x5208"})
-		case "eth_sendRawTransaction":
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0xabc123"})
-		default:
-			t.Fatalf("unexpected rpc method %q", req.Method)
-		}
-	}))
-	defer rpcServer.Close()
-
 	cfg := &config.Config{
 		PoolController: config.PoolController{URL: controllerServer.URL},
 		Executor: config.Executor{
 			ExecutorID:      "executor-a",
 			LeaseTTLSeconds: 300,
 			ChainID:         42161,
-			RPCURLs:         []string{rpcServer.URL},
-			PrivateKeyRef:   "env://POOL_EXECUTOR_TEST_KEY",
 		},
 	}
 	result, err := sendNativeBatch(t.Context(), cfg, nil, poolcontroller.ListPayoutIntentsOptions{
 		RoundID: "124",
 		Status:  "exported",
 		Limit:   2,
-	}, false)
+	}, false, nil)
 	if err != nil {
 		t.Fatalf("sendNativeBatch() error = %v", err)
 	}
@@ -625,6 +507,12 @@ func TestSendNativeBatchReleasesUntouchedLeaseRemainderAfterPartialSubmit(t *tes
 	}
 	if len(releaseBody.IDs) != 1 || releaseBody.IDs[0] != "payout-untouched-1" {
 		t.Fatalf("release body = %+v", releaseBody)
+	}
+	if n := f.rpc.Calls("SendTransaction"); n != 1 {
+		t.Fatalf("SendTransaction calls = %d, want 1", n)
+	}
+	if !strings.Contains(fmt.Sprint(result.Results), "submitted") {
+		t.Fatalf("results = %v", result.Results)
 	}
 }
 
@@ -683,7 +571,8 @@ func TestAutoRequeueFailedRequeuesOnlyEligibleTransientFailures(t *testing.T) {
 }
 
 func TestRunReconcileLoopMultiRoundSoak(t *testing.T) {
-	t.Setenv("POOL_EXECUTOR_TEST_KEY", "4c0883a69102937d6231471b5dbb6204fe512961708279ee7c36f6ddf6e702a8")
+	f := useSimEngine(t)
+	f.mine(t)
 
 	store := newTestIntentStore([]poolcontroller.PayoutIntent{
 		{ID: "payout-201-0xaaa", RoundID: "201", MemberEthAddress: "0xaaa", DestinationAddress: "0x1111111111111111111111111111111111111111", ChainID: 42161, Asset: "native_eth", AmountWei: "100", Status: "exported"},
@@ -693,17 +582,13 @@ func TestRunReconcileLoopMultiRoundSoak(t *testing.T) {
 	controllerServer := httptest.NewServer(http.HandlerFunc(store.handle))
 	defer controllerServer.Close()
 
-	rpc := newTestRPCServer()
-	rpcServer := httptest.NewServer(http.HandlerFunc(rpc.handle))
-	defer rpcServer.Close()
-
 	configPath := filepath.Join(t.TempDir(), "executor.yaml")
 	statePath := filepath.Join(t.TempDir(), "executor-state.db")
 	if err := os.WriteFile(configPath, []byte(`
 pool_controller:
   url: `+controllerServer.URL+`
 executor:
-  rpc_urls: [`+rpcServer.URL+`]
+  rpc_urls: [http://127.0.0.1:1]
   private_key_ref: env://POOL_EXECUTOR_TEST_KEY
   chain_id: 42161
   batch_size: 1
@@ -725,11 +610,22 @@ executor:
 			t.Fatalf("intent %s status = %q, want paid; all statuses = %#v", id, gotStatuses[id], gotStatuses)
 		}
 	}
-	if len(rpc.sentTxHashes()) != 3 {
-		t.Fatalf("sent tx count = %d, want 3", len(rpc.sentTxHashes()))
+	if n := f.rpc.Calls("SendTransaction"); n != 3 {
+		t.Fatalf("sent tx count = %d, want 3", n)
 	}
 	if !strings.Contains(out.String(), `"iterations": 5`) {
 		t.Fatalf("reconcile-loop output unexpected:\n%s", out.String())
+	}
+	// Every payout landed on chain for its recipient.
+	for addr, want := range map[string]int64{
+		"0x1111111111111111111111111111111111111111": 100,
+		"0x2222222222222222222222222222222222222222": 200,
+		"0x3333333333333333333333333333333333333333": 300,
+	} {
+		bal, err := f.rpc.BalanceAt(context.Background(), ethcommon.HexToAddress(addr), nil)
+		if err != nil || bal.Int64() != want {
+			t.Fatalf("balance(%s) = %v, %v; want %d", addr, bal, err, want)
+		}
 	}
 }
 
@@ -888,95 +784,28 @@ func (s *testIntentStore) statuses() map[string]string {
 	return out
 }
 
-type testRPCServer struct {
-	mu        sync.Mutex
-	nextNonce uint64
-	txCount   int
-	txHashes  []string
-}
-
-func newTestRPCServer() *testRPCServer {
-	return &testRPCServer{nextNonce: 1}
-}
-
-func (s *testRPCServer) handle(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID     any    `json:"id"`
-		Method string `json:"method"`
-		Params []any  `json:"params"`
+func TestIsTransientFailure_ChainCommonsCodes(t *testing.T) {
+	cases := map[string]bool{
+		"":                                   false,
+		"tx.reverted":                        false,
+		"tx.insufficient_funds":              false,
+		"tx.sign_failed":                     false,
+		"tx.nonce_past":                      false,
+		"rpc.invalid_argument":               false,
+		"tx.replacement_exhausted":           true,
+		"rpc.rate_limited":                   true,
+		"rpc.block_not_synced":               true,
+		"rpc.gas_suggest_failed":             true,
+		"rpc.pending_nonce_failed":           true,
+		"rpc.timeout":                        true,
+		"rpc.connection_error":               true,
+		"rpc.not_found":                      true,
+		"Receipt not available yet":          true,
+		"insufficient funds for gas * price": false,
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		panic(err)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	switch req.Method {
-	case "eth_chainId":
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0xa4b1"})
-	case "eth_getBalance":
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0xffffffffffff"})
-	case "eth_getTransactionCount":
-		s.mu.Lock()
-		nonce := s.nextNonce
-		s.mu.Unlock()
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": fmt.Sprintf("0x%x", nonce)})
-	case "eth_maxPriorityFeePerGas":
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0x1"})
-	case "eth_getBlockByNumber":
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{
-			"parentHash":       "0x1111111111111111111111111111111111111111111111111111111111111111",
-			"sha3Uncles":       "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
-			"miner":            "0x0000000000000000000000000000000000000000",
-			"stateRoot":        "0x2222222222222222222222222222222222222222222222222222222222222222",
-			"transactionsRoot": "0x3333333333333333333333333333333333333333333333333333333333333333",
-			"receiptsRoot":     "0x4444444444444444444444444444444444444444444444444444444444444444",
-			"logsBloom":        "0x" + strings.Repeat("0", 512),
-			"difficulty":       "0x0",
-			"number":           "0x10",
-			"gasLimit":         "0x1c9c380",
-			"gasUsed":          "0x0",
-			"timestamp":        "0x1",
-			"extraData":        "0x",
-			"mixHash":          "0x5555555555555555555555555555555555555555555555555555555555555555",
-			"nonce":            "0x0000000000000000",
-			"baseFeePerGas":    "0x1",
-		}})
-	case "eth_estimateGas":
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": "0x673c"})
-	case "eth_sendRawTransaction":
-		s.mu.Lock()
-		s.txCount++
-		hash := fmt.Sprintf("0x%064x", s.txCount)
-		s.txHashes = append(s.txHashes, hash)
-		s.nextNonce++
-		s.mu.Unlock()
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": hash})
-	case "eth_getTransactionReceipt":
-		txHash := ""
-		if len(req.Params) > 0 {
-			txHash, _ = req.Params[0].(string)
+	for reason, want := range cases {
+		if got := isTransientFailure(reason); got != want {
+			t.Errorf("isTransientFailure(%q) = %v, want %v", reason, got, want)
 		}
-		if strings.TrimSpace(txHash) == "" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": nil})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{
-			"status":            "0x1",
-			"blockNumber":       "0x10",
-			"transactionHash":   txHash,
-			"transactionIndex":  "0x0",
-			"blockHash":         "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-			"gasUsed":           "0x673c",
-			"cumulativeGasUsed": "0x673c",
-			"logs":              []any{},
-			"logsBloom":         "0x" + strings.Repeat("0", 512),
-		}})
-	default:
-		panic(fmt.Sprintf("unexpected rpc method %q", req.Method))
 	}
-}
-
-func (s *testRPCServer) sentTxHashes() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.txHashes...)
 }

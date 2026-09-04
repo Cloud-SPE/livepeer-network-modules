@@ -28,6 +28,14 @@ Initial implementation scope for plan 0029:
 14. Expose an explicit failed-intent requeue command so operators can return
     failed payouts to the exported queue without coupling unattended reconcile
     loops to an implicit retry policy.
+15. Drive every payout transaction through chain-commons's durable
+    transaction intents (plan 0048 stage 4): one intent per controller
+    intent id, so a re-run never pays twice; the processor owns the hot
+    wallet's nonce, gas-bump replacement of stalled transactions, and
+    reorg-aware confirmation. A submitted payout this executor has no
+    record of is adopted from the controller's `tx_hash` + `external_ref`
+    on the next confirm pass, which is how in-flight payouts survive an
+    upgrade.
 15. Expose a read-only payout-alert view through executor config/auth so
     operator automation can inspect controller-derived anomalies without
     separate curl wiring.

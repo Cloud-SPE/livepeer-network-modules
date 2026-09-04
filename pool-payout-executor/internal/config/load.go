@@ -36,6 +36,7 @@ func LoadFile(path string) (*Config, error) {
 	cfg.Executor.KeystorePath = resolvePath(cfg.Executor.KeystorePath)
 	cfg.Executor.KeystorePasswordPath = resolvePath(cfg.Executor.KeystorePasswordPath)
 	cfg.Executor.StatePath = resolvePath(cfg.Executor.StatePath)
+	cfg.Executor.IntentStorePath = resolvePath(cfg.Executor.IntentStorePath)
 	return cfg, nil
 }
 
@@ -135,6 +136,15 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Executor.RequeueCooldownSeconds < 0 {
 		return fmt.Errorf("executor.requeue_cooldown_seconds must be >= 0")
+	}
+	if cfg.Executor.ConfirmWaitMS < 0 {
+		return fmt.Errorf("executor.confirm_wait_ms must be >= 0")
+	}
+	if cfg.Executor.ReplaceAfterSeconds < 0 {
+		return fmt.Errorf("executor.replace_after_seconds must be >= 0")
+	}
+	if cfg.Executor.MaxReplacements < 0 {
+		return fmt.Errorf("executor.max_replacements must be >= 0")
 	}
 	if cfg.Executor.PrivateKeyRef != "" && !strings.HasPrefix(cfg.Executor.PrivateKeyRef, "env://") {
 		return fmt.Errorf("executor.private_key_ref must use env://")

@@ -15,14 +15,35 @@ import (
 	"net/http"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/config"
-	ethclientx "github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/ethclient"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/observability"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/payouts"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/poolcontroller"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/repo"
 	ethcommon "github.com/ethereum/go-ethereum/common"
 )
 
 var version = "dev"
+
+// openEngine builds the payout engine for a process: the failover
+// transport, the hot wallet, and chain-commons's durable transaction
+// intents. Tests swap it for an engine over a simulated chain.
+var openEngine = func(ctx context.Context, cfg config.Executor) (*payouts.Engine, error) {
+	return payouts.Open(ctx, cfg, payouts.Options{Metrics: observability.ChainMetrics()})
+}
+
+// engineFor returns eng when the caller already holds one (reconcile-loop
+// opens a single engine for its lifetime) and otherwise opens one for
+// this call; the returned func closes it in the latter case only.
+func engineFor(ctx context.Context, cfg config.Executor, eng *payouts.Engine) (*payouts.Engine, func(), error) {
+	if eng != nil {
+		return eng, func() {}, nil
+	}
+	opened, err := openEngine(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return opened, func() { _ = opened.Close() }, nil
+}
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -359,7 +380,7 @@ func runSendNativeBatch(args []string, stdout io.Writer) error {
 	if opts.Limit == 0 {
 		opts.Limit = cfg.Executor.BatchSize
 	}
-	result, err := sendNativeBatch(context.Background(), cfg, nil, opts, *dryRun)
+	result, err := sendNativeBatch(context.Background(), cfg, nil, opts, *dryRun, nil)
 	if err != nil {
 		return err
 	}
@@ -378,7 +399,7 @@ func runReconcileOnce(args []string, stdout io.Writer) error {
 	if stateRepo != nil {
 		defer stateRepo.Close()
 	}
-	result, err := reconcileOnce(context.Background(), cfg, stateRepo, confirmOpts, failedOpts, sendOpts, dryRun)
+	result, err := reconcileOnce(context.Background(), cfg, stateRepo, confirmOpts, failedOpts, sendOpts, dryRun, nil)
 	if stateRepo != nil {
 		if persistErr := persistReconcileState(stateRepo, result, err); persistErr != nil {
 			return persistErr
@@ -455,11 +476,19 @@ func runReconcileLoop(args []string, stdout io.Writer) error {
 		}()
 		defer func() { _ = srv.Close() }()
 	}
+	// One engine for the whole loop: the intent processor keeps tracking
+	// in-flight payouts between iterations instead of being rebuilt each
+	// tick, and in-flight intents from a previous run are resumed here.
+	eng, err := openEngine(context.Background(), cfg.Executor)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = eng.Close() }()
 	results := make([]reconcileOnceResult, 0)
 	runCount := 0
 	for {
 		iterStart := time.Now()
-		result, err := reconcileOnce(context.Background(), cfg, stateRepo, confirmOpts, failedOpts, sendOpts, *dryRun)
+		result, err := reconcileOnce(context.Background(), cfg, stateRepo, confirmOpts, failedOpts, sendOpts, *dryRun, eng)
 		recordReconcileMetrics(result, err, time.Since(iterStart))
 		if stateRepo != nil {
 			if persistErr := persistReconcileState(stateRepo, result, err); persistErr != nil {
@@ -601,12 +630,12 @@ func recordReconcileMetrics(result reconcileOnceResult, runErr error, dur time.D
 	}
 }
 
-func reconcileOnce(ctx context.Context, cfg *config.Config, stateRepo *repo.StateRepo, confirmOpts, failedOpts, sendOpts poolcontroller.ListPayoutIntentsOptions, dryRun bool) (reconcileOnceResult, error) {
+func reconcileOnce(ctx context.Context, cfg *config.Config, stateRepo *repo.StateRepo, confirmOpts, failedOpts, sendOpts poolcontroller.ListPayoutIntentsOptions, dryRun bool, eng *payouts.Engine) (reconcileOnceResult, error) {
 	result := reconcileOnceResult{
 		DryRun:    dryRun,
 		StartedAt: time.Now().UTC(),
 	}
-	confirmResult, err := confirmSubmitted(ctx, cfg, stateRepo, confirmOpts, dryRun)
+	confirmResult, err := confirmSubmitted(ctx, cfg, stateRepo, confirmOpts, dryRun, eng)
 	if err != nil {
 		result.CompletedAt = time.Now().UTC()
 		return result, err
@@ -618,7 +647,7 @@ func reconcileOnce(ctx context.Context, cfg *config.Config, stateRepo *repo.Stat
 		return result, err
 	}
 	result.AutoRequeue = requeueResult
-	sendResult, err := sendNativeBatch(ctx, cfg, stateRepo, sendOpts, dryRun)
+	sendResult, err := sendNativeBatch(ctx, cfg, stateRepo, sendOpts, dryRun, eng)
 	if err != nil {
 		result.CompletedAt = time.Now().UTC()
 		return result, err
@@ -760,6 +789,9 @@ func isTransientFailure(reason string) bool {
 		"unsupported",
 		"manual",
 		"compliance",
+		// chain-commons failure codes that need an operator, not a retry.
+		"tx.sign_failed",
+		"tx.nonce_past",
 	}
 	for _, marker := range permanentMarkers {
 		if strings.Contains(reason, marker) {
@@ -781,6 +813,15 @@ func isTransientFailure(reason string) bool {
 		"pending",
 		"receipt not available",
 		"not found",
+		"not_found",
+		// chain-commons failure codes for conditions that clear on their
+		// own: a stalled fee market after the replacement budget is spent,
+		// a lagging or throttled endpoint.
+		"tx.replacement_exhausted",
+		"rpc.rate_limited",
+		"rpc.block_not_synced",
+		"rpc.gas_suggest_failed",
+		"rpc.pending_nonce_failed",
 	}
 	for _, marker := range transientMarkers {
 		if strings.Contains(reason, marker) {
@@ -790,7 +831,7 @@ func isTransientFailure(reason string) bool {
 	return false
 }
 
-func sendNativeBatch(ctx context.Context, cfg *config.Config, stateRepo *repo.StateRepo, opts poolcontroller.ListPayoutIntentsOptions, dryRun bool) (sendNativeBatchResult, error) {
+func sendNativeBatch(ctx context.Context, cfg *config.Config, stateRepo *repo.StateRepo, opts poolcontroller.ListPayoutIntentsOptions, dryRun bool, eng *payouts.Engine) (sendNativeBatchResult, error) {
 	controllerClient, err := poolcontroller.NewClient(cfg.PoolController)
 	if err != nil {
 		return sendNativeBatchResult{}, err
@@ -870,15 +911,15 @@ func sendNativeBatch(ctx context.Context, cfg *config.Config, stateRepo *repo.St
 			Actions:  actions,
 		}, nil
 	}
-	chainClient, err := ethclientx.New(ctx, cfg.Executor, ethclientx.Options{Metrics: observability.ChainMetrics()})
+	engine, closeEngine, err := engineFor(ctx, cfg.Executor, eng)
 	if err != nil {
 		if releaseErr := releaseLeaseIfHeld(ctx, controllerClient, cfg.Executor, leaseID); releaseErr != nil {
 			return sendNativeBatchResult{}, releaseErr
 		}
 		return sendNativeBatchResult{}, err
 	}
-	defer chainClient.Close()
-	balance, err := chainClient.BalanceAt(ctx)
+	defer closeEngine()
+	balance, err := engine.BalanceAt(ctx)
 	if err != nil {
 		return sendNativeBatchResult{}, err
 	}
@@ -891,7 +932,9 @@ func sendNativeBatch(ctx context.Context, cfg *config.Config, stateRepo *repo.St
 	submittedCount := 0
 	for _, intent := range eligible {
 		amount, _ := new(big.Int).SetString(intent.AmountWei, 10)
-		sent, err := chainClient.SendNativeTransfer(ctx, ethcommon.HexToAddress(intent.DestinationAddress), amount)
+		// One durable intent per controller intent id: a re-run over the
+		// same batch reuses the broadcast instead of paying twice.
+		sent, err := engine.Dispatch(ctx, intent.ID, ethcommon.HexToAddress(intent.DestinationAddress), amount)
 		if err != nil {
 			results = append(results, map[string]any{
 				"id":     intent.ID,
@@ -922,6 +965,7 @@ func sendNativeBatch(ctx context.Context, cfg *config.Config, stateRepo *repo.St
 			"id":      intent.ID,
 			"status":  "submitted",
 			"tx_hash": sent.TxHash,
+			"reused":  sent.Reused,
 			"intent":  updated[0],
 		})
 		submittedCount++
@@ -940,7 +984,7 @@ func sendNativeBatch(ctx context.Context, cfg *config.Config, stateRepo *repo.St
 		}
 	}
 	return sendNativeBatchResult{
-		From:     chainClient.FromAddress().Hex(),
+		From:     engine.FromAddress().Hex(),
 		LeaseID:  leaseID,
 		TotalWei: total.String(),
 		Results:  results,
@@ -1037,7 +1081,7 @@ func runConfirmSubmitted(args []string, stdout io.Writer) error {
 	if opts.Limit == 0 {
 		opts.Limit = cfg.Executor.BatchSize
 	}
-	result, err := confirmSubmitted(context.Background(), cfg, nil, opts, false)
+	result, err := confirmSubmitted(context.Background(), cfg, nil, opts, false, nil)
 	if err != nil {
 		return err
 	}
@@ -1050,7 +1094,7 @@ type confirmSubmittedResult struct {
 	Actions []repo.IntentUpdate `json:"-"`
 }
 
-func confirmSubmitted(ctx context.Context, cfg *config.Config, stateRepo *repo.StateRepo, opts poolcontroller.ListPayoutIntentsOptions, dryRun bool) (confirmSubmittedResult, error) {
+func confirmSubmitted(ctx context.Context, cfg *config.Config, stateRepo *repo.StateRepo, opts poolcontroller.ListPayoutIntentsOptions, dryRun bool, eng *payouts.Engine) (confirmSubmittedResult, error) {
 	controllerClient, err := poolcontroller.NewClient(cfg.PoolController)
 	if err != nil {
 		return confirmSubmittedResult{}, err
@@ -1059,11 +1103,11 @@ func confirmSubmitted(ctx context.Context, cfg *config.Config, stateRepo *repo.S
 	if err != nil {
 		return confirmSubmittedResult{}, err
 	}
-	chainClient, err := ethclientx.New(ctx, cfg.Executor, ethclientx.Options{Metrics: observability.ChainMetrics()})
+	engine, closeEngine, err := engineFor(ctx, cfg.Executor, eng)
 	if err != nil {
 		return confirmSubmittedResult{}, err
 	}
-	defer chainClient.Close()
+	defer closeEngine()
 	results := make([]map[string]any, 0, len(intents))
 	actions := make([]repo.IntentUpdate, 0, len(intents))
 	for _, intent := range intents {
@@ -1084,54 +1128,83 @@ func confirmSubmitted(ctx context.Context, cfg *config.Config, stateRepo *repo.S
 			actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "skipped", Error: "missing tx_hash"})
 			continue
 		}
-		confirmed, err := chainClient.ConfirmTransaction(ctx, intent.TxHash, cfg.Executor.ConfirmationBlocks)
+		outcome, err := payoutOutcome(ctx, engine, intent, dryRun)
 		if err != nil {
+			return confirmSubmittedResult{}, err
+		}
+		switch outcome.State {
+		case payouts.StateFailed:
 			if dryRun {
-				results = append(results, map[string]any{"id": intent.ID, "status": "would_mark_failed", "tx_hash": intent.TxHash, "error": err.Error()})
-				actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "would_mark_failed", Error: err.Error(), TxHash: intent.TxHash, ConfirmCheck: true, Failed: true})
+				results = append(results, map[string]any{"id": intent.ID, "status": "would_mark_failed", "tx_hash": outcome.TxHash, "error": outcome.Reason})
+				actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "would_mark_failed", Error: outcome.Reason, TxHash: outcome.TxHash, ConfirmCheck: true, Failed: true})
 				continue
 			}
 			updated, updateErr := controllerClient.UpdatePayoutIntentStatus(ctx, poolcontroller.UpdatePayoutIntentStatusRequest{
 				IDs:           []string{intent.ID},
 				Status:        "failed",
 				ExternalRef:   intent.ExternalRef,
-				TxHash:        intent.TxHash,
-				FailureReason: err.Error(),
+				TxHash:        outcome.TxHash,
+				FailureReason: outcome.Reason,
 			})
 			if updateErr != nil {
 				return confirmSubmittedResult{}, updateErr
 			}
 			results = append(results, map[string]any{"id": intent.ID, "status": "failed", "intent": updated[0]})
-			actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "failed", Error: err.Error(), TxHash: intent.TxHash, ConfirmCheck: true, Failed: true})
-			continue
+			actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "failed", Error: outcome.Reason, TxHash: outcome.TxHash, ConfirmCheck: true, Failed: true})
+		case payouts.StatePending:
+			entry := map[string]any{"id": intent.ID, "status": "pending_confirmation", "tx_hash": outcome.TxHash}
+			if outcome.Reason != "" {
+				entry["error"] = outcome.Reason
+			}
+			results = append(results, entry)
+			actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "pending_confirmation", Error: outcome.Reason, TxHash: outcome.TxHash, ConfirmCheck: true})
+		case payouts.StatePaid:
+			if dryRun {
+				results = append(results, map[string]any{"id": intent.ID, "status": "would_mark_paid", "tx_hash": outcome.TxHash})
+				actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "would_mark_paid", TxHash: outcome.TxHash, ConfirmCheck: true, Succeeded: true})
+				continue
+			}
+			updated, err := controllerClient.UpdatePayoutIntentStatus(ctx, poolcontroller.UpdatePayoutIntentStatusRequest{
+				IDs:         []string{intent.ID},
+				Status:      "paid",
+				ExternalRef: intent.ExternalRef,
+				TxHash:      outcome.TxHash,
+			})
+			if err != nil {
+				return confirmSubmittedResult{}, err
+			}
+			results = append(results, map[string]any{"id": intent.ID, "status": "paid", "intent": updated[0]})
+			actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "paid", TxHash: outcome.TxHash, ConfirmCheck: true, Succeeded: true})
 		}
-		if !confirmed {
-			results = append(results, map[string]any{"id": intent.ID, "status": "pending_confirmation", "tx_hash": intent.TxHash})
-			actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "pending_confirmation", TxHash: intent.TxHash, ConfirmCheck: true})
-			continue
-		}
-		if dryRun {
-			results = append(results, map[string]any{"id": intent.ID, "status": "would_mark_paid", "tx_hash": intent.TxHash})
-			actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "would_mark_paid", TxHash: intent.TxHash, ConfirmCheck: true, Succeeded: true})
-			continue
-		}
-		updated, err := controllerClient.UpdatePayoutIntentStatus(ctx, poolcontroller.UpdatePayoutIntentStatusRequest{
-			IDs:         []string{intent.ID},
-			Status:      "paid",
-			ExternalRef: intent.ExternalRef,
-			TxHash:      intent.TxHash,
-		})
-		if err != nil {
-			return confirmSubmittedResult{}, err
-		}
-		results = append(results, map[string]any{"id": intent.ID, "status": "paid", "intent": updated[0]})
-		actions = append(actions, repo.IntentUpdate{IntentID: intent.ID, Phase: "confirm", Status: "paid", TxHash: intent.TxHash, ConfirmCheck: true, Succeeded: true})
 	}
 	return confirmSubmittedResult{
 		DryRun:  dryRun,
 		Results: results,
 		Actions: actions,
 	}, nil
+}
+
+// payoutOutcome answers "what happened to this submitted payout". In a
+// dry run it reads the chain directly and writes nothing. Otherwise it
+// makes sure the payout is tracked by an intent — adopting the
+// transaction the controller recorded when this executor has no record
+// of it, which is how in-flight payouts survive an upgrade — and reports
+// the intent's state. A submitted payout whose transaction no endpoint
+// knows and whose nonce was never recorded is reported pending with a
+// reason, and left for the controller's stale-submitted handling.
+func payoutOutcome(ctx context.Context, engine *payouts.Engine, intent poolcontroller.PayoutIntent, dryRun bool) (payouts.Outcome, error) {
+	if dryRun {
+		return engine.Peek(ctx, intent.TxHash)
+	}
+	amount, _ := new(big.Int).SetString(strings.TrimSpace(intent.AmountWei), 10)
+	_, err := engine.Track(ctx, intent.ID, intent.TxHash, intent.ExternalRef, ethcommon.HexToAddress(intent.DestinationAddress), amount)
+	if err != nil {
+		if errors.Is(err, payouts.ErrUnknownTx) {
+			return payouts.Outcome{State: payouts.StatePending, TxHash: strings.TrimSpace(intent.TxHash), Reason: err.Error()}, nil
+		}
+		return payouts.Outcome{}, err
+	}
+	return engine.Outcome(ctx, intent.ID)
 }
 
 func openOptionalStateRepo(cfg *config.Config) (*repo.StateRepo, error) {

@@ -1,0 +1,38 @@
+# coverage-gate exemptions
+#
+# One import path per line. Every exemption MUST have a reason on the
+# same line after '#'. Do not exempt a package just because writing
+# tests is hard. Exemption is a last resort when the code path is
+# genuinely impractical to cover (CLI entry-points gated on os.Exit,
+# generated code with no logic, etc.).
+
+# cmd entry points: flag parsing, provider construction and os.Exit paths.
+# The daemon's happy path is exercised end-to-end by the integration
+# stack (infra/scenarios/integration-stack) and the rotation / wire-compat
+# suites, not by unit tests of main.go.
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/cmd/livepeer-payment-daemon  # cmd entry; covered end-to-end by the integration stack
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/cmd/payout-sim  # CLI wrapper over internal/payoutsim, which carries the tests
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/cmd/livepeer-chain-probe  # operator probe CLI against a live RPC
+
+# Interface-only package: providers/*.go are interface declarations
+# consumed by the impl subpackages, which carry the tests.
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers  # interfaces only
+
+# Lint tooling. The coverage gate is exercised by its own gate_test.go;
+# no-secrets-in-logs runs against the tree in `make test`.
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/lint/no-secrets-in-logs  # lint tool; runs against the tree
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/lint/no-secrets-in-logs/testdata  # test fixtures
+
+# Pre-existing coverage debt, outside plan 0048's scope. Tracked in bead lnm-tou.7;
+# delete a line as its package reaches the floor. Stage 4 touches
+# service/settlement and must lift it.
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store  # 41% before plan 0048; bead lnm-tou.7
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types  # 44% before plan 0048; bead lnm-tou.7
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow  # 67% before plan 0048; bead lnm-tou.7
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver  # 68% before plan 0048; bead lnm-tou.7
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/settlement  # 63% before plan 0048; stage 4 lifts it; bead lnm-tou.7
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/inmemory  # 70% before plan 0048; bead lnm-tou.7
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devbroker  # dev-mode fake, no tests before plan 0048; bead lnm-tou.7
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock  # dev-mode fake, no tests before plan 0048; bead lnm-tou.7
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devkeystore  # dev-mode fake, no tests before plan 0048; bead lnm-tou.7
+github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/server  # grpc.Server lifecycle, no tests before plan 0048; bead lnm-tou.7

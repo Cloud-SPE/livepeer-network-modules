@@ -8,10 +8,11 @@
 // eth_getTransactionReceipt until the receipt + Config.Confirmations
 // blocks have passed, and returns the confirmed tx hash.
 //
-// Per plan 0016 §11.Q1 we deliberately do NOT port the prior impl's
-// chain-commons.txintent layer — settlement here is single-threaded,
-// one tx per loop tick, and go-ethereum's bind.TransactOpts surface +
-// an in-process nonce counter is sufficient.
+// Every call goes through chain-commons rpc.RPC, so reads and the
+// redemption submit fail over across --chain-rpc-urls (plan 0048 stage
+// 1). Submission is still a single-threaded send-then-wait with an
+// in-process nonce counter; moving it onto chain-commons's durable
+// intent machine is plan 0048 stage 4.
 package ticketbroker
 
 import (
@@ -27,7 +28,8 @@ import (
 	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
+
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 )
@@ -82,7 +84,7 @@ const defaultConfirmations uint64 = 4
 // Broker is the chain-backed providers.Broker.
 type Broker struct {
 	cfg      Config
-	client   *ethclient.Client
+	client   rpc.RPC
 	gasPrice providers.GasPrice
 	signer   providers.TxSigner
 	log      *slog.Logger
@@ -95,9 +97,9 @@ type Broker struct {
 // New constructs a Broker. client + signer + gasPrice are all required
 // for the redeem path; sender mode (which never redeems) may pass nil
 // signer/gasPrice.
-func New(cfg Config, client *ethclient.Client, gasPrice providers.GasPrice, signer providers.TxSigner) (*Broker, error) {
+func New(cfg Config, client rpc.RPC, gasPrice providers.GasPrice, signer providers.TxSigner) (*Broker, error) {
 	if client == nil {
-		return nil, errors.New("ticketbroker: nil ethclient")
+		return nil, errors.New("ticketbroker: nil rpc client")
 	}
 	if (cfg.Address == ethcommon.Address{}) {
 		return nil, errors.New("ticketbroker: empty contract address")
@@ -317,8 +319,11 @@ func (b *Broker) nextNonce(ctx context.Context) (uint64, error) {
 	return out, nil
 }
 
+// pollInterval is how often the receipt and confirmation waits re-poll.
+// A var so tests can shorten it.
+var pollInterval = 2 * time.Second
+
 func (b *Broker) waitForReceipt(ctx context.Context, txHash ethcommon.Hash) (*ethtypes.Receipt, error) {
-	const pollInterval = 2 * time.Second
 	for {
 		select {
 		case <-ctx.Done():
@@ -341,14 +346,16 @@ func (b *Broker) waitForReceipt(ctx context.Context, txHash ethcommon.Hash) (*et
 }
 
 func (b *Broker) waitForConfirmations(ctx context.Context, mined *big.Int) error {
-	const pollInterval = 2 * time.Second
 	target := new(big.Int).Add(mined, big.NewInt(int64(b.cfg.Confirmations)))
 	for {
-		head, err := b.client.BlockNumber(ctx)
+		head, err := b.client.HeaderByNumber(ctx, nil)
 		if err != nil {
-			return fmt.Errorf("block number: %w", err)
+			return fmt.Errorf("head header: %w", err)
 		}
-		if new(big.Int).SetUint64(head).Cmp(target) >= 0 {
+		if head == nil || head.Number == nil {
+			return errors.New("head header: empty")
+		}
+		if head.Number.Cmp(target) >= 0 {
 			return nil
 		}
 		select {

@@ -1,26 +1,18 @@
-// Package chain wires the JSON-RPC client used by every chain-backed
-// provider (broker, clock, gasprice) and resolves Livepeer's
-// Controller-pattern contract addresses.
-//
-// Per plan 0016 §11.Q1 we build minimal in-tree machinery instead of
-// pulling in the deprecated chain-commons module — the v0.2 provider
-// interfaces are right-sized and a ~100-line controller resolver is
-// cleaner than a sibling extracted module.
+// Package chain holds the chain-level constants and the chain-id
+// preflight every chain-backed provider (broker, clock, gasprice)
+// shares. The RPC transport, Controller address resolution and gas
+// pricing come from chain-commons (plan 0048); this package is what is
+// left once those are shared.
 package chain
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"math/big"
-	"net/url"
-	"strings"
 
-	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
+
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 )
 
 // ArbitrumOneChainID is the canonical chain ID for Arbitrum One — the
@@ -31,29 +23,12 @@ const ArbitrumOneChainID int64 = 42161
 // Arbitrum One. Source: payment-daemon/docs/operator-runbook.md §10.
 var ArbitrumOneController = ethcommon.HexToAddress("0xD8E8328501E9645d16Cf49539efC04f734606ee4")
 
-// Addresses holds the resolved addresses of every Livepeer contract
-// the daemon talks to. Populated by Resolver.Resolve.
-type Addresses struct {
-	TicketBroker   ethcommon.Address
-	RoundsManager  ethcommon.Address
-	BondingManager ethcommon.Address
-}
-
-// Overrides lets operators bypass on-chain Controller resolution for any
-// individual contract. Empty / zero address means "resolve via
-// Controller".
-type Overrides struct {
-	TicketBroker   ethcommon.Address
-	RoundsManager  ethcommon.Address
-	BondingManager ethcommon.Address
-}
-
 // CheckChainID confirms the connected RPC reports the expected chain
 // ID. Setting expected = 0 disables the check (escape hatch for forks /
 // local Anvil; production must keep the default per the runbook).
-func CheckChainID(ctx context.Context, client *ethclient.Client, expected int64) error {
+func CheckChainID(ctx context.Context, client rpc.RPC, expected int64) error {
 	if client == nil {
-		return errors.New("chain: nil ethclient")
+		return errors.New("chain: nil rpc client")
 	}
 	got, err := client.ChainID(ctx)
 	if err != nil {
@@ -62,140 +37,8 @@ func CheckChainID(ctx context.Context, client *ethclient.Client, expected int64)
 	if expected == 0 {
 		return nil
 	}
-	if got.Cmp(big.NewInt(expected)) != 0 {
-		return fmt.Errorf("chain id mismatch: rpc=%s, expected=%d", got.String(), expected)
+	if expected < 0 || uint64(got) != uint64(expected) {
+		return fmt.Errorf("chain id mismatch: rpc=%d, expected=%d", uint64(got), expected)
 	}
 	return nil
-}
-
-// Resolver loads contract addresses from the Livepeer Controller. The
-// Controller exposes `getContract(bytes32 nameHash) returns (address)`
-// where nameHash is keccak256(contractName).
-type Resolver struct {
-	client     *ethclient.Client
-	controller ethcommon.Address
-}
-
-// NewResolver builds a Resolver targeting the given Controller address.
-func NewResolver(client *ethclient.Client, controller ethcommon.Address) *Resolver {
-	return &Resolver{client: client, controller: controller}
-}
-
-// Resolve returns the resolved Addresses, applying any non-zero
-// overrides without an RPC call. Returns an error iff a name without
-// override fails to resolve.
-func (r *Resolver) Resolve(ctx context.Context, ov Overrides) (Addresses, error) {
-	out := Addresses{
-		TicketBroker:   ov.TicketBroker,
-		RoundsManager:  ov.RoundsManager,
-		BondingManager: ov.BondingManager,
-	}
-	if (out.TicketBroker == ethcommon.Address{}) {
-		addr, err := r.callGetContract(ctx, "TicketBroker")
-		if err != nil {
-			return Addresses{}, fmt.Errorf("resolve TicketBroker: %w", err)
-		}
-		out.TicketBroker = addr
-	}
-	if (out.RoundsManager == ethcommon.Address{}) {
-		addr, err := r.callGetContract(ctx, "RoundsManager")
-		if err != nil {
-			return Addresses{}, fmt.Errorf("resolve RoundsManager: %w", err)
-		}
-		out.RoundsManager = addr
-	}
-	if (out.BondingManager == ethcommon.Address{}) {
-		addr, err := r.callGetContract(ctx, "BondingManager")
-		if err != nil {
-			return Addresses{}, fmt.Errorf("resolve BondingManager: %w", err)
-		}
-		out.BondingManager = addr
-	}
-	if (out.TicketBroker == ethcommon.Address{}) {
-		return Addresses{}, errors.New("resolved TicketBroker is zero address")
-	}
-	if (out.RoundsManager == ethcommon.Address{}) {
-		return Addresses{}, errors.New("resolved RoundsManager is zero address")
-	}
-	if (out.BondingManager == ethcommon.Address{}) {
-		return Addresses{}, errors.New("resolved BondingManager is zero address")
-	}
-	return out, nil
-}
-
-// getContractSelector is keccak256("getContract(bytes32)")[:4].
-var getContractSelector = crypto.Keccak256([]byte("getContract(bytes32)"))[:4]
-
-func (r *Resolver) callGetContract(ctx context.Context, name string) (ethcommon.Address, error) {
-	nameHash := crypto.Keccak256([]byte(name))
-	calldata := make([]byte, 0, 4+32)
-	calldata = append(calldata, getContractSelector...)
-	calldata = append(calldata, nameHash...)
-	out, err := r.client.CallContract(ctx, ethereum.CallMsg{
-		To:   &r.controller,
-		Data: calldata,
-	}, nil)
-	if err != nil {
-		return ethcommon.Address{}, err
-	}
-	if len(out) < 32 {
-		return ethcommon.Address{}, fmt.Errorf("getContract(%s): %d bytes returned, want 32", name, len(out))
-	}
-	var addr ethcommon.Address
-	copy(addr[:], out[12:32])
-	return addr, nil
-}
-
-// DialFirstHealthy dials urls in order and returns the first client that
-// both connects and passes CheckChainID against expected. Candidates that
-// fail are logged at warn with their position and the endpoint host only
-// (URLs may carry an API key in the path), then skipped. When no
-// candidate works the returned error names how many were tried.
-//
-// This is startup selection, not failover: once a client is chosen the
-// daemon runs against it for its whole lifetime, because every chain-
-// backed provider holds a concrete *ethclient.Client. Runtime failover
-// between the entries is tracked separately.
-func DialFirstHealthy(ctx context.Context, logger *slog.Logger, urls []string, expected int64) (*ethclient.Client, error) {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	if len(urls) == 0 {
-		return nil, errors.New("chain: no rpc urls given")
-	}
-	for i, raw := range urls {
-		client, err := ethclient.DialContext(ctx, raw)
-		if err == nil {
-			if err = CheckChainID(ctx, client, expected); err == nil {
-				return client, nil
-			}
-			client.Close()
-		}
-		logger.Warn("rpc candidate rejected",
-			"index", i,
-			"host", URLHost(raw),
-			"err", redactURL(err, raw))
-	}
-	return nil, fmt.Errorf("chain: no usable rpc endpoint among %d candidate(s)", len(urls))
-}
-
-// redactURL replaces every occurrence of the raw URL inside err's text
-// with its host, because go-ethereum's dial and transport errors quote
-// the full URL and that is where provider API keys live.
-func redactURL(err error, raw string) string {
-	if err == nil {
-		return ""
-	}
-	return strings.ReplaceAll(err.Error(), raw, URLHost(raw))
-}
-
-// URLHost returns the host part of an RPC URL for logging. Credentials
-// and path (where provider API keys usually live) are dropped; an
-// unparseable value yields "<invalid-url>".
-func URLHost(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return "<invalid-url>"
-	}
-	return u.Host
 }

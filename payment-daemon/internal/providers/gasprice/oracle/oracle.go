@@ -1,8 +1,15 @@
-// Package onchain is the chain-backed implementation of
-// providers.GasPrice. Polls eth_gasPrice on a configurable interval and
-// applies the operator-tuned multiplier (default 200% — 2× headroom
-// over base-fee per the runbook).
-package onchain
+// Package oracle is the chain-backed implementation of providers.GasPrice
+// on top of chain-commons's gas oracle. It refreshes on a configurable
+// interval, applies the operator-tuned multiplier (default 200% — 2×
+// headroom over the chain's eth_gasPrice per the runbook), and serves
+// the last good value from memory so the settlement hot path never
+// waits on an RPC.
+//
+// The oracle's own TTL is set to the refresh interval, so one refresh is
+// one eth_gasPrice call and the value the runbook documents is exactly
+//
+//	submitted_gas_price = eth_gasPrice × multiplier_pct / 100
+package oracle
 
 import (
 	"context"
@@ -14,7 +21,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/gasoracle"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/gasoracle/ttl"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 )
 
 // Config holds the parameters for a GasPrice instance.
@@ -34,7 +43,7 @@ type Config struct {
 // GasPrice is the chain-backed providers.GasPrice.
 type GasPrice struct {
 	cfg    Config
-	client *ethclient.Client
+	oracle gasoracle.GasOracle
 	log    *slog.Logger
 
 	current atomic.Pointer[big.Int]
@@ -44,32 +53,49 @@ type GasPrice struct {
 	wg   sync.WaitGroup
 }
 
-// New constructs a GasPrice and runs an initial sync. Start runs the
-// refresh goroutine.
-func New(ctx context.Context, cfg Config, client *ethclient.Client) (*GasPrice, error) {
+// New builds a GasPrice over a chain-commons TTL gas oracle on client
+// and runs the initial sync. Start runs the refresh goroutine.
+func New(ctx context.Context, cfg Config, client rpc.RPC) (*GasPrice, error) {
 	if client == nil {
-		return nil, errors.New("onchain gasprice: nil ethclient")
+		return nil, errors.New("gasprice: nil rpc client")
 	}
-	if cfg.MultiplierPct == 0 {
-		cfg.MultiplierPct = 200
+	applyDefaults(&cfg)
+	o, err := ttl.New(ttl.Options{RPC: client, TTL: cfg.RefreshInterval})
+	if err != nil {
+		return nil, fmt.Errorf("gasprice: %w", err)
 	}
-	if cfg.RefreshInterval <= 0 {
-		cfg.RefreshInterval = 5 * time.Second
+	return NewWithOracle(ctx, cfg, o)
+}
+
+// NewWithOracle is New over an already-built oracle (tests, or a daemon
+// that shares one oracle between consumers).
+func NewWithOracle(ctx context.Context, cfg Config, o gasoracle.GasOracle) (*GasPrice, error) {
+	if o == nil {
+		return nil, errors.New("gasprice: nil oracle")
 	}
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
+	applyDefaults(&cfg)
 	g := &GasPrice{
 		cfg:    cfg,
-		client: client,
-		log:    logger.With("component", "onchain-gasprice"),
+		oracle: o,
+		log:    cfg.Logger.With("component", "gasprice"),
 		stop:   make(chan struct{}),
 	}
 	if err := g.refresh(ctx); err != nil {
 		return nil, fmt.Errorf("initial sync: %w", err)
 	}
 	return g, nil
+}
+
+func applyDefaults(cfg *Config) {
+	if cfg.MultiplierPct == 0 {
+		cfg.MultiplierPct = 200
+	}
+	if cfg.RefreshInterval <= 0 {
+		cfg.RefreshInterval = 5 * time.Second
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
 }
 
 // Start runs the refresh goroutine until Stop is called or the context
@@ -79,7 +105,8 @@ func (g *GasPrice) Start(ctx context.Context) {
 	go g.refreshLoop(ctx)
 }
 
-// Stop signals the refresh goroutine to exit and waits for it.
+// Stop signals the refresh goroutine to exit and waits for it. Safe to
+// call more than once.
 func (g *GasPrice) Stop() {
 	g.mu.Lock()
 	select {
@@ -122,11 +149,14 @@ func (g *GasPrice) refreshLoop(ctx context.Context) {
 	}
 }
 
+// refresh reads the oracle once and stores the multiplied value. A
+// failure leaves the last good value in place.
 func (g *GasPrice) refresh(ctx context.Context) error {
-	raw, err := g.client.SuggestGasPrice(ctx)
+	est, err := g.oracle.Suggest(ctx)
 	if err != nil {
 		return fmt.Errorf("eth_gasPrice: %w", err)
 	}
+	raw := est.BaseFee
 	if raw == nil || raw.Sign() <= 0 {
 		return errors.New("eth_gasPrice returned non-positive")
 	}

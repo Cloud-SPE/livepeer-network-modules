@@ -3,7 +3,10 @@
 // Polls RoundsManager.lastInitializedRound + blockHashForRound on a
 // configurable interval; reports BondingManager.getTranscoderPoolSize
 // for the escrow's reserve-alloc math; tracks the latest observed L1
-// block via eth_blockNumber.
+// block via the head header.
+//
+// Every read goes through chain-commons rpc.RPC, so a refresh fails
+// over across --chain-rpc-urls like every other chain call (plan 0048).
 //
 // Per Q5 the implementation is poll-only — no eth_subscribe / WSS
 // reconnect logic. The default 30s refresh-interval is bounded enough
@@ -25,7 +28,8 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	ethcommon "github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethclient"
+
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 )
 
 const roundsManagerABI = `[
@@ -59,7 +63,7 @@ type Config struct {
 // Clock is the chain-backed providers.Clock.
 type Clock struct {
 	cfg    Config
-	client *ethclient.Client
+	client rpc.RPC
 	log    *slog.Logger
 
 	state    atomic.Pointer[clockState]
@@ -82,9 +86,9 @@ type clockState struct {
 // New constructs a Clock and runs an initial sync. The refresh
 // goroutine is started by Start; until Start runs, the values reflect
 // the initial sync only.
-func New(ctx context.Context, cfg Config, client *ethclient.Client) (*Clock, error) {
+func New(ctx context.Context, cfg Config, client rpc.RPC) (*Clock, error) {
 	if client == nil {
-		return nil, errors.New("onchain clock: nil ethclient")
+		return nil, errors.New("onchain clock: nil rpc client")
 	}
 	if (cfg.RoundsManager == ethcommon.Address{}) {
 		return nil, errors.New("onchain clock: empty RoundsManager address")
@@ -195,16 +199,19 @@ func (c *Clock) refresh(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("getTranscoderPoolSize: %w", err)
 	}
-	head, err := c.client.BlockNumber(ctx)
+	head, err := c.client.HeaderByNumber(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("blockNumber: %w", err)
+		return fmt.Errorf("head header: %w", err)
+	}
+	if head == nil || head.Number == nil {
+		return errors.New("head header: empty")
 	}
 
 	c.poolSize.Store(pool)
 	c.state.Store(&clockState{
 		round:      round,
 		roundHash:  hash,
-		l1BlockNum: new(big.Int).SetUint64(head),
+		l1BlockNum: new(big.Int).Set(head.Number),
 		updatedAt:  time.Now(),
 	})
 	return nil

@@ -1,192 +1,224 @@
 package onchain
 
 import (
+	"bytes"
 	"context"
-	"encoding/hex"
-	"encoding/json"
-	"io"
+	"errors"
 	"math/big"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethclient"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+
+	chaintesting "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
 )
 
-type rpcReq struct {
-	JSONRPC string            `json:"jsonrpc"`
-	Method  string            `json:"method"`
-	Params  []json.RawMessage `json:"params"`
-	ID      int               `json:"id"`
+var (
+	roundsAddr  = ethcommon.HexToAddress("0x0000000000000000000000000000000000000010")
+	bondingAddr = ethcommon.HexToAddress("0x0000000000000000000000000000000000000020")
+)
+
+// chainStub is a programmable RoundsManager + BondingManager behind a
+// FakeRPC: it answers the three eth_calls the clock issues and the head
+// header, and counts blockHashForRound calls so the per-round cache can
+// be asserted.
+type chainStub struct {
+	rpc       *chaintesting.FakeRPC
+	round     atomic.Int64
+	pool      atomic.Int64
+	head      atomic.Int64
+	hashCalls atomic.Int32
 }
-type rpcResp struct {
-	JSONRPC string `json:"jsonrpc"`
-	Result  string `json:"result"`
-	ID      int    `json:"id"`
+
+func newChainStub(t *testing.T) *chainStub {
+	t.Helper()
+	s := &chainStub{rpc: chaintesting.NewFakeRPC()}
+	s.round.Store(12345)
+	s.pool.Store(100)
+	s.head.Store(777)
+	s.rpc.CallContractFunc = func(_ context.Context, msg ethereum.CallMsg, _ *big.Int) ([]byte, error) {
+		if len(msg.Data) < 4 {
+			return nil, errors.New("short calldata")
+		}
+		sel := msg.Data[:4]
+		switch {
+		case bytes.Equal(sel, roundsABI.Methods["lastInitializedRound"].ID):
+			if *msg.To != roundsAddr {
+				return nil, errors.New("lastInitializedRound sent to wrong contract")
+			}
+			return roundsABI.Methods["lastInitializedRound"].Outputs.Pack(big.NewInt(s.round.Load()))
+		case bytes.Equal(sel, roundsABI.Methods["blockHashForRound"].ID):
+			s.hashCalls.Add(1)
+			args, err := roundsABI.Methods["blockHashForRound"].Inputs.Unpack(msg.Data[4:])
+			if err != nil {
+				return nil, err
+			}
+			var h [32]byte
+			h[31] = byte(args[0].(*big.Int).Int64()) // hash encodes the round it was asked for
+			return roundsABI.Methods["blockHashForRound"].Outputs.Pack(h)
+		case bytes.Equal(sel, bondingABI.Methods["getTranscoderPoolSize"].ID):
+			if *msg.To != bondingAddr {
+				return nil, errors.New("getTranscoderPoolSize sent to wrong contract")
+			}
+			return bondingABI.Methods["getTranscoderPoolSize"].Outputs.Pack(big.NewInt(s.pool.Load()))
+		}
+		return nil, errors.New("unstubbed selector")
+	}
+	s.rpc.HeaderByNumberFunc = func(_ context.Context, n *big.Int) (*ethtypes.Header, error) {
+		if n != nil {
+			return nil, errors.New("clock must ask for the head, not a specific block")
+		}
+		return &ethtypes.Header{Number: big.NewInt(s.head.Load())}, nil
+	}
+	return s
+}
+
+func newClock(t *testing.T, s *chainStub, interval time.Duration) *Clock {
+	t.Helper()
+	c, err := New(context.Background(), Config{
+		RoundsManager:   roundsAddr,
+		BondingManager:  bondingAddr,
+		RefreshInterval: interval,
+	}, s.rpc)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return c
 }
 
 func TestClock_InitialSync(t *testing.T) {
-	rounds := ethcommon.HexToAddress("0x0000000000000000000000000000000000000010")
-	bonding := ethcommon.HexToAddress("0x0000000000000000000000000000000000000020")
-
-	roundResHex := func() string {
-		out, _ := roundsABI.Methods["lastInitializedRound"].Outputs.Pack(big.NewInt(12345))
-		return "0x" + hex.EncodeToString(out)
-	}()
-	hashResHex := func() string {
-		var h [32]byte
-		for i := range h {
-			h[i] = 0xab
-		}
-		out, _ := roundsABI.Methods["blockHashForRound"].Outputs.Pack(h)
-		return "0x" + hex.EncodeToString(out)
-	}()
-	poolResHex := func() string {
-		out, _ := bondingABI.Methods["getTranscoderPoolSize"].Outputs.Pack(big.NewInt(100))
-		return "0x" + hex.EncodeToString(out)
-	}()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req rpcReq
-		_ = json.Unmarshal(body, &req)
-		w.Header().Set("Content-Type", "application/json")
-		switch req.Method {
-		case "eth_call":
-			var call struct{ Data, Input string }
-			_ = json.Unmarshal(req.Params[0], &call)
-			data := call.Data
-			if data == "" {
-				data = call.Input
-			}
-			selector := ""
-			if len(data) >= 10 {
-				selector = strings.ToLower(data[:10])
-			}
-			lirSel := "0x" + hex.EncodeToString(roundsABI.Methods["lastInitializedRound"].ID)
-			bhrSel := "0x" + hex.EncodeToString(roundsABI.Methods["blockHashForRound"].ID)
-			poolSel := "0x" + hex.EncodeToString(bondingABI.Methods["getTranscoderPoolSize"].ID)
-			var result string
-			switch selector {
-			case strings.ToLower(lirSel):
-				result = roundResHex
-			case strings.ToLower(bhrSel):
-				result = hashResHex
-			case strings.ToLower(poolSel):
-				result = poolResHex
-			default:
-				http.Error(w, "unknown selector "+selector, 400)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(rpcResp{JSONRPC: "2.0", Result: result, ID: req.ID})
-		case "eth_blockNumber":
-			_ = json.NewEncoder(w).Encode(rpcResp{JSONRPC: "2.0", Result: "0x1234", ID: req.ID})
-		default:
-			http.Error(w, "unstubbed method "+req.Method, 400)
-		}
-	}))
-	defer srv.Close()
-	cl, err := ethclient.Dial(srv.URL)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer cl.Close()
-
-	c, err := New(context.Background(), Config{
-		RoundsManager:   rounds,
-		BondingManager:  bonding,
-		RefreshInterval: 30 * time.Second,
-	}, cl)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newChainStub(t)
+	c := newClock(t, s, time.Hour)
 
 	if got := c.LastInitializedRound(); got != 12345 {
-		t.Errorf("round = %d; want 12345", got)
+		t.Errorf("LastInitializedRound = %d; want 12345", got)
 	}
 	hash := c.LastInitializedL1BlockHash()
-	if len(hash) != 32 || hash[0] != 0xab {
-		t.Errorf("hash = %x", hash)
+	if len(hash) != 32 || hash[31] != byte(12345%256) {
+		t.Errorf("LastInitializedL1BlockHash = %x; want 32 bytes tagged with the round", hash)
 	}
-	if got := c.LastSeenL1Block(); got.Cmp(big.NewInt(0x1234)) != 0 {
-		t.Errorf("l1 block = %s; want 0x1234", got.String())
+	if got := c.LastSeenL1Block(); got.Int64() != 777 {
+		t.Errorf("LastSeenL1Block = %s; want 777", got)
 	}
-	if got := c.GetTranscoderPoolSize(); got.Cmp(big.NewInt(100)) != 0 {
-		t.Errorf("poolSize = %s; want 100", got.String())
+	if got := c.GetTranscoderPoolSize(); got.Int64() != 100 {
+		t.Errorf("GetTranscoderPoolSize = %s; want 100", got)
+	}
+	// Returned slices and ints are copies: mutating them must not touch
+	// the clock's state.
+	hash[0] = 0xff
+	if c.LastInitializedL1BlockHash()[0] == 0xff {
+		t.Error("LastInitializedL1BlockHash returned an aliased slice")
 	}
 }
 
-func TestClock_BlockHashCache(t *testing.T) {
-	var bhrCalls int32
-	rounds := ethcommon.HexToAddress("0x0000000000000000000000000000000000000010")
-	bonding := ethcommon.HexToAddress("0x0000000000000000000000000000000000000020")
-
-	roundResHex := func() string {
-		out, _ := roundsABI.Methods["lastInitializedRound"].Outputs.Pack(big.NewInt(7))
-		return "0x" + hex.EncodeToString(out)
-	}()
-	hashResHex := func() string {
-		var h [32]byte
-		out, _ := roundsABI.Methods["blockHashForRound"].Outputs.Pack(h)
-		return "0x" + hex.EncodeToString(out)
-	}()
-	poolResHex := func() string {
-		out, _ := bondingABI.Methods["getTranscoderPoolSize"].Outputs.Pack(big.NewInt(1))
-		return "0x" + hex.EncodeToString(out)
-	}()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		var req rpcReq
-		_ = json.Unmarshal(body, &req)
-		w.Header().Set("Content-Type", "application/json")
-		switch req.Method {
-		case "eth_call":
-			var call struct{ Data, Input string }
-			_ = json.Unmarshal(req.Params[0], &call)
-			data := call.Data
-			if data == "" {
-				data = call.Input
-			}
-			selector := strings.ToLower(data[:10])
-			bhrSel := strings.ToLower("0x" + hex.EncodeToString(roundsABI.Methods["blockHashForRound"].ID))
-			lirSel := strings.ToLower("0x" + hex.EncodeToString(roundsABI.Methods["lastInitializedRound"].ID))
-			poolSel := strings.ToLower("0x" + hex.EncodeToString(bondingABI.Methods["getTranscoderPoolSize"].ID))
-			switch selector {
-			case lirSel:
-				_ = json.NewEncoder(w).Encode(rpcResp{JSONRPC: "2.0", Result: roundResHex, ID: req.ID})
-			case bhrSel:
-				atomic.AddInt32(&bhrCalls, 1)
-				_ = json.NewEncoder(w).Encode(rpcResp{JSONRPC: "2.0", Result: hashResHex, ID: req.ID})
-			case poolSel:
-				_ = json.NewEncoder(w).Encode(rpcResp{JSONRPC: "2.0", Result: poolResHex, ID: req.ID})
-			default:
-				http.Error(w, "unknown selector", 400)
-			}
-		case "eth_blockNumber":
-			_ = json.NewEncoder(w).Encode(rpcResp{JSONRPC: "2.0", Result: "0x1", ID: req.ID})
-		}
-	}))
-	defer srv.Close()
-	cl, _ := ethclient.Dial(srv.URL)
-	defer cl.Close()
-	c, err := New(context.Background(), Config{RoundsManager: rounds, BondingManager: bonding, RefreshInterval: time.Hour}, cl)
-	if err != nil {
-		t.Fatalf("New: %v", err)
+func TestClock_BlockHashCachedPerRound(t *testing.T) {
+	s := newChainStub(t)
+	c := newClock(t, s, time.Hour)
+	if got := s.hashCalls.Load(); got != 1 {
+		t.Fatalf("blockHashForRound calls after initial sync = %d; want 1", got)
 	}
-
-	if got := atomic.LoadInt32(&bhrCalls); got != 1 {
-		t.Errorf("blockHashForRound calls after first sync = %d; want 1", got)
-	}
-	// Manually re-call refresh: same round, cache hit, no extra RPC.
+	// Same round: cache hit, no new call.
 	if err := c.refresh(context.Background()); err != nil {
-		t.Fatalf("refresh: %v", err)
+		t.Fatal(err)
 	}
-	if got := atomic.LoadInt32(&bhrCalls); got != 1 {
-		t.Errorf("blockHashForRound calls after second sync = %d; want still 1 (cached)", got)
+	if got := s.hashCalls.Load(); got != 1 {
+		t.Errorf("blockHashForRound calls after same-round refresh = %d; want 1", got)
+	}
+	// Round advances: exactly one more call, and the hash follows it.
+	s.round.Store(12346)
+	if err := c.refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.hashCalls.Load(); got != 2 {
+		t.Errorf("blockHashForRound calls after round advance = %d; want 2", got)
+	}
+	if c.LastInitializedRound() != 12346 || c.LastInitializedL1BlockHash()[31] != byte(12346%256) {
+		t.Errorf("state did not follow the round: round=%d hash=%x", c.LastInitializedRound(), c.LastInitializedL1BlockHash())
+	}
+}
+
+// A refresh that fails on the RPC leaves the last-good state in place
+// and the next refresh recovers: the same shape as an endpoint failing
+// over mid-poll.
+func TestClock_RefreshFailureKeepsLastGoodThenRecovers(t *testing.T) {
+	s := newChainStub(t)
+	c := newClock(t, s, time.Hour)
+
+	s.round.Store(20000)
+	s.head.Store(800)
+	s.rpc.InjectError("CallContract", errors.New("connection refused"))
+	err := c.refresh(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "lastInitializedRound") {
+		t.Fatalf("expected the failing read to be named, got %v", err)
+	}
+	if c.LastInitializedRound() != 12345 || c.LastSeenL1Block().Int64() != 777 {
+		t.Fatalf("failed refresh must not touch state: round=%d head=%s", c.LastInitializedRound(), c.LastSeenL1Block())
+	}
+
+	if err := c.refresh(context.Background()); err != nil {
+		t.Fatalf("recovery refresh: %v", err)
+	}
+	if c.LastInitializedRound() != 20000 || c.LastSeenL1Block().Int64() != 800 {
+		t.Fatalf("state after recovery: round=%d head=%s", c.LastInitializedRound(), c.LastSeenL1Block())
+	}
+}
+
+func TestClock_HeadHeaderFailureIsNamed(t *testing.T) {
+	s := newChainStub(t)
+	c := newClock(t, s, time.Hour)
+	s.rpc.InjectError("HeaderByNumber", errors.New("boom"))
+	if err := c.refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "head header") {
+		t.Fatalf("err = %v", err)
+	}
+	s.rpc.HeaderByNumberFunc = func(context.Context, *big.Int) (*ethtypes.Header, error) { return &ethtypes.Header{}, nil }
+	if err := c.refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("nil head number: err = %v", err)
+	}
+}
+
+func TestClock_StartRefreshesAndStopIsIdempotent(t *testing.T) {
+	s := newChainStub(t)
+	c := newClock(t, s, 5*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.Start(ctx)
+	s.round.Store(50000)
+	deadline := time.Now().Add(2 * time.Second)
+	for c.LastInitializedRound() != 50000 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if c.LastInitializedRound() != 50000 {
+		t.Fatal("refresh loop never observed the new round")
+	}
+	c.Stop()
+	c.Stop()
+}
+
+func TestClock_ConstructionErrors(t *testing.T) {
+	s := newChainStub(t)
+	ctx := context.Background()
+	if _, err := New(ctx, Config{RoundsManager: roundsAddr, BondingManager: bondingAddr}, nil); err == nil {
+		t.Error("nil client must error")
+	}
+	if _, err := New(ctx, Config{BondingManager: bondingAddr}, s.rpc); err == nil {
+		t.Error("empty RoundsManager must error")
+	}
+	if _, err := New(ctx, Config{RoundsManager: roundsAddr}, s.rpc); err == nil {
+		t.Error("empty BondingManager must error")
+	}
+	s.rpc.InjectError("CallContract", errors.New("down"))
+	if _, err := New(ctx, Config{RoundsManager: roundsAddr, BondingManager: bondingAddr}, s.rpc); err == nil || !strings.Contains(err.Error(), "initial sync") {
+		t.Errorf("initial sync failure must abort construction, got %v", err)
+	}
+}
+
+func TestClock_ZeroValuesBeforeSync(t *testing.T) {
+	c := &Clock{}
+	if c.LastInitializedRound() != 0 || c.LastInitializedL1BlockHash() != nil || c.LastSeenL1Block().Sign() != 0 || c.GetTranscoderPoolSize().Sign() != 0 {
+		t.Fatal("unsynced clock must report zero values")
 	}
 }

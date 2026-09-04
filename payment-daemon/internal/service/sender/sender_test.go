@@ -67,8 +67,8 @@ type fakeFetcher struct{}
 
 func (fakeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
 	return &senderTypes.TicketParams{
-		Recipient:         append([]byte(nil), req.Recipient...),
-		FaceValue:         new(big.Int).Set(req.FaceValue),
+		Recipient: append([]byte(nil), req.Recipient...),
+		FaceValue: new(big.Int).Set(req.FaceValue),
 		// MaxWinProb: every ticket credits its full face value, so one
 		// ticket funds a request exactly. A win_prob of 0 credits
 		// nothing at any batch size, which is now refused rather than
@@ -107,8 +107,8 @@ func (f *rotatingFetcher) Fetch(_ context.Context, req sender.TicketParamsReques
 		hash = []byte("0123456789abcdef0123456789abcde2")
 	}
 	return &senderTypes.TicketParams{
-		Recipient:         append([]byte(nil), req.Recipient...),
-		FaceValue:         new(big.Int).Set(req.FaceValue),
+		Recipient: append([]byte(nil), req.Recipient...),
+		FaceValue: new(big.Int).Set(req.FaceValue),
 		// MaxWinProb: every ticket credits its full face value, so one
 		// ticket funds a request exactly. A win_prob of 0 credits
 		// nothing at any batch size, which is now refused rather than

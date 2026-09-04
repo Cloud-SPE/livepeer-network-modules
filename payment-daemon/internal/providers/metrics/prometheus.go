@@ -62,6 +62,9 @@ type Prometheus struct {
 	// Daemon-level
 	uptimeSeconds prometheus.Gauge
 	buildInfo     *prometheus.GaugeVec
+
+	// chain-commons series, registered by name on first emission.
+	dyn dynamicVecs
 }
 
 // NewPrometheus builds the production Recorder. It installs the standard
@@ -73,7 +76,11 @@ func NewPrometheus() *Prometheus {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
-	p := &Prometheus{reg: reg}
+	p := &Prometheus{reg: reg, dyn: dynamicVecs{
+		counters:   map[string]*dynamicCounter{},
+		gauges:     map[string]*dynamicGauge{},
+		histograms: map[string]*dynamicHistogram{},
+	}}
 
 	counterVec := func(name, help string, labels ...string) *prometheus.CounterVec {
 		v := prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: namespace, Name: name, Help: help}, labels)

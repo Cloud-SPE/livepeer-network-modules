@@ -3,8 +3,9 @@
 // unix socket. Mode is chosen at boot via `--mode`; it does not change
 // at runtime.
 //
-// In production mode (--chain-rpc-urls set), the daemon dials the first
-// healthy Arbitrum One RPC in the list, resolves the Livepeer Controller
+// In production mode (--chain-rpc-urls set), the daemon opens one
+// chain-commons multi-RPC client over the whole list — every chain call
+// fails over across the entries — resolves the Livepeer Controller
 // addresses, and runs against real on-chain state (TicketBroker,
 // RoundsManager, BondingManager). The dev-mode path (no --chain-rpc-urls)
 // keeps the daemon compileable and testable without any chain
@@ -20,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"os"
@@ -30,17 +32,24 @@ import (
 	"time"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethclient"
+
+	cchain "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	chaincfg "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/controller"
+	ctrleth "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/controller/eth"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
+	rpcmulti "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc/multi"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/broker/ticketbroker"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/chaincommons"
 	clockonchain "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/clock/onchain"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devbroker"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devkeystore"
-	gasprice "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/gasprice/onchain"
+	gasprice "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/gasprice/oracle"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/inmemory"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/jsonfile"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
@@ -70,7 +79,7 @@ func main() {
 		mintRetention         = flag.Duration("mint-retention", 24*time.Hour, "sender: how long a mint response stays replayable. Keys are remembered forever regardless — an expired key is refused, never re-minted")
 		payeeAdminToken       = flag.String("payee-admin-token", "", "Bearer token required for receiver-only PayeeAdmin RPCs. Empty disables authenticated admin access.")
 		payerAdminToken       = flag.String("payer-admin-token", "", "Bearer token required for sender-only PayerAdmin RPCs (dev-clock round advancement, for live conformance). Empty disables admin access. Refused outright on a chain clock.")
-		chainRPCURLs          = flag.String("chain-rpc-urls", "", "Comma-separated JSON-RPC endpoints, primary first (production). The daemon dials them in order at startup and uses the first that connects and reports the expected chain id. Empty = DEV MODE: chain providers are in-memory and the signing key is a deterministic throwaway. The key is REAL secp256k1 — dev payments verify like production ones — but it is published and must never hold value.")
+		chainRPCURLs          = flag.String("chain-rpc-urls", "", "Comma-separated JSON-RPC endpoints, primary first (production). Every chain read and write fails over across the list. Empty = DEV MODE: chain providers are in-memory and the signing key is a deterministic throwaway. The key is REAL secp256k1 — dev payments verify like production ones — but it is published and must never hold value.")
 		devKeyHex             = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc-urls is set.")
 		keystorePath          = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc-urls is set.")
 		keystorePwFile        = flag.String("keystore-password-file", "", "Path to a file containing the keystore unlock password. Mutually exclusive with LIVEPEER_KEYSTORE_PASSWORD.")
@@ -115,7 +124,11 @@ func main() {
 			*socketPath = "/var/run/livepeer/payment-daemon.sock"
 		}
 	}
-	rpcURLs := splitCSV(*chainRPCURLs)
+	rpcURLs, err := chaincfg.ParseRPCURLs(*chainRPCURLs)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(configErrExitCode)
+	}
 	if len(rpcURLs) > 0 && *devKeyHex != "" {
 		fmt.Fprintln(os.Stderr, "--dev-signing-key-hex is rejected when --chain-rpc-urls is set")
 		os.Exit(configErrExitCode)
@@ -202,6 +215,11 @@ type bootConfig struct {
 	clockRefreshInterval    time.Duration
 	gasPriceRefreshInterval time.Duration
 	metricsListen           string
+
+	// rpcPolicy overrides chain-commons's default retry / circuit-breaker
+	// tuning. nil = chaincfg.Default().RPC. Tests use it to make failover
+	// fast; production always runs the default.
+	rpcPolicy *chaincfg.RPCPolicy
 }
 
 type configError struct{ err error }
@@ -210,12 +228,17 @@ func (e *configError) Error() string { return e.err.Error() }
 func (e *configError) Unwrap() error { return e.err }
 
 func run(logger *slog.Logger, cfg bootConfig) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runWithContext(ctx, logger, cfg)
+}
+
+// runWithContext is run without the signal wiring: the daemon serves
+// until ctx is cancelled. Tests drive it directly.
+func runWithContext(ctx context.Context, logger *slog.Logger, cfg bootConfig) error {
 	if err := ensureParentDir(cfg.socketPath); err != nil {
 		return fmt.Errorf("prepare socket dir: %w", err)
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// Build the metrics Recorder. Prometheus when --metrics-listen is set,
 	// otherwise a zero-cost Noop. The recorder threads through the gRPC
@@ -251,29 +274,31 @@ func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec met
 		clock = devclock.New()
 		gp = providers.NewDevGasPrice()
 	} else {
-		client, addrs, err := dialAndResolve(ctx, logger, cfg)
+		deps, err := openChain(ctx, logger, rec, cfg)
 		if err != nil {
 			return err
 		}
+		defer deps.close()
 		_ = gp // sender doesn't need a gas-price provider
 		broker, err = ticketbroker.New(ticketbroker.Config{
-			Address: addrs.TicketBroker,
+			Address: deps.addrs.TicketBroker,
 			ChainID: big.NewInt(cfg.expectedChainID),
 			Logger:  logger,
-		}, client, nil, nil)
+		}, deps.rpc, nil, nil)
 		if err != nil {
 			return fmt.Errorf("build broker: %w", err)
 		}
 		oc, err := clockonchain.New(ctx, clockonchain.Config{
-			RoundsManager:   addrs.RoundsManager,
-			BondingManager:  addrs.BondingManager,
+			RoundsManager:   deps.addrs.RoundsManager,
+			BondingManager:  deps.addrs.BondingManager,
 			RefreshInterval: cfg.clockRefreshInterval,
 			Logger:          logger,
-		}, client)
+		}, deps.rpc)
 		if err != nil {
 			return fmt.Errorf("build clock: %w", err)
 		}
 		oc.Start(ctx)
+		defer oc.Stop()
 		clock = oc
 	}
 	broker = providers.NewMeteredBroker(broker, rec)
@@ -372,10 +397,11 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: cfg.payeeAdminToken}, cfg.socketPath, rec, logger.With("component", "grpc"))
 
 	if len(cfg.chainRPCURLs) > 0 {
-		client, addrs, err := dialAndResolve(ctx, logger, cfg)
+		deps, err := openChain(ctx, logger, rec, cfg)
 		if err != nil {
 			return err
 		}
+		defer deps.close()
 
 		txSigner, ok := keystore.(providers.TxSigner)
 		if !ok {
@@ -386,7 +412,7 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 			MultiplierPct:   cfg.gasPriceMultPct,
 			RefreshInterval: cfg.gasPriceRefreshInterval,
 			Logger:          logger,
-		}, client)
+		}, deps.rpc)
 		if err != nil {
 			return fmt.Errorf("build gasprice: %w", err)
 		}
@@ -394,11 +420,11 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 		defer gp.Stop()
 
 		oc, err := clockonchain.New(ctx, clockonchain.Config{
-			RoundsManager:   addrs.RoundsManager,
-			BondingManager:  addrs.BondingManager,
+			RoundsManager:   deps.addrs.RoundsManager,
+			BondingManager:  deps.addrs.BondingManager,
 			RefreshInterval: cfg.clockRefreshInterval,
 			Logger:          logger,
-		}, client)
+		}, deps.rpc)
 		if err != nil {
 			return fmt.Errorf("build clock: %w", err)
 		}
@@ -406,21 +432,21 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 		defer oc.Stop()
 
 		broker, err := ticketbroker.New(ticketbroker.Config{
-			Address:       addrs.TicketBroker,
+			Address:       deps.addrs.TicketBroker,
 			Claimant:      ethcommon.BytesToAddress(recipient),
 			From:          ethcommon.BytesToAddress(keystore.Address()),
 			ChainID:       big.NewInt(cfg.expectedChainID),
 			RedeemGas:     cfg.redeemGas,
 			Confirmations: cfg.redemptionConfirmations,
 			Logger:        logger,
-		}, client, gp, txSigner)
+		}, deps.rpc, gp, txSigner)
 		if err != nil {
 			return fmt.Errorf("build broker: %w", err)
 		}
 		meteredBroker := providers.NewMeteredBroker(broker, rec)
 
 		// Preflight: fail fast if signing wallet has no ETH for gas.
-		bal, err := client.BalanceAt(ctx, ethcommon.BytesToAddress(keystore.Address()), nil)
+		bal, err := deps.rpc.BalanceAt(ctx, ethcommon.BytesToAddress(keystore.Address()), nil)
 		if err != nil {
 			logger.Warn("preflight balance check failed (continuing)", "err", err)
 		} else if bal.Sign() == 0 {
@@ -446,38 +472,87 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 
 		logger.Info("chain integration active",
 			"controller", cfg.controllerAddrHex,
-			"ticketbroker", addrs.TicketBroker.Hex(),
-			"rounds_manager", addrs.RoundsManager.Hex(),
-			"bonding_manager", addrs.BondingManager.Hex(),
+			"ticketbroker", deps.addrs.TicketBroker.Hex(),
+			"rounds_manager", deps.addrs.RoundsManager.Hex(),
+			"bonding_manager", deps.addrs.BondingManager.Hex(),
 		)
 	}
 
 	return runServerWithCtx(ctx, logger, srv)
 }
 
-// dialAndResolve dials the JSON-RPC endpoints in order, keeps the first
-// whose chain ID matches `cfg.expectedChainID`, and resolves the contract
-// addresses via the Controller (honoring per-contract overrides).
-func dialAndResolve(ctx context.Context, logger *slog.Logger, cfg bootConfig) (*ethclient.Client, chain.Addresses, error) {
-	client, err := chain.DialFirstHealthy(ctx, logger, cfg.chainRPCURLs, cfg.expectedChainID)
-	if err != nil {
-		return nil, chain.Addresses{}, &configError{err: err}
-	}
-	logger.Info("chain id verified", "chain_id", cfg.expectedChainID)
+// chainDeps is what a chain-mode boot shares between providers: the one
+// failover RPC client, the Controller-resolved contract addresses, and
+// the close that releases both.
+type chainDeps struct {
+	rpc   rpc.RPC
+	addrs controller.Addresses
+	close func()
+}
 
-	controllerAddr := ethcommon.HexToAddress(cfg.controllerAddrHex)
-	r := chain.NewResolver(client, controllerAddr)
-	overrides := chain.Overrides{
-		TicketBroker:   ethcommon.HexToAddress(cfg.ticketBrokerAddrHex),
-		RoundsManager:  ethcommon.HexToAddress(cfg.roundsManagerAddrHex),
-		BondingManager: ethcommon.HexToAddress(cfg.bondingManagerAddrHex),
+// openChain opens the multi-RPC client over --chain-rpc-urls, verifies
+// the chain id, and resolves the contract addresses via the Controller
+// (honoring per-contract overrides). A dead primary is not fatal: the
+// client fails over per call and the circuit breaker parks it.
+func openChain(ctx context.Context, logger *slog.Logger, rec metrics.Recorder, cfg bootConfig) (*chainDeps, error) {
+	policy := chaincfg.Default().RPC
+	if cfg.rpcPolicy != nil {
+		policy = *cfg.rpcPolicy
 	}
-	addrs, err := r.Resolve(ctx, overrides)
+	client, err := rpcmulti.Open(rpcmulti.Options{
+		URLs:    cfg.chainRPCURLs,
+		Policy:  policy,
+		Logger:  chaincommons.Logger(logger.With("component", "rpc")),
+		Metrics: chaincommons.Recorder(rec),
+	})
 	if err != nil {
-		client.Close()
-		return nil, chain.Addresses{}, fmt.Errorf("resolve contracts: %w", err)
+		return nil, &configError{err: fmt.Errorf("open rpc: %w", err)}
 	}
-	return client, addrs, nil
+	if err := chain.CheckChainID(ctx, client, cfg.expectedChainID); err != nil {
+		_ = client.Close()
+		return nil, &configError{err: err}
+	}
+	logger.Info("chain id verified", "chain_id", cfg.expectedChainID, "endpoints", len(cfg.chainRPCURLs))
+
+	overrides := map[string]cchain.Address{}
+	for name, hex := range map[string]string{
+		"TicketBroker":   cfg.ticketBrokerAddrHex,
+		"RoundsManager":  cfg.roundsManagerAddrHex,
+		"BondingManager": cfg.bondingManagerAddrHex,
+	} {
+		if a := ethcommon.HexToAddress(hex); hex != "" && a != (ethcommon.Address{}) {
+			overrides[name] = a
+		}
+	}
+	ctrl, err := ctrleth.New(ctx, ctrleth.Options{
+		RPC:               client,
+		ControllerAddr:    ethcommon.HexToAddress(cfg.controllerAddrHex),
+		ContractOverrides: overrides,
+		RefreshInterval:   time.Hour,
+		Logger:            chaincommons.Logger(logger.With("component", "controller")),
+	})
+	if err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("resolve contracts: %w", err)
+	}
+	closeAll := func() {
+		if c, ok := ctrl.(io.Closer); ok {
+			_ = c.Close()
+		}
+		_ = client.Close()
+	}
+	addrs := ctrl.Addresses()
+	for name, a := range map[string]cchain.Address{
+		"TicketBroker":   addrs.TicketBroker,
+		"RoundsManager":  addrs.RoundsManager,
+		"BondingManager": addrs.BondingManager,
+	} {
+		if a == (cchain.Address{}) {
+			closeAll()
+			return nil, fmt.Errorf("resolve contracts: resolved %s is zero address", name)
+		}
+	}
+	return &chainDeps{rpc: client, addrs: addrs, close: closeAll}, nil
 }
 
 // buildKeyStore returns the providers.KeyStore for the given boot
@@ -603,27 +678,17 @@ func ensureParentDir(p string) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
+// chainStatus names the endpoints by host only: RPC providers put API
+// keys in the path, and this goes to a log line.
 func chainStatus(urls []string) string {
 	if len(urls) == 0 {
 		return "dev (fakes)"
 	}
 	hosts := make([]string, len(urls))
 	for i, u := range urls {
-		hosts[i] = chain.URLHost(u)
+		hosts[i] = chaincommons.Host(u)
 	}
 	return "production (" + strings.Join(hosts, ",") + ")"
-}
-
-// splitCSV splits a comma-separated flag value, trimming whitespace and
-// dropping empty items, so "" and " , " both mean "not set".
-func splitCSV(raw string) []string {
-	var out []string
-	for _, part := range strings.Split(raw, ",") {
-		if p := strings.TrimSpace(part); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 func decodeHex40(hex40 string) ([]byte, error) {

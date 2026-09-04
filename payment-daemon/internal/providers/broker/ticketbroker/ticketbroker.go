@@ -23,7 +23,6 @@ import (
 	"log/slog"
 	"math/big"
 	"strings"
-	"sync"
 
 	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -82,14 +81,6 @@ type Broker struct {
 	client  rpc.RPC
 	intents Intents
 	log     *slog.Logger
-
-	// submitMu serializes the submit / inspect / resubmit step. The
-	// intent manager's idempotency is keyed on the ticket hash, but two
-	// concurrent first submits of the same key can both miss the read
-	// and both dispatch a processor; one redemption per ticket is this
-	// broker's promise, so the critical section is held here. Waiting
-	// happens outside the lock.
-	submitMu sync.Mutex
 }
 
 // New constructs a Broker. client is required. intents is required for
@@ -284,9 +275,9 @@ func (b *Broker) RedeemWinningTicket(ctx context.Context, t *providers.Ticket, s
 // submitOrRedrive files the redemption intent and, when an earlier
 // attempt at this ticket ended in a non-revert failure, re-drives it.
 func (b *Broker) submitOrRedrive(ctx context.Context, hash, data []byte, sender []byte, logCtx *slog.Logger) (txintent.IntentID, error) {
-	b.submitMu.Lock()
-	defer b.submitMu.Unlock()
-
+	// One redemption per ticket is the manager's promise: Submit
+	// serialises concurrent first submits of one key, and Resubmit only
+	// moves a failed intent, so nothing here needs a lock of its own.
 	id, err := b.intents.Submit(ctx, txintent.Params{
 		Kind:      IntentKind,
 		KeyParams: hash,
@@ -321,7 +312,13 @@ func (b *Broker) submitOrRedrive(ctx context.Context, hash, data []byte, sender 
 			"reason", reasonString(cur.FailedReason),
 		)
 		if err := b.intents.Resubmit(ctx, id, data); err != nil {
-			return txintent.IntentID{}, fmt.Errorf("resubmit redemption intent: %w", err)
+			// A concurrent caller may have re-driven it first; Resubmit
+			// refuses anything but a failed intent. If it is no longer
+			// failed, someone else's re-drive is the one to wait on.
+			again, serr := b.intents.Status(ctx, id)
+			if serr != nil || again.Status == txintent.StatusFailed {
+				return txintent.IntentID{}, fmt.Errorf("resubmit redemption intent: %w", err)
+			}
 		}
 	}
 	return id, nil

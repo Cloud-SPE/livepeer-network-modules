@@ -3,6 +3,8 @@
 //
 //   - currentRoundInitialized() → bool
 //   - currentRound() → uint256
+//   - lastInitializedRound() → uint256
+//   - blockHashForRound(uint256) → bytes32
 //
 // Write-side calldata (initializeRound) lives in protocol-daemon's
 // roundsmanager package, since it is coupled to the round-init service.
@@ -26,6 +28,8 @@ import (
 var (
 	selectorCurrentRoundInitialized = crypto.Keccak256([]byte("currentRoundInitialized()"))[:4]
 	selectorCurrentRound            = crypto.Keccak256([]byte("currentRound()"))[:4]
+	selectorLastInitializedRound    = crypto.Keccak256([]byte("lastInitializedRound()"))[:4]
+	selectorBlockHashForRound       = crypto.Keccak256([]byte("blockHashForRound(uint256)"))[:4]
 )
 
 // Bindings is the read-only surface for RoundsManager.
@@ -88,6 +92,54 @@ func (b *Bindings) CurrentRound(ctx context.Context) (chain.RoundNumber, error) 
 		return 0, fmt.Errorf("roundsmanager.currentRound: short return (%d bytes)", len(out))
 	}
 	return chain.RoundNumber(decodeUint64(out[:32])), nil
+}
+
+// LastInitializedRound calls RoundsManager.lastInitializedRound(): the
+// most recent round whose initializeRound() has landed, and therefore
+// the most recent round with a non-zero blockHashForRound. Ticket
+// creation rounds are anchored to this, not to currentRound(), because
+// a ticket's creationRoundBlockHash must be readable by the redeemer.
+func (b *Bindings) LastInitializedRound(ctx context.Context) (chain.RoundNumber, error) {
+	addr := b.addr
+	out, err := b.rpc.CallContract(ctx, ethereum.CallMsg{
+		To:   &addr,
+		Data: selectorLastInitializedRound,
+	}, nil)
+	if err != nil {
+		return 0, fmt.Errorf("roundsmanager.lastInitializedRound: %w", err)
+	}
+	if len(out) < 32 {
+		return 0, fmt.Errorf("roundsmanager.lastInitializedRound: short return (%d bytes)", len(out))
+	}
+	return chain.RoundNumber(decodeUint64(out[:32])), nil
+}
+
+// BlockHashForRound calls RoundsManager.blockHashForRound(round): the L1
+// block hash recorded when the round was initialized. Zero for a round
+// that was never initialized.
+func (b *Bindings) BlockHashForRound(ctx context.Context, round chain.RoundNumber) (chain.TxHash, error) {
+	addr := b.addr
+	data := make([]byte, 4+32)
+	copy(data[:4], selectorBlockHashForRound)
+	// uint256 argument: big-endian in the rightmost bytes of the slot.
+	v := uint64(round)
+	for i := 35; i >= 28; i-- {
+		data[i] = byte(v)
+		v >>= 8
+	}
+	out, err := b.rpc.CallContract(ctx, ethereum.CallMsg{
+		To:   &addr,
+		Data: data,
+	}, nil)
+	if err != nil {
+		return chain.TxHash{}, fmt.Errorf("roundsmanager.blockHashForRound(%d): %w", round, err)
+	}
+	if len(out) < 32 {
+		return chain.TxHash{}, fmt.Errorf("roundsmanager.blockHashForRound(%d): short return (%d bytes)", round, len(out))
+	}
+	var h chain.TxHash
+	copy(h[:], out[:32])
+	return h, nil
 }
 
 // decodeUint64 reads a uint256 ABI-encoded value's low 8 bytes as uint64.

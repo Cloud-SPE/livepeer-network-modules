@@ -48,7 +48,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/broker/ticketbroker"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/chaincommons"
-	clockonchain "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/clock/onchain"
+	chainclock "github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/clock/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devbroker"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devkeystore"
@@ -298,16 +298,16 @@ func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec met
 		if err != nil {
 			return fmt.Errorf("build broker: %w", err)
 		}
-		oc, err := clockonchain.New(ctx, clockonchain.Config{
-			RoundsManager:   deps.addrs.RoundsManager,
-			BondingManager:  deps.addrs.BondingManager,
+		oc, err := chainclock.New(ctx, chainclock.Config{
 			RefreshInterval: cfg.clockRefreshInterval,
 			Logger:          logger,
-		}, deps.rpc)
+		}, deps.rpc, deps.ctrl)
 		if err != nil {
 			return fmt.Errorf("build clock: %w", err)
 		}
-		oc.Start(ctx)
+		if err := oc.Start(ctx); err != nil {
+			return fmt.Errorf("start clock: %w", err)
+		}
 		defer oc.Stop()
 		clock = oc
 	}
@@ -429,16 +429,16 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 		gp.Start(ctx)
 		defer gp.Stop()
 
-		oc, err := clockonchain.New(ctx, clockonchain.Config{
-			RoundsManager:   deps.addrs.RoundsManager,
-			BondingManager:  deps.addrs.BondingManager,
+		oc, err := chainclock.New(ctx, chainclock.Config{
 			RefreshInterval: cfg.clockRefreshInterval,
 			Logger:          logger,
-		}, deps.rpc)
+		}, deps.rpc, deps.ctrl)
 		if err != nil {
 			return fmt.Errorf("build clock: %w", err)
 		}
-		oc.Start(ctx)
+		if err := oc.Start(ctx); err != nil {
+			return fmt.Errorf("start clock: %w", err)
+		}
 		defer oc.Stop()
 
 		intents, closeIntents, err := openRedemptionIntents(ctx, logger, rec, cfg, deps, keystore, txSigner, gp)
@@ -499,6 +499,7 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 // the close that releases both.
 type chainDeps struct {
 	rpc   rpc.RPC
+	ctrl  controller.Controller
 	addrs controller.Addresses
 	close func()
 }
@@ -565,7 +566,7 @@ func openChain(ctx context.Context, logger *slog.Logger, rec metrics.Recorder, c
 			return nil, fmt.Errorf("resolve contracts: resolved %s is zero address", name)
 		}
 	}
-	return &chainDeps{rpc: client, addrs: addrs, close: closeAll}, nil
+	return &chainDeps{rpc: client, ctrl: ctrl, addrs: addrs, close: closeAll}, nil
 }
 
 // openRedemptionIntents wires chain-commons's durable transaction state

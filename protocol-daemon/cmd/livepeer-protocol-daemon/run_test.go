@@ -49,16 +49,6 @@ func TestRunDevModeBootShutdown(t *testing.T) {
 	}
 }
 
-func TestSplitCSV(t *testing.T) {
-	got := splitCSV(" a, b ,,c, ")
-	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
-		t.Fatalf("splitCSV = %#v", got)
-	}
-	if got := splitCSV(""); len(got) != 0 {
-		t.Fatalf("splitCSV(empty) = %#v; want []", got)
-	}
-}
-
 func TestBuildLoggerJSON(t *testing.T) {
 	var buf bytes.Buffer
 	l, err := buildLogger("info", "json", &buf)

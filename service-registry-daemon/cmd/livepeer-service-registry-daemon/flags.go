@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	chaincfg "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/config"
 )
 
@@ -86,28 +87,21 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	return cfg, false, nil
 }
 
-// csvList is a flag.Value for a comma-separated list. Entries are
-// trimmed; a blank entry (a stray comma) is a parse error rather than
-// something to skip silently, because an RPC list with a hole in it is
-// almost always a typo in the operator's env file.
+// csvList is the flag.Value for --chain-rpc-urls. Parsing lives in
+// chain-commons so every daemon rejects the same inputs the same way.
 type csvList []string
 
 func (l *csvList) String() string { return strings.Join(*l, ",") }
 
 func (l *csvList) Set(v string) error {
-	if strings.TrimSpace(v) == "" {
+	urls, err := chaincfg.ParseRPCURLs(v)
+	if err != nil {
+		return err
+	}
+	if len(urls) == 0 {
 		return fmt.Errorf("list must not be empty")
 	}
-	parts := strings.Split(v, ",")
-	out := make([]string, 0, len(parts))
-	for i, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			return fmt.Errorf("entry %d is empty", i+1)
-		}
-		out = append(out, p)
-	}
-	*l = out
+	*l = urls
 	return nil
 }
 

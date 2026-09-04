@@ -125,9 +125,12 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	cfg.Chain = chaincfg.Default()
 	cfg.Chain.ChainID = chain.ChainID(*chainID)
 	cfg.Chain.GasLimit = *gasLimit
-	if *chainRPCURLs != "" {
-		cfg.Chain.EthURLs = splitCSV(*chainRPCURLs)
+	urls, err := chaincfg.ParseRPCURLs(*chainRPCURLs)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
 	}
+	cfg.Chain.EthURLs = urls
 	if *controllerAddr != "" {
 		cfg.Chain.ControllerAddr = common.HexToAddress(*controllerAddr)
 	}
@@ -759,18 +762,6 @@ func (s *slogAdapter) Warn(msg string, fields ...logger.Field)  { s.l.Warn(msg, 
 func (s *slogAdapter) Error(msg string, fields ...logger.Field) { s.l.Error(msg, s.toAttrs(fields)...) }
 func (s *slogAdapter) With(fields ...logger.Field) logger.Logger {
 	return &slogAdapter{l: s.l.With(s.toAttrs(fields)...)}
-}
-
-func splitCSV(s string) []string {
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 // shutdownTimeout caps how long lifecycle Run waits for services to drain.

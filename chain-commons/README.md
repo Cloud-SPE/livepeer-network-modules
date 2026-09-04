@@ -28,6 +28,7 @@ Consumed in production by `payment-daemon`, `service-registry-daemon`, and
 - ✅ Both `Store` impls: in-memory (`store/memstore.go`) and BoltDB (`store/bolt`)
 - ✅ `slog`-backed `Logger`; no-op `Recorder` (production decorators live in daemons); system `Clock`
 - ✅ `testing/` fakes for rpc, controller, keystore, gasoracle, receipts, store, metrics, logger, clock
+- ✅ `testing/simchain` — go-ethereum's in-process simulated chain exposed as `rpc.RPC`, with deploy/mine helpers and a call-failing wrapper, for tests that need real signed transactions, nonces and receipts without a network
 - ⏳ `lint/{coverage-gate, layer-check, no-secrets-in-logs}` — policy READMEs only; the Go tools are unimplemented (`.golangci.yml` `depguard` covers most layer rules today)
 
 The interfaces are stable; consumer daemons dial against fakes from `testing/` and switch to real impls without API churn.
@@ -58,6 +59,7 @@ chain-commons/
 │   ├── roundclock/     typed Round events
 │   └── eventlog/       durable log subscriptions
 ├── testing/            fakes for the providers daemons dial against
+│   └── simchain/       simulated chain as rpc.RPC (real txs, no network)
 ├── lint/               coverage-gate, layer-check, no-secrets-in-logs
 │                       (policy READMEs; tools not implemented yet)
 ├── go.mod

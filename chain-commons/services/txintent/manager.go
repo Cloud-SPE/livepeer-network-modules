@@ -177,6 +177,126 @@ func (m *Manager) Submit(ctx context.Context, p Params) (IntentID, error) {
 	return id, nil
 }
 
+// AdoptOption tunes Adopt.
+type AdoptOption func(*adoptOptions)
+
+type adoptOptions struct {
+	broadcastedAt time.Time
+	feeCap        *big.Int
+	tipCap        *big.Int
+}
+
+// WithBroadcastedAt records when the adopted transaction was originally
+// broadcast. Default: the manager clock's now.
+func WithBroadcastedAt(t time.Time) AdoptOption {
+	return func(o *adoptOptions) { o.broadcastedAt = t }
+}
+
+// WithGasCaps records the fee and tip caps the adopted transaction was
+// signed with, so a later replacement bumps from the real values rather
+// than from a fresh oracle read.
+func WithGasCaps(feeCap, tipCap *big.Int) AdoptOption {
+	return func(o *adoptOptions) {
+		o.feeCap = copyBig(feeCap)
+		o.tipCap = copyBig(tipCap)
+	}
+}
+
+// Adopt records a transaction that was broadcast by something other than
+// this Manager — typically the implementation this daemon replaced — as an
+// intent already in StatusSubmitted with one attempt (txHash, nonce), and
+// hands it to the Processor to track to confirmation. Nothing is signed or
+// sent: the tx is already on the network. It exists so an upgrade can take
+// over in-flight work instead of re-sending it.
+//
+// Idempotency is exactly Submit's: the same (Kind, KeyParams) adopted or
+// submitted twice returns the existing IntentID without modification, so
+// an Adopt after a Submit (or vice versa) never yields two intents.
+//
+// p.To, p.CallData, p.Value and p.GasLimit describe the transaction as best
+// the caller knows it; they are only used if the adopted attempt stalls and
+// the Processor has to sign a replacement at the same nonce. Pass
+// WithGasCaps when the original caps are known; otherwise a replacement
+// starts from the gas oracle's current suggestion.
+func (m *Manager) Adopt(ctx context.Context, p Params, txHash chain.TxHash, nonce uint64, opts ...AdoptOption) (IntentID, error) {
+	if p.Kind == "" {
+		return IntentID{}, fmt.Errorf("txintent: Kind is required")
+	}
+	if p.GasLimit == 0 {
+		return IntentID{}, fmt.Errorf("txintent: GasLimit is required (> 0)")
+	}
+	if txHash == (chain.TxHash{}) {
+		return IntentID{}, fmt.Errorf("txintent: Adopt requires a non-zero tx hash")
+	}
+
+	id := ComputeID(p.Kind, p.KeyParams)
+	now := m.clock.Now()
+	o := adoptOptions{broadcastedAt: now}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	existing, err := m.read(id)
+	if err == nil {
+		if m.logger != nil {
+			m.logger.Debug("txintent.adopt.idempotent",
+				logger.String("id", id.Hex()),
+				logger.String("kind", p.Kind),
+				logger.String("status", existing.Status.String()),
+			)
+		}
+		m.metrics.CounterAdd("livepeer_chain_txintent_submit_total",
+			metrics.Labels{"kind": p.Kind, "outcome": "idempotent"}, 1)
+		return id, nil
+	} else if err != store.ErrNotFound {
+		return IntentID{}, fmt.Errorf("txintent: read existing intent: %w", err)
+	}
+
+	value := p.Value
+	if value == nil {
+		value = new(big.Int)
+	}
+	intent := TxIntent{
+		ID:        id,
+		Kind:      p.Kind,
+		KeyParams: append([]byte(nil), p.KeyParams...),
+		To:        p.To,
+		CallData:  append([]byte(nil), p.CallData...),
+		Value:     new(big.Int).Set(value),
+		GasLimit:  p.GasLimit,
+		Metadata:  p.Metadata,
+		Status:    StatusSubmitted,
+		Attempts: []IntentAttempt{{
+			Nonce:         nonce,
+			GasFeeCap:     o.feeCap,
+			GasTipCap:     o.tipCap,
+			SignedTxHash:  txHash,
+			BroadcastedAt: o.broadcastedAt,
+		}},
+		CreatedAt:     now,
+		LastUpdatedAt: now,
+	}
+	if err := m.write(intent); err != nil {
+		return IntentID{}, fmt.Errorf("txintent: persist adopted intent: %w", err)
+	}
+
+	if m.logger != nil {
+		m.logger.Info("txintent.adopt.new",
+			logger.String("id", id.Hex()),
+			logger.String("kind", p.Kind),
+			logger.String("tx", txHash.Hex()),
+			logger.Uint64("nonce", nonce),
+		)
+	}
+	m.metrics.CounterAdd("livepeer_chain_txintent_submit_total",
+		metrics.Labels{"kind": p.Kind, "outcome": "adopted"}, 1)
+
+	if m.processor != nil {
+		go m.processor.Process(context.WithoutCancel(ctx), m, id)
+	}
+	return id, nil
+}
+
 // Status returns the current intent record.
 func (m *Manager) Status(_ context.Context, id IntentID) (TxIntent, error) {
 	return m.read(id)

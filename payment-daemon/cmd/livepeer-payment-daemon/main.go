@@ -37,8 +37,11 @@ import (
 	chaincfg "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/controller"
 	ctrleth "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/controller/eth"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/receipts/reorg"
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
 	rpcmulti "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc/multi"
+	ccbolt "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/store/bolt"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/txintent"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
@@ -70,6 +73,7 @@ func main() {
 		mode          = flag.String("mode", "", "required: 'sender' or 'receiver'")
 		socketPath    = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
 		dbPath        = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB ledger path: receiver sessions, or sender mint-idempotency records")
+		txintentDB    = flag.String("txintent-db", "", "BoltDB path for the redemption transaction-intent store (receiver, chain mode): every redeemWinningTicket the daemon has signed, its nonce and attempts, so a restart resumes in-flight redemptions instead of re-sending them. Empty = txintents.db beside --db.")
 		maxPaymentWei = flag.String("max-payment-wei", "",
 			"sender: REQUIRED in chain mode. Largest funded value this daemon will authorize for a single payment, in wei. "+
 				"A circuit breaker against runaway loops and fat-fingered funding, not a price policy — see --max-price-per-unit.")
@@ -147,10 +151,16 @@ func main() {
 		adminToken = os.Getenv("PAYEE_DAEMON_ADMIN_TOKEN")
 	}
 
+	intentDBPath := *txintentDB
+	if intentDBPath == "" {
+		intentDBPath = filepath.Join(filepath.Dir(*dbPath), "txintents.db")
+	}
+
 	cfg := bootConfig{
 		mode:                  *mode,
 		socketPath:            *socketPath,
 		dbPath:                *dbPath,
+		txintentDBPath:        intentDBPath,
 		mintRetention:         *mintRetention,
 		maxPaymentWei:         *maxPaymentWei,
 		maxPricePerUnit:       *maxPricePerUnit,
@@ -191,6 +201,7 @@ type bootConfig struct {
 	mode                  string
 	socketPath            string
 	dbPath                string
+	txintentDBPath        string
 	mintRetention         time.Duration
 	maxPaymentWei         string
 	maxPricePerUnit       string
@@ -282,9 +293,8 @@ func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec met
 		_ = gp // sender doesn't need a gas-price provider
 		broker, err = ticketbroker.New(ticketbroker.Config{
 			Address: deps.addrs.TicketBroker,
-			ChainID: big.NewInt(cfg.expectedChainID),
 			Logger:  logger,
-		}, deps.rpc, nil, nil)
+		}, deps.rpc, nil)
 		if err != nil {
 			return fmt.Errorf("build broker: %w", err)
 		}
@@ -431,15 +441,18 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 		oc.Start(ctx)
 		defer oc.Stop()
 
+		intents, closeIntents, err := openRedemptionIntents(ctx, logger, rec, cfg, deps, keystore, txSigner, gp)
+		if err != nil {
+			return err
+		}
+		defer closeIntents()
+
 		broker, err := ticketbroker.New(ticketbroker.Config{
-			Address:       deps.addrs.TicketBroker,
-			Claimant:      ethcommon.BytesToAddress(recipient),
-			From:          ethcommon.BytesToAddress(keystore.Address()),
-			ChainID:       big.NewInt(cfg.expectedChainID),
-			RedeemGas:     cfg.redeemGas,
-			Confirmations: cfg.redemptionConfirmations,
-			Logger:        logger,
-		}, deps.rpc, gp, txSigner)
+			Address:   deps.addrs.TicketBroker,
+			Claimant:  ethcommon.BytesToAddress(recipient),
+			RedeemGas: cfg.redeemGas,
+			Logger:    logger,
+		}, deps.rpc, intents)
 		if err != nil {
 			return fmt.Errorf("build broker: %w", err)
 		}
@@ -554,6 +567,84 @@ func openChain(ctx context.Context, logger *slog.Logger, rec metrics.Recorder, c
 	}
 	return &chainDeps{rpc: client, addrs: addrs, close: closeAll}, nil
 }
+
+// openRedemptionIntents wires chain-commons's durable transaction state
+// machine for redeemWinningTicket: a BoltDB intent store of its own
+// (internal/store stays the sole owner of the sessions file), the
+// daemon's unlocked key behind the chain-commons keystore interface,
+// the shared gas oracle with the operator's multiplier applied,
+// reorg-aware confirmation tracking at --redemption-confirmations, and
+// the same failover RPC client everything else uses. Resume runs before
+// the broker exists so a redemption that was in flight when the
+// previous process stopped is tracked to confirmation, not re-sent.
+func openRedemptionIntents(ctx context.Context, logger *slog.Logger, rec metrics.Recorder, cfg bootConfig, deps *chainDeps, ks providers.KeyStore, signer providers.TxSigner, gp *gasprice.GasPrice) (*txintent.Manager, func(), error) {
+	if err := ensureParentDir(cfg.txintentDBPath); err != nil {
+		return nil, nil, fmt.Errorf("txintent db dir: %w", err)
+	}
+	st, err := ccbolt.Open(cfg.txintentDBPath, ccbolt.Options{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("open txintent db %s: %w", cfg.txintentDBPath, err)
+	}
+	fail := func(err error) (*txintent.Manager, func(), error) {
+		_ = st.Close()
+		return nil, nil, err
+	}
+	keystore, err := chaincommons.Keystore(ks, signer)
+	if err != nil {
+		return fail(err)
+	}
+	chainID := cchain.ChainID(cfg.expectedChainID)
+	if chainID == 0 {
+		// --expected-chain-id=0 disables the preflight check; the
+		// processor still has to sign for the chain it is on.
+		chainID, err = deps.rpc.ChainID(ctx)
+		if err != nil {
+			return fail(fmt.Errorf("read chain id for signing: %w", err))
+		}
+	}
+	rcpts, err := reorg.New(reorg.Options{RPC: deps.rpc, Poll: receiptPollInterval})
+	if err != nil {
+		return fail(fmt.Errorf("build receipts tracker: %w", err))
+	}
+	policy := chaincfg.Default().TxIntent
+	proc, err := txintent.NewDefaultProcessor(txintent.ProcessorConfig{
+		Policy:             policy,
+		ChainID:            chainID,
+		ReorgConfirmations: cfg.redemptionConfirmations,
+		GasLimit:           cfg.redeemGas,
+		RPC:                deps.rpc,
+		Keystore:           keystore,
+		Gas:                gp.Oracle(),
+		Receipts:           rcpts,
+		Logger:             chaincommons.Logger(logger.With("component", "txintent")),
+		Metrics:            chaincommons.Recorder(rec),
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build txintent processor: %w", err))
+	}
+	mgr, err := txintent.New(policy, st, nil,
+		chaincommons.Logger(logger.With("component", "txintent")),
+		chaincommons.Recorder(rec), proc)
+	if err != nil {
+		return fail(fmt.Errorf("build txintent manager: %w", err))
+	}
+	if err := mgr.Resume(ctx); err != nil {
+		return fail(fmt.Errorf("resume redemption intents: %w", err))
+	}
+	logger.Info("redemption intent store open",
+		"path", cfg.txintentDBPath,
+		"confirmations", cfg.redemptionConfirmations,
+		"submit_timeout", policy.SubmitTimeout.String(),
+		"max_replacements", policy.MaxReplacements,
+	)
+	return mgr, func() { _ = st.Close() }, nil
+}
+
+// receiptPollInterval is how often the confirmation tracker re-polls a
+// pending redemption's receipt and the head. Arbitrum blocks every
+// ~250ms; 2s keeps the RPC load negligible while bounding confirmation
+// latency to the same figure the previous in-tree loop used.
+const receiptPollInterval = 2 * time.Second
 
 // buildKeyStore returns the providers.KeyStore for the given boot
 // config. In dev mode (no chainRPCURLs) it returns a deterministic

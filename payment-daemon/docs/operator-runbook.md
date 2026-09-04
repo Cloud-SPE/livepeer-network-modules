@@ -112,6 +112,8 @@ before signing.
 | `--redeem-gas` | 500000 | receiver | Estimated gas for a `redeemWinningTicket` tx. Used to compute the face_value floor. Match to the chain you're on; Arbitrum L2 ≈ 500k. |
 | `--gas-price-multiplier-pct` | 200 | receiver | Headroom on the chain's `eth_gasPrice`. 200% = 2.0×. Protects against base-fee spikes between price-read and tx-submit on EIP-1559 chains. **Lower to 100 only on stable-price chains; raise to 300 if your provider's gas estimates are unusually conservative.** |
 | `--validity-window` | 2 | receiver | Rounds a ticket's `CreationRound` may trail `LastInitializedRound` before it is dropped at redemption. |
+| `--redemption-confirmations` | 4 | receiver | Blocks past the receipt before a redemption counts as confirmed. `0` means the default. See §4 "Why redemption-confirmations matters". |
+| `--txintent-db` | `txintents.db` beside `--db` | receiver | BoltDB file for the durable transaction-intent store: every redemption the daemon has signed and where it stands. Same persistent volume as `--db`. See §4 "Durable transaction intents". |
 
 > **Not yet operator-tunable.** The receiver's issued ticket size is
 > currently a compile-time default in
@@ -290,11 +292,44 @@ Configurable via `--redemption-interval` (default 30s). On each tick:
 1. Pop the oldest queued winner that hasn't been submitted.
 2. Run pre-checks (see "Gas validation pre-checks" below). Drop the
    ticket if a check fails.
-3. Submit the redemption transaction via the configured RPC endpoint.
-4. Wait for the receipt.
-5. Wait for **`--redemption-confirmations`** additional blocks (default
-   4) before marking the ticket `MarkRedeemed`.
+3. Ask the contract whether the ticket is already in `usedTickets`. If
+   it is — an earlier attempt landed, or the process that ran before
+   this one did — the ticket is drained locally with no transaction.
+4. File a **transaction intent** for `redeemWinningTicket`, keyed by the
+   ticket hash, and wait for it to reach a terminal state. The intent
+   machine (chain-commons `txintent`) owns the wallet's nonce, the gas
+   caps, replacement of a stalled transaction with a gas bump, reorg
+   recovery, and the wait for **`--redemption-confirmations`** blocks
+   past the receipt (default 4).
+5. On confirmation, mark the ticket `MarkRedeemed` with the tx hash.
 6. Repeat.
+
+A tick has a 5-minute budget. If the intent has not confirmed by then
+the tick ends, the intent keeps going in the background, and the next
+tick files the same key again — which returns the same intent — and
+waits on it. One ticket never produces two transactions.
+
+### Durable transaction intents (`--txintent-db`)
+
+Every redemption the daemon signs is recorded before it is broadcast, in
+a BoltDB file of its own (`--txintent-db`, default `txintents.db` beside
+`--db`): the calldata, the nonce, every attempt's hash and gas caps, and
+the terminal outcome. On start the daemon resumes every non-terminal
+intent from that file and tracks it to confirmation instead of signing
+a new transaction for the same ticket.
+
+That file is the wallet's nonce ledger. Keep it on the same persistent
+volume as `--db`, and snapshot the two together: a `sessions.db` from
+after a redemption paired with a `txintents.db` from before it would
+re-send that redemption.
+
+**Upgrading from a build without an intent store** (any image built
+before plan 0048): stop the daemon, upgrade, start. No drain is needed —
+a redemption the old loop had broadcast is caught by the `usedTickets`
+pre-check once it mines, and one that never mined is re-sent by the
+new loop from the queue exactly as the old one would have. Draining the
+queue first (`livepeer_payment_redemption_queue_depth` at 0 before
+stopping) remains the conservative choice and costs nothing but time.
 
 ### Why redemption-confirmations matters
 
@@ -306,7 +341,9 @@ a longer window is safer but defers revenue. Tune for the chain:
 - **Arbitrum One**: 4 (default) is appropriate. Reorgs within Arbitrum
   Nitro are extremely rare past a few blocks.
 - **L1 mainnet**: use 12+ for safety against typical reorgs.
-- **Test L2s**: 0 (return on first receipt) is fine for development.
+- **Test L2s**: the intent machine treats `0` as the default of 4;
+  there is no "return on first receipt" setting. Use `1` for the
+  fastest confirmation in development.
 
 ### Gas validation pre-checks
 
@@ -763,8 +800,10 @@ the code.
    Consider `--max-price-per-unit` for each work unit you route to,
    especially if you mix cheap and expensive workloads.
 7. **BoltDB on persistent storage.** `--db` (receiver mode; default
-   `/var/lib/livepeer/payment-daemon/sessions.db`) mounted on a real
-   disk, not tmpfs. Backups are operator-responsibility.
+   `/var/lib/livepeer/payment-daemon/sessions.db`) and the
+   transaction-intent store beside it (`--txintent-db`, default
+   `txintents.db` in the same directory) mounted on a real disk, not
+   tmpfs. Snapshot the two together. Backups are operator-responsibility.
 8. **Metrics scraping configured.** Prometheus pointed at the daemon's
    `--metrics-listen` port. Alerts wired to
    `livepeer_payment_redemption_queue_depth` above some queue-depth

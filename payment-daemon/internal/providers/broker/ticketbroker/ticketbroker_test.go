@@ -6,20 +6,18 @@ import (
 	"errors"
 	"math/big"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
-	ethtypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto"
 
-	cchain "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	cerrors "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/txintent"
 	chaintesting "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/testing"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
-	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/inmemory"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
 var (
@@ -60,10 +58,6 @@ func contractStub(t *testing.T, answers map[string][]byte) *chaintesting.FakeRPC
 	return f
 }
 
-type fixedGas struct{ v *big.Int }
-
-func (g fixedGas) Current() *big.Int { return g.v }
-
 func TestGetSenderInfo_DecodesTuples(t *testing.T) {
 	deposit := big.NewInt(1_000_000_000_000_000_000)
 	fundsRemaining := big.NewInt(500_000_000_000_000_000)
@@ -80,7 +74,7 @@ func TestGetSenderInfo_DecodesTuples(t *testing.T) {
 		),
 		"claimedReserve": abiOut(t, "claimedReserve", big.NewInt(42)),
 	})
-	b, err := New(Config{Address: contractAddr, Claimant: claimantAddr, ChainID: big.NewInt(42161)}, f, nil, nil)
+	b, err := New(Config{Address: contractAddr, Claimant: claimantAddr}, f, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -118,7 +112,7 @@ func TestGetSenderInfo_NoClaimantSkipsClaimedReserve(t *testing.T) {
 			}{FundsRemaining: big.NewInt(6), ClaimedInCurrentRound: big.NewInt(0)},
 		),
 	})
-	b, _ := New(Config{Address: contractAddr, ChainID: big.NewInt(42161)}, f, nil, nil)
+	b, _ := New(Config{Address: contractAddr}, f, nil)
 	info, err := b.GetSenderInfo(context.Background(), senderAddr.Bytes())
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +127,7 @@ func TestGetSenderInfo_NoClaimantSkipsClaimedReserve(t *testing.T) {
 
 func TestGetSenderInfo_Errors(t *testing.T) {
 	f := contractStub(t, map[string][]byte{"getSenderInfo": []byte{0x01}})
-	b, _ := New(Config{Address: contractAddr, ChainID: big.NewInt(42161)}, f, nil, nil)
+	b, _ := New(Config{Address: contractAddr}, f, nil)
 	if _, err := b.GetSenderInfo(context.Background(), []byte{1, 2}); err == nil || !strings.Contains(err.Error(), "20 bytes") {
 		t.Errorf("short sender: %v", err)
 	}
@@ -148,7 +142,7 @@ func TestGetSenderInfo_Errors(t *testing.T) {
 
 func TestIsUsedTicket_DecodesBool(t *testing.T) {
 	f := contractStub(t, map[string][]byte{"usedTickets": abiOut(t, "usedTickets", true)})
-	b, _ := New(Config{Address: contractAddr, ChainID: big.NewInt(42161)}, f, nil, nil)
+	b, _ := New(Config{Address: contractAddr}, f, nil)
 	ticketHash := make([]byte, 32)
 	ticketHash[0] = 0xde
 	used, err := b.IsUsedTicket(context.Background(), ticketHash)
@@ -169,13 +163,13 @@ func TestIsUsedTicket_DecodesBool(t *testing.T) {
 
 func TestTicketValidityPeriod(t *testing.T) {
 	f := contractStub(t, map[string][]byte{"ticketValidityPeriod": abiOut(t, "ticketValidityPeriod", big.NewInt(2))})
-	b, _ := New(Config{Address: contractAddr, ChainID: big.NewInt(42161)}, f, nil, nil)
+	b, _ := New(Config{Address: contractAddr}, f, nil)
 	got, err := b.TicketValidityPeriod(context.Background())
 	if err != nil || got != 2 {
 		t.Fatalf("got %d, %v; want 2", got, err)
 	}
 	f = contractStub(t, map[string][]byte{"ticketValidityPeriod": abiOut(t, "ticketValidityPeriod", big.NewInt(0))})
-	b, _ = New(Config{Address: contractAddr, ChainID: big.NewInt(42161)}, f, nil, nil)
+	b, _ = New(Config{Address: contractAddr}, f, nil)
 	if _, err := b.TicketValidityPeriod(context.Background()); err == nil || !strings.Contains(err.Error(), "implausible") {
 		t.Errorf("zero period: %v", err)
 	}
@@ -187,17 +181,17 @@ func TestTicketValidityPeriod(t *testing.T) {
 
 func TestNew_Validation(t *testing.T) {
 	f := chaintesting.NewFakeRPC()
-	if _, err := New(Config{Address: contractAddr}, nil, nil, nil); err == nil {
+	if _, err := New(Config{Address: contractAddr}, nil, nil); err == nil {
 		t.Error("nil client must error")
 	}
-	if _, err := New(Config{}, f, nil, nil); err == nil {
+	if _, err := New(Config{}, f, nil); err == nil {
 		t.Error("empty address must error")
 	}
-	b, err := New(Config{Address: contractAddr}, f, nil, nil)
+	b, err := New(Config{Address: contractAddr}, f, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.cfg.RedeemGas != defaultRedeemGas || b.cfg.Confirmations != defaultConfirmations {
+	if b.cfg.RedeemGas != defaultRedeemGas {
 		t.Errorf("defaults not applied: %+v", b.cfg)
 	}
 }
@@ -213,11 +207,25 @@ func sampleTicket() *providers.Ticket {
 	}
 }
 
+func TestTicketHash_MatchesTypes(t *testing.T) {
+	tk := sampleTicket()
+	tk.CreationRound = 7
+	tk.CreationRoundHash = bytes.Repeat([]byte{0x11}, 32)
+	want := (&types.Ticket{
+		Recipient: tk.Recipient, Sender: tk.Sender, FaceValue: tk.FaceValue, WinProb: tk.WinProb,
+		SenderNonce: tk.SenderNonce, RecipientRandHash: tk.RecipientRandHash,
+		CreationRound: tk.CreationRound, CreationRoundHash: tk.CreationRoundHash,
+	}).Hash()
+	if got := TicketHash(tk); !bytes.Equal(got, want) || len(got) != 32 {
+		t.Fatalf("TicketHash = %x, want %x", got, want)
+	}
+}
+
 func TestRedeem_RejectsMisconfiguration(t *testing.T) {
 	f := chaintesting.NewFakeRPC()
 	ctx := context.Background()
-	b, _ := New(Config{Address: contractAddr, ChainID: big.NewInt(42161)}, f, nil, nil)
-	if _, err := b.RedeemWinningTicket(ctx, sampleTicket(), make([]byte, 65), big.NewInt(1)); err == nil || !strings.Contains(err.Error(), "TxSigner") {
+	b, _ := New(Config{Address: contractAddr}, f, nil)
+	if _, err := b.RedeemWinningTicket(ctx, sampleTicket(), make([]byte, 65), big.NewInt(1)); err == nil || !strings.Contains(err.Error(), "intent manager") {
 		t.Errorf("read-only broker: %v", err)
 	}
 	if _, err := b.RedeemWinningTicket(ctx, nil, nil, big.NewInt(1)); err == nil {
@@ -226,221 +234,263 @@ func TestRedeem_RejectsMisconfiguration(t *testing.T) {
 	if _, err := b.RedeemWinningTicket(ctx, sampleTicket(), nil, nil); err == nil {
 		t.Error("nil recipientRand must error")
 	}
-	key, _ := crypto.GenerateKey()
-	signer, _ := inmemory.New(key)
-	b, _ = New(Config{Address: contractAddr, ChainID: big.NewInt(42161)}, f, nil, signer)
-	if _, err := b.RedeemWinningTicket(ctx, sampleTicket(), make([]byte, 65), big.NewInt(1)); err == nil || !strings.Contains(err.Error(), "GasPrice") {
-		t.Errorf("nil gas price: %v", err)
-	}
-	b, _ = New(Config{Address: contractAddr}, f, fixedGas{big.NewInt(10)}, signer)
-	if _, err := b.RedeemWinningTicket(ctx, sampleTicket(), make([]byte, 65), big.NewInt(1)); err == nil || !strings.Contains(err.Error(), "ChainID") {
-		t.Errorf("nil chain id: %v", err)
-	}
-	b, _ = New(Config{Address: contractAddr, ChainID: big.NewInt(42161)}, f, fixedGas{big.NewInt(0)}, signer)
-	if _, err := b.RedeemWinningTicket(ctx, sampleTicket(), make([]byte, 65), big.NewInt(1)); err == nil || !strings.Contains(err.Error(), "gas price unavailable") {
-		t.Errorf("zero gas price: %v", err)
-	}
 }
 
-// redeemHarness wires a signer, a fixed gas price and a FakeRPC whose
-// SendTransaction / TransactionReceipt / HeaderByNumber are scripted.
-type redeemHarness struct {
-	rpc    *chaintesting.FakeRPC
-	broker *Broker
-	from   ethcommon.Address
-	sent   atomic.Pointer[ethtypes.Transaction]
-	mined  atomic.Int64 // block the receipt reports; 0 = not yet mined
-	status atomic.Uint64
-	head   atomic.Int64
+// fakeIntents scripts the four Manager calls the broker makes.
+type fakeIntents struct {
+	mu        sync.Mutex
+	submitted []txintent.Params
+	resubmits [][]byte
+	submitErr error
+	statusFn  func(id txintent.IntentID) (txintent.TxIntent, error)
+	resubErr  error
+	waitFn    func(ctx context.Context, id txintent.IntentID) (txintent.TxIntent, error)
+	waits     int
 }
 
-func newRedeemHarness(t *testing.T) *redeemHarness {
+func (f *fakeIntents) Submit(_ context.Context, p txintent.Params) (txintent.IntentID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.submitErr != nil {
+		return txintent.IntentID{}, f.submitErr
+	}
+	f.submitted = append(f.submitted, p)
+	return txintent.ComputeID(p.Kind, p.KeyParams), nil
+}
+
+func (f *fakeIntents) Status(_ context.Context, id txintent.IntentID) (txintent.TxIntent, error) {
+	if f.statusFn != nil {
+		return f.statusFn(id)
+	}
+	return txintent.TxIntent{ID: id, Status: txintent.StatusPending}, nil
+}
+
+func (f *fakeIntents) Resubmit(_ context.Context, _ txintent.IntentID, calldata []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resubmits = append(f.resubmits, calldata)
+	return f.resubErr
+}
+
+func (f *fakeIntents) Wait(ctx context.Context, id txintent.IntentID) (txintent.TxIntent, error) {
+	f.mu.Lock()
+	f.waits++
+	f.mu.Unlock()
+	if f.waitFn != nil {
+		return f.waitFn(ctx, id)
+	}
+	return confirmed(id, txHashA), nil
+}
+
+var txHashA = ethcommon.HexToHash("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+
+func confirmed(id txintent.IntentID, h ethcommon.Hash) txintent.TxIntent {
+	return txintent.TxIntent{ID: id, Status: txintent.StatusConfirmed,
+		Attempts: []txintent.IntentAttempt{{Nonce: 3, SignedTxHash: h}}}
+}
+
+func failed(id txintent.IntentID, class cerrors.ErrorClass, code string) txintent.TxIntent {
+	return txintent.TxIntent{ID: id, Status: txintent.StatusFailed,
+		Attempts:     []txintent.IntentAttempt{{Nonce: 3, SignedTxHash: txHashA}},
+		FailedReason: cerrors.New(class, code, "scripted")}
+}
+
+func notUsed(t *testing.T) *chaintesting.FakeRPC {
+	return contractStub(t, map[string][]byte{"usedTickets": abiOut(t, "usedTickets", false)})
+}
+
+func newIntentBroker(t *testing.T, rpc *chaintesting.FakeRPC, fi *fakeIntents) *Broker {
 	t.Helper()
-	t.Cleanup(func() { pollInterval = 2 * time.Second })
-	pollInterval = time.Millisecond
-
-	key, err := crypto.GenerateKey()
+	b, err := New(Config{Address: contractAddr, Claimant: claimantAddr, RedeemGas: 123_456}, rpc, fi)
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer, err := inmemory.New(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := &redeemHarness{rpc: chaintesting.NewFakeRPC(), from: crypto.PubkeyToAddress(key.PublicKey)}
-	h.status.Store(ethtypes.ReceiptStatusSuccessful)
-	h.rpc.DefaultNonce = 7
-	h.rpc.SendTransactionFunc = func(_ context.Context, tx *ethtypes.Transaction) error {
-		h.sent.Store(tx)
-		return nil
-	}
-	h.rpc.TransactionReceiptFunc = func(_ context.Context, hash cchain.TxHash) (*ethtypes.Receipt, error) {
-		sent := h.sent.Load()
-		mined := h.mined.Load()
-		if sent == nil || sent.Hash() != hash || mined == 0 {
-			return nil, ethereum.NotFound
-		}
-		return &ethtypes.Receipt{Status: h.status.Load(), BlockNumber: big.NewInt(mined), GasUsed: 21000}, nil
-	}
-	h.rpc.HeaderByNumberFunc = func(context.Context, *big.Int) (*ethtypes.Header, error) {
-		return &ethtypes.Header{Number: big.NewInt(h.head.Load())}, nil
-	}
-	b, err := New(Config{
-		Address:       contractAddr,
-		Claimant:      claimantAddr,
-		From:          h.from,
-		ChainID:       big.NewInt(42161),
-		RedeemGas:     123_456,
-		Confirmations: 4,
-	}, h.rpc, fixedGas{big.NewInt(1_000)}, signer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.broker = b
-	return h
+	return b
 }
 
-func TestRedeem_SubmitsSignedTxAndWaitsForConfirmations(t *testing.T) {
-	h := newRedeemHarness(t)
-	h.mined.Store(100)
-	h.head.Store(104) // exactly Confirmations deep
-
-	got, err := h.broker.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(9))
-	if err != nil {
-		t.Fatalf("RedeemWinningTicket: %v", err)
+func TestRedeem_UsedPrecheckSkipsIntent(t *testing.T) {
+	fi := &fakeIntents{submitErr: errors.New("must not submit")}
+	b := newIntentBroker(t, contractStub(t, map[string][]byte{"usedTickets": abiOut(t, "usedTickets", true)}), fi)
+	_, err := b.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(1))
+	if !errors.Is(err, providers.ErrTicketAlreadyUsed) {
+		t.Fatalf("err = %v, want ErrTicketAlreadyUsed", err)
 	}
-	tx := h.sent.Load()
-	if tx == nil {
-		t.Fatal("no transaction was sent")
-	}
-	if !bytes.Equal(got, tx.Hash().Bytes()) {
-		t.Errorf("returned hash %x != sent %x", got, tx.Hash())
-	}
-	if tx.Nonce() != 7 || tx.Gas() != 123_456 || tx.GasPrice().Int64() != 1_000 || *tx.To() != contractAddr {
-		t.Errorf("tx fields: nonce=%d gas=%d price=%s to=%s", tx.Nonce(), tx.Gas(), tx.GasPrice(), tx.To())
-	}
-	if !bytes.Equal(tx.Data()[:4], ParsedABI.Methods["redeemWinningTicket"].ID) {
-		t.Errorf("calldata selector %x is not redeemWinningTicket", tx.Data()[:4])
-	}
-	signerOf, err := ethtypes.Sender(ethtypes.LatestSignerForChainID(big.NewInt(42161)), tx)
-	if err != nil || signerOf != h.from {
-		t.Errorf("tx not signed by the configured key: %s, %v", signerOf, err)
-	}
-	// Second redemption reuses the in-process counter: nonce 8, and no
-	// second PendingNonceAt round-trip.
-	if _, err := h.broker.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(9)); err != nil {
-		t.Fatal(err)
-	}
-	if h.sent.Load().Nonce() != 8 || h.rpc.CallCount("PendingNonceAt") != 1 {
-		t.Errorf("nonce=%d pendingNonceAt calls=%d; want 8 and 1", h.sent.Load().Nonce(), h.rpc.CallCount("PendingNonceAt"))
+	if len(fi.submitted) != 0 || fi.waits != 0 {
+		t.Fatalf("used ticket reached the intent manager: %+v", fi)
 	}
 }
 
-// A send that fails on the RPC surfaces the error and re-primes the
-// nonce from the chain on the next attempt, so a counter that drifted
-// during the failure cannot be reused.
-func TestRedeem_SendFailureReprimesNonce(t *testing.T) {
-	h := newRedeemHarness(t)
-	h.mined.Store(100)
-	h.head.Store(110)
-	h.rpc.InjectError("SendTransaction", errors.New("connection refused"))
-
-	_, err := h.broker.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(9))
-	if err == nil || !strings.Contains(err.Error(), "send tx") {
-		t.Fatalf("err = %v; want send failure", err)
-	}
-	h.rpc.DefaultNonce = 20 // chain moved on while we were down
-	if _, err := h.broker.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(9)); err != nil {
-		t.Fatalf("retry: %v", err)
-	}
-	if h.rpc.CallCount("PendingNonceAt") != 2 || h.sent.Load().Nonce() != 20 {
-		t.Errorf("pendingNonceAt calls=%d nonce=%d; want 2 and 20", h.rpc.CallCount("PendingNonceAt"), h.sent.Load().Nonce())
-	}
-	h.rpc.InjectError("PendingNonceAt", errors.New("down"))
-	h.broker.noncePrimed = false
-	if _, err := h.broker.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(9)); err == nil || !strings.Contains(err.Error(), "get nonce") {
-		t.Errorf("nonce error: %v", err)
+func TestRedeem_PrecheckErrorSurfaces(t *testing.T) {
+	f := chaintesting.NewFakeRPC()
+	f.CallContractFunc = func(context.Context, ethereum.CallMsg, *big.Int) ([]byte, error) { return nil, errors.New("rpc down") }
+	b := newIntentBroker(t, f, &fakeIntents{})
+	_, err := b.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(1))
+	if err == nil || !strings.Contains(err.Error(), "pre-check") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestRedeem_RevertedReceiptIsErrTxFailed(t *testing.T) {
-	h := newRedeemHarness(t)
-	h.mined.Store(100)
-	h.head.Store(200)
-	h.status.Store(ethtypes.ReceiptStatusFailed)
-	_, err := h.broker.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(9))
+func TestRedeem_SubmitsIntentAndReturnsConfirmedHash(t *testing.T) {
+	fi := &fakeIntents{}
+	b := newIntentBroker(t, notUsed(t), fi)
+	tk := sampleTicket()
+	sig := bytes.Repeat([]byte{7}, 65)
+	got, err := b.RedeemWinningTicket(context.Background(), tk, sig, big.NewInt(99))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, txHashA.Bytes()) {
+		t.Fatalf("tx hash = %x", got)
+	}
+	if len(fi.submitted) != 1 {
+		t.Fatalf("submits = %d", len(fi.submitted))
+	}
+	p := fi.submitted[0]
+	if p.Kind != IntentKind || !bytes.Equal(p.KeyParams, TicketHash(tk)) || p.To != contractAddr || p.GasLimit != 123_456 {
+		t.Fatalf("params = %+v", p)
+	}
+	if p.Metadata["ticket_hash"] != ethcommon.Bytes2Hex(TicketHash(tk)) {
+		t.Fatalf("metadata = %v", p.Metadata)
+	}
+	// The calldata is the real redeemWinningTicket encoding.
+	m := ParsedABI.Methods["redeemWinningTicket"]
+	if !bytes.Equal(p.CallData[:4], m.ID) {
+		t.Fatalf("selector = %x", p.CallData[:4])
+	}
+	args, err := m.Inputs.Unpack(p.CallData[4:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := args[2].(*big.Int); got.Int64() != 99 {
+		t.Fatalf("recipientRand = %s", got)
+	}
+	if got := args[1].([]byte); !bytes.Equal(got, sig) {
+		t.Fatalf("sig = %x", got)
+	}
+	if fi.waits != 1 || len(fi.resubmits) != 0 {
+		t.Fatalf("waits=%d resubmits=%d", fi.waits, len(fi.resubmits))
+	}
+}
+
+func TestRedeem_ExistingRevertedIntentIsTxFailed(t *testing.T) {
+	fi := &fakeIntents{statusFn: func(id txintent.IntentID) (txintent.TxIntent, error) {
+		return failed(id, cerrors.ClassReverted, "tx.reverted"), nil
+	}}
+	b := newIntentBroker(t, notUsed(t), fi)
+	_, err := b.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(1))
+	if !errors.Is(err, ErrTxFailed) || !errors.Is(err, providers.ErrRedemptionReverted) {
+		t.Fatalf("err = %v, want ErrTxFailed", err)
+	}
+	if cerrors.Classify(err).Class != cerrors.ClassReverted {
+		t.Fatalf("class = %s", cerrors.Classify(err).Class)
+	}
+	if !strings.Contains(err.Error(), txHashA.Hex()) {
+		t.Fatalf("revert error should name the tx: %v", err)
+	}
+	if len(fi.resubmits) != 0 || fi.waits != 0 {
+		t.Fatalf("a reverted intent must not be re-driven: %+v", fi)
+	}
+}
+
+func TestRedeem_ExistingTransientFailureIsResubmitted(t *testing.T) {
+	fi := &fakeIntents{statusFn: func(id txintent.IntentID) (txintent.TxIntent, error) {
+		return failed(id, cerrors.ClassTransient, "tx.replacement_exhausted"), nil
+	}}
+	b := newIntentBroker(t, notUsed(t), fi)
+	got, err := b.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(1))
+	if err != nil || !bytes.Equal(got, txHashA.Bytes()) {
+		t.Fatalf("got %x, %v", got, err)
+	}
+	if len(fi.resubmits) != 1 || !bytes.Equal(fi.resubmits[0], fi.submitted[0].CallData) {
+		t.Fatalf("resubmit not issued with the calldata: %+v", fi.resubmits)
+	}
+}
+
+func TestRedeem_ManagerErrorsSurface(t *testing.T) {
+	ctx := context.Background()
+	tk := sampleTicket()
+	sig := make([]byte, 65)
+
+	b := newIntentBroker(t, notUsed(t), &fakeIntents{submitErr: errors.New("store closed")})
+	if _, err := b.RedeemWinningTicket(ctx, tk, sig, big.NewInt(1)); err == nil || !strings.Contains(err.Error(), "submit redemption intent") {
+		t.Errorf("submit: %v", err)
+	}
+
+	b = newIntentBroker(t, notUsed(t), &fakeIntents{statusFn: func(txintent.IntentID) (txintent.TxIntent, error) {
+		return txintent.TxIntent{}, errors.New("read failed")
+	}})
+	if _, err := b.RedeemWinningTicket(ctx, tk, sig, big.NewInt(1)); err == nil || !strings.Contains(err.Error(), "intent status") {
+		t.Errorf("status: %v", err)
+	}
+
+	b = newIntentBroker(t, notUsed(t), &fakeIntents{
+		statusFn: func(id txintent.IntentID) (txintent.TxIntent, error) {
+			return failed(id, cerrors.ClassPermanent, "x"), nil
+		},
+		resubErr: errors.New("not failed"),
+	})
+	if _, err := b.RedeemWinningTicket(ctx, tk, sig, big.NewInt(1)); err == nil || !strings.Contains(err.Error(), "resubmit") {
+		t.Errorf("resubmit: %v", err)
+	}
+}
+
+func TestRedeem_WaitOutcomes(t *testing.T) {
+	ctx := context.Background()
+	tk := sampleTicket()
+	sig := make([]byte, 65)
+	redeem := func(fn func(context.Context, txintent.IntentID) (txintent.TxIntent, error)) error {
+		b := newIntentBroker(t, notUsed(t), &fakeIntents{waitFn: fn})
+		_, err := b.RedeemWinningTicket(ctx, tk, sig, big.NewInt(1))
+		return err
+	}
+
+	// Cancelled wait: the intent keeps going; the caller sees ctx.Err.
+	err := redeem(func(context.Context, txintent.IntentID) (txintent.TxIntent, error) {
+		return txintent.TxIntent{}, context.Canceled
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("cancel: %v", err)
+	}
+
+	// Reverted after the wait.
+	err = redeem(func(_ context.Context, id txintent.IntentID) (txintent.TxIntent, error) {
+		return failed(id, cerrors.ClassReverted, "tx.reverted"), nil
+	})
 	if !errors.Is(err, ErrTxFailed) {
-		t.Fatalf("err = %v; want ErrTxFailed", err)
+		t.Errorf("revert: %v", err)
 	}
-}
 
-func TestRedeem_WaitsForReceiptThenConfirmations(t *testing.T) {
-	h := newRedeemHarness(t)
-	h.head.Store(100)
-	done := make(chan error, 1)
-	go func() {
-		_, err := h.broker.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(9))
-		done <- err
-	}()
-	// Not mined yet: the call must still be waiting.
-	time.Sleep(20 * time.Millisecond)
-	select {
-	case err := <-done:
-		t.Fatalf("returned before the receipt existed: %v", err)
-	default:
+	// Failed for a non-revert reason keeps the classification and is
+	// not ErrTxFailed.
+	err = redeem(func(_ context.Context, id txintent.IntentID) (txintent.TxIntent, error) {
+		return failed(id, cerrors.ClassTransient, "tx.replacement_exhausted"), nil
+	})
+	if errors.Is(err, ErrTxFailed) || cerrors.Classify(err).Class != cerrors.ClassTransient {
+		t.Errorf("transient: %v (class %s)", err, cerrors.Classify(err).Class)
 	}
-	h.mined.Store(100) // mined, but head is only 100: 0 confirmations
-	time.Sleep(20 * time.Millisecond)
-	select {
-	case err := <-done:
-		t.Fatalf("returned before confirmations: %v", err)
-	default:
-	}
-	h.head.Store(104)
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("redeem: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("redeem did not return after confirmations")
-	}
-	if h.rpc.CallCount("TransactionReceipt") < 2 || h.rpc.CallCount("HeaderByNumber") < 2 {
-		t.Errorf("expected polling: receipt=%d head=%d", h.rpc.CallCount("TransactionReceipt"), h.rpc.CallCount("HeaderByNumber"))
-	}
-}
 
-func TestRedeem_ReceiptAndHeadErrorsSurface(t *testing.T) {
-	h := newRedeemHarness(t)
-	h.mined.Store(100)
-	h.head.Store(200)
-	h.rpc.InjectError("TransactionReceipt", errors.New("boom"))
-	if _, err := h.broker.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(9)); err == nil || !strings.Contains(err.Error(), "get receipt") {
-		t.Errorf("receipt error: %v", err)
+	// Failed without a recorded reason still fails loudly.
+	err = redeem(func(_ context.Context, id txintent.IntentID) (txintent.TxIntent, error) {
+		return txintent.TxIntent{ID: id, Status: txintent.StatusFailed}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "without a recorded reason") {
+		t.Errorf("no reason: %v", err)
 	}
-	h.rpc.InjectError("HeaderByNumber", errors.New("boom"))
-	if _, err := h.broker.RedeemWinningTicket(context.Background(), sampleTicket(), make([]byte, 65), big.NewInt(9)); err == nil || !strings.Contains(err.Error(), "head header") {
-		t.Errorf("head error: %v", err)
-	}
-}
 
-func TestRedeem_ContextCancelWhileWaiting(t *testing.T) {
-	h := newRedeemHarness(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, err := h.broker.RedeemWinningTicket(ctx, sampleTicket(), make([]byte, 65), big.NewInt(9))
-		done <- err
-	}()
-	time.Sleep(10 * time.Millisecond)
-	cancel()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("err = %v; want context.Canceled", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("cancel did not unblock the wait")
+	// Confirmed without an attempt is a bug, not a success.
+	err = redeem(func(_ context.Context, id txintent.IntentID) (txintent.TxIntent, error) {
+		return txintent.TxIntent{ID: id, Status: txintent.StatusConfirmed}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "without an attempt") {
+		t.Errorf("no attempt: %v", err)
+	}
+
+	// A non-terminal state out of Wait is a contract violation.
+	err = redeem(func(_ context.Context, id txintent.IntentID) (txintent.TxIntent, error) {
+		return txintent.TxIntent{ID: id, Status: txintent.StatusSubmitted}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "non-terminal") {
+		t.Errorf("non-terminal: %v", err)
 	}
 }
 

@@ -4,12 +4,18 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"math/big"
 	"strings"
 	"testing"
 
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
+
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logger"
 	cmetrics "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/metrics"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/inmemory"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 )
 
@@ -96,5 +102,59 @@ func TestHost(t *testing.T) {
 	}
 	if got := Host("::not a url"); got != "<invalid-url>" {
 		t.Fatalf("Host invalid = %q", got)
+	}
+}
+
+func TestKeystore_DelegatesToTheLoadedKey(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ks, err := inmemory.New(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapted, err := Keystore(ks, ks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := crypto.PubkeyToAddress(key.PublicKey)
+	if adapted.Address() != want {
+		t.Fatalf("Address = %s, want %s", adapted.Address().Hex(), want.Hex())
+	}
+
+	// SignTx: the signed transaction recovers to the key's address on
+	// the chain id the processor passes as chain.ChainID.
+	tx := ethtypes.NewTx(&ethtypes.DynamicFeeTx{ChainID: big.NewInt(1337), Nonce: 1, Gas: 21_000,
+		GasFeeCap: big.NewInt(10), GasTipCap: big.NewInt(1), To: &want})
+	signed, err := adapted.SignTx(tx, chain.ChainID(1337))
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, err := ethtypes.Sender(ethtypes.LatestSignerForChainID(big.NewInt(1337)), signed)
+	if err != nil || from != want {
+		t.Fatalf("sender = %s, %v", from.Hex(), err)
+	}
+
+	// Sign: EIP-191 personal-sign, identical bytes to the daemon's own.
+	payload := []byte("ticket bytes")
+	got, err := adapted.Sign(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct, _ := ks.Sign(payload)
+	if !bytes.Equal(got, direct) {
+		t.Fatal("adapter Sign differs from the daemon keystore's Sign")
+	}
+}
+
+func TestKeystore_RejectsNil(t *testing.T) {
+	key, _ := crypto.GenerateKey()
+	ks, _ := inmemory.New(key)
+	if _, err := Keystore(nil, ks); err == nil {
+		t.Error("nil keystore accepted")
+	}
+	if _, err := Keystore(ks, nil); err == nil {
+		t.Error("nil signer accepted")
 	}
 }

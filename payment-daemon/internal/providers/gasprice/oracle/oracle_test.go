@@ -135,3 +135,59 @@ func TestGasPrice_ZeroBeforeSync(t *testing.T) {
 		t.Fatal("unsynced provider must report zero")
 	}
 }
+
+func TestOracle_FeeCapIsMultipliedGasPrice(t *testing.T) {
+	o := chaintesting.NewFakeGasOracle()
+	o.SetEstimate(gasoracle.Estimate{BaseFee: big.NewInt(100), TipCap: big.NewInt(7), FeeCap: big.NewInt(999), Source: "rpc"})
+	g, err := NewWithOracle(context.Background(), Config{MultiplierPct: 200, RefreshInterval: time.Hour}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	est, err := g.Oracle().Suggest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if est.FeeCap.Int64() != 200 {
+		t.Errorf("FeeCap = %s, want 200 (100 × 200%%)", est.FeeCap)
+	}
+	if est.TipCap.Int64() != 7 || est.BaseFee.Int64() != 100 || est.Source != "rpc" {
+		t.Errorf("estimate = %+v", est)
+	}
+	// The processor's number and the settlement pre-check's number are
+	// the same number.
+	if est.FeeCap.Cmp(g.Current()) != 0 {
+		t.Errorf("Oracle FeeCap %s != Current %s", est.FeeCap, g.Current())
+	}
+	// A tip above the cap is clamped so the tx stays valid.
+	o.SetEstimate(gasoracle.Estimate{BaseFee: big.NewInt(10), TipCap: big.NewInt(50)})
+	est, _ = g.Oracle().Suggest(context.Background())
+	if est.TipCap.Int64() != 20 || est.FeeCap.Int64() != 20 {
+		t.Errorf("clamped estimate = %+v", est)
+	}
+	// A nil tip is zero.
+	o.SetEstimate(gasoracle.Estimate{BaseFee: big.NewInt(10)})
+	est, _ = g.Oracle().Suggest(context.Background())
+	if est.TipCap.Sign() != 0 {
+		t.Errorf("nil tip = %s", est.TipCap)
+	}
+	if tip, err := g.Oracle().SuggestTipCap(context.Background()); err != nil || tip == nil {
+		t.Errorf("SuggestTipCap passthrough: %v %v", tip, err)
+	}
+}
+
+func TestOracle_PropagatesErrorsAndRejectsNonPositive(t *testing.T) {
+	o := chaintesting.NewFakeGasOracle()
+	o.SetEstimate(estimate(100))
+	g, err := NewWithOracle(context.Background(), Config{RefreshInterval: time.Hour}, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.SetEstimate(gasoracle.Estimate{BaseFee: big.NewInt(0)})
+	if _, err := g.Oracle().Suggest(context.Background()); err == nil || !strings.Contains(err.Error(), "non-positive") {
+		t.Errorf("zero gas price: %v", err)
+	}
+	o.FailNextSuggest(errors.New("rpc down"))
+	if _, err := g.Oracle().Suggest(context.Background()); err == nil {
+		t.Error("oracle error swallowed")
+	}
+}

@@ -9,9 +9,27 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"math/big"
 
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
+)
+
+// Sentinel errors a Broker returns from RedeemWinningTicket on a
+// terminal outcome. They live here rather than in the chain-backed
+// implementation so settlement can classify them without importing a
+// provider implementation.
+var (
+	// ErrTicketAlreadyUsed: the on-chain TicketBroker already has this
+	// ticket in usedTickets, so there is nothing to redeem. Settlement
+	// drains the ticket locally without spending gas.
+	ErrTicketAlreadyUsed = errors.New("broker: ticket already used on-chain")
+
+	// ErrRedemptionReverted: the redemption transaction mined and the
+	// receipt reports status=0. Terminal for this ticket; settlement
+	// drains it. The wrapped cause carries the chain-commons
+	// classification (ClassReverted).
+	ErrRedemptionReverted = errors.New("broker: redemption transaction reverted")
 )
 
 // SenderInfo is the on-chain TicketBroker view of a single sender.

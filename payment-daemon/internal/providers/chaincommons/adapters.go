@@ -1,18 +1,26 @@
-// Package chaincommons adapts the payment-daemon's logging and metrics
-// surfaces to the interfaces chain-commons expects, so the shared chain
-// glue (multi-RPC failover, Controller resolver, gas oracle) logs
-// through the daemon's slog handler and lands its series on the
-// daemon's /metrics.
+// Package chaincommons adapts the payment-daemon's logging, metrics and
+// keystore surfaces to the interfaces chain-commons expects, so the
+// shared chain glue (multi-RPC failover, Controller resolver, gas
+// oracle, transaction intents) logs through the daemon's slog handler,
+// lands its series on the daemon's /metrics, and signs with the
+// daemon's already-unlocked key.
 package chaincommons
 
 import (
+	"errors"
 	"log/slog"
 	"net/url"
 	"regexp"
 
+	ethcommon "github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/keystore"
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/logger"
 	cmetrics "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/metrics"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 )
 
@@ -107,4 +115,35 @@ func Host(raw string) string {
 		return "<invalid-url>"
 	}
 	return u.Host
+}
+
+// Keystore wraps the daemon's KeyStore + TxSigner pair (one loaded key,
+// two interfaces) as the single chain-commons keystore.Keystore the
+// transaction-intent processor signs with. Address, EIP-191 Sign and
+// EIP-155/1559 SignTx all delegate; nothing is re-derived.
+func Keystore(ks providers.KeyStore, signer providers.TxSigner) (keystore.Keystore, error) {
+	if ks == nil {
+		return nil, errors.New("chaincommons: nil keystore")
+	}
+	if signer == nil {
+		return nil, errors.New("chaincommons: nil tx signer")
+	}
+	return &keystoreAdapter{ks: ks, signer: signer}, nil
+}
+
+type keystoreAdapter struct {
+	ks     providers.KeyStore
+	signer providers.TxSigner
+}
+
+func (k *keystoreAdapter) Address() chain.Address {
+	return ethcommon.BytesToAddress(k.ks.Address())
+}
+
+func (k *keystoreAdapter) Sign(payload []byte) ([]byte, error) {
+	return k.ks.Sign(payload)
+}
+
+func (k *keystoreAdapter) SignTx(tx *ethtypes.Transaction, chainID chain.ChainID) (*ethtypes.Transaction, error) {
+	return k.signer.SignTx(tx, chainID.BigInt())
 }

@@ -124,6 +124,13 @@ Receiver-side BoltDB owns:
 
 The store package is the only owner of these buckets.
 
+The redemption *transactions* live in a second BoltDB file
+(`--txintent-db`), owned by chain-commons's transaction-intent store:
+one intent per ticket hash, with its nonce, attempts and terminal
+outcome. The store package never touches that file; the ticket broker
+files intents and waits on them, and the daemon resumes non-terminal
+intents at boot.
+
 ## Failure modes
 
 | Surface | Failure | Expected behavior |

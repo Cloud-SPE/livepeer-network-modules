@@ -165,3 +165,52 @@ func (g *GasPrice) refresh(ctx context.Context) error {
 	g.current.Store(scaled)
 	return nil
 }
+
+// Oracle returns a chain-commons gas oracle for callers that sign
+// their own transactions (the transaction-intent processor). It shares
+// this GasPrice's underlying TTL cache, so one eth_gasPrice read serves
+// both the settlement pre-checks and the signed transaction, and it
+// applies the same multiplier: the fee cap it suggests is exactly
+//
+//	eth_gasPrice × multiplier_pct / 100
+//
+// which is the number the runbook documents as the submitted gas price.
+// The tip cap is passed through, clamped to the fee cap.
+func (g *GasPrice) Oracle() gasoracle.GasOracle {
+	return &multiplied{inner: g.oracle, pct: g.cfg.MultiplierPct}
+}
+
+type multiplied struct {
+	inner gasoracle.GasOracle
+	pct   uint64
+}
+
+func (m *multiplied) Suggest(ctx context.Context) (gasoracle.Estimate, error) {
+	est, err := m.inner.Suggest(ctx)
+	if err != nil {
+		return gasoracle.Estimate{}, err
+	}
+	if est.BaseFee == nil || est.BaseFee.Sign() <= 0 {
+		return gasoracle.Estimate{}, errors.New("gasprice: eth_gasPrice returned non-positive")
+	}
+	feeCap := new(big.Int).Mul(est.BaseFee, new(big.Int).SetUint64(m.pct))
+	feeCap.Quo(feeCap, big.NewInt(100))
+	tip := est.TipCap
+	if tip == nil {
+		tip = new(big.Int)
+	}
+	if tip.Cmp(feeCap) > 0 {
+		tip = feeCap
+	}
+	return gasoracle.Estimate{
+		BaseFee:  new(big.Int).Set(est.BaseFee),
+		TipCap:   new(big.Int).Set(tip),
+		FeeCap:   feeCap,
+		Source:   est.Source,
+		CachedAt: est.CachedAt,
+	}, nil
+}
+
+func (m *multiplied) SuggestTipCap(ctx context.Context) (*big.Int, error) {
+	return m.inner.SuggestTipCap(ctx)
+}

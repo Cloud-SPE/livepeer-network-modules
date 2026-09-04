@@ -25,11 +25,14 @@ secure-orch side to run:
 
 - A separate secure-orch / protocol host already running `protocol-daemon`
   and exposing `/var/run/livepeer/protocol.sock` on this host.
+- One or more Arbitrum RPC endpoints (`CHAIN_RPC_URLS`, comma-separated,
+  primary first). The payout executor takes its list from the
+  `executor.rpc_urls` key of its config file instead.
 - A funded payment-daemon receiver wallet:
-  - `PAYMENT_KEYSTORE`
+  - `PAYMENT_KEYSTORE_FILE`
   - `PAYMENT_KEYSTORE_PASSWORD_FILE`
 - A funded payout hot wallet:
-  - `POOL_PAYOUT_EXECUTOR_KEYSTORE`
+  - `POOL_PAYOUT_EXECUTOR_KEYSTORE_FILE`
   - `POOL_PAYOUT_EXECUTOR_KEYSTORE_PASSWORD_FILE`
 - A real coordinator config at `./coordinator-config.yaml`
 - A generated broker host-config at `./run/generated-broker-host-config.yaml`

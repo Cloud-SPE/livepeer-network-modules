@@ -43,7 +43,7 @@ Simulation inputs: [`scenarios/`](./scenarios/).
   stale cached session and returns `codes.Aborted` with retry details.
 - `PayeeAdmin.ResetSession` gives operators an explicit session-rotation
   surface instead of relying on daemon restarts.
-- **Chain integration is available when `--chain-rpc` is set.** In dev
+- **Chain integration is available when `--chain-rpc-urls` is set.** In dev
   mode the daemon still uses fake chain providers and a deterministic
   key; in production mode it validates against real chain state and runs
   the redemption pipeline.

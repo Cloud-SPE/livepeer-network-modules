@@ -43,7 +43,8 @@ roles are single-host.
 
 - Linux hosts with Docker Engine and `docker compose` v2.
 - An on-chain orchestrator address (`ORCH_ADDRESS`) and its keystore.
-- One Arbitrum RPC endpoint (`ETH_URLS`) for chain reads/writes.
+- One or more Arbitrum RPC endpoints (`CHAIN_RPC_URLS`, comma-separated,
+  primary first). Every host uses the same list.
 - Funded hot wallet keys for ticket redemption on every broker box.
 - One domain you control, with DNS managed somewhere (Cloudflare,
   Route 53, etc.). You'll create one record per public-facing host.
@@ -70,7 +71,7 @@ for the full walkthrough. Short form:
 ```sh
 cp infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/.env.example \
    infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/.env
-# Set ORCH_ADDRESS, ETH_URLS, SECURE_ORCH_ADMIN_TOKENS, keystore paths
+# Set CHAIN_RPC_URLS, ORCH_ADDRESS, SECURE_ORCH_ADMIN_TOKENS
 docker compose \
   -f infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/docker-compose.yml \
   --env-file infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/.env \
@@ -190,7 +191,7 @@ sudo $EDITOR /opt/livepeer/host-config.yaml             # set orch_eth_address +
 
 cp infra/scenarios/orchestrator-onboarding/capability-broker/.env.example \
    infra/scenarios/orchestrator-onboarding/capability-broker/.env
-# Set ORCH_ADDRESS, CHAIN_RPC, BROKER_HOST (per-box hostname)
+# Set CHAIN_RPC_URLS, ORCH_ADDRESS, BROKER_ADMIN_TOKEN, BROKER_HOST (per-box hostname)
 docker compose \
   -f infra/scenarios/orchestrator-onboarding/capability-broker/docker-compose.yml \
   --env-file infra/scenarios/orchestrator-onboarding/capability-broker/.env \

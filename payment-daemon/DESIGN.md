@@ -26,7 +26,7 @@ caller restarts and component extraction.
   against the selected broker URL to fetch authoritative payee-issued
   `TicketParams`.
 - **Outbound, receiver mode:** optional Arbitrum JSON-RPC when
-  `--chain-rpc` is set.
+  `--chain-rpc-urls` is set.
 - **State:** BoltDB on both sides. The receiver keeps the session ledger;
   the sender keeps mint-idempotency records, so a retry after an
   uncertain response replays rather than signing a second batch. Only the

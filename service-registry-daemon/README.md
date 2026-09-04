@@ -54,7 +54,7 @@ Resolver deployments should pass the exact registry contract they intend to use 
   --mode=resolver \
   --socket=/var/run/livepeer-service-registry.sock \
   --store-path=/var/lib/livepeer/registry-cache.db \
-  --chain-rpc=https://arb1.arbitrum.io/rpc \
+  --chain-rpc-urls=https://arb1.arbitrum.io/rpc,https://arbitrum.publicnode.com \
   --service-registry-address=0xC92d06C74A26B312bcDE600F0aA22EAC2efA0a90 \
   --static-overlay=/etc/livepeer/nodes.yaml
 ```
@@ -68,7 +68,7 @@ export LIVEPEER_KEYSTORE_PASSWORD="$(cat /etc/livepeer/ks-password)"
 ./bin/livepeer-service-registry-daemon \
   --mode=publisher \
   --socket=/var/run/livepeer-service-registry-publisher.sock \
-  --chain-rpc=https://arb1.arbitrum.io/rpc \
+  --chain-rpc-urls=https://arb1.arbitrum.io/rpc,https://arbitrum.publicnode.com \
   --keystore-path=/etc/livepeer/keystore.json
   ```
 
@@ -99,7 +99,7 @@ docker pull tztcloud/livepeer-service-registry-daemon:v3.0.1
 For a turn-key resolver, copy the run-only example env and bring up the stack:
 
 ```sh
-cp compose/.env.example .env     # set CHAIN_RPC; pin TAG
+cp compose/.env.example .env     # set CHAIN_RPC_URLS; pin TAG if needed
 docker compose -f compose/docker-compose.yml up -d
 docker compose logs -f
 ```

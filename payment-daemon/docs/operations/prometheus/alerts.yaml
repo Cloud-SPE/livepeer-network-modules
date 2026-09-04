@@ -6,7 +6,7 @@
 #
 # Tune thresholds before applying; defaults err on the side of "loud
 # enough to be useful". The chain-dependent rules (redemption, chain
-# staleness) only fire for receiver-mode daemons with --chain-rpc set;
+# staleness) only fire for receiver-mode daemons with --chain-rpc-urls set;
 # in dev mode those series stay flat.
 #
 # Install:
@@ -52,7 +52,7 @@ groups:
           description: |
             The metered Broker has not completed a chain read/write in 5+
             minutes. Winning-ticket redemptions stall and escrow ceilings
-            go stale. Likely: chain RPC down, wrong --chain-rpc, or
+            go stale. Likely: chain RPC down, wrong --chain-rpc-urls, or
             rate-limit exhaustion.
 
       - alert: PaymentRedemptionTxFailureSpike

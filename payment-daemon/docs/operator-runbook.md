@@ -227,7 +227,7 @@ and it stops protecting you; set it too low and legitimate work fails
 loudly with `spend limit: funded_value … exceeds max-payment-wei …`,
 which is the failure you want.
 
-Dev mode (no `--chain-rpc`) has no real funds and runs without it.
+Dev mode (no `--chain-rpc-urls`) has no real funds and runs without it.
 
 ### `--max-price-per-unit` (optional, and the one that scales)
 
@@ -365,7 +365,7 @@ Setup checklist:
 
 ### Single-wallet vs hot/cold split — what the daemon logs
 
-When the V3 keystore is loaded (production mode, `--chain-rpc` set)
+When the V3 keystore is loaded (production mode, `--chain-rpc-urls` set)
 the daemon logs one of two startup lines:
 
 - `WARN single-wallet config — hot signer is also the on-chain
@@ -608,9 +608,9 @@ surfaces; see `capability-broker/docs/operator-runbook.md` §3.
 | Sender `CreatePayment` fails with `deposit and reserve set to unlock soon` | Payer initiated `unlock()`. | Either the operator wants to drain (in which case stop sending), or it was an accident (in which case, do nothing — `unlock()` doesn't reset; either let it complete and re-lock or call `cancelUnlock()`). |
 | Receiver returns ProcessPayment `signature recovery failed` | Sender's signature does not parse to a valid ETH address. | The hot signing key may be wrong, or the wire bytes were re-encoded mid-flight. Check the wire-compat round-trip test. |
 | Receiver `ErrFaceValueTooLow` shows up consistently for one sender | Sender's last-known price is stale; receiver bumped face_value floor on a gas spike. | Sender should re-quote. Check sender logs for the next outgoing ticket — if the price is back in line, the issue self-corrected. |
-| Receiver redemption queue depth grows unbounded | Redemption loop is wedged or chain RPC is slow. | Check `--redemption-interval` and the latency of the endpoint behind `--chain-rpc`. Look at `livepeer_payment_redemption_queue_depth` over time. |
+| Receiver redemption queue depth grows unbounded | Redemption loop is wedged or chain RPC is slow. | Check `--redemption-interval` and the latency of the endpoint behind `--chain-rpc-urls`. Look at `livepeer_payment_redemption_queue_depth` over time. |
 | Receiver "params expired" rejections from senders | Daemon's L1 clock is trailing the on-chain round. | `--clock-refresh-interval` (default 30s) may be set too high; also check `eth_blockNumber` latency on the RPC endpoint. |
-| Daemon prints `DEV MODE — --chain-rpc is empty` in production logs | Operator forgot to supply `--chain-rpc`. | Set it. Production must not run in dev mode. |
+| Daemon prints `DEV MODE — --chain-rpc-urls is empty` in production logs | Operator forgot to supply `--chain-rpc-urls`. | Set it. Production must not run in dev mode. |
 | Sender returns `face_value capped by maxFloat` | Pending redemptions are eating into deposit faster than 3× heuristic allows. | Speed up redemption (lower `--redemption-interval`), or have payer top up deposit. |
 | Broker terminated long-running session with `Livepeer-Error: insufficient_balance` | Payer's session balance hit zero before the session ended (plan 0015). Either the gateway sized the initial payment too small for the session length, or no mid-session top-up flow exists yet. | Have the gateway raise the initial `face_value` it asks the sender daemon for; or confirm the planned top-up flow is wired (currently a deferred follow-up plan). On Arbitrum One, look for the broker log line `terminating session work_id=… reason=insufficient_balance`. |
 | `livepeer_payment_debits_total{result="error"}` rate > 0 sustained | Broker's interim-debit tick is failing on the daemon. Could be a daemon RPC error, a network partition, or BoltDB contention. | Check broker logs for the per-tick `interim DebitBalance work_id=… failed: …` warning. The broker reuses the same `debit_seq` across retries (plan 0015 §5.3) so the daemon's idempotency key prevents double-debit; sustained retries still indicate a real problem on the daemon side. |
@@ -706,7 +706,7 @@ key bytes themselves stay in memory.
 
 ## 9. Dev mode (no chain)
 
-Run with `--mode=...` and a socket path; omit `--chain-rpc`:
+Run with `--mode=...` and a socket path; omit `--chain-rpc-urls`:
 
 ```sh
 ./bin/livepeer-payment-daemon --mode receiver --socket /tmp/rx.sock
@@ -722,18 +722,18 @@ before signing each quote-free payment.
 Dev mode prints a loud warning to stderr at startup:
 
 ```
-livepeer-payment-daemon: DEV MODE — --chain-rpc is empty; using fake chain providers (redemptions will not hit any chain)
+livepeer-payment-daemon: DEV MODE — --chain-rpc-urls is empty; using fake chain providers (redemptions will not hit any chain)
 ```
 
 If you see that line in a production log, the operator forgot
-`--chain-rpc`. Page someone.
+`--chain-rpc-urls`. Page someone.
 
 For a deterministic sender identity (so the receiver can pre-seed fake
 broker state), set `--dev-signing-key-hex` or
 `LIVEPEER_DEV_SIGNING_KEY_HEX`. The raw key is never logged; the derived
 address is logged once at startup.
 
-`--dev-signing-key-hex` is rejected when `--chain-rpc` is set. You
+`--dev-signing-key-hex` is rejected when `--chain-rpc-urls` is set. You
 cannot mix dev signing with real chain.
 
 ---

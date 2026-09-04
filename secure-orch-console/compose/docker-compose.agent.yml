@@ -23,8 +23,8 @@ services:
       - --keystore-password-file=/etc/secure-orch/password
       - --last-signed=/var/lib/secure-orch/last-signed.json
       - --audit-log=/var/log/secure-orch/audit.log.jsonl
-      - --audit-rotate-size=${AUDIT_ROTATE_SIZE}
-      - --listen=${SECURE_ORCH_LISTEN}
+      - --audit-rotate-size=${AUDIT_ROTATE_SIZE:-104857600}
+      - --listen=${SECURE_ORCH_LISTEN:-127.0.0.1:8080}
       # --- agent mode (plan 0042) ---
       - --agent
       - --coordinator-url=${COORDINATOR_URL:?set COORDINATOR_URL to the coordinator admin base URL}

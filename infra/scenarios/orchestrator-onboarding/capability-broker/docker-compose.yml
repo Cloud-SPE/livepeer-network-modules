@@ -20,33 +20,37 @@
 # sells: capability, price, capacity, and the certification a runner must
 # pass. It says nothing about where a workload lives; the runner declares
 # that itself. Variants for common hardware mixes are documented separately.
+#
+# Every optional variable carries its default inline (${VAR:-default}) so
+# the .env only needs the Required section of .env.example.
 
 services:
   payment-daemon-receiver:
-    image: ${REGISTRY}/livepeer-payment-daemon:${PAYMENT_TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v2.0.0}
     container_name: payment-daemon-receiver
     hostname: payment-daemon-receiver
     command:
       - --mode=receiver
       - --socket=/var/run/livepeer/payment-daemon.sock
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
-      - --chain-rpc=${CHAIN_RPC}
+      # Comma-separated RPC URLs; index 0 is primary, the rest are backups.
+      - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
       - --orch-address=${ORCH_ADDRESS:?set ORCH_ADDRESS to the cold/on-chain orch identity}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
-      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT}
-      - --redeem-gas=${REDEEM_GAS}
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
+      - --redeem-gas=${REDEEM_GAS:-500000}
     environment:
-      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD}
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
     volumes:
-      - ${PAYMENT_KEYSTORE}:/etc/livepeer/keystore.json:ro
-      - ${PAYMENT_KEYSTORE_PASSWORD_FILE}:/etc/livepeer/keystore-password:ro
+      - ${PAYMENT_KEYSTORE_FILE:-/opt/livepeer/payment-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-/opt/livepeer/payment-keystore-password}:/etc/livepeer/keystore-password:ro
       - livepeer-run:/var/run/livepeer
       - payment-daemon-db:/var/lib/livepeer/payment-daemon
     restart: unless-stopped
 
   capability-broker:
-    image: ${REGISTRY}/livepeer-capability-broker:${TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v2.0.0}
     container_name: capability-broker
     hostname: capability-broker
     command:
@@ -54,7 +58,7 @@ services:
       - --listen=:8080
       - --metrics=:9090
     environment:
-      LOG_LEVEL: ${BROKER_LOG_LEVEL}
+      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
       # Bearer for the private admin surface. Required to mint runner attach
       # credentials with POST /admin/v1/enroll, which is how a workload gets
       # to serve any offer at all.
@@ -64,18 +68,18 @@ services:
       # orch-coordinator, find this URL there, and call it directly. Put a
       # TLS-terminating reverse proxy in front of this in production.
       # Runners that cannot use QUIC attach over WebSocket on this port too.
-      - "${BROKER_PUBLIC_BIND}:${BROKER_LISTEN_PORT}:8080"
+      - "${BROKER_PUBLIC_BIND:-0.0.0.0}:${BROKER_LISTEN_PORT:-8080}:8080"
       # Runner attach over QUIC (UDP), preferred for multiplexed streaming
       # and large multipart bodies.
-      - "${BROKER_PUBLIC_BIND}:${BROKER_QUIC_PORT}:8443/udp"
+      - "${BROKER_PUBLIC_BIND:-0.0.0.0}:${BROKER_QUIC_PORT:-8443}:8443/udp"
       # Metrics — keep private.
-      - "${BROKER_METRICS_BIND}:${BROKER_METRICS_PORT}:9090"
+      - "${BROKER_METRICS_BIND:-127.0.0.1}:${BROKER_METRICS_PORT:-9090}:9090"
     volumes:
-      - ${BROKER_CONFIG}:/etc/livepeer/host-config.yaml:ro
+      - ${BROKER_CONFIG:-/opt/livepeer/host-config.yaml}:/etc/livepeer/host-config.yaml:ro
       # Seals the attach-credential store at rest. Generate once with
       # `openssl rand -hex 32 > /opt/livepeer/broker-seal.key`; losing it
       # means every host re-enrolls.
-      - ${BROKER_SEAL_KEY}:/etc/livepeer/broker-seal.key:ro
+      - ${BROKER_SEAL_KEY:-/opt/livepeer/broker-seal.key}:/etc/livepeer/broker-seal.key:ro
       - livepeer-run:/var/run/livepeer
       # Durable broker state: paid-session authority and paid-job
       # idempotency records. Point `session_store.path` in host-config.yaml

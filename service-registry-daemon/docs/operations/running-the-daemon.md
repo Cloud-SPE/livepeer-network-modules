@@ -14,7 +14,7 @@ A single host can run both daemons side-by-side with separate sockets and stores
 | `--mode` | (required) | `publisher` or `resolver` |
 | `--socket` | `/var/run/livepeer-service-registry.sock` | Unix socket path for gRPC |
 | `--store-path` | `/var/lib/livepeer/registry-cache.db` | BoltDB file (resolver only by default; publisher also uses it for write history) |
-| `--chain-rpc` | `https://arb1.arbitrum.io/rpc` | Ethereum JSON-RPC endpoint |
+| `--chain-rpc-urls` | _(required outside `--dev`)_ | Comma-separated Ethereum JSON-RPC endpoints, primary first; the daemon fails over between them. No built-in default: the daemon refuses to start without it. |
 | `--chain-id` | `42161` | Sanity check; daemon refuses to boot if RPC reports a different chain |
 | `--controller-address` | `0xD8E8...6ee4` (Arbitrum One) | Livepeer Controller. Resolver derives `BondingManager` + `RoundsManager` from it, and `ServiceRegistry` too when `--service-registry-address` is empty. |
 | `--service-registry-address` | `""` | Optional override for the primary registry contract used by resolver `getServiceURI()` lookups. When empty, the resolver reads `ServiceRegistry` from Controller. |
@@ -85,7 +85,7 @@ Set `--dev` on either mode. Effects:
 - A loud `=== DEV MODE ===` banner prints to stderr.
 - Manifest fetcher accepts `http://localhost:*` URLs.
 
-`--dev` and `--chain-rpc` are mutually exclusive.
+`--dev` and `--chain-rpc-urls` are mutually exclusive.
 
 ## Health
 

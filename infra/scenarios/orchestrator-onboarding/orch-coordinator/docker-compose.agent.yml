@@ -16,6 +16,9 @@
 # COORDINATOR_ADMIN_BIND accordingly, but never expose :8080 to the
 # public internet.
 #
+# COORDINATOR_RENEWAL_THRESHOLD=0 means manifest-ttl/3; the coordinator
+# publishes the effective value in metadata.json for the agent to read.
+#
 # Usage:
 #   docker compose \
 #     -f infra/scenarios/orchestrator-onboarding/orch-coordinator/docker-compose.yml \
@@ -33,11 +36,11 @@ services:
       - --listen=:8080
       - --public-listen=:8081
       - --metrics-listen=:9091
-      - --log-level=${COORDINATOR_LOG_LEVEL}
-      - --log-format=${COORDINATOR_LOG_FORMAT}
-      - --scrape-interval=${COORDINATOR_SCRAPE_INTERVAL}
+      - --log-level=${COORDINATOR_LOG_LEVEL:-info}
+      - --log-format=${COORDINATOR_LOG_FORMAT:-text}
+      - --scrape-interval=${COORDINATOR_SCRAPE_INTERVAL:-5m}
       # --- sign-cycle agent support (plan 0042) ---
       - --agent-token-file=/etc/livepeer/agent-token
       - --renewal-threshold=${COORDINATOR_RENEWAL_THRESHOLD:-0}
     volumes:
-      - ${COORDINATOR_AGENT_TOKEN_FILE}:/etc/livepeer/agent-token:ro
+      - ${COORDINATOR_AGENT_TOKEN_FILE:-/opt/livepeer/agent-token}:/etc/livepeer/agent-token:ro

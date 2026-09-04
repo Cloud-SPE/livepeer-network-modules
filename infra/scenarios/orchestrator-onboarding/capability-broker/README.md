@@ -204,15 +204,21 @@ docker compose \
 
 You must set these in `.env` before bring-up:
 
+- `CHAIN_RPC_URLS` — comma-separated Arbitrum RPC endpoints, primary
+  first; the payment-daemon fails over between them for ticket redemption
 - `ORCH_ADDRESS` — your cold orch on-chain address
-- `CHAIN_RPC` — Arbitrum RPC endpoint for ticket redemption
 - `BROKER_ADMIN_TOKEN` — bearer for the private admin surface. Required:
   enrolling a runner (`POST /admin/v1/enroll`) is how anything gets served,
   and the broker refuses to start with `admin_auth: bearer` and no token.
+
+Everything else has a default baked into the compose file and is listed,
+commented out, under "Overrides" in `.env.example`. The ones you are most
+likely to touch:
+
 - `BROKER_SEAL_KEY` — only if `broker-seal.key` lives somewhere other than
   `/opt/livepeer/`
-- `PAYMENT_KEYSTORE` / `PAYMENT_KEYSTORE_PASSWORD_FILE` — only if your hot
-  wallet keystore lives somewhere other than `/opt/livepeer/`
+- `PAYMENT_KEYSTORE_FILE` / `PAYMENT_KEYSTORE_PASSWORD_FILE` — only if your
+  hot wallet keystore lives somewhere other than `/opt/livepeer/`
 - `BROKER_CONFIG` — only if `host-config.yaml` lives somewhere other than
   `/opt/livepeer/`
 

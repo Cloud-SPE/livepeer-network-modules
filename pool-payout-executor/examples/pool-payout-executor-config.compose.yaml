@@ -7,7 +7,11 @@ executor:
   batch_size: 25
   executor_id: executor-a
   lease_ttl_seconds: 300
-  rpc_url: https://arb1.arbitrum.io/rpc
+  # Comma-free YAML list, primary first; the executor fails over between
+  # entries. Public endpoints shown as an example only.
+  rpc_urls:
+    - https://arb1.arbitrum.io/rpc
+    - https://arbitrum.publicnode.com
   chain_id: 42161
   keystore_path: ./keystore.json
   keystore_password_path: ./keystore-password

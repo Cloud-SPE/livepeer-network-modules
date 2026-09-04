@@ -39,7 +39,7 @@ livepeer-protocol-daemon \
   --mode=both \
   --socket=/var/run/livepeer/protocol.sock \
   --store-path=/var/lib/livepeer/protocol.db \
-  --eth-urls=https://arb1.arbitrum.io/rpc,https://arbitrum.publicnode.com \
+  --chain-rpc-urls=https://arb1.arbitrum.io/rpc,https://arbitrum.publicnode.com \
   --chain-id=42161 \
   --controller-address=0xD8E8328501E9645d16Cf49539efC04f734606ee4 \
   --keystore-path=/etc/livepeer/keystore.json \
@@ -56,7 +56,7 @@ Required inputs:
   treasury vote) acts on `msg.sender`, so the daemon signs as the
   orchestrator itself. The signing wallet must equal `--orch-address`.
 - the keystore password, via `--keystore-password-file` or `LIVEPEER_KEYSTORE_PASSWORD`
-- `--eth-urls`
+- `--chain-rpc-urls`
 - `--orch-address` for `reward` and `both`
 - writable state at `--store-path`
 - writable unix-socket directory for `--socket`
@@ -82,7 +82,7 @@ Optional but required *for treasury voting*:
 
 ## 3. What it talks to
 
-- **Chain RPC** over the URLs in `--eth-urls`
+- **Chain RPC** over the URLs in `--chain-rpc-urls`
 - **Local operators / local tools** over the unix socket at `--socket`
 - **Prometheus** optionally over `--metrics-listen`
 

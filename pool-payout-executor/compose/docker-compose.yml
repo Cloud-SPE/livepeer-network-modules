@@ -3,21 +3,24 @@
 #
 # Expected dependencies:
 #   - pool-controller reachable at the URL in the mounted config
-#   - Arbitrum RPC URL in the mounted config
+#   - Arbitrum RPC URLs (executor.rpc_urls) in the mounted config
 #   - executor keystore + password file
+#
+# Every optional variable carries its default inline (${VAR:-default}) so
+# the .env only needs the Required section of .env.example.
 
 services:
   pool-payout-executor:
-    image: ${REGISTRY}/livepeer-pool-payout-executor:${TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-payout-executor:${TAG:-v2.0.0}
     command:
       - reconcile-loop
       - --config=/etc/livepeer/pool-payout-executor.yaml
-      - --interval-ms=${POOL_PAYOUT_EXECUTOR_INTERVAL_MS}
+      - --interval-ms=${POOL_PAYOUT_EXECUTOR_INTERVAL_MS:-5000}
     environment:
-      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN}
+      POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:?set POOL_CONTROLLER_ADMIN_TOKEN to the pool-controller admin bearer}
     volumes:
-      - ${POOL_PAYOUT_EXECUTOR_CONFIG}:/etc/livepeer/pool-payout-executor.yaml:ro
-      - ${POOL_PAYOUT_EXECUTOR_KEYSTORE}:/etc/livepeer/keystore.json:ro
-      - ${POOL_PAYOUT_EXECUTOR_KEYSTORE_PASSWORD_FILE}:/etc/livepeer/keystore-password:ro
-      - ${POOL_PAYOUT_EXECUTOR_STATE_DIR}:/var/lib/livepeer
+      - ${POOL_PAYOUT_EXECUTOR_CONFIG:-../examples/pool-payout-executor-config.compose.yaml}:/etc/livepeer/pool-payout-executor.yaml:ro
+      - ${POOL_PAYOUT_EXECUTOR_KEYSTORE_FILE:-../examples/keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${POOL_PAYOUT_EXECUTOR_KEYSTORE_PASSWORD_FILE:-../examples/keystore-password}:/etc/livepeer/keystore-password:ro
+      - ${POOL_PAYOUT_EXECUTOR_STATE_DIR:-./run/data}:/var/lib/livepeer
     restart: unless-stopped

@@ -38,14 +38,14 @@ start() { # name, then command
 
 echo "starting payment daemons..."
 start payer "$BIN_DIR/payment-daemon" --mode=sender \
-  --chain-rpc="$CHAIN_RPC" \
+  --chain-rpc-urls="$CHAIN_RPC_URLS" \
   --keystore-path="$PAYER_KEYSTORE" \
   --keystore-password-file="$PAYER_KEYSTORE_PASSWORD_FILE" \
   --socket=/tmp/lpm-payer.sock --db="$RUN_DIR/payer.db" \
   --max-payment-wei="$MAX_PAYMENT_WEI" --max-price-per-unit="$MAX_PRICE_PER_UNIT"
 
 start payee "$BIN_DIR/payment-daemon" --mode=receiver \
-  --chain-rpc="$CHAIN_RPC" \
+  --chain-rpc-urls="$CHAIN_RPC_URLS" \
   --keystore-path="$PAYEE_KEYSTORE" \
   --keystore-password-file="$PAYEE_KEYSTORE_PASSWORD_FILE" \
   --socket=/tmp/lpm-payee.sock --db="$RUN_DIR/payee.db" \

@@ -1,6 +1,6 @@
 # chain-commons Adoption — Exec Plan 0048
 
-> Status: Active · Owner: Mike Zupper · Last updated: 2026-09-04
+> Status: Code complete; real-process run pending · Owner: Mike Zupper · Last updated: 2026-09-04
 > Branch: `tasks/lpm-v2`
 > Components: `chain-commons`, `payment-daemon`, `pool-payout-executor`, `protocol-daemon`, `service-registry-daemon`
 
@@ -150,3 +150,12 @@ built from this plan's final commit.
   env list), `334522c` (payment-daemon transport, Controller resolver,
   gas oracle). Coverage gates installed in both modules; pre-existing
   debt exempted against `lnm-tou.7`. Stage 4 next.
+- 2026-09-04 — stages 4 and 5 landed: `2a8feab` (executor payouts on
+  txintent), `09cc28b` (ticket redemption on txintent), `494533f`
+  (txintent first-submit race found by the redemption tests),
+  `5d8ea89` (payment-daemon image copies chain-commons), and the round
+  clock commit. Both images build. All five modules green on build,
+  vet, test, lint and the coverage gate. Remaining before the plan
+  moves to completed/: the integration-stack real-process run (§3
+  layer 3), which uses real keys on mainnet and is the operator's
+  call, and the image rebuild + push that the broker rollout needs.

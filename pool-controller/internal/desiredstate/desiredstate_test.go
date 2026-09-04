@@ -372,3 +372,18 @@ func TestBuildDrainsAPlacementOnAWithdrawnCard(t *testing.T) {
 // catalog file is reviewed in git and the controller's database is not
 // where someone's API credential belongs. So the compose carries
 // ${NAME} and docker substitutes it from the member's own .env.
+
+// The compose a 1080 gets names the class build; a 4090 on the same
+// template gets the vendor default.
+func TestRenderPicksTheClassBuild(t *testing.T) {
+	tmpl := templates.Template{ID: "t-whisper", Protocol: "paid-job/v1",
+		RunnerCompose: templates.RunnerCompose{Image: map[string]string{"nvidia": "img:cu128", "nvidia/gtx-1080": "img:cu126"}}}
+	pascal := renderCompose("whisper", tmpl, types.HardwareUnit{GPUUUID: "GPU-1", GPUModel: "NVIDIA GeForce GTX 1080"})
+	if !strings.Contains(pascal, "image: img:cu126") {
+		t.Fatalf("1080 compose:\n%s", pascal)
+	}
+	ada := renderCompose("whisper", tmpl, types.HardwareUnit{GPUUUID: "GPU-2", GPUModel: "NVIDIA GeForce RTX 4090"})
+	if !strings.Contains(ada, "image: img:cu128") {
+		t.Fatalf("4090 compose:\n%s", ada)
+	}
+}

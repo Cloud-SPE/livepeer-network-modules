@@ -261,3 +261,34 @@ func TestLoadReadsMatchFromYAML(t *testing.T) {
 		t.Fatalf("match = %v", tmpl.Match)
 	}
 }
+
+// An image-map class key names a class the pool knows, of the vendor
+// the key says; and a class in gpu_classes is satisfied by either its
+// own key or the vendor default.
+func TestLoadValidatesClassImageKeys(t *testing.T) {
+	base := func(images string, classes string) string {
+		return "id: t-x\ncapability: openai:audio-transcriptions\noffering_id: x\nprotocol: paid-job/v1\n" +
+			"price_default: { amount_wei: \"1\", per_units: 1 }\nstacking: { primary: true }\n" +
+			"requirements:\n  gpu_classes: [" + classes + "]\nrunner_compose:\n  image:\n" + images
+	}
+	for name, tc := range map[string]struct {
+		yaml    string
+		wantErr string
+	}{
+		"class key satisfies its class":                  {base("    nvidia/gtx-1080: a:cu126\n    nvidia: a:cu128\n", "gtx-1080, rtx-4090"), ""},
+		"class key alone leaves other classes uncovered": {base("    nvidia/gtx-1080: a:cu126\n", "gtx-1080, rtx-4090"), "no nvidia image for it"},
+		"unknown class in key":                           {base("    nvidia/rtx-9999: a\n", "rtx-4090"), "not a nvidia class"},
+		"class of the wrong vendor":                      {base("    nvidia/arc-a770: a\n", "arc-a770"), "not a nvidia class"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := writeTemplates(t, map[string]string{"t.yaml": tc.yaml})
+			_, err := Load(dir)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Load() error = %v", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("Load() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}

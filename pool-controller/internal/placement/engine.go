@@ -302,8 +302,8 @@ func requirementsFail(tmpl templates.Template, unit types.HardwareUnit, class st
 		if vendor == "" {
 			return ReasonNoImageForVendor, "card names no vendor the pool can render for: " + unit.GPUModel
 		}
-		if tmpl.RunnerCompose.ImageFor(vendor) == "" {
-			return ReasonNoImageForVendor, "no " + vendor + " image"
+		if tmpl.RunnerCompose.ImageForClass(vendor, class) == "" {
+			return ReasonNoImageForVendor, "no " + vendor + " image for " + class
 		}
 	}
 	return "", ""

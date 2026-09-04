@@ -357,6 +357,7 @@ Landed in this repository, 2026-09-01, in this order:
 | 2 | `6529bbb` | Broker reports dispatch outcomes; TTFB; refusals excluded; paid-job only. |
 | 5, 6 | `170fd3c` | Three templates get hardware policy; `vision:image-analysis` rename and price; new dated pricing reference. |
 | 4 | `16111f6` | Per-vendor image map with load-time validation; `no_image_for_vendor`; Intel classes; vendor-branched device block; `member_env` deleted. |
+| 4 | 2026-09-04 | Image map keys may be `<vendor>/<class>`: a build for one class that wins over the vendor default — the openai-runners team's cu126 Pascal variants for `gtx-1080`, where the cu128 default fails at the first CUDA op. Validated at load, gated at placement, picked at render. |
 | 3 | `949d669` | `runner-contract.md`; agent is a relay; profiles deleted; `draining` reaches the wire. |
 | 7 | `68e5abf` | Run-scoped fixture and sink URLs; `{{fixture_url.*}}` / `{{sink_url}}`; transcode smoke steps in the real shape. |
 

@@ -95,3 +95,35 @@ func TestPlacementVendorGateOnlyAppliesWhenAnImageShips(t *testing.T) {
 		t.Fatalf("an image-less template was vendor-gated: %q", reason)
 	}
 }
+
+// A class key in the image map is a build for that one class and wins
+// over the vendor default — a GTX 1080 needs a cu126 variant where the
+// cu128 default fails at the first CUDA op. Without the key the card is
+// refused for the vendor's default, never handed a build that cannot
+// run.
+func TestClassImageKeyOverridesTheVendorDefault(t *testing.T) {
+	tmpl := templates.Template{
+		ID: "t-whisper", Priority: 10,
+		Requirements:  templates.Requirements{GPUClasses: []string{ClassGTX1080, ClassRTX4090}},
+		Stacking:      templates.Stacking{Primary: true},
+		RunnerCompose: templates.RunnerCompose{Image: map[string]string{"nvidia": "img:cu128", "nvidia/gtx-1080": "img:cu126"}},
+	}
+	if got := tmpl.RunnerCompose.ImageForClass("nvidia", ClassGTX1080); got != "img:cu126" {
+		t.Fatalf("1080 image = %q", got)
+	}
+	if got := tmpl.RunnerCompose.ImageForClass("nvidia", ClassRTX4090); got != "img:cu128" {
+		t.Fatalf("4090 image = %q", got)
+	}
+	for _, model := range []string{"NVIDIA GeForce GTX 1080", "NVIDIA GeForce RTX 4090"} {
+		if err := Validate(tmpl, vendorUnit(model), types.TemplateAssignmentPrimary); err != nil {
+			t.Fatalf("%s: %v", model, err)
+		}
+	}
+	// A template whose only nvidia build is a Pascal one admits nothing
+	// newer: the vendor default is absent, so a 4090 is refused by name.
+	pascalOnly := tmpl
+	pascalOnly.RunnerCompose = templates.RunnerCompose{Image: map[string]string{"nvidia/gtx-1080": "img:cu126"}}
+	if err := Validate(pascalOnly, vendorUnit("NVIDIA GeForce RTX 4090"), types.TemplateAssignmentPrimary); err == nil {
+		t.Fatal("a 4090 must be refused when the only nvidia build is the 1080's")
+	}
+}

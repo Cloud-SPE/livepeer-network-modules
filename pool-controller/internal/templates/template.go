@@ -157,6 +157,30 @@ func (rc RunnerCompose) ImageFor(vendor string) string {
 	return strings.TrimSpace(rc.Image[strings.ToLower(strings.TrimSpace(vendor))])
 }
 
+// ImageForClass is ImageFor with a class override: a key of the form
+// `<vendor>/<class>` names a build for that one class and wins over the
+// vendor's default. The case it exists for is a CUDA generation the
+// vendor's default build no longer targets — a GTX 1080 needs a
+// cu126 variant while every newer card runs the cu128 default — and
+// that is the template author's knowledge of the image, which is why
+// it is the image map's business and not a second template's.
+func (rc RunnerCompose) ImageForClass(vendor, class string) string {
+	vendor = strings.ToLower(strings.TrimSpace(vendor))
+	if class = strings.ToLower(strings.TrimSpace(class)); class != "" {
+		if img := strings.TrimSpace(rc.Image[vendor+"/"+class]); img != "" {
+			return img
+		}
+	}
+	return rc.ImageFor(vendor)
+}
+
+// SplitImageKey parses an image-map key into its vendor and optional
+// class.
+func SplitImageKey(key string) (vendor, class string) {
+	vendor, class, _ = strings.Cut(strings.ToLower(strings.TrimSpace(key)), "/")
+	return vendor, class
+}
+
 // HasImage reports whether the template ships a runner at all.
 func (rc RunnerCompose) HasImage() bool { return len(rc.Image) > 0 }
 

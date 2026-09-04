@@ -248,13 +248,21 @@ func (t Template) Validate() error {
 	// The image map and the class list have to agree, or a card is placed
 	// on a workload it has no image for and the failure surfaces as a
 	// compose pull on a member's host instead of here (plan 0045 §4).
-	for vendor, image := range t.RunnerCompose.Image {
+	for key, image := range t.RunnerCompose.Image {
+		vendor, class := SplitImageKey(key)
 		if !gpu.Known(vendor) {
 			return fmt.Errorf("template %s: runner_compose.image names vendor %q; known vendors are %v",
 				t.ID, vendor, gpu.Vendors())
 		}
+		// A class key is a build for one class; the class has to be one
+		// the pool knows, of the vendor the key names, or the override
+		// would sit there matching nothing.
+		if class != "" && gpu.VendorOfClass(class) != vendor {
+			return fmt.Errorf("template %s: runner_compose.image key %q: %q is not a %s class the pool knows (%v)",
+				t.ID, key, class, vendor, gpu.Classes())
+		}
 		if strings.TrimSpace(image) == "" {
-			return fmt.Errorf("template %s: runner_compose.image.%s is empty", t.ID, vendor)
+			return fmt.Errorf("template %s: runner_compose.image.%s is empty", t.ID, key)
 		}
 	}
 	if t.RunnerCompose.HasImage() && len(t.Requirements.CPUClasses) > 0 && t.RunnerCompose.ImageFor(gpu.VendorCPU) == "" {
@@ -271,8 +279,8 @@ func (t Template) Validate() error {
 			if vendor == "" {
 				continue // a class placement has not learned yet is not this check's business
 			}
-			if t.RunnerCompose.ImageFor(vendor) == "" {
-				return fmt.Errorf("template %s: requirements.gpu_classes admits %s (%s) but runner_compose.image has no %s image; "+
+			if t.RunnerCompose.ImageForClass(vendor, class) == "" {
+				return fmt.Errorf("template %s: requirements.gpu_classes admits %s (%s) but runner_compose.image has no %s image for it; "+
 					"a card placed on it would fail at compose up on a member's host", t.ID, class, vendor, vendor)
 			}
 		}

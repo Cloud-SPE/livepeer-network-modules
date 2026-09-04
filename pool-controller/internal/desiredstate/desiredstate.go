@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/gpu"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/placement"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
@@ -203,7 +204,7 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 		// cores the way any container does.
 		vendor = gpu.VendorCPU
 	}
-	if image := tmpl.RunnerCompose.ImageFor(vendor); image != "" {
+	if image := tmpl.RunnerCompose.ImageForClass(vendor, placement.ClassOfUnit(unit)); image != "" {
 		fmt.Fprintf(&b, "    image: %s\n", image)
 	}
 	b.WriteString("    restart: unless-stopped\n")

@@ -9,7 +9,13 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	ccconfig "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
 )
+
+// RPCURLsEnv is the environment variable that overrides executor.rpc_urls.
+// It is the same name and comma-separated shape every other daemon reads.
+const RPCURLsEnv = "CHAIN_RPC_URLS"
 
 func LoadFile(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
@@ -41,6 +47,9 @@ func Load(raw []byte) (*Config, error) {
 		return nil, fmt.Errorf("parse yaml: %w", err)
 	}
 	if err := validate(&cfg); err != nil {
+		return nil, err
+	}
+	if err := applyEnvOverrides(&cfg); err != nil {
 		return nil, err
 	}
 	if cfg.PoolController.TimeoutMS == 0 {
@@ -136,5 +145,24 @@ func validate(cfg *Config) error {
 	if cfg.Executor.KeystorePasswordPath != "" && cfg.Executor.KeystorePath == "" {
 		return fmt.Errorf("executor.keystore_path is required when executor.keystore_password_path is set")
 	}
+	return nil
+}
+
+// applyEnvOverrides lets the environment win over the file for the
+// values a compose host shares between services. Today that is only the
+// RPC list: CHAIN_RPC_URLS, when set to a non-blank value, replaces
+// executor.rpc_urls; blank or unset leaves the file's list alone; a
+// malformed value (a blank entry between commas) is an error rather than
+// a silent fallback to the file.
+func applyEnvOverrides(cfg *Config) error {
+	raw, ok := os.LookupEnv(RPCURLsEnv)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	urls, err := ccconfig.ParseRPCURLs(raw)
+	if err != nil {
+		return fmt.Errorf("%s: %w", RPCURLsEnv, err)
+	}
+	cfg.Executor.RPCURLs = urls
 	return nil
 }

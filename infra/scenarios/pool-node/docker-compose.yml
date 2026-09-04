@@ -59,6 +59,9 @@ services:
       - --interval-ms=${POOL_PAYOUT_EXECUTOR_INTERVAL_MS:-5000}
     environment:
       POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:?set POOL_CONTROLLER_ADMIN_TOKEN to the pool-controller admin bearer (openssl rand -hex 32)}
+      # Same list as payment-daemon; overrides executor.rpc_urls in the
+      # mounted config so this host carries one RPC list.
+      CHAIN_RPC_URLS: ${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
     volumes:
       - ${POOL_PAYOUT_EXECUTOR_CONFIG:-../../../pool-payout-executor/examples/pool-payout-executor-config.compose.yaml}:/etc/livepeer/pool-payout-executor.yaml:ro
       - ${POOL_PAYOUT_EXECUTOR_KEYSTORE_FILE:-../../../pool-payout-executor/examples/keystore.json}:/etc/livepeer/keystore.json:ro

@@ -16,9 +16,11 @@ type Executor struct {
 	BatchSize       int    `yaml:"batch_size,omitempty"`
 	ExecutorID      string `yaml:"executor_id,omitempty"`
 	LeaseTTLSeconds int    `yaml:"lease_ttl_seconds,omitempty"`
-	// RPCURLs lists JSON-RPC endpoints, primary first. The executor dials
-	// them in order at startup and uses the first that connects and reports
-	// the expected chain id.
+	// RPCURLs lists JSON-RPC endpoints, primary first; every chain call
+	// fails over between them. Precedence: the CHAIN_RPC_URLS environment
+	// variable (comma-separated, same shape every other daemon takes),
+	// when set and non-blank, replaces this list entirely, so a compose
+	// host carries one RPC list for all of its services.
 	RPCURLs                []string `yaml:"rpc_urls,omitempty"`
 	ChainID                uint64   `yaml:"chain_id,omitempty"`
 	PrivateKeyRef          string   `yaml:"private_key_ref,omitempty"`

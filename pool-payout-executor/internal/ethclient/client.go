@@ -1,3 +1,10 @@
+// Package ethclient is the payout executor's chain client: it holds the
+// hot wallet key and submits native transfers over chain-commons's
+// multi-RPC transport, which fails over between the entries of
+// executor.rpc_urls (or CHAIN_RPC_URLS) on every call.
+//
+// Send-then-confirm is still the executor's own loop here; plan 0048
+// stage 4 replaces it with chain-commons's durable tx intents.
 package ethclient
 
 import (
@@ -6,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
-	"net/url"
 	"os"
 	"strings"
 
@@ -15,13 +21,18 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	goethclient "github.com/ethereum/go-ethereum/ethclient"
 
+	ccconfig "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
+	ccmetrics "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/metrics"
+	ccrpc "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc"
+	ccrpcmulti "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/rpc/multi"
+
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/chainlog"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/config"
 )
 
 type Client struct {
-	rpc     *goethclient.Client
+	rpc     ccrpc.RPC
 	key     *ecdsa.PrivateKey
 	from    ethcommon.Address
 	chainID *big.Int
@@ -32,24 +43,73 @@ type SentTransfer struct {
 	Nonce  uint64 `json:"nonce"`
 }
 
-func New(ctx context.Context, cfg config.Executor) (*Client, error) {
+// Options tunes New. Zero values mean: slog.Default() for the transport
+// log, a no-op metrics recorder, and chain-commons's default RPC policy.
+type Options struct {
+	Logger  *slog.Logger
+	Metrics ccmetrics.Recorder
+	Policy  *ccconfig.RPCPolicy
+}
+
+// New opens the multi-RPC transport from cfg.RPCURLs and verifies the
+// chain id. Every call the returned client makes fails over between the
+// configured endpoints.
+func New(ctx context.Context, cfg config.Executor, opts ...Options) (*Client, error) {
+	var o Options
+	if len(opts) > 0 {
+		o = opts[0]
+	}
 	urls := trimmedURLs(cfg.RPCURLs)
 	if len(urls) == 0 {
 		return nil, fmt.Errorf("executor.rpc_urls is required")
+	}
+	policy := ccconfig.Default().RPC
+	if o.Policy != nil {
+		policy = *o.Policy
+	}
+	if o.Logger == nil {
+		o.Logger = slog.Default()
+	}
+	rpc, err := ccrpcmulti.Open(ccrpcmulti.Options{
+		URLs:    urls,
+		Policy:  policy,
+		Logger:  chainlog.New(o.Logger.With("component", "rpc")),
+		Metrics: o.Metrics,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open rpc: %w", err)
+	}
+	c, err := NewWithRPC(ctx, cfg, rpc)
+	if err != nil {
+		_ = rpc.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
+// NewWithRPC builds a client over an already-open transport. The caller
+// keeps ownership of rpc's lifetime semantics only in the sense that
+// Close on the returned client closes it; tests inject a fake here.
+func NewWithRPC(ctx context.Context, cfg config.Executor, rpc ccrpc.RPC) (*Client, error) {
+	if rpc == nil {
+		return nil, fmt.Errorf("rpc is required")
 	}
 	key, err := loadPrivateKey(cfg)
 	if err != nil {
 		return nil, err
 	}
-	rpc, chainID, err := dialFirstHealthy(ctx, urls, cfg.ChainID)
+	chainID, err := rpc.ChainID(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch chain id: %w", err)
+	}
+	if cfg.ChainID != 0 && uint64(chainID) != cfg.ChainID {
+		return nil, fmt.Errorf("rpc chain id %d does not match configured chain_id %d", uint64(chainID), cfg.ChainID)
 	}
 	return &Client{
 		rpc:     rpc,
 		key:     key,
 		from:    crypto.PubkeyToAddress(key.PublicKey),
-		chainID: chainID,
+		chainID: chainID.BigInt(),
 	}, nil
 }
 
@@ -91,7 +151,7 @@ func loadPrivateKey(cfg config.Executor) (*ecdsa.PrivateKey, error) {
 
 func (c *Client) Close() {
 	if c != nil && c.rpc != nil {
-		c.rpc.Close()
+		_ = c.rpc.Close()
 	}
 }
 
@@ -117,7 +177,7 @@ func (c *Client) SendNativeTransfer(ctx context.Context, to ethcommon.Address, a
 		return SentTransfer{}, fmt.Errorf("latest header: %w", err)
 	}
 	baseFee := big.NewInt(0)
-	if header.BaseFee != nil {
+	if header != nil && header.BaseFee != nil {
 		baseFee = new(big.Int).Set(header.BaseFee)
 	}
 	feeCap := new(big.Int).Add(new(big.Int).Mul(baseFee, big.NewInt(2)), tipCap)
@@ -169,10 +229,14 @@ func (c *Client) ConfirmTransaction(ctx context.Context, txHash string, confirma
 	if confirmationBlocks <= 1 {
 		return true, nil
 	}
-	head, err := c.rpc.BlockNumber(ctx)
+	header, err := c.rpc.HeaderByNumber(ctx, nil)
 	if err != nil {
-		return false, fmt.Errorf("latest block number: %w", err)
+		return false, fmt.Errorf("latest header: %w", err)
 	}
+	if header == nil || header.Number == nil {
+		return false, fmt.Errorf("latest header has no number")
+	}
+	head := header.Number.Uint64()
 	if head+1 < receipt.BlockNumber.Uint64()+confirmationBlocks {
 		return false, nil
 	}
@@ -198,36 +262,6 @@ func strip0x(s string) string {
 	return strings.TrimPrefix(strings.TrimSpace(s), "0x")
 }
 
-// dialFirstHealthy dials urls in order and returns the first client that
-// connects and — when expected is non-zero — reports that chain id.
-// Rejected candidates are logged at warn with their position and host
-// only (provider API keys usually live in the path). When none works
-// the error names how many were tried.
-//
-// This is startup selection, not failover: the chosen *goethclient.Client
-// is held for the executor's lifetime. Runtime failover between the
-// entries is tracked separately.
-func dialFirstHealthy(ctx context.Context, urls []string, expected uint64) (*goethclient.Client, *big.Int, error) {
-	for i, raw := range urls {
-		rpc, err := goethclient.DialContext(ctx, raw)
-		if err == nil {
-			var chainID *big.Int
-			chainID, err = rpc.ChainID(ctx)
-			if err == nil && (expected == 0 || chainID.Uint64() == expected) {
-				return rpc, chainID, nil
-			}
-			if err == nil {
-				err = fmt.Errorf("rpc chain id %d does not match configured chain_id %d", chainID.Uint64(), expected)
-			}
-			rpc.Close()
-		}
-		// go-ethereum quotes the full URL in dial and transport errors,
-		// and that is where provider API keys live: redact it to the host.
-		slog.Warn("rpc candidate rejected", "index", i, "host", urlHost(raw), "err", strings.ReplaceAll(err.Error(), raw, urlHost(raw)))
-	}
-	return nil, nil, fmt.Errorf("no usable rpc endpoint among %d candidate(s)", len(urls))
-}
-
 // trimmedURLs drops blank entries so a YAML list with an empty item
 // reads as "not set" rather than as a dial of "".
 func trimmedURLs(in []string) []string {
@@ -238,14 +272,4 @@ func trimmedURLs(in []string) []string {
 		}
 	}
 	return out
-}
-
-// urlHost returns the host of an RPC URL for logging, dropping
-// credentials and path.
-func urlHost(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return "<invalid-url>"
-	}
-	return u.Host
 }

@@ -7,8 +7,10 @@ executor:
   batch_size: 25
   executor_id: executor-a
   lease_ttl_seconds: 300
-  # Comma-free YAML list, primary first; the executor fails over between
-  # entries. Public endpoints shown as an example only.
+  # YAML list, primary first; every chain call fails over between entries.
+  # The CHAIN_RPC_URLS environment variable (comma-separated), when set,
+  # replaces this list — compose stacks set it so a host has one RPC list.
+  # Public endpoints shown as an example only.
   rpc_urls:
     - https://arb1.arbitrum.io/rpc
     - https://arbitrum.publicnode.com

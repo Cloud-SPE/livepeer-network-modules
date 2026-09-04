@@ -870,7 +870,7 @@ func sendNativeBatch(ctx context.Context, cfg *config.Config, stateRepo *repo.St
 			Actions:  actions,
 		}, nil
 	}
-	chainClient, err := ethclientx.New(ctx, cfg.Executor)
+	chainClient, err := ethclientx.New(ctx, cfg.Executor, ethclientx.Options{Metrics: observability.ChainMetrics()})
 	if err != nil {
 		if releaseErr := releaseLeaseIfHeld(ctx, controllerClient, cfg.Executor, leaseID); releaseErr != nil {
 			return sendNativeBatchResult{}, releaseErr
@@ -1059,7 +1059,7 @@ func confirmSubmitted(ctx context.Context, cfg *config.Config, stateRepo *repo.S
 	if err != nil {
 		return confirmSubmittedResult{}, err
 	}
-	chainClient, err := ethclientx.New(ctx, cfg.Executor)
+	chainClient, err := ethclientx.New(ctx, cfg.Executor, ethclientx.Options{Metrics: observability.ChainMetrics()})
 	if err != nil {
 		return confirmSubmittedResult{}, err
 	}

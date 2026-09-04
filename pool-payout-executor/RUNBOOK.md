@@ -12,7 +12,9 @@
 ## Required runtime inputs
 
 - executor config YAML
-- Arbitrum RPC URL
+- Arbitrum RPC list: `executor.rpc_urls` in the config, or `CHAIN_RPC_URLS`
+  in the environment (comma-separated, primary first), which takes
+  precedence. Every call fails over between the entries.
 - keystore file
 - keystore password file
 - durable `executor.state_path` if reconcile-loop persistence is desired

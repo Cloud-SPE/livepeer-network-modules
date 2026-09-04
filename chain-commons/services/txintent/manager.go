@@ -49,6 +49,14 @@ type Manager struct {
 
 	mu      sync.Mutex
 	waiters map[IntentID][]chan TxIntent
+
+	// submitMu serialises the read-then-write in Submit and Adopt. The
+	// idempotency key is only a guarantee if two concurrent first
+	// submits of the same key cannot both miss the read, both persist,
+	// and both dispatch a processor — which would spend the key twice
+	// at two nonces. Held for the existence check and the write only;
+	// processor dispatch happens after release.
+	submitMu sync.Mutex
 }
 
 // Processor advances a TxIntent from any non-terminal state toward a
@@ -115,6 +123,9 @@ func (m *Manager) Submit(ctx context.Context, p Params) (IntentID, error) {
 
 	id := ComputeID(p.Kind, p.KeyParams)
 	now := m.clock.Now()
+
+	m.submitMu.Lock()
+	defer m.submitMu.Unlock()
 
 	// Check if intent already exists — idempotent submit.
 	existing, err := m.read(id)
@@ -235,6 +246,9 @@ func (m *Manager) Adopt(ctx context.Context, p Params, txHash chain.TxHash, nonc
 	for _, opt := range opts {
 		opt(&o)
 	}
+
+	m.submitMu.Lock()
+	defer m.submitMu.Unlock()
 
 	existing, err := m.read(id)
 	if err == nil {

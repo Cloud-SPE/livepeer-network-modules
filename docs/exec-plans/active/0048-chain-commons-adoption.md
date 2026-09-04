@@ -145,3 +145,8 @@ built from this plan's final commit.
 
 - 2026-09-04 — plan opened; commits `eda0a56` and `f4c65f4` (one flag,
   one list, env layout) are the precondition.
+- 2026-09-04 — stages 0–3 landed: `ecb84a1` (parser), `fc04d5a`
+  (simchain, Adopt, NotFound class), `2cc5270` (executor transport +
+  env list), `334522c` (payment-daemon transport, Controller resolver,
+  gas oracle). Coverage gates installed in both modules; pre-existing
+  debt exempted against `lnm-tou.7`. Stage 4 next.

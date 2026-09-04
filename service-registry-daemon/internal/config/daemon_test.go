@@ -37,7 +37,8 @@ func TestDaemonValidate_RejectsCases(t *testing.T) {
 		{"resolver-huge-bytes", func(d *Daemon) { d.Mode = ModeResolver; d.ManifestMaxBytes = 20 << 20 }, "capped at 16 MiB"},
 		{"publisher-no-keystore", func(d *Daemon) { d.Mode = ModePublisher; d.Dev = false }, "keystore-path"},
 		{"publisher-no-password", func(d *Daemon) { d.Mode = ModePublisher; d.Dev = false; d.KeystorePath = "/x" }, "keystore password"},
-		{"dev-and-rpc", func(d *Daemon) { d.Mode = ModeResolver; d.Dev = true; d.ChainRPC = "https://x" }, "mutually exclusive"},
+		{"dev-and-rpc", func(d *Daemon) { d.Mode = ModeResolver; d.Dev = true; d.ChainRPCURLs = []string{"https://x"} }, "mutually exclusive"},
+		{"resolver-no-rpc", func(d *Daemon) { d.Mode = ModeResolver; d.Dev = false }, "--chain-rpc-urls is required"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -57,6 +58,7 @@ func TestDaemonValidate_RejectsCases(t *testing.T) {
 func TestDaemonValidate_ResolverHappy(t *testing.T) {
 	d := DefaultDaemon()
 	d.Mode = ModeResolver
+	d.ChainRPCURLs = []string{"https://rpc.example/one", "https://rpc.example/two"}
 	if err := d.Validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -66,7 +68,6 @@ func TestDaemonValidate_PublisherDevHappy(t *testing.T) {
 	d := DefaultDaemon()
 	d.Mode = ModePublisher
 	d.Dev = true
-	d.ChainRPC = ""
 	if err := d.Validate(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -93,7 +94,6 @@ func TestValidate_ChainSeedRejectsOverlayOnly(t *testing.T) {
 	d := DefaultDaemon()
 	d.Mode = ModeResolver
 	d.Dev = true
-	d.ChainRPC = ""
 	d.ChainSeedPath = "/tmp/seed.yaml"
 	d.Discovery = DiscoveryOverlayOnly
 	if err := d.Validate(); err == nil {
@@ -105,7 +105,6 @@ func TestValidate_ChainSeedWithDevIsAccepted(t *testing.T) {
 	d := DefaultDaemon()
 	d.Mode = ModeResolver
 	d.Dev = true
-	d.ChainRPC = ""
 	d.ChainSeedPath = "/tmp/seed.yaml"
 	if err := d.Validate(); err != nil {
 		t.Fatalf("--chain-seed with --dev = %v; want accepted", err)

@@ -12,7 +12,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
+	"net/url"
+	"strings"
 
 	"github.com/ethereum/go-ethereum"
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -141,4 +144,58 @@ func (r *Resolver) callGetContract(ctx context.Context, name string) (ethcommon.
 	var addr ethcommon.Address
 	copy(addr[:], out[12:32])
 	return addr, nil
+}
+
+// DialFirstHealthy dials urls in order and returns the first client that
+// both connects and passes CheckChainID against expected. Candidates that
+// fail are logged at warn with their position and the endpoint host only
+// (URLs may carry an API key in the path), then skipped. When no
+// candidate works the returned error names how many were tried.
+//
+// This is startup selection, not failover: once a client is chosen the
+// daemon runs against it for its whole lifetime, because every chain-
+// backed provider holds a concrete *ethclient.Client. Runtime failover
+// between the entries is tracked separately.
+func DialFirstHealthy(ctx context.Context, logger *slog.Logger, urls []string, expected int64) (*ethclient.Client, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if len(urls) == 0 {
+		return nil, errors.New("chain: no rpc urls given")
+	}
+	for i, raw := range urls {
+		client, err := ethclient.DialContext(ctx, raw)
+		if err == nil {
+			if err = CheckChainID(ctx, client, expected); err == nil {
+				return client, nil
+			}
+			client.Close()
+		}
+		logger.Warn("rpc candidate rejected",
+			"index", i,
+			"host", URLHost(raw),
+			"err", redactURL(err, raw))
+	}
+	return nil, fmt.Errorf("chain: no usable rpc endpoint among %d candidate(s)", len(urls))
+}
+
+// redactURL replaces every occurrence of the raw URL inside err's text
+// with its host, because go-ethereum's dial and transport errors quote
+// the full URL and that is where provider API keys live.
+func redactURL(err error, raw string) string {
+	if err == nil {
+		return ""
+	}
+	return strings.ReplaceAll(err.Error(), raw, URLHost(raw))
+}
+
+// URLHost returns the host part of an RPC URL for logging. Credentials
+// and path (where provider API keys usually live) are dropped; an
+// unparseable value yields "<invalid-url>".
+func URLHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "<invalid-url>"
+	}
+	return u.Host
 }

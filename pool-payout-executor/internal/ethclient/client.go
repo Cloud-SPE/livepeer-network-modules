@@ -4,13 +4,15 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"fmt"
+	"log/slog"
 	"math/big"
+	"net/url"
 	"os"
 	"strings"
 
+	ethereum "github.com/ethereum/go-ethereum"
 	ethkeystore "github.com/ethereum/go-ethereum/accounts/keystore"
 	ethcommon "github.com/ethereum/go-ethereum/common"
-	ethereum "github.com/ethereum/go-ethereum"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	goethclient "github.com/ethereum/go-ethereum/ethclient"
@@ -31,25 +33,17 @@ type SentTransfer struct {
 }
 
 func New(ctx context.Context, cfg config.Executor) (*Client, error) {
-	if strings.TrimSpace(cfg.RPCURL) == "" {
-		return nil, fmt.Errorf("executor.rpc_url is required")
+	urls := trimmedURLs(cfg.RPCURLs)
+	if len(urls) == 0 {
+		return nil, fmt.Errorf("executor.rpc_urls is required")
 	}
 	key, err := loadPrivateKey(cfg)
 	if err != nil {
 		return nil, err
 	}
-	rpc, err := goethclient.DialContext(ctx, cfg.RPCURL)
+	rpc, chainID, err := dialFirstHealthy(ctx, urls, cfg.ChainID)
 	if err != nil {
-		return nil, fmt.Errorf("dial rpc: %w", err)
-	}
-	chainID, err := rpc.ChainID(ctx)
-	if err != nil {
-		rpc.Close()
-		return nil, fmt.Errorf("fetch chain id: %w", err)
-	}
-	if cfg.ChainID != 0 && chainID.Uint64() != cfg.ChainID {
-		rpc.Close()
-		return nil, fmt.Errorf("rpc chain id %d does not match configured chain_id %d", chainID.Uint64(), cfg.ChainID)
+		return nil, err
 	}
 	return &Client{
 		rpc:     rpc,
@@ -202,4 +196,56 @@ func resolveSecret(ref string) (string, error) {
 
 func strip0x(s string) string {
 	return strings.TrimPrefix(strings.TrimSpace(s), "0x")
+}
+
+// dialFirstHealthy dials urls in order and returns the first client that
+// connects and — when expected is non-zero — reports that chain id.
+// Rejected candidates are logged at warn with their position and host
+// only (provider API keys usually live in the path). When none works
+// the error names how many were tried.
+//
+// This is startup selection, not failover: the chosen *goethclient.Client
+// is held for the executor's lifetime. Runtime failover between the
+// entries is tracked separately.
+func dialFirstHealthy(ctx context.Context, urls []string, expected uint64) (*goethclient.Client, *big.Int, error) {
+	for i, raw := range urls {
+		rpc, err := goethclient.DialContext(ctx, raw)
+		if err == nil {
+			var chainID *big.Int
+			chainID, err = rpc.ChainID(ctx)
+			if err == nil && (expected == 0 || chainID.Uint64() == expected) {
+				return rpc, chainID, nil
+			}
+			if err == nil {
+				err = fmt.Errorf("rpc chain id %d does not match configured chain_id %d", chainID.Uint64(), expected)
+			}
+			rpc.Close()
+		}
+		// go-ethereum quotes the full URL in dial and transport errors,
+		// and that is where provider API keys live: redact it to the host.
+		slog.Warn("rpc candidate rejected", "index", i, "host", urlHost(raw), "err", strings.ReplaceAll(err.Error(), raw, urlHost(raw)))
+	}
+	return nil, nil, fmt.Errorf("no usable rpc endpoint among %d candidate(s)", len(urls))
+}
+
+// trimmedURLs drops blank entries so a YAML list with an empty item
+// reads as "not set" rather than as a dial of "".
+func trimmedURLs(in []string) []string {
+	var out []string
+	for _, u := range in {
+		if s := strings.TrimSpace(u); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// urlHost returns the host of an RPC URL for logging, dropping
+// credentials and path.
+func urlHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "<invalid-url>"
+	}
+	return u.Host
 }

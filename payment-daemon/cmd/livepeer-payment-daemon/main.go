@@ -3,11 +3,12 @@
 // unix socket. Mode is chosen at boot via `--mode`; it does not change
 // at runtime.
 //
-// In production mode (--chain-rpc set), the daemon dials an Arbitrum
-// One RPC, resolves the Livepeer Controller addresses, and runs against
-// real on-chain state (TicketBroker, RoundsManager, BondingManager).
-// The dev-mode path (no --chain-rpc) keeps the daemon compileable and
-// testable without any chain integration.
+// In production mode (--chain-rpc-urls set), the daemon dials the first
+// healthy Arbitrum One RPC in the list, resolves the Livepeer Controller
+// addresses, and runs against real on-chain state (TicketBroker,
+// RoundsManager, BondingManager). The dev-mode path (no --chain-rpc-urls)
+// keeps the daemon compileable and testable without any chain
+// integration.
 //
 // See ../../docs/operator-runbook.md for what each flag actually does
 // and what each failure mode means in production.
@@ -69,9 +70,9 @@ func main() {
 		mintRetention         = flag.Duration("mint-retention", 24*time.Hour, "sender: how long a mint response stays replayable. Keys are remembered forever regardless — an expired key is refused, never re-minted")
 		payeeAdminToken       = flag.String("payee-admin-token", "", "Bearer token required for receiver-only PayeeAdmin RPCs. Empty disables authenticated admin access.")
 		payerAdminToken       = flag.String("payer-admin-token", "", "Bearer token required for sender-only PayerAdmin RPCs (dev-clock round advancement, for live conformance). Empty disables admin access. Refused outright on a chain clock.")
-		chainRPC              = flag.String("chain-rpc", "", "JSON-RPC endpoint (production). Empty = DEV MODE: chain providers are in-memory and the signing key is a deterministic throwaway. The key is REAL secp256k1 — dev payments verify like production ones — but it is published and must never hold value.")
-		devKeyHex             = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc is set.")
-		keystorePath          = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc is set.")
+		chainRPCURLs          = flag.String("chain-rpc-urls", "", "Comma-separated JSON-RPC endpoints, primary first (production). The daemon dials them in order at startup and uses the first that connects and reports the expected chain id. Empty = DEV MODE: chain providers are in-memory and the signing key is a deterministic throwaway. The key is REAL secp256k1 — dev payments verify like production ones — but it is published and must never hold value.")
+		devKeyHex             = flag.String("dev-signing-key-hex", "", "Dev-mode sender signing key as hex private key (sender only). Rejected when --chain-rpc-urls is set.")
+		keystorePath          = flag.String("keystore-path", "", "Path to the V3 JSON keystore file (production only). Required when --chain-rpc-urls is set.")
 		keystorePwFile        = flag.String("keystore-password-file", "", "Path to a file containing the keystore unlock password. Mutually exclusive with LIVEPEER_KEYSTORE_PASSWORD.")
 		orchAddressHex        = flag.String("orch-address", "", "Hex (0x-prefixed) on-chain orchestrator identity. Empty = the keystore's address is used as the recipient.")
 		controllerAddrHex     = flag.String("chain-controller-address", chain.ArbitrumOneController.Hex(), "Livepeer Controller address. Default = Arbitrum One.")
@@ -114,19 +115,20 @@ func main() {
 			*socketPath = "/var/run/livepeer/payment-daemon.sock"
 		}
 	}
-	if *chainRPC != "" && *devKeyHex != "" {
-		fmt.Fprintln(os.Stderr, "--dev-signing-key-hex is rejected when --chain-rpc is set")
+	rpcURLs := splitCSV(*chainRPCURLs)
+	if len(rpcURLs) > 0 && *devKeyHex != "" {
+		fmt.Fprintln(os.Stderr, "--dev-signing-key-hex is rejected when --chain-rpc-urls is set")
 		os.Exit(configErrExitCode)
 	}
-	if *chainRPC == "" {
-		fmt.Fprintln(os.Stderr, "livepeer-payment-daemon: DEV MODE — --chain-rpc is empty; using fake chain providers (redemptions will not hit any chain)")
+	if len(rpcURLs) == 0 {
+		fmt.Fprintln(os.Stderr, "livepeer-payment-daemon: DEV MODE — --chain-rpc-urls is empty; using fake chain providers (redemptions will not hit any chain)")
 	}
 
 	logger.Info("payment-daemon starting",
 		"version", version,
 		"mode", *mode,
 		"socket", *socketPath,
-		"chain", chainStatus(*chainRPC))
+		"chain", chainStatus(rpcURLs))
 	adminToken := *payeeAdminToken
 	if adminToken == "" {
 		adminToken = os.Getenv("PAYEE_DAEMON_ADMIN_TOKEN")
@@ -141,7 +143,7 @@ func main() {
 		maxPricePerUnit:       *maxPricePerUnit,
 		payeeAdminToken:       adminToken,
 		payerAdminToken:       *payerAdminToken,
-		chainRPC:              *chainRPC,
+		chainRPCURLs:          rpcURLs,
 		devKeyHex:             *devKeyHex,
 		keystorePath:          *keystorePath,
 		keystorePwFile:        *keystorePwFile,
@@ -181,7 +183,7 @@ type bootConfig struct {
 	maxPricePerUnit       string
 	payeeAdminToken       string
 	payerAdminToken       string
-	chainRPC              string
+	chainRPCURLs          []string
 	devKeyHex             string
 	keystorePath          string
 	keystorePwFile        string
@@ -244,7 +246,7 @@ func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec met
 	var clock providers.Clock
 	var gp providers.GasPrice
 
-	if cfg.chainRPC == "" {
+	if len(cfg.chainRPCURLs) == 0 {
 		broker = devbroker.New()
 		clock = devclock.New()
 		gp = providers.NewDevGasPrice()
@@ -339,8 +341,8 @@ func runSender(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec met
 }
 
 // runReceiver boots a receiver-mode daemon and lights up the full
-// settlement pipeline (broker + escrow + settlement) when --chain-rpc
-// is set.
+// settlement pipeline (broker + escrow + settlement) when
+// --chain-rpc-urls is set.
 func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec metrics.Recorder) error {
 	keystore, err := buildKeyStore(logger, cfg)
 	if err != nil {
@@ -369,7 +371,7 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 	svc := receiver.New(st, receiver.Config{Recipient: recipient, Recorder: rec}, logger.With("component", "receiver"))
 	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: cfg.payeeAdminToken}, cfg.socketPath, rec, logger.With("component", "grpc"))
 
-	if cfg.chainRPC != "" {
+	if len(cfg.chainRPCURLs) > 0 {
 		client, addrs, err := dialAndResolve(ctx, logger, cfg)
 		if err != nil {
 			return err
@@ -453,16 +455,12 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 	return runServerWithCtx(ctx, logger, srv)
 }
 
-// dialAndResolve dials the JSON-RPC endpoint, checks the chain ID
-// matches `cfg.expectedChainID`, and resolves the contract addresses
-// via the Controller (honoring per-contract overrides).
+// dialAndResolve dials the JSON-RPC endpoints in order, keeps the first
+// whose chain ID matches `cfg.expectedChainID`, and resolves the contract
+// addresses via the Controller (honoring per-contract overrides).
 func dialAndResolve(ctx context.Context, logger *slog.Logger, cfg bootConfig) (*ethclient.Client, chain.Addresses, error) {
-	client, err := ethclient.DialContext(ctx, cfg.chainRPC)
+	client, err := chain.DialFirstHealthy(ctx, logger, cfg.chainRPCURLs, cfg.expectedChainID)
 	if err != nil {
-		return nil, chain.Addresses{}, fmt.Errorf("dial %s: %w", cfg.chainRPC, err)
-	}
-	if err := chain.CheckChainID(ctx, client, cfg.expectedChainID); err != nil {
-		client.Close()
 		return nil, chain.Addresses{}, &configError{err: err}
 	}
 	logger.Info("chain id verified", "chain_id", cfg.expectedChainID)
@@ -483,13 +481,13 @@ func dialAndResolve(ctx context.Context, logger *slog.Logger, cfg bootConfig) (*
 }
 
 // buildKeyStore returns the providers.KeyStore for the given boot
-// config. In dev mode (cfg.chainRPC == "") it returns a deterministic
+// config. In dev mode (no chainRPCURLs) it returns a deterministic
 // devkeystore. In production mode it loads the V3 JSON keystore via
 // jsonfile.Load + inmemory.New (eager decrypt). Decrypt failures are
 // wrapped in *configError so the caller exits 2 without binding the
 // gRPC socket.
 func buildKeyStore(logger *slog.Logger, cfg bootConfig) (providers.KeyStore, error) {
-	if cfg.chainRPC == "" {
+	if len(cfg.chainRPCURLs) == 0 {
 		ks, err := devkeystore.New(cfg.devKeyHex)
 		if err != nil {
 			return nil, &configError{err: fmt.Errorf("dev keystore: %w", err)}
@@ -498,7 +496,7 @@ func buildKeyStore(logger *slog.Logger, cfg bootConfig) (providers.KeyStore, err
 	}
 
 	if cfg.keystorePath == "" {
-		return nil, &configError{err: errors.New("--keystore-path is required when --chain-rpc is set")}
+		return nil, &configError{err: errors.New("--keystore-path is required when --chain-rpc-urls is set")}
 	}
 
 	password, err := loadPassword(cfg.keystorePwFile)
@@ -605,11 +603,27 @@ func ensureParentDir(p string) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
-func chainStatus(chainRPC string) string {
-	if chainRPC == "" {
+func chainStatus(urls []string) string {
+	if len(urls) == 0 {
 		return "dev (fakes)"
 	}
-	return "production (" + chainRPC + ")"
+	hosts := make([]string, len(urls))
+	for i, u := range urls {
+		hosts[i] = chain.URLHost(u)
+	}
+	return "production (" + strings.Join(hosts, ",") + ")"
+}
+
+// splitCSV splits a comma-separated flag value, trimming whitespace and
+// dropping empty items, so "" and " , " both mean "not set".
+func splitCSV(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func decodeHex40(hex40 string) ([]byte, error) {
@@ -654,7 +668,7 @@ func buildLimits(cfg bootConfig) (sender.Limits, error) {
 	var out sender.Limits
 	raw := strings.TrimSpace(cfg.maxPaymentWei)
 	switch {
-	case raw == "" && cfg.chainRPC != "":
+	case raw == "" && len(cfg.chainRPCURLs) > 0:
 		return out, fmt.Errorf("--max-payment-wei is required in chain mode: " +
 			"set the largest funded value this daemon may authorize for one payment " +
 			"(see docs/operator-runbook.md, 'Spend limits')")

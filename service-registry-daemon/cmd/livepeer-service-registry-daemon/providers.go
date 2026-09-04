@@ -38,7 +38,6 @@ import (
 	storeadapter "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/store/chaincommonsadapter"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/verifier"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
-	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 // builtProviders holds the set of providers needed by the services. The
@@ -155,11 +154,18 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 
 	var controllerAddrs cccontrollerapi.Addresses
 
+	// ccRPC is the one chain client for a production resolver: the
+	// Controller refresher, the round poller, pool discovery and the
+	// ServiceRegistry reads all share it, so they all fail over across
+	// the same --chain-rpc-urls list. Opened once, closed once.
+	var ccRPC *ccrpcmulti.MultiRPC
+
 	// Resolver production deployments resolve ServiceRegistry from the
 	// Controller by default so operators don't need to pass the address
 	// explicitly. The explicit flag remains as an override.
 	if cfg.Mode == config.ModeResolver && !cfg.Dev {
-		ccRPC, err := ccrpcmulti.Open(ccrpcmulti.Options{URLs: []string{cfg.ChainRPC}})
+		var err error
+		ccRPC, err = ccrpcmulti.Open(ccrpcmulti.Options{URLs: cfg.ChainRPCURLs})
 		if err != nil {
 			return nil, fmt.Errorf("providers: chain-commons rpc: %w", err)
 		}
@@ -248,16 +254,12 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		}
 		bp.chain = mem
 	} else if cfg.Mode == config.ModeResolver {
-		cli, err := ethclient.DialContext(ctx, cfg.ChainRPC)
-		if err != nil {
-			return nil, fmt.Errorf("providers: chain dial %s: %w", cfg.ChainRPC, err)
-		}
 		serviceRegistryAddress := cfg.ServiceRegistryAddress
 		if serviceRegistryAddress == "" && cfg.Mode == config.ModeResolver {
 			serviceRegistryAddress = controllerAddrs.ServiceRegistry.Hex()
 		}
 		eth, err := chain.NewEth(chain.EthConfig{
-			Client:                   cli,
+			Client:                   ccRPC,
 			ServiceRegistryAddress:   serviceRegistryAddress,
 			AIServiceRegistryAddress: cfg.AIServiceRegistryAddress,
 		})

@@ -109,7 +109,7 @@ func TestRunReceiverDoesNotBindSocketOnDecryptFailure(t *testing.T) {
 		mode:         "receiver",
 		socketPath:   socketPath,
 		dbPath:       filepath.Join(tmp, "sessions.db"),
-		chainRPC:     "https://example.invalid/rpc",
+		chainRPCURLs: []string{"https://example.invalid/rpc"},
 		keystorePath: keystorePath,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -141,7 +141,7 @@ func TestRunSenderDoesNotBindSocketOnDecryptFailure(t *testing.T) {
 	cfg := bootConfig{
 		mode:         "sender",
 		socketPath:   socketPath,
-		chainRPC:     "https://example.invalid/rpc",
+		chainRPCURLs: []string{"https://example.invalid/rpc"},
 		keystorePath: keystorePath,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

@@ -13,22 +13,25 @@ type PoolController struct {
 }
 
 type Executor struct {
-	BatchSize              int    `yaml:"batch_size,omitempty"`
-	ExecutorID             string `yaml:"executor_id,omitempty"`
-	LeaseTTLSeconds        int    `yaml:"lease_ttl_seconds,omitempty"`
-	RPCURL                 string `yaml:"rpc_url,omitempty"`
-	ChainID                uint64 `yaml:"chain_id,omitempty"`
-	PrivateKeyRef          string `yaml:"private_key_ref,omitempty"`
-	KeystorePath           string `yaml:"keystore_path,omitempty"`
-	KeystorePasswordPath   string `yaml:"keystore_password_path,omitempty"`
-	ConfirmationBlocks     uint64 `yaml:"confirmation_blocks,omitempty"`
-	StatePath              string `yaml:"state_path,omitempty"`
-	RunHistoryLimit        int    `yaml:"run_history_limit,omitempty"`
-	BackoffBaseMS          int    `yaml:"backoff_base_ms,omitempty"`
-	BackoffMaxMS           int    `yaml:"backoff_max_ms,omitempty"`
-	AutoRequeueFailed      bool   `yaml:"auto_requeue_failed,omitempty"`
-	MaxRetries             int    `yaml:"max_retries,omitempty"`
-	RequeueCooldownSeconds int    `yaml:"requeue_cooldown_seconds,omitempty"`
+	BatchSize       int    `yaml:"batch_size,omitempty"`
+	ExecutorID      string `yaml:"executor_id,omitempty"`
+	LeaseTTLSeconds int    `yaml:"lease_ttl_seconds,omitempty"`
+	// RPCURLs lists JSON-RPC endpoints, primary first. The executor dials
+	// them in order at startup and uses the first that connects and reports
+	// the expected chain id.
+	RPCURLs                []string `yaml:"rpc_urls,omitempty"`
+	ChainID                uint64   `yaml:"chain_id,omitempty"`
+	PrivateKeyRef          string   `yaml:"private_key_ref,omitempty"`
+	KeystorePath           string   `yaml:"keystore_path,omitempty"`
+	KeystorePasswordPath   string   `yaml:"keystore_password_path,omitempty"`
+	ConfirmationBlocks     uint64   `yaml:"confirmation_blocks,omitempty"`
+	StatePath              string   `yaml:"state_path,omitempty"`
+	RunHistoryLimit        int      `yaml:"run_history_limit,omitempty"`
+	BackoffBaseMS          int      `yaml:"backoff_base_ms,omitempty"`
+	BackoffMaxMS           int      `yaml:"backoff_max_ms,omitempty"`
+	AutoRequeueFailed      bool     `yaml:"auto_requeue_failed,omitempty"`
+	MaxRetries             int      `yaml:"max_retries,omitempty"`
+	RequeueCooldownSeconds int      `yaml:"requeue_cooldown_seconds,omitempty"`
 	// MetricsAddr is the listen address for /metrics scraping during
 	// long-running reconcile-loop mode. Empty disables the listener.
 	MetricsAddr string `yaml:"metrics_addr,omitempty"`

@@ -72,7 +72,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	socketPath := fs.String("socket", "", "unix socket path for the gRPC listener; required in non-dev mode")
 	storePath := fs.String("store-path", "", "BoltDB file path; required in non-dev mode")
 
-	ethURLs := fs.String("eth-urls", "", "comma-separated Ethereum RPC URLs (primary first)")
+	chainRPCURLs := fs.String("chain-rpc-urls", "", "comma-separated Ethereum JSON-RPC URLs, primary first; every chain read and write fails over across the list (required in non-dev mode)")
 	chainID := fs.Uint64("chain-id", 42161, "expected chain ID; default Arbitrum One")
 	controllerAddr := fs.String("controller-address", "0xD8E8328501E9645d16Cf49539efC04f734606ee4", "Livepeer Controller contract address; default Arbitrum One")
 	aiServiceRegistryAddr := fs.String("ai-service-registry-address", "0x04C0b249740175999E5BF5c9ac1dA92431EF34C5", "AI service registry contract address; default supplied deployment")
@@ -125,8 +125,8 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	cfg.Chain = chaincfg.Default()
 	cfg.Chain.ChainID = chain.ChainID(*chainID)
 	cfg.Chain.GasLimit = *gasLimit
-	if *ethURLs != "" {
-		cfg.Chain.EthURLs = splitCSV(*ethURLs)
+	if *chainRPCURLs != "" {
+		cfg.Chain.EthURLs = splitCSV(*chainRPCURLs)
 	}
 	if *controllerAddr != "" {
 		cfg.Chain.ControllerAddr = common.HexToAddress(*controllerAddr)

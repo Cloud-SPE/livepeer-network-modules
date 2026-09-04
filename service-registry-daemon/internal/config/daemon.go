@@ -38,8 +38,12 @@ type Daemon struct {
 	Mode       Mode
 	SocketPath string
 	StorePath  string
-	ChainRPC   string
-	ChainID    int64
+	// ChainRPCURLs is the ordered list of JSON-RPC endpoints, primary
+	// first; every chain read fails over across it. Required in
+	// resolver mode outside --dev. There is no default: the operator
+	// names the endpoints, never the binary.
+	ChainRPCURLs []string
+	ChainID      int64
 	// ControllerAddress is the Livepeer Controller address; used to
 	// resolve BondingManager + RoundsManager for resolver chain
 	// discovery and, by default, the ServiceRegistry contract address
@@ -95,7 +99,6 @@ func DefaultDaemon() *Daemon {
 	return &Daemon{
 		SocketPath:                "/var/run/livepeer-service-registry.sock",
 		StorePath:                 "/var/lib/livepeer/registry-cache.db",
-		ChainRPC:                  "https://arb1.arbitrum.io/rpc",
 		ChainID:                   42161,
 		ControllerAddress:         "0xD8E8328501E9645d16Cf49539efC04f734606ee4", // Livepeer Controller, Arbitrum One
 		ServiceRegistryAddress:    "",                                           // empty means resolve via Controller
@@ -124,8 +127,8 @@ func (d *Daemon) Validate() error {
 	if d.SocketPath == "" {
 		return fmt.Errorf("config: --socket is required")
 	}
-	if d.Dev && d.ChainRPC != "" && d.ChainRPC != "dev" {
-		return fmt.Errorf("config: --dev and --chain-rpc are mutually exclusive")
+	if d.Dev && len(d.ChainRPCURLs) > 0 {
+		return fmt.Errorf("config: --dev and --chain-rpc-urls are mutually exclusive")
 	}
 	// A seed outside --dev would be read, validated, and then ignored,
 	// because a real chain provider replaces the in-memory one. Refusing
@@ -159,6 +162,12 @@ func (d *Daemon) Validate() error {
 		}
 		if d.ManifestFetchTimeout <= 0 {
 			return fmt.Errorf("config: --manifest-fetch-timeout must be > 0")
+		}
+		// Every production resolver reads the chain — at minimum to
+		// resolve ServiceRegistry from the Controller — and there is
+		// deliberately no built-in endpoint to fall back to.
+		if !d.Dev && len(d.ChainRPCURLs) == 0 {
+			return fmt.Errorf("config: --chain-rpc-urls is required in resolver mode (comma-separated, primary first)")
 		}
 	}
 	if d.Mode == ModePublisher && !d.Dev {

@@ -237,7 +237,7 @@ func TestRunReconcileOnceDryRun(t *testing.T) {
 pool_controller:
   url: `+controllerServer.URL+`
 executor:
-  rpc_url: `+rpcServer.URL+`
+  rpc_urls: [`+rpcServer.URL+`]
   private_key_ref: env://POOL_EXECUTOR_TEST_KEY
   chain_id: 42161
   state_path: `+statePath+`
@@ -319,7 +319,7 @@ func TestRunReconcileLoopDryRun(t *testing.T) {
 pool_controller:
   url: `+controllerServer.URL+`
 executor:
-  rpc_url: `+rpcServer.URL+`
+  rpc_urls: [`+rpcServer.URL+`]
   private_key_ref: env://POOL_EXECUTOR_TEST_KEY
   chain_id: 42161
   state_path: `+statePath+`
@@ -398,7 +398,7 @@ func TestRunReconcileLoopAppliesConfirmBackoff(t *testing.T) {
 pool_controller:
   url: `+controllerServer.URL+`
 executor:
-  rpc_url: `+rpcServer.URL+`
+  rpc_urls: [`+rpcServer.URL+`]
   private_key_ref: env://POOL_EXECUTOR_TEST_KEY
   chain_id: 42161
   state_path: `+statePath+`
@@ -608,7 +608,7 @@ func TestSendNativeBatchReleasesUntouchedLeaseRemainderAfterPartialSubmit(t *tes
 			ExecutorID:      "executor-a",
 			LeaseTTLSeconds: 300,
 			ChainID:         42161,
-			RPCURL:          rpcServer.URL,
+			RPCURLs:         []string{rpcServer.URL},
 			PrivateKeyRef:   "env://POOL_EXECUTOR_TEST_KEY",
 		},
 	}
@@ -703,7 +703,7 @@ func TestRunReconcileLoopMultiRoundSoak(t *testing.T) {
 pool_controller:
   url: `+controllerServer.URL+`
 executor:
-  rpc_url: `+rpcServer.URL+`
+  rpc_urls: [`+rpcServer.URL+`]
   private_key_ref: env://POOL_EXECUTOR_TEST_KEY
   chain_id: 42161
   batch_size: 1

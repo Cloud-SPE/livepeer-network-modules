@@ -143,3 +143,61 @@ func TestResolve_HonorsOverrides(t *testing.T) {
 		t.Errorf("override not honored; got %s", addrs.TicketBroker)
 	}
 }
+
+// chainIDServer answers eth_chainId with the given id and rejects
+// everything else.
+func chainIDServer(t *testing.T, id string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req rpcReq
+		if err := json.Unmarshal(body, &req); err != nil || req.Method != "eth_chainId" {
+			http.Error(w, "unexpected", http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(rpcResp{JSONRPC: "2.0", Result: id, ID: req.ID})
+	}))
+}
+
+func TestDialFirstHealthy_SkipsBadCandidates(t *testing.T) {
+	wrong := chainIDServer(t, "0x1") // mainnet, not Arbitrum
+	defer wrong.Close()
+	right := chainIDServer(t, "0xa4b1") // 42161
+	defer right.Close()
+
+	urls := []string{
+		"http://127.0.0.1:1/unreachable", // dial/transport failure
+		wrong.URL,                        // wrong chain id
+		right.URL,
+	}
+	client, err := DialFirstHealthy(context.Background(), nil, urls, ArbitrumOneChainID)
+	if err != nil {
+		t.Fatalf("DialFirstHealthy: %v", err)
+	}
+	defer client.Close()
+	got, err := client.ChainID(context.Background())
+	if err != nil || got.Int64() != ArbitrumOneChainID {
+		t.Fatalf("chosen client chain id = %v, err = %v; want %d", got, err, ArbitrumOneChainID)
+	}
+}
+
+func TestDialFirstHealthy_NoneUsable(t *testing.T) {
+	wrong := chainIDServer(t, "0x1")
+	defer wrong.Close()
+	_, err := DialFirstHealthy(context.Background(), nil, []string{"http://127.0.0.1:1/x", wrong.URL}, ArbitrumOneChainID)
+	if err == nil || !strings.Contains(err.Error(), "2 candidate(s)") {
+		t.Fatalf("err = %v; want a 'no usable rpc endpoint among 2 candidate(s)' error", err)
+	}
+	if _, err := DialFirstHealthy(context.Background(), nil, nil, ArbitrumOneChainID); err == nil {
+		t.Fatal("empty url list must error")
+	}
+}
+
+func TestURLHost_DropsSecrets(t *testing.T) {
+	if got := URLHost("https://user:pw@rpc.example.com/v2/SECRETKEY"); got != "rpc.example.com" {
+		t.Fatalf("URLHost = %q", got)
+	}
+	if got := URLHost("::not a url"); got != "<invalid-url>" {
+		t.Fatalf("URLHost invalid = %q", got)
+	}
+}

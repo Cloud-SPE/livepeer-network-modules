@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 
@@ -20,7 +21,7 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	mode := fs.String("mode", "", "operating mode: publisher | resolver (required)")
 	fs.StringVar(&cfg.SocketPath, "socket", cfg.SocketPath, "unix socket path for gRPC")
 	fs.StringVar(&cfg.StorePath, "store-path", cfg.StorePath, "BoltDB file path")
-	fs.StringVar(&cfg.ChainRPC, "chain-rpc", cfg.ChainRPC, "Ethereum JSON-RPC endpoint (mutually exclusive with --dev)")
+	fs.Var((*csvList)(&cfg.ChainRPCURLs), "chain-rpc-urls", "comma-separated Ethereum JSON-RPC URLs, primary first; every chain read fails over across the list (required in resolver mode; mutually exclusive with --dev)")
 	fs.Int64Var(&cfg.ChainID, "chain-id", cfg.ChainID, "expected chain ID (sanity check)")
 	fs.StringVar(&cfg.ControllerAddress, "controller-address", cfg.ControllerAddress, "Livepeer Controller contract address; used for resolver chain auto-discovery (BondingManager + RoundsManager). Default Arbitrum One")
 	fs.StringVar(&cfg.ServiceRegistryAddress, "service-registry-address", cfg.ServiceRegistryAddress, "optional override for the primary registry contract address; when empty, resolver reads ServiceRegistry from Controller")
@@ -79,30 +80,35 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 		cfg.Discovery = config.DiscoveryOverlayOnly
 	}
 
-	// In --dev mode, suppress the default chain-rpc unless the operator
-	// explicitly passed one. This keeps the validator from tripping on
-	// the dev/chain-rpc mutual-exclusion when the user just wrote
-	// `--mode=resolver --dev`.
-	if cfg.Dev && !flagSet(fs, "chain-rpc") {
-		cfg.ChainRPC = ""
-	}
-
 	if err := cfg.Validate(); err != nil {
 		return nil, false, err
 	}
 	return cfg, false, nil
 }
 
-// flagSet reports whether name was explicitly set on the command line
-// (vs. left at default).
-func flagSet(fs *flag.FlagSet, name string) bool {
-	found := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			found = true
+// csvList is a flag.Value for a comma-separated list. Entries are
+// trimmed; a blank entry (a stray comma) is a parse error rather than
+// something to skip silently, because an RPC list with a hole in it is
+// almost always a typo in the operator's env file.
+type csvList []string
+
+func (l *csvList) String() string { return strings.Join(*l, ",") }
+
+func (l *csvList) Set(v string) error {
+	if strings.TrimSpace(v) == "" {
+		return fmt.Errorf("list must not be empty")
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for i, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return fmt.Errorf("entry %d is empty", i+1)
 		}
-	})
-	return found
+		out = append(out, p)
+	}
+	*l = out
+	return nil
 }
 
 // usage prints flag help. Used when --help / -h is passed.

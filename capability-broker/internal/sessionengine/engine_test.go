@@ -41,6 +41,8 @@ type fakePayment struct {
 	workIDs      []string
 	openPerUnits []uint64
 	ticketCount  int32 // tickets in the batch ProcessPayment reports
+	failClose    int   // fail the next N CloseSession calls
+	openDelay    time.Duration
 	ticketsBad   int32 // how many of them were rejected
 	rejectReason payment.PaymentRejectionReason
 	// pricing reads the offering under test at call time, so a test that
@@ -58,6 +60,12 @@ func (f *fakePayment) GetTicketParams(context.Context, payment.GetTicketParamsRe
 	return nil, errors.New("unused")
 }
 func (f *fakePayment) OpenSession(_ context.Context, req payment.OpenSessionRequest) (*payment.OpenSessionResult, error) {
+	f.mu.Lock()
+	delay := f.openDelay
+	f.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.openCalls++
@@ -142,6 +150,10 @@ func (f *fakePayment) GetBalance(context.Context, []byte, string) (*big.Int, err
 func (f *fakePayment) CloseSession(context.Context, []byte, string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failClose > 0 {
+		f.failClose--
+		return errors.New("payment daemon unavailable")
+	}
 	f.closed++
 	return nil
 }
@@ -157,12 +169,13 @@ func (f *fakePayment) totalDebited() int64 {
 }
 
 type fakeRunner struct {
-	mu         sync.Mutex
-	created    int
-	terminated []string
-	gone       bool
-	runtime    json.RawMessage
-	failCreate bool
+	mu            sync.Mutex
+	created       int
+	terminated    []string
+	gone          bool
+	runtime       json.RawMessage
+	failCreate    bool
+	failTerminate bool
 }
 
 func validRuntime() json.RawMessage {
@@ -198,6 +211,9 @@ func (f *fakeRunner) QuerySession(context.Context, string) (*RunnerStatus, error
 func (f *fakeRunner) TerminateSession(_ context.Context, id, reason string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failTerminate {
+		return errors.New("runner unreachable")
+	}
 	f.terminated = append(f.terminated, reason)
 	return nil
 }
@@ -206,14 +222,15 @@ func (f *fakeRunner) TerminateSession(_ context.Context, id, reason string) erro
 // harness
 
 type harness struct {
-	engine  *Engine
-	store   *sessionstore.Store
-	pay     *fakePayment
-	runner  *fakeRunner
-	spec    *OfferingSpec
-	nowVal  time.Time
-	nowMu   sync.Mutex
-	release []string
+	engine    *Engine
+	store     *sessionstore.Store
+	pay       *fakePayment
+	runner    *fakeRunner
+	spec      *OfferingSpec
+	nowVal    time.Time
+	nowMu     sync.Mutex
+	release   []string
+	winddowns []string // OnWinddown reasons, in order
 }
 
 func (h *harness) now() time.Time {
@@ -260,6 +277,7 @@ func newHarness(t *testing.T) *harness {
 		Specs:           func(string) *OfferingSpec { return h.spec },
 		Callback:        CallbackConfig{BaseURL: "https://broker.example.com"},
 		ReleaseCapacity: func(ref string) { h.release = append(h.release, ref) },
+		OnWinddown:      func(_ sessionstore.Record, reason string) { h.winddowns = append(h.winddowns, reason) },
 		Now:             h.now,
 	})
 	if err != nil {
@@ -1462,4 +1480,142 @@ func TestSettlementStateUsesTheNormativeVocabulary(t *testing.T) {
 			t.Fatalf("an ended session settles as %q; want \"closed\"", set.GetState())
 		}
 	})
+}
+
+// Two opens with one request id, concurrently: the id is claimed before
+// any side effect, so exactly one payee session opens and one runner
+// session is created; the other open is told it is in flight (or, if
+// it arrived after the first finished, replays it).
+func TestConcurrentOpensWithOneRequestIDFundOnce(t *testing.T) {
+	h := newHarness(t)
+	h.pay.openDelay = 150 * time.Millisecond
+	open := func() (*OpenResult, error) {
+		return h.engine.Open(context.Background(), OpenRequest{
+			RequestID: "req-race", GatewaySessionID: "gws-race",
+			SessionParams: json.RawMessage(`{}`), PaymentBytes: []byte{1, 2, 3},
+			Spec: h.spec, CapacityRef: "slot-race",
+		})
+	}
+	type out struct {
+		res *OpenResult
+		err error
+	}
+	results := make(chan out, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			r, err := open()
+			results <- out{r, err}
+		}()
+	}
+	var ok, inFlight, replayed int
+	for i := 0; i < 2; i++ {
+		o := <-results
+		var pe *ProtocolError
+		switch {
+		case o.err == nil && o.res.Replayed:
+			replayed++
+		case o.err == nil:
+			ok++
+		case errors.As(o.err, &pe) && pe.Code == "open_in_flight":
+			inFlight++
+		default:
+			t.Fatalf("unexpected: %+v %v", o.res, o.err)
+		}
+	}
+	if ok != 1 || inFlight+replayed != 1 {
+		t.Fatalf("ok=%d in_flight=%d replayed=%d; want one open and one refusal-or-replay", ok, inFlight, replayed)
+	}
+	if h.pay.openCalls != 1 || h.runner.created != 1 {
+		t.Fatalf("payment opens=%d runner creates=%d; the guarantee is one of each", h.pay.openCalls, h.runner.created)
+	}
+	// And the reservation is gone: the record holds the id now.
+	n := 0
+	_ = h.store.ForEachReservation(func(sessionstore.OpenReservation) error { n++; return nil })
+	if n != 0 {
+		t.Fatalf("%d reservations left after a completed open", n)
+	}
+	// A third open with the same content replays; different content is refused.
+	if r, err := open(); err != nil || !r.Replayed {
+		t.Fatalf("replay: %+v %v", r, err)
+	}
+}
+
+// A crash between payment and the session record leaves a reservation
+// naming what was opened. Recover closes it, releases the capacity, and
+// drops the reservation, so nothing funds a session nobody holds.
+func TestRecoverUndoesAnAbandonedOpen(t *testing.T) {
+	h := newHarness(t)
+	if err := h.store.ReserveOpen("req-crash", []byte("fp")); err != nil {
+		t.Fatal(err)
+	}
+	_ = h.store.UpdateReservation("req-crash", func(r *sessionstore.OpenReservation) error {
+		r.Stage, r.WorkID, r.Sender, r.CapacityRef, r.BackendRef = sessionstore.ReservationRunnerCreated, "w-crash", []byte{9}, "slot-crash", "b1"
+		r.RunnerSessionID = "rs-crash"
+		return nil
+	})
+	h.engine.Recover(context.Background())
+	if h.pay.closed != 1 {
+		t.Fatalf("payee session closed %d times, want 1", h.pay.closed)
+	}
+	if len(h.runner.terminated) != 1 || h.runner.terminated[0] != ReasonOpenFailed {
+		t.Fatalf("runner terminated: %v", h.runner.terminated)
+	}
+	if len(h.release) != 1 || h.release[0] != "slot-crash" {
+		t.Fatalf("capacity released: %v", h.release)
+	}
+	n := 0
+	_ = h.store.ForEachReservation(func(sessionstore.OpenReservation) error { n++; return nil })
+	if n != 0 {
+		t.Fatal("reservation survived recovery")
+	}
+	// The id is free again: a retry of the open proceeds fresh.
+	if _, err := h.engine.Open(context.Background(), OpenRequest{RequestID: "req-crash", GatewaySessionID: "g2",
+		SessionParams: json.RawMessage(`{}`), PaymentBytes: []byte{1}, Spec: h.spec, CapacityRef: "slot-2"}); err != nil {
+		t.Fatalf("retry after recovery: %v", err)
+	}
+}
+
+// A winddown whose runner terminate fails stays winding_down — capacity
+// held, no outcome, events refused — and Sweep completes it once the
+// runner answers, firing the outcome exactly once.
+func TestWinddownRetriesUntilObligationsAreMet(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	h.runner.failTerminate = true
+	if _, err := h.engine.End(context.Background(), res.SessionID, ""); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := h.store.Get(res.SessionID)
+	if rec.State != sessionstore.StateWindingDown || rec.Terminal() || rec.CloseReason != ReasonGatewayClose {
+		t.Fatalf("after a failed terminate: %+v", rec)
+	}
+	if rec.PaymentClosed != true || rec.RunnerTerminated != false {
+		t.Fatalf("obligation flags: payment=%v runner=%v", rec.PaymentClosed, rec.RunnerTerminated)
+	}
+	if len(h.release) != 0 || len(h.winddowns) != 0 {
+		t.Fatalf("released %v / outcomes %v before the obligations were met", h.release, h.winddowns)
+	}
+	total := uint64(1)
+	if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID, usageEvent("evt_late", 1, total)); err == nil {
+		t.Fatal("a winding-down session must refuse events")
+	}
+	// Still failing: the sweep retries and the state holds.
+	h.engine.Sweep(context.Background())
+	rec, _ = h.store.Get(res.SessionID)
+	if rec.State != sessionstore.StateWindingDown || len(h.winddowns) != 0 {
+		t.Fatalf("after a retry that also failed: %+v %v", rec, h.winddowns)
+	}
+	// The runner comes back: the next sweep completes the winddown.
+	h.runner.failTerminate = false
+	h.engine.Sweep(context.Background())
+	rec, _ = h.store.Get(res.SessionID)
+	if !rec.Terminal() || rec.State != sessionstore.StateEnded || !rec.RunnerTerminated || rec.EndedAt.IsZero() {
+		t.Fatalf("after the runner answered: %+v", rec)
+	}
+	if len(h.release) != 1 || len(h.winddowns) != 1 || h.winddowns[0] != ReasonGatewayClose {
+		t.Fatalf("released %v / outcomes %v; want one each, once", h.release, h.winddowns)
+	}
+	if h.pay.closed != 1 {
+		t.Fatalf("payment closed %d times; the met obligation must not be redone", h.pay.closed)
+	}
 }

@@ -21,7 +21,8 @@ description: >-
   and smaller per bit, which is the trade a VOD caller is making.
 
 # Twice the GPU VOD rate, per 1000 frame-megapixels
-# (docs/references/2026-09-05-transcode-megapixel-pricing.md): a software
+# (docs/references/2026-09-05-transcode-megapixel-pricing.md; anchor tier
+# corrected the same day in …-pricing-correction.md): a software
 # AV1 encode occupies many cores for many times the wall-clock per
 # pixel-frame, and the output is worth more per byte delivered. A
 # recommendation, not an operator's number — reprice against real encode

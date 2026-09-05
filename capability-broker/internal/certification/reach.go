@@ -2,8 +2,12 @@ package certification
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -90,8 +94,17 @@ func reachDescriptor(ctx context.Context, desc *sessionengine.Descriptor, cfg ma
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return evidence, fmt.Sprintf("get %s: %d", target.Host, resp.StatusCode)
 		}
+	case "rtmps", "rtmp":
+		// An ingest answers the RTMP handshake: C0 (version 3) and C1
+		// (1536 bytes) in, S0 and S1 back. That proves the member's
+		// RTMPS port, the agent's forward, and the runner's router all
+		// answer, without publishing a stream — publishing needs an
+		// encoder and is not a certification step.
+		if err := rtmpHandshake(ctx, raw, target); err != nil {
+			return evidence, fmt.Sprintf("rtmp handshake %s: %v", target.Host, err)
+		}
 	default:
-		return evidence, fmt.Sprintf("public.%s has scheme %q; reach knows ws(s) and http(s)", field, target.Scheme)
+		return evidence, fmt.Sprintf("public.%s has scheme %q; reach knows ws(s), http(s) and rtmp(s)", field, target.Scheme)
 	}
 	evidence["reach_ms"] = time.Since(start).Milliseconds()
 	return evidence, ""
@@ -102,4 +115,46 @@ func stringOr(cfg map[string]any, key, def string) string {
 		return strings.TrimSpace(v)
 	}
 	return def
+}
+
+// rtmpHandshake performs the client half of the RTMP handshake and
+// expects the server half back.
+func rtmpHandshake(ctx context.Context, raw string, target *url.URL) error {
+	host := target.Host
+	if target.Port() == "" {
+		if target.Scheme == "rtmps" {
+			host = net.JoinHostPort(target.Hostname(), "443")
+		} else {
+			host = net.JoinHostPort(target.Hostname(), "1935")
+		}
+	}
+	d := &net.Dialer{}
+	var conn net.Conn
+	var err error
+	if target.Scheme == "rtmps" {
+		conn, err = (&tls.Dialer{NetDialer: d, Config: &tls.Config{ServerName: target.Hostname(), MinVersion: tls.VersionTLS12}}).DialContext(ctx, "tcp", host)
+	} else {
+		conn, err = d.DialContext(ctx, "tcp", host)
+	}
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if dl, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(dl)
+	}
+	c1 := make([]byte, 1536)
+	_, _ = rand.Read(c1[8:])
+	copy(c1[4:8], []byte{0, 0, 0, 0})
+	if _, err := conn.Write(append([]byte{3}, c1...)); err != nil {
+		return fmt.Errorf("send C0+C1: %w", err)
+	}
+	s0s1 := make([]byte, 1+1536)
+	if _, err := io.ReadFull(conn, s0s1); err != nil {
+		return fmt.Errorf("read S0+S1: %w", err)
+	}
+	if s0s1[0] != 3 {
+		return fmt.Errorf("S0 version %d, want 3", s0s1[0])
+	}
+	return nil
 }

@@ -151,6 +151,12 @@ certification:
       # No `expect_descriptor_schema` either: the runner declares which schema
       # it emits, so the step accepts whatever it declared rather than pinning
       # rtmp-hls/v1 from here.
+      # Reachability (plan 0046): the broker dials the descriptor's
+      # `rtmp_url` from its own vantage and completes the RTMP handshake,
+      # proving the member's RTMPS port, the agent's forward and the
+      # runner's router all answer. Not a publish — that needs an encoder.
+      # `hls_url` is not dialled: with no publisher there is no playlist.
+      reach: { field: rtmp_url }
       hold_ms: 5000
   # NOT required, and the reason is the workload rather than the plumbing.
   #

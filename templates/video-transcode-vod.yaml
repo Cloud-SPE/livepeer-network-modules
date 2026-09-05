@@ -27,7 +27,8 @@ description: >-
   the pool absorbs the variance in clip length.
 
 # Per 1000 frame-megapixels of delivered output
-# (docs/references/2026-09-05-transcode-megapixel-pricing.md). Decided
+# (docs/references/2026-09-05-transcode-megapixel-pricing.md; anchor tier
+# corrected the same day in …-pricing-correction.md). Decided
 # 2026-09-05, replacing the rig's flat 4.8e12 per job, under which a
 # ten-second clip and a two-hour film cost the same. The runner counts the
 # units and claims them in the response trailer.

@@ -3,6 +3,8 @@ package certification
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -80,6 +82,43 @@ func TestReachGetsAnHTTPField(t *testing.T) {
 	}
 	if _, msg := reachDescriptor(context.Background(), descriptorFor(t, map[string]any{"room": "r"}),
 		map[string]any{"field": "url"}); !strings.Contains(msg, "absent") {
+		t.Fatalf("msg = %q", msg)
+	}
+}
+
+// An rtmp field is reached by completing the RTMP handshake against
+// whatever answers — here a fake that speaks S0+S1 — and a peer that
+// does not answer the handshake fails by name.
+func TestReachPerformsTheRTMPHandshake(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				buf := make([]byte, 1537)
+				if _, err := io.ReadFull(c, buf); err != nil || buf[0] != 3 {
+					return
+				}
+				s1 := make([]byte, 1537)
+				s1[0] = 3
+				_, _ = c.Write(s1)
+			}()
+		}
+	}()
+	if _, msg := reachDescriptor(context.Background(), descriptorFor(t, map[string]any{"rtmp_url": "rtmp://" + ln.Addr().String() + "/live"}),
+		map[string]any{"field": "rtmp_url", "timeout_ms": 2000}); msg != "" {
+		t.Fatal(msg)
+	}
+	if _, msg := reachDescriptor(context.Background(), descriptorFor(t, map[string]any{"rtmp_url": "rtmp://127.0.0.1:1/live"}),
+		map[string]any{"field": "rtmp_url", "timeout_ms": 500}); !strings.Contains(msg, "rtmp handshake") {
 		t.Fatalf("msg = %q", msg)
 	}
 }

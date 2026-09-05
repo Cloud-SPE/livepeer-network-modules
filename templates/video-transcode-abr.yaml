@@ -16,7 +16,8 @@ description: >-
   the same.
 
 # Per 1000 frame-megapixels of delivered output, aggregated over every video
-# rendition (docs/references/2026-09-05-transcode-megapixel-pricing.md).
+# rendition (docs/references/2026-09-05-transcode-megapixel-pricing.md; anchor tier
+# corrected the same day in …-pricing-correction.md).
 # Decided 2026-09-05, replacing the rig's flat 4.8e12 per job: a ladder
 # encodes the source several times over, and a flat price made ABR the worse
 # return on an encoder-hour while charging a ten-second clip like a film.

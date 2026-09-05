@@ -13,7 +13,10 @@
     "type": "request",
     "required": true,
     "config": {
-      "hold_ms": 5000
+      "hold_ms": 5000,
+      "reach": {
+        "field": "rtmp_url"
+      }
     }
   },
   {

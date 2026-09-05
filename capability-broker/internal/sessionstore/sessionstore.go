@@ -49,6 +49,11 @@ const (
 	// ambiguously, which returns a valid signed record for the wrong
 	// session.
 	gatewaySessionsBucket = "gateway_sessions"
+	// openReservationsBucket holds an open that is in flight: the request
+	// id is claimed before any payment or runner side effect (plan 0048
+	// §2.2), and the entry is deleted in the transaction that persists
+	// the session, or released when the open fails closed.
+	openReservationsBucket = "open_reservations"
 )
 
 // KeySize is the required length of the store's sealing key (AES-256).
@@ -73,6 +78,9 @@ var (
 	// that it never admitted this request. Admitting it now would put two
 	// contradictory signed claims under one delegated key.
 	ErrNonAdmissionIssued = errors.New("sessionstore: a non-admission record was already issued for this request")
+	// ErrOpenInFlight means another open with this request id has
+	// reserved it and not yet finished; the caller retries.
+	ErrOpenInFlight = errors.New("sessionstore: an open with this request id is in flight")
 )
 
 // Session states (paid-session/v1 §2).
@@ -110,6 +118,11 @@ type Record struct {
 	// Payment.
 	Sender        []byte `json:"sender,omitempty"`
 	PaymentClosed bool   `json:"payment_closed"`
+	// RunnerTerminated records that the runner acknowledged terminate (or
+	// no longer held the session). With PaymentClosed it is the pair of
+	// obligations a winddown owes; a record leaves winding_down only
+	// when both are true (plan 0048 §2.3).
+	RunnerTerminated bool `json:"runner_terminated,omitempty"`
 	// SharedPaymentIdentity is true when work_id came from the payment
 	// (the payee's ticket-session rand hash), which many sessions and
 	// jobs can share. The broker MUST NOT close such a session: closing
@@ -211,6 +224,13 @@ func (r *Record) Terminal() bool {
 	return r.State == StateEnded || r.State == StateFailed
 }
 
+// Closing reports a session that takes no more work: terminal, or
+// winding down with obligations outstanding. Events, top-ups and
+// refills are refused in either.
+func (r *Record) Closing() bool {
+	return r.Terminal() || r.State == StateWindingDown
+}
+
 // HashSecret is the canonical hash for credentials, callback tokens,
 // and grant secrets held by the store.
 func HashSecret(secret string) []byte {
@@ -259,7 +279,10 @@ func Open(path string, key []byte) (*Store, error) {
 		if _, e := tx.CreateBucketIfNotExists([]byte(openRequestsBucket)); e != nil {
 			return e
 		}
-		_, e := tx.CreateBucketIfNotExists([]byte(gatewaySessionsBucket))
+		if _, e := tx.CreateBucketIfNotExists([]byte(gatewaySessionsBucket)); e != nil {
+			return e
+		}
+		_, e := tx.CreateBucketIfNotExists([]byte(openReservationsBucket))
 		return e
 	})
 	if err != nil {
@@ -324,6 +347,10 @@ func (s *Store) CreateIndexed(rec *Record, requestID string) error {
 		idx := tx.Bucket([]byte(openRequestsBucket))
 		if b.Get([]byte(rec.SessionID)) != nil || idx.Get([]byte(requestID)) != nil {
 			return ErrExists
+		}
+		// The reservation ends where the record begins, atomically.
+		if err := tx.Bucket([]byte(openReservationsBucket)).Delete([]byte(requestID)); err != nil {
+			return err
 		}
 		// The gateway's id has to resolve to exactly one session for as
 		// long as the record is retained, or the lookup it exists for
@@ -613,4 +640,95 @@ func (s *Store) GetByWorkID(workID string) (*Record, error) {
 		return nil, ErrNotFound
 	}
 	return out, nil
+}
+
+// Open reservation stages (plan 0048 §2.2). Each names what has been
+// done on the caller's behalf so a crash between stages can be undone.
+const (
+	ReservationReserved      = "reserved"
+	ReservationPaid          = "paid"
+	ReservationRunnerCreated = "runner_created"
+)
+
+// OpenReservation is an open in flight: the request id is claimed and the
+// side effects performed so far are recorded.
+type OpenReservation struct {
+	RequestID       string    `json:"request_id"`
+	Fingerprint     []byte    `json:"fingerprint"`
+	Stage           string    `json:"stage"`
+	WorkID          string    `json:"work_id,omitempty"`
+	Sender          []byte    `json:"sender,omitempty"`
+	SharedIdentity  bool      `json:"shared_identity,omitempty"`
+	BackendRef      string    `json:"backend_ref,omitempty"`
+	RunnerSessionID string    `json:"runner_session_id,omitempty"`
+	CapacityRef     string    `json:"capacity_ref,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// ReserveOpen claims a request id before any side effect. ErrExists when
+// the id already resolves to a session (replay it); ErrOpenInFlight when
+// another open holds the reservation.
+func (s *Store) ReserveOpen(requestID string, fingerprint []byte) error {
+	if requestID == "" {
+		return errors.New("sessionstore: empty request id")
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		if tx.Bucket([]byte(openRequestsBucket)).Get([]byte(requestID)) != nil {
+			return ErrExists
+		}
+		b := tx.Bucket([]byte(openReservationsBucket))
+		if b.Get([]byte(requestID)) != nil {
+			return ErrOpenInFlight
+		}
+		raw, err := json.Marshal(OpenReservation{RequestID: requestID, Fingerprint: fingerprint,
+			Stage: ReservationReserved, CreatedAt: time.Now().UTC()})
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(requestID), raw)
+	})
+}
+
+// UpdateReservation records progress on an open in flight.
+func (s *Store) UpdateReservation(requestID string, fn func(*OpenReservation) error) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(openReservationsBucket))
+		raw := b.Get([]byte(requestID))
+		if raw == nil {
+			return ErrNotFound
+		}
+		var r OpenReservation
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return err
+		}
+		if err := fn(&r); err != nil {
+			return err
+		}
+		out, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(requestID), out)
+	})
+}
+
+// ReleaseReservation drops a reservation whose open failed closed.
+func (s *Store) ReleaseReservation(requestID string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket([]byte(openReservationsBucket)).Delete([]byte(requestID))
+	})
+}
+
+// ForEachReservation visits every open still in flight — after a
+// restart, every open a crash abandoned.
+func (s *Store) ForEachReservation(fn func(OpenReservation) error) error {
+	return s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket([]byte(openReservationsBucket)).ForEach(func(_, raw []byte) error {
+			var r OpenReservation
+			if err := json.Unmarshal(raw, &r); err != nil {
+				return err
+			}
+			return fn(r)
+		})
+	})
 }

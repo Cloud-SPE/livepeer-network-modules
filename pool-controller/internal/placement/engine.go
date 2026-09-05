@@ -38,6 +38,11 @@ const (
 	// compute unit — a socket offered to a GPU template, or a card to a
 	// CPU-only one. The two never compete.
 	ReasonKindNotAllowed = "kind_not_allowed"
+	// ReasonIngestTaken: this host already places a template with an
+	// RTMP ingest on another unit. The member publishes one RTMPS port
+	// and the agent forwards it to one runner (plan 0046 §2.7), so a
+	// second ingest on the host would receive nothing.
+	ReasonIngestTaken = "ingest_port_taken"
 )
 
 // Placement is one template placed on one GPU.
@@ -115,8 +120,30 @@ func Plan(in Input) []Decision {
 	out := make([]Decision, 0, len(in.Hardware))
 	units := append([]types.HardwareUnit(nil), in.Hardware...)
 	sort.Slice(units, func(i, j int) bool { return units[i].ID < units[j].ID })
+	// One RTMP ingest per host (plan 0046 §2.7): the first unit, in id
+	// order, that takes an ingest template holds the host's port; a
+	// later unit on the same host is planned with those templates
+	// excluded, and told why.
+	ingestHeld := map[string]bool{}
 	for _, unit := range units {
-		out = append(out, planUnit(unit, enabled, in.OptOuts, in.Stances))
+		var excluded map[string]string
+		if ingestHeld[unit.EnrollmentID] {
+			excluded = map[string]string{}
+			for _, tmpl := range enabled {
+				if tmpl.RunnerCompose.RTMPPort > 0 {
+					excluded[tmpl.ID] = "another unit on this host holds the RTMPS port"
+				}
+			}
+		}
+		d := planUnit(unit, enabled, in.OptOuts, in.Stances, excluded)
+		for _, pl := range d.Placements {
+			for _, tmpl := range enabled {
+				if tmpl.ID == pl.TemplateID && tmpl.RunnerCompose.RTMPPort > 0 {
+					ingestHeld[unit.EnrollmentID] = true
+				}
+			}
+		}
+		out = append(out, d)
 	}
 	return out
 }
@@ -145,7 +172,7 @@ func enabledTemplates(all []templates.Template, overrides []types.TemplateOverri
 }
 
 func planUnit(unit types.HardwareUnit, enabled []templates.Template,
-	optOuts []types.MemberTemplateOptOut, stances map[string]int) Decision {
+	optOuts []types.MemberTemplateOptOut, stances map[string]int, excluded map[string]string) Decision {
 
 	class := ClassOfUnit(unit)
 	decision := Decision{
@@ -169,6 +196,12 @@ func planUnit(unit types.HardwareUnit, enabled []templates.Template,
 	// Which templates could run here at all, in priority order.
 	eligible := make([]templates.Template, 0, len(enabled))
 	for _, tmpl := range enabled {
+		if detail, taken := excluded[tmpl.ID]; taken {
+			decision.Rejections = append(decision.Rejections, Rejection{
+				TemplateID: tmpl.ID, Reason: ReasonIngestTaken, Detail: detail,
+			})
+			continue
+		}
 		if optedOut(optOuts, unit, tmpl.ID) {
 			decision.Rejections = append(decision.Rejections, Rejection{
 				TemplateID: tmpl.ID, Reason: ReasonMemberOptedOut,

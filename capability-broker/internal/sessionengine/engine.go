@@ -258,6 +258,26 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	if id, err := e.cfg.Store.SessionIDForRequest(req.RequestID); err == nil {
 		return e.replayOpen(id, fingerprint)
 	}
+	// Claim the request id BEFORE any side effect (plan 0048 §2.2). Two
+	// opens with one id could otherwise both pass the lookup above and
+	// both fund and both create a runner session before one lost the
+	// insert; and a crash between payment and persist left a funded
+	// payee session with no record to find it by. The reservation is
+	// what Recover undoes.
+	if err := e.cfg.Store.ReserveOpen(req.RequestID, fingerprint); err != nil {
+		switch {
+		case errors.Is(err, sessionstore.ErrExists):
+			if id, lerr := e.cfg.Store.SessionIDForRequest(req.RequestID); lerr == nil {
+				return e.replayOpen(id, fingerprint)
+			}
+			return nil, err
+		case errors.Is(err, sessionstore.ErrOpenInFlight):
+			return nil, protoErr("open_in_flight", "an open with this request id is in flight; retry")
+		default:
+			return nil, err
+		}
+	}
+	releaseReservation := func() { _ = e.cfg.Store.ReleaseReservation(req.RequestID) }
 
 	now := e.cfg.Now()
 	sessionID := "sess_" + uuid.NewString()
@@ -289,13 +309,23 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		PerUnits:            req.Spec.PerUnits,
 		WorkUnit:            req.Spec.WorkUnit,
 	}); err != nil {
+		releaseReservation()
 		return nil, &RetryableError{Err: fmt.Errorf("payment open: %w", err)}
 	}
+	// The payee session exists from here: record it so a crash before
+	// the session record lands can still close it.
+	_ = e.cfg.Store.UpdateReservation(req.RequestID, func(r *sessionstore.OpenReservation) error {
+		r.Stage, r.WorkID, r.SharedIdentity, r.CapacityRef, r.BackendRef = sessionstore.ReservationPaid, workID, sharedIdentity, req.CapacityRef, req.Spec.BackendRef
+		return nil
+	})
 	payRes, err := e.cfg.Payment.ProcessPayment(ctx, payment.ProcessPaymentRequest{
 		WorkID:       workID,
 		PaymentBytes: req.PaymentBytes,
 	})
 	if err != nil {
+		_ = e.closePayeeSession(ctx, sharedIdentity, nil, workID)
+		e.release(req.CapacityRef)
+		releaseReservation()
 		return nil, protoErr("payment_invalid", "payment rejected: %v", err)
 	}
 	// A daemon that rejects every ticket returns no error — it reports
@@ -305,9 +335,14 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	if err := rejectionErr(payRes); err != nil {
 		_ = e.closePayeeSession(ctx, sharedIdentity, payRes.Sender, workID)
 		e.release(req.CapacityRef)
+		releaseReservation()
 		return nil, err
 	}
 	sender := payRes.Sender
+	_ = e.cfg.Store.UpdateReservation(req.RequestID, func(r *sessionstore.OpenReservation) error {
+		r.Sender = sender
+		return nil
+	})
 
 	failClosed := func(stage string, cause error, runnerSessionID string) error {
 		if runnerSessionID != "" {
@@ -315,6 +350,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		}
 		_ = e.closePayeeSession(ctx, sharedIdentity, sender, workID)
 		e.release(req.CapacityRef)
+		releaseReservation()
 		return fmt.Errorf("sessionengine: open failed at %s (failed closed): %w", stage, cause)
 	}
 
@@ -330,6 +366,10 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	if err != nil {
 		return nil, failClosed("runner create", err, "")
 	}
+	_ = e.cfg.Store.UpdateReservation(req.RequestID, func(r *sessionstore.OpenReservation) error {
+		r.Stage, r.RunnerSessionID = sessionstore.ReservationRunnerCreated, created.RunnerSessionID
+		return nil
+	})
 	desc, err := ParseDescriptor(created.Runtime, req.Spec.DescriptorSchema, req.Spec.DescriptorMaxBytes)
 	if err != nil {
 		return nil, failClosed("descriptor validation", err, created.RunnerSessionID)
@@ -373,6 +413,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		if errors.Is(err, sessionstore.ErrGatewaySessionExists) {
 			_ = e.runnerFor(req.Spec.BackendRef).TerminateSession(ctx, created.RunnerSessionID, ReasonOpenFailed)
 			_ = e.closePayeeSession(ctx, sharedIdentity, sender, workID)
+			releaseReservation()
 			e.release(req.CapacityRef)
 			return nil, protoErr("gateway_session_id_reuse",
 				"gateway_session_id is already bound to another session; choose an unused id")
@@ -563,7 +604,7 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 	if err != nil {
 		return nil, err
 	}
-	if rec.Terminal() {
+	if rec.Closing() {
 		return nil, protoErr("session_terminal", "session is %s (%s)", rec.State, rec.CloseReason)
 	}
 	spec := e.cfg.Specs(sessionID)
@@ -1149,21 +1190,52 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 	if err != nil || rec.Terminal() {
 		return
 	}
-	if err := e.runnerFor(rec.BackendRef).TerminateSession(ctx, rec.RunnerSessionID, reason); err != nil {
-		e.cfg.Log.Warn("runner terminate failed; continuing winddown",
-			"session", sessionID, "err", err)
+	// A winddown already pending keeps its first reason: what ended the
+	// session, not what the sweep noticed on the retry.
+	if rec.State == sessionstore.StateWindingDown && rec.CloseReason != "" {
+		reason = rec.CloseReason
+	}
+	// Two obligations, each retried until it is met (plan 0048 §2.3).
+	runnerDone := rec.RunnerTerminated
+	if !runnerDone {
+		err := e.runnerFor(rec.BackendRef).TerminateSession(ctx, rec.RunnerSessionID, reason)
+		if err == nil || errors.Is(err, ErrRunnerSessionGone) {
+			runnerDone = true
+		} else {
+			e.cfg.Log.Warn("runner terminate failed; winddown pending, will retry on sweep",
+				"session", sessionID, "err", err)
+		}
 	}
 	paymentClosed := rec.PaymentClosed
 	if !paymentClosed {
 		if err := e.closePayeeSession(ctx, rec.SharedPaymentIdentity, rec.Sender, rec.WorkID); err != nil {
-			e.cfg.Log.Warn("payment close failed; will retry on sweep",
+			e.cfg.Log.Warn("payment close failed; winddown pending, will retry on sweep",
 				"session", sessionID, "err", err)
 		} else {
 			paymentClosed = true
 		}
 	}
-	e.release(rec.CapacityRef)
 	now := e.cfg.Now()
+	if !runnerDone || !paymentClosed {
+		// Not terminal: the runner session or the payee session is
+		// still open, so the capacity stays held and no outcome is
+		// reported. Sweep and Recover call back here until both are met.
+		_ = e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
+			r.State = sessionstore.StateWindingDown
+			r.CloseReason = reason
+			r.ReplayMaterial = nil
+			r.PaymentClosed = paymentClosed
+			r.RunnerTerminated = runnerDone
+			return nil
+		})
+		if e.cfg.OnEvent != nil {
+			e.cfg.OnEvent(sessionID, "session.winding_down", map[string]any{
+				"close_reason": reason, "runner_terminated": runnerDone, "payment_closed": paymentClosed,
+			})
+		}
+		return
+	}
+	e.release(rec.CapacityRef)
 	state := sessionstore.StateEnded
 	if reason == ReasonRunnerFailed || reason == ReasonRecoveryFailed {
 		state = sessionstore.StateFailed
@@ -1175,7 +1247,8 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		// The replay window ends with the session. Secrets outliving
 		// the thing they unlock is how a store becomes a liability.
 		r.ReplayMaterial = nil
-		r.PaymentClosed = paymentClosed
+		r.PaymentClosed = true
+		r.RunnerTerminated = true
 		r.EndedAt = now
 		r.CapacityRef = ""
 		ended = *r
@@ -1206,6 +1279,12 @@ func (e *Engine) Sweep(ctx context.Context) {
 	var dues []due
 	_ = e.cfg.Store.ForEach(func(r *sessionstore.Record) error {
 		if r.Terminal() {
+			return nil
+		}
+		if r.State == sessionstore.StateWindingDown {
+			// Obligations outstanding: retry them, under the reason
+			// already recorded.
+			dues = append(dues, due{r.SessionID, r.CloseReason})
 			return nil
 		}
 		spec := e.cfg.Specs(r.SessionID)
@@ -1247,13 +1326,28 @@ func (e *Engine) Sweep(ctx context.Context) {
 // to the explicit terminal outcome when the runner no longer holds it.
 // Never mints a second work_id, never re-issues grants (§9.2).
 func (e *Engine) Recover(ctx context.Context) {
-	var ids []string
+	e.recoverReservations(ctx)
+	var ids, pending []string
 	_ = e.cfg.Store.ForEach(func(r *sessionstore.Record) error {
-		if !r.Terminal() {
+		switch {
+		case r.Terminal():
+		case r.State == sessionstore.StateWindingDown:
+			pending = append(pending, r.SessionID)
+		default:
 			ids = append(ids, r.SessionID)
 		}
 		return nil
 	})
+	for _, id := range pending {
+		rec, err := e.cfg.Store.Get(id)
+		if err != nil {
+			continue
+		}
+		mu := e.sessionMu(id)
+		mu.Lock()
+		e.winddownLocked(ctx, id, rec.CloseReason)
+		mu.Unlock()
+	}
 	for _, id := range ids {
 		rec, err := e.cfg.Store.Get(id)
 		if err != nil {
@@ -1353,4 +1447,37 @@ func randomSecret(prefix string) (string, error) {
 		return "", err
 	}
 	return prefix + hex.EncodeToString(b), nil
+}
+
+// recoverReservations undoes every open a crash abandoned between its
+// reservation and its record (plan 0048 §2.2): what the recorded stage
+// says was opened is closed, the capacity is released, and the
+// reservation is dropped. A gateway retrying the open afterwards starts
+// clean; one that never retries is not left funding a session nobody
+// holds.
+func (e *Engine) recoverReservations(ctx context.Context) {
+	var abandoned []sessionstore.OpenReservation
+	_ = e.cfg.Store.ForEachReservation(func(r sessionstore.OpenReservation) error {
+		abandoned = append(abandoned, r)
+		return nil
+	})
+	for _, r := range abandoned {
+		if r.Stage == sessionstore.ReservationRunnerCreated && r.RunnerSessionID != "" {
+			if err := e.runnerFor(r.BackendRef).TerminateSession(ctx, r.RunnerSessionID, ReasonOpenFailed); err != nil && !errors.Is(err, ErrRunnerSessionGone) {
+				e.cfg.Log.Warn("abandoned open: runner terminate failed; leaving the reservation for the next start",
+					"request_id", r.RequestID, "err", err)
+				continue
+			}
+		}
+		if r.Stage == sessionstore.ReservationPaid || r.Stage == sessionstore.ReservationRunnerCreated {
+			if err := e.closePayeeSession(ctx, r.SharedIdentity, r.Sender, r.WorkID); err != nil {
+				e.cfg.Log.Warn("abandoned open: payment close failed; leaving the reservation for the next start",
+					"request_id", r.RequestID, "err", err)
+				continue
+			}
+		}
+		e.release(r.CapacityRef)
+		_ = e.cfg.Store.ReleaseReservation(r.RequestID)
+		e.cfg.Log.Warn("abandoned open undone", "request_id", r.RequestID, "stage", r.Stage)
+	}
 }

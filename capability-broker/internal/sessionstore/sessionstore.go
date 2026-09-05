@@ -732,3 +732,16 @@ func (s *Store) ForEachReservation(fn func(OpenReservation) error) error {
 		})
 	})
 }
+
+// Reservation reads an open in flight. ErrNotFound when none.
+func (s *Store) Reservation(requestID string) (OpenReservation, error) {
+	var r OpenReservation
+	err := s.db.View(func(tx *bolt.Tx) error {
+		raw := tx.Bucket([]byte(openReservationsBucket)).Get([]byte(requestID))
+		if raw == nil {
+			return ErrNotFound
+		}
+		return json.Unmarshal(raw, &r)
+	})
+	return r, err
+}

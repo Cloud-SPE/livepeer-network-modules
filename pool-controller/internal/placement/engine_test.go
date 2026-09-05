@@ -765,3 +765,47 @@ func TestSocketsAndCardsDoNotCompete(t *testing.T) {
 		}
 	}
 }
+
+// A member with several cards runs one ingest (plan 0046 §2.7): the
+// first card in id order takes the live template and holds the host's
+// RTMPS port; the others are refused it by name and fall through to
+// what else they can run. A second host is a second port.
+func TestOneIngestPerHost(t *testing.T) {
+	live := templates.Template{ID: "t-live", Protocol: "paid-session/v1", Priority: 30,
+		Requirements:  templates.Requirements{GPUClasses: []string{ClassRTX2080}},
+		Stacking:      templates.Stacking{Primary: true},
+		RunnerCompose: templates.RunnerCompose{RTMPPort: 1935}}
+	vod := templates.Template{ID: "t-vod", Priority: 20,
+		Requirements: templates.Requirements{GPUClasses: []string{ClassRTX2080}},
+		Stacking:     templates.Stacking{Primary: true}}
+	overrides := []types.TemplateOverride{{TemplateID: "t-live", Enabled: true}, {TemplateID: "t-vod", Enabled: true}}
+	card := func(id, host string) types.HardwareUnit {
+		return types.HardwareUnit{ID: id, EnrollmentID: host, GPUModel: "NVIDIA GeForce RTX 2080 Ti", VRAMBytes: 11 << 30,
+			State: types.HardwareUnitOnline, PublicURL: "https://" + host + ".example"}
+	}
+	out := Plan(Input{Hardware: []types.HardwareUnit{card("gpu-b", "host-1"), card("gpu-a", "host-1"), card("gpu-c", "host-2")},
+		Templates: []templates.Template{live, vod}, Overrides: overrides})
+	got := map[string]Decision{}
+	for _, d := range out {
+		got[d.HardwareUnitID] = d
+	}
+	// id order: gpu-a first on host-1 takes the ingest; gpu-b does not.
+	if got["gpu-a"].Placements[0].TemplateID != "t-live" {
+		t.Fatalf("gpu-a: %+v", got["gpu-a"].Placements)
+	}
+	if got["gpu-b"].Placements[0].TemplateID != "t-vod" {
+		t.Fatalf("gpu-b must fall through to vod: %+v", got["gpu-b"].Placements)
+	}
+	found := false
+	for _, r := range got["gpu-b"].Rejections {
+		if r.TemplateID == "t-live" && r.Reason == ReasonIngestTaken {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("gpu-b must be refused the ingest by name: %+v", got["gpu-b"].Rejections)
+	}
+	if got["gpu-c"].Placements[0].TemplateID != "t-live" {
+		t.Fatalf("host-2 is its own port: %+v", got["gpu-c"].Placements)
+	}
+}

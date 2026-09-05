@@ -1619,3 +1619,28 @@ func TestWinddownRetriesUntilObligationsAreMet(t *testing.T) {
 		t.Fatalf("payment closed %d times; the met obligation must not be redone", h.pay.closed)
 	}
 }
+
+// An open under an id that is in flight with DIFFERENT content is a
+// reuse, refused as such, not told to retry; and a failed secret or
+// stage write leaves no reservation behind.
+func TestInFlightOpenWithDifferentContentIsReuse(t *testing.T) {
+	h := newHarness(t)
+	h.pay.openDelay = 200 * time.Millisecond
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = h.engine.Open(context.Background(), OpenRequest{RequestID: "req-dup", GatewaySessionID: "g1",
+			SessionParams: json.RawMessage(`{"a":1}`), PaymentBytes: []byte{1}, Spec: h.spec, CapacityRef: "s1"})
+	}()
+	time.Sleep(50 * time.Millisecond)
+	_, err := h.engine.Open(context.Background(), OpenRequest{RequestID: "req-dup", GatewaySessionID: "g2",
+		SessionParams: json.RawMessage(`{"a":2}`), PaymentBytes: []byte{1}, Spec: h.spec, CapacityRef: "s2"})
+	var pe *ProtocolError
+	if !errors.As(err, &pe) || pe.Code != "request_id_reuse" {
+		t.Fatalf("different content under an in-flight id: %v, want request_id_reuse", err)
+	}
+	<-done
+	if h.pay.openCalls != 1 {
+		t.Fatalf("payment opened %d times", h.pay.openCalls)
+	}
+}

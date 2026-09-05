@@ -77,3 +77,30 @@ then the SDK runs against the broker the network actually ships.
 
 Nothing that blocks anything. A note when §1 and §2 land, so the
 verification record for this sweep can close.
+
+## Correction (2026-09-05, later the same day): one item IS blocking
+
+The "nothing blocking" conclusion above was wrong, and the LOC team found
+the gap: the sweep searched for identifiers changed by plans 0045–0048
+and missed a branch commit outside them. **`eda0a56` (2026-09-04, "chain
+rpc: one flag, one list") removes `--chain-rpc` from every daemon** in
+favour of `--chain-rpc-urls`. LOC's `docker-compose.yml` still passes
+`--chain-rpc` to both payment-daemon sidecars (lines 40 and 57), so a
+fresh `livepeer-payment-daemon` image refuses to start under it. Before
+testing fresh images, LOC must:
+
+1. **`--chain-rpc-urls=<url>[,<url>…]`** on both sidecars — a
+   comma-separated list, primary first (`payment-daemon/cmd/…/main.go:86`).
+   `--chain-rpc` is gone, not deprecated.
+2. **`--max-payment-wei=<wei>`** on the *payer* (sender) sidecar. Required
+   in chain mode — the daemon refuses to start without it. It is the
+   single-payment circuit breaker; size it to your largest intended job
+   with headroom (`payment-daemon/docs/operator-runbook.md` §"--max-payment-wei").
+3. **Persist the payer's ledger.** `--db` (default
+   `/var/lib/livepeer/payment-daemon/sessions.db`) holds the sender's
+   mint-idempotency state; it must sit on a volume that survives the
+   container, or every restart forgets which mints were answered. The
+   receiver's `--db` and `--txintent-db` share that rule (runbook §4).
+
+Not covered by the four SDK/OpenAPI items; this is the sidecar
+configuration, and it blocks any test against the current branch.

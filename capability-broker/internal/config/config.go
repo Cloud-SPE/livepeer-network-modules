@@ -4,28 +4,141 @@
 // entire day-to-day surface.
 package config
 
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
+
 // Config is the top-level host-config.yaml schema.
 type Config struct {
-	Identity      Identity      `yaml:"identity"`
-	Listen        Listen        `yaml:"listen,omitempty"`
-	AdminAuth     AuthConfig    `yaml:"admin_auth,omitempty"`
-	PaymentDaemon PaymentDaemon `yaml:"payment_daemon,omitempty"`
-	PoolSnapshot  PoolSnapshot  `yaml:"pool_snapshot,omitempty"`
-	ReceiptSink   ReceiptSink   `yaml:"receipt_sink,omitempty"`
-	Capabilities  []Capability  `yaml:"capabilities"`
+	Identity Identity `yaml:"identity"`
+	// ExternalBaseURL is the broker's externally-reachable base URL
+	// (e.g. https://broker.example.com). Runner callback URLs and
+	// session control URLs are derived from it — never from inbound
+	// request headers. Required once any paid-session capability is
+	// declared.
+	ExternalBaseURL string        `yaml:"external_base_url,omitempty"`
+	Listen          Listen        `yaml:"listen,omitempty"`
+	AdminAuth       AuthConfig    `yaml:"admin_auth,omitempty"`
+	PaymentDaemon   PaymentDaemon `yaml:"payment_daemon,omitempty"`
+	SessionStore    SessionStore  `yaml:"session_store,omitempty"`
+	// CredentialStore holds runner attach credentials (plan 0043 §3.3).
+	// Required once runners attach with store-issued credentials; when
+	// absent, connected workers authenticate with the legacy per-backend
+	// worker_session_credential config string.
+	CredentialStore CredentialStoreConfig `yaml:"credential_store,omitempty"`
+	PoolSnapshot    PoolSnapshot          `yaml:"pool_snapshot,omitempty"`
+	ReceiptSink     ReceiptSink           `yaml:"receipt_sink,omitempty"`
+	// Offers is the plan-0043 operator grammar (offers.go). OffersSource
+	// is "file" (default) or "admin" (pushed by pool-controller).
+	Offers       []Offer `yaml:"offers,omitempty"`
+	OffersSource string  `yaml:"offers_source,omitempty"`
+	// CertificationFixturesDir resolves certification fixture refs
+	// (<dir>/<name>, certification-steps §4). Empty means ref fixtures
+	// error at run time; inline_base64 fixtures always work.
+	CertificationFixturesDir string `yaml:"certification_fixtures_dir,omitempty"`
+	// OffersStatePath persists frozen shapes (and admin-pushed offers)
+	// across restarts. Required in production once offers exist: a
+	// frozen shape that vanished on restart would re-freeze from
+	// whichever runner certified first — a silent manifest change.
+	OffersStatePath string `yaml:"offers_state_path,omitempty"`
+}
+
+// CredentialStoreConfig configures the sealed runner-credential store
+// (internal/credentialstore). Path is a bbolt file on a persistent
+// volume; SealingKeyFile holds the 32-byte key (raw or hex) — the same
+// format as session_store.sealing_key_file, and it MAY be the same
+// file. Expiry bounds apply to POST /admin/v1/enroll.
+type CredentialStoreConfig struct {
+	Path                 string `yaml:"path,omitempty"`
+	SealingKeyFile       string `yaml:"sealing_key_file,omitempty"`
+	DefaultExpirySeconds int    `yaml:"default_expiry_seconds,omitempty"` // default 90 days
+	MaxExpirySeconds     int    `yaml:"max_expiry_seconds,omitempty"`     // default 365 days
+}
+
+// Enabled reports whether a store is configured.
+func (c CredentialStoreConfig) Enabled() bool { return c.Path != "" }
+
+// SessionStore configures the durable paid-session store
+// (internal/sessionstore). Path is the bbolt database file — it must
+// live on a persistent volume, since losing it orphans every active
+// session. SealingKeyFile names a file holding the 32-byte key (raw or
+// hex) that seals descriptor private parts at rest. Both are required
+// once any capability declares a paid-session protocol.
+type SessionStore struct {
+	Path           string `yaml:"path,omitempty"`
+	SealingKeyFile string `yaml:"sealing_key_file,omitempty"`
+	// JobRetention is how long a terminal paid-job record is kept.
+	//
+	// It bounds two different things and the larger one governs. The
+	// first is the idempotency window — how late a retry can still
+	// converge on the recorded outcome. The second is how long the
+	// broker can answer "was this exchange ever admitted", which a
+	// clearinghouse needs to resolve an encumbrance held against a
+	// payment envelope that may never have been used.
+	//
+	// The second window opens when the envelope EXPIRES, because before
+	// then the envelope is still spendable and the question is
+	// premature. So retention shorter than the expiry window deletes the
+	// evidence before anybody is able to ask for it. Expiry is
+	// creation_round + 2, which on Arbitrum's ~19h rounds is roughly
+	// 38–57 hours depending on where in a round the mint landed — so a
+	// 24h default, which is what this was, guaranteed the record was
+	// gone first.
+	//
+	// Zero means the default below.
+	JobRetention time.Duration `yaml:"job_retention,omitempty"`
 }
 
 // Identity carries the orch's chain identity. Must be present.
 type Identity struct {
 	OrchEthAddress string `yaml:"orch_eth_address"`
 	Label          string `yaml:"label,omitempty"`
+	// SettlementKeyFile holds the hex secp256k1 private key this broker
+	// signs settlement records with. It is a HOT key the orch's cold key
+	// delegates to through the manifest's settlement_keys block — never
+	// the cold key itself, because a broker is network-exposed and
+	// compromising one must not cost the operator its on-chain identity.
+	//
+	// Absent means settlement records go out unsigned. That keeps a
+	// mock-payment deployment runnable; a consumer that needs integrity
+	// rejects an unsigned envelope.
+	SettlementKeyFile string `yaml:"settlement_key_file,omitempty"`
+	// SettlementKeyNotBefore / SettlementKeyExpiresAt mirror the window
+	// published for this key in the manifest's settlement_keys block
+	// (RFC3339). The broker refuses to sign outside them, so it cannot
+	// emit evidence that no consumer will accept. Empty means unbounded.
+	SettlementKeyNotBefore string `yaml:"settlement_key_not_before,omitempty"`
+	SettlementKeyExpiresAt string `yaml:"settlement_key_expires_at,omitempty"`
 }
 
 // Listen declares the broker's bind addresses. If omitted, defaults are used.
 type Listen struct {
-	Paid       string `yaml:"paid,omitempty"`        // default ":8080"
-	Metrics    string `yaml:"metrics,omitempty"`     // default ":9090"
-	WorkerQUIC string `yaml:"worker_quic,omitempty"` // optional UDP listener for connected workers
+	Paid    string `yaml:"paid,omitempty"`    // default ":8080"
+	Metrics string `yaml:"metrics,omitempty"` // default ":9090"
+	// AttachQUIC is the optional UDP listener a member's agent may
+	// attach over instead of WebSocket.
+	//
+	// It was spelled `worker_quic` while the same listener also carried
+	// the legacy worker tunnel. That tunnel is gone and the name was
+	// left describing something the broker no longer does, but the key
+	// is in every deployed config and in the bundles this broker has
+	// already minted — so the old spelling is still accepted, with a
+	// warning, rather than turning an upgrade into a broker that
+	// silently stops listening for attaches.
+	AttachQUIC string `yaml:"attach_quic,omitempty"`
+	// WorkerQUIC is the deprecated spelling of AttachQUIC. Read it
+	// through Listen.QUICAddr, never directly.
+	WorkerQUIC string `yaml:"worker_quic,omitempty"`
+}
+
+// QUICAddr is the attach listener address, whichever key set it.
+func (l Listen) QUICAddr() string {
+	if addr := strings.TrimSpace(l.AttachQUIC); addr != "" {
+		return addr
+	}
+	return strings.TrimSpace(l.WorkerQUIC)
 }
 
 // PaymentDaemon describes how to reach the co-located payment-daemon. v0.1
@@ -33,6 +146,12 @@ type Listen struct {
 type PaymentDaemon struct {
 	Socket string `yaml:"socket,omitempty"`
 	Mock   bool   `yaml:"mock,omitempty"`
+	// MockStatePath makes the in-process mock's ledger survive the
+	// process, modelling the real daemon's durable store. Test/dev
+	// surface only; ignored unless Mock is true. Without it the mock
+	// is amnesiac, which is a legitimate configuration for exercising
+	// the fail-closed half of session recovery.
+	MockStatePath string `yaml:"mock_state_path,omitempty"`
 }
 
 // PoolSnapshot configures optional polling of pool-controller's backend
@@ -57,15 +176,108 @@ type ReceiptSink struct {
 
 // Capability is one entry in the host-config.yaml capabilities array.
 type Capability struct {
-	ID              string         `yaml:"id"`
-	OfferingID      string         `yaml:"offering_id"`
-	InteractionMode string         `yaml:"interaction_mode"`
-	WorkUnit        WorkUnit       `yaml:"work_unit"`
-	Health          Health         `yaml:"health,omitempty"`
-	Price           Price          `yaml:"price"`
-	Backend         Backend        `yaml:"backend"`
-	Extra           map[string]any `yaml:"extra,omitempty"`
-	Constraints     map[string]any `yaml:"constraints,omitempty"`
+	ID          string         `yaml:"id"`
+	OfferingID  string         `yaml:"offering_id"`
+	Protocol    string         `yaml:"protocol"`
+	Job         *JobCapability `yaml:"job,omitempty"`
+	Session     *SessionCap    `yaml:"session,omitempty"`
+	WorkUnit    WorkUnit       `yaml:"work_unit"`
+	Health      Health         `yaml:"health,omitempty"`
+	Price       Price          `yaml:"price"`
+	Backend     Backend        `yaml:"backend"`
+	Extra       map[string]any `yaml:"extra,omitempty"`
+	Constraints map[string]any `yaml:"constraints,omitempty"`
+}
+
+// JobCapability carries the paid-job/v1 declared axes.
+type JobCapability struct {
+	// Transports is the non-empty subset of unary|stream|multipart the
+	// offering serves; requests negotiate per-transport.
+	Transports []string `yaml:"transports"`
+}
+
+// SessionCap carries the paid-session/v1 declared axes plus the
+// broker-side backend paths (operator configuration, per A4 — no URL
+// space is imposed by the protocol).
+type SessionCap struct {
+	DescriptorSchema string           `yaml:"descriptor_schema"`
+	Heartbeat        SessionHeartbeat `yaml:"heartbeat,omitempty"`
+	LeaseMaxSeconds  int              `yaml:"lease_max_seconds,omitempty"`
+	// LeasePolicy is the manifest's lease.policy axis:
+	// "funding-tracking" (default) derives the lease from funded runway;
+	// "fixed" grants lease_max_seconds regardless of funding, for
+	// offerings whose runway is managed out of band.
+	LeasePolicy    string  `yaml:"lease_policy,omitempty"`
+	BurnRatePerSec float64 `yaml:"burn_rate_per_second,omitempty"`
+	MinRunwayUnits int64   `yaml:"min_runway_units,omitempty"`
+	// MaxRotations caps how many times a session may be rebound onto a
+	// rotated payment identity. 0 means the default (3). An unbounded
+	// rotate-and-rebind loop would burn the payer's deposit without ever
+	// delivering work.
+	MaxRotations int `yaml:"max_rotations,omitempty"`
+	// Attachment and Metering are advertised axes (offering-axes.md §3).
+	// Defaults: external / runner-reported — the only combination this
+	// broker implements today, but declared explicitly because
+	// counterparties gate on them.
+	Attachment string `yaml:"attachment,omitempty"`
+	Metering   string `yaml:"metering,omitempty"`
+	// Refill declares whether top-ups are accepted after open.
+	Refill string `yaml:"refill,omitempty"`
+	// ToleranceBandPct and RunwayIncrementUnits are advisory economics
+	// the buyer reads at route selection; the broker never gates on them.
+	ToleranceBandPct     float64            `yaml:"tolerance_band_pct,omitempty"`
+	RunwayIncrementUnits int64              `yaml:"runway_increment_units,omitempty"`
+	Runner               SessionRunnerPaths `yaml:"runner"`
+	// SessionParamsSchema is not operator-authored: the describe pass
+	// fills it from the runner's declaration so it can be advertised to
+	// gateways. Never enforced by the broker.
+	SessionParamsSchema json.RawMessage `yaml:"-" json:"-"`
+}
+
+// AdvertisedLeasePolicy returns the lease policy with its default.
+func (s *SessionCap) AdvertisedLeasePolicy() string {
+	if s.LeasePolicy == "" {
+		return "funding-tracking"
+	}
+	return s.LeasePolicy
+}
+
+// AdvertisedAttachment returns the attachment axis with its default.
+func (s *SessionCap) AdvertisedAttachment() string {
+	if s.Attachment == "" {
+		return "external"
+	}
+	return s.Attachment
+}
+
+// AdvertisedMetering returns the metering axis with its default.
+func (s *SessionCap) AdvertisedMetering() string {
+	if s.Metering == "" {
+		return "runner-reported"
+	}
+	return s.Metering
+}
+
+// AdvertisedRefill returns the refill axis with its default.
+func (s *SessionCap) AdvertisedRefill() string {
+	if s.Refill == "" {
+		return "extensible"
+	}
+	return s.Refill
+}
+
+// SessionHeartbeat mirrors the offering axes heartbeat object.
+type SessionHeartbeat struct {
+	IntervalSeconds int `yaml:"interval_seconds,omitempty" json:"interval_seconds,omitempty"` // default 10
+	MissedThreshold int `yaml:"missed_threshold,omitempty" json:"missed_threshold,omitempty"` // default 3
+}
+
+// SessionRunnerPaths declares the runner's session API paths relative
+// to backend.url; {id} is replaced with the runner session id.
+type SessionRunnerPaths struct {
+	CreatePath    string `yaml:"create_path"`
+	StatusPath    string `yaml:"status_path"`
+	TerminatePath string `yaml:"terminate_path"`
 }
 
 func (c Capability) GetBackendID() string {
@@ -107,73 +319,38 @@ type WorkUnit struct {
 // Price is wei-per-unit; AmountWei is a decimal string to preserve precision
 // beyond JSON's safe-integer range (per manifest schema).
 type Price struct {
-	AmountWei string `yaml:"amount_wei"`
-	PerUnits  uint64 `yaml:"per_units"`
+	AmountWei string `yaml:"amount_wei" json:"amount_wei"`
+	PerUnits  uint64 `yaml:"per_units" json:"per_units"`
 }
 
 // Backend describes how the broker forwards a request to the upstream backend.
 type Backend struct {
-	ID                      string     `yaml:"id,omitempty"`
-	Transport               string     `yaml:"transport"`
-	URL                     string     `yaml:"url,omitempty"`
-	Auth                    AuthConfig `yaml:"auth,omitempty"`
-	HostEnrollmentID        string     `yaml:"host_enrollment_id,omitempty"`
-	HardwareUnitID          string     `yaml:"hardware_unit_id,omitempty"`
-	GPUUUID                 string     `yaml:"gpu_uuid,omitempty"`
-	TemplateID              string     `yaml:"template_id,omitempty"`
-	WorkerSessionCredential string     `yaml:"worker_session_credential,omitempty"`
-	MaxInFlight             int        `yaml:"max_in_flight,omitempty"`
-	QueueLimit              int        `yaml:"queue_limit,omitempty"`
-	// Profile names the encoder preset for transport=ffmpeg-subprocess.
-	// One of: passthrough | h264-live-1080p-nvenc |
-	// h264-live-1080p-qsv | h264-live-1080p-vaapi |
-	// h264-live-1080p-libx264.
-	Profile string `yaml:"profile,omitempty"`
-	// SessionRunner declares the per-session subprocess for
-	// transport=session-runner (session-control-plus-media mode).
-	SessionRunner *SessionRunnerBackend `yaml:"session_runner,omitempty"`
-	// LiveRunner declares the remote runner transport details for
-	// transport=remote-live-runner (broker-managed payment/session
-	// authority; runner-managed RTMP/FFmpeg/HLS media plane).
-	LiveRunner *LiveRunnerBackend `yaml:"live_runner,omitempty"`
+	ID               string     `yaml:"id,omitempty"`
+	Transport        string     `yaml:"transport"`
+	URL              string     `yaml:"url,omitempty"`
+	Auth             AuthConfig `yaml:"auth,omitempty"`
+	HostEnrollmentID string     `yaml:"host_enrollment_id,omitempty"`
+	HardwareUnitID   string     `yaml:"hardware_unit_id,omitempty"`
+	GPUUUID          string     `yaml:"gpu_uuid,omitempty"`
+	TemplateID       string     `yaml:"template_id,omitempty"`
+	MaxInFlight      int        `yaml:"max_in_flight,omitempty"`
+	QueueLimit       int        `yaml:"queue_limit,omitempty"`
 }
 
-// SessionRunnerBackend captures the operator-supplied launch spec for
-// the per-session container the broker stands up under
-// transport=session-runner.
-type SessionRunnerBackend struct {
-	Image          string                 `yaml:"image"`
-	Command        []string               `yaml:"command,omitempty"`
-	Env            map[string]string      `yaml:"env,omitempty"`
-	Resources      SessionRunnerResources `yaml:"resources,omitempty"`
-	StartupTimeout string                 `yaml:"startup_timeout,omitempty"`
-	NetworkMode    string                 `yaml:"network_mode,omitempty"`
-	Media          SessionRunnerMediaSpec `yaml:"media,omitempty"`
-}
-
-// SessionRunnerResources expresses the memory / CPU / GPU envelope for
-// the per-session container. Keys mirror docker run flags.
-type SessionRunnerResources struct {
-	Memory string `yaml:"memory,omitempty"`
-	CPU    string `yaml:"cpu,omitempty"`
-	GPUs   int    `yaml:"gpus,omitempty"`
-}
-
-// SessionRunnerMediaSpec declares the media-plane transports the
-// runner expects on each leg.
-type SessionRunnerMediaSpec struct {
-	Publish SessionRunnerLeg `yaml:"publish,omitempty"`
-	Egress  SessionRunnerLeg `yaml:"egress,omitempty"`
-}
-
-// SessionRunnerLeg is the per-direction transport label.
-type SessionRunnerLeg struct {
-	Transport string `yaml:"transport"`
-}
-
-// LiveRunnerBackend captures the HTTP base URL the broker uses for
-// runner session create/query/delete operations under
-// transport=remote-live-runner.
-type LiveRunnerBackend struct {
-	BaseURL string `yaml:"base_url"`
+// Deprecations lists config a future release will stop accepting.
+//
+// Warned rather than rejected: an operator who upgrades should find out
+// from a log line at the next restart, not from a broker that refuses
+// to start on a config that worked yesterday.
+func (c *Config) Deprecations() []string {
+	var out []string
+	if strings.TrimSpace(c.Listen.WorkerQUIC) != "" {
+		msg := "listen.worker_quic is deprecated; rename it to listen.attach_quic — " +
+			"the listener now serves runner attaches only, the worker tunnel it was named for is gone"
+		if strings.TrimSpace(c.Listen.AttachQUIC) != "" {
+			msg += " (listen.attach_quic is set and wins; worker_quic is being ignored)"
+		}
+		out = append(out, msg)
+	}
+	return out
 }

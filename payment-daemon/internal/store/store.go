@@ -50,19 +50,48 @@ const (
 
 const metaNextSeq = "next_seq"
 
+// PricingUnset marks a session whose price has not been set by an
+// offering. GetTicketParams must create the payment session before a
+// sender can mint against it, but it knows nothing about what the work
+// costs — so it seeds this, and the broker's OpenSession fills in the
+// real price exactly once.
+//
+// It is a distinct value rather than "0" because a zero price is a legal
+// offering price (free capabilities exist), and "free" must not be
+// indistinguishable from "nobody has said yet".
+const PricingUnset = ""
+
+// ErrPricingConflict reports an OpenSession that would change a price an
+// offering already set. Re-pricing a live session retroactively bills
+// funded work at a rate the payer never agreed to, so it is refused.
+var ErrPricingConflict = errors.New("store: session price already set by an offering and differs")
+
+// ErrPricingUnset reports a debit against a session no offering has
+// priced. Billing it would silently charge zero — the failure mode this
+// exists to prevent — so the debit fails loudly instead.
+var ErrPricingUnset = errors.New("store: session has no offering price; refusing to bill")
+
 // Session is the on-disk receiver session record.
 type Session struct {
-	WorkID              string    `json:"work_id"`
-	Sender              []byte    `json:"sender,omitempty"` // nil until first ProcessPayment seals it
-	Recipient           []byte    `json:"recipient,omitempty"`
-	Capability          string    `json:"capability"`
-	Offering            string    `json:"offering"`
-	PricePerWorkUnitWei string    `json:"price_per_work_unit_wei"` // big.Int decimal string
-	WorkUnit            string    `json:"work_unit"`
-	BalanceWei          string    `json:"balance_wei"` // big.Int decimal string; may be negative (overdraft)
-	Closed              bool      `json:"closed"`
-	OpenedAt            time.Time `json:"opened_at"`
-	ClosedAt            time.Time `json:"closed_at,omitempty"`
+	WorkID              string `json:"work_id"`
+	Sender              []byte `json:"sender,omitempty"` // nil until first ProcessPayment seals it
+	Recipient           []byte `json:"recipient,omitempty"`
+	Capability          string `json:"capability"`
+	Offering            string `json:"offering"`
+	PricePerWorkUnitWei string `json:"price_per_work_unit_wei"` // big.Int decimal string
+	// PerUnits is the price denominator: PricePerWorkUnitWei buys this
+	// many work units. Zero is read as 1, which keeps sessions written
+	// before the field existed billing exactly as they did.
+	PerUnits uint64 `json:"per_units,omitempty"`
+	WorkUnit string `json:"work_unit"`
+	// DebitedUnits is cumulative work units debited since open. Billing
+	// is a function of this running total, not of any single debit —
+	// see billFor.
+	DebitedUnits uint64    `json:"debited_units,omitempty"`
+	BalanceWei   string    `json:"balance_wei"` // big.Int decimal string; may be negative (overdraft)
+	Closed       bool      `json:"closed"`
+	OpenedAt     time.Time `json:"opened_at"`
+	ClosedAt     time.Time `json:"closed_at,omitempty"`
 
 	// Authoritative ticket params issued by the receiver at session
 	// open. RecipientRand is the receiver-only secret; the daemon
@@ -75,6 +104,35 @@ type Session struct {
 	RecipientRand string `json:"recipient_rand,omitempty"` // big.Int decimal string
 	FaceValueWei  string `json:"face_value_wei,omitempty"`
 	WinProb       string `json:"win_prob,omitempty"`
+}
+
+// BillFor returns the total wei owed for `units` cumulative work units:
+//
+//	bill(U) = ceil(U * price / per_units)
+//
+// Ceiling, so a payee is never left short on work it already delivered;
+// cumulative, so a debit costs bill(total+delta) - bill(total) and the
+// sum of every debit equals one ceiling over the running total. Rounding
+// each debit independently would cost the payer up to a wei per debit,
+// which over a long session with a fast tick is real money and — worse —
+// makes the payer's and payee's arithmetic disagree.
+//
+// perUnits of 0 means 1: a session persisted before the denominator
+// existed bills exactly as it used to.
+func BillFor(price *big.Int, perUnits uint64, units uint64) *big.Int {
+	if price == nil || price.Sign() == 0 || units == 0 {
+		return new(big.Int)
+	}
+	if perUnits == 0 {
+		perUnits = 1
+	}
+	total := new(big.Int).Mul(price, new(big.Int).SetUint64(units))
+	denom := new(big.Int).SetUint64(perUnits)
+	quo, rem := new(big.Int).QuoRem(total, denom, new(big.Int))
+	if rem.Sign() != 0 {
+		quo.Add(quo, big.NewInt(1))
+	}
+	return quo
 }
 
 // ErrNotFound is returned when a (sender, work_id) tuple has no
@@ -114,7 +172,7 @@ func Open(path string) (*Store, error) {
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for _, name := range []string{
 			sessionsBucket, debitSeqsBucket, capIndexBucket, ticketIdxBucket,
-			noncesBucket,
+			noncesBucket, mintsBucket, tombstonesBucket,
 			redemptionsPending, redemptionsByHash, redemptionsRedeemed, redemptionsMeta,
 		} {
 			if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
@@ -173,6 +231,27 @@ func (s *Store) OpenSession(seed Session) (sess *Session, alreadyOpen bool, err 
 			if err := json.Unmarshal(raw, &found); err != nil {
 				return fmt.Errorf("unmarshal existing session: %w", err)
 			}
+			// The session exists, but it may have been created by
+			// GetTicketParams, which cannot know what the work costs.
+			// Apply the offering's pricing exactly once; refuse to move
+			// it afterwards.
+			switch {
+			case found.PricePerWorkUnitWei == PricingUnset:
+				found.PricePerWorkUnitWei = seed.PricePerWorkUnitWei
+				found.PerUnits = seed.PerUnits
+				found.WorkUnit = seed.WorkUnit
+				found.Capability = seed.Capability
+				found.Offering = seed.Offering
+				updated, err := json.Marshal(&found)
+				if err != nil {
+					return fmt.Errorf("marshal priced session: %w", err)
+				}
+				if err := tx.Bucket([]byte(sessionsBucket)).Put(rawKey, updated); err != nil {
+					return err
+				}
+			case found.PricePerWorkUnitWei != seed.PricePerWorkUnitWei || found.PerUnits != seed.PerUnits:
+				return ErrPricingConflict
+			}
 			sess = &found
 			alreadyOpen = true
 			return nil
@@ -192,6 +271,42 @@ func (s *Store) OpenSession(seed Session) (sess *Session, alreadyOpen bool, err 
 // GetOrCreateTicketSession returns the open receiver-issued session for
 // this stable sender/recipient/capability/offering identity. Closed or
 // stale indexed sessions are discarded and replaced with a fresh one.
+// TicketSessionFor returns the session currently indexed for a tuple,
+// or nil when there is none. Read-only: it does not create one.
+//
+// Exists so the receiver can ask what a tuple's rand has consumed before
+// deciding whether to rotate it — GetOrCreateTicketSession would mint a
+// session as a side effect of asking.
+func (s *Store) TicketSessionFor(key TicketSessionKey) (*Session, error) {
+	indexKey := ticketSessionIndexKey(key)
+	var out *Session
+	err := s.db.View(func(tx *bolt.Tx) error {
+		idx := tx.Bucket([]byte(ticketIdxBucket))
+		if idx == nil {
+			return nil
+		}
+		workID := idx.Get(indexKey)
+		if workID == nil {
+			return nil
+		}
+		sessions := tx.Bucket([]byte(sessionsBucket))
+		if sessions == nil {
+			return nil
+		}
+		raw := sessions.Get(compositeKey(key.Sender, string(workID)))
+		if raw == nil {
+			return nil
+		}
+		var found Session
+		if err := json.Unmarshal(raw, &found); err != nil {
+			return err
+		}
+		out = &found
+		return nil
+	})
+	return out, err
+}
+
 func (s *Store) GetOrCreateTicketSession(key TicketSessionKey, seed Session) (sess *Session, alreadyOpen bool, err error) {
 	if seed.WorkID == "" {
 		return nil, false, errors.New("work_id is required")
@@ -259,6 +374,78 @@ func (s *Store) GetOrCreateTicketSession(key TicketSessionKey, seed Session) (se
 // ResetTicketSession closes the active stable-identity ticket session,
 // drops its nonce ledger, and removes the active index so the next
 // GetTicketParams call mints a fresh work_id.
+// ResetTicketSessionIfCurrent retires a tuple's session ONLY when the
+// work_id currently indexed for it is the one the caller expected.
+//
+// Compare-and-swap, because rotation has concurrent callers by nature:
+// several payments can reach an exhausted rand at once and each will try
+// to rotate it. Without the comparison the second one retires the
+// SUCCESSOR the first just created, and the route forks or loses a
+// freshly-minted identity. With it, exactly one caller observes
+// rotated=true and the rest see their expectation no longer holds.
+//
+// rotated=false with no error means someone else already rotated it —
+// which is success from the caller's point of view, not a failure.
+func (s *Store) ResetTicketSessionIfCurrent(key TicketSessionKey, expectedWorkID string) (rotated bool, err error) {
+	if expectedWorkID == "" {
+		return false, errors.New("store: expected work_id is required")
+	}
+	indexKey := ticketSessionIndexKey(key)
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		idx := tx.Bucket([]byte(ticketIdxBucket))
+		current := idx.Get(indexKey)
+		if current == nil || string(current) != expectedWorkID {
+			// Already rotated, or never indexed. Either way this
+			// caller's predecessor is no longer the live identity.
+			return nil
+		}
+		if err := retireIndexedSession(tx, key, expectedWorkID); err != nil {
+			return err
+		}
+		rotated = true
+		return nil
+	})
+	return rotated, err
+}
+
+// retireIndexedSession closes a session, unhooks it from the tuple index
+// and drops its nonce ledger. Shared so the conditional and
+// unconditional resets cannot drift apart.
+func retireIndexedSession(tx *bolt.Tx, key TicketSessionKey, workID string) error {
+	idx := tx.Bucket([]byte(ticketIdxBucket))
+	sessions := tx.Bucket([]byte(sessionsBucket))
+	raw := sessions.Get(compositeKey(key.Sender, workID))
+	if raw == nil {
+		return idx.Delete(ticketSessionIndexKey(key))
+	}
+	var sess Session
+	if err := json.Unmarshal(raw, &sess); err != nil {
+		return fmt.Errorf("unmarshal indexed session: %w", err)
+	}
+	sess.Closed = true
+	sess.ClosedAt = time.Now().UTC()
+	updated, err := json.Marshal(sess)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	if err := sessions.Put(compositeKey(key.Sender, workID), updated); err != nil {
+		return err
+	}
+	if err := idx.Delete(ticketSessionIndexKey(key)); err != nil {
+		return err
+	}
+	if sess.RecipientRand != "" {
+		randInt, ok := new(big.Int).SetString(sess.RecipientRand, 10)
+		if !ok {
+			return errors.New("session rand corrupt")
+		}
+		if err := deleteNonceLedger(tx.Bucket([]byte(noncesBucket)), randInt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) ResetTicketSession(key TicketSessionKey) (oldWorkID string, reset bool, err error) {
 	indexKey := ticketSessionIndexKey(key)
 	err = s.db.Update(func(tx *bolt.Tx) error {
@@ -380,10 +567,22 @@ func (s *Store) CreditBalance(sender []byte, workID string, weiToCredit *big.Int
 // DebitBalance is idempotent by debit_seq within a session: a debit
 // recorded with the same (sender, work_id, debit_seq) returns the
 // balance from the original debit, not a re-debit.
-func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debitSeq uint64) (*big.Int, error) {
+// DebitResult is what a debit actually did. The charge is returned
+// rather than left for a caller to recompute: billing is cumulative, so
+// the amount depends on the running total, and a caller working from the
+// units alone disagrees whenever a remainder carries.
+type DebitResult struct {
+	Balance         *big.Int
+	DebitedWei      *big.Int
+	CumulativeUnits uint64
+	Replayed        bool
+}
+
+func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debitSeq uint64) (*DebitResult, error) {
 	if workUnits < 0 {
 		return nil, errors.New("work_units must be >= 0")
 	}
+	out := &DebitResult{}
 	var newBalance *big.Int
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		composite := compositeKey(sender, workID)
@@ -401,6 +600,8 @@ func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debi
 				return fmt.Errorf("unmarshal: %w", err)
 			}
 			newBalance = parseDecimalBig(sess.BalanceWei)
+			out.CumulativeUnits = sess.DebitedUnits
+			out.Replayed = true
 			return nil
 		}
 
@@ -418,8 +619,21 @@ func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debi
 			return ErrClosed
 		}
 
+		// Fail closed on an unpriced session. Treating "nobody set a
+		// price" as zero is how work gets delivered free while every
+		// log line reports success.
+		if sess.PricePerWorkUnitWei == PricingUnset {
+			return ErrPricingUnset
+		}
+		// Cumulative billing: charge the difference between the bill
+		// for everything debited so far and the bill including this
+		// delta. Never price the delta on its own.
 		price := parseDecimalBig(sess.PricePerWorkUnitWei)
-		debitWei := new(big.Int).Mul(price, big.NewInt(workUnits))
+		before := BillFor(price, sess.PerUnits, sess.DebitedUnits)
+		sess.DebitedUnits += uint64(workUnits)
+		debitWei := new(big.Int).Sub(BillFor(price, sess.PerUnits, sess.DebitedUnits), before)
+		out.DebitedWei = new(big.Int).Set(debitWei)
+		out.CumulativeUnits = sess.DebitedUnits
 		bal := parseDecimalBig(sess.BalanceWei)
 		bal.Sub(bal, debitWei)
 		sess.BalanceWei = bal.String()
@@ -437,7 +651,11 @@ func (s *Store) DebitBalance(sender []byte, workID string, workUnits int64, debi
 	if err != nil {
 		return nil, err
 	}
-	return newBalance, nil
+	out.Balance = newBalance
+	if out.DebitedWei == nil {
+		out.DebitedWei = new(big.Int)
+	}
+	return out, nil
 }
 
 // GetBalance returns the current balance for a session.

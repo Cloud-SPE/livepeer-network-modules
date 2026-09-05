@@ -9,18 +9,22 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
+// Buckets. The legacy member model's four buckets (join_requests,
+// members, member_backends, assignments) and the offers bucket are no
+// longer declared or opened — an offer is derived from the enabled
+// template set, never stored. Existing databases keep those bytes: nothing enumerates
+// buckets, so they are inert, and there is no migration machinery in
+// this module to convert them with. Deleting a user's rows on upgrade
+// is not a decision this code should make silently.
 const (
-	offersBucket              = "offers"
-	joinRequestsBucket        = "join_requests"
-	membersBucket             = "members"
-	memberBackendsBucket      = "member_backends"
-	assignmentsBucket         = "assignments"
 	auditEventsBucket         = "audit_events"
 	poolMembersBucket         = "pool_members_v2"
 	memberNoncesBucket        = "member_nonces"
 	hostEnrollmentsBucket     = "host_enrollments"
 	hardwareUnitsBucket       = "hardware_units"
-	templateCatalogBucket     = "template_catalog"
+	templateOverridesBucket   = "template_overrides"
+	memberOptOutsBucket       = "member_template_opt_outs"
+	hardwareConflictsBucket   = "hardware_claim_conflicts"
 	templateAssignmentsBucket = "template_assignments"
 	certificationRunsBucket   = "certification_runs"
 	settlementWindowsBucket   = "settlement_windows"
@@ -29,23 +33,19 @@ const (
 
 func (r *StateRepo) initControlPlaneBuckets(tx *bolt.Tx) error {
 	for _, bucket := range []string{
-		offersBucket,
-		joinRequestsBucket,
-		membersBucket,
-		memberBackendsBucket,
-		assignmentsBucket,
 		auditEventsBucket,
 		poolMembersBucket,
 		memberNoncesBucket,
 		hostEnrollmentsBucket,
 		hardwareUnitsBucket,
-		templateCatalogBucket,
+		templateOverridesBucket,
+		memberOptOutsBucket,
+		hardwareConflictsBucket,
 		templateAssignmentsBucket,
 		certificationRunsBucket,
 		settlementWindowsBucket,
 		payoutBatchesBucket,
 		desiredBrokerRuntimeBucket,
-		appliedBrokerRuntimeBucket,
 	} {
 		if _, err := tx.CreateBucketIfNotExists([]byte(bucket)); err != nil {
 			return err

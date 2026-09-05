@@ -6,14 +6,23 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
 const ExecutionPathBrokerVirtualBackend = "broker_virtual_backend"
 
+// TemplateSource is the catalog this service certifies against. The
+// catalog is files on disk, so it is handed in rather than read from
+// the database.
+type TemplateSource interface {
+	Get(id string) (templates.Template, bool)
+}
+
 type Service struct {
-	repo *repo.StateRepo
-	now  func() time.Time
+	repo    *repo.StateRepo
+	catalog TemplateSource
+	now     func() time.Time
 }
 
 type CompleteRequest struct {
@@ -23,15 +32,15 @@ type CompleteRequest struct {
 	FailureReason string
 }
 
-func New(stateRepo *repo.StateRepo) *Service {
-	return &Service{repo: stateRepo, now: func() time.Time { return time.Now().UTC() }}
+func New(stateRepo *repo.StateRepo, catalog TemplateSource) *Service {
+	return NewWithClock(stateRepo, catalog, nil)
 }
 
-func NewWithClock(stateRepo *repo.StateRepo, now func() time.Time) *Service {
+func NewWithClock(stateRepo *repo.StateRepo, catalog TemplateSource, now func() time.Time) *Service {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Service{repo: stateRepo, now: now}
+	return &Service{repo: stateRepo, catalog: catalog, now: now}
 }
 
 func (s *Service) StartAssignmentCertification(assignmentID string) (types.CertificationRun, error) {
@@ -47,8 +56,15 @@ func (s *Service) StartAssignmentCertification(assignmentID string) (types.Certi
 	if err != nil {
 		return types.CertificationRun{}, err
 	}
-	if _, err := s.repo.GetTemplateCatalogEntry(assignment.TemplateID); err != nil {
-		return types.CertificationRun{}, err
+	// Certify against a template the catalog actually defines: an
+	// assignment naming a template this build does not ship has nothing
+	// to prove, and starting a run for it would produce a verdict with
+	// no recipe behind it.
+	if s.catalog == nil {
+		return types.CertificationRun{}, fmt.Errorf("template catalog is not loaded")
+	}
+	if _, ok := s.catalog.Get(assignment.TemplateID); !ok {
+		return types.CertificationRun{}, fmt.Errorf("template %q is not in the catalog", assignment.TemplateID)
 	}
 	now := s.now()
 	assignment.State = types.TemplateAssignmentTesting

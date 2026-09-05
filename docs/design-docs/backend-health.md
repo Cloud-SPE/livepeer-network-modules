@@ -121,8 +121,12 @@ health surface."
 
 In practice:
 
-- each tuple in `host-config.yaml` may choose a broker-side probe recipe
-- the probe recipe may be shallow or specialized depending on workload
+- the **runner declares its own readiness recipe** in its attach document
+  (`readiness{type, path, config}`), because the runner is the only party
+  that knows what ready means for it — model loaded, GPU free, queue
+  depth. An operator-authored HTTP-status recipe approximates a fact the
+  runner has exactly.
+- the recipe may be shallow or specialized depending on workload
 - the broker maps the result onto generic outward states:
   `ready`, `draining`, `degraded`, `unreachable`, `stale`
 
@@ -138,8 +142,11 @@ Examples of legitimate specialized checks:
 The coordinator, resolver, and gateways should not need to understand
 those semantics. They consume only the broker's normalized result.
 
-**Freshness budget:** seconds. Backend reachability is probed on cadence
-(periodic + on-demand) and cached briefly.
+**Freshness budget:** seconds — but not because anything is polled. A
+runner's reachability is whether its attach tunnel is up, and its fitness
+for an offer is what certification decided; both are read live on every
+request to `/registry/health`. The freshness budget is a statement about
+how long a *reader* may cache the answer, not about a probe interval.
 
 **Who consumes it:**
 
@@ -167,10 +174,16 @@ a green `/healthz`.
 This stack is expected to serve capabilities with different definitions
 of "ready". The extensibility point belongs in the broker:
 
-- **operator-facing choice:** `host-config.yaml` selects the probe recipe
-  and thresholds per tuple
+- **runner-facing declaration:** the attach document names the probe
+  recipe (`http-status`, `http-jsonpath`, `http-openai-model-ready`,
+  `tcp-connect`) and its parameters
+  ([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md) §3.2)
+- **operator-facing choice:** the offer's `certification` steps decide
+  how much readiness is *enough* — attempts, interval, consecutive
+  successes — without restating the recipe
 - **core-module implementation:** capability-broker ships the probe
-  recipe library and executes probes on cadence
+  recipe library and runs a recipe when it certifies a runner — never on a
+  background cadence against a configured URL
 - **cross-stack contract:** `/registry/health` exposes only normalized
   status, freshness, and reason
 

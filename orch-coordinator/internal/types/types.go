@@ -13,16 +13,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
+	"regexp"
 	"strings"
 	"time"
 )
 
-const (
-	MetadataStateOK             = "ok"
-	MetadataStateDegraded       = "degraded"
-	MetadataStateStale          = "stale"
-	MetadataStateNeverSucceeded = "never_succeeded"
-)
+const ()
 
 // BrokerOffering is one capability tuple as advertised by a broker's
 // /registry/offerings endpoint. Mirrors
@@ -31,7 +28,9 @@ const (
 type BrokerOffering struct {
 	CapabilityID    string         `json:"capability_id"`
 	OfferingID      string         `json:"offering_id"`
-	InteractionMode string         `json:"interaction_mode"`
+	Protocol        string         `json:"protocol"`
+	Job             *JobAxes       `json:"job,omitempty"`
+	Session         *SessionAxes   `json:"session,omitempty"`
 	WorkUnit        WorkUnit       `json:"work_unit"`
 	PricePerUnitWei string         `json:"price_per_unit_wei"`
 	PerUnits        uint64         `json:"per_units,omitempty"`
@@ -39,15 +38,106 @@ type BrokerOffering struct {
 	Constraints     map[string]any `json:"constraints,omitempty"`
 }
 
+// JobAxes carries the paid-job/v1 declared axes
+// (livepeer-network-protocol/protocols/offering-axes.md §2, schema
+// #/$defs/job_axes). Currently one key, "transports".
+//
+// It is deliberately an opaque object rather than a typed mirror: per
+// offering-axes.md §4 the coordinator gates on nothing in here, it
+// only carries the declaration from the broker into the bytes the
+// cold key signs. A typed mirror would silently drop any axis a later
+// spec minor adds, and the drop would be baked into the operator's
+// signature. Pass-through cannot go stale.
+type JobAxes map[string]any
+
+// SessionAxes carries the paid-session/v1 declared axes
+// (offering-axes.md §3, schema #/$defs/session_axes):
+// descriptor_schema, metering, attachment, refill, heartbeat, lease,
+// tolerance_band_pct, runway_increment_units. Opaque for the same
+// reason as JobAxes.
+type SessionAxes map[string]any
+
+// Protocol tag prefixes the manifest schema pairs with a specific
+// axes object. Unknown protocols are carried through unchanged — the
+// coordinator refuses to guess, and the schema imposes no axes rule
+// on them.
+const (
+	ProtocolPaidJobPrefix     = "paid-job/"
+	ProtocolPaidSessionPrefix = "paid-session/"
+)
+
+// protocolTagRE mirrors the schema's protocol pattern
+// (^[a-z][a-z0-9-]*/v[0-9]+$).
+var protocolTagRE = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
+
+// ValidateProtocolAxes enforces the manifest schema's conditional
+// pairing: a paid-job/* protocol requires the job object and forbids
+// session; a paid-session/* protocol requires session and forbids
+// job. Both the scrape boundary and the signed-manifest receive path
+// run it — a tuple that fails here produces a manifest that fails
+// schema validation at every resolver, so it must never reach the
+// cold key.
+func ValidateProtocolAxes(protocol string, job *JobAxes, session *SessionAxes) error {
+	switch {
+	case strings.HasPrefix(protocol, ProtocolPaidJobPrefix):
+		if job == nil {
+			return fmt.Errorf("job: required for %q protocols", ProtocolPaidJobPrefix+"*")
+		}
+		if session != nil {
+			return fmt.Errorf("session: must not be set for %q protocols", ProtocolPaidJobPrefix+"*")
+		}
+	case strings.HasPrefix(protocol, ProtocolPaidSessionPrefix):
+		if session == nil {
+			return fmt.Errorf("session: required for %q protocols", ProtocolPaidSessionPrefix+"*")
+		}
+		if job != nil {
+			return fmt.Errorf("job: must not be set for %q protocols", ProtocolPaidSessionPrefix+"*")
+		}
+	}
+	return nil
+}
+
 // WorkUnit is the metering dimension. Free-form name; opaque to the
 // coordinator but signed into the manifest verbatim.
 type WorkUnit struct {
 	Name string `json:"name"`
+	// Estimator, when present, is how a CLIENT computes a funding
+	// ceiling before the work runs. Carried, not interpreted: the
+	// coordinator neither measures anything nor checks that the id is
+	// one it recognises. It is here because the scrape decodes with
+	// DisallowUnknownFields, so a field the coordinator does not model
+	// is not merely dropped — it rejects the broker's entire offering
+	// set with ErrBrokerSchema, and the operator sees a broker that
+	// looks unreachable rather than one advertising a field.
+	Estimator *Estimator `json:"estimator,omitempty"`
+}
+
+// Estimator mirrors the manifest schema's #/$defs/estimator. It is the
+// one exception to extractors being unadvertised: how a seller counts is
+// its own business, except when a consumer must reserve funds against a
+// measurement it cannot derive from its own request — a multipart upload
+// has no duration in its parameters, and a guessed reservation and the
+// seller's bill are two different numbers.
+type Estimator struct {
+	ID        string `json:"id"`
+	Rounding  string `json:"rounding"`
+	Exactness string `json:"exactness"`
+	Package   string `json:"package,omitempty"`
+	Fixtures  string `json:"fixtures,omitempty"`
 }
 
 // BrokerOfferings is the full /registry/offerings response.
 type BrokerOfferings struct {
-	OrchEthAddress string           `json:"orch_eth_address"`
+	// SpecVersion is the protocol module's VERSION the broker was built
+	// against (protocols/broker-admin.md §7). The coordinator refuses to
+	// merge a broker whose major differs from its own: those tuples would
+	// be signed into a manifest consumers read under a different contract.
+	SpecVersion    string `json:"spec_version"`
+	OrchEthAddress string `json:"orch_eth_address"`
+	// OffersRevision is informational: the offer-set revision the broker
+	// last applied (broker-admin §4.2). Carried for operator surfaces,
+	// never signed.
+	OffersRevision string           `json:"offers_revision,omitempty"`
 	Capabilities   []BrokerOffering `json:"capabilities"`
 }
 
@@ -64,7 +154,6 @@ type BrokerHealthCapability struct {
 	ConsecutiveSuccesses int                   `json:"consecutive_successes,omitempty"`
 	ConsecutiveFailures  int                   `json:"consecutive_failures,omitempty"`
 	Backends             []BrokerHealthBackend `json:"backends,omitempty"`
-	Metadata             *BrokerHealthMetadata `json:"metadata,omitempty"`
 }
 
 type BrokerHealthBackend struct {
@@ -81,17 +170,6 @@ type BrokerHealthBackend struct {
 	SelectionReason      string    `json:"selection_reason,omitempty"`
 }
 
-type BrokerHealthMetadata struct {
-	Provider              string    `json:"provider,omitempty"`
-	Applicable            bool      `json:"applicable"`
-	LastAttemptAt         time.Time `json:"last_attempt_at,omitempty"`
-	LastSuccessAt         time.Time `json:"last_success_at,omitempty"`
-	LastSuccessAgeSeconds float64   `json:"last_success_age_seconds,omitempty"`
-	LastError             string    `json:"last_error,omitempty"`
-	LastResult            string    `json:"last_result,omitempty"`
-	ConsecutiveFailures   int       `json:"consecutive_failures,omitempty"`
-}
-
 // BrokerHealth is the full /registry/health response.
 type BrokerHealth struct {
 	BrokerStatus string                   `json:"broker_status"`
@@ -101,8 +179,12 @@ type BrokerHealth struct {
 
 // Validate runs a boundary-decoder pass on the freshly-scraped
 // payload: orch identity match, required fields, decimal-string price,
-// non-empty interaction_mode and work_unit.
+// well-formed protocol tag paired with its declared-axes object, and
+// non-empty work_unit.
 func (b *BrokerOfferings) Validate(expectedOrch string) error {
+	if err := b.validateSpecVersion(); err != nil {
+		return err
+	}
 	if !strings.EqualFold(strings.TrimSpace(b.OrchEthAddress), strings.TrimSpace(expectedOrch)) {
 		return fmt.Errorf("orch identity mismatch: got %q, want %q", b.OrchEthAddress, expectedOrch)
 	}
@@ -113,15 +195,42 @@ func (b *BrokerOfferings) Validate(expectedOrch string) error {
 		if c.OfferingID == "" {
 			return fmt.Errorf("capabilities[%d].offering_id: required", i)
 		}
-		if c.InteractionMode == "" {
-			return fmt.Errorf("capabilities[%d].interaction_mode: required", i)
+		if c.Protocol == "" {
+			return fmt.Errorf("capabilities[%d].protocol: required", i)
+		}
+		if !protocolTagRE.MatchString(c.Protocol) {
+			return fmt.Errorf("capabilities[%d].protocol: must match <name>/v<major>, got %q", i, c.Protocol)
+		}
+		if err := ValidateProtocolAxes(c.Protocol, c.Job, c.Session); err != nil {
+			return fmt.Errorf("capabilities[%d].%w", i, err)
 		}
 		if c.WorkUnit.Name == "" {
 			return fmt.Errorf("capabilities[%d].work_unit.name: required", i)
 		}
+		if err := validateEstimator(c.WorkUnit.Estimator); err != nil {
+			return fmt.Errorf("capabilities[%d].work_unit.%w", i, err)
+		}
 		if !isNonNegativeDecimalString(c.PricePerUnitWei) {
 			return fmt.Errorf("capabilities[%d].price_per_unit_wei: must be a non-negative decimal string, got %q", i, c.PricePerUnitWei)
 		}
+	}
+	return nil
+}
+
+// validateSpecVersion refuses a broker on a different spec major
+// (plan 0043 §3.7). Minor and patch are non-breaking by definition, so
+// only the major gates. An absent stamp is refused too: it means the
+// broker predates the stamp, and tuples whose contract cannot be
+// verified must not reach a cold-key-signed manifest.
+func (b *BrokerOfferings) validateSpecVersion() error {
+	got := strings.TrimSpace(b.SpecVersion)
+	if got == "" {
+		return fmt.Errorf("spec_version: required — this broker does not stamp it (coordinator is on %s); "+
+			"upgrade the broker to a build that publishes spec_version on /registry/offerings", version.VERSION)
+	}
+	if !version.SameMajor(got) {
+		return fmt.Errorf("spec_version major mismatch: broker publishes %q, coordinator is on %q — "+
+			"a manifest cannot mix majors; upgrade whichever side is behind", got, version.VERSION)
 	}
 	return nil
 }
@@ -145,36 +254,6 @@ func (b *BrokerHealth) Validate() error {
 	return nil
 }
 
-func MetadataResultHealthy(result string) bool {
-	switch result {
-	case "enriched", "empty", "already_configured":
-		return true
-	default:
-		return false
-	}
-}
-
-func ClassifyBrokerHealthMetadata(meta *BrokerHealthMetadata, warningAfter, staleAfter time.Duration) (string, float64) {
-	if meta == nil || !meta.Applicable {
-		return "", -1
-	}
-	ageSeconds := meta.LastSuccessAgeSeconds
-	if ageSeconds < 0 || meta.LastSuccessAt.IsZero() {
-		return MetadataStateNeverSucceeded, -1
-	}
-	age := time.Duration(ageSeconds * float64(time.Second))
-	if staleAfter > 0 && age >= staleAfter {
-		return MetadataStateStale, ageSeconds
-	}
-	if meta.ConsecutiveFailures > 0 || !MetadataResultHealthy(meta.LastResult) {
-		return MetadataStateDegraded, ageSeconds
-	}
-	if warningAfter > 0 && age >= warningAfter {
-		return MetadataStateDegraded, ageSeconds
-	}
-	return MetadataStateOK, ageSeconds
-}
-
 // SourceTuple is one offering tagged with the broker that advertised
 // it. The scrape cache holds a flat list of these; the candidate
 // service deduplicates by uniqueness key.
@@ -189,14 +268,30 @@ type SourceTuple struct {
 // CapabilityTuple is the manifest tuple as the coordinator emits it.
 // Mirrors livepeer-network-protocol/manifest/schema.json #/$defs/capability.
 type CapabilityTuple struct {
-	CapabilityID    string         `json:"capability_id"`
-	OfferingID      string         `json:"offering_id"`
-	InteractionMode string         `json:"interaction_mode"`
-	WorkUnit        WorkUnit       `json:"work_unit"`
-	PricePerUnitWei string         `json:"price_per_unit_wei"`
-	WorkerURL       string         `json:"worker_url"`
-	Extra           map[string]any `json:"extra,omitempty"`
-	Constraints     map[string]any `json:"constraints,omitempty"`
+	CapabilityID string `json:"capability_id"`
+	OfferingID   string `json:"offering_id"`
+	// Protocol is the protocol tag ("paid-job/v1", "paid-session/v1").
+	// Manifest spec 1.0.0 replaced the pre-v1 mode field with this plus
+	// the declared axes below.
+	Protocol string `json:"protocol"`
+	// Job / Session are the declared-axes objects. Exactly one is set,
+	// selected by Protocol; both nil only for an unknown protocol the
+	// schema imposes no rule on. Pointers so absence survives the
+	// round-trip — an emitted-but-empty object would break the
+	// schema's conditional requirements.
+	Job             *JobAxes     `json:"job,omitempty"`
+	Session         *SessionAxes `json:"session,omitempty"`
+	WorkUnit        WorkUnit     `json:"work_unit"`
+	PricePerUnitWei string       `json:"price_per_unit_wei"`
+	// PerUnits is the price denominator: PricePerUnitWei buys this many
+	// work units. Absent (0) means 1. Carried verbatim from the broker's
+	// offering into the signed bytes — dropping it here is what let a
+	// per_units offering publish a quote at per_units times the rate its
+	// own ledger charges.
+	PerUnits    uint64         `json:"per_units,omitempty"`
+	WorkerURL   string         `json:"worker_url"`
+	Extra       map[string]any `json:"extra,omitempty"`
+	Constraints map[string]any `json:"constraints,omitempty"`
 }
 
 // Orch is the orchestrator-identity sub-struct. Mirrors
@@ -210,12 +305,24 @@ type Orch struct {
 // over this). Mirrors livepeer-network-protocol/manifest/schema.json
 // #/$defs/manifest.
 type ManifestPayload struct {
-	SpecVersion    string            `json:"spec_version"`
-	PublicationSeq uint64            `json:"publication_seq"`
-	IssuedAt       time.Time         `json:"issued_at"`
-	ExpiresAt      time.Time         `json:"expires_at"`
-	Orch           Orch              `json:"orch"`
+	SpecVersion    string    `json:"spec_version"`
+	PublicationSeq uint64    `json:"publication_seq"`
+	IssuedAt       time.Time `json:"issued_at"`
+	ExpiresAt      time.Time `json:"expires_at"`
+	Orch           Orch      `json:"orch"`
+	// SettlementKeys are hot keys the cold key delegates settlement
+	// signing to. They ride inside the signed payload because that is
+	// the whole point: the cold key's signature is what makes a
+	// broker-held key trustworthy to a consumer.
+	SettlementKeys []SettlementKey   `json:"settlement_keys,omitempty"`
 	Capabilities   []CapabilityTuple `json:"capabilities"`
+}
+
+// SettlementKey is one delegated settlement-signing key and its window.
+type SettlementKey struct {
+	PublicKey string    `json:"public_key"`
+	NotBefore time.Time `json:"not_before"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // Signature is the cold-key signature over the JCS bytes of
@@ -250,51 +357,29 @@ type Candidate struct {
 
 // Metadata is the operator-only sidecar (NOT signed).
 type Metadata struct {
-	CandidateTimestamp              time.Time              `json:"candidate_timestamp"`
-	ScrapeWindowStart               time.Time              `json:"scrape_window_start"`
-	ScrapeWindowEnd                 time.Time              `json:"scrape_window_end"`
-	SourceBrokers                   []MetadataBrokerEntry  `json:"source_brokers"`
-	MetadataWarningThresholdSeconds int64                  `json:"metadata_warning_threshold_seconds,omitempty"`
-	MetadataStaleThresholdSeconds   int64                  `json:"metadata_stale_threshold_seconds,omitempty"`
-	Warnings                        []MetadataWarning      `json:"warnings,omitempty"`
-	TupleMetadataWarnings           []TupleMetadataWarning `json:"tuple_metadata_warnings,omitempty"`
-	CoordinatorCommit               string                 `json:"coordinator_commit"`
-	SchemaVersion                   string                 `json:"schema_version"`
-	HAEndpoints                     []HAEndpoint           `json:"ha_endpoints,omitempty"`
+	CandidateTimestamp time.Time             `json:"candidate_timestamp"`
+	ScrapeWindowStart  time.Time             `json:"scrape_window_start"`
+	ScrapeWindowEnd    time.Time             `json:"scrape_window_end"`
+	SourceBrokers      []MetadataBrokerEntry `json:"source_brokers"`
+	CoordinatorCommit  string                `json:"coordinator_commit"`
+	SchemaVersion      string                `json:"schema_version"`
+	// ManifestTTLSeconds and RenewalThresholdSeconds publish the sign
+	// policy the coordinator actually applies, so the console reads it
+	// instead of keeping its own copy (plan 0043 §3.7). Both are the
+	// EFFECTIVE values: the threshold is already defaulted to ttl/3 when
+	// the operator left it unset, so a reader never re-derives it.
+	ManifestTTLSeconds      int64        `json:"manifest_ttl_seconds,omitempty"`
+	RenewalThresholdSeconds int64        `json:"renewal_threshold_seconds,omitempty"`
+	HAEndpoints             []HAEndpoint `json:"ha_endpoints,omitempty"`
 }
 
 // MetadataBrokerEntry records per-broker scrape success/failure.
 type MetadataBrokerEntry struct {
-	Name                     string    `json:"name"`
-	BaseURL                  string    `json:"base_url"`
-	Status                   string    `json:"status"`
-	ScrapedAt                time.Time `json:"scraped_at,omitempty"`
-	Error                    string    `json:"error,omitempty"`
-	MetadataApplicableTuples int       `json:"metadata_applicable_tuples,omitempty"`
-	MetadataUnhealthyTuples  int       `json:"metadata_unhealthy_tuples,omitempty"`
-	MetadataStaleTuples      int       `json:"metadata_stale_tuples,omitempty"`
-	MetadataWorstAgeSeconds  float64   `json:"metadata_worst_age_seconds,omitempty"`
-}
-
-type MetadataWarning struct {
-	Code     string `json:"code"`
-	Severity string `json:"severity"`
-	Message  string `json:"message"`
-}
-
-type TupleMetadataWarning struct {
-	Code                  string  `json:"code"`
-	Severity              string  `json:"severity"`
-	BrokerName            string  `json:"broker_name"`
-	BaseURL               string  `json:"base_url"`
-	CapabilityID          string  `json:"capability_id"`
-	OfferingID            string  `json:"offering_id"`
-	WorkerURL             string  `json:"worker_url,omitempty"`
-	MetadataState         string  `json:"metadata_state"`
-	MetadataResult        string  `json:"metadata_result,omitempty"`
-	MetadataError         string  `json:"metadata_error,omitempty"`
-	LastSuccessAgeSeconds float64 `json:"last_success_age_seconds,omitempty"`
-	ConsecutiveFailures   int     `json:"consecutive_failures,omitempty"`
+	Name      string    `json:"name"`
+	BaseURL   string    `json:"base_url"`
+	Status    string    `json:"status"`
+	ScrapedAt time.Time `json:"scraped_at,omitempty"`
+	Error     string    `json:"error,omitempty"`
 }
 
 // HAEndpoint records the alternate worker_url(s) that were dropped
@@ -326,6 +411,33 @@ func ParseSignedManifest(b []byte) (*SignedManifest, error) {
 		return nil, errors.New("trailing data after signed manifest")
 	}
 	return &sm, nil
+}
+
+// validateEstimator refuses a partial estimator rather than signing one.
+// The schema requires id, rounding and exactness together, and a consumer
+// that reads an estimator missing its rounding rule has no way to reach
+// the seller's number — which is the single thing the block exists to let
+// it do. Refusing here keeps that failure at publication, where an
+// operator can see it, rather than at a funding decision downstream.
+//
+// The enum values are deliberately NOT checked: this daemon gates on
+// nothing inside the estimator, and a hard-coded list would reject the
+// first value a later spec minor adds, with the rejection baked into the
+// operator's signature.
+func validateEstimator(e *Estimator) error {
+	if e == nil {
+		return nil
+	}
+	if e.ID == "" {
+		return fmt.Errorf("estimator.id: required")
+	}
+	if e.Rounding == "" {
+		return fmt.Errorf("estimator.rounding: required")
+	}
+	if e.Exactness == "" {
+		return fmt.Errorf("estimator.exactness: required")
+	}
+	return nil
 }
 
 func isNonNegativeDecimalString(s string) bool {

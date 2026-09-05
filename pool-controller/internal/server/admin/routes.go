@@ -5,36 +5,70 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ladder"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/admissionreview"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/assignmentpolicy"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/backendverify"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokeradmin"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/brokerpush"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/certification"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/offerservice"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/runtimeservice"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/settlement"
-	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/service/statusservice"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ui/web"
 )
 
+// hostEnrollmentView is a host enrollment with its secret withheld.
+//
+// BrokerSessionCredential is the 32 random bytes a member's agent
+// authenticates to the broker with. It is stored in plaintext because
+// the controller has to hand it to the member once and hash it into the
+// credential push, but it must never travel back out of an admin read:
+// the admin token is an operator's key to the control plane, not to
+// every member's runner identity. Redacting at the HTTP boundary rather
+// than on the type keeps the field serialisable for the bolt store,
+// which uses these same JSON tags.
+type hostEnrollmentView struct {
+	types.HostEnrollment
+	BrokerSessionCredential string `json:"broker_session_credential,omitempty"`
+}
+
+func redactHostEnrollment(in types.HostEnrollment) hostEnrollmentView {
+	in.BrokerSessionCredential = ""
+	return hostEnrollmentView{HostEnrollment: in}
+}
+
+func redactHostEnrollments(in []types.HostEnrollment) []hostEnrollmentView {
+	out := make([]hostEnrollmentView, 0, len(in))
+	for _, item := range in {
+		out = append(out, redactHostEnrollment(item))
+	}
+	return out
+}
+
 type Deps struct {
-	Repo                *repo.StateRepo
-	WrapAuth            func(http.HandlerFunc) http.HandlerFunc
-	Session             *SessionAuth
-	RefreshRendered     func(string) error
-	GetDesiredRuntime   func() (*types.DesiredBrokerRuntime, error)
-	GetRuntimeApplyInfo func() RuntimeApplyInfo
-	ApplyDesiredRuntime func(*types.DesiredBrokerRuntime) error
-	Verifier            *backendverify.Service
-	GetBrokerConfig     func() []byte
-	GetMembersJSON      func() ([]byte, error)
-	GetOfferingsJSON    func() ([]byte, error)
-	GetStateJSON        func() ([]byte, error)
-	KillWorkerSession   func(string) error
+	// Catalog is the curated template catalog, loaded from files.
+	Catalog *templates.Catalog
+	// Stances overrides how many templates a GPU class runs at once.
+	Stances map[string]int
+	// Ladder moves placements between trust states.
+	Ladder LadderRunner
+	// LadderPolicy is the pool's ladder configuration, for the shares
+	// an operator gesture has to reproduce.
+	LadderPolicy func() ladder.Policy
+	// PayoutPolicyPath and PayoutPausePath are payout-policy.json and
+	// its kill switch. Empty means no automatic approval, which is the
+	// state every pool starts in.
+	PayoutPolicyPath string
+	PayoutPausePath  string
+	Repo             *repo.StateRepo
+	WrapAuth         func(http.HandlerFunc) http.HandlerFunc
+	Session          *SessionAuth
+	RefreshRendered  func(string) error
+	GetOfferingsJSON func() ([]byte, error)
+	GetStateJSON     func() ([]byte, error)
 }
 
 type RuntimeApplyInfo struct {
@@ -44,54 +78,10 @@ type RuntimeApplyInfo struct {
 	BrokerAdminConfigured bool   `json:"broker_admin_configured"`
 }
 
-type offerMutationRequest = offerservice.Mutation
-
-type assignmentMutationRequest struct {
-	ID              string `json:"id"`
-	OfferID         string `json:"offer_id"`
-	MemberBackendID string `json:"member_backend_id"`
-	Notes           string `json:"notes,omitempty"`
-	Status          string `json:"status,omitempty"`
-}
-
-type memberStatusRequest struct {
-	Status string `json:"status"`
-}
-
-type backendStatusRequest struct {
-	Status string `json:"status"`
-}
-
-type joinRequestReviewRequest struct {
-	Reason string `json:"reason,omitempty"`
-}
-
 type brokerRuntimeMarkAppliedRequest struct {
 	Revision string `json:"revision,omitempty"`
 	Actor    string `json:"actor,omitempty"`
 	Error    string `json:"error,omitempty"`
-}
-
-type assignmentPreviewRequest struct {
-	OfferID         string `json:"offer_id"`
-	MemberBackendID string `json:"member_backend_id"`
-}
-
-type assignmentPreviewView = assignmentpolicy.PreviewView
-
-type joinRequestPreviewRequest struct {
-	JoinRequestID string `json:"join_request_id"`
-}
-
-type joinRequestBackendPreview = admissionreview.JoinRequestBackendPreview
-type joinRequestClaimPreview = admissionreview.JoinRequestClaimPreview
-type joinRequestOfferSuggestion = admissionreview.JoinRequestOfferSuggestion
-type joinRequestPreviewView = admissionreview.JoinRequestPreviewView
-type assignmentCandidateView = admissionreview.AssignmentCandidateView
-
-type runtimeView struct {
-	runtimeservice.View
-	RuntimeApplyInfo
 }
 
 type runtimeHistoryItem struct {
@@ -194,20 +184,11 @@ func Register(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /admin", uiPage("overview", "Overview"))
 	mux.HandleFunc("GET /admin/pool", uiPage("pool", "Pool"))
 	mux.HandleFunc("GET /admin/offers", uiPage("offers", "Offers"))
-	mux.HandleFunc("GET /admin/join-requests", uiPage("join-requests", "Join requests"))
-	mux.HandleFunc("GET /admin/members", uiPage("members", "Members & backends"))
-	mux.HandleFunc("GET /admin/assignments", uiPage("assignments", "Assignments"))
-	mux.HandleFunc("GET /admin/broker-runtime", uiPage("broker-runtime", "Broker runtime"))
+	mux.HandleFunc("GET /admin/placement", uiPage("placement", "Placement"))
+	mux.HandleFunc("GET /admin/ladder", uiPage("ladder", "Ladder"))
+	mux.HandleFunc("GET /admin/exceptions", uiPage("exceptions", "Exceptions"))
+	mux.HandleFunc("GET /admin/payouts", uiPage("payouts", "Payouts"))
 	mux.HandleFunc("GET /admin/audit", uiPage("audit", "Audit"))
-	mux.HandleFunc("GET /admin/v1/broker-config", auth(func(w http.ResponseWriter, _ *http.Request) {
-		if deps.GetBrokerConfig == nil {
-			http.Error(w, "broker config reader is not configured", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/yaml")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(deps.GetBrokerConfig())
-	}))
 	mux.HandleFunc("GET /admin/v1/pool-members", auth(func(w http.ResponseWriter, _ *http.Request) {
 		items, err := deps.Repo.ListPoolMembers()
 		writeAdminJSON(w, struct {
@@ -217,8 +198,8 @@ func Register(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /admin/v1/host-enrollments", auth(func(w http.ResponseWriter, _ *http.Request) {
 		items, err := deps.Repo.ListHostEnrollments()
 		writeAdminJSON(w, struct {
-			HostEnrollments []types.HostEnrollment `json:"host_enrollments"`
-		}{HostEnrollments: items}, err)
+			HostEnrollments []hostEnrollmentView `json:"host_enrollments"`
+		}{HostEnrollments: redactHostEnrollments(items)}, err)
 	}))
 	mux.HandleFunc("POST /admin/v1/host-enrollments/{id}/revoke", auth(func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.PathValue("id"))
@@ -231,11 +212,24 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		killed := killEnrollmentAssignments(deps.Repo, id, deps.KillWorkerSession)
+		// Revoking has to reach the broker NOW, not at the next
+		// reload. The push carries the credential as revoked, and the
+		// broker closes every connection holding it — which is the
+		// only thing that actually stops a revoked host serving. Until
+		// this call was here, "revoke" left the runner attached and
+		// earning until someone happened to reload.
+		pushErr := ""
+		if err := deps.refresh("host-enrollment-revoked"); err != nil {
+			pushErr = err.Error()
+		}
 		writeAdminJSON(w, struct {
-			Enrollment types.HostEnrollment `json:"enrollment"`
-			Killed     []string             `json:"killed_worker_sessions,omitempty"`
-		}{Enrollment: enrollment, Killed: killed}, nil)
+			Enrollment hostEnrollmentView `json:"enrollment"`
+			// Named rather than swallowed: the enrollment is revoked
+			// here either way, but a failed push means the host is
+			// still attached somewhere and the operator has to know
+			// that revoking did not finish.
+			BrokerPushError string `json:"broker_push_error,omitempty"`
+		}{Enrollment: redactHostEnrollment(enrollment), BrokerPushError: pushErr}, nil)
 	}))
 	mux.HandleFunc("GET /admin/v1/hardware-units", auth(func(w http.ResponseWriter, _ *http.Request) {
 		items, err := deps.Repo.ListHardwareUnits()
@@ -243,31 +237,56 @@ func Register(mux *http.ServeMux, deps Deps) {
 			HardwareUnits []types.HardwareUnit `json:"hardware_units"`
 		}{HardwareUnits: items}, err)
 	}))
+	// The catalog is read-only over HTTP: it is files in the repo,
+	// reviewed in version control. What an operator changes at runtime
+	// is the override — enable it, price it, add metadata.
+	registerPlacementRoutes(mux, deps, auth)
+	registerLadderRoutes(mux, deps, auth)
+	registerPayoutPolicyRoutes(mux, deps, auth)
+	registerExceptionRoutes(mux, deps, auth)
 	mux.HandleFunc("GET /admin/v1/template-catalog", auth(func(w http.ResponseWriter, _ *http.Request) {
-		items, err := deps.Repo.ListTemplateCatalogEntries()
+		overrides, err := deps.Repo.ListTemplateOverrides()
+		if err != nil {
+			writeAdminJSON(w, nil, err)
+			return
+		}
 		writeAdminJSON(w, struct {
-			Templates []types.TemplateCatalogEntry `json:"templates"`
-		}{Templates: items}, err)
+			Templates []templateCatalogView `json:"templates"`
+		}{Templates: catalogViews(deps.Catalog, overrides)}, nil)
 	}))
-	mux.HandleFunc("POST /admin/v1/template-catalog", auth(func(w http.ResponseWriter, r *http.Request) {
-		var item types.TemplateCatalogEntry
-		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+	mux.HandleFunc("PUT /admin/v1/template-overrides/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.PathValue("id"))
+		if _, ok := deps.Catalog.Get(id); !ok {
+			http.Error(w, "no template "+id+" in the catalog", http.StatusNotFound)
+			return
+		}
+		var override types.TemplateOverride
+		if err := json.NewDecoder(r.Body).Decode(&override); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		now := time.Now().UTC()
-		if item.CreatedAt.IsZero() {
-			item.CreatedAt = now
-		}
-		item.UpdatedAt = now
-		if item.Status == "" {
-			item.Status = types.TemplateStatusActive
-		}
-		if err := deps.Repo.PutTemplateCatalogEntry(item); err != nil {
+		override.TemplateID = id
+		if err := validateTemplateOverride(override); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		writeAdminJSON(w, item, nil)
+		if err := deps.Repo.PutTemplateOverride(override); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		stored, err := deps.Repo.GetTemplateOverride(id)
+		writeAdminJSON(w, stored, err)
+	}))
+	mux.HandleFunc("DELETE /admin/v1/template-overrides/{id}", auth(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSpace(r.PathValue("id"))
+		if err := deps.Repo.DeleteTemplateOverride(id); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeAdminJSON(w, struct {
+			Status     string `json:"status"`
+			TemplateID string `json:"template_id"`
+		}{Status: "reverted_to_catalog_default", TemplateID: id}, nil)
 	}))
 	mux.HandleFunc("GET /admin/v1/template-assignments", auth(func(w http.ResponseWriter, _ *http.Request) {
 		items, err := deps.Repo.ListTemplateAssignments()
@@ -292,11 +311,29 @@ func Register(mux *http.ServeMux, deps Deps) {
 		if item.Role == "" {
 			item.Role = types.TemplateAssignmentPrimary
 		}
+		if err := validateTemplateAssignment(deps, &item); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err := deps.Repo.PutTemplateAssignment(item); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := deps.RefreshRendered("template-assignment-created"); err != nil {
+		// Applying a plan is on the record; writing one assignment by
+		// hand moves the same member's hardware and belongs there too.
+		// Without this the audit trail reads as though placement were
+		// entirely automatic.
+		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
+			Kind:         "template_assignment_created",
+			OccurredAt:   now,
+			ResourceType: "template_assignment",
+			ResourceID:   item.ID,
+			Details: map[string]any{
+				"template_id": item.TemplateID, "hardware_unit_id": item.HardwareUnitID,
+				"role": string(item.Role), "member_eth_address": item.MemberEthAddress,
+			},
+		})
+		if err := deps.refresh("template-assignment-created"); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -304,12 +341,12 @@ func Register(mux *http.ServeMux, deps Deps) {
 	}))
 	mux.HandleFunc("POST /admin/v1/template-assignments/{id}/certification/start", auth(func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSpace(r.PathValue("id"))
-		run, err := certification.New(deps.Repo).StartAssignmentCertification(id)
+		run, err := certification.New(deps.Repo, deps.Catalog).StartAssignmentCertification(id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := deps.RefreshRendered("certification-started"); err != nil {
+		if err := deps.refresh("certification-started"); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -331,7 +368,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		run, err := certification.New(deps.Repo).CompleteRun(certification.CompleteRequest{
+		run, err := certification.New(deps.Repo, deps.Catalog).CompleteRun(certification.CompleteRequest{
 			RunID:         strings.TrimSpace(r.PathValue("id")),
 			Passed:        req.Passed,
 			Results:       req.Results,
@@ -341,7 +378,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := deps.RefreshRendered("certification-completed"); err != nil {
+		if err := deps.refresh("certification-completed"); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -426,31 +463,19 @@ func Register(mux *http.ServeMux, deps Deps) {
 			Intents []types.PayoutIntent `json:"intents"`
 		}{Batch: batch, Intents: intents}, nil)
 	}))
-	mux.HandleFunc("GET /admin/v1/members", auth(func(w http.ResponseWriter, _ *http.Request) {
-		if deps.GetMembersJSON == nil {
-			http.Error(w, "members reader is not configured", http.StatusInternalServerError)
-			return
-		}
-		body, err := deps.GetMembersJSON()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(body)
-	}))
+	// The offers a broker is told to serve, derived from the enabled
+	// templates. This is the same computation the push performs, so
+	// what an operator reads here is exactly what the fleet was sent —
+	// there is no stored offer set that could disagree.
 	mux.HandleFunc("GET /admin/v1/offers", auth(func(w http.ResponseWriter, _ *http.Request) {
-		items, err := deps.Repo.ListOffers()
+		overrides, err := deps.Repo.ListTemplateOverrides()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			Offers []types.Offer `json:"offers"`
-		}{Offers: items})
+		writeAdminJSON(w, struct {
+			Offers []brokeradmin.OfferPush `json:"offers"`
+		}{Offers: brokerpush.BuildOffersFromCatalog(deps.Catalog.All(), overrides)}, nil)
 	}))
 	mux.HandleFunc("GET /admin/v1/offerings", auth(func(w http.ResponseWriter, _ *http.Request) {
 		if deps.GetOfferingsJSON == nil {
@@ -502,636 +527,6 @@ func Register(mux *http.ServeMux, deps Deps) {
 			Events []types.AuditEvent `json:"events"`
 		}{Events: items})
 	}))
-	mux.HandleFunc("PATCH /admin/v1/members/", auth(func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/admin/v1/members/")
-		if id == "" {
-			http.Error(w, "member id is required", http.StatusBadRequest)
-			return
-		}
-		current, err := deps.Repo.GetMember(id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var req memberStatusRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		item, err := statusservice.SetMemberStatus(deps.Repo, id, req.Status)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := deps.RefreshRendered("member-status-updated"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "member_status_updated",
-			OccurredAt:   time.Now().UTC(),
-			ResourceID:   id,
-			ResourceType: "member",
-			Details: map[string]any{
-				"from_status": current.Status,
-				"to_status":   item.Status,
-			},
-		})
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(item)
-	}))
-	mux.HandleFunc("GET /admin/v1/join-requests", auth(func(w http.ResponseWriter, _ *http.Request) {
-		items, err := deps.Repo.ListJoinRequests()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			JoinRequests []types.JoinRequest `json:"join_requests"`
-		}{JoinRequests: items})
-	}))
-	mux.HandleFunc("POST /admin/v1/join-request-preview", auth(func(w http.ResponseWriter, r *http.Request) {
-		var req joinRequestPreviewRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		item, err := deps.Repo.GetJoinRequest(strings.TrimSpace(req.JoinRequestID))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		offers, err := deps.Repo.ListOffers()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		view := admissionreview.BuildJoinRequestPreview(item, offers)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(view)
-	}))
-	mux.HandleFunc("POST /admin/v1/join-requests/", auth(func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/admin/v1/join-requests/")
-		parts := strings.Split(strings.Trim(path, "/"), "/")
-		if len(parts) != 2 {
-			http.Error(w, "expected /admin/v1/join-requests/{id}/approve, reject, or refresh", http.StatusBadRequest)
-			return
-		}
-		id, action := parts[0], parts[1]
-		item, err := deps.Repo.GetJoinRequest(id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		var req joinRequestReviewRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		switch action {
-		case "refresh":
-			if deps.Verifier == nil {
-				http.Error(w, "verifier is not configured", http.StatusInternalServerError)
-				return
-			}
-			results, err := deps.Verifier.VerifyJoinRequest(id)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-				Kind:         "join_request_refreshed",
-				OccurredAt:   time.Now().UTC(),
-				ResourceID:   id,
-				ResourceType: "join_request",
-				Details: map[string]any{
-					"verified_backends": len(results),
-				},
-			})
-		case "approve":
-			if _, err := admissionreview.ApproveJoinRequest(deps.Repo, item, req.Reason, time.Now().UTC()); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			_ = deps.Repo.AppendAuditEvent(types.AuditEvent{Kind: "join_request_approved", OccurredAt: time.Now().UTC(), ResourceID: id, ResourceType: "join_request"})
-			if err := deps.RefreshRendered("join-request-approved"); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		case "reject":
-			if err := deps.Repo.SetJoinRequestStatus(id, types.JoinRequestRejected, req.Reason); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			_ = deps.Repo.AppendAuditEvent(types.AuditEvent{Kind: "join_request_rejected", OccurredAt: time.Now().UTC(), ResourceID: id, ResourceType: "join_request", Details: map[string]any{"reason": req.Reason}})
-		default:
-			http.Error(w, "action must be approve or reject", http.StatusBadRequest)
-			return
-		}
-		updated, err := deps.Repo.GetJoinRequest(id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(updated)
-	}))
-	mux.HandleFunc("POST /admin/v1/offers", auth(func(w http.ResponseWriter, r *http.Request) {
-		var req offerMutationRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		offer, err := offerservice.Create(deps.Repo, req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "offer_created",
-			OccurredAt:   time.Now().UTC(),
-			ResourceID:   offer.ID,
-			ResourceType: "offer",
-			Details: map[string]any{
-				"capability_id":    offer.CapabilityID,
-				"offering_id":      offer.OfferingID,
-				"interaction_mode": offer.InteractionMode,
-				"status":           offer.Status,
-			},
-		})
-		if err := deps.RefreshRendered("offer-created"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(offer)
-	}))
-	mux.HandleFunc("PATCH /admin/v1/offers/", auth(func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/admin/v1/offers/")
-		if id == "" {
-			http.Error(w, "offer id is required", http.StatusBadRequest)
-			return
-		}
-		current, err := deps.Repo.GetOffer(id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		var req offerMutationRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		updated, err := offerservice.Update(deps.Repo, current, req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "offer_updated",
-			OccurredAt:   time.Now().UTC(),
-			ResourceID:   updated.ID,
-			ResourceType: "offer",
-			Details: map[string]any{
-				"capability_id":    updated.CapabilityID,
-				"offering_id":      updated.OfferingID,
-				"interaction_mode": updated.InteractionMode,
-				"status":           updated.Status,
-			},
-		})
-		if err := deps.RefreshRendered("offer-updated"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(updated)
-	}))
-	mux.HandleFunc("GET /admin/v1/member-backends", auth(func(w http.ResponseWriter, _ *http.Request) {
-		items, err := deps.Repo.ListMemberBackends()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			Backends []types.MemberBackend `json:"backends"`
-		}{Backends: items})
-	}))
-	mux.HandleFunc("GET /admin/v1/assignment-candidates", auth(func(w http.ResponseWriter, _ *http.Request) {
-		items, err := admissionreview.ListAssignmentCandidates(deps.Repo)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			Candidates []assignmentCandidateView `json:"candidates"`
-		}{Candidates: items})
-	}))
-	mux.HandleFunc("PATCH /admin/v1/member-backends/", auth(func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/admin/v1/member-backends/")
-		if id == "" {
-			http.Error(w, "backend id is required", http.StatusBadRequest)
-			return
-		}
-		current, err := deps.Repo.GetMemberBackend(id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var req backendStatusRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		item, err := statusservice.SetBackendStatus(deps.Repo, id, req.Status)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := deps.RefreshRendered("member-backend-status-updated"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "member_backend_status_updated",
-			OccurredAt:   time.Now().UTC(),
-			ResourceID:   id,
-			ResourceType: "member_backend",
-			Details: map[string]any{
-				"from_status": current.Status,
-				"to_status":   item.Status,
-			},
-		})
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(item)
-	}))
-	mux.HandleFunc("POST /admin/v1/member-backends/", auth(func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/admin/v1/member-backends/")
-		parts := strings.Split(strings.Trim(path, "/"), "/")
-		if len(parts) != 2 || parts[1] != "verify" {
-			http.Error(w, "expected /admin/v1/member-backends/{id}/verify", http.StatusBadRequest)
-			return
-		}
-		if deps.Verifier == nil {
-			http.Error(w, "verifier is not configured", http.StatusInternalServerError)
-			return
-		}
-		result, err := deps.Verifier.VerifyMemberBackend(parts[0])
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "member_backend_verified",
-			OccurredAt:   time.Now().UTC(),
-			ResourceID:   parts[0],
-			ResourceType: "member_backend",
-			Details: map[string]any{
-				"verification_status": result.VerificationStatus,
-				"verification_error":  result.VerificationError,
-			},
-		})
-		item, err := deps.Repo.GetMemberBackend(parts[0])
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(item)
-	}))
-	mux.HandleFunc("GET /admin/v1/assignments", auth(func(w http.ResponseWriter, _ *http.Request) {
-		assignments, err := deps.Repo.ListAssignments()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			Assignments []types.Assignment `json:"assignments"`
-		}{Assignments: assignments})
-	}))
-	mux.HandleFunc("POST /admin/v1/assignment-preview", auth(func(w http.ResponseWriter, r *http.Request) {
-		var req assignmentPreviewRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		view, err := assignmentpolicy.Preview(deps.Repo, req.OfferID, req.MemberBackendID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(view)
-	}))
-	mux.HandleFunc("POST /admin/v1/assignments", auth(func(w http.ResponseWriter, r *http.Request) {
-		var req assignmentMutationRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		assignment, err := assignmentFromRequest(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if _, err := assignmentpolicy.CreateAssignment(deps.Repo, assignment); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := deps.RefreshRendered("assignment-created"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(assignment)
-	}))
-	mux.HandleFunc("PATCH /admin/v1/assignments/", auth(func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/admin/v1/assignments/")
-		if id == "" {
-			http.Error(w, "assignment id is required", http.StatusBadRequest)
-			return
-		}
-		current, err := deps.Repo.GetAssignment(id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var req assignmentMutationRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		item, err := statusservice.SetAssignmentStatus(deps.Repo, id, req.Status)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := deps.RefreshRendered("assignment-status-updated"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "assignment_status_updated",
-			OccurredAt:   time.Now().UTC(),
-			ResourceID:   id,
-			ResourceType: "assignment",
-			Details: map[string]any{
-				"from_status": current.Status,
-				"to_status":   item.Status,
-			},
-		})
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(item)
-	}))
-	mux.HandleFunc("DELETE /admin/v1/assignments/", auth(func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/admin/v1/assignments/")
-		if id == "" {
-			http.Error(w, "assignment id is required", http.StatusBadRequest)
-			return
-		}
-		if err := deps.Repo.DeleteAssignment(id); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if err := deps.RefreshRendered("assignment-deleted"); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	mux.HandleFunc("GET /admin/v1/broker-runtime", auth(func(w http.ResponseWriter, _ *http.Request) {
-		desired, err := deps.GetDesiredRuntime()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		applied, _ := deps.Repo.GetAppliedBrokerRuntime()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(buildRuntimeView(desired, applied, deps.GetRuntimeApplyInfo))
-	}))
-	mux.HandleFunc("GET /admin/v1/broker-runtime/diff", auth(func(w http.ResponseWriter, _ *http.Request) {
-		desired, err := deps.GetDesiredRuntime()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		applied, _ := deps.Repo.GetAppliedBrokerRuntime()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(runtimeservice.BuildDiff(desired, applied))
-	}))
-	mux.HandleFunc("GET /admin/v1/broker-runtime/history", auth(func(w http.ResponseWriter, r *http.Request) {
-		limit := 20
-		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-			var parsed int
-			if _, err := fmt.Sscanf(raw, "%d", &parsed); err == nil && parsed > 0 {
-				limit = parsed
-			}
-		}
-		events, err := deps.Repo.ListAuditEventsFiltered("", "broker_runtime", "", 200)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		items := buildRuntimeHistory(events, limit)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(struct {
-			Items []runtimeHistoryItem `json:"items"`
-		}{Items: items})
-	}))
-	mux.HandleFunc("POST /admin/v1/broker-runtime/mark-applied", auth(func(w http.ResponseWriter, r *http.Request) {
-		desired, err := deps.GetDesiredRuntime()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		var req brokerRuntimeMarkAppliedRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		now := time.Now().UTC()
-		applied, err := runtimeservice.MarkApplied(deps.Repo, desired, runtimeservice.MarkRequest{
-			Revision: req.Revision,
-			Actor:    req.Actor,
-		}, now)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "broker_runtime_mark_applied",
-			OccurredAt:   now,
-			Actor:        req.Actor,
-			ResourceID:   applied.AppliedRevision,
-			ResourceType: "broker_runtime",
-			Details: map[string]any{
-				"desired_revision": desired.Revision,
-				"applied_revision": applied.AppliedRevision,
-			},
-		})
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(buildRuntimeView(desired, applied, deps.GetRuntimeApplyInfo))
-	}))
-	mux.HandleFunc("POST /admin/v1/broker-runtime/mark-started", auth(func(w http.ResponseWriter, r *http.Request) {
-		desired, err := deps.GetDesiredRuntime()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		var req brokerRuntimeMarkAppliedRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		now := time.Now().UTC()
-		applied, err := runtimeservice.MarkStarted(deps.Repo, desired, now)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "broker_runtime_mark_started",
-			OccurredAt:   now,
-			Actor:        req.Actor,
-			ResourceID:   desired.Revision,
-			ResourceType: "broker_runtime",
-		})
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(buildRuntimeView(desired, applied, deps.GetRuntimeApplyInfo))
-	}))
-	mux.HandleFunc("POST /admin/v1/broker-runtime/mark-failed", auth(func(w http.ResponseWriter, r *http.Request) {
-		desired, err := deps.GetDesiredRuntime()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		var req brokerRuntimeMarkAppliedRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		now := time.Now().UTC()
-		applied, err := runtimeservice.MarkFailed(deps.Repo, desired, runtimeservice.MarkRequest{
-			Actor: req.Actor,
-			Error: req.Error,
-		}, now)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "broker_runtime_mark_failed",
-			OccurredAt:   now,
-			Actor:        req.Actor,
-			ResourceID:   desired.Revision,
-			ResourceType: "broker_runtime",
-			Details: map[string]any{
-				"error": applied.LastApplyError,
-			},
-		})
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(buildRuntimeView(desired, applied, deps.GetRuntimeApplyInfo))
-	}))
-	mux.HandleFunc("POST /admin/v1/broker-runtime/apply", auth(func(w http.ResponseWriter, r *http.Request) {
-		desired, err := deps.GetDesiredRuntime()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		var req brokerRuntimeMarkAppliedRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		now := time.Now().UTC()
-		applied, status, err := runtimeservice.Apply(deps.Repo, desired, runtimeservice.MarkRequest{
-			Revision: req.Revision,
-			Actor:    req.Actor,
-			Error:    req.Error,
-		}, now, deps.ApplyDesiredRuntime)
-		currentDesired := desired
-		if latest, latestErr := deps.GetDesiredRuntime(); latestErr == nil && latest != nil {
-			currentDesired = latest
-		}
-		if status == "failed" {
-			details := map[string]any{
-				"error":            applied.LastApplyError,
-				"desired_revision": desired.Revision,
-				"current_revision": currentDesired.Revision,
-			}
-			if applied.BrokerReloadAttemptID != "" {
-				details["broker_reload_attempt_id"] = applied.BrokerReloadAttemptID
-			}
-			if applied.BrokerLoadedRevision != "" {
-				details["broker_loaded_revision"] = applied.BrokerLoadedRevision
-			}
-			if applied.BrokerReloadStatus != "" {
-				details["broker_reload_status"] = applied.BrokerReloadStatus
-			}
-			if applied.BrokerReloadError != "" {
-				details["broker_reload_error"] = applied.BrokerReloadError
-			}
-			_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-				Kind:         "broker_runtime_apply_failed",
-				OccurredAt:   now,
-				Actor:        req.Actor,
-				ResourceID:   desired.Revision,
-				ResourceType: "broker_runtime",
-				Details:      details,
-			})
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		details := map[string]any{
-			"desired_revision": currentDesired.Revision,
-			"applied_revision": applied.AppliedRevision,
-		}
-		if applied.BrokerReloadAttemptID != "" {
-			details["broker_reload_attempt_id"] = applied.BrokerReloadAttemptID
-		}
-		if applied.BrokerLoadedRevision != "" {
-			details["broker_loaded_revision"] = applied.BrokerLoadedRevision
-		}
-		if applied.BrokerReloadStatus != "" {
-			details["broker_reload_status"] = applied.BrokerReloadStatus
-		}
-		if applied.BrokerReloadError != "" {
-			details["broker_reload_error"] = applied.BrokerReloadError
-		}
-		_ = deps.Repo.AppendAuditEvent(types.AuditEvent{
-			Kind:         "broker_runtime_apply_succeeded",
-			OccurredAt:   now,
-			Actor:        req.Actor,
-			ResourceID:   applied.AppliedRevision,
-			ResourceType: "broker_runtime",
-			Details:      details,
-		})
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(buildRuntimeView(currentDesired, applied, deps.GetRuntimeApplyInfo))
-	}))
-}
-
-func buildRuntimeView(desired *types.DesiredBrokerRuntime, applied types.AppliedBrokerRuntime, infoFn func() RuntimeApplyInfo) runtimeView {
-	view := runtimeView{
-		View: runtimeservice.BuildView(desired, applied),
-	}
-	if infoFn != nil {
-		view.RuntimeApplyInfo = infoFn()
-	}
-	return view
 }
 
 func buildRuntimeHistory(events []types.AuditEvent, limit int) []runtimeHistoryItem {
@@ -1251,48 +646,84 @@ func materializePayoutIntents(batch types.PayoutBatch, now time.Time) []types.Pa
 	return intents
 }
 
-func killEnrollmentAssignments(stateRepo *repo.StateRepo, enrollmentID string, kill func(string) error) []string {
-	if stateRepo == nil || kill == nil {
-		return nil
-	}
-	units, err := stateRepo.ListHardwareUnitsByEnrollment(enrollmentID)
-	if err != nil {
-		return nil
-	}
-	var killed []string
-	for _, unit := range units {
-		assignments, err := stateRepo.ListTemplateAssignmentsByHardwareUnit(unit.ID)
-		if err != nil {
-			continue
-		}
-		for _, assignment := range assignments {
-			if err := kill(assignment.ID); err == nil {
-				killed = append(killed, assignment.ID)
-			}
-		}
-	}
-	return killed
+// templateCatalogView is a catalog template with the pool's decision
+// folded in, so a console does not have to join the two itself.
+type templateCatalogView struct {
+	templates.Template
+	Enabled bool `json:"enabled"`
+	// EffectivePrice is the override's price when set, otherwise the
+	// catalog's suggestion — what this pool would actually charge.
+	EffectivePrice  templates.Price `json:"effective_price"`
+	PriceOverridden bool            `json:"price_overridden,omitempty"`
+	// Extra is the catalog's metadata with the pool's merged over it —
+	// what is actually advertised.
+	Extra map[string]any `json:"extra,omitempty"`
+	// ExtraOverride is the pool's own half, unmerged. It exists because
+	// a PUT replaces the whole override record: without seeing what the
+	// pool set, a client toggling `enabled` would have to either drop
+	// the extra override or echo the merged map back, and echoing it
+	// would silently freeze today's catalog values into the pool's
+	// state where a later catalog edit could never reach them.
+	ExtraOverride map[string]any `json:"extra_override,omitempty"`
+	UpdatedAt     *time.Time     `json:"override_updated_at,omitempty"`
 }
 
-func assignmentFromRequest(req assignmentMutationRequest) (types.Assignment, error) {
-	req.ID = strings.TrimSpace(req.ID)
-	req.OfferID = strings.TrimSpace(req.OfferID)
-	req.MemberBackendID = strings.TrimSpace(req.MemberBackendID)
-	if req.ID == "" {
-		return types.Assignment{}, fmt.Errorf("id is required")
+func catalogViews(catalog *templates.Catalog, overrides []types.TemplateOverride) []templateCatalogView {
+	byID := make(map[string]types.TemplateOverride, len(overrides))
+	for _, o := range overrides {
+		byID[o.TemplateID] = o
 	}
-	if req.OfferID == "" || req.MemberBackendID == "" {
-		return types.Assignment{}, fmt.Errorf("offer_id and member_backend_id are required")
+	all := catalog.All()
+	out := make([]templateCatalogView, 0, len(all))
+	for _, tmpl := range all {
+		view := templateCatalogView{Template: tmpl, EffectivePrice: tmpl.PriceDefault, Extra: tmpl.Extra}
+		if override, ok := byID[tmpl.ID]; ok {
+			view.Enabled = override.Enabled
+			if override.Price != nil {
+				view.EffectivePrice = templates.Price{AmountWei: override.Price.AmountWei, PerUnits: override.Price.PerUnits}
+				view.PriceOverridden = true
+			}
+			view.ExtraOverride = override.Extra
+			if len(override.Extra) > 0 {
+				merged := make(map[string]any, len(tmpl.Extra)+len(override.Extra))
+				for k, v := range tmpl.Extra {
+					merged[k] = v
+				}
+				// The pool's word wins on a key they both set: an
+				// override exists precisely to disagree with the catalog.
+				for k, v := range override.Extra {
+					merged[k] = v
+				}
+				view.Extra = merged
+			}
+			updated := override.UpdatedAt
+			view.UpdatedAt = &updated
+		}
+		out = append(out, view)
 	}
-	status := types.AssignmentStatusActive
-	if strings.TrimSpace(req.Status) != "" {
-		status = types.AssignmentStatus(strings.TrimSpace(req.Status))
-	}
-	return types.Assignment{
-		ID:              req.ID,
-		OfferID:         req.OfferID,
-		MemberBackendID: req.MemberBackendID,
-		Status:          status,
-		Notes:           req.Notes,
-	}, nil
+	return out
 }
+
+func validateTemplateOverride(override types.TemplateOverride) error {
+	if override.Price != nil {
+		if !priceWeiRE.MatchString(override.Price.AmountWei) {
+			return fmt.Errorf("price.amount_wei must be a non-negative decimal string (got %q)", override.Price.AmountWei)
+		}
+		if override.Price.PerUnits == 0 {
+			return fmt.Errorf("price.per_units must be > 0")
+		}
+	}
+	for _, reserved := range []string{"protocol", "job", "session"} {
+		if _, clash := override.Extra[reserved]; clash {
+			return fmt.Errorf("extra.%s is reserved — the declaration owns that key", reserved)
+		}
+	}
+	for key := range override.Extra {
+		if strings.HasPrefix(key, "x-") {
+			return fmt.Errorf("extra.%s — x-* keys are runner extensions; the template promotes them with extra_from_runner", key)
+		}
+	}
+	return nil
+}
+
+var priceWeiRE = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)

@@ -40,6 +40,10 @@ type Service struct {
 	// constructor time; future plans can refine per-offering pricing.
 	defaultFaceValue *big.Int
 	defaultWinProb   *big.Int
+	// minFaceValue is the smallest ticket this payee will issue. Below
+	// it, EV credit floors to zero and a winning ticket costs more gas
+	// to redeem than it pays.
+	minFaceValue *big.Int
 }
 
 // Config holds the receiver service's tunable state.
@@ -71,10 +75,47 @@ func New(st *store.Store, cfg Config, logger *slog.Logger) *Service {
 	if faceValue == nil {
 		faceValue = new(big.Int).Exp(big.NewInt(10), big.NewInt(15), nil)
 	}
+	// The floor must make EV land above zero: EV is
+	// face_value x win_prob / 2^256, so the smallest useful face value
+	// is 2^256 / win_prob — one wei of credit per ticket. Operators who
+	// want more headroom raise DefaultFaceValue; this is the hard
+	// minimum below which tickets are worthless by arithmetic.
 	winProb := cfg.DefaultWinProb
 	if winProb == nil {
 		// 1/1024 of MaxWinProb.
 		winProb = new(big.Int).Quo(types.MaxWinProb, big.NewInt(1024))
+	}
+	// One wei of credit per ticket is the arithmetic floor. Credit is
+	// floor(face_value x win_prob / MaxWinProb), so crediting at least
+	// one wei needs face_value >= MaxWinProb/win_prob — and that has to
+	// round UP.
+	//
+	// It used to floor. At the defaults (win_prob = MaxWinProb/1024)
+	// that advertised a minimum of 1024, and MaxWinProb is odd so
+	// 1024 x win_prob < MaxWinProb: the payee accepted its own
+	// advertised minimum and credited zero. Work served, nothing paid —
+	// the same shape as the zero-credit payment found on mainnet, this
+	// time reachable through the documented boundary rather than a bug.
+	// The correct minimum for those defaults is 1025.
+	minFace, rem := new(big.Int).QuoRem(types.MaxWinProb, winProb, new(big.Int))
+	if rem.Sign() != 0 {
+		minFace.Add(minFace, big.NewInt(1))
+	}
+	if minFace.Sign() <= 0 {
+		minFace = big.NewInt(1)
+	}
+	// The floor used to be clamped DOWN to the operator's default face
+	// value, so "an operator choosing a small default is not overridden."
+	// That defeated the floor exactly when it was needed: a default
+	// below the arithmetic minimum makes every ticket this payee issues
+	// credit zero. The floor is not a preference, so the default is
+	// raised to meet it and the operator is told.
+	if faceValue.Cmp(minFace) < 0 {
+		logger.Warn("default face value is below the arithmetic minimum; raising it",
+			"configured_wei", faceValue.String(),
+			"minimum_wei", minFace.String(),
+			"reason", "below this, EV credit floors to zero and tickets are free money for the sender")
+		faceValue = new(big.Int).Set(minFace)
 	}
 	rec := cfg.Recorder
 	if rec == nil {
@@ -87,6 +128,7 @@ func New(st *store.Store, cfg Config, logger *slog.Logger) *Service {
 		recipient:        append([]byte(nil), cfg.Recipient...),
 		defaultFaceValue: faceValue,
 		defaultWinProb:   winProb,
+		minFaceValue:     minFace,
 	}
 }
 
@@ -122,12 +164,19 @@ func (s *Service) OpenSession(_ context.Context, req *pb.OpenSessionRequest) (*p
 		Capability:          req.GetCapability(),
 		Offering:            req.GetOffering(),
 		PricePerWorkUnitWei: priceWei.String(),
+		PerUnits:            req.GetPerUnits(),
 		WorkUnit:            req.GetWorkUnit(),
 		RecipientRand:       rand.String(),
 		FaceValueWei:        s.defaultFaceValue.String(),
 		WinProb:             s.defaultWinProb.String(),
 	})
 	if err != nil {
+		if errors.Is(err, store.ErrPricingConflict) {
+			s.logger.Error("open session: pricing conflict",
+				"work_id", req.GetWorkId(), "offered_price_wei", priceWei.String())
+			return nil, status.Error(codes.FailedPrecondition,
+				"session price was already set by an offering and cannot be changed")
+		}
 		s.logger.Error("open session", "err", err)
 		return nil, status.Errorf(codes.Internal, "open session: %v", err)
 	}
@@ -182,6 +231,57 @@ func (s *Service) ProcessPayment(_ context.Context, req *pb.ProcessPaymentReques
 		return nil, status.Errorf(codes.Internal, "load session: %v", err)
 	}
 
+	// A closed session takes no more money.
+	//
+	// Closing is how a payee retires an identity — ResetSession marks the
+	// old session closed and drops its index entry so the next
+	// ticket-params issuance mints a fresh work_id. A payer that has not
+	// yet learned of the rotation keeps paying the old one, and until
+	// this guard existed those payments were accepted: validateAndCredit
+	// ran, winning tickets were QUEUED FOR REDEMPTION, and the EV landed
+	// on a session whose every debit fails with ErrClosed. The payer paid
+	// real ETH into a session that can never serve it work.
+	//
+	// The refusal is returned in band rather than as an error because
+	// that is how the rotation signal travels: the broker rebinds on
+	// tickets_rejected > 0 with a dominant INVALID_RECIPIENT_RAND, and a
+	// gRPC error would read as a generic failure and strand the payer on
+	// the dead identity. The reason is the honest one — the recipient
+	// rand behind this work_id is no longer one the payee will honour.
+	if sess.Closed {
+		statuses := make([]*pb.TicketStatus, 0, len(pay.GetTicketSenderParams()))
+		for _, tsp := range pay.GetTicketSenderParams() {
+			statuses = append(statuses, &pb.TicketStatus{
+				SenderNonce:     tsp.GetSenderNonce(),
+				RejectionReason: pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND,
+			})
+		}
+		if len(statuses) == 0 {
+			// A ticketless payment still has to carry the signal:
+			// tickets_rejected == 0 reads as "accepted" downstream.
+			statuses = append(statuses, &pb.TicketStatus{
+				RejectionReason: pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND,
+			})
+		}
+		rejected, dominant := summarizeTicketStatus(statuses)
+		balance, ok := new(big.Int).SetString(sess.BalanceWei, 10)
+		if !ok {
+			balance = big.NewInt(0)
+		}
+		s.logger.Info("payment refused: session closed",
+			"work_id", req.GetWorkId(),
+			"sender_hex", hex.EncodeToString(pay.GetSender()),
+			"tickets_refused", rejected)
+		return &pb.ProcessPaymentResponse{
+			Sender:            pay.GetSender(),
+			CreditedEv:        big.NewInt(0).Bytes(),
+			Balance:           balance.Bytes(),
+			TicketStatus:      statuses,
+			TicketsRejected:   rejected,
+			DominantRejection: dominant,
+		}, nil
+	}
+
 	// Recover the per-session rand. Empty rand = session was opened by
 	// the v0.2 stub flow before plan 0016 landed; we bypass chain
 	// validation in that case to keep the dev path running. A real
@@ -194,6 +294,18 @@ func (s *Service) ProcessPayment(_ context.Context, req *pb.ProcessPaymentReques
 		if !ok {
 			return nil, status.Error(codes.Internal, "session rand corrupt")
 		}
+	}
+
+	// Cross-check the price against what the SENDER signed.
+	//
+	// Until here the price is an assertion by the broker — the party
+	// being paid. expected_price rides inside the payment the sender
+	// signed, so it is the only figure both sides committed to. A
+	// mismatch means the two disagree about the rate, and billing at
+	// either number would charge somebody something they never agreed
+	// to, so the payment is refused instead.
+	if err := checkSignedPrice(&pay, sess); err != nil {
+		return nil, err
 	}
 
 	credited := big.NewInt(0)
@@ -291,25 +403,78 @@ func (s *Service) validateAndCredit(pay *pb.Payment, sess *store.Session, recipi
 				s.logger.Warn("nonce replay; skipping",
 					"work_id", sess.WorkID,
 					"nonce", tsp.GetSenderNonce())
+				// NOT treated as a rotation trigger.
+				//
+				// A replay is ordinarily a duplicate delivery — the same
+				// payment arriving twice, already credited, nothing to
+				// do. It is ALSO what a payer that lost its durable
+				// watermark looks like: its stream restarts low, every
+				// nonce it produces has been seen, and it can never make
+				// progress on this rand again.
+				//
+				// Those two cannot be told apart from one payment. A
+				// re-delivered early payment replays a low nonce exactly
+				// as a rewound sender does, so a positional rule
+				// ("replayed far below the high-water mark") rotates the
+				// route's identity on every ordinary retry. Recovering
+				// the rewound case needs the payee to report its
+				// high-water nonce so the payer can resync deliberately,
+				// rather than this side guessing. Tracked separately;
+				// see lnm-nbx.
 				continue
 			}
 			if errors.Is(err, store.ErrTooManyNonces) {
-				ticketStatus.RejectionReason = pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_CAP_REACHED
+				// The rand's nonce budget is spent. Retire it here and
+				// report the result as a rotation, so recovery runs
+				// through the path both sides already implement.
+				//
+				// The payee is the only party that authoritatively knows
+				// this count — the payer's view is an estimate that a
+				// restart or a partial state loss can put out of step —
+				// so this is where the decision has to be made and acted
+				// on in one step.
+				//
+				// Compare-and-swap against THIS session's work_id:
+				// several payments can arrive at an exhausted rand at
+				// once, and without the comparison the second would
+				// retire the successor the first just created.
+				rotated, rerr := s.store.ResetTicketSessionIfCurrent(store.TicketSessionKey{
+					Sender:     sess.Sender,
+					Recipient:  s.recipient,
+					Capability: sess.Capability,
+					Offering:   sess.Offering,
+				}, sess.WorkID)
+				if rerr != nil {
+					return nil, 0, nil, status.Errorf(codes.Internal,
+						"retiring exhausted ticket session: %v", rerr)
+				}
+				// Normalized to the existing contract rather than
+				// surfaced as its own terminal reason. A caller seeing
+				// NONCE_CAP_REACHED has nothing to do with it; one
+				// seeing INVALID_RECIPIENT_RAND evicts its cache, mints
+				// a successor and rebinds — machinery that already
+				// exists on every side of this. The cause is in the log,
+				// where an operator needs it; the wire carries the
+				// recovery the caller can act on.
+				ticketStatus.RejectionReason = pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND
 				statuses = append(statuses, ticketStatus)
-				s.logger.Warn("nonce cap reached; skipping ticket and remaining batch",
+				s.logger.Warn("nonce budget exhausted; retiring the rand and reporting rotation",
 					"work_id", sess.WorkID,
-					"nonce", tsp.GetSenderNonce())
+					"nonce", tsp.GetSenderNonce(),
+					"cap", store.MaxSenderNonces,
+					"rotated_by_this_call", rotated)
 				return creditTotal, winners, statuses, nil
 			}
 			return nil, 0, nil, status.Errorf(codes.Internal, "record nonce: %v", err)
 		}
-		// EV credit: face_value × win_prob / 2^256, integer floor.
-		ev := types.EV(faceValue, winProb)
-		if ev != nil {
-			num := new(big.Int).Quo(ev.Num(), ev.Denom())
-			creditTotal.Add(creditTotal, num)
-			ticketStatus.CreditedEv = num.Bytes()
-		}
+		// EV credit: floor(face_value x win_prob / MaxWinProb).
+		// Shared with the sender, which sizes its batch from the same
+		// function — so "the payee credits at least what was funded" is
+		// true by construction rather than by two implementations
+		// happening to round the same way.
+		num := types.CreditedEV(faceValue, winProb)
+		creditTotal.Add(creditTotal, num)
+		ticketStatus.CreditedEv = num.Bytes()
 		if validator.IsWinning(ticket, tsp.GetSig(), recipientRand) {
 			ticketStatus.WasWinning = true
 			st := &store.SignedTicket{
@@ -410,6 +575,45 @@ func summarizeTicketStatus(statuses []*pb.TicketStatus) (int32, pb.PaymentReject
 	return rejected, dominant
 }
 
+// checkSignedPrice compares the session's price against the payment's
+// signed expected_price. A payment carrying no expected_price is a
+// stub/legacy blob and is tolerated — those cannot be minted against a
+// real deposit, so there is nothing to protect.
+//
+// A session whose price is still unset is also tolerated: the broker's
+// OpenSession has not run yet, and DebitBalance refuses to bill an
+// unpriced session anyway.
+func checkSignedPrice(pay *pb.Payment, sess *store.Session) error {
+	price := pay.GetExpectedPrice()
+	if price == nil || sess == nil || sess.PricePerWorkUnitWei == store.PricingUnset {
+		return nil
+	}
+	signed := big.NewInt(price.GetPricePerUnit())
+	stored, ok := new(big.Int).SetString(sess.PricePerWorkUnitWei, 10)
+	if !ok || stored == nil {
+		return status.Error(codes.Internal, "session price corrupt")
+	}
+	if signed.Cmp(stored) != 0 {
+		return status.Errorf(codes.FailedPrecondition,
+			"payment signed price %s wei does not match the session price %s wei",
+			signed, stored)
+	}
+	signedPerUnits := price.GetPixelsPerUnit()
+	if signedPerUnits <= 0 {
+		signedPerUnits = 1
+	}
+	storedPerUnits := sess.PerUnits
+	if storedPerUnits == 0 {
+		storedPerUnits = 1
+	}
+	if uint64(signedPerUnits) != storedPerUnits {
+		return status.Errorf(codes.FailedPrecondition,
+			"payment signed per_units %d does not match the session per_units %d",
+			signedPerUnits, storedPerUnits)
+	}
+	return nil
+}
+
 // DebitBalance subtracts (work_units × price) from the balance.
 // Idempotent by (sender, work_id, debit_seq).
 func (s *Service) DebitBalance(_ context.Context, req *pb.DebitBalanceRequest) (*pb.DebitBalanceResponse, error) {
@@ -422,14 +626,23 @@ func (s *Service) DebitBalance(_ context.Context, req *pb.DebitBalanceRequest) (
 	if req.GetWorkUnits() < 0 {
 		return nil, status.Error(codes.InvalidArgument, "work_units must be >= 0")
 	}
-	balance, err := s.store.DebitBalance(req.GetSender(), req.GetWorkId(), req.GetWorkUnits(), req.GetDebitSeq())
+	res, err := s.store.DebitBalance(req.GetSender(), req.GetWorkId(), req.GetWorkUnits(), req.GetDebitSeq())
 	if err != nil {
 		s.metrics.IncDebit(metrics.ResultError)
 		return nil, mapStoreErr(err)
 	}
 	s.metrics.IncDebit(metrics.ResultOK)
 	s.metrics.AddWorkUnitsDebited(float64(req.GetWorkUnits()))
-	return &pb.DebitBalanceResponse{Balance: balance.Bytes()}, nil
+	// Report what was actually charged. The caller must not recompute
+	// it: billing is cumulative, so the amount depends on the running
+	// total and a recomputation from units alone disagrees whenever a
+	// remainder carries.
+	return &pb.DebitBalanceResponse{
+		Balance:         res.Balance.Bytes(),
+		DebitedWei:      &pb.BigUInt{Value: res.DebitedWei.Bytes()},
+		CumulativeUnits: res.CumulativeUnits,
+		Replayed:        res.Replayed,
+	}, nil
 }
 
 // SufficientBalance reports whether the balance covers a minimum
@@ -453,7 +666,17 @@ func (s *Service) SufficientBalance(_ context.Context, req *pb.SufficientBalance
 	if price == nil {
 		price = new(big.Int)
 	}
-	required := new(big.Int).Mul(price, big.NewInt(req.GetMinWorkUnits()))
+	// Price the runway the way it will actually be debited: the
+	// difference between cumulative bills, not the units in isolation.
+	// Asking with the isolated price would over-state what the next
+	// tick costs whenever the denominator is > 1.
+	min := req.GetMinWorkUnits()
+	if min < 0 {
+		min = 0
+	}
+	required := new(big.Int).Sub(
+		store.BillFor(price, sess.PerUnits, sess.DebitedUnits+uint64(min)),
+		store.BillFor(price, sess.PerUnits, sess.DebitedUnits))
 	return &pb.SufficientBalanceResponse{
 		Sufficient: balance.Cmp(required) >= 0,
 		Balance:    balance.Bytes(),
@@ -566,21 +789,92 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 	workID := hex.EncodeToString(rrHash)
 
 	faceValue := new(big.Int).Set(s.defaultFaceValue)
+	var requestedFace *big.Int
 	if got := req.GetFaceValue(); len(got) > 0 {
-		// Honor the sender's face-value request when economically
-		// reasonable. Plan-future: real per-offering pricing.
-		faceValue = new(big.Int).SetBytes(got)
+		requested := new(big.Int).SetBytes(got)
+		// A sender may size its own tickets, but not below the floor.
+		//
+		// Credit is floor(face_value x win_prob / 2^256), so a small
+		// enough face value makes every ticket credit ZERO while still
+		// looking valid — the sender gets work for money that rounds
+		// away. The floor is also plain economics: redeeming a winner
+		// costs gas, and a face value under that is not worth winning.
+		if requested.Cmp(s.minFaceValue) < 0 {
+			return nil, status.Errorf(codes.InvalidArgument,
+				"requested face_value %s wei is below this payee's minimum of %s wei",
+				requested, s.minFaceValue)
+		}
+		faceValue = requested
+		requestedFace = requested
 	}
 
-	sess, _, err := s.store.GetOrCreateTicketSession(store.TicketSessionKey{
+	tupleKey := store.TicketSessionKey{
 		Sender:     req.GetSender(),
 		Recipient:  s.recipient,
 		Capability: req.GetCapability(),
 		Offering:   req.GetOffering(),
-	}, store.Session{
-		WorkID:              workID,
-		PricePerWorkUnitWei: "0",
-		WorkUnit:            "ticket",
+	}
+
+	// Rotate before handing out params the sender cannot use.
+	//
+	// A recipient rand tracks at most store.MaxSenderNonces nonces.
+	// Beyond that every ticket on it is refused NONCE_CAP_REACHED and
+	// credits nothing — so a sender that kept minting against an
+	// exhausted rand would sign payments this payee has already decided
+	// to reject. The store comment on MaxSenderNonces names this exit:
+	// "beyond this the receiver should re-quote with a fresh
+	// recipientRandHash". This is where that happens.
+	//
+	// Rotation retires the exhausted identity: ResetTicketSession closes
+	// the old session, so a late payment on it is refused
+	// recipient_rotated rather than credited to a session nobody can
+	// draw on.
+	//
+	// Idempotent by construction. The check is on the CONSUMED budget of
+	// the rand currently indexed for the tuple, so once rotated the new
+	// rand has zero nonces and no further call rotates again. Two
+	// concurrent callers both see the exhausted rand, but
+	// ResetTicketSession is a single Bolt transaction, so exactly one
+	// performs the reset and the other observes the successor.
+	var predecessorWorkID string
+	if existing, lookupErr := s.store.TicketSessionFor(tupleKey); lookupErr == nil && existing != nil {
+		if rand, ok := new(big.Int).SetString(existing.RecipientRand, 10); ok {
+			used, cerr := s.store.NonceCount(rand)
+			if cerr != nil {
+				return nil, status.Errorf(codes.Internal, "nonce budget: %v", cerr)
+			}
+			if used >= store.MaxSenderNonces {
+				// Conditional on the session actually observed above.
+				//
+				// The lookup, the count and the reset are three separate
+				// reads, so another caller can rotate between them. An
+				// unconditional reset would then retire the SUCCESSOR
+				// that caller just created, leaving the tuple with no
+				// live identity — the compare-and-swap makes this a
+				// no-op in exactly that case, and the caller that did
+				// rotate keeps its successor.
+				rotated, rerr := s.store.ResetTicketSessionIfCurrent(tupleKey, existing.WorkID)
+				if rerr != nil {
+					return nil, status.Errorf(codes.Internal, "rotate exhausted session: %v", rerr)
+				}
+				if rotated {
+					predecessorWorkID = existing.WorkID
+					s.logger.Info("ticket session rotated: nonce budget exhausted",
+						"predecessor_work_id", existing.WorkID,
+						"nonces_used", used,
+						"cap", store.MaxSenderNonces)
+				}
+			}
+		}
+	}
+
+	sess, _, err := s.store.GetOrCreateTicketSession(tupleKey, store.Session{
+		WorkID: workID,
+		// This call mints ticket params; it has no idea what the work
+		// costs. The broker's OpenSession sets the real price exactly
+		// once — see store.PricingUnset.
+		PricePerWorkUnitWei: store.PricingUnset,
+		WorkUnit:            "",
 		RecipientRand:       r.String(),
 		FaceValueWei:        faceValue.String(),
 		WinProb:             s.defaultWinProb.String(),
@@ -597,12 +891,41 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 	if !ok {
 		return nil, status.Error(codes.Internal, "session face value corrupt")
 	}
+	// An explicit request wins over the value stored when the session
+	// was first created.
+	//
+	// "A sender may size its own tickets, but not below the floor" was
+	// only true for the FIRST call: afterwards GetOrCreateTicketSession
+	// returned the original figure and quietly ignored the request. A
+	// sender that needs a larger face value — because a ticket credits
+	// its expected value, roughly face/1024, and the payee caps a
+	// session at MaxSenderNonces tickets — could never get one, so
+	// funding intents above that ceiling were unreachable.
+	//
+	// Safe to honour: credit is computed from each TICKET's own face
+	// value, so tickets already signed keep crediting what they were
+	// worth, and a larger face value raises the SENDER's exposure, not
+	// this payee's. The floor above still applies.
+	if requestedFace != nil {
+		faceValue = requestedFace
+	}
 	winProb, ok := new(big.Int).SetString(sess.WinProb, 10)
 	if !ok {
 		return nil, status.Error(codes.Internal, "session win prob corrupt")
 	}
 
+	// State what this payee has already recorded against the rand, so a
+	// sender whose own counter was lost resumes above it instead of
+	// replaying into rejections it cannot diagnose.
+	highestSeen, hasSeen, hErr := s.store.HighestSenderNonce(recipientRand)
+	if hErr != nil {
+		return nil, status.Errorf(codes.Internal, "read nonce high-water mark: %v", hErr)
+	}
+
 	return &pb.GetTicketParamsResponse{
+		PredecessorWorkId: predecessorWorkID,
+		HighestSeenNonce:  highestSeen,
+		HasSeenNonces:     hasSeen,
 		TicketParams: &pb.TicketParams{
 			Recipient:         append([]byte(nil), s.recipient...),
 			FaceValue:         faceValue.Bytes(),
@@ -699,6 +1022,10 @@ func (s *Service) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthResp
 }
 
 func mapStoreErr(err error) error {
+	if errors.Is(err, store.ErrPricingUnset) {
+		return status.Error(codes.FailedPrecondition,
+			"session has no offering price; the broker must OpenSession with pricing before billing")
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return status.Error(codes.NotFound, "session not found")

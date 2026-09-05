@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -15,25 +16,20 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/certification"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/credentialstore"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/ffmpegprogress"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/encoder"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/hls"
-	mediartmp "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/rtmp"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/sessionrunner"
-	mediawebrtc "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/webrtc"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/rtmpingresshlsegress"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolexternalmedia"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/modes/sessioncontrolplusmedia"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/offers"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolreport"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/poolsnapshot"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/runners"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
 )
 
 // Options aggregates non-host-config knobs the server takes at
@@ -43,78 +39,27 @@ import (
 type Options struct {
 	ConfigPath string
 
-	// MetadataRefreshInterval controls periodic stable-metadata refresh for
-	// discovery-capable offerings. Zero falls back to the broker default.
-	// Negative values disable periodic refresh after the initial bootstrap pass.
-	MetadataRefreshInterval time.Duration
-
 	// InterimDebit governs the long-running session ticker per plan
 	// 0015. Zero values are a safe disabled state (v0.2 single-debit
 	// fall-through).
 	InterimDebit middleware.InterimDebitConfig
 
-	// RTMP configures the broker's RTMP ingest listener. Empty Addr
-	// keeps the listener disabled; the broker still serves the
-	// session-open POST so configurations without RTMP capabilities
-	// keep working.
-	RTMP RTMPOptions
-
-	// RTMPDriver carries the URL-derivation knobs for the
-	// rtmp-ingress-hls-egress driver. Empty values fall back to
-	// host-of-backend.url.
-	RTMPDriver rtmpingresshlsegress.Config
-
-	// FFmpeg configures the per-session encoder subprocess. Empty
-	// Binary defaults to "ffmpeg"; CancelGrace defaults to 5s.
-	FFmpeg FFmpegOptions
-
-	// HLS configures the LL-HLS muxer flags + scratch root.
-	HLS HLSOptions
-
-	// SessionControl configures the session-control-plus-media
-	// driver's control-WS lifecycle.
-	SessionControl sessioncontrolplusmedia.ControlWSConfig
-
-	// WebRTC governs the per-broker pion settings used by the
-	// session-control-plus-media media-plane relay.
-	WebRTC mediawebrtc.Config
-
-	// SessionRunner governs the per-broker session-runner subprocess
-	// supervisor consumed by the session-control-plus-media driver.
-	SessionRunner sessionrunner.Config
-}
-
-// HLSOptions configures the LL-HLS muxer + scratch directory.
-type HLSOptions struct {
-	Legacy          bool
-	PartDuration    time.Duration
-	SegmentDuration time.Duration
-	PlaylistWindow  int
-	ScratchDir      string
-}
-
-// RTMPOptions configures the broker's RTMP ingest listener.
-type RTMPOptions struct {
-	Addr             string
-	MaxConcurrent    int
-	IdleTimeout      time.Duration
-	DuplicatePolicy  mediartmp.DuplicatePolicy
-	RequireStreamKey bool
-}
-
-// FFmpegOptions configures the per-session FFmpeg subprocess.
-type FFmpegOptions struct {
-	Binary      string
-	CancelGrace time.Duration
-	// Codec is the encoder selected at startup by media/encoder.Probe.
-	// Empty when the RTMP listener is disabled.
-	Codec encoder.Codec
+	// PaymentClient replaces the client the config would select. Tests
+	// use it to drive failure paths the config cannot reach — a ledger
+	// that refuses a debit after the work has already shipped is the
+	// case the durable-retry lifecycle exists for, and it is
+	// unreachable without injecting the failure.
+	PaymentClient payment.Client
 }
 
 // Server wraps the broker's HTTP server. It owns two listeners: the paid
-// listener (cfg.Listen.Paid) for /v1/cap and /registry/*, and a metrics
-// listener (cfg.Listen.Metrics) for Prometheus scraping.
+// listener (cfg.Listen.Paid) for /v1/job, /v1/session/*, /registry/* and
+// the admin surface, and a metrics listener (cfg.Listen.Metrics) for
+// Prometheus scraping.
 type Server struct {
+	settlementSigner     *settlement.Signer
+	memDebitSeqMu        sync.Mutex
+	memDebitSeq          map[string]uint64
 	mu                   sync.RWMutex
 	cfg                  *config.Config
 	configPath           string
@@ -131,36 +76,39 @@ type Server struct {
 	lastReloadError      string
 	reloadHistory        []runtimeHistoryEntry
 	opts                 Options
-	metadata             *metadataCatalog
 	mux                  *http.ServeMux
 	srv                  *http.Server
 	metricsSrv           *http.Server
 	payment              payment.Client
-	modes                *modes.Registry
 	extractors           *extractors.Registry
 	backend              backend.Forwarder
-	workerRegistry       *workerconn.Registry
 	backendInFlight      map[string]int
 	secrets              backend.SecretResolver
 	receiptSink          receipts.Client
 	poolReporter         poolreport.Client
 	poolSnapshot         *poolsnapshot.Cache
-	health               *health.Manager
-	rtmpStore            *rtmpingresshlsegress.Store
-	rtmpListener         *mediartmp.Listener
-	sessStore            *sessioncontrolplusmedia.Store
-	sessDriver           *sessioncontrolplusmedia.Driver
-	extStore             *sessioncontrolexternalmedia.Store
-	extDriver            *sessioncontrolexternalmedia.Driver
-	liveRunnerStore      *liveRunnerSessionStore
-	liveRunnerClient     *liveRunnerBackendClient
-	webrtcEngine         *mediawebrtc.Engine
-	sessRunnerSup        *sessionrunner.Supervisor
-	randIntn             func(int) int
+	sessionStore         *sessionstore.Store
+	credentialStore      *credentialstore.Store
+	// runners is the registry of attached runners (plan 0043 item 7).
+	runners *runners.Registry
+	// offersEngine matches runners to offers, freezes shapes, and
+	// decides eligibility (plan 0043 item 8).
+	offersEngine *offers.Engine
+	// certEngine executes certification runs (plan 0043 item 9).
+	certEngine *certification.Engine
+	// attachedHosts maps a host_id (credential-store enrollment) to the
+	// connections it holds, so revoke = delete + kill (broker-admin
+	// §5.3). Guarded by attachedMu.
+	attachedMu    sync.Mutex
+	attachedHosts map[string][]io.Closer
+	sessionEngine *sessionengine.Engine
+	sessionWS     *sessionWSHub
+	jobIdem       jobIdemStore
+	randIntn      func(int) int
 }
 
 // New constructs a Server from a validated config and registers routes. It
-// fails-fast if any configured capability references an unregistered mode or
+// fails-fast if any configured capability references an unregistered
 // extractor, since those would be unservable at runtime.
 //
 // Selection of the payment client follows host-config:
@@ -172,8 +120,6 @@ type Server struct {
 // fails fast if it is unreachable; the broker should not bind its paid
 // listener with no working payment surface.
 func New(cfg *config.Config, opts Options) (*Server, error) {
-	metadata := newMetadataCatalog()
-	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
 	loadedRevision, loadedConfigPath, err := loadRuntimeRevision(opts.ConfigPath, cfg)
 	if err != nil {
 		return nil, err
@@ -191,9 +137,15 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	paymentClient, err := newPaymentClient(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("payment client: %w", err)
+	// An injected client wins over the configured one, so a test can
+	// drive failure paths the config cannot express.
+	paymentClient := opts.PaymentClient
+	if paymentClient == nil {
+		var err error
+		paymentClient, err = newPaymentClient(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("payment client: %w", err)
+		}
 	}
 	secretResolver := backend.NewEnvSecretResolver()
 	receiptSink, err := newReceiptSink(cfg, secretResolver)
@@ -209,46 +161,43 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("pool snapshot: %w", err)
 	}
 
-	rtmpStore := rtmpingresshlsegress.NewStore()
-	rtmpDriver := rtmpingresshlsegress.New(rtmpStore, opts.RTMPDriver)
-
-	sessCfg := opts.SessionControl
-	if sessCfg.HeartbeatInterval == 0 && sessCfg.ReconnectWindow == 0 {
-		sessCfg = sessioncontrolplusmedia.DefaultControlWSConfig()
-	}
-	sessStore := sessioncontrolplusmedia.NewStore(sessioncontrolplusmedia.StoreConfig{
-		ReplayBufferMessages: sessCfg.ReplayBufferMessages,
-		ReplayBufferBytes:    sessCfg.ReplayBufferBytes,
-	})
-	sessDriver := sessioncontrolplusmedia.New(sessStore, sessCfg)
-	extStore := sessioncontrolexternalmedia.NewStore()
-	extDriver := sessioncontrolexternalmedia.New(extStore, sessioncontrolexternalmedia.DefaultConfig())
-
-	rtcCfg := opts.WebRTC
-	if rtcCfg.UDPPortMin == 0 {
-		rtcCfg = mediawebrtc.DefaultConfig()
-	}
-	rtcEngine, err := mediawebrtc.NewEngine(rtcCfg)
-	if err != nil {
-		return nil, fmt.Errorf("webrtc engine: %w", err)
+	// The delegated settlement key, if the operator published one.
+	// Absent is not an error: a broker on a mock payment layer has no
+	// delegation and still has to report what it billed.
+	var settlementSigner *settlement.Signer
+	if path := cfg.Identity.SettlementKeyFile; path != "" {
+		settlementSigner, err = settlement.LoadSigner(path)
+		if err != nil {
+			return nil, fmt.Errorf("settlement key: %w", err)
+		}
+		notBefore, expiresAt, verr := parseKeyValidity(cfg.Identity)
+		if verr != nil {
+			return nil, fmt.Errorf("settlement key validity: %w", verr)
+		}
+		settlementSigner.SetValidity(notBefore, expiresAt)
+		log.Printf("settlement signing enabled; delegated public key %s (validity %s)",
+			settlementSigner.PublicKeyHex(), describeValidity(notBefore, expiresAt))
+	} else {
+		log.Printf("warning: no identity.settlement_key_file — settlement records go out UNSIGNED " +
+			"and a clearinghouse will refuse them for anything financially material")
 	}
 
-	runnerCfg := opts.SessionRunner
-	if runnerCfg.ContainerRuntime == "" {
-		runnerCfg = sessionrunner.DefaultConfig()
-	}
-	runnerSup, err := sessionrunner.NewSupervisor(runnerCfg)
-	if err != nil {
-		return nil, fmt.Errorf("session-runner supervisor: %w", err)
-	}
+	runnerRegistry := runners.New(0)
 
-	resolver := sessionRunnerResolver(cfg, sessStore)
-	runnerBackend := sessioncontrolplusmedia.NewRunnerBackend(runnerSup, resolver, rtcEngine, sessStore)
-	sessDriver.SetBackend(runnerBackend)
-
-	liveRunnerStore := newLiveRunnerSessionStore()
-	liveRunnerClient := newLiveRunnerBackendClient()
-	workerRegistry := workerconn.NewRegistry()
+	var credStore *credentialstore.Store
+	if cfg.CredentialStore.Enabled() {
+		key, err := sessionstore.LoadKeyFile(cfg.CredentialStore.SealingKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("credential store: %w", err)
+		}
+		credStore, err = credentialstore.Open(cfg.CredentialStore.Path, key, credentialstore.Options{
+			DefaultExpiry: time.Duration(cfg.CredentialStore.DefaultExpirySeconds) * time.Second,
+			MaxExpiry:     time.Duration(cfg.CredentialStore.MaxExpirySeconds) * time.Second,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("credential store: %w", err)
+		}
+	}
 
 	s := &Server{
 		cfg:                 cfg,
@@ -267,61 +216,75 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			LoadedRevision: loadedRevision,
 		}},
 		opts:             opts,
-		metadata:         metadata,
 		mux:              mux,
 		srv:              srv,
 		payment:          paymentClient,
-		modes:            defaultModes(rtmpDriver, sessDriver, extDriver),
+		settlementSigner: settlementSigner,
 		extractors:       defaultExtractors(),
-		backend:          workerconn.NewForwarder(backend.NewHTTPClient(), workerRegistry),
-		workerRegistry:   workerRegistry,
-		backendInFlight:  make(map[string]int),
-		secrets:          secretResolver,
-		receiptSink:      receiptSink,
-		poolReporter:     poolReporter,
-		poolSnapshot:     poolSnapshot,
-		health:           health.NewWithTransport(cfg, nil, workerRegistry.HTTPTransport(nil)),
-		rtmpStore:        rtmpStore,
-		sessStore:        sessStore,
-		sessDriver:       sessDriver,
-		extStore:         extStore,
-		extDriver:        extDriver,
-		liveRunnerStore:  liveRunnerStore,
-		liveRunnerClient: liveRunnerClient,
-		webrtcEngine:     rtcEngine,
+		// runner:// (attached runners) → plain HTTP. The runner layer
+		// claims its own scheme and delegates the rest.
+		backend:         runnerForwarder{next: backend.NewHTTPClient(), registry: runnerRegistry},
+		credentialStore: credStore,
+		runners:         runnerRegistry,
+		attachedHosts:   make(map[string][]io.Closer),
+		backendInFlight: make(map[string]int),
+		secrets:         secretResolver,
+		receiptSink:     receiptSink,
+		poolReporter:    poolReporter,
+		poolSnapshot:    poolSnapshot,
 		randIntn: func(n int) int {
 			return rand.New(rand.NewSource(time.Now().UnixNano())).Intn(n)
 		},
-		sessRunnerSup: runnerSup,
 	}
 
-	if opts.RTMP.Addr != "" {
-		s.rtmpListener = mediartmp.New(mediartmp.Config{
-			Addr:             opts.RTMP.Addr,
-			MaxConcurrent:    opts.RTMP.MaxConcurrent,
-			DuplicatePolicy:  opts.RTMP.DuplicatePolicy,
-			RequireStreamKey: opts.RTMP.RequireStreamKey,
-		}, &mediaLookup{
-			store:  rtmpStore,
-			ffmpeg: opts.FFmpeg,
-			hls:    opts.HLS,
-			lookupCap: func(capID, offID string) (encoderProfile string, ok bool) {
-				for i := range cfg.Capabilities {
-					c := &cfg.Capabilities[i]
-					if c.ID == capID && c.OfferingID == offID {
-						return c.Backend.Profile, true
-					}
-				}
-				return "", false
-			},
-		})
+	if len(cfg.Offers) > 0 && cfg.OffersStatePath == "" && cfg.OffersSource != config.OffersSourceAdmin {
+		log.Printf("warning: offers[] configured without offers_state_path — frozen shapes will not survive a restart, " +
+			"and a re-freeze from a different runner would be a silent manifest change")
+	}
+	certEngine := certification.New(s.runners, certification.Options{
+		Extractors:  s.extractors,
+		FixturesDir: cfg.CertificationFixturesDir,
+		// A session runner under certification reports usage to a
+		// callback under this base, the same way it reports to a paid
+		// session's callback.
+		CallbackBaseURL: cfg.ExternalBaseURL,
+	})
+	s.certEngine = certEngine
+	offersEngine, err := offers.New(cfg, s.runners, cfg.OffersStatePath, certEngine)
+	if err != nil {
+		return nil, fmt.Errorf("offers engine: %w", err)
+	}
+	s.offersEngine = offersEngine
+	// Terminal certification outcomes re-evaluate the pair — this is
+	// where a first pass freezes an unfrozen offer.
+	certEngine.Report = offersEngine.RecordCertification
+	s.runners.OnChange = func(hostID string) { offersEngine.Rematch(hostID) }
+
+	if err := s.initSessionEngine(); err != nil {
+		return nil, fmt.Errorf("session engine: %w", err)
 	}
 
-	if err := s.validateAgainstRegistries(); err != nil {
-		return nil, err
+	// Retention shorter than a payment envelope's life deletes the
+	// broker's record of an exchange before a clearinghouse is able to
+	// ask whether it happened — that question is only asked once the
+	// envelope has expired, which is later than this.
+	if r := s.jobRetention(); r < minEvidenceRetention {
+		log.Printf("warning: session_store.job_retention is %s, shorter than the %s a payment "+
+			"envelope can stay spendable; a consumer holding an encumbrance will find the "+
+			"exchange record already evicted when it asks whether the envelope was ever used",
+			r, minEvidenceRetention)
 	}
 
 	s.registerRoutes()
+	if s.sessionEngine != nil {
+		s.registerSessionRoutes()
+	}
+	if err := s.initJobIdem(); err != nil {
+		return nil, fmt.Errorf("job idempotency: %w", err)
+	}
+	if s.jobIdem != nil {
+		s.registerJobRoutes()
+	}
 	s.metricsSrv = newMetricsServer(cfg.Listen.Metrics)
 	return s, nil
 }
@@ -377,141 +340,20 @@ func newPoolReporter(cfg *config.Config, secrets backend.SecretResolver) (poolre
 	return poolreport.NewHTTPClient(cfg.PoolSnapshot.URL, timeout, cfg.PoolSnapshot.Auth, backend.NewAuthApplier(secrets))
 }
 
-// mediaLookup adapts the session store to mediartmp.SessionLookup
-// and owns the per-session encoder + LL-HLS scratch wire-up. On a
-// successful publish handshake it:
-//
-//  1. Resolves the capability's encoder profile.
-//  2. Materialises the per-session HLS scratch.
-//  3. Renders FFmpeg argv from the profile + HLS options.
-//  4. Spawns the SystemEncoder goroutine reading from a PipeSink.
-//  5. Returns the PipeSink to the listener.
-//
-// Cancellation flows through the context attached to the encoder; the
-// listener invokes Close on the sink when RTMP disconnects.
-type mediaLookup struct {
-	store     *rtmpingresshlsegress.Store
-	ffmpeg    FFmpegOptions
-	hls       HLSOptions
-	lookupCap func(capID, offID string) (string, bool)
-}
-
-func (l *mediaLookup) LookupAndAccept(sessionID, streamKey string) (mediartmp.Sink, bool, bool) {
-	rec, ok := l.store.Lookup(sessionID, streamKey)
-	if !ok {
-		return nil, false, false
-	}
-	if rec.Profile == "" {
-		log.Printf("rtmp: session=%s has empty profile (capability=%s/%s); falling back to passthrough",
-			sessionID, rec.CapabilityID, rec.OfferingID)
-		rec.Profile = encoder.ProfilePassthrough
-	}
-
-	scratch := hls.NewScratch(l.hls.ScratchDir, sessionID)
-	rungs := []string{}
-	if rec.Profile != encoder.ProfilePassthrough {
-		for _, r := range encoder.FiveRungLadder {
-			rungs = append(rungs, r.Name)
-		}
-	}
-	scratchDir, err := scratch.Setup(rungs)
-	if err != nil {
-		log.Printf("rtmp: session=%s scratch setup failed: %v", sessionID, err)
-		return nil, false, false
-	}
-
-	args, err := encoder.BuildArgs(encoder.PresetInput{
-		Profile: rec.Profile,
-		Codec:   l.ffmpeg.Codec,
-		HLS: encoder.HLSOptions{
-			Legacy:          l.hls.Legacy,
-			SegmentDuration: int(l.hls.SegmentDuration.Seconds()),
-			PartDuration:    l.hls.PartDuration.Seconds(),
-			PlaylistWindow:  l.hls.PlaylistWindow,
-			ScratchDir:      scratchDir,
-		},
-	})
-	if err != nil {
-		log.Printf("rtmp: session=%s build args: %v", sessionID, err)
-		_ = scratch.Cleanup()
-		return nil, false, false
-	}
-
-	sysEnc := encoder.NewSystemEncoder(l.ffmpeg.Binary, l.ffmpeg.CancelGrace)
-	prog := sysEnc.Progress()
-	if rec.Profile != encoder.ProfilePassthrough {
-		prog.Width = uint64(encoder.FiveRungLadder[len(encoder.FiveRungLadder)-1].Width)
-		prog.Height = uint64(encoder.FiveRungLadder[len(encoder.FiveRungLadder)-1].Height)
-	}
-
-	pipe := mediartmp.NewPipeSink(func(now time.Time) { l.store.Touch(sessionID, now) })
-
-	encCtx, encCancel := context.WithCancel(context.Background())
-	encDone := make(chan struct{})
-	go func() {
-		defer close(encDone)
-		if err := sysEnc.Run(encCtx, encoder.Job{
-			Input:      pipe.Reader(),
-			ScratchDir: scratchDir,
-			Profile:    rec.Profile,
-			Args:       args,
-		}); err != nil {
-			log.Printf("rtmp: session=%s encoder exited with err=%v", sessionID, err)
-		}
-	}()
-
-	cancel := func() {
-		encCancel()
-		_ = pipe.Close()
-		<-encDone
-		_ = scratch.Cleanup()
-	}
-
-	lc := buildRTMPLiveCounter(rec, prog)
-	l.store.AttachMedia(sessionID, lc, cancel)
-
-	prior, _ := l.store.MarkPublishing(sessionID, time.Now())
-	return pipe, true, prior
-}
-
-// buildRTMPLiveCounter selects the LiveCounter shape based on the
-// capability's configured ffmpeg-progress unit. Falls back to a
-// nil-safe out_time_seconds counter when the capability uses a
-// different extractor.
-func buildRTMPLiveCounter(rec *rtmpingresshlsegress.SessionRecord, prog *encoder.Progress) extractors.LiveCounter {
-	_ = rec
-	ext := &progressLiveCounter{prog: prog}
-	return ext
-}
-
-// progressLiveCounter exposes encoder.Progress as an
-// extractors.LiveCounter. Distinct from
-// extractors/ffmpegprogress.LiveCounter — that one wraps separate
-// atomics; this one wraps the encoder.Progress directly so the unit
-// resolution lives in one place when the dispatch layer owns it.
-type progressLiveCounter struct {
-	prog *encoder.Progress
-}
-
-func (p *progressLiveCounter) CurrentUnits() uint64 {
-	if p == nil || p.prog == nil {
-		return 0
-	}
-	return p.prog.CurrentUnits()
-}
-
-// _ = ffmpegprogress is kept as a build-time hint that the
-// per-extractor LiveCounter constructor in extractors/ffmpegprogress
-// is the alternative wiring (used when the dispatch layer
-// short-circuits past the rtmp-ingress driver).
-var _ = ffmpegprogress.Name
-
 // newPaymentClient picks the right Client implementation per host-config.
 func newPaymentClient(cfg *config.Config) (payment.Client, error) {
 	switch {
 	case cfg.PaymentDaemon.Mock:
-		log.Printf("payment client: in-process Mock (payment_daemon.mock=true)")
-		return payment.WithMetrics(payment.NewMock()), nil
+		mock := payment.NewMock()
+		if p := cfg.PaymentDaemon.MockStatePath; p != "" {
+			if err := mock.EnablePersistence(p); err != nil {
+				return nil, fmt.Errorf("payment mock state: %w", err)
+			}
+			log.Printf("payment client: in-process Mock, state at %s (survives restart)", p)
+		} else {
+			log.Printf("payment client: in-process Mock (payment_daemon.mock=true; state is NOT durable)")
+		}
+		return payment.WithMetrics(mock), nil
 	case cfg.PaymentDaemon.Socket != "":
 		log.Printf("payment client: gRPC unix socket %s", cfg.PaymentDaemon.Socket)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -527,48 +369,20 @@ func newPaymentClient(cfg *config.Config) (payment.Client, error) {
 	}
 }
 
-// validateAgainstRegistries fails-fast if any configured capability
-// references an unregistered mode or extractor.
-func (s *Server) validateAgainstRegistries() error {
-	cfg := s.currentConfig()
-	return validateConfigAgainstRegistries(cfg, s.modes, s.extractors)
-}
-
-func validateConfigAgainstRegistries(cfg *config.Config, modeRegistry *modes.Registry, extractorRegistry *extractors.Registry) error {
-	if cfg == nil {
-		return fmt.Errorf("config is not loaded")
-	}
-	for i := range cfg.Capabilities {
-		c := &cfg.Capabilities[i]
-		if !modeRegistry.Has(c.InteractionMode) {
-			return fmt.Errorf("capability %s/%s: interaction_mode %q is not implemented by this broker (registered: %v)",
-				c.ID, c.OfferingID, c.InteractionMode, modeRegistry.Names())
-		}
-		extractorType, _ := c.WorkUnit.Extractor["type"].(string)
-		if !extractorRegistry.Has(extractorType) {
-			return fmt.Errorf("capability %s/%s: work_unit.extractor.type %q is not implemented by this broker (registered: %v)",
-				c.ID, c.OfferingID, extractorType, extractorRegistry.Names())
-		}
-	}
-	return nil
+// adminTokenMatches reports whether an Authorization header carries the
+// admin bearer token. A broker with no admin token configured accepts
+// no token — never every token.
+func (s *Server) adminTokenMatches(authz string) bool {
+	s.mu.RLock()
+	token := strings.TrimSpace(s.adminToken)
+	s.mu.RUnlock()
+	return token != "" && strings.TrimSpace(authz) == "Bearer "+token
 }
 
 func (s *Server) currentConfig() *config.Config {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.cfg
-}
-
-func (s *Server) currentHealth() *health.Manager {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.health
-}
-
-func (s *Server) currentMetadata() *metadataCatalog {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.metadata
 }
 
 func (s *Server) currentPoolSnapshot() *poolsnapshot.Cache {
@@ -581,6 +395,65 @@ func (s *Server) currentPoolSnapshot() *poolsnapshot.Cache {
 // any listener errors; performs graceful shutdown on cancellation.
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 4)
+	if s.sessionEngine != nil {
+		// Restart recovery first (rebind-or-terminal), then the
+		// lease/heartbeat sweeper for the process lifetime.
+		s.sessionEngine.Recover(ctx)
+		go func() {
+			t := time.NewTicker(2 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					s.sessionEngine.Sweep(ctx)
+				}
+			}
+		}()
+	}
+	if s.sessionStore != nil && s.payment != nil {
+		// Drive outstanding debits to a terminal accounting state. Until
+		// this ran, a debit that failed after the work shipped was
+		// simply lost — and the exchange reported as settled anyway.
+		go s.runDebitRetry(ctx)
+	}
+	if s.credentialStore != nil {
+		defer func() { _ = s.credentialStore.Close() }()
+	}
+	go s.runRunnerEviction(ctx)
+	if s.sessionStore != nil {
+		defer func() { _ = s.sessionStore.Close() }()
+		// Idempotency-window retention for paid-job and top-up records.
+		go func() {
+			t := time.NewTicker(10 * time.Minute)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					cutoff := time.Now().Add(-s.jobRetention())
+					if n, err := s.sessionStore.EvictJobs(cutoff); err == nil && n > 0 {
+						log.Printf("evicted %d job idempotency records", n)
+					}
+					if n, err := s.sessionStore.EvictTopUps(cutoff); err == nil && n > 0 {
+						log.Printf("evicted %d top-up idempotency records", n)
+					}
+					if n, err := s.sessionStore.EvictNonAdmissions(cutoff); err == nil && n > 0 {
+						log.Printf("evicted %d non-admission records", n)
+					}
+					// Admission tombstones outlive the detailed records
+					// they refer to, and pruning them advances the
+					// horizon so the broker stops claiming it can answer
+					// for a period it can no longer see.
+					if n, err := s.sessionStore.EvictAdmissionTombstones(cutoff); err == nil && n > 0 {
+						log.Printf("evicted %d admission tombstones; evidence horizon advanced", n)
+					}
+				}
+			}
+		}()
+	}
 	go func() {
 		log.Printf("listening on %s (paid)", s.cfg.Listen.Paid)
 		if err := s.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -597,22 +470,9 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
-	if s.rtmpListener != nil {
+	if addr := s.cfg.Listen.QUICAddr(); addr != "" {
 		go func() {
-			if err := s.rtmpListener.Run(ctx); err != nil {
-				errCh <- fmt.Errorf("listen rtmp: %w", err)
-				return
-			}
-			errCh <- nil
-		}()
-		go s.rtmpStore.RunWatchdog(ctx, rtmpingresshlsegress.LifetimeOptions{
-			IdleTimeout:   s.opts.RTMP.IdleTimeout,
-			CheckInterval: time.Second,
-		})
-	}
-	if strings.TrimSpace(s.cfg.Listen.WorkerQUIC) != "" {
-		go func() {
-			if err := s.runWorkerQUIC(ctx, s.cfg.Listen.WorkerQUIC); err != nil {
+			if err := s.runAttachQUIC(ctx, addr); err != nil {
 				errCh <- fmt.Errorf("listen worker quic: %w", err)
 				return
 			}
@@ -620,13 +480,7 @@ func (s *Server) Run(ctx context.Context) error {
 		}()
 	}
 
-	if s.sessDriver != nil {
-		go s.sessDriver.RunReconnectWatchdog(ctx)
-	}
 	s.attachRunContext(ctx)
-	if s.metadata != nil {
-		go s.runMetadataRefresh(ctx, s.metadataRefreshInterval())
-	}
 	if s.poolSnapshot != nil {
 		go s.poolSnapshot.Run(ctx)
 	}
@@ -648,54 +502,66 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) attachRunContext(ctx context.Context) {
 	s.mu.Lock()
 	s.runCtx = ctx
-	healthMgr := s.health
 	s.mu.Unlock()
-	s.startHealthLoop(healthMgr)
 }
 
-func (s *Server) startHealthLoop(healthMgr *health.Manager) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.healthCancel != nil {
-		s.healthCancel()
-		s.healthCancel = nil
-	}
-	if s.runCtx == nil || healthMgr == nil {
-		return
-	}
-	childCtx, cancel := context.WithCancel(s.runCtx)
-	s.healthCancel = cancel
-	go healthMgr.Run(childCtx)
-}
-
-func (s *Server) metadataRefreshInterval() time.Duration {
-	if s.opts.MetadataRefreshInterval < 0 {
-		return 0
-	}
-	if s.opts.MetadataRefreshInterval == 0 {
-		return 5 * time.Minute
-	}
-	return s.opts.MetadataRefreshInterval
-}
-
-func (s *Server) runMetadataRefresh(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	client := &http.Client{Timeout: 2 * time.Second}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			cfg := s.currentConfig()
-			metadata := s.currentMetadata()
-			if cfg == nil || metadata == nil {
-				continue
-			}
-			refreshMetadataCatalog(ctx, client, cfg, metadata)
+func parseKeyValidity(id config.Identity) (time.Time, time.Time, error) {
+	parse := func(field, raw string) (time.Time, error) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return time.Time{}, nil
 		}
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("%s: %w", field, err)
+		}
+		return t.UTC(), nil
 	}
+	notBefore, err := parse("settlement_key_not_before", id.SettlementKeyNotBefore)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	expiresAt, err := parse("settlement_key_expires_at", id.SettlementKeyExpiresAt)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if !notBefore.IsZero() && !expiresAt.IsZero() && !expiresAt.After(notBefore) {
+		return time.Time{}, time.Time{}, fmt.Errorf("settlement_key_expires_at must be after settlement_key_not_before")
+	}
+	return notBefore, expiresAt, nil
+}
+
+func describeValidity(notBefore, expiresAt time.Time) string {
+	if notBefore.IsZero() && expiresAt.IsZero() {
+		return "unbounded — publish a settlement_keys window and mirror it here"
+	}
+	from, until := "-inf", "+inf"
+	if !notBefore.IsZero() {
+		from = notBefore.Format(time.RFC3339)
+	}
+	if !expiresAt.IsZero() {
+		until = expiresAt.Format(time.RFC3339)
+	}
+	return from + " .. " + until
+}
+
+// allocDebitSeq hands out the next debit sequence for a work_id.
+//
+// Durable when a state store is configured. Without one it falls back to
+// an in-process counter, which is correct within a process and lost on
+// restart — after which a work_id's sequence restarts and the payee
+// deduplicates the first debits away as replays. That is the same
+// caveat the in-process job idempotency carries, and the same reason
+// session_store is required for spec conformance.
+func (s *Server) allocDebitSeq(workID string) (uint64, error) {
+	if s.sessionStore != nil {
+		return s.sessionStore.NextDebitSeq(workID)
+	}
+	s.memDebitSeqMu.Lock()
+	defer s.memDebitSeqMu.Unlock()
+	if s.memDebitSeq == nil {
+		s.memDebitSeq = map[string]uint64{}
+	}
+	s.memDebitSeq[workID]++
+	return s.memDebitSeq[workID], nil
 }

@@ -35,23 +35,20 @@ type Prometheus struct {
 	cfg PrometheusConfig
 
 	// Counters
-	grpcRequests     *capVec
-	resolutions      *capVec
-	legacyFallbacks  *capVec
+	grpcRequests        *capVec
+	resolutions         *capVec
+	legacyFallbacks     *capVec
 	liveHealthDecisions *capVec
-	manifestFetches  *capVec
-	manifestVerifies *capVec
-	cacheLookups     *capVec
-	cacheWrites      prometheus.Counter
-	cacheEvictions   *capVec
-	auditEvents      *capVec
-	overlayReloads   *capVec
-	overlayDrops     *capVec
-	chainReads       *capVec
-	chainWrites      *capVec
-	publisherBuilds  prometheus.Counter
-	publisherSigns   *capVec
-	publisherProbes  *capVec
+	manifestFetches     *capVec
+	manifestVerifies    *capVec
+	cacheLookups        *capVec
+	cacheWrites         prometheus.Counter
+	cacheEvictions      *capVec
+	auditEvents         *capVec
+	overlayReloads      *capVec
+	overlayDrops        *capVec
+	chainReads          *capVec
+	chainWrites         *capVec
 
 	// Histograms
 	grpcDuration     *prometheus.HistogramVec
@@ -154,21 +151,6 @@ func NewPrometheus(cfg PrometheusConfig) *Prometheus {
 	p.chainWrites = newCap(reg, p.onCapHit, "chain_writes_total", prometheus.NewCounterVec(
 		prometheus.CounterOpts{Namespace: ns, Name: "chain_writes_total",
 			Help: "ServiceRegistry.setServiceURI tx outcomes."},
-		[]string{"outcome"},
-	))
-	p.publisherBuilds = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: ns, Name: "publisher_builds_total",
-		Help: "Publisher.BuildManifest invocations.",
-	})
-	reg.MustRegister(p.publisherBuilds)
-	p.publisherSigns = newCap(reg, p.onCapHit, "publisher_signs_total", prometheus.NewCounterVec(
-		prometheus.CounterOpts{Namespace: ns, Name: "publisher_signs_total",
-			Help: "Publisher.SignManifest invocations, labeled by outcome."},
-		[]string{"outcome"},
-	))
-	p.publisherProbes = newCap(reg, p.onCapHit, "publisher_probe_workers_total", prometheus.NewCounterVec(
-		prometheus.CounterOpts{Namespace: ns, Name: "publisher_probe_workers_total",
-			Help: "Publisher.ProbeWorker outcomes."},
 		[]string{"outcome"},
 	))
 
@@ -374,14 +356,6 @@ func (p *Prometheus) SetManifestFetcherLastSuccess(t time.Time) {
 	p.manifestFetcherLastSuccess.Set(float64(t.Unix()))
 }
 
-func (p *Prometheus) IncPublisherBuild() { p.publisherBuilds.Inc() }
-func (p *Prometheus) IncPublisherSign(outcome string) {
-	p.publisherSigns.inc(unset(outcome))
-}
-func (p *Prometheus) IncPublisherProbe(outcome string) {
-	p.publisherProbes.inc(unset(outcome))
-}
-
 func (p *Prometheus) SetUptimeSeconds(s float64) { p.uptimeSeconds.Set(s) }
 func (p *Prometheus) SetBuildInfo(version, mode, goVersion string) {
 	p.buildInfo.WithLabelValues(version, mode, goVersion).Set(1)
@@ -469,7 +443,6 @@ func (p *Prometheus) ApplyCap(max int) {
 		p.manifestFetches, p.manifestVerifies, p.cacheLookups,
 		p.cacheEvictions, p.auditEvents, p.overlayReloads,
 		p.overlayDrops, p.chainReads, p.chainWrites,
-		p.publisherSigns, p.publisherProbes,
 	} {
 		v.withCap(max)
 	}

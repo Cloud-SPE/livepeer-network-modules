@@ -1,0 +1,91 @@
+# Audio translation to English — whisper-large-v3.
+#
+# New 2026-09-02 (decision 1 of the 2026-09-02 walkthrough on lnm-of6). The
+# openai-audio-runner in livepeer-modules-openai-runners serves BOTH
+# /v1/audio/transcriptions and /v1/audio/translations from one process and
+# one set of weights; only the transcription half had a template. This is the
+# other half: the same runner attaches with two capability entries, and the
+# two offers match one each.
+
+id: openai-audio-translations-whisper-large-v3
+capability: openai:audio-translations
+# Not `whisper-large-v3` like its transcription sibling: an offering id is
+# unique across the whole catalog (the broker admits one offer per id), and
+# the e2e seam test refused the catalog when this template reused it.
+offering_id: whisper-large-v3-translate
+protocol: paid-job/v1
+display_name: Audio translation to English (whisper-large-v3)
+description: >-
+  OpenAI-compatible audio translation over a multipart upload: speech in any
+  of Whisper's languages, an English transcript out. Metered in seconds of
+  input audio, so the bill is fixed by the file the caller sent.
+
+# The transcription sibling's operator rate, unchanged: same weights, same
+# compute, and OpenAI prices the two endpoints identically. Derivation in
+# docs/references/2026-09-02-rerank-and-audio-translations-pricing.md.
+# Reprice the two together.
+price_default: { amount_wei: "45000000000", per_units: 1 }
+
+capacity: { max_in_flight: 2, queue_limit: 2 }
+
+extra:
+  provider: whisper
+  backend_model: openai/whisper-large-v3
+  audio:
+    task: translation
+
+constraints:
+  gpu_vendor: NVIDIA
+
+match:
+  identity.openai.model: whisper-large-v3
+
+certification:
+  - { name: ready, type: readiness, required: true, config: { attempts: 5, interval_ms: 3000 } }
+  - name: smoke
+    type: request
+    required: true
+    config:
+      transport: multipart
+      parts:
+        - { name: model, value: "{{identity.openai.model}}" }
+        - name: file
+          filename: probe.wav
+          content_type: audio/wav
+          # The same 3s broker fixture the transcription template uses
+          # (certification-steps.md §4). It is English, so this probe proves
+          # the endpoint answers, not that it translates — no fixture in the
+          # broker's set is non-English speech, which is a gap worth closing
+          # if translation quality ever becomes a certification question.
+          fixture: { ref: multipart-audio-duration-v1/wav-16k-mono-3s }
+      assert:
+        - "$.text"
+  # The runner counts ceil(duration) seconds and claims them in a response
+  # header (X-Livepeer-Work-Units), the same path as transcription; a 3s
+  # fixture yields 3 and a broken header yields 0.
+  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+  - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 6000 } }
+
+# Identical to the transcription sibling on purpose: it is the same container
+# on the same card, so a class list that differed would describe a placement
+# that cannot happen.
+requirements:
+  gpu_classes: [rtx-4090, rtx-5090]
+
+# One under transcription (16). The two ride the same card as secondaries and
+# the pool has no reason to prefer translation traffic; a strict ordering
+# just keeps the planner deterministic when both are eligible.
+priority: 15
+
+stacking:
+  primary: true
+  secondary_on: [rtx-4090, rtx-5090]
+
+# runner_compose omitted: same image as the transcription sibling, same
+# reason (lnm-v12). One container, two capability entries.
+
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

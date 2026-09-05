@@ -1,7 +1,7 @@
 ---
 title: Payment-daemon interactions
 status: active
-last-reviewed: 2026-05-11
+last-reviewed: 2026-08-19
 ---
 
 # Payment-daemon interactions
@@ -18,16 +18,20 @@ The goal is to make three things explicit:
 
 ## Scope
 
-This doc applies to both interaction-model families:
+This doc applies to both v1 protocols
+([`interaction-modes.md`](./interaction-modes.md)):
 
-- **request/response** modes (`http-reqresp`, `http-stream`, `http-multipart`)
-- **streaming** modes (`ws-realtime`, `rtmp-ingress-hls-egress`,
-  `session-control-plus-media`) using the worker-metered / gateway-ledger
-  split defined in [`streaming-workload-pattern.md`](./streaming-workload-pattern.md)
+- **[`paid-job/v1`](../../livepeer-network-protocol/protocols/paid-job.md)** —
+  one paid exchange, one envelope, one `ReportUsage`, settled once. Transport
+  (`unary` / `stream` / `multipart`) is a per-request HTTP negotiation and does
+  not change the payment shape.
+- **[`paid-session/v1`](../../livepeer-network-protocol/protocols/paid-session.md)** —
+  one `OpenSession` at open, debits driven by the runner's cumulative usage
+  claims, top-ups crediting the same `work_id`, `CloseSession` at winddown.
 
-The payment primitives are shared. What changes between the two model families
-is who owns the long-lived session meter and when customer-ledger commits
-happen.
+The payment primitives are shared. What changes between the two is who owns the
+long-lived session meter and when customer-ledger commits happen; the trust
+framing for both is [`dual-meter-trust.md`](./dual-meter-trust.md).
 
 > **Important rewrite-specific change.** In the rewrite, the daemon no longer
 > enforces a closed enum of capability or work-unit names. Both are opaque
@@ -108,7 +112,7 @@ flowchart LR
     Adapter --> Sender
     Sender -.->|"unix socket"| SRDg
     Sender -.->|"POST /v1/payment/ticket-params"| Broker
-    Adapter ==>|"HTTPS / WS / RTMP +<br/>Livepeer-Payment header"| Broker
+    Adapter ==>|"POST /v1/job or /v1/session +<br/>Livepeer-Payment header"| Broker
     Broker -.->|"unix socket"| Receiver
     Receiver -->|"redeemWinningTicket"| Chain
     Broker --> Backend
@@ -116,7 +120,7 @@ flowchart LR
 
 ## End-to-end quote-free flow
 
-This is the canonical flow used across all interaction modes.
+This is the canonical flow, shared by both protocols.
 
 ### 1. Resolve route and retail price
 
@@ -126,7 +130,7 @@ The gateway resolves through `service-registry-daemon`:
 - recipient ETH address
 - `capability_id`
 - `offering_id`
-- `interaction_mode`
+- `protocol`
 - `price_per_work_unit_wei`
 - `work_unit` (opaque string)
 
@@ -189,7 +193,7 @@ sequenceDiagram
     participant Receiver as payment-daemon<br/>(receiver)
 
     Shell->>SRD: Resolver.Select(capability_id, offering_id?)
-    SRD-->>Shell: { worker_url, eth_address, interaction_mode,<br/>work_unit, price_per_unit_wei }
+    SRD-->>Shell: { worker_url, eth_address, protocol,<br/>work_unit, price_per_unit_wei }
     Shell->>Shell: compute accepted_price + funded_value from<br/>price_per_unit_wei × estimated_units
     Shell->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
     Sender->>SRD: resolve recipient → worker_url (local)
@@ -225,7 +229,7 @@ These terms are **not** interchangeable.
 
 | Term | Chosen by | Meaning |
 |---|---|---|
-| `price_per_work_unit_wei` | host config (`host-config.yaml`) | published retail price for one work unit |
+| `price_per_work_unit_wei` | host config (`offers[].price` in `host-config.yaml`) | published retail price for one work unit |
 | accepted price basis in `CreatePayment(...)` | gateway | the unit price / quote identity the gateway accepted |
 | funded budget in `CreatePayment(...)` | gateway | initial funded EV for this request or session window |
 | actual ticket `FaceValue` inside returned `TicketParams` | receiver daemon | winning-ticket size chosen so redemption remains truthful |
@@ -265,14 +269,23 @@ This is the most important operator distinction.
 
 ### Retail price
 
-Retail charge comes from `host-config.yaml`:
+Retail charge comes from the offer in `host-config.yaml` — the operator's
+half of the tuple:
 
-- `capabilities[].id`
-- `capabilities[].work_unit.name`
-- `capabilities[].price.amount_wei`
-- `capabilities[].price.per_units`
+- `offers[].capability`
+- `offers[].offering_id`
+- `offers[].price.amount_wei`
+- `offers[].price.per_units`
 
-Changing these changes what gateways should charge for work.
+Changing these changes what gateways should charge for work, and is an
+ordinary config edit.
+
+The work-unit *name* those wei are counted in is **not** here: the runner
+declares it (with the extractor that produces it) at attach, and the first
+runner to certify freezes it into the offer. So changing the unit is not a
+price edit at all — it is a different runner shape, and a runner that
+presents one the offer did not freeze is refused rather than silently
+repricing the tuple.
 
 ### Acceptance floor / redeemability
 
@@ -382,13 +395,15 @@ Repo docs therefore keep these roles distinct:
 
 ## Backend-author checklist
 
-A new backend integration is not ready until its docs and host-config example
-answer all of these clearly:
+A new backend integration is not ready until its docs, its offer example and
+its runner's contract (`runner-contract.md`) answer all of these clearly. Note which side owns
+each answer: 1–2 and 6–9 are the operator's, 3–5 are declared by the runner
+and frozen into the offer.
 
 1. What `capability_id` string does it advertise?
 2. What `offering_id` does it route on?
 3. What `work_unit` does it meter in?
-4. What `interaction_mode` from the protocol typology applies?
+4. Which protocol (`paid-job/v1` or `paid-session/v1`) applies, and for sessions, which descriptor schema?
 5. Which extractor produces `actualUnits` from the backend response?
 6. How does the gateway compute requested spend from that unit price?
 7. For streaming: which side owns the live meter — gateway or broker?

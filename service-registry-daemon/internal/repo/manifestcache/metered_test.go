@@ -42,9 +42,6 @@ func (*fakeRecorder) IncChainWrite(_ string)                                {}
 func (*fakeRecorder) ObserveChainRead(_ time.Duration)                      {}
 func (*fakeRecorder) SetChainLastSuccess(_ time.Time)                       {}
 func (*fakeRecorder) SetManifestFetcherLastSuccess(_ time.Time)             {}
-func (*fakeRecorder) IncPublisherBuild()                                    {}
-func (*fakeRecorder) IncPublisherSign(_ string)                             {}
-func (*fakeRecorder) IncPublisherProbe(_ string)                            {}
 func (*fakeRecorder) SetUptimeSeconds(_ float64)                            {}
 func (*fakeRecorder) SetBuildInfo(_, _, _ string)                           {}
 func (*fakeRecorder) Handler() http.Handler                                 { return nil }

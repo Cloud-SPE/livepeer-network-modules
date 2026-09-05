@@ -38,13 +38,13 @@ func newSvc(t *testing.T) (*Service, *ecdsa.PrivateKey, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { log.Close() })
-	return New(store, nil, log, addr, "0.1.0", nil), priv, addr
+	return New(store, nil, log, addr, "1.0.0", nil), priv, addr
 }
 
 func sampleManifest(addr string, seq uint64) types.ManifestPayload {
 	now := time.Now().UTC()
 	return types.ManifestPayload{
-		SpecVersion:    "0.1.0",
+		SpecVersion:    "1.0.0",
 		PublicationSeq: seq,
 		IssuedAt:       now,
 		ExpiresAt:      now.Add(24 * time.Hour),
@@ -52,7 +52,8 @@ func sampleManifest(addr string, seq uint64) types.ManifestPayload {
 		Capabilities: []types.CapabilityTuple{{
 			CapabilityID:    "cap",
 			OfferingID:      "off",
-			InteractionMode: "http-stream@v1",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"stream"}},
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "100",
 			WorkerURL:       "https://worker.example/",
@@ -147,7 +148,7 @@ func TestReceive_RejectsWrongSigner(t *testing.T) {
 func TestReceive_RejectsSpecDrift(t *testing.T) {
 	svc, priv, addr := newSvc(t)
 	p := sampleManifest(addr, 1)
-	p.SpecVersion = "0.2.0"
+	p.SpecVersion = "1.1.0"
 	body := signManifest(t, priv, p)
 	_, err := svc.Receive(body, "x")
 	var ve *VerifyError
@@ -228,7 +229,7 @@ func TestReceive_RejectsSignedManifestThatDoesNotMatchLatestCandidate(t *testing
 		t.Fatal(err)
 	}
 
-	svc := New(pubStore, candStore, log, addr, "0.1.0", nil)
+	svc := New(pubStore, candStore, log, addr, "1.0.0", nil)
 	_, err = svc.Receive(signManifest(t, priv, p1), "u1")
 	var ve *VerifyError
 	if !errIs(err, &ve) || ve.Code != audit.OutcomeDriftRejected {
@@ -268,7 +269,7 @@ func TestReceive_AcceptedPublishAdvancesNextPublicationSeq(t *testing.T) {
 		t.Fatal(err)
 	}
 	builder := &stubSeqSetter{}
-	svc := New(pubStore, candStore, log, addr, "0.1.0", builder)
+	svc := New(pubStore, candStore, log, addr, "1.0.0", builder)
 	if _, err := svc.Receive(signManifest(t, priv, p), "u1"); err != nil {
 		t.Fatal(err)
 	}

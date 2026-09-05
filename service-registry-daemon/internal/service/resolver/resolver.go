@@ -378,18 +378,19 @@ func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddr
 	return nil, nil, [32]byte{}, 0, lastErr
 }
 
+// decodeFetchedManifest validates fetched bytes as the protocol
+// envelope — the only manifest shape there is (plan 0043 decision 8).
+//
+// This used to try a daemon-local v3.0.1 schema first and fall back to
+// the coordinator envelope as a compatibility branch. Two shapes meant
+// two validators and two canonicalizations of the same document, and
+// which one a manifest was graded against depended on which parse
+// happened to succeed. The envelope is now the path, and a document
+// that is not one is rejected with the envelope decoder's own reason
+// rather than the other decoder's.
 func decodeFetchedManifest(body []byte) (*types.Manifest, []byte, string, uint64, error) {
-	manifest, err := types.DecodeManifest(body)
-	if err == nil {
-		canonical, cerr := types.CanonicalBytes(manifest)
-		if cerr != nil {
-			return nil, nil, "", 0, fmt.Errorf("%w: canonical: %w", types.ErrParse, cerr)
-		}
-		return manifest, canonical, manifest.Signature.Value, 0, nil
-	}
-
-	env, compatErr := types.DecodeCoordinatorEnvelope(body)
-	if compatErr != nil {
+	env, err := types.DecodeCoordinatorEnvelope(body)
+	if err != nil {
 		return nil, nil, "", 0, err
 	}
 	canonical, cerr := types.CoordinatorCanonicalBytes(env.Manifest)
@@ -538,11 +539,14 @@ func projectManifest(addr types.EthAddress, m *types.Manifest, publicationSeq ui
 			Extra:            append([]byte(nil), n.Extra...),
 			Capabilities:     append([]types.Capability(nil), n.Capabilities...),
 			PublicationSeq:   publicationSeq,
-			Source:           types.SourceManifest,
-			SignatureStatus:  types.SigVerified,
-			OperatorAddr:     addr,
-			Enabled:          true,
-			Weight:           100,
+			// The delegation is the orch's, so every node projected from
+			// this manifest carries the same set.
+			SettlementKeys:  append([]types.SettlementKey(nil), m.SettlementKeys...),
+			Source:          types.SourceManifest,
+			SignatureStatus: types.SigVerified,
+			OperatorAddr:    addr,
+			Enabled:         true,
+			Weight:          100,
 		})
 	}
 	return out

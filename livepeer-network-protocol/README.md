@@ -10,26 +10,31 @@ consumed it; future gateway-side implementations are out-of-repo.
 
 ## Status
 
-Pre-1.0 (spec-wide). Current version: see [`VERSION`](./VERSION).
+Spec-wide version is in [`VERSION`](./VERSION) and, for Go consumers, `version.VERSION` in [`version/`](./version/) (a test keeps them equal). The 2.0.0 major bump
+removed `interaction_mode` from the manifest in favour of `protocol` plus
+declared axes; pre-2.0 consumers cannot read these manifests. Individual
+protocol and descriptor-schema specs are still at `1.0.x-draft` in their own
+frontmatter.
 
-Per-mode versions are tracked in each `modes/<mode>.md` frontmatter. Hybrid SemVer is
-the authoritative versioning policy — see
-[plan 0002](../docs/exec-plans/completed/0002-define-interaction-modes-spec.md) Q2
-resolution and [core belief #14](../docs/design-docs/core-beliefs.md).
+Per-protocol versions are tracked in each `protocols/<name>.md` frontmatter, and
+per-schema versions in each `descriptors/<name>.md`. Hybrid SemVer is the
+authoritative versioning policy — see [core belief #14](../docs/design-docs/core-beliefs.md).
 
 ## Layout
 
 | Folder | What it holds |
 |---|---|
 | [`manifest/`](./manifest/) | Manifest JSON Schema, examples, schema changelog |
-| [`modes/`](./modes/) | One spec per interaction mode (`http-reqresp`, `http-stream`, …) |
+| [`protocols/`](./protocols/) | The two core protocols (`paid-job/v1`, `paid-session/v1`), the runtime-descriptor framework, the offering declared axes, the [runner attach contract](./protocols/runner-attach.md) (+ its JSON Schema and examples under `protocols/runner-attach/`), the [broker admin API contract](./protocols/broker-admin.md), and the [certification steps](./protocols/certification-steps.md) an offer runs against a runner |
+| [`descriptors/`](./descriptors/) | One spec per runtime-descriptor schema (`sfu-room/v1`, `rtmp-hls/v1`, …) |
 | [`extractors/`](./extractors/) | One spec per work-unit extractor (`openai-usage`, `response-jsonpath`, …) |
 | [`headers/`](./headers/) | `Livepeer-*` header conventions, payment envelope structure |
 | [`proto/`](./proto/) | Canonical `.proto` source for the payment wire format and the daemon gRPC services |
 | [`proto-go/`](./proto-go/) | Generated Go bindings for `proto/`; importable as a Go module |
+| [`version/`](./version/) | Dependency-free Go module exporting `VERSION` — the single source brokers stamp on `/registry/offerings` and the coordinator gates on |
 | [`verify/`](./verify/) | Cross-cutting Go module that recovers the Ethereum address from a manifest signature (resolver / coordinator / gateway double-verify) |
+| [`conformance/`](./conformance/) | Executable conformance suite for the v1 protocols; runs against the reference broker or any implementation by URL |
 | [`docs/`](./docs/) | Cross-cutting design docs ([`wire-compat.md`](./docs/wire-compat.md) — byte-for-byte contract with go-livepeer's `pm/`) |
-| [`conformance/`](./conformance/) | Test fixtures + Go runner + Dockerfile + Makefile + compose.yaml |
 
 ## Versioning
 
@@ -37,9 +42,11 @@ Hybrid SemVer:
 
 - **Spec-wide SemVer** at [`VERSION`](./VERSION) covers cross-cutting parts: manifest
   schema, header conventions, payment envelope, extractor library envelope.
-- **Per-mode SemVer** in each `modes/<mode>.md` frontmatter covers that specific mode.
+- **Per-protocol SemVer** in each `protocols/<name>.md` frontmatter; per-schema
+  SemVer in each `descriptors/<name>.md`.
 - Manifest tuples carry both: `spec_version: "<X.Y>"` at the manifest root +
-  `interaction_mode: "<name>@v<N>"` per capability.
+  `protocol: "<name>/v<N>"` per capability, plus `session.descriptor_schema`
+  for paid-session offerings (see `protocols/offering-axes.md`).
 
 ## Implementing this spec
 
@@ -57,9 +64,21 @@ product gateways that consumed it.
 
 ## Verifying your implementation
 
-Pull `tztcloud/livepeer-conformance:<tag>` (image tag matches this spec's
-[`VERSION`](./VERSION)) and run it against your broker or gateway. See
-[`conformance/`](./conformance/).
+[`conformance/`](./conformance/) is an executable suite for `paid-job/v1`,
+`paid-session/v1`, and the runtime-descriptor framework. Every scenario pins a
+normative clause from `protocols/*.md` §Conformance, and the suite never
+imports the reference broker — it speaks only the wire contract.
+
+```sh
+make conformance          # auto mode: against the in-repo reference broker
+
+# URL mode: against any implementation
+cd conformance && go run ./cmd/livepeer-conformance --broker-url https://your-broker --pause
+```
+
+See [`conformance/README.md`](./conformance/README.md) for the offerings your
+broker must serve in URL mode, and for the three assertions the suite
+deliberately cannot make black-box.
 
 ## Proposing changes
 

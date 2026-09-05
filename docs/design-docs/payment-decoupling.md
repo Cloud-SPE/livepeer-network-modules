@@ -141,8 +141,8 @@ The runtime safety properties survive:
 ## What this enables
 
 The first-order win: **adding a brand-new capability under an existing
-interaction mode is a `host-config.yaml` edit, with no broker, gateway, or
-daemon release.**
+protocol is an offer in `host-config.yaml` plus a runner that declares
+itself — with no broker, gateway, or daemon release.**
 
 The second-order wins:
 
@@ -156,8 +156,9 @@ The second-order wins:
 
 Some changes are still trunk changes — they're just much rarer:
 
-- **A new interaction mode** (e.g. WebRTC). One adapter on each side of the
-  wire (broker + gateway).
+- **A new protocol.** Rare and expensive — a client on each side of the wire
+  (broker + gateway). A new *descriptor schema* under `paid-session/v1` is the
+  default answer instead, and needs neither.
 - **A new extractor recipe.** The broker ships a small fixed set
   (`openai-usage`, `response-jsonpath`, `request-formula`, `bytes-counted`,
   `seconds-elapsed`, `ffmpeg-progress`). Adding one is a broker change.
@@ -189,8 +190,10 @@ unchanged.
 - [`../../payment-daemon/`](../../payment-daemon/) — the daemon itself
 - [`./payment-daemon-interactions.md`](./payment-daemon-interactions.md) —
   cross-cutting interaction guide
-- [`./streaming-workload-pattern.md`](./streaming-workload-pattern.md) — the
-  long-lived-session shape that exercises `OpenSession` / `DebitBalance` /
-  `SufficientBalance` / `CloseSession`
+- [`../../livepeer-network-protocol/protocols/paid-session.md`](../../livepeer-network-protocol/protocols/paid-session.md)
+  — the long-lived-session shape that exercises `OpenSession` / `DebitBalance` /
+  `SufficientBalance` / `CloseSession` (the older
+  [`./streaming-workload-pattern.md`](./streaming-workload-pattern.md) is
+  superseded and kept only as provenance)
 - [`../../livepeer-network-protocol/headers/livepeer-headers.md`](../../livepeer-network-protocol/headers/livepeer-headers.md)
   — wire-level header spec

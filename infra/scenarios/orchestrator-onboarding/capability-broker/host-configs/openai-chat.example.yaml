@@ -1,12 +1,23 @@
 # Capability Broker host-config — OpenAI Chat Completions.
 #
-# Advertises a single chat model with two interaction modes:
-#   - http-stream@v0   for gateways that want SSE streaming
-#   - http-reqresp@v0  for gateways that want a single buffered response
+# Advertises a single chat model as one `paid-job/v1` offer, served by
+# whatever vLLM runner attaches and declares that model.
 #
-# Same backend, same model, same price — different gateway integration paths.
-# Pair this with any reachable vLLM deployment behind the broker's
-# `backend.url` targets below.
+# Note what is NOT in this file: no backend URL, no work unit, no
+# extractor, no transports, no health probe. Those are facts the runner
+# knows about itself, and it declares them when it attaches outbound
+# (livepeer-network-protocol/protocols/runner-attach.md). The operator
+# authors the commercial terms — capability, price, capacity, metadata,
+# and the certification a runner must pass — and `match:` picks which
+# attached runners this offer is for.
+#
+# This used to be two offerings, one declaring [unary] and one declaring
+# [unary, stream]. That split is gone twice over: the runner declares its
+# transports now, and even under the old grammar a single offering
+# declaring both already served both callers, who select per request with
+# ordinary HTTP negotiation (Accept: text/event-stream). Split into two
+# offers only when you want to price or constrain them differently — and
+# give each its own `offering_id`, which is unique across the file.
 
 identity:
   orch_eth_address: 0xYOUR_ORCH_ADDRESS
@@ -15,43 +26,44 @@ identity:
 listen:
   paid: ":8080"
   metrics: ":9090"
+  # Runners attach here over QUIC; the WebSocket fallback rides :8080.
+  attach_quic: ":8443"
+
+# Needed to mint a runner's attach credential with POST /admin/v1/enroll.
+admin_auth:
+  method: bearer
+  secret_ref: env://BROKER_ADMIN_TOKEN
+
+# Attach credentials, sealed at rest (only sha256(token) is stored).
+# Paths are inside the broker container: /var/lib/livepeer is the durable
+# volume the scenario compose mounts, /etc/livepeer holds read-only material
+# bind-mounted from the host (see .env.example: BROKER_SEAL_KEY).
+credential_store:
+  path: /var/lib/livepeer/credentials.db
+  sealing_key_file: /etc/livepeer/broker-seal.key
+
+# Frozen offer shapes survive a restart here. Without it a restarted broker
+# re-freezes from whichever runner certifies first — a silent manifest change.
+offers_state_path: /var/lib/livepeer/offers.db
 
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock
 
-capabilities:
-  # ── streaming chat completions ──────────────────────────────────────────
-  - id: "openai:chat-completions"
-    offering_id: "vllm-qwen3.6-27b-stream"
-    interaction_mode: "http-stream@v0"
-    work_unit:
-      # vLLM emits an OpenAI-shaped usage block; the broker reads
-      # total_tokens directly out of that.
-      name: "tokens"
-      extractor:
-        type: "openai-usage"
-        field: "total_tokens"
-    # Live-health probe (Layer 2). Uses the OpenAI-compatible /v1/models
-    # surface: the probe is healthy iff vLLM lists `expect_model`. Failures
-    # mark this offering `unreachable` and gateways stop routing here until
-    # vLLM recovers — without touching the signed manifest.
-    health:
-      probe:
-        type: "http-openai-model-ready"
-        interval_ms: 5000
-        timeout_ms: 1500
-        unhealthy_after: 2
-        healthy_after: 1
-        config:
-          url: "http://vllm_chat:8000/v1/models"
-          expect_model: "Qwen3.6-27B"
+offers:
+  - offering_id: "vllm-qwen3.6-27b-default"
+    capability: "openai:chat-completions"
+    protocol: "paid-job/v1"
+    # Selects attached runners by the identity they declared. Any host
+    # running this model qualifies; adding a second box is an attach, not
+    # an edit to this file.
+    match:
+      identity.openai.model: "Qwen3.6-27B"
     price:
       amount_wei: "25000000"
       per_units: 1
-    backend:
-      transport: "http"
-      url: "http://vllm_chat:8000/v1/chat/completions"
-      auth: "none"
+    capacity:
+      max_in_flight: 4
+      queue_limit: 8
     extra:
       openai:
         model: "Qwen3.6-27B"
@@ -63,42 +75,26 @@ capabilities:
     constraints:
       tier: "standard"
       gpu: "5090"
-
-  # ── non-streaming (request/response) chat completions ───────────────────
-  - id: "openai:chat-completions"
-    offering_id: "vllm-qwen3.6-27b-default"
-    interaction_mode: "http-reqresp@v0"
-    work_unit:
-      name: "tokens"
-      extractor:
-        type: "openai-usage"
-        field: "total_tokens"
-    # Same backend → same probe. Both offerings die together if vLLM does.
-    health:
-      probe:
-        type: "http-openai-model-ready"
-        interval_ms: 5000
-        timeout_ms: 1500
-        unhealthy_after: 2
-        healthy_after: 1
+    # Certification is what replaces the old live-health probe. `readiness`
+    # runs the recipe the runner declared for itself (for vLLM that is
+    # `http-openai-model-ready` against /v1/models), and the request/usage
+    # steps prove the runner actually serves and meters paid work before it
+    # is advertised. A runner that fails gets no traffic and the signed
+    # manifest is never touched.
+    certification:
+      - { name: ready, type: readiness, config: { attempts: 10, interval_ms: 3000 } }
+      - name: smoke
+        type: request
         config:
-          url: "http://vllm_chat:8000/v1/models"
-          expect_model: "Qwen3.6-27B"
-    price:
-      amount_wei: "25000000"
-      per_units: 1
-    backend:
-      transport: "http"
-      url: "http://vllm_chat:8000/v1/chat/completions"
-      auth: "none"
-    extra:
-      openai:
-        model: "Qwen3.6-27B"
-      provider: "vllm"
-      served_model_name: "Qwen3.6-27B"
-      backend_model: "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
-      reasoning_parser: "qwen3"
-      tool_call_parser: "qwen3_coder"
-    constraints:
-      tier: "standard"
-      gpu: "5090"
+          transport: unary
+          body:
+            model: "{{identity.openai.model}}"
+            messages: [ { role: user, content: "ping" } ]
+            max_tokens: 8
+          assert:
+            - "$.choices[0].message.content"
+            - { path: "$.usage.total_tokens", min: 1 }
+      - { name: usage, type: usage, config: { min_units: 1 } }
+    # Re-prove periodically, so a model that was unloaded or a GPU that
+    # dropped out stops receiving paid work without operator action.
+    recertify_every_seconds: 3600

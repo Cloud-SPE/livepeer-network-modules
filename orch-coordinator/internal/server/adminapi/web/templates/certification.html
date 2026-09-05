@@ -1,0 +1,54 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Hot zone</p>
+  <h1>Certification</h1>
+  <p class="muted">What each runner proved before it was allowed to serve an offer. Steps are authored by the offer or template — a runner may suggest them but never certifies itself. None of this traffic is paid or settled.</p>
+  {{template "hotzone-context" .}}
+</section>
+
+{{range $row := .Runs}}
+<section class="roster" id="cert-{{anchorID $row.Broker $row.HostID $row.OfferingID}}">
+  <h2>
+    <a href="/runners#runner-{{anchorID .Broker .HostID}}" class="inline-link">{{.HostID}}</a>/{{.LocalID}}
+    <span class="muted">×</span>
+    <a href="/offers#offer-{{anchorID .Broker .OfferingID}}" class="inline-link">{{.OfferingID}}</a>
+    <span class="badge audit-{{if eq .State "passed"}}success{{else}}failure{{end}}">{{.State}}</span>
+    <small class="muted">{{.Trigger}} · on {{.Broker}}</small>
+  </h2>
+  <p class="muted"><small>
+    <code>{{.RunID}}</code> · started {{.StartedAt.Format "2006-01-02 15:04:05Z"}}
+    {{if not .FinishedAt.IsZero}}· finished {{.FinishedAt.Format "15:04:05Z"}}{{end}}
+    {{if .ShapeHash}}· shape <code>{{.ShapeHash}}</code>{{end}}
+  </small></p>
+
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>step</th><th>status</th><th>took</th><th>evidence</th></tr></thead>
+    <tbody>
+    {{range .Steps}}
+      <tr>
+        <td><strong>{{.Name}}</strong><br><small class="muted">{{.Type}}{{if not .Required}} · optional{{end}}</small></td>
+        <td><span class="badge audit-{{if eq .Status "passed"}}success{{else if eq .Status "skipped"}}info{{else}}failure{{end}}">{{.Status}}</span></td>
+        <td>{{.DurationMS}}ms</td>
+        <td>
+          {{range $k, $v := .Evidence}}<div><small><code>{{$k}}</code> {{kv $v}}</small></div>{{end}}
+          {{if .Message}}<div class="err"><small>{{.Message}}</small></div>{{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+
+  <form method="post" action="/certification/run" class="refresh">
+    <input type="hidden" name="broker" value="{{$row.Broker}}">
+    <input type="hidden" name="host_id" value="{{$row.HostID}}">
+    <input type="hidden" name="offering_id" value="{{$row.OfferingID}}">
+    <input type="hidden" name="local_id" value="{{$row.LocalID}}">
+    <button type="submit">Re-run</button>
+  </form>
+</section>
+{{else}}
+<section><p class="muted"><em>No certification runs yet.</em> A run starts when a runner matches an offer.</p></section>
+{{end}}
+{{end}}

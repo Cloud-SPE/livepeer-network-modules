@@ -49,7 +49,35 @@ type CreatePaymentRequest struct {
 	// Accepted route/quote basis chosen by the gateway.
 	AcceptedPrice *AcceptedPrice `protobuf:"bytes,3,opt,name=accepted_price,json=acceptedPrice,proto3" json:"accepted_price,omitempty"`
 	// Funding scope the gateway is authorizing for this minted payment batch.
-	Funding       *FundingIntent `protobuf:"bytes,4,opt,name=funding,proto3" json:"funding,omitempty"`
+	Funding *FundingIntent `protobuf:"bytes,4,opt,name=funding,proto3" json:"funding,omitempty"`
+	// Caller-supplied idempotency key for this mint intent. REQUIRED.
+	//
+	// Minting signs tickets against real deposit, so a retry after an
+	// uncertain response must never mint a second batch. With this key the
+	// daemon replays the exact original response — same payment_bytes,
+	// same work_id, same values — and never re-signs.
+	//
+	// Namespace: the key is scoped to the daemon's own sender identity
+	// (its keystore address). Two callers sharing one daemon share one
+	// namespace, so ids MUST be globally unique within it — a UUIDv4, or a
+	// caller-prefixed form like "loc:<uuid>". Max 128 bytes. A key reused
+	// with different request content is refused (INVALID_ARGUMENT), never
+	// minted: the key is a promise about content.
+	//
+	// A recovery retry after `ReportPaymentResult` reported
+	// INVALID_RECIPIENT_RAND is a NEW intent and needs a NEW key: the old
+	// one would replay the very payment the payee rejected. The rotation
+	// mints against a fresh recipient rand, so it is a different payment
+	// by construction.
+	//
+	// Lifecycle: the daemon keeps the full response for a retention window
+	// (operator-configured, default 24h) and keeps a permanent tombstone of
+	// the key beyond it. A retry arriving after the window is REFUSED with
+	// FAILED_PRECONDITION, never treated as a fresh mint — an evicted key
+	// must not become mintable again, or a sufficiently delayed retry
+	// would double-pay. The tombstone is a hash, not the key, so retention
+	// costs ~80 bytes per mint forever.
+	MintRequestId string `protobuf:"bytes,5,opt,name=mint_request_id,json=mintRequestId,proto3" json:"mint_request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -112,6 +140,13 @@ func (x *CreatePaymentRequest) GetFunding() *FundingIntent {
 	return nil
 }
 
+func (x *CreatePaymentRequest) GetMintRequestId() string {
+	if x != nil {
+		return x.MintRequestId
+	}
+	return ""
+}
+
 type CreatePaymentResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Wire-format `livepeer.payments.v1.Payment` bytes. The caller
@@ -128,9 +163,71 @@ type CreatePaymentResponse struct {
 	// Quote identity serialized into the payment context.
 	AcceptedQuoteRef *QuoteRef `protobuf:"bytes,5,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`
 	// Work-id bound to this minted payment (hex recipient_rand_hash).
-	WorkId        string `protobuf:"bytes,6,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	WorkId string `protobuf:"bytes,6,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	// Set when minting this payment ROTATED the ticket session: the
+	// work_id that `work_id` above supersedes.
+	//
+	// The payee tracks a bounded number of sender nonces per recipient
+	// rand. On exhaustion it mints a fresh rand, so work_id moves. This
+	// field is what makes that explicit rather than silent: a caller
+	// compares it to the work_id it was using and knows a rollover
+	// happened, a clearinghouse advances its rotation generation, and a
+	// gateway holding an open session takes its existing rebind path.
+	//
+	// A paid JOB can simply adopt the successor. An open paid SESSION
+	// cannot — it is already bound — so the pair is what lets the gateway
+	// rebind rather than discover the change through a refused payment.
+	//
+	// Empty on every ordinary mint.
+	PredecessorWorkId string `protobuf:"bytes,11,opt,name=predecessor_work_id,json=predecessorWorkId,proto3" json:"predecessor_work_id,omitempty"`
+	// The round these tickets were minted in, the last round in which they
+	// can currently still be redeemed, and the ticketValidityPeriod that
+	// figure was computed from.
+	//
+	// READ THE NEXT PARAGRAPH BEFORE TREATING expires_after_round AS A
+	// DEADLINE. It is a PREDICTION under the governance parameter observed
+	// at mint, not an immutable property of the envelope.
+	//
+	// The TicketBroker checks, at redemption:
+	//
+	//	require(creationRound + ticketValidityPeriod > currentRound)
+	//
+	// reading ticketValidityPeriod from CURRENT storage, and the round
+	// block hashes it also needs are kept in a permanent mapping. So
+	// raising the parameter extends tickets already issued, and can revive
+	// ones that had lapsed. A consumer that finalizes or refunds on
+	// expires_after_round alone can be wrong about an envelope it already
+	// acted on.
+	//
+	// ticket_validity_period is published so a consumer can DETECT that:
+	// compare it against the chain's current value and you can see that a
+	// deadline moved.
+	//
+	// Detect, not repair. Re-encumbering on an increase is not
+	// implementable — credit already finalized or returned may have been
+	// spent or withdrawn — so this is telemetry, and paid-job §5.3
+	// describes the terminal outcomes that actually govern.
+	//
+	// expires_after_round is the LAST round the envelope can still be
+	// redeemed in — creation_round + ticket_validity_period - 1 — so
+	// "no longer redeemable" is exactly current_round > expires_after_round,
+	// matching the contract's boundary rather than sitting a round beyond
+	// it.
+	CreationRound        int64 `protobuf:"varint,7,opt,name=creation_round,json=creationRound,proto3" json:"creation_round,omitempty"`
+	ExpiresAfterRound    int64 `protobuf:"varint,8,opt,name=expires_after_round,json=expiresAfterRound,proto3" json:"expires_after_round,omitempty"`
+	TicketValidityPeriod int64 `protobuf:"varint,9,opt,name=ticket_validity_period,json=ticketValidityPeriod,proto3" json:"ticket_validity_period,omitempty"`
+	// When ticket_validity_period was read from the chain, RFC3339 with
+	// nanoseconds.
+	//
+	// A payer may serve this from a short cache rather than reading the
+	// contract inside every signing path. That makes the value "the
+	// chain's, as of a moment", and the moment has to be stated or a
+	// consumer cannot tell a current value from one governance changed a
+	// second ago. Treat it as telemetry for detecting drift, not as
+	// authority over anything.
+	TicketValidityPeriodObservedAt string `protobuf:"bytes,10,opt,name=ticket_validity_period_observed_at,json=ticketValidityPeriodObservedAt,proto3" json:"ticket_validity_period_observed_at,omitempty"`
+	unknownFields                  protoimpl.UnknownFields
+	sizeCache                      protoimpl.SizeCache
 }
 
 func (x *CreatePaymentResponse) Reset() {
@@ -201,6 +298,41 @@ func (x *CreatePaymentResponse) GetAcceptedQuoteRef() *QuoteRef {
 func (x *CreatePaymentResponse) GetWorkId() string {
 	if x != nil {
 		return x.WorkId
+	}
+	return ""
+}
+
+func (x *CreatePaymentResponse) GetPredecessorWorkId() string {
+	if x != nil {
+		return x.PredecessorWorkId
+	}
+	return ""
+}
+
+func (x *CreatePaymentResponse) GetCreationRound() int64 {
+	if x != nil {
+		return x.CreationRound
+	}
+	return 0
+}
+
+func (x *CreatePaymentResponse) GetExpiresAfterRound() int64 {
+	if x != nil {
+		return x.ExpiresAfterRound
+	}
+	return 0
+}
+
+func (x *CreatePaymentResponse) GetTicketValidityPeriod() int64 {
+	if x != nil {
+		return x.TicketValidityPeriod
+	}
+	return 0
+}
+
+func (x *CreatePaymentResponse) GetTicketValidityPeriodObservedAt() string {
+	if x != nil {
+		return x.TicketValidityPeriodObservedAt
 	}
 	return ""
 }
@@ -317,9 +449,13 @@ type GetSessionDebitsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Sender ETH address (20 raw bytes), echoed from the payment envelope.
 	Sender []byte `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
-	// Work-id of the long-lived session. Hex-encoded
-	// recipient_rand_hash, identical to the value the broker echoes in
-	// `Livepeer-Request-Id` when the session opens.
+	// Work-id of the long-lived session: the hex-encoded
+	// recipient_rand_hash the payee issued.
+	//
+	// An earlier comment here claimed this equals the value the broker
+	// echoes in `Livepeer-Request-Id` at session open. It does not, and
+	// never did — `Livepeer-Request-Id` is the caller's own idempotency
+	// key and has no relationship to a payment identity.
 	WorkId        string `protobuf:"bytes,2,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -481,8 +617,40 @@ type GetDepositInfoResponse struct {
 	// If the payer has initiated an unlock, the round at which
 	// withdrawal becomes possible. Zero when no unlock is pending.
 	WithdrawRound int64 `protobuf:"varint,3,opt,name=withdraw_round,json=withdrawRound,proto3" json:"withdraw_round,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// The payer's current round, read from the SAME clock that stamps
+	// CreatePaymentResponse.creation_round.
+	//
+	// It is here so a consumer holding an encumbrance can evaluate
+	// release against one clock rather than correlating two. The rule the
+	// field exists for is
+	//
+	//	release iff current_round > expires_after_round
+	//
+	// with equality staying encumbered — a ticket minted in round R is
+	// redeemable through R+window inclusive, so releasing at equality
+	// releases while the envelope is still spendable.
+	//
+	// A consumer MUST also refuse to release on a missing, zero, or
+	// REGRESSING value. A round that goes backwards means the payer's
+	// clock lost state or is talking to a re-orged or lagging node, and a
+	// stale round can only make an expired envelope look live — never the
+	// reverse — so the safe reading of a suspect clock is "still
+	// encumbered".
+	CurrentRound int64 `protobuf:"varint,4,opt,name=current_round,json=currentRound,proto3" json:"current_round,omitempty"`
+	// The chain's CURRENT ticketValidityPeriod, read fresh.
+	//
+	// Paired with the value a mint recorded, this is how a consumer
+	// notices that governance moved the goalposts: an envelope minted when
+	// the period was 2 and evaluated when it is 4 is redeemable two rounds
+	// longer than its recorded deadline says.
+	TicketValidityPeriod int64 `protobuf:"varint,5,opt,name=ticket_validity_period,json=ticketValidityPeriod,proto3" json:"ticket_validity_period,omitempty"`
+	// When that value was read. This RPC reads the contract fresh on every
+	// call — it is an administrative query, not a signing path, so there
+	// is no latency argument for caching and therefore no reason to make a
+	// consumer reason about staleness here.
+	TicketValidityPeriodObservedAt string `protobuf:"bytes,6,opt,name=ticket_validity_period_observed_at,json=ticketValidityPeriodObservedAt,proto3" json:"ticket_validity_period_observed_at,omitempty"`
+	unknownFields                  protoimpl.UnknownFields
+	sizeCache                      protoimpl.SizeCache
 }
 
 func (x *GetDepositInfoResponse) Reset() {
@@ -536,23 +704,51 @@ func (x *GetDepositInfoResponse) GetWithdrawRound() int64 {
 	return 0
 }
 
+func (x *GetDepositInfoResponse) GetCurrentRound() int64 {
+	if x != nil {
+		return x.CurrentRound
+	}
+	return 0
+}
+
+func (x *GetDepositInfoResponse) GetTicketValidityPeriod() int64 {
+	if x != nil {
+		return x.TicketValidityPeriod
+	}
+	return 0
+}
+
+func (x *GetDepositInfoResponse) GetTicketValidityPeriodObservedAt() string {
+	if x != nil {
+		return x.TicketValidityPeriodObservedAt
+	}
+	return ""
+}
+
 var File_livepeer_payments_v1_payer_daemon_proto protoreflect.FileDescriptor
 
 const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\n" +
-	"'livepeer/payments/v1/payer_daemon.proto\x12\x14livepeer.payments.v1\x1a livepeer/payments/v1/types.proto\"\xf4\x01\n" +
+	"'livepeer/payments/v1/payer_daemon.proto\x12\x14livepeer.payments.v1\x1a livepeer/payments/v1/types.proto\"\x9c\x02\n" +
 	"\x14CreatePaymentRequest\x12\x1c\n" +
 	"\trecipient\x18\x01 \x01(\fR\trecipient\x123\n" +
 	"\x16ticket_params_base_url\x18\x02 \x01(\tR\x13ticketParamsBaseUrl\x12J\n" +
 	"\x0eaccepted_price\x18\x03 \x01(\v2#.livepeer.payments.v1.AcceptedPriceR\racceptedPrice\x12=\n" +
-	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\"\xdb\x02\n" +
+	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\x12&\n" +
+	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\"\xe4\x04\n" +
 	"\x15CreatePaymentResponse\x12#\n" +
 	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x12'\n" +
 	"\x0ftickets_created\x18\x02 \x01(\rR\x0eticketsCreated\x12D\n" +
 	"\x0eexpected_value\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\rexpectedValue\x12G\n" +
 	"\x10funded_value_wei\x18\x04 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12L\n" +
 	"\x12accepted_quote_ref\x18\x05 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12\x17\n" +
-	"\awork_id\x18\x06 \x01(\tR\x06workId\"\xca\x01\n" +
+	"\awork_id\x18\x06 \x01(\tR\x06workId\x12.\n" +
+	"\x13predecessor_work_id\x18\v \x01(\tR\x11predecessorWorkId\x12%\n" +
+	"\x0ecreation_round\x18\a \x01(\x03R\rcreationRound\x12.\n" +
+	"\x13expires_after_round\x18\b \x01(\x03R\x11expiresAfterRound\x124\n" +
+	"\x16ticket_validity_period\x18\t \x01(\x03R\x14ticketValidityPeriod\x12J\n" +
+	"\"ticket_validity_period_observed_at\x18\n" +
+	" \x01(\tR\x1eticketValidityPeriodObservedAt\"\xca\x01\n" +
 	"\x1aReportPaymentResultRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1e\n" +
 	"\n" +
@@ -569,11 +765,14 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\vdebit_count\x18\x02 \x01(\x04R\n" +
 	"debitCount\x12\x16\n" +
 	"\x06closed\x18\x03 \x01(\bR\x06closed\"\x17\n" +
-	"\x15GetDepositInfoRequest\"s\n" +
+	"\x15GetDepositInfoRequest\"\x9a\x02\n" +
 	"\x16GetDepositInfoResponse\x12\x18\n" +
 	"\adeposit\x18\x01 \x01(\fR\adeposit\x12\x18\n" +
 	"\areserve\x18\x02 \x01(\fR\areserve\x12%\n" +
-	"\x0ewithdraw_round\x18\x03 \x01(\x03R\rwithdrawRound2\xa8\x04\n" +
+	"\x0ewithdraw_round\x18\x03 \x01(\x03R\rwithdrawRound\x12#\n" +
+	"\rcurrent_round\x18\x04 \x01(\x03R\fcurrentRound\x124\n" +
+	"\x16ticket_validity_period\x18\x05 \x01(\x03R\x14ticketValidityPeriod\x12J\n" +
+	"\"ticket_validity_period_observed_at\x18\x06 \x01(\tR\x1eticketValidityPeriodObservedAt2\xa8\x04\n" +
 	"\vPayerDaemon\x12h\n" +
 	"\rCreatePayment\x12*.livepeer.payments.v1.CreatePaymentRequest\x1a+.livepeer.payments.v1.CreatePaymentResponse\x12z\n" +
 	"\x13ReportPaymentResult\x120.livepeer.payments.v1.ReportPaymentResultRequest\x1a1.livepeer.payments.v1.ReportPaymentResultResponse\x12k\n" +

@@ -323,48 +323,12 @@ func (s *Server) GetAuditLog(_ context.Context, req GetAuditLogRequest) ([]types
 
 // ----- Publisher-side RPCs -----
 
-// BuildManifest constructs an unsigned manifest from spec.
-func (s *Server) BuildManifest(_ context.Context, spec publisher.BuildSpec) (*types.Manifest, error) {
-	if s.publisherSvc == nil {
-		return nil, errors.New("grpc: publisher not mounted")
-	}
-	return s.publisherSvc.BuildManifest(spec)
-}
-
 // GetIdentity returns the loaded publisher cold-key identity.
 func (s *Server) GetIdentity(_ context.Context) (types.EthAddress, error) {
 	if s.publisherSvc == nil {
 		return "", errors.New("grpc: publisher not mounted")
 	}
 	return s.publisherSvc.Identity()
-}
-
-// SignManifest signs an in-memory manifest produced by BuildManifest.
-//
-// Note: we accept the typed *types.Manifest struct here rather than
-// a JSON-bytes wire form because DecodeManifest requires a full
-// signature for validation, and BuildManifest output is intentionally
-// unsigned. The gRPC adapter (added under `make proto`) is responsible
-// for translating the wire form to/from this struct. See
-// docs/exec-plans/active/0001-repo-scaffold.md for the wiring plan.
-func (s *Server) SignManifest(_ context.Context, m *types.Manifest) (*types.Manifest, error) {
-	if s.publisherSvc == nil {
-		return nil, errors.New("grpc: publisher not mounted")
-	}
-	if m == nil {
-		return nil, errors.New("grpc: nil manifest")
-	}
-	return s.publisherSvc.SignManifest(m)
-}
-
-// BuildAndSign is the one-shot Build+Sign path used by
-// livepeer-registry-refresh. Output is byte-identical to BuildManifest
-// followed by SignManifest.
-func (s *Server) BuildAndSign(_ context.Context, spec publisher.BuildSpec) (*types.Manifest, error) {
-	if s.publisherSvc == nil {
-		return nil, errors.New("grpc: publisher not mounted")
-	}
-	return s.publisherSvc.BuildAndSign(spec)
 }
 
 // Health returns a coarse aliveness status.
@@ -410,9 +374,12 @@ type SelectRequest struct {
 // narrower than ResolvedNode on purpose: gateways get only the route
 // fields they need for dispatch, pricing, and payment.
 type SelectedRoute struct {
-	WorkerURL             string
-	EthAddress            string
-	Capability            string
+	WorkerURL  string
+	EthAddress string
+	Capability string
+	// Protocol is the signed tuple's protocol tag. Typed, not a key in
+	// Extra, because consumers gate their open path on it.
+	Protocol              string
 	Offering              string
 	PricePerWorkUnitWei   string
 	WorkUnit              string
@@ -423,6 +390,37 @@ type SelectedRoute struct {
 	ConstraintFingerprint []byte
 	RouteFingerprint      []byte
 	UnitsPerPrice         uint64
+	// SettlementKeys are the orch's delegated settlement-signing keys,
+	// carried with the route so a consumer verifies a broker signature
+	// against a set it already trusts.
+	SettlementKeys []SettlementKey
+	// WorkUnitEstimator is how a client computes a funding ceiling for
+	// this route before the work runs, when it can.
+	//
+	// Nil for the routes whose ceiling a caller derives from its own
+	// request, which is most of them. Present for the ones where it
+	// cannot — a multipart upload has no ceiling in its parameters —
+	// and a consumer that reserves funds against a route carrying one
+	// MUST use it rather than guess, or its reservation and the
+	// seller's bill are two different numbers.
+	WorkUnitEstimator *Estimator
+}
+
+// Estimator mirrors the manifest's work_unit.estimator block.
+type Estimator struct {
+	ID        string
+	Rounding  string
+	Exactness string
+	Package   string
+	Fixtures  string
+}
+
+// SettlementKey mirrors the proto message.
+type SettlementKey struct {
+	PublicKey                  string
+	NotBefore                  string
+	ExpiresAt                  string
+	IntroducedInPublicationSeq uint64
 }
 
 // KnownEntry mirrors the proto message.

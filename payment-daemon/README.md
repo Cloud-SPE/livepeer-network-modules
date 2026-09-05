@@ -43,10 +43,16 @@ Simulation inputs: [`scenarios/`](./scenarios/).
   stale cached session and returns `codes.Aborted` with retry details.
 - `PayeeAdmin.ResetSession` gives operators an explicit session-rotation
   surface instead of relying on daemon restarts.
-- **Chain integration is available when `--chain-rpc` is set.** In dev
+- **Chain integration is available when `--chain-rpc-urls` is set.** In dev
   mode the daemon still uses fake chain providers and a deterministic
   key; in production mode it validates against real chain state and runs
   the redemption pipeline.
+- **Chain mode requires a spend limit.** A sender daemon will not start
+  without `--max-payment-wei`, the most it may authorize for a single
+  payment. Optional `--max-price-per-unit` adds per-work-unit rate
+  ceilings, which is how a deployment mixing cheap and expensive
+  workloads gets meaningful protection. See
+  [operator-runbook §3.5](./docs/operator-runbook.md).
 
 Anything in [`docs/operator-runbook.md`](./docs/operator-runbook.md)
 that talks about real funds, real gas, or real redemption is
@@ -60,7 +66,8 @@ that talks about real funds, real gas, or real redemption is
 
 ```sh
 make build      # build dev image locally
-make run        # foreground; sock at ./run/payment-daemon.sock
+make run        # foreground receiver; sock at ./run/payment-daemon.sock
+                # (MODE=sender make run for the sender side)
 make test       # in-container go test ./...
 make publish TAG=0.1.0   # multi-arch push (requires real TAG)
 ```
@@ -78,9 +85,15 @@ Flags:
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--socket` | `/var/run/livepeer/payment-daemon.sock` | unix socket the gRPC server listens on |
-| `--db` | `/var/lib/livepeer/payment-daemon/sessions.db` | BoltDB session ledger path |
+| `--mode` | — (**required**) | `sender` or `receiver`; the process refuses to boot without it |
+| `--socket` | per-mode: `/var/run/livepeer/payer-daemon.sock` (sender), `/var/run/livepeer/payment-daemon.sock` (receiver) | unix socket the gRPC server listens on |
+| `--db` | `/var/lib/livepeer/payment-daemon/sessions.db` | BoltDB session ledger path (receiver only) |
+| `--txintent-db` | `txintents.db` beside `--db` | BoltDB transaction-intent store: every redemption the daemon has signed, resumed on restart (receiver, chain mode) |
 | `--payee-admin-token` | empty | bearer token for receiver-only `PayeeAdmin` methods; falls back to `PAYEE_DAEMON_ADMIN_TOKEN` when unset |
+
+The full flag set (chain, keystore, gas, and redemption tunables) is in
+[`docs/operator-runbook.md`](./docs/operator-runbook.md); `--version`
+prints the build and exits.
 
 The socket and DB paths are designed to be mounted as docker volumes shared
 with the broker container.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/chain"
@@ -48,44 +47,6 @@ func TestServer_ResolverModeOnly_PublisherCallsRejected(t *testing.T) {
 	}
 	if srv.HasPublisher() {
 		t.Fatal("publisher should not be mounted")
-	}
-}
-
-func TestServer_PublisherEndToEnd(t *testing.T) {
-	sk, _ := signer.GenerateRandom()
-	c := chain.NewInMemory(sk.Address())
-	a := audit.New(store.NewMemory())
-	clk := &clock.Fixed{T: time.Unix(1745000000, 0).UTC()}
-	pub := publisher.New(publisher.Config{Chain: c, Signer: sk, Audit: a, Clock: clk})
-
-	srv, err := NewServer(Config{Publisher: pub, Audit: a})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := srv.BuildManifest(context.Background(), publisher.BuildSpec{
-		EthAddress: sk.Address(),
-		Nodes:      []types.Node{{ID: "n1", URL: "https://x.test", Capabilities: []types.Capability{}}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	signed, err := srv.SignManifest(context.Background(), m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if signed.Signature.Value == "" {
-		t.Fatal("not signed")
-	}
-	addr, err := srv.GetIdentity(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if addr != sk.Address() {
-		t.Fatalf("GetIdentity = %s, want %s", addr, sk.Address())
-	}
-	// Resolver-only RPCs must reject in publisher mode.
-	if _, err := srv.ResolveByAddress(context.Background(), ResolveByAddressRequest{EthAddress: "0xabcdef0000000000000000000000000000000000"}); err == nil {
-		t.Fatal("resolver RPC should fail in publisher-only mode")
 	}
 }
 

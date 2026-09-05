@@ -13,22 +13,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/selection"
 )
 
-type MetadataStatusSource interface {
-	StatusFor(capabilityID, offeringID string) (MetadataStatus, bool)
-}
-
 type PoolStatusSource interface {
 	StatusFor(backendID, capabilityID, offeringID string) poolsnapshot.Status
-}
-
-type MetadataStatus struct {
-	Provider            string
-	Applicable          bool
-	LastAttemptAt       time.Time
-	LastSuccessAt       time.Time
-	LastError           string
-	LastResult          string
-	ConsecutiveFailures int
 }
 
 type healthResponse struct {
@@ -160,15 +146,10 @@ type poolAggregateStatus struct {
 	TopExclusionReasons                   map[string]int `json:"top_exclusion_reasons,omitempty"`
 }
 
-// HealthHandler returns the broker's normalized live-health snapshot.
-func HealthHandler(mgr *health.Manager, metadata MetadataStatusSource, pool PoolStatusSource) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		WriteHealthResponse(w, mgr, metadata, pool)
-	}
-}
-
-func WriteHealthResponse(w http.ResponseWriter, mgr *health.Manager, metadata MetadataStatusSource, pool PoolStatusSource) {
-	snap := mgr.Snapshot()
+// WriteHealthResponse renders the broker's normalized live-health
+// document. It takes the verdict rather than producing it: the caller
+// owns where health comes from, and this owns the wire shape.
+func WriteHealthResponse(w http.ResponseWriter, snap health.Response, pool PoolStatusSource) {
 	statuses := make(map[string]string, len(snap.Capabilities))
 	grouped := make(map[string]*healthCapabilityStatus, len(snap.Capabilities))
 	out := healthResponse{
@@ -191,24 +172,6 @@ func WriteHealthResponse(w http.ResponseWriter, mgr *health.Manager, metadata Me
 				Backends:   make([]backendStatus, 0, 1),
 			}
 			entry = grouped[key]
-			if st, ok := metadata.StatusFor(cap.ID, cap.OfferingID); ok {
-				lastSuccessAgeSeconds := 0.0
-				if st.LastSuccessAt.IsZero() {
-					lastSuccessAgeSeconds = -1
-				} else {
-					lastSuccessAgeSeconds = out.GeneratedAt.Sub(st.LastSuccessAt).Seconds()
-				}
-				entry.Metadata = &metadataStatus{
-					Provider:              st.Provider,
-					Applicable:            st.Applicable,
-					LastAttemptAt:         st.LastAttemptAt,
-					LastSuccessAt:         st.LastSuccessAt,
-					LastSuccessAgeSeconds: lastSuccessAgeSeconds,
-					LastError:             st.LastError,
-					LastResult:            st.LastResult,
-					ConsecutiveFailures:   st.ConsecutiveFailures,
-				}
-			}
 		}
 		var poolStatusValue *poolsnapshot.Status
 		if pool != nil {

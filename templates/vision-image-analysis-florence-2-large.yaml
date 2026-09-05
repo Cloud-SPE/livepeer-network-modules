@@ -1,0 +1,155 @@
+# Image understanding — Florence-2-large, as run on the operator's
+# "ai-rig-broker".
+#
+# Renamed from `openai-vision-florence-2-large` on 2026-09-01 (plan 0045 §6).
+# OpenAI has no vision endpoint, so `openai:vision` claimed one that does not
+# exist — and Florence-2 is not a chat model, so `openai:chat-completions` was
+# wrong in the other direction. `capability_id` is opaque to the protocol
+# (runner-attach.md §3.2: "no closed enum"), and the network's vocabulary rule
+# (runner-attach.md §3.2, decision 1 of the 2026-09-02 walkthrough) gives a
+# non-OpenAI capability the product domain as its prefix (`video:transcode.vod`,
+# `meet:sfu-room`), so the id says what the thing does.
+
+id: vision-image-analysis-florence-2-large
+capability: vision:image-analysis
+offering_id: florence-2-large
+protocol: paid-job/v1
+display_name: Image understanding (Florence-2-large)
+description: >-
+  Structured image analysis: an image and a task go in (caption, OCR, object
+  detection, dense region captions), a result with text and, where the task
+  produces them, regions comes back. Metered in images, claimed by the runner
+  in a response header.
+
+# Derived 2026-09-01 (plan 0045 §6), replacing the placeholder `25000000` the
+# rig's config carried with a comment saying it was a placeholder to be
+# re-derived. That figure was about $0.000000043 per image at the 2026-06-15
+# ETH basis — roughly 4 cents per MILLION images.
+#
+# Anchor: $0.0015/image, Google Cloud Vision. The closest comparable, because it
+# does captioning, OCR and object detection in one call, which is Florence's
+# surface. A frontier VLM's per-token vision pricing was rejected as the anchor
+# because it would price a 0.77B specialist like GPT-4o. 30% under, per the
+# reference's method, is $0.00105/image.
+#
+# Computed as exactly 15x the reference's whisper figure ($0.00007 per audio
+# second -> 40592888126 wei), so it inherits the 2026-06-15 basis with no
+# rounding drift and can be checked against a row already in that document.
+# Derivation and provenance: docs/references/2026-09-01-vision-pricing-and-
+# flux-anchor.md. The June reference is point-in-time and is not edited.
+#
+# Sanity: this lands image analysis at about 1/20th of a FLUX image in the same
+# catalog, which is the right shape — generating an image is far more work than
+# describing one — where the placeholder had it at 1/487,000th.
+price_default: { amount_wei: "608893321890", per_units: 1 }
+
+# The rig pinned no concurrency. Two in flight is pool policy: Florence-2-large
+# is a 0.8B model and a single analysis is one short forward pass, so the card
+# is idle between requests at a concurrency of one — but the response can carry
+# a long generated description, so this is not as cheap per request as speech.
+capacity: { max_in_flight: 2, queue_limit: 2 }
+
+extra:
+  provider: florence
+  # The upstream weights. Worth stating: "florence-2-large" is served under
+  # several fine-tunes and this is Microsoft's release.
+  backend_model: microsoft/Florence-2-large
+  vision:
+    task: analyze
+
+# The rig's `constraints.gpu_vendor`. Advertised for routing; the enforcement
+# is `requirements.gpu_classes` below, which is NVIDIA-only anyway.
+constraints:
+  gpu_vendor: NVIDIA
+
+# `identity.model`, not `identity.openai.model` (decision 2 of the 2026-09-02
+# walkthrough, option C): this is not an OpenAI capability, so the runner
+# declares its identity under the plain key. A runner still declaring the
+# openai-namespaced key does not match this offer, which is the point — the
+# selector is where the vocabulary is enforced.
+match:
+  identity.model: florence-2-large
+
+certification:
+  # Runs the runner's declared probe (the rig used http-status on /healthz);
+  # sufficiency only, per certification-steps.md §3.1.
+  - { name: ready, type: readiness, required: true, config: { attempts: 5, interval_ms: 3000 } }
+  - name: smoke
+    type: request
+    required: true
+    config:
+      # The runner's structured analyze request (decision 2, option C): the
+      # capability IS `POST /v1/vision/analyze`, and the runner declares that
+      # path in its contract. The chat-shaped route the rig also served is not
+      # a declared capability and is not probed — a probe that passed on it
+      # would certify a surface this offer does not sell.
+      transport: unary
+      body:
+        model: "{{identity.model}}"
+        # A 32x32 PNG inline as a data URL. `{{fixture_url.image/png-64}}`
+        # would also work (certification-steps.md §4), but that makes the
+        # probe depend on the runner reaching the broker's base URL, and an
+        # image-understanding runner has no other reason to; inline needs
+        # nothing. Any valid image will do: the assertion below is that a
+        # result came back at all, not that it is a good one.
+        image: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAASElEQVR42mNg4BCQUNAwsHDwCIhIyCioaOiYMGPBig07Dpy4cOPBiw8/KJYftWDUglELRi0YtWDUglELRi0YtWDUglELhooFACLx0Ez8llH7AAAAAElFTkSuQmCC"
+        # The cheapest task in the runner's vocabulary (caption, ocr,
+        # object_detection, dense_region_caption, ...). Caption because it is
+        # what the runner defaults to and what every Florence build supports;
+        # a probe on a region task would certify less broadly, not more.
+        task: caption
+      # One result per image; `response` is the task's text. `usage.images`
+      # is the runner's own count and must agree with the header the usage
+      # step below reads — a probe that checked only one of them would let
+      # the two drift.
+      assert:
+        - "$.results[0].response"
+        - "$.usage.images"
+  # The rig metered this from a response header. Which header and which
+  # extractor reads it are runner-declared and frozen (runner-attach.md §3.2);
+  # a passing step proves the header is actually being emitted, which is the
+  # failure mode a header-based claim has and a usage-block one does not — a
+  # runner that answers correctly and forgets the header bills zero forever.
+  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+  # Not required. A vision forward pass should be fast; a slow one is a scoring
+  # input, not an eligibility question.
+  - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 5000 } }
+
+# The rig wrote `constraints.gpu: "4090"`, `gpu_vendor: NVIDIA` — decided, so
+# stated. Classes rather than model strings because a model string is the
+# driver's exact case-sensitive marketing name (runner-attach.md §3.1) and an
+# allowlist of them excludes rebadges and variants that are the same card for
+# this purpose; `rtx-4090` is the pool's normalised class for all of them.
+#
+# rtx-5090 is a widening of what the operator wrote: strictly the faster card,
+# and without it this template could never take a slot on the rig that runs
+# chat. Delete it to hold the operator's line exactly.
+#
+# No gpu_vram_min_bytes: a 0.8B model needs far less than either class has, so
+# a floor here would be a statement about the card that the class list already
+# makes.
+requirements:
+  gpu_classes: [rtx-4090, rtx-5090]
+
+# Below chat and the live session, above the batch audio families. Vision is
+# interactive — a caller is usually waiting on the answer — which is what puts
+# it ahead of workloads whose callers uploaded a file and went away.
+priority: 20
+
+# Primary only. A vision request is short, but the model stays resident and the
+# response can be long; it is not the near-free rider that speech and Whisper
+# are, and it has not been observed sharing a card here.
+stacking: { primary: true, secondary_on: [] }
+
+# runner_compose omitted: the image that serves this workload is
+# moatus/florence-2-runner, and as published it serves no runner contract,
+# declares `openai:vision`, and reports its identity under the OpenAI key. The
+# tag it ships the contract under (lnm-6ig) is the tag that belongs here;
+# inventing one now would fail at `compose up` on a member's host instead of
+# in review (tracked with the other unresolved images as lnm-v12).
+
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

@@ -58,6 +58,28 @@ func (s *Store) RecordNonce(recipientRand *big.Int, nonce uint32) error {
 	})
 }
 
+// NonceCount reports how many nonces have been recorded under a
+// recipient rand. It is the session's consumed budget: once it reaches
+// MaxSenderNonces the payee refuses further tickets on this rand, so
+// both sides need to be able to ask before one of them signs something
+// the other will reject.
+func (s *Store) NonceCount(recipientRand *big.Int) (int, error) {
+	count := 0
+	err := s.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte(noncesBucket))
+		if bucket == nil {
+			return nil
+		}
+		prefix := append(randHex(recipientRand), 0x00)
+		c := bucket.Cursor()
+		for k, _ := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, _ = c.Next() {
+			count++
+		}
+		return nil
+	})
+	return count, err
+}
+
 func nonceKey(recipientRand *big.Int, nonce uint32) []byte {
 	prefix := append(randHex(recipientRand), 0x00)
 	out := make([]byte, len(prefix)+4)
@@ -101,4 +123,54 @@ func hasPrefix(b, prefix []byte) bool {
 		}
 	}
 	return true
+}
+
+// HighestSenderNonce returns the largest nonce recorded under a
+// recipient rand, and false when none are.
+//
+// The nonce is the low four bytes of the key, big-endian, so the last
+// key under the rand's prefix carries the maximum. Used to tell a sender
+// that REWOUND — its nonce stream restarted below what this payee has
+// already seen, which is what partial payer state loss looks like from
+// here — apart from an ordinary duplicate delivery, which replays a
+// nonce at the top of the stream rather than the bottom.
+func (s *Store) HighestSenderNonce(recipientRand *big.Int) (uint32, bool, error) {
+	var (
+		highest uint32
+		found   bool
+	)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte(noncesBucket))
+		if bucket == nil {
+			return nil
+		}
+		prefix := append(randHex(recipientRand), 0x00)
+		c := bucket.Cursor()
+		for k, _ := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, _ = c.Next() {
+			if len(k) < len(prefix)+4 {
+				continue
+			}
+			n := binary.BigEndian.Uint32(k[len(prefix):])
+			if !found || n > highest {
+				highest, found = n, true
+			}
+		}
+		return nil
+	})
+	return highest, found, err
+}
+
+// FillNonceLedger records a run of nonces under a rand without the
+// per-call cap check, so a test can arrange a ledger that is already at
+// capacity. Not for production use: the cap in RecordNonce is the point.
+func (s *Store) FillNonceLedger(recipientRand *big.Int, from, count uint32) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		bucket := tx.Bucket([]byte(noncesBucket))
+		for i := uint32(0); i < count; i++ {
+			if err := bucket.Put(nonceKey(recipientRand, from+i), []byte{1}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

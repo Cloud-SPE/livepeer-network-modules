@@ -24,6 +24,11 @@ type ticketParamsRequestJSON struct {
 
 type ticketParamsResponseJSON struct {
 	TicketParams ticketParamsJSON `json:"ticket_params"`
+	// Relayed verbatim from the payee. A payer that lost its durable
+	// nonce counter resumes above this rather than replaying into
+	// rejections it cannot tell apart from duplicate deliveries.
+	HighestSeenNonce uint32 `json:"highest_seen_nonce,omitempty"`
+	HasSeenNonces    bool   `json:"has_seen_nonces,omitempty"`
 }
 
 type ticketParamsJSON struct {
@@ -71,7 +76,9 @@ func ticketParamsHandler(client payment.Client) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(ticketParamsResponseJSON{
-			TicketParams: renderTicketParamsJSON(params),
+			TicketParams:     renderTicketParamsJSON(params),
+			HighestSeenNonce: params.HighestSeenNonce,
+			HasSeenNonces:    params.HasSeenNonces,
 		})
 	}
 }

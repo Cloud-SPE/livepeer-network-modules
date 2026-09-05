@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -27,6 +28,9 @@ func Load(path string) (*Config, error) {
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validate config %q: %w", path, err)
+	}
+	for _, warning := range cfg.Deprecations() {
+		log.Printf("warning: %s", warning)
 	}
 
 	return &cfg, nil

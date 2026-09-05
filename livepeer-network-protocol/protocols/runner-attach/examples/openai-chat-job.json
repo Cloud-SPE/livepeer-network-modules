@@ -1,0 +1,48 @@
+{
+  "contract_version": "1.0",
+  "credential": { "kind": "bearer", "token": "lpc_9f2c1ab4c81b32d0" },
+  "host_id": "host-3f9a",
+  "agent_version": "pool-member-agent/0.9.2",
+  "hardware": [
+    {
+      "gpu_uuid": "GPU-8f3c2a1e-4b7d-4e9f-a0c1-2d3e4f5a6b7c",
+      "gpu_model": "NVIDIA H100 80GB HBM3",
+      "vram_bytes": 85899345920,
+      "driver": "560.35.03",
+      "cuda": "12.6",
+      "facts": { "pcie_gen": "5", "power_limit_w": "700" }
+    }
+  ],
+  "capabilities": [
+    {
+      "capability_id": "openai:chat-completions",
+      "protocol": "paid-job/v1",
+      "local_id": "vllm-70b",
+      "transports": ["unary", "stream"],
+      "work_unit": { "name": "tokens", "extractor": { "type": "openai-usage" } },
+      "paths": { "invoke": "/v1/chat/completions", "options": "/v1/models" },
+      "readiness": {
+        "type": "http-openai-model-ready",
+        "path": "/v1/models",
+        "config": { "model": "llama-3-70b" }
+      },
+      "identity": { "openai.model": "llama-3-70b", "provider": "vllm" },
+      "schema_versions": { "paid-job/v1": "1.0.15" },
+      "requirements": { "gpu_vram_min_bytes": 68719476736 },
+      "devices": ["GPU-8f3c2a1e-4b7d-4e9f-a0c1-2d3e4f5a6b7c"],
+      "x-quantization": "fp8",
+      "x-certification-suggested": [
+        {
+          "name": "smoke",
+          "type": "request",
+          "required": true,
+          "config": {
+            "body": { "model": "llama-3-70b", "messages": [{ "role": "user", "content": "ping" }] },
+            "expect_status": 200,
+            "assert": ["$.choices[0].message.content"]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -464,3 +464,52 @@ func TestNewDefaultProcessor_RequiresDeps(t *testing.T) {
 		})
 	}
 }
+
+func TestProcessor_AdoptedAttemptWithoutCapsReplacesFromOracle(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	// Adopted with no gas caps. No receipt is ever set for the adopted
+	// hash, so SubmitTimeout expires and the processor must replace it —
+	// bumping from the oracle's estimate rather than from nil.
+	adopted := chain.TxHash{0xaa}
+	id, err := h.store.Adopt(ctx, txintent.Params{
+		Kind: "Adopted", KeyParams: []byte{1}, To: chain.Address{0x01}, GasLimit: 21_000,
+	}, adopted, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.After(10 * time.Second)
+	for len(h.sentTxHashes()) < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("expected a replacement broadcast")
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	replacement := h.sentTxHashes()[0]
+	h.receipts.Set(replacement, &receipts.Receipt{TxHash: replacement, Status: 1, Confirmed: true})
+
+	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	final, err := h.store.Wait(waitCtx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Status != txintent.StatusConfirmed {
+		t.Fatalf("status = %s (%v)", final.Status, final.FailedReason)
+	}
+	if len(final.Attempts) != 2 || final.Attempts[1].Nonce != 5 || final.Attempts[0].ReplacedAt == nil {
+		t.Fatalf("expected the adopted attempt replaced at nonce 5, got %+v", final.Attempts)
+	}
+	bump := int64(100 + config.Default().TxIntent.ReplacementGasBump)
+	want := new(big.Int).Mul(big.NewInt(3_000_000_000), big.NewInt(bump)) // fake oracle FeeCap
+	want.Quo(want, big.NewInt(100))
+	if final.Attempts[1].GasFeeCap.Cmp(want) != 0 {
+		t.Fatalf("replacement fee cap = %s, want oracle fee cap bumped = %s", final.Attempts[1].GasFeeCap, want)
+	}
+	if n := len(h.sentTxHashes()); n != 1 {
+		t.Fatalf("sends = %d, want exactly the replacement", n)
+	}
+}

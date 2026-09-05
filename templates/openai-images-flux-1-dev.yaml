@@ -1,0 +1,138 @@
+# Image generation — FLUX.1-dev, as run on the operator's "ai-rig-broker".
+#
+# Hardware policy decided 2026-09-01 (plan 0045 §5); see `requirements`.
+
+id: openai-images-flux-1-dev
+capability: openai:images-generations
+offering_id: flux-1-dev
+protocol: paid-job/v1
+display_name: Image generation (FLUX.1-dev)
+description: >-
+  OpenAI-compatible image generation. Metered in images from the request's `n`,
+  so the bill is known before the job runs and a caller cannot be surprised by
+  it.
+
+# The operator's real rate: 12177 Gwei per image — ~$0.0210 at the 2026-06-15
+# ETH basis, against the $0.025/image FLUX.1-dev anchor in
+# docs/references/2026-06-15-openai-compatible-market-pricing.md. So the
+# operator sells ~16% under the anchor where that reference's own
+# recommendation was 30% under (10148222031500 wei). The difference is a margin
+# decision, not an error, and it is carried as the operator wrote it.
+#
+# Step count and resolution move the real cost per image more than any other
+# lever in this catalog. A pool serving a non-default step count should
+# reprice.
+price_default: { amount_wei: "12177000000000", per_units: 1 }
+
+# One at a time. The rig pinned no concurrency here, but a diffusion step uses
+# the whole card: a second concurrent generation adds no throughput, it makes
+# both callers wait twice as long. queue_limit 1 keeps the wait bounded — a
+# caller who cannot be served soon should get a 503 with a backoff rather than
+# a place in a long line.
+capacity: { max_in_flight: 1, queue_limit: 1 }
+
+extra:
+  provider: image-runner
+  # Here the served identity and the upstream repo are the same string
+  # (`black-forest-labs/FLUX.1-dev`), so this is not the redundant restatement
+  # it would be elsewhere — it is the fact that the runner serves the upstream
+  # weights unmodified, which for a diffusion model is worth saying.
+  backend_model: black-forest-labs/FLUX.1-dev
+  image:
+    task: generation
+
+# The rig's `constraints:` block, kept whole. `gpu_vendor` is advertised
+# metadata for routing; the gate is `requirements.gpu_classes` below, which
+# is NVIDIA-only. It is still advertised metadata rather than a gate — a
+# constraint tells a buyer what they are routing to, it does not stop this
+# template being placed on an AMD card.
+constraints:
+  tier: standard
+  gpu_vendor: NVIDIA
+
+match:
+  identity.openai.model: black-forest-labs/FLUX.1-dev
+
+certification:
+  # Runs the runner's declared probe (the rig used http-status on /healthz
+  # expecting 200); the template sets sufficiency only. Ten attempts at 3s
+  # because a diffusion transformer's weights are the slowest load in the
+  # catalog.
+  - { name: ready, type: readiness, required: true, config: { attempts: 10, interval_ms: 3000 } }
+  - name: smoke
+    type: request
+    required: true
+    # A denoise at default step count is slow next to an OpenAI ping, hence the
+    # step-level override rather than the 30s type default.
+    timeout_ms: 90000
+    config:
+      transport: unary
+      body:
+        model: "{{identity.openai.model}}"
+        prompt: "a probe"
+        n: 1
+        # Pin the response shape so the assertion below is deterministic:
+        # the OpenAI images API returns either `b64_json` or `url` depending
+        # on this field, and a probe that accepts either proves less.
+        response_format: b64_json
+      # Strengthened 2026-09-01 (plan 0045 §4). The previous assert was
+      # `{path: $.data[0], min: 0}`, which passes on an empty object — it
+      # proved a response came back, not that it carried an image. This one
+      # requires the image payload to be present. It still cannot prove the
+      # payload DECODES to an image of the right size: none of the step types
+      # in certification-steps.md §3 can decode a b64_json body, so that
+      # remains a claim this catalog cannot check.
+      assert:
+        - "$.data[0].b64_json"
+  # The rig metered this with a request-formula over `$.n` defaulting to 1, so
+  # a passing usage step proves the count was read from the request the broker
+  # actually sent. Which formula is runner-declared and frozen.
+  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+
+# Decided 2026-09-01 (plan 0045 §5). The rig's config read `gpu:
+# "YOUR_GPU_MODEL"` — a placeholder from whatever example it was copied from —
+# and this template shipped with `requirements: {}` while that stood.
+#
+# What the empty list actually did was not "permissive": it made this template
+# the default winner on every card the rest of the catalog declines. Nothing
+# else admits an a100, h100, l40s or rtx-3090, so the highest-priority template
+# admitting everything took them — and on a GTX 1080 a FLUX generation does
+# not finish inside any reasonable caller timeout at all.
+#
+# FLUX.1-dev is ~12B parameters and ~24GB in bf16. An 8GB card cannot run it;
+# the pair below is the catalog's other heavy-model family and the operator's
+# actual rigs. No gpu_vram_min_bytes: on this narrow a class list it can only
+# exclude cards the class already vouches for.
+requirements:
+  gpu_classes: [rtx-4090, rtx-5090]
+
+# Raised 10 -> 28 in the same change that filled in `requirements`; the two are
+# one decision. Just under chat (30): on a 5090 both qualify and chat is the
+# rig's flagship, so chat holds the primary slot and FLUX takes the card only
+# where chat does not.
+#
+# Above vision (20) on a 4090. That ordering is a COMMERCIAL call, not a
+# technical one — it says image generation earns that card more than image
+# analysis does. If that is wrong, move this number, not the class list.
+priority: 28
+
+# Primary only, and the strictest case for it. The model occupies the card for
+# the duration of every job, so this is not the low-footprint rider a secondary
+# slot is for, and it tolerates one less well than chat does — a co-resident
+# secondary shows up directly as slower generations.
+stacking: { primary: true, secondary_on: [] }
+
+# runner_compose omitted: the images that serve this workload are unresolved
+# (tracked as lnm-v12). The rig named a compose service, not a published image
+# reference, and inventing a ghcr tag here would fail at `compose up` on a
+# member's host instead of in review.
+
+# The lowest min_jobs in the catalog because each job is the most expensive: 10
+# generations already costs a probationary card several minutes of exclusive
+# work, and the failure modes (OOM, timeout, no image) all show up in the first
+# few.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 10 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

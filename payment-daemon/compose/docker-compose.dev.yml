@@ -6,14 +6,14 @@ services:
   # Dev-mode receiver — chain-stubbed; for smoke usage only. Do not
   # accept real funds against this profile.
   payment-daemon-dev:
-    image: ${REGISTRY}/livepeer-payment-daemon:${TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v2.0.0}
     profiles: [dev]
     command:
       - --mode=receiver
       - --socket=/var/run/livepeer/payment-daemon.sock
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
     volumes:
-      - ${PAYMENT_DAEMON_SOCKET_DIR}:/var/run/livepeer
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
       - payment-daemon-db:/var/lib/livepeer/payment-daemon
 
 volumes:

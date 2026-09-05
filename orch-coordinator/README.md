@@ -41,10 +41,11 @@ idle timeout.
 
 ## Status
 
-**v0.1 scaffold** (plan 0018, commit 1). The flag set, config parser, broker
-HTTP client, and scrape loop are wired; candidate output, diff surface,
-signed-manifest receive, resolver endpoint, metrics, and web UI land in
-later commits.
+Feature-complete against plan 0018 plus the plan 0042 sign-cycle agent:
+config parser, broker HTTP client, scrape loop, candidate build + tarball,
+diff surface, roster UI, signed-manifest receive + atomic publish, the
+resolver endpoint, the agent bearer credential, and Prometheus metrics all
+ship.
 
 ## Build
 
@@ -54,12 +55,41 @@ make test                # go test -race ./...
 make help                # show all targets
 ```
 
+## Hot-zone console
+
+Four pages manage runners and offers over each broker's admin API
+(plan 0043 §3.6). They are the *hot* zone: they change what a runner may
+serve. They cannot change what is sold — prices come from offers, and
+the manifest is still only ever changed by the cold key on secure-orch.
+
+| Page | Answers |
+|---|---|
+| **Runners** | Which hosts are attached, what they declared, and why a capability is or is not eligible for an offer — with the disagreeing field and both sides named. |
+| **Offers** | What each broker sells, the frozen runner-declared shape, and candidate shapes with their diff. `Accept this shape` is the explicit supersession gesture; the candidate still has to be signed. |
+| **Enroll host** | Mint an attach credential (shown once) with the agent environment to paste into the bundle; list, and revoke, enrollments. |
+| **Certification** | What each runner proved before it was allowed to serve, step by step with evidence; re-run on demand. |
+
+Each broker needs `admin_token_ref` in `coordinator-config.yaml`:
+
+```yaml
+brokers:
+  - name: broker-a
+    base_url: http://broker-a:8080
+    admin_token_ref: env://BROKER_A_ADMIN_TOKEN   # or file:///run/secrets/broker-a-admin
+```
+
+Reference form only, never the secret inline. A broker without one is
+listed but not administrable, and the pages say so. The pages are not
+registered at all when no broker admin surface is configured.
+
 ## Configuration
 
 A YAML config file (mounted to `/etc/livepeer/orch-coordinator.yaml` by
 default) plus flags. See
 [`examples/coordinator-config.yaml`](./examples/coordinator-config.yaml)
-and the [`AGENTS.md`](./AGENTS.md) flag table.
+and the flag documentation in
+[`docs/operator-runbook.md`](./docs/operator-runbook.md); `--help` on the
+binary is the authoritative list.
 
 ## Layout
 
@@ -77,8 +107,6 @@ orch-coordinator/
 ├── docs/                            design + operator runbook
 ├── Dockerfile                       distroless static
 ├── Makefile                         docker-first gestures
-└── compose.yaml                     dev compose (coordinator + a fake broker)
+├── compose/                         run-only compose (+ agent overlay)
+└── compose.yaml                     dev compose (coordinator in --dev mode)
 ```
-
-`internal/` packages are added as code lands across plan 0018's seven
-commits.

@@ -72,15 +72,21 @@ Convergence is by convention or market pressure.
 **Why:** capability semantics evolve faster than canonical registries. A registered-only
 model becomes a chokepoint.
 
-## R8 — Typology of interaction modes
+## R8 — Typology of interaction protocols
 
-A small fixed set of wire-contract templates (req/resp, stream, multipart, ws-realtime,
-rtmp-hls, session-control). Capabilities self-declare which mode they use. Gateways
-implement per-mode adapters; capabilities are opaque to gateway code.
+A small fixed set of wire contracts. Capabilities self-declare which one they use, and
+gateways implement one client per contract; capabilities stay opaque to gateway code.
 
 **Why:** R8 is what makes R1 possible. Without a typology, gateway code has to
 understand each capability — workload-agnosticism collapses. With a typology, workload
 knowledge is contained.
+
+**As implemented (2026-08).** The typology is two protocols — `paid-job/v1` and
+`paid-session/v1` — plus per-offering declared axes, replacing the original seven-mode
+enumeration. The requirement is unchanged and better served: workload identity moved
+out of protocol names into runtime-descriptor schemas, so adding a workload no longer
+enlarges the typology at all. See
+[interaction-modes.md](./interaction-modes.md).
 
 ## R9 — v1 trusts orch-reported usage
 

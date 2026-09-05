@@ -1,0 +1,191 @@
+# VOD transcode — as run on the operator's "us-central-broker" rig.
+#
+# The first workload in this catalog from a third rig, and the only one on
+# 2080-class hardware: the cards that keep earning on encode work long after
+# they stopped being able to hold a useful model.
+#
+# The rig ran this offering as `offering_id: default`, and so did its ABR
+# sibling. That is not legal: the broker admits one offer per offering id
+# across the whole catalog, and since 2026-09-02 the loader enforces the same
+# rule (load.go) — before that it keyed on (capability, offering_id) and would
+# have let the pair through to be refused together at push. Renamed to
+# `vod-default` for that reason and a second one: an offering id is not rig-local, it
+# travels in the `Livepeer-Offering` header, it is what the controller sorts
+# offers by when it pushes them (brokerpush/catalog.go), and it is what an
+# operator reads in a console listing every offering the pool sells. Two rows
+# both called "default" are ambiguous everywhere except on the rig that named
+# them.
+
+id: video-transcode-vod
+capability: video:transcode.vod
+offering_id: vod-default
+protocol: paid-job/v1
+display_name: VOD transcode
+description: >-
+  File-in, file-out video transcode. Priced per job rather than per second of
+  output, so a caller knows the cost of a transcode before they submit it and
+  the pool absorbs the variance in clip length.
+
+# Per 1000 frame-megapixels of delivered output
+# (docs/references/2026-09-05-transcode-megapixel-pricing.md; anchor tier
+# corrected the same day in …-pricing-correction.md). Decided
+# 2026-09-05, replacing the rig's flat 4.8e12 per job, under which a
+# ten-second clip and a two-hour film cost the same. The runner counts the
+# units and claims them in the response trailer.
+price_default: { amount_wei: "1629000000000", per_units: 1000 }
+
+# The rig pinned no concurrency. Two in flight is pool policy: transcode
+# saturates the encoder blocks rather than VRAM, so the limit is how many
+# streams NVENC will take, not how much memory the card has. The queue stays
+# shallow — a queued transcode is work the broker could have handed to a card
+# that was free.
+capacity: { max_in_flight: 2, queue_limit: 2 }
+
+extra:
+  provider: transcode-runner
+  video:
+    task: transcode
+    # No presets or codecs list. The architecture-overview's video contract
+    # has a place for both, and the rig declared neither; a list invented here
+    # would be a promise to callers that nothing checks.
+
+# The rig's `constraints:` block, kept as constraints because these are the
+# axes a BUYER routes on and they reach the manifest tuple.
+#
+# `region` is the one that earns this block its keep. A gateway picking an
+# orchestrator for a transcode job is picking a network path — the source file
+# has to get there and the renditions have to come back — so an offering with
+# no region is not merely under-described, it is unfindable by anyone who
+# cares where their work runs (template.go, Constraints). It is also the only
+# region in this catalog: the two AI rigs supplied none, and until they do,
+# their offerings are the ones that cannot be found this way.
+constraints:
+  tier: standard
+  gpu_vendor: NVIDIA
+  region: us-central
+
+# No `match:`. The rig runs exactly one VOD transcode runner and there is no
+# model identity to select on — a transcoder is not a model — so any runner
+# declaring this capability is the runner this offer wants. That is the
+# single-runner case template.go's Match comment describes, and it is the only
+# template in this catalog without a selector.
+
+certification:
+  # The rig probed http-status on http://transcode-runner:8080/healthz. Neither
+  # the type nor the path appears here: certification-steps.md §3.1 runs the
+  # probe the RUNNER declared and lets the author set only how much readiness
+  # is enough. Three attempts is plenty — an ffmpeg wrapper is up as soon as
+  # its process is.
+  - { name: ready, type: readiness, required: true, config: { attempts: 3, interval_ms: 2000 } }
+  - name: smoke
+    type: request
+    required: true
+    # A real encode of a 2s clip is slow next to an OpenAI ping, hence the
+    # step-level override rather than the 30s type default.
+    timeout_ms: 60000
+    config:
+      # PROPOSED, pending the transcode team (2026-09-05): the VOD runner is
+      # still asynchronous (202 + job_id) and its synchronous request schema
+      # does not exist yet. This body mirrors the ABR runner's
+      # `video-transcode-abr/v2` shape with one rendition and no ladder, as
+      # the shape the team said the VOD runner would move to; they confirm or
+      # correct the schema name and fields. Every URL is run-scoped and
+      # broker-minted (certification-steps.md §4). The runner streams its
+      # progress and claims the count in the response trailer.
+      transport: stream
+      body:
+        schema: video-transcode-vod/v2
+        workload_id: "cert-{{run.id}}"
+        input: { download_url: "{{fixture_url.video/mp4-2s-720p}}" }
+        rendition: { name: "720p", width: 1280, height: 720, fps: 30 }
+        output:
+          stream: { artifact_uri: "cert://720p.mp4", upload_url: "{{sink_url}}/720p.mp4" }
+      # No assertion on the response body: it is progress, and the usage step
+      # below is what proves the encode produced output. There is still no
+      # step type that decodes media, so the rendition's dimensions remain a
+      # claim this catalog cannot check.
+  # A 2s 720p30 rendition is 60 frames × 0.92 MP ≈ 55 units; a claim under
+  # 40 is a runner counting something other than delivered output.
+  - { name: usage, type: usage, required: true, config: { min_units: 40 } }
+  - { name: latency, type: latency, required: false, config: { samples: 2, p50_max_ms: 20000 } }
+
+# The rig wrote `gpu_model: 2080` — a real decision, unlike the FLUX
+# placeholder, so it is honoured.
+#
+# It is honoured as a CLASS, and holding the "exact line" was never available:
+# `gpu_models` is matched by exact, case-sensitive equality against the
+# driver's marketing name (runner-attach.md §3.1), and "2080" is not one. A
+# real card reports "NVIDIA GeForce RTX 2080 Ti", which that list would not
+# match — an exact-model gate built from the operator's string would silently
+# match nothing at all. `rtx-2080` is the pool's normalised class for every
+# 2080, Ti and SUPER included (placement/class.go), which is what the operator
+# meant by "2080".
+#
+# Not widened to 3090/4090/5090, unlike the audio templates. Those were
+# widened so they could ride a newer card as a secondary; this one cannot ride
+# anything (see stacking), so a wider list would only let transcode take
+# primary slots on cards the operator never offered for it.
+# Intel added 2026-09-01 (plan 0045 §4): the intel build of this runner
+# exists, and a class list that named no Intel card would leave every one of
+# those images unrunnable — ClassOf returns ClassUnknown for a card no class
+# matches, and placement rejects it. Which Intel cards belong here is a fleet
+# question; these are the classes placement knows today.
+# gtx-1080 added 2026-09-02 (plan 0045 §5, decision 9 on lnm-of6). For the
+# H.264/HEVC this offering sells, Pascal NVENC is the 2080's peer rather than
+# its lesser: it encodes both codecs, runs 1080p well past real time, and takes
+# the same number of concurrent sessions under current drivers. What Turing
+# added (HEVC B-frames, a little quality per bit) is a scoring difference, and
+# the non-required latency step ranks it down rather than refusing the card.
+# Neither class does AV1. The 1080 is admitted by NO AI template: vLLM needs
+# compute capability 7.0+, and whether any other image runs on sm_61 depends
+# on that image's CUDA base — a fact its author owns, not this catalog.
+requirements:
+  gpu_classes: [gtx-1080, rtx-2080, arc-a770, arc-b580, flex-170]
+
+# Above the catalog's three unconstrained templates (12/11/10), which is the
+# point: those match a 2080 too, and without this the rig's own workload would
+# lose its own cards to a template nobody scoped.
+#
+# Above ABR as well, and that ranking follows the price rather than the
+# product: both offerings charge 4.8e12 per JOB, but an ABR job produces a
+# whole ladder while a VOD job produces one output — so at equal price VOD is
+# the better return on an encoder-hour. Reprice ABR and this ordering should
+# flip with it.
+priority: 22
+
+# Primary only, and the class settles it: 0040 §4.4 gives 2080-class cards one
+# template and nothing else (placement.DefaultStances rtx-2080: 1), so a
+# secondary_on entry here would describe a stacking that can never happen.
+stacking: { primary: true, secondary_on: [] }
+
+# The runner, per vendor (plan 0045 §4). Same product on either card, a
+# different build for each; the controller picks at desired-state render,
+# where it knows the card, and placement refuses a card whose vendor has no
+# entry here rather than letting it fail at compose up on a member's host.
+# Confirmed against livepeer-modules-transcode (its predecessor,
+# livepeer-modules-transcode-runners, is stale since June 2026 and is being
+# archived — decision 11 on lnm-of6): transcode-runner-* serves
+# `POST /v1/video/transcode`. AMD waits for a later iteration and has no key.
+#
+# NOTE — plan 0045 §7: as published, these runners are asynchronous (202 +
+# job_id, status polled) and therefore cannot be billed under paid-job; and
+# they do not yet serve the runner self-description contract (§3). Until both
+# land, the agent refuses this image LOUDLY, naming it. That is the design:
+# the failure message is the impacted-runner inventory.
+runner_compose:
+  image:
+    nvidia: tztcloud/transcode-runner-nvidia:v1.4.1
+    intel: tztcloud/transcode-runner-intel:v1.4.1
+
+# min_jobs is the highest in the catalog. Transcode failures are bursty — one
+# bad container produces many quick errors, and a codec the runner cannot
+# handle only shows up when a caller sends it — so a small sample promotes on
+# luck.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 30 }
+
+# 20% rather than the catalog's usual 15%: this family has the largest
+# eligible fleet in a pool of older cards, and concentrating it on a few hosts
+# is the failure mode that ceiling exists to prevent.
+active: { share_cap_ppm: 200000 }
+
+commission_bps: 1000

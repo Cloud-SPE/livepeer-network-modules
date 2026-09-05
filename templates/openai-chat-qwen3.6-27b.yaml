@@ -1,0 +1,185 @@
+# Chat completions — Qwen3.6-27B, as run on the operator's "ai-rig2-broker".
+#
+# Rebuilt from that rig's real configuration. In the old grammar the rig
+# declared this workload TWICE: one offering with
+# `interaction_mode: http-stream@v0` and one with `http-reqresp@v0`, identical
+# in model, price, and backend. Both collapse into this single template.
+#
+# Why one template and not two: `interaction_mode` is gone
+# (offering-axes.md §5, "removed, no deprecation period"). What it encoded —
+# request/response vs server-sent-events streaming — is now `transports`, and
+# `transports` is declared by the RUNNER at attach and frozen into the offer
+# (runner-attach.md §3.2, §5), not chosen by the operator. offering-axes.md §2
+# states the consequence outright: "One offering, many transports — the
+# per-mode offering duplication the old taxonomy forced is structurally gone."
+# A caller picks per request (`stream: true` / `Accept: text/event-stream`).
+#
+# Two templates would also be actively wrong here. They would carry the same
+# `match:`, so both would select the same runner and the pool would sell one
+# GPU's work twice at one price, on two offering ids, with two certification
+# runs and two probation ladders — for a distinction the wire no longer makes.
+# What survives of the streaming offering is the `stream` certification step
+# below: it is how the pool proves the runner really serves that transport.
+
+id: openai-chat-qwen3.6-27b
+capability: openai:chat-completions
+offering_id: qwen3.6-27b
+protocol: paid-job/v1
+display_name: Chat completions (Qwen3.6-27B)
+description: >-
+  OpenAI-compatible chat completions, unary and streaming from one offering.
+  Metered in total tokens from the response usage block. Served by a vLLM-class
+  runner loading an NVFP4 quantisation of Qwen3.6-27B, which is why the offer is
+  scoped to 5090-class cards.
+
+# The operator's real rate: 830 Gwei per token, expressed against a 1000-token
+# denominator because that is how the rig wrote it and because the pair is
+# meaningless read apart (offering-axes.md §6 — a layer that drops `per_units`
+# bills 1000x). At the 2026-06-15 ETH basis in
+# docs/references/2026-06-15-openai-compatible-market-pricing.md that is about
+# $1.43 per million tokens, which is a plausible 27B-class rate; the reference
+# has no Qwen3.6-27B row to anchor against, so this number is the operator's
+# own commercial decision and not a derivation.
+price_default: { amount_wei: "830000000000", per_units: 1000 }
+
+# The operator's rig did not pin concurrency for this workload. 4 in flight
+# with a queue of 8 is what this repo's own broker example carries for the same
+# model (infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/
+# openai-chat.example.yaml) — roughly what continuous batching sustains on one
+# 32 GB card before per-token latency degrades. It is pool policy, not an
+# operator fact: raise it after watching real queue depth, not before.
+capacity: { max_in_flight: 4, queue_limit: 8 }
+
+# What the OPERATOR knows and advertises. Deliberately absent: the served model
+# name. The runner declares `identity.openai.model` and the broker projects it
+# into the offer's `extra.openai.model` at freeze (runner-attach.md §3.2, §5);
+# restating it here is exactly the hand-typed duplicate §3.2.1 blames for
+# extra-vs-reality drift. The offer SELECTS on the model (see `match:`) instead.
+#
+# The rig's `backend_url`, `service`, and endpoint path are gone entirely: how
+# the runner is reached is runner-owned and never appears in a template.
+extra:
+  provider: openai-chat-runner
+  # The weights the runner loads, which the model identity does not carry: a
+  # buyer comparing two "Qwen3.6-27B" offers wants to see the NVFP4 MTP build.
+  backend_model: sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+  # Parser selection changes what a caller gets back — reasoning traces and
+  # tool-call framing — so it is part of the product, not a deployment detail.
+  reasoning_parser: qwen3
+  tool_call_parser: qwen3_coder
+
+# The rig's `constraints:` block, kept as constraints. These are the axes a
+# BUYER routes on and they reach the manifest tuple, which is what separates
+# them from `extra` above: losing `provider` would make the offering less
+# well described, losing `tier` would make it unfindable by a gateway that
+# filters on tier (template.go, Constraints).
+#
+# The hardware half of the rig's constraints — `gpu: "5090"` — is not repeated
+# here: it is a placement gate the pool enforces, and it lives in
+# `requirements` below. A constraint is advertised; a requirement is enforced.
+constraints:
+  tier: standard
+
+# Quantization is a runner-owned fact — this pool cannot know which build a
+# given member loaded — so it is promoted from the attach document rather than
+# declared (runner-attach.md §3.3). Once frozen it is part of the offer's
+# shape: a runner that later reports a different quantization is ineligible.
+extra_from_runner: [x-quantization]
+
+# The selector. Without it this offer would take any runner declaring
+# openai:chat-completions and the broker would freeze whichever attached first
+# (template.go, Match). The rig runs exactly one chat model, so the model name
+# is the whole identity that distinguishes it.
+match:
+  identity.openai.model: Qwen3.6-27B
+
+certification:
+  # The rig's readiness probe was `http-openai-model-ready` against
+  # http://vllm_model_runner:8000/v1/models expecting model Qwen3.6-27B. None
+  # of that is written here on purpose: certification-steps.md §3.1 says a
+  # `readiness` step "runs the runner-declared readiness probe — the type, the
+  # path, and the config the runner gave, not anything the author writes". The
+  # author controls only how much readiness is enough. Ten attempts at 3s
+  # because a 27B model's weights take minutes to load and a single-shot check
+  # would fail a runner that is merely still starting.
+  - { name: ready, type: readiness, required: true, config: { attempts: 10, interval_ms: 3000 } }
+  - name: smoke
+    type: request
+    required: true
+    config:
+      transport: unary
+      body:
+        model: "{{identity.openai.model}}"
+        messages:
+          - { role: user, content: ping }
+        max_tokens: 8
+      # Content AND usage: a runner that answers but reports no usage cannot be
+      # billed, which is a certification failure rather than a quality one.
+      assert:
+        - "$.choices[0].message.content"
+        - { path: "$.usage.total_tokens", min: 1 }
+  # Runs the runner's declared extractor (the rig used `openai-usage` over
+  # `total_tokens`) and proves it yields a positive count. The extractor name is
+  # not repeated here — it is frozen from the attach document.
+  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+  # This is where the deleted `http-stream@v0` offering went. It proves the
+  # runner really serves SSE before the pool advertises an offering that claims
+  # both transports. Not required, per the chat family in
+  # certification-steps.md §7: a runner that declared only `unary` is still a
+  # sellable runner, and the step errors rather than fails there
+  # (`transport_not_declared`, §3.2).
+  - name: stream
+    type: request
+    required: false
+    config:
+      transport: stream
+      body:
+        model: "{{identity.openai.model}}"
+        messages:
+          - { role: user, content: ping }
+        stream: true
+        max_tokens: 8
+      assert:
+        - "$[0].choices[0].delta"
+  # Not required: a slow runner is a scoring input, not an ineligible one. The
+  # bound is on first byte because that is the number a streaming chat caller
+  # actually feels.
+  - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 4000, measure: first_byte } }
+
+# The rig wrote `constraints.gpu: "5090"` — a decided fact, so it is stated.
+#
+# gpu_classes rather than gpu_models: a model string is the driver's exact,
+# case-sensitive marketing name (runner-attach.md §3.1), so an allowlist of
+# them is a per-board escape hatch that silently excludes "NVIDIA GeForce RTX
+# 5090 D" or any rebadge. `rtx-5090` is the pool's normalised class
+# (pool-controller/internal/placement/class.go), which is the vocabulary the
+# operator's "5090" actually meant.
+#
+# gpu_vram_min_bytes is deliberately unset. The operator constrained the class,
+# not the memory; a VRAM floor invented here would be a second gate they never
+# asked for, and on this narrow a class list it can only ever exclude cards the
+# class already vouches for.
+requirements:
+  gpu_classes: [rtx-5090]
+
+# The highest in the catalog. This is the rig's flagship workload and the one
+# that extracts the most from a 5090; when a 5090 qualifies for chat and for
+# anything else, chat takes the primary slot.
+priority: 30
+
+# Primary only. Continuous batching claims the card's memory up front for the
+# KV cache, which is the opposite of the low-footprint rider a secondary slot
+# is for. It can still HOST a secondary — speech and Whisper list rtx-5090 in
+# their own secondary_on.
+stacking: { primary: true, secondary_on: [] }
+
+# runner_compose omitted: the images that serve this workload are unresolved
+# (tracked as lnm-v12). The rig named a compose service, not a published image
+# reference, and inventing a ghcr tag here would fail at `compose up` on a
+# member's host instead of in review.
+
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

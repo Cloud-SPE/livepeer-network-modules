@@ -1,10 +1,19 @@
 ---
 title: Streaming workload pattern
-status: active
-last-reviewed: 2026-05-11
+status: superseded
+last-reviewed: 2026-08-19
 ---
 
 # Streaming workload pattern
+
+> **Status note (2026-08-19).** The interaction modes this doc binds to were
+> removed with the v1 protocol rebuild. Its durability requirements (durable
+> outbox, replay after restart, persisted session identity) survive as the
+> seller's own obligations in
+> [`paid-session/v1`](../../livepeer-network-protocol/protocols/paid-session.md)
+> §7.3/§9; its "broker meters for the gateway" framing is superseded by
+> [`dual-meter-trust.md`](./dual-meter-trust.md). Kept as design provenance —
+> do not implement against it.
 
 Cross-cutting blueprint for long-lived, continuously-metered capabilities on
 the Livepeer network. This is the pattern new streaming capabilities should
@@ -142,9 +151,12 @@ Responsibilities:
 - emit idempotent usage and control-plane events to the gateway
 - close receiver-side payment state when the session ends
 
-> The broker carries no per-capability semantics — the debit cadence and units
-> come from the `host-config.yaml` declaration. The same broker code runs the
-> vtuber session, the RTMP live ingest, and any future streaming capability.
+> The broker carries no per-capability semantics. The commercial half — price,
+> lease policy, heartbeat cadence — comes from the offer in `host-config.yaml`;
+> the runner half — descriptor schema, session paths, how it meters — comes
+> from the runner's own attach declaration, frozen at certification. The same
+> broker code runs the vtuber session, the RTMP live ingest, and any future
+> streaming capability.
 
 ### Receiver-side `payment-daemon`
 
@@ -581,6 +593,3 @@ Gateway → sender-side daemon:
   sender / receiver economic model
 - [`payment-decoupling.md`](./payment-decoupling.md) — what the rewrite
   changed in `payment-daemon` to support opaque capability / work-unit names
-- [`../../livepeer-network-protocol/modes/session-control-plus-media.md`](../../livepeer-network-protocol/modes/session-control-plus-media.md)
-- [`../../livepeer-network-protocol/modes/ws-realtime.md`](../../livepeer-network-protocol/modes/ws-realtime.md)
-- [`../../livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md`](../../livepeer-network-protocol/modes/rtmp-ingress-hls-egress.md)

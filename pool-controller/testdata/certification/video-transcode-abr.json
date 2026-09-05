@@ -1,0 +1,96 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness",
+    "required": true,
+    "config": {
+      "attempts": 3,
+      "consecutive": 1,
+      "interval_ms": 2000
+    }
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "required": true,
+    "timeout_ms": 60000,
+    "config": {
+      "body": {
+        "input": {
+          "download_url": "{{fixture_url.video/mp4-2s-720p}}"
+        },
+        "ladder": {
+          "preset": "abr-standard"
+        },
+        "output": {
+          "manifest": {
+            "artifact_uri": "cert://manifest.m3u8",
+            "upload_url": "{{sink_url}}/manifest.m3u8"
+          },
+          "renditions": {
+            "1080p": {
+              "playlist": {
+                "artifact_uri": "cert://1080p.m3u8",
+                "upload_url": "{{sink_url}}/1080p.m3u8"
+              },
+              "stream": {
+                "artifact_uri": "cert://1080p.ts",
+                "upload_url": "{{sink_url}}/1080p.ts"
+              }
+            },
+            "360p": {
+              "playlist": {
+                "artifact_uri": "cert://360p.m3u8",
+                "upload_url": "{{sink_url}}/360p.m3u8"
+              },
+              "stream": {
+                "artifact_uri": "cert://360p.ts",
+                "upload_url": "{{sink_url}}/360p.ts"
+              }
+            },
+            "480p": {
+              "playlist": {
+                "artifact_uri": "cert://480p.m3u8",
+                "upload_url": "{{sink_url}}/480p.m3u8"
+              },
+              "stream": {
+                "artifact_uri": "cert://480p.ts",
+                "upload_url": "{{sink_url}}/480p.ts"
+              }
+            },
+            "720p": {
+              "playlist": {
+                "artifact_uri": "cert://720p.m3u8",
+                "upload_url": "{{sink_url}}/720p.m3u8"
+              },
+              "stream": {
+                "artifact_uri": "cert://720p.ts",
+                "upload_url": "{{sink_url}}/720p.ts"
+              }
+            }
+          }
+        },
+        "schema": "video-transcode-abr/v2",
+        "workload_id": "cert-{{run.id}}"
+      },
+      "transport": "stream"
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "required": true,
+    "config": {
+      "min_units": 100
+    }
+  },
+  {
+    "name": "latency",
+    "type": "latency",
+    "required": false,
+    "config": {
+      "p50_max_ms": 30000,
+      "samples": 2
+    }
+  }
+]

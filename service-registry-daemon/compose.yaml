@@ -6,7 +6,7 @@
 #
 # Quick start (publisher):
 #   cp .env.example .env
-#   $EDITOR .env                   # set CHAIN_RPC, REGISTRY_IMAGE_TAG, ORCH_ADDRESS
+#   $EDITOR .env                   # set CHAIN_RPC_URLS (pin REGISTRY_IMAGE_TAG, ORCH_ADDRESS if needed)
 #   cp /path/to/your/v3-keystore.json ./keystore.json
 #   printf '%s' 'your-keystore-password' > ./keystore-password
 #   chmod 600 ./keystore-password
@@ -14,11 +14,11 @@
 
 services:
   service-registry-daemon:
-    # Pin to a published tag (default v1.4.1 — bump REGISTRY_IMAGE_TAG
+    # Pin to a published tag (default v2.0.0 — bump REGISTRY_IMAGE_TAG
     # in .env to upgrade). For local development, comment out `image:`
     # and uncomment the `build:` block below — context is the monorepo
     # root because the daemon's go.mod uses `replace ../chain-commons`.
-    image: tztcloud/livepeer-service-registry-daemon:${REGISTRY_IMAGE_TAG}
+    image: tztcloud/livepeer-service-registry-daemon:${REGISTRY_IMAGE_TAG:-v2.0.0}
     # build:
     #   context: ..
     #   dockerfile: service-registry-daemon/Dockerfile
@@ -31,14 +31,14 @@ services:
       - --mode=publisher
       - --socket=/var/run/livepeer/service-registry.sock
       - --store-path=/var/lib/livepeer/registry-cache.db
-      - --chain-rpc=${CHAIN_RPC}
-      - --chain-id=${CHAIN_ID}
+      - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
+      - --chain-id=${CHAIN_ID:-42161}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
       # Optional: cold orch identity distinct from the keystore's signing
       # address. Leave unset to use the keystore address as the orch
       # identity.
-      # - --orch-address=${ORCH_ADDRESS}
+      # - --orch-address=${ORCH_ADDRESS:-}
       # Optional: write the signed manifest to a file your HTTP server
       # (nginx / caddy) maps to /.well-known/livepeer-registry.json so
       # consumers can fetch the off-chain manifest.
@@ -46,17 +46,17 @@ services:
       # ServiceRegistry writes now live in protocol-daemon. Publisher
       # mode here is manifest-signing only.
       # Logging — recommend json for production log aggregators.
-      - --log-level=${LOG_LEVEL}
-      - --log-format=${LOG_FORMAT}
-      # Prometheus listener — set METRICS_PORT empty in .env to disable.
+      - --log-level=${LOG_LEVEL:-info}
+      - --log-format=${LOG_FORMAT:-json}
+      # Prometheus listener — remove this flag to disable.
       # The daemon's recommended port is 9091 per
       # docs/conventions/ports.md (livepeer-modules-project monorepo).
-      - --metrics-listen=${METRICS_PORT:+:${METRICS_PORT}}
+      - --metrics-listen=:${METRICS_PORT:-9091}
 
     # Uncomment to expose the metrics port to the host. Bind to
     # 127.0.0.1 when scraping from a Prometheus on the same host.
     # ports:
-    #   - "127.0.0.1:${METRICS_PORT}:${METRICS_PORT}"
+    #   - "127.0.0.1:${METRICS_PORT:-9091}:${METRICS_PORT:-9091}"
 
     volumes:
       # Keystore + password: read-only bind mounts. Operator produces

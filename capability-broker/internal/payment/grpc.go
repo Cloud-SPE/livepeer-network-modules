@@ -81,6 +81,8 @@ func (g *GRPC) GetTicketParams(ctx context.Context, req GetTicketParamsRequest) 
 		Seed:              append([]byte(nil), tp.GetSeed()...),
 		ExpirationBlock:   new(big.Int).SetBytes(tp.GetExpirationBlock()),
 	}
+	out.HighestSeenNonce = resp.GetHighestSeenNonce()
+	out.HasSeenNonces = resp.GetHasSeenNonces()
 	if exp := tp.GetExpirationParams(); exp != nil {
 		out.ExpirationParams = &TicketExpirationParams{
 			CreationRound:          exp.GetCreationRound(),
@@ -100,6 +102,7 @@ func (g *GRPC) OpenSession(ctx context.Context, req OpenSessionRequest) (*OpenSe
 		Capability:          req.Capability,
 		Offering:            req.Offering,
 		PricePerWorkUnitWei: priceBytes,
+		PerUnits:            req.PerUnits,
 		WorkUnit:            req.WorkUnit,
 	})
 	if err != nil {
@@ -138,7 +141,7 @@ func (g *GRPC) ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (*
 	}, nil
 }
 
-func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.Int, error) {
+func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error) {
 	resp, err := g.client.DebitBalance(ctx, &pb.DebitBalanceRequest{
 		Sender:    req.Sender,
 		WorkId:    req.WorkID,
@@ -148,7 +151,12 @@ func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.
 	if err != nil {
 		return nil, err
 	}
-	return new(big.Int).SetBytes(resp.GetBalance()), nil
+	return &DebitResult{
+		Balance:         new(big.Int).SetBytes(resp.GetBalance()),
+		DebitedWei:      new(big.Int).SetBytes(resp.GetDebitedWei().GetValue()),
+		CumulativeUnits: resp.GetCumulativeUnits(),
+		Replayed:        resp.GetReplayed(),
+	}, nil
 }
 
 func (g *GRPC) SufficientBalance(ctx context.Context, req SufficientBalanceRequest) (*SufficientBalanceResult, error) {

@@ -81,10 +81,6 @@ type Recorder interface {
 
 	// ----- Publisher -----
 
-	IncPublisherBuild()
-	IncPublisherSign(outcome string)
-	IncPublisherProbe(outcome string)
-
 	// ----- Daemon-level -----
 
 	SetUptimeSeconds(s float64)

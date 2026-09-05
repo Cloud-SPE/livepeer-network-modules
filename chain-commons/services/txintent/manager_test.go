@@ -500,3 +500,163 @@ func TestNotifyWaiters_OnFailedTerminal(t *testing.T) {
 		t.Fatal("Wait did not return after MarkFailed")
 	}
 }
+
+func TestAdopt_RecordsSubmittedIntentWithOneAttempt(t *testing.T) {
+	m := newManager(t)
+	ctx := context.Background()
+	hash := chain.TxHash{0xaa}
+	sent := time.Unix(1_700_000_000, 0).UTC()
+
+	id, err := m.Adopt(ctx, sampleParams("RedeemTicket", []byte{9}), hash, 7,
+		WithBroadcastedAt(sent), WithGasCaps(big.NewInt(30), big.NewInt(2)))
+	if err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	if id != ComputeID("RedeemTicket", []byte{9}) {
+		t.Fatalf("Adopt id mismatch")
+	}
+	got, err := m.Status(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusSubmitted {
+		t.Fatalf("status = %s, want submitted", got.Status)
+	}
+	if len(got.Attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(got.Attempts))
+	}
+	a := got.Attempts[0]
+	if a.SignedTxHash != hash || a.Nonce != 7 || !a.BroadcastedAt.Equal(sent) {
+		t.Fatalf("attempt = %+v", a)
+	}
+	if a.GasFeeCap.Int64() != 30 || a.GasTipCap.Int64() != 2 {
+		t.Fatalf("gas caps = %v / %v", a.GasFeeCap, a.GasTipCap)
+	}
+	if cur := got.CurrentAttempt(); cur == nil || cur.SignedTxHash != hash {
+		t.Fatalf("CurrentAttempt = %+v", cur)
+	}
+	if got.GasLimit != 500_000 || got.Kind != "RedeemTicket" {
+		t.Fatalf("params not carried: %+v", got)
+	}
+}
+
+func TestAdopt_DefaultsAndValidation(t *testing.T) {
+	m := newManager(t)
+	ctx := context.Background()
+
+	// No options: broadcast time is now, caps are unknown (nil).
+	id, err := m.Adopt(ctx, sampleParams("K", []byte{1}), chain.TxHash{0x01}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := m.Status(ctx, id)
+	// Unknown caps persist as nil-or-zero (the codec collapses the two);
+	// the processor treats both as "ask the oracle".
+	if a := got.Attempts[0]; (a.GasFeeCap != nil && a.GasFeeCap.Sign() != 0) || (a.GasTipCap != nil && a.GasTipCap.Sign() != 0) {
+		t.Fatalf("caps should be unknown when not supplied: %+v", a)
+	}
+	if got.Attempts[0].BroadcastedAt.IsZero() {
+		t.Fatal("BroadcastedAt should default to now")
+	}
+
+	if _, err := m.Adopt(ctx, sampleParams("K", []byte{2}), chain.TxHash{}, 0); err == nil {
+		t.Fatal("zero tx hash should be rejected")
+	}
+	p := sampleParams("", []byte{3})
+	if _, err := m.Adopt(ctx, p, chain.TxHash{0x03}, 0); err == nil {
+		t.Fatal("empty kind should be rejected")
+	}
+	p = sampleParams("K", []byte{4})
+	p.GasLimit = 0
+	if _, err := m.Adopt(ctx, p, chain.TxHash{0x04}, 0); err == nil {
+		t.Fatal("zero gas limit should be rejected")
+	}
+}
+
+func TestAdopt_IdempotentWithSubmitInBothDirections(t *testing.T) {
+	m := newManager(t)
+	ctx := context.Background()
+
+	// Submit first, then Adopt the same key: the pending intent wins.
+	p := sampleParams("K", []byte{1})
+	id1, _ := m.Submit(ctx, p)
+	id2, err := m.Adopt(ctx, p, chain.TxHash{0x11}, 5)
+	if err != nil || id1 != id2 {
+		t.Fatalf("Adopt after Submit: %v %v %v", id1, id2, err)
+	}
+	got, _ := m.Status(ctx, id1)
+	if got.Status != StatusPending || len(got.Attempts) != 0 {
+		t.Fatalf("Adopt modified an existing intent: %+v", got)
+	}
+
+	// Adopt first, then Submit the same key: the adopted intent wins and
+	// nothing is re-signed.
+	q := sampleParams("K", []byte{2})
+	id3, _ := m.Adopt(ctx, q, chain.TxHash{0x22}, 6)
+	id4, err := m.Submit(ctx, q)
+	if err != nil || id3 != id4 {
+		t.Fatalf("Submit after Adopt: %v %v %v", id3, id4, err)
+	}
+	got, _ = m.Status(ctx, id3)
+	if got.Status != StatusSubmitted || len(got.Attempts) != 1 || got.Attempts[0].Nonce != 6 {
+		t.Fatalf("Submit modified an adopted intent: %+v", got)
+	}
+
+	// Adopt twice is also idempotent.
+	id5, _ := m.Adopt(ctx, q, chain.TxHash{0x33}, 99)
+	got, _ = m.Status(ctx, id5)
+	if id5 != id3 || got.Attempts[0].SignedTxHash != (chain.TxHash{0x22}) {
+		t.Fatalf("second Adopt changed the attempt: %+v", got)
+	}
+}
+
+func TestAdopt_ResumeDispatchesAdoptedIntent(t *testing.T) {
+	st := store.Memory()
+	rec := &recordingProcessor{seen: make(chan IntentID, 4)}
+	m, err := New(config.Default().TxIntent, st, clock.System(), nil, metrics.NoOp(), rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	id, err := m.Adopt(ctx, sampleParams("K", []byte{1}), chain.TxHash{0x01}, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Adopt itself dispatches once.
+	select {
+	case got := <-rec.seen:
+		if got != id {
+			t.Fatalf("dispatched %s, want %s", got, id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Adopt did not dispatch to the processor")
+	}
+
+	// A fresh manager over the same store resumes it like any other
+	// submitted intent.
+	rec2 := &recordingProcessor{seen: make(chan IntentID, 4)}
+	m2, err := New(config.Default().TxIntent, st, clock.System(), nil, metrics.NoOp(), rec2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m2.Resume(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-rec2.seen:
+		if got != id {
+			t.Fatalf("resumed %s, want %s", got, id)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Resume did not dispatch the adopted intent")
+	}
+}
+
+// recordingProcessor records every id it is asked to process.
+type recordingProcessor struct {
+	seen chan IntentID
+}
+
+func (r *recordingProcessor) Process(_ context.Context, _ *Manager, id IntentID) {
+	r.seen <- id
+}

@@ -237,3 +237,40 @@ func TestTranscoderInfoIsActiveAtRound(t *testing.T) {
 		})
 	}
 }
+
+func TestGetTranscoderPoolSize(t *testing.T) {
+	r := chaintesting.NewFakeRPC()
+	var seen []byte
+	r.CallContractFunc = func(_ context.Context, msg ethereum.CallMsg, _ *big.Int) ([]byte, error) {
+		seen = msg.Data
+		return EncodeUintSlot(100), nil
+	}
+	b, _ := New(r, common.HexToAddress("0x000000000000000000000000000000000000FB01"))
+	got, err := b.GetTranscoderPoolSize(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 100 {
+		t.Fatalf("GetTranscoderPoolSize = %d; want 100", got)
+	}
+	if string(seen) != string(selectorGetPoolSize) {
+		t.Fatalf("calldata = %x; want the getTranscoderPoolSize selector", seen)
+	}
+}
+
+func TestGetTranscoderPoolSizeErrors(t *testing.T) {
+	r := chaintesting.NewFakeRPC()
+	r.CallContractFunc = func(context.Context, ethereum.CallMsg, *big.Int) ([]byte, error) {
+		return nil, errors.New("rpc down")
+	}
+	b, _ := New(r, common.HexToAddress("0x000000000000000000000000000000000000FB01"))
+	if _, err := b.GetTranscoderPoolSize(context.Background()); err == nil {
+		t.Fatal("expected rpc error")
+	}
+	r.CallContractFunc = func(context.Context, ethereum.CallMsg, *big.Int) ([]byte, error) {
+		return []byte{1}, nil
+	}
+	if _, err := b.GetTranscoderPoolSize(context.Background()); err == nil {
+		t.Fatal("expected short-return error")
+	}
+}

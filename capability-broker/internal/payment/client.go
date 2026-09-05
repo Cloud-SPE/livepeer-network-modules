@@ -55,7 +55,13 @@ type Client interface {
 	// DebitBalance is idempotent by (sender, work_id, debit_seq).
 	// Retries with the same seq return the prior balance instead of
 	// double-debiting.
-	DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.Int, error)
+	//
+	// The result reports what the ledger actually CHARGED. Do not
+	// recompute it: billing is cumulative, so a charge depends on the
+	// running total and a recomputation from units alone disagrees
+	// whenever a remainder carries — which is how a signed settlement
+	// came to attest 5 wei for a debit that cost 4.
+	DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error)
 
 	// SufficientBalance checks whether the (sender, work_id) balance
 	// covers at least min_work_units of additional priced work, without
@@ -73,14 +79,34 @@ type Client interface {
 	CloseSession(ctx context.Context, sender []byte, workID string) error
 }
 
+// DebitResult is what a debit did, as reported by the ledger.
+type DebitResult struct {
+	Balance *big.Int
+	// DebitedWei is the amount charged. Authoritative — this is the
+	// number a settlement record must attest.
+	DebitedWei *big.Int
+	// CumulativeUnits is the running unit total after this debit, so a
+	// settlement can state its position on the cumulative curve and stay
+	// verifiable from the record alone.
+	CumulativeUnits uint64
+	// Replayed is true when the debit was deduplicated: nothing was
+	// charged and no totals moved.
+	Replayed bool
+}
+
 // OpenSessionRequest carries the (capability, offering, price,
-// work_unit) tuple the daemon binds to the work_id.
+// per_units, work_unit) tuple the daemon binds to the work_id.
 type OpenSessionRequest struct {
 	WorkID              string
 	Capability          string
 	Offering            string
 	PricePerWorkUnitWei *big.Int
-	WorkUnit            string
+	// PerUnits is the denominator PricePerWorkUnitWei is quoted over.
+	// The daemon bills ceil(units * price / per_units) cumulatively; a
+	// zero here means 1, so an omitted denominator bills per_units times
+	// the intended rate.
+	PerUnits uint64
+	WorkUnit string
 }
 
 // GetTicketParamsRequest mirrors the payee-daemon quote-free request
@@ -102,6 +128,12 @@ type TicketParams struct {
 	Seed              []byte
 	ExpirationBlock   *big.Int
 	ExpirationParams  *TicketExpirationParams
+	// HighestSeenNonce / HasSeenNonces are relayed verbatim from the
+	// payee so a payer whose durable nonce counter was lost can resume
+	// above what the payee has already recorded. The broker has no
+	// opinion on either value; it is a pass-through.
+	HighestSeenNonce uint32
+	HasSeenNonces    bool
 }
 
 // TicketExpirationParams mirrors the payee-daemon response submessage.

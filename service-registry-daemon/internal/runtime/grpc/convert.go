@@ -97,8 +97,9 @@ func sourceFromProto(s registryv1.Source) types.Source {
 // capabilityToProto converts a domain Capability.
 func capabilityToProto(c types.Capability) *registryv1.Capability {
 	out := &registryv1.Capability{
-		Name:     c.Name,
-		WorkUnit: c.WorkUnit,
+		Name:              c.Name,
+		WorkUnit:          c.WorkUnit,
+		WorkUnitEstimator: domainEstimatorToProto(c.WorkUnitEstimator),
 	}
 	if len(c.Extra) > 0 {
 		out.ExtraJson = append([]byte(nil), c.Extra...)
@@ -114,7 +115,11 @@ func capabilityFromProto(p *registryv1.Capability) types.Capability {
 	if p == nil {
 		return types.Capability{}
 	}
-	c := types.Capability{Name: p.GetName(), WorkUnit: p.GetWorkUnit()}
+	c := types.Capability{
+		Name:              p.GetName(),
+		WorkUnit:          p.GetWorkUnit(),
+		WorkUnitEstimator: domainEstimatorFromProto(p.GetWorkUnitEstimator()),
+	}
 	if x := p.GetExtraJson(); len(x) > 0 {
 		c.Extra = append([]byte(nil), x...)
 	}
@@ -205,18 +210,28 @@ func selectedRouteToProto(r *SelectedRoute) *registryv1.SelectedRoute {
 		WorkerUrl:           r.WorkerURL,
 		EthAddress:          r.EthAddress,
 		Capability:          r.Capability,
+		Protocol:            r.Protocol,
 		Offering:            r.Offering,
 		PricePerWorkUnitWei: r.PricePerWorkUnitWei,
 		WorkUnit:            r.WorkUnit,
 		QuoteId:             r.QuoteID,
 		QuoteVersion:        r.QuoteVersion,
 		UnitsPerPrice:       r.UnitsPerPrice,
+		WorkUnitEstimator:   estimatorToProto(r.WorkUnitEstimator),
 	}
 	if len(r.Extra) > 0 {
 		out.ExtraJson = append([]byte(nil), r.Extra...)
 	}
 	if len(r.Constraints) > 0 {
 		out.ConstraintsJson = append([]byte(nil), r.Constraints...)
+	}
+	for _, k := range r.SettlementKeys {
+		out.SettlementKeys = append(out.SettlementKeys, &registryv1.SettlementKey{
+			PublicKey:                  k.PublicKey,
+			NotBefore:                  k.NotBefore,
+			ExpiresAt:                  k.ExpiresAt,
+			IntroducedInPublicationSeq: k.IntroducedInPublicationSeq,
+		})
 	}
 	if len(r.ConstraintFingerprint) > 0 {
 		out.ConstraintFingerprint = append([]byte(nil), r.ConstraintFingerprint...)
@@ -236,11 +251,21 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 		WorkerURL:           n.URL,
 		EthAddress:          string(n.OperatorAddr),
 		Capability:          capability.Name,
+		Protocol:            capability.Protocol,
 		Offering:            offering.ID,
 		PricePerWorkUnitWei: offering.PricePerWorkUnitWei,
 		WorkUnit:            capability.WorkUnit,
 		QuoteVersion:        n.PublicationSeq,
-		UnitsPerPrice:       1,
+		// The offering's own denominator, not an assumption. Hard-coding
+		// 1 here published a quote at per_units times the rate the
+		// payee's ledger charges.
+		UnitsPerPrice:  unitsPerPrice(offering.PerUnits),
+		SettlementKeys: settlementKeysFor(n),
+		// Carried, not dropped. A consumer reserving funds against this
+		// route has to reach the same number the seller will bill, and
+		// for a multipart upload it cannot derive that from its own
+		// request.
+		WorkUnitEstimator: estimatorFor(capability.WorkUnitEstimator),
 	}
 	if len(capability.Extra) > 0 {
 		out.Extra = append([]byte(nil), capability.Extra...)
@@ -252,6 +277,36 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 	out.QuoteID = buildQuoteID(out)
 	out.RouteFingerprint = fingerprintRoute(out)
 	return out, nil
+}
+
+// settlementKeysFor carries the orch's delegated settlement keys onto a
+// route. Every currently-valid key, not just the active one: LOC pins
+// this set with its immutable route snapshot, and a record signed just
+// before a rotation has to keep verifying against a snapshot taken
+// before it.
+func settlementKeysFor(n types.ResolvedNode) []SettlementKey {
+	if len(n.SettlementKeys) == 0 {
+		return nil
+	}
+	out := make([]SettlementKey, 0, len(n.SettlementKeys))
+	for _, k := range n.SettlementKeys {
+		out = append(out, SettlementKey{
+			PublicKey:                  k.PublicKey,
+			NotBefore:                  k.NotBefore.UTC().Format(time.RFC3339),
+			ExpiresAt:                  k.ExpiresAt.UTC().Format(time.RFC3339),
+			IntroducedInPublicationSeq: n.PublicationSeq,
+		})
+	}
+	return out
+}
+
+// unitsPerPrice normalizes the wire form: absent (0) means 1, so a
+// consumer never divides by nothing.
+func unitsPerPrice(perUnits uint64) uint64 {
+	if perUnits == 0 {
+		return 1
+	}
+	return perUnits
 }
 
 func buildQuoteID(r *SelectedRoute) string {
@@ -270,6 +325,7 @@ func fingerprintRoute(r *SelectedRoute) []byte {
 		[]byte(strings.ToLower(r.EthAddress)),
 		[]byte(r.WorkerURL),
 		[]byte(r.Capability),
+		[]byte(r.Protocol),
 		[]byte(r.Offering),
 		[]byte(r.PricePerWorkUnitWei),
 		[]byte(r.WorkUnit),
@@ -411,4 +467,64 @@ func nodesFromProto(ps []*registryv1.Node) []types.Node {
 		out = append(out, n)
 	}
 	return out
+}
+
+// estimatorToProto puts the route's estimator on the wire. Without it
+// the field reached the route struct and died at the gRPC boundary — the
+// same parsed-here-modelled-nowhere shape that lost capability.extra,
+// one layer further out.
+func estimatorToProto(in *Estimator) *registryv1.Estimator {
+	if in == nil {
+		return nil
+	}
+	return &registryv1.Estimator{
+		Id:        in.ID,
+		Rounding:  in.Rounding,
+		Exactness: in.Exactness,
+		Package:   in.Package,
+		Fixtures:  in.Fixtures,
+	}
+}
+
+// domainEstimatorToProto and domainEstimatorFromProto carry the estimator
+// across the node-listing path, which round-trips through proto and so
+// drops anything the message does not model.
+func domainEstimatorToProto(in *types.Estimator) *registryv1.Estimator {
+	if in == nil {
+		return nil
+	}
+	return &registryv1.Estimator{
+		Id:        in.ID,
+		Rounding:  in.Rounding,
+		Exactness: in.Exactness,
+		Package:   in.Package,
+		Fixtures:  in.Fixtures,
+	}
+}
+
+func domainEstimatorFromProto(p *registryv1.Estimator) *types.Estimator {
+	if p == nil {
+		return nil
+	}
+	return &types.Estimator{
+		ID:        p.GetId(),
+		Rounding:  p.GetRounding(),
+		Exactness: p.GetExactness(),
+		Package:   p.GetPackage(),
+		Fixtures:  p.GetFixtures(),
+	}
+}
+
+// estimatorFor projects the resolved estimator onto a route.
+func estimatorFor(in *types.Estimator) *Estimator {
+	if in == nil {
+		return nil
+	}
+	return &Estimator{
+		ID:        in.ID,
+		Rounding:  in.Rounding,
+		Exactness: in.Exactness,
+		Package:   in.Package,
+		Fixtures:  in.Fixtures,
+	}
 }

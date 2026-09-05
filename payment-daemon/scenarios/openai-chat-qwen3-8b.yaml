@@ -15,7 +15,7 @@ offerings:
   - name: "qwen3-8b-chat"
     capability_id: "openai:chat-completions"
     offering_id: "qwen3:8b"
-    interaction: "http-stream@v0"
+    interaction: "paid-job/v1"
     work_unit: "tokens"
     price:
       # Cadence break-even:

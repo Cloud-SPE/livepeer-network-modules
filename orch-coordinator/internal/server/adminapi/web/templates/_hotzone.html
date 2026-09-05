@@ -1,0 +1,14 @@
+{{define "hotzone-context"}}
+{{if .Flash}}
+<p class="upload-flash upload-{{.Flash.Outcome}}"><strong>{{.Flash.Outcome}}</strong> {{.Flash.Message}}</p>
+{{end}}
+{{if .BrokerErrors}}
+<div class="alert-list">
+  {{range .BrokerErrors}}
+  <article class="alert-item alert-warn">
+    <strong>{{.Broker}}</strong><span>{{.Message}}</span>
+  </article>
+  {{end}}
+</div>
+{{end}}
+{{end}}

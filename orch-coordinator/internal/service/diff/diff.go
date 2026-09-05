@@ -18,29 +18,33 @@ import (
 
 // Drift kinds. The kind enum is stable for Prometheus labels.
 const (
-	DriftNone          = "none"
-	DriftAdded         = "added"
-	DriftRemoved       = "removed"
-	DriftPriceChanged  = "price_changed"
-	DriftModeChanged   = "mode_changed"
-	DriftExtraChanged  = "extra_changed"
-	DriftWorkerChanged = "worker_changed"
+	DriftNone         = "none"
+	DriftAdded        = "added"
+	DriftRemoved      = "removed"
+	DriftPriceChanged = "price_changed"
+	// DriftProtocolChanged covers the protocol tag and its declared
+	// axes (job / session) — they are one declaration, and a
+	// transports or descriptor_schema change is as consequential to a
+	// gateway as swapping the tag itself.
+	DriftProtocolChanged = "protocol_changed"
+	DriftExtraChanged    = "extra_changed"
+	DriftWorkerChanged   = "worker_changed"
 )
 
 // Row is one diff entry, keyed by the canonicalized uniqueness key.
 type Row struct {
-	Key             string
-	CapabilityID    string
-	OfferingID      string
-	Drift           string
-	Candidate       *types.CapabilityTuple
-	Published       *types.CapabilityTuple
-	OldPriceWei     string
-	NewPriceWei     string
-	OldMode         string
-	NewMode         string
-	OldWorkerURL    string
-	NewWorkerURL    string
+	Key          string
+	CapabilityID string
+	OfferingID   string
+	Drift        string
+	Candidate    *types.CapabilityTuple
+	Published    *types.CapabilityTuple
+	OldPriceWei  string
+	NewPriceWei  string
+	OldProtocol  string
+	NewProtocol  string
+	OldWorkerURL string
+	NewWorkerURL string
 }
 
 // Result aggregates all rows plus per-kind counts useful for metrics
@@ -68,13 +72,13 @@ func Compute(cand, pub *types.ManifestPayload) (*Result, error) {
 	rows := make([]Row, 0, len(candIdx)+len(pubIdx))
 	keys := mergedKeys(candIdx, pubIdx)
 	counts := map[string]int{
-		DriftNone:          0,
-		DriftAdded:         0,
-		DriftRemoved:       0,
-		DriftPriceChanged:  0,
-		DriftModeChanged:   0,
-		DriftExtraChanged:  0,
-		DriftWorkerChanged: 0,
+		DriftNone:            0,
+		DriftAdded:           0,
+		DriftRemoved:         0,
+		DriftPriceChanged:    0,
+		DriftProtocolChanged: 0,
+		DriftExtraChanged:    0,
+		DriftWorkerChanged:   0,
 	}
 
 	for _, k := range keys {
@@ -87,22 +91,22 @@ func Compute(cand, pub *types.ManifestPayload) (*Result, error) {
 			row.CapabilityID = c.CapabilityID
 			row.OfferingID = c.OfferingID
 			row.NewPriceWei = c.PricePerUnitWei
-			row.NewMode = c.InteractionMode
+			row.NewProtocol = c.Protocol
 			row.NewWorkerURL = c.WorkerURL
 		case c == nil && p != nil:
 			row.Drift = DriftRemoved
 			row.CapabilityID = p.CapabilityID
 			row.OfferingID = p.OfferingID
 			row.OldPriceWei = p.PricePerUnitWei
-			row.OldMode = p.InteractionMode
+			row.OldProtocol = p.Protocol
 			row.OldWorkerURL = p.WorkerURL
 		default:
 			row.CapabilityID = c.CapabilityID
 			row.OfferingID = c.OfferingID
 			row.OldPriceWei = p.PricePerUnitWei
 			row.NewPriceWei = c.PricePerUnitWei
-			row.OldMode = p.InteractionMode
-			row.NewMode = c.InteractionMode
+			row.OldProtocol = p.Protocol
+			row.NewProtocol = c.Protocol
 			row.OldWorkerURL = p.WorkerURL
 			row.NewWorkerURL = c.WorkerURL
 			row.Drift = classify(c, p)
@@ -123,11 +127,11 @@ func Compute(cand, pub *types.ManifestPayload) (*Result, error) {
 }
 
 func classify(c, p *types.CapabilityTuple) string {
-	if c.PricePerUnitWei != p.PricePerUnitWei {
+	if c.PricePerUnitWei != p.PricePerUnitWei || c.PerUnits != p.PerUnits {
 		return DriftPriceChanged
 	}
-	if c.InteractionMode != p.InteractionMode {
-		return DriftModeChanged
+	if c.Protocol != p.Protocol || !axesEqualCanonical(c, p) {
+		return DriftProtocolChanged
 	}
 	if c.WorkerURL != p.WorkerURL {
 		return DriftWorkerChanged
@@ -170,6 +174,35 @@ func uniquenessKey(c *types.CapabilityTuple) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// axesEqualCanonical compares the declared-axes objects. Presence is
+// significant: an axes object that appears or disappears is drift even
+// when the protocol tag is unchanged.
+func axesEqualCanonical(c, p *types.CapabilityTuple) bool {
+	return axesObjEqual(jobMap(c.Job), jobMap(p.Job)) &&
+		axesObjEqual(sessionMap(c.Session), sessionMap(p.Session))
+}
+
+func jobMap(j *types.JobAxes) map[string]any {
+	if j == nil {
+		return nil
+	}
+	return map[string]any(*j)
+}
+
+func sessionMap(s *types.SessionAxes) map[string]any {
+	if s == nil {
+		return nil
+	}
+	return map[string]any(*s)
+}
+
+func axesObjEqual(a, b map[string]any) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	return mapsEqualCanonical(a, b)
 }
 
 func mapsEqualCanonical(a, b map[string]any) bool {

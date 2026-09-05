@@ -79,6 +79,11 @@ You must set these in `.env` before bring-up:
 
 - `ORCH_COORDINATOR_ADMIN_TOKENS` — generated secret used to authenticate
   operator pushes (e.g. signing a fresh manifest from the Secure Orch host).
+
+Everything else has a default baked into the compose file and is listed,
+commented out, under "Overrides" in `.env.example`. The one you are most
+likely to touch:
+
 - `COORDINATOR_CONFIG` — only if your config lives somewhere other than
   `/opt/livepeer/coordinator-config.yaml`.
 

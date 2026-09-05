@@ -1,0 +1,84 @@
+{
+  "contract_version": "1.1",
+  "credential": {
+    "kind": "bearer",
+    "token": "lpc_test"
+  },
+  "host_id": "host-1",
+  "agent_version": "pool-member-agent/test",
+  "hardware": [
+    {
+      "gpu_uuid": "GPU-8f3c2a1e-4b7d-4e9f-a0c1-2d3e4f5a6b7c",
+      "gpu_model": "NVIDIA GeForce RTX 4090",
+      "vram_bytes": 25769803776
+    }
+  ],
+  "capabilities": [
+    {
+      "capability_id": "openai:chat-completions",
+      "identity": {
+        "openai.model": "llama-3-70b",
+        "provider": "vllm"
+      },
+      "local_id": "chat",
+      "paths": {
+        "invoke": "/v1/chat/completions"
+      },
+      "protocol": "paid-job/v1",
+      "readiness": {
+        "type": "http-openai-model-ready",
+        "path": "/v1/models",
+        "config": {
+          "model": "llama-3-70b"
+        }
+      },
+      "requirements": {
+        "gpu_vram_min_bytes": 17179869184
+      },
+      "schema_versions": {
+        "paid-job/v1": "1.0.15"
+      },
+      "transports": [
+        "unary",
+        "stream"
+      ],
+      "work_unit": {
+        "name": "tokens",
+        "extractor": {
+          "field": "total_tokens",
+          "type": "openai-usage"
+        }
+      },
+      "x-quantization": "fp8"
+    },
+    {
+      "capability_id": "video:transcode.live",
+      "protocol": "paid-session/v1",
+      "local_id": "live",
+      "descriptor_schemas": [
+        "rtmp-hls/v1"
+      ],
+      "work_unit": {
+        "name": "output_seconds"
+      },
+      "paths": {
+        "create": "/v1/video/live/sessions",
+        "status": "/v1/video/live/sessions/{id}",
+        "terminate": "/v1/video/live/sessions/{id}"
+      },
+      "readiness": {
+        "type": "http-status",
+        "path": "/healthz"
+      },
+      "identity": {
+        "provider": "livepeer-live-runner"
+      },
+      "schema_versions": {
+        "paid-session/v1": "1.0.0",
+        "rtmp-hls/v1": "1.0.0"
+      },
+      "metering": "runner-reported",
+      "draining": true
+    }
+  ]
+}

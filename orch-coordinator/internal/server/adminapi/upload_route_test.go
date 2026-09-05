@@ -56,7 +56,8 @@ func signedBody(t *testing.T, priv *ecdsa.PrivateKey, addr string, seq uint64) [
 		ExpiresAt:      now.Add(time.Hour),
 		Orch:           types.Orch{EthAddress: addr},
 		Capabilities: []types.CapabilityTuple{{
-			CapabilityID: "c", OfferingID: "o", InteractionMode: "m@v1",
+			CapabilityID: "c", OfferingID: "o", Protocol: "paid-job/v1",
+			Job:      &types.JobAxes{"transports": []any{"unary"}},
 			WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "1",
 			WorkerURL: "https://w.example/",
 		}},
@@ -73,7 +74,8 @@ func signedBody(t *testing.T, priv *ecdsa.PrivateKey, addr string, seq uint64) [
 			map[string]any{
 				"capability_id":      "c",
 				"offering_id":        "o",
-				"interaction_mode":   "m@v1",
+				"protocol":           "paid-job/v1",
+				"job":                map[string]any{"transports": []any{"unary"}},
 				"work_unit":          map[string]any{"name": "x"},
 				"price_per_unit_wei": "1",
 				"worker_url":         "https://w.example/",

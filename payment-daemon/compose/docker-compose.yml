@@ -12,46 +12,64 @@
 # (broker on the orch host; gateway on the gateway host) consume that
 # socket.
 #
-# Production requires --chain-rpc set. Dev mode (no --chain-rpc) is
-# chain-stubbed and will not redeem on-chain.
+# Production requires --chain-rpc-urls set (comma-separated, primary
+# first; the daemon fails over between entries). Dev mode (no
+# --chain-rpc-urls; see docker-compose.dev.yml) is chain-stubbed and will
+# not redeem on-chain.
+#
+# Every optional variable carries its default inline (${VAR:-default}) so
+# the .env only needs the Required section of .env.example.
+#
+# A sender in chain mode also requires --max-payment-wei: the daemon
+# refuses to start without a stated ceiling on what one payment may
+# authorize. See docs/operator-runbook.md §3.5 for sizing, and for the
+# optional per-work-unit rate ceilings that mixed workloads need.
 
 services:
   payment-daemon-receiver:
-    image: ${REGISTRY}/livepeer-payment-daemon:${TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v2.0.0}
     profiles: [receiver]
     command:
       - --mode=receiver
       - --socket=/var/run/livepeer/payment-daemon.sock
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
-      - --chain-rpc=${CHAIN_RPC}
+      - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
-      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT}
-      - --redeem-gas=${REDEEM_GAS}
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
+      - --redeem-gas=${REDEEM_GAS:-500000}
     environment:
-      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD}
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
     volumes:
-      - ${PAYMENT_KEYSTORE}:/etc/livepeer/keystore.json:ro
-      - ${PAYMENT_KEYSTORE_PASSWORD_FILE}:/etc/livepeer/keystore-password:ro
-      - ${PAYMENT_DAEMON_SOCKET_DIR}:/var/run/livepeer
+      - ${PAYMENT_KEYSTORE_FILE:-./run/keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
       - payment-daemon-db:/var/lib/livepeer/payment-daemon
     restart: unless-stopped
 
   payment-daemon-sender:
-    image: ${REGISTRY}/livepeer-payment-daemon:${TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${TAG:-v2.0.0}
     profiles: [sender]
     command:
       - --mode=sender
       - --socket=/var/run/livepeer/payer-daemon.sock
-      - --chain-rpc=${CHAIN_RPC}
+      - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
+      # REQUIRED in chain mode — the daemon will not start without it.
+      # Circuit breaker on a single payment; see runbook §3.5.
+      - --max-payment-wei=${MAX_PAYMENT_WEI:?set MAX_PAYMENT_WEI — the sender refuses to start without a single-payment ceiling (runbook §3.5)}
+      # Optional per-work-unit rate ceilings. Set one entry per workload
+      # you route to: a fair price for LLM tokens and for a second of
+      # generated video differ by orders of magnitude, so one number
+      # cannot serve both. Units you omit keep only the breaker above.
+      - --max-price-per-unit=${MAX_PRICE_PER_UNIT:-}
     environment:
-      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD}
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
     volumes:
-      - ${PAYMENT_KEYSTORE}:/etc/livepeer/keystore.json:ro
-      - ${PAYMENT_KEYSTORE_PASSWORD_FILE}:/etc/livepeer/keystore-password:ro
-      - ${PAYMENT_DAEMON_SOCKET_DIR}:/var/run/livepeer
+      - ${PAYMENT_KEYSTORE_FILE:-./run/keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-./run/keystore-password}:/etc/livepeer/keystore-password:ro
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
     restart: unless-stopped
 volumes:
   payment-daemon-db: {}

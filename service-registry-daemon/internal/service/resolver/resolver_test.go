@@ -107,19 +107,50 @@ func (f *fakeLiveHealthFetcher) Fetch(ctx context.Context, workerURL string) (*t
 	return &types.RouteHealthSnapshot{}, nil
 }
 
-// signManifestForFixture builds a manifest signed by f.signer for f.addr.
+// signManifestForFixture hosts a signed coordinator envelope covering
+// what the given nodes serve — the only manifest shape the daemon reads
+// (plan 0043 decision 8). Fixtures still describe the node-shaped result
+// they expect; this flattens it to the envelope's per-tuple worker_url.
 func (f *fixture) signManifestForFixture(nodes []types.Node) []byte {
 	f.t.Helper()
-	m := &types.Manifest{
-		SchemaVersion: types.SchemaVersion,
-		EthAddress:    string(f.addr),
-		IssuedAt:      f.clk.Now(),
-		Nodes:         nodes,
-		Signature: types.Signature{
-			Alg: types.SignatureAlgEthPersonal,
+	env := types.CoordinatorSignedManifest{
+		Manifest: types.CoordinatorManifestPayload{
+			SpecVersion:    "2.4.1",
+			PublicationSeq: 1,
+			IssuedAt:       f.clk.Now().UTC(),
+			ExpiresAt:      f.clk.Now().UTC().Add(24 * time.Hour),
+			Orch:           types.CoordinatorOrch{EthAddress: string(f.addr), ServiceURI: f.uri},
+		},
+		Signature: types.CoordinatorEnvelopeSignature{
+			Algorithm:        types.CoordinatorSignatureAlg,
+			Canonicalization: "JCS",
 		},
 	}
-	canonical, err := types.CanonicalBytes(m)
+	for _, n := range nodes {
+		for _, c := range n.Capabilities {
+			offerings := c.Offerings
+			if len(offerings) == 0 {
+				offerings = []types.Offering{{ID: "default", PricePerWorkUnitWei: "1"}}
+			}
+			for _, o := range offerings {
+				price := o.PricePerWorkUnitWei
+				if price == "" {
+					price = "1"
+				}
+				env.Manifest.Capabilities = append(env.Manifest.Capabilities, types.CoordinatorCapability{
+					CapabilityID:    c.Name,
+					OfferingID:      o.ID,
+					Protocol:        "paid-job/v1",
+					Job:             json.RawMessage(`{"transports":["unary"]}`),
+					WorkUnit:        types.CoordinatorWorkUnit{Name: c.WorkUnit},
+					PricePerUnitWei: price,
+					PerUnits:        1,
+					WorkerURL:       n.URL,
+				})
+			}
+		}
+	}
+	canonical, err := types.CoordinatorCanonicalBytes(env.Manifest)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -127,9 +158,8 @@ func (f *fixture) signManifestForFixture(nodes []types.Node) []byte {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	m.Signature.Value = "0x" + hex(sig)
-	m.Signature.SignedCanonicalBytesSHA256 = types.CanonicalSHA256(canonical)
-	body, err := json.Marshal(m)
+	env.Signature.Value = "0x" + hex(sig)
+	body, err := json.Marshal(env)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -277,7 +307,8 @@ func TestResolveByAddress_CoordinatorEnvelopeCompat(t *testing.T) {
 		{
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "qwen3.6-27b-default",
-			InteractionMode: "http-stream@v0",
+			Protocol:        "paid-job/v1",
+			Job:             json.RawMessage(`{"transports":["unary","stream"]}`),
 			WorkUnit:        types.CoordinatorWorkUnit{Name: "tokens"},
 			PricePerUnitWei: "25000000",
 			WorkerURL:       "https://openai-worker.xodeapp.xyz",
@@ -298,7 +329,7 @@ func TestResolveByAddress_CoordinatorEnvelopeCompat(t *testing.T) {
 	if res.Mode != types.ModeWellKnown {
 		t.Fatalf("mode = %v", res.Mode)
 	}
-	if res.SchemaVersion != "0.1.0" {
+	if res.SchemaVersion != "1.0.0" {
 		t.Fatalf("schema version = %q", res.SchemaVersion)
 	}
 	if len(res.Nodes) != 1 {
@@ -321,8 +352,11 @@ func TestResolveByAddress_CoordinatorEnvelopeCompat(t *testing.T) {
 	if !strings.Contains(string(cap.Extra), "\"served_model_name\":\"Qwen3.6-27B\"") {
 		t.Fatalf("capability extra = %s", string(cap.Extra))
 	}
-	if !strings.Contains(string(cap.Extra), "\"interaction_mode\":\"http-stream@v0\"") {
-		t.Fatalf("capability extra missing interaction_mode: %s", string(cap.Extra))
+	if !strings.Contains(string(cap.Extra), "\"protocol\":\"paid-job/v1\"") {
+		t.Fatalf("capability extra missing protocol: %s", string(cap.Extra))
+	}
+	if !strings.Contains(string(cap.Extra), "\"job\":{\"transports\":[\"unary\",\"stream\"]}") {
+		t.Fatalf("capability extra missing job axes: %s", string(cap.Extra))
 	}
 	if len(cap.Offerings) != 1 || cap.Offerings[0].ID != "qwen3.6-27b-default" {
 		t.Fatalf("offerings = %+v", cap.Offerings)
@@ -335,6 +369,71 @@ func TestResolveByAddress_CoordinatorEnvelopeCompat(t *testing.T) {
 	}
 	if !bytesEqual(envBody, f.fetcher.Bodies[f.uri]) {
 		t.Fatal("fixture body mutated unexpectedly")
+	}
+}
+
+// The registry layer gates on nothing in the declaration (offering-axes
+// §4) but must still deliver it: gateways select routes on
+// session.descriptor_schema, so the whole session object has to survive
+// the node-oriented projection byte-for-byte.
+func TestResolveByAddress_CoordinatorEnvelopeSessionAxesPassThrough(t *testing.T) {
+	f := newFixture(t)
+	const session = `{"descriptor_schema":"rtmp-hls/v1","metering":"runner-reported","refill":"bounded","attachment":"external","heartbeat":{"interval_seconds":10,"missed_threshold":3},"tolerance_band_pct":2.5,"runway_increment_units":60000}`
+	f.signCoordinatorEnvelope([]types.CoordinatorCapability{
+		{
+			CapabilityID:    "video:transcode.live",
+			OfferingID:      "h264-1080p30",
+			Protocol:        "paid-session/v1",
+			Session:         json.RawMessage(session),
+			WorkUnit:        types.CoordinatorWorkUnit{Name: "video-frame-megapixel"},
+			PricePerUnitWei: "200000",
+			WorkerURL:       "https://openai-worker.xodeapp.xyz",
+		},
+	})
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Nodes) != 1 || len(res.Nodes[0].Capabilities) != 1 {
+		t.Fatalf("nodes = %+v", res.Nodes)
+	}
+	cap := res.Nodes[0].Capabilities[0]
+	if !strings.Contains(string(cap.Extra), `"protocol":"paid-session/v1"`) {
+		t.Fatalf("capability extra missing protocol: %s", string(cap.Extra))
+	}
+	if !strings.Contains(string(cap.Extra), `"session":`+session) {
+		t.Fatalf("capability extra dropped or reshaped session axes: %s", string(cap.Extra))
+	}
+	if strings.Contains(string(cap.Extra), `"job"`) {
+		t.Fatalf("session offering must not gain job axes: %s", string(cap.Extra))
+	}
+}
+
+// A protocol this daemon has never heard of, carrying axes it has never
+// heard of, still resolves: the registry is not a gate.
+func TestResolveByAddress_CoordinatorEnvelopeUnknownProtocolPassesThrough(t *testing.T) {
+	f := newFixture(t)
+	f.signCoordinatorEnvelope([]types.CoordinatorCapability{
+		{
+			CapabilityID:    "kibble:doggo-bark-counter:v1",
+			OfferingID:      "default",
+			Protocol:        "future-thing/v9",
+			WorkUnit:        types.CoordinatorWorkUnit{Name: "barks"},
+			PricePerUnitWei: "100",
+			WorkerURL:       "https://openai-worker.xodeapp.xyz",
+		},
+	})
+
+	res, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+	if err != nil {
+		t.Fatalf("unknown protocol must not be rejected by the registry: %v", err)
+	}
+	if len(res.Nodes) != 1 || len(res.Nodes[0].Capabilities) != 1 {
+		t.Fatalf("nodes = %+v", res.Nodes)
+	}
+	if !strings.Contains(string(res.Nodes[0].Capabilities[0].Extra), `"protocol":"future-thing/v9"`) {
+		t.Fatalf("capability extra = %s", string(res.Nodes[0].Capabilities[0].Extra))
 	}
 }
 
@@ -370,35 +469,12 @@ func TestResolveByAddress_LegacyFallbackDeniedWithoutFlag(t *testing.T) {
 	}
 }
 
-func TestResolveByAddress_SignatureMismatchRejected(t *testing.T) {
-	f := newFixture(t)
-	// Build a manifest signed by a *different* key.
-	other, _ := signer.GenerateRandom()
-	m := &types.Manifest{
-		SchemaVersion: types.SchemaVersion,
-		EthAddress:    string(f.addr), // claims f.addr
-		IssuedAt:      f.clk.Now(),
-		Nodes:         []types.Node{{ID: "n1", URL: f.uri, Capabilities: []types.Capability{}}},
-		Signature:     types.Signature{Alg: types.SignatureAlgEthPersonal},
-	}
-	canonical, _ := types.CanonicalBytes(m)
-	sig, _ := other.SignCanonical(canonical)
-	m.Signature.Value = "0x" + hex(sig)
-	body, _ := json.Marshal(m)
-	f.fetcher.Bodies[f.uri] = body
-
-	_, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
-	if !errors.Is(err, types.ErrSignatureMismatch) {
-		t.Fatalf("expected ErrSignatureMismatch, got %v", err)
-	}
-}
-
 func TestResolveByAddress_CoordinatorEnvelopeSignatureMismatchRejected(t *testing.T) {
 	f := newFixture(t)
 	other, _ := signer.GenerateRandom()
 	env := &types.CoordinatorSignedManifest{
 		Manifest: types.CoordinatorManifestPayload{
-			SpecVersion: "0.1.0",
+			SpecVersion: "1.0.0",
 			IssuedAt:    f.clk.Now(),
 			ExpiresAt:   f.clk.Now().Add(24 * time.Hour),
 			Orch:        types.CoordinatorOrch{EthAddress: string(f.addr)},
@@ -406,7 +482,8 @@ func TestResolveByAddress_CoordinatorEnvelopeSignatureMismatchRejected(t *testin
 				{
 					CapabilityID:    "openai:chat-completions",
 					OfferingID:      "default",
-					InteractionMode: "http-stream@v0",
+					Protocol:        "paid-job/v1",
+					Job:             json.RawMessage(`{"transports":["unary"]}`),
 					WorkUnit:        types.CoordinatorWorkUnit{Name: "tokens"},
 					PricePerUnitWei: "1",
 					WorkerURL:       "https://openai-worker.xodeapp.xyz",
@@ -745,8 +822,8 @@ func TestResolveByAddress_RequestedTupleFilteringPreservesSiblingNodes(t *testin
 	if len(res.Nodes) != 2 {
 		t.Fatalf("expected non-target sibling nodes to remain after filtering, got %+v", res.Nodes)
 	}
-	if res.Nodes[0].ID != "n2" || res.Nodes[1].ID != "n3" {
-		t.Fatalf("expected node order [n2 n3], got %+v", []string{res.Nodes[0].ID, res.Nodes[1].ID})
+	if res.Nodes[0].ID != "node-2" || res.Nodes[1].ID != "node-3" {
+		t.Fatalf("expected node order [node-2 node-3], got %+v", []string{res.Nodes[0].ID, res.Nodes[1].ID})
 	}
 }
 
@@ -848,8 +925,8 @@ func TestResolveByAddress_RequestedTupleKeepsHealthyTargetNode(t *testing.T) {
 	if len(res.Nodes) != 3 {
 		t.Fatalf("expected healthy target node and siblings to remain, got %+v", res.Nodes)
 	}
-	if res.Nodes[0].ID != "n1" || res.Nodes[1].ID != "n2" || res.Nodes[2].ID != "n3" {
-		t.Fatalf("expected node order [n1 n2 n3], got %+v", []string{res.Nodes[0].ID, res.Nodes[1].ID, res.Nodes[2].ID})
+	if res.Nodes[0].ID != "node-1" || res.Nodes[1].ID != "node-2" || res.Nodes[2].ID != "node-3" {
+		t.Fatalf("expected node order [node-1 node-2 node-3], got %+v", []string{res.Nodes[0].ID, res.Nodes[1].ID, res.Nodes[2].ID})
 	}
 }
 
@@ -1195,7 +1272,7 @@ func (f *fixture) signCoordinatorEnvelope(caps []types.CoordinatorCapability) []
 	f.t.Helper()
 	env := &types.CoordinatorSignedManifest{
 		Manifest: types.CoordinatorManifestPayload{
-			SpecVersion: "0.1.0",
+			SpecVersion: "1.0.0",
 			IssuedAt:    f.clk.Now(),
 			ExpiresAt:   f.clk.Now().Add(24 * time.Hour),
 			Orch: types.CoordinatorOrch{

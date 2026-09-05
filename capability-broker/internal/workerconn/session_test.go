@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -149,4 +150,63 @@ func TestQUICSessionForwarderStreamsBody(t *testing.T) {
 		t.Fatalf("response status=%d headers=%v body=%q", resp.StatusCode, resp.Header, string(got))
 	}
 	<-serverDone
+}
+
+// A runner that sends no headers at all must still produce a usable
+// response, and the broker must length-delimit it. The tunnel already
+// holds the whole body, so the length is known here — leaving it unset
+// would send the gateway a chunked reply for something that was never
+// streamed, and would make delimitation depend on every runner
+// remembering to relay a Content-Length it should not have to think
+// about.
+func TestSessionForwarderLengthDelimitsHeaderlessResponse(t *testing.T) {
+	const body = `{"ok":true}`
+	upgrader := websocket.Upgrader{}
+	forwarderCh := make(chan *SessionForwarder, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("Upgrade() error = %v", err)
+			return
+		}
+		forwarderCh <- NewSessionForwarder(conn)
+	}))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var req TunnelMessage
+		if err := conn.ReadJSON(&req); err != nil {
+			t.Errorf("ReadJSON() error = %v", err)
+			return
+		}
+		// Deliberately no Headers: nil map on the wire.
+		if err := conn.WriteJSON(TunnelMessage{
+			Type: MessageTypeResponse, ID: req.ID, StatusCode: http.StatusOK,
+			BodyBase64: base64.StdEncoding.EncodeToString([]byte(body)),
+		}); err != nil {
+			t.Errorf("WriteJSON() error = %v", err)
+		}
+	}()
+
+	resp, err := (<-forwarderCh).Forward(context.Background(), backend.ForwardRequest{
+		URL: "http://worker.local/v1", Method: http.MethodPost, Body: strings.NewReader(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("Forward() error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.ContentLength != int64(len(body)) {
+		t.Fatalf("ContentLength = %d, want %d", resp.ContentLength, len(body))
+	}
+	if got := resp.Header.Get("Content-Length"); got != strconv.Itoa(len(body)) {
+		t.Fatalf("Content-Length header = %q, want %d", got, len(body))
+	}
+	<-done
 }

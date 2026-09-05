@@ -6,6 +6,13 @@ last-reviewed: 2026-05-19
 
 # gRPC surface (consumer contract)
 
+> **Plan 0043 (decision 8).** The daemon no longer builds or signs
+> manifests. `orch-coordinator` builds the candidate and the cold key on
+> `secure-orch-console` signs it, so `BuildManifest`, `SignManifest`,
+> `BuildAndSign`, `ProbeWorker` and the `livepeer-registry-refresh` CLI
+> were deleted along with the daemon's own v3.0.1 manifest schema. What
+> remains on `Publisher` is `GetIdentity` and `Health`.
+
 This is what a consumer can rely on across versions of the daemon. It's deliberately narrower than the design-doc version: design can change, contract cannot.
 
 ## Stability rules
@@ -121,29 +128,17 @@ Diagnostic. See design-doc for shapes.
 ```proto
 service Publisher {
   rpc GetIdentity(google.protobuf.Empty) returns (IdentityResult);
-  rpc BuildManifest(BuildManifestRequest) returns (BuildResult);
-  rpc SignManifest(SignManifestRequest) returns (SignedManifest);
-  rpc BuildAndSign(BuildAndSignRequest) returns (SignedManifest);
-  rpc ProbeWorker(ProbeWorkerRequest) returns (ProbeResult);
   rpc Health(google.protobuf.Empty) returns (HealthResult);
 }
 ```
 
-### GetIdentity / BuildManifest / SignManifest / BuildAndSign
+### GetIdentity
 
-`GetIdentity` returns the loaded cold-key eth address. It exists so secure-orch UIs can preflight proposal identity before the operator clicks sign.
-
-`BuildManifest` is pure with respect to output bytes, but it validates the proposal first. The request must carry `proposed_eth_address`; if that address does not match the loaded signer identity, the RPC fails.
-
-`SignManifest` reads the loaded keystore key and produces a signed manifest. It also enforces that the manifest's top-level `eth_address` matches the loaded signer identity.
-
-`BuildAndSign` is the one-shot path used by secure-orch tooling. It applies the same identity validation as `BuildManifest`, then signs.
-
-### ProbeWorker
-
-Reserved for future worker HTTP probing. In the current v1
-implementation, the method returns `chain_write_failed` /
-failed-precondition and does not fetch worker URLs yet.
+`GetIdentity` returns the loaded cold-key eth address. It exists so
+secure-orch UIs can preflight proposal identity before the operator
+clicks sign. It is the only publisher-side RPC that survives plan 0043
+besides `Health` — building and signing moved to `orch-coordinator` and
+`secure-orch-console`.
 
 ## Error codes (frozen)
 

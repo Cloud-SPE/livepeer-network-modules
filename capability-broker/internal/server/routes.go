@@ -1,127 +1,81 @@
 package server
 
 import (
-	"net/http"
-
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/media/hls"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/certification"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/registry"
 )
 
+// registerRoutes wires the broker's unpaid surfaces: registry, health,
+// admin, ticket-params, and runner attach endpoints.
+//
+// The paid dispatch surface (POST/GET /v1/cap and friends) was removed
+// with the v0 interaction-mode taxonomy. The paid routes now belong to
+// the two protocol engines, which register them separately:
+// registerJobRoutes (POST /v1/job, job_routes.go) and
+// registerSessionRoutes (/v1/session/*, session_routes.go).
 func (s *Server) registerRoutes() {
 	// Unpaid registry endpoints — no Livepeer-* validation, no payment.
 	s.mux.HandleFunc("GET /registry/offerings", instrumentRegistryScrape("offerings", s.handleOfferings))
 	s.mux.HandleFunc("GET /registry/health", instrumentRegistryScrape("health", s.handleRegistryHealth))
 	s.mux.HandleFunc("GET /healthz", registry.HealthzHandler())
+	// Settlement serves BOTH protocols, so it is registered here rather
+	// than with the session routes: a job-only broker — what an
+	// OpenAI-style gateway runs — needs it most, because a streamed
+	// job's claim arrives in a trailer its SDK may not be able to read.
+	s.mux.HandleFunc("GET /v1/settlement/{id}", s.handleSettlement)
+	// Evidence of ABSENCE, keyed on the id the consumer issued so it is
+	// retrievable without anything the customer holds.
+	s.mux.HandleFunc("POST /v1/non-admission/{request_id}", s.handleNonAdmission)
+	// What happened to this request, keyed on the id the consumer
+	// issued. Every other lookup here is keyed on something the customer
+	// holds, so a customer that withheld the settlement could force a
+	// conservative full charge the broker had evidence against.
+	s.mux.HandleFunc("GET /v1/exchange/{request_id}", s.handleExchangeByRequestID)
 	s.mux.HandleFunc("POST /v1/payment/ticket-params", ticketParamsHandler(s.payment))
 	s.mux.HandleFunc("GET /admin/v1/runtime", s.handleRuntimeStatus)
 	s.mux.HandleFunc("POST /admin/v1/runtime/reload", s.handleRuntimeReload)
-	s.mux.HandleFunc("GET /admin/v1/worker-sessions", s.handleWorkerSessions)
-	s.mux.HandleFunc("POST /admin/v1/worker-sessions/{backend_id}/kill", s.handleWorkerSessionKill)
-	s.mux.HandleFunc("GET /internal/v1/worker/session", s.handleWorkerSession)
-
-	// LL-HLS playback served from the per-session scratch. The URL is
-	// itself a per-session bearer secret (12 random bytes hex) so
-	// playback isn't gated by the payment middleware — that ran at
-	// session-open. Registered only when the scratch dir is set.
-	if s.opts.HLS.ScratchDir != "" {
-		s.mux.Handle("/_hls/", hls.Handler(s.opts.HLS.ScratchDir, func(id string) bool {
-			return s.rtmpStore != nil && s.rtmpStore.Get(id) != nil
-		}))
-	}
+	// The runner attach endpoint. The path keeps its old spelling on
+	// purpose: it is in every bundle this broker has minted and in
+	// every agent already running, and renaming a wire path to match a
+	// deleted feature's departure would strand them all.
+	s.mux.HandleFunc("GET /internal/v1/worker/session", s.handleAttachWS)
+	// Usage callback for a session under certification (certification-steps §3.3).
+	s.mux.HandleFunc("POST "+certification.TapPathPrefix+"{tap_id}", s.handleCertificationUsage)
+	// Run-scoped fixture source and output sink for runners that fetch
+	// their input and write their output (certification-steps §4).
+	s.mux.HandleFunc("GET "+certification.FixturePathPrefix+"{scope}/{ref...}", s.handleCertificationFixture)
+	s.mux.HandleFunc("PUT "+certification.SinkPathPrefix+"{scope}", s.handleCertificationSink)
+	s.mux.HandleFunc("POST "+certification.SinkPathPrefix+"{scope}", s.handleCertificationSink)
+	// A runner writing several artifacts — an ABR ladder is a manifest,
+	// a playlist and a media file per rendition — names each under the
+	// scope. The path is the runner's; the sink counts and discards.
+	s.mux.HandleFunc("PUT "+certification.SinkPathPrefix+"{scope}/{artifact...}", s.handleCertificationSink)
+	s.mux.HandleFunc("POST "+certification.SinkPathPrefix+"{scope}/{artifact...}", s.handleCertificationSink)
+	// Offers (broker-admin §4).
+	s.mux.HandleFunc("GET /admin/v1/offers", s.handleOffersList)
+	s.mux.HandleFunc("PUT /admin/v1/offers", s.handleOffersPut)
+	s.mux.HandleFunc("GET /admin/v1/offers/{offering_id}", s.handleOfferGet)
+	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/accept-shape", s.handleOfferAcceptShape)
+	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/confirm-published", s.handleOfferConfirmPublished)
+	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/disable", s.handleOfferDisable)
+	s.mux.HandleFunc("POST /admin/v1/offers/{offering_id}/enable", s.handleOfferEnable)
+	// Certification (broker-admin §6).
+	s.mux.HandleFunc("GET /admin/v1/certification", s.handleCertificationList)
+	s.mux.HandleFunc("GET /admin/v1/certification/{host_id}/{offering_id}", s.handleCertificationPair)
+	s.mux.HandleFunc("POST /admin/v1/certification/{host_id}/{offering_id}/run", s.handleCertificationRun)
+	// Attached runners (broker-admin §3).
+	s.mux.HandleFunc("GET /admin/v1/runners", s.handleRunnersList)
+	s.mux.HandleFunc("GET /admin/v1/runners/{host_id}", s.handleRunnerGet)
+	s.mux.HandleFunc("POST /admin/v1/runners/{host_id}/disconnect", s.handleRunnerDisconnect)
+	// Credential store (broker-admin §5). 404 when no store is configured.
+	s.mux.HandleFunc("POST /admin/v1/enroll", s.handleEnroll)
+	s.mux.HandleFunc("GET /admin/v1/credentials", s.handleCredentialsList)
+	s.mux.HandleFunc("PUT /admin/v1/credentials", s.handleCredentialsSync)
+	s.mux.HandleFunc("GET /admin/v1/credentials/{credential_id}", s.handleCredentialGet)
+	s.mux.HandleFunc("POST /admin/v1/credentials/{credential_id}/rotate", s.handleCredentialRotate)
+	s.mux.HandleFunc("POST /admin/v1/credentials/{credential_id}/revoke", s.handleCredentialRevoke)
 
 	// Metrics live on a separate listener (cfg.Listen.Metrics, default :9090);
 	// see metrics_server.go. This intentionally does NOT register /metrics on
 	// the paid listener — scrapes shouldn't traverse the paid middleware chain.
-
-	// Paid mode-dispatch endpoints share a middleware chain.
-	// Order: outermost first; Recover wraps everything to catch panics.
-	paidChain := middleware.Chain(
-		middleware.Recover,
-		middleware.RequestID,
-		middleware.Metrics,
-		middleware.Headers,
-		middleware.Payment(s.payment, s.capabilityLookup(), s.opts.InterimDebit, s.receiptSink),
-	)
-
-	// POST /v1/cap — either the standard paid-mode dispatcher or the
-	// remote live-runner session-open contract, depending on the selected
-	// backend transport for live-session-remote-runner@v0.
-	s.mux.Handle("POST /v1/cap", middleware.Chain(
-		middleware.Recover,
-		middleware.RequestID,
-		middleware.Metrics,
-	)(s.dispatchCapPost(func(next http.Handler) http.Handler {
-		return middleware.Chain(
-			middleware.Headers,
-			middleware.Payment(s.payment, s.capabilityLookup(), s.opts.InterimDebit, s.receiptSink),
-		)(next)
-	})))
-
-	// GET /v1/cap — ws-realtime upgrade. Same dispatcher handles the
-	// (method, mode) selection; the ws-realtime driver upgrades the
-	// connection in its Serve method.
-	s.mux.Handle("GET /v1/cap", paidChain(http.HandlerFunc(s.dispatch)))
-
-	// POST /v1/cap/{session_id}/end — gateway-initiated session close
-	// for rtmp-ingress-hls-egress per the mode spec §"Session-end".
-	// Unpaid: the session was already paid for at session-open, and
-	// the URL path is a per-session bearer secret. 404 on unknown
-	// session id; 204 on a successful tear-down.
-	s.mux.HandleFunc("POST /v1/cap/{session_id}/end", s.dispatchCapEnd)
-	s.mux.HandleFunc("POST /v1/cap/{session_id}/topup", s.liveTopupSession)
-	s.mux.HandleFunc("GET /v1/cap/{session_id}", s.liveGetSession)
-	s.mux.HandleFunc("POST /internal/v1/live/events", s.liveRunnerEvents)
-
-	// GET /v1/cap/{session_id}/control — session-control-plus-media OR
-	// live-session-remote-runner control-WebSocket upgrade. Unpaid:
-	// the URL path is the per-session bearer (Q1 lock — path-id-only
-	// auth). The dispatcher routes by session-store ownership.
-	if s.sessDriver != nil || s.extDriver != nil {
-		s.mux.HandleFunc("GET /v1/cap/{session_id}/control", s.dispatchControlWS)
-	}
-
-	// /_scope/{session_id}/{path...} — live-session-remote-runner
-	// reverse-proxy plane. Forwards customer (gateway) traffic to the
-	// workload backend's HTTP API. Unpaid: the session id is the
-	// bearer. The driver's proxy handler authorises against the live
-	// session record + strips Livepeer-* headers.
-	if s.extDriver != nil {
-		s.mux.HandleFunc("/_scope/{session_id}/{path...}", s.extDriver.ServeProxy)
-	}
-}
-
-// dispatchControlWS routes a control-WS upgrade to whichever mode owns
-// the named session. If both stores claim it (cannot happen — IDs are
-// 12 random bytes), the external-media driver wins. If neither owns it,
-// returns 401.
-func (s *Server) dispatchControlWS(w http.ResponseWriter, r *http.Request) {
-	sessID := r.PathValue("session_id")
-	if sessID == "" {
-		http.Error(w, "missing session_id", http.StatusBadRequest)
-		return
-	}
-	if s.extDriver != nil && s.extDriver.Store().Get(sessID) != nil {
-		s.extDriver.ServeControlWS(w, r)
-		return
-	}
-	if s.sessDriver != nil {
-		s.sessDriver.ServeControlWS(w, r)
-		return
-	}
-	http.Error(w, "session not found", http.StatusUnauthorized)
-}
-
-// capabilityLookup returns a CapabilityLookup function the payment
-// middleware uses to translate (capability, offering) into the
-// (work_unit, price_per_work_unit_wei) tuple the daemon needs at
-// OpenSession time.
-//
-// Maps the broker's host-config Price (`amount_wei` per `per_units`)
-// into a per-work-unit wei value. Both fields are validated upstream;
-// price_per_work_unit_wei is `amount_wei / per_units`.
-func (s *Server) capabilityLookup() middleware.CapabilityLookup {
-	return func(capability, offering string) (middleware.CapabilitySpec, bool) {
-		return s.lookupSpec(capability, offering)
-	}
 }

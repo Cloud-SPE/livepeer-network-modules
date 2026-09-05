@@ -35,6 +35,35 @@ type Identity struct {
 type Broker struct {
 	Name    string `yaml:"name"`
 	BaseURL string `yaml:"base_url"`
+	// AdminTokenRef points at the broker's admin bearer, which the
+	// hot-zone console uses to read runners and offers and to make the
+	// operator's write gestures (plan 0043 §3.6). Reference form only —
+	// `env://VAR` or `file:///path` — never the secret inline: this
+	// token can change what a runner may serve, so it gets the same
+	// handling as the agent bearer. A broker without one is read-only
+	// from the console's point of view, and says so.
+	AdminTokenRef string `yaml:"admin_token_ref,omitempty"`
+}
+
+// ResolveAdminToken reads the referenced secret. An empty ref yields an
+// empty token and no error: not configuring the console for a broker is
+// a choice, not a failure.
+func (b Broker) ResolveAdminToken() (string, error) {
+	ref := strings.TrimSpace(b.AdminTokenRef)
+	switch {
+	case ref == "":
+		return "", nil
+	case strings.HasPrefix(ref, "env://"):
+		return strings.TrimSpace(os.Getenv(strings.TrimPrefix(ref, "env://"))), nil
+	case strings.HasPrefix(ref, "file://"):
+		raw, err := os.ReadFile(strings.TrimPrefix(ref, "file://"))
+		if err != nil {
+			return "", fmt.Errorf("read admin token: %w", err)
+		}
+		return strings.TrimSpace(string(raw)), nil
+	default:
+		return "", fmt.Errorf("admin_token_ref %q: want env:// or file://", ref)
+	}
 }
 
 // Publish holds tunables that affect manifest output. Optional; the
@@ -96,6 +125,10 @@ func (c *Config) Validate() error {
 		seen[b.Name] = struct{}{}
 		if err := validateBaseURL(b.BaseURL); err != nil {
 			return fmt.Errorf("brokers[%d].base_url: %w", i, err)
+		}
+		ref := strings.TrimSpace(b.AdminTokenRef)
+		if ref != "" && !strings.HasPrefix(ref, "env://") && !strings.HasPrefix(ref, "file://") {
+			return fmt.Errorf("brokers[%d].admin_token_ref %q: want env:// or file://", i, ref)
 		}
 	}
 	if c.Publish.ManifestTTL < 0 {

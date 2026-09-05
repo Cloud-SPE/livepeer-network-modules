@@ -125,7 +125,7 @@ Once your worker is up:
 3. When the operator wants to publish, they download
    `raw-registry-manifest.json` from
    the coordinator, hand-carry it to the secure-orch host, run
-   `livepeer-registry-refresh` against this daemon's publisher mode, and
+   the orch-coordinator → secure-orch-console sign cycle, and
    carry the signed manifest back to the coordinator for atomic-swap onto
    the public path.
 4. Gateways using a resolver sidecar discover the new offerings on next
@@ -165,7 +165,7 @@ change, or a proto regen.
   string conventions.
 - [`worker-offerings-endpoint.md`](worker-offerings-endpoint.md) — the
   uniform endpoint workers expose for orch-coordinator scrape.
-- [`manifest-schema.md`](manifest-schema.md) — the wire shape your offerings
+- [`../livepeer-network-protocol/manifest/schema.json`](../livepeer-network-protocol/manifest/schema.json) — the wire shape your offerings
   end up in.
 - `livepeer-network-suite` plan 0003 — cross-repo coordination story for the
   v3.0.1 archetype-A reset.

@@ -3,26 +3,65 @@
   "$id": "https://livepeer-network-protocol.example/manifest/schema.json",
   "title": "Livepeer registry manifest",
   "description": "Top-level wrapper plus signed manifest content. Published at /.well-known/livepeer-registry.json by the orch-coordinator. Signature is computed by the cold key on secure-orch over the canonical (RFC 8785 JCS) form of the manifest payload.",
-
   "type": "object",
-  "required": ["manifest", "signature"],
+  "required": [
+    "manifest",
+    "signature"
+  ],
   "additionalProperties": false,
   "properties": {
-    "manifest": { "$ref": "#/$defs/manifest" },
-    "signature": { "$ref": "#/$defs/signature" }
+    "manifest": {
+      "$ref": "#/$defs/manifest"
+    },
+    "settlement_key": {
+      "type": "object",
+      "title": "Delegated settlement key",
+      "required": [
+        "public_key",
+        "not_before",
+        "expires_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "public_key": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{130}$",
+          "description": "Uncompressed secp256k1 public key, hex, 65 bytes (0x04 || X || Y). Same curve as the manifest signature, so a consumer verifies settlement with the primitives it already has."
+        },
+        "not_before": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Start of the key's validity window."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "End of the key's validity window. An outgoing key stays listed until this passes so a record signed just before a rotation still verifies \u2014 without the overlap, rotating a key would invalidate settlements already in flight."
+        }
+      }
+    },
+    "signature": {
+      "$ref": "#/$defs/signature"
+    }
   },
-
   "$defs": {
     "manifest": {
       "type": "object",
       "title": "Manifest content (signed payload)",
-      "required": ["spec_version", "publication_seq", "issued_at", "expires_at", "orch", "capabilities"],
+      "required": [
+        "spec_version",
+        "publication_seq",
+        "issued_at",
+        "expires_at",
+        "orch",
+        "capabilities"
+      ],
       "additionalProperties": false,
       "properties": {
         "spec_version": {
           "type": "string",
           "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$",
-          "description": "Spec-wide SemVer (major.minor or major.minor.patch). Consumers MUST validate the major version; minor and patch are non-breaking by definition. See livepeer-network-protocol/VERSION."
+          "description": "Spec-wide SemVer (major.minor or major.minor.patch). Consumers MUST validate the major version; minor and patch are non-breaking by definition. Single source: livepeer-network-protocol/version (Go const VERSION), mirrored in the VERSION file."
         },
         "publication_seq": {
           "type": "integer",
@@ -39,20 +78,33 @@
           "format": "date-time",
           "description": "ISO 8601 UTC timestamp after which consumers MUST refetch. Resolvers MUST NOT route on expired manifests."
         },
-        "orch": { "$ref": "#/$defs/orch" },
+        "orch": {
+          "$ref": "#/$defs/orch"
+        },
+        "settlement_keys": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "$ref": "#/$defs/settlement_key"
+          },
+          "description": "Hot keys the orch's cold key delegates settlement signing to. A broker is network-exposed, so it must never hold the cold key that anchors the operator's on-chain identity; it signs settlement records with one of these instead. Consumers accept a record signed by any listed key whose validity window contains the record's issued_at, which is what makes rotation an ordinary republish: publish a manifest with the new key, a higher publication_seq, and the outgoing key still present until its expires_at."
+        },
         "capabilities": {
           "type": "array",
           "minItems": 0,
-          "items": { "$ref": "#/$defs/capability" },
+          "items": {
+            "$ref": "#/$defs/capability"
+          },
           "description": "Flat list of capability tuples. Host is not a registration unit; multi-binary or multi-broker hosts contribute multiple entries here."
         }
       }
     },
-
     "orch": {
       "type": "object",
       "title": "Orchestrator identity",
-      "required": ["eth_address"],
+      "required": [
+        "eth_address"
+      ],
       "additionalProperties": false,
       "properties": {
         "eth_address": {
@@ -67,19 +119,58 @@
         }
       }
     },
-
     "capability": {
       "type": "object",
       "title": "Capability tuple",
       "required": [
         "capability_id",
         "offering_id",
-        "interaction_mode",
+        "protocol",
         "work_unit",
         "price_per_unit_wei",
         "worker_url"
       ],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "protocol": {
+                "pattern": "^paid-job/"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "job"
+            ],
+            "not": {
+              "required": [
+                "session"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "protocol": {
+                "pattern": "^paid-session/"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "session"
+            ],
+            "not": {
+              "required": [
+                "job"
+              ]
+            }
+          }
+        }
+      ],
       "properties": {
         "capability_id": {
           "type": "string",
@@ -91,16 +182,29 @@
           "minLength": 1,
           "description": "Opaque UTF-8 identifier disambiguating priced tiers under the capability (e.g. different models, hardware classes, SLAs)."
         },
-        "interaction_mode": {
+        "protocol": {
           "type": "string",
-          "pattern": "^[a-z][a-z0-9-]*@v[0-9]+$",
-          "description": "Mode name + major version (per Q2 hybrid SemVer), e.g. 'http-stream@v0'. Mode names live in modes/<mode>.md."
+          "pattern": "^[a-z][a-z0-9-]*/v[0-9]+$",
+          "description": "Protocol tag, e.g. 'paid-job/v1' or 'paid-session/v1'. Protocol specs live in protocols/<name>.md. Consumers MUST refuse unknown protocols, never guess. Declared axes ride in the matching 'job' or 'session' object (see protocols/offering-axes.md)."
         },
-        "work_unit": { "$ref": "#/$defs/work_unit" },
+        "job": {
+          "$ref": "#/$defs/job_axes"
+        },
+        "session": {
+          "$ref": "#/$defs/session_axes"
+        },
+        "work_unit": {
+          "$ref": "#/$defs/work_unit"
+        },
         "price_per_unit_wei": {
           "type": "string",
           "pattern": "^[0-9]+$",
-          "description": "Wei per work-unit, expressed as a non-negative decimal string. String form preserves precision beyond JSON's safe-integer range."
+          "description": "Wei per `per_units` work units, expressed as a non-negative decimal string. String form preserves precision beyond JSON's safe-integer range. Read with per_units, never alone: this is the price of a batch of units, not necessarily of one."
+        },
+        "per_units": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Denominator of price_per_unit_wei: the price buys this many work units. Absent means 1. Lets an offering price below 1 wei per unit, which token-metered workloads need. Every layer that carries the price MUST carry this with it \u2014 see protocols/offering-axes.md \u00a76, which also fixes the cumulative ceiling billing rule both payer and payee compute."
         },
         "worker_url": {
           "type": "string",
@@ -120,31 +224,154 @@
         }
       }
     },
-
+    "job_axes": {
+      "type": "object",
+      "title": "paid-job declared axes",
+      "required": [
+        "transports"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "transports": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "unary",
+              "stream",
+              "multipart"
+            ]
+          },
+          "description": "Transports this offering serves. Selected per-request by HTTP negotiation; brokers refuse undeclared transports before payment side effects."
+        }
+      }
+    },
+    "session_axes": {
+      "type": "object",
+      "title": "paid-session declared axes",
+      "required": [
+        "descriptor_schema",
+        "metering"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "descriptor_schema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*/v[0-9]+$",
+          "description": "Runtime-descriptor schema tag (protocols/runtime-descriptor.md). Gateways MUST NOT open sessions whose schema they do not implement; brokers reject runner descriptors that do not match it."
+        },
+        "attachment": {
+          "enum": [
+            "external"
+          ],
+          "default": "external",
+          "description": "Runtime coordinates come from the descriptor; data never transits the broker. The only value since offering-axes 1.0.8."
+        },
+        "metering": {
+          "enum": [
+            "runner-reported"
+          ],
+          "description": "Origin of the seller's usage claims: runner events. The only value since offering-axes 1.0.8 \u2014 no session traffic transits the broker."
+        },
+        "max_rotations": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Cap on how many times a session may be rebound onto a rotated payment identity (protocols/paid-session.md \u00a73.3.1). Absent or 0 means the default, 3. Consumers gate on nothing here; it is the broker's own bound, advertised so an operator can see it. Note a 'bounded' offering cannot survive a rotation at all \u2014 its successor identity starts at a zero balance."
+        },
+        "refill": {
+          "enum": [
+            "extensible",
+            "bounded"
+          ],
+          "default": "extensible",
+          "description": "'bounded' offerings reject top-up after open. The clearinghouse gates refill on this field."
+        },
+        "heartbeat": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "interval_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 10
+            },
+            "missed_threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 3
+            }
+          },
+          "description": "Liveness enforcement parameters (paid-session spec \u00a75)."
+        },
+        "lease": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "policy": {
+              "enum": [
+                "funding-tracking",
+                "fixed"
+              ],
+              "default": "funding-tracking"
+            },
+            "max_seconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "description": "Lease policy override; absent means the session spec's normative funding-tracking default."
+        },
+        "tolerance_band_pct": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Advisory: divergence tolerance the seller commits to operate within (trust-model doc). Buyers may prefer tighter bands at route selection."
+        },
+        "runway_increment_units": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Advisory: seller-suggested top-up sizing. Buyers own their actual increment; it is their exposure bound."
+        },
+        "session_params_schema": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Opaque description of the session_params this capability expects, as declared by the runner in its attach document (protocols/runner-attach.md \u00a73.2) and frozen into the offer. Relayed verbatim to gateways so they can validate before opening rather than discovering the requirement as a create-time failure. Never enforced by the broker or the registry \u2014 the runner remains the authority on its own inputs."
+        }
+      }
+    },
     "work_unit": {
       "type": "object",
       "title": "Work-unit declaration",
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
         "name": {
           "type": "string",
           "minLength": 1,
-          "description": "The metering dimension's name, e.g. 'tokens', 'video-frame-megapixel', 'barks'. Opaque to the protocol; consumed by gateways for billing display. The extractor (which counts the units) is host-config concern, not advertised here."
+          "description": "The metering dimension's name, e.g. 'tokens', 'seconds', 'characters'. Opaque to the protocol; consumed by gateways for billing display. The EXTRACTOR that counts units is host-config concern and is never advertised \u2014 how a seller counts is its own business. See `estimator` for the one case where a consumer must reproduce the measurement."
+        },
+        "estimator": {
+          "$ref": "#/$defs/estimator"
         }
       }
     },
-
     "signature": {
       "type": "object",
       "title": "Cold-key signature",
       "description": "Signature is computed over the JCS-canonicalized (RFC 8785) form of the manifest payload. Signers: the orch's cold key on secure-orch.",
-      "required": ["algorithm", "value"],
+      "required": [
+        "algorithm",
+        "value"
+      ],
       "additionalProperties": false,
       "properties": {
         "algorithm": {
           "type": "string",
-          "enum": ["secp256k1"],
+          "enum": [
+            "secp256k1"
+          ],
           "description": "Signing algorithm. Currently only secp256k1 (Ethereum's curve) is permitted, matching the orch's on-chain identity."
         },
         "value": {
@@ -154,9 +381,52 @@
         },
         "canonicalization": {
           "type": "string",
-          "enum": ["JCS"],
+          "enum": [
+            "JCS"
+          ],
           "default": "JCS",
           "description": "JSON canonicalization scheme used before hashing. JCS = RFC 8785."
+        }
+      }
+    },
+    "estimator": {
+      "type": "object",
+      "title": "Client-reproducible estimator",
+      "description": "How a CLIENT computes a funding ceiling before the work runs, for the offerings where that is possible at all. Present only when a consumer must reproduce the seller's measurement: a JSON workload exposes a ceiling in its own request parameters, but a multipart upload does not, and a caller reserving funds has to reach the same number the seller will bill. This is the exception to extractors being unadvertised, not a relaxation of it.",
+      "required": [
+        "id",
+        "rounding",
+        "exactness"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Versioned estimator name, e.g. 'multipart-audio-duration/v1'. A consumer MUST refuse an id it does not implement rather than guess a ceiling."
+        },
+        "rounding": {
+          "type": "string",
+          "enum": [
+            "ceil-to-whole-seconds",
+            "ceil-to-whole-units"
+          ],
+          "description": "How a fractional measurement becomes billable units. Ceiling, always: a rule that could round down would fund less work than the exchange delivers."
+        },
+        "exactness": {
+          "type": "string",
+          "enum": [
+            "exact-or-reject"
+          ],
+          "description": "What an implementation does when it cannot measure exactly. 'exact-or-reject' means it MUST refuse rather than return an estimate \u2014 a ceiling that reads low underfunds real work and one that reads high overcharges, so neither is guessed."
+        },
+        "package": {
+          "type": "string",
+          "description": "Canonical client implementation, e.g. an npm package name."
+        },
+        "fixtures": {
+          "type": "string",
+          "description": "Shared conformance fixtures both sides run, so a disagreement between implementations is a test failure rather than a settlement that exceeds a ceiling."
         }
       }
     }

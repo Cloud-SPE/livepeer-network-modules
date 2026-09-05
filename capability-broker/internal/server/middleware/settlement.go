@@ -11,9 +11,48 @@ import (
 	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"google.golang.org/protobuf/proto"
 )
+
+// SettlementIdentity binds a settlement record to the exchange it
+// describes, and to when it was made. All three ride inside the signed
+// payload — evidence that does not say what it is evidence of can be
+// replayed against something else.
+type SettlementIdentity struct {
+	// JobID is the broker-assigned Livepeer-Job-Id.
+	JobID string
+	// WorkID is the payee-side payment identity.
+	WorkID string
+	// IssuedAt is RFC3339 (nanosecond precision).
+	IssuedAt string
+	// ChargedWei is what the ledger reported charging for this
+	// exchange. Nil means no debit happened (zero units, or the debit
+	// failed) and the record falls back to the computed value.
+	ChargedWei *big.Int
+	// CumulativeUnits is the running unit total on the payment session
+	// after this exchange, so a reader can verify the charge as
+	// bill(cumulative) - bill(cumulative - actual_units) without needing
+	// the session's whole history.
+	CumulativeUnits uint64
+	// DebitFailed reports that the final debit did not complete. The
+	// record then attests what the ledger TOOK (debited_units, usually
+	// zero) rather than what the extractor measured, and carries
+	// DEBIT_FAILED so a clearinghouse refuses it instead of booking
+	// revenue that never moved.
+	DebitFailed bool
+	// DebitedUnits is what the ledger actually accepted. Equal to the
+	// measured units on the normal path; less, usually zero, when the
+	// debit failed.
+	DebitedUnits uint64
+	// RequestID is the exchange's Livepeer-Request-Id. job_id is
+	// broker-minted and reaches a clearinghouse only through the
+	// customer's SDK, so it binds the record to the broker's view of the
+	// exchange; this binds it to the caller's own, when the caller chose
+	// the id. It is the job path's counterpart to gateway_session_id.
+	RequestID string
+}
 
 // SettlementInputs captures everything needed to build a
 // SettlementRecord at a later point in time. Long-lived session
@@ -41,10 +80,14 @@ type SettlementInputs struct {
 // Returns nil when the payment cannot be parsed or has no
 // expected_price — both indicate a stub/legacy payment that doesn't
 // support settlement.
-func BuildSettlementRecord(in SettlementInputs, actualUnits uint64, terminationReason string) *pb.SettlementRecord {
-	return buildSettlementRecord(in.PaymentBytes, in.FundedValueWei, actualUnits, in.WorkUnit, terminationReason)
+func BuildSettlementRecord(in SettlementInputs, actualUnits uint64, terminationReason string, ident SettlementIdentity) *pb.SettlementRecord {
+	return buildSettlementRecord(in.PaymentBytes, in.FundedValueWei, actualUnits, in.WorkUnit, terminationReason, ident)
 }
 
+// Deprecated: use internal/settlement.Encode, which emits the signed
+// envelope both protocols now carry. Kept only until the last caller
+// moves.
+//
 // EncodeSettlementRecord base64-encodes a marshalled SettlementRecord
 // for transport in a single HTTP header or WebSocket terminal-event
 // field.
@@ -63,7 +106,7 @@ func encodeSettlementRecord(record *pb.SettlementRecord) (string, error) {
 	return base64.StdEncoding.EncodeToString(raw), nil
 }
 
-func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualUnits uint64, currentWorkUnit string, terminationReason string) *pb.SettlementRecord {
+func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualUnits uint64, currentWorkUnit string, terminationReason string, ident SettlementIdentity) *pb.SettlementRecord {
 	var pay pb.Payment
 	if err := proto.Unmarshal(paymentBytes, &pay); err != nil {
 		return nil
@@ -80,10 +123,32 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 	if unitsPerPrice <= 0 {
 		unitsPerPrice = 1
 	}
-	billedValueWei := new(big.Int).Mul(big.NewInt(price.GetPricePerUnit()), new(big.Int).SetUint64(actualUnits))
-	billedValueWei.Div(billedValueWei, big.NewInt(unitsPerPrice))
+	// Ceiling, per offering-axes.md §6.1 — the same function the payee's
+	// ledger and the session path compute. Integer division floors, so
+	// with per_units > 1 this used to attest less than was actually
+	// billed, and a clearinghouse recomputing the rule disagreed with
+	// the record it was verifying.
+	// Prefer what the ledger says it charged. Recomputing here produces
+	// an INDEPENDENT ceiling, which is right only for the first exchange
+	// on a payment session: billing is cumulative, so later exchanges
+	// cost the difference of two ceilings and an independent one attests
+	// money that never moved.
+	billedValueWei := ident.ChargedWei
+	if billedValueWei == nil {
+		billedValueWei = payment.BillFor(big.NewInt(price.GetPricePerUnit()), uint64(unitsPerPrice), actualUnits)
+	}
 	if fundedValueWei == nil {
 		fundedValueWei = new(big.Int)
+	}
+
+	// A failed debit overrides every funded/billed comparison below: the
+	// question "was this over- or under-funded" presumes value moved,
+	// and none did. Attest what the ledger took, not what was measured.
+	if ident.DebitFailed {
+		billedValueWei = big.NewInt(0)
+		if ident.ChargedWei != nil {
+			billedValueWei = ident.ChargedWei
+		}
 	}
 
 	outcome := pb.SettlementRecord_EXACT
@@ -99,6 +164,11 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 	if terminationReason == livepeerheader.ErrInsufficientBalance {
 		outcome = pb.SettlementRecord_STOPPED_AT_BUDGET
 	}
+	// And a failed debit outranks that in turn — a budget stop is an
+	// orderly end to a settled exchange; this one did not settle.
+	if ident.DebitFailed {
+		outcome = pb.SettlementRecord_DEBIT_FAILED
+	}
 
 	workUnit := meta.workUnitName
 	if workUnit == "" {
@@ -106,6 +176,25 @@ func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualU
 	}
 
 	return &pb.SettlementRecord{
+		// Identity inside the signature. Without it a valid settlement
+		// verifies as evidence for a different exchange: work_id on
+		// paid-job is the ticket session's rand hash, shared by every
+		// job minted against it, so job_id is what makes the record
+		// about ONE exchange.
+		JobId:     ident.JobID,
+		WorkId:    ident.WorkID,
+		RequestId: ident.RequestID,
+		IssuedAt:  ident.IssuedAt,
+		// This exchange's own units. The identity's running total goes
+		// in payment_cumulative_units — putting it here made one field
+		// mean the exchange on the job path and the whole session on the
+		// session path, which is worse than the gap it was filling.
+		// What the LEDGER took, which is the measured units on the
+		// normal path and less — usually zero — when the debit failed.
+		// Reporting the measurement here claimed value that never moved.
+		DebitedUnits:           ident.DebitedUnits,
+		PaymentCumulativeUnits: ident.CumulativeUnits,
+
 		AcceptedQuoteRef: &pb.QuoteRef{
 			QuoteId:               meta.quoteID,
 			QuoteVersion:          meta.quoteVersion,
@@ -159,8 +248,16 @@ func validateExpectedPriceForRequest(paymentBytes []byte, capability, offering s
 			return fmt.Errorf("payment price_per_unit %d does not match broker price %s", price.GetPricePerUnit(), spec.PricePerWorkUnitWei.String())
 		}
 	}
-	if price.GetPixelsPerUnit() != 1 {
-		return fmt.Errorf("payment pixels_per_unit %d does not match broker expectation 1", price.GetPixelsPerUnit())
+	// pixels_per_unit is go-livepeer's name for the price denominator
+	// (offering-axes.md §6.3). It must equal the offering's per_units,
+	// or payer and payee are pricing the same work differently.
+	wantPerUnits := int64(1)
+	if spec.PerUnits > 1 {
+		wantPerUnits = int64(spec.PerUnits)
+	}
+	if price.GetPixelsPerUnit() != wantPerUnits {
+		return fmt.Errorf("payment pixels_per_unit %d does not match the offering's per_units %d",
+			price.GetPixelsPerUnit(), wantPerUnits)
 	}
 	return nil
 }

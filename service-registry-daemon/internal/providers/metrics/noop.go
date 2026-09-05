@@ -49,10 +49,6 @@ func (*Noop) ObserveChainRead(_ time.Duration)          {}
 func (*Noop) SetChainLastSuccess(_ time.Time)           {}
 func (*Noop) SetManifestFetcherLastSuccess(_ time.Time) {}
 
-func (*Noop) IncPublisherBuild()         {}
-func (*Noop) IncPublisherSign(_ string)  {}
-func (*Noop) IncPublisherProbe(_ string) {}
-
 func (*Noop) SetUptimeSeconds(_ float64)                {}
 func (*Noop) SetBuildInfo(_ string, _ string, _ string) {}
 

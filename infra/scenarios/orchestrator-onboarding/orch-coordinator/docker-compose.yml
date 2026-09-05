@@ -11,10 +11,13 @@
 #
 # Production should terminate TLS at a reverse proxy in front of :8081. A
 # Traefik reference setup is documented in a separate section.
+#
+# Every optional variable carries its default inline (${VAR:-default}) so
+# the .env only needs the Required section of .env.example.
 
 services:
   orch-coordinator:
-    image: ${REGISTRY}/livepeer-orch-coordinator:${TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v2.0.0}
     container_name: orch-coordinator
     hostname: orch-coordinator
     command:
@@ -23,20 +26,20 @@ services:
       - --listen=:8080
       - --public-listen=:8081
       - --metrics-listen=:9091
-      - --log-level=${COORDINATOR_LOG_LEVEL}
-      - --log-format=${COORDINATOR_LOG_FORMAT}
-      - --scrape-interval=${COORDINATOR_SCRAPE_INTERVAL}
+      - --log-level=${COORDINATOR_LOG_LEVEL:-info}
+      - --log-format=${COORDINATOR_LOG_FORMAT:-text}
+      - --scrape-interval=${COORDINATOR_SCRAPE_INTERVAL:-5m}
     ports:
       # Public registry endpoint. Put a TLS-terminating reverse proxy in front
       # of this in production.
-      - "${COORDINATOR_PUBLIC_BIND}:${COORDINATOR_PUBLIC_PORT}:8081"
+      - "${COORDINATOR_PUBLIC_BIND:-0.0.0.0}:${COORDINATOR_PUBLIC_PORT:-8081}:8081"
       # Admin + metrics. Bind to loopback by default; reach over SSH tunnel.
-      - "${COORDINATOR_ADMIN_BIND}:${COORDINATOR_LISTEN_PORT}:8080"
-      - "${COORDINATOR_METRICS_BIND}:${COORDINATOR_METRICS_PORT}:9091"
+      - "${COORDINATOR_ADMIN_BIND:-127.0.0.1}:${COORDINATOR_LISTEN_PORT:-8080}:8080"
+      - "${COORDINATOR_METRICS_BIND:-127.0.0.1}:${COORDINATOR_METRICS_PORT:-9091}:9091"
     environment:
-      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS}
+      ORCH_COORDINATOR_ADMIN_TOKENS: ${ORCH_COORDINATOR_ADMIN_TOKENS:?set ORCH_COORDINATOR_ADMIN_TOKENS to at least one admin bearer token (openssl rand -hex 32)}
     volumes:
-      - ${COORDINATOR_CONFIG}:/etc/livepeer/orch-coordinator.yaml:ro
+      - ${COORDINATOR_CONFIG:-/opt/livepeer/coordinator-config.yaml}:/etc/livepeer/orch-coordinator.yaml:ro
       - coordinator-data:/srv/data
     restart: unless-stopped
 

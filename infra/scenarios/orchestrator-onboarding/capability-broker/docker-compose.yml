@@ -10,41 +10,47 @@
 #   - capability-broker         routes inbound work to capabilities
 #   - payment-daemon (receiver) redeems payment tickets on-chain
 #
-# What lives outside this stack (per host-config.yaml):
+# What lives outside this stack:
 #   - The actual capability workers (vLLM, ABR, etc.). They can be
-#     containers on this same box (declared by you), or remote services
-#     this broker proxies to.
+#     containers on this same box or on other machines. Each runs an agent
+#     that attaches OUTBOUND to this broker with an enrolled credential —
+#     the broker never dials them, so they need no inbound port.
 #
-# The host-config.yaml at COORDINATOR_CONFIG defines which capabilities this
-# broker advertises and where the workloads live. Variants for common
-# hardware mixes are documented separately.
+# The host-config.yaml at BROKER_CONFIG defines the OFFERS this broker
+# sells: capability, price, capacity, and the certification a runner must
+# pass. It says nothing about where a workload lives; the runner declares
+# that itself. Variants for common hardware mixes are documented separately.
+#
+# Every optional variable carries its default inline (${VAR:-default}) so
+# the .env only needs the Required section of .env.example.
 
 services:
   payment-daemon-receiver:
-    image: ${REGISTRY}/livepeer-payment-daemon:${PAYMENT_TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-payment-daemon:${PAYMENT_TAG:-v2.0.0}
     container_name: payment-daemon-receiver
     hostname: payment-daemon-receiver
     command:
       - --mode=receiver
       - --socket=/var/run/livepeer/payment-daemon.sock
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
-      - --chain-rpc=${CHAIN_RPC}
+      # Comma-separated RPC URLs; index 0 is primary, the rest are backups.
+      - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
       - --orch-address=${ORCH_ADDRESS:?set ORCH_ADDRESS to the cold/on-chain orch identity}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
-      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT}
-      - --redeem-gas=${REDEEM_GAS}
+      - --gas-price-multiplier-pct=${GAS_PRICE_MULT_PCT:-200}
+      - --redeem-gas=${REDEEM_GAS:-500000}
     environment:
-      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD}
+      LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_KEYSTORE_PASSWORD:-}
     volumes:
-      - ${PAYMENT_KEYSTORE}:/etc/livepeer/keystore.json:ro
-      - ${PAYMENT_KEYSTORE_PASSWORD_FILE}:/etc/livepeer/keystore-password:ro
+      - ${PAYMENT_KEYSTORE_FILE:-/opt/livepeer/payment-keystore.json}:/etc/livepeer/keystore.json:ro
+      - ${PAYMENT_KEYSTORE_PASSWORD_FILE:-/opt/livepeer/payment-keystore-password}:/etc/livepeer/keystore-password:ro
       - livepeer-run:/var/run/livepeer
       - payment-daemon-db:/var/lib/livepeer/payment-daemon
     restart: unless-stopped
 
   capability-broker:
-    image: ${REGISTRY}/livepeer-capability-broker:${TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v2.0.0}
     container_name: capability-broker
     hostname: capability-broker
     command:
@@ -52,17 +58,41 @@ services:
       - --listen=:8080
       - --metrics=:9090
     environment:
-      LOG_LEVEL: ${BROKER_LOG_LEVEL}
+      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
+      # Bearer for the private admin surface. Required to mint runner attach
+      # credentials with POST /admin/v1/enroll, which is how a workload gets
+      # to serve any offer at all.
+      BROKER_ADMIN_TOKEN: ${BROKER_ADMIN_TOKEN:?set BROKER_ADMIN_TOKEN to a long random secret}
     ports:
       # Public broker endpoint. Gateways resolve your manifest from the
       # orch-coordinator, find this URL there, and call it directly. Put a
       # TLS-terminating reverse proxy in front of this in production.
-      - "${BROKER_PUBLIC_BIND}:${BROKER_LISTEN_PORT}:8080"
+      # Runners that cannot use QUIC attach over WebSocket on this port too.
+      - "${BROKER_PUBLIC_BIND:-0.0.0.0}:${BROKER_LISTEN_PORT:-8080}:8080"
+      # Runner attach over QUIC (UDP), preferred for multiplexed streaming
+      # and large multipart bodies.
+      - "${BROKER_PUBLIC_BIND:-0.0.0.0}:${BROKER_QUIC_PORT:-8443}:8443/udp"
       # Metrics — keep private.
-      - "${BROKER_METRICS_BIND}:${BROKER_METRICS_PORT}:9090"
+      - "${BROKER_METRICS_BIND:-127.0.0.1}:${BROKER_METRICS_PORT:-9090}:9090"
     volumes:
-      - ${BROKER_CONFIG}:/etc/livepeer/host-config.yaml:ro
+      - ${BROKER_CONFIG:-/opt/livepeer/host-config.yaml}:/etc/livepeer/host-config.yaml:ro
+      # Seals the attach-credential store at rest. Generate once with
+      # `openssl rand -hex 32 > /opt/livepeer/broker-seal.key`; losing it
+      # means every host re-enrolls.
+      - ${BROKER_SEAL_KEY:-/opt/livepeer/broker-seal.key}:/etc/livepeer/broker-seal.key:ro
       - livepeer-run:/var/run/livepeer
+      # Durable broker state: paid-session authority and paid-job
+      # idempotency records. Point `session_store.path` in host-config.yaml
+      # at a file under this directory, along with `credential_store.path`
+      # and `offers_state_path`. Without it the broker keeps job idempotency
+      # in memory (a warning, fine for a smoke run, not conformant for
+      # production), refuses to load any paid-session offer at all, makes
+      # every host re-enrol on restart, and re-freezes each offer from
+      # whichever runner certifies first. Losing the volume orphans active
+      # sessions and re-uses debit sequence numbers the payment daemon
+      # already recorded, so snapshot it together with, or after,
+      # payment-daemon-db — never from before it.
+      - broker-state:/var/lib/livepeer
     restart: unless-stopped
     depends_on:
       payment-daemon-receiver:
@@ -71,3 +101,4 @@ services:
 volumes:
   livepeer-run: {}
   payment-daemon-db: {}
+  broker-state: {}

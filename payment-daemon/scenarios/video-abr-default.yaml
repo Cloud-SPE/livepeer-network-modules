@@ -15,7 +15,7 @@ offerings:
   - name: "video-abr-default"
     capability_id: "video:transcode.abr"
     offering_id: "default"
-    interaction: "http-reqresp@v0"
+    interaction: "paid-job/v1"
     work_unit: "jobs"
     price:
       # Cadence break-even:

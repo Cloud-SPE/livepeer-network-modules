@@ -5,8 +5,8 @@
 // both), divided by a configurable granularity to convert to work-units.
 // HTTP headers excluded by default; opt in via `headers: true`.
 //
-// Plan 0015 adds a LiveCounter sibling: long-running mode drivers
-// (ws-realtime, http-stream) increment a shared `atomic.Uint64` byte
+// Plan 0015 adds a LiveCounter sibling: a long-running transport (the
+// paid-job `stream` body) increments a shared `atomic.Uint64` byte
 // counter as data flows; the payment middleware polls that counter every
 // tick to drive interim DebitBalance calls. The Extract path is unchanged.
 package bytescounted
@@ -124,8 +124,8 @@ func (lc *LiveCounter) CurrentUnits() uint64 {
 	return lc.Bytes.Load() / lc.granularity
 }
 
-// AddBytes adds n on-wire bytes to the running counter. Mode drivers
-// call this from their proxy loops (e.g. ws-realtime's pumpFrames).
+// AddBytes adds n on-wire bytes to the running counter. A streaming
+// transport calls this from its copy loop.
 func (lc *LiveCounter) AddBytes(n uint64) {
 	if lc == nil {
 		return

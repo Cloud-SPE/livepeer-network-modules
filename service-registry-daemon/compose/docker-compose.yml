@@ -14,39 +14,43 @@
 #     `/var/run/livepeer/service-registry.sock`
 #
 # Required operator inputs:
-#   - CHAIN_RPC
+#   - CHAIN_RPC_URLS (comma-separated, primary first; the resolver fails
+#     over between entries)
 # Optional:
 #   - expose METRICS_PORT for Prometheus
 #   - set STATIC_OVERLAY to bypass chain discovery
+#
+# Every optional variable carries its default inline (${VAR:-default}) so
+# the .env only needs the Required section of .env.example.
 
 services:
   service-registry-daemon:
-    image: ${REGISTRY}/livepeer-service-registry-daemon:${TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-service-registry-daemon:${TAG:-v2.0.0}
     restart: unless-stopped
 
     command:
       - --mode=resolver
       - --socket=/var/run/livepeer/service-registry.sock
       - --store-path=/var/lib/livepeer/registry-cache.db
-      - --chain-rpc=${CHAIN_RPC}
-      - --chain-id=${CHAIN_ID}
-      - --controller-address=${CONTROLLER_ADDRESS}
-      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS}
-      - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS}
-      - --discovery=${DISCOVERY_MODE}
-      - --round-poll-interval=${ROUND_POLL_INTERVAL}
-      - --cache-manifest-ttl=${CACHE_MANIFEST_TTL}
-      - --manifest-max-bytes=${MANIFEST_MAX_BYTES}
-      - --manifest-fetch-timeout=${MANIFEST_FETCH_TIMEOUT}
-      - --max-stale=${MAX_STALE}
-      - --reject-unsigned=${REJECT_UNSIGNED}
-      - --static-overlay=${STATIC_OVERLAY}
-      - --log-level=${LOG_LEVEL}
-      - --log-format=${LOG_FORMAT}
-      - --metrics-listen=${METRICS_PORT:+:${METRICS_PORT}}
+      - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
+      - --chain-id=${CHAIN_ID:-42161}
+      - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
+      - --service-registry-address=${SERVICE_REGISTRY_ADDRESS:-}
+      - --ai-service-registry-address=${AI_SERVICE_REGISTRY_ADDRESS:-0x04C0b249740175999E5BF5c9ac1dA92431EF34C5}
+      - --discovery=${DISCOVERY_MODE:-chain}
+      - --round-poll-interval=${ROUND_POLL_INTERVAL:-15s}
+      - --cache-manifest-ttl=${CACHE_MANIFEST_TTL:-5m}
+      - --manifest-max-bytes=${MANIFEST_MAX_BYTES:-1048576}
+      - --manifest-fetch-timeout=${MANIFEST_FETCH_TIMEOUT:-5s}
+      - --max-stale=${MAX_STALE:-30m}
+      - --reject-unsigned=${REJECT_UNSIGNED:-true}
+      - --static-overlay=${STATIC_OVERLAY:-}
+      - --log-level=${LOG_LEVEL:-info}
+      - --log-format=${LOG_FORMAT:-json}
+      - --metrics-listen=:${METRICS_PORT:-9095}
 
     ports:
-      - "${REGISTRY_METRICS_BIND}:${METRICS_PORT}:${METRICS_PORT}"
+      - "${REGISTRY_METRICS_BIND:-127.0.0.1}:${METRICS_PORT:-9095}:${METRICS_PORT:-9095}"
 
     volumes:
       - service-registry-socket:/var/run/livepeer

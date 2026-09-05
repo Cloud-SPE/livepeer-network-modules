@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -631,17 +632,26 @@ func percentile(xs []float64, p float64) float64 {
 
 func hostConfigSnippet(off Offering, floorWei *big.Int) string {
 	priceAmount, _ := new(big.Int).SetString(off.Price.AmountWei, 10)
+	// off.Interaction carries the protocol tag (e.g. "paid-job/v1"); a
+	// paid-* capability is only valid with its axes object, so the
+	// snippet emits one the operator can fill in.
+	axes := "  job:\n    transports: [unary]\n"
+	if strings.HasPrefix(off.Interaction, "paid-session/") {
+		axes = "  session:\n    descriptor_schema: \"TODO/v1\"\n    runner:\n" +
+			"      create_path: \"/sessions\"\n      status_path: \"/sessions/{id}\"\n" +
+			"      terminate_path: \"/sessions/{id}\"\n"
+	}
 	return fmt.Sprintf(`- id: %q
   offering_id: %q
-  interaction_mode: %q
-  work_unit:
+  protocol: %q
+%s  work_unit:
     name: %q
     extractor: { type: "TODO" }
   price:
     amount_wei: %q
     per_units: %d
   # target floor at current assumptions: %s wei/%s
-`, off.CapabilityID, off.OfferingID, off.Interaction, off.WorkUnit, priceAmount.String(), off.Price.PerUnits, floorWei.String(), off.WorkUnit)
+`, off.CapabilityID, off.OfferingID, off.Interaction, axes, off.WorkUnit, priceAmount.String(), off.Price.PerUnits, floorWei.String(), off.WorkUnit)
 }
 
 func ceilRat(r *big.Rat) *big.Int {

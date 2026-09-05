@@ -6,19 +6,28 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 |---|---|---|
 | [core-beliefs.md](./core-beliefs.md) | active | Invariants every change must uphold |
 | [requirements.md](./requirements.md) | active | The 11 supply-side requirements with rationale |
-| [architecture-overview.md](./architecture-overview.md) | active | The 8-layer proposed architecture at a glance, with mermaid diagrams per layer |
-| [interaction-modes.md](./interaction-modes.md) | active | The finite set of client↔broker wire shapes and when each mode is the right fit |
+| [architecture-overview.md](./architecture-overview.md) | active | The 8-layer architecture at a glance, with mermaid diagrams per layer |
+| [interaction-modes.md](./interaction-modes.md) | active | The two paid protocols (`paid-job/v1`, `paid-session/v1`), declared axes, and how a capability picks its shape |
 | [payment-daemon-interactions.md](./payment-daemon-interactions.md) | active | Cross-cutting guide to how the client, broker, and both `payment-daemon` roles interact |
-| [streaming-workload-pattern.md](./streaming-workload-pattern.md) | active | Long-lived-session blueprint (broker-side meter + client-side ledger) for `ws-realtime`, `session-control-plus-media`, and `rtmp-…` modes |
+| [streaming-workload-pattern.md](./streaming-workload-pattern.md) | superseded | Mode-era long-lived-session blueprint; durability requirements live on in `paid-session/v1`, trust framing in `dual-meter-trust.md` |
 | [payment-decoupling.md](./payment-decoupling.md) | active | What changed in `payment-daemon` for opaque capability / work-unit names |
-| [pricing-overview.md](./pricing-overview.md) | active | End-to-end synthesis: how price flows from `host-config.yaml` through manifest, discovery, headers, extractors, modes, session, debit, settlement, and pool receipts |
+| [pricing-overview.md](./pricing-overview.md) | active | End-to-end synthesis: how price flows from `host-config.yaml` through manifest, discovery, headers, extractors, protocols, session, debit, settlement, and pool receipts |
 | [backend-health.md](./backend-health.md) | active | Three-layer health model (manifest / live / failure-rate) — which layer answers which routing question |
 | [trust-model.md](./trust-model.md) | active | Cold-key + sign-cycle deep dive; threat model and what each invariant defends against |
+- [`migrating-to-connected-runners.md`](./migrating-to-connected-runners.md)
+  — what an existing deployment must change for plan 0043, and what it
+  can delete. No backward compatibility; read this before upgrading.
+- Runner-declared capabilities → **superseded by plan 0043**. The
+  contract is
+  [`livepeer-network-protocol/protocols/runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md);
+  the original argument is archived at
+  [`../references/archived/runner-declared-capabilities.md`](../references/archived/runner-declared-capabilities.md).
+| [dual-meter-trust.md](./dual-meter-trust.md) | active | Economic trust for the v1 protocols: dual meters, admission-edge billing, claims-vs-bills, tolerance band + bounded exposure |
 | [ui-design-system.md](./ui-design-system.md) | active | Shared visual system for all operator and product UIs, aligned to current Livepeer brand and explorer surfaces |
 | [frontend-dom-and-css-invariants.md](./frontend-dom-and-css-invariants.md) | active | Repo-wide frontend implementation contract: light DOM only, semantic HTML only, no inline CSS, styling only from checked-in CSS files |
 | [pool-node-production-readiness.md](./pool-node-production-readiness.md) | active | Cross-cutting production gate for the Pool stack: persistence, secrets, retry policy, alerting, privacy, and live runtime validation |
-| [pool-orchestrator-production-rollout.md](./pool-orchestrator-production-rollout.md) | active | Cross-cutting operator rollout path for the Pool-based orch: controller, broker apply, coordinator publish, and secure-orch sign cycle |
-| [pool-overlay-flows.md](./pool-overlay-flows.md) | active | Sequence + state diagrams for the three pool-specific flows: member signup, payout cycle, and work routing / worker selection |
+| [pool-orchestrator-production-rollout.md](./pool-orchestrator-production-rollout.md) | active | Cross-cutting operator rollout path for the Pool-based orch: controller, template catalog, offer/credential push, coordinator publish, and secure-orch sign cycle |
+| [pool-overlay-flows.md](./pool-overlay-flows.md) | active | How the pool works end to end: zero-touch member onboarding, the template catalog and placement policy, the agent's desired-state loop, the trust ladder, and the payout cycle |
 
 Stubs (to be written as we drill in):
 
@@ -26,8 +35,9 @@ Stubs (to be written as we drill in):
 |---|---|---|
 | `spec-repo-relationship.md` | stub | Boundary between this repo and `livepeer-network-protocol` |
 
-Per-mode wire contracts live in
-[`../../livepeer-network-protocol/modes/`](../../livepeer-network-protocol/modes/),
+Protocol wire contracts live in
+[`../../livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/)
+and [`../../livepeer-network-protocol/descriptors/`](../../livepeer-network-protocol/descriptors/),
 not in this directory.
 
 Component-local designs live inside their respective submodules. Promote a doc

@@ -65,11 +65,11 @@ sender/receiver split.
 | Wire headers | [`livepeer-network-protocol/headers/livepeer-headers.md`](../../livepeer-network-protocol/headers/livepeer-headers.md) |
 | Payee RPC surface | [`livepeer-network-protocol/proto/livepeer/payments/v1/payee_daemon.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/payee_daemon.proto) |
 | Payer RPC surface | [`livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto) |
-| Wire-compat payment types | [`proto-contracts/livepeer/payments/v1/types.proto`](../../proto-contracts/livepeer/payments/v1/types.proto) |
+| Wire-compat payment types | [`livepeer-network-protocol/proto/livepeer/payments/v1/types.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/types.proto) |
 | Sender (payer) daemon | [`payment-daemon/internal/service/sender/sender.go`](../../payment-daemon/internal/service/sender/sender.go) |
 | Receiver (payee) daemon | [`payment-daemon/internal/service/receiver/receiver.go`](../../payment-daemon/internal/service/receiver/receiver.go) |
 | Session + balance store | [`payment-daemon/internal/store/store.go`](../../payment-daemon/internal/store/store.go) |
-| Interaction modes | [`livepeer-network-protocol/modes/`](../../livepeer-network-protocol/modes/) |
+| Interaction protocols | [`livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/) |
 | Work-unit extractors | [`livepeer-network-protocol/extractors/`](../../livepeer-network-protocol/extractors/) |
 | Pool accounting docs | [`pool-controller/`](../../pool-controller/), [`pool-reconciler/`](../../pool-reconciler/), [`pool-payout-executor/`](../../pool-payout-executor/) |
 
@@ -77,30 +77,39 @@ sender/receiver split.
 
 ### 1. The operator declares the price
 
-A capability entry in `host-config.yaml` declares its retail price as a
-wei-denominated ratio plus an opaque work-unit name. Example from
-[`host-config.example.yaml:45-67`](../../capability-broker/examples/host-config.example.yaml):
+An **offer** in `host-config.yaml` declares its retail price as a
+wei-denominated ratio. Price is the operator's to set — it is the whole
+reason the offer exists — but the work unit that price is *counted in* is
+not: the runner declares the unit it meters and the extractor that
+produces it, and the first runner to certify freezes that into the offer.
+So the operator sets the rate and the runner supplies the denominator.
+Example from
+[`host-config.example.yaml`](../../capability-broker/examples/host-config.example.yaml):
 
 ```yaml
-capabilities:
-  - id: "kibble:doggo-bark-counter:v1"
-    offering_id: "default"
-    interaction_mode: "http-reqresp@v0"
-    work_unit:
-      name: "barks"
-      extractor: { type: "response-jsonpath", path: "$.bark_count" }
+offers:
+  - offering_id: "doggo-default"
+    capability: "kibble:doggo-bark-counter:v1"
+    protocol: "paid-job/v1"
     price:
       amount_wei: "100"
       per_units: 1
+    certification:
+      - { name: ready, type: readiness }
 ```
 
-The Go grammar is declared in
-[`capability-broker/internal/config/config.go`](../../capability-broker/internal/config/config.go):
+That prices one bark at 100 wei — where "bark" is whatever the attached
+runner declared as its work unit, and the manifest advertises the frozen
+pair.
 
-- `Capability` struct — `config.go:43-54`
-- `WorkUnit` struct (name + extractor map) — `config.go:87-90`
+The Go grammar is declared in
+[`capability-broker/internal/config/offers.go`](../../capability-broker/internal/config/offers.go):
+
+- `Offer` struct — `offers.go`
 - `Price` struct (`amount_wei` as decimal string, `per_units` as uint64) —
-  `config.go:94-97`
+  [`config.go`](../../capability-broker/internal/config/config.go)
+- `WorkUnit` (name + extractor map) is populated from the runner's attach
+  declaration, not from this file
 
 The string form for `amount_wei` is deliberate — it preserves precision
 beyond JSON's safe-integer range (per the manifest schema).
@@ -151,7 +160,7 @@ requested_face_value_wei = target_units × price_per_work_unit_wei
 (See [`payment-daemon-interactions.md:108-128`](./payment-daemon-interactions.md).)
 
 The gateway calls `PayerDaemon.CreatePayment` —
-[`proto-contracts/livepeer/payments/v1/payer_daemon.proto`](../../proto-contracts/livepeer/payments/v1/payer_daemon.proto)
+[`livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto)
 and the implementation
 [`payment-daemon/internal/service/sender/sender.go:69-150`](../../payment-daemon/internal/service/sender/sender.go).
 The sender:
@@ -182,16 +191,16 @@ headers — see
 
 | Header | Direction | Carries |
 |---|---|---|
-| `Livepeer-Capability` | request → broker | capability id (opaque string), `livepeer-headers.md:45-53` |
-| `Livepeer-Offering` | request → broker | offering id (opaque string), `livepeer-headers.md:55-63` |
-| `Livepeer-Payment` | request → broker | base64 protobuf `Payment` envelope, `livepeer-headers.md:65-86` |
-| `Livepeer-Mode` | request → broker | interaction mode id, e.g. `http-stream@v0` |
-| `Livepeer-Work-Units` | response from broker | `actualUnits` after extraction, `livepeer-headers.md:132-…` |
+| `Livepeer-Capability` | request → broker | capability id (opaque string) |
+| `Livepeer-Offering` | request → broker | offering id (opaque string) |
+| `Livepeer-Payment` | request → broker | base64 protobuf `Payment` envelope |
+| `Livepeer-Protocol` | request → broker | protocol tag, `paid-job/v1` or `paid-session/v1` (replaced the mode-era `Livepeer-Mode` + `Livepeer-Spec-Version` pair) |
+| `Livepeer-Work-Units` | response from broker | `actualUnits` after extraction; a trailer on the `stream` transport |
+| `Livepeer-Work-Unit` | response from broker | echo of the offering's declared unit name, so the gateway can reject unit drift |
 | `Livepeer-Error` | response on error | machine-readable code such as `insufficient_balance` |
 
-The envelope's `capability_id` and `offering_id` MUST match the headers
-(`livepeer-headers.md:74-84`). Mismatch ⇒ broker rejects with
-`Livepeer-Error: payment_invalid`.
+The envelope's `capability_id` and `offering_id` MUST match the headers.
+Mismatch ⇒ broker rejects with `Livepeer-Error: payment_invalid`.
 
 ### 6. Receiver validates the ticket and credits EV
 
@@ -230,21 +239,20 @@ s.store.OpenSession(store.Session{
 the session — see the `Session` struct in
 [`store.go:47-71`](../../payment-daemon/internal/store/store.go).
 
-### 7. Backend runs in an interaction mode
+### 7. Backend runs under a protocol
 
-The interaction mode controls *when* and *how* work units are reported.
-Specs in [`livepeer-network-protocol/modes/`](../../livepeer-network-protocol/modes/):
+The protocol controls *when* and *how* work units are reported. Specs in
+[`livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/):
 
-- `http-reqresp@v0` — one request, one response, post-response extraction
-- `http-stream@v0` — chunked/SSE response, extraction at stream end
-- `http-multipart@v0` — multipart upload, post-response extraction
-- `ws-realtime@v0` — bidirectional WebSocket, per-cadence debit
-- `rtmp-ingress-hls-egress@v0` — RTMP in, HLS out, session-metered
-- `session-control-plus-media@v0` — broker-managed media plane
-- `live-session-remote-runner@v0` — broker-authoritative live session with a remote runner-owned media runtime
+- `paid-job/v1` — one exchange; the declared extractor runs at the terminal
+  accounting point (response end or stream termination) and the debit
+  settles once.
+- `paid-session/v1` — cumulative usage claims (runner-reported; the
+  runner is the usage authority) drive debits
+  against funded runway for the session's lifetime.
 
-Pricing math is identical across modes; modes only differ in *when* the
-broker can extract `actualUnits` and call `DebitBalance`.
+Pricing math is identical across protocols; they differ only in *when* the
+broker can establish `actualUnits` and call `DebitBalance`.
 
 ### 8. Extractor produces `actualUnits`
 
@@ -258,7 +266,7 @@ that produces the integer count is declarative. Recipes are in
 | `response-jsonpath` | Arbitrary JSONPath over response body | integer |
 | `request-formula` | Safe arithmetic over request fields (e.g. `width × height × steps`) | integer |
 | `bytes-counted` | Byte length of request, response, or both | bytes |
-| `seconds-elapsed` | Wall-clock duration between mode-defined anchors | seconds |
+| `seconds-elapsed` | Wall-clock duration of one exchange, anchored per transport | seconds |
 | `ffmpeg-progress` | Parsed FFmpeg `-progress` stream | frames or out-time |
 
 The broker ships the extractor implementations; the operator only references
@@ -385,7 +393,7 @@ message SelectedRoute {
 
 ### Wire-compat payment types
 
-[`proto-contracts/livepeer/payments/v1/types.proto`](../../proto-contracts/livepeer/payments/v1/types.proto)
+[`livepeer-network-protocol/proto/livepeer/payments/v1/types.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/types.proto)
 preserves byte-for-byte wire compatibility with go-livepeer's
 `net/lp_rpc.proto`. Field *names* differ
 (`price_per_unit` vs. `pricePerUnit`); field *numbers* are identical, so the
@@ -461,12 +469,13 @@ To pre-empt confusion from the older `livepeer-modules-project` codebase:
   face-value
 - [`architecture-overview.md`](./architecture-overview.md) — the 8-layer
   architecture; pricing sits across layers 3-6
-- [`interaction-modes.md`](./interaction-modes.md) — full mode catalogue
+- [`interaction-modes.md`](./interaction-modes.md) — the two paid protocols
+  (`paid-job/v1`, `paid-session/v1`) and their declared axes
+- [`dual-meter-trust.md`](./dual-meter-trust.md) — whose meter bills whom, and
+  the divergence tolerance band
 - [`streaming-workload-pattern.md`](./streaming-workload-pattern.md) —
-  long-lived session blueprint for streaming modes
+  **superseded**; the mode-era long-lived-session blueprint, kept as provenance
 - [`trust-model.md`](./trust-model.md) — manifest signing, cold key
-- [`migration-from-suite.md`](./migration-from-suite.md) — component map
-  from the older suite
 
 ---
 
@@ -1229,17 +1238,34 @@ under capability `openai:chat-completions`, differentiated by
 `offering_id`:
 
 ```yaml
-capabilities:
-  - id: "openai:chat-completions"
-    offering_id: "llama-3.3-70b-h100"     # premium: 10% off Together
+offers:
+  - offering_id: "llama-3.3-70b-h100"        # premium: 10% off Together
+    capability: "openai:chat-completions"
+    protocol: "paid-job/v1"
+    match: { identity.gpu_class: "h100" }    # see note below on identity keys
     # price targets retail ≈ $0.79/M output
-  - id: "openai:chat-completions"
-    offering_id: "llama-3.3-70b-a100"     # mid: 12% off
+  - offering_id: "llama-3.3-70b-a100"        # mid: 12% off
+    capability: "openai:chat-completions"
+    protocol: "paid-job/v1"
+    match: { identity.gpu_class: "a100" }
     # price targets retail ≈ $0.77/M output
-  - id: "openai:chat-completions"
-    offering_id: "llama-3.3-70b-2x3090-awq"  # budget: 20% off, quantized
+  - offering_id: "llama-3.3-70b-2x3090-awq"  # budget: 20% off, quantized
+    capability: "openai:chat-completions"
+    protocol: "paid-job/v1"
+    match: { identity.gpu_class: "3090" }
     # price targets retail ≈ $0.70/M output, slower / quantized
 ```
+
+Each tier is one offer with a distinct `offering_id` (ids are unique across
+the file). What separates them is which runners each `match` selects — so a
+new box joins a tier by attaching and declaring itself into it, not by an
+operator adding a row.
+
+`identity` is a free-form string→string map the runner declares
+([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md)
+§3.2); `gpu_class` above is only a tier key a runner's contract would have to
+emit. Match on whatever the runners you actually run declare — the OpenAI
+adapter's contract emits `openai.model` and `provider`.
 
 The gateway adapter then picks the offering matching the customer's
 SLA / latency / quality preference.

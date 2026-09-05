@@ -327,6 +327,12 @@ func schemaCheck(sm *types.SignedManifest) error {
 		if c.CapabilityID == "" || c.OfferingID == "" {
 			return errors.New("capability: capability_id + offering_id required")
 		}
+		if c.Protocol == "" {
+			return errors.New("capability.protocol: required")
+		}
+		if err := types.ValidateProtocolAxes(c.Protocol, c.Job, c.Session); err != nil {
+			return fmt.Errorf("capability.%w", err)
+		}
 		if c.WorkUnit.Name == "" {
 			return errors.New("capability.work_unit.name: required")
 		}
@@ -366,6 +372,12 @@ func manifestPayloadMap(p types.ManifestPayload) map[string]any {
 		"orch":            orchToMap(p.Orch),
 		"capabilities":    capsToList(p.Capabilities),
 	}
+	// Emitted only when present, so a manifest without delegations
+	// canonicalizes to exactly the bytes it did before the field
+	// existed.
+	if len(p.SettlementKeys) > 0 {
+		root["settlement_keys"] = settlementKeysToList(p.SettlementKeys)
+	}
 	return root
 }
 
@@ -383,10 +395,25 @@ func capsToList(caps []types.CapabilityTuple) []any {
 		entry := map[string]any{
 			"capability_id":      c.CapabilityID,
 			"offering_id":        c.OfferingID,
-			"interaction_mode":   c.InteractionMode,
+			"protocol":           c.Protocol,
 			"work_unit":          map[string]any{"name": c.WorkUnit.Name},
 			"price_per_unit_wei": c.PricePerUnitWei,
 			"worker_url":         c.WorkerURL,
+		}
+		// Emitted only when it carries information. A denominator of 1
+		// is the default, so omitting it keeps every already-signed
+		// manifest canonicalizing to the same bytes it did before the
+		// field existed.
+		if c.PerUnits > 1 {
+			entry["per_units"] = c.PerUnits
+		}
+		// Must stay identical to candidate.capsToList — these bytes are
+		// re-derived to check the cold key's signature.
+		if c.Job != nil {
+			entry["job"] = map[string]any(*c.Job)
+		}
+		if c.Session != nil {
+			entry["session"] = map[string]any(*c.Session)
 		}
 		if len(c.Extra) > 0 {
 			entry["extra"] = c.Extra
@@ -395,6 +422,21 @@ func capsToList(caps []types.CapabilityTuple) []any {
 			entry["constraints"] = c.Constraints
 		}
 		out = append(out, entry)
+	}
+	return out
+}
+
+// settlementKeysToList must stay byte-identical across both payload
+// builders — these bytes are re-derived to check the cold key's
+// signature.
+func settlementKeysToList(keys []types.SettlementKey) []any {
+	out := make([]any, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, map[string]any{
+			"public_key": k.PublicKey,
+			"not_before": k.NotBefore.UTC().Format(time.RFC3339Nano),
+			"expires_at": k.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		})
 	}
 	return out
 }

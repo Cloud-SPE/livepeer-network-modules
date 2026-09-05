@@ -1,0 +1,37 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness",
+    "required": true,
+    "config": {
+      "attempts": 10,
+      "interval_ms": 3000
+    }
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "required": true,
+    "timeout_ms": 90000,
+    "config": {
+      "assert": [
+        "$.data[0].b64_json"
+      ],
+      "body": {
+        "model": "{{identity.openai.model}}",
+        "n": 1,
+        "prompt": "a probe",
+        "response_format": "b64_json"
+      },
+      "transport": "unary"
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "required": true,
+    "config": {
+      "min_units": 1
+    }
+  }
+]

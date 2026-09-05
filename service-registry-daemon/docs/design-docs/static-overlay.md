@@ -75,9 +75,25 @@ In overlay-only resolver mode, the daemon walks every enabled overlay entry once
 
 ## Reload
 
-The overlay file is watched (via `fsnotify`) and reloaded on change. Reloads are atomic — partial parse failures keep the previous valid overlay active and emit a `config_reload_failed` audit event.
+**The overlay is read exactly once, at daemon startup.** There is no file
+watcher, no SIGHUP handler, and no `reload_overlay` flag on
+`Resolver.Refresh` (`RefreshRequest` carries only `eth_address` and
+`force`). To pick up an edited `nodes.yaml`, restart the daemon.
 
-A SIGHUP also triggers a reload. The gRPC `Resolver.Refresh` RPC accepts a `reload_overlay=true` flag that does the same thing on demand.
+Do **not** send SIGHUP expecting a reload — the daemon installs handlers
+only for SIGINT and SIGTERM, so SIGHUP takes the Go default disposition
+and kills the process.
+
+A parse failure at startup is fatal: the daemon refuses to boot rather
+than run with a half-applied policy. The
+`livepeer_registry_overlay_reloads_total` counter therefore records a
+single startup load (`ok` / `io_error` / `parse_error`) rather than an
+ongoing reload stream.
+
+Hot-reload (watcher + SIGHUP + on-demand RPC flag) remains unimplemented.
+(The `overlay-hot-reload-tests` entry in
+`docs/exec-plans/tech-debt-tracker.md` predates this and describes it as
+shipped — it is not.)
 
 ## Security
 

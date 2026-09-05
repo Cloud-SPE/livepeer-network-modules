@@ -1,0 +1,14 @@
+# coverage-gate exemptions
+#
+# One import path per line. Every exemption MUST have a reason on the
+# same line after '#'. Do not exempt a package just because writing
+# tests is hard. Exemption is a last resort when the code path is
+# genuinely impractical to cover (CLI entry-points gated on os.Exit,
+# generated code with no logic, etc.).
+
+# cmd entry point: subcommand dispatch, config load and os.Exit paths.
+# The subcommands are exercised through the pool scenario stacks.
+github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/cmd/livepeer-pool-payout-executor  # cmd entry; covered by the pool-node / pool-orchestrator stacks
+
+# Pre-existing coverage debt, outside plan 0048's scope. Tracked in bead lnm-tou.7.
+github.com/Cloud-SPE/livepeer-network-modules/pool-payout-executor/internal/poolcontroller  # 25% before plan 0048; bead lnm-tou.7

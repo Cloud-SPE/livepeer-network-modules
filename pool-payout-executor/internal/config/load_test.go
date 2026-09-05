@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -181,5 +182,48 @@ executor:
 `))
 	if err == nil {
 		t.Fatal("Load() error = nil, want invalid requeue_cooldown_seconds error")
+	}
+}
+
+func TestLoadEnvRPCURLsOverridesFile(t *testing.T) {
+	t.Setenv(RPCURLsEnv, " https://env-a , https://env-b ")
+	cfg, err := Load([]byte(`
+pool_controller:
+  url: http://pool-controller:8080
+executor:
+  rpc_urls: [https://file-a]
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Executor.RPCURLs) != 2 || cfg.Executor.RPCURLs[0] != "https://env-a" || cfg.Executor.RPCURLs[1] != "https://env-b" {
+		t.Fatalf("RPCURLs = %v, want the env list", cfg.Executor.RPCURLs)
+	}
+}
+
+func TestLoadBlankEnvRPCURLsKeepsFile(t *testing.T) {
+	t.Setenv(RPCURLsEnv, "   ")
+	cfg, err := Load([]byte(`
+pool_controller:
+  url: http://pool-controller:8080
+executor:
+  rpc_urls: [https://file-a]
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Executor.RPCURLs) != 1 || cfg.Executor.RPCURLs[0] != "https://file-a" {
+		t.Fatalf("RPCURLs = %v, want the file list", cfg.Executor.RPCURLs)
+	}
+}
+
+func TestLoadInvalidEnvRPCURLsIsAnError(t *testing.T) {
+	t.Setenv(RPCURLsEnv, "https://a,,https://b")
+	_, err := Load([]byte(`
+pool_controller:
+  url: http://pool-controller:8080
+`))
+	if err == nil || !strings.Contains(err.Error(), "CHAIN_RPC_URLS") || !strings.Contains(err.Error(), "entry 2 is empty") {
+		t.Fatalf("Load() error = %v, want CHAIN_RPC_URLS parse error", err)
 	}
 }

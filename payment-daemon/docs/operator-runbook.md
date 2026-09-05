@@ -109,18 +109,25 @@ before signing.
 
 | Knob | Default | Side | What it controls |
 |---|---|---|---|
-| `--receiver-ev` | 1e12 wei | receiver | Target per-ticket expected value. Receiver sizes face_value × win_prob to hit this. Smaller = more tickets per request, higher overhead, finer billing granularity. Larger = fewer tickets, coarser. |
-| `--receiver-tx-cost-multiplier` | 100 | receiver | Receiver targets `face_value = redemption-tx-cost × multiplier`. 100× = winners pay 100× the gas cost, leaving 99% for the operator. |
 | `--redeem-gas` | 500000 | receiver | Estimated gas for a `redeemWinningTicket` tx. Used to compute the face_value floor. Match to the chain you're on; Arbitrum L2 ≈ 500k. |
 | `--gas-price-multiplier-pct` | 200 | receiver | Headroom on the chain's `eth_gasPrice`. 200% = 2.0×. Protects against base-fee spikes between price-read and tx-submit on EIP-1559 chains. **Lower to 100 only on stable-price chains; raise to 300 if your provider's gas estimates are unusually conservative.** |
-| `MaxEV` (sender config) | unset | sender | Caps per-ticket EV. Refuses to sign tickets where `face_value × win_prob > MaxEV`. Protects payer from a malicious or buggy receiver claiming a $1000 ticket on a $0.001 request. |
-| `MaxTotalEV` (sender config) | unset | sender | Caps cumulative EV across a single batch (size × per-ticket EV). Same protection at batch granularity. |
-| `DepositMultiplier` (sender config) | 0 (disabled) | sender | Caps `face_value ≤ Deposit / DepositMultiplier`. Bounds in-flight exposure as a fraction of escrow. |
+| `--validity-window` | 2 | receiver | Rounds a ticket's `CreationRound` may trail `LastInitializedRound` before it is dropped at redemption. |
+| `--redemption-confirmations` | 4 | receiver | Blocks past the receipt before a redemption counts as confirmed. `0` means the default. See §4 "Why redemption-confirmations matters". |
+| `--txintent-db` | `txintents.db` beside `--db` | receiver | BoltDB file for the durable transaction-intent store: every redemption the daemon has signed and where it stands. Same persistent volume as `--db`. See §4 "Durable transaction intents". |
 
-The sender knobs are the gateway operator's defense. **Run with them
-set.** A misconfigured or compromised receiver should never be able to
-mint $X worth of expected loss against a sender that was sized for $Y ≪
-X.
+> **Not yet operator-tunable.** The receiver's issued ticket size is
+> currently a compile-time default in
+> `internal/service/receiver` — `face_value = 1e15 wei` and
+> `win_prob = MaxWinProb / 1024`, so per-ticket EV ≈ 1e12 wei. There is
+> **no `--receiver-ev` and no `--receiver-tx-cost-multiplier` flag**;
+> changing the issued ticket size today means changing
+> `receiver.Config{DefaultFaceValue, DefaultWinProb}` at the call site.
+> Likewise, the sender-side EV caps discussed in the pricing material
+> (`MaxEV`, `MaxTotalEV`, `DepositMultiplier`) are **not implemented** —
+> the sender's only pre-signing guards are the deposit / reserve /
+> pending-unlock checks in §3. Model these with `cmd/payout-sim` (see
+> [`payout-modeling-guide.md`](./payout-modeling-guide.md)) rather than
+> expecting a flag.
 
 ---
 
@@ -167,8 +174,10 @@ maxFloat shrinks** — operators should watch the ratio.
   to withdraw their funds; signing tickets after that point creates
   unrecoverable obligations.
 
-The corresponding error returned to the gateway is
-`SenderValidationError`; the message identifies which reason fired.
+The gateway sees a gRPC error whose message identifies which reason
+fired: `no sender deposit`, `no sender reserve`, or `deposit and
+reserve set to unlock soon`. There is no distinct typed
+`SenderValidationError` on the wire — match on the message text.
 
 ### Unlock / withdrawal flow
 
@@ -187,6 +196,90 @@ decision and stays out-of-band.
 
 ---
 
+## 3.5. Spend limits (sender side) — REQUIRED in chain mode
+
+A gateway signs whatever price the resolver hands it, and the quote is
+*where a bad price comes from* — so no consistency check can catch one.
+The only defence is your own policy about what you are willing to pay,
+and the daemon refuses to start in chain mode until you state it.
+
+**What is not at risk.** A payment cannot be charged beyond its funded
+value. An overpriced orchestrator therefore delivers *less work for the
+same money* rather than draining more of it. These limits guard against
+waste and runaway, not unbounded loss — which is why one of them is
+required and the other is not.
+
+### `--max-payment-wei` (required in chain mode)
+
+The circuit breaker: the largest funded value the daemon will authorize
+for a **single** payment.
+
+```
+--max-payment-wei=10000000000000000    # 0.01 ETH
+```
+
+One number, unit-agnostic, meaningful for every workload. It exists to
+bound the blast radius of a runaway retry loop or a fat-fingered funding
+call — not to express what a fair price is.
+
+**Sizing it.** Take the most expensive single request you ever intend to
+make and give it some headroom. If your largest job funds 0.002 ETH, set
+0.01 and you will notice a bug long before it costs you. Set it too high
+and it stops protecting you; set it too low and legitimate work fails
+loudly with `spend limit: funded_value … exceeds max-payment-wei …`,
+which is the failure you want.
+
+Dev mode (no `--chain-rpc-urls`) has no real funds and runs without it.
+
+### `--max-price-per-unit` (optional, and the one that scales)
+
+Rate ceilings, keyed by **work unit**:
+
+```
+--max-price-per-unit='tokens=10,video_seconds=2000000000000000'
+```
+
+The work unit is the key because it is the denominator a price is quoted
+in (`price_per_unit_wei` per `work_unit.name`), and the manifest declares
+it before anything is minted.
+
+This is what handles **diverse workloads**. A fair price for an LLM token
+and one for a second of generated video differ by orders of magnitude, so
+a single ceiling cannot serve both — but two entries can, and neither
+constrains the other. A unit you have not listed has no rate policy and
+keeps only the circuit breaker, so adding a capability never hard-fails;
+it just runs with the weaker guard until you set a number.
+
+A price quoted per many units is scaled before comparison: with
+`tokens=10`, an offering at 5000 wei per 1000 tokens is 5 wei/token and
+passes.
+
+**Sizing it.** Start from what you actually pay today and roughly double
+it. The point is to catch an orchestrator publishing 1000× the going
+rate — or, far more likely, one that typed an extra three zeros — not to
+haggle over normal variation.
+
+**Known limitation.** Work unit is not a perfect key: tokens from a small
+model and tokens from a large one are the same unit at legitimately
+different prices, so one `tokens` ceiling must be set for the most
+expensive case you route to and will not catch overpricing on the
+cheapest. If that gap matters for your traffic, split the workloads
+across daemons with different policies.
+
+### Managing them day to day
+
+- The active policy is logged at startup (`spend limits policy=…`). Read
+  it after any config change; it is the ground truth for what this daemon
+  will sign.
+- A refusal is a `FailedPrecondition` naming the limit and **both**
+  numbers, so the log line tells you whether the limit is wrong or the
+  price is.
+- Changing a limit takes a restart. There is no hot reload by design: a
+  spend policy that can change without an audit trail is not a policy.
+- Raise a limit when your own legitimate spend grows. Never raise one to
+  make a specific failing request pass without first checking *why* that
+  request wanted more.
+
 ## 4. Gas economics and redemption (receiver side)
 
 Winning tickets accumulate in a durable redemption queue (BoltDB-backed)
@@ -199,11 +292,44 @@ Configurable via `--redemption-interval` (default 30s). On each tick:
 1. Pop the oldest queued winner that hasn't been submitted.
 2. Run pre-checks (see "Gas validation pre-checks" below). Drop the
    ticket if a check fails.
-3. Submit the redemption transaction via the configured RPC endpoint.
-4. Wait for the receipt.
-5. Wait for **`--redemption-confirmations`** additional blocks (default
-   4) before marking the ticket `MarkRedeemed`.
+3. Ask the contract whether the ticket is already in `usedTickets`. If
+   it is — an earlier attempt landed, or the process that ran before
+   this one did — the ticket is drained locally with no transaction.
+4. File a **transaction intent** for `redeemWinningTicket`, keyed by the
+   ticket hash, and wait for it to reach a terminal state. The intent
+   machine (chain-commons `txintent`) owns the wallet's nonce, the gas
+   caps, replacement of a stalled transaction with a gas bump, reorg
+   recovery, and the wait for **`--redemption-confirmations`** blocks
+   past the receipt (default 4).
+5. On confirmation, mark the ticket `MarkRedeemed` with the tx hash.
 6. Repeat.
+
+A tick has a 5-minute budget. If the intent has not confirmed by then
+the tick ends, the intent keeps going in the background, and the next
+tick files the same key again — which returns the same intent — and
+waits on it. One ticket never produces two transactions.
+
+### Durable transaction intents (`--txintent-db`)
+
+Every redemption the daemon signs is recorded before it is broadcast, in
+a BoltDB file of its own (`--txintent-db`, default `txintents.db` beside
+`--db`): the calldata, the nonce, every attempt's hash and gas caps, and
+the terminal outcome. On start the daemon resumes every non-terminal
+intent from that file and tracks it to confirmation instead of signing
+a new transaction for the same ticket.
+
+That file is the wallet's nonce ledger. Keep it on the same persistent
+volume as `--db`, and snapshot the two together: a `sessions.db` from
+after a redemption paired with a `txintents.db` from before it would
+re-send that redemption.
+
+**Upgrading from a build without an intent store** (any image built
+before plan 0048): stop the daemon, upgrade, start. No drain is needed —
+a redemption the old loop had broadcast is caught by the `usedTickets`
+pre-check once it mines, and one that never mined is re-sent by the
+new loop from the queue exactly as the old one would have. Draining the
+queue first (`livepeer_payment_redemption_queue_depth` at 0 before
+stopping) remains the conservative choice and costs nothing but time.
 
 ### Why redemption-confirmations matters
 
@@ -215,7 +341,9 @@ a longer window is safer but defers revenue. Tune for the chain:
 - **Arbitrum One**: 4 (default) is appropriate. Reorgs within Arbitrum
   Nitro are extremely rare past a few blocks.
 - **L1 mainnet**: use 12+ for safety against typical reorgs.
-- **Test L2s**: 0 (return on first receipt) is fine for development.
+- **Test L2s**: the intent machine treats `0` as the default of 4;
+  there is no "return on first receipt" setting. Use `1` for the
+  fastest confirmation in development.
 
 ### Gas validation pre-checks
 
@@ -224,7 +352,7 @@ Before each redemption submission, the daemon checks:
 | Check | Failure mode | Operator-actionable? |
 |---|---|---|
 | `ErrTicketExpired` — ticket's `CreationRound` is older than `Clock.LastInitializedRound() - ValidityWindow` (default 2 rounds) | Ticket is dropped; receiver loses the EV. | Increase `--validity-window` if your block time is unusually slow; otherwise, this is a payer problem (their batch sat too long before redemption). |
-| `ErrFaceValueTooLow` — ticket face_value < estimated redemption-tx cost | Redeeming would lose money to gas. Ticket is dropped; receiver loses the EV. | Tune `--receiver-tx-cost-multiplier` higher when issuing future tickets to avoid this. Past tickets can't be retroactively fixed. |
+| `ErrFaceValueTooLow` — ticket face_value < estimated redemption-tx cost | Redeeming would lose money to gas. Ticket is dropped; receiver loses the EV. | Raise the receiver's issued face value (today a compile-time default — see §2) or lower `--redeem-gas` if it over-estimates your chain. Past tickets can't be retroactively fixed. |
 | `ErrInsufficientFunds` — sender's available funds (deposit + reserve - pending) < redemption-tx cost | Submission would revert at the contract. Ticket is left queued and retried. | Watch for this in logs as a leading indicator of a sender draining their escrow. |
 
 The pre-checks save gas; the alternative is submitting a tx that
@@ -274,7 +402,7 @@ Setup checklist:
 
 ### Single-wallet vs hot/cold split — what the daemon logs
 
-When the V3 keystore is loaded (production mode, `--chain-rpc` set)
+When the V3 keystore is loaded (production mode, `--chain-rpc-urls` set)
 the daemon logs one of two startup lines:
 
 - `WARN single-wallet config — hot signer is also the on-chain
@@ -356,6 +484,26 @@ recipient, capability, offering)`. Reset closes the old session, drops
 its nonce ledger, and makes the next `GetTicketParams` mint a fresh
 `work_id`.
 
+Payments that arrive on the retired `work_id` are **refused, not
+banked**. A closed session's debits all fail, so anything credited to it
+is money in for work that can never go out — and a winning ticket
+credited there would be redeemed on chain against a session that can
+never serve the sender. The receiver therefore rejects the payment
+before validating any ticket, credits nothing, and queues no winners.
+
+The refusal is returned as a successful `ProcessPayment` carrying
+`tickets_rejected` and a dominant `INVALID_RECIPIENT_RAND`, which the
+broker surfaces to the gateway as `recipient_rotated`. That code is the
+gateway's cue to re-fetch ticket params and rebind with
+`Livepeer-Rebind-From`; a transport error in its place would read as a
+generic failure and strand the sender on the dead identity.
+
+Note what reset does **not** do: it rotates the stable-tuple index and
+closes the session record, but the session's rand survives, so tickets
+already in flight against it still validate at redemption time. Rotation
+retires an identity for future work — it does not invalidate past
+tickets.
+
 ### Nonce-replay window
 
 Per `recipient_rand_hash`, the receiver tracks **up to 600 nonces**.
@@ -387,13 +535,18 @@ Default is 2 rounds.
 
 The receiver daemon owns per-(sender, work_id) balances. The
 **capability-broker** is the component that performs work and tells the
-daemon "I just did N units; debit accordingly". For request/response
-modes (`http-reqresp@v0`, `http-multipart@v0`) the broker calls
-`PayeeDaemon.DebitBalance` exactly once at handler completion. For
-**long-running modes** (`ws-realtime@v0`, `rtmp-ingress-hls-egress@v0`,
-`session-control-plus-media@v0`, streaming `http-stream@v0`) the broker
-runs a per-session ticker and issues a sequence of `DebitBalance` calls
-plus periodic `SufficientBalance` runway checks. Plan 0015.
+daemon "I just did N units; debit accordingly". For **`paid-job/v1`**
+exchanges the broker calls `PayeeDaemon.DebitBalance` once at the
+terminal accounting point (response completion or stream termination).
+For **`paid-session/v1`** the broker converts the runner's cumulative
+usage claims into a sequence of `DebitBalance` calls, with
+`SufficientBalance` runway checks on cadence.
+
+The session path's accounting invariant is worth knowing here because it
+constrains what the daemon sees: event deduplication is committed only
+together with durable debit progress, so a transient `DebitBalance`
+failure leaves the event unprocessed and the runner's retry produces
+exactly one debit — never zero, never two.
 
 This section is what the gateway operator and the orchestrator operator
 need to know to reason about long-running session economics together.
@@ -442,17 +595,17 @@ runs out.
 When `SufficientBalance` returns `sufficient=false`:
 
 1. The broker logs at WARN: `terminating session work_id=… reason=insufficient_balance`.
-2. The broker cancels the request context. The mode driver (`ws-realtime`,
-   etc.) sees the cancellation, closes both halves of its relay, and
-   returns.
+2. The broker cancels the request context. Under `paid-job/v1` the
+   exchange handler sees the cancellation, closes both halves of its
+   relay, and returns; under `paid-session/v1` the session engine winds
+   the session down with reason `insufficient_balance`.
 3. The middleware performs a final `DebitBalance` for any units
    accumulated between the last tick and the cancellation point (so the
    daemon's ledger matches the bytes/seconds actually shipped).
 4. `CloseSession` runs.
-5. The connection closes gateway-side. For ws-realtime, the backend sees
-   a server-side close. For other long-running modes, the gateway sees
-   the body terminate; where the protocol allows it, the broker emits
-   `Livepeer-Error: insufficient_balance` as a trailer.
+5. The connection closes gateway-side. The gateway sees the body or the
+   websocket terminate; where the protocol allows it, the broker emits
+   `Livepeer-Error: insufficient_balance`.
 
 The receiver operator does not see anything they wouldn't see from a
 normal session close: a `CloseSession` on the daemon plus the final
@@ -473,30 +626,31 @@ semantics unchanged from v0.2.
 If you see `DebitBalance call rate exceeds expected cadence` in
 operator dashboards, that's a sustained-retry signal. See §7.
 
-**`rtmp-ingress-hls-egress@v0` work-units.** RTMP sessions emit
-work-units via the FFmpeg progress extractor (see
-`capability-broker/docs/operator-runbook.md` §"GPU encoder hardware"
-+ §"RTMP pipeline observability"). The broker's interim-debit ticker
-reads `LiveCounter.CurrentUnits()` from the encoder's progress atomic
-and debits at the same cadence as ws-realtime. Termination triggers
-(no_push_timeout / idle_timeout / insufficient_balance / customer
-CloseSession) are all surfaced through the broker's existing
-`Livepeer-Error` channel.
+**Session work-units.** Under `paid-session/v1` the runner is the source
+of usage: it reports cumulative totals on the session's event channel and
+the broker derives debits from them. The broker no longer hosts media
+pipelines or counts units itself, so there is no encoder-progress or
+in-broker counter path to reason about here. Terminal reasons
+(`heartbeat_lost`, `lease_expired`, `insufficient_balance`,
+`gateway_close`, …) are surfaced on the session's status and control
+surfaces; see `capability-broker/docs/operator-runbook.md` §3.
 
+---
 
+## 7. Common failure modes
 
 | Symptom | Likely cause | What to check |
 |---|---|---|
-| Sender returns `SenderValidationError: no sender deposit` | Payer's TicketBroker deposit hit 0. | Have the gateway operator top up via direct contract call. |
-| Sender returns `SenderValidationError: pending unlock imminent` | Payer initiated `unlock()`. | Either the operator wants to drain (in which case stop sending), or it was an accident (in which case, do nothing — `unlock()` doesn't reset; either let it complete and re-lock or call `cancelUnlock()`). |
+| Sender `CreatePayment` fails with `no sender deposit` | Payer's TicketBroker deposit hit 0. | Have the gateway operator top up via direct contract call. |
+| Sender `CreatePayment` fails with `deposit and reserve set to unlock soon` | Payer initiated `unlock()`. | Either the operator wants to drain (in which case stop sending), or it was an accident (in which case, do nothing — `unlock()` doesn't reset; either let it complete and re-lock or call `cancelUnlock()`). |
 | Receiver returns ProcessPayment `signature recovery failed` | Sender's signature does not parse to a valid ETH address. | The hot signing key may be wrong, or the wire bytes were re-encoded mid-flight. Check the wire-compat round-trip test. |
 | Receiver `ErrFaceValueTooLow` shows up consistently for one sender | Sender's last-known price is stale; receiver bumped face_value floor on a gas spike. | Sender should re-quote. Check sender logs for the next outgoing ticket — if the price is back in line, the issue self-corrected. |
-| Receiver redemption queue depth grows unbounded | Redemption loop is wedged or chain RPC is slow. | Check `--chain-rpc-dial-timeout`, `--redemption-interval`. Look at the `pending_redemptions_total` metric over time. |
+| Receiver redemption queue depth grows unbounded | Redemption loop is wedged or chain RPC is slow. | Check `--redemption-interval` and the latency of the endpoint behind `--chain-rpc-urls`. Look at `livepeer_payment_redemption_queue_depth` over time. |
 | Receiver "params expired" rejections from senders | Daemon's L1 clock is trailing the on-chain round. | `--clock-refresh-interval` (default 30s) may be set too high; also check `eth_blockNumber` latency on the RPC endpoint. |
-| Daemon prints `DEV MODE — --chain-rpc is empty` in production logs | Operator forgot to supply `--chain-rpc`. | Set it. Production must not run in dev mode. |
+| Daemon prints `DEV MODE — --chain-rpc-urls is empty` in production logs | Operator forgot to supply `--chain-rpc-urls`. | Set it. Production must not run in dev mode. |
 | Sender returns `face_value capped by maxFloat` | Pending redemptions are eating into deposit faster than 3× heuristic allows. | Speed up redemption (lower `--redemption-interval`), or have payer top up deposit. |
 | Broker terminated long-running session with `Livepeer-Error: insufficient_balance` | Payer's session balance hit zero before the session ended (plan 0015). Either the gateway sized the initial payment too small for the session length, or no mid-session top-up flow exists yet. | Have the gateway raise the initial `face_value` it asks the sender daemon for; or confirm the planned top-up flow is wired (currently a deferred follow-up plan). On Arbitrum One, look for the broker log line `terminating session work_id=… reason=insufficient_balance`. |
-| `livepeer_payment_interim_debit_total{outcome="retried"}` rate > 0 sustained | Broker's interim-debit tick is failing on the daemon. Could be a daemon RPC error, a network partition, or BoltDB contention. | Check broker logs for the per-tick `interim DebitBalance work_id=… failed: …` warning. The broker reuses the same `debit_seq` across retries (plan 0015 §5.3) so the daemon's idempotency key prevents double-debit; sustained retries still indicate a real problem on the daemon side. |
+| `livepeer_payment_debits_total{result="error"}` rate > 0 sustained | Broker's interim-debit tick is failing on the daemon. Could be a daemon RPC error, a network partition, or BoltDB contention. | Check broker logs for the per-tick `interim DebitBalance work_id=… failed: …` warning. The broker reuses the same `debit_seq` across retries (plan 0015 §5.3) so the daemon's idempotency key prevents double-debit; sustained retries still indicate a real problem on the daemon side. |
 | DebitBalance call rate exceeds expected cadence | Broker is retrying tick deltas and the daemon is observing duplicate debit_seq values without successful prior commits. | Check broker logs for `interim DebitBalance work_id=… failed` patterns; if the same work_id repeats with the same `debit_seq`, the daemon is rejecting the ticket (signature, sender mismatch, or session-already-closed). Race with `CloseSession` is the most common — increase the broker's tick-stop wait timeout. |
 
 ---
@@ -560,23 +714,24 @@ work_id, ticket hash, or nonce.**
 - `livepeer_payment_build_info{version,mode,go_version}` (gauge, value 1).
 - `livepeer_payment_uptime_seconds` (gauge).
 
-**Broker (interim-debit cadence — plan 0015; emitted by the broker, not this daemon):**
-- `livepeer_payment_interim_debit_total{outcome}` (counter) — interim
-  DebitBalance call results from the broker's per-session ticker;
-  outcome ∈ {success, retried, terminal_failure}. `retried` means the
-  same `debit_seq` was reused after a non-success daemon reply (plan
-  0015 §5.3 retry semantics). High `retried` rate is a leading
-  indicator of daemon RPC distress.
-- `livepeer_payment_session_terminated_total{reason}` (counter) —
-  long-running sessions terminated by the broker; reason ∈
-  {balance_insufficient, handler_complete, ctx_cancelled}.
-  `balance_insufficient` rates trending up indicate gateway
-  operators are sizing initial payments below their session length.
+**Emitted by the broker, not this daemon** (see
+`capability-broker/docs/operations/`):
+- `livepeer_payment_client_requests_total` / `_request_duration_seconds`
+  / `_in_flight` — the broker's view of its gRPC calls into this daemon.
+  Join against `livepeer_payment_grpc_*` here to separate daemon latency
+  from network/queueing on the broker side.
+- `livepeer_protocol_session_winddowns_total{reason}` — paid-session
+  terminal winddowns; `reason` ∈ {gateway_close, lease_expired,
+  heartbeat_lost, insufficient_balance, …}. `insufficient_balance`
+  trending up means gateway operators are sizing initial payments below
+  their session length.
+- `livepeer_protocol_session_debited_units_total` — units the broker
+  derived from runner usage claims and pushed here via `DebitBalance`.
 
 ### Logging
 
-`--log-level` (`error|warn|info|debug`) and `--log-format` (`text|json`).
-Production runs JSON to ship to Loki / Elastic; development defaults to
+The daemon logs `slog` **text to stderr at INFO** and has no log-level
+or log-format flag; run it under a collector that parses logfmt-ish
 text. Every session start/close, every batch created, every redemption
 attempt + result emits a structured event.
 
@@ -588,7 +743,7 @@ key bytes themselves stay in memory.
 
 ## 9. Dev mode (no chain)
 
-Run with `--mode=...` and a socket path; omit `--chain-rpc`:
+Run with `--mode=...` and a socket path; omit `--chain-rpc-urls`:
 
 ```sh
 ./bin/livepeer-payment-daemon --mode receiver --socket /tmp/rx.sock
@@ -604,18 +759,18 @@ before signing each quote-free payment.
 Dev mode prints a loud warning to stderr at startup:
 
 ```
-livepeer-payment-daemon: DEV MODE — --chain-rpc is empty; using fake chain providers (redemptions will not hit any chain)
+livepeer-payment-daemon: DEV MODE — --chain-rpc-urls is empty; using fake chain providers (redemptions will not hit any chain)
 ```
 
 If you see that line in a production log, the operator forgot
-`--chain-rpc`. Page someone.
+`--chain-rpc-urls`. Page someone.
 
 For a deterministic sender identity (so the receiver can pre-seed fake
 broker state), set `--dev-signing-key-hex` or
 `LIVEPEER_DEV_SIGNING_KEY_HEX`. The raw key is never logged; the derived
 address is logged once at startup.
 
-`--dev-signing-key-hex` is rejected when `--chain-rpc` is set. You
+`--dev-signing-key-hex` is rejected when `--chain-rpc-urls` is set. You
 cannot mix dev signing with real chain.
 
 ---
@@ -640,13 +795,26 @@ the code.
 5. **Chain RPC reachable.** Test `eth_blockNumber`, `eth_gasPrice`,
    `eth_call` against the RPC endpoint before pointing the daemon at
    it. Latency under 1s; 99.9% uptime SLO.
-6. **BoltDB on persistent storage.** `--store-path` mounted on a real
-   disk, not tmpfs. Backups are operator-responsibility.
-7. **Metrics scraping configured.** Prometheus pointed at the daemon's
-   `--metrics-listen` port. Alerts wired to `pending_redemptions_total`
-   above some queue-depth threshold.
-8. **Sender knobs set.** Gateway-side `MaxEV`, `MaxTotalEV`, and
-   `DepositMultiplier` set per the operator's risk tolerance.
+6. **Spend limits set (sender).** `--max-payment-wei` is REQUIRED in
+   chain mode and the daemon will not start without it — see §3.5.
+   Consider `--max-price-per-unit` for each work unit you route to,
+   especially if you mix cheap and expensive workloads.
+7. **BoltDB on persistent storage.** `--db` (receiver mode; default
+   `/var/lib/livepeer/payment-daemon/sessions.db`) and the
+   transaction-intent store beside it (`--txintent-db`, default
+   `txintents.db` in the same directory) mounted on a real disk, not
+   tmpfs. Snapshot the two together. Backups are operator-responsibility.
+8. **Metrics scraping configured.** Prometheus pointed at the daemon's
+   `--metrics-listen` port. Alerts wired to
+   `livepeer_payment_redemption_queue_depth` above some queue-depth
+   threshold — `docs/operations/prometheus/alerts.yaml` ships the rule.
+9. **Gateway-side spend sized deliberately.** `--max-payment-wei` and
+   `--max-price-per-unit` (§3.5) are the daemon's ceilings, and they
+   bound what any caller above them can authorize. They do not replace
+   the gateway's own funding policy — how much value it mints per
+   request or per session top-up — which decides how much work you
+   actually buy. Size that with `cmd/payout-sim`; size the limits to
+   catch the bugs.
 
 A misconfigured production daemon that starts up clean and silent is
 worse than one that fails fast. The startup sequence is deliberately
@@ -654,81 +822,18 @@ load-bearing — read the logs.
 
 ---
 
-## 11. Session-control-plus-media operations
+## 11. Removed: session-control-plus-media operations
 
-Cross-cutting deltas for the broker's `session-control-plus-media@v0`
-mode. The mode driver itself ships with the broker; this section
-captures the operator-facing knobs and failure modes.
+This section documented the broker's `session-control-plus-media@v0` mode
+driver: container-runtime prerequisites for per-session backends, image
+management, and the pion WebRTC UDP port range.
 
-### 11.1. Container-runtime prereq
+**That mode and its driver were removed with the v0 interaction-mode
+taxonomy (2026-08).** The flags it described — `--container-runtime`,
+`--webrtc-udp-port-min` / `--webrtc-udp-port-max`,
+`--session-control-max-concurrent-sessions` — no longer exist, and a
+broker started with them will fail to parse its arguments.
 
-Docker daemon must be running on the broker host with image registry
-credentials configured for the operator's session-backend image. The broker's
-`--container-runtime` flag defaults to `docker`; the alternative
-`process` runtime is debug-only and bypasses the runtime entirely.
-
-### 11.2. Image management
-
-Operator pulls the session-backend image; the broker does not vendor it. Pin to
-a digest in production. Rotation = push new image + update
-`host-config.yaml`'s `capabilities[].backend.session_runner.image` +
-SIGHUP the broker. The `--session-control-max-concurrent-sessions` cap
-governs how many session backends can run simultaneously per broker host.
-
-### 11.3. WebRTC firewall
-
-The pion media-plane binds UDP ports `--webrtc-udp-port-min` through
-`--webrtc-udp-port-max` (default `40000-49999`). The full range must be
-reachable from customer clients. STUN config for NAT traversal is
-operator-provisioned via the customer-side player; TURN is not bundled
-by the broker.
-
-If `--webrtc-public-ip` is unset, pion auto-detects the host's
-outbound IP. In multi-homed deployments (private + public NICs), pin
-the flag explicitly to avoid advertising the wrong interface in ICE
-candidates.
-
-### 11.4. Resource sizing
-
-Per-session sizing depends on the backend image. The historical vtuber
-session backend needed ~ 2 GiB RAM + 2 CPU per session; capacity formula
-is `--session-control-max-concurrent-sessions x per-session sizing`.
-Set `capabilities[].backend.session_runner.resources` to enforce per
-session.
-
-### 11.5. Common failure modes
-
-- **Session backend crashed.** Check the broker logs for `runner_crashed` /
-  `runner_oom`. OOM means raising `resources.memory`; missing env or
-  pull failure means registry credentials.
-- **Control-WS keeps disconnecting.** Most often NAT or firewall on the
-  customer side. Pong RTT vs `--session-control-heartbeat-interval`
-  matters: a 10s ping with three missed pongs gives a 30s detection
-  window. Reconnect-window default is 30s; raise both for high-latency
-  customer paths.
-- **SDP failure.** Verify `--webrtc-public-ip`; UDP range open;
-  customer's STUN reachable. The broker emits `media.failed` on the
-  control-WS when negotiation fails.
-- **Session starvation.** `--session-control-max-concurrent-sessions`
-  cap hit. The broker rejects new sessions at the dispatcher with
-  `capacity_exhausted`; pre-existing sessions continue.
-- **Backpressure drop.** The broker dropped a control-WS because the
-  customer stopped reading; the WS close-frame reason is
-  `backpressure_drop`. Customer-side bug; broker is healthy.
-
-### 11.6. Observability
-
-New broker-side metrics for the mode:
-
-- `livepeer_mode_session_runner_subprocess_total{outcome}` — counter;
-  outcome ∈ {started, exited_clean, crashed, oom_killed,
-  watchdog_killed}.
-- `livepeer_mode_session_control_ws_active{capability}` — gauge; per-
-  capability count of currently-attached control-WS connections.
-- `livepeer_mode_session_media_pc_state{state}` — counter; state
-  transitions of the per-session pion PeerConnection.
-
-Reconnect-window expiry shows up on the broker as a
-`control_disconnect_window_expired` close cause and propagates to
-`livepeer_payment_session_terminated_total` via the existing
-interim-debit ticker.
+Long-lived workloads are now `paid-session/v1`, where the runtime is
+owned by a remote runner rather than spawned by the broker. Operator
+guidance lives in `capability-broker/docs/operator-runbook.md` §3.

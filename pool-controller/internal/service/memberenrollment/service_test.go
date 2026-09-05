@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -99,12 +100,12 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 			ID:         "assign-chat-1",
 			TemplateID: "chat-4090",
 		}},
-		Templates: []types.TemplateCatalogEntry{{
+		Templates: []templates.Template{{
 			ID: "chat-4090",
-			RunnerCompose: map[string]any{
-				"image":        "runner-chat:latest",
-				"internal_url": "http://chat-runner:9000",
-				"environment":  map[string]any{"MODEL": "small"},
+			RunnerCompose: templates.RunnerCompose{
+				Image:       map[string]string{"nvidia": "runner-chat:latest"},
+				InternalURL: "http://chat-runner:9000",
+				Env:         map[string]string{"QUANT": "fp8", "MODEL": "small"},
 			},
 		}},
 	})
@@ -128,18 +129,45 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 	if !bytes.Contains(envBody, []byte("POOL_ENROLLMENT_TOKEN_FILE=/run/livepeer/enrollment-token")) {
 		t.Fatalf(".env missing token file: %s", string(envBody))
 	}
-	if !bytes.Contains(envBody, []byte("POOL_BROKER_QUIC_ADDR=broker.example.com:8443")) {
+	// The agent reads LIVEPEER_* to attach and POOL_* to reach the
+	// controller. Emitting only the POOL_ names — which is what this
+	// bundle used to do — leaves a member running `docker compose up`
+	// against an agent that has no broker URL and no credential.
+	if !bytes.Contains(envBody, []byte("LIVEPEER_BROKER_QUIC_ADDR=broker.example.com:8443")) {
 		t.Fatalf(".env missing broker quic addr: %s", string(envBody))
 	}
-	if !bytes.Contains(envBody, []byte("POOL_BROKER_SESSION_CREDENTIAL=")) || !bytes.Contains(envBody, []byte("POOL_WORKER_BACKENDS=assign-chat-1=http://chat-runner:9000")) {
-		t.Fatalf(".env missing broker session fields: %s", string(envBody))
+	if !bytes.Contains(envBody, []byte("LIVEPEER_BROKER_URL=https://broker")) {
+		t.Fatalf(".env missing broker url: %s", string(envBody))
+	}
+	if !bytes.Contains(envBody, []byte("LIVEPEER_ATTACH_CREDENTIAL=")) {
+		t.Fatalf(".env missing the attach credential: %s", string(envBody))
+	}
+	// The host id must BE the enrolment id, or the GPUs this agent
+	// reports attach to an enrolment that does not exist.
+	if !bytes.Contains(envBody, []byte("LIVEPEER_HOST_ID="+created.Enrollment.ID)) {
+		t.Fatalf(".env host id is not the enrolment id: %s", string(envBody))
+	}
+
+	// The bundle no longer names the runners. It ships the agent, and
+	// the agent asks the pool what to run — so a placement change does
+	// not stale the bundle a member already downloaded.
+	if bytes.Contains(envBody, []byte("POOL_WORKER_BACKENDS")) {
+		t.Fatalf(".env still declares a static runner set: %s", string(envBody))
 	}
 	composeBody := zipFileBody(t, zr, "docker-compose.yaml")
 	if !bytes.Contains(composeBody, []byte("gpus: all")) {
 		t.Fatalf("compose missing gpu access: %s", string(composeBody))
 	}
-	if !bytes.Contains(composeBody, []byte("runner_assign_chat_1:")) || !bytes.Contains(composeBody, []byte("image: runner-chat:latest")) {
-		t.Fatalf("compose missing assigned runner: %s", string(composeBody))
+	// The agent writes runners.compose.yaml itself; the bundle includes
+	// it optionally so a first boot with no placements still starts.
+	if !bytes.Contains(composeBody, []byte("runners.compose.yaml")) {
+		t.Fatalf("compose does not include the agent-written runner file: %s", string(composeBody))
+	}
+	if !bytes.Contains(composeBody, []byte("/var/run/docker.sock")) {
+		t.Fatalf("agent cannot start runners without the docker socket: %s", string(composeBody))
+	}
+	if bytes.Contains(composeBody, []byte("runner_assign_chat_1:")) {
+		t.Fatalf("bundle still ships a per-placement service: %s", string(composeBody))
 	}
 }
 

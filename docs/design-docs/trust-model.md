@@ -116,7 +116,8 @@ That's a strong claim, and the protocol leans on it heavily:
 That's why the signature payload is the manifest's **canonical bytes** —
 deterministic serialization — not the raw HTTP body. Any change anywhere in
 the canonical bytes invalidates the signature, including changes to the
-declared price, the declared backend URL, or the declared interaction mode.
+declared price, the declared backend URL, or the declared protocol and its
+declared axes.
 
 ## Double verification
 
@@ -212,16 +213,34 @@ These hold for every published manifest, by construction:
    benign changes within explicit operator-authored bounds (price delta
    percentage, worker-URL domain allowlist, tuple removal), rate-limited
    per hour.
-4. **There is no unbounded automated sign path.** The cold key signs
+4. **A runner can never change what is sold.** Runners declare what they
+   *are* and the operator declares what it *costs*: an attach document
+   carries no price, no capacity, and no offering id, and the broker
+   refuses any field it does not know. Runner-declared facts reach the
+   cold-key-signed manifest exactly once per offer — when the first
+   certified runner freezes them, and the operator's signature is the
+   acceptance. A runner that later disagrees with that frozen shape
+   becomes ineligible for the offer; it does not mutate it. A stolen
+   attach credential therefore buys the ability to serve work as that
+   host, gated by certification, crediting the enrollment's payout
+   address — not the ability to alter the manifest (plan 0043).
+
+5. **There is no unbounded automated sign path.** The cold key signs
    without an operator only inside a policy envelope the operator
    authored and the audit log records: content-identical renewals
    always; benign content changes only within explicit bounds (price
    delta, domain allowlist, rate limit); everything else is held for a
    discrete operator action. Identity (`eth_address`) and `spec_version`
    changes are never auto-signed — that dial does not exist in the
-   policy schema. (Amended by plan 0042; the original invariant read
-   "there is no automated sign path".)
-5. **Revocation is supersession.** There is no separate revoke step — the
+   policy schema. `eth_address` is refused outright: a signing key signs
+   for exactly one orchestrator, so a changed address is somebody else's
+   manifest. `spec_version` is *held*, not refused, and signing one takes
+   a second gesture — typing the version being moved to — because it
+   changes the contract every consumer reads the manifest under and must
+   not ride along inside a routine signature. (Amended by plan 0042 and
+   plan 0043 §3.7; the original invariant read "there is no automated
+   sign path".)
+6. **Revocation is supersession.** There is no separate revoke step — the
    operator signs a new manifest that omits the no-longer-offered
    capability, and resolvers pick it up on the next round refresh.
 

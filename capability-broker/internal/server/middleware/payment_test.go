@@ -3,7 +3,10 @@ package middleware
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +19,9 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
+	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"google.golang.org/protobuf/proto"
 )
 
 // fakeLiveCounter is a goroutine-safe LiveCounter for middleware tests.
@@ -35,8 +40,7 @@ func makePaidRequest(workID string) *http.Request {
 	r.Header.Set(livepeerheader.Capability, "cap")
 	r.Header.Set(livepeerheader.Offering, "off")
 	r.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("dummy-payment")))
-	r.Header.Set(livepeerheader.SpecVersion, "0.1")
-	r.Header.Set(livepeerheader.Mode, "ws-realtime@v0")
+	r.Header.Set(livepeerheader.Protocol, "paid-session/v1")
 	// The Payment middleware reads RequestIDFromContext for work_id; the
 	// RequestID middleware would normally set this. Inline the same
 	// behavior for the test path.
@@ -94,7 +98,7 @@ func TestPayment_TickerDisabledFallback(t *testing.T) {
 
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval: 0, // disabled
-	}, nil)
+	}, nil, nil, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(livepeerheader.WorkUnits, "42")
@@ -135,7 +139,7 @@ func TestPayment_TickerHappyPath(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       30 * time.Millisecond,
 		MinRunwayUnits: 0, // disable SufficientBalance for this fixture
-	}, nil)
+	}, nil, nil, nil)
 
 	lc := &fakeLiveCounter{}
 	handlerStart := make(chan struct{})
@@ -206,7 +210,7 @@ func TestPayment_InsufficientBalanceTermination(t *testing.T) {
 		Interval:            20 * time.Millisecond,
 		MinRunwayUnits:      100,
 		GraceOnInsufficient: 0,
-	}, nil)
+	}, nil, nil, nil)
 
 	lc := &fakeLiveCounter{}
 	handlerCtxObserved := make(chan struct{})
@@ -216,8 +220,12 @@ func TestPayment_InsufficientBalanceTermination(t *testing.T) {
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := SessionStateFromContext(r.Context())
 		state.SetLiveCounter(lc)
-		// Don't credit balance; mock starts at 0 → SufficientBalance
-		// (price=1, min=100) returns false on first tick.
+		// Empty the session explicitly: with price=1 and min=100,
+		// SufficientBalance returns false on the first tick. Stated
+		// rather than inherited from the mock, which now credits.
+		if err := mock.SetBalance(RequestIDFromContext(r.Context()), new(big.Int)); err != nil {
+			t.Errorf("SetBalance: %v", err)
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -259,7 +267,7 @@ func TestPayment_InsufficientBalanceWithRunwayDoesNotTerminate(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       20 * time.Millisecond,
 		MinRunwayUnits: 10, // price=1 × 10 = 10 wei runway
-	}, nil)
+	}, nil, nil, nil)
 
 	lc := &fakeLiveCounter{}
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -298,7 +306,7 @@ func TestPayment_NoLiveCounterSkipsTicks(t *testing.T) {
 	mw := Payment(mock, stubLookup, InterimDebitConfig{
 		Interval:       10 * time.Millisecond,
 		MinRunwayUnits: 0,
-	}, nil)
+	}, nil, nil, nil)
 
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Do NOT set LiveCounter. Sleep long enough for ≥3 ticks.
@@ -324,11 +332,15 @@ func TestPayment_NoLiveCounterSkipsTicks(t *testing.T) {
 	}
 }
 
-func TestPayment_InvalidRecipientRandReturnsPaymentInvalid(t *testing.T) {
+// TestPayment_InvalidRecipientRandReturnsRecipientRotated: the payee
+// rotating its rand is not a generic payment failure. It has a
+// mechanical remedy — re-fetch params, re-mint, retry — so the gateway
+// gets a code it can act on rather than a message to match.
+func TestPayment_InvalidRecipientRandReturnsRecipientRotated(t *testing.T) {
 	t.Parallel()
 
 	client := &invalidRecipientRandClient{Mock: payment.NewMock()}
-	mw := Payment(client, stubLookup, InterimDebitConfig{Interval: 0}, nil)
+	mw := Payment(client, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil, nil)
 
 	called := false
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -343,14 +355,14 @@ func TestPayment_InvalidRecipientRandReturnsPaymentInvalid(t *testing.T) {
 	if called {
 		t.Fatal("handler should not run when ticket params are invalidated")
 	}
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status: got %d, want 401; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status: got %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get(livepeerheader.Error); got != livepeerheader.ErrPaymentInvalid {
-		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrPaymentInvalid)
+	if got := rec.Header().Get(livepeerheader.Error); got != livepeerheader.ErrRecipientRotated {
+		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrRecipientRotated)
 	}
-	if body := rec.Body.String(); body == "" || !contains(body, "INVALID_RECIPIENT_RAND") {
-		t.Fatalf("body = %q; want INVALID_RECIPIENT_RAND marker", body)
+	if body := rec.Body.String(); body == "" || !contains(body, "rotated") {
+		t.Fatalf("body = %q; want the rotation named", body)
 	}
 }
 
@@ -371,7 +383,7 @@ func TestPayment_EmitsFinalReceiptWhenMetaPresent(t *testing.T) {
 	sink := &stubReceiptSink{}
 	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "success"))
 
-	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink)
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink, nil, nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := SessionStateFromContext(r.Context())
 		state.SetReceiptMeta(ReceiptMeta{
@@ -412,7 +424,7 @@ func TestPayment_EmitsFinalReceiptErrorMetricWhenSinkFails(t *testing.T) {
 	sink := &stubReceiptSink{err: errors.New("boom")}
 	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "error"))
 
-	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink)
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink, nil, nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := SessionStateFromContext(r.Context())
 		state.SetReceiptMeta(ReceiptMeta{
@@ -437,5 +449,427 @@ func TestPayment_EmitsFinalReceiptErrorMetricWhenSinkFails(t *testing.T) {
 	after := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "error"))
 	if after != before+1 {
 		t.Fatalf("final receipt error emit delta = %v; want 1", after-before)
+	}
+}
+
+// TestPayment_RefusesWorkAgainstAnUnfundedSession is what the mainnet
+// probe exposed: a unary job ran the backend and returned results
+// against a session with zero balance, reporting success at every layer.
+// The interim ticker guards long-running work and is a no-op here, so
+// nothing checked before the backend ran.
+func TestPayment_RefusesWorkAgainstAnUnfundedSession(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil, nil)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// A payment that credits nothing — a valid ticket whose expected
+	// value rounded away, which is what the mainnet run produced.
+	mock.SetCreditPerPayment(new(big.Int))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, makePaidRequest("wid-unfunded"))
+
+	if called {
+		t.Fatal("backend ran for a session that cannot pay for one unit of work")
+	}
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d; want 402", rec.Code)
+	}
+	if got := rec.Header().Get(livepeerheader.Error); got != livepeerheader.ErrInsufficientBalance {
+		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrInsufficientBalance)
+	}
+}
+
+// TestPayment_FundedSessionStillServes: the check must not refuse work a
+// gateway has actually paid for.
+func TestPayment_FundedSessionStillServes(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil, nil)
+
+	called := false
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, makePaidRequest("wid-funded"))
+
+	if !called {
+		t.Fatalf("funded session was refused: status %d body %s", rec.Code, rec.Body.String())
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200", rec.Code)
+	}
+}
+
+// TestPayment_EverySeparateExchangeOnOneWorkIDDebits is the defect a
+// real chain run found and nothing else could.
+//
+// A gateway reuses one ticket session across many jobs, so work_id is
+// stable. debit_seq used to be derived from per-request state, which
+// meant every unary job debited at seq 1 — and the payee, correctly
+// deduplicating on (sender, work_id, debit_seq), dropped every debit
+// after the first. Only the first job on a session ever billed, and it
+// billed correctly, which is exactly the request an operator tests.
+func TestPayment_EverySeparateExchangeOnOneWorkIDDebits(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, nil, nil, nil)
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Three exchanges sharing one work_id, as a gateway on one ticket
+	// session produces. The payment must carry ticket params: a stub
+	// payment falls back to a per-request work_id, which is the one case
+	// that never collides and therefore never showed the bug.
+	randHash := []byte("0123456789abcdef0123456789abcdef")
+	workID := hex.EncodeToString(randHash)
+	for i := 0; i < 3; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, makeTicketPaidRequest(t, randHash, fmt.Sprintf("req-%d", i)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("exchange %d: status %d body %s", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	debits := mock.Debits(workID)
+	if len(debits) != 3 {
+		t.Fatalf("recorded %d debits for 3 exchanges: %v — a shared work_id deduplicated them away",
+			len(debits), debits)
+	}
+	seen := map[uint64]bool{}
+	for _, d := range debits {
+		if seen[d.Seq] {
+			t.Fatalf("debit_seq %d issued twice; the payee will drop the repeat: %v", d.Seq, debits)
+		}
+		seen[d.Seq] = true
+	}
+}
+
+// makeTicketPaidRequest builds a request whose payment carries ticket
+// params, so the middleware derives the payee work_id from it — the
+// shared-identity path a real gateway uses.
+func makeTicketPaidRequest(t *testing.T, randHash []byte, requestID string) *http.Request {
+	t.Helper()
+	raw, err := proto.Marshal(&paymentsv1.Payment{
+		TicketParams: &paymentsv1.TicketParams{RecipientRandHash: randHash},
+		// The envelope check compares this against the offering, so it
+		// must match stubLookup: 1 wei per 1 unit of "bytes".
+		ExpectedPrice: &paymentsv1.PriceInfo{
+			PricePerUnit:  1,
+			PixelsPerUnit: 1,
+			Constraint:    "cap=cap;off=off;wu=bytes;est=100;qid=q;qv=1;cfp=aa;rfp=bb",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/v1/job", nil)
+	r.Header.Set(livepeerheader.Capability, "cap")
+	r.Header.Set(livepeerheader.Offering, "off")
+	r.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString(raw))
+	r.Header.Set(livepeerheader.Protocol, "paid-job/v1")
+	return r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
+}
+
+// TestSettlementAttestsWhatTheLedgerCharged is the mismatch the chain
+// probe found on a second job over one payment session.
+//
+// Billing is cumulative: 42 units at 100 wei per 1000 costs ceil(4.2)=5
+// for the first exchange and ceil(8.4)-5 = 4 for the second. A record
+// that recomputed an independent ceiling attested 5 both times, so the
+// second settlement claimed a wei that never moved — and a clearinghouse
+// recomputing the rule fails closed on exactly that.
+func TestSettlementAttestsWhatTheLedgerCharged(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+
+	var captured []*paymentsv1.SettlementRecord
+	mw := Payment(mock, fractionalLookup, InterimDebitConfig{Interval: 0}, nil,
+		func(rec *paymentsv1.SettlementRecord) (string, error) {
+			captured = append(captured, rec)
+			return "encoded", nil
+		}, nil)
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	randHash := []byte("fedcba9876543210fedcba9876543210")
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, makeFractionalPaidRequest(t, randHash, fmt.Sprintf("req-%d", i)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("exchange %d: status %d body %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if len(captured) != 2 {
+		t.Fatalf("captured %d settlements; want 2", len(captured))
+	}
+
+	debits := mock.Debits(hex.EncodeToString(randHash))
+	if len(debits) != 2 {
+		t.Fatalf("ledger applied %d debits; want 2", len(debits))
+	}
+	for i, rec := range captured {
+		attested := new(big.Int).SetBytes(rec.GetBilledValueWei().GetValue())
+		if attested.Cmp(debits[i].Wei) != 0 {
+			t.Fatalf("exchange %d: settlement attests %s wei, ledger charged %s",
+				i, attested, debits[i].Wei)
+		}
+	}
+	// And the second must genuinely differ, or the test proves nothing.
+	if debits[0].Wei.Cmp(debits[1].Wei) == 0 {
+		t.Fatalf("both exchanges charged %s — pick a price whose remainder carries", debits[0].Wei)
+	}
+}
+
+// fractionalLookup prices per 1000 units, the denominator where an
+// independent ceiling and a cumulative delta diverge.
+func fractionalLookup(cap, off string) (CapabilitySpec, bool) {
+	return CapabilitySpec{
+		WorkUnit:            "tokens",
+		PricePerWorkUnitWei: big.NewInt(100),
+		PerUnits:            1000,
+	}, true
+}
+
+func makeFractionalPaidRequest(t *testing.T, randHash []byte, requestID string) *http.Request {
+	t.Helper()
+	raw, err := proto.Marshal(&paymentsv1.Payment{
+		TicketParams: &paymentsv1.TicketParams{RecipientRandHash: randHash},
+		ExpectedPrice: &paymentsv1.PriceInfo{
+			PricePerUnit:  100,
+			PixelsPerUnit: 1000,
+			Constraint:    "cap=cap;off=off;wu=tokens;est=1000;qid=q;qv=1;cfp=aa;rfp=bb",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/v1/job", nil)
+	r.Header.Set(livepeerheader.Capability, "cap")
+	r.Header.Set(livepeerheader.Offering, "off")
+	r.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString(raw))
+	r.Header.Set(livepeerheader.Protocol, "paid-job/v1")
+	return r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID))
+}
+
+// TestSettlementFieldsMeanTheSameThingOnBothProtocols: debited_units is
+// scoped to the exchange (job) or the logical session, and the payment
+// identity's running total has its own field. They were briefly the same
+// field, which meant a reader had to know which protocol produced a
+// record before it could interpret it — worse than the gap that
+// conflation was filling.
+func TestSettlementFieldsMeanTheSameThingOnBothProtocols(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	var captured []*paymentsv1.SettlementRecord
+	mw := Payment(mock, fractionalLookup, InterimDebitConfig{Interval: 0}, nil,
+		func(rec *paymentsv1.SettlementRecord) (string, error) {
+			captured = append(captured, rec)
+			return "encoded", nil
+		}, nil)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	randHash := []byte("aaaabbbbccccddddeeeeffff00001111")
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, makeFractionalPaidRequest(t, randHash, fmt.Sprintf("r-%d", i)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("exchange %d: %d", i, rec.Code)
+		}
+	}
+
+	for i, rec := range captured {
+		if rec.GetDebitedUnits() != 42 {
+			t.Fatalf("exchange %d: debited_units = %d; a job's is its OWN units",
+				i, rec.GetDebitedUnits())
+		}
+	}
+	// The identity's total advances across exchanges; the exchange's own
+	// units do not.
+	if a, b := captured[0].GetPaymentCumulativeUnits(), captured[1].GetPaymentCumulativeUnits(); a != 42 || b != 84 {
+		t.Fatalf("payment_cumulative_units = %d then %d; want 42 then 84", a, b)
+	}
+	// And that field is exactly what makes the charge recomputable.
+	for i, rec := range captured {
+		cum := rec.GetPaymentCumulativeUnits()
+		units := rec.GetDebitedUnits()
+		want := new(big.Int).Sub(
+			payment.BillFor(big.NewInt(100), 1000, cum),
+			payment.BillFor(big.NewInt(100), 1000, cum-units))
+		got := new(big.Int).SetBytes(rec.GetBilledValueWei().GetValue())
+		if got.Cmp(want) != 0 {
+			t.Fatalf("exchange %d: attested %s wei; bill(%d)-bill(%d) = %s",
+				i, got, cum, cum-units, want)
+		}
+	}
+}
+
+// TestUnaryWorkUnitsHeaderStatesWhatTheLedgerTook: on a unary exchange
+// the handler commits its headers before this middleware runs the final
+// debit, so Livepeer-Work-Units named a measurement the ledger had not
+// accepted yet. A gateway reads that header as "units you were charged
+// for" — reasonably, since that is what it has to reconcile against —
+// and on a failed debit it was charged for none of them.
+//
+// The response is now held until the debit resolves. Both cases below
+// matter: on success the number is unchanged, which is the point (the
+// header means one thing on every exchange), and on failure it is the
+// difference between a true statement and a false one.
+func TestUnaryWorkUnitsHeaderStatesWhatTheLedgerTook(t *testing.T) {
+	t.Parallel()
+
+	newHandler := func(mock *payment.Mock) http.Handler {
+		mw := Payment(mock, fractionalLookup, InterimDebitConfig{Interval: 0}, nil,
+			func(*paymentsv1.SettlementRecord) (string, error) { return "encoded", nil }, nil)
+		return mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// The unary shape: measure, set the claim, commit, write.
+			w.Header().Set(livepeerheader.WorkUnits, "42")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}))
+	}
+
+	t.Run("debit succeeds", func(t *testing.T) {
+		t.Parallel()
+		mock := payment.NewMock()
+		rec := httptest.NewRecorder()
+		newHandler(mock).ServeHTTP(rec, makeFractionalPaidRequest(t,
+			[]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), "req-ok"))
+
+		if got := rec.Header().Get(livepeerheader.WorkUnits); got != "42" {
+			t.Errorf("work units = %q, want %q", got, "42")
+		}
+		if rec.Body.String() != `{"ok":true}` {
+			t.Errorf("body = %q; deferral must not eat the response", rec.Body.String())
+		}
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", rec.Code)
+		}
+	})
+
+	t.Run("debit fails", func(t *testing.T) {
+		t.Parallel()
+		mock := payment.NewMock()
+		mock.FailNextDebits(1)
+		rec := httptest.NewRecorder()
+		newHandler(mock).ServeHTTP(rec, makeFractionalPaidRequest(t,
+			[]byte("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), "req-fail"))
+
+		// Nothing was debited, so the claim must not say 42.
+		if got := rec.Header().Get(livepeerheader.WorkUnits); got != "0" {
+			t.Errorf("work units = %q, want %q — the ledger took nothing", got, "0")
+		}
+		// And the caller is told the number may still move, because the
+		// debit is queued for retry rather than lost.
+		if got := rec.Header().Get(livepeerheader.Error); got != livepeerheader.ErrAccountingPending {
+			t.Errorf("error header = %q, want %q", got, livepeerheader.ErrAccountingPending)
+		}
+	})
+}
+
+// A streamed response cannot be held, and must not be: it corrects its
+// own claim in the trailer it declares. This pins that the deferral
+// releases rather than stalling the stream or eating its body.
+func TestStreamedResponseIsNotDeferred(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	mw := Payment(mock, fractionalLookup, InterimDebitConfig{Interval: 0}, nil,
+		func(*paymentsv1.SettlementRecord) (string, error) { return "encoded", nil }, nil)
+
+	rec := httptest.NewRecorder()
+	bodyAtFlush := -1
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Del("Content-Length")
+		w.Header().Add("Trailer", livepeerheader.WorkUnits)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("chunk-one"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// The bytes must already be through to the client, not parked
+		// in a buffer waiting on a debit that has not run yet. Read the
+		// underlying recorder directly: w here is the middleware's
+		// wrapper, which is exactly the thing under test.
+		bodyAtFlush = rec.Body.Len()
+		w.Header().Set(livepeerheader.WorkUnits, "7")
+	}))
+
+	handler.ServeHTTP(rec, makeFractionalPaidRequest(t,
+		[]byte("cccccccccccccccccccccccccccccccc"), "req-stream"))
+
+	if rec.Body.String() != "chunk-one" {
+		t.Errorf("body = %q, want %q", rec.Body.String(), "chunk-one")
+	}
+	if bodyAtFlush != len("chunk-one") {
+		t.Errorf("at flush the client had %d bytes, want %d — the stream was held",
+			bodyAtFlush, len("chunk-one"))
+	}
+}
+
+// httptest.ResponseRecorder keeps a live header map, so a header set
+// after WriteHeader still shows up in it — which makes it useless for
+// asking whether a header actually reached the client. This runs over a
+// real connection, where a late Set is simply lost.
+//
+// It matters for the settlement record specifically: it is built after
+// the handler returns, so on unary it was always set too late. The
+// record was still durable and readable via GET /v1/settlement/{id},
+// but a caller that expected it inline never got it. Holding the
+// response back is what makes the inline copy deliverable.
+func TestUnarySettlementReachesTheClientOverARealConnection(t *testing.T) {
+	t.Parallel()
+	mock := payment.NewMock()
+	mw := Payment(mock, fractionalLookup, InterimDebitConfig{Interval: 0}, nil,
+		func(*paymentsv1.SettlementRecord) (string, error) { return "encoded-record", nil }, nil)
+
+	srv := httptest.NewServer(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(livepeerheader.WorkUnits, "42")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	})))
+	defer srv.Close()
+
+	req := makeFractionalPaidRequest(t, []byte("dddddddddddddddddddddddddddddddd"), "req-real")
+	out, err := http.NewRequest("POST", srv.URL+"/v1/job", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Header = req.Header.Clone()
+
+	resp, err := srv.Client().Do(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if got := resp.Header.Get(livepeerheader.Settlement); got != "encoded-record" {
+		t.Errorf("settlement header = %q, want %q — set after the handler, so it only "+
+			"arrives if the response was held", got, "encoded-record")
+	}
+	if got := resp.Header.Get(livepeerheader.WorkUnits); got != "42" {
+		t.Errorf("work units = %q, want %q", got, "42")
+	}
+	if string(body) != `{"ok":true}` {
+		t.Errorf("body = %q, want %q", body, `{"ok":true}`)
 	}
 }

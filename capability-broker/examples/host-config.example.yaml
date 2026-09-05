@@ -4,36 +4,108 @@
 # runtime surface. Edit, reload, and re-publish the manifest without rebuilding
 # the broker binary.
 #
-# In a pool-managed rollout, `pool-controller` owns the canonical offer/member
-# state and stages the broker runtime artifact that the broker reloads.
+# In a pool-managed rollout, `pool-controller` owns the canonical offer state
+# and pushes it over PUT /admin/v1/offers; set `offers_source: admin` and leave
+# `offers:` empty below.
 #
-# This example is intentionally conservative: it starts with simple HTTP
-# request/response capabilities and keeps more operationally involved shapes
-# (RTMP, long-lived streaming, third-party API resale) commented out until the
-# operator is ready to wire the required backend infrastructure.
+# ---------------------------------------------------------------------------
+# WHO OWNS WHAT
+# ---------------------------------------------------------------------------
+# The operator authors OFFERS. An offer is the commercial fact: what is sold,
+# under which capability id, at what price, with what capacity, in what place,
+# gated by what certification. That is the whole of this file's `offers:` list.
 #
-# Some commented examples below reference workload binaries that used to live
-# in this repo. Those component trees were removed on 2026-05-20; keep the
-# examples only as contract-shape references when wiring your own backends.
+# The RUNNER declares itself. Transports, descriptor schemas, the work unit and
+# its extractor, endpoint paths, readiness recipe, model identity, GPU
+# inventory — all of it arrives in the runner's attach document when the runner
+# connects outbound to the broker
+# (livepeer-network-protocol/protocols/runner-attach.md). None of it is
+# transcribed here, because a hand-copied fact is a fact that can be wrong: an
+# operator who mistypes a model name or an extractor produces an offering the
+# manifest advertises and the backend cannot serve.
 #
-# The current broker binary ships multiple mode drivers and extractors. The
-# commented entries below are examples of real supported shapes, not placeholders
-# for future plans.
+# `match:` is how an offer picks its runners — a selector over the identity
+# runners declare, never a URL the operator writes. `certification:` is how the
+# broker proves a matched runner can actually serve the offer before it gets
+# paid work. The FIRST runner to certify FREEZES its declared shape into the
+# offer; every later runner must present the same shape or it is refused, so
+# the published manifest tuple cannot silently change underneath a gateway that
+# already routed to it. See protocols/broker-admin.md §4 and
+# protocols/certification-steps.md.
+#
+# There is no `capabilities:` list any more, no `backend:` block, no health
+# probe to configure. Backend health is not polled: a runner is reachable
+# exactly when its attach tunnel is up, and fit exactly when certification says
+# so — both facts the broker already holds, with no stale probe window.
+#
+# ---------------------------------------------------------------------------
+# PROTOCOLS
+# ---------------------------------------------------------------------------
+# Every offer declares one of two protocols, and the value is load-bearing —
+# it selects which engine serves the tuple and which policy the validator
+# accepts:
+#
+#   protocol: "paid-job/v1"      served on POST /v1/job
+#     the runner declares job transports (unary | stream | multipart) and the
+#     work_unit + extractor it is metered by
+#
+#   protocol: "paid-session/v1"  served on POST /v1/session + /v1/session/{id}/*
+#     the runner declares descriptor_schema, session paths and metering
+#     the operator may declare `session_policy:` (the commercial axes)
+#     requires top-level `session_store` and `external_base_url`
+#
+# `offering_id` is unique across the whole file — one offer per id. Runners
+# multiply an offer (many attached runners can serve the same one); repeated
+# entries do not.
+#
+# ---------------------------------------------------------------------------
+# RUNNING THIS FILE
+# ---------------------------------------------------------------------------
+# It loads as-is, but a broker started with it also needs, at run time:
+#
+#   * BROKER_ADMIN_TOKEN set in the environment (admin_auth below)
+#   * the file at credential_store.sealing_key_file to exist — 32 raw bytes
+#     or 64 hex chars: `openssl rand -hex 32 > /etc/livepeer/broker-seal.key`
+#   * the directories under credential_store.path / offers_state_path to be
+#     writable and on a volume that survives restarts
+#   * a payment-daemon on payment_daemon.socket, or `mock: true` instead
+#
+# And nothing is advertised until a runner attaches and certifies. That is
+# deliberate: an offer nobody can serve is never published.
 
 identity:
   orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
   label: "broker-a"
 
-# Optional private admin auth for runtime-status and reload endpoints.
-# When omitted, /admin/v1/runtime* stays disabled.
-#
-# admin_auth:
-#   method: bearer
-#   secret_ref: env://BROKER_ADMIN_TOKEN
+# Admin auth guards the runtime-status, enrolment, offer-push and reload
+# endpoints. REQUIRED to mint runner attach credentials with
+# POST /admin/v1/enroll, and REQUIRED when `offers_source: admin`.
+admin_auth:
+  method: bearer
+  secret_ref: env://BROKER_ADMIN_TOKEN
 
 listen:
   paid: ":8080"
   metrics: ":9090"
+  # Runners attach here over QUIC. The WebSocket fallback rides the paid
+  # listener, so an egress-restricted host still gets in without UDP.
+  attach_quic: ":8443"
+
+# Runner attach credentials. Standalone: mint one per host with
+# POST /admin/v1/enroll and hand it to the host's agent. Pool-managed:
+# pool-controller syncs the hashes over PUT /admin/v1/credentials. Only
+# sha256(token) is stored, sealed with the key file below.
+credential_store:
+  path: /var/lib/livepeer/broker/credentials.db
+  sealing_key_file: /etc/livepeer/broker-seal.key
+  # default_expiry_seconds: 7776000    # 90 d
+  # max_expiry_seconds: 31536000       # 365 d
+
+# Where frozen offer shapes (and admin-pushed offers) survive a restart.
+# REQUIRED in production: a frozen shape that vanished on restart would
+# re-freeze from whichever runner happened to certify first, which is a silent
+# manifest change.
+offers_state_path: /var/lib/livepeer/broker/offers.db
 
 # Path to the co-located payment-daemon unix socket. The broker dials this
 # at startup and fails fast if the daemon is unreachable.
@@ -46,6 +118,23 @@ payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock
   # mock: true
 
+# Externally-reachable base URL of the paid listener. Runner callback
+# URLs and session control URLs derive from it, and never from inbound
+# request headers. REQUIRED once any paid-session offer is served.
+# external_base_url: "https://broker.example.com"
+
+# Durable state: paid-session authority + paid-job idempotency records.
+# REQUIRED once any paid-session offer is served. The path must be a
+# persistent volume — see docs/operator-runbook.md §2 for the snapshot
+# ordering rule (this file holds debit sequence numbers).
+# session_store:
+#   path: /var/lib/livepeer/broker-state.db
+#   sealing_key_file: /etc/livepeer/broker-seal.key
+
+# Where `certification[].config.parts[].fixture.ref` values resolve
+# (<dir>/<name>). Inline base64 fixtures need no directory.
+# certification_fixtures_dir: /etc/livepeer/fixtures
+
 # Optional best-effort receipt sink for Pool accounting. When set, the broker
 # posts `stub` and `final` work receipts to pool-controller's admin API without
 # failing paid traffic if the sink is unavailable.
@@ -57,9 +146,13 @@ payment_daemon:
 #     method: "bearer"
 #     secret_ref: "env://POOL_CONTROLLER_TOKEN"
 
-# Optional read-only Pool snapshot source. When set, the broker polls
-# pool-controller's backend-selection snapshot and surfaces freshness / entry
-# status on GET /registry/health. This first slice does not alter routing yet.
+# Optional Pool snapshot source. When set, the broker polls
+# pool-controller's backend-selection snapshot, surfaces freshness / entry
+# status on GET /registry/health, AND lets that state gate routing:
+# expired / bootstrap_pending / fetch_error snapshots fail closed for
+# Pool-managed backends, missing and excluded/quarantined entries are
+# ineligible, and eligible/degraded entries scale the selection weight by the
+# snapshot's effective_selection_score.
 #
 # pool_snapshot:
 #   url: "http://pool-controller:8080"
@@ -71,7 +164,12 @@ payment_daemon:
 #     method: "bearer"
 #     secret_ref: "env://POOL_CONTROLLER_TOKEN"
 
-capabilities:
+# `offers_source: file` (the default) means this file owns `offers:`.
+# `offers_source: admin` means a pool-controller pushes them over
+# PUT /admin/v1/offers and `offers:` below MUST be empty.
+# offers_source: file
+
+offers:
   # Pricing assumptions used across this file:
   # - ETH = $2,900 planning rate (re-derive wei when ETH moves materially)
   # - All prices below are WHOLESALE (orch ↔ gateway), in wei.
@@ -85,204 +183,92 @@ capabilities:
   # - For resale offerings (proxying to OpenAI/Anthropic/etc.) the math
   #   inverts: wholesale = upstream_cost × (1 + orch_markup). Discount
   #   bands do not apply to resale.
-  # - Hardware tier noted per capability; re-derive if changing cards.
+  # - Hardware tier noted per offer; re-derive if changing cards.
   # - Cost-floor check: confirm market-anchored price clears the four-lens
   #   floor (Part 2 of pricing-overview.md). When it does not — see the
   #   Llama 70B note below — the workload is structurally unprofitable on
   #   that hardware at competitive pricing.
 
-  # ---- Simple HTTP request/response examples ----
-  - id: "kibble:doggo-bark-counter:v1"
-    offering_id: "default"
-    interaction_mode: "http-reqresp@v0"
-    work_unit:
-      name: "barks"
-      extractor: { type: "response-jsonpath", path: "$.bark_count" }
-    health:
-      probe:
-        type: "http-status"
-        interval_ms: 5000
-        timeout_ms: 1500
-        unhealthy_after: 2
-        healthy_after: 1
-        config:
-          url: "http://localhost:9000/healthz"
+  # ---- Simple paid-job example ----
+  # No `match:`, so any attached runner that declares
+  # `kibble:doggo-bark-counter:v1` over paid-job/v1 is a candidate. The runner
+  # declares its own path, work unit ("barks") and extractor; this file only
+  # says what a bark costs.
+  - offering_id: "doggo-default"
+    capability: "kibble:doggo-bark-counter:v1"
+    protocol: "paid-job/v1"
     # Demo placeholder — symbolic price, not a real-world rate.
+    #
+    # The pair is the price: amount_wei buys per_units work units. Set
+    # per_units above 1 to price below 1 wei per unit — the usual case
+    # for token-metered offerings, e.g. amount_wei "100" / per_units
+    # 1000 is 0.1 wei per token. Billing is cumulative:
+    # ceil(units * amount_wei / per_units) over the session's running
+    # total, so no sequence of debits accumulates rounding drift
+    # (protocols/offering-axes.md §6).
     price:
       amount_wei: "100"
       per_units: 1
-    backend:
-      transport: "http"
-      url: "http://localhost:9000/count"
-      auth: "none"
+    capacity:
+      max_in_flight: 4          # concurrent dispatches per eligible runner
+      queue_limit: 8
+    # `readiness` runs the probe recipe the RUNNER declared, so this step
+    # stays correct even if the runner changes what "ready" means for it.
+    certification:
+      - { name: ready, type: readiness }
 
-  # ---- A second request/response example ----
-  - id: "demo:echo:v1"
-    offering_id: "default"
-    interaction_mode: "http-reqresp@v0"
-    work_unit:
-      name: "echoes"
-      extractor: { type: "response-jsonpath", path: "$.count", default: 1 }
-    health:
-      probe:
-        type: "http-jsonpath"
-        interval_ms: 5000
-        timeout_ms: 1500
-        unhealthy_after: 2
-        healthy_after: 1
-        config:
-          url: "http://localhost:9001/healthz"
-          path: "$.ready"
-          equals: "true"
+  # ---- A second paid-job example ----
+  - offering_id: "echo-default"
+    capability: "demo:echo:v1"
+    protocol: "paid-job/v1"
     # Demo placeholder — symbolic price, not a real-world rate.
     price:
       amount_wei: "10"
       per_units: 1
-    backend:
-      transport: "http"
-      url: "http://localhost:9001/echo"
-      auth: "none"
+    certification:
+      - { name: ready, type: readiness }
 
   # ---- Video VOD ABR (offline path; consumed by an upstream video gateway,
   # out-of-repo as of 2026-05-19) ----
   # The current video product model routes all offline video work through
-  # `video:transcode.abr`, including one-rendition jobs. The gateway talks
-  # directly to the backend API when `extra.abr_backend_url` (or one of the
-  # other backend URL hints) is present in the published manifest.
+  # `video:transcode.abr`, including one-rendition jobs.
   #
-  # - id: "video:transcode.abr"
-  #   offering_id: "default"
-  #   interaction_mode: "http-reqresp@v0"
-  #   work_unit:
-  #     name: "jobs"
-  #     extractor: { type: "request-formula", expression: "1", default: 1 }
+  # - offering_id: "abr-default"
+  #   capability: "video:transcode.abr"
+  #   protocol: "paid-job/v1"
   #   # Market-anchored: Mux $0.024/min × 0.75 (transcoding 25% discount,
   #   # 3090 budget tier) = $0.018/min retail → $0.0139/job wholesale at
   #   # 30% gateway margin (1-min representative job).
   #   # NB: per-job pricing is coarse — long or multi-rendition jobs are
-  #   # under-priced here. Switch to `megapixel_frame` work_unit when job
-  #   # size distribution is wide.
+  #   # under-priced here. A runner that declares an output-seconds work
+  #   # unit is priced per second instead; the runner owns that choice,
+  #   # this file only owns the rate.
   #   price:
   #     amount_wei: "4800000000000"  # 4.8 Twei/job
   #     per_units: 1
-  #   backend:
-  #     transport: "http"
-  #     url: "http://video_transcode_backend:8080/v1/video/transcode/abr"
-  #     auth: "none"
   #   extra:
   #     provider: "video-transcode-backend"
   #     video:
   #       task: "abr-transcode"
-  #     abr_backend_url: "http://video_transcode_backend:8080"
-  #     # Optional stable fields like video.presets, video.codecs,
-  #     # video.packaging, and video.hardware.gpu_vendor may be
-  #     # auto-hydrated from GET /v1/video/transcode/abr/presets.
   #   constraints:
   #     tier: "standard"
   #     gpu_vendor: "NVIDIA"
-
-  # ---- Remote live runner (live-session-remote-runner) ----
-  # Broker owns paid-session authority while the remote live runner owns
-  # RTMP ingest, FFmpeg, and HLS egress. Use this when live media is no
-  # longer broker-local but the gateway still talks to the broker for open,
-  # top-up, status, and end.
-  #
-  # - id: "video:transcode.live"
-  #   offering_id: "default"
-  #   interaction_mode: "live-session-remote-runner@v0"
-  #   work_unit:
-  #     name: "output_seconds"
-  #     extractor: { type: "seconds-elapsed", granularity: 1 }
-  #   # Placeholder rate; derive from the active market before publishing.
-  #   price:
-  #     amount_wei: "1000000000000"
-  #     per_units: 1
-  #   backend:
-  #     transport: "remote-live-runner"
-  #     auth: "none"
-  #     live_runner:
-  #       base_url: "http://live-runner:8080"
-  #   health:
-  #     probe:
-  #       type: "http-status"
-  #       interval_ms: 5000
-  #       timeout_ms: 1500
-  #       unhealthy_after: 2
-  #       healthy_after: 1
-  #       config:
-  #         url: "http://live-runner:8080/healthz"
-  #   constraints:
-  #     tier: "standard"
-  #     gpu_vendor: "NVIDIA"
-  #
-  # To advertise the gateway-owned ingest topology alongside this one,
-  # reuse id: "video:transcode.live" with a distinct offering_id such as
-  # "gateway-ingest" and interaction_mode: "live-session-gateway-ingest@v0".
-
-  # ---- VTuber session runtime (session-control-plus-media) ----
-  #
-  # - id: "livepeer:vtuber-session"
-  #   offering_id: "default"
-  #   interaction_mode: "session-control-plus-media@v0"
-  #   work_unit:
-  #     name: "seconds"
-  #     extractor: { type: "seconds-elapsed", granularity: 1 }
-  #   # Market-anchored: HeyGen avatar streaming ref $0.008/sec × 0.75
-  #   # (25% discount, 4090 mid-tier) = $0.006/sec retail → $0.00462/sec
-  #   # wholesale at 30% gateway margin.
-  #   price:
-  #     amount_wei: "1600000000000"  # 1.6 Twei/sec
-  #     per_units: 1
-  #   backend:
-  #     transport: "http"
-  #     url: "http://session_backend:8080/api/sessions/start"
-  #     auth: "none"
-  #   extra:
-  #     provider: "session-backend"
-  #     vtuber:
-  #       task: "session"
-  #     # Optional stable fields like vtuber.control_schema,
-  #     # vtuber.media_schema, and vtuber.features.* may be
-  #     # auto-hydrated from GET /options.
-  #   constraints:
-  #     tier: "standard"
-
-  # ---- Live RTMP transcode (rtmp-ingress-hls-egress + ffmpeg-progress) ----
-  # Stream the resulting LL-HLS playlist from the broker's /_hls/<sess>/...
-  # path. The broker's --rtmp-listen-addr must be set for the listener to
-  # bind. backend.url is the broker's externally-advertised host so the
-  # session-open response can derive the RTMP and HLS URLs.
-  #
-  # - id: "video:live.rtmp"
-  #   offering_id: "default"
-  #   interaction_mode: "rtmp-ingress-hls-egress@v0"
-  #   work_unit:
-  #     name: "out_time_seconds"
-  #     extractor: { type: "ffmpeg-progress", unit: "out_time_seconds" }
-  #   # Market-anchored: Mux $0.0004/sec × 0.75 (transcoding 25% discount,
-  #   # 3090 budget tier) = $0.0003/sec retail → $0.000231/sec wholesale at
-  #   # 30% gateway margin. Clears 3090 cost floor (~$0.15/hr per stream) by ~5×.
-  #   price:
-  #     amount_wei: "80000000000"    # 80 Gwei/output-second
-  #     per_units: 1
-  #   backend:
-  #     transport: "ffmpeg-subprocess"
-  #     profile: "h264-live-1080p-nvenc"
-  #     url: "https://broker.example.com"
+  #   certification:
+  #     - { name: ready, type: readiness }
 
   # ---- Additional shipped examples (uncomment when your deployment is ready) ----
   #
-  # ---- Multi-backend shared offering example ----
-  # Repeating the same `(id, offering_id)` publishes one manifest tuple while
-  # giving the broker multiple candidate backends to choose from at request
-  # time. This is the shape `pool-controller/` emits for Pool members.
+  # ---- One offer, many runners ----
+  # There is exactly ONE entry per offering id. Every attached runner whose
+  # declared identity satisfies `match:` serves it, so scaling a pool is
+  # attaching another host — not editing this file. This is the shape a
+  # pool-controller pushes for Pool members.
   #
-  # - id: "openai:chat-completions"
-  #   offering_id: "llama-3-70b-shared"
-  #   interaction_mode: "http-stream@v0"
-  #   work_unit:
-  #     name: "tokens"
-  #     extractor: { type: "openai-usage", field: "total_tokens" }
+  # - offering_id: "llama-3-70b-shared"
+  #   capability: "openai:chat-completions"
+  #   protocol: "paid-job/v1"
+  #   match:
+  #     identity.openai.model: "llama-3-70b"   # selects runners, not URLs
   #   # Market-anchored: Together.ai $0.88/M × 0.90 (LLM-open 10% discount,
   #   # H100 premium tier) = $0.792/M retail → $0.609/M wholesale at 30%
   #   # gateway margin = $6.09e-7 per token.
@@ -292,83 +278,72 @@ capabilities:
   #   # clears the floor at ~1,800+ tok/s aggregate (heavy vLLM batching).
   #   # See Part 3 of pricing-overview.md for the "structurally unprofitable"
   #   # decision tree. Consider Llama-8B or quantized 2× consumer instead.
+  #   #
+  #   # Every runner behind this id is sold at this one price — there is no
+  #   # way to publish an inconsistent tuple, because there is no second
+  #   # entry to disagree with.
   #   price:
   #     amount_wei: "210000000"      # 210 Mwei/token
   #     per_units: 1
-  #   backend:
-  #     id: "member-west"
-  #     transport: "http"
-  #     url: "http://10.0.0.5:8000/v1/chat/completions"
-  #     auth: "none"
-  #   extra:
-  #     openai:
-  #       model: "llama-3-70b"
-  #     provider: "vllm"
-  #
-  # - id: "openai:chat-completions"
-  #   offering_id: "llama-3-70b-shared"
-  #   interaction_mode: "http-stream@v0"
-  #   work_unit:
-  #     name: "tokens"
-  #     extractor: { type: "openai-usage", field: "total_tokens" }
-  #   # Same offering, second pool member — must publish the SAME price as
-  #   # member-west or the pool advertises an inconsistent tuple.
-  #   price:
-  #     amount_wei: "210000000"      # 210 Mwei/token (matches member-west)
-  #     per_units: 1
-  #   backend:
-  #     id: "member-east"
-  #     transport: "http"
-  #     url: "http://10.0.0.6:8000/v1/chat/completions"
-  #     auth:
-  #       method: "bearer"
-  #       secret_ref: "env://MEMBER_EAST_TOKEN"
-  #   extra:
-  #     openai:
-  #       model: "llama-3-70b"
-  #     provider: "vllm"
-  #
-  # - id: "openai:chat-completions"
-  #   offering_id: "vllm-h100-batch4"
-  #   interaction_mode: "http-stream@v0"
-  #   work_unit:
-  #     name: "tokens"
-  #     extractor: { type: "openai-usage", field: "total_tokens" }
-  #   # Dedicated H100 vLLM batch-4 — same market-anchored rate as the
-  #   # shared pool offering; differentiate via region / SLA constraints,
-  #   # not price. Same structural-floor caveat as member-west applies.
-  #   price:
-  #     amount_wei: "210000000"      # 210 Mwei/token
-  #     per_units: 1
-  #   backend:
-  #     transport: "http"
-  #     url: "http://10.0.0.5:8000/v1/chat/completions"
-  #     auth: "none"
-  #   health:
-  #     probe:
-  #       type: "http-openai-model-ready"
-  #       interval_ms: 5000
-  #       timeout_ms: 1500
-  #       unhealthy_after: 2
-  #       healthy_after: 1
-  #       config:
-  #         url: "http://10.0.0.5:8000/v1/models"
-  #         expect_model: "llama-3-70b"
+  #   capacity: { max_in_flight: 4, queue_limit: 8 }
   #   extra:
   #     openai:
   #       model: "llama-3-70b"
   #     provider: "vllm"
   #     region: "us-west-2"
   #     gpu_class: "h100"
-  #     # Optional stable fields like served_model_name, backend_model,
-  #     # and features.* may be auto-hydrated from GET /v1/models.
+  #   # Promote a runner extension key into the advertised extra. Anything
+  #   # the runner sends that is not listed here stays on operator surfaces.
+  #   extra_from_runner: ["x-quantization"]
+  #   certification:
+  #     - { name: ready, type: readiness, config: { attempts: 5, interval_ms: 3000 } }
+  #     - name: smoke
+  #       type: request
+  #       config:
+  #         transport: unary
+  #         body:
+  #           model: "{{identity.openai.model}}"
+  #           messages: [ { role: user, content: ping } ]
+  #           max_tokens: 8
+  #         assert: [ "$.choices[0].message.content", { path: "$.usage.total_tokens", min: 1 } ]
+  #     - { name: usage, type: usage, config: { min_units: 1 } }
+  #     - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 4000, measure: first_byte } }
+  #   # Re-run certification periodically so a runner that quietly degrades
+  #   # (model unloaded, GPU fell out) stops receiving paid work.
+  #   recertify_every_seconds: 3600
   #
-  # - id: "openai:chat-completions"
-  #   offering_id: "openai-resale"
-  #   interaction_mode: "http-stream@v0"
-  #   work_unit:
-  #     name: "tokens"
-  #     extractor: { type: "openai-usage", field: "total_tokens" }
+  # ---- Same capability, a second commercial tier ----
+  # Differentiate with region / SLA constraints and a distinct match, not by
+  # repeating an offering id.
+  #
+  # - offering_id: "vllm-h100-batch4"
+  #   capability: "openai:chat-completions"
+  #   protocol: "paid-job/v1"
+  #   match:
+  #     identity.openai.model: "llama-3-70b"
+  #     identity.provider: "vllm"
+  #   price:
+  #     amount_wei: "210000000"      # 210 Mwei/token
+  #     per_units: 1
+  #   extra:
+  #     openai:
+  #       model: "llama-3-70b"
+  #     provider: "vllm"
+  #     region: "us-west-2"
+  #     gpu_class: "h100"
+  #   certification:
+  #     - { name: ready, type: readiness }
+  #
+  # ---- Resale of a third-party API ----
+  # The runner in front of api.openai.com is still a runner: it attaches, it
+  # declares the endpoint and the key it holds, and it is certified like any
+  # other. The broker never learns the upstream credential.
+  #
+  # - offering_id: "openai-resale"
+  #   capability: "openai:chat-completions"
+  #   protocol: "paid-job/v1"
+  #   match:
+  #     identity.openai.model: "gpt-4o"
   #   # Resale economics (NOT discount-anchored): orch pays OpenAI retail
   #   # blended ~$7.75/M (70% output × $10 + 30% input × $2.50). Wholesale
   #   # = upstream_cost × (1 + 10% orch markup) = $8.53/M. After 30%
@@ -377,30 +352,20 @@ capabilities:
   #   price:
   #     amount_wei: "2940000000"     # 2.94 Gwei/token
   #     per_units: 1
-  #   backend:
-  #     transport: "http"
-  #     url: "https://api.openai.com/v1/chat/completions"
-  #     auth:
-  #       method: "bearer"
-  #       secret_ref: "env://OPENAI_API_KEY"           # vault:// in plan 0005
   #   extra:
   #     openai:
   #       model: "gpt-4o"
   #     provider: "openai"
   #     backend_provider: "openai"
   #     region: "global"
+  #   certification:
+  #     - { name: ready, type: readiness }
   #
-  # - id: "openai:images-generations"
-  #   offering_id: "SG161222/RealVisXL_V4.0_Lightning"
-  #   interaction_mode: "http-reqresp@v0"
-  #   work_unit:
-  #     name: "images"
-  #     extractor:
-  #       type: "request-formula"
-  #       expression: "n"
-  #       fields:
-  #         n: "$.n"
-  #       default: 1
+  # - offering_id: "realvisxl-v4-lightning"
+  #   capability: "openai:images-generations"
+  #   protocol: "paid-job/v1"
+  #   match:
+  #     identity.openai.model: "SG161222/RealVisXL_V4.0_Lightning"
   #   # Market-anchored: Replicate Lightning $0.025/image × 0.70 (image-gen
   #   # 30% discount, 4090 mid-tier) = $0.0175/image retail → $0.01346/image
   #   # wholesale at 30% gateway margin. Massively above 4090 cost floor —
@@ -408,46 +373,59 @@ capabilities:
   #   price:
   #     amount_wei: "4600000000000"  # 4.6 Twei/image
   #     per_units: 1
-  #   backend:
-  #     transport: "http"
-  #     url: "http://image_generation_backend:8080/v1/images/generations"
-  #     auth: "none"
   #   extra:
   #     openai:
   #       model: "SG161222/RealVisXL_V4.0_Lightning"
   #     provider: "image-generation-backend"
-  #     served_model_name: "SG161222/RealVisXL_V4.0_Lightning"
-  #     backend_model: "SG161222/RealVisXL_V4.0_Lightning"
   #   constraints:
   #     tier: "standard"
   #     gpu: "4090"
+  #   certification:
+  #     - { name: ready, type: readiness }
   #
-  # - id: "rerank"
-  #   offering_id: "zerank-2-default"
-  #   interaction_mode: "http-reqresp@v0"
-  #   work_unit:
-  #     # This backend does not emit a usage field today, so the broker
-  #     # meters this capability as one priced request per call.
-  #     name: "requests"
-  #     extractor:
-  #       type: "request-formula"
-  #       expression: "1"
-  #       fields: {}
-  #       default: 1
+  # - offering_id: "zerank-2-default"
+  #   capability: "rerank"
+  #   protocol: "paid-job/v1"
+  #   match:
+  #     identity.model: "zeroentropy/zerank-2"
   #   # Market-anchored: Cohere Rerank $0.002/req × 0.70 (rerank 30%
   #   # discount, 4090 mid-tier) = $0.0014/req retail → $0.00108/req
   #   # wholesale at 30% gateway margin. Clears 4090 cost floor by ~50×.
+  #   #
+  #   # This backend emits no usage field, so its runner declares a
+  #   # one-unit-per-request work unit. That is the runner's call, and it
+  #   # is what `per_units: 1` is priced against here.
   #   price:
   #     amount_wei: "372000000000"   # 372 Gwei/request
   #     per_units: 1
-  #   backend:
-  #     transport: "http"
-  #     # If the broker shares a Docker network with the backend, use the
-  #     # container DNS name. Host-run brokers can use 127.0.0.1:8080 instead.
-  #     url: "http://rerank_backend:8080/v1/rerank"
-  #     auth: "none"
   #   extra:
   #     provider: "rerank-backend"
   #     model: "zeroentropy/zerank-2"
   #   constraints:
   #     gpu_vendor: "NVIDIA"
+  #   certification:
+  #     - { name: ready, type: readiness }
+  #
+  # ---- A paid-session offer ----
+  # Needs `session_store` and `external_base_url` above. The operator owns the
+  # commercial axes below; the runner declares descriptor_schema, its session
+  # paths, and how it meters.
+  #
+  # - offering_id: "meet-default"
+  #   capability: "meet:sfu-room"
+  #   protocol: "paid-session/v1"
+  #   price: { amount_wei: "10", per_units: 1 }
+  #   session_policy:
+  #     refill: extensible
+  #     lease_policy: funding-tracking
+  #     heartbeat: { interval_seconds: 10, missed_threshold: 3 }
+  #     max_rotations: 3
+  #   certification:
+  #     - { name: ready, type: readiness }
+  #     - name: open
+  #       type: request
+  #       config:
+  #         session_params: { room_name: "cert-{{run.id}}" }
+  #         expect_descriptor_schema: sfu-room/v1
+  #         hold_ms: 5000
+  #     - { name: usage, type: usage, config: { window_ms: 5000 } }

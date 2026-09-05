@@ -660,6 +660,21 @@
   {{end}}
 </section>
 
+{{if .AutoSignPaused}}
+<section class="warn">
+  <h2>Auto-signing is paused</h2>
+  <p>
+    The agent signed more candidates in an hour than the policy allows, so it
+    latched rather than throttling — a burst usually means something upstream
+    is republishing, not that the bound is too low. Candidates still reach this
+    queue; nothing signs itself until you clear this.
+  </p>
+  <form action="/agent/rate-limit/clear" method="post">
+    <button type="submit">Clear the pause</button>
+  </form>
+</section>
+{{end}}
+
 <section class="confirm">
   <h2>Tap to sign</h2>
   <p>
@@ -669,6 +684,16 @@
   <form action="/sign" method="post">
     <label for="confirm_last4">Last 4 hex chars:</label>
     <input type="text" id="confirm_last4" name="confirm_last4" maxlength="4" pattern="[0-9a-fA-F]{4}" autocomplete="off" required>
+    {{if and $d (not $d.Header.SpecVersionStable)}}
+    <p class="warn">
+      This candidate changes <code>spec_version</code> from
+      <code>{{$d.Header.BeforeSpecVersion}}</code> to
+      <code>{{$d.Header.AfterSpecVersion}}</code>. That changes the contract
+      every consumer reads this manifest under, so confirm it separately.
+    </p>
+    <label for="confirm_spec_version">Type the new spec_version:</label>
+    <input type="text" id="confirm_spec_version" name="confirm_spec_version" autocomplete="off" required>
+    {{end}}
     <button type="submit">Sign &amp; download</button>
   </form>
   <form action="/discard" method="post" class="discard">

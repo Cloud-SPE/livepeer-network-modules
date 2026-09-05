@@ -1,0 +1,747 @@
+// Package sessionstore is the broker's durable paid-session authority —
+// the persistence layer behind paid-session/v1 §9 (durability and
+// recovery). Everything the spec requires to survive a broker restart
+// lives in one Record per session, mutated only through single-bucket
+// bbolt transactions so that event dedup, usage watermarks, and payment
+// debit progress commit together or not at all.
+//
+// Schema:
+//
+//	bucket "sessions" — keyed by session id; value is the JSON-encoded
+//	                    Record. DescriptorPrivate is never stored in
+//	                    plaintext: it is sealed with AES-256-GCM under
+//	                    the store key before the record is written.
+//
+// Dedup design: the old per-session unbounded event-id set is replaced
+// by a monotonic sequence watermark plus the last accepted event id. An
+// event is processed iff its sequence is <= the committed watermark; a
+// runner retry of an event whose commit failed re-presents the same
+// sequence and is accepted, which is what makes the exactly-once debit
+// dance work (see paid-session/v1 §7.3).
+package sessionstore
+
+import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	bolt "go.etcd.io/bbolt"
+)
+
+const (
+	sessionsBucket = "sessions"
+	// openRequestsBucket maps Livepeer-Request-Id -> session id, making
+	// session open idempotent (paid-session/v1 §3.1): a retried open
+	// resolves to the original session instead of minting a sibling.
+	openRequestsBucket = "open_requests"
+	// gatewaySessionsBucket maps the GATEWAY's own session id ->
+	// session id. A clearinghouse holds only the id it issued itself:
+	// session_id is broker-local and reaches it through the customer's
+	// SDK, and work_id is shared by every session on a ticket session.
+	// Without this index the only key it can present resolves
+	// ambiguously, which returns a valid signed record for the wrong
+	// session.
+	gatewaySessionsBucket = "gateway_sessions"
+	// openReservationsBucket holds an open that is in flight: the request
+	// id is claimed before any payment or runner side effect (plan 0048
+	// §2.2), and the entry is deleted in the transaction that persists
+	// the session, or released when the open fails closed.
+	openReservationsBucket = "open_reservations"
+)
+
+// KeySize is the required length of the store's sealing key (AES-256).
+const KeySize = 32
+
+var (
+	// ErrNotFound is returned when no record exists for the session id.
+	ErrNotFound = errors.New("sessionstore: session not found")
+	// ErrExists is returned by Create when the session id is taken.
+	ErrExists = errors.New("sessionstore: session already exists")
+	// ErrGatewaySessionExists is returned when an open declares a
+	// gateway_session_id already bound to a retained session. It is
+	// distinct from ErrExists because the remedy differs: the caller
+	// picked a colliding id, and no retry of the same open will succeed.
+	ErrGatewaySessionExists = errors.New("sessionstore: gateway_session_id already in use")
+	// ErrAmbiguous is returned by a lookup whose key matches more than
+	// one session. Returning any one of them would hand back a valid
+	// signature for the wrong session, which a caller cannot detect as
+	// wrong from the record alone.
+	ErrAmbiguous = errors.New("sessionstore: identifier matches more than one session")
+	// ErrNonAdmissionIssued means this broker already signed a statement
+	// that it never admitted this request. Admitting it now would put two
+	// contradictory signed claims under one delegated key.
+	ErrNonAdmissionIssued = errors.New("sessionstore: a non-admission record was already issued for this request")
+	// ErrOpenInFlight means another open with this request id has
+	// reserved it and not yet finished; the caller retries.
+	ErrOpenInFlight = errors.New("sessionstore: an open with this request id is in flight")
+)
+
+// Session states (paid-session/v1 §2).
+const (
+	StateActive      = "active"
+	StateWindingDown = "winding_down"
+	StateEnded       = "ended"
+	StateFailed      = "failed"
+)
+
+// GrantAudit is the retained metadata for one issued admission grant.
+// The grant secret itself is delivered once at open and never stored in
+// recoverable form (runtime-descriptor §2.4 rule 2) — only its hash.
+type GrantAudit struct {
+	ID         string    `json:"id"`
+	Operations []string  `json:"operations"`
+	SecretHash []byte    `json:"secret_hash"`
+	ExpiresAt  time.Time `json:"expires_at"`
+}
+
+// Record is the on-disk session record — the paid-session/v1 §9.1
+// persistence list, field for field.
+type Record struct {
+	// Identifiers.
+	SessionID        string `json:"session_id"`
+	GatewaySessionID string `json:"gateway_session_id"`
+	RunnerSessionID  string `json:"runner_session_id"`
+	WorkID           string `json:"work_id"`
+
+	// Binding.
+	Capability string `json:"capability"`
+	Offering   string `json:"offering"`
+	BackendRef string `json:"backend_ref"`
+
+	// Payment.
+	Sender        []byte `json:"sender,omitempty"`
+	PaymentClosed bool   `json:"payment_closed"`
+	// RunnerTerminated records that the runner acknowledged terminate (or
+	// no longer held the session). With PaymentClosed it is the pair of
+	// obligations a winddown owes; a record leaves winding_down only
+	// when both are true (plan 0048 §2.3).
+	RunnerTerminated bool `json:"runner_terminated,omitempty"`
+	// SharedPaymentIdentity is true when work_id came from the payment
+	// (the payee's ticket-session rand hash), which many sessions and
+	// jobs can share. The broker MUST NOT close such a session: closing
+	// strands every other holder and forfeits credit that is not this
+	// session's to forfeit. False only for the stub fallback, where the
+	// identity belongs to this session alone.
+	SharedPaymentIdentity bool `json:"shared_payment_identity,omitempty"`
+
+	// Authentication material, hashed (never plaintext).
+	CredentialHash    []byte `json:"credential_hash"`
+	CallbackTokenHash []byte `json:"callback_token_hash"`
+
+	// OpenFingerprint binds the request id to the open it answered, so a
+	// reused id with different content is refused instead of being given
+	// somebody else's session.
+	OpenFingerprint []byte `json:"open_fingerprint,omitempty"`
+
+	// ReplayMaterial is the credential and grant secrets an idempotent
+	// open must be able to re-deliver, sealed under the store key like
+	// the descriptor's private part. A gateway whose open response was
+	// lost otherwise holds a funded session it can never drive.
+	//
+	// Cleared at winddown: the replay window is the session's life, and
+	// secrets outliving the thing they unlock is how a store becomes a
+	// liability.
+	ReplayMaterial       []byte `json:"-"`
+	ReplayMaterialSealed []byte `json:"replay_material_sealed,omitempty"`
+
+	// Runtime descriptor. Public is stored as-is (it is public by
+	// contract); Private is sealed under the store key on write and
+	// unsealed on read; Grants hold audit metadata only.
+	DescriptorSchema  string          `json:"descriptor_schema"`
+	DescriptorPublic  json.RawMessage `json:"descriptor_public,omitempty"`
+	DescriptorPrivate json.RawMessage `json:"-"`
+	PrivateSealed     []byte          `json:"descriptor_private_sealed,omitempty"`
+	Grants            []GrantAudit    `json:"grants,omitempty"`
+
+	// Rotation chain. A recipient rotation rebinds the session to a new
+	// payment identity; session_id and the credential do not move, so
+	// this is the only record of which work_id paid for which stretch.
+	// GenerationStartUnits is the cumulative debited total at the moment
+	// this generation began, so a generation's own subtotal is
+	// DebitedTotal - GenerationStartUnits without a second counter to
+	// keep in step.
+	RotationGeneration uint32 `json:"rotation_generation,omitempty"`
+	// SettlementSeq orders settlement records for this session. Per
+	// session, not per work_id: a rotation mints a new identity, and a
+	// per-identity counter would restart mid-session.
+	SettlementSeq uint64 `json:"settlement_seq,omitempty"`
+	// FundedWei is cumulative credited value over the whole logical
+	// session; GenerationFundedWei covers the current identity only.
+	// Both are decimal strings, because a wei total outgrows int64.
+	// Funding is per identity while billing is cumulative, so a reader
+	// reconciling one envelope needs the generation figure and one
+	// reconciling the whole session needs the total.
+	FundedWei string `json:"funded_wei,omitempty"`
+	// BilledWei is what the LEDGER reported charging this session, summed
+	// across its debits. Not recomputed from units: billing is
+	// cumulative over the payment session, which two sessions can share,
+	// so only the ledger knows what this one actually cost.
+	BilledWei string `json:"billed_wei,omitempty"`
+	// PaymentCumulativeUnits is the running unit total on the PAYMENT
+	// identity, as the ledger last reported it. Sessions sharing a
+	// work_id advance it together, so it is not this session's total —
+	// it is where this session's last debit landed on the shared curve.
+	PaymentCumulativeUnits uint64 `json:"payment_cumulative_units,omitempty"`
+	GenerationFundedWei    string `json:"generation_funded_wei,omitempty"`
+	PredecessorWorkID      string `json:"predecessor_work_id,omitempty"`
+	GenerationStartUnits   uint64 `json:"generation_start_units,omitempty"`
+
+	// Event/usage/debit progress — the exactly-once commit set.
+	LastEventID  string `json:"last_event_id,omitempty"`
+	LastSequence uint64 `json:"last_sequence"`
+	Unit         string `json:"unit"`
+	ClaimedTotal uint64 `json:"claimed_total"`
+	DebitedTotal uint64 `json:"debited_total"`
+	DebitSeq     uint64 `json:"debit_seq"`
+	// PendingDebitSeq is a debit sequence allocated but not yet
+	// committed. It is persisted BEFORE the debit is attempted so a
+	// retry re-presents the same number and the payee deduplicates it;
+	// allocating again on retry would double-debit.
+	PendingDebitSeq uint64 `json:"pending_debit_seq,omitempty"`
+
+	// Lease and liveness.
+	LeaseExpiresAt time.Time `json:"lease_expires_at"`
+	LastEventAt    time.Time `json:"last_event_at"`
+
+	// Lifecycle.
+	State       string    `json:"state"`
+	CloseReason string    `json:"close_reason,omitempty"`
+	CapacityRef string    `json:"capacity_ref,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	EndedAt     time.Time `json:"ended_at,omitzero"`
+}
+
+// Terminal reports whether the record is in a terminal state.
+func (r *Record) Terminal() bool {
+	return r.State == StateEnded || r.State == StateFailed
+}
+
+// Closing reports a session that takes no more work: terminal, or
+// winding down with obligations outstanding. Events, top-ups and
+// refills are refused in either.
+func (r *Record) Closing() bool {
+	return r.Terminal() || r.State == StateWindingDown
+}
+
+// HashSecret is the canonical hash for credentials, callback tokens,
+// and grant secrets held by the store.
+func HashSecret(secret string) []byte {
+	sum := sha256.Sum256([]byte(secret))
+	return sum[:]
+}
+
+// VerifySecret reports whether secret matches the stored hash. The
+// comparison is constant-time; hashing first also makes timing
+// independent of where the inputs differ.
+func VerifySecret(hash []byte, secret string) bool {
+	if len(hash) != sha256.Size {
+		return false
+	}
+	return subtle.ConstantTimeCompare(hash, HashSecret(secret)) == 1
+}
+
+// Store is the bbolt-backed session store.
+type Store struct {
+	db   *bolt.DB
+	aead cipher.AEAD
+}
+
+// Open opens (creating if needed) the store at path. key seals
+// descriptor private parts at rest and MUST be KeySize bytes.
+func Open(path string, key []byte) (*Store, error) {
+	if len(key) != KeySize {
+		return nil, fmt.Errorf("sessionstore: sealing key must be %d bytes, got %d", KeySize, len(key))
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("sessionstore: cipher: %w", err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("sessionstore: gcm: %w", err)
+	}
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 5 * time.Second})
+	if err != nil {
+		return nil, fmt.Errorf("sessionstore: open %s: %w", path, err)
+	}
+	err = db.Update(func(tx *bolt.Tx) error {
+		if _, e := tx.CreateBucketIfNotExists([]byte(sessionsBucket)); e != nil {
+			return e
+		}
+		if _, e := tx.CreateBucketIfNotExists([]byte(openRequestsBucket)); e != nil {
+			return e
+		}
+		if _, e := tx.CreateBucketIfNotExists([]byte(gatewaySessionsBucket)); e != nil {
+			return e
+		}
+		_, e := tx.CreateBucketIfNotExists([]byte(openReservationsBucket))
+		return e
+	})
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sessionstore: init bucket: %w", err)
+	}
+	st := &Store{db: db, aead: aead}
+	// Stamp coverage at OPEN, not lazily at the first query that needs
+	// it. Stamped lazily, a broker that had been running for days would
+	// mark its coverage as beginning the moment somebody first asked —
+	// and then refuse every job older than that question, which is every
+	// job it had actually served.
+	if _, err := st.CoverageStartedAt(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sessionstore: stamp coverage: %w", err)
+	}
+	return st, nil
+}
+
+// Close closes the underlying database.
+func (s *Store) Close() error { return s.db.Close() }
+
+// Create inserts a new record. ErrExists if the session id is taken.
+func (s *Store) Create(rec *Record) error {
+	if rec.SessionID == "" {
+		return errors.New("sessionstore: empty session id")
+	}
+	now := time.Now().UTC()
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = now
+	}
+	rec.UpdatedAt = now
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(sessionsBucket))
+		if b.Get([]byte(rec.SessionID)) != nil {
+			return ErrExists
+		}
+		raw, err := s.seal(rec)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(rec.SessionID), raw)
+	})
+}
+
+// CreateIndexed inserts a new record and, in the same transaction,
+// indexes it under the open request id. ErrExists if either the session
+// id or the request id is already taken (a request-id collision means a
+// concurrent open won the race; the caller re-resolves via
+// SessionIDForRequest).
+func (s *Store) CreateIndexed(rec *Record, requestID string) error {
+	if rec.SessionID == "" || requestID == "" {
+		return errors.New("sessionstore: empty session id or request id")
+	}
+	now := time.Now().UTC()
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = now
+	}
+	rec.UpdatedAt = now
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(sessionsBucket))
+		idx := tx.Bucket([]byte(openRequestsBucket))
+		if b.Get([]byte(rec.SessionID)) != nil || idx.Get([]byte(requestID)) != nil {
+			return ErrExists
+		}
+		// The reservation ends where the record begins, atomically.
+		if err := tx.Bucket([]byte(openReservationsBucket)).Delete([]byte(requestID)); err != nil {
+			return err
+		}
+		// The gateway's id has to resolve to exactly one session for as
+		// long as the record is retained, or the lookup it exists for
+		// returns somebody else's signed settlement. Two guards: it must
+		// not already be indexed, and it must not collide with a broker
+		// session id — Get(id) is tried first on the query path, so a
+		// caller could otherwise name another session and shadow its own.
+		gidx := tx.Bucket([]byte(gatewaySessionsBucket))
+		if rec.GatewaySessionID != "" {
+			if gidx.Get([]byte(rec.GatewaySessionID)) != nil ||
+				b.Get([]byte(rec.GatewaySessionID)) != nil {
+				return ErrGatewaySessionExists
+			}
+		}
+		raw, err := s.seal(rec)
+		if err != nil {
+			return err
+		}
+		if err := b.Put([]byte(rec.SessionID), raw); err != nil {
+			return err
+		}
+		if rec.GatewaySessionID != "" {
+			if err := gidx.Put([]byte(rec.GatewaySessionID), []byte(rec.SessionID)); err != nil {
+				return err
+			}
+		}
+		return idx.Put([]byte(requestID), []byte(rec.SessionID))
+	})
+}
+
+// SessionIDForRequest resolves an open request id to its session id.
+// ErrNotFound when the request id is unknown.
+func (s *Store) SessionIDForRequest(requestID string) (string, error) {
+	var id string
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket([]byte(openRequestsBucket)).Get([]byte(requestID))
+		if v == nil {
+			return ErrNotFound
+		}
+		id = string(v)
+		return nil
+	})
+	return id, err
+}
+
+// GetByGatewaySessionID resolves the gateway's own session id to its
+// record. ErrNotFound when unknown.
+//
+// This is the key a clearinghouse actually holds. It is unique by
+// construction (CreateIndexed refuses a collision), so unlike a work_id
+// lookup it cannot return the wrong session.
+func (s *Store) GetByGatewaySessionID(gatewaySessionID string) (*Record, error) {
+	if gatewaySessionID == "" {
+		return nil, ErrNotFound
+	}
+	var rec *Record
+	err := s.db.View(func(tx *bolt.Tx) error {
+		id := tx.Bucket([]byte(gatewaySessionsBucket)).Get([]byte(gatewaySessionID))
+		if id == nil {
+			return ErrNotFound
+		}
+		raw := tx.Bucket([]byte(sessionsBucket)).Get(id)
+		if raw == nil {
+			return ErrNotFound
+		}
+		var e error
+		rec, e = s.unseal(raw)
+		return e
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rec, nil
+}
+
+// Get returns the record for id, with the private descriptor part
+// unsealed. ErrNotFound if absent.
+func (s *Store) Get(id string) (*Record, error) {
+	var rec *Record
+	err := s.db.View(func(tx *bolt.Tx) error {
+		raw := tx.Bucket([]byte(sessionsBucket)).Get([]byte(id))
+		if raw == nil {
+			return ErrNotFound
+		}
+		var e error
+		rec, e = s.unseal(raw)
+		return e
+	})
+	return rec, err
+}
+
+// Update applies fn to the record inside one write transaction. If fn
+// returns an error the transaction aborts and the record is unchanged —
+// this is the atomic commit point paid-session/v1 §7.3 requires: dedup
+// watermark, usage totals, and debit progress mutate together or not at
+// all. bbolt serializes writers, so concurrent Updates on one session
+// never interleave.
+func (s *Store) Update(id string, fn func(*Record) error) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(sessionsBucket))
+		raw := b.Get([]byte(id))
+		if raw == nil {
+			return ErrNotFound
+		}
+		rec, err := s.unseal(raw)
+		if err != nil {
+			return err
+		}
+		if err := fn(rec); err != nil {
+			return err
+		}
+		rec.UpdatedAt = time.Now().UTC()
+		out, err := s.seal(rec)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), out)
+	})
+}
+
+// ForEach iterates every record (private parts unsealed) in one
+// read-only transaction. Returning an error from fn stops iteration.
+// This is the sweeper's surface: lease expiry, heartbeat breach, and
+// terminal-retention scans all ride it.
+func (s *Store) ForEach(fn func(*Record) error) error {
+	return s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket([]byte(sessionsBucket)).ForEach(func(_, raw []byte) error {
+			rec, err := s.unseal(raw)
+			if err != nil {
+				return err
+			}
+			return fn(rec)
+		})
+	})
+}
+
+// EvictTerminal deletes terminal records whose EndedAt is before
+// cutoff, returning how many were removed. Bounds the store per
+// paid-session/v1 §2 (terminal records are retained for a window, then
+// evicted).
+func (s *Store) EvictTerminal(cutoff time.Time) (int, error) {
+	n := 0
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(sessionsBucket))
+		var evict [][]byte
+		var gateways [][]byte
+		if err := b.ForEach(func(k, raw []byte) error {
+			rec, err := s.unseal(raw)
+			if err != nil {
+				return err
+			}
+			if rec.Terminal() && !rec.EndedAt.IsZero() && rec.EndedAt.Before(cutoff) {
+				evict = append(evict, bytes.Clone(k))
+				if rec.GatewaySessionID != "" {
+					gateways = append(gateways, []byte(rec.GatewaySessionID))
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, k := range evict {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+			n++
+		}
+		// Drop the gateway index with the record. Left behind it would
+		// both point at nothing and keep the id reserved forever, so a
+		// gateway that reuses ids across days would be refused an open
+		// on account of a session that no longer exists.
+		gidx := tx.Bucket([]byte(gatewaySessionsBucket))
+		for _, g := range gateways {
+			if err := gidx.Delete(g); err != nil {
+				return err
+			}
+		}
+		// The open-request index is left alone. Dropping an entry with
+		// its record would let a late retry of the same open mint a
+		// second session, which is the failure idempotency exists to
+		// prevent. The cost is a pointer to an evicted record, and a
+		// retry that finds one currently errors rather than replaying —
+		// acceptable only because the retry window is far shorter than
+		// the retention cutoff.
+		return nil
+	})
+	return n, err
+}
+
+// seal serializes the record, encrypting DescriptorPrivate into
+// PrivateSealed. The plaintext field carries a `json:"-"` tag, so a
+// record can never round-trip private material through the JSON layer
+// — deny-by-default, per runtime-descriptor §4.
+func (s *Store) seal(rec *Record) ([]byte, error) {
+	clone := *rec
+	if len(rec.DescriptorPrivate) > 0 {
+		nonce := make([]byte, s.aead.NonceSize())
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, fmt.Errorf("sessionstore: nonce: %w", err)
+		}
+		clone.PrivateSealed = append(nonce, s.aead.Seal(nil, nonce, rec.DescriptorPrivate, []byte(rec.SessionID))...)
+	}
+	if len(rec.ReplayMaterial) > 0 {
+		nonce := make([]byte, s.aead.NonceSize())
+		if _, err := rand.Read(nonce); err != nil {
+			return nil, fmt.Errorf("sessionstore: nonce: %w", err)
+		}
+		clone.ReplayMaterialSealed = append(nonce, s.aead.Seal(nil, nonce, rec.ReplayMaterial, []byte(rec.SessionID))...)
+	} else {
+		clone.ReplayMaterialSealed = nil
+	}
+	return json.Marshal(&clone)
+}
+
+func (s *Store) unseal(raw []byte) (*Record, error) {
+	var rec Record
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return nil, fmt.Errorf("sessionstore: decode: %w", err)
+	}
+	if len(rec.PrivateSealed) > 0 {
+		ns := s.aead.NonceSize()
+		if len(rec.PrivateSealed) < ns {
+			return nil, errors.New("sessionstore: sealed private part truncated")
+		}
+		plain, err := s.aead.Open(nil, rec.PrivateSealed[:ns], rec.PrivateSealed[ns:], []byte(rec.SessionID))
+		if err != nil {
+			return nil, fmt.Errorf("sessionstore: unseal private part: %w", err)
+		}
+		rec.DescriptorPrivate = plain
+	}
+	if len(rec.ReplayMaterialSealed) > 0 {
+		ns := s.aead.NonceSize()
+		if len(rec.ReplayMaterialSealed) < ns {
+			return nil, errors.New("sessionstore: sealed replay material truncated")
+		}
+		plain, err := s.aead.Open(nil, rec.ReplayMaterialSealed[:ns], rec.ReplayMaterialSealed[ns:], []byte(rec.SessionID))
+		if err != nil {
+			return nil, fmt.Errorf("sessionstore: unseal replay material: %w", err)
+		}
+		rec.ReplayMaterial = plain
+	}
+	return &rec, nil
+}
+
+// GetByWorkID finds a session by a payment identity it holds or held.
+// Rotation means a reader can arrive with a superseded work_id — a
+// settlement forwarded through a slow path, say — and matching only the
+// current one would answer "unknown session" about a session that is
+// right there.
+func (s *Store) GetByWorkID(workID string) (*Record, error) {
+	if workID == "" {
+		return nil, ErrNotFound
+	}
+	var out *Record
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(sessionsBucket))
+		if b == nil {
+			return ErrNotFound
+		}
+		return b.ForEach(func(_, raw []byte) error {
+			rec, err := s.unseal(raw)
+			if err != nil {
+				return nil // a record we cannot read is not a match
+			}
+			if rec.WorkID != workID && rec.PredecessorWorkID != workID {
+				return nil
+			}
+			// A work_id is a PAYMENT identity, and a gateway reuses one
+			// ticket session across many logical sessions. This used to
+			// keep the last match in iteration order, so a query with
+			// several sessions on one identity returned whichever
+			// session id sorted last — a correctly signed record for the
+			// wrong session, which the caller cannot tell is wrong.
+			// Refusing is the only honest answer; the caller has a key
+			// that resolves, in gateway_session_id.
+			if out != nil && out.SessionID != rec.SessionID {
+				return ErrAmbiguous
+			}
+			out = rec
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return nil, ErrNotFound
+	}
+	return out, nil
+}
+
+// Open reservation stages (plan 0048 §2.2). Each names what has been
+// done on the caller's behalf so a crash between stages can be undone.
+const (
+	ReservationReserved      = "reserved"
+	ReservationPaid          = "paid"
+	ReservationRunnerCreated = "runner_created"
+)
+
+// OpenReservation is an open in flight: the request id is claimed and the
+// side effects performed so far are recorded.
+type OpenReservation struct {
+	RequestID       string    `json:"request_id"`
+	Fingerprint     []byte    `json:"fingerprint"`
+	Stage           string    `json:"stage"`
+	WorkID          string    `json:"work_id,omitempty"`
+	Sender          []byte    `json:"sender,omitempty"`
+	SharedIdentity  bool      `json:"shared_identity,omitempty"`
+	BackendRef      string    `json:"backend_ref,omitempty"`
+	RunnerSessionID string    `json:"runner_session_id,omitempty"`
+	CapacityRef     string    `json:"capacity_ref,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// ReserveOpen claims a request id before any side effect. ErrExists when
+// the id already resolves to a session (replay it); ErrOpenInFlight when
+// another open holds the reservation.
+func (s *Store) ReserveOpen(requestID string, fingerprint []byte) error {
+	if requestID == "" {
+		return errors.New("sessionstore: empty request id")
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		if tx.Bucket([]byte(openRequestsBucket)).Get([]byte(requestID)) != nil {
+			return ErrExists
+		}
+		b := tx.Bucket([]byte(openReservationsBucket))
+		if b.Get([]byte(requestID)) != nil {
+			return ErrOpenInFlight
+		}
+		raw, err := json.Marshal(OpenReservation{RequestID: requestID, Fingerprint: fingerprint,
+			Stage: ReservationReserved, CreatedAt: time.Now().UTC()})
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(requestID), raw)
+	})
+}
+
+// UpdateReservation records progress on an open in flight.
+func (s *Store) UpdateReservation(requestID string, fn func(*OpenReservation) error) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(openReservationsBucket))
+		raw := b.Get([]byte(requestID))
+		if raw == nil {
+			return ErrNotFound
+		}
+		var r OpenReservation
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return err
+		}
+		if err := fn(&r); err != nil {
+			return err
+		}
+		out, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(requestID), out)
+	})
+}
+
+// ReleaseReservation drops a reservation whose open failed closed.
+func (s *Store) ReleaseReservation(requestID string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket([]byte(openReservationsBucket)).Delete([]byte(requestID))
+	})
+}
+
+// ForEachReservation visits every open still in flight — after a
+// restart, every open a crash abandoned.
+func (s *Store) ForEachReservation(fn func(OpenReservation) error) error {
+	return s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket([]byte(openReservationsBucket)).ForEach(func(_, raw []byte) error {
+			var r OpenReservation
+			if err := json.Unmarshal(raw, &r); err != nil {
+				return err
+			}
+			return fn(r)
+		})
+	})
+}
+
+// Reservation reads an open in flight. ErrNotFound when none.
+func (s *Store) Reservation(requestID string) (OpenReservation, error) {
+	var r OpenReservation
+	err := s.db.View(func(tx *bolt.Tx) error {
+		raw := tx.Bucket([]byte(openReservationsBucket)).Get([]byte(requestID))
+		if raw == nil {
+			return ErrNotFound
+		}
+		return json.Unmarshal(raw, &r)
+	})
+	return r, err
+}

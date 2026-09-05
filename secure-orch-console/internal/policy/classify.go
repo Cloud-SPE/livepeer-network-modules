@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,9 +31,10 @@ const (
 	// ClassCritical — at least one change exceeds the bounds; hold
 	// for a discrete operator action.
 	ClassCritical
-	// ClassForbidden — identity (eth_address) or spec_version
-	// changed; the candidate is rejected outright, never held as
-	// signable.
+	// ClassForbidden — identity (eth_address) changed; the candidate
+	// is rejected outright, never held as signable. A signing key can
+	// only ever sign for one orchestrator, so a changed address is
+	// somebody else's manifest.
 	ClassForbidden
 )
 
@@ -75,7 +77,9 @@ const (
 	CodeWorkerURLDisallowed = "worker_url_outside_allowlist"
 	CodeExtraChanged        = "extra_changed"
 	CodeConstraintsChanged  = "constraints_changed"
-	CodeModeChanged         = "interaction_mode_changed"
+	CodeProtocolChanged     = "protocol_changed"
+	CodeJobAxesChanged      = "job_axes_changed"
+	CodeSessionAxesChanged  = "session_axes_changed"
 	CodeWorkUnitChanged     = "work_unit_changed"
 	CodeUnknownFieldChanged = "unknown_field_changed"
 	CodeEthAddressChanged   = "eth_address_changed"
@@ -122,7 +126,14 @@ func Classify(d *diff.Result, in ClassifyInput) Classification {
 			fmt.Sprintf("orch.eth_address %q → %q", d.Header.BeforeEthAddress, d.Header.AfterEthAddress)))
 	}
 	if !d.Header.SpecVersionStable {
-		findings = append(findings, finding(ClassForbidden, CodeSpecVersionChanged, "", "",
+		// Critical, not forbidden (plan 0043 §3.7). The spec version now
+		// has one source — the protocol module's VERSION, which the
+		// broker stamps and the coordinator imports — so it changes when
+		// the operator upgrades, which is a real thing they do. Refusing
+		// it outright meant an upgrade could never be signed at all;
+		// holding it for a deliberate gesture is the honest grade. The
+		// console requires the new version to be typed before signing.
+		findings = append(findings, finding(ClassCritical, CodeSpecVersionChanged, "", "",
 			fmt.Sprintf("spec_version %q → %q", d.Header.BeforeSpecVersion, d.Header.AfterSpecVersion)))
 	}
 
@@ -185,9 +196,39 @@ func classifyChangedTuple(t diff.ChangedTuple, bounds BenignBounds) []Finding {
 			out = append(out, finding(ClassCritical, CodeExtraChanged, t.CapabilityID, t.OfferingID, "extra changed"))
 		case "constraints":
 			out = append(out, finding(ClassCritical, CodeConstraintsChanged, t.CapabilityID, t.OfferingID, "constraints changed"))
-		case "interaction_mode":
-			out = append(out, finding(ClassCritical, CodeModeChanged, t.CapabilityID, t.OfferingID,
-				fmt.Sprintf("interaction_mode %v → %v", t.Before[k], t.After[k])))
+		// protocol / job / session are the offering's declaration
+		// (livepeer-network-protocol/protocols/offering-axes.md). They
+		// replaced the single interaction-mode string, and they
+		// inherit its grade: critical, every one of them.
+		//
+		// The declaration is what counterparties gate on.
+		// session.descriptor_schema decides which gateways may open a
+		// session at all; session.refill decides whether the
+		// clearinghouse honours a top-up; session.metering decides who
+		// counts the money; session.attachment decides whether the
+		// data plane transits the broker; job.transports decides what
+		// a broker accepts before payment. A silent edit to any of
+		// them changes who can buy and how they are billed — exactly
+		// the class of change the sign cycle exists to put in front of
+		// a human. Splitting one mode string into a protocol tag plus
+		// an axes object must not become a way to auto-sign the same
+		// semantics.
+		//
+		// The advisory axes (heartbeat, lease, tolerance_band_pct,
+		// runway_increment_units) ride in the same object and are
+		// graded with it. Grading them benign would need
+		// operator-authored bounds that BenignBounds does not have,
+		// and absent a bound this classifier cannot call a change
+		// benign — the same rule that sends unknown fields critical.
+		case "protocol":
+			out = append(out, finding(ClassCritical, CodeProtocolChanged, t.CapabilityID, t.OfferingID,
+				fmt.Sprintf("protocol %v → %v", t.Before[k], t.After[k])))
+		case "job":
+			out = append(out, finding(ClassCritical, CodeJobAxesChanged, t.CapabilityID, t.OfferingID,
+				axesDetail("job", t.Before[k], t.After[k])))
+		case "session":
+			out = append(out, finding(ClassCritical, CodeSessionAxesChanged, t.CapabilityID, t.OfferingID,
+				axesDetail("session", t.Before[k], t.After[k])))
 		case "work_unit":
 			out = append(out, finding(ClassCritical, CodeWorkUnitChanged, t.CapabilityID, t.OfferingID, "work_unit changed"))
 		default:
@@ -198,6 +239,52 @@ func classifyChangedTuple(t diff.ChangedTuple, bounds BenignBounds) []Finding {
 		}
 	}
 	return out
+}
+
+// axesDetail names the axes that moved, so the held-queue entry tells
+// the operator which knob turned without dumping both objects into the
+// audit record. It reads key names only — never the values' meaning.
+func axesDetail(field string, before, after any) string {
+	b, okB := before.(map[string]any)
+	a, okA := after.(map[string]any)
+	if !okB || !okA {
+		// One side absent (or not an object): the offering changed
+		// shape, e.g. a paid-job offering became a paid-session one.
+		return fmt.Sprintf("%s axes %s", field, presence(okB, okA))
+	}
+	seen := map[string]bool{}
+	var keys []string
+	for k := range b {
+		seen[k] = true
+		keys = append(keys, k)
+	}
+	for k := range a {
+		if !seen[k] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	var moved []string
+	for _, k := range keys {
+		if !jsonEqual(b[k], a[k]) {
+			moved = append(moved, k)
+		}
+	}
+	if len(moved) == 0 {
+		return fmt.Sprintf("%s axes changed", field)
+	}
+	return fmt.Sprintf("%s axes changed: %s", field, strings.Join(moved, ", "))
+}
+
+func presence(before, after bool) string {
+	switch {
+	case !before && after:
+		return "declared"
+	case before && !after:
+		return "removed"
+	default:
+		return "changed"
+	}
 }
 
 // classifyPrice bounds price changes in either direction by

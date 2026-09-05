@@ -1,0 +1,56 @@
+{
+  "manifest": {
+    "spec_version": "2.4.0",
+    "publication_seq": 1,
+    "issued_at": "2026-08-22T12:00:00Z",
+    "expires_at": "2026-09-21T12:00:00Z",
+    "orch": {
+      "eth_address": "0x1234567890abcdef1234567890abcdef12345678",
+      "service_uri": "https://orch.example.com/.well-known/livepeer-registry.json"
+    },
+    "capabilities": [
+      {
+        "capability_id": "openai:chat-completions",
+        "offering_id": "vllm-h100-batch4",
+        "protocol": "paid-job/v1",
+        "job": {
+          "transports": [
+            "unary",
+            "stream"
+          ]
+        },
+        "work_unit": {
+          "name": "tokens"
+        },
+        "price_per_unit_wei": "1500000",
+        "worker_url": "https://broker-a.orch.example.com"
+      },
+      {
+        "capability_id": "openai:audio-transcriptions",
+        "offering_id": "whisper-large",
+        "protocol": "paid-job/v1",
+        "job": {
+          "transports": [
+            "multipart"
+          ]
+        },
+        "work_unit": {
+          "name": "seconds",
+          "estimator": {
+            "id": "multipart-audio-duration/v1",
+            "rounding": "ceil-to-whole-seconds",
+            "exactness": "exact-or-reject",
+            "fixtures": "livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1"
+          }
+        },
+        "price_per_unit_wei": "2000000",
+        "worker_url": "https://broker-a.orch.example.com"
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "secp256k1",
+    "value": "0xababababababababababababababababababababababababababababababababcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd1b",
+    "canonicalization": "JCS"
+  }
+}

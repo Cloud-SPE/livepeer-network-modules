@@ -5,11 +5,14 @@
 `pool-controller` is the Pool accounting and admin source of truth. It is not
 in the request path, but it is the source of record for:
 
-- orch-owned offers
-- join requests
-- approved members and backends
-- backend-to-offer assignments
-- desired broker runtime
+- which workload templates this pool has enabled, and at what price
+  (the catalog itself is files, read at boot; only the overrides are state)
+- pool members and their enrolled hosts
+- hardware units (GPUs) reported by those hosts
+- template assignments — a pool template placed on a GPU — their ladder state,
+  and the certification runs that qualify them
+- member per-template opt-outs
+- the audit log
 - work receipts
 - round receipts
 - payout intents
@@ -17,7 +20,12 @@ in the request path, but it is the source of record for:
 - lease state
 
 It is also the operator control plane for broker runtime convergence when the
-Pool broker is managed through `POST /admin/v1/broker-runtime/apply`.
+Pool broker state is **pushed**, not rendered. The controller sends its
+offer set and the credentials that may attach over the broker admin API
+(`PUT /admin/v1/offers`, `PUT /admin/v1/credentials`) whenever pool state
+changes. There is no rendered broker config file, no staging command, and
+no reload: runners tell the broker what they are, and the broker freezes
+those facts into the offer (plan 0043).
 
 ## Production topology
 
@@ -38,7 +46,9 @@ The Pool production shape spans two sides:
 `pool-controller` does not replace the secure-orch sign cycle. The normal
 publication flow remains:
 
-1. `pool-controller` manages offers, members, assignments, and broker apply
+1. `pool-controller` holds the pool's policy — enabled templates, placements,
+   ladder state — and pushes the derived offer set + attach credentials to
+   every broker in the fleet
 2. `capability-broker` advertises the resulting inventory
 3. `orch-coordinator` scrapes broker offerings/health and builds the candidate
 4. secure-orch signs
@@ -51,23 +61,34 @@ Bootstrap config:
 - `identity.orch_eth_address`
 - durable `--data-dir`
 - `admin_auth.bearer_token_ref: env://...`
+- `template_catalog_dir` — the workload catalog, read at boot. Empty is valid
+  for an accounting-only controller; a *malformed* template is a hard error, on
+  purpose, because a silently skipped one leaves members running nothing with
+  no explanation
+- `listen.member` if this deployment splits the member surface onto its own
+  address (recommended)
 
-Broker apply integration:
+Broker admin integration (the push path — there is no rendered file and no
+apply command):
 
-- `bootstrap.broker_apply_command`:
-  stages the rendered broker YAML where the broker host expects it
-- `bootstrap.broker_apply_timeout_ms`
 - `bootstrap.broker_admin_url`
 - `bootstrap.broker_admin_auth`
 - `bootstrap.broker_admin_timeout_ms`
+- `bootstrap.public_broker_url` / `bootstrap.public_broker_quic_addr` — where
+  member hosts attach
 
 Broker private admin surface:
 
 - `capability-broker` `admin_auth.method: bearer`
 - `capability-broker` `admin_auth.secret_ref: env://...`
-- private reachability from `pool-controller` to:
-  - `POST /admin/v1/runtime/reload`
-  - `GET /admin/v1/runtime`
+- private reachability from `pool-controller` to, on each broker:
+  - `PUT /admin/v1/offers`, `PUT /admin/v1/credentials` — what it pushes
+  - `GET /admin/v1/runners`, `GET /admin/v1/certification` — what it reads
+    back to relay hardware and show a member where their host stands
+
+  Not `/admin/v1/runtime[/reload]`. The controller reloaded the broker when
+  it rendered the broker's config; it no longer renders one, so it no longer
+  reloads it. A push takes effect on acceptance.
 
 Secure-orch side:
 
@@ -79,17 +100,21 @@ Secure-orch side:
 
 1. Bring up secure-orch/protocol host first.
 2. Bring up `pool-controller` with durable storage and admin auth.
-3. Create orch-owned offers in `pool-controller`.
-4. Accept member join requests and verify backends.
-5. Create assignments from approved backends to orch-owned offers.
-6. Apply desired broker runtime through `POST /admin/v1/broker-runtime/apply`.
-7. Confirm broker convergence from:
-  - `GET /admin/v1/broker-runtime`
-  - `GET /admin/v1/broker-runtime/history`
-  - broker `GET /admin/v1/runtime`
-8. Bring up or refresh `orch-coordinator` against the broker public URL.
-9. Run the secure-orch sign/publish cycle.
-10. Run a low-risk production smoke request through the gateway path.
+3. Enable the workload templates this pool sells and price them
+   (`GET /admin/v1/template-catalog`, then
+   `PUT /admin/v1/template-overrides/{id}`). The offer set is derived from
+   those, not authored separately.
+4. Have members sign in with their wallet and enrol a host
+   (`POST /member/v1/enrollments`) and run the bundle. The bundle contains
+   the agent and nothing else.
+5. Review `GET /admin/v1/placement-plan` and commit it with
+   `POST /admin/v1/placement-plan/apply`. From there the agent pulls its own
+   desired state, the broker certifies what attaches, and the ladder promotes
+   it — no further operator step is on the member's path.
+6. Confirm the push landed: the recorded revision carries `push_error`
+   when the broker did not accept it, and `changed_offers` / `revoked_hosts`
+   when it did. Runner and certification state is read from the broker —
+   see the coordinator's Runners, Offers and Certification pages.
 
 ## Required runtime inputs
 
@@ -102,8 +127,8 @@ Secure-orch side:
 Important boundary:
 
 - the supported production config is bootstrap-only
-- legacy nested `members[].backends[].offerings[]` config is migration-only and
-  should not be used as the steady-state operator workflow
+- legacy nested `members[].backends[].offerings[]` config is not supported at
+  all: the compatibility loader that once ingested it has been removed
 
 ## Start
 
@@ -126,94 +151,184 @@ for `pool-controller`.
 
 ## Primary operator workflow
 
-### 1. Offer and member control plane
+### 1. Templates, members, and placement
 
-The normal operator sequence is:
+Members onboard themselves: they sign in with their wallet, enrol a host, and
+run the bundle. There is no join request, no operator approval step, and no
+member-supplied backend URL to verify — the pool never dials a member endpoint;
+the member's runners attach to the broker.
 
-1. create/update offers
-2. review join requests
-3. refresh backend verification if needed
-4. approve or reject the member
-5. assign approved backends to active offers
+**Policy is set once, in the catalog.** Templates are YAML files under
+`template_catalog_dir`, read at boot. The only per-pool state is
+`{enabled, price, extra}`, and an enabled, priced template is *derived* into an
+offer and pushed to every broker in the fleet. There is no separate offer
+record to keep in step.
+
+1. `GET /admin/v1/template-catalog` — what this build loaded
+2. `PUT /admin/v1/template-overrides/{id}` — enable and price it.
+   `DELETE` the override to switch it off.
+3. `GET /admin/v1/offers` — what those enabled templates derive into
+
+> None of the five templates in the repo catalog carries a `runner_compose`
+> block: the v1 images and model ids are still open (`lnm-v12`). Enabling one
+> makes the pool advertise it, but the compose service rendered for a member
+> host has no `image` and nothing will start there. Add
+> `runner_compose.image` to the templates you enable.
+
+**Placement is policy, not a gesture.** For each GPU, among enabled templates
+whose `requirements` it satisfies and the member has not opted out of, the
+highest `priority` takes the primary slot; another stacks only where it names
+that GPU's class in `stacking.secondary_on` and the class's stance allows a
+rider. Members opt *out*, never in.
+
+- `GET /admin/v1/placement-plan` — what the policy would do, with a reason code
+  on every GPU including the ones that get nothing, plus a pool-wide
+  `not_enabled` list
+- `POST /admin/v1/placement-plan/apply` — commit it. A placement leaving the
+  plan is **drained**, not deleted
+- `POST /admin/v1/template-assignments` — direct placement, for the cases
+  policy cannot reach
+
+Applying is a call rather than a loop on purpose: placement is deterministic,
+so the plan is worth reading before it is committed.
+
+**Act only on exceptions.** `GET /admin/v1/exceptions` is the queue —
+suspensions and duplicate GPU UUID claims.
+
+- `PATCH /admin/v1/pool-members/{address}` — suspend or reactivate a member.
+  A suspension requires a reason (one with none is a decision nobody can review
+  later, including the operator who made it) and drains that member's
+  placements rather than stopping them dead
+- `POST /admin/v1/host-enrollments/{id}/revoke` — revoke a host enrolment.
+  The controller pushes the revocation to every broker immediately rather
+  than waiting for the next state change, and the broker deletes the
+  credential hash and closes every connection holding it. If a broker was
+  unreachable the response carries `broker_push_error`: the enrolment is
+  revoked here, but that host is still attached somewhere and the push has
+  to land before it stops serving
+- `GET /admin/v1/ladder/state` — where placements stand, read-only
+- `POST /admin/v1/ladder/run` — run a ladder pass now rather than waiting for
+  the timer. Read the state first: looking should not be acting
 
 Useful admin reads:
 
 - `GET /admin/v1/offers`
-- `GET /admin/v1/join-requests`
-- `GET /admin/v1/members`
-- `GET /admin/v1/member-backends`
-- `GET /admin/v1/assignments`
+- `GET /admin/v1/pool-members`
+- `GET /admin/v1/host-enrollments`
+- `GET /admin/v1/hardware-units`
+- `GET /admin/v1/template-catalog`
+- `GET /admin/v1/placement-plan`
+- `GET /admin/v1/template-assignments`
+- `GET /admin/v1/certification-runs`
+- `GET /admin/v1/exceptions`
+- `GET /admin/v1/audit-events`
 
-### 2. Broker runtime convergence
+The console presents the same state, and is usually faster than curling:
+`/admin/pool` (members, hosts, GPUs), `/admin/offers`, `/admin/placement` (the
+plan with its rejections and reason codes), `/admin/ladder` (transitions with
+the evidence sentence), `/admin/exceptions`, `/admin/payouts`, `/admin/audit`.
 
-The normal production action is:
+### 1.1 The trust ladder
 
-- `POST /admin/v1/broker-runtime/apply`
+The controller advances placements on a timer (default 60s), so promotion and
+throttling are not operator actions:
 
-That flow now means:
-
-1. `pool-controller` renders the desired broker YAML
-2. optional apply command stages the file
-3. `pool-controller` triggers broker reload
-4. broker reports a broker-local reload `attempt_id`
-5. `pool-controller` confirms:
-   - broker reload attempt matches the triggered `attempt_id`
-   - broker `loaded_revision == desired_revision`
-
-Do not treat shell-command exit alone as proof of convergence.
-
-Primary runtime reads:
-
-- `GET /admin/v1/broker-runtime`
-- `GET /admin/v1/broker-runtime/history`
-
-Broker-side corroboration:
-
-- broker `GET /admin/v1/runtime`
-
-The manual runtime endpoints remain fallback/debug controls only:
-
-- `POST /admin/v1/broker-runtime/mark-started`
-- `POST /admin/v1/broker-runtime/mark-failed`
-- `POST /admin/v1/broker-runtime/mark-applied`
-
-Use them only when the operator intentionally needs to bypass the normal
-broker-admin apply path for investigation or break-glass handling.
-
-### 2.1 Apply-command deployment patterns
-
-Choose one explicit staging pattern for `bootstrap.broker_apply_command`.
-
-#### Same-host file replace
-
-Use when broker and controller share the same host filesystem contract.
-
-Example:
-
-```bash
-install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /etc/livepeer/host-config.yaml
+```
+certified ─▶ probationary ─(closed settlement round ∧ ≥N jobs)─▶ active
+active ─(score below floor)─▶ throttled ─(recovers)─▶ active
+any ─(K consecutive failures)─▶ recertify
+any ─(serious failure)─▶ suspended ─(operator lifts)─▶ probationary
 ```
 
-#### Shared-volume container staging
+Promotion needs **both** halves. A job count alone can be run up in minutes by
+a host about to fail; a closed round alone proves only that time passed.
 
-Use when broker and controller are separate containers sharing a writable
-volume.
+Every transition writes `{state, reason_code, evidence, at}`, and the member
+sees the same reason code you do — so "why am I throttled" is answered by the
+record rather than by an operator writing an explanation.
 
-Example:
+Tune under `ladder:`: `probation_share_ppm`, `probation_max_in_flight`,
+`probation_min_jobs`, `exploration_ppm`, `score_floor`,
+`recertify_after_failures`, `active_share_cap_ppm`, `evaluation_interval_ms`.
+A zero field means "not configured" and takes the default; it does not mean
+zero. `ladder run error` on stderr means the pool is frozen at whatever it was
+routing — alert on it.
 
-```bash
-install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /shared/broker/host-config.yaml
-```
+### 1.2 Listeners
 
-#### External wrapper
+`listen.member` puts the member portal and `/member/v1/*` on their own address,
+with no `/admin/*` route and no cross-member figure. Leaving it empty keeps
+both surfaces on `listen.paid`, which is the supported single-address
+deployment. Prefer the split in production: an operator console reachable from
+the same address members use is one misconfigured proxy away from being
+reachable *by* them, and an address boundary survives a proxy mistake that an
+auth check does not. Test it rather than reasoning about it.
 
-Use when a checked-in wrapper script handles staging into the broker’s real
-config path.
+### 2. Broker convergence
 
-Regardless of pattern, success still requires broker-confirmed:
+There is no rendered broker config file, no staging command, and no reload
+(plan 0043). The controller pushes what it owns — the derived offer set and the
+credential hashes that may attach — to each broker over the broker admin API
+(`PUT /admin/v1/offers`, `PUT /admin/v1/credentials`). Both are full,
+idempotent replacements; a credential that disappears from a push is a revoke,
+which closes that host's connections. Offers go first, so a host whose
+credential was just accepted attaches into a broker that already knows what it
+might serve.
 
-- `last_reload_attempt_id`
-- `loaded_revision`
+**The normal production action is none.** The push happens on state change.
+`brokerrender`, `runtimeservice`, the `/admin/v1/broker-runtime/*` routes,
+`bootstrap.broker_apply_command` and `cmd/broker-apply` were deleted with that
+path; if you are looking for them, you want the push above instead.
+
+Confirm convergence from both sides:
+
+- controller: the recorded runtime revision — `push_error` when the broker
+  refused (it names the offer and the field), `changed_offers` and
+  `revoked_hosts` when it accepted
+- broker `GET /admin/v1/offers` — which offers it holds, and whether each is
+  frozen and advertised. An offer with no certified runner is deliberately not
+  advertised
+- broker `GET /admin/v1/runners` — who is attached and, for a capability that
+  is not serving, the field the broker disagreed with
+- broker `GET /admin/v1/certification` — what each runner actually proved
+
+The coordinator's Runners, Offers and Certification pages present all of these
+over the same API. Do not treat an absent `push_error` on a stale revision as
+convergence — check the broker's own view.
+
+A failed push leaves the broker serving what it last accepted. That is safe:
+paid traffic keeps flowing to already-eligible runners and the signed manifest
+is unaffected. Prefer fix-forward over editing state by hand.
+
+### 3. Payouts
+
+Approval is human by default. `payout-policy.json` (`payouts.policy_path`) can
+take it over within bounds it states explicitly, and every decision carries the
+hash of the policy that made it.
+
+- `GET /admin/v1/payout-policy` — the policy in force, and its hash
+- `POST /admin/v1/payout-batches/{id}/policy-review` — what the policy says
+  about this batch, without approving it
+- `POST /admin/v1/payout-batches/{id}/approve` — the human gesture
+- `payouts.pause_path` — the kill switch. Verify it works before you need it
+
+A missing policy file is not an error: it means no automatic approval, which is
+where every pool starts. Read "Graduating to automatic payouts" below before
+enabling `auto_approve`.
+
+Automatic window close is wired and **off by default**. Set
+`payouts.auto_close_windows: true` and the controller sweeps every five
+minutes: a window in `closing` is evaluated by `settlement.EvaluateClose`
+against `payouts.scale_tolerance` and either moves to `pending_approval`
+or is held with the reason recorded in its `anomaly` field, where the
+exception queue shows it. Closing is opt-in because it is the step before
+money moves, and a pool should say out loud that it wants that to happen
+without a person.
+
+Left off, closing a window stays the manual
+`POST /admin/v1/settlement-windows/close`. Either way, close is not
+approval: the payout batch still goes through policy review and the
+human gesture above.
 
 ## Health checks
 
@@ -225,8 +340,6 @@ Regardless of pattern, success still requires broker-confirmed:
 
 - `GET /admin/v1/state`
 - `GET /admin/v1/snapshots`
-- `GET /admin/v1/broker-runtime`
-- `GET /admin/v1/broker-runtime/history`
 - `GET /admin/v1/payout-intents`
 - `GET /admin/v1/member-payouts`
 - `GET /admin/v1/payout-rounds`
@@ -246,8 +359,6 @@ High-value Pool routing metrics now include:
 - average recent-window age by offering
 - the live scorer settings currently applied after defaults and reload
 - backend outcome ingest counts by outcome class
-- synthetic probe run totals and durations
-- per-capability synthetic probe result counts by `status` and `reason`
 - persisted work-receipt counts by `status`
 - persisted payout-intent counts by `status`
 - persisted payout-intent retry pressure: `livepeer_pool_payout_intent_retry_count_max`,
@@ -278,53 +389,251 @@ Useful admin reads while triaging:
   `pool-payout-executor` RUNBOOK for response playbooks)
 - `GET /admin/v1/payout-rounds?with_alerts=true` — round-level failure pressure
 
+## The exception queue
+
+`GET /admin/v1/exceptions` is what policy deliberately refuses to
+decide. Everything else about onboarding is automatic; these are the
+cases where a judgement about a person is required, and the queue exists
+so they are not discovered by accident.
+
+### A contested GPU
+
+Two ETH addresses claim one `gpu_uuid`. The second claim was REFUSED —
+the incumbent keeps the card — and the refusal is recorded here. That
+asymmetry is deliberate: if a challenger's claim were written, anyone
+could take a member's card contested, and stop them earning, just by
+declaring its uuid.
+
+The two real causes look identical on the wire:
+
+- a member sold or gave away the hardware and never retired the
+  enrolment, so the new owner's agent is reporting a card the pool still
+  has under the old owner;
+- someone is cloning a uuid to farm a second identity.
+
+Only a person can tell them apart, which is why there is no rule.
+
+Most disputes should never reach you. A claim that never certifies is
+released automatically after `claims.grace_hours` (seven days by
+default), because a claim that has not proved itself cannot be earning
+either: a runner is pinned to its device, and a container pinned to
+hardware that is not present does not start. So a uuid learned from a
+log or a previous owner can block someone, but only until the grace
+runs out — and the block heals without you. What reaches this queue in
+steady state is a dispute between two members who are BOTH running the
+card, which is the case actually worth your time.
+
+The queue tells you whether the incumbent is working: `incumbent_proven`,
+jobs served, when they last checked in, and when they claimed it.
+Neither side can prove possession on demand, so work is the only real
+evidence. A card claimed weeks ago that never started is usually a stale
+enrolment — a member who sold the hardware and never retired the host —
+and the challenger is usually right.
+
+`POST /admin/v1/gpu-conflicts/{id}/transfer` retires the incumbent's
+unit so the challenger's next attach succeeds. It does not hand the card
+over — it stops refusing. `POST .../reject` records that the claim was
+refused on purpose. Both require a `reason`: either outcome takes a card
+away from someone, and a decision with no recorded cause cannot be
+reviewed later, including by you.
+
+A conflict you rejected that comes back is reopened, because a host
+still trying after a rejection is new information — worth looking at
+before rejecting it again.
+
+### A placement still draining
+
+Suspending a member drains their placements. Reinstating the member does
+NOT bring them back — each placement has to be reinstated too, and
+nothing else on any screen would tell you that step is outstanding. A
+member who is back but earning nothing looks, from everywhere else, like
+a member who is fine.
+
+The queue lists any placement draining longer than a drain should take,
+and says which case it is: `member is active but this placement is still
+draining` means the reinstate below is owed. Anything else means the
+drain itself is stuck — the host is gone, or not reporting — and the
+member is not earning either way.
+
+### Lifting a suspension
+
+A placement is suspended for invalid output, a fraud signal, or repeated
+certification failure. `POST /admin/v1/template-assignments/{id}/reinstate`
+lifts it.
+
+It goes back to `certification_testing`, not straight to earning. The
+things that get a placement suspended are exactly what certification
+tests, re-proving costs one automated probe, and the ladder promotes it
+from there on its own. Pass `{"to":"probationary_real_traffic"}` when you
+know certification was never the issue — a placement suspended by
+mistake, say.
+
+The suspension records what it was for, and the reinstate audit event
+carries it forward. Today that is always repeated certification failure,
+which re-certifying genuinely settles. If a future release adds
+detection for invalid output or fraud, note that re-certifying does NOT
+settle that: the smoke step checks a response came back with the right
+shape, and a runner returning fluent, confident, wrong answers passes it
+every time. The reason is recorded now so that gap is visible rather
+than inherited.
+
+Reinstating stamps the placement with the moment it happened, and the
+ladder counts certification failures only after it. Without that the
+failures that caused the suspension would re-suspend it on the next
+tick, and your decision would visibly do nothing, once a minute, until
+you noticed. The history is kept rather than reset, so the earlier
+failures are still there when someone asks whether the reinstate was
+wise.
+
+If the placement's MEMBER is suspended, reinstate the member first: the
+route refuses, because returning work to someone the pool has stopped
+dealing with is not something one gesture should do by implication.
+
+## Graduating to automatic payouts
+
+Money leaving the pool is the one action nobody can undo, so approval
+starts entirely human and the pool earns its way out of that. Each phase
+below has an exit criterion you can check and a way to stop.
+
+The kill switch at every phase is the same: create the file named by
+`payouts.pause_path`. Its presence refuses every automatic approval
+until it is removed. It needs no deploy, no restart, and no code change,
+which is the point — an operator who does not trust what automation is
+doing must be able to stop it in one command.
+
+`payouts.policy_path` points at `payout-policy.json`. It is strict:
+unknown fields are rejected, `auto_approve.enabled` without
+`max_batch_wei` is refused as a half-written config rather than read as
+"any amount", and a file that cannot be parsed fails the read instead of
+silently becoming a policy that approves nothing while looking
+configured. The file's SHA-256 is recorded beside every decision it
+makes, so an audit can prove which rules were in force at the time.
+
+### Phase 0 — shadow
+
+```json
+{ "shadow": true,
+  "auto_approve": { "enabled": true, "max_batch_wei": "...", "require_scale_gte": 0.99 } }
+```
+
+The policy runs and records what it WOULD have approved. It approves
+nothing. Humans keep approving every batch as before.
+
+**Exit criterion:** at least four consecutive settlement windows where
+every batch the policy would have approved was also approved by a
+person, and every batch a person held was also refused by the policy.
+Zero divergence, in both directions. Read them from the audit trail —
+`kind=payout_policy_decision` beside the human approvals.
+
+Divergence in the direction of "the policy would have approved something
+a person held" is the one that matters. Investigate it before restarting
+the count; it usually means a bound is too loose or an anomaly is not
+being detected.
+
+### Phase 1 — automatic within tight bounds
+
+Set `shadow: false` and keep the bounds well under a typical window:
+`max_batch_wei` around a normal batch, `max_per_member_wei` around a
+normal member's share, `max_batches_per_day` at one or two,
+`require_scale_gte` at 0.99 or higher. Anything larger, anomalous, or
+short still goes to a person, and that is the design rather than a
+limitation.
+
+**Exit criterion:** four more windows with no batch that later needed
+reversing, and no operator intervention that the policy should have
+caught.
+
+### Phase 2 — widen
+
+Raise the bounds to cover the ordinary case, guided by what the audit
+shows about real batch sizes. Do not raise `require_scale_gte` — that
+one is not a bound on size, it is the check that the pool collected what
+it is about to pay out.
+
+**Exit criterion:** the only batches still reaching a human are ones you
+would want a human to see.
+
+### Phase 3 — automatic except by exception
+
+`auto_approve` unbounded except `require_scale_gte` and
+`max_batches_per_day`. Human approval remains for held windows, which
+means: attribution anomalies, and windows whose settlement scale came in
+short. Those are the cases where the pool would be paying out money it
+did not collect, and no bound makes them safe to automate.
+
+**At every phase**, `max_batches_per_day` stays set. It is not a trust
+measure, it is a blast radius: it bounds how much a bug can move before
+someone notices.
+
 ## Recovery notes
 
-- `pool-controller` restarts are safe if `--data-dir` is persisted.
-- If `pool-controller` is down, previously loaded broker config remains in the
-  broker process; traffic can continue.
+- `pool-controller` restarts are safe if `--data-dir` is persisted. The
+  template catalog and `payout-policy.json` are read at boot, so a change to
+  either needs a restart (or `POST /admin/v1/reload`) to take effect.
+- If `pool-controller` is down, the broker keeps serving what it last accepted;
+  traffic can continue. Member hosts also keep running what they were running:
+  the agent treats an unreachable controller as "no new instruction", not as a
+  reason to stop.
 - Do not delete the BoltDB state unless you intentionally want to discard
   payout and receipt history.
 
-Broker apply failure triage:
+Broker push failure triage:
 
-1. `GET /admin/v1/broker-runtime`
-   Check:
-   - `dirty`
-   - `broker_dirty`
-   - `broker_reload_status`
-   - `broker_reload_error`
-   - `broker_reload_attempt_id`
-2. `GET /admin/v1/broker-runtime/history`
-   Confirm the latest controller-side attempt details.
-3. broker `GET /admin/v1/runtime`
-   Confirm the broker's own latest attempt, loaded revision, and history.
-4. inspect the configured `broker_apply_command`
-   Confirm the desired YAML was staged at the correct path for the broker.
+1. The recorded runtime revision carries `push_error` when the last push
+   was refused. The broker names the offer and the field it rejected, so
+   the message is usually the fix.
+2. Broker `GET /admin/v1/offers` — confirm which offers the broker holds
+   and whether each is frozen and advertised. An offer with no certified
+   runner is deliberately not advertised.
+3. Broker `GET /admin/v1/runners` — confirm the hosts attached and why a
+   capability is ineligible. The disagreeing field is named there.
+4. Broker `GET /admin/v1/certification` — confirm what a runner proved.
 
-If the broker loaded revision does not match the controller desired revision,
-do not publish from `orch-coordinator` until convergence is fixed.
+The coordinator's Runners, Offers and Certification pages present all
+three over the same API; use them before curling.
 
-If broker reload fails but the prior broker runtime is still serving traffic,
-prefer fix-forward and re-apply over manual state edits.
+A push that fails leaves the broker serving what it last accepted, which
+is safe: paid traffic keeps flowing to already-eligible runners and the
+signed manifest is unaffected.
 
 Common operator playbooks:
 
-- desired revision drifted during apply:
-  - inspect runtime history plus recent audit events
-  - identify the mutating offer/member/assignment change
-  - re-apply only after the desired revision stabilizes
-- approved but unassigned backend:
-  - inspect `GET /admin/v1/assignment-candidates`
-  - create assignment if the backend should publish
-  - then run broker apply
-- verification or join-request rejection:
-  - inspect join preview and backend verification error details
-  - correct endpoint/probe/claim issues before retrying approval
-- suspended member or disabled backend:
+- enrolled GPU running nothing — placement is deterministic, so there is always
+  a reason; read it rather than guessing:
+  - `GET /admin/v1/hardware-units` — confirm the GPU reached the controller and
+    what state the unit is in
+  - `GET /admin/v1/placement-plan` — the reason code for this GPU. Usually: no
+    template enabled (`not_enabled`), the driver string did not normalise to a
+    pool class (laptop and Max-Q parts deliberately get none), no enabled
+    template's `requirements` match, the member opted out, or it lost the
+    primary slot and nothing names its class as a secondary
+  - `POST /admin/v1/placement-plan/apply` if the plan is right and simply has
+    not been committed
+  - `GET /admin/v1/template-assignments` — confirm the placement exists and the
+    agent started it
+  - `GET /admin/v1/certification-runs` — a placement only becomes eligible once
+    its certification passes
+  - check the template has a `runner_compose.image`; without one nothing can
+    start on the member host
+- host is running the wrong thing, or a withdrawal has not taken effect:
+  - the agent polls every `POOL_POLL_EVERY` (default 30s) and reports back;
+    check the reported revision against the current one
+  - a withdrawn service is marked `draining` in the attach document *before*
+    the container stops, so it can linger deliberately while in-flight work
+    finishes
+- member stuck in `probationary`:
+  - promotion needs a closed settlement round **and** the template's
+    `min_jobs`. A member with neither is usually not getting traffic, not
+    failing
+- certification failing:
+  - read the failed run's checks; the broker names the capability field it
+    disagreed with (broker `GET /admin/v1/runners`)
+  - fix the runner (image, model, capability shape) and re-run certification —
+    there is nothing to "re-approve" on the controller side
+- host revoked or retired:
   - treat it as a routing-state change
-  - apply broker runtime again before expecting broker/coordinator visibility to
-    match
+  - confirm the offer push landed before expecting broker/coordinator
+    visibility to match
 
 ## Backup scope
 

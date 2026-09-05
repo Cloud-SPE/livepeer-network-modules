@@ -15,8 +15,9 @@ authoritative for component-specific flags and troubleshooting.
 
 This guide covers the production path for a Pool-based orch where:
 
-- `pool-controller` owns offers, member onboarding, assignments, and desired
-  broker runtime
+- `pool-controller` owns the pool's policy: which workload templates are
+  enabled at what price, which template lands on which member GPU (a
+  *placement*), how a placement earns its share of traffic, and the money
 - `capability-broker` serves the paid data path and exposes the broker-private
   runtime reload surface
 - `orch-coordinator` scrapes the broker and publishes the signed manifest
@@ -79,7 +80,6 @@ Rules:
 - `pool-controller` bootstrap config with:
   - `identity.orch_eth_address`
   - `admin_auth.bearer_token_ref`
-  - optional `bootstrap.broker_apply_command`
   - `bootstrap.broker_admin_url`
   - `bootstrap.broker_admin_auth`
 
@@ -137,117 +137,96 @@ Bring up:
 
 Do not expose live traffic yet.
 
-### 4.3 Create orch-owned offers
+### 4.3 Enable the workload templates this pool sells
 
-Use `pool-controller` admin UI/API to create the canonical offer catalog.
+The workload catalog is a directory of YAML files (`template_catalog_dir`,
+repo-root `templates/`), read at boot. There is no offer catalog to author: an
+offer is *derived* from an enabled, priced template and pushed to every broker
+in the fleet.
 
-Do not let member capability claims define public offerings.
+1. `GET /admin/v1/template-catalog` — what this build loaded
+2. `PUT /admin/v1/template-overrides/{id}` — enable it and set its price. The
+   `price_default` in a template file is a starting point from a dated market
+   reference, not a rate card.
+3. `GET /admin/v1/offers` — what those enabled templates derive into
+
+Do not let member capability claims define public offerings. A member's runner
+declares what it *is*; the pool decides what it *sells*.
+
+> Each of the five templates in the repo catalog ships without a
+> `runner_compose` block — the v1 images and model ids are still open
+> (`lnm-v12`). Enabling one makes the pool advertise it, but the compose
+> service rendered for a member host has no `image` and nothing will start.
+> Supply `runner_compose.image` on the templates you enable.
 
 ### 4.4 Onboard members
 
+Members onboard themselves. There is no join request and no approval gate: the
+pool never dials a member-supplied endpoint, so there is nothing for the
+operator to verify before admission. Trust is established later, by the broker,
+from what the member's runners actually prove under certification.
+
 Normal control-plane sequence:
 
-1. member submits join request
-2. operator refreshes verification if needed
-3. operator approves or rejects
-4. operator assigns approved backend(s) to orch-owned offer(s)
+1. member signs in with their wallet and enrols a host
+   (`POST /member/v1/enrollments`), then runs the returned bundle — which
+   contains the agent and nothing else
+2. the host's GPUs reach the controller, and placement policy matches them to
+   enabled templates: highest `priority` among the templates whose
+   `requirements` the card satisfies and the member has not opted out of takes
+   the primary slot, with a secondary only where the template names that GPU
+   class and the class's stance allows a rider
+3. the agent pulls its desired state and starts the runners; it re-attaches
+   declaring what it now serves
+4. the broker certifies each runner against the offer it matched; a placement
+   becomes eligible to serve only once certification passes
+5. the ladder promotes it from `probationary` to `active` on its own, once a
+   settlement round has closed **and** it has completed the template's
+   `min_jobs` with no serious failure
 
-### 4.5 Apply broker runtime
+No operator gesture appears anywhere in that sequence. The operator's touches
+are the exceptions: lifting a suspension, overriding a duplicate GPU UUID
+claim, banning or retiring a member, and approving payout batches until those
+graduate.
 
-Normal production action:
+Two things to know before relying on it:
 
-1. `POST /admin/v1/broker-runtime/apply`
-2. `pool-controller` stages desired broker YAML if an apply command is
-   configured
-3. `pool-controller` triggers broker reload
-4. broker returns a broker-local reload `attempt_id`
-5. `pool-controller` confirms:
-   - broker `last_reload_attempt_id` matches the triggered attempt
-   - broker `loaded_revision == desired_revision`
+- **Applying a placement plan is a call, not a loop.** Review
+  `GET /admin/v1/placement-plan` — it carries a reason code for every GPU,
+  including the ones that got nothing — then commit it with
+  `POST /admin/v1/placement-plan/apply`. `POST /admin/v1/template-assignments`
+  remains for the cases policy cannot reach.
+- **Confirm how GPU inventory actually reaches your controller.** The agent no
+  longer posts hardware itself, and `brokerpush.RelayHardware` — which reads it
+  from the broker's runner view — is implemented but not yet called by any
+  loop or route. `POST /member/v1/enrollments/{id}/hardware` still exists.
+  Check `GET /admin/v1/hardware-units` on a real enrolment before assuming
+  placement has anything to work with.
 
-Required reads after apply:
+### 4.5 Broker convergence
 
-- `GET /admin/v1/broker-runtime`
-- `GET /admin/v1/broker-runtime/history`
-- broker `GET /admin/v1/runtime`
+The controller pushes its offers and credentials to the broker over the
+admin API whenever pool state changes; there is no rendered config file,
+no staging command, and no reload (plan 0043).
 
-Do not treat apply-command exit alone as convergence.
+Normal production action: none. The push happens on state change.
 
-### 4.5.1 Broker apply deployment patterns
+Required reads to confirm convergence:
 
-The operator must choose one explicit staging pattern for
-`bootstrap.broker_apply_command`.
+- controller: the recorded runtime revision — `push_error` when the
+  broker refused (it names the offer and field), `changed_offers` and
+  `revoked_hosts` when it accepted
+- broker `GET /admin/v1/offers` — which offers are frozen and advertised
+- broker `GET /admin/v1/runners` — who is attached and, for a capability
+  not serving, the disagreeing field
+- broker `GET /admin/v1/certification` — what each runner proved
 
-#### Pattern A — same-host file replace
+The coordinator's console presents all three over the same API.
 
-Use when `pool-controller` and `capability-broker` run on the same host and the
-broker loads `host-config.yaml` from a stable on-disk path.
-
-Shape:
-
-- broker reads a fixed path such as `/etc/livepeer/host-config.yaml`
-- apply command copies `POOL_CONTROLLER_BROKER_CONFIG_PATH` to that path
-- controller then calls broker `POST /admin/v1/runtime/reload`
-
-Typical command shape:
-
-```bash
-install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /etc/livepeer/host-config.yaml
-```
-
-Use when:
-
-- host-level deployment
-- systemd-managed broker
-- compose with bind-mounted config path
-
-#### Pattern B — shared-volume container staging
-
-Use when `pool-controller` and `capability-broker` run as separate containers on
-the same machine and share a writable volume for broker config.
-
-Shape:
-
-- both containers mount the same volume
-- broker reads a stable in-container path from that volume
-- apply command writes the desired YAML into the shared volume path
-- controller then calls broker reload
-
-Typical command shape:
-
-```bash
-install -m 0644 "$POOL_CONTROLLER_BROKER_CONFIG_PATH" /shared/broker/host-config.yaml
-```
-
-Use when:
-
-- docker compose public/data-plane deployment
-- no host-level config-management system is in front of the containers
-
-#### Pattern C — external config-management hook
-
-Use when config staging is delegated to an external control system.
-
-Shape:
-
-- apply command is a wrapper script
-- wrapper script moves the rendered YAML into the broker’s expected config
-  location by whatever production mechanism the operator uses
-- controller still requires broker reload + broker attempt/revision confirmation
-
-This is acceptable only if the wrapper is deterministic and checked in as part
-of the deployment system of record.
-
-#### Not yet defined here
-
-This guide does not yet lock a multi-node clustered rollout controller for:
-
-- kubernetes ConfigMap rollouts
-- per-site fan-out to multiple brokers from one `pool-controller`
-- automatic broker fleet orchestration across regions
-
-For now, choose an explicit single-target broker apply mechanism and document it
-alongside the deployment.
+A failed push leaves the broker serving what it last accepted: paid
+traffic and the signed manifest are unaffected. Do not treat an absent
+`push_error` on a stale revision as convergence — check the broker's own
+view.
 
 ### 4.6 Refresh coordinator state
 
@@ -274,18 +253,18 @@ Before live traffic:
 ### 5.1 Control-plane checks
 
 - expected offers exist in `pool-controller`
-- approved members are present
-- expected assignments are active
+- expected members and host enrolments are present
+- each expected GPU appears as a hardware unit with a template assignment
+- each template assignment has a passing certification run
 
 ### 5.2 Broker convergence checks
 
-- `GET /admin/v1/broker-runtime`:
-  - `dirty=false`
-  - `broker_dirty=false`
-  - `broker_reload_status=applied`
-- broker `GET /admin/v1/runtime`:
-  - expected `loaded_revision`
-  - expected `last_reload_attempt_id`
+- controller: the recorded runtime revision has no `push_error`
+- broker `GET /admin/v1/offers`:
+  - every enabled offer is `frozen` and `advertised`
+  - `runners.eligible > 0` on each
+- broker `GET /admin/v1/runners`: expected hosts `connected`, each
+  capability `accepted` at attach
 
 ### 5.3 Coordinator checks
 
@@ -311,108 +290,127 @@ exercising the real production path.
 
 ## 7. Failure handling
 
-### 7.1 Broker apply failed
+### 7.1 Broker push failed
 
 Check:
 
-- `GET /admin/v1/broker-runtime`
-- `GET /admin/v1/broker-runtime/history`
-- broker `GET /admin/v1/runtime`
+- the controller's recorded runtime revision — `push_error` names the
+  offer and the field the broker refused
+- broker `GET /admin/v1/offers`
+- broker `GET /admin/v1/runners`
 
 Focus on:
 
-- `broker_reload_attempt_id`
-- `broker_reload_status`
-- `broker_reload_error`
-- `broker_loaded_revision`
+- an offer refused at validation (the message says which key)
+- an offer frozen with no eligible runner — check certification
+- a runner attached but ineligible — the disagreeing field is named on
+  the runner view
 
-If the broker did not confirm the intended attempt/revision:
+If the broker does not hold the offers you expect:
 
 - do not treat the rollout as converged
-- do not publish a new candidate on the assumption that the new broker state is
-  live
-- fix forward and re-apply
+- do not publish a new candidate on the assumption that the new broker
+  state is live
+- fix forward; the next state change re-pushes
 
 Playbook:
 
-1. stop any publication change that depends on the failed runtime
-2. confirm the desired revision in `pool-controller`
-3. confirm the broker-local latest `attempt_id`, status, and loaded revision
-4. verify the staged file path and contents used by `broker_apply_command`
-5. correct the staging or broker config issue
-6. run `POST /admin/v1/broker-runtime/apply` again
-7. re-check controller and broker history before proceeding
+1. stop any publication change that depends on the refused offers
+2. read `push_error` on the controller's recorded runtime revision
+3. correct the offer the broker named (price, capacity, certification
+   step, or a key it does not accept)
+4. the next control-plane change re-pushes; there is no manual apply
+5. re-check `GET /admin/v1/offers` on the broker before proceeding
 
-### 7.2 Desired revision drifted during apply
+### 7.2 An offer is frozen against the wrong shape
 
-If `pool-controller` reports drift during apply:
+A frozen shape comes from the first runner that certified. If that runner
+declared something the operator did not intend — a different model, a
+different quantization — the offer is advertising it.
 
-- reload state from `pool-controller`
-- inspect recent offer/member/assignment mutations
-- re-run apply only after the desired runtime stabilizes
+- inspect `GET /admin/v1/offers`: `frozen.projection` is what is
+  advertised, `frozen_by` is the runner that set it
+- `candidates[]` lists certified runners whose declaration disagrees,
+  with the diff
+- accept the intended shape from the coordinator's **Offers** page
+  (`POST /admin/v1/offers/{id}/accept-shape`), then sign the candidate —
+  the signature is the acceptance
+- runners on the old shape become ineligible at that moment
 
-Playbook:
+### 7.3 Enrolled GPU running nothing
 
-1. fetch `GET /admin/v1/broker-runtime`
-2. fetch `GET /admin/v1/broker-runtime/history`
-3. inspect recent `GET /admin/v1/audit-events` for:
-   - offer changes
-   - member/backend status changes
-   - assignment changes
-4. decide whether the newest desired revision is the intended one
-5. if yes, apply again against the new desired revision
-6. if no, revert the accidental control-plane mutation through the normal API
-   surface, then apply again
+This is not a publication failure by itself. It is expected staging state: a
+reported GPU serves nothing until a template is placed on it and that placement
+certifies.
 
-### 7.3 Member approved but unassigned
-
-This is not a publication failure by itself. It is expected staging state.
-
-Action:
-
-- either assign the backend to an active offer
-- or leave it intentionally unpublished
+Placement is deterministic policy, so "running nothing" always has a reason —
+read it rather than guessing.
 
 Playbook:
 
-1. inspect `GET /admin/v1/assignment-candidates`
-2. inspect backend verification status and claim-to-offer suggestions
-3. either:
-   - create an assignment and apply broker runtime
-   - or leave the backend unassigned intentionally
-4. do not expect coordinator-visible inventory change until assignment + apply
-   have both completed
+1. `GET /admin/v1/hardware-units` — confirm the GPU reached the controller at
+   all, and see what state the unit is in
+2. `GET /admin/v1/placement-plan` — the reason code for this GPU. The common
+   answers, in rough order of frequency:
+   - `not_enabled` at the top of the response: no template is switched on
+   - the card's driver string did not normalise to a pool class — laptop and
+     Max-Q parts deliberately get no class rather than the wrong one
+   - no enabled template's `requirements` match (class or VRAM floor)
+   - the member opted out
+   - it lost the primary slot and no template names its class as a secondary
+3. `POST /admin/v1/placement-plan/apply` if the plan is right and simply has
+   not been committed
+4. `GET /admin/v1/template-assignments` — confirm the placement exists, and
+   whether the agent has actually started it
+5. `GET /admin/v1/certification-runs` — a placement only becomes eligible once
+   its certification passes
+6. check the template has a `runner_compose.image`. Without one the rendered
+   compose service has no image and nothing can start on the member host
+7. or leave the GPU deliberately unplaced
+8. do not expect coordinator-visible inventory change until a placement has
+   certified and the offer push has landed
 
-### 7.4 Join request rejected or verification failed
+### 7.4 Certification failed
 
-This is an onboarding review outcome, not a runtime failure.
+This is a runner-capability outcome, not an onboarding review outcome. Nothing
+on the controller side needs re-approving.
 
 Playbook:
 
-1. inspect join preview and backend verification error details
-2. confirm whether the failure is:
-   - endpoint reachability
-   - probe configuration
-   - incompatible claim shape
-   - operator policy rejection
-3. communicate the reason back to the member/operator workflow
-4. refresh verification only after the underlying backend or claim issue is
-   corrected
+1. read the failed run's checks
+2. corroborate with broker `GET /admin/v1/runners`, which names the capability
+   field the broker disagreed with, and broker `GET /admin/v1/certification`
+3. confirm whether the failure is:
+   - runner not ready (image, model download, GPU not visible to the container)
+   - a capability shape the offer does not accept
+   - a latency or usage check the template requires
+4. fix the runner and re-run certification for that placement. Repeated
+   certification failures are also what the ladder acts on by itself: K
+   consecutive failures send a placement back to recertify, and a serious
+   failure suspends it. A suspension is one of the few things only an operator
+   can lift.
 
-### 7.5 Member suspended or backend disabled after publication
+### 7.5 Host revoked or retired after publication
 
 This is an active routing change and requires runtime reconciliation.
 
 Playbook:
 
-1. change member/backend status in `pool-controller`
-2. confirm assignment and candidate state reflect the change
-3. run `POST /admin/v1/broker-runtime/apply`
+1. revoke the host enrolment
+   (`POST /admin/v1/host-enrollments/{id}/revoke`) in `pool-controller`.
+   Member-level suspension has no admin route of its own yet — the
+   `PoolMember.status` field is now set through
+   `PATCH /admin/v1/pool-members/{address}`, and the operator exception queue
+   is `GET /admin/v1/exceptions`
+2. confirm the affected template assignments reflect the change
+3. the change pushes automatically; to cut a host off immediately,
+   revoke its credential — that deletes the secret and closes its
+   connections
 4. verify broker convergence
 5. confirm broker `/registry/health` and coordinator view reflect the new
    routable set
-6. if the change was emergency containment, leave the member/backend suspended
-   until a new verification cycle completes
+6. if the change was emergency containment, leave the host revoked until the
+   affected templates have re-certified
 
 ### 7.6 Secure-orch sign/publish blocked
 

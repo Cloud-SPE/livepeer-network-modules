@@ -37,12 +37,6 @@ func applyDefaults(cfg *Config) {
 	if cfg.Listen.Metrics == "" {
 		cfg.Listen.Metrics = ":9090"
 	}
-	if cfg.SyntheticProbes.IntervalMS == 0 {
-		cfg.SyntheticProbes.IntervalMS = 30000
-	}
-	if cfg.SyntheticProbes.TimeoutMS == 0 {
-		cfg.SyntheticProbes.TimeoutMS = 3000
-	}
 	if cfg.Scoring.CooldownDurationMS == 0 {
 		cfg.Scoring.CooldownDurationMS = 300000
 	}
@@ -85,9 +79,6 @@ func applyDefaults(cfg *Config) {
 	if cfg.Scoring.PublicWorstOfferingsLimit == 0 {
 		cfg.Scoring.PublicWorstOfferingsLimit = 5
 	}
-	if cfg.Bootstrap.BrokerApplyTimeoutMS == 0 {
-		cfg.Bootstrap.BrokerApplyTimeoutMS = 30000
-	}
 	if cfg.Bootstrap.BrokerAdminTimeoutMS == 0 {
 		cfg.Bootstrap.BrokerAdminTimeoutMS = 5000
 	}
@@ -102,15 +93,6 @@ func validate(cfg *Config) error {
 	}
 	if cfg.AdminAuth.BearerTokenRef != "" && !strings.HasPrefix(cfg.AdminAuth.BearerTokenRef, "env://") {
 		return fmt.Errorf("admin_auth.bearer_token_ref must use env://")
-	}
-	if cfg.Bootstrap.BrokerApplyTimeoutMS < 0 {
-		return fmt.Errorf("bootstrap.broker_apply_timeout_ms must be >= 0")
-	}
-	for i, arg := range cfg.Bootstrap.BrokerApplyCommand {
-		cfg.Bootstrap.BrokerApplyCommand[i] = strings.TrimSpace(arg)
-		if cfg.Bootstrap.BrokerApplyCommand[i] == "" {
-			return fmt.Errorf("bootstrap.broker_apply_command[%d] must not be empty", i)
-		}
 	}
 	if cfg.Bootstrap.BrokerAdminURL != "" {
 		u, err := url.Parse(cfg.Bootstrap.BrokerAdminURL)
@@ -133,6 +115,40 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("bootstrap.broker_admin_auth.method %q is not supported", cfg.Bootstrap.BrokerAdminAuth.Method)
 		}
 	}
+	// A pool that declared a fleet and got no usable target from it has
+	// almost certainly typed a key wrong. Pushing nowhere is a valid
+	// standalone configuration, but only when the operator asked for
+	// nothing — reaching it by way of a misspelling would leave every
+	// broker on a stale offer set with nothing said anywhere.
+	if len(cfg.Bootstrap.Brokers) > 0 {
+		for i, broker := range cfg.Bootstrap.Brokers {
+			if strings.TrimSpace(broker.AdminURL) == "" {
+				return fmt.Errorf("bootstrap.brokers[%d]: admin_url is required", i)
+			}
+			u, err := url.Parse(broker.AdminURL)
+			if err != nil {
+				return fmt.Errorf("bootstrap.brokers[%d].admin_url is invalid: %w", i, err)
+			}
+			if u.Scheme != "http" && u.Scheme != "https" {
+				return fmt.Errorf("bootstrap.brokers[%d].admin_url scheme must be http or https (got %q)", i, u.Scheme)
+			}
+			switch broker.Auth.Method {
+			case "", "none":
+			case "bearer":
+				if broker.Auth.SecretRef == "" {
+					return fmt.Errorf("bootstrap.brokers[%d].auth.secret_ref is required when method=bearer", i)
+				}
+				if !strings.Contains(broker.Auth.SecretRef, "://") {
+					return fmt.Errorf("bootstrap.brokers[%d].auth.secret_ref should be a URI-style reference (got %q)", i, broker.Auth.SecretRef)
+				}
+			default:
+				return fmt.Errorf("bootstrap.brokers[%d].auth.method %q is not supported", i, broker.Auth.Method)
+			}
+			if broker.TimeoutMS < 0 {
+				return fmt.Errorf("bootstrap.brokers[%d].timeout_ms must be >= 0", i)
+			}
+		}
+	}
 	if cfg.Bootstrap.BrokerAdminTimeoutMS < 0 {
 		return fmt.Errorf("bootstrap.broker_admin_timeout_ms must be >= 0")
 	}
@@ -150,12 +166,6 @@ func validate(cfg *Config) error {
 		if err := validateHostPort("bootstrap.public_broker_quic_addr", cfg.Bootstrap.PublicBrokerQUICAddr); err != nil {
 			return err
 		}
-	}
-	if cfg.SyntheticProbes.IntervalMS < 0 {
-		return fmt.Errorf("synthetic_probes.interval_ms must be >= 0")
-	}
-	if cfg.SyntheticProbes.TimeoutMS < 0 {
-		return fmt.Errorf("synthetic_probes.timeout_ms must be >= 0")
 	}
 	if cfg.Scoring.CooldownDurationMS < 0 {
 		return fmt.Errorf("scoring.cooldown_duration_ms must be >= 0")

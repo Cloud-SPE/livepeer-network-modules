@@ -25,11 +25,14 @@ secure-orch side to run:
 
 - A separate secure-orch / protocol host already running `protocol-daemon`
   and exposing `/var/run/livepeer/protocol.sock` on this host.
+- One or more Arbitrum RPC endpoints (`CHAIN_RPC_URLS`, comma-separated,
+  primary first). The payout executor takes its list from the
+  `executor.rpc_urls` key of its config file instead.
 - A funded payment-daemon receiver wallet:
-  - `PAYMENT_KEYSTORE`
+  - `PAYMENT_KEYSTORE_FILE`
   - `PAYMENT_KEYSTORE_PASSWORD_FILE`
 - A funded payout hot wallet:
-  - `POOL_PAYOUT_EXECUTOR_KEYSTORE`
+  - `POOL_PAYOUT_EXECUTOR_KEYSTORE_FILE`
   - `POOL_PAYOUT_EXECUTOR_KEYSTORE_PASSWORD_FILE`
 - A real coordinator config at `./coordinator-config.yaml`
 - A generated broker host-config at `./run/generated-broker-host-config.yaml`
@@ -54,19 +57,39 @@ From the repo root:
 `pool-controller` no longer renders broker config from a nested controller YAML.
 The production path is:
 
-1. bootstrap `pool-controller`
-2. create offers through the control-plane
-3. approve members and backends
-4. create assignments
-5. use `POST /admin/v1/broker-runtime/apply`
+1. bootstrap `pool-controller` with `template_catalog_dir` pointing at the
+   workload catalog (repo-root `templates/`)
+2. enable the templates this pool sells and price them
+   (`PUT /admin/v1/template-overrides/{id}`). The offer set is *derived* from
+   the enabled ones — there is no separate offer catalog to author
+3. members sign in with their wallet and enrol a host, then run the bundle,
+   which contains the agent and nothing else. There is no join request and no
+   approval step — the pool never dials a member endpoint, so there is nothing
+   to verify before admission
+4. placement policy matches each reported GPU to enabled templates by
+   `requirements` + `priority` + `stacking`; review
+   `GET /admin/v1/placement-plan` and commit it with
+   `POST /admin/v1/placement-plan/apply`
+5. the agent pulls its desired state and starts the runners, then re-attaches
+   declaring them; the broker certifies each and freezes the offer's
+   runner-declared shape
+6. the ladder promotes a passing placement from `probationary` to `active` on
+   its own, once a settlement round has closed and it has completed the
+   template's `min_jobs`
 
-The controller now derives desired broker runtime from persisted state and
-confirms convergence against broker-reported runtime revision and attempt ID.
+> The five templates in `templates/` carry no `runner_compose` block yet — the
+> v1 images and model ids are still open (`lnm-v12`) — so nothing will actually
+> start on a member host from the shipped catalog. For an end-to-end scenario,
+> add `runner_compose.image` to the template you enable.
+
+The controller pushes its offers and credentials to the broker over the
+admin API whenever pool state changes (plan 0043). There is no rendered
+broker config and no apply step; runner facts come from the runners.
 
 See:
 
-- [`pool-controller/RUNBOOK.md`](../../pool-controller/RUNBOOK.md)
-- [`docs/design-docs/pool-orchestrator-production-rollout.md`](../../docs/design-docs/pool-orchestrator-production-rollout.md)
+- [`pool-controller/RUNBOOK.md`](../../../pool-controller/RUNBOOK.md)
+- [`docs/design-docs/pool-orchestrator-production-rollout.md`](../../../docs/design-docs/pool-orchestrator-production-rollout.md)
 
 ## Configure coordinator
 

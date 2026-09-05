@@ -14,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	specversion "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/providers/brokeradmin"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/providers/brokerclient"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/candidates"
@@ -221,6 +223,15 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 	defer auditLog.Close()
 
 	receiveSvc := receive.New(publishedStore, candStore, auditLog, loaded.EthAddress(), candidate.SpecVersion, builder)
+
+	// The hot-zone console: runners, offers, enrollment and
+	// certification, over each broker's admin API (plan 0043 §3.6). A
+	// broker with no admin_token_ref is listed but not administrable,
+	// which the pages say plainly rather than failing.
+	hotzone, err := buildHotzoneDeps(loaded.Brokers, cfg.scrapeTimeout)
+	if err != nil {
+		return &configError{err: err}
+	}
 	receiveSvc.SetObserver(mreg)
 
 	admin := adminapi.New(cfg.listenAddr, logger.With("component", "adminapi"), cfg.adminTokens)
@@ -242,6 +253,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 		Receive:        receiveSvc,
 		OrchEthAddress: loaded.EthAddress(),
 		SecureOrchURL:  cfg.secureOrchURL,
+		Hotzone:        hotzone,
 		Version:        version,
 	}); err != nil {
 		return fmt.Errorf("admin web routes: %w", err)
@@ -414,12 +426,14 @@ func newDevFake(orchAddr string, brokers []config.Broker) brokerclient.Client {
 		caps := []types.BrokerOffering{{
 			CapabilityID:    "demo:echo:v1",
 			OfferingID:      "default",
-			InteractionMode: "http-reqresp@v0",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"unary"}},
 			WorkUnit:        types.WorkUnit{Name: "echoes"},
 			PricePerUnitWei: "100",
 			Extra:           map[string]any{"broker": b.Name},
 		}}
 		f.Set(b.BaseURL, &types.BrokerOfferings{
+			SpecVersion:    specversion.VERSION,
 			OrchEthAddress: orchAddr,
 			Capabilities:   caps,
 		}, nil)
@@ -480,4 +494,29 @@ func loadNextPublicationSeq(store *published.Store, logger *slog.Logger) uint64 
 		return 0
 	}
 	return sm.Manifest.PublicationSeq + 1
+}
+
+// buildHotzoneDeps resolves each broker's admin bearer and builds the
+// console's client. A bad reference is fatal — an operator who wrote
+// admin_token_ref meant to use it, and silently running without it
+// would present a read-only console with no explanation.
+func buildHotzoneDeps(brokers []config.Broker, timeout time.Duration) (*adminapi.HotzoneDeps, error) {
+	targets := make([]brokeradmin.Target, 0, len(brokers))
+	listed := make([]adminapi.HotzoneBroker, 0, len(brokers))
+	for _, b := range brokers {
+		token, err := b.ResolveAdminToken()
+		if err != nil {
+			return nil, fmt.Errorf("brokers[%s].admin_token_ref: %w", b.Name, err)
+		}
+		targets = append(targets, brokeradmin.Target{Name: b.Name, BaseURL: b.BaseURL, Token: token})
+		listed = append(listed, adminapi.HotzoneBroker{Name: b.Name, BaseURL: b.BaseURL, Administrable: token != ""})
+	}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	return &adminapi.HotzoneDeps{
+		Admin:   brokeradmin.New(timeout, targets),
+		Brokers: listed,
+		Timeout: timeout,
+	}, nil
 }

@@ -15,10 +15,15 @@ infra/
 │   │   ├── ingress-traefik/
 │   │   ├── ingress-cloudflared/
 │   │   └── ingress-nginx/
+│   ├── pool-orchestrator/         # single-host Pool stack: broker + coordinator + accounting
+│   ├── pool-node/                 # Pool accounting only (controller/reconciler/executor)
 │   └── archive/                   # earlier scenarios, preserved for reference
 ├── compose/
 │   ├── docker-compose.yml         # shared services (postgres, redis, rustfs) — profile-gated
 │   └── .env.example               # copy to .env, edit, then --env-file in compose
+├── build/
+│   ├── image-versions.env         # IMAGE_TAG_DEFAULT + toolchain pins shared by every build
+│   └── git-version.sh             # derives binary build metadata from git
 └── scripts/
     └── build-images.sh            # builds every image in dependency order
 ```
@@ -29,7 +34,7 @@ The script pulls **no** images — it builds the deployable components that
 still live in this repo from source in dependency order.
 
 ```sh
-# Build everything as tztcloud/<name>:v1.4.0
+# Build everything as tztcloud/<name>:v2.0.0
 ./infra/scripts/build-images.sh
 
 # Build a single component (substring match)
@@ -42,7 +47,7 @@ REGISTRY=ghcr.io/myorg TAG=2026.5.7 ./infra/scripts/build-images.sh
 PUSH=1 REGISTRY=ghcr.io/myorg TAG=2026.5.7 ./infra/scripts/build-images.sh
 ```
 
-Defaults: `REGISTRY=tztcloud`, `TAG=v1.4.0`, `PUSH=0`.
+Defaults: `REGISTRY=tztcloud`, `TAG=v2.0.0`, `PUSH=0`.
 
 ## Scenario stacks
 

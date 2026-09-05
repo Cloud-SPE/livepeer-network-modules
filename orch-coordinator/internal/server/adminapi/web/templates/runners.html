@@ -1,0 +1,86 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Hot zone</p>
+  <h1>Runners</h1>
+  <p class="muted">Every host attached to a broker, what it declared about itself, and which offers will and will not use it. A runner that disagrees with a frozen offer is listed here with the disagreeing field — it is not a manifest change.</p>
+  {{template "hotzone-context" .}}
+  <form method="get" class="filters">
+    <input type="text" name="q" value="{{.Filter}}" placeholder="host, label, member address, capability">
+    <button type="submit">Filter</button>
+    <a href="/runners" class="ghost-link">Clear</a>
+  </form>
+</section>
+
+{{range $row := .Runners}}
+<section class="roster" id="runner-{{anchorID $row.Broker $row.HostID}}">
+  <h2>
+    <code>{{.HostID}}</code>
+    <span class="badge broker-{{if eq .State "connected"}}ok{{else}}stale_failing{{end}}">{{.State}}</span>
+    <small class="muted">on {{.Broker}}</small>
+  </h2>
+  <dl class="meta">
+    {{if .Enrollment.Label}}<dt>label</dt><dd>{{.Enrollment.Label}}</dd>{{end}}
+    {{if .Enrollment.MemberEthAddress}}<dt>member</dt><dd><code>{{.Enrollment.MemberEthAddress}}</code></dd>{{end}}
+    <dt>agent</dt><dd>{{.AgentVersion}} · contract {{.ContractVersion}}</dd>
+    <dt>connections</dt><dd>{{.Connections}} · last seen {{.LastSeen.Format "2006-01-02 15:04:05Z"}}</dd>
+  </dl>
+
+  {{if .Hardware}}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>gpu_uuid</th><th>model</th><th>vram</th><th>driver</th></tr></thead>
+    <tbody>
+    {{range .Hardware}}
+      <tr><td><code>{{.GPUUUID}}</code></td><td>{{.GPUModel}}</td><td>{{gib .VRAMBytes}}</td><td>{{.Driver}}{{if .CUDA}} · CUDA {{.CUDA}}{{end}}</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{else}}
+  <p class="muted">No GPUs reported. CPU work is fine; a capability whose requirements name GPU facts is rejected.</p>
+  {{end}}
+
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>local_id / capability</th><th>attach</th><th>declared</th><th>offers</th></tr></thead>
+    <tbody>
+    {{range .Capabilities}}
+      <tr>
+        <td><strong>{{.LocalID}}</strong><br><small>{{.CapabilityID}}</small><br><small class="muted">{{.Protocol}}</small></td>
+        <td>
+          <span class="badge audit-{{if eq .Attach.Status "accepted"}}success{{else}}failure{{end}}">{{.Attach.Status}}</span>
+          {{range .Attach.Reasons}}
+            <div class="err"><code>{{.Code}}</code> {{.Field}}<br>
+              <small>declared <code>{{.Declared}}</code>{{if .Expected}} · expected <code>{{.Expected}}</code>{{end}}</small></div>
+          {{end}}
+          {{range .Attach.Warnings}}<div class="muted"><small>{{.Code}} {{.Message}}</small></div>{{end}}
+        </td>
+        <td>{{range $k, $v := .Declared}}<div><small><code>{{$k}}</code> {{kv $v}}</small></div>{{end}}
+            {{range $k, $v := .Extensions}}<div><small class="muted"><code>{{$k}}</code> {{kv $v}}</small></div>{{end}}</td>
+        <td>
+          {{range .Offers}}
+            <div class="broker-cell">
+              <a href="/offers#offer-{{anchorID $row.Broker .OfferingID}}" class="inline-link">{{.OfferingID}}</a>
+              <span class="badge drift-{{.State}}">{{.State}}</span>
+              {{if .Reason}}<br><small class="err"><code>{{.Reason.Code}}</code> {{.Reason.Field}}: declared <code>{{.Reason.Declared}}</code>{{if .Reason.Frozen}} · frozen <code>{{.Reason.Frozen}}</code>{{end}}{{if .Reason.Expected}} · expected <code>{{.Reason.Expected}}</code>{{end}}</small>{{end}}
+              {{if .Certification}}<br><small class="muted">cert {{.Certification.State}}</small>{{end}}
+            </div>
+          {{else}}<em class="muted">no offer matches</em>{{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+
+  <form method="post" action="/runners/disconnect" class="refresh">
+    <input type="hidden" name="broker" value="{{$row.Broker}}">
+    <input type="hidden" name="host_id" value="{{$row.HostID}}">
+    <button type="submit">Disconnect</button>
+    <span class="muted"><small>Closes its connections. It may reconnect — revoke the credential on <a href="/enroll" class="inline-link">Enroll host</a> to stop that.</small></span>
+  </form>
+</section>
+{{else}}
+<section><p class="muted"><em>No runners attached.</em> A host attaches by running the agent with a credential from <a href="/enroll" class="inline-link">Enroll host</a>.</p></section>
+{{end}}
+{{end}}

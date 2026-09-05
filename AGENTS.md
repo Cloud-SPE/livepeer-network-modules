@@ -28,6 +28,7 @@ load-bearing decisions.
 | What's the proposed architecture at a glance? | [`docs/design-docs/architecture-overview.md`](./docs/design-docs/architecture-overview.md) |
 | How do gateway-shaped clients, broker, and `payment-daemon` interact? | [`docs/design-docs/payment-daemon-interactions.md`](./docs/design-docs/payment-daemon-interactions.md) |
 | What do the pool-specific flows (signup / payout / routing) look like? | [`docs/design-docs/pool-overlay-flows.md`](./docs/design-docs/pool-overlay-flows.md) |
+| How do runners declare themselves, and what must an existing deployment change? | [`docs/design-docs/migrating-to-connected-runners.md`](./docs/design-docs/migrating-to-connected-runners.md) |
 | How do long-lived / streaming sessions work end-to-end? | [`docs/design-docs/streaming-workload-pattern.md`](./docs/design-docs/streaming-workload-pattern.md) |
 | What changed in `payment-daemon` vs the suite? | [`docs/design-docs/payment-decoupling.md`](./docs/design-docs/payment-decoupling.md) |
 | Which "health" surface answers a given routing question? | [`docs/design-docs/backend-health.md`](./docs/design-docs/backend-health.md) |
@@ -37,6 +38,7 @@ load-bearing decisions.
 | What known tech debt are we tracking? | [`docs/exec-plans/tech-debt-tracker.md`](./docs/exec-plans/tech-debt-tracker.md) |
 | What's the source-of-truth for the design conversation? | [`docs/references/2026-05-06-architecture-conversation.md`](./docs/references/2026-05-06-architecture-conversation.md) |
 | Reference material (papers, PDFs, transcripts) | [`docs/references/`](./docs/references/) |
+| How is day-to-day work tracked? | Beads (`bd`) — run `bd prime`; see "Task tracking" below |
 
 ## Repo shape — monorepo for now
 
@@ -54,6 +56,17 @@ Current top-level components include `livepeer-network-protocol/`,
 `chain-commons/`, `proto-contracts/`, `pool-controller/`,
 `pool-reconciler/`, `pool-payout-executor/`, and `pool-member-agent/`. Additional components still
 land as top-level subfolders as the rewrite expands.
+
+## Task tracking
+
+Issues, tasks, bugs, and discovered work are tracked in **beads** (`bd`), backed by
+the Dolt database under `.beads/`. Run `bd prime` for the workflow contract and
+`bd ready` for claimable work. Do not track tasks in markdown TODOs, checklists,
+or scratch plan files.
+
+The boundary with the doc conventions below: beads owns *work items* (what to do,
+in what order, what blocks what); `docs/exec-plans/` and `docs/design-docs/` own
+*design* (why and how). A plan doc and its implementing beads reference each other.
 
 ## Doing work in this repo
 

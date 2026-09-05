@@ -50,6 +50,7 @@ type Server struct {
 
 	mu        sync.Mutex
 	candidate *stashedCandidate
+	agent     AgentControls
 }
 
 type stashedCandidate struct {
@@ -167,6 +168,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /discard", s.requireAuth(s.handleDiscard))
 	s.mux.HandleFunc("POST /sign", s.requireAuth(s.handleSign))
 	s.mux.HandleFunc("POST /held/load", s.requireAuth(s.handleHeldLoad))
+	s.mux.HandleFunc("POST /agent/rate-limit/clear", s.requireAuth(s.handleClearRateLimit))
 	s.mux.HandleFunc("POST /protocol/force-init", s.requireAuth(s.handleProtocolForceInit))
 	s.mux.HandleFunc("POST /protocol/force-reward", s.requireAuth(s.handleProtocolForceReward))
 	s.mux.HandleFunc("POST /protocol/set-service-uri", s.requireAuth(s.handleProtocolSetServiceURI))
@@ -189,6 +191,18 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // SetMetricsHandler installs the agent's metrics exposition. Call
 // before Listen.
 func (s *Server) SetMetricsHandler(h http.Handler) { s.metricsHandler = h }
+
+// AgentControls is the slice of the in-process agent the console can
+// act on. Nil when the console runs without an agent, in which case the
+// gestures are simply not offered.
+type AgentControls interface {
+	RateLimitPaused() bool
+	ClearRateLimit(actor string) bool
+}
+
+// SetAgentControls wires the operator gestures the agent exposes. Call
+// before Listen.
+func (s *Server) SetAgentControls(c AgentControls) { s.agent = c }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if s.metricsHandler == nil {

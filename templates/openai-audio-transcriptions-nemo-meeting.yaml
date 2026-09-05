@@ -1,0 +1,141 @@
+# Diarized meeting transcription — NeMo, as run on the operator's
+# "ai-rig-broker".
+#
+# Batch transcription: the caller uploads a finished recording and gets a
+# speaker-labelled transcript back. Its live sibling
+# (openai-audio-transcriptions-nemo-meeting-stream.yaml) is a different
+# protocol, a different price basis, and a different template.
+
+id: openai-audio-transcriptions-nemo-meeting
+capability: openai:audio-transcriptions
+offering_id: nemo-meeting
+protocol: paid-job/v1
+display_name: Diarized meeting transcription (NeMo)
+description: >-
+  OpenAI-compatible audio transcription over a multipart upload, with speaker
+  diarization tuned for meeting recordings. Metered in seconds of input audio,
+  so the bill is fixed by the file the caller sent and does not move with how
+  fast or slow the runner is.
+
+# The operator's real rate: 1e12 wei per second of input audio.
+#
+# Read this before repricing: at the 2026-06-15 ETH basis in
+# docs/references/2026-06-15-openai-compatible-market-pricing.md that is
+# ~$0.103 per audio minute, roughly 17x that reference's plain-Whisper batch
+# recommendation (~$0.0047/min, see the whisper-large-v3 template). The gap is
+# not obviously an error — diarized meeting transcription is a different
+# product from plain speech-to-text, and it is the only offering on either rig
+# that produces speaker attribution — but it IS the largest unexplained spread
+# in this catalog, and no market anchor for it exists in that reference. An
+# operator reviewing prices should confirm it deliberately rather than inherit
+# it.
+price_default: { amount_wei: "1000000000000", per_units: 1 }
+
+# One at a time. This is the rig's own `backend.max_in_flight: 1`, which under
+# the current split is operator-owned capacity (runner-attach.md §3.2.1: "a
+# runner declaring its own capacity would set what the orchestrator sells";
+# plan 0043 §8 puts runner-declared capacity out of scope) and so survives the
+# grammar change intact.
+#
+# queue_limit is deliberately unset: the rig fixed concurrency and said nothing
+# about queueing, and a depth invented here would change how long a caller
+# waits before getting a 503 + Livepeer-Backoff. Set it once real queue depth
+# has been observed.
+capacity: { max_in_flight: 1 }
+
+extra:
+  provider: nemo
+  # No backend_model: unlike the Whisper and Kokoro offerings, the rig named no
+  # upstream weights repo for this one — the served identity is the whole model
+  # fact it declared, and it arrives frozen from the runner's attach document
+  # (runner-attach.md §5), so it is not restated here.
+  audio:
+    task: transcription
+    # The rig's own accepted-format lists. These are stable product facts a
+    # caller needs before it uploads — "will you take my webm?" is not
+    # answerable from the capability id — which is what earns them a place in
+    # `extra` under the family namespace (docs/design-docs/
+    # architecture-overview.md, "Family-specific stable `extra` contracts").
+    formats:
+      input: [wav, mpeg, mp4, webm, flac, ogg]
+      output: [json, verbose_json, text, srt, vtt]
+
+# Three offerings on this rig share the openai:audio-transcriptions capability
+# (this one, its streaming sibling, and whisper-large-v3). Without a selector
+# each would take whichever transcription runner attached first and freeze the
+# wrong model into the wrong price.
+match:
+  identity.openai.model: nemo-diarized-transcription-meeting-v0
+
+certification:
+  # The rig probed `http-status` on /healthz. That recipe is not repeated here:
+  # under certification-steps.md §3.1 the step runs the probe the RUNNER
+  # declared, and the template sets only sufficiency. Five attempts at 3s
+  # covers a cold start without failing a runner that is still loading.
+  - { name: ready, type: readiness, required: true, config: { attempts: 5, interval_ms: 3000 } }
+  - name: smoke
+    type: request
+    required: true
+    config:
+      transport: multipart
+      parts:
+        - { name: model, value: "{{identity.openai.model}}" }
+        - name: file
+          filename: probe.wav
+          content_type: audio/wav
+          # A built-in broker fixture rather than a file this pool ships, so
+          # every runner is certified against the same 3s clip
+          # (certification-steps.md §4).
+          fixture: { ref: multipart-audio-duration-v1/wav-16k-mono-3s }
+      # Only that text came back. There is no assertion on speaker labels: a
+      # 3s single-speaker fixture cannot exercise diarization, and asserting on
+      # what a transcript SAYS is subjective scoring this catalog does not do.
+      assert:
+        - "$.text"
+  # The rig metered this workload from a response header
+  # (X-Livepeer-Work-Units). Which extractor reads it is runner-declared and
+  # frozen (runner-attach.md §3.2); all the template asserts is that the frozen
+  # path yields a billable count. The fixture is 3s, so a working extractor
+  # reports 3 and a broken one reports 0.
+  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+
+# Decided 2026-09-01 (plan 0045 §5). The rig's config carried no
+# `constraints.gpu` for the NeMo offerings, and this shipped empty while that
+# stood — which made it the default winner on every card the rest of the
+# catalog declines: nothing else admits an a100, h100, l40s or rtx-3090, so an
+# H100 in the fleet was placed on batch ASR of a 0.6B model.
+#
+# Deliberately WIDE, because this is batch. A weak card makes a transcription
+# slow, which is recoverable — the caller waits, the latency step is
+# non-required, the ladder scores it down. Contrast the streaming sibling,
+# which is narrow for the opposite reason. With this list it loses 2080s to
+# transcode (21/22/26) and strong cards to everything else, so it lands on
+# 3090s — which is where a light batch workload belongs.
+requirements:
+  gpu_classes: [rtx-2080, rtx-3090, rtx-4090, rtx-5090]
+
+# Unchanged at 12 when `requirements` was filled in: below every template with
+# a heavier or more latency-sensitive workload, so this takes a card only when
+# nothing better claimed it. Now that the class list is real, that is exactly
+# the right place for batch ASR.
+priority: 12
+
+# Primary only. Whisper and Kokoro ride as secondaries because their weights
+# are small and their requests are short; a diarized meeting recording is
+# minutes of exclusive GPU per job, which is the workload a secondary slot is
+# meant to avoid stacking onto a primary.
+stacking: { primary: true, secondary_on: [] }
+
+# runner_compose omitted: the images that serve this workload are unresolved
+# (tracked as lnm-v12). The rig named a compose service, not a published image
+# reference, and inventing a ghcr tag here would fail at `compose up` on a
+# member's host instead of in review.
+
+# min_jobs is low because each job is long: 15 meeting files is already a
+# substantial probation sample at one in flight, and the failure modes (OOM on
+# a long recording, a format the runner rejects) surface in the first few.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 15 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

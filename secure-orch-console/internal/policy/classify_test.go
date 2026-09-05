@@ -10,8 +10,8 @@ import (
 )
 
 type tup struct {
-	capID, offID, mode, workUnit, price, workerURL string
-	extra, constraints                             map[string]any
+	capID, offID, protocol, workUnit, price, workerURL string
+	job, session, extra, constraints                   map[string]any
 }
 
 func manifestJSON(t *testing.T, spec string, seq uint64, eth string, tuples ...tup) []byte {
@@ -21,10 +21,16 @@ func manifestJSON(t *testing.T, spec string, seq uint64, eth string, tuples ...t
 		entry := map[string]any{
 			"capability_id":      tp.capID,
 			"offering_id":        tp.offID,
-			"interaction_mode":   tp.mode,
+			"protocol":           tp.protocol,
 			"work_unit":          map[string]any{"name": tp.workUnit},
 			"price_per_unit_wei": tp.price,
 			"worker_url":         tp.workerURL,
+		}
+		if tp.job != nil {
+			entry["job"] = tp.job
+		}
+		if tp.session != nil {
+			entry["session"] = tp.session
 		}
 		if tp.extra != nil {
 			entry["extra"] = tp.extra
@@ -50,8 +56,25 @@ func manifestJSON(t *testing.T, spec string, seq uint64, eth string, tuples ...t
 
 func baseTuple() tup {
 	return tup{
-		capID: "openai:chat-completions", offID: "vllm-h100", mode: "http-stream@v1",
+		capID: "openai:chat-completions", offID: "vllm-h100", protocol: "paid-job/v1",
+		job:      map[string]any{"transports": []any{"unary", "stream"}},
 		workUnit: "tokens", price: "1000", workerURL: "https://a.workers.example-orch.net/",
+	}
+}
+
+// sessionTuple is the paid-session counterpart: the axes object carries
+// the semantics the old mode string used to smuggle in its name.
+func sessionTuple() tup {
+	return tup{
+		capID: "video:transcode.live", offID: "h264-1080p30", protocol: "paid-session/v1",
+		session: map[string]any{
+			"descriptor_schema":      "rtmp-hls/v1",
+			"metering":               "runner-reported",
+			"refill":                 "extensible",
+			"heartbeat":              map[string]any{"interval_seconds": 10, "missed_threshold": 3},
+			"runway_increment_units": 60000,
+		},
+		workUnit: "video-frame-megapixel", price: "1000", workerURL: "https://a.workers.example-orch.net/",
 	}
 }
 
@@ -122,7 +145,7 @@ func TestClassify_ChangeTable(t *testing.T) {
 	}{
 		{
 			name:      "tuple added",
-			after:     []tup{baseTuple(), {capID: "new:cap", offID: "o", mode: "m@v1", workUnit: "x", price: "1", workerURL: "https://a.workers.example-orch.net/"}},
+			after:     []tup{baseTuple(), {capID: "new:cap", offID: "o", protocol: "paid-job/v1", job: map[string]any{"transports": []any{"unary"}}, workUnit: "x", price: "1", workerURL: "https://a.workers.example-orch.net/"}},
 			wantClass: ClassCritical, wantCode: CodeTupleAdded,
 		},
 		{
@@ -196,9 +219,36 @@ func TestClassify_ChangeTable(t *testing.T) {
 			wantClass: ClassCritical, wantCode: CodeConstraintsChanged,
 		},
 		{
-			name:      "interaction_mode changed",
-			after:     []tup{mutate(func(tp *tup) { tp.mode = "ws-realtime@v0" })},
-			wantClass: ClassCritical, wantCode: CodeModeChanged,
+			name:      "protocol changed",
+			after:     []tup{mutate(func(tp *tup) { tp.protocol = "paid-job/v2" })},
+			wantClass: ClassCritical, wantCode: CodeProtocolChanged,
+		},
+		{
+			// A transport the broker did not previously serve is new
+			// surface area, not a cosmetic edit.
+			name: "job transport added",
+			after: []tup{mutate(func(tp *tup) {
+				tp.job = map[string]any{"transports": []any{"unary", "stream", "multipart"}}
+			})},
+			wantClass: ClassCritical, wantCode: CodeJobAxesChanged,
+		},
+		{
+			name: "job transport removed",
+			after: []tup{mutate(func(tp *tup) {
+				tp.job = map[string]any{"transports": []any{"unary"}}
+			})},
+			wantClass: ClassCritical, wantCode: CodeJobAxesChanged,
+		},
+		{
+			// The old vocabulary spelled this as one mode-string swap.
+			// Split across protocol + axes, it must still hold.
+			name: "protocol flipped from job to session",
+			after: []tup{mutate(func(tp *tup) {
+				tp.protocol = "paid-session/v1"
+				tp.job = nil
+				tp.session = map[string]any{"descriptor_schema": "rtmp-hls/v1", "metering": "runner-reported"}
+			})},
+			wantClass: ClassCritical, wantCode: CodeProtocolChanged,
 		},
 		{
 			name:      "work_unit changed",
@@ -231,6 +281,94 @@ func TestClassify_ChangeTable(t *testing.T) {
 	}
 }
 
+// Every session axis is critical — the gating ones because a
+// counterparty routes, meters, or refills on them, the advisory ones
+// because BenignBounds has no bound to grade them against. The detail
+// string must name the axis that moved so the held-queue entry is
+// reviewable without re-diffing.
+func TestClassify_SessionAxesChangesAreCritical(t *testing.T) {
+	mutate := func(f func(map[string]any)) tup {
+		tp := sessionTuple()
+		f(tp.session)
+		return tp
+	}
+	cases := []struct {
+		name       string
+		after      tup
+		wantDetail string
+	}{
+		{
+			// Gateways MUST NOT open sessions whose schema they do not
+			// implement; swapping it re-points every buyer.
+			name:       "descriptor_schema",
+			after:      mutate(func(s map[string]any) { s["descriptor_schema"] = "webrtc/v1" }),
+			wantDetail: "session axes changed: descriptor_schema",
+		},
+		{
+			// The clearinghouse gates top-up on this field.
+			name:       "refill bounded",
+			after:      mutate(func(s map[string]any) { s["refill"] = "bounded" }),
+			wantDetail: "session axes changed: refill",
+		},
+		{
+			// Who counts the money.
+			name:       "metering origin",
+			after:      mutate(func(s map[string]any) { s["metering"] = "not-runner-reported" }),
+			wantDetail: "session axes changed: metering",
+		},
+		{
+			// Whether the data plane transits the broker at all.
+			name:       "attachment declared",
+			after:      mutate(func(s map[string]any) { s["attachment"] = "not-external" }),
+			wantDetail: "session axes changed: attachment",
+		},
+		{
+			// Advisory, but still not gradable against any bound.
+			name: "heartbeat interval",
+			after: mutate(func(s map[string]any) {
+				s["heartbeat"] = map[string]any{"interval_seconds": 600, "missed_threshold": 3}
+			}),
+			wantDetail: "session axes changed: heartbeat",
+		},
+		{
+			name:       "runway increment advisory",
+			after:      mutate(func(s map[string]any) { s["runway_increment_units"] = 1 }),
+			wantDetail: "session axes changed: runway_increment_units",
+		},
+	}
+	before := manifestJSON(t, "0.1.0", 4, ethA, sessionTuple())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			after := manifestJSON(t, "0.1.0", 5, ethA, tc.after)
+			got := Classify(computeDiff(t, before, after), ClassifyInput{
+				Bounds: defaultBounds(), RenewalThreshold: 8 * time.Hour, RemainingValidity: 20 * time.Hour,
+			})
+			if got.Class != ClassCritical {
+				t.Fatalf("class=%s want critical (findings: %+v)", got.Class, got.Findings)
+			}
+			if len(got.Findings) != 1 || got.Findings[0].Code != CodeSessionAxesChanged {
+				t.Fatalf("findings=%+v want a single %s", got.Findings, CodeSessionAxesChanged)
+			}
+			if got.Findings[0].Detail != tc.wantDetail {
+				t.Fatalf("detail=%q want %q", got.Findings[0].Detail, tc.wantDetail)
+			}
+		})
+	}
+}
+
+// A session tuple whose axes are untouched is still a no-op: grading
+// axes critical must not make every republish hold.
+func TestClassify_SessionAxesUnchangedIsNoOp(t *testing.T) {
+	before := manifestJSON(t, "0.1.0", 4, ethA, sessionTuple())
+	after := manifestJSON(t, "0.1.0", 5, ethA, sessionTuple())
+	got := Classify(computeDiff(t, before, after), ClassifyInput{
+		Bounds: defaultBounds(), RenewalThreshold: 8 * time.Hour, RemainingValidity: 20 * time.Hour,
+	})
+	if got.Class != ClassNoOp {
+		t.Fatalf("class=%s want no_op (findings: %+v)", got.Class, got.Findings)
+	}
+}
+
 func TestClassify_HighestClassWins(t *testing.T) {
 	// A within-bound price change (benign) plus a new tuple
 	// (critical): the candidate is critical.
@@ -238,7 +376,7 @@ func TestClassify_HighestClassWins(t *testing.T) {
 	changed.price = "1050"
 	before := manifestJSON(t, "0.1.0", 4, ethA, baseTuple())
 	after := manifestJSON(t, "0.1.0", 5, ethA, changed,
-		tup{capID: "new:cap", offID: "o", mode: "m@v1", workUnit: "x", price: "1", workerURL: "https://x.example/"})
+		tup{capID: "new:cap", offID: "o", protocol: "paid-job/v1", job: map[string]any{"transports": []any{"unary"}}, workUnit: "x", price: "1", workerURL: "https://x.example/"})
 	got := Classify(computeDiff(t, before, after), ClassifyInput{Bounds: defaultBounds()})
 	if got.Class != ClassCritical {
 		t.Fatalf("class=%s want critical", got.Class)
@@ -255,20 +393,27 @@ func TestClassify_HighestClassWins(t *testing.T) {
 	}
 }
 
-func TestClassify_ForbiddenHeaderChanges(t *testing.T) {
+func TestClassify_HeaderChanges(t *testing.T) {
 	before := manifestJSON(t, "0.1.0", 4, ethA, baseTuple())
 	for _, tc := range []struct {
 		name  string
 		after []byte
 		code  string
+		want  Class
 	}{
-		{"eth_address change", manifestJSON(t, "0.1.0", 5, ethB, baseTuple()), CodeEthAddressChanged},
-		{"spec_version change", manifestJSON(t, "0.2.0", 5, ethA, baseTuple()), CodeSpecVersionChanged},
+		// A signing key signs for exactly one orchestrator, so a changed
+		// address is somebody else's manifest: never signable.
+		{"eth_address change", manifestJSON(t, "0.1.0", 5, ethB, baseTuple()), CodeEthAddressChanged, ClassForbidden},
+		// The spec version has one source now and changes when the
+		// operator upgrades. Refusing it outright meant an upgrade could
+		// never be signed; it is held for a deliberate gesture instead
+		// (plan 0043 §3.7).
+		{"spec_version change", manifestJSON(t, "0.2.0", 5, ethA, baseTuple()), CodeSpecVersionChanged, ClassCritical},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Classify(computeDiff(t, before, tc.after), ClassifyInput{Bounds: defaultBounds()})
-			if got.Class != ClassForbidden {
-				t.Fatalf("class=%s want forbidden", got.Class)
+			if got.Class != tc.want {
+				t.Fatalf("class=%s want %s", got.Class, tc.want)
 			}
 			if got.Findings[0].Code != tc.code {
 				t.Fatalf("code=%s want %s", got.Findings[0].Code, tc.code)

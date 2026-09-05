@@ -4,8 +4,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"io"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,29 +21,20 @@ import (
 func sampleSnap() scrape.Snapshot {
 	now := mustTime("2026-05-06T12:00:00Z")
 	return scrape.Snapshot{
-		OrchEthAddress:       "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		WindowStart:          now.Add(-30 * time.Second),
-		WindowEnd:            now,
-		MetadataWarningAfter: 30 * time.Second,
-		MetadataStaleAfter:   2 * time.Minute,
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		WindowStart:    now.Add(-30 * time.Second),
+		WindowEnd:      now,
 		Brokers: []scrape.BrokerStatus{
 			{
-				Name:                     "b1",
-				BaseURL:                  "http://b1:8080",
-				Freshness:                scrape.FreshnessOK,
-				LastSuccessAt:            now,
-				MetadataApplicableTuples: 1,
+				Name:          "b1",
+				BaseURL:       "http://b1:8080",
+				Freshness:     scrape.FreshnessOK,
+				LastSuccessAt: now,
 				TupleHealth: map[string]types.BrokerHealthCapability{
 					"openai:chat-completions|vllm-h100-batch4": {
 						ID:         "openai:chat-completions",
 						OfferingID: "vllm-h100-batch4",
 						Status:     "ready",
-						Metadata: &types.BrokerHealthMetadata{
-							Applicable:            true,
-							LastResult:            "enriched",
-							LastSuccessAt:         now.Add(-10 * time.Second),
-							LastSuccessAgeSeconds: 10,
-						},
 					},
 				},
 			},
@@ -52,7 +47,8 @@ func sampleSnap() scrape.Snapshot {
 				Offering: types.BrokerOffering{
 					CapabilityID:    "openai:chat-completions",
 					OfferingID:      "vllm-h100-batch4",
-					InteractionMode: "http-stream@v1",
+					Protocol:        "paid-job/v1",
+					Job:             &types.JobAxes{"transports": []any{"stream"}},
 					WorkUnit:        types.WorkUnit{Name: "tokens"},
 					PricePerUnitWei: "1500000",
 					Extra: map[string]any{
@@ -176,25 +172,19 @@ func TestBuild_DebouncesIssuedAtWhenOnlyVolatileMetadataChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Second scrape: window advances and broker metadata health degrades,
-	// but the capability content (orch + capabilities tuples) is unchanged.
+	// Second scrape: the window advances and the tuple's live health
+	// degrades, but the capability content (orch + capabilities tuples)
+	// is unchanged. Neither is manifest content, so neither may move
+	// issued_at — a signed manifest that re-issues on every scrape burns
+	// a signature for nothing and looks like a change to a gateway.
 	second := sampleSnap()
 	second.WindowStart = first.WindowEnd
 	second.WindowEnd = first.WindowEnd.Add(60 * time.Second)
-	second.Brokers[0].MetadataUnhealthyTuples = 1
-	second.Brokers[0].MetadataWorstAgeSeconds = 180
 	second.Brokers[0].TupleHealth["openai:chat-completions|vllm-h100-batch4"] = types.BrokerHealthCapability{
 		ID:         "openai:chat-completions",
 		OfferingID: "vllm-h100-batch4",
-		Status:     "ready",
-		Metadata: &types.BrokerHealthMetadata{
-			Applicable:            true,
-			LastResult:            "models_probe_failed",
-			LastSuccessAt:         second.WindowEnd.Add(-3 * time.Minute),
-			LastSuccessAgeSeconds: 180,
-			ConsecutiveFailures:   2,
-			LastError:             "probe failed",
-		},
+		Status:     "unreachable",
+		Reason:     "no_eligible_runner",
 	}
 
 	opts.PrevContentHash = c1.ContentHash
@@ -209,9 +199,10 @@ func TestBuild_DebouncesIssuedAtWhenOnlyVolatileMetadataChanges(t *testing.T) {
 	if !bytes.Equal(c1.ManifestBytes, c2.ManifestBytes) {
 		t.Fatal("manifest_bytes drifted on volatile-metadata-only change")
 	}
-	// Sidecar SHOULD reflect the new metadata health regardless.
-	if len(c2.Metadata.TupleMetadataWarnings) == 0 {
-		t.Fatal("expected metadata sidecar to surface new tuple warning")
+	// The sidecar still moves: it is not signed and its whole job is to
+	// report the scrape that just happened.
+	if !c2.Metadata.ScrapeWindowEnd.After(c1.Metadata.ScrapeWindowEnd) {
+		t.Fatal("sidecar did not advance its scrape window")
 	}
 }
 
@@ -238,7 +229,8 @@ func TestAggregate_PriceConflictHardFails(t *testing.T) {
 		Offering: types.BrokerOffering{
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
-			InteractionMode: "http-stream@v1",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"stream"}},
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "1500001", // different price
 			Extra: map[string]any{
@@ -265,7 +257,8 @@ func TestAggregate_HAPairDedupsToLexMin(t *testing.T) {
 		Offering: types.BrokerOffering{
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
-			InteractionMode: "http-stream@v1",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"stream"}},
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "1500000", // same price
 			Extra: map[string]any{
@@ -300,7 +293,8 @@ func TestAggregate_DistinctExtraEmitsBoth(t *testing.T) {
 		Offering: types.BrokerOffering{
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
-			InteractionMode: "http-stream@v1",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"stream"}},
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "1500000",
 			Extra:           map[string]any{"region": "us-east-1"}, // distinct
@@ -334,60 +328,6 @@ func TestBuild_PreservesOpenAICapabilityIDAndModelExtra(t *testing.T) {
 	openaiExtra, _ := got.Extra["openai"].(map[string]any)
 	if openaiExtra["model"] != "llama-3-70b" {
 		t.Fatalf("model extra = %#v", openaiExtra["model"])
-	}
-}
-
-func TestBuild_EmitsTupleMetadataWarnings(t *testing.T) {
-	snap := sampleSnap()
-	now := snap.WindowEnd
-	snap.Brokers[0].MetadataUnhealthyTuples = 1
-	snap.Brokers[0].MetadataStaleTuples = 1
-	snap.Brokers[0].MetadataWorstAgeSeconds = 180
-	snap.Brokers[0].TupleHealth["openai:chat-completions|vllm-h100-batch4"] = types.BrokerHealthCapability{
-		ID:         "openai:chat-completions",
-		OfferingID: "vllm-h100-batch4",
-		Status:     "ready",
-		Metadata: &types.BrokerHealthMetadata{
-			Applicable:            true,
-			LastResult:            "models_probe_failed",
-			LastSuccessAt:         now.Add(-3 * time.Minute),
-			LastSuccessAgeSeconds: 180,
-			ConsecutiveFailures:   2,
-			LastError:             "probe failed",
-		},
-	}
-
-	c, err := Build(snap, BuildOptions{
-		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		ManifestTTL:    24 * time.Hour,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := c.Metadata.MetadataWarningThresholdSeconds; got != 30 {
-		t.Fatalf("warning threshold seconds = %d; want 30", got)
-	}
-	if got := c.Metadata.MetadataStaleThresholdSeconds; got != 120 {
-		t.Fatalf("stale threshold seconds = %d; want 120", got)
-	}
-	if len(c.Metadata.Warnings) == 0 {
-		t.Fatal("expected top-level metadata warnings")
-	}
-	if len(c.Metadata.TupleMetadataWarnings) != 1 {
-		t.Fatalf("tuple metadata warnings = %d; want 1", len(c.Metadata.TupleMetadataWarnings))
-	}
-	w := c.Metadata.TupleMetadataWarnings[0]
-	if w.Code != WarningCodeMetadataStale {
-		t.Fatalf("warning code = %q; want %q", w.Code, WarningCodeMetadataStale)
-	}
-	if w.MetadataState != types.MetadataStateStale {
-		t.Fatalf("metadata state = %q; want stale", w.MetadataState)
-	}
-	if w.ConsecutiveFailures != 2 {
-		t.Fatalf("consecutive failures = %d; want 2", w.ConsecutiveFailures)
-	}
-	if c.Metadata.SourceBrokers[0].MetadataWorstAgeSeconds != 180 {
-		t.Fatalf("broker metadata worst age = %v; want 180", c.Metadata.SourceBrokers[0].MetadataWorstAgeSeconds)
 	}
 }
 
@@ -593,5 +533,154 @@ func TestBuild_ExplicitRenewalThresholdKeepsDebounce(t *testing.T) {
 	}
 	if !c2.Manifest.IssuedAt.Equal(c1.Manifest.IssuedAt) {
 		t.Fatalf("debounce should hold above explicit threshold: c1=%s c2=%s", c1.Manifest.IssuedAt, c2.Manifest.IssuedAt)
+	}
+}
+
+// The signed bytes are the manifest. Spec 1.0.0 requires `protocol` plus
+// exactly the axes object that matches it; anything the coordinator drops
+// here is dropped from what the cold key signs, and the published manifest
+// fails schema validation at every resolver.
+func TestBuild_EmitsProtocolAndDeclaredAxesVerbatim(t *testing.T) {
+	snap := sampleSnap()
+	snap.SourceTuples = []types.SourceTuple{
+		{
+			BrokerName: "b1",
+			WorkerURL:  "https://b1.example/",
+			Offering: types.BrokerOffering{
+				CapabilityID:    "openai:chat-completions",
+				OfferingID:      "vllm",
+				Protocol:        "paid-job/v1",
+				Job:             &types.JobAxes{"transports": []any{"unary", "stream"}},
+				WorkUnit:        types.WorkUnit{Name: "tokens"},
+				PricePerUnitWei: "1500000",
+			},
+		},
+		{
+			BrokerName: "b2",
+			WorkerURL:  "https://b2.example/",
+			Offering: types.BrokerOffering{
+				CapabilityID: "video:transcode.live",
+				OfferingID:   "h264",
+				Protocol:     "paid-session/v1",
+				Session: &types.SessionAxes{
+					"descriptor_schema":      "rtmp-hls/v1",
+					"metering":               "runner-reported",
+					"heartbeat":              map[string]any{"interval_seconds": float64(10), "missed_threshold": float64(3)},
+					"runway_increment_units": float64(60000),
+				},
+				WorkUnit:        types.WorkUnit{Name: "video-frame-megapixel"},
+				PricePerUnitWei: "200000",
+			},
+		},
+	}
+
+	c, err := Build(snap, BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got struct {
+		Capabilities []map[string]any `json:"capabilities"`
+	}
+	if err := json.Unmarshal(c.ManifestBytes, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Capabilities) != 2 {
+		t.Fatalf("expected 2 tuples, got %d", len(got.Capabilities))
+	}
+
+	byCap := map[string]map[string]any{}
+	for _, e := range got.Capabilities {
+		byCap[e["capability_id"].(string)] = e
+	}
+
+	job := byCap["openai:chat-completions"]
+	if job["protocol"] != "paid-job/v1" {
+		t.Fatalf("protocol = %v", job["protocol"])
+	}
+	// additionalProperties:false — assert the exact key set, so any
+	// stray leftover key (the pre-1.0.0 mode field included) fails here.
+	assertKeys(t, job, "capability_id", "offering_id", "protocol", "job",
+		"work_unit", "price_per_unit_wei", "worker_url")
+	wantJob := map[string]any{"transports": []any{"unary", "stream"}}
+	if !reflect.DeepEqual(job["job"], wantJob) {
+		t.Fatalf("job axes = %#v, want %#v", job["job"], wantJob)
+	}
+	if _, bad := job["session"]; bad {
+		t.Fatal("paid-job tuple must not carry a session object")
+	}
+
+	sess := byCap["video:transcode.live"]
+	if sess["protocol"] != "paid-session/v1" {
+		t.Fatalf("protocol = %v", sess["protocol"])
+	}
+	wantSess := map[string]any{
+		"descriptor_schema":      "rtmp-hls/v1",
+		"metering":               "runner-reported",
+		"heartbeat":              map[string]any{"interval_seconds": float64(10), "missed_threshold": float64(3)},
+		"runway_increment_units": float64(60000),
+	}
+	if !reflect.DeepEqual(sess["session"], wantSess) {
+		t.Fatalf("session axes = %#v, want %#v", sess["session"], wantSess)
+	}
+	if _, bad := sess["job"]; bad {
+		t.Fatal("paid-session tuple must not carry a job object")
+	}
+	assertKeys(t, sess, "capability_id", "offering_id", "protocol", "session",
+		"work_unit", "price_per_unit_wei", "worker_url")
+}
+
+func assertKeys(t *testing.T, entry map[string]any, want ...string) {
+	t.Helper()
+	got := make([]string, 0, len(entry))
+	for k := range entry {
+		got = append(got, k)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("emitted keys = %v, want %v", got, want)
+	}
+}
+
+// The candidate publishes the sign policy it actually applies, so the
+// console reads it instead of keeping its own copy (plan 0043 §3.7).
+func TestBuild_MetadataPublishesEffectiveSignPolicy(t *testing.T) {
+	base := BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+		PublicationSeq: 7,
+	}
+	// Unset threshold: the published value is the applied default
+	// (ttl/3), never 0 — a reader must not have to re-derive it.
+	c, err := Build(sampleSnap(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Metadata.ManifestTTLSeconds; got != int64((24 * time.Hour).Seconds()) {
+		t.Fatalf("manifest_ttl_seconds = %d", got)
+	}
+	if got := c.Metadata.RenewalThresholdSeconds; got != int64((8 * time.Hour).Seconds()) {
+		t.Fatalf("renewal_threshold_seconds = %d, want the applied ttl/3 default", got)
+	}
+
+	// Explicit threshold is published verbatim.
+	withThreshold := base
+	withThreshold.RenewalThreshold = 90 * time.Minute
+	c, err = Build(sampleSnap(), withThreshold)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Metadata.RenewalThresholdSeconds; got != int64((90 * time.Minute).Seconds()) {
+		t.Fatalf("renewal_threshold_seconds = %d, want 5400", got)
+	}
+
+	// The spec version has one source.
+	if c.Manifest.SpecVersion != version.VERSION || c.Metadata.SchemaVersion != version.VERSION {
+		t.Fatalf("spec version drifted from the protocol module: manifest=%q metadata=%q module=%q",
+			c.Manifest.SpecVersion, c.Metadata.SchemaVersion, version.VERSION)
 	}
 }

@@ -1,0 +1,20 @@
+{
+  "contract_version": "1.0",
+  "credential": { "kind": "bearer", "token": "lpc_x" },
+  "host_id": "h",
+  "agent_version": "a/1",
+  "hardware": [],
+  "capabilities": [
+    {
+      "capability_id": "c",
+      "protocol": "paid-session/v1",
+      "descriptor_schemas": ["sfu-room/v1"],
+      "metering": "runner-reported",
+      "work_unit": { "name": "participant_seconds" },
+      "paths": { "create": "/s", "status": "/s/status", "terminate": "/s/{id}" },
+      "readiness": { "type": "http-status" },
+      "identity": {},
+      "schema_versions": { "paid-session/v1": "1.0.0", "sfu-room/v1": "1.0.0" }
+    }
+  ]
+}

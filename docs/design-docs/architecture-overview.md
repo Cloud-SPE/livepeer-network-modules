@@ -48,7 +48,7 @@ flowchart TD
         direction TB
         CB["Capability Broker<br/>(workload-agnostic,<br/>one per host)"]
         WPD["payment-daemon<br/>receiver"]
-        subgraph backends["Backends declared in host-config.yaml"]
+        subgraph backends["Runners — attached outbound, self-declaring"]
             direction LR
             VLLM["vLLM / TGI / etc.<br/>(local)"]
             OAIAPI["OpenAI API<br/>(SaaS)"]
@@ -62,7 +62,7 @@ flowchart TD
         GW["gateway shell<br/>(OpenAI / video / vtuber)"]
         GPD["payment-daemon<br/>sender"]
         SRD["service-registry-daemon<br/>resolver"]
-        ADAPT["gateway-adapters<br/>(per interaction mode)"]
+        PROTO["protocol clients<br/>(paid-job/v1, paid-session/v1<br/>+ the descriptor schemas served)"]
     end
 
     SOC -.-> PRD
@@ -77,12 +77,12 @@ flowchart TD
     SRD --> SREG
     SRD -.->|"GET /manifest.json<br/>+ verify sig"| OC
 
-    GW --> ADAPT
+    GW --> PROTO
     GW --> SRD
     GW --> GPD
     GPD --> TB
 
-    ADAPT ==>|"paid HTTP / WS / RTMP /<br/>session-control + media"| CB
+    PROTO ==>|"POST /v1/job<br/>POST /v1/session + control plane"| CB
     CB --> WPD
     WPD --> TB
 
@@ -105,8 +105,9 @@ The five logical layers, top to bottom:
 - **Worker hosts (capability broker + backends)** — one broker per host, fully
   workload-agnostic. Backends are arbitrary (local containers, LAN services,
   third-party APIs). Co-located `payment-daemon` (receiver) validates tickets.
-- **Gateway** — resolver + sender + per-mode adapter. Talks to the broker over
-  whichever interaction mode the resolved tuple declares.
+- **Gateway** — resolver + sender + per-protocol client. Talks to the broker over
+  whichever protocol the resolved tuple declares (`paid-job/v1` or
+  `paid-session/v1`).
 
 ## Pool overlay
 
@@ -134,18 +135,21 @@ flowchart LR
 
     subgraph members["Pool members"]
         direction LR
-        MB1["member backend A"]
-        MB2["member backend B"]
-        MB3["member backend N"]
+        MR1["member runner A<br/>(GPU host)"]
+        MR2["member runner B"]
+        MR3["member runner N"]
     end
 
     GW["gateway"] --> PCB
     PCB --> PPD
-    PCB --> MB1
-    PCB --> MB2
-    PCB --> MB3
+    MR1 -.->|"outbound attach + capabilities"| PCB
+    MR2 -.-> PCB
+    MR3 -.-> PCB
+    PCB -->|"dispatch over the attached tunnel"| MR1
+    PCB --> MR2
+    PCB --> MR3
 
-    PCC -.->|"render broker host-config"| PCB
+    PCC -.->|"push offers + credentials (admin API)"| PCB
     PCC -.->|"exported payout intents"| PPE
     PCB -.->|"stub/final work receipts"| PCC
     PRD -.->|"round timing"| PRC
@@ -158,9 +162,10 @@ flowchart LR
 
 Current Pool implementation boundaries:
 
-- `pool-controller` owns member records, receipt persistence, round receipts,
-  payout intents, retry history, public summaries, and broker-config
-  generation.
+- `pool-controller` owns member and host-enrolment records, the templates
+  placed on member GPUs, receipt persistence, round receipts, payout intents,
+  retry history, public summaries, and the offer set + attach credentials it
+  pushes to the broker.
 - `pool-reconciler` closes rounds from `protocol-daemon` timing,
   `payment-daemon` realized revenue, and `pool-controller` work receipts.
 - `pool-payout-executor` executes native-`ETH` payouts on Arbitrum and writes
@@ -172,49 +177,72 @@ Current Pool implementation boundaries:
 
 **One process per host, workload-agnostic.** No per-capability Go code. Core jobs:
 
-1. Read a single `host-config.yaml`.
+1. Read a single `host-config.yaml` — which since plan 0043 carries
+   **offers only**: what is sold, at what price, with what capacity,
+   where, and gated by which certification steps. Runner facts
+   (transports, work unit, extractor, paths, readiness, model identity)
+   are not in it and never were the operator's to know.
 2. Expose `GET /registry/offerings`, `GET /registry/health`, `GET /healthz`,
-   `GET /metrics`, plus one canonical path per mode (e.g. `POST /v1/cap` for
-   `http-reqresp` — see [`../../livepeer-network-protocol/modes/`](../../livepeer-network-protocol/modes/)).
-3. Route inbound requests by **`Livepeer-Capability` header** → look up the
-   **backend descriptor** → wrap in the declared **interaction mode** → forward →
-   return the response.
-4. Report `actualUnits` to co-located `payment-daemon` (receiver) over unix socket — same
+   `GET /metrics`, plus one canonical path set per protocol
+   (`POST /v1/job` for `paid-job/v1`; `POST /v1/session` and
+   `/v1/session/{id}/{status,topup,end,events,ws}` for `paid-session/v1` — see
+   [`../../livepeer-network-protocol/protocols/`](../../livepeer-network-protocol/protocols/)).
+3. Admit runners that attach outbound with a credential and declare
+   themselves
+   ([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md)),
+   match them to offers, certify them, and freeze the first certified
+   runner's declared shape into the offer. A later runner that disagrees
+   is ineligible — never a manifest change.
+4. Route inbound requests by **`Livepeer-Capability` header** → select an
+   eligible attached runner → run the declared **protocol** → forward
+   over that runner's own connection → return the response.
+5. Report `actualUnits` to co-located `payment-daemon` (receiver) over unix socket — same
    socket regardless of capability.
-5. Execute broker-local health probes on cadence and publish normalized
-   per-tuple snapshots on `GET /registry/health`.
+6. Publish normalized per-tuple availability on `GET /registry/health`,
+   derived from state the broker already holds: certification says whether
+   a runner can serve an offer, the attach tunnel says whether it is
+   reachable right now. There is no probe cadence and therefore no window
+   in which a published verdict is stale.
+
+**The broker contains no workload-specific knowledge.** It once polled
+per-workload discovery endpoints to hydrate what an offering advertised,
+which meant a new workload needed a broker release; a runner declares
+that itself now, and describing a new workload is the runner serving its
+own contract at `/.well-known/livepeer-runner` — no agent change at all.
 
 **The broker contains zero routing semantics upstream of normalized health.**
-Capability-specific readiness logic is allowed inside probe recipes, but it
-must stop at the broker boundary and publish only the shared outward states
-`ready`, `draining`, `degraded`, `unreachable`, and `stale`.
+Capability-specific readiness logic lives in the runner's own declared
+readiness recipe and in the offer's certification steps, but it must stop at
+the broker boundary and publish only the shared outward states `ready`,
+`draining`, `degraded`, `unreachable`, and `stale`.
 
 Replaces: `openai-worker-node`, `vtuber-worker-node`, `video-worker-node`.
 
 ### Request lifecycle inside the broker
 
-A single `http-reqresp` request, from inbound TLS to settled payment. Streaming
-modes (`http-stream`, `ws-realtime`, `session-control-plus-media`,
-`rtmp-ingress-hls-egress`) follow the same shape but the "forward + collect
-units" step is long-lived — see the streaming-pattern doc for the full picture.
+A single `unary` `paid-job/v1` exchange, from inbound TLS to settled payment.
+The `stream` transport follows the same shape but the "forward + collect units"
+step is long-lived and the claim arrives as a trailer. `paid-session/v1` is a
+different shape entirely — see
+[`protocols/paid-session.md`](../../livepeer-network-protocol/protocols/paid-session.md).
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant GW as gateway adapter
     participant Broker as Capability Broker
-    participant Cfg as host-config.yaml<br/>(loaded once)
+    participant Offer as offer + frozen shape<br/>(operator price · runner declaration)
     participant PD as payment-daemon<br/>(receiver, unix socket)
-    participant Backend as backend<br/>(vLLM / OpenAI / FFmpeg / …)
+    participant Runner as attached runner<br/>(vLLM / OpenAI / FFmpeg / …)
 
-    GW->>Broker: POST /v1/cap<br/>Livepeer-Capability: <id><br/>Livepeer-Offering: <id><br/>Livepeer-Payment: ticket<br/>Authorization: Bearer <session>?
-    Broker->>Cfg: lookup (capability_id, offering_id)
-    Cfg-->>Broker: { interaction_mode, work_unit, extractor,<br/>price, backend descriptor }
+    GW->>Broker: POST /v1/job<br/>Livepeer-Protocol: paid-job/v1<br/>Livepeer-Capability: <id><br/>Livepeer-Offering: <id><br/>Livepeer-Request-Id: <uuid><br/>Livepeer-Payment: ticket
+    Broker->>Offer: lookup (capability_id, offering_id)
+    Offer-->>Broker: { protocol, price } from the offer<br/>{ work_unit, extractor, path } from the frozen<br/>runner declaration
     Broker->>PD: ProcessPayment(payment_bytes, work_id)
     PD-->>Broker: ok (sender, credited_ev, balance)
 
-    Broker->>Backend: forward (transport from descriptor)
-    Backend-->>Broker: response payload
+    Broker->>Runner: forward over the runner's attach tunnel<br/>(transport from the frozen shape)
+    Runner-->>Broker: response payload
 
     Broker->>Broker: extractor → actualUnits<br/>(openai-usage / response-jsonpath /<br/>bytes-counted / seconds-elapsed / …)
     Broker->>PD: ReportUsage(work_id, actualUnits)
@@ -231,126 +259,97 @@ sequenceDiagram
 - `actualUnits` is whatever the declared extractor returns; the broker doesn't
   know what a "token" or "pixel-second" is.
 
-## Layer 2 — Interaction-mode typology
+## Layer 2 — Interaction protocols
 
-The fixed wire contracts. Capabilities pick one. Initial set:
+The fixed wire contracts, rebuilt 2026-08 as two protocols plus declared
+axes (replacing the seven-mode typology):
 
-| Mode | Wire shape | Examples |
+| Protocol | Wire shape | Examples |
 |---|---|---|
-| `http-reqresp` | one HTTP req → one HTTP resp | `openai:embeddings`, custom REST |
-| `http-stream` | request → SSE / chunked stream | `openai:chat-completions` (stream) |
-| `http-multipart` | multipart upload → response | `openai:audio-transcriptions` |
-| `ws-realtime` | bidirectional WebSocket | `openai:realtime`, vtuber `/control` |
-| `rtmp-ingress-hls-egress` | RTMP in → HLS manifest+segments out | `video:live.rtmp` |
-| `session-control-plus-media` | HTTP session-open → broker-managed long-lived media/runtime plane | `livepeer:vtuber-session` |
-| `live-session-remote-runner` | HTTP session-open -> broker authority + remote runner-owned live RTMP/HLS runtime | `video:transcode.live` |
+| `paid-job/v1` | one paid exchange, settled once; transport `unary` \| `stream` \| `multipart` negotiated per-request | `openai:embeddings`, `openai:chat-completions`, ABR transcode dispatch |
+| `paid-session/v1` | durable paid session: descriptor-declared runtime, control plane, usage claims, lease | SFU meetings, live transcode, interactive generative runtimes |
 
-Each mode is implemented once in the broker, once in the gateway. **New capability
-under an existing mode = zero code.** New mode = one adapter on each side.
+Workload identity lives in **runtime-descriptor schemas**
+(`sfu-room/v1`, `rtmp-hls/v1`, …), never in protocol names; every other
+former mode distinction is a declared offering axis (transports, attachment,
+metering source, refill policy). Specs:
+[`protocols/`](../../livepeer-network-protocol/protocols/) and
+[`descriptors/`](../../livepeer-network-protocol/descriptors/).
 
-**Modes are specifications, not libraries.** Living in the
-`livepeer-network-protocol` spec repo (working name) — not a code dependency.
+**Adding a brand-new capability is a YAML edit plus, at most, a descriptor
+schema** — implemented only by the runner that emits it and the gateway that
+consumes it. No broker, clearinghouse, or registry release.
 
-```mermaid
-flowchart LR
-    subgraph caps["Capabilities (declared in host-config.yaml)"]
-        direction TB
-        C1["openai:chat-completions"]
-        C2["openai:embeddings"]
-        C3["openai:audio-transcriptions"]
-        C4["openai:realtime"]
-        C5["video:live.rtmp"]
-        C6["livepeer:vtuber-session"]
-        C8["daydream:scope:v1"]
-        C7["customer:custom-rest-api"]
-    end
+See [`./interaction-modes.md`](./interaction-modes.md) and
+[`./dual-meter-trust.md`](./dual-meter-trust.md).
 
-    subgraph modes["Interaction modes (one adapter on each side)"]
-        direction TB
-        M1["http-reqresp"]
-        M2["http-stream"]
-        M3["http-multipart"]
-        M4["ws-realtime"]
-        M5["rtmp-ingress-hls-egress"]
-        M6["session-control-plus-media"]
-        M7["live-session-remote-runner"]
-    end
+## Layer 3 — Declarative offer config
 
-    subgraph adapters["One adapter per mode<br/>(broker side + gateway side)"]
-        direction TB
-        A1["reqresp adapter"]
-        A2["stream adapter"]
-        A3["multipart adapter"]
-        A4["ws adapter"]
-        A5["rtmp adapter"]
-        A6["session adapter"]
-        A7["external-media session adapter"]
-    end
+`host-config.yaml`. Two concerns: identity, and offers.
 
-    C1 --> M2
-    C2 --> M1
-    C3 --> M3
-    C4 --> M4
-    C5 --> M5
-    C6 --> M6
-    C8 --> M7
-    C7 --> M1
-
-    M1 --> A1
-    M2 --> A2
-    M3 --> A3
-    M4 --> A4
-    M5 --> A5
-    M6 --> A6
-    M7 --> A7
-```
-
-**Adding a brand-new capability under an existing mode is a YAML edit** —
-no broker, gateway, or daemon release. Adding a new mode is the rare case
-where code lands in both `capability-broker/` and `gateway-adapters/`.
-
-See [`./interaction-modes.md`](./interaction-modes.md).
-
-## Layer 3 — Declarative capability config
-
-`host-config.yaml`. Three concerns: identity, capabilities, backends.
+An **offer** is a commercial fact and nothing else: what is sold, under
+which capability, at what price, with what capacity, in what place, gated
+by what certification. That is the operator's whole surface. The runner's
+own facts — transports, descriptor schema, work unit and extractor,
+endpoint paths, readiness recipe, model identity, GPU inventory — are not
+here, because they are not the operator's to know. They arrive in the
+runner's attach document
+([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md)),
+and the first runner to certify freezes them into the offer so the
+published tuple cannot silently change under a gateway that already
+routed to it.
 
 ```yaml
 identity:
   orch_eth_address: 0xabc...
 
-capabilities:
-  - id: "openai:chat-completions"
-    interaction_mode: "http-stream"
-    work_unit:
-      name: "tokens"
-      extractor: { type: "openai-usage" }
-    health:
-      probe:
-        type: "http-openai-model-ready"
-        path: "/healthz"
-        expect_model: "llama-3-70b"
-        timeout_ms: 1500
-        interval_ms: 5000
-        unhealthy_after: 2
+credential_store:
+  path: /var/lib/livepeer/broker/credentials.db
+  sealing_key_file: /etc/livepeer/broker-seal.key
+offers_state_path: /var/lib/livepeer/broker/offers.db
+
+offers:
+  - offering_id: "llama-3-70b-shared"
+    capability: "openai:chat-completions"
+    protocol: "paid-job/v1"
+    # Selects attached runners by the identity they declared — never a URL
+    # the operator typed. Adding capacity is attaching another host.
+    match:
+      identity.openai.model: "llama-3-70b"
     price:
-      amount_wei: 1500000
+      amount_wei: "1500000"
       per_units: 1
-    backend:
-      transport: "http"
-      url: "http://10.0.0.5:8000/v1/chat/completions"
-      auth: "none"
+    capacity:
+      max_in_flight: 4
+      queue_limit: 8
     extra:
       openai:
         model: "llama-3-70b"
       provider: "vllm"
       region: "us-west-2"
       gpu_class: "h100"
+    # Proves a matched runner can actually serve and meter the offer
+    # before it is advertised. `readiness` runs the runner's own declared
+    # recipe, so it stays correct when the runner changes what "ready"
+    # means for it.
+    certification:
+      - { name: ready, type: readiness }
+      - { name: smoke, type: request, config: { transport: unary } }
+      - { name: usage, type: usage, config: { min_units: 1 } }
 ```
 
-The `extractor` library is a small fixed set of recipes (`openai-usage`,
-`response-jsonpath`, `request-formula`, `bytes-counted`, `seconds-elapsed`,
-`ffmpeg-progress`). Adding an extractor is a broker change but extremely rare.
+There is no `capabilities[]` list, no `backend:` block, and no health
+probe to configure: those were the places where an operator hand-copied a
+fact the runner already knew, and a mistyped model name or extractor
+produced an offering the manifest advertised and the backend could not
+serve.
+
+The `extractor` library is still a small fixed set of recipes
+(`openai-usage`, `response-jsonpath`, `request-formula`, `bytes-counted`,
+`seconds-elapsed`, `ffmpeg-progress`) — but the runner names which one it
+is metered by, and a runner declaring an extractor the broker does not
+implement is rejected at attach. Adding an extractor is a broker change
+but extremely rare.
 
 ### OpenAI-compatible `extra` shape
 
@@ -378,61 +377,46 @@ extra:
 
 Rules:
 
-- `extra.openai.model` is required for current `openai:*` offerings.
-- `extra.provider` is required for current `openai:*` offerings.
+- `extra.openai.model` is required on the offer for current `openai:*`
+  offerings.
+- `extra.provider` is required on the offer for current `openai:*` offerings.
 - `served_model_name`, `backend_model`, and `features.*` are optional stable
   enrichment fields.
 - `features.*`, when present, are booleans.
 - Operator-owned deployment labels such as `region`, `gpu_class`, and
   `latency_tier` may also live in `extra`.
-- For `provider: "vllm"` and `provider: "ollama"` on HTTP backends, the broker
-  may probe `GET /v1/models` at startup and fill missing
-  `served_model_name`, `backend_model`, and stable `features.*` fields when the
-  configured `extra.openai.model` is found upstream.
-- For runner families with stable options or presets surfaces, the broker may
-  fill missing `extra.audio.*`, `extra.video.*`, or `extra.vtuber.*` fields
-  from those family-specific endpoints using the same fill-only merge policy.
-- The broker refreshes this metadata on a bounded cadence while running.
-  Discovery freshness, provider, last result, and last error are exposed via
-  `GET /registry/health`; they do not change the tuple's market identity.
-- Prometheus also exposes
-  `livepeer_metadata_refresh_total{family,provider,result}` so discovery drift
-  and probe failures are visible without polling per-offering health.
-- It also exposes refresh latency and freshness signals via
-  `livepeer_metadata_refresh_duration_seconds{family,provider,result}`,
-  `livepeer_metadata_refresh_last_attempt_timestamp_seconds{family,capability,offering,provider}`,
-  and
-  `livepeer_metadata_refresh_last_success_timestamp_seconds{family,capability,offering,provider}`,
-  plus `livepeer_metadata_refresh_last_success_age_seconds{family,capability,offering,provider}`.
-- For alerting on the current discovery state, it also exposes
-  `livepeer_metadata_refresh_current_result{family,capability,offering,provider,result}`,
-  where the active result label is `1` and previous results are reset to `0`
-  when the offering transitions.
-- To surface sustained discovery breakage, it also exposes
-  `livepeer_metadata_refresh_consecutive_failures{family,capability,offering,provider}`,
-  and the same `consecutive_failures` value appears in
-  `GET /registry/health` metadata for each applicable offering.
-- On unhealthy refreshes, the broker preserves `last_success_at` instead of
-  overwriting it, so age-based alerting tracks time since the last healthy
-  metadata refresh rather than time since the last failed probe.
-- `GET /registry/health` also publishes metadata-level
-  `last_success_age_seconds` so operators inspecting the JSON health surface
-  can see the same freshness signal without Prometheus.
-- `last_result` is family-aware rather than a single generic status. For
-  example, OpenAI-compatible offerings may report `model_not_found` or
-  `models_probe_failed`, while runner families may report
-  `audio_options_probe_failed`, `video_presets_empty`, or
-  `vtuber_options_probe_failed`.
+- The rest of this shape comes from the runner. Its declared `identity` is
+  merged into the advertised `extra` at freeze time, and `x-*` extension
+  keys the operator names in `extra_from_runner` are promoted alongside it;
+  a collision between an operator key and a runner key is a load error, not
+  a silent overwrite.
+
+The broker used to fill these fields itself, by polling per-workload
+discovery surfaces — `GET /v1/models` for vLLM and Ollama,
+options/presets endpoints for the audio, video and vtuber families — on a
+bounded cadence, and reporting the freshness of that polling through
+`GET /registry/health` and a family of `livepeer_metadata_refresh_*`
+metrics. That is gone. It meant the broker carried hardcoded knowledge of
+every workload's discovery contract, so a new workload needed a broker
+release; and it was an inference about the runner where the runner had the
+fact outright. A runner now declares its own identity and extensions in
+its attach document, and describing a new workload is the runner's own
+contract, which the agent relays without knowing what is in it.
 
 Boundary:
 
-- In a standalone broker rollout, `host-config.yaml` owns operator intent:
-  capability family, offering ID, interaction mode, price, metering, backend
-  URL, and routing constraints. In a pool-managed rollout, the analogous
-  operator intent lives in `pool-controller` persisted control-plane state.
-- Runtime discovery may validate and enrich an offering, but it does not invent
-  or rewrite its market identity. The broker must not rewrite
-  `extra.openai.model`, `offering_id`, `price`, or `constraints`.
+- In a standalone broker rollout, `host-config.yaml` owns operator intent
+  and only operator intent: capability family, offering ID, protocol,
+  price, capacity, commercial session policy, routing constraints, and the
+  certification a runner must pass. In a pool-managed rollout, the analogous
+  operator intent lives in `pool-controller` persisted control-plane state
+  and is pushed over the broker admin API.
+- The runner owns runner intent: how it is reached, what it can do, how it
+  is metered, and what "ready" means for it. Neither side may author the
+  other's half.
+- Freezing is what keeps those two halves honest. The first certified
+  runner's declared shape becomes the offer's shape; a later runner that
+  disagrees is ineligible rather than a manifest change.
 - Volatile runtime facts such as full model inventories, queue depth,
   throughput, utilization, or context window belong in live health, metrics,
   or diagnostics, not in the signed manifest.
@@ -442,7 +426,8 @@ Boundary:
 The same pattern applies across every runner family in the rewrite:
 
 - `host-config.yaml` defines the offering's market identity.
-- Family-specific discovery validates and enriches only stable metadata.
+- The runner's attach declaration supplies the stable metadata that
+  describes the runner itself; freezing pins it.
 - Volatile runtime state belongs in `GET /registry/health` or metrics, not in
   the signed manifest.
 
@@ -588,39 +573,46 @@ Live only:
 Any new backend family should define four things before implementation:
 
 1. the base `capability_id`
-2. the minimal stable `extra.<family>` schema
-3. the discovery source that fills stable enrichment fields
-4. the live-health source for volatile runtime state
+2. the minimal stable `extra.<family>` schema the operator authors
+3. the contract the runner serves to declare itself for this family —
+   endpoint paths, transports, work unit, extractor, readiness recipe
+   (`runner-contract.md`)
+4. the certification steps that prove a runner of this family actually
+   serves and meters the work
 
 This keeps new workloads consistent with the broker's publication boundary:
 stable capability facts in `/registry/offerings`, live availability facts in
 `/registry/health`, and no direct runner-owned manifest identity.
 
-Live health follows the same pattern: the broker owns a small fixed
-library of **probe recipes** and `host-config.yaml` selects one per tuple.
-Examples might include:
+Live health follows the same pattern, but the recipe is the **runner's**,
+not the operator's. The broker owns a small fixed library of readiness
+recipes and the runner names the one that describes it:
 
 - `http-status` — shallow HTTP reachability
 - `http-jsonpath` — response field must match an expected value
 - `http-openai-model-ready` — backend is up and a specific model is loaded
 - `tcp-connect` — port accepts connections
-- `command-exit-0` — local process or sidecar probe
-- `runner-options-match` — backend reports the expected offering or mode
-- `manual-drain` — operator intent overrides automatic readiness
+
+The broker no longer polls any of these on a cadence. A readiness recipe
+runs as a **certification** step, to decide whether a runner may serve an
+offer at all; after that, the offer's live availability is read off two
+facts the broker already holds — certification state, and whether the
+runner's attach tunnel is up. An operator can still force a tuple down by
+disabling the offer.
 
 The important boundary is:
 
-- **capabilities choose a probe recipe**
-- **the broker executes the probe**
+- **the runner declares which readiness recipe describes it**
+- **the broker executes it, as a certification step**
 - **the broker normalizes the result to generic outward states**
 
 That lets the core modules support specialized health behavior without
 teaching the coordinator, resolver, or gateways what "model loaded",
 "pipeline warmed", or "TURN path ready" mean for any specific workload.
 
-Just like extractors, new probe recipe types are broker changes and
-should be rare. Day-to-day operator work is selecting and tuning existing
-recipes in YAML, not writing new code.
+Just like extractors, new readiness recipe types are broker changes and
+should be rare. Day-to-day operator work is authoring offers and their
+certification steps, not writing new code.
 
 For a standalone broker rollout, this YAML is the operator's day-to-day
 surface. In a pool-managed rollout, the analogous operator surface is the
@@ -630,12 +622,12 @@ state.
 ## Layer 4 — Discovery (workload-agnostic registry)
 
 - **Manifest data model**: a flat list of
-  `(capability_id, offering_id, interaction_mode, work_unit_name, price_per_unit_wei, worker_url, eth_address, extra, constraints)`
+  `(capability_id, offering_id, protocol, work_unit_name, price_per_unit_wei, worker_url, eth_address, extra, constraints)`
   tuples. **Host is not a registration unit.**
 - **Coordinator UI**: roster is per-capability-tuple, not per-host. Multi-binary-per-host
   vanishes (no separate binaries); multi-broker-per-orch is N more entries.
 - Resolver semantics keep their existing shape but the response now carries
-  `interaction_mode`.
+  `protocol`.
 
 The current `service-registry-daemon` resolver/publisher split keeps working; what
 changes is the manifest schema and the coordinator UX.
@@ -684,14 +676,14 @@ sequenceDiagram
 
     Note over GW,SRD: On the hot path
     GW->>SRD: Resolver.Select(capability_id,<br/>offering_id?, tier?, min_weight?)
-    SRD-->>GW: route { worker_url, eth_address,<br/>interaction_mode, work_unit,<br/>price_per_unit_wei, extra }
+    SRD-->>GW: route { worker_url, eth_address,<br/>protocol, work_unit,<br/>price_per_unit_wei, extra }
 ```
 
 **Two verifications, intentionally.** The coordinator verifies on upload; every
 gateway resolver verifies again on fetch. If the coordinator host is ever
 compromised, tampered manifests still don't propagate.
 
-**`interaction_mode` is in the resolver response** — the gateway picks the
+**`protocol` is in the resolver response** — the gateway picks the
 adapter from this, not from any per-capability lookup table.
 
 ## Layer 5 — Trust spine: operator-driven sign cycle
@@ -701,8 +693,9 @@ adapter from this, not from any per-capability lookup table.
 **Operator-driven cycle:**
 
 1. Operator updates the broker-facing operator surface:
-   - standalone rollout: edit `host-config.yaml` on broker host(s)
-   - pool-managed rollout: mutate `pool-controller` state and apply broker runtime
+   - standalone rollout: edit `offers[]` in `host-config.yaml` on broker host(s)
+   - pool-managed rollout: mutate `pool-controller` state; the controller
+     pushes the offer set over `PUT /admin/v1/offers`
 2. Broker re-advertises locally; orch-coordinator scrapes; coordinator builds
    candidate manifest and exposes it for download.
 3. Operator pulls candidate to secure-orch (download via console, scp, USB — operator's
@@ -727,7 +720,7 @@ sequenceDiagram
     participant Chain as ServiceRegistry
 
     Note over Op,Broker: 1. Operator updates broker-facing state
-    Op->>Broker: edit host-config.yaml or apply via pool-controller
+    Op->>Broker: edit offers[] in host-config.yaml,<br/>or pool-controller pushes them
     Broker->>Broker: reload runtime /registry/offerings
 
     Note over Coord,Broker: 2. Coordinator scrapes, builds candidate
@@ -740,10 +733,9 @@ sequenceDiagram
     Op->>SOC: import candidate manifest
     SOC->>SOC: render diff vs currently-published manifest
     Op->>SOC: review + tap Sign
-    SOC->>PRD: Publisher.BuildAndSign
-    PRD->>Cold: sign canonical bytes (HSM)
-    Cold-->>PRD: signature
-    PRD-->>SOC: signed manifest
+    SOC->>Cold: sign canonical bytes (cold key / HSM)
+    Cold-->>SOC: signature
+    SOC->>SOC: write last-signed envelope
 
     Note over Op,Coord: 4. Operator ships signed manifest back
     Op->>Coord: POST /admin/manifest (signed)
@@ -776,7 +768,7 @@ The `Livepeer-Payment` header remains the wire-format payment envelope while
 `Livepeer-Capability` and `Livepeer-Offering` carry the routed tuple so the
 broker can refuse mismatched routing.
 
-### Per-request payment (`http-reqresp` / `http-stream` / `http-multipart`)
+### Per-exchange payment (`paid-job/v1`)
 
 One ticket per inbound request. Settles on-chain only if the ticket is winning;
 otherwise it's expected-value credit. `actualUnits` is reported after the
@@ -812,12 +804,14 @@ sequenceDiagram
     Broker-->>GW: response
 ```
 
-### Streaming / session payment (`ws-realtime` / `session-control-plus-media` / `rtmp-…`)
+### Session payment (`paid-session/v1`)
 
-Amortized billing: one `OpenSession` at attach, periodic `Debit` ticks during
-the session, `CloseSession` on teardown. The cross-workload rules live in
-[`streaming-workload-pattern.md`](./streaming-workload-pattern.md) — this is the
-canonical shape.
+Amortized billing: one `OpenSession` at open, `Debit` driven by the runner's
+cumulative usage claims, `CloseSession` on winddown. The normative contract is
+[`protocols/paid-session.md`](../../livepeer-network-protocol/protocols/paid-session.md)
+§7/§9 and the trust framing is [`dual-meter-trust.md`](./dual-meter-trust.md).
+(The older [`streaming-workload-pattern.md`](./streaming-workload-pattern.md) is
+superseded and kept only as provenance.)
 
 ```mermaid
 sequenceDiagram
@@ -871,7 +865,7 @@ See [`./payment-decoupling.md`](./payment-decoupling.md).
 
 - `service-registry-daemon` applies Layer 1 + Layer 2 before the gateway sees
   a route: signed-manifest validity plus broker live health.
-- Gateway resolves a route → gets the tuple including `interaction_mode`.
+- Gateway resolves a route → gets the tuple including `protocol`.
 - Picks the matching mode adapter (req/resp, stream, ws, RTMP, session) — generic across
   capabilities.
 - Wraps with `Authorization` (customer's bearer), `Livepeer-Payment` (ticket from sender
@@ -882,7 +876,7 @@ See [`./payment-decoupling.md`](./payment-decoupling.md).
 - For session/stream/realtime: payment is amortized
   (`OpenSession + periodic Debit + CloseSession`).
 
-**Gateway code is per-mode, not per-capability.** New capability under an existing mode
+**Gateway code is per-protocol, not per-capability.** New capability under an existing protocol
 lights up automatically once the manifest carries it.
 
 **Client-side health policy is shared, not forked.** Client implementations
@@ -894,22 +888,14 @@ flowchart TD
     Cust["customer request"] --> Shell["client shell"]
     Shell --> Auth["AuthResolver<br/>(bearer → customer + balance)"]
     Auth --> Resolve["Resolver.Select(capability_id,<br/>offering_id?, tier?, min_weight?)"]
-    Resolve --> Tuple["route tuple<br/>{ worker_url, eth_address,<br/>interaction_mode, work_unit,<br/>price_per_unit, extra }"]
-    Tuple --> ModeSwitch{interaction_mode?}
+    Resolve --> Tuple["route tuple<br/>{ worker_url, eth_address,<br/>protocol, work_unit,<br/>price_per_unit, extra }"]
+    Tuple --> ProtoSwitch{protocol?}
 
-    ModeSwitch -->|http-reqresp| A1["reqresp adapter"]
-    ModeSwitch -->|http-stream| A2["stream adapter<br/>(SSE / chunked)"]
-    ModeSwitch -->|http-multipart| A3["multipart adapter"]
-    ModeSwitch -->|ws-realtime| A4["ws adapter"]
-    ModeSwitch -->|rtmp-ingress-hls-egress| A5["rtmp adapter"]
-    ModeSwitch -->|session-control-plus-media| A6["session adapter"]
+    ProtoSwitch -->|paid-job/v1| A1["job client<br/>(unary / stream / multipart<br/>negotiated per request)"]
+    ProtoSwitch -->|paid-session/v1| A2["session client<br/>(open / topup / status / end<br/>+ the descriptor schema)"]
 
     A1 --> Sender["payment-daemon sender<br/>CreatePayment"]
     A2 --> Sender
-    A3 --> Sender
-    A4 --> Sender
-    A5 --> Sender
-    A6 --> Sender
 
     Sender --> Wrap["wrap headers:<br/>Authorization (customer bearer)<br/>Livepeer-Payment (ticket)<br/>Livepeer-Capability / Offering"]
     Wrap --> Broker["Capability Broker<br/>(worker-orch host)"]
@@ -985,7 +971,7 @@ market's view of itself.
 
 ### Changes
 
-- Manifest schema: flat list of capability tuples; `interaction_mode` in resolver
+- Manifest schema: flat list of capability tuples; `protocol` in resolver
   response.
 - `payment-daemon`: opaque capability/work-unit names; arithmetic only.
 - Coordinator UX: capability-as-roster-entry.

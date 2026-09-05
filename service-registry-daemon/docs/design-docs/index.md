@@ -24,8 +24,8 @@ Non-negotiables that shape every decision in this repo.
 ## Architectural decisions
 
 - [architecture.md](architecture.md) — `verified` — layer stack, domains, providers (boundaries enforced by golangci-lint depguard in `.golangci.yml`)
-- [manifest-schema.md](manifest-schema.md) — `accepted` — the JSON schema served at the exact manifest URL published on-chain, including canonical-bytes definition for signing (covered by `internal/types/decoder_test.go`)
-- [signature-scheme.md](signature-scheme.md) — `verified` — Ethereum personal-sign over canonical bytes; recover-then-compare against the chain-claimed eth address (covered by `internal/providers/{signer,verifier}/`)
+- [../livepeer-network-protocol/manifest/schema.json](../livepeer-network-protocol/manifest/schema.json) — `accepted` — the JSON schema served at the exact manifest URL published on-chain, including canonical-bytes definition for signing (covered by `internal/types/decoder_test.go`)
+- [references/archived/signature-scheme.md](references/archived/signature-scheme.md) — `verified` — Ethereum personal-sign over canonical bytes; recover-then-compare against the chain-claimed eth address (covered by `internal/providers/{signer,verifier}/`)
 - [serviceuri-modes.md](serviceuri-modes.md) — `accepted` — resolver interpretation of full manifest URLs, CSV-fallback (read-only), and chainless static-overlay synth (covered by `internal/service/resolver/`)
 - [static-overlay.md](static-overlay.md) — `verified` — operator-curated `nodes.yaml` overlay rules and merge precedence (covered by `internal/config/overlay_test.go` + resolver overlay tests)
 - [resolver-cache.md](resolver-cache.md) — `verified` — TTL, last-good fallback, audit-event log (covered by `internal/repo/{manifestcache,audit}/`)

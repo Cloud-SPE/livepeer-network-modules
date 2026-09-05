@@ -26,9 +26,13 @@ caller restarts and component extraction.
   against the selected broker URL to fetch authoritative payee-issued
   `TicketParams`.
 - **Outbound, receiver mode:** optional Arbitrum JSON-RPC when
-  `--chain-rpc` is set.
-- **State:** BoltDB on receiver side only. Sender-side sessions remain
-  process-local memory.
+  `--chain-rpc-urls` is set.
+- **State:** BoltDB on both sides. The receiver keeps the session ledger;
+  the sender keeps mint-idempotency records, so a retry after an
+  uncertain response replays rather than signing a second batch. Only the
+  sender's ticket-session cache is process-local memory — it is
+  reconstructible from the payee, and losing it costs a round trip, not
+  money.
 
 ## Load-bearing session contracts
 
@@ -119,6 +123,13 @@ Receiver-side BoltDB owns:
   `(sender, recipient, capability, offering)`
 
 The store package is the only owner of these buckets.
+
+The redemption *transactions* live in a second BoltDB file
+(`--txintent-db`), owned by chain-commons's transaction-intent store:
+one intent per ticket hash, with its nonce, attempts and terminal
+outcome. The store package never touches that file; the ticket broker
+files intents and waits on them, and the daemon resumes non-terminal
+intents at boot.
 
 ## Failure modes
 

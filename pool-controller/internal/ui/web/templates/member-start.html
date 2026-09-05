@@ -1,0 +1,66 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Get started</p>
+  <h1>Add a host</h1>
+  <p class="muted">Enrolling a host gives you a credential and a bundle. You unzip it and run one command; from there the pool assigns templates, the agent starts the runners, and certification happens on its own. There is no operator step on this path.</p>
+</section>
+
+<section>
+  <h2>1 · Name the host</h2>
+  <p class="muted">A label only you see. Use something you will recognise on the <a href="/member/hosts" class="inline-link">Hosts</a> page — the machine's hostname is usually enough.</p>
+  <div class="form-grid">
+    <label>Host label
+      <input id="startHostLabel" placeholder="workshop-4090" autocomplete="off">
+    </label>
+  </div>
+  <div class="actions">
+    <button id="startCreate" class="primary-button">Create host enrollment</button>
+  </div>
+</section>
+
+<section id="startCredentialSection" hidden>
+  <h2>2 · Save the credential</h2>
+  <div id="startCredential"></div>
+</section>
+
+<section id="startBundleSection" hidden>
+  <h2>3 · Download the bundle and run one command</h2>
+  <div id="startBundle"></div>
+</section>
+
+<section>
+  <h2>What happens after the command</h2>
+  <div class="workflow-banner">
+    <article class="workflow-step">
+      <strong>Attach</strong>
+      <span>The agent connects outbound with its credential and reports the GPUs it can see. Nothing is opened on your network.</span>
+    </article>
+    <article class="workflow-step">
+      <strong>Placement</strong>
+      <span>The pool matches each GPU to the templates it qualifies for, and the agent pulls the runners for them.</span>
+    </article>
+    <article class="workflow-step">
+      <strong>Certification, then earning</strong>
+      <span>Each placement is certified, runs capped on probation, and is promoted automatically once it has proved itself.</span>
+    </article>
+  </div>
+  <p class="muted">Every one of those steps, and the reason it is where it is, shows on <a href="/member/hosts" class="inline-link">Hosts</a>.</p>
+</section>
+
+<section>
+  <h2>Already have a host?</h2>
+  <p class="muted">This browser keeps the credentials of hosts you enrolled here so the portal can read their status. A host enrolled in another browser is not listed until you add its credential back. The agent also rotates its own token on a cadence, so a copy kept here goes stale in about a day &mdash; the host&rsquo;s current one is always in the <code>enrollment-token</code> file beside its compose file.</p>
+  <div class="form-grid">
+    <label>Enrollment ID
+      <input id="startAdoptID" placeholder="enr-…" autocomplete="off" spellcheck="false">
+    </label>
+    <label>Enrollment token
+      <input id="startAdoptToken" type="password" autocomplete="off" spellcheck="false">
+    </label>
+  </div>
+  <div class="actions">
+    <button id="startAdopt" class="secondary">Add this host to this browser</button>
+  </div>
+  <p class="small muted">On the host: <code>cat enrollment-token</code> in the directory you unzipped the bundle into. If that is gone too, ask the operator to revoke the host and enrol it again.</p>
+</section>
+{{end}}

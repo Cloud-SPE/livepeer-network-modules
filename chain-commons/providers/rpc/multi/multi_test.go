@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
 	cerrors "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/errors"
+	"github.com/ethereum/go-ethereum"
 )
 
 // fakeRPCServer responds to JSON-RPC calls. handler is invoked with the
@@ -193,7 +195,7 @@ func TestAllCircuitsOpen_ReturnsCircuitOpenError(t *testing.T) {
 	policy := defaultPolicy()
 	policy.MaxRetries = 0
 	policy.CircuitBreakerThreshold = 1
-	policy.HealthProbeInterval = time.Hour     // disable probe for this test
+	policy.HealthProbeInterval = time.Hour // disable probe for this test
 	policy.CircuitBreakerCooloff = time.Hour
 
 	m, _ := Open(Options{URLs: []string{primary.URL()}, Policy: policy})
@@ -283,5 +285,58 @@ func TestEndpoints_RolesAssigned(t *testing.T) {
 		if eps[i].Role != "backup" {
 			t.Errorf("%d: role = %q, want backup", i, eps[i].Role)
 		}
+	}
+}
+
+// A receipt or transaction the node has not seen yet is a normal polling
+// state, not an endpoint fault: one attempt, no retry, no failover, no
+// strike against the circuit breaker, and the go-ethereum sentinel still
+// visible to the caller through errors.Is.
+func TestNotFound_IsNotRetriedAndNotRecordedAsFailure(t *testing.T) {
+	primary := newFakeRPCServer(func(method string) (string, error) {
+		switch method {
+		case "eth_getTransactionReceipt", "eth_getTransactionByHash":
+			return "null", nil
+		default:
+			return `"0xa4b1"`, nil
+		}
+	})
+	defer primary.Close()
+	backup := newFakeRPCServer(func(method string) (string, error) { return `"0xa4b1"`, nil })
+	defer backup.Close()
+
+	p := defaultPolicy()
+	p.MaxRetries = 6 // the production default; the point is that none happen
+	m, err := Open(Options{URLs: []string{primary.URL(), backup.URL()}, Policy: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	before := primary.Calls()
+	receipt, err := m.TransactionReceipt(context.Background(), chain.TxHash{0xab})
+	if receipt != nil || !errors.Is(err, ethereum.NotFound) {
+		t.Fatalf("TransactionReceipt = %v, %v; want nil, ethereum.NotFound", receipt, err)
+	}
+	if got := primary.Calls() - before; got != 1 {
+		t.Fatalf("primary attempts = %d, want exactly 1 (no retry)", got)
+	}
+	if backup.Calls() != 0 {
+		t.Fatalf("backup was consulted %d times; NotFound must not fail over", backup.Calls())
+	}
+
+	tx, pending, err := m.TransactionByHash(context.Background(), chain.TxHash{0xcd})
+	if tx != nil || pending || !errors.Is(err, ethereum.NotFound) {
+		t.Fatalf("TransactionByHash = %v, %v, %v; want nil, false, ethereum.NotFound", tx, pending, err)
+	}
+
+	never := time.Time{}.Unix() // Endpoints reports a zero time.Time as its Unix value
+	for _, ep := range m.Endpoints() {
+		if ep.ConsecutiveFailures != 0 || ep.CircuitState != "closed" || ep.LastFailureUnix != never {
+			t.Fatalf("endpoint %s penalized for NotFound: %+v", ep.URL, ep)
+		}
+	}
+	if cerrors.Classify(err).Class != cerrors.ClassNotFound {
+		t.Fatalf("class = %s, want not_found", cerrors.Classify(err).Class)
 	}
 }

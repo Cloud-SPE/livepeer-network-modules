@@ -29,7 +29,22 @@ type Manifest struct {
 	EthAddress    string    `json:"eth_address"`
 	IssuedAt      time.Time `json:"issued_at"`
 	Nodes         []Node    `json:"nodes"`
-	Signature     Signature `json:"signature"`
+	// SettlementKeys are the orch's delegated settlement-signing keys,
+	// verified as part of the manifest and projected onto every route so
+	// a consumer can check a broker's settlement signature without
+	// fetching or verifying manifests itself.
+	SettlementKeys []SettlementKey `json:"settlement_keys,omitempty"`
+	Signature      Signature       `json:"signature"`
+}
+
+// SettlementKey is one delegated key with its validity window. All
+// currently-valid keys are carried, newest first: a record signed just
+// before a rotation must still verify, so the outgoing key stays until
+// its expires_at.
+type SettlementKey struct {
+	PublicKey string    `json:"public_key"`
+	NotBefore time.Time `json:"not_before"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // Signature carries the eth-personal-sign output plus a diagnostic hash.
@@ -51,8 +66,19 @@ type Node struct {
 // Capability advertises one named operation. Name is opaque to this
 // daemon — see docs/design-docs/workload-agnostic-strings.md.
 type Capability struct {
-	Name      string          `json:"name"`
-	WorkUnit  string          `json:"work_unit,omitempty"`
+	Name     string `json:"name"`
+	WorkUnit string `json:"work_unit,omitempty"`
+	// WorkUnitEstimator is how a client computes a funding ceiling for
+	// this capability, when it can. Nil for every capability whose
+	// ceiling the caller can derive from its own request — which is most
+	// of them, and why this is a pointer rather than a value.
+	WorkUnitEstimator *Estimator `json:"work_unit_estimator,omitempty"`
+	// Protocol is the signed tuple's protocol tag ("paid-job/v1",
+	// "paid-session/v1"). Typed, and projected onto SelectedRoute as a
+	// typed field, because every consumer gates on it. It used to reach
+	// consumers only as a key inside Extra, where an operator-declared
+	// key of the same name could shadow it.
+	Protocol  string          `json:"protocol,omitempty"`
 	Offerings []Offering      `json:"offerings,omitempty"`
 	Extra     json.RawMessage `json:"extra,omitempty"`
 }
@@ -64,9 +90,14 @@ type Capability struct {
 // the per-work-unit wholesale rate the orchestrator advertises;
 // gateways/bridges read it as the wholesale-side input to routing.
 type Offering struct {
-	ID                  string          `json:"id"`
-	PricePerWorkUnitWei string          `json:"price_per_work_unit_wei,omitempty"` // decimal big-int as string
-	Constraints         json.RawMessage `json:"constraints,omitempty"`
+	ID                  string `json:"id"`
+	PricePerWorkUnitWei string `json:"price_per_work_unit_wei,omitempty"` // decimal big-int as string
+	// PerUnits is the denominator of the price: it buys this many work
+	// units. Absent (0) means 1. Projected onto SelectedRoute as
+	// units_per_price — a consumer that reads the price without it
+	// quotes per_units times the rate the payee will charge.
+	PerUnits    uint64          `json:"per_units,omitempty"`
+	Constraints json.RawMessage `json:"constraints,omitempty"`
 }
 
 // Clone returns a deep copy of the manifest. Used in canonicalization
@@ -101,4 +132,19 @@ func (m *Manifest) Clone() *Manifest {
 		}
 	}
 	return &out
+}
+
+// Estimator is the client-reproducible measurement for a capability
+// whose ceiling a caller cannot derive from its own request.
+//
+// It travels because a consumer reserving funds up front has to reach
+// the same number the seller will bill: if the two disagree the
+// settlement exceeds the reservation, and that surfaces as a refused
+// exchange rather than a bug report.
+type Estimator struct {
+	ID        string `json:"id"`
+	Rounding  string `json:"rounding"`
+	Exactness string `json:"exactness"`
+	Package   string `json:"package,omitempty"`
+	Fixtures  string `json:"fixtures,omitempty"`
 }

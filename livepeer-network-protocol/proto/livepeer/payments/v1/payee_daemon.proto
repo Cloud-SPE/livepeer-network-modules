@@ -144,6 +144,37 @@ message GetTicketParamsRequest {
 
 message GetTicketParamsResponse {
   TicketParams ticket_params = 1;
+
+  // Set when answering this call ROTATED the ticket session: the work_id
+  // the returned params supersede.
+  //
+  // A recipient rand tracks a bounded number of sender nonces, so a
+  // long-lived session eventually exhausts its budget and the payee
+  // mints a fresh rand. That changes work_id, and a changed work_id must
+  // never arrive silently — a consumer keying evidence on it would
+  // otherwise attribute the successor's payments to nothing, or to the
+  // predecessor.
+  //
+  // Empty on the ordinary path, which is almost every call.
+  string predecessor_work_id = 2;
+
+  // The highest sender nonce this payee has already recorded against the
+  // returned recipient rand, and whether it has recorded any.
+  //
+  // A sender allocates nonces from its own durable counter. If that
+  // counter is lost — a restored backup, a wiped volume — the sender
+  // rewinds and every nonce it produces has already been seen here, so
+  // every payment is refused as a replay, credits nothing, and it can
+  // never make progress on this rand again. It cannot detect this
+  // itself: from its side a replay rejection looks the same as a
+  // duplicate delivery.
+  //
+  // So the payee states what it has seen, and a sender resumes ABOVE it.
+  // Reported at quote time rather than in a rejection, because that is
+  // before anything is signed: the loss heals on the next mint instead
+  // of costing a refused payment first.
+  uint32 highest_seen_nonce = 3;
+  bool has_seen_nonces = 4;
 }
 
 // ─── ListCapabilities ─────────────────────────────────────────────────
@@ -169,12 +200,25 @@ message OpenSessionRequest {
   // Offering the session is opened against.
   string offering = 3;
 
-  // Authoritative price per work unit for this session (wei,
-  // big-endian bytes).
+  // Authoritative price for `per_units` work units (wei, big-endian
+  // bytes). NOT necessarily the price of one unit — read it with
+  // `per_units`, never alone.
   bytes price_per_work_unit_wei = 4;
 
   // Work-unit identifier for this session ("token", "second", ...).
   string work_unit = 5;
+
+  // Denominator of the price: `price_per_work_unit_wei` buys this many
+  // work units. 0 is read as 1. Carrying it lets an offering price
+  // below 1 wei per unit, which token-metered workloads need; dropping
+  // it makes the ledger debit `per_units` times the intended rate.
+  //
+  // The daemon bills cumulatively —
+  // `bill(U) = ceil(U * price / per_units)` over units debited since
+  // open — and charges each debit the difference between successive
+  // cumulative bills. Rounding each debit on its own would let a long
+  // session accumulate up to one wei of drift per debit.
+  uint64 per_units = 6;
 }
 
 message OpenSessionResponse {
@@ -244,6 +288,30 @@ message DebitBalanceResponse {
   // indicate overdraft; callers should stop serving work when this
   // happens.
   bytes balance = 1;
+
+  // What this debit actually CHARGED, in wei.
+  //
+  // Returned rather than left for the caller to recompute. Billing is
+  // cumulative — a debit costs bill(total_after) - bill(total_before) —
+  // so the charge depends on the session's running total, and a caller
+  // recomputing it from the units alone gets a different number whenever
+  // a remainder is carried. That is not hypothetical: a broker attested
+  // 5 wei in a signed settlement for a debit the ledger charged 4, and
+  // the two disagreed by exactly the carried remainder.
+  //
+  // The ledger is the authority on what was charged. It says so here.
+  BigUInt debited_wei = 2;
+
+  // Cumulative work units debited on this (sender, work_id) after this
+  // debit. Carried so a settlement record can state its position in the
+  // cumulative curve, which is what makes the charge verifiable from the
+  // record alone rather than from the session's whole history.
+  uint64 cumulative_units = 3;
+
+  // Zero when the debit was deduplicated as a replay: nothing was
+  // charged and the totals did not move. Distinguishes "already applied"
+  // from "applied and cost nothing".
+  bool replayed = 4;
 }
 
 message SufficientBalanceRequest {

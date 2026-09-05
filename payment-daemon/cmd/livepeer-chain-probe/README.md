@@ -1,0 +1,175 @@
+# chain-probe — exercise the paid path against a real chain
+
+Every payment defect found so far was invisible to unit tests,
+conformance and dev deployments, because all three run against a mock
+payment client. A mock credits what it is told to credit and never
+closes a session it should not close, so it cannot show:
+
+- a session that bills **zero** because pricing was discarded;
+- a price **nobody signed** being used to bill;
+- work served against an **empty balance**;
+- only the **first** job on a shared payment session ever billing;
+- a ledger and a signed settlement **disagreeing** about the same job.
+
+All five were real. All five were found here.
+
+## Cost of a run
+
+Minting a ticket does not move money — a ticket is a signed lottery
+claim. Value moves only when one **wins** and the payee redeems it,
+which costs the payee gas and draws the ticket's face value from the
+payer's deposit.
+
+At the daemon's defaults (face value 0.001 ETH, win probability 1/1024)
+a run costs, in expectation, a fraction of a cent, with a 1-in-1024
+chance per ticket of actually costing 0.001 ETH. Small, real, and worth
+knowing before you type the command.
+
+**This is deliberately not part of `make test` or CI.** It spends real
+value and needs real keys. A check that runs by accident against mainnet
+is worse than no check.
+
+## Running it
+
+Bring up a payer, a payee and a broker against the same chain, then:
+
+```
+go run ./cmd/livepeer-chain-probe \
+    --recipient=0x<payee address> \
+    --protocol=both
+```
+
+Flags worth setting deliberately:
+
+| Flag | Why |
+|---|---|
+| `--per-units` | **Keep it above 1.** At `per_units: 1` flooring and ceiling agree, so a rounding defect cannot surface — which is exactly how one shipped. |
+| `--price-wei` | Pick a price whose product with the unit count leaves a remainder. |
+| `--protocol` | `job`, `session`, `both`, `rotation`, `retry`, or `evidence`. |
+| `--payee-admin-token` | Required for `rotation`: it drives `PayeeAdmin.ResetSession`, which is closed unless the payee was started with a matching `--payee-admin-token`. |
+
+## The rotation run
+
+`--protocol=rotation` drives a recipient rotation under a live session —
+the one path with no other way to test it. A mock cannot rotate a rand it
+never had, and conformance treats payment envelopes as opaque by design.
+The sequence is the one a gateway actually hits:
+
+```
+open → payee resets its rand → the next payment is refused with
+recipient_rotated → the payer evicts its cached identity → a re-mint
+gets a new work_id → a top-up declaring Livepeer-Rebind-From moves the
+live session onto it
+```
+
+and it then asserts what makes a rotation safe: same session, same
+credential, one generation forward, cumulative units unbroken across the
+boundary, predecessor settled, and the whole chain in the signed
+settlement.
+
+This run found that the payee **credited** payments arriving on the
+retired identity while every debit against that closed session failed —
+value in, no work billable out. Run it after any change to session
+lifecycle or ticket validation.
+
+## The evidence run
+
+`--protocol=evidence` exercises the reconciliation surfaces a
+clearinghouse depends on, against a real signing broker:
+
+- a settled exchange is findable by the `request_id` the CONSUMER issued,
+  and carries an actual signed settlement — `SETTLED` is a claim about
+  money, so it requires the evidence rather than merely a terminal state;
+- an id nobody has heard of answers `NO_RECORD`, which is silence and not
+  a claim;
+- a non-admission is signed for an unseen id, and the SECOND ask returns
+  the same record rather than re-signing one fact under a later
+  `observed_at`;
+- that record then surfaces through the ordinary exchange lookup;
+- asking for non-admission on an ADMITTED request hands back its
+  settlement instead of a bare refusal, so the caller does not charge
+  conservatively against evidence the broker is holding.
+
+These decide how much a customer is charged when a settlement goes
+missing, and the failure they guard against is silent in both directions.
+
+The `job` run also prints and checks the expiry the payer computed from a
+REAL contract read:
+
+```
+expiry: creation_round=4310 validity_period=2 expires_after_round=4311 observed_at=...
+```
+
+`validity_period` comes from `TicketBroker.ticketValidityPeriod()`, and
+the read is fail-closed — a broker that cannot read it refuses to mint.
+That makes this run the only place the ABI entry is exercised at all.
+
+## The retry run
+
+`--protocol=retry` exercises the debit-retry lifecycle against a real
+ledger: work delivered, debit refused, and the exchange reaching a signed
+terminal settlement anyway.
+
+The failure has to come from outside, because the probe cannot stop a
+daemon it did not start. Point the offering's backend at something slow,
+run the probe, and **stop the payee while the backend is working**, then
+start it again:
+
+```
+# backend sleeps ~20s
+./chain-probe --protocol=retry --recipient=0x... &
+sleep 2 && kill -9 $(pgrep -f 'payment-daemon --mode=receiver')
+sleep 20 && ./payment-daemon --mode=receiver ...   # same --db
+```
+
+The probe asserts the sequence: `202 accounting_pending` while the debit
+is outstanding, then a signed terminal settlement whose `debited_units`
+reflect what the ledger finally took.
+
+Restart the payee with the **same `--db`**. The session has to survive, and
+the broker has to have left it open — a closed session refuses debits, so
+closing it at end of exchange makes every retry fail no matter how
+generous the budget. That was a real bug, and this run is what would have
+caught it.
+
+## Run it twice
+
+The second run is the one that matters. Several defects only appear on
+the **second** exchange over one ticket session — the first bills
+correctly, which is precisely the request an operator tests before
+declaring victory. A single green run proves less than it looks like.
+
+Restarting the daemons between runs wipes the ticket session and hides
+exactly these bugs. Don't.
+
+## What it asserts
+
+Not log lines — money:
+
+- the payment credited something (a zero-EV payment funds no work);
+- the ledger balance moved by **credit minus bill**, with the bill
+  recomputed here from the normative rule rather than imported from the
+  broker, so a wrong implementation cannot agree with itself;
+- the settlement is reachable without reading an HTTP trailer;
+- the settlement is **signed**, names its own exchange, and carries an
+  RFC3339 `issued_at`;
+- for sessions: the `work_id` is the payment's, usage debits, a top-up
+  replay returns the recorded outcome rather than funding twice, and the
+  runner is terminated at end;
+- the settlement carries the id its CONSUMER issued — `request_id` on a
+  job, `gateway_session_id` on a session — inside the signature. Every
+  other identifier in the record is broker-minted and reaches a
+  clearinghouse only through the customer's SDK, which is the channel
+  the signature exists to distrust;
+- a session settlement **resolves** by `gateway_session_id`, not merely
+  echoes it: that is the only key a clearinghouse holds;
+- a second session declaring a `gateway_session_id` already in use is
+  refused with `gateway_session_id_reuse`. This one costs a real payment
+  to check and is worth it — it is a new way for a gateway to fail, and
+  it fails at open.
+
+Note the last one when reading the source: the probe uses a **unique**
+`gateway_session_id` per run. It used a constant, and the uniqueness rule
+turned this file's own "run it twice" instruction into a failure at the
+second open — which is precisely the friction a gateway reusing a stable
+id will hit.

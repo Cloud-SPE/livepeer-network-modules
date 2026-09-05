@@ -157,6 +157,10 @@ type Runner struct {
 	URL      string   `json:"url"`
 	Devices  []string `json:"devices,omitempty"`
 	Draining bool     `json:"draining,omitempty"`
+	// RTMPPort is the container port the agent's RTMPS edge forwards
+	// to (plan 0046 §2.7); zero for a runner with no ingest. Agent-side
+	// only: it never reaches the attach document.
+	RTMPPort int `json:"-"`
 }
 
 // Host is the non-runner half of the document.

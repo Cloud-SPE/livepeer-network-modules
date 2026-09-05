@@ -20,11 +20,13 @@ description: >-
   GPU sibling, so a caller knows the cost before submitting; slower per clip
   and smaller per bit, which is the trade a VOD caller is making.
 
-# Twice the GPU VOD rate (4.8e12 per job): a software AV1 encode occupies
-# many cores for many times the wall-clock of an NVENC pass, and the output
-# is worth more to the caller per byte delivered. A recommendation, not an
-# operator's number — reprice against real encode times.
-price_default: { amount_wei: "9600000000000", per_units: 1 }
+# Twice the GPU VOD rate, per 1000 frame-megapixels
+# (docs/references/2026-09-05-transcode-megapixel-pricing.md): a software
+# AV1 encode occupies many cores for many times the wall-clock per
+# pixel-frame, and the output is worth more per byte delivered. A
+# recommendation, not an operator's number — reprice against real encode
+# times.
+price_default: { amount_wei: "3258000000000", per_units: 1000 }
 
 # One at a time. SVT-AV1 parallelises across the socket's cores by itself;
 # a second concurrent encode halves both rather than adding throughput.
@@ -52,14 +54,17 @@ certification:
     # NVENC, so the bound is looser than the GPU sibling's.
     timeout_ms: 120000
     config:
+      # PROPOSED, as on the GPU VOD template: the v2 VOD shape with the
+      # codec named. The transcode team confirms.
       transport: stream
       body:
-        source_url: "{{fixture_url.video/mp4-2s-720p}}"
-        output_url: "{{sink_url}}"
-        codec: av1
-        profiles:
-          - { name: 720p30, width: 1280, height: 720, fps: 30 }
-  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+        schema: video-transcode-vod/v2
+        workload_id: "cert-{{run.id}}"
+        input: { download_url: "{{fixture_url.video/mp4-2s-720p}}" }
+        rendition: { name: "720p", width: 1280, height: 720, fps: 30, codec: av1 }
+        output:
+          stream: { artifact_uri: "cert://720p.mp4", upload_url: "{{sink_url}}/720p.mp4" }
+  - { name: usage, type: usage, required: true, config: { min_units: 40 } }
   - { name: latency, type: latency, required: false, config: { samples: 2, p50_max_ms: 90000 } }
 
 # Sockets, not cards (plan 0047): the core tiers this encode is worth

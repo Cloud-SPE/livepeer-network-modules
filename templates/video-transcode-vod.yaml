@@ -26,17 +26,12 @@ description: >-
   output, so a caller knows the cost of a transcode before they submit it and
   the pool absorbs the variance in clip length.
 
-# The operator's real rate: 4.8e12 wei per job — ~$0.00828 at the 2026-06-15
-# ETH basis in docs/references/2026-06-15-openai-compatible-market-pricing.md.
-#
-# The unit is `jobs`, counted by a request-formula whose expression is the
-# constant "1": one submission, one unit, whatever the clip. That is a real
-# commercial choice and not a placeholder — it trades away per-second fairness
-# for a price a caller can predict — but it means a ten-second clip and a
-# two-hour film cost the same. If this pool starts seeing long submissions,
-# the fix is a work unit change on the RUNNER (runner-attach.md §3.2 owns the
-# extractor), not a price edit here.
-price_default: { amount_wei: "4800000000000", per_units: 1 }
+# Per 1000 frame-megapixels of delivered output
+# (docs/references/2026-09-05-transcode-megapixel-pricing.md). Decided
+# 2026-09-05, replacing the rig's flat 4.8e12 per job, under which a
+# ten-second clip and a two-hour film cost the same. The runner counts the
+# units and claims them in the response trailer.
+price_default: { amount_wei: "1629000000000", per_units: 1000 }
 
 # The rig pinned no concurrency. Two in flight is pool policy: transcode
 # saturates the encoder blocks rather than VRAM, so the limit is how many
@@ -88,35 +83,29 @@ certification:
     # step-level override rather than the 30s type default.
     timeout_ms: 60000
     config:
-      # The runner's real request shape (plan 0045 §7): JSON in, naming a
-      # source URL to fetch and a destination URL to write, with the encode
-      # streamed back as FFmpeg progress so the broker meters it live
-      # (`ffmpeg-progress`, declared by the runner). Both URLs are minted by
-      # the broker for this one run — certification-steps.md §4,
-      # `{{fixture_url.*}}` and `{{sink_url}}` — so the runner fetches a real
-      # 2s clip and writes somewhere real, and nothing here is a URL the pool
-      # invented.
-      #
-      # As published, the transcode runners are asynchronous (202 + job_id,
-      # status polled) and serve no contract. They FAIL this step, loudly,
-      # naming the runner — which is the design until they are rewritten
-      # (lnm-z72). This template describes the runner we ship next, not the
-      # one on the registry today.
+      # PROPOSED, pending the transcode team (2026-09-05): the VOD runner is
+      # still asynchronous (202 + job_id) and its synchronous request schema
+      # does not exist yet. This body mirrors the ABR runner's
+      # `video-transcode-abr/v2` shape with one rendition and no ladder, as
+      # the shape the team said the VOD runner would move to; they confirm or
+      # correct the schema name and fields. Every URL is run-scoped and
+      # broker-minted (certification-steps.md §4). The runner streams its
+      # progress and claims the count in the response trailer.
       transport: stream
       body:
-        source_url: "{{fixture_url.video/mp4-2s-720p}}"
-        output_url: "{{sink_url}}"
-        profiles:
-          - { name: 720p30, width: 1280, height: 720, fps: 30 }
+        schema: video-transcode-vod/v2
+        workload_id: "cert-{{run.id}}"
+        input: { download_url: "{{fixture_url.video/mp4-2s-720p}}" }
+        rendition: { name: "720p", width: 1280, height: 720, fps: 30 }
+        output:
+          stream: { artifact_uri: "cert://720p.mp4", upload_url: "{{sink_url}}/720p.mp4" }
       # No assertion on the response body: it is progress, and the usage step
       # below is what proves the encode produced output. There is still no
       # step type that decodes media, so the rendition's dimensions remain a
       # claim this catalog cannot check.
-  # The runner's extractor is the constant formula, so this step proves the
-  # metering path fires at all rather than that it counted correctly — with a
-  # constant expression those are the same question, which is one of the
-  # quieter virtues of pricing per job.
-  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+  # A 2s 720p30 rendition is 60 frames × 0.92 MP ≈ 55 units; a claim under
+  # 40 is a runner counting something other than delivered output.
+  - { name: usage, type: usage, required: true, config: { min_units: 40 } }
   - { name: latency, type: latency, required: false, config: { samples: 2, p50_max_ms: 20000 } }
 
 # The rig wrote `gpu_model: 2080` — a real decision, unlike the FLUX

@@ -359,7 +359,8 @@ func bundleEnv(input BundleInput) string {
 		// certificate is the member's until the pool issues them
 		// (plan 0046 §7).
 		"LIVEPEER_PUBLIC_URL=\n" +
-		"LIVEPEER_EDGE_PORT=8443\n"
+		"LIVEPEER_EDGE_PORT=8443\n" +
+		"LIVEPEER_EDGE_RTMPS_PORT=1936\n"
 }
 
 func bundleReadme(input BundleInput) string {
@@ -415,6 +416,9 @@ func bundleCompose(input BundleInput) string {
 		// LIVEPEER_PUBLIC_URL is set and a certificate is mounted.
 		"    ports:\n" +
 		"      - \"${LIVEPEER_EDGE_PORT:-8443}:8443\"\n" +
+		// RTMPS ingest for live session runners (plan 0046 §2.7): the
+		// agent terminates TLS and forwards to the runner's rtmp_port.
+		"      - \"${LIVEPEER_EDGE_RTMPS_PORT:-1936}:1936\"\n" +
 		"    volumes:\n" +
 		"      - ./edge:/etc/livepeer/edge:ro\n" +
 		"      - ./enrollment-token:/run/livepeer/enrollment-token:ro\n" +

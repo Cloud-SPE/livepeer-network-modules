@@ -299,7 +299,7 @@ func requirementsFail(tmpl templates.Template, unit types.HardwareUnit, class st
 	// rather than silently handing the card to something else.
 	if tmpl.RunnerCompose.HasImage() {
 		vendor := gpuv.VendorOfModel(unit.GPUModel)
-		if vendor == "" {
+		if vendor == "" && tmpl.RunnerCompose.ImageFor(gpuv.VendorAny) == "" {
 			return ReasonNoImageForVendor, "card names no vendor the pool can render for: " + unit.GPUModel
 		}
 		if tmpl.RunnerCompose.ImageForClass(vendor, class) == "" {

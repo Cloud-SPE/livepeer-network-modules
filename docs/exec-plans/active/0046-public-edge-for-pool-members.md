@@ -63,6 +63,18 @@ the one that is the operator's is marked open (§7).
    edge port and mounts a certificate directory; `.env` carries
    `LIVEPEER_PUBLIC_URL` and the listen address.
 
+7. **RTMPS is a second published port, terminated by the agent** (added
+   2026-09-05 on the transcode team's review: the HTTP edge cannot carry
+   RTMP, and the addendum that said to derive `rtmps://` under `/r/` was
+   wrong). A template declares `runner_compose.rtmp_port`; the member
+   publishes 1936; the agent terminates TLS on it with the HTTP edge's
+   certificate and pipes the raw stream to the one runner with an ingest;
+   the pool sets `LIVEPEER_PUBLIC_RTMP_URL=rtmps://<public host>:1936` on
+   that service. One port per host — the live stance is one template per
+   card and the runner's media router multiplexes by stream key. Not an
+   L4/SNI edge (plain RTMP has nothing to route on; a port is a port) and
+   not RTMP-over-WebSocket (a wire nobody's encoder speaks).
+
 ## 3. What this does not do
 
 - **Issue names or certificates.** The certificate and the public name are
@@ -81,7 +93,8 @@ the one that is the operator's is marked open (§7).
 | § | Commit | What |
 |---|---|---|
 | 2.1, 2.4 | `163357e` | `public_url` host fact: runner-attach 1.2, agent env, broker validation and view, controller relay onto units, placement `host_not_public`, Validate agrees. |
-| 2.2, 2.3, 2.5, 2.6 | `679bf8e` | Agent TLS edge routing `/r/<local_id>/`; desired-state sets `LIVEPEER_PUBLIC_URL` on session services; certification `reach` dial; bundle publishes the edge port, mounts `./edge`, carries the env. |
+| 2.2, 2.3, 2.5, 2.6 | `679bf8e` |
+| 2.7 | (this commit) | RTMPS edge, `rtmp_port`, `LIVEPEER_PUBLIC_RTMP_URL`, bundle port 1936; `any` image key; sink sub-paths; `{{run.id}}` in transcode probes. | Agent TLS edge routing `/r/<local_id>/`; desired-state sets `LIVEPEER_PUBLIC_URL` on session services; certification `reach` dial; bundle publishes the edge port, mounts `./edge`, carries the env. |
 
 ## 7. Open — the operator's
 

@@ -15,16 +15,15 @@ description: >-
   job, so a three-rendition ladder and a one-rendition ladder cost the caller
   the same.
 
-# The operator's real rate: 4.8e12 wei per job, identical to the VOD offering
-# on the same rig — ~$0.00828 at the 2026-06-15 ETH basis.
-#
-# Flagged for review rather than corrected here: an ABR job encodes the source
-# several times over and a VOD job encodes it once, so at one price ABR is
-# strictly the worse return on an encoder-hour. Either the ladder is expected
-# to be small, or the two prices drifted into each other. The pool's ranking
-# below is set to match the price as written (VOD outranks ABR); if this price
-# moves, move `priority` with it.
-price_default: { amount_wei: "4800000000000", per_units: 1 }
+# Per 1000 frame-megapixels of delivered output, aggregated over every video
+# rendition (docs/references/2026-09-05-transcode-megapixel-pricing.md).
+# Decided 2026-09-05, replacing the rig's flat 4.8e12 per job: a ladder
+# encodes the source several times over, and a flat price made ABR the worse
+# return on an encoder-hour while charging a ten-second clip like a film.
+# The runner counts the units and claims them in the response trailer; the
+# rate is the same as the VOD sibling's because the unit already carries the
+# ladder's extra work.
+price_default: { amount_wei: "1629000000000", per_units: 1000 }
 
 # Same as its VOD sibling: the rig pinned nothing, and two in flight is what
 # NVENC will take on a 2080 without the renditions starving each other. The
@@ -79,27 +78,36 @@ certification:
     # OpenAI ping, not for ffmpeg.
     timeout_ms: 60000
     config:
-      # The runner's real request shape (plan 0045 §7), as on the VOD template:
-      # JSON naming a source URL and a destination URL, encode streamed back
-      # as FFmpeg progress and metered live. Both URLs are run-scoped and
-      # broker-minted (certification-steps.md §4).
+      # The runner's own request schema, `video-transcode-abr/v2`
+      # (livepeer-modules-transcode abr-runner/contract_v2.go; corrected
+      # 2026-09-05 — the earlier body here was read from the stale June
+      # repository). The runner streams typed SSE progress and a terminal
+      # result; the broker relays that body verbatim and reads only the
+      # `Livepeer-Work-Units` trailer. Every URL is run-scoped and
+      # broker-minted (certification-steps.md §4): the runner fetches a real
+      # 2s clip and writes each artifact under the run's sink.
       #
-      # As published, the abr runner is asynchronous and serves no contract;
-      # it fails this step loudly until rewritten (lnm-z72).
+      # The preset and the rendition keys are the runner's (`presets.yaml`,
+      # `abr-standard`: 1080p/720p/480p/360p); the transcode team confirms
+      # the destination map this probe must carry for that preset.
       transport: stream
       body:
-        source_url: "{{fixture_url.video/mp4-2s-720p}}"
-        output_url: "{{sink_url}}"
-        # A two-rung ladder rather than the single rung the VOD probe sends:
-        # this offering's whole product is producing several renditions from
-        # one source, and a one-rendition probe would certify a runner that
-        # cannot do the thing being sold.
-        profiles:
-          - { name: 720p30, width: 1280, height: 720, fps: 30 }
-          - { name: 480p30, width: 854, height: 480, fps: 30 }
-  # Constant-formula metering again: with an expression of "1", proving the
-  # extractor fires and proving it counted right are the same question.
-  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+        schema: video-transcode-abr/v2
+        workload_id: "cert-{{run.id}}"
+        input: { download_url: "{{fixture_url.video/mp4-2s-720p}}" }
+        ladder: { preset: abr-standard }
+        output:
+          manifest: { artifact_uri: "cert://manifest.m3u8", upload_url: "{{sink_url}}/manifest.m3u8" }
+          renditions:
+            "1080p": { playlist: { artifact_uri: "cert://1080p.m3u8", upload_url: "{{sink_url}}/1080p.m3u8" }, stream: { artifact_uri: "cert://1080p.ts", upload_url: "{{sink_url}}/1080p.ts" } }
+            "720p": { playlist: { artifact_uri: "cert://720p.m3u8", upload_url: "{{sink_url}}/720p.m3u8" }, stream: { artifact_uri: "cert://720p.ts", upload_url: "{{sink_url}}/720p.ts" } }
+            "480p": { playlist: { artifact_uri: "cert://480p.m3u8", upload_url: "{{sink_url}}/480p.m3u8" }, stream: { artifact_uri: "cert://480p.ts", upload_url: "{{sink_url}}/480p.ts" } }
+            "360p": { playlist: { artifact_uri: "cert://360p.m3u8", upload_url: "{{sink_url}}/360p.m3u8" }, stream: { artifact_uri: "cert://360p.ts", upload_url: "{{sink_url}}/360p.ts" } }
+  # A 2s four-rung ladder is well over a hundred frame-megapixels; a claim
+  # under 100 is a runner counting something other than delivered output.
+  # Which rendition counted what is the runner's arithmetic, with the
+  # runner's fixtures; the broker reads the trailer.
+  - { name: usage, type: usage, required: true, config: { min_units: 100 } }
   # Two rungs take longer than one, so the bound is looser than the VOD
   # template's. Not required either way — a slow encoder is a scoring input,
   # not an ineligible one.

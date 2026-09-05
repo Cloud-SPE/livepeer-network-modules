@@ -33,7 +33,8 @@ import (
 const (
 	// FixturePathPrefix + {scope}/{ref} serves a fixture file.
 	FixturePathPrefix = "/internal/v1/certification/fixture/"
-	// SinkPathPrefix + {scope} accepts and discards an upload.
+	// SinkPathPrefix + {scope} — or any path under it, for a runner that
+	// writes several artifacts — accepts and discards an upload.
 	SinkPathPrefix = "/internal/v1/certification/sink/"
 
 	// maxSinkBytes bounds one upload. A 2s 720p probe transcodes to well

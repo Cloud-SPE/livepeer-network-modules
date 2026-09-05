@@ -28,6 +28,7 @@ type Service struct {
 	Name            string   `json:"name"`
 	ComposeFragment string   `json:"compose_fragment"`
 	DeviceIDs       []string `json:"device_ids"`
+	RTMPPort        int      `json:"rtmp_port,omitempty"`
 	Models          []Model  `json:"models,omitempty"`
 	Draining        bool     `json:"draining,omitempty"`
 	TemplateID      string   `json:"template_id"`

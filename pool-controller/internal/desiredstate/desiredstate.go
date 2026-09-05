@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -31,6 +32,9 @@ type Document struct {
 // Service is one runner the agent should have running.
 type Service struct {
 	Name string `json:"name"`
+	// RTMPPort is the container port the agent's RTMPS edge forwards to;
+	// zero for a service with no ingest (plan 0046 §2.7).
+	RTMPPort int `json:"rtmp_port,omitempty"`
 	// ComposeFragment is a docker-compose service body, already
 	// indented to sit under `services:`. The agent merges it rather
 	// than composing one itself, so what runs is what the pool
@@ -124,6 +128,7 @@ func Build(in Input) (Document, error) {
 		}
 		services = append(services, Service{
 			Name:            ServiceName(assignment.ID),
+			RTMPPort:        tmpl.RunnerCompose.RTMPPort,
 			Capability:      tmpl.Capability,
 			Protocol:        tmpl.Protocol,
 			Identity:        identityFor(tmpl),
@@ -233,6 +238,15 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 	// other, so an absent value here is a bug upstream, not a fallback.
 	if tmpl.Protocol == "paid-session/v1" && strings.TrimSpace(unit.PublicURL) != "" {
 		env["LIVEPEER_PUBLIC_URL"] = strings.TrimRight(strings.TrimSpace(unit.PublicURL), "/") + "/r/" + name
+		// An ingest is reached on the host's RTMPS port, terminated by
+		// the agent's edge and forwarded to the container's rtmp_port
+		// (plan 0046 §2.7). The runner advertises this and never a
+		// guessed hostname.
+		if tmpl.RunnerCompose.RTMPPort > 0 {
+			if u, err := url.Parse(strings.TrimSpace(unit.PublicURL)); err == nil && u.Hostname() != "" {
+				env["LIVEPEER_PUBLIC_RTMP_URL"] = fmt.Sprintf("rtmps://%s:%d", u.Hostname(), templates.RTMPSPublicPort)
+			}
+		}
 	}
 	if len(env) > 0 {
 		names := make([]string, 0, len(env))

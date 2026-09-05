@@ -273,6 +273,12 @@ func (t Template) Validate() error {
 			return fmt.Errorf("template %s: requirements.cpu_classes names %q; cpu classes are core tiers cpu-8, cpu-16, cpu-32, cpu-64", t.ID, class)
 		}
 	}
+	if t.RunnerCompose.RTMPPort < 0 || t.RunnerCompose.RTMPPort > 65535 {
+		return fmt.Errorf("template %s: runner_compose.rtmp_port must be a port", t.ID)
+	}
+	if t.RunnerCompose.RTMPPort > 0 && t.Protocol != "paid-session/v1" {
+		return fmt.Errorf("template %s: runner_compose.rtmp_port is only meaningful on paid-session/v1 (an ingest is a session)", t.ID)
+	}
 	if t.RunnerCompose.HasImage() {
 		for _, class := range t.Requirements.GPUClasses {
 			vendor := gpu.VendorOfClass(class)

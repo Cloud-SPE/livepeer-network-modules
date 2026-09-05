@@ -220,10 +220,20 @@ stacking: { primary: true, secondary_on: [] }
 # they do not yet serve the runner self-description contract (§3). Until both
 # land, the agent refuses this image LOUDLY, naming it. That is the design:
 # the failure message is the impacted-runner inventory.
+# One image for every card (corrected 2026-09-05): the live runner is ubuntu
+# + ffmpeg + a media router with no vendor build stage, so it takes the
+# image map's `any` key rather than a tag per vendor. The device block is
+# still rendered by the card's vendor, so the encoder can use it.
+#
+# `rtmp_port` (plan 0046 §2.7): the container's RTMP ingest. The member
+# publishes one RTMPS port; the agent's edge terminates TLS on it with the
+# host's certificate and forwards here, and the pool hands the runner
+# `LIVEPEER_PUBLIC_RTMP_URL=rtmps://<public host>:1936` to advertise. The
+# HLS side rides the HTTP edge under `LIVEPEER_PUBLIC_URL`.
 runner_compose:
   image:
-    nvidia: tztcloud/live-runner-nvidia:v1.4.1
-    intel: tztcloud/live-runner-intel:v1.4.1
+    any: tztcloud/live-runner:v1.4.1
+  rtmp_port: 1935
 
 # min_jobs counts SESSIONS, and a live session may run for hours — so 5 is
 # already a long probation in wall-clock terms, and a larger number would keep

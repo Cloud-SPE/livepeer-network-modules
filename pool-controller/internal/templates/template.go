@@ -148,7 +148,17 @@ type RunnerCompose struct {
 	Models  []Model           `yaml:"models,omitempty" json:"models,omitempty"`
 	// InternalURL names a runner the operator hosts themselves.
 	InternalURL string `yaml:"internal_url,omitempty" json:"internal_url,omitempty"`
+	// RTMPPort is the container port an RTMP ingest listens on (plan
+	// 0046 §2.7). The agent's edge terminates RTMPS on the host's
+	// published port and forwards to it; the runner receives its public
+	// address as LIVEPEER_PUBLIC_RTMP_URL. Zero: no ingest.
+	RTMPPort int `yaml:"rtmp_port,omitempty" json:"rtmp_port,omitempty"`
 }
+
+// RTMPSPublicPort is the host port the agent's edge terminates RTMPS on
+// (plan 0046 §2.7). One per host: the live class's stance is one
+// template per card and the media router multiplexes streams by key.
+const RTMPSPublicPort = 1936
 
 // ImageFor is the image this template runs on a card of the given
 // vendor, or empty when it has none — which placement treats as "this
@@ -171,7 +181,12 @@ func (rc RunnerCompose) ImageForClass(vendor, class string) string {
 			return img
 		}
 	}
-	return rc.ImageFor(vendor)
+	if img := rc.ImageFor(vendor); img != "" {
+		return img
+	}
+	// A build that runs anywhere: the live runner is ubuntu + ffmpeg +
+	// a media router with no vendor stage.
+	return strings.TrimSpace(rc.Image["any"])
 }
 
 // SplitImageKey parses an image-map key into its vendor and optional

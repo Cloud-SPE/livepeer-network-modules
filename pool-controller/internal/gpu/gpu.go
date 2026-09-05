@@ -27,15 +27,19 @@ const (
 	// VendorCPU is the image-map key for a cpu unit (plan 0047): not a
 	// GPU vendor, but the same question — which build runs here.
 	VendorCPU = "cpu"
+	// VendorAny is the image-map fallback for a build that runs on any
+	// unit — a software encoder, a media router — where the vendor
+	// map's question ("which build runs here") has one answer.
+	VendorAny = "any"
 )
 
 // Vendors lists the known image-map keys, sorted.
-func Vendors() []string { return []string{VendorAMD, VendorCPU, VendorIntel, VendorNVIDIA} }
+func Vendors() []string { return []string{VendorAMD, VendorAny, VendorCPU, VendorIntel, VendorNVIDIA} }
 
 // Known reports whether v is a key the pool can render for.
 func Known(v string) bool {
 	switch v {
-	case VendorNVIDIA, VendorIntel, VendorAMD, VendorCPU:
+	case VendorNVIDIA, VendorIntel, VendorAMD, VendorCPU, VendorAny:
 		return true
 	}
 	return false

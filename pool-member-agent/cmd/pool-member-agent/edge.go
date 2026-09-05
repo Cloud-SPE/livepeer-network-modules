@@ -112,6 +112,9 @@ func startEdge(ctx context.Context, state *runnerState) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
+	if err := startRTMPSEdge(ctx, state, cert); err != nil {
+		log.Print(err)
+	}
 	log.Printf("public edge listening on %s for %s", listen, os.Getenv("LIVEPEER_PUBLIC_URL"))
 	go func() {
 		if err := srv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {

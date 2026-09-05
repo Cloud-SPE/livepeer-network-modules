@@ -15,17 +15,24 @@
     "timeout_ms": 120000,
     "config": {
       "body": {
-        "codec": "av1",
-        "output_url": "{{sink_url}}",
-        "profiles": [
-          {
-            "fps": 30,
-            "height": 720,
-            "name": "720p30",
-            "width": 1280
+        "input": {
+          "download_url": "{{fixture_url.video/mp4-2s-720p}}"
+        },
+        "output": {
+          "stream": {
+            "artifact_uri": "cert://720p.mp4",
+            "upload_url": "{{sink_url}}/720p.mp4"
           }
-        ],
-        "source_url": "{{fixture_url.video/mp4-2s-720p}}"
+        },
+        "rendition": {
+          "codec": "av1",
+          "fps": 30,
+          "height": 720,
+          "name": "720p",
+          "width": 1280
+        },
+        "schema": "video-transcode-vod/v2",
+        "workload_id": "cert-{{run.id}}"
       },
       "transport": "stream"
     }
@@ -35,7 +42,7 @@
     "type": "usage",
     "required": true,
     "config": {
-      "min_units": 1
+      "min_units": 40
     }
   },
   {

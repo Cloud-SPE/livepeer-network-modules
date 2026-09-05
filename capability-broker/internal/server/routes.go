@@ -46,6 +46,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET "+certification.FixturePathPrefix+"{scope}/{ref...}", s.handleCertificationFixture)
 	s.mux.HandleFunc("PUT "+certification.SinkPathPrefix+"{scope}", s.handleCertificationSink)
 	s.mux.HandleFunc("POST "+certification.SinkPathPrefix+"{scope}", s.handleCertificationSink)
+	// A runner writing several artifacts — an ABR ladder is a manifest,
+	// a playlist and a media file per rendition — names each under the
+	// scope. The path is the runner's; the sink counts and discards.
+	s.mux.HandleFunc("PUT "+certification.SinkPathPrefix+"{scope}/{artifact...}", s.handleCertificationSink)
+	s.mux.HandleFunc("POST "+certification.SinkPathPrefix+"{scope}/{artifact...}", s.handleCertificationSink)
 	// Offers (broker-admin §4).
 	s.mux.HandleFunc("GET /admin/v1/offers", s.handleOffersList)
 	s.mux.HandleFunc("PUT /admin/v1/offers", s.handleOffersPut)

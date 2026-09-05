@@ -177,6 +177,7 @@ func runnersFor(doc desiredstate.Document) []attach.Runner {
 			URL:      "http://" + service.Name + ":8080",
 			Devices:  service.DeviceIDs,
 			Draining: service.Draining,
+			RTMPPort: service.RTMPPort,
 		})
 	}
 	return out

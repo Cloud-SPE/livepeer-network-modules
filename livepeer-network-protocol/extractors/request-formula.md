@@ -36,7 +36,8 @@ work_unit:
 |---|---|---|---|
 | `type` | yes | — | `"request-formula"` |
 | `expression` | yes | — | Safe arithmetic expression — operators only; field references by name |
-| `fields` | yes | — | Map of identifier → JSONPath into the request body. A path that resolves to a **string** evaluates to its code-point count (so `$.input` on a TTS request is the character count); a number is itself; anything else is missing. |
+| `fields` | yes* | — | Map of identifier → JSONPath into the request body. Numeric only: a path that resolves to anything but a number is missing, and falls to `default`. |
+| `text_fields` | no* | — | Map of identifier → JSONPath into the request body, evaluated as the **code-point count** of the string found there (so `text_fields: { chars: "$.input" }` with `expression: chars` is a TTS character count). A path that resolves to anything but a string is missing. An identifier may appear in `fields` or `text_fields`, never both. *At least one of the two is required; `text_fields` alone is a complete configuration. |
 | `default` | no | `0` | Used when any field is missing or evaluates to non-numeric |
 
 ## Safe expression language

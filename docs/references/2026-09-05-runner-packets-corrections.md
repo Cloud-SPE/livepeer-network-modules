@@ -49,3 +49,14 @@ numeric fields. The broker's implementation evaluates a field whose JSONPath
 resolves to a string as its code-point count, so TTS metering is
 `{"type": "request-formula", "expression": "chars", "fields": {"chars": "$.input"}}`.
 The document will say so.
+
+## Correction to §3 (2026-09-05, later the same day)
+
+§3 above is wrong, as the openai-runners team pointed out against the
+code: `fields` is numeric only, and a path under it that resolves to a
+string is *missing* (falls to `default`). Code-point counting lives under
+a separate `text_fields` map — `{"type": "request-formula", "expression":
+"chars", "text_fields": {"chars": "$.input"}}` — and the extractor refuses
+an identifier declared in both. The team's TTS contract declares
+`text_fields` and is correct as shipped. `extractors/request-formula.md`
+now documents `text_fields`; the code is unchanged.

@@ -62,5 +62,5 @@ verified against the code and each real:
 
 | § | Commit | What |
 |---|---|---|
-| 2.1 | (this commit) | `backend.Timeouts`; idle-bounded body; tests for a long steady stream and a stalled one. |
-| 2.2, 2.3 | (this commit) | Reservation bucket and stages; `open_in_flight`; recovery of abandoned reservations; `winding_down` retry from Sweep and Recover; tests for concurrent opens, crash recovery, and a failed terminate that later succeeds. |
+| 2.1 | `83802ba` | `backend.Timeouts`; idle-bounded body; tests for a long steady stream and a stalled one. |
+| 2.2, 2.3 | `83802ba` | Reservation bucket and stages; `open_in_flight`; recovery of abandoned reservations; `winding_down` retry from Sweep and Recover; tests for concurrent opens, crash recovery, and a failed terminate that later succeeds. |

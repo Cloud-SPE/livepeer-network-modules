@@ -94,7 +94,7 @@ the one that is the operator's is marked open (§7).
 |---|---|---|
 | 2.1, 2.4 | `163357e` | `public_url` host fact: runner-attach 1.2, agent env, broker validation and view, controller relay onto units, placement `host_not_public`, Validate agrees. |
 | 2.2, 2.3, 2.5, 2.6 | `679bf8e` |
-| 2.7 | (this commit) | RTMPS edge, `rtmp_port`, `LIVEPEER_PUBLIC_RTMP_URL`, bundle port 1936; `any` image key; sink sub-paths; `{{run.id}}` in transcode probes. | Agent TLS edge routing `/r/<local_id>/`; desired-state sets `LIVEPEER_PUBLIC_URL` on session services; certification `reach` dial; bundle publishes the edge port, mounts `./edge`, carries the env. |
+| 2.7 | `bcd4148`, `83802ba` | RTMPS edge, `rtmp_port`, `LIVEPEER_PUBLIC_RTMP_URL`, bundle port 1936; `any` image key; sink sub-paths; `{{run.id}}` in transcode probes. | Agent TLS edge routing `/r/<local_id>/`; desired-state sets `LIVEPEER_PUBLIC_URL` on session services; certification `reach` dial; bundle publishes the edge port, mounts `./edge`, carries the env. |
 
 ## 7. Open — the operator's
 

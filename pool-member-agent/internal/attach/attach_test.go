@@ -331,7 +331,15 @@ func TestContractArrayAttachesEachEntry(t *testing.T) {
 	dup := serveContract(t, "["+chatContract+","+chatContract+"]", http.StatusOK)
 	if _, errs := Resolve(context.Background(), nil, []Runner{{LocalID: "chat", URL: dup.URL}}); len(errs) != 1 ||
 		!strings.Contains(errs[0].Error(), "repeats capability_id") {
-		t.Fatalf("a repeated capability id must be refused: %v", errs)
+		t.Fatalf("a repeated (capability, identity) must be refused: %v", errs)
+	}
+	// One capability under two identities is two runners (runner-attach
+	// §3.2): a chat proxy serving two models.
+	secondModel := strings.Replace(chatContract, `"llama-3-70b"`, `"llama-3-8b"`, -1)
+	multi := serveContract(t, "["+chatContract+","+secondModel+"]", http.StatusOK)
+	resolved, errs := Resolve(context.Background(), nil, []Runner{{LocalID: "chat", URL: multi.URL}})
+	if len(errs) != 0 || len(resolved) != 2 || resolved[1].Contract.Identity["openai.model"] != "llama-3-8b" {
+		t.Fatalf("two models behind one capability must both attach: %v %+v", errs, resolved)
 	}
 	empty := serveContract(t, "[]", http.StatusOK)
 	if _, errs := Resolve(context.Background(), nil, []Runner{{LocalID: "chat", URL: empty.URL}}); len(errs) != 1 {

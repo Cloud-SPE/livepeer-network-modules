@@ -189,13 +189,16 @@ func Fetch(ctx context.Context, client *http.Client, baseURL string) ([]*Contrac
 		if err := c.Validate(); err != nil {
 			return nil, fmt.Errorf("contract[%d] is not valid: %w", i, err)
 		}
-		// Two entries with one capability id from one container would be
-		// the same runner twice under two local ids, and the broker would
-		// dispatch to both as if they were two cards.
-		if seen[c.CapabilityID] {
-			return nil, fmt.Errorf("contract[%d] repeats capability_id %q; one entry per capability", i, c.CapabilityID)
+		// The broker's own uniqueness rule (runner-attach §4.1): one
+		// capability MAY appear under several identities — a chat proxy
+		// serving three models is three entries — never twice under one.
+		// Two identical entries from one container would be the same
+		// runner twice under two local ids, dispatched to as two cards.
+		key := c.CapabilityID + "|" + identityKey(c.Identity)
+		if seen[key] {
+			return nil, fmt.Errorf("contract[%d] repeats capability_id %q with the same identity; one entry per (capability, identity)", i, c.CapabilityID)
 		}
-		seen[c.CapabilityID] = true
+		seen[key] = true
 		out = append(out, &c)
 	}
 	return out, nil
@@ -311,4 +314,18 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// identityKey is the key-sorted identity, the broker's duplicate key.
+func identityKey(identity map[string]string) string {
+	keys := make([]string, 0, len(identity))
+	for k := range identity {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k + "=" + identity[k] + ";")
+	}
+	return b.String()
 }

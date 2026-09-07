@@ -25,3 +25,18 @@ brokers:
 publish:
   # How long downstream consumers should treat a published manifest as fresh.
   manifest_ttl: 24h
+
+# Hot keys the cold key delegates settlement signing to (manifest spec
+# 2.3.0). Each broker signs its settlement records with the key named by
+# its host-config `identity.settlement_key_file`; a clearinghouse trusts a
+# record only if this list carries the recovered public key with a window
+# containing the record's issued_at. Public key is the uncompressed
+# secp256k1 form: 0x04 + 128 hex. Rotate by adding the new key and keeping
+# the outgoing one listed until its expires_at, then sign and publish.
+# Omit the block entirely to publish no delegation.
+#
+# settlement_keys:
+#   - label: rig-1
+#     public_key: "0x04..."          # 0x04 + 128 hex, one per broker key
+#     not_before: 2026-09-07T00:00:00Z
+#     expires_at: 2027-09-07T00:00:00Z

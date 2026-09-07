@@ -98,6 +98,32 @@ The orch eth address is the on-chain `ServiceRegistry` (or
 `AIServiceRegistry`) entry the cold key on secure-orch will sign for.
 The broker list is static for v0.1; service discovery is a follow-up.
 
+### Settlement key delegation
+
+```yaml
+settlement_keys:
+  - label: rig-1                      # operator-only, never published
+    public_key: "0x04..."             # uncompressed secp256k1: 0x04 + 128 hex
+    not_before: 2026-09-07T00:00:00Z
+    expires_at: 2027-09-07T00:00:00Z
+```
+
+Optional. Each entry is a hot key a broker signs settlement records
+with (its host-config `identity.settlement_key_file`); the list rides
+inside the signed manifest as `settlement_keys[]` (manifest spec
+2.3.0), so the cold key's signature is what makes those keys
+trustworthy to a clearinghouse. A record signed by a key the published
+manifest does not list, or lists with a window that excludes the
+record's `issued_at`, is refused as `missing_delegation`.
+
+Validation: the key must be `0x04` + 128 hex (normalized to lower
+case), both timestamps are required, `expires_at` must be after
+`not_before`, and duplicates are rejected. The keys are content: adding
+or rotating one produces a fresh candidate even when no offering
+changed, and the secure-orch console holds it for a human — a
+delegation change never auto-signs. Rotate by adding the new key and
+keeping the outgoing one listed until its `expires_at`.
+
 ## Roster cells
 
 The roster consumes both broker `/registry/offerings` and `/registry/health`.

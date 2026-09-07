@@ -204,6 +204,7 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 		PublicationSeq:    nextPublicationSeq,
 		CoordinatorCommit: version,
 		RenewalThreshold:  cfg.renewalThreshold,
+		SettlementKeys:    settlementKeysFromConfig(loaded.SettlementKeys),
 	}, logger.With("component", "candidate"))
 	if err != nil {
 		return fmt.Errorf("candidate builder: %w", err)
@@ -519,4 +520,22 @@ func buildHotzoneDeps(brokers []config.Broker, timeout time.Duration) (*adminapi
 		Brokers: listed,
 		Timeout: timeout,
 	}, nil
+}
+
+// settlementKeysFromConfig lifts the operator's delegation list into
+// the manifest type. The label stays behind: the schema forbids it and
+// it is for the operator's eyes only.
+func settlementKeysFromConfig(keys []config.SettlementKey) []types.SettlementKey {
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make([]types.SettlementKey, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, types.SettlementKey{
+			PublicKey: k.PublicKey,
+			NotBefore: k.NotBefore.UTC(),
+			ExpiresAt: k.ExpiresAt.UTC(),
+		})
+	}
+	return out
 }

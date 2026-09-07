@@ -18,6 +18,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/candidates"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/published"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/candidate"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
@@ -302,3 +303,45 @@ func errIs(err error, target **VerifyError) bool {
 
 var _ = fmt.Sprintf
 var _ = os.ErrNotExist
+
+// The receive path re-derives the canonical bytes from the decoded
+// payload to check the cold key's signature. A candidate built with
+// settlement keys must round-trip to the identical bytes, or every
+// delegating manifest would be refused as a signature mismatch.
+func TestManifestPayloadMap_RoundTripsSettlementKeys(t *testing.T) {
+	keys := []types.SettlementKey{{
+		PublicKey: "0x049d2193d32d9379271df49fcdd6d2b53dad719371ddfb77009494d2c08ceca2bbea717657d9e62d49f11ac13f8ee3ae9dbeea45c1db363ed200edd9618f027f48",
+		NotBefore: time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC),
+		ExpiresAt: time.Date(2027, 9, 7, 0, 0, 0, 0, time.UTC),
+	}}
+	cand, err := candidate.Build(scrape.Snapshot{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		WindowEnd:      time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC),
+		SourceTuples: []types.SourceTuple{{
+			BrokerName: "b1", BaseURL: "http://b1:8080", WorkerURL: "https://b1.example",
+			Offering: types.BrokerOffering{
+				CapabilityID: "openai:chat-completions", OfferingID: "qwen", Protocol: "paid-job/v1",
+				Job: &types.JobAxes{"transports": []any{"unary"}}, WorkUnit: types.WorkUnit{Name: "tokens"}, PricePerUnitWei: "1",
+			},
+		}},
+	}, candidate.BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+		SettlementKeys: keys,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Through the wire: decode what the console would upload.
+	var decoded types.ManifestPayload
+	if err := json.Unmarshal(cand.ManifestBytes, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	rederived, err := candidate.CanonicalBytes(manifestPayloadMap(decoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(rederived) != string(cand.ManifestBytes) {
+		t.Fatalf("canonical bytes drift across the receive path:\n built: %s\n again: %s", cand.ManifestBytes, rederived)
+	}
+}

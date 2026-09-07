@@ -24,6 +24,14 @@ type Config struct {
 	Identity Identity `yaml:"identity"`
 	Brokers  []Broker `yaml:"brokers"`
 	Publish  Publish  `yaml:"publish,omitempty"`
+	// SettlementKeys are the hot keys the cold key delegates settlement
+	// signing to (manifest spec 2.3.0, `settlement_keys[]`). Each broker
+	// signs its settlement records with one of these; a clearinghouse
+	// trusts the record only if the published manifest lists the
+	// recovered key with a window containing the record's issued_at.
+	// Absent or empty means no delegation is published, which is what
+	// every manifest before this field carried.
+	SettlementKeys []SettlementKey `yaml:"settlement_keys,omitempty"`
 }
 
 // Identity carries the orch's chain identity. Must be present.
@@ -64,6 +72,19 @@ func (b Broker) ResolveAdminToken() (string, error) {
 	default:
 		return "", fmt.Errorf("admin_token_ref %q: want env:// or file://", ref)
 	}
+}
+
+// SettlementKey is one delegated settlement-signing key and its
+// validity window. Mirrors livepeer-network-protocol/manifest/schema.json
+// #/$defs/settlement_key; Label is operator-only and never published.
+type SettlementKey struct {
+	// PublicKey is the uncompressed secp256k1 public key: 0x04 followed
+	// by 128 hex characters (X || Y). Normalized to lower case on
+	// validation, because the schema pattern is lower-case only.
+	PublicKey string    `yaml:"public_key"`
+	NotBefore time.Time `yaml:"not_before"`
+	ExpiresAt time.Time `yaml:"expires_at"`
+	Label     string    `yaml:"label,omitempty"`
 }
 
 // Publish holds tunables that affect manifest output. Optional; the
@@ -134,7 +155,58 @@ func (c *Config) Validate() error {
 	if c.Publish.ManifestTTL < 0 {
 		return errors.New("publish.manifest_ttl: must be non-negative")
 	}
+	seenKeys := make(map[string]int, len(c.SettlementKeys))
+	for i := range c.SettlementKeys {
+		k := &c.SettlementKeys[i]
+		normalized, err := normalizeSettlementPublicKey(k.PublicKey)
+		if err != nil {
+			return fmt.Errorf("settlement_keys[%d].public_key: %w", i, err)
+		}
+		k.PublicKey = normalized
+		if j, dup := seenKeys[normalized]; dup {
+			return fmt.Errorf("settlement_keys[%d].public_key: duplicate of settlement_keys[%d]", i, j)
+		}
+		seenKeys[normalized] = i
+		if k.NotBefore.IsZero() {
+			return fmt.Errorf("settlement_keys[%d].not_before: required (RFC 3339)", i)
+		}
+		if k.ExpiresAt.IsZero() {
+			return fmt.Errorf("settlement_keys[%d].expires_at: required (RFC 3339)", i)
+		}
+		if !k.ExpiresAt.After(k.NotBefore) {
+			return fmt.Errorf("settlement_keys[%d]: expires_at %s must be after not_before %s",
+				i, k.ExpiresAt.UTC().Format(time.RFC3339), k.NotBefore.UTC().Format(time.RFC3339))
+		}
+	}
 	return nil
+}
+
+// settlementPublicKeyHexLen is 0x04 || X || Y: one prefix byte and two
+// 32-byte coordinates, as hex.
+const settlementPublicKeyHexLen = 130
+
+// normalizeSettlementPublicKey checks the uncompressed-secp256k1 shape
+// the manifest schema requires and returns the lower-case form the
+// schema pattern matches.
+func normalizeSettlementPublicKey(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "0x") && !strings.HasPrefix(s, "0X") {
+		return "", errors.New("must be 0x-prefixed")
+	}
+	body := s[2:]
+	if len(body) != settlementPublicKeyHexLen {
+		return "", fmt.Errorf("must be 0x + %d hex chars (uncompressed secp256k1), got %d", settlementPublicKeyHexLen, len(body))
+	}
+	for _, c := range body {
+		if !isHexDigit(c) {
+			return "", errors.New("must be valid hex")
+		}
+	}
+	body = strings.ToLower(body)
+	if !strings.HasPrefix(body, "04") {
+		return "", errors.New("must be an uncompressed key (0x04 prefix byte)")
+	}
+	return "0x" + body, nil
 }
 
 // EthAddress returns the canonicalized lower-case orch eth address.

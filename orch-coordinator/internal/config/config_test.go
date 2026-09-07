@@ -134,3 +134,87 @@ func TestNormalizeOptionalBaseURL(t *testing.T) {
 func qstr(s string) string {
 	return "\"" + s + "\""
 }
+
+const settlementKeyA = "0x049d2193d32d9379271df49fcdd6d2b53dad719371ddfb77009494d2c08ceca2bbea717657d9e62d49f11ac13f8ee3ae9dbeea45c1db363ed200edd9618f027f48"
+const settlementKeyB = "0x0453180efc760bdd8a7ba16997caa23e1a173e4e45deb8f1b5b379e4eab21cf9eb0e1a2d48eb7d47ae60fdc76b61210f9423d4387eaec5787ed136fefc51c935ef"
+
+func settlementConfig(keys string) []byte {
+	return []byte(`identity:
+  orch_eth_address: "0xabcdef1234567890abcdef1234567890abcdef12"
+brokers:
+  - name: a
+    base_url: http://10.0.0.5:8080
+settlement_keys:
+` + keys)
+}
+
+func TestLoadBytes_SettlementKeys(t *testing.T) {
+	cfg, err := LoadBytes(settlementConfig(`  - label: ai2-rig-broker
+    public_key: "` + settlementKeyA + `"
+    not_before: 2026-09-07T00:00:00Z
+    expires_at: 2027-09-07T00:00:00Z
+  - label: eu-central-broker
+    public_key: "0x` + strings.ToUpper(settlementKeyB[2:]) + `"
+    not_before: 2026-09-07T00:00:00Z
+    expires_at: 2027-09-07T00:00:00Z
+`))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	if len(cfg.SettlementKeys) != 2 {
+		t.Fatalf("settlement_keys: want 2, got %d", len(cfg.SettlementKeys))
+	}
+	if cfg.SettlementKeys[0].Label != "ai2-rig-broker" || cfg.SettlementKeys[0].PublicKey != settlementKeyA {
+		t.Fatalf("key[0]: %+v", cfg.SettlementKeys[0])
+	}
+	// The schema pattern is lower-case only; an upper-case key is
+	// normalized rather than rejected, so the published bytes validate.
+	if cfg.SettlementKeys[1].PublicKey != settlementKeyB {
+		t.Fatalf("key[1] not normalized to lower case: %s", cfg.SettlementKeys[1].PublicKey)
+	}
+	want := time.Date(2027, 9, 7, 0, 0, 0, 0, time.UTC)
+	if !cfg.SettlementKeys[1].ExpiresAt.Equal(want) {
+		t.Fatalf("key[1].expires_at = %s, want %s", cfg.SettlementKeys[1].ExpiresAt, want)
+	}
+}
+
+func TestLoadBytes_SettlementKeysAbsentIsValid(t *testing.T) {
+	cfg, err := LoadBytes(settlementConfig("  []\n"))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	if len(cfg.SettlementKeys) != 0 {
+		t.Fatalf("want no keys, got %d", len(cfg.SettlementKeys))
+	}
+}
+
+func TestLoadBytes_RejectsBadSettlementKeys(t *testing.T) {
+	window := `    not_before: 2026-09-07T00:00:00Z
+    expires_at: 2027-09-07T00:00:00Z
+`
+	for _, tc := range []struct{ name, keys, wantErr string }{
+		{"too short", `  - public_key: "0x04abcd"
+` + window, "settlement_keys[0].public_key: must be 0x + 130 hex"},
+		{"not hex", `  - public_key: "` + settlementKeyA[:len(settlementKeyA)-1] + `z"
+` + window, "settlement_keys[0].public_key: must be valid hex"},
+		{"compressed", `  - public_key: "0x02` + settlementKeyA[4:] + `"
+` + window, "uncompressed key"},
+		{"missing not_before", `  - public_key: "` + settlementKeyA + `"
+    expires_at: 2027-09-07T00:00:00Z
+`, "settlement_keys[0].not_before: required"},
+		{"reversed window", `  - public_key: "` + settlementKeyA + `"
+    not_before: 2027-09-07T00:00:00Z
+    expires_at: 2026-09-07T00:00:00Z
+`, "expires_at 2026-09-07T00:00:00Z must be after not_before"},
+		{"duplicate", `  - public_key: "` + settlementKeyA + `"
+` + window + `  - public_key: "0x` + strings.ToUpper(settlementKeyA[2:]) + `"
+` + window, "settlement_keys[1].public_key: duplicate of settlement_keys[0]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadBytes(settlementConfig(tc.keys))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}

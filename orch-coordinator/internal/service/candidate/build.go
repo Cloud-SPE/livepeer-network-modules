@@ -78,6 +78,11 @@ type BuildOptions struct {
 	// TTL−threshold, keeping the candidate bytes stable while the sign
 	// cycle is in flight. Zero or negative means ManifestTTL/3.
 	RenewalThreshold time.Duration
+	// SettlementKeys ride into the signed payload verbatim (manifest
+	// spec 2.3.0). They are content: a key added or rotated while the
+	// offerings stand still must still produce fresh signable bytes,
+	// so they are folded into the content hash the debounce compares.
+	SettlementKeys []types.SettlementKey
 }
 
 // Build assembles a candidate from a scrape snapshot. The result is
@@ -101,7 +106,7 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		ServiceURI: opts.ServiceURI,
 	}
 
-	contentHash, err := computeContentHash(orch, tuples)
+	contentHash, err := computeContentHash(orch, tuples, opts.SettlementKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -130,6 +135,7 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		IssuedAt:       issuedAt,
 		ExpiresAt:      expiresAt,
 		Orch:           orch,
+		SettlementKeys: opts.SettlementKeys,
 		Capabilities:   tuples,
 	}
 
@@ -159,14 +165,19 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 }
 
 // computeContentHash returns a stable hex digest over the
-// content-bearing fields of the manifest (orch + capabilities). Used
-// to debounce issued_at: when the hash matches the prior build, the
-// canonical bytes can keep the same issued_at/expires_at and remain
-// byte-identical for signing.
-func computeContentHash(orch types.Orch, tuples []types.CapabilityTuple) (string, error) {
+// content-bearing fields of the manifest (orch + capabilities +
+// settlement keys). Used to debounce issued_at: when the hash matches
+// the prior build, the canonical bytes can keep the same
+// issued_at/expires_at and remain byte-identical for signing.
+func computeContentHash(orch types.Orch, tuples []types.CapabilityTuple, keys []types.SettlementKey) (string, error) {
 	root := map[string]any{
 		"orch":         orchToMap(orch),
 		"capabilities": capsToList(tuples),
+	}
+	// Same presence rule as the payload: absent keys hash exactly as
+	// they did before the field existed.
+	if len(keys) > 0 {
+		root["settlement_keys"] = settlementKeysToList(keys)
 	}
 	b, err := CanonicalBytes(root)
 	if err != nil {

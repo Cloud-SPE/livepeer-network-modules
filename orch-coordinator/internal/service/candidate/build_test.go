@@ -684,3 +684,101 @@ func TestBuild_MetadataPublishesEffectiveSignPolicy(t *testing.T) {
 			c.Manifest.SpecVersion, c.Metadata.SchemaVersion, version.VERSION)
 	}
 }
+
+func sampleSettlementKeys() []types.SettlementKey {
+	return []types.SettlementKey{{
+		PublicKey: "0x049d2193d32d9379271df49fcdd6d2b53dad719371ddfb77009494d2c08ceca2bbea717657d9e62d49f11ac13f8ee3ae9dbeea45c1db363ed200edd9618f027f48",
+		NotBefore: mustTime("2026-09-07T00:00:00Z"),
+		ExpiresAt: mustTime("2027-09-07T00:00:00Z"),
+	}}
+}
+
+// The delegation block rides in the signed payload, in the schema's
+// shape, and only when configured — a coordinator without keys emits
+// the same bytes it always did.
+func TestBuild_SettlementKeysRideInSignedPayload(t *testing.T) {
+	opts := BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+	}
+	without, err := Build(sampleSnap(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(without.ManifestBytes), "settlement_keys") {
+		t.Fatalf("no keys configured, yet the payload carries settlement_keys: %s", without.ManifestBytes)
+	}
+
+	opts.SettlementKeys = sampleSettlementKeys()
+	with, err := Build(sampleSnap(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(with.ManifestBytes, &root); err != nil {
+		t.Fatal(err)
+	}
+	keys, ok := root["settlement_keys"].([]any)
+	if !ok || len(keys) != 1 {
+		t.Fatalf("settlement_keys missing or wrong shape: %s", with.ManifestBytes)
+	}
+	got := keys[0].(map[string]any)
+	want := map[string]any{
+		"public_key": opts.SettlementKeys[0].PublicKey,
+		"not_before": "2026-09-07T00:00:00Z",
+		"expires_at": "2027-09-07T00:00:00Z",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("settlement_keys[0] = %v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(with.Manifest.SettlementKeys, opts.SettlementKeys) {
+		t.Fatalf("Manifest.SettlementKeys = %+v", with.Manifest.SettlementKeys)
+	}
+}
+
+// Adding or rotating a key while the offerings stand still is a
+// content change: the debounce must not hand back the previous
+// issued_at, or the new delegation would never reach a signer.
+func TestBuild_SettlementKeyChangeIsContentChange(t *testing.T) {
+	first := sampleSnap()
+	opts := BuildOptions{
+		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:    24 * time.Hour,
+	}
+	c1, err := Build(first, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second := sampleSnap()
+	second.WindowStart = first.WindowEnd
+	second.WindowEnd = first.WindowEnd.Add(60 * time.Second)
+	opts.PrevContentHash = c1.ContentHash
+	opts.PrevIssuedAt = c1.Manifest.IssuedAt
+	opts.SettlementKeys = sampleSettlementKeys()
+	c2, err := Build(second, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c2.ContentHash == c1.ContentHash {
+		t.Fatal("content hash ignored the settlement keys")
+	}
+	if !c2.Manifest.IssuedAt.Equal(second.WindowEnd) {
+		t.Fatalf("issued_at = %s; want window end %s (keys changed, so no debounce)", c2.Manifest.IssuedAt, second.WindowEnd)
+	}
+
+	// Same keys again: content identical, debounce applies.
+	third := sampleSnap()
+	third.WindowStart = second.WindowEnd
+	third.WindowEnd = second.WindowEnd.Add(60 * time.Second)
+	opts.PrevContentHash = c2.ContentHash
+	opts.PrevIssuedAt = c2.Manifest.IssuedAt
+	c3, err := Build(third, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c3.ContentHash != c2.ContentHash || !c3.Manifest.IssuedAt.Equal(c2.Manifest.IssuedAt) {
+		t.Fatalf("unchanged keys should debounce: hash %s vs %s, issued_at %s vs %s",
+			c3.ContentHash, c2.ContentHash, c3.Manifest.IssuedAt, c2.Manifest.IssuedAt)
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/settlementkeys"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
@@ -780,5 +781,60 @@ func TestBuild_SettlementKeyChangeIsContentChange(t *testing.T) {
 	if c3.ContentHash != c2.ContentHash || !c3.Manifest.IssuedAt.Equal(c2.Manifest.IssuedAt) {
 		t.Fatalf("unchanged keys should debounce: hash %s vs %s, issued_at %s vs %s",
 			c3.ContentHash, c2.ContentHash, c3.Manifest.IssuedAt, c2.Manifest.IssuedAt)
+	}
+}
+
+// A key a broker announced and proved is delegated in the candidate
+// with a coordinator-assigned window, recorded in metadata with its
+// provenance; an unproven one is reported and never delegated; a
+// published key still in its window is carried even though no broker
+// announces it.
+func TestBuild_MergesDiscoveredSettlementKeys(t *testing.T) {
+	snap := sampleSnap()
+	snap.Brokers[0].SettlementKeysSupported = true
+	snap.Brokers[0].SettlementKeys = []settlementkeys.Discovered{
+		{PublicKey: "0x04aa", Proven: true},
+		{PublicKey: "0x04bb", Proven: false, Reason: "settlementkeys: statement is for a different orchestrator"},
+	}
+	now := snap.WindowEnd
+	published := []types.SettlementKey{{PublicKey: "0x04ff", NotBefore: now.Add(-time.Hour), ExpiresAt: now.Add(time.Hour)}}
+	opts := BuildOptions{
+		OrchEthAddress:          "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ManifestTTL:             24 * time.Hour,
+		SettlementKeyValidity:   30 * 24 * time.Hour,
+		SettlementKeyWindows:    &settlementkeys.MemoryWindower{},
+		PublishedSettlementKeys: func() []types.SettlementKey { return published },
+	}
+	c, err := Build(snap, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Manifest.SettlementKeys) != 2 || c.Manifest.SettlementKeys[0].PublicKey != "0x04aa" || c.Manifest.SettlementKeys[1].PublicKey != "0x04ff" {
+		t.Fatalf("delegated = %+v", c.Manifest.SettlementKeys)
+	}
+	if k := c.Manifest.SettlementKeys[0]; !k.NotBefore.Equal(now) || !k.ExpiresAt.Equal(now.Add(30*24*time.Hour)) {
+		t.Fatalf("assigned window = %s..%s", k.NotBefore, k.ExpiresAt)
+	}
+	if !strings.Contains(string(c.ManifestBytes), `"settlement_keys":[{"expires_at":`) {
+		t.Fatalf("payload lacks settlement_keys: %s", c.ManifestBytes)
+	}
+	if len(c.Metadata.SettlementKeys) != 2 || c.Metadata.SettlementKeys[0].Source != settlementkeys.SourceBroker || c.Metadata.SettlementKeys[0].Broker != "b1" || c.Metadata.SettlementKeys[1].Source != settlementkeys.SourcePublished {
+		t.Fatalf("provenance = %+v", c.Metadata.SettlementKeys)
+	}
+	b := c.Metadata.SourceBrokers[0]
+	if len(b.SettlementKeys) != 2 || !b.SettlementKeys[0].Proven || b.SettlementKeys[1].Proven || b.SettlementKeys[1].Reason == "" {
+		t.Fatalf("broker entry = %+v", b)
+	}
+
+	// Stable across a second scrape: same window, same bytes, debounced.
+	second := snap
+	second.WindowStart, second.WindowEnd = snap.WindowEnd, snap.WindowEnd.Add(time.Minute)
+	opts.PrevContentHash, opts.PrevIssuedAt = c.ContentHash, c.Manifest.IssuedAt
+	c2, err := Build(second, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(c2.ManifestBytes) != string(c.ManifestBytes) {
+		t.Fatalf("discovered key churned the candidate:\n%s\n%s", c.ManifestBytes, c2.ManifestBytes)
 	}
 }

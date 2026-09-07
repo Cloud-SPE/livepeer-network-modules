@@ -10,6 +10,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/settlementkeys"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
@@ -78,11 +79,25 @@ type BuildOptions struct {
 	// TTL−threshold, keeping the candidate bytes stable while the sign
 	// cycle is in flight. Zero or negative means ManifestTTL/3.
 	RenewalThreshold time.Duration
-	// SettlementKeys ride into the signed payload verbatim (manifest
-	// spec 2.3.0). They are content: a key added or rotated while the
-	// offerings stand still must still produce fresh signable bytes,
-	// so they are folded into the content hash the debounce compares.
+	// SettlementKeys is the operator's pinned delegation list from
+	// coordinator-config (manifest spec 2.3.0). It is merged with the
+	// keys brokers announced on scrape and the keys the current
+	// manifest still delegates (settlementkeys.Merge). Keys are content:
+	// one added or rotated while the offerings stand still must still
+	// produce fresh signable bytes, so they are folded into the content
+	// hash the debounce compares.
 	SettlementKeys []types.SettlementKey
+	// SettlementKeyValidity is the window assigned to a broker key
+	// announced without one; zero means settlementkeys.DefaultValidity.
+	SettlementKeyValidity time.Duration
+	// SettlementKeyWindows remembers when each such key was first seen
+	// so the window is stable across scrapes. Nil disables discovery of
+	// unbounded keys (they are reported, not delegated).
+	SettlementKeyWindows settlementkeys.Windower
+	// PublishedSettlementKeys returns the current manifest's list, so a
+	// key inside its window stays delegated through a rotation or a
+	// broker outage. Nil when nothing is published.
+	PublishedSettlementKeys func() []types.SettlementKey
 }
 
 // Build assembles a candidate from a scrape snapshot. The result is
@@ -106,14 +121,27 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		ServiceURI: opts.ServiceURI,
 	}
 
-	contentHash, err := computeContentHash(orch, tuples, opts.SettlementKeys)
-	if err != nil {
-		return nil, err
-	}
-
 	issuedAt := snap.WindowEnd.UTC()
 	if issuedAt.IsZero() {
 		issuedAt = time.Now().UTC()
+	}
+
+	var published []types.SettlementKey
+	if opts.PublishedSettlementKeys != nil {
+		published = opts.PublishedSettlementKeys()
+	}
+	settlementKeys, keyProvenance := settlementkeys.Merge(settlementkeys.MergeInput{
+		Config:    opts.SettlementKeys,
+		Brokers:   announcedKeys(snap),
+		Published: published,
+		Now:       issuedAt,
+		Validity:  opts.SettlementKeyValidity,
+		Windows:   opts.SettlementKeyWindows,
+	})
+
+	contentHash, err := computeContentHash(orch, tuples, settlementKeys)
+	if err != nil {
+		return nil, err
 	}
 	// The effective threshold is resolved once, so what the metadata
 	// publishes is exactly what the debounce applies.
@@ -135,7 +163,7 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		IssuedAt:       issuedAt,
 		ExpiresAt:      expiresAt,
 		Orch:           orch,
-		SettlementKeys: opts.SettlementKeys,
+		SettlementKeys: settlementKeys,
 		Capabilities:   tuples,
 	}
 
@@ -154,6 +182,7 @@ func Build(snap scrape.Snapshot, opts BuildOptions) (*types.Candidate, error) {
 		ManifestTTLSeconds:      int64(opts.ManifestTTL / time.Second),
 		RenewalThresholdSeconds: int64(renewalThreshold / time.Second),
 		HAEndpoints:             ha,
+		SettlementKeys:          keyProvenance,
 	}
 
 	return &types.Candidate{
@@ -412,16 +441,34 @@ func tupleFrom(s types.SourceTuple) types.CapabilityTuple {
 	}
 }
 
+// announcedKeys lifts each broker's verified announcement into the
+// merge's input.
+func announcedKeys(snap scrape.Snapshot) []settlementkeys.BrokerKeys {
+	out := make([]settlementkeys.BrokerKeys, 0, len(snap.Brokers))
+	for _, b := range snap.Brokers {
+		if len(b.SettlementKeys) == 0 {
+			continue
+		}
+		out = append(out, settlementkeys.BrokerKeys{Name: b.Name, BaseURL: b.BaseURL, Keys: b.SettlementKeys})
+	}
+	return out
+}
+
 func brokerEntries(snap scrape.Snapshot) []types.MetadataBrokerEntry {
 	out := make([]types.MetadataBrokerEntry, 0, len(snap.Brokers))
 	for _, b := range snap.Brokers {
-		out = append(out, types.MetadataBrokerEntry{
-			Name:      b.Name,
-			BaseURL:   b.BaseURL,
-			Status:    b.Freshness,
-			ScrapedAt: b.LastSuccessAt,
-			Error:     b.LastError,
-		})
+		entry := types.MetadataBrokerEntry{
+			Name:                b.Name,
+			BaseURL:             b.BaseURL,
+			Status:              b.Freshness,
+			ScrapedAt:           b.LastSuccessAt,
+			Error:               b.LastError,
+			SettlementKeysError: b.SettlementKeysError,
+		}
+		for _, d := range b.SettlementKeys {
+			entry.SettlementKeys = append(entry.SettlementKeys, types.MetadataAnnouncedKey{PublicKey: d.PublicKey, Proven: d.Proven, Reason: d.Reason})
+		}
+		out = append(out, entry)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out

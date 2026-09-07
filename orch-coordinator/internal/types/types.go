@@ -371,6 +371,9 @@ type Metadata struct {
 	ManifestTTLSeconds      int64        `json:"manifest_ttl_seconds,omitempty"`
 	RenewalThresholdSeconds int64        `json:"renewal_threshold_seconds,omitempty"`
 	HAEndpoints             []HAEndpoint `json:"ha_endpoints,omitempty"`
+	// SettlementKeys is the provenance of every key the candidate
+	// delegates, in the order the manifest lists them.
+	SettlementKeys []MetadataSettlementKey `json:"settlement_keys,omitempty"`
 }
 
 // MetadataBrokerEntry records per-broker scrape success/failure.
@@ -380,6 +383,74 @@ type MetadataBrokerEntry struct {
 	Status    string    `json:"status"`
 	ScrapedAt time.Time `json:"scraped_at,omitempty"`
 	Error     string    `json:"error,omitempty"`
+	// SettlementKeys is what the broker announced at
+	// GET /registry/settlement-keys and whether each proof held.
+	// Operator-only: which of these the candidate delegates is decided
+	// by the merge and recorded in Metadata.SettlementKeys.
+	SettlementKeys      []MetadataAnnouncedKey `json:"settlement_keys,omitempty"`
+	SettlementKeysError string                 `json:"settlement_keys_error,omitempty"`
+}
+
+// MetadataAnnouncedKey is one key a broker announced, with the verdict
+// on its proof of possession.
+type MetadataAnnouncedKey struct {
+	PublicKey string `json:"public_key"`
+	Proven    bool   `json:"proven"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// MetadataSettlementKey is the provenance of one delegated key in the
+// candidate: where the key came from and where its window came from.
+// Unsigned and operator-only, like the rest of metadata.json — the cold
+// key sees the key itself in the manifest; this says why it is there.
+type MetadataSettlementKey struct {
+	PublicKey string `json:"public_key"`
+	// Source is config, broker or published (carried over from the
+	// current manifest until its window closes).
+	Source  string `json:"source"`
+	Broker  string `json:"broker,omitempty"`
+	BaseURL string `json:"base_url,omitempty"`
+	// WindowSource is config, broker, default (coordinator-assigned
+	// from first sight and publish.settlement_key_validity) or
+	// published.
+	WindowSource string    `json:"window_source"`
+	NotBefore    time.Time `json:"not_before"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
+// BrokerSettlementKeys mirrors GET /registry/settlement-keys
+// (protocols/broker-admin.md §7.1): the broker's self-signed
+// announcement of the delegated key(s) it signs settlements with.
+type BrokerSettlementKeys struct {
+	SpecVersion    string                         `json:"spec_version"`
+	OrchEthAddress string                         `json:"orch_eth_address"`
+	Keys           []BrokerSettlementAnnouncement `json:"keys"`
+}
+
+// BrokerSettlementAnnouncement is one announced key: the statement the
+// key signed, and the signature that proves possession.
+type BrokerSettlementAnnouncement struct {
+	Statement BrokerSettlementStatement  `json:"statement"`
+	Signature *BrokerSettlementSignature `json:"signature,omitempty"`
+	Error     string                     `json:"error,omitempty"`
+}
+
+// BrokerSettlementStatement is the signed content. Field set and
+// omission rules match the broker's; the canonical form is JCS.
+type BrokerSettlementStatement struct {
+	OrchEthAddress string `json:"orch_eth_address"`
+	PublicKey      string `json:"public_key"`
+	BaseURL        string `json:"base_url,omitempty"`
+	NotBefore      string `json:"not_before,omitempty"`
+	ExpiresAt      string `json:"expires_at,omitempty"`
+	IssuedAt       string `json:"issued_at"`
+}
+
+// BrokerSettlementSignature is EIP-191 secp256k1 over the JCS bytes.
+type BrokerSettlementSignature struct {
+	Algorithm        string `json:"algorithm"`
+	Canonicalization string `json:"canonicalization"`
+	Value            string `json:"value"`
 }
 
 // HAEndpoint records the alternate worker_url(s) that were dropped

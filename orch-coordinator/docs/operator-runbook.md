@@ -101,6 +101,9 @@ The broker list is static for v0.1; service discovery is a follow-up.
 ### Settlement key delegation
 
 ```yaml
+publish:
+  manifest_ttl: 24h
+  settlement_key_validity: 8760h    # window for keys brokers announce unbounded; default one year
 settlement_keys:
   - label: rig-1                      # operator-only, never published
     public_key: "0x04..."             # uncompressed secp256k1: 0x04 + 128 hex
@@ -121,8 +124,40 @@ case), both timestamps are required, `expires_at` must be after
 `not_before`, and duplicates are rejected. The keys are content: adding
 or rotating one produces a fresh candidate even when no offering
 changed, and the secure-orch console holds it for a human — a
-delegation change never auto-signs. Rotate by adding the new key and
-keeping the outgoing one listed until its `expires_at`.
+delegation change never auto-signs.
+
+**You normally do not write this block.** Each broker announces its
+own key at `GET /registry/settlement-keys` (broker-admin §7.1) with a
+signature proving it holds the private half, and the coordinator reads
+it on the same scrape as offerings. The candidate's `settlement_keys` is
+the merge of three sources, highest first:
+
+| Source | Where the window comes from | When it applies |
+|---|---|---|
+| `settlement_keys` in this file | you | a key the broker cannot announce (older build), or a window you chose |
+| the broker's announcement | the broker's `settlement_key_not_before/expires_at`; if it signs unbounded, the coordinator assigns `[first seen, first seen + publish.settlement_key_validity)` (default one year) | the announcement verified: signature recovers to the key, statement names this orch and this broker's `base_url` |
+| the published manifest | as published | a key still inside its window that no broker announces any more — the rotation overlap, and the reason a broker that is down at scrape time keeps its delegation |
+
+Expired keys are dropped from every source but this file. The
+coordinator-assigned window is remembered in
+`<data-dir>/settlement-keys.json` so it is stable across scrapes and
+restarts; at two thirds elapsed it re-anchors at the current time, which
+is a change the cold key reviews — renewal is a sign cycle, never a
+lapse.
+
+The roster page has a **Settlement delegation** section listing each
+broker's announced key with its state — `published`, `pending` (in the
+candidate, sign to delegate), `unproven` (the proof failed, with the
+reason), `retiring` (published, no longer announced), `none` (the broker
+holds no key: its settlements are unsigned), `unsupported` (older
+broker: pin the key here). Anything but `published` also appears in the
+broker alerts. `metadata.json` carries the same provenance per key.
+
+Rotation: generate a new key on the broker
+(`livepeer-capability-broker settlement-key generate --out …`), point
+`identity.settlement_key_file` at it, restart. The next scrape
+announces the new key; the old one stays delegated until its window
+closes. Nothing to edit here.
 
 ## Roster cells
 

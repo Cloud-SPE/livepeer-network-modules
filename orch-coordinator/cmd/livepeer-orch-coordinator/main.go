@@ -11,6 +11,8 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -34,7 +36,11 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/server/publicapi"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/candidate"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/receive"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
+
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/verify"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/settlementkeys"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
@@ -198,13 +204,21 @@ func run(logger *slog.Logger, cfg bootConfig) error {
 		return fmt.Errorf("candidate store: %w", err)
 	}
 
+	keyLedger, err := settlementkeys.OpenLedger(filepath.Join(cfg.dataDir, "settlement-keys.json"))
+	if err != nil {
+		return fmt.Errorf("settlement key ledger: %w", err)
+	}
+
 	builder, err := candidate.NewBuilder(scrapeSvc, candStore, candidate.BuildOptions{
-		OrchEthAddress:    loaded.EthAddress(),
-		ManifestTTL:       ttl,
-		PublicationSeq:    nextPublicationSeq,
-		CoordinatorCommit: version,
-		RenewalThreshold:  cfg.renewalThreshold,
-		SettlementKeys:    settlementKeysFromConfig(loaded.SettlementKeys),
+		OrchEthAddress:          loaded.EthAddress(),
+		ManifestTTL:             ttl,
+		PublicationSeq:          nextPublicationSeq,
+		CoordinatorCommit:       version,
+		RenewalThreshold:        cfg.renewalThreshold,
+		SettlementKeys:          settlementKeysFromConfig(loaded.SettlementKeys),
+		SettlementKeyValidity:   loaded.Publish.SettlementKeyValidity,
+		SettlementKeyWindows:    keyLedger,
+		PublishedSettlementKeys: publishedSettlementKeys(publishedStore),
 	}, logger.With("component", "candidate"))
 	if err != nil {
 		return fmt.Errorf("candidate builder: %w", err)
@@ -448,8 +462,41 @@ func newDevFake(orchAddr string, brokers []config.Broker) brokerclient.Client {
 				Reason:     "probe_ok",
 			}},
 		}, nil)
+		f.SetSettlementKeys(b.BaseURL, devSettlementKeys(orchAddr, b.BaseURL), nil)
 	}
 	return f
+}
+
+// devSettlementKeys is a fresh, self-signed announcement per fake
+// broker, so --dev exercises discovery end to end: the key is proven,
+// unbounded, and gets the default window from the ledger.
+func devSettlementKeys(orchAddr, baseURL string) *types.BrokerSettlementKeys {
+	key, err := ethcrypto.GenerateKey()
+	if err != nil {
+		return &types.BrokerSettlementKeys{SpecVersion: specversion.VERSION, OrchEthAddress: orchAddr, Keys: []types.BrokerSettlementAnnouncement{}}
+	}
+	st := types.BrokerSettlementStatement{
+		OrchEthAddress: orchAddr,
+		PublicKey:      "0x" + hex.EncodeToString(ethcrypto.FromECDSAPub(&key.PublicKey)),
+		BaseURL:        baseURL,
+		IssuedAt:       time.Now().UTC().Format(time.RFC3339),
+	}
+	// JCS of the statement: sorted keys, encoding/json strings.
+	canonical, _ := json.Marshal(struct {
+		BaseURL        string `json:"base_url,omitempty"`
+		IssuedAt       string `json:"issued_at"`
+		OrchEthAddress string `json:"orch_eth_address"`
+		PublicKey      string `json:"public_key"`
+	}{st.BaseURL, st.IssuedAt, st.OrchEthAddress, st.PublicKey})
+	sig, err := ethcrypto.Sign(verify.PersonalSignDigest(canonical), key)
+	ann := types.BrokerSettlementAnnouncement{Statement: st}
+	if err == nil {
+		sig[64] += 27
+		ann.Signature = &types.BrokerSettlementSignature{Algorithm: "secp256k1", Canonicalization: "jcs", Value: "0x" + hex.EncodeToString(sig)}
+	} else {
+		ann.Error = err.Error()
+	}
+	return &types.BrokerSettlementKeys{SpecVersion: specversion.VERSION, OrchEthAddress: orchAddr, Keys: []types.BrokerSettlementAnnouncement{ann}}
 }
 
 func brokerNames(brokers []config.Broker) []string {
@@ -538,4 +585,21 @@ func settlementKeysFromConfig(keys []config.SettlementKey) []types.SettlementKey
 		})
 	}
 	return out
+}
+
+// publishedSettlementKeys reads the current manifest's delegation list
+// at each build, so a key inside its window is carried until it
+// expires no matter what the brokers say this cycle.
+func publishedSettlementKeys(store *published.Store) func() []types.SettlementKey {
+	return func() []types.SettlementKey {
+		raw, _, err := store.Read()
+		if err != nil {
+			return nil
+		}
+		sm, err := types.ParseSignedManifest(raw)
+		if err != nil {
+			return nil
+		}
+		return sm.Manifest.SettlementKeys
+	}
 }

@@ -218,3 +218,23 @@ func TestLoadBytes_RejectsBadSettlementKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadBytes_SettlementKeyValidity(t *testing.T) {
+	base := `identity:
+  orch_eth_address: "0xabcdef1234567890abcdef1234567890abcdef12"
+brokers:
+  - name: a
+    base_url: http://10.0.0.5:8080
+publish:
+  settlement_key_validity: `
+	cfg, err := LoadBytes([]byte(base + "2160h\n"))
+	if err != nil || cfg.Publish.SettlementKeyValidity != 90*24*time.Hour {
+		t.Fatalf("90d: cfg=%+v err=%v", cfg, err)
+	}
+	if _, err := LoadBytes([]byte(base + "1h\n")); err == nil || !strings.Contains(err.Error(), "at least 24h") {
+		t.Fatalf("1h accepted: %v", err)
+	}
+	if _, err := LoadBytes([]byte(base + "-24h\n")); err == nil {
+		t.Fatal("negative accepted")
+	}
+}

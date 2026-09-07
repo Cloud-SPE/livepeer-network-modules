@@ -91,6 +91,12 @@ type SettlementKey struct {
 // flag set carries deployment-wide defaults when this block is absent.
 type Publish struct {
 	ManifestTTL time.Duration `yaml:"manifest_ttl,omitempty"`
+	// SettlementKeyValidity is the window the coordinator assigns to a
+	// settlement key a broker announces without one (see
+	// settlement_keys for the pinned form). Zero means one year. The
+	// window re-anchors at two thirds elapsed, which is a change the
+	// cold key reviews — renewal is a sign cycle, never a lapse.
+	SettlementKeyValidity time.Duration `yaml:"settlement_key_validity,omitempty"`
 }
 
 // Load reads a YAML file from disk and validates it.
@@ -154,6 +160,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Publish.ManifestTTL < 0 {
 		return errors.New("publish.manifest_ttl: must be non-negative")
+	}
+	if c.Publish.SettlementKeyValidity < 0 {
+		return errors.New("publish.settlement_key_validity: must be non-negative")
+	}
+	if v := c.Publish.SettlementKeyValidity; v > 0 && v < 24*time.Hour {
+		return errors.New("publish.settlement_key_validity: must be at least 24h; a shorter window churns the manifest")
 	}
 	seenKeys := make(map[string]int, len(c.SettlementKeys))
 	for i := range c.SettlementKeys {

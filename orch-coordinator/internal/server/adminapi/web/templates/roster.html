@@ -33,6 +33,21 @@
     {{end}}
     </ul>
   </details>
+  <details class="brokers" id="settlement-keys" open>
+    <summary>Settlement delegation — {{len .SettlementKeys}} key(s)</summary>
+    <p class="muted">Keys brokers announce at <code>/registry/settlement-keys</code>, proven by signature, and where each stands. The cold key delegates them when it signs the candidate.</p>
+    <ul>
+    {{range .SettlementKeys}}
+      <li class="settlement-{{.State}}">
+        {{if .Broker}}<strong>{{.Broker}}</strong>{{else}}<strong>(not announced by any broker)</strong>{{end}}
+        — <span class="badge settlement-{{.State}}">{{.State}}</span>
+        {{if .PublicKey}}<code title="{{.PublicKey}}">{{.Fingerprint}}</code>{{end}}
+        {{if not .NotBefore.IsZero}}<span class="muted">{{.NotBefore.Format "2006-01-02"}} &rarr; {{.ExpiresAt.Format "2006-01-02"}}</span>{{end}}
+        {{if .Reason}}<span class="err">{{.Reason}}</span>{{end}}
+      </li>
+    {{end}}
+    </ul>
+  </details>
   <form method="get" class="filters">
     <input type="text" name="q" value="{{.Filter.CapabilitySubstring}}" placeholder="capability substring">
     <input type="text" name="protocol" value="{{.Filter.Protocol}}" placeholder="protocol">

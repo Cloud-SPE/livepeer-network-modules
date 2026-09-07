@@ -18,6 +18,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/providers/brokerclient"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/settlementkeys"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
@@ -43,6 +44,15 @@ type BrokerStatus struct {
 	HealthError     string
 	LiveStatus      string
 	TupleHealth     map[string]types.BrokerHealthCapability
+	// SettlementKeys is what the broker announced at
+	// GET /registry/settlement-keys, verified against this orch and
+	// this broker's base_url. Soft like health: a failed fetch keeps
+	// the last announcement and records the error, and a broker that
+	// predates the endpoint reports SettlementKeysSupported false.
+	SettlementKeys          []settlementkeys.Discovered
+	SettlementKeysCheckedAt time.Time
+	SettlementKeysError     string
+	SettlementKeysSupported bool
 }
 
 // Snapshot is a point-in-time view of the scrape cache.
@@ -173,6 +183,10 @@ func (s *Service) scrapeOnce(ctx context.Context) {
 		health, herr := s.client.FetchHealth(hctx, b.BaseURL)
 		hcancel()
 		s.applyHealth(b, health, herr)
+		kctx, kcancel := context.WithTimeout(ctx, s.cfg.ScrapeTimeout)
+		keys, kerr := s.client.FetchSettlementKeys(kctx, b.BaseURL)
+		kcancel()
+		s.applySettlementKeys(b, keys, kerr)
 		if s.observer != nil {
 			s.observer.ObserveScrape(b.Name, outcome, time.Since(start))
 		}
@@ -285,6 +299,39 @@ func (s *Service) applyHealth(b config.Broker, health *types.BrokerHealth, err e
 	}
 }
 
+// applySettlementKeys records the broker's key announcement. Like
+// health, it never touches Freshness: a broker that serves offers but
+// cannot be asked for its key is still a broker, and the last
+// announcement stands until a fetch replaces it.
+func (s *Service) applySettlementKeys(b config.Broker, keys *types.BrokerSettlementKeys, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.cache[b.Name]
+	if !ok {
+		return
+	}
+	st.SettlementKeysCheckedAt = time.Now().UTC()
+	switch {
+	case errors.Is(err, brokerclient.ErrNotSupported):
+		st.SettlementKeysSupported = false
+		st.SettlementKeysError = ""
+		st.SettlementKeys = nil
+		return
+	case err != nil:
+		st.SettlementKeysError = err.Error()
+		return
+	case keys == nil:
+		st.SettlementKeysError = "empty settlement-keys response"
+		return
+	}
+	st.SettlementKeysSupported = true
+	st.SettlementKeysError = ""
+	st.SettlementKeys = make([]settlementkeys.Discovered, 0, len(keys.Keys))
+	for _, a := range keys.Keys {
+		st.SettlementKeys = append(st.SettlementKeys, settlementkeys.Verify(a, s.cfg.OrchEthAddress, b.BaseURL))
+	}
+}
+
 // Snapshot returns a deep-copy view of the cache. The window bounds
 // are derived from the freshest broker's success timestamp; a broker
 // without a recent success contributes its last-good entries flagged
@@ -306,6 +353,7 @@ func (s *Service) Snapshot() Snapshot {
 		}
 		copyBroker := *st
 		copyBroker.Offerings = append([]types.BrokerOffering(nil), st.Offerings...)
+		copyBroker.SettlementKeys = append([]settlementkeys.Discovered(nil), st.SettlementKeys...)
 		if st.TupleHealth != nil {
 			copyBroker.TupleHealth = make(map[string]types.BrokerHealthCapability, len(st.TupleHealth))
 			for k, v := range st.TupleHealth {

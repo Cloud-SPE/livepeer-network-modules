@@ -25,6 +25,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/receive"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/roster"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/settlementkeys"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
@@ -322,6 +323,7 @@ type rosterPage struct {
 	CandidateEthAddress  string
 	CandidateCanonHash   string
 	HasCandidateIdentity bool
+	SettlementKeys       []settlementKeyRow
 	CycleStage           string
 	CycleTitle           string
 	CycleNote            string
@@ -513,7 +515,9 @@ func buildRosterPage(deps WebDeps, r *http.Request) rosterPage {
 		RiskItems:            collectDriftAlerts(out.Rows),
 		BrokerAlerts:         collectBrokerAlerts(view.BrokerStatus),
 		HasCandidateIdentity: cand != nil,
+		SettlementKeys:       settlementKeyRows(view.BrokerStatus, cand, pub),
 	}
+	page.BrokerAlerts = append(page.BrokerAlerts, collectSettlementKeyAlerts(page.SettlementKeys)...)
 	if cand != nil {
 		page.CandidateSeq = cand.PublicationSeq
 		page.CandidateEthAddress = cand.Orch.EthAddress
@@ -733,6 +737,125 @@ func collectDriftAlerts(rows []roster.Row) []alertItem {
 				Href:    "/diff#diff-row-" + anchorID(row.CapabilityID, row.OfferingID),
 			})
 		}
+		if len(alerts) >= 6 {
+			break
+		}
+	}
+	return alerts
+}
+
+// settlementKeyRow is one delegated (or delegable) settlement key as the
+// roster shows it: who announced it, whether the proof held, and where
+// it stands between candidate and published manifest. This is the
+// column the operator reads instead of comparing 130 hex characters.
+type settlementKeyRow struct {
+	Broker      string
+	BaseURL     string
+	PublicKey   string
+	Fingerprint string
+	Proven      bool
+	Reason      string
+	// State is one of: published (delegated by the live manifest),
+	// pending (in the candidate, not yet signed), unproven, retiring
+	// (published but no broker announces it), unsupported (broker
+	// predates the endpoint), none (broker announces no key: it signs
+	// nothing).
+	State     string
+	NotBefore time.Time
+	ExpiresAt time.Time
+}
+
+func settlementKeyRows(brokers []scrape.BrokerStatus, cand, pub *types.ManifestPayload) []settlementKeyRow {
+	inCand := map[string]types.SettlementKey{}
+	if cand != nil {
+		for _, k := range cand.SettlementKeys {
+			inCand[k.PublicKey] = k
+		}
+	}
+	inPub := map[string]types.SettlementKey{}
+	if pub != nil {
+		for _, k := range pub.SettlementKeys {
+			inPub[k.PublicKey] = k
+		}
+	}
+	rows := make([]settlementKeyRow, 0, len(brokers)+len(inPub))
+	announced := map[string]bool{}
+	for _, b := range brokers {
+		switch {
+		case b.SettlementKeysError != "" && len(b.SettlementKeys) == 0:
+			rows = append(rows, settlementKeyRow{Broker: b.Name, BaseURL: b.BaseURL, State: "unknown", Reason: b.SettlementKeysError})
+			continue
+		case !b.SettlementKeysSupported && len(b.SettlementKeys) == 0:
+			rows = append(rows, settlementKeyRow{Broker: b.Name, BaseURL: b.BaseURL, State: "unsupported", Reason: "broker does not serve /registry/settlement-keys; pin the key in coordinator-config"})
+			continue
+		case len(b.SettlementKeys) == 0:
+			rows = append(rows, settlementKeyRow{Broker: b.Name, BaseURL: b.BaseURL, State: "none", Reason: "broker announces no key: its settlement records go out unsigned"})
+			continue
+		}
+		for _, d := range b.SettlementKeys {
+			announced[d.PublicKey] = true
+			row := settlementKeyRow{Broker: b.Name, BaseURL: b.BaseURL, PublicKey: d.PublicKey, Fingerprint: settlementkeys.Fingerprint(d.PublicKey), Proven: d.Proven, Reason: d.Reason}
+			switch {
+			case !d.Proven:
+				row.State = "unproven"
+			case hasKey(inPub, d.PublicKey):
+				row.State = "published"
+				row.NotBefore, row.ExpiresAt = inPub[d.PublicKey].NotBefore, inPub[d.PublicKey].ExpiresAt
+			case hasKey(inCand, d.PublicKey):
+				row.State = "pending"
+				row.NotBefore, row.ExpiresAt = inCand[d.PublicKey].NotBefore, inCand[d.PublicKey].ExpiresAt
+			default:
+				row.State = "undelegated"
+				row.Reason = "proven but not in the candidate; an unbounded key needs the ledger, or the window has expired"
+			}
+			rows = append(rows, row)
+		}
+	}
+	// Published keys no broker announces any more: retiring through
+	// their window, or pinned in config.
+	for pk, k := range inPub {
+		if announced[pk] {
+			continue
+		}
+		state := "retiring"
+		if hasKey(inCand, pk) {
+			state = "published"
+		}
+		rows = append(rows, settlementKeyRow{PublicKey: pk, Fingerprint: settlementkeys.Fingerprint(pk), Proven: true, State: state, NotBefore: k.NotBefore, ExpiresAt: k.ExpiresAt})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Broker != rows[j].Broker {
+			return rows[i].Broker < rows[j].Broker
+		}
+		return rows[i].PublicKey < rows[j].PublicKey
+	})
+	return rows
+}
+
+func hasKey(m map[string]types.SettlementKey, pk string) bool {
+	_, ok := m[pk]
+	return ok
+}
+
+func collectSettlementKeyAlerts(rows []settlementKeyRow) []alertItem {
+	alerts := make([]alertItem, 0)
+	for _, r := range rows {
+		var msg string
+		switch r.State {
+		case "unproven":
+			msg = r.Broker + " announced a settlement key it could not prove it holds: " + r.Reason
+		case "none":
+			msg = r.Broker + " signs no settlements: no delegated key configured on the broker."
+		case "unsupported":
+			msg = r.Broker + " cannot announce its settlement key (older broker); pin it in coordinator-config or upgrade."
+		case "unknown":
+			msg = r.Broker + " settlement key check failed: " + r.Reason
+		case "pending":
+			msg = r.Broker + " settlement key " + r.Fingerprint + " is in the candidate but not yet published; sign to delegate it."
+		default:
+			continue
+		}
+		alerts = append(alerts, alertItem{Message: msg, Href: "#settlement-keys"})
 		if len(alerts) >= 6 {
 			break
 		}

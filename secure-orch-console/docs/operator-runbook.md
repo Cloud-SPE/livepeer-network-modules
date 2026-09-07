@@ -70,12 +70,20 @@ matching coordinator timeline section during the hand-carry cycle.
    Header summary surfaces `publication_seq` monotonicity and
    `orch.eth_address` stability; per-tuple diff highlights
    `price_per_unit_wei` / `worker_url` changes.
-5. Operator types the last 4 hex chars of the signer eth address into
+5. If the review flags **settlement delegation changed**, verify each
+   listed key against the broker that holds it before going further.
+   The page prints one command per broker in the candidate:
+   `curl -s <worker_url>/registry/settlement-keys | jq '.keys[].statement.public_key'`.
+   Run it from your laptop, not from the coordinator: the point is a
+   path the coordinator does not control. A key the candidate delegates
+   that no broker announces is either pinned in coordinator-config on
+   purpose or should not be signed.
+6. Operator types the last 4 hex chars of the signer eth address into
    the confirm input and submits the sign form.
-6. Console signs the canonical bytes, atomically updates
+7. Console signs the canonical bytes, atomically updates
    `last-signed.json`, and streams `signed.json` back as a download
    attachment.
-7. Operator uploads `signed.json` to the coordinator's web UI;
+8. Operator uploads `signed.json` to the coordinator's web UI;
    coordinator double-verifies, then publishes at
    `/.well-known/livepeer-registry.json`.
 

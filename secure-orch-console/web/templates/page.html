@@ -621,6 +621,13 @@
         <li class="{{if not $d.Header.SettlementKeysStable}}chg{{end}}"><code>{{index . "public_key"}}</code> <span class="muted">{{index . "not_before"}} &rarr; {{index . "expires_at"}}</span></li>
         {{end}}
       </ul>
+      {{if not $d.Header.SettlementKeysStable}}
+      <p class="muted">Verify each key against the broker that holds it, over a path the coordinator does not control. From your workstation, for every broker in this candidate:</p>
+      <ul class="tuples">
+        {{range $d.Header.WorkerURLs}}<li><code>curl -s {{.}}/registry/settlement-keys | jq '.keys[].statement.public_key'</code></li>{{end}}
+      </ul>
+      <p class="muted">A key listed above that no broker announces is either pinned in coordinator-config on purpose or should not be here.</p>
+      {{end}}
       {{else}}<code>none</code>{{end}}
     </div>
   </div>

@@ -67,6 +67,12 @@ type HeaderChange struct {
 	BeforeSettlementKeys []map[string]any `json:"before_settlement_keys,omitempty"`
 	AfterSettlementKeys  []map[string]any `json:"after_settlement_keys,omitempty"`
 	SettlementKeysStable bool             `json:"settlement_keys_stable"`
+	// WorkerURLs is every distinct worker_url the candidate sells
+	// through. Shown next to a delegation change so the operator can
+	// check each key against the broker's own announcement over a
+	// channel the coordinator does not control:
+	// GET <worker_url>/registry/settlement-keys.
+	WorkerURLs []string `json:"worker_urls,omitempty"`
 }
 
 // Compute computes the structural diff between the inner manifest
@@ -184,6 +190,7 @@ func header(before, after map[string]any) HeaderChange {
 		h.AfterIssuedAt, _ = after["issued_at"].(string)
 		h.AfterExpiresAt, _ = after["expires_at"].(string)
 		h.AfterSettlementKeys = readSettlementKeys(after)
+		h.WorkerURLs = readWorkerURLs(after)
 	}
 	if before != nil {
 		seq := readUint64(before, "publication_seq")
@@ -219,6 +226,28 @@ func readSettlementKeys(m map[string]any) []map[string]any {
 			out = append(out, k)
 		}
 	}
+	return out
+}
+
+// readWorkerURLs lists the distinct worker_url values, sorted.
+func readWorkerURLs(m map[string]any) []string {
+	caps, ok := m["capabilities"].([]any)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range caps {
+		c, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if u, _ := c["worker_url"].(string); u != "" && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 

@@ -40,6 +40,22 @@ func TestCompute_SettlementKeysAddedIsAHeaderChange(t *testing.T) {
 	}
 }
 
+// The header names the brokers the candidate sells through, so the
+// review page can tell the operator where to check each key.
+func TestCompute_HeaderListsWorkerURLs(t *testing.T) {
+	r, err := Compute(nil, []byte(`{"spec_version":"0.2.0","publication_seq":1,"orch":{"eth_address":"0xaaaa00000000000000000000000000000000aaaa"},
+	  "capabilities":[
+	    {"capability_id":"a","offering_id":"1","worker_url":"https://b.example"},
+	    {"capability_id":"b","offering_id":"1","worker_url":"https://a.example"},
+	    {"capability_id":"c","offering_id":"1","worker_url":"https://b.example"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Header.WorkerURLs) != 2 || r.Header.WorkerURLs[0] != "https://a.example" || r.Header.WorkerURLs[1] != "https://b.example" {
+		t.Fatalf("worker_urls = %v", r.Header.WorkerURLs)
+	}
+}
+
 func TestCompute_SettlementKeysUnchangedIsStable(t *testing.T) {
 	r, err := Compute([]byte(withKeys), []byte(withKeys))
 	if err != nil {

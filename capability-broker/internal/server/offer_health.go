@@ -5,6 +5,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/offers"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/runners"
 )
 
 // /registry/health over attached runners.
@@ -62,6 +63,25 @@ func (s *Server) offerHealth() health.Response {
 
 // pairHealth is one eligible runner's verdict for one offer.
 func (s *Server) pairHealth(view offers.View, pair offers.PairKey, now time.Time) health.Snapshot {
+	host, known := s.runners.Get(pair.HostID)
+	_, live := s.runners.ConnFor(pair.HostID, pair.LocalID)
+	return attachVerdict(view, pair, host, known, live, now)
+}
+
+// attachVerdict is the pure half of pairHealth: the verdict for one
+// (offer, runner) pair given what the registry knows about the host.
+//
+// probed_at is always now and stale_after is always now+healthHorizon.
+// The verdict is recomputed from live state on every read, so the
+// tunnel being up IS the current evidence, in a way a probe result
+// never was — and a reader that ages it against the last dispatch
+// would halve an idle runner's selection weight after ninety quiet
+// seconds (selection.isNearStale). That was the bug behind lnm-ei4:
+// last_seen advances on real dispatch only, and reporting it as
+// probed_at made "idle" read as "nearly stale". It is still reported,
+// because it is the honest answer to "when did this last demonstrably
+// work", but under its own name.
+func attachVerdict(view offers.View, pair offers.PairKey, host runners.Snapshot, known, live bool, now time.Time) health.Snapshot {
 	snap := health.Snapshot{
 		ID:         view.CapabilityID,
 		OfferingID: view.OfferingID,
@@ -70,31 +90,23 @@ func (s *Server) pairHealth(view offers.View, pair offers.PairKey, now time.Time
 		ProbedAt:   now,
 		StaleAfter: now.Add(healthHorizon),
 	}
-	host, known := s.runners.Get(pair.HostID)
 	switch {
 	case !known || host.State != "connected":
 		snap.Status = health.StatusUnreachable
 		snap.Reason = "runner_detached"
 		snap.ConsecutiveFailures = 1
+	case !live:
+		// The host is attached but this capability's connection is
+		// not: the runner dropped the entry without detaching.
+		snap.Status = health.StatusUnreachable
+		snap.Reason = "capability_not_connected"
+		snap.ConsecutiveFailures = 1
 	default:
-		if _, live := s.runners.ConnFor(pair.HostID, pair.LocalID); !live {
-			// The host is attached but this capability's connection is
-			// not: the runner dropped the entry without detaching.
-			snap.Status = health.StatusUnreachable
-			snap.Reason = "capability_not_connected"
-			snap.ConsecutiveFailures = 1
-			break
-		}
 		snap.Status = health.StatusReady
 		snap.Reason = "certified"
 		snap.ConsecutiveSuccesses = 1
 		if !host.LastSeen.IsZero() {
-			// LastSeen advances on real dispatch, so it is the honest
-			// answer to "when did this last demonstrably work". It is
-			// reported, but it does not age the verdict: an idle runner
-			// is not a failing one, and the tunnel being up is current
-			// evidence in a way a probe result never was.
-			snap.ProbedAt = host.LastSeen.UTC()
+			snap.LastDispatchedAt = host.LastSeen.UTC()
 		}
 	}
 	return snap

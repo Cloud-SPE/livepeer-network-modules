@@ -24,14 +24,19 @@ const (
 
 // Snapshot is one backend's verdict under one published tuple.
 type Snapshot struct {
-	ID                   string    `json:"id"`
-	OfferingID           string    `json:"offering_id"`
-	BackendID            string    `json:"backend_id,omitempty"`
-	Status               Status    `json:"status"`
-	Reason               string    `json:"reason,omitempty"`
-	ProbeType            string    `json:"probe_type,omitempty"`
-	ProbedAt             time.Time `json:"probed_at,omitempty"`
-	StaleAfter           time.Time `json:"stale_after,omitempty"`
+	ID         string    `json:"id"`
+	OfferingID string    `json:"offering_id"`
+	BackendID  string    `json:"backend_id,omitempty"`
+	Status     Status    `json:"status"`
+	Reason     string    `json:"reason,omitempty"`
+	ProbeType  string    `json:"probe_type,omitempty"`
+	ProbedAt   time.Time `json:"probed_at,omitempty"`
+	StaleAfter time.Time `json:"stale_after,omitempty"`
+	// LastDispatchedAt is when this backend last demonstrably did work
+	// (a forwarded exchange or a keepalive touched it). Informational:
+	// it does not age the verdict, because an idle runner is not a
+	// failing one. Zero when the backend has never been dispatched to.
+	LastDispatchedAt     time.Time `json:"last_dispatched_at,omitempty"`
 	ConsecutiveSuccesses int       `json:"consecutive_successes,omitempty"`
 	ConsecutiveFailures  int       `json:"consecutive_failures,omitempty"`
 }

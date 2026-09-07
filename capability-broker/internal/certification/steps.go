@@ -1,6 +1,8 @@
 package certification
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -397,7 +399,7 @@ func checkAssert(a any, data any) string {
 func (x *runExec) sessionRequest(cfg map[string]any, sr *StepResult, timeout time.Duration) {
 	params, _ := json.Marshal(valueOr(cfg, "session_params", map[string]any{}))
 	create := map[string]any{
-		"session_id": "cert-" + x.runID, "work_id": "cert-" + x.runID,
+		"session_id": "cert-" + x.runID, "work_id": certWorkID(x.runID),
 		"capability": x.cap.CapabilityID, "offering": x.offer.OfferingID,
 		"session_params": json.RawMessage(params),
 	}
@@ -477,8 +479,7 @@ func (x *runExec) sessionRequest(cfg map[string]any, sr *StepResult, timeout tim
 			sr.Status = StepFailed
 			sr.Message = "reach: " + msg
 			sr.Evidence = ev
-			termPath := strings.ReplaceAll(x.cap.Paths["terminate"], "{id}", created.RunnerSessionID)
-			_, _ = x.forward(http.MethodDelete, termPath, nil, nil, timeout, defaultMaxRespBytes)
+			x.terminateSession(created.RunnerSessionID, timeout)
 			return
 		}
 		reached = ev
@@ -489,11 +490,9 @@ func (x *runExec) sessionRequest(cfg map[string]any, sr *StepResult, timeout tim
 		case <-time.After(time.Duration(hold) * time.Millisecond):
 		}
 	}
-	termPath := strings.ReplaceAll(x.cap.Paths["terminate"], "{id}", created.RunnerSessionID)
-	tex, err := x.forward(http.MethodDelete, termPath, nil, nil, timeout, defaultMaxRespBytes)
-	if err != nil || tex.status >= 300 {
+	if err := x.terminateSession(created.RunnerSessionID, timeout); err != nil {
 		sr.Status = StepFailed
-		sr.Message = "terminate failed"
+		sr.Message = "terminate failed: " + err.Error()
 		return
 	}
 	sr.Status = StepPassed
@@ -1061,3 +1060,33 @@ const usagePollInterval = 50 * time.Millisecond
 // defaultUsageWindowMS is certification-steps §3.3's default: how long
 // a session usage step waits for the runner's report.
 const defaultUsageWindowMS = 10000
+
+// certWorkID is the work_id a certification session carries. paid-session
+// §3 makes work_id the payment identity: the hex-encoded recipient rand
+// hash, 64 hex characters, and a session runner is entitled to refuse any
+// other shape — the live runner does, with a 400 that names nothing.
+// Certification has no payment, so it derives a spec-shaped id from the
+// run instead of inventing a prefixed string no runner will accept.
+func certWorkID(runID string) string {
+	sum := sha256.Sum256([]byte("cert-" + runID))
+	return hex.EncodeToString(sum[:])
+}
+
+// terminateSession ends a certification session the way the paid path
+// does (sessionengine.HTTPRunnerClient.TerminateSession): DELETE with a
+// {"reason"} body carrying a stable close reason, idempotent on a session
+// the runner no longer has.
+func (x *runExec) terminateSession(runnerSessionID string, timeout time.Duration) error {
+	termPath := strings.ReplaceAll(x.cap.Paths["terminate"], "{id}", runnerSessionID)
+	body, _ := json.Marshal(map[string]string{"reason": "gateway_close"})
+	headers := http.Header{}
+	headers.Set("Content-Type", "application/json")
+	tex, err := x.forward(http.MethodDelete, termPath, headers, bytes.NewReader(body), timeout, defaultMaxRespBytes)
+	if err != nil {
+		return err
+	}
+	if tex.status/100 == 2 || tex.status == http.StatusNotFound || tex.status == http.StatusGone {
+		return nil
+	}
+	return fmt.Errorf("runner terminate returned %d", tex.status)
+}

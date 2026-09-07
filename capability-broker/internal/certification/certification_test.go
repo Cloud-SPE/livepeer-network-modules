@@ -288,9 +288,23 @@ func TestSessionRequestOpensChecksDescriptorTerminates(t *testing.T) {
 				http.Error(w, "no room", 400)
 				return
 			}
+			// paid-session §3: work_id is the hex recipient rand hash. A
+			// runner may refuse anything else, so certification must send
+			// a spec-shaped one.
+			if wid, _ := body["work_id"].(string); len(wid) != 64 || strings.Trim(wid, "0123456789abcdef") != "" {
+				http.Error(w, "work_id is not 64 hex characters", 400)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"runner_session_id":"rs-1","runtime":{"schema":"sfu-room/v1","public":{"join_url":"https://x/join"}}}`))
 		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/sessions/"):
+			// The runner's terminate takes a {"reason"} body with a stable
+			// close reason, as the paid path sends; a bare DELETE is a 400.
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["reason"] != "gateway_close" {
+				http.Error(w, "terminate needs a close reason", 400)
+				return
+			}
 			terminated = true
 			w.WriteHeader(204)
 		default:

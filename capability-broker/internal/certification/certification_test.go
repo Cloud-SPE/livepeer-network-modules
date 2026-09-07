@@ -15,6 +15,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/openaiusage"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/responsejsonpath"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors/responsetrailer"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/offers"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/runnerattach"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/runners"
@@ -58,6 +59,7 @@ func extractorRegistry() *extractors.Registry {
 	r := extractors.NewRegistry()
 	r.Register(openaiusage.Name, openaiusage.New)
 	r.Register(responsejsonpath.Name, responsejsonpath.New)
+	r.Register(responsetrailer.Name, responsetrailer.New)
 	return r
 }
 
@@ -355,3 +357,56 @@ func TestOperatorRunAbortsInFlight(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// A streamed job's usage claim is an HTTP trailer (paid-job §3.2). The
+// certification usage step must read it, or every runner metered by
+// response-trailer — the transcode family — fails with units 0 and never
+// advertises, which is what the first eu-central attach showed.
+func TestStreamedJobCertifiesFromTheTrailer(t *testing.T) {
+	conn := &handlerConn{h: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ready":
+			w.WriteHeader(200)
+		case "/v1/video/transcode":
+			if r.Header.Get("Accept") != "text/event-stream" {
+				http.Error(w, "sse_transport_required", http.StatusNotAcceptable)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Trailer", "X-Livepeer-Work-Units")
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte("event: progress\ndata: {\"frame\":60}\n\n"))
+			w.Header().Set("X-Livepeer-Work-Units", "55")
+		default:
+			http.NotFound(w, r)
+		}
+	})}
+	cap := &runnerattach.Capability{
+		CapabilityID: "video:transcode.vod", Protocol: "paid-job/v1", LocalID: "vod",
+		Transports: []string{"stream"},
+		WorkUnit: runnerattach.WorkUnit{Name: "video-frame-megapixel",
+			Extractor: map[string]any{"type": "response-trailer", "trailer": "X-Livepeer-Work-Units"}},
+		Paths:     map[string]string{"invoke": "/v1/video/transcode"},
+		Readiness: runnerattach.Readiness{Type: "http-status", Path: "/ready"},
+		Identity:  map[string]string{"provider": "transcode-runner"},
+	}
+	offer := config.Offer{
+		OfferingID: "vod-default", Capability: "video:transcode.vod", Protocol: "paid-job/v1",
+		Certification: []config.CertificationStep{
+			{Name: "ready", Type: "readiness"},
+			{Name: "smoke", Type: "request", Config: map[string]any{
+				"transport": "stream",
+				"headers":   map[string]any{"Accept": "text/event-stream"},
+				"body":      map[string]any{"schema": "video-transcode-vod/v2"},
+			}},
+			{Name: "usage", Type: "usage", Config: map[string]any{"min_units": 40}},
+		},
+	}
+	out, res, _ := runAndWait(t, conn, cap, offer)
+	if !out.Passed || res.State != RunPassed {
+		t.Fatalf("run: %+v %+v", out, res)
+	}
+	if res.Steps[2].Evidence["extractor"] != "response-trailer" || res.Steps[2].Evidence["units"] != uint64(55) {
+		t.Fatalf("usage evidence: %+v", res.Steps[2].Evidence)
+	}
+}

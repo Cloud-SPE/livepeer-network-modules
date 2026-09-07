@@ -93,7 +93,13 @@ type tunnelMessage struct {
 	Headers    map[string][]string `json:"headers,omitempty"`
 	BodyBase64 string              `json:"body_base64,omitempty"`
 	StatusCode int                 `json:"status_code,omitempty"`
-	Error      string              `json:"error,omitempty"`
+	// Trailers carries the runner's HTTP trailers on a response frame.
+	// A paid-job runner's usage claim on the stream transport is a
+	// trailer (paid-job §3.2), and a broker extractor of type
+	// response-trailer reads nothing else; a tunnel that dropped them
+	// billed every streamed job at zero. Additive: absent on older frames.
+	Trailers map[string][]string `json:"trailers,omitempty"`
+	Error    string              `json:"error,omitempty"`
 }
 
 // registerResult is the broker's answer to a register (runner-attach §6).
@@ -667,6 +673,11 @@ func forwardTunnelRequest(ctx context.Context, routes map[string]string, msg tun
 	resp.StatusCode = httpResp.StatusCode
 	resp.Headers = map[string][]string(httpResp.Header)
 	resp.BodyBase64 = base64Encode(respBody)
+	// Trailers are only populated once the body has been read to EOF,
+	// which ReadAll above guarantees.
+	if len(httpResp.Trailer) > 0 {
+		resp.Trailers = map[string][]string(httpResp.Trailer)
+	}
 	return resp
 }
 

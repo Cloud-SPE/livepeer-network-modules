@@ -55,6 +55,7 @@ type exchange struct {
 	status    int
 	body      []byte
 	header    http.Header
+	trailer   http.Header // populated once the body is read to EOF
 	duration  time.Duration
 	sessionID string // session form: the runner session still open (hold_ms)
 	units     func() (uint64, string, error)
@@ -562,7 +563,7 @@ func (x *runExec) runExtractor(src *exchange) (uint64, string, error) {
 	}
 	units, err := ext.Extract(x.ctx,
 		&extractors.Request{Method: http.MethodPost, Body: reqBody},
-		&extractors.Response{Status: src.status, Body: src.body, Headers: src.header})
+		&extractors.Response{Status: src.status, Body: src.body, Headers: src.header, Trailers: src.trailer})
 	return units, typ, err
 }
 
@@ -665,7 +666,10 @@ func (x *runExec) forward(method, path string, headers http.Header, body io.Read
 	if int64(len(raw)) > maxBytes {
 		return nil, fmt.Errorf("response_too_large: > %d bytes", maxBytes)
 	}
-	return &exchange{status: resp.StatusCode, body: raw, header: resp.Header, duration: time.Since(start)}, nil
+	// resp.Trailer is only complete after the body reached EOF, which
+	// ReadAll above guarantees; a response-trailer extractor reads nothing
+	// else, so capturing it here is what lets a streamed job certify.
+	return &exchange{status: resp.StatusCode, body: raw, header: resp.Header, trailer: resp.Trailer, duration: time.Since(start)}, nil
 }
 
 func (x *runExec) multipartBody(cfg map[string]any) (*bytes.Buffer, string, error) {

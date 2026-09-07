@@ -63,8 +63,12 @@ func TestForwardTunnelRequest(t *testing.T) {
 		gotBody = string(body)
 		gotTunnelHeader = r.Header.Get(LocalIDHeader)
 		w.Header().Set("Livepeer-Work-Units", "7")
+		// A streamed runner's usage claim rides in a trailer; the tunnel
+		// must carry it or a response-trailer extractor reads zero.
+		w.Header().Set("Trailer", "X-Livepeer-Work-Units")
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"ok":true}`))
+		w.Header().Set("X-Livepeer-Work-Units", "9")
 	}))
 	defer runner.Close()
 
@@ -81,6 +85,9 @@ func TestForwardTunnelRequest(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusAccepted || headerValue(resp.Headers, "Livepeer-Work-Units") != "7" {
 		t.Fatalf("response = %+v", resp)
+	}
+	if headerValue(resp.Trailers, "X-Livepeer-Work-Units") != "9" {
+		t.Fatalf("trailer not relayed: trailers = %v", resp.Trailers)
 	}
 	if gotPath != "/v1/chat?x=1" || gotBody != `{"hello":"world"}` || gotTunnelHeader != "" {
 		t.Fatalf("runner got path=%q body=%q tunnelHeader=%q", gotPath, gotBody, gotTunnelHeader)

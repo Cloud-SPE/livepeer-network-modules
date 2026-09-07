@@ -51,6 +51,7 @@ func TestSessionForwarderRoundTrip(t *testing.T) {
 			StatusCode: http.StatusAccepted,
 			Headers:    map[string][]string{"Content-Type": []string{"application/json"}},
 			BodyBase64: base64.StdEncoding.EncodeToString([]byte(`{"ok":true}`)),
+			Trailers:   map[string][]string{"X-Livepeer-Work-Units": []string{"21"}},
 		}
 		if err := conn.WriteJSON(resp); err != nil {
 			t.Errorf("WriteJSON() error = %v", err)
@@ -68,6 +69,9 @@ func TestSessionForwarderRoundTrip(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if got := resp.Trailer.Get("X-Livepeer-Work-Units"); got != "21" {
+		t.Fatalf("trailer not relayed: got %q, trailers %v", got, resp.Trailer)
 	}
 	<-done
 }

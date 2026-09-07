@@ -37,7 +37,12 @@ type TunnelMessage struct {
 	Headers    map[string][]string `json:"headers,omitempty"`
 	BodyBase64 string              `json:"body_base64,omitempty"`
 	StatusCode int                 `json:"status_code,omitempty"`
-	Error      string              `json:"error,omitempty"`
+	// Trailers are the runner's HTTP trailers on a response frame: the
+	// usage claim of a streamed paid job (paid-job §3.2), which the
+	// response-trailer extractor reads. Absent on frames from an agent
+	// that predates the field.
+	Trailers map[string][]string `json:"trailers,omitempty"`
+	Error    string              `json:"error,omitempty"`
 }
 
 type SessionForwarder struct {
@@ -175,6 +180,9 @@ func (s *SessionForwarder) Forward(ctx context.Context, req backend.ForwardReque
 			StatusCode: resp.StatusCode,
 			Header:     header,
 			Body:       io.NopCloser(bytes.NewReader(respBody)),
+		}
+		if len(resp.Trailers) > 0 {
+			out.Trailer = http.Header(resp.Trailers)
 		}
 		// The tunnel already holds the whole body, so the broker knows
 		// the exact length. Leaving ContentLength at zero means

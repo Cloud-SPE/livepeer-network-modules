@@ -80,6 +80,16 @@ services:
       # `openssl rand -hex 32 > /opt/livepeer/broker-seal.key`; losing it
       # means every host re-enrolls.
       - ${BROKER_SEAL_KEY:-/opt/livepeer/broker-seal.key}:/etc/livepeer/broker-seal.key:ro
+      # Certification fixtures: multipart `fixture: { ref }` and
+      # {{fixture_url.<ref>}} resolve under this directory. The broker
+      # embeds none, so copy livepeer-network-protocol/extractors/fixtures/
+      # here (audio) and add video/mp4-2s-720p.mp4 for transcode. An empty
+      # directory is fine until an offer needs one.
+      - ${BROKER_FIXTURES_DIR:-/opt/livepeer/fixtures}:/etc/livepeer/fixtures:ro
+      # Settlement signing key (identity.settlement_key_file). Not mounted
+      # by default because a bind mount of a missing file creates a
+      # directory and the broker then refuses to start. When you have one:
+      #   - ${BROKER_SETTLEMENT_KEY:-/opt/livepeer/broker-settlement.key}:/etc/livepeer/broker-settlement.key:ro
       - livepeer-run:/var/run/livepeer
       # Durable broker state: paid-session authority and paid-job
       # idempotency records. Point `session_store.path` in host-config.yaml

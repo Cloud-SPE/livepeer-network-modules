@@ -2,7 +2,7 @@
 # one OpenAI-compatible chat-completions capability backed by vLLM.
 #
 # Pair this with:
-#   infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai-chat.example.yaml
+#   infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai.example.yaml
 # and a vLLM deployment whose host runs an agent that attaches outbound to
 # the broker and declares that model. The broker never dials it, so the vLLM
 # box needs no inbound reachability.

@@ -106,7 +106,8 @@ and edit:
 
 | Variant                                            | Status | Capability                                          | Pair with |
 | -------------------------------------------------- | ------ | --------------------------------------------------- | --------- |
-| [`openai-chat.example.yaml`](./host-configs/openai-chat.example.yaml) | Stable | `openai:chat-completions` (vLLM, one `paid-job/v1` offer) | your vLLM deployment |
+| [`openai.example.yaml`](./host-configs/openai.example.yaml) | Stable | The OpenAI runner family, one `paid-job/v1` offer per capability: chat, embeddings, audio transcription + translation, speech, images, rerank | the `livepeer-modules-openai-runners` images |
+| [`video-transcode.example.yaml`](./host-configs/video-transcode.example.yaml) | Stable | `video:transcode.vod` + `.abr` (`paid-job/v1`), `video:transcode.live` (`paid-session/v1`) | the `livepeer-modules-transcode` images |
 
 The backend service does not need to be reachable *from* the broker. Run an
 agent next to it (`pool-member-agent`), give it an enrolled credential, and

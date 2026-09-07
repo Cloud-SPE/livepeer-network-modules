@@ -1,27 +1,59 @@
-# Capability Broker host-config — OpenAI Chat Completions.
+# Capability Broker host-config — the OpenAI-shaped runner family.
 #
-# Advertises a single chat model as one `paid-job/v1` offer, served by
-# whatever vLLM runner attaches and declares that model.
+# Advertises every capability the `livepeer-modules-openai-runners` images
+# serve, one `paid-job/v1` offer each: chat completions, embeddings, audio
+# transcription and translation, speech, image generation, and (Cohere-shaped
+# rather than OpenAI-shaped, but shipped by the same repo) rerank. Each offer
+# is the same commercial terms the pool-controller would push from the
+# catalog template of the same offering_id (templates/openai-*.yaml,
+# templates/text-rerank-zerank-2.yaml); this file is the
+# standalone-orchestrator spelling of them. Delete the offers you do not
+# run — an offer with no runner sits unfrozen and advertises nothing, which
+# is harmless but noisy on the admin surface.
 #
 # Note what is NOT in this file: no backend URL, no work unit, no
 # extractor, no transports, no health probe. Those are facts the runner
-# knows about itself, and it declares them when it attaches outbound
-# (livepeer-network-protocol/protocols/runner-attach.md). The operator
-# authors the commercial terms — capability, price, capacity, metadata,
-# and the certification a runner must pass — and `match:` picks which
-# attached runners this offer is for.
+# knows about itself, and it declares them at GET /.well-known/livepeer-runner
+# when the pool member agent attaches it
+# (livepeer-network-protocol/protocols/runner-attach.md; the runners' own
+# BROKER-CONTRACT.md shows the exact document each image serves). The
+# operator authors the commercial terms — capability, price, capacity,
+# metadata, and the certification a runner must pass — and `match:` picks
+# which attached runners each offer is for.
 #
-# This used to be two offerings, one declaring [unary] and one declaring
-# [unary, stream]. That split is gone twice over: the runner declares its
-# transports now, and even under the old grammar a single offering
-# declaring both already served both callers, who select per request with
-# ordinary HTTP negotiation (Accept: text/event-stream). Split into two
-# offers only when you want to price or constrain them differently — and
-# give each its own `offering_id`, which is unique across the file.
+# `match:` is exact, case-sensitive string equality on the identity the
+# runner declared. This is where "attached but never advertised" comes
+# from: read the runner's contract first
+#   curl -s http://<runner>:8080/.well-known/livepeer-runner
+# and make the match value equal identity.openai.model (identity.model for
+# rerank) character for character. For chat and embeddings that value is
+# whatever the operator set as SERVED_MODEL_NAME on the runner; for the
+# Python runners it is MODEL_ALIAS (whisper-large-v3, kokoro, zerank-2);
+# for image generation it is MODEL_ID as-is.
+#
+# Two things the audio offers need beyond the chat example:
+#
+#   1. A fixtures directory. The transcription and translation smoke steps
+#      upload the built-in 3-second clip `multipart-audio-duration-v1/
+#      wav-16k-mono-3s`. The broker does not embed it: copy the protocol
+#      tree's fixtures into `certification_fixtures_dir`
+#        cp -r livepeer-network-protocol/extractors/fixtures/. /opt/livepeer/fixtures/
+#      (the scenario compose mounts BROKER_FIXTURES_DIR there). A missing
+#      fixture fails the step as fixture_missing, naming the ref.
+#
+#   2. Nothing else — audio is multipart, unary, fixed-price per second of
+#      input, and the runner's own header carries the count.
 
 identity:
   orch_eth_address: 0xYOUR_ORCH_ADDRESS
-  label: "chat-broker"
+  label: "openai-broker"
+  # Hot secp256k1 key (hex) this broker signs settlement records with,
+  # delegated by the cold key through the manifest's settlement_keys block.
+  # Generate: openssl rand -hex 32 > /opt/livepeer/broker-settlement.key
+  # Without it settlement records go out UNSIGNED and a clearinghouse
+  # refuses them for anything financially material; fine for a mock-payment
+  # smoke run, not for paid traffic. Uncomment once the file is mounted.
+  # settlement_key_file: /etc/livepeer/broker-settlement.key
 
 listen:
   paid: ":8080"
@@ -42,45 +74,55 @@ credential_store:
   path: /var/lib/livepeer/credentials.db
   sealing_key_file: /etc/livepeer/broker-seal.key
 
+# Paid-job idempotency records. Not strictly required for job-only offers
+# (the broker warns and keeps them in memory), but a restart then forgets
+# in-flight request ids, which is not conformant for paid traffic.
+session_store:
+  path: /var/lib/livepeer/state.db
+  sealing_key_file: /etc/livepeer/broker-seal.key
+
 # Frozen offer shapes survive a restart here. Without it a restarted broker
 # re-freezes from whichever runner certifies first — a silent manifest change.
 offers_state_path: /var/lib/livepeer/offers.db
+
+# Where multipart `fixture: { ref: ... }` and {{fixture_url.<ref>}} resolve:
+# <dir>/<ref>.<any extension>. See the header for what to put there.
+certification_fixtures_dir: /etc/livepeer/fixtures
 
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock
 
 offers:
-  - offering_id: "vllm-qwen3.6-27b-default"
+  # ---------------------------------------------------------------------
+  # Chat completions. Unary and streaming from one offer; the runner
+  # declares both transports and a caller picks per request. Metered in
+  # total tokens from the usage block (final SSE frame on stream).
+  # ---------------------------------------------------------------------
+  - offering_id: "qwen3.6-27b"
     capability: "openai:chat-completions"
     protocol: "paid-job/v1"
     # Selects attached runners by the identity they declared. Any host
-    # running this model qualifies; adding a second box is an attach, not
+    # serving this model qualifies; adding a second box is an attach, not
     # an edit to this file.
     match:
       identity.openai.model: "Qwen3.6-27B"
     price:
-      amount_wei: "25000000"
-      per_units: 1
+      amount_wei: "830000000000"
+      per_units: 1000
     capacity:
       max_in_flight: 4
       queue_limit: 8
     extra:
-      openai:
-        model: "Qwen3.6-27B"
-      provider: "vllm"
-      served_model_name: "Qwen3.6-27B"
+      provider: "openai-chat-runner"
       backend_model: "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
       reasoning_parser: "qwen3"
       tool_call_parser: "qwen3_coder"
+    # Promote this x-* key from the runner's contract into the advertised
+    # extra; everything else the runner says stays on operator surfaces.
+    extra_from_runner: [x-quantization]
     constraints:
       tier: "standard"
       gpu: "5090"
-    # Certification is what replaces the old live-health probe. `readiness`
-    # runs the recipe the runner declared for itself (for vLLM that is
-    # `http-openai-model-ready` against /v1/models), and the request/usage
-    # steps prove the runner actually serves and meters paid work before it
-    # is advertised. A runner that fails gets no traffic and the signed
-    # manifest is never touched.
     certification:
       - { name: ready, type: readiness, config: { attempts: 10, interval_ms: 3000 } }
       - name: smoke
@@ -94,7 +136,279 @@ offers:
           assert:
             - "$.choices[0].message.content"
             - { path: "$.usage.total_tokens", min: 1 }
+      # Runs the runner's declared extractor (openai-usage over total_tokens)
+      # and proves it yields a positive count.
       - { name: usage, type: usage, config: { min_units: 1 } }
-    # Re-prove periodically, so a model that was unloaded or a GPU that
-    # dropped out stops receiving paid work without operator action.
+      # Proves SSE really works before advertising an offer that claims
+      # both transports. Not required: a unary-only runner is still sellable.
+      - name: stream
+        type: request
+        required: false
+        config:
+          transport: stream
+          body:
+            model: "{{identity.openai.model}}"
+            messages: [ { role: user, content: "ping" } ]
+            stream: true
+            max_tokens: 8
+          assert:
+            - "$[0].choices[0].delta"
+      - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 4000, measure: first_byte } }
+    recertify_every_seconds: 3600
+
+  # ---------------------------------------------------------------------
+  # Embeddings. Unary only. Metered in tokens from the usage block.
+  # ---------------------------------------------------------------------
+  - offering_id: "qwen3-embedding-8b"
+    capability: "openai:embeddings"
+    protocol: "paid-job/v1"
+    match:
+      identity.openai.model: "Qwen3-Embedding-8B"
+    price:
+      amount_wei: "4059288813"
+      per_units: 1000
+    capacity:
+      max_in_flight: 4
+      queue_limit: 8
+    extra:
+      provider: "openai-embeddings-runner"
+      backend_model: "Qwen/Qwen3-Embedding-8B"
+      embeddings:
+        dimensions: 4096
+    constraints:
+      tier: "standard"
+    certification:
+      - { name: ready, type: readiness, config: { attempts: 10, interval_ms: 3000 } }
+      - name: smoke
+        type: request
+        config:
+          transport: unary
+          body:
+            model: "{{identity.openai.model}}"
+            input: "a probe"
+          assert:
+            - "$.data[0].embedding"
+            - { path: "$.usage.total_tokens", min: 1 }
+      - { name: usage, type: usage, config: { min_units: 1 } }
+      - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 2000 } }
+    recertify_every_seconds: 3600
+
+  # ---------------------------------------------------------------------
+  # Audio transcription and translation. One Whisper container serves
+  # both and declares both in one contract; two offers because they are
+  # two capabilities, priced identically (OpenAI prices them the same).
+  # Multipart upload, metered in seconds of input audio from the runner's
+  # X-Livepeer-Work-Units header.
+  # ---------------------------------------------------------------------
+  - offering_id: "whisper-large-v3"
+    capability: "openai:audio-transcriptions"
+    protocol: "paid-job/v1"
+    match:
+      identity.openai.model: "whisper-large-v3"
+    price:
+      amount_wei: "45000000000"
+      per_units: 1
+    capacity:
+      max_in_flight: 2
+      queue_limit: 2
+    extra:
+      provider: "whisper"
+      backend_model: "openai/whisper-large-v3"
+      audio:
+        task: "transcription"      # the broker validates this value per capability
+    constraints:
+      gpu_vendor: "NVIDIA"
+    certification:
+      - { name: ready, type: readiness, config: { attempts: 5, interval_ms: 3000 } }
+      - name: smoke
+        type: request
+        config:
+          transport: multipart
+          parts:
+            - { name: model, value: "{{identity.openai.model}}" }
+            - name: file
+              filename: probe.wav
+              content_type: audio/wav
+              fixture: { ref: multipart-audio-duration-v1/wav-16k-mono-3s }
+          assert:
+            - "$.text"
+      # The fixture is 3 s, so a correct header reports 3 and a broken one 0.
+      - { name: usage, type: usage, config: { min_units: 1 } }
+      - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 6000 } }
+    recertify_every_seconds: 3600
+
+  - offering_id: "whisper-large-v3-translate"
+    capability: "openai:audio-translations"
+    protocol: "paid-job/v1"
+    match:
+      identity.openai.model: "whisper-large-v3"
+    price:
+      amount_wei: "45000000000"
+      per_units: 1
+    capacity:
+      max_in_flight: 2
+      queue_limit: 2
+    extra:
+      provider: "whisper"
+      backend_model: "openai/whisper-large-v3"
+      audio:
+        task: "translation"
+    constraints:
+      gpu_vendor: "NVIDIA"
+    certification:
+      - { name: ready, type: readiness, config: { attempts: 5, interval_ms: 3000 } }
+      - name: smoke
+        type: request
+        config:
+          transport: multipart
+          parts:
+            - { name: model, value: "{{identity.openai.model}}" }
+            - name: file
+              filename: probe.wav
+              content_type: audio/wav
+              fixture: { ref: multipart-audio-duration-v1/wav-16k-mono-3s }
+          assert:
+            - "$.text"
+      - { name: usage, type: usage, config: { min_units: 1 } }
+      - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 6000 } }
+    recertify_every_seconds: 3600
+
+  # ---------------------------------------------------------------------
+  # Speech. JSON in, audio out. Metered in input characters, counted by
+  # the broker from the request (the runner declares a request-formula
+  # over the code points of `input`), so the price is known before the
+  # request is sent.
+  # ---------------------------------------------------------------------
+  - offering_id: "kokoro"
+    capability: "openai:audio-speech"
+    protocol: "paid-job/v1"
+    match:
+      identity.openai.model: "kokoro"
+    price:
+      amount_wei: "252000000000"
+      per_units: 1000
+    capacity:
+      max_in_flight: 4
+      queue_limit: 4
+    extra:
+      provider: "kokoro"
+      backend_model: "hexgrad/Kokoro-82M"
+      audio:
+        task: "speech"
+        voices:
+          default: af_bella
+          native: [af_bella, am_michael, bm_george, am_adam, af_sarah, bf_emma, bf_isabella, bm_lewis]
+          aliases:
+            alloy: af_bella
+            echo: am_michael
+            fable: bm_george
+            onyx: am_adam
+            nova: af_sarah
+            shimmer: af_bella
+            ash: am_adam
+            sage: bf_emma
+            verse: am_michael
+            coral: bf_isabella
+            ballad: bm_lewis
+    constraints:
+      gpu_vendor: "NVIDIA"
+    certification:
+      - { name: ready, type: readiness, config: { attempts: 3, interval_ms: 2000 } }
+      - name: smoke
+        type: request
+        config:
+          transport: unary
+          body:
+            model: "{{identity.openai.model}}"
+            input: "ping"
+            voice: "{{offer.extra.audio.voices.default}}"
+          # Audio, not JSON: assert on the content type and bound the size
+          # (4 MiB — even a short utterance in WAV clears the 1 MiB default).
+          expect_content_type: "audio/"
+          max_response_bytes: 4194304
+      - { name: usage, type: usage, config: { min_units: 1 } }
+    recertify_every_seconds: 3600
+
+  # ---------------------------------------------------------------------
+  # Image generation. Metered in images from the request's `n` (default
+  # 1), counted by the broker. The identity is the HF id as-is here —
+  # the runner serves the upstream model under its own name.
+  # ---------------------------------------------------------------------
+  - offering_id: "flux-1-dev"
+    capability: "openai:images-generations"
+    protocol: "paid-job/v1"
+    match:
+      identity.openai.model: "black-forest-labs/FLUX.1-dev"
+    price:
+      amount_wei: "12177000000000"
+      per_units: 1
+    capacity:
+      max_in_flight: 1
+      queue_limit: 1
+    extra:
+      provider: "image-runner"
+      backend_model: "black-forest-labs/FLUX.1-dev"
+      image:
+        task: "generation"
+    constraints:
+      tier: "standard"
+      gpu_vendor: "NVIDIA"
+    certification:
+      - { name: ready, type: readiness, config: { attempts: 10, interval_ms: 3000 } }
+      # FLUX takes tens of seconds per image on a consumer card.
+      - name: smoke
+        type: request
+        timeout_ms: 90000
+        config:
+          transport: unary
+          body:
+            model: "{{identity.openai.model}}"
+            prompt: "a probe"
+            n: 1
+            response_format: b64_json
+          assert:
+            - "$.data[0].b64_json"
+      - { name: usage, type: usage, config: { min_units: 1 } }
+    recertify_every_seconds: 3600
+
+  # ---------------------------------------------------------------------
+  # Rerank. Cohere-shaped, not OpenAI-shaped, so the capability takes the
+  # product domain and the identity is the plain `model` key. Metered per
+  # document scored from the runner's X-Livepeer-Work-Units header.
+  # ---------------------------------------------------------------------
+  - offering_id: "zerank-2"
+    capability: "text:rerank"
+    protocol: "paid-job/v1"
+    match:
+      identity.model: "zerank-2"
+    price:
+      amount_wei: "8118577625"
+      per_units: 1000
+    capacity:
+      max_in_flight: 2
+      queue_limit: 4
+    extra:
+      provider: "rerank-runner"
+      backend_model: "zeroentropy/zerank-2"
+      rerank:
+        max_documents: 100
+    constraints:
+      tier: "standard"
+    certification:
+      - { name: ready, type: readiness, config: { attempts: 5, interval_ms: 3000 } }
+      - name: smoke
+        type: request
+        config:
+          transport: unary
+          body:
+            query: "a probe"
+            documents: ["a probe document", "an unrelated document"]
+            top_n: 2
+          assert:
+            - { path: "$.results[0].index", min: 0 }
+            - { path: "$.results[1].index", min: 0 }
+      # Two documents scored: a runner that emits no header reports 0
+      # and fails loudly here, naming the step.
+      - { name: usage, type: usage, config: { min_units: 2 } }
+      - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 2000 } }
     recertify_every_seconds: 3600

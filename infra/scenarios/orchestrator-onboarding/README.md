@@ -149,7 +149,8 @@ by hardware. Reference host-configs live under
 
 | Variant                                              | Status      | Capability                                                          |
 | ---------------------------------------------------- | ----------- | ------------------------------------------------------------------- |
-| [`openai-chat.example.yaml`](./capability-broker/host-configs/openai-chat.example.yaml)   | Stable      | `openai:chat-completions` (vLLM) |
+| [`openai.example.yaml`](./capability-broker/host-configs/openai.example.yaml)   | Stable      | The OpenAI runner family: `openai:chat-completions`, `openai:embeddings`, `openai:audio-transcriptions`, `openai:audio-translations`, `openai:audio-speech`, `openai:images-generations`, `text:rerank` — one offer each, delete what you do not run |
+| [`video-transcode.example.yaml`](./capability-broker/host-configs/video-transcode.example.yaml) | Stable      | `video:transcode.vod`, `video:transcode.abr` (paid-job), `video:transcode.live` (paid-session) |
 
 The backend workloads (vLLM, external APIs, local media services, etc.)
 live alongside the broker on the same Docker network, OR on separate
@@ -185,7 +186,7 @@ for the three-layer model (manifest / live / failure-rate).
 repeated on every broker host:
 
 ```sh
-sudo cp infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai-chat.example.yaml \
+sudo cp infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai.example.yaml \
         /opt/livepeer/host-config.yaml
 sudo $EDITOR /opt/livepeer/host-config.yaml             # set orch_eth_address + backend urls
 

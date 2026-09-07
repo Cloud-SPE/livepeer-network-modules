@@ -127,7 +127,7 @@ func Compute(cand, pub *types.ManifestPayload) (*Result, error) {
 }
 
 func classify(c, p *types.CapabilityTuple) string {
-	if c.PricePerUnitWei != p.PricePerUnitWei || c.PerUnits != p.PerUnits {
+	if c.PricePerUnitWei != p.PricePerUnitWei || effectivePerUnits(c) != effectivePerUnits(p) {
 		return DriftPriceChanged
 	}
 	if c.Protocol != p.Protocol || !axesEqualCanonical(c, p) {
@@ -140,6 +140,19 @@ func classify(c, p *types.CapabilityTuple) string {
 		return DriftExtraChanged
 	}
 	return DriftNone
+}
+
+// effectivePerUnits is the denominator as priced. The schema says
+// absent means 1, and the builder omits the field at 1 so a signed
+// manifest keeps its bytes — so a published tuple decodes as 0 while
+// the broker that advertised it says 1. Those are the same price; a
+// diff that read them as drift flagged every per-unit-priced offering
+// as price_changed on every roster load.
+func effectivePerUnits(c *types.CapabilityTuple) uint64 {
+	if c.PerUnits <= 1 {
+		return 1
+	}
+	return c.PerUnits
 }
 
 func indexByKey(m *types.ManifestPayload) (map[string]*types.CapabilityTuple, error) {

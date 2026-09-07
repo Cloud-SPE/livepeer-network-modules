@@ -17,10 +17,11 @@ services:
       - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
       - --chain-id=${CHAIN_ID:-42161}
       - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
-      # LivepeerGovernor (treasury) contract — REQUIRED for treasury
-      # proposal voting. Without it, CastVote / GetTreasuryProposal return
-      # Unimplemented. Empty = treasury voting disabled.
-      - --treasury-address=${PROTOCOL_TREASURY_ADDRESS:-}
+      # LivepeerGovernor (treasury) contract, required for treasury proposal
+      # voting. Arbitrum One default; override for forks / testnets, or set
+      # PROTOCOL_TREASURY_ADDRESS= (empty) to disable voting — CastVote /
+      # GetTreasuryProposal then return Unimplemented.
+      - --treasury-address=${PROTOCOL_TREASURY_ADDRESS-0xcFE4E2879B786C3aa075813F0E364bb5acCb6aa0}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
       # The orchestrator's on-chain transcoder address. The keystore above

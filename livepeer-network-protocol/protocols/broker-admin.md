@@ -1,6 +1,6 @@
 ---
 spec_name: broker-admin
-version: 1.1.0-draft
+version: 1.2.0-draft
 status: draft
 last_updated: 2026-08-29
 ---
@@ -470,6 +470,66 @@ that is the only automatic freeze and it is why `run` is a write.
   of (offer set, frozen shapes) — runner churn does not change it.
 - `offers_revision` is informational, mirrors §4.2.
 
+### 7.1 `GET /registry/settlement-keys`
+
+Public, unauthenticated, unpaid — next to `/registry/offerings` and
+`/registry/health`. The broker announces the delegated key(s) it signs
+settlement records with (`headers/livepeer-headers.md`, "The signer is a
+delegated hot key"), so the coordinator discovers them on scrape instead
+of an operator copying a 130-character public key out of a log line.
+
+```json
+{
+  "spec_version": "2.4.1",
+  "orch_eth_address": "0xd003…3c7f",
+  "keys": [
+    {
+      "statement": {
+        "orch_eth_address": "0xd003…3c7f",
+        "public_key": "0x049d…7f48",
+        "base_url": "https://ai2-rig-broker.xode.app",
+        "not_before": "2026-09-07T00:00:00Z",
+        "expires_at": "2027-09-07T00:00:00Z",
+        "issued_at": "2026-09-08T12:00:00Z"
+      },
+      "signature": { "algorithm": "secp256k1", "canonicalization": "jcs", "value": "0x…" }
+    }
+  ]
+}
+```
+
+- `keys[]` is empty when the broker holds no delegated key. That is a
+  fact the endpoint states, not an error: such a broker's settlement
+  records go out unsigned.
+- `statement` is what the key signed. `signature.value` is EIP-191
+  personal-sign over the JCS bytes of `statement`, the same scheme as
+  the settlement envelope, and MUST recover to `statement.public_key`.
+  This is a **proof of possession**: the server answering at this URL
+  holds the private half. It is not a proof of identity — which broker
+  the URL belongs to is the transport's job, and whether the key is
+  delegated at all is the cold key's.
+- `statement.orch_eth_address` MUST equal the broker's `orch_eth_address`
+  and `statement.base_url`, when present, MUST equal the broker's
+  `external_base_url`. Both are inside the signed bytes so a proof cannot
+  be replayed into another operator's manifest or attributed to another
+  broker. A coordinator MUST reject an announcement whose statement names
+  a different orchestrator or a different URL than the one it scraped.
+- `not_before` / `expires_at` are the window the broker was configured
+  with, both optional. Absent means the broker signs unbounded; the
+  coordinator then assigns the window it publishes.
+- `issued_at` is the time of the announcement; the broker MUST sign a
+  fresh statement per request (`Cache-Control: no-store`).
+- A broker MUST still announce a key whose configured window has passed.
+  The key is unusable for records, and the announcement is how the
+  operator finds that out.
+
+What the coordinator does with it (orch-coordinator operator runbook,
+"Settlement key delegation"): a proven key is merged into the candidate's
+`settlement_keys`, with precedence config-pinned > broker-announced >
+still-valid published; the secure-orch console holds any delegation
+change for a human, and shows the operator this endpoint's URL per broker
+so the key can be checked over a path the coordinator does not control.
+
 ## 8. Error codes
 
 | Code | HTTP | Meaning |
@@ -521,6 +581,7 @@ frontmatter tracks the document.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.0-draft | 2026-09-08 | Add public `GET /registry/settlement-keys` (§7.1): the broker's self-signed announcement of the delegated settlement key(s) it holds, with a proof of possession bound to `orch_eth_address` and `base_url`. Lets the coordinator discover delegations on scrape instead of an operator transcribing public keys; the cold key still decides. Additive. |
 | 1.1.0-draft | 2026-08-29 | Delete `GET /admin/v1/worker-sessions` and `POST /admin/v1/worker-sessions/{id}/kill`. 1.0.0-draft already recorded them as superseded by §3; they are now gone from the broker. The tunnel they managed was keyed on the backend ids of `worker://` backends, which the `capabilities[]` grammar produced and which no longer exists — so the kill route had nothing to key on and reported kills it never performed. A host is disconnected by revoking its credential (§5) or via `POST /admin/v1/runners/{host_id}/disconnect` (§3), and listed by §3. Removal, not additive: a caller of either route now gets 404. |
 | 1.0.1-draft | 2026-08-26 | Add `POST /admin/v1/offers/{id}/confirm-published` — the coordinator's report that the signed manifest now carries the accepted shape, which resolves `superseding → frozen`. Until it lands the broker keeps dispatching the previously published shape. Additive. |
 | 1.0.0-draft | 2026-08-26 | Initial contract (plan 0043 §3.6, §3.7, item 2). Runners (list/get/disconnect), offers (list/get, full-replacement `PUT`, `accept-shape`, disable/enable), enrollment and credentials (`enroll`, list, rotate, revoke, hash-only `PUT` sync), certification (results, per-pair history, `run`), the `spec_version` stamp and frozen-only rule on `/registry/offerings`, error codes, and conformance fixtures. Supersedes `GET/POST /admin/v1/worker-sessions*`. |

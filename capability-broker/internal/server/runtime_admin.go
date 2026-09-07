@@ -58,6 +58,23 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
+// handleSettlementKeys publishes the delegated settlement key as a
+// self-signed announcement (broker-admin §7.1). The coordinator reads
+// it on scrape and carries the key into the manifest candidate; the
+// cold key still decides whether it is delegated.
+func (s *Server) handleSettlementKeys(w http.ResponseWriter, r *http.Request) {
+	cfg := s.currentConfig()
+	if cfg == nil {
+		http.Error(w, "runtime config is not loaded", http.StatusInternalServerError)
+		return
+	}
+	payload := registry.BuildSettlementKeys(cfg.Identity.OrchEthAddress, cfg.ExternalBaseURL, s.settlementSigner)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
 func (s *Server) handleRegistryHealth(w http.ResponseWriter, r *http.Request) {
 	registry.WriteHealthResponse(w, s.offerHealth(), s.currentPoolSnapshot())
 }

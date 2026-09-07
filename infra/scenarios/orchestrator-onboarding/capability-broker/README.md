@@ -79,6 +79,32 @@ for the full three-layer model (manifest / live / failure-rate).
 (`openssl rand -hex 32 > /opt/livepeer/broker-seal.key`). Back it up: losing
 it means every workload host has to re-enrol.
 
+### Settlement signing key
+
+`identity.settlement_key_file` in `host-config.yaml` names the hot
+secp256k1 key this broker signs settlement records with. Mint one with
+the broker binary — it refuses to overwrite an existing file:
+
+```sh
+docker run --rm -v /opt/livepeer:/opt/livepeer tztcloud/livepeer-capability-broker:v2.0.0 \
+  settlement-key generate --out /opt/livepeer/broker-settlement.key
+# later, to read the public half again:
+docker compose exec capability-broker livepeer-capability-broker settlement-key pubkey --file /etc/livepeer/broker-settlement.key
+```
+
+The broker announces the key at `GET /registry/settlement-keys`, signed
+by the key itself, and the Orch Coordinator picks it up on the next
+scrape and puts it in the manifest candidate. You never copy the public
+key anywhere; the cold key reviews the delegation when you sign. Check
+what this broker announces with:
+
+```sh
+curl -s https://broker-a.<your-domain>/registry/settlement-keys | jq .
+```
+
+Rotate by generating a new file, pointing `settlement_key_file` at it,
+and restarting: the old key stays delegated until its window closes.
+
 ### Keys on this box
 
 The keystore here is the **hot wallet** that signs payment-ticket

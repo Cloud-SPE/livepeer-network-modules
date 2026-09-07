@@ -133,16 +133,9 @@ func (s *Signer) Sign(canonical []byte) (string, error) {
 	if !s.expiresAt.IsZero() && now.After(s.expiresAt) {
 		return "", fmt.Errorf("%w: expires_at=%s", ErrKeyOutsideValidity, s.expiresAt.Format(time.RFC3339))
 	}
-	sig, err := crypto.Sign(personalSignDigest(canonical), s.key)
-	if err != nil {
-		return "", fmt.Errorf("settlement: sign: %w", err)
-	}
-	// Normalize v to {27,28}: go-ethereum signs with {0,1}, and every
-	// EIP-191 verifier accepts the 27-based form.
-	if len(sig) == 65 && sig[64] < 27 {
-		sig[64] += 27
-	}
-	return "0x" + hex.EncodeToString(sig), nil
+	// v is normalized to {27,28}: go-ethereum signs with {0,1}, and
+	// every EIP-191 verifier accepts the 27-based form.
+	return s.signRaw(canonical)
 }
 
 // Encode canonicalizes a record, signs it when a signer is configured,

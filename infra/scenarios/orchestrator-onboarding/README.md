@@ -140,8 +140,19 @@ own:
 /opt/livepeer/
 ├── payment-keystore.json
 ├── payment-keystore-password
+├── broker-settlement.key        # hot key that signs settlement records
 └── host-config.yaml             # the offers THIS broker box sells
 ```
+
+**Settlement signing.** Each broker signs the settlement records a
+clearinghouse verifies with a hot key the cold key delegates. Mint it
+with `livepeer-capability-broker settlement-key generate --out
+/opt/livepeer/broker-settlement.key` and point
+`identity.settlement_key_file` at it. The broker announces the public
+half at `/registry/settlement-keys`; the Orch Coordinator picks it up
+on scrape and the delegation lands in the next manifest you sign. You
+never copy the key by hand. See the capability-broker README,
+"Settlement signing key".
 
 **Capability mix.** What each broker advertises is up to you — it varies
 by hardware. Reference host-configs live under

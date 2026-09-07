@@ -17,6 +17,7 @@ func (s *Server) registerRoutes() {
 	// Unpaid registry endpoints — no Livepeer-* validation, no payment.
 	s.mux.HandleFunc("GET /registry/offerings", instrumentRegistryScrape("offerings", s.handleOfferings))
 	s.mux.HandleFunc("GET /registry/health", instrumentRegistryScrape("health", s.handleRegistryHealth))
+	s.mux.HandleFunc("GET /registry/settlement-keys", instrumentRegistryScrape("settlement-keys", s.handleSettlementKeys))
 	s.mux.HandleFunc("GET /healthz", registry.HealthzHandler())
 	// Settlement serves BOTH protocols, so it is registered here rather
 	// than with the session routes: a job-only broker — what an

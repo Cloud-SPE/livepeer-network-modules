@@ -58,6 +58,15 @@ type HeaderChange struct {
 	AfterIssuedAt     string  `json:"after_issued_at"`
 	BeforeExpiresAt   string  `json:"before_expires_at,omitempty"`
 	AfterExpiresAt    string  `json:"after_expires_at"`
+	// SettlementKeys is the delegation block (manifest spec 2.3.0):
+	// the hot keys this signature would authorize to sign settlements
+	// on the orch's behalf. It is not a capability tuple, so the tuple
+	// diff cannot see it — and a change here is exactly the kind of
+	// content a cold key must never sign unseen. Surfaced verbatim,
+	// with a stability flag the classifier holds on.
+	BeforeSettlementKeys []map[string]any `json:"before_settlement_keys,omitempty"`
+	AfterSettlementKeys  []map[string]any `json:"after_settlement_keys,omitempty"`
+	SettlementKeysStable bool             `json:"settlement_keys_stable"`
 }
 
 // Compute computes the structural diff between the inner manifest
@@ -174,6 +183,7 @@ func header(before, after map[string]any) HeaderChange {
 		h.AfterSpecVersion, _ = after["spec_version"].(string)
 		h.AfterIssuedAt, _ = after["issued_at"].(string)
 		h.AfterExpiresAt, _ = after["expires_at"].(string)
+		h.AfterSettlementKeys = readSettlementKeys(after)
 	}
 	if before != nil {
 		seq := readUint64(before, "publication_seq")
@@ -182,15 +192,49 @@ func header(before, after map[string]any) HeaderChange {
 		h.BeforeSpecVersion, _ = before["spec_version"].(string)
 		h.BeforeIssuedAt, _ = before["issued_at"].(string)
 		h.BeforeExpiresAt, _ = before["expires_at"].(string)
+		h.BeforeSettlementKeys = readSettlementKeys(before)
 		h.SeqMonotonic = h.AfterSeq > seq
 		h.EthAddressStable = h.AfterEthAddress == h.BeforeEthAddress
 		h.SpecVersionStable = h.AfterSpecVersion == h.BeforeSpecVersion
+		h.SettlementKeysStable = settlementKeysEqual(h.BeforeSettlementKeys, h.AfterSettlementKeys)
 	} else {
 		h.SeqMonotonic = true
 		h.EthAddressStable = true
 		h.SpecVersionStable = true
+		h.SettlementKeysStable = true
 	}
 	return h
+}
+
+// readSettlementKeys lifts the delegation list out of a payload. Absent
+// and empty both read as nil, which is what "no delegation" means.
+func readSettlementKeys(m map[string]any) []map[string]any {
+	raw, ok := m["settlement_keys"].([]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, r := range raw {
+		if k, ok := r.(map[string]any); ok {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// settlementKeysEqual compares the lists as signed: order included,
+// because the bytes the cold key signs carry the order. A reorder is
+// reported as a change; that is conservative, and it is what happened.
+func settlementKeysEqual(a, b []map[string]any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !fieldsEqual(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func readUint64(m map[string]any, key string) uint64 {

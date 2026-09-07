@@ -427,7 +427,7 @@
 {{end}}
 
 {{if .Candidate}}
-{{if or (not .Candidate.Diff.Header.SeqMonotonic) (not .Candidate.Diff.Header.EthAddressStable) .Candidate.Diff.Removed .Candidate.Diff.Changed}}
+{{if or (not .Candidate.Diff.Header.SeqMonotonic) (not .Candidate.Diff.Header.EthAddressStable) (not .Candidate.Diff.Header.SettlementKeysStable) .Candidate.Diff.Removed .Candidate.Diff.Changed}}
 <section>
   <h2>Review attention points</h2>
   <div class="alert-list">
@@ -441,6 +441,12 @@
     <article class="alert-item alert-warn">
       <strong>orch identity changed</strong>
       <span>Current candidate advertises a different <code>orch.eth_address</code> than the last signed manifest. <a href="#header-orch-eth-address" class="alert-link">Jump to header check</a></span>
+    </article>
+    {{end}}
+    {{if not .Candidate.Diff.Header.SettlementKeysStable}}
+    <article class="alert-item alert-warn">
+      <strong>settlement delegation changed</strong>
+      <span>Signing authorizes the listed <code>settlement_keys</code> to sign settlements on the orch's behalf. Confirm each key against the broker that holds it. <a href="#header-settlement-keys" class="alert-link">Jump to header check</a></span>
     </article>
     {{end}}
     {{range .Candidate.Diff.Removed}}
@@ -605,6 +611,17 @@
       <span class="label">expires_at</span>
       {{if $d.Header.BeforeExpiresAt}}<code>{{$d.Header.BeforeExpiresAt}}</code> &rarr; {{end}}
       <code>{{$d.Header.AfterExpiresAt}}</code>
+    </div>
+    <div id="header-settlement-keys">
+      <span class="label">settlement_keys</span>
+      {{if not $d.Header.SettlementKeysStable}}<strong class="warn">delegation changed - {{len $d.Header.BeforeSettlementKeys}} &rarr; {{len $d.Header.AfterSettlementKeys}} keys</strong>{{end}}
+      {{if $d.Header.AfterSettlementKeys}}
+      <ul class="tuples">
+        {{range $d.Header.AfterSettlementKeys}}
+        <li class="{{if not $d.Header.SettlementKeysStable}}chg{{end}}"><code>{{index . "public_key"}}</code> <span class="muted">{{index . "not_before"}} &rarr; {{index . "expires_at"}}</span></li>
+        {{end}}
+      </ul>
+      {{else}}<code>none</code>{{end}}
     </div>
   </div>
 

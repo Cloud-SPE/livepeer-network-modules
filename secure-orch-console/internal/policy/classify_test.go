@@ -3,6 +3,7 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -409,6 +410,10 @@ func TestClassify_HeaderChanges(t *testing.T) {
 		// never be signed; it is held for a deliberate gesture instead
 		// (plan 0043 §3.7).
 		{"spec_version change", manifestJSON(t, "0.2.0", 5, ethA, baseTuple()), CodeSpecVersionChanged, ClassCritical},
+		// A delegation is the cold key vouching for a hot key. It is not
+		// a tuple, so only the header sees it; it must hold for a human
+		// rather than pass as a content-identical renewal.
+		{"settlement_keys added", withSettlementKeys(t, manifestJSON(t, "0.1.0", 5, ethA, baseTuple()), settlementKeyA), CodeSettlementKeysChanged, ClassCritical},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Classify(computeDiff(t, before, tc.after), ClassifyInput{Bounds: defaultBounds()})
@@ -450,5 +455,57 @@ func TestDecide_Table(t *testing.T) {
 				t.Fatalf("shadow=%v want %v", d.ShadowAutoSign, tc.wantShadow)
 			}
 		})
+	}
+}
+
+const settlementKeyA = "0x049d2193d32d9379271df49fcdd6d2b53dad719371ddfb77009494d2c08ceca2bbea717657d9e62d49f11ac13f8ee3ae9dbeea45c1db363ed200edd9618f027f48"
+
+func withSettlementKeys(t *testing.T, body []byte, keys ...string) []byte {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatal(err)
+	}
+	list := make([]any, 0, len(keys))
+	for _, k := range keys {
+		list = append(list, map[string]any{"public_key": k, "not_before": "2026-09-07T00:00:00Z", "expires_at": "2027-09-07T00:00:00Z"})
+	}
+	m["settlement_keys"] = list
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// The same delegation on both sides is not a change, and a candidate
+// that only renews its window still grades as a renewal.
+func TestClassify_SettlementKeysUnchangedIsNotAFinding(t *testing.T) {
+	before := withSettlementKeys(t, manifestJSON(t, "0.1.0", 4, ethA, baseTuple()), settlementKeyA)
+	after := withSettlementKeys(t, manifestJSON(t, "0.1.0", 5, ethA, baseTuple()), settlementKeyA)
+	got := Classify(computeDiff(t, before, after), ClassifyInput{Bounds: defaultBounds(), RemainingValidity: time.Hour, RenewalThreshold: 2 * time.Hour})
+	if got.Class != ClassRenewal {
+		t.Fatalf("class=%s want renewal; findings=%+v", got.Class, got.Findings)
+	}
+}
+
+// A rotation removes one key and adds another: both named in the
+// finding, so the operator sees exactly what authority moves.
+func TestClassify_SettlementKeyRotationNamesBothKeys(t *testing.T) {
+	keyB := "0x0453180efc760bdd8a7ba16997caa23e1a173e4e45deb8f1b5b379e4eab21cf9eb0e1a2d48eb7d47ae60fdc76b61210f9423d4387eaec5787ed136fefc51c935ef"
+	before := withSettlementKeys(t, manifestJSON(t, "0.1.0", 4, ethA, baseTuple()), settlementKeyA)
+	after := withSettlementKeys(t, manifestJSON(t, "0.1.0", 5, ethA, baseTuple()), keyB)
+	got := Classify(computeDiff(t, before, after), ClassifyInput{Bounds: defaultBounds()})
+	if got.Class != ClassCritical || len(got.Findings) != 1 || got.Findings[0].Code != CodeSettlementKeysChanged {
+		t.Fatalf("got %s %+v", got.Class, got.Findings)
+	}
+	detail := got.Findings[0].Detail
+	for _, want := range []string{"1 → 1", "added 0x0453180e", "removed 0x049d2193"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail %q lacks %q", detail, want)
+		}
+	}
+	if Decide(got, Policy{AutoSign: AutoSign{Renewal: true, Benign: true}}).Action != ActionHold {
+		t.Fatal("a delegation change must hold even under the most permissive policy")
 	}
 }

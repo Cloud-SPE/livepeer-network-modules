@@ -68,25 +68,26 @@ type Finding struct {
 
 // Finding codes. Stable strings — they land in audit records.
 const (
-	CodeTupleAdded          = "tuple_added"
-	CodeTupleRemoved        = "tuple_removed"
-	CodePriceWithinBound    = "price_change_within_bound"
-	CodePriceBeyondBound    = "price_change_beyond_bound"
-	CodePriceUnparseable    = "price_unparseable"
-	CodeWorkerURLAllowed    = "worker_url_within_allowlist"
-	CodeWorkerURLDisallowed = "worker_url_outside_allowlist"
-	CodeExtraChanged        = "extra_changed"
-	CodeConstraintsChanged  = "constraints_changed"
-	CodeProtocolChanged     = "protocol_changed"
-	CodeJobAxesChanged      = "job_axes_changed"
-	CodeSessionAxesChanged  = "session_axes_changed"
-	CodeWorkUnitChanged     = "work_unit_changed"
-	CodeUnknownFieldChanged = "unknown_field_changed"
-	CodeEthAddressChanged   = "eth_address_changed"
-	CodeSpecVersionChanged  = "spec_version_changed"
-	CodeRenewalDue          = "renewal_due"
-	CodeNoOp                = "no_op"
-	CodeFirstSign           = "first_sign_cycle"
+	CodeTupleAdded            = "tuple_added"
+	CodeTupleRemoved          = "tuple_removed"
+	CodePriceWithinBound      = "price_change_within_bound"
+	CodePriceBeyondBound      = "price_change_beyond_bound"
+	CodePriceUnparseable      = "price_unparseable"
+	CodeWorkerURLAllowed      = "worker_url_within_allowlist"
+	CodeWorkerURLDisallowed   = "worker_url_outside_allowlist"
+	CodeExtraChanged          = "extra_changed"
+	CodeConstraintsChanged    = "constraints_changed"
+	CodeProtocolChanged       = "protocol_changed"
+	CodeJobAxesChanged        = "job_axes_changed"
+	CodeSessionAxesChanged    = "session_axes_changed"
+	CodeWorkUnitChanged       = "work_unit_changed"
+	CodeUnknownFieldChanged   = "unknown_field_changed"
+	CodeEthAddressChanged     = "eth_address_changed"
+	CodeSpecVersionChanged    = "spec_version_changed"
+	CodeSettlementKeysChanged = "settlement_keys_changed"
+	CodeRenewalDue            = "renewal_due"
+	CodeNoOp                  = "no_op"
+	CodeFirstSign             = "first_sign_cycle"
 )
 
 // Classification is the graded outcome.
@@ -135,6 +136,16 @@ func Classify(d *diff.Result, in ClassifyInput) Classification {
 		// console requires the new version to be typed before signing.
 		findings = append(findings, finding(ClassCritical, CodeSpecVersionChanged, "", "",
 			fmt.Sprintf("spec_version %q → %q", d.Header.BeforeSpecVersion, d.Header.AfterSpecVersion)))
+	}
+
+	if !d.Header.SettlementKeysStable {
+		// Critical, never benign: this block is the cold key handing
+		// settlement authority to a hot key. It lives outside the tuple
+		// list, so without this check a candidate that only added a
+		// delegation would read as "content identical" and could be
+		// auto-signed as a renewal — a key nobody reviewed, signed for.
+		findings = append(findings, finding(ClassCritical, CodeSettlementKeysChanged, "", "",
+			settlementKeysDetail(d.Header.BeforeSettlementKeys, d.Header.AfterSettlementKeys)))
 	}
 
 	for _, t := range d.Added {
@@ -344,6 +355,52 @@ func hostAllowed(rawURL string, allowlist []string) bool {
 		}
 	}
 	return false
+}
+
+// settlementKeysDetail names what the delegation change does, key by
+// key, so the operator holding it can check each against the broker
+// that is supposed to own it.
+func settlementKeysDetail(before, after []map[string]any) string {
+	index := func(keys []map[string]any) map[string]map[string]any {
+		out := make(map[string]map[string]any, len(keys))
+		for _, k := range keys {
+			if pk, _ := k["public_key"].(string); pk != "" {
+				out[pk] = k
+			}
+		}
+		return out
+	}
+	b, a := index(before), index(after)
+	var parts []string
+	for _, k := range after {
+		pk, _ := k["public_key"].(string)
+		prev, had := b[pk]
+		switch {
+		case !had:
+			parts = append(parts, fmt.Sprintf("added %s (%v → %v)", shortKey(pk), k["not_before"], k["expires_at"]))
+		case !jsonEqual(prev, k):
+			parts = append(parts, fmt.Sprintf("window changed on %s (%v → %v)", shortKey(pk), k["not_before"], k["expires_at"]))
+		}
+	}
+	for _, k := range before {
+		pk, _ := k["public_key"].(string)
+		if _, kept := a[pk]; !kept {
+			parts = append(parts, fmt.Sprintf("removed %s", shortKey(pk)))
+		}
+	}
+	if len(parts) == 0 {
+		parts = append(parts, "keys reordered")
+	}
+	return fmt.Sprintf("settlement_keys %d → %d: %s", len(before), len(after), strings.Join(parts, "; "))
+}
+
+// shortKey keeps enough of a 65-byte public key to tell two apart on a
+// screen. The full value is on the diff page.
+func shortKey(pk string) string {
+	if len(pk) <= 16 {
+		return pk
+	}
+	return pk[:10] + "…" + pk[len(pk)-6:]
 }
 
 func finding(class Class, code, capID, offID, detail string) Finding {

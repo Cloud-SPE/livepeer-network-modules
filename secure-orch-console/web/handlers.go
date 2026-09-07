@@ -234,6 +234,9 @@ func assessManifestReview(hasLastSigned bool, res *diff.Result) (state, title, m
 	if !res.Header.EthAddressStable {
 		return "warn", "Identity changed", "orch.eth_address differs from the last signed manifest. Treat this as a rotation event and verify the handoff before signing."
 	}
+	if !res.Header.SettlementKeysStable {
+		return "warn", "Settlement delegation changed", "settlement_keys differs from the last signed manifest. Signing authorizes these hot keys to sign settlements on the orch's behalf: confirm each one against the broker that holds it before signing."
+	}
 	if hasLastSigned && len(res.Added) == 0 && len(res.Removed) == 0 && len(res.Changed) == 0 {
 		return "warn", "No-op candidate", "This candidate does not change any capability tuples relative to the last signed manifest."
 	}

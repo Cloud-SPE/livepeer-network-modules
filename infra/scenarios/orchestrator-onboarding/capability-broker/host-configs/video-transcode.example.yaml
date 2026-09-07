@@ -223,10 +223,21 @@ offers:
       - { name: ready, type: readiness, config: { attempts: 5, interval_ms: 3000 } }
       # Opens a session, checks the descriptor's rtmp_url is reachable,
       # holds it open for 5 s so heartbeats and the usage callback get a
-      # chance to arrive, then terminates it.
+      # chance to arrive, then terminates it. The live runner validates
+      # session_params on create (rtmp-hls-session/v1) and refuses a create
+      # without them, so the recipe has to send a complete set: a preset it
+      # ships (live-standard), the rendition it meters on, and runner-local
+      # storage so certification needs no bucket. The broker adds the
+      # callback coordinates itself.
       - name: open
         type: request
         config:
+          session_params:
+            schema: rtmp-hls-session/v1
+            publisher_mode: direct-publisher
+            output_profile: live-standard
+            metering_rendition: "720p"
+            storage: { kind: runner-local }
           reach: { field: rtmp_url }
           hold_ms: 5000
       # Not required: with no publisher on the ingest there may be no

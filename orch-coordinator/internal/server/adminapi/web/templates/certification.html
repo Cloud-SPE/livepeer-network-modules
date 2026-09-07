@@ -28,7 +28,14 @@
     {{range .Steps}}
       <tr>
         <td><strong>{{.Name}}</strong><br><small class="muted">{{.Type}}{{if not .Required}} · optional{{end}}</small></td>
-        <td><span class="badge audit-{{if eq .Status "passed"}}success{{else if eq .Status "skipped"}}info{{else}}failure{{end}}">{{.Status}}</span></td>
+        {{/* A failed step that the recipe marks optional did not decide the
+             run: the verdict above is what passed or failed. It still shows
+             its status — a live offer's usage step fails for want of a
+             publisher during certification, and an operator should see
+             that rather than a green badge — but in the warning tint, not
+             the failure one, so it cannot be mistaken for the reason a run
+             failed. */}}
+        <td><span class="badge audit-{{if eq .Status "passed"}}success{{else if eq .Status "skipped"}}info{{else if not .Required}}optional{{else}}failure{{end}}">{{.Status}}{{if and (ne .Status "passed") (ne .Status "skipped") (not .Required)}} · optional{{end}}</span></td>
         <td>{{.DurationMS}}ms</td>
         <td>
           {{range $k, $v := .Evidence}}<div><small><code>{{$k}}</code> {{kv $v}}</small></div>{{end}}

@@ -516,6 +516,34 @@
     border-color: transparent;
   }
 
+  /* Step and offer status badges (certification.html, offers.html). These
+     classes were referenced without a rule, so every status rendered in
+     the neutral badge; a failed step looked like a skipped one. */
+  .badge.audit-success {
+    background: var(--ok-tint);
+    color: var(--ok);
+    border-color: transparent;
+  }
+
+  .badge.audit-info {
+    background: var(--accent-tint);
+    color: var(--accent);
+    border-color: transparent;
+  }
+
+  .badge.audit-failure {
+    background: var(--danger-tint);
+    color: var(--danger);
+    border-color: transparent;
+  }
+
+  /* A failed step the recipe marks optional: worth seeing, not the verdict. */
+  .badge.audit-optional {
+    background: var(--warn-tint);
+    color: var(--warn);
+    border-color: transparent;
+  }
+
   .badge.audit-signed_returned {
     background: rgba(52, 211, 153, 0.14);
     color: var(--ok);

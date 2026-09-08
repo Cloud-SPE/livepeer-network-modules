@@ -331,6 +331,7 @@ type rosterPage struct {
 	// the cycle worth showing is the one that produced the live manifest.
 	CycleFrame     string
 	CycleSeq       uint64
+	ChecklistHint  string
 	CycleTitle     string
 	CycleNote      string
 	CycleEvents    []cycleEventView
@@ -359,6 +360,7 @@ type overviewPage struct {
 	CycleStage          string
 	CycleFrame          string
 	CycleSeq            uint64
+	ChecklistHint       string
 	CycleTitle          string
 	CycleNote           string
 	CycleEvents         []cycleEventView
@@ -474,6 +476,7 @@ func buildOverviewPage(deps WebDeps, r *http.Request) overviewPage {
 	)
 	out.CycleEvents = cycleTimeline(events, frame.hash)
 	out.ReconcileSteps = coordinatorChecklist(frame.hash, events, out.CycleEvents, deps.SecureOrchURL)
+	out.ChecklistHint = checklistHint(deps.SecureOrchURL)
 	return out
 }
 
@@ -555,6 +558,7 @@ func buildRosterPage(deps WebDeps, r *http.Request) rosterPage {
 	)
 	page.CycleEvents = cycleTimeline(events, frame.hash)
 	page.ReconcileSteps = coordinatorChecklist(frame.hash, events, page.CycleEvents, deps.SecureOrchURL)
+	page.ChecklistHint = checklistHint(deps.SecureOrchURL)
 	return page
 }
 
@@ -726,18 +730,51 @@ func cycleTimeline(events []audit.Event, manifestHash string) []cycleEventView {
 	return out
 }
 
+// coordinatorChecklist is the hand-carry cycle as the coordinator can
+// see it. Steps 1, 5 and 6 are its own audit events. Steps 2–4 happen
+// on the cold-key host, which the coordinator cannot observe — until a
+// signed manifest comes back: a signature that verifies against the
+// cold key is proof the candidate reached the host, was acted on, and
+// was signed, so from then on those steps are done, inferred. Before
+// that they are "remote": not unknown-and-pending, but recorded
+// somewhere the coordinator cannot read.
 func coordinatorChecklist(manifestHash string, events []audit.Event, timeline []cycleEventView, secureOrchURL string) []checkpointStepView {
 	hasDownload := downloadedCandidate(events, manifestHash)
 	hasReturned := signedReturned(events, manifestHash)
 	hasAccepted := acceptedCandidate(events, manifestHash)
-	return []checkpointStepView{
+	remote := func(happened string) checkpointStepView {
+		step := checkpointStepView{Status: "remote", Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")}
+		if hasReturned {
+			step.Status = "done"
+			step.Note = happened + " Inferred: a manifest signed by the cold key came back for this candidate (step 5)."
+			return step
+		}
+		step.Note = happened + " Recorded on secure-orch's own audit log, which the coordinator cannot read."
+		if secureOrchURL != "" {
+			step.Note += " Match canonical_sha256 on arrival before continuing the hand-carry cycle."
+		}
+		return step
+	}
+	steps := []checkpointStepView{
 		{Label: "1. Candidate downloaded", Status: checkpointStatus(hasDownload), Note: "Recorded in coordinator when candidate.tar.gz is downloaded.", Href: timelineHref(timeline, string(audit.OutcomeCandidateDownloaded))},
-		{Label: "2. Candidate loaded on secure-orch", Status: "remote", Note: remoteChecklistNote("Tracked on secure-orch after the upload reaches the cold-key host.", "--secure-orch-url", secureOrchURL), Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")},
-		{Label: "3. Diff reviewed on secure-orch", Status: "remote", Note: remoteChecklistNote("Tracked on secure-orch when the operator opens the candidate diff.", "--secure-orch-url", secureOrchURL), Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")},
-		{Label: "4. Manifest signed on secure-orch", Status: "remote", Note: remoteChecklistNote("Tracked on secure-orch when sign and write_signed complete.", "--secure-orch-url", secureOrchURL), Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")},
+		remote("Tracked on secure-orch after the upload reaches the cold-key host."),
+		remote("Tracked on secure-orch when the operator opens the candidate diff."),
+		remote("Tracked on secure-orch when sign and write_signed complete."),
 		{Label: "5. Signed manifest returned", Status: checkpointStatus(hasReturned), Note: "Recorded in coordinator when the signed manifest is uploaded back.", Href: timelineHref(timeline, string(audit.OutcomeSignedReturned))},
 		{Label: "6. Manifest published", Status: checkpointStatus(hasAccepted), Note: "Recorded in coordinator when publish acceptance completes.", Href: timelineHref(timeline, string(audit.OutcomeAccepted))},
 	}
+	steps[1].Label, steps[2].Label, steps[3].Label = "2. Candidate loaded on secure-orch", "3. Diff reviewed on secure-orch", "4. Manifest signed on secure-orch"
+	return steps
+}
+
+// checklistHint is the one line under the checklist heading about the
+// secure-orch cross-link, shown only while the flag is unset. It used to
+// repeat on three steps on two pages for everyone who had not set it.
+func checklistHint(secureOrchURL string) string {
+	if strings.TrimSpace(secureOrchURL) != "" {
+		return ""
+	}
+	return "Steps 2–4 are recorded on the cold-key host. Start the coordinator with --secure-orch-url to link each of them to the secure-orch console's review timeline (the address must be reachable from your browser, e.g. the SSH-tunnelled port)."
 }
 
 func acceptedCandidate(events []audit.Event, manifestHash string) bool {
@@ -775,13 +812,6 @@ func remoteEvidenceHref(baseURL, suffix string) string {
 		return ""
 	}
 	return strings.TrimRight(baseURL, "/") + suffix
-}
-
-func remoteChecklistNote(baseNote, flagName, baseURL string) string {
-	if strings.TrimSpace(baseURL) == "" {
-		return baseNote + " Set " + flagName + " to enable a direct jump to the peer console."
-	}
-	return baseNote + " Match canonical_sha256 on arrival before continuing the hand-carry cycle."
 }
 
 func collectDriftAlerts(rows []roster.Row) []alertItem {

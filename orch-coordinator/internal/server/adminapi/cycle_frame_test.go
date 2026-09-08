@@ -81,3 +81,28 @@ func TestCycleFrame_ChangedCandidateTracksItself(t *testing.T) {
 		t.Fatalf("first cycle: %+v", f)
 	}
 }
+
+// A verified signature coming back is proof the cold-key host received,
+// reviewed and signed the candidate: steps 2–4 flip from remote to done.
+// Before that they stay remote, never pending.
+func TestChecklist_RemoteStepsInferredFromReturnedSignature(t *testing.T) {
+	hash := "sha256:abc"
+	before := coordinatorChecklist(hash, []audit.Event{{Outcome: audit.OutcomeCandidateDownloaded, ManifestSHA256: hash}}, nil, "")
+	for _, i := range []int{1, 2, 3} {
+		if before[i].Status != "remote" || strings.Contains(before[i].Note, "--secure-orch-url") {
+			t.Fatalf("before return, step %q = %s %q", before[i].Label, before[i].Status, before[i].Note)
+		}
+	}
+	after := coordinatorChecklist(hash, []audit.Event{{Outcome: audit.OutcomeSignedReturned, ManifestSHA256: hash}}, nil, "https://secure.example")
+	for _, i := range []int{1, 2, 3} {
+		if after[i].Status != "done" || !strings.Contains(after[i].Note, "Inferred") || after[i].Href != "https://secure.example/manifests#review-timeline" {
+			t.Fatalf("after return, step %q = %s %q %q", after[i].Label, after[i].Status, after[i].Note, after[i].Href)
+		}
+	}
+	if after[0].Status != "pending" || after[4].Status != "done" || after[5].Status != "pending" {
+		t.Fatalf("own steps: %s %s %s", after[0].Status, after[4].Status, after[5].Status)
+	}
+	if checklistHint("") == "" || checklistHint("https://secure.example") != "" {
+		t.Fatal("hint must show only while the flag is unset")
+	}
+}

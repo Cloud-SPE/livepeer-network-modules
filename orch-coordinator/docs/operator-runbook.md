@@ -72,7 +72,8 @@ When running the published container image, use `/srv/data`. The image is
 built to run as `nonroot` and pre-owns that path so Docker named volumes are
 initialized with writable ownership.
 
-`--secure-orch-url` is optional; when set, the coordinator checklist can jump
+`--secure-orch-url` is optional and cosmetic (the scenario compose reads it
+from `COORDINATOR_SECURE_ORCH_URL`); when set, the coordinator checklist can jump
 directly to the secure-orch review timeline for the current hand-carry cycle.
 
 ## Dev mode

@@ -29,6 +29,7 @@ services:
       - --log-level=${COORDINATOR_LOG_LEVEL:-info}
       - --log-format=${COORDINATOR_LOG_FORMAT:-text}
       - --scrape-interval=${COORDINATOR_SCRAPE_INTERVAL:-5m}
+      - --secure-orch-url=${COORDINATOR_SECURE_ORCH_URL:-}
     ports:
       # Public registry endpoint. Put a TLS-terminating reverse proxy in front
       # of this in production.

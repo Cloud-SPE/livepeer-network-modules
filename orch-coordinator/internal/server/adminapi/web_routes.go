@@ -325,10 +325,16 @@ type rosterPage struct {
 	HasCandidateIdentity bool
 	SettlementKeys       []settlementKeyRow
 	CycleStage           string
-	CycleTitle           string
-	CycleNote            string
-	CycleEvents          []cycleEventView
-	ReconcileSteps       []checkpointStepView
+	// CycleFrame says which manifest the cycle stage and checklist
+	// describe: "candidate" while there is a change to carry, or
+	// "published" when the current candidate is a no-op successor and
+	// the cycle worth showing is the one that produced the live manifest.
+	CycleFrame     string
+	CycleSeq       uint64
+	CycleTitle     string
+	CycleNote      string
+	CycleEvents    []cycleEventView
+	ReconcileSteps []checkpointStepView
 }
 
 type overviewPage struct {
@@ -351,6 +357,8 @@ type overviewPage struct {
 	RiskItems           []alertItem
 	BrokerAlerts        []alertItem
 	CycleStage          string
+	CycleFrame          string
+	CycleSeq            uint64
 	CycleTitle          string
 	CycleNote           string
 	CycleEvents         []cycleEventView
@@ -453,16 +461,19 @@ func buildOverviewPage(deps WebDeps, r *http.Request) overviewPage {
 	out.PublishState, out.PublishTitle, out.PublishNote = assessPublishReadiness(view, out.HasCandidate, out.HasPublished)
 	out.RiskItems = collectDriftAlerts(view.Rows)
 	out.BrokerAlerts = collectBrokerAlerts(view.BrokerStatus)
+	frame := cycleFrame(cand, pub, view)
+	out.CycleFrame, out.CycleSeq = frame.name, frame.seq
 	out.CycleStage, out.CycleTitle, out.CycleNote = assessCoordinatorCycle(
 		out.HasCandidate,
 		out.CandidateSeq,
 		out.HasPublished,
 		out.PublishedSeq,
-		downloadedCandidate(events, out.CandidateCanonHash),
-		signedReturned(events, out.CandidateCanonHash),
+		downloadedCandidate(events, frame.hash),
+		signedReturned(events, frame.hash),
+		frame.name == cycleFramePublished,
 	)
-	out.CycleEvents = cycleTimeline(events, out.CandidateCanonHash)
-	out.ReconcileSteps = coordinatorChecklist(out.CandidateCanonHash, events, out.CycleEvents, deps.SecureOrchURL)
+	out.CycleEvents = cycleTimeline(events, frame.hash)
+	out.ReconcileSteps = coordinatorChecklist(frame.hash, events, out.CycleEvents, deps.SecureOrchURL)
 	return out
 }
 
@@ -531,16 +542,19 @@ func buildRosterPage(deps WebDeps, r *http.Request) rosterPage {
 	if pub != nil {
 		publishedSeq = pub.PublicationSeq
 	}
+	frame := cycleFrame(cand, pub, view)
+	page.CycleFrame, page.CycleSeq = frame.name, frame.seq
 	page.CycleStage, page.CycleTitle, page.CycleNote = assessCoordinatorCycle(
 		cand != nil,
 		page.CandidateSeq,
 		pub != nil,
 		publishedSeq,
-		downloadedCandidate(events, page.CandidateCanonHash),
-		signedReturned(events, page.CandidateCanonHash),
+		downloadedCandidate(events, frame.hash),
+		signedReturned(events, frame.hash),
+		frame.name == cycleFramePublished,
 	)
-	page.CycleEvents = cycleTimeline(events, page.CandidateCanonHash)
-	page.ReconcileSteps = coordinatorChecklist(page.CandidateCanonHash, events, page.CycleEvents, deps.SecureOrchURL)
+	page.CycleEvents = cycleTimeline(events, frame.hash)
+	page.ReconcileSteps = coordinatorChecklist(frame.hash, events, page.CycleEvents, deps.SecureOrchURL)
 	return page
 }
 
@@ -579,8 +593,66 @@ func assessPublishReadiness(view *roster.View, hasCandidate, hasPublished bool) 
 	return "ok", "Ready for secure-orch review", "Candidate and broker state look healthy enough for operator review. Continue with candidate diff inspection, then hand-carry to secure-orch."
 }
 
-func assessCoordinatorCycle(hasCandidate bool, candidateSeq uint64, hasPublished bool, publishedSeq uint64, downloaded, returned bool) (state, title, note string) {
+const (
+	cycleFrameCandidate = "candidate"
+	cycleFramePublished = "published"
+)
+
+// cycleRef is the manifest the cycle stage and checklist are about.
+type cycleRef struct {
+	name string
+	hash string
+	seq  uint64
+}
+
+// cycleFrame picks that manifest. The moment a publish is accepted the
+// builder advances to the next sequence and rebuilds, so the "current
+// candidate" is a successor nobody has carried yet. Keying the checklist
+// on it showed six pending steps right after a cycle completed, which is
+// the opposite of what happened. When the candidate changes nothing
+// against the live manifest, the frame is the live manifest and the
+// checklist shows the cycle that produced it, from the audit events
+// recorded under its hash.
+func cycleFrame(cand, pub *types.ManifestPayload, view *roster.View) cycleRef {
+	if cand != nil && pub != nil && candidateIsNoop(cand, pub, view) {
+		return cycleRef{name: cycleFramePublished, hash: manifestCanonicalHash(pub), seq: pub.PublicationSeq}
+	}
+	ref := cycleRef{name: cycleFrameCandidate}
+	if cand != nil {
+		ref.hash, ref.seq = manifestCanonicalHash(cand), cand.PublicationSeq
+	}
+	return ref
+}
+
+// candidateIsNoop is true when signing the candidate would publish
+// nothing new: same orch, no tuple drift, same delegations.
+func candidateIsNoop(cand, pub *types.ManifestPayload, view *roster.View) bool {
+	if !strings.EqualFold(cand.Orch.EthAddress, pub.Orch.EthAddress) {
+		return false
+	}
+	if view != nil {
+		for kind, n := range view.DriftCounts {
+			if kind != diff.DriftNone && n > 0 {
+				return false
+			}
+		}
+	}
+	if len(cand.SettlementKeys) != len(pub.SettlementKeys) {
+		return false
+	}
+	for i := range cand.SettlementKeys {
+		c, p := cand.SettlementKeys[i], pub.SettlementKeys[i]
+		if c.PublicKey != p.PublicKey || !c.NotBefore.Equal(p.NotBefore) || !c.ExpiresAt.Equal(p.ExpiresAt) {
+			return false
+		}
+	}
+	return true
+}
+
+func assessCoordinatorCycle(hasCandidate bool, candidateSeq uint64, hasPublished bool, publishedSeq uint64, downloaded, returned, upToDate bool) (state, title, note string) {
 	switch {
+	case upToDate && hasPublished:
+		return "ok", "Published, up to date", fmt.Sprintf("Publication %d is live and the current candidate (%d) changes nothing against it. Nothing to carry; the checklist shows the cycle that produced the live manifest.", publishedSeq, candidateSeq)
 	case hasCandidate && !hasPublished:
 		if returned {
 			return "warn", "Signed manifest returned", "A signed manifest came back from secure-orch for this candidate, but no publish is live yet. Review the audit trail for publish acceptance or failure."

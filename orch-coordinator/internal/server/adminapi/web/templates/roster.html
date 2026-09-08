@@ -142,6 +142,7 @@
 {{if .ReconcileSteps}}
 <section>
   <h2>Cross-surface checklist</h2>
+  <p class="muted">{{if eq .CycleFrame "published"}}Tracking publication {{.CycleSeq}}, the live manifest. The current candidate ({{.CandidateSeq}}) is a no-op successor built after that publish; there is nothing to carry.{{else}}Tracking candidate {{.CycleSeq}}.{{end}}</p>
   <div class="checklist">
     {{range .ReconcileSteps}}
     <article class="checklist-item">

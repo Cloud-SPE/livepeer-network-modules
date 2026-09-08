@@ -12,7 +12,8 @@ Package layout, request lifecycle, and dispatch flow for the broker.
 ```
 capability-broker/
 ├── cmd/livepeer-capability-broker/
-│   └── main.go                           # entry point; flag parsing; wires everything
+│   ├── main.go                           # entry point; flag parsing; wires everything
+│   └── settlementkey.go                  # `settlement-key generate|pubkey` operator subcommand
 └── internal/
     ├── config/                           # host-config.yaml loader + validator
     │   ├── config.go                     # top-level types (identity, stores, sinks)
@@ -53,6 +54,7 @@ capability-broker/
     │       ├── offerings.go              # GET /registry/offerings
     │       ├── offer_tuples.go           # frozen shape → advertised manifest tuple
     │       ├── health.go                 # GET /registry/health
+    │       ├── settlementkeys.go         # GET /registry/settlement-keys (self-signed announcement)
     │       └── healthz.go                # GET /healthz
     ├── offers/                           # the offer state machine
     │   └── engine.go                     # match → certify → freeze → advertise
@@ -90,7 +92,7 @@ capability-broker/
     │   ├── headers.go                    # Livepeer-* stripping
     │   └── secret.go                     # backend-auth injection (env://, bearer)
     ├── workerconn/                       # the attach tunnel wire (QUIC + WS frames)
-    ├── settlement/                       # canonical payload + delegated signing
+    ├── settlement/                       # canonical payload + delegated signing; key announcement + proof
     ├── health/                           # health vocabulary + aggregation (no prober)
     ├── selection/                        # eligibility + weighting decisions
     ├── poolsnapshot/                     # pool-controller snapshot cache
@@ -119,6 +121,7 @@ Paid listener (`--listen`, default `:8080`):
 | `POST /v1/payment/ticket-params` | — | Unpaid ticket-params proxy. |
 | `GET /registry/offerings` | — | Unpaid capability inventory. |
 | `GET /registry/health` | — | Unpaid live availability. |
+| `GET /registry/settlement-keys` | — | Unpaid, self-signed announcement of the delegated settlement key(s), for coordinator discovery (broker-admin §7.1). |
 | `GET /healthz` | — | Process health. |
 | `GET /v1/exchange/{request_id}` | — | What happened to an exchange, keyed on the consumer's id. |
 | `GET /v1/settlement/{id}` | — | The signed settlement for a job or session. |

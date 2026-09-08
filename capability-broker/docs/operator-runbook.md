@@ -26,6 +26,43 @@ headers. If it is wrong, runners post events into the void and sessions die
 by heartbeat loss: check it first when sessions open and then wind down
 with `heartbeat_lost`.
 
+## 1.0 Settlement signing key
+
+`identity.settlement_key_file` names the hot secp256k1 key this broker
+signs settlement records with. Without it every record goes out unsigned
+and a clearinghouse refuses it for anything financially material.
+
+```sh
+# mint (0600, refuses to overwrite) — prints the public key
+livepeer-capability-broker settlement-key generate --out /etc/livepeer/broker-settlement.key
+# read the public half back later
+livepeer-capability-broker settlement-key pubkey --file /etc/livepeer/broker-settlement.key
+```
+
+The broker announces the key at `GET /registry/settlement-keys`
+(broker-admin §7.1): a statement naming the orch, the key, this broker's
+`external_base_url` and its configured window, signed by the key itself.
+The orch-coordinator reads it on scrape, verifies the proof, and carries
+the key into the manifest candidate; the cold key delegates it when the
+operator signs. Nothing is copied by hand.
+
+**The one trap:** `external_base_url` is inside the signed statement, and
+the coordinator compares it (scheme and host) against the `base_url` it
+scraped this broker at. If the broker says its public hostname while
+`coordinator-config.brokers[].base_url` points at a LAN address, the
+coordinator's roster shows the key as `unproven: statement names a
+different broker URL` and does not delegate it. Make the two agree, or
+leave `external_base_url` unset on a broker with no paid-session offers.
+
+`settlement_key_not_before` / `settlement_key_expires_at` are optional.
+Leave them unset: the coordinator assigns a window from first sight
+(`publish.settlement_key_validity`, default one year), remembers it, and
+renews it by a sign cycle. Set them only to make the broker refuse to sign
+outside a window you chose, and then mirror the published one.
+
+Rotate by generating a new file, pointing `settlement_key_file` at it and
+restarting. The old key stays delegated until its window closes.
+
 ## 1.1 Runtime reload in production
 
 When the broker participates in the Pool control-plane apply path:

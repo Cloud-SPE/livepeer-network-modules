@@ -39,6 +39,7 @@ services:
       - --log-level=${COORDINATOR_LOG_LEVEL:-info}
       - --log-format=${COORDINATOR_LOG_FORMAT:-text}
       - --scrape-interval=${COORDINATOR_SCRAPE_INTERVAL:-5m}
+      - --secure-orch-url=${COORDINATOR_SECURE_ORCH_URL:-}
       # --- sign-cycle agent support (plan 0042) ---
       - --agent-token-file=/etc/livepeer/agent-token
       - --renewal-threshold=${COORDINATOR_RENEWAL_THRESHOLD:-0}

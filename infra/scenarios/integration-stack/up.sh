@@ -27,7 +27,7 @@ echo "building..."
 # broker signs records with. Generated once and kept: a new settlement
 # key invalidates every record a consumer already holds.
 [ -f "$RUN_DIR/seal.key" ] || head -c 32 /dev/urandom | xxd -p -c 64 > "$RUN_DIR/seal.key"
-[ -f "$RUN_DIR/settlement.key" ] || head -c 32 /dev/urandom | xxd -p -c 64 > "$RUN_DIR/settlement.key"
+[ -f "$RUN_DIR/settlement.key" ] || "$BIN_DIR/capability-broker" settlement-key generate --out "$RUN_DIR/settlement.key" >/dev/null
 
 start() { # name, then command
   local name="$1"; shift

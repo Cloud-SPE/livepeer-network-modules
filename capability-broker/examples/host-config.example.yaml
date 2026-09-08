@@ -66,6 +66,10 @@
 #   * BROKER_ADMIN_TOKEN set in the environment (admin_auth below)
 #   * the file at credential_store.sealing_key_file to exist — 32 raw bytes
 #     or 64 hex chars: `openssl rand -hex 32 > /etc/livepeer/broker-seal.key`
+#   * for paid traffic, a settlement signing key at identity.settlement_key_file:
+#     `livepeer-capability-broker settlement-key generate --out /etc/livepeer/broker-settlement.key`
+#     (without it settlement records go out unsigned and a clearinghouse
+#     refuses them)
 #   * the directories under credential_store.path / offers_state_path to be
 #     writable and on a volume that survives restarts
 #   * a payment-daemon on payment_daemon.socket, or `mock: true` instead
@@ -76,6 +80,15 @@
 identity:
   orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
   label: "broker-a"
+  # Hot secp256k1 key (hex) this broker signs settlement records with. Mint
+  # it with `livepeer-capability-broker settlement-key generate --out …`;
+  # the broker announces the public half at GET /registry/settlement-keys
+  # and the coordinator delegates it in the next signed manifest. Absent
+  # means records go out UNSIGNED — fine for a mock-payment smoke run only.
+  # settlement_key_file: /etc/livepeer/broker-settlement.key
+  # Optional window; leave unset and the coordinator assigns one.
+  # settlement_key_not_before: 2026-09-07T00:00:00Z
+  # settlement_key_expires_at: 2027-09-07T00:00:00Z
 
 # Admin auth guards the runtime-status, enrolment, offer-push and reload
 # endpoints. REQUIRED to mint runner attach credentials with

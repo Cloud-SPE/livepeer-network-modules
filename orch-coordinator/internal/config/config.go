@@ -1,6 +1,7 @@
 // Package config defines the orch-coordinator's coordinator-config.yaml
 // grammar plus the boot-time validation pass. The grammar is small by
-// design: orch identity, broker list, publish tunables.
+// design: orch identity, broker list, publish tunables, and an optional
+// pinned settlement-key list for brokers that cannot announce their own.
 //
 // The runtime flag set lives in cmd/livepeer-orch-coordinator and is
 // orthogonal to the YAML — flags pin per-process behavior (listen

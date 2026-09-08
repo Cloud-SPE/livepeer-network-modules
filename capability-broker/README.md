@@ -15,6 +15,7 @@ exposes:
 - `POST /v1/payment/ticket-params` — unpaid quote-free ticket-params proxy for sender-mode payment daemons.
 - `GET /registry/offerings` — capability inventory for orch-coordinator scrape.
 - `GET /registry/health` — live capability availability for gateway resolvers.
+- `GET /registry/settlement-keys` — the delegated settlement key(s) this broker signs with, self-signed, for orch-coordinator discovery (broker-admin §7.1).
 - `GET /healthz` — process health.
 - `GET /admin/v1/runtime` — private runtime status, including loaded revision.
 - `POST /admin/v1/runtime/reload` — private runtime reload endpoint.
@@ -264,11 +265,15 @@ workload's facts are described. That polling, its
 `GET /registry/health`, and its `livepeer_metadata_refresh_*` metrics are
 removed (plan 0043 item 11).
 `GET /registry/health` reports one entry per advertised offer per eligible
-runner. Its JSON contract is unchanged — the roster, the registry daemon's
-live-health layer and the chain probe all read it — but nothing is polled to
-produce it: certification says whether a runner can serve the offer and the
-attach tunnel says whether it is reachable, and both are read live on every
-request, so there is no interval in which the answer is stale.
+runner. Its JSON shape is additive-compatible — the roster, the registry
+daemon's live-health layer and the chain probe all read it — but nothing is
+polled to produce it: certification says whether a runner can serve the
+offer and the attach tunnel says whether it is reachable, and both are read
+live on every request. So `probed_at` is always the read time and
+`stale_after` is always read time + 30 s; a reader must not age the verdict
+against anything else. The runner's last real dispatch is reported
+separately as `last_dispatched_at`, informational only — an idle runner is
+not a failing one.
 When `pool_snapshot.url` is configured,
 each backend may also include a `pool` object with snapshot freshness
 (`fresh`, `stale`, `expired`, `bootstrap_pending`, or `fetch_error`), cached
@@ -322,10 +327,13 @@ for the full package tree and dispatch flow.
 
 ```
 capability-broker/
-├── cmd/livepeer-capability-broker/main.go
+├── cmd/livepeer-capability-broker/
+│   ├── main.go
+│   └── settlementkey.go  # `settlement-key generate|pubkey` subcommand
 ├── internal/
 │   ├── config/         # host-config.yaml loader + validator
 │   ├── server/         # HTTP server, middleware, job + session routes
+│   ├── settlement/     # settlement envelope signing + the key announcement
 │   ├── sessionengine/  # paid-session/v1 authority (leases, descriptors)
 │   ├── sessionstore/   # durable bbolt state: sessions + job idempotency
 │   ├── extractors/     # work-unit extractor library (paid-job only)

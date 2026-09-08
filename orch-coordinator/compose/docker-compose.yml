@@ -19,6 +19,7 @@ services:
       - --metrics-listen=:9091
       - --log-level=${COORDINATOR_LOG_LEVEL}
       - --log-format=${COORDINATOR_LOG_FORMAT}
+      - --secure-orch-url=${COORDINATOR_SECURE_ORCH_URL:-}
     ports:
       - "${COORDINATOR_LISTEN_PORT}:8080"
       - "${COORDINATOR_PUBLIC_PORT}:8081"

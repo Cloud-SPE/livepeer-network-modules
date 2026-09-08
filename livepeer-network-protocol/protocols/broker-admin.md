@@ -30,7 +30,7 @@ RFC 2119. Companion specs: [`runner-attach.md`](./runner-attach.md)
 4. [Offers](#4-offers)
 5. [Enrollment and credentials](#5-enrollment-and-credentials)
 6. [Certification](#6-certification)
-7. [`/registry/offerings` stamp](#7-registryofferings-spec_version-stamp)
+7. [`/registry/offerings` stamp](#7-registryofferings-spec_version-stamp) · [7.1 `/registry/settlement-keys`](#71-get-registrysettlement-keys)
 8. [Error codes](#8-error-codes)
 9. [Versioning](#9-versioning)
 10. [Conformance obligations](#10-conformance-obligations)
@@ -576,6 +576,9 @@ frontmatter tracks the document.
 | `admin-certification-run-freezes-unfrozen-offer` | Unfrozen offer, run passes → `state: frozen`, `frozen_by.run_id` matches. |
 | `registry-offerings-stamps-spec-version` | Root `spec_version` equals the module `VERSION`. |
 | `registry-offerings-excludes-unfrozen` | An offer with no certified runner is absent from `capabilities[]`. |
+| `registry-settlement-keys-empty-without-key` | No `settlement_key_file` → `200` with `keys: []`, never an error. |
+| `registry-settlement-keys-proves-possession` | Each `keys[].signature.value` recovers, over the JCS bytes of `statement`, to `statement.public_key`; `statement.orch_eth_address` equals the root and `statement.base_url` equals `external_base_url`. |
+| `registry-settlement-keys-announces-expired` | A key whose configured window has passed is still announced, with its window. |
 
 ## Changelog
 

@@ -96,19 +96,42 @@ backends right now?
 
 ```json
 {
+  "broker_status": "ready",
+  "generated_at": "2026-09-08T12:00:00Z",
   "capabilities": [
     {
       "id": "openai:chat-completions",
       "offering_id": "tier-a",
       "status": "ready",
-      "last_probe_ms": 1450,
-      "backend": "reachable"
+      "reason": "certified",
+      "probe_type": "attach",
+      "probed_at": "2026-09-08T12:00:00Z",
+      "stale_after": "2026-09-08T12:00:30Z",
+      "last_dispatched_at": "2026-09-08T11:41:07Z",
+      "backends": [
+        {
+          "backend_id": "ai2-rig|qwen-chat",
+          "status": "ready",
+          "reason": "certified",
+          "probe_type": "attach",
+          "probed_at": "2026-09-08T12:00:00Z",
+          "stale_after": "2026-09-08T12:00:30Z",
+          "consecutive_successes": 1,
+          "last_dispatched_at": "2026-09-08T11:41:07Z",
+          "selection_eligible": true,
+          "selection_weight": 110,
+          "selection_reason": "eligible"
+        }
+      ]
     },
     {
-      "id": "video:live.rtmp",
+      "id": "video:transcode.live",
       "offering_id": "default",
-      "status": "draining",
-      "reason": "operator_marked_drain"
+      "status": "unreachable",
+      "reason": "no_eligible_runner",
+      "probe_type": "attach",
+      "probed_at": "2026-09-08T12:00:00Z",
+      "stale_after": "2026-09-08T12:00:30Z"
     }
   ]
 }
@@ -147,6 +170,11 @@ runner's reachability is whether its attach tunnel is up, and its fitness
 for an offer is what certification decided; both are read live on every
 request to `/registry/health`. The freshness budget is a statement about
 how long a *reader* may cache the answer, not about a probe interval.
+Concretely: `probed_at` is always the time of the read and `stale_after` is
+always `probed_at` + 30 s. A reader MUST NOT age the verdict against
+anything else — in particular not against `last_dispatched_at`, which
+reports when the runner last did work and is informational only. An idle
+runner is not a failing one; the tunnel being up is the current evidence.
 
 **Who consumes it:**
 

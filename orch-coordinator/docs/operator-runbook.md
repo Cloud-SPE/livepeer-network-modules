@@ -75,6 +75,9 @@ initialized with writable ownership.
 `--secure-orch-url` is optional and cosmetic (the scenario compose reads it
 from `COORDINATOR_SECURE_ORCH_URL`); when set, the coordinator checklist can jump
 directly to the secure-orch review timeline for the current hand-carry cycle.
+The address must be reachable from the operator's *browser* — for the
+recommended loopback-only console that is the SSH-tunnelled port on the
+workstation, not the cold host's LAN address.
 
 ## Dev mode
 
@@ -91,8 +94,11 @@ identity:
 brokers:
   - name: broker-a
     base_url: http://10.0.0.5:8080
+    admin_token_ref: env://BROKER_A_ADMIN_TOKEN   # optional: enables the hot-zone pages
 publish:
   manifest_ttl: 24h
+  settlement_key_validity: 8760h                # optional: window for keys brokers announce unbounded
+settlement_keys: []                             # optional: pinned keys, see below
 ```
 
 The orch eth address is the on-chain `ServiceRegistry` (or
@@ -162,7 +168,8 @@ closes. Nothing to edit here.
 
 ## Roster cells
 
-The roster consumes both broker `/registry/offerings` and `/registry/health`.
+The roster consumes broker `/registry/offerings`, `/registry/health` and
+`/registry/settlement-keys`.
 One row per capability tuple, one cell per broker, so a disagreement between
 brokers about the same tuple is visible side by side. Each cell shows that
 broker's scrape freshness and its live view of the tuple — `live=ready`,
@@ -206,9 +213,13 @@ Before the first build they return `503` with `Retry-After`. A `304`
 poll is not an audit event; only full tarball downloads are audited.
 
 `metadata.json` is operator-only and not signed. It carries the scrape
-window, `source_brokers` with each broker's freshness and last error, the
-coordinator commit and schema version, the effective sign policy
-(`manifest_ttl_seconds`, `renewal_threshold_seconds`) and `ha_endpoints`.
+window, `source_brokers` with each broker's freshness and last error (and
+the settlement keys it announced, each with `proven` and a reason, or
+`settlement_keys_error`), the coordinator commit and schema version, the
+effective sign policy (`manifest_ttl_seconds`, `renewal_threshold_seconds`),
+`ha_endpoints`, and `settlement_keys[]`: for every key the candidate
+delegates, its `source` (`config`, `broker`, `published`) and
+`window_source` (`config`, `broker`, `default`, `published`).
 
 It no longer carries metadata-discovery fields. The broker stopped
 enriching offerings from backends it polled — a runner declares what it

@@ -199,7 +199,10 @@ Broker-authoritative settlement record for the completed request or session wind
   anchors it on-chain. The cold key delegates by publishing the hot key in the
   manifest's `settlement_keys`, and resolvers project every currently-valid key
   onto the route, so key discovery and rotation ride the path a consumer
-  already trusts.
+  already trusts. How the key gets from the broker into that block:
+  the broker announces it, self-signed, at `GET /registry/settlement-keys`
+  (`protocols/broker-admin.md` §7.1) and the coordinator carries a proven
+  announcement into the candidate the cold key signs.
 - A consumer MUST accept a record signed by any delegated key whose validity
   window contains the record's `issued_at` — an outgoing key stays published
   until its `expires_at` so a record signed just before a rotation still

@@ -64,6 +64,10 @@ services:
     volumes:
       - ${POOL_BROKER_CONFIG:-./run/generated-broker-host-config.yaml}:/etc/livepeer/host-config.yaml:ro
       - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
+      # Settlement signing key (identity.settlement_key_file in the generated
+      # host-config). Uncomment once the file exists — a bind mount of a
+      # missing file creates a directory and the broker refuses to start.
+      #   - ${BROKER_SETTLEMENT_KEY:-/opt/livepeer/broker-settlement.key}:/etc/livepeer/broker-settlement.key:ro
     restart: unless-stopped
 
   orch-coordinator:
@@ -78,6 +82,7 @@ services:
       - --metrics-listen=:9091
       - --log-level=${COORDINATOR_LOG_LEVEL:-info}
       - --log-format=${COORDINATOR_LOG_FORMAT:-text}
+      - --secure-orch-url=${COORDINATOR_SECURE_ORCH_URL:-}
     ports:
       - "${COORDINATOR_LISTEN_PORT:-8080}:8080"
       - "${COORDINATOR_PUBLIC_PORT:-8081}:8081"

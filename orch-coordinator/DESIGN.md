@@ -13,8 +13,11 @@ One coordinator process per orch operator. Inputs:
 - LAN broker `/registry/offerings` endpoints — HTTP GET, JSON. Shape pinned
   by [`../capability-broker/internal/server/registry/offerings.go`](../capability-broker/internal/server/registry/offerings.go).
 - LAN broker `/registry/health` endpoints — HTTP GET, JSON. Used for tuple
-  liveness plus broker metadata-discovery status such as `last_result`,
-  `consecutive_failures`, and freshness age.
+  liveness.
+- LAN broker `/registry/settlement-keys` endpoints — HTTP GET, JSON. Each
+  broker's self-signed announcement of its delegated settlement key; the
+  proof is verified on scrape and proven keys are merged into the
+  candidate's `settlement_keys[]`.
 - Static config file `coordinator-config.yaml` — broker list, orch identity,
   tunables.
 
@@ -148,15 +151,18 @@ over the publish dir; concurrent uploaders block on the lock.
 
 - **In-memory.** Scrape cache (latest broker offerings + per-broker
   status). Recoverable on restart by re-scraping.
-  The per-broker status now includes broker `/registry/health` tuple metadata
-  so the roster can classify metadata state as `ok`, `degraded`, `stale`, or
-  `never_succeeded`.
+  The per-broker status carries the broker's live tuple health and its
+  settlement-key announcement with the proof verdict.
 - **On disk.**
   - `<data-dir>/published/manifest.json` — the live signed manifest.
   - `<data-dir>/candidates/<timestamp>/{manifest.json,metadata.json}` —
     history snapshots; pruned by count.
   - `<data-dir>/audit.db` — BoltDB log of every publish event (uploader,
     timestamp, signature hash, accepted/rejected with reason).
+  - `<data-dir>/settlement-keys.json` — when each broker-announced
+    settlement key was first seen, from which its published window is
+    derived. Deleting it re-anchors every unbounded key to a new window,
+    which is a manifest change the cold key has to review.
 
 ## Observability
 

@@ -142,9 +142,9 @@ Candidate classes and dispositions:
 
 | Class | Meaning | Phase 1 | Phase 2 |
 |---|---|---|---|
-| `renewal` | content identical, remaining validity below the coordinator's published threshold | auto-sign | auto-sign |
+| `renewal` | content identical (tuples *and* `settlement_keys`), remaining validity below the coordinator's published threshold | auto-sign | auto-sign |
 | `benign` | every change within `benign_bounds` | hold + `would_auto_sign` shadow audit | auto-sign |
-| `critical` | any change beyond the bounds, **including a `spec_version` change** | hold + alert | hold + alert |
+| `critical` | any change beyond the bounds, **including a `spec_version` change and any `settlement_keys` change** (a delegation is never benign: no policy dial makes it auto-sign) | hold + alert | hold + alert |
 | `forbidden` | `eth_address` changed | refuse + alert | refuse + alert |
 
 `spec_version` moved from `forbidden` to `critical` (plan 0043 §3.7).

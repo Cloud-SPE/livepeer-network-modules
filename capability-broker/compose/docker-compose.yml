@@ -28,6 +28,12 @@
 #     the broker advertises nothing.
 #   - UDP 8443 published when host-config.yaml sets `listen.attach_quic`.
 #     Runners that cannot use QUIC attach over WebSocket on 8080 instead.
+#   - optionally the settlement signing key at
+#     /etc/livepeer/broker-settlement.key (identity.settlement_key_file).
+#     Mint it with `livepeer-capability-broker settlement-key generate`;
+#     the broker announces its public half at GET /registry/settlement-keys
+#     and the coordinator delegates it in the next manifest. Without it,
+#     settlement records go out unsigned.
 
 services:
   capability-broker:
@@ -50,6 +56,9 @@ services:
       # harmless (and still useful for job idempotency) without them.
       - broker-state:/var/lib/livepeer
       - ${BROKER_SEALING_KEY:-/dev/null}:/etc/livepeer/broker-seal.key:ro
+      # Settlement signing key. Not mounted by default: a bind mount of a
+      # missing file creates a directory and the broker refuses to start.
+      #   - ${BROKER_SETTLEMENT_KEY:-/opt/livepeer/broker-settlement.key}:/etc/livepeer/broker-settlement.key:ro
     restart: unless-stopped
 
 volumes:

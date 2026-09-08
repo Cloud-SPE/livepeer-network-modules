@@ -52,9 +52,12 @@ own; use it only where nothing asserts on runner-side state.
 
 `--settlement-signer <0x…>` is the eth address of the broker's delegated
 settlement key. Without it the two settlement-signature scenarios skip:
-the broker publishes that key on no unauthenticated surface, so the suite
-has to be told, and skipping is better than passing without checking the
-one thing a clearinghouse gates money on.
+the suite pins the signer it expects rather than trusting whatever the
+broker announces at `GET /registry/settlement-keys`, and skipping is
+better than passing without checking the one thing a clearinghouse gates
+money on. `livepeer-capability-broker settlement-key pubkey --file …`
+prints the public key; derive the address from it with any secp256k1
+tool.
 
 Work units are configurable so you can run against your own offerings
 without patching scenarios: `--job-unit` (default `tokens`) and

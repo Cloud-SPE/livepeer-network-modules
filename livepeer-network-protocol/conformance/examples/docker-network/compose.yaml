@@ -4,7 +4,7 @@
 # at http://conformance:8091 and http://conformance:8092.
 #
 #   openssl rand -hex 32 > seal.key
-#   openssl rand -hex 32 > settle.key
+#   livepeer-capability-broker settlement-key generate --out settle.key   # prints the public key
 #   docker compose up --abort-on-container-exit --exit-code-from conformance
 #
 # Use `up`, not `run`: a one-off `docker compose run` container is not
@@ -52,8 +52,9 @@ services:
       - --fakes-backend-port=8091
       - --fakes-runner-port=8092
       # The eth address of the key in settle.key. Without it the two
-      # settlement-signature scenarios SKIP — the broker publishes its
-      # delegated key on no unauthenticated surface, so the suite has to
-      # be told, and a skip is better than a pass that checked nothing.
-      # Derive it from the key with any secp256k1 tool.
+      # settlement-signature scenarios SKIP — the suite pins the signer it
+      # expects rather than trusting the broker's own announcement at
+      # GET /registry/settlement-keys, and a skip is better than a pass
+      # that checked nothing. Derive it from the public key that
+      # `settlement-key generate` printed, with any secp256k1 tool.
       # - --settlement-signer=0x...

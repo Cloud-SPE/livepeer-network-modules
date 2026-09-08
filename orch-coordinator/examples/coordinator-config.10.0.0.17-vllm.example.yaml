@@ -18,3 +18,8 @@ brokers:
 
 publish:
   manifest_ttl: 24h
+  # Window assigned to a settlement key a broker announces without one
+  # (default one year). Keys are discovered from each broker's
+  # GET /registry/settlement-keys; pin one under a top-level
+  # `settlement_keys:` only for a broker that cannot announce it.
+  # settlement_key_validity: 8760h

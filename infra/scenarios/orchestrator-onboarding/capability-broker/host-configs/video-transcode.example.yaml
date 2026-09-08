@@ -46,6 +46,12 @@
 identity:
   orch_eth_address: 0xYOUR_ORCH_ADDRESS
   label: "transcode-broker"
+  # Hot secp256k1 key this broker signs settlement records with. Mint:
+  #   livepeer-capability-broker settlement-key generate --out /opt/livepeer/broker-settlement.key
+  # The broker announces it at GET /registry/settlement-keys and the
+  # coordinator delegates it in the next signed manifest. Without it,
+  # settlement records go out UNSIGNED. Uncomment once the file is mounted.
+  # settlement_key_file: /etc/livepeer/broker-settlement.key
 
 # Required here for two reasons: run-scoped fixture/sink URLs during VOD
 # and ABR certification, and the session usage callback for live. Runners

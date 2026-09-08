@@ -13,8 +13,10 @@ back via HTTP POST, and atomic-swap publishes the live manifest at
 One process per orch operator (not per host). A single operator with multiple
 broker hosts on the LAN runs one coordinator; the coordinator scrapes them
 all and unifies their offerings into a single candidate manifest. In addition
-to `/registry/offerings`, it also consumes broker `/registry/health` so the
-roster can surface per-tuple liveness and broker metadata-discovery state.
+to `/registry/offerings`, it also consumes broker `/registry/health` (so the
+roster can surface per-tuple liveness) and `/registry/settlement-keys` (so
+each broker's delegated settlement key is discovered, proven and carried
+into the candidate rather than transcribed by hand).
 
 Three listeners:
 
@@ -28,10 +30,12 @@ Three listeners:
 The coordinator never holds a signing key. Cold key on `secure-orch` is the
 only signer.
 
-`candidate.tar.gz` now carries richer operator-only provenance in
-`metadata.json`, including broker metadata-warning thresholds, per-broker
-metadata summaries, and per-tuple metadata warnings when broker discovery is
-degraded, stale, or has never succeeded.
+`candidate.tar.gz` carries operator-only provenance in `metadata.json`:
+the scrape window, per-broker freshness and errors, the effective sign
+policy, `ha_endpoints`, and `settlement_keys[]` — for every delegated key,
+where it came from (config, broker, or carried over from the published
+manifest) and where its window came from — plus, per broker, the keys it
+announced and whether each proof held.
 
 When `ORCH_COORDINATOR_ADMIN_TOKENS` is set, the admin listener requires
 operator login with admin token + actor identity and records the actor on
@@ -99,9 +103,9 @@ orch-coordinator/
 ├── internal/
 │   ├── config/                      coordinator-config.yaml grammar
 │   ├── types/                       offerings, candidate, signed-manifest types
-│   ├── providers/brokerclient/      HTTP GET /registry/offerings
+│   ├── providers/brokerclient/      HTTP GET /registry/{offerings,health,settlement-keys}
 │   ├── repo/                        candidates / audit / published manifest
-│   ├── service/                     scrape, candidate, diff, roster, receive
+│   ├── service/                     scrape, settlementkeys, candidate, diff, roster, receive
 │   └── server/                      adminapi / publicapi / metrics
 ├── examples/coordinator-config.yaml
 ├── docs/                            design + operator runbook

@@ -30,7 +30,10 @@ for paid-job, `session` for paid-session; see
 optional denominator `per_units` (absent means 1 — the pair is the price,
 see [`../protocols/offering-axes.md`](../protocols/offering-axes.md) §6),
 `worker_url` (HTTPS), and optional free-form `extra` / `constraints` for
-workload-specific filtering. Signature is
+workload-specific filtering. Beside the tuples, optional `settlement_keys[]`
+(since 2.3.0) lists the hot keys the cold key delegates settlement signing
+to, each with a validity window — the block a clearinghouse checks a
+broker-signed settlement against. Signature is
 secp256k1 (Ethereum's curve) — recovers to the orch's `eth_address`, which must
 match the on-chain `ServiceRegistry` entry.
 

@@ -36,6 +36,13 @@ secure-orch side to run:
   - `POOL_PAYOUT_EXECUTOR_KEYSTORE_PASSWORD_FILE`
 - A real coordinator config at `./coordinator-config.yaml`
 - A generated broker host-config at `./run/generated-broker-host-config.yaml`
+- A settlement signing key for the broker, minted with
+  `livepeer-capability-broker settlement-key generate`, mounted via the
+  commented `BROKER_SETTLEMENT_KEY` line in `docker-compose.yml` and named
+  by `identity.settlement_key_file` in the broker host-config. Without it
+  the broker's settlement records are unsigned and a clearinghouse refuses
+  them. Note: the pool-controller's generated host-config does not yet set
+  `settlement_key_file`; add it by hand after generation (bead lnm-6p2).
 
 ## Build images
 

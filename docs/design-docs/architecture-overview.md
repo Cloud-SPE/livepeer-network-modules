@@ -182,7 +182,8 @@ Current Pool implementation boundaries:
    where, and gated by which certification steps. Runner facts
    (transports, work unit, extractor, paths, readiness, model identity)
    are not in it and never were the operator's to know.
-2. Expose `GET /registry/offerings`, `GET /registry/health`, `GET /healthz`,
+2. Expose `GET /registry/offerings`, `GET /registry/health`,
+   `GET /registry/settlement-keys`, `GET /healthz`,
    `GET /metrics`, plus one canonical path set per protocol
    (`POST /v1/job` for `paid-job/v1`; `POST /v1/session` and
    `/v1/session/{id}/{status,topup,end,events,ws}` for `paid-session/v1` — see

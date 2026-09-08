@@ -34,7 +34,7 @@ flowchart LR
     subgraph hot["Hot zone (public)"]
         direction TB
         OC["orch-coordinator<br/>(no keys, no daemon sockets)"]
-        Broker["Capability Broker<br/>(no keys)"]
+        Broker["Capability Broker<br/>(delegated settlement key only)"]
         WPD["payment-daemon receiver<br/>(hot signer wallet only)"]
     end
 
@@ -48,7 +48,7 @@ flowchart LR
     SOC -.->|"signed manifest<br/>(out-of-band)"| OC
     PRD -.->|"initializeRound, reward,<br/>transcoder, transferBond,<br/>withdrawFees, treasury vote<br/>(signed by orch key on the daemon)"| chain
 
-    Broker -.->|"GET /registry/offerings"| OC
+    Broker -.->|"GET /registry/offerings,<br/>/registry/health,<br/>/registry/settlement-keys"| OC
     OC --> SREG
     WPD --> TB
 
@@ -62,6 +62,7 @@ Identity-bearing keys in the system, each with a tightly-scoped role:
 | **Cold manifest key** | HSM / firewalled `secure-orch`, held by `secure-orch-console` | manifest canonical bytes only | any on-chain transaction |
 | **Orchestrator signing key** | `protocol-daemon` keystore (`--keystore-path`) | protocol-daemon txs: `initializeRound`, `reward`/`rewardWithHint`, `transcoder` (reward/fee cut), `transferBond`, `withdrawFees`, treasury `castVote` | manifests |
 | **Ticket signer wallet** | receiver `payment-daemon` on worker-orch | ticket-redemption gas txs | manifests; protocol-daemon txs |
+| **Delegated settlement key** | `capability-broker` host (`identity.settlement_key_file`) | settlement records (`Livepeer-Settlement`), and its own announcement at `GET /registry/settlement-keys` | manifests; any on-chain transaction. Trusted only while the cold-signed manifest lists it in `settlement_keys[]`; compromise costs settlement attribution until the cold key drops it |
 | **Operator console bearer** | secure-orch-console (LAN auth) | nothing on-chain — gates access to the sign UI and issues session-authenticated gRPC requests to the daemon | anything cryptographic |
 
 **Why the orchestrator key is daemon-controlled, not cold.** The
@@ -192,6 +193,18 @@ The trust model is deliberately concentrated. Anything that isn't
 cold-signed is treated as observation, not attestation.
 
 ## Sign-cycle invariants
+
+How a settlement key gets into a manifest, because it is the one piece of
+hot-zone key material the cold key vouches for: the broker announces the
+key at `GET /registry/settlement-keys`, signed by the key itself and bound
+to the orch address and the broker's `external_base_url`; the coordinator
+verifies that proof on scrape and merges the key into the candidate
+(config-pinned keys first, then proven broker keys, then keys the live
+manifest still delegates inside their window); `secure-orch-console`
+grades any change to `settlement_keys[]` critical and holds it for a
+human, showing per broker the command to read the announcement over a
+path the coordinator does not control; the cold key signs. A compromised
+coordinator can propose a key; it cannot get one signed unseen.
 
 These hold for every published manifest, by construction:
 

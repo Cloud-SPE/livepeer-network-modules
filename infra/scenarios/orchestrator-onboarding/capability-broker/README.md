@@ -44,7 +44,7 @@ What runs **alongside** this stack (and is *not* in `host-config.yaml`):
 
 | Port | Visibility | Purpose                                                                      |
 | ---- | ---------- | ---------------------------------------------------------------------------- |
-| 8080 | **Public** | Broker API (`/registry/offerings`, `/registry/health`, `/healthz`, paid traffic) and the WebSocket runner-attach fallback |
+| 8080 | **Public** | Broker API (`/registry/offerings`, `/registry/health`, `/registry/settlement-keys`, `/healthz`, paid traffic) and the WebSocket runner-attach fallback |
 | 8443/udp | **Public** | Runner attach over QUIC (preferred; the WebSocket on 8080 is the egress-friendly fallback) |
 | 9090 | Private    | Prometheus metrics                                                           |
 

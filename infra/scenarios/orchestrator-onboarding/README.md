@@ -284,9 +284,13 @@ fronted by an ingress (Steps 3 + 4):
    in Step 1. The console runs on the cold-key host's loopback or
    private LAN — reach it over SSH.
 2. Build a manifest candidate from your current `coordinator-config.yaml`
-   on the **Orch Coordinator** host. Submit it to the console for
-   signing. The console signs with the cold key and returns the signed
-   blob.
+   on the **Orch Coordinator** host. It carries the settlement keys your
+   brokers announced (roster → Settlement delegation, each `pending`).
+   Submit it to the console for signing. The console grades a delegation
+   change **critical** and holds it: verify each listed key against the
+   broker that holds it with the command the review page prints per
+   broker (`curl <broker>/registry/settlement-keys`), then sign. The
+   console signs with the cold key and returns the signed blob.
 3. Push the signed blob to the coordinator's admin API (`:8080`) using
    one of the `ORCH_COORDINATOR_ADMIN_TOKENS` you generated in Step 2.
 4. Verify the public endpoint serves it:
@@ -302,8 +306,14 @@ fronted by an ingress (Steps 3 + 4):
 ## Verifying end-to-end
 
 ```sh
-# Manifest URL serves your signed manifest
-curl -s https://coordinator.<your-domain>/.well-known/livepeer-registry.json | jq '.brokers'
+# Manifest URL serves your signed manifest: which brokers it sells through,
+# and which settlement keys it delegates
+curl -s https://coordinator.<your-domain>/.well-known/livepeer-registry.json \
+  | jq '{brokers: [.manifest.capabilities[].worker_url] | unique, settlement_keys: .manifest.settlement_keys}'
+
+# Each broker announces the settlement key it signs with; the public_key
+# must appear in the manifest's settlement_keys above
+curl -s https://broker-a.<your-domain>/registry/settlement-keys | jq '.keys[].statement'
 
 # Each broker process is up
 curl -sf https://broker-a.<your-domain>/healthz

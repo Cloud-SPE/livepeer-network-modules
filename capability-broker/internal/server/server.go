@@ -175,11 +175,12 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			return nil, fmt.Errorf("settlement key validity: %w", verr)
 		}
 		settlementSigner.SetValidity(notBefore, expiresAt)
-		log.Printf("settlement signing enabled; delegated public key %s (validity %s)",
+		log.Printf("settlement signing enabled; delegated public key %s (validity %s); announced at GET /registry/settlement-keys",
 			settlementSigner.PublicKeyHex(), describeValidity(notBefore, expiresAt))
 	} else {
 		log.Printf("warning: no identity.settlement_key_file — settlement records go out UNSIGNED " +
-			"and a clearinghouse will refuse them for anything financially material")
+			"and a clearinghouse will refuse them for anything financially material; " +
+			"mint one with `livepeer-capability-broker settlement-key generate --out <file>`")
 	}
 
 	runnerRegistry := runners.New(0)
@@ -533,7 +534,7 @@ func parseKeyValidity(id config.Identity) (time.Time, time.Time, error) {
 
 func describeValidity(notBefore, expiresAt time.Time) string {
 	if notBefore.IsZero() && expiresAt.IsZero() {
-		return "unbounded — publish a settlement_keys window and mirror it here"
+		return "unbounded — the coordinator assigns and remembers the published window"
 	}
 	from, until := "-inf", "+inf"
 	if !notBefore.IsZero() {

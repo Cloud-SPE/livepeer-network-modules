@@ -33,6 +33,7 @@ type healthCapabilityStatus struct {
 	StaleAfter           time.Time            `json:"stale_after,omitempty"`
 	ConsecutiveSuccesses int                  `json:"consecutive_successes,omitempty"`
 	ConsecutiveFailures  int                  `json:"consecutive_failures,omitempty"`
+	LastDispatchedAt     time.Time            `json:"last_dispatched_at,omitempty"`
 	Backends             []backendStatus      `json:"backends,omitempty"`
 	Pool                 *poolAggregateStatus `json:"pool,omitempty"`
 	Metadata             *metadataStatus      `json:"metadata,omitempty"`
@@ -47,10 +48,13 @@ type backendStatus struct {
 	StaleAfter           time.Time     `json:"stale_after,omitempty"`
 	ConsecutiveSuccesses int           `json:"consecutive_successes,omitempty"`
 	ConsecutiveFailures  int           `json:"consecutive_failures,omitempty"`
-	SelectionEligible    bool          `json:"selection_eligible"`
-	SelectionWeight      int           `json:"selection_weight,omitempty"`
-	SelectionReason      string        `json:"selection_reason,omitempty"`
-	Pool                 *poolStatus   `json:"pool,omitempty"`
+	// LastDispatchedAt is informational: when this backend last did
+	// work. It does not age the verdict (probed_at is the read time).
+	LastDispatchedAt  time.Time   `json:"last_dispatched_at,omitempty"`
+	SelectionEligible bool        `json:"selection_eligible"`
+	SelectionWeight   int         `json:"selection_weight,omitempty"`
+	SelectionReason   string      `json:"selection_reason,omitempty"`
+	Pool              *poolStatus `json:"pool,omitempty"`
 }
 
 type metadataStatus struct {
@@ -179,6 +183,9 @@ func WriteHealthResponse(w http.ResponseWriter, snap health.Response, pool PoolS
 				poolStatusValue = &ps
 			}
 		}
+		if cap.LastDispatchedAt.After(entry.LastDispatchedAt) {
+			entry.LastDispatchedAt = cap.LastDispatchedAt
+		}
 		decision := selection.DecisionFor(cap, poolStatusValue)
 		backend := backendStatus{
 			BackendID:            cap.BackendID,
@@ -189,6 +196,7 @@ func WriteHealthResponse(w http.ResponseWriter, snap health.Response, pool PoolS
 			StaleAfter:           cap.StaleAfter,
 			ConsecutiveSuccesses: cap.ConsecutiveSuccesses,
 			ConsecutiveFailures:  cap.ConsecutiveFailures,
+			LastDispatchedAt:     cap.LastDispatchedAt,
 			SelectionEligible:    decision.Eligible,
 			SelectionWeight:      decision.Weight,
 			SelectionReason:      decision.Reason,

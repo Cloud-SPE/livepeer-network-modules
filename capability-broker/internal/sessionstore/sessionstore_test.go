@@ -34,19 +34,23 @@ func openTemp(t *testing.T) (*Store, string) {
 
 func sampleRecord() *Record {
 	return &Record{
-		SessionID:         "sess_1",
-		GatewaySessionID:  "gws_1",
-		RunnerSessionID:   "rns_1",
-		WorkID:            "work_1",
-		Capability:        "meet:sfu-room",
-		Offering:          "default",
-		BackendRef:        "backend-a",
-		Sender:            []byte{0xAA, 0xBB},
-		CredentialHash:    HashSecret("sc_secret"),
-		CallbackTokenHash: HashSecret("cb_secret"),
-		DescriptorSchema:  "sfu-room/v1",
-		DescriptorPublic:  json.RawMessage(`{"url":"wss://sfu","room":"rm_1"}`),
-		DescriptorPrivate: json.RawMessage(`{"terminate_token":"rt_topsecret"}`),
+		SessionID:             "sess_1",
+		GatewaySessionID:      "gws_1",
+		RunnerSessionID:       "rns_1",
+		WorkID:                "work_1",
+		Capability:            "meet:sfu-room",
+		Offering:              "default",
+		BackendRef:            "backend-a",
+		QuoteID:               "resolver:v1:test",
+		QuoteVersion:          7,
+		ConstraintFingerprint: []byte{0x01, 0x02},
+		RouteFingerprint:      []byte{0x03, 0x04},
+		Sender:                []byte{0xAA, 0xBB},
+		CredentialHash:        HashSecret("sc_secret"),
+		CallbackTokenHash:     HashSecret("cb_secret"),
+		DescriptorSchema:      "sfu-room/v1",
+		DescriptorPublic:      json.RawMessage(`{"url":"wss://sfu","room":"rm_1"}`),
+		DescriptorPrivate:     json.RawMessage(`{"terminate_token":"rt_topsecret"}`),
 		Grants: []GrantAudit{{
 			ID:         "grant_1",
 			Operations: []string{"participant-token-mint"},
@@ -91,6 +95,11 @@ func TestRoundTripAndRestartSurvival(t *testing.T) {
 	}
 	if got.OutputState != "stalled" || got.LastFailureCode != "encoder_init_failed" || got.OutputStalledAt.IsZero() {
 		t.Fatalf("output health lost across restart: %+v", got)
+	}
+	if got.QuoteID != rec.QuoteID || got.QuoteVersion != rec.QuoteVersion ||
+		!bytes.Equal(got.ConstraintFingerprint, rec.ConstraintFingerprint) ||
+		!bytes.Equal(got.RouteFingerprint, rec.RouteFingerprint) {
+		t.Fatalf("accepted quote lost across restart: %+v", got)
 	}
 	if !bytes.Equal(got.DescriptorPrivate, rec.DescriptorPrivate) {
 		t.Fatalf("private part mismatch: %s", got.DescriptorPrivate)

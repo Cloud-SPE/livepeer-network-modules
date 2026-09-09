@@ -74,6 +74,31 @@ type SettlementInputs struct {
 	WorkUnit string
 }
 
+// AcceptedQuoteRef returns the quote identity carried by a payment after the
+// normal expected-price validation has accepted it. Session admission uses
+// this to retain the exact quote for a settlement emitted long after the open
+// request has gone away.
+func AcceptedQuoteRef(paymentBytes []byte) (*pb.QuoteRef, error) {
+	var pay pb.Payment
+	if err := proto.Unmarshal(paymentBytes, &pay); err != nil {
+		return nil, fmt.Errorf("decode payment: %w", err)
+	}
+	price := pay.GetExpectedPrice()
+	if price == nil {
+		return nil, errors.New("payment has no expected price")
+	}
+	meta, ok := parseExpectedPriceConstraint(price.GetConstraint())
+	if !ok || meta.quoteID == "" {
+		return nil, errors.New("payment expected price has no valid quote reference")
+	}
+	return &pb.QuoteRef{
+		QuoteId:               meta.quoteID,
+		QuoteVersion:          meta.quoteVersion,
+		ConstraintFingerprint: append([]byte(nil), meta.constraintFingerprint...),
+		RouteFingerprint:      append([]byte(nil), meta.routeFingerprint...),
+	}, nil
+}
+
 // BuildSettlementRecord constructs a SettlementRecord from a session's
 // inputs, the final measured units, and an optional termination reason
 // (one of the livepeerheader.Err* strings; empty for normal close).

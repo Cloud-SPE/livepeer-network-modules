@@ -235,6 +235,7 @@ type OpenRequest struct {
 	PaymentBytes          []byte
 	AuthorizationBytes    []byte
 	InitialReservationWei *big.Int
+	AcceptedQuoteRef      *pb.QuoteRef
 	Spec                  *OfferingSpec
 	CapacityRef           string
 }
@@ -467,6 +468,10 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		Capability:            req.Spec.Capability,
 		Offering:              req.Spec.Offering,
 		BackendRef:            req.Spec.BackendRef,
+		QuoteID:               req.AcceptedQuoteRef.GetQuoteId(),
+		QuoteVersion:          req.AcceptedQuoteRef.GetQuoteVersion(),
+		ConstraintFingerprint: append([]byte(nil), req.AcceptedQuoteRef.GetConstraintFingerprint()...),
+		RouteFingerprint:      append([]byte(nil), req.AcceptedQuoteRef.GetRouteFingerprint()...),
 		Sender:                sender,
 		CredentialHash:        sessionstore.HashSecret(credential),
 		CallbackTokenHash:     sessionstore.HashSecret(callbackToken),

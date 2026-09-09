@@ -1,6 +1,6 @@
 ---
 spec_name: paid-session
-version: 1.2.0-draft
+version: 1.2.1-draft
 status: draft
 last_updated: 2026-09-09
 ---
@@ -345,6 +345,14 @@ SDK — the channel the signature exists to distrust — and `work_id` can be
 shared by several sessions. Without it a signed record cannot be bound to
 the session it is evidence for. It MUST appear in the direct settlement
 query response too.
+
+A session settlement MUST carry the exact `accepted_quote_ref` admitted at
+open. The broker validates that reference before work starts and retains it in
+durable session state; it MUST NOT reconstruct it later from current registry
+state or accept it from runner events. The reference is unchanged by broker
+restart, top-up, or payment-identity rotation. Without it, a gateway or
+clearinghouse cannot prove that the signed debit used the route and price it
+selected, and MUST reject the record rather than guess.
 
 Carrying it is not enough: **`GET /v1/settlement/{id}` MUST resolve it.** A
 consumer that cannot look a record up by the only key it holds is left
@@ -743,6 +751,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.1-draft | 2026-09-09 | Requires every session settlement to carry the exact accepted quote reference retained durably from admission; fixes independently verified closes that otherwise fail as `quote_mismatch`. |
 | 1.2.0-draft | 2026-09-09 | Adds optional, workload-agnostic output health in event details; separates runner liveness from productive output; persists health atomically; preserves safe runner failure reasons including `output_failed`; fails continuously stalled sessions closed after 60 seconds; and carries the safe terminal diagnosis in signed settlements for independent reconcilers. Old runners remain valid with `unknown` health. |
 | 1.1.0-draft | 2026-09-09 | Adds cumulative single-purpose session authorization over a stable wholesale account. Admission reserves bounded runway, usage advances the cumulative debit and replaces runway atomically, aggregate shortfall funding is optional, and wind-down releases the remainder. |
 | 1.0.11-draft | 2026-08-26 | §7.1.1 superseded by `protocols/runner-attach.md` (plan 0043): self-description becomes the mandatory, versioned attach document for every protocol; the describe path is gone. Never-adopt, contradiction-fatal, and schema-not-validator rules carried over. §11 row updated. |

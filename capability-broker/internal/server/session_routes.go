@@ -222,6 +222,7 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 	}
 	var authorizationBytes []byte
 	var reservationWei *big.Int
+	var acceptedQuoteRef *paymentsv1.QuoteRef
 	if h := r.Header.Get(livepeerheader.Authorization); h != "" {
 		authorizationBytes, err = base64.StdEncoding.DecodeString(h)
 		if err != nil {
@@ -233,11 +234,22 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, err.Error())
 			return
 		}
+		var authorization paymentsv1.SpendAuthorization
+		if err := proto.Unmarshal(authorizationBytes, &authorization); err != nil || authorization.GetPayload().GetAcceptedPrice().GetQuoteRef() == nil {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization has no accepted quote reference")
+			return
+		}
+		acceptedQuoteRef = proto.Clone(authorization.GetPayload().GetAcceptedPrice().GetQuoteRef()).(*paymentsv1.QuoteRef)
 	} else if spec, ok := s.lookupSpec(capID, offID); ok {
 		if err := middleware.ValidateExpectedPriceForRequest(paymentBytes, capID, offID, spec); err != nil {
 			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "expected price mismatch: "+err.Error())
 			return
 		}
+		// A production payment validated above always yields a quote. The
+		// in-process payment stub intentionally accepts opaque fixture bytes;
+		// keep that development-only path usable while leaving its settlement
+		// without an invented quote (and therefore unsuitable for clearing).
+		acceptedQuoteRef, _ = middleware.AcceptedQuoteRef(paymentBytes)
 	}
 
 	res, err := s.sessionEngine.Open(r.Context(), sessionengine.OpenRequest{
@@ -247,6 +259,7 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 		PaymentBytes:          paymentBytes,
 		AuthorizationBytes:    authorizationBytes,
 		InitialReservationWei: reservationWei,
+		AcceptedQuoteRef:      acceptedQuoteRef,
 		Spec:                  specFromCapability(c),
 	})
 	if err != nil {

@@ -111,9 +111,13 @@ type Record struct {
 	WorkID           string `json:"work_id"`
 
 	// Binding.
-	Capability string `json:"capability"`
-	Offering   string `json:"offering"`
-	BackendRef string `json:"backend_ref"`
+	Capability            string `json:"capability"`
+	Offering              string `json:"offering"`
+	BackendRef            string `json:"backend_ref"`
+	QuoteID               string `json:"quote_id,omitempty"`
+	QuoteVersion          uint64 `json:"quote_version,omitempty"`
+	ConstraintFingerprint []byte `json:"constraint_fingerprint,omitempty"`
+	RouteFingerprint      []byte `json:"route_fingerprint,omitempty"`
 
 	// Payment.
 	Sender        []byte `json:"sender,omitempty"`

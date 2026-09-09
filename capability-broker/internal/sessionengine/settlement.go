@@ -58,6 +58,12 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 	generationBilled := new(big.Int).Sub(billed, payment.BillFor(amount, perUnits, rec.GenerationStartUnits))
 
 	out := &pb.SettlementRecord{
+		AcceptedQuoteRef: &pb.QuoteRef{
+			QuoteId:               rec.QuoteID,
+			QuoteVersion:          rec.QuoteVersion,
+			ConstraintFingerprint: append([]byte(nil), rec.ConstraintFingerprint...),
+			RouteFingerprint:      append([]byte(nil), rec.RouteFingerprint...),
+		},
 		WorkUnitName:   rec.Unit,
 		ActualUnits:    rec.DebitedTotal,
 		BilledUnits:    rec.DebitedTotal,

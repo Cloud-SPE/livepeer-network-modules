@@ -1522,6 +1522,11 @@ func TestSettlementBindsToTheGatewaysOwnID(t *testing.T) {
 	res, err := h.engine.Open(context.Background(), OpenRequest{
 		RequestID: "req-1", GatewaySessionID: "loc-session-9f2c",
 		SessionParams: json.RawMessage(`{}`), PaymentBytes: []byte{1, 2, 3}, Spec: h.spec,
+		AcceptedQuoteRef: &pb.QuoteRef{
+			QuoteId: "resolver:v1:test", QuoteVersion: 7,
+			ConstraintFingerprint: []byte{0x01, 0x02},
+			RouteFingerprint:      []byte{0x03, 0x04},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1534,6 +1539,12 @@ func TestSettlementBindsToTheGatewaysOwnID(t *testing.T) {
 	if set.GetGatewaySessionId() != "loc-session-9f2c" {
 		t.Fatalf("gateway_session_id = %q; a record that cannot be bound to the caller's own "+
 			"session is not evidence the caller can use", set.GetGatewaySessionId())
+	}
+	quote := set.GetAcceptedQuoteRef()
+	if quote.GetQuoteId() != "resolver:v1:test" || quote.GetQuoteVersion() != 7 ||
+		!bytes.Equal(quote.GetConstraintFingerprint(), []byte{0x01, 0x02}) ||
+		!bytes.Equal(quote.GetRouteFingerprint(), []byte{0x03, 0x04}) {
+		t.Fatalf("accepted quote is not bound into settlement: %+v", quote)
 	}
 }
 

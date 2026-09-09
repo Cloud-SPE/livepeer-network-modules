@@ -682,6 +682,11 @@ func sessionScenarios() []harness.Scenario {
 			var got struct {
 				SessionID        string `json:"session_id"`
 				GatewaySessionID string `json:"gateway_session_id"`
+				AcceptedQuoteRef struct {
+					QuoteID               string `json:"quote_id"`
+					ConstraintFingerprint string `json:"constraint_fingerprint"`
+					RouteFingerprint      string `json:"route_fingerprint"`
+				} `json:"accepted_quote_ref"`
 			}
 			if err := json.Unmarshal([]byte(q.Body), &got); err != nil {
 				return fmt.Errorf("decode settlement query: %w", err)
@@ -693,6 +698,11 @@ func sessionScenarios() []harness.Scenario {
 			if open.SessionID != "" && got.SessionID != open.SessionID {
 				return fmt.Errorf("query resolved to session %q; want the opened %q",
 					got.SessionID, open.SessionID)
+			}
+			if got.AcceptedQuoteRef.QuoteID == "" ||
+				got.AcceptedQuoteRef.ConstraintFingerprint == "" ||
+				got.AcceptedQuoteRef.RouteFingerprint == "" {
+				return fmt.Errorf("settlement omitted the accepted quote reference: %+v", got.AcceptedQuoteRef)
 			}
 			return nil
 		}},

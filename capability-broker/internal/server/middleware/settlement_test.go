@@ -141,6 +141,17 @@ func TestBuildSettlementRecord_NilWhenExpectedPriceMissing(t *testing.T) {
 	}
 }
 
+func TestAcceptedQuoteRefExtractsValidatedPaymentIdentity(t *testing.T) {
+	quote, err := AcceptedQuoteRef(makePaymentBytes(t, 10, 100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote.GetQuoteId() != "quote-1" || quote.GetQuoteVersion() != 1 ||
+		len(quote.GetConstraintFingerprint()) == 0 || len(quote.GetRouteFingerprint()) == 0 {
+		t.Fatalf("quote = %+v", quote)
+	}
+}
+
 func TestEncodeSettlementRecord_RoundTrip(t *testing.T) {
 	paymentBytes := makePaymentBytes(t, 10, 100)
 	rec := buildSettlementRecord(paymentBytes, big.NewInt(1000), 100, "tokens", "", testIdentity())

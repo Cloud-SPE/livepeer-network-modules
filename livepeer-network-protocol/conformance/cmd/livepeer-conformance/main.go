@@ -35,6 +35,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
+var version = "dev"
+
 // The reference broker's config, in the offer-only grammar. Runner
 // facts are deliberately absent: the suite's own runner declares them at
 // attach, which is the path a real deployment uses and therefore the one
@@ -215,8 +217,13 @@ func run() int {
 			"URL mode: eth address of the broker's delegated settlement key, so the settlement-signature scenarios run instead of skipping")
 		brokerAdminToken = flag.String("broker-admin-token", os.Getenv("BROKER_ADMIN_TOKEN"),
 			"URL/serve-runner mode: broker admin bearer used to enroll attached runners (prefer BROKER_ADMIN_TOKEN env to avoid process-argument exposure)")
+		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("livepeer-conformance", version)
+		return 0
+	}
 
 	listen := fakes.Listen{
 		BindHost:      *fakesBind,

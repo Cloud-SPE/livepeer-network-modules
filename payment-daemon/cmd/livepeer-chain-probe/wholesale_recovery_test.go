@@ -47,10 +47,13 @@ func (p *recoveryPayee) GetSpendAuthorization(_ context.Context, req *pb.GetSpen
 	if hex.EncodeToString(req.GetPayer()) != hex.EncodeToString(p.payer) || req.GetAuthorizationId() != p.authID {
 		return nil, fmt.Errorf("authorization lookup differs")
 	}
-	return &pb.GetSpendAuthorizationResponse{
-		State:            pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED,
-		ReservedValueWei: &pb.BigUInt{Value: p.maxDebit.Bytes()},
-	}, nil
+	if p.settleCalls > 0 {
+		return &pb.GetSpendAuthorizationResponse{
+			State: pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED, SettlementSeq: 1,
+		}, nil
+	}
+	return &pb.GetSpendAuthorizationResponse{State: pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED,
+		ReservedValueWei: &pb.BigUInt{Value: p.maxDebit.Bytes()}}, nil
 }
 
 func (p *recoveryPayee) SettleAuthorization(_ context.Context, req *pb.SettleAuthorizationRequest, _ ...grpc.CallOption) (*pb.SettleAuthorizationResponse, error) {
@@ -108,7 +111,7 @@ func TestVerifyWholesaleRecoveryAcrossRestart(t *testing.T) {
 		AccountAfterAdmission: initial, SettlementJobID: "job-recovery", SettlementRequestID: "request-completed",
 		SettlementState: "terminal", SettlementBilledWei: "10",
 	}
-	checkpoint := filepath.Join(t.TempDir(), "recovery.json")
+	checkpoint := filepath.Join(t.TempDir(), "recovery-test.json")
 	if err := writeRecoveryCheckpoint(checkpoint, cp, true); err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +130,9 @@ func TestVerifyWholesaleRecoveryAcrossRestart(t *testing.T) {
 	}
 	if verified.Phase != "verified" || verified.VerifiedAt == "" || payee.settleCalls != 2 {
 		t.Fatalf("checkpoint=%+v settle_calls=%d", verified, payee.settleCalls)
+	}
+	if err := probeWholesaleEvidence(context.Background(), config{brokerURL: server.URL, checkpointDir: filepath.Dir(checkpoint)}, payee); err != nil {
+		t.Fatal(err)
 	}
 }
 

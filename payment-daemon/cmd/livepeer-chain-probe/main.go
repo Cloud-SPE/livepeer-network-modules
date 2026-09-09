@@ -73,6 +73,7 @@ type config struct {
 	sessionMaxAuthUnits     uint64
 	sessionRunnerControlURL string
 	checkpointFile          string
+	checkpointDir           string
 }
 
 func main() {
@@ -89,7 +90,7 @@ func main() {
 		perUnits                = flag.Uint64("per-units", 1000, "the offering's per_units — keep this above 1: it is the denominator where flooring and ceiling disagree, and a run at 1 cannot see a rounding defect")
 		fundedWei               = flag.String("funded-wei", "1000000000000000", "value to authorize per payment")
 		runnerBind              = flag.String("runner-bind", "127.0.0.1:0", "address for the probe's fake session runner")
-		protocol                = flag.String("protocol", "both", "job | session | both | rotation | retry | evidence | wholesale | wholesale-recovery-prepare | wholesale-recovery-verify")
+		protocol                = flag.String("protocol", "both", "job | session | both | rotation | retry | evidence | wholesale | wholesale-recovery-prepare | wholesale-recovery-verify | wholesale-evidence")
 		chainID                 = flag.Uint64("chain-id", 42161, "chain id signed into wholesale spend authorizations")
 		accountFloat            = flag.String("account-float-wei", "", "wholesale only: target available account float; defaults to the maximum authorization debit")
 		maxAuthUnits            = flag.Uint64("max-authorization-units", 131072, "wholesale only: maximum units bound into each single-purpose authorization")
@@ -101,6 +102,7 @@ func main() {
 		sessionMaxAuthUnits     = flag.Uint64("session-max-authorization-units", 600, "wholesale only: paid-session cumulative unit ceiling")
 		sessionRunnerControlURL = flag.String("session-runner-control-url", "http://runner:8092", "wholesale only: conformance session runner's internal probe-control URL")
 		checkpointFile          = flag.String("checkpoint-file", "", "wholesale recovery only: durable checkpoint path on a persistent volume")
+		checkpointDir           = flag.String("checkpoint-dir", "/var/lib/livepeer/payment-daemon", "wholesale evidence only: directory containing recovery checkpoints")
 		adminToken              = flag.String("payee-admin-token", "",
 			"rotation only: the payee's --payee-admin-token. Rotation is driven through PayeeAdmin.ResetSession, which is closed unless the operator configured a token.")
 	)
@@ -131,7 +133,7 @@ func main() {
 		sessionCapability: *sessionCapability, sessionOffering: *sessionOffering,
 		sessionWorkUnit: *sessionWorkUnit, sessionPriceWei: *sessionPriceWei,
 		sessionPerUnits: *sessionPerUnits, sessionMaxAuthUnits: *sessionMaxAuthUnits,
-		sessionRunnerControlURL: *sessionRunnerControlURL, checkpointFile: *checkpointFile,
+		sessionRunnerControlURL: *sessionRunnerControlURL, checkpointFile: *checkpointFile, checkpointDir: *checkpointDir,
 	}
 	if cfg.brokerURI == "" {
 		cfg.brokerURI = cfg.brokerURL
@@ -218,6 +220,14 @@ func main() {
 			failed++
 		} else {
 			fmt.Print("PASS wholesale recovery verify\n\n")
+		}
+	}
+	if cfg.protocol == "wholesale-evidence" {
+		if err := probeWholesaleEvidence(ctx, cfg, pb.NewPayeeDaemonClient(payee)); err != nil {
+			fmt.Printf("FAIL wholesale evidence: %v\n\n", err)
+			failed++
+		} else {
+			fmt.Print("PASS wholesale evidence\n\n")
 		}
 	}
 	if failed > 0 {

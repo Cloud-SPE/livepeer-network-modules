@@ -115,8 +115,14 @@ envelopes, credentials, or private keys.
 
 ## Evidence and drain
 
-Capture these without private keys, passwords, admin tokens, or RPC query
-secrets:
+After the approved standard and recovery probes complete, capture the
+redact-safe bundle:
+
+```bash
+./evidence.sh post-pilot
+```
+
+It writes an owner-only directory below ignored `run/` containing:
 
 - all three resolved image digests;
 - chain ID, payer/payee addresses, limits, price, target float, and timestamps;
@@ -125,10 +131,32 @@ secrets:
   wholesale metrics;
 - retry/restart results and the final drain observation.
 
-To drain: stop assigning new work and stop invoking `pilot.sh`; leave admitted
-work running until it settles; keep the receiver and broker state volumes; use
-remaining available credit for intended work until it approaches the chosen
-dust threshold. Removing the route does not erase or refund account credit.
+The bundle intentionally excludes keystore paths and contents, passwords,
+admin tokens, RPC URLs, and payment/authorization envelopes. Its `SHA256SUMS`
+detects later evidence mutation.
+
+Drain only after admitted work settles:
+
+```bash
+./drain.sh
+```
+
+The command captures pre-drain evidence, refuses while any wholesale value is
+reserved, checks account conservation and the bounded residual, writes the
+`run/DRAINING` admission fence, stops the runner, waits until neither pilot
+offering is selectable, and captures post-drain evidence. It preserves payer,
+payee, broker, checkpoint, and ledger volumes. Removing the route does not
+erase or refund account credit.
+
+`pilot.sh`, `pilot-recovery.sh`, and `up.sh` all refuse while the marker exists.
+To resume deliberately, preserve the marker as audit evidence before startup:
+
+```bash
+mv run/DRAINING "run/DRAINED-$(date -u +%Y%m%dT%H%M%SZ)"
+./up.sh
+```
+
+To stop the remaining control plane after evidence capture:
 
 ```bash
 ./down.sh

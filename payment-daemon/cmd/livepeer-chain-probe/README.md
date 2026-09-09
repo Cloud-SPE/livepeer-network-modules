@@ -236,3 +236,9 @@ Prepare leaves one authorization admitted and records only non-secret replay
 coordinates at `--checkpoint-file`; verify replays the identical durable mint,
 checks the preserved account, authorization, and broker settlement, then
 settles twice to prove the second call is an idempotent replay.
+
+`--protocol=wholesale-evidence` reads the latest verified checkpoint from
+`--checkpoint-dir`, queries the live payee and broker, and emits a non-secret
+reconciliation of accepted ticket EV to settled debit plus bounded reusable
+float. It refuses while any reservation remains or the retained float exceeds
+the checkpoint target.

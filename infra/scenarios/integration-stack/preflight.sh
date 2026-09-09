@@ -50,7 +50,7 @@ for name in PAYMENT_IMAGE BROKER_IMAGE RUNNER_IMAGE; do
 done
 [ "$CHAIN_ID" = 42161 ] || { echo "CHAIN_ID must be 42161 (Arbitrum One)" >&2; exit 1; }
 [[ "$ORCH_ETH_ADDRESS" =~ ^0x[0-9a-fA-F]{40}$ ]] || { echo "ORCH_ETH_ADDRESS is not a 20-byte hex address" >&2; exit 1; }
-[[ "$EXTERNAL_BASE_URL" =~ ^https://[^/]+(/.*)?$ ]] || { echo "EXTERNAL_BASE_URL must use https" >&2; exit 1; }
+[[ "$EXTERNAL_BASE_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$ ]] || { echo "EXTERNAL_BASE_URL must be an https origin without userinfo, path, query, or fragment" >&2; exit 1; }
 
 for name in PAYER_KEYSTORE PAYER_KEYSTORE_PASSWORD_FILE PAYEE_KEYSTORE PAYEE_KEYSTORE_PASSWORD_FILE; do
   path="${!name}"
@@ -66,6 +66,8 @@ if [ -z "$payee_address" ] || [ "$payee_address" != "$configured_address" ]; the
   echo "ORCH_ETH_ADDRESS does not match PAYEE_KEYSTORE" >&2
   exit 1
 fi
+payer_address="$(jq -r '.address // empty' "$PAYER_KEYSTORE" | sed 's/^0x//' | tr '[:upper:]' '[:lower:]')"
+[[ "$payer_address" =~ ^[0-9a-f]{40}$ ]] || { echo "PAYER_KEYSTORE does not contain a 20-byte address" >&2; exit 1; }
 
 numeric=(PRICE_WEI PER_UNITS MAX_AUTHORIZATION_UNITS ACCOUNT_FLOAT_WEI MAX_PAYMENT_WEI MAX_AUTHORIZATION_WEI MAX_TICKET_FACE_VALUE_WEI MAX_PRICE_PER_UNIT_WEI)
 numeric+=(SESSION_PRICE_WEI SESSION_PER_UNITS SESSION_MAX_AUTHORIZATION_UNITS SESSION_MAX_PRICE_PER_UNIT_WEI)

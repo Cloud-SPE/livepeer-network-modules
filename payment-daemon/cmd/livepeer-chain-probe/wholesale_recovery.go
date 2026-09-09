@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -380,5 +381,75 @@ func syncCheckpointDir(path string) error {
 	if err := dir.Sync(); err != nil {
 		return fmt.Errorf("sync checkpoint directory: %w", err)
 	}
+	return nil
+}
+
+func probeWholesaleEvidence(ctx context.Context, cfg config, payee pb.PayeeDaemonClient) error {
+	paths, err := filepath.Glob(filepath.Join(cfg.checkpointDir, "recovery-*.json"))
+	if err != nil || len(paths) == 0 {
+		return fmt.Errorf("no recovery checkpoints in %s", cfg.checkpointDir)
+	}
+	sort.Strings(paths)
+	cp, err := readRecoveryCheckpoint(paths[len(paths)-1])
+	if err != nil {
+		return err
+	}
+	if cp.Phase != "verified" {
+		return fmt.Errorf("latest checkpoint %s is %q, not verified", paths[len(paths)-1], cp.Phase)
+	}
+	payerAddress, err := hexTo20(cp.Payer)
+	if err != nil {
+		return err
+	}
+	account, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	if err != nil {
+		return err
+	}
+	if err := account.validate(); err != nil {
+		return err
+	}
+	if account.Reserved.big().Sign() != 0 {
+		return fmt.Errorf("account still has %s wei reserved; drain is unsafe", account.Reserved.big())
+	}
+	target, ok := new(big.Int).SetString(cp.TargetAvailableWei, 10)
+	if !ok || target.Sign() <= 0 || account.Available.big().Cmp(target) > 0 {
+		return fmt.Errorf("remaining available %s exceeds checkpoint target %s", account.Available.big(), cp.TargetAvailableWei)
+	}
+	auth, err := payee.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{Payer: payerAddress, AuthorizationId: cp.AuthorizationID})
+	if err != nil {
+		return err
+	}
+	if auth.GetState() != pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED {
+		return fmt.Errorf("checkpoint authorization state=%s, not settled", auth.GetState())
+	}
+	settlement, err := fetchSettlement(cfg.brokerURL, cp.SettlementJobID)
+	if err != nil {
+		return err
+	}
+	out := struct {
+		ObservedAt          string            `json:"observed_at"`
+		Checkpoint          string            `json:"checkpoint"`
+		Payer               string            `json:"payer"`
+		Payee               string            `json:"payee"`
+		ChainID             uint64            `json:"chain_id"`
+		IssuedAcceptedEVWei string            `json:"issued_accepted_ev_wei"`
+		SettledDebitWei     string            `json:"settled_debit_wei"`
+		RemainingFloatWei   string            `json:"remaining_float_wei"`
+		ReservedWei         string            `json:"reserved_wei"`
+		Authorization       map[string]any    `json:"authorization"`
+		Settlement          map[string]string `json:"settlement"`
+	}{
+		ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Checkpoint: filepath.Base(paths[len(paths)-1]),
+		Payer: account.Payer, Payee: account.Payee, ChainID: account.ChainID,
+		IssuedAcceptedEVWei: account.Credited.big().String(), SettledDebitWei: account.Debited.big().String(),
+		RemainingFloatWei: account.Available.big().String(), ReservedWei: account.Reserved.big().String(),
+		Authorization: map[string]any{"id": cp.AuthorizationID, "state": auth.GetState().String(), "actual_units": auth.GetActualUnits(), "settlement_seq": auth.GetSettlementSeq()},
+		Settlement:    map[string]string{"job_id": cp.SettlementJobID, "request_id": settlement.payload.RequestID, "state": settlement.payload.State, "billed_value_wei": new(big.Int).SetBytes(settlement.payload.BilledValueWei.value()).String()},
+	}
+	raw, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(raw))
 	return nil
 }

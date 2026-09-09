@@ -69,6 +69,8 @@ services:
       - --max-authorization-wei=${MAX_AUTHORIZATION_WEI:?set MAX_AUTHORIZATION_WEI}
       - --max-price-per-unit=${WORK_UNIT:-tokens}=${MAX_PRICE_PER_UNIT_WEI:?set MAX_PRICE_PER_UNIT_WEI},${SESSION_WORK_UNIT:-participant_minutes}=${SESSION_MAX_PRICE_PER_UNIT_WEI:?set SESSION_MAX_PRICE_PER_UNIT_WEI}
       - --metrics-listen=0.0.0.0:9092
+    ports:
+      - "127.0.0.1:${PAYER_METRICS_PORT:-9414}:9092"
     volumes:
       - payer-run:/var/run/livepeer
       - payer-state:/var/lib/livepeer/payment-daemon

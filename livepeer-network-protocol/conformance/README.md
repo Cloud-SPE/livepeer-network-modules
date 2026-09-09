@@ -16,6 +16,9 @@ Runs against the in-repo reference broker:
 make conformance
 ```
 
+Published images expose their build version with `--version`; pilot evidence
+uses that output together with the immutable image digest.
+
 The runner builds and starts `capability-broker` with a generated host
 config (mock payment daemon, temp state store), pointing at the suite's
 own fake session runner and fake job backend, executes every scenario,

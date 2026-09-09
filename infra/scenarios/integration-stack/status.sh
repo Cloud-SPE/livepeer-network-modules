@@ -3,6 +3,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 set -a; . ./stack.env; set +a
 compose=(docker compose --env-file stack.env -f compose.yaml)
+if [ -f run/DRAINING ]; then
+  echo "ADMISSION DRAINED"
+  sed -n '1,10p' run/DRAINING
+  echo
+fi
 "${compose[@]}" ps
 echo
 curl -fsS "http://127.0.0.1:${PAID_PORT:-8411}/registry/offerings" || true

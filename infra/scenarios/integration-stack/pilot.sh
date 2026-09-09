@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 ./preflight.sh pilot
+[ ! -e run/DRAINING ] || { echo "pilot is drained; preserve or clear run/DRAINING explicitly before admitting new work" >&2; exit 2; }
 set -a; . ./stack.env; set +a
 
 echo "approved Arbitrum One dust pilot"

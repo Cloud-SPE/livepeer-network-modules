@@ -2,6 +2,7 @@ package main
 
 import (
 	"math/big"
+	"path/filepath"
 	"testing"
 )
 
@@ -16,6 +17,32 @@ func TestWholesaleAccountConservation(t *testing.T) {
 	account.Available = "501"
 	if err := account.validate(); err == nil {
 		t.Fatal("non-conserving account passed validation")
+	}
+}
+
+func TestRecoveryCheckpointIsExclusiveThenReplaceable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "recovery.json")
+	cp := &wholesaleRecoveryCheckpoint{
+		Version: wholesaleRecoveryCheckpointVersion,
+		Phase:   "preparing",
+		Payer:   "0x0000000000000000000000000000000000000001",
+	}
+	if err := writeRecoveryCheckpoint(path, cp, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRecoveryCheckpoint(path, cp, true); err == nil {
+		t.Fatal("exclusive checkpoint creation overwrote an existing recovery marker")
+	}
+	cp.Phase = "admitted"
+	if err := writeRecoveryCheckpoint(path, cp, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readRecoveryCheckpoint(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Phase != "admitted" || got.Payer != cp.Payer {
+		t.Fatalf("checkpoint = %+v", got)
 	}
 }
 

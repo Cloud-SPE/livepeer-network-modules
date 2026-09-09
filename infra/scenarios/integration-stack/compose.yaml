@@ -83,6 +83,7 @@ services:
     volumes:
       - payer-run:/var/run/livepeer/payer
       - payee-run:/var/run/livepeer/payee
+      - probe-state:/var/lib/livepeer/payment-daemon
     depends_on: [payer, payee, broker, runner]
 
 volumes:
@@ -91,3 +92,4 @@ volumes:
   payer-state: {}
   payee-state: {}
   broker-state: {}
+  probe-state: {}

@@ -227,3 +227,12 @@ Note the last one when reading the source: the probe uses a **unique**
 turned this file's own "run it twice" instruction into a failure at the
 second open — which is precisely the friction a gateway reusing a stable
 id will hit.
+
+## Wholesale restart checkpoints
+
+`--protocol=wholesale-recovery-prepare` and
+`--protocol=wholesale-recovery-verify` form a deliberate restart boundary.
+Prepare leaves one authorization admitted and records only non-secret replay
+coordinates at `--checkpoint-file`; verify replays the identical durable mint,
+checks the preserved account, authorization, and broker settlement, then
+settles twice to prove the second call is an idempotent replay.

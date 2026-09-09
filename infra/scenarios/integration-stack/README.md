@@ -98,6 +98,21 @@ though its container reaches the broker at `http://broker:8080`. This matches a
 clearinghouse or provider whose internal control plane and public locked route
 use different network names.
 
+To exercise a real stop/restart boundary, use the separately approval-gated
+recovery probe:
+
+```bash
+PILOT_APPROVAL=ARBITRUM_ONE_DUST_APPROVED ./pilot-recovery.sh
+```
+
+It writes a non-secret checkpoint to the persistent `probe-state` volume,
+leaves one authorization admitted, stops payer, runner, broker, and payee,
+restarts them in receiver-first order, and then verifies the identical mint
+replay, account and authorization continuity, durable settlement lookup, and
+idempotent reservation release. Each invocation uses a new checkpoint name;
+retained checkpoints contain identifiers and account totals, not payment
+envelopes, credentials, or private keys.
+
 ## Evidence and drain
 
 Capture these without private keys, passwords, admin tokens, or RPC query
@@ -119,6 +134,7 @@ dust threshold. Removing the route does not erase or refund account credit.
 ./down.sh
 ```
 
-The initial pilot does not close the rollout bead: restart recovery and
-rollback/drain evidence must also be captured before mainnet rollout is
+Shipping this harness does not close the rollout bead: both approved probes
+must run against the pinned production images, and their restart plus
+rollback/drain evidence must be captured before the mainnet rollout is
 considered complete.

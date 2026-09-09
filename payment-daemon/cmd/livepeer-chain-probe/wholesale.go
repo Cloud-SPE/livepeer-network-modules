@@ -506,11 +506,16 @@ func createSessionAuthorization(ctx context.Context, cfg config, payer pb.PayerD
 }
 
 func mintAccountShortfall(ctx context.Context, cfg config, payer pb.PayerDaemonClient, tag string, target, observed *big.Int) (*pb.CreatePaymentResponse, error) {
+	return mintAccountShortfallWithID(ctx, cfg, payer,
+		fmt.Sprintf("chain-probe-wholesale-fund-%s-%d", tag, time.Now().UnixNano()), target, observed)
+}
+
+func mintAccountShortfallWithID(ctx context.Context, cfg config, payer pb.PayerDaemonClient, mintRequestID string, target, observed *big.Int) (*pb.CreatePaymentResponse, error) {
 	return payer.CreatePayment(ctx, &pb.CreatePaymentRequest{
 		Recipient: cfg.recipient, TicketParamsBaseUrl: cfg.brokerURL,
 		AcceptedPrice: acceptedPrice(cfg),
 		Funding:       &pb.FundingIntent{FundedValueWei: &pb.BigUInt{Value: target.Bytes()}, EstimatedUnits: cfg.maxAuthUnits},
-		MintRequestId: fmt.Sprintf("chain-probe-wholesale-fund-%s-%d", tag, time.Now().UnixNano()),
+		MintRequestId: mintRequestID,
 		AccountFunding: &pb.AccountFundingIntent{
 			TargetAvailableWei:   &pb.BigUInt{Value: target.Bytes()},
 			ObservedAvailableWei: &pb.BigUInt{Value: observed.Bytes()},

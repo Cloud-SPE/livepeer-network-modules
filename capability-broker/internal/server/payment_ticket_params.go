@@ -17,9 +17,11 @@ const maxTicketParamsBodyBytes = 8 << 10
 type ticketParamsRequestJSON struct {
 	SenderETHAddress    string `json:"sender_eth_address"`
 	RecipientETHAddress string `json:"recipient_eth_address"`
-	FaceValueWei        string `json:"face_value_wei"`
-	Capability          string `json:"capability"`
-	Offering            string `json:"offering"`
+	// Historical JSON name; semantically this is target expected value. The
+	// payee may return a larger redeemable face with a lower probability.
+	FaceValueWei string `json:"face_value_wei"`
+	Capability   string `json:"capability"`
+	Offering     string `json:"offering"`
 }
 
 type ticketParamsResponseJSON struct {

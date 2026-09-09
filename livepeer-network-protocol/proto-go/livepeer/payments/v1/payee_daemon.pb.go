@@ -312,11 +312,12 @@ type GetTicketParamsRequest struct {
 	// ETH address of the intended recipient. Must match the receiver
 	// daemon's configured recipient when provided.
 	Recipient []byte `protobuf:"bytes,2,opt,name=recipient,proto3" json:"recipient,omitempty"`
-	// Target spend / expected-value request in wei, big-endian bytes,
-	// for the quote-free sender/payee flow. The receiver may return a
-	// larger TicketParams.face_value when redemption economics require
-	// a redeemable winning ticket, paired with a lower win probability
-	// so expected spend stays aligned with this request.
+	// Target spend / expected-value request in wei, big-endian bytes. The
+	// historical field name is NOT an instruction to use this as face value.
+	// For the quote-free sender/payee flow, the receiver may return a larger
+	// TicketParams.face_value when redemption economics require a redeemable
+	// winning ticket, paired with the probability that makes credited EV equal
+	// this request exactly.
 	FaceValue []byte `protobuf:"bytes,3,opt,name=face_value,json=faceValue,proto3" json:"face_value,omitempty"`
 	// Optional capability / offering metadata for logging and future
 	// metrics.

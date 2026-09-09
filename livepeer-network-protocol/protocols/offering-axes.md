@@ -1,8 +1,8 @@
 ---
 spec_name: offering-axes
-version: 1.0.8-draft
+version: 1.0.10-draft
 status: draft
-last_updated: 2026-09-02
+last_updated: 2026-09-09
 ---
 
 # Offering declared axes
@@ -195,13 +195,14 @@ funded value: doing so produces a second cache entry and a redundant
 ticket-params fetch that returns the same identity anyway, and it implies
 an invariant the protocol does not have.
 
-Face value is not identity and is not pinned. A payer re-quotes it for each
-replenishment, upward or downward, while the payee preserves recipient rand.
-Each signed ticket carries its own face value, so earlier tickets retain their
-original economics. A payer MUST size the resulting aggregate EV to the
-funding intent exactly or refuse before signing; reusing a stale larger face
-value would deposit surplus credit, while reusing a stale smaller one can
-exhaust the bounded nonce budget.
+Ticket face value and win probability are not identity and are not pinned. A
+payer re-quotes the target expected value for each replenishment while the
+payee preserves recipient rand. The payee MUST retain an economically
+redeemable winning face and vary win probability to represent the target EV;
+shrinking the winning face for a tiny shortfall transfers redemption cost to
+the payee and is not fair funding. Each signed ticket carries its own values,
+so earlier tickets retain their original economics. A payer MUST require the
+resulting aggregate EV to equal the funding intent or refuse before signing.
 
 ### 6.3 Wire names
 
@@ -223,6 +224,7 @@ refused.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.0.10-draft | 2026-09-09 | §6.2 makes exact-EV sizing economically symmetric: the payee retains a redeemable winning face and varies win probability. Shrinking face value to a small account shortfall avoided payer surplus only by creating payee-side uneconomic winners. |
 | 1.0.9-draft | 2026-09-09 | §6.2 corrects stale face-value pinning: face value is mutable per-replenishment sizing, not session identity. Payers re-quote in both directions under the stable recipient rand and refuse any signed-EV mismatch, preventing both nonce-exhausting underfund and surplus account float. |
 | 1.0.8-draft | 2026-09-02 | `attachment: inband-ws` and `metering: broker-observed` removed (plan 0045, decision 13 of the 2026-09-02 walkthrough). Both were accepted by brokers and served by none: the broker's session WebSocket is the §8 control socket, not a media relay. Every session data plane is external; a pool member exposes it through the pool's member-edge feature. The enums keep one value each so a future value is an addition, not a redefinition. |
 | 1.0.7-draft | 2026-08-26 | Runner-owned axes (`transports`, `descriptor_schema`, `metering`, `work_unit`, `session_params_schema`, the extractor) now originate in the attach document (`runner-attach.md`) and reach the manifest only through the offer freeze; references to paid-session §7.1.1 repointed. No wire change. |

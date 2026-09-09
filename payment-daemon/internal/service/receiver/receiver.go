@@ -39,16 +39,12 @@ type Service struct {
 	recipient []byte // 20-byte ETH address this daemon receives as
 	chainID   uint64
 
-	// defaultFaceValue / defaultWinProb size newly-issued ticket
-	// params. Operators tune these via the runbook (--receiver-ev,
-	// --receiver-tx-cost-multiplier). Plan 0016 takes them at
-	// constructor time; future plans can refine per-offering pricing.
+	// defaultFaceValue / defaultWinProb size ticket params when the caller
+	// does not request a target EV. A target-EV quote retains at least the
+	// default face and varies probability. Plan 0016 takes these values at
+	// constructor time; future plans can refine per-offering economics.
 	defaultFaceValue *big.Int
 	defaultWinProb   *big.Int
-	// minFaceValue is the smallest ticket this payee will issue. Below
-	// it, EV credit floors to zero and a winning ticket costs more gas
-	// to redeem than it pays.
-	minFaceValue *big.Int
 }
 
 // AdmitAuthorization verifies a payer signature, optionally processes a
@@ -465,7 +461,6 @@ func New(st *store.Store, cfg Config, logger *slog.Logger) *Service {
 		chainID:          cfg.ChainID,
 		defaultFaceValue: faceValue,
 		defaultWinProb:   winProb,
-		minFaceValue:     minFace,
 	}
 }
 
@@ -1126,23 +1121,25 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 	workID := hex.EncodeToString(rrHash)
 
 	faceValue := new(big.Int).Set(s.defaultFaceValue)
-	var requestedFace *big.Int
+	winProb := new(big.Int).Set(s.defaultWinProb)
+	var requestedEV *big.Int
 	if got := req.GetFaceValue(); len(got) > 0 {
-		requested := new(big.Int).SetBytes(got)
-		// A sender may size its own tickets, but not below the floor.
-		//
-		// Credit is floor(face_value x win_prob / 2^256), so a small
-		// enough face value makes every ticket credit ZERO while still
-		// looking valid — the sender gets work for money that rounds
-		// away. The floor is also plain economics: redeeming a winner
-		// costs gas, and a face value under that is not worth winning.
-		if requested.Cmp(s.minFaceValue) < 0 {
-			return nil, status.Errorf(codes.InvalidArgument,
-				"requested face_value %s wei is below this payee's minimum of %s wei",
-				requested, s.minFaceValue)
+		requestedEV = new(big.Int).SetBytes(got)
+		// This wire field retains its historical name, but its contract is
+		// target expected value. Preserve a redeemable winning face and vary
+		// probability: shrinking face value for a small account refill merely
+		// moves stranded value from payer to payee.
+		if requestedEV.Sign() <= 0 {
+			return nil, status.Error(codes.InvalidArgument, "target expected value must be positive")
 		}
-		faceValue = requested
-		requestedFace = requested
+		if requestedEV.Cmp(faceValue) > 0 {
+			faceValue.Set(requestedEV)
+		}
+		winProb = winProbForExactEV(faceValue, requestedEV)
+		if winProb.Sign() <= 0 || winProb.Cmp(types.MaxWinProb) > 0 || types.CreditedEV(faceValue, winProb).Cmp(requestedEV) != 0 {
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"cannot represent target expected value %s with redeemable face value %s", requestedEV, faceValue)
+		}
 	}
 
 	tupleKey := store.TicketSessionKey{
@@ -1214,7 +1211,7 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 		WorkUnit:            "",
 		RecipientRand:       r.String(),
 		FaceValueWei:        faceValue.String(),
-		WinProb:             s.defaultWinProb.String(),
+		WinProb:             winProb.String(),
 	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "open session: %v", err)
@@ -1228,27 +1225,26 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 	if !ok {
 		return nil, status.Error(codes.Internal, "session face value corrupt")
 	}
-	// An explicit request wins over the value stored when the session
-	// was first created.
+	// An explicit target wins over the sizing stored when the session was
+	// first created.
 	//
-	// "A sender may size its own tickets, but not below the floor" was
-	// only true for the FIRST call: afterwards GetOrCreateTicketSession
-	// returned the original figure and quietly ignored the request. A
-	// sender that needs a larger face value — because a ticket credits
-	// its expected value, roughly face/1024, and the payee caps a
-	// session at MaxSenderNonces tickets — could never get one, so
-	// funding intents above that ceiling were unreachable.
+	// GetOrCreateTicketSession returns the original figures. Reusing those
+	// figures for a later, differently-sized refill silently transfers the
+	// old EV. Recompute both economic knobs while retaining the stable rand.
 	//
-	// Safe to honour: credit is computed from each TICKET's own face
-	// value, so tickets already signed keep crediting what they were
-	// worth, and a larger face value raises the SENDER's exposure, not
-	// this payee's. The floor above still applies.
-	if requestedFace != nil {
-		faceValue = requestedFace
-	}
-	winProb, ok := new(big.Int).SetString(sess.WinProb, 10)
-	if !ok {
-		return nil, status.Error(codes.Internal, "session win prob corrupt")
+	// Safe to honour: each ticket carries its own face/probability, and the
+	// receiver validates and credits those exact signed values.
+	if requestedEV != nil {
+		faceValue = new(big.Int).Set(s.defaultFaceValue)
+		if requestedEV.Cmp(faceValue) > 0 {
+			faceValue.Set(requestedEV)
+		}
+		winProb = winProbForExactEV(faceValue, requestedEV)
+	} else {
+		winProb, ok = new(big.Int).SetString(sess.WinProb, 10)
+		if !ok {
+			return nil, status.Error(codes.Internal, "session win prob corrupt")
+		}
 	}
 
 	// State what this payee has already recorded against the rand, so a
@@ -1271,6 +1267,18 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 			Seed:              ethcommon.LeftPadBytes(recipientRand.Bytes(), 32),
 		},
 	}, nil
+}
+
+// winProbForExactEV returns the smallest probability whose integer expected
+// value at faceValue reaches target. Callers keep faceValue >= target, so the
+// result is at most MaxWinProb and CreditedEV lands exactly on target.
+func winProbForExactEV(faceValue, target *big.Int) *big.Int {
+	numerator := new(big.Int).Mul(new(big.Int).Set(target), types.MaxWinProb)
+	prob, rem := new(big.Int).QuoRem(numerator, faceValue, new(big.Int))
+	if rem.Sign() != 0 {
+		prob.Add(prob, big.NewInt(1))
+	}
+	return prob
 }
 
 // GetQuote returns a stub. Per-offering pricing is a future plan.

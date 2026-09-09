@@ -72,10 +72,10 @@ Each cached session owns:
 - the monotonic sender nonce stream
 - the current `work_id = hex(recipient_rand_hash)`
 
-Face value is mutable sizing state inside the cached `TicketParams`, not part
-of identity. `CreatePayment` serializes each route and re-quotes face value in
-both directions so the actual signed EV equals that replenishment's funding
-intent without moving `work_id`.
+Ticket economics are mutable sizing state inside cached `TicketParams`, not
+part of identity. `CreatePayment` serializes each route and re-quotes exact
+target EV in both directions. The payee retains a redeemable winning face and
+varies win probability, while recipient rand and `work_id` remain stable.
 
 `CreatePayment` returns that `work_id` to the caller.
 

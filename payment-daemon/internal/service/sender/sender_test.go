@@ -785,10 +785,16 @@ func (authoritativeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequ
 type halfProbabilityFetcher struct{}
 
 func (halfProbabilityFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
+	face := big.NewInt(5000)
+	numerator := new(big.Int).Mul(new(big.Int).Set(req.FaceValue), senderTypes.MaxWinProb)
+	prob, rem := new(big.Int).QuoRem(numerator, face, new(big.Int))
+	if rem.Sign() != 0 {
+		prob.Add(prob, big.NewInt(1))
+	}
 	return &senderTypes.TicketParams{
 		Recipient:         append([]byte(nil), req.Recipient...),
-		FaceValue:         new(big.Int).Set(req.FaceValue),
-		WinProb:           new(big.Int).Quo(new(big.Int).Set(senderTypes.MaxWinProb), big.NewInt(2)),
+		FaceValue:         face,
+		WinProb:           prob,
 		RecipientRandHash: []byte("0123456789abcdef0123456789abcdef"),
 		Seed:              []byte("seed-seed-seed-seed-seed-seed-12"),
 		ExpirationBlock:   big.NewInt(123456),

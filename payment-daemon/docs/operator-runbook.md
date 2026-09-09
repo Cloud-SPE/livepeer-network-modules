@@ -115,19 +115,20 @@ before signing.
 | `--redemption-confirmations` | 4 | receiver | Blocks past the receipt before a redemption counts as confirmed. `0` means the default. See §4 "Why redemption-confirmations matters". |
 | `--txintent-db` | `txintents.db` beside `--db` | receiver | BoltDB file for the durable transaction-intent store: every redemption the daemon has signed and where it stands. Same persistent volume as `--db`. See §4 "Durable transaction intents". |
 
-> **Not yet operator-tunable.** The receiver's issued ticket size is
+> **Not yet operator-tunable.** The receiver's redeemable winning face is
 > currently a compile-time default in
-> `internal/service/receiver` — `face_value = 1e15 wei` and
-> `win_prob = MaxWinProb / 1024`, so per-ticket EV ≈ 1e12 wei. There is
+> `internal/service/receiver` — `face_value = 1e15 wei`. A quote without a
+> target EV uses `win_prob = MaxWinProb / 1024`; exact account replenishments
+> retain at least that winning face and vary probability to match target EV. There is
 > **no `--receiver-ev` and no `--receiver-tx-cost-multiplier` flag**;
 > changing the issued ticket size today means changing
 > `receiver.Config{DefaultFaceValue, DefaultWinProb}` at the call site.
-> Likewise, the sender-side EV caps discussed in the pricing material
-> (`MaxEV`, `MaxTotalEV`, `DepositMultiplier`) are **not implemented** —
-> the sender's only pre-signing guards are the deposit / reserve /
-> pending-unlock checks in §3. Model these with `cmd/payout-sim` (see
-> [`payout-modeling-guide.md`](./payout-modeling-guide.md)) rather than
-> expecting a flag.
+> The sender independently enforces the per-mint expected-value ceiling
+> `--max-payment-wei`, the winning exposure ceiling
+> `--max-ticket-face-value-wei`, and the workload authorization ceiling
+> `--max-authorization-wei`, in addition to deposit / reserve /
+> pending-unlock checks. Model longer-horizon payout cadence and solvency with
+> `cmd/payout-sim` (see [`payout-modeling-guide.md`](./payout-modeling-guide.md)).
 
 ---
 
@@ -232,8 +233,10 @@ which is the failure you want.
 
 The daemon checks this twice: first against the requested shortfall and again
 against the aggregate EV of the actual tickets returned by payee parameter
-negotiation. A payee cannot bypass the limit with indivisible rounding or a
-stale cached face value.
+negotiation. A payee cannot bypass the limit with integer rounding or stale
+cached ticket economics. For a small refill the receiver retains its
+redeemable winning face and lowers win probability; exact shortfall funding
+must not be implemented by making winners uneconomic to redeem.
 
 Dev mode (no `--chain-rpc-urls`) has no real funds and runs without it.
 
@@ -869,8 +872,9 @@ shortfall = max(0, target_available - trusted broker account.available_value_wei
 Keep `--max-payment-wei` at or above one intended replenishment and below the
 loss you are willing to authorize from one faulty local call. The sender
 re-quotes cached ticket parameters in both directions and requires signed EV to
-equal the shortfall exactly; if the payee cannot honor exact sizing, the mint
-fails before signing instead of depositing surplus float. A 131K-token request
+equal the shortfall exactly. The receiver retains a redeemable winning face and
+varies probability; if it cannot honor exact sizing, the mint fails before
+signing instead of depositing surplus float. A 131K-token request
 may authorize a large debit without requiring a ticket of that value when
 reusable credit already exists.
 

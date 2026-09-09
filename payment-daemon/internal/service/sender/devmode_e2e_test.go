@@ -1,6 +1,7 @@
 package sender_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,7 +12,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -398,100 +398,73 @@ func devModeCreateRequest(recipient []byte, mintID, baseURL string) *pb.CreatePa
 	}
 }
 
-// The advertised minimum face value must actually credit something.
-//
-// It did not. minFaceValue was floor(MaxWinProb/win_prob); credit is
-// floor(face_value x win_prob / MaxWinProb). MaxWinProb is odd, so at the
-// default win_prob (MaxWinProb/1024) the floor came out at 1024 and
-// 1024 x win_prob < MaxWinProb — the payee accepted its own advertised
-// minimum and credited zero. A gateway funding at exactly the advertised
-// figure bought work for nothing and then saw insufficient_balance,
-// which is how LOC found it. The correct minimum is 1025.
-//
-// This asks the daemon what its minimum is rather than hardcoding one,
-// so it keeps holding if the defaults move: whatever face value this
-// payee advertises as sufficient, a ticket at that value must credit at
-// least one wei.
-func TestAdvertisedMinimumFaceValueCreditsAtLeastOneWei(t *testing.T) {
+// A tiny account shortfall must lower winning probability rather than the
+// redeemable face. Otherwise exact payer funding is achieved by handing the
+// payee a winning ticket too small to justify redemption.
+func TestSmallTargetEVKeepsRedeemableFaceAndCreditsExactly(t *testing.T) {
 	recipient := bytes20(0xdf)
-	// Deliberately the DEFAULT config, not receiverStand's: the bug is
-	// in the default win probability's derived minimum, and a stand that
-	// pins win_prob to MaxWinProb makes the minimum 1 and hides it.
 	payee, cleanup := defaultConfigReceiverStand(t, recipient)
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Ask for an impossible face value; the refusal names the minimum.
+	quote := func(target int64) *pb.GetTicketParamsResponse {
+		t.Helper()
+		got, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+			Sender: bytes20(0x01), Recipient: recipient, FaceValue: big.NewInt(target).Bytes(),
+			Capability: "openai:chat-completions", Offering: "model-a",
+		})
+		if err != nil {
+			t.Fatalf("target EV %d: %v", target, err)
+		}
+		return got
+	}
+	first := quote(1)
+	second := quote(2)
+	for target, params := range map[int64]*pb.GetTicketParamsResponse{1: first, 2: second} {
+		face := new(big.Int).SetBytes(params.GetTicketParams().GetFaceValue())
+		if face.Cmp(big.NewInt(1_000_000_000_000_000)) < 0 {
+			t.Fatalf("target EV %d shrank winning face to %s; want redeemable default", target, face)
+		}
+		winProb := new(big.Int).SetBytes(params.GetTicketParams().GetWinProb())
+		credit := daemonTypes.CreditedEV(face, winProb)
+		if credit.Cmp(big.NewInt(target)) != 0 {
+			t.Fatalf("target EV %d credits %s (face=%s probability=%s)", target, credit, face, winProb)
+		}
+	}
+	if !bytes.Equal(first.GetTicketParams().GetRecipientRandHash(), second.GetTicketParams().GetRecipientRandHash()) {
+		t.Fatal("changing target EV moved the stable work_id")
+	}
+	if new(big.Int).SetBytes(first.GetTicketParams().GetWinProb()).Cmp(new(big.Int).SetBytes(second.GetTicketParams().GetWinProb())) >= 0 {
+		t.Fatal("larger target EV did not increase winning probability")
+	}
+
+	largeTarget := int64(2_000_000_000_000_000)
+	large := quote(largeTarget)
+	face := new(big.Int).SetBytes(large.GetTicketParams().GetFaceValue())
+	prob := new(big.Int).SetBytes(large.GetTicketParams().GetWinProb())
+	if face.Int64() != largeTarget || daemonTypes.CreditedEV(face, prob).Int64() != largeTarget {
+		t.Fatalf("large target not represented exactly: face=%s probability=%s credit=%s", face, prob, daemonTypes.CreditedEV(face, prob))
+	}
+}
+
+func TestZeroTargetEVIsRejected(t *testing.T) {
+	recipient := bytes20(0xde)
+	payee, cleanup := defaultConfigReceiverStand(t, recipient)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	_, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
 		Sender:     bytes20(0x01),
 		Recipient:  recipient,
-		FaceValue:  big.NewInt(1).Bytes(),
+		FaceValue:  []byte{0},
 		Capability: "openai:chat-completions",
 		Offering:   "model-a",
 	})
 	if err == nil {
-		t.Fatal("a 1 wei face value was accepted; expected a refusal naming the minimum")
+		t.Fatal("zero target expected value was accepted")
 	}
-	minFace := parseAdvertisedMinimum(t, err.Error())
-
-	// The advertised minimum must be accepted...
-	params, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
-		Sender:     bytes20(0x01),
-		Recipient:  recipient,
-		FaceValue:  minFace.Bytes(),
-		Capability: "openai:chat-completions",
-		Offering:   "model-a",
-	})
-	if err != nil {
-		t.Fatalf("payee refused its own advertised minimum of %s wei: %v", minFace, err)
-	}
-
-	// ...and must credit at least one wei, which is the entire point of
-	// having a minimum. This is the receiver's own arithmetic, not a
-	// reimplementation: floor(face x win / MaxWinProb).
-	winProb := new(big.Int).SetBytes(params.GetTicketParams().GetWinProb())
-	credit := new(big.Int).Quo(new(big.Int).Mul(minFace, winProb), daemonTypes.MaxWinProb)
-	if credit.Sign() == 0 {
-		t.Fatalf("advertised minimum %s wei credits ZERO at win_prob %s — "+
-			"a gateway funding exactly this buys work for free",
-			minFace, winProb)
-	}
-
-	// And one wei below it must be refused, or the boundary is not a
-	// boundary — an off-by-one in the safe direction is still wrong.
-	below := new(big.Int).Sub(minFace, big.NewInt(1))
-	if _, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
-		Sender:     bytes20(0x01),
-		Recipient:  recipient,
-		FaceValue:  below.Bytes(),
-		Capability: "openai:chat-completions",
-		Offering:   "model-a",
-	}); err == nil {
-		t.Fatalf("payee accepted %s wei, one below its advertised minimum", below)
-	}
-}
-
-// parseAdvertisedMinimum pulls the figure out of the payee's refusal:
-// "requested face_value N wei is below this payee's minimum of M wei".
-func parseAdvertisedMinimum(t *testing.T, msg string) *big.Int {
-	t.Helper()
-	const marker = "minimum of "
-	i := strings.Index(msg, marker)
-	if i < 0 {
-		t.Fatalf("refusal did not name a minimum: %s", msg)
-	}
-	rest := msg[i+len(marker):]
-	j := strings.Index(rest, " ")
-	if j < 0 {
-		t.Fatalf("could not parse the minimum out of: %s", msg)
-	}
-	got, ok := new(big.Int).SetString(rest[:j], 10)
-	if !ok {
-		t.Fatalf("minimum %q is not a decimal integer", rest[:j])
-	}
-	return got
 }
 
 // defaultConfigReceiverStand runs a receiver on its shipped defaults —
@@ -543,10 +516,9 @@ func defaultConfigReceiverStandWithStore(t *testing.T, recipient []byte) (pb.Pay
 // believed, then hit insufficient_balance after the exchange had already
 // been admitted.
 //
-// The face value cannot be raised to fix it: the payee fixes face value
-// when the session opens, and a resize must not move work_id
-// (TestRefillSizingDoesNotChangeSessionIdentity). So the batch grows in
-// tickets instead — same session, same face value, N times the credit.
+// The fix retains the payee's redeemable face and chooses the probability
+// whose integer EV is the funding intent. One ticket funds exactly without
+// moving work_id or exhausting the session's nonce budget.
 //
 // Checked end to end rather than on the mint alone: the contract is that
 // the PAYEE credits at least what was funded, and only the payee can say
@@ -556,7 +528,7 @@ func TestFundingIntentIsActuallyFunded(t *testing.T) {
 		1025,      // the advertised minimum
 		3000,      // the reported case
 		4097,      // non-divisible by the per-ticket credit
-		1_000_000, // comfortably many tickets
+		1_000_000, // a larger exact target on the same arithmetic
 	} {
 		t.Run(fmt.Sprintf("funded_%d", funded), func(t *testing.T) {
 			recipient := bytes20(0xf0)
@@ -637,8 +609,8 @@ func TestFundingIntentIsActuallyFunded(t *testing.T) {
 // rejected the last one at its 600-nonce cap, and 613,975 of 616,025 wei
 // was credited — an under-funding the caller was never told about.
 //
-// The session is now re-quoted at a larger face value instead, keeping
-// the tuple's recipient rand so work_id does not move.
+// The session is now re-quoted at a higher probability under the payee's
+// redeemable face, keeping recipient rand so work_id does not move.
 func TestCachedSessionFundsALargerLaterRequest(t *testing.T) {
 	recipient := bytes20(0xf3)
 	payee, cleanupPayee := defaultConfigReceiverStand(t, recipient)

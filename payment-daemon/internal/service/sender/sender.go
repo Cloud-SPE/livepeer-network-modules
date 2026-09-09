@@ -779,16 +779,9 @@ func (s *Service) recordSenderFunds(info *providers.SenderInfo) {
 	}
 }
 
-// rescaleTicketParams re-quotes a session at a face value whose
-// per-ticket expected value covers `want`, keeping the tuple's recipient
-// rand — so work_id does not move and the session is the same one.
-//
-// A ticket credits floor(face x win_prob / MaxWinProb), and win_prob is
-// the payee's to choose, so the face value is the only lever the sender
-// has. Scaling it is what makes ONE ticket carry the intent, which
-// matters because the payee caps a session at store.MaxSenderNonces
-// tickets: paying for a large intent in many small tickets runs out of
-// nonces long before it runs out of money.
+// rescaleTicketParams re-quotes a session for exact target EV while keeping
+// the tuple's recipient rand, so work_id does not move. The payee chooses both
+// a redeemable face and its probability; the sender checks their resulting EV.
 // rotateExhaustedSession retires a session whose nonce budget is spent
 // and returns its successor, or an error if it cannot.
 //
@@ -850,36 +843,30 @@ func (s *Service) rescaleTicketParams(ctx context.Context, recipient []byte, wan
 			"payee quoted win_prob %v, so no ticket on this session can credit anything",
 			current.WinProb)
 	}
-	// scaled = ceil(want x MaxWinProb / win_prob): the face value whose
-	// per-ticket credit is at least the funding intent.
-	scaled, rem := new(big.Int).QuoRem(
-		new(big.Int).Mul(want, types.MaxWinProb), current.WinProb, new(big.Int))
-	if rem.Sign() != 0 {
-		scaled.Add(scaled, big.NewInt(1))
-	}
-
+	// The request field retains its historical FaceValue name, but its
+	// sender/payee contract is target EV. The payee owns redemption economics:
+	// it retains a redeemable winning face and varies probability to represent
+	// this exact shortfall.
 	fetchStart := time.Now()
 	retry, err := s.fetcher.Fetch(ctx, TicketParamsRequest{
 		BaseURL:    baseURL,
 		Sender:     append([]byte(nil), s.keystore.Address()...),
 		Recipient:  append([]byte(nil), recipient...),
-		FaceValue:  scaled,
+		FaceValue:  new(big.Int).Set(want),
 		Capability: capability,
 		Offering:   offering,
 	})
 	s.metrics.ObserveTicketParamsFetch(time.Since(fetchStart))
 	if err != nil {
 		s.metrics.IncTicketParamsFetch(metrics.ResultError)
-		return nil, fmt.Errorf("re-quoting ticket params at %s wei face value to fund %s wei: %w",
-			scaled, want, err)
+		return nil, fmt.Errorf("re-quoting ticket params for %s wei expected value: %w", want, err)
 	}
 	s.metrics.IncTicketParamsFetch(metrics.ResultOK)
 
 	if got := types.CreditedEV(retry.FaceValue, retry.WinProb); got.Cmp(want) != 0 {
 		// Fail closed in either direction. Under-funding fails at admission;
 		// over-funding recreates the stranded-float bug this re-quote exists
-		// to prevent. With stable win probability, inverse face-value sizing
-		// can represent every integer EV exactly.
+		// to prevent.
 		direction := "below"
 		if got.Cmp(want) > 0 {
 			direction = "above"
@@ -909,12 +896,10 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 		sess.acceptedQuote = cloneQuoteRef(acceptedQuote)
 		cached := cloneTicketParams(sess.ticketParams)
 		s.mu.Unlock()
-		// Face value is sizing, not session identity. Re-quote in BOTH
-		// directions whenever the cached ticket EV differs from this
-		// replenishment. Growing avoids under-funding and nonce exhaustion;
-		// shrinking prevents a small refill after a large one from silently
-		// transferring the old, much larger EV. The payee keeps recipient
-		// rand stable, so work_id does not move.
+		// Ticket economics are sizing, not session identity. Re-quote whenever
+		// cached EV differs. The payee varies probability while retaining a
+		// redeemable face and stable recipient rand; the sender refuses any EV
+		// mismatch.
 		if types.CreditedEV(cached.FaceValue, cached.WinProb).Cmp(faceValue) != 0 {
 			rescaled, rerr := s.rescaleTicketParams(ctx, recipient, faceValue,
 				capability, offering, ticketParamsBaseURL, cached)
@@ -1267,8 +1252,9 @@ func evToBytes(ev *big.Rat) []byte {
 // redundant ticket-params fetch that came back with the same identity.
 // Worse, it implied the opposite invariant to anyone reading it.
 //
-// Face value is mutable sizing state, not identity. Each replenishment may
-// re-quote it upward or downward while the payee keeps recipient rand stable.
+// Face value and probability are mutable sizing state, not identity. Each
+// replenishment re-quotes target EV while the payee keeps recipient rand and a
+// redeemable winning face stable where possible.
 func sessionKey(recipient []byte, capability, offering string, ticketParamsBaseURL string) string {
 	return hex.EncodeToString(recipient) + "|" + capability + "|" + offering + "|" + strings.TrimSpace(ticketParamsBaseURL)
 }

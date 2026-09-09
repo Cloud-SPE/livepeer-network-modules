@@ -148,11 +148,12 @@ message GetTicketParamsRequest {
   // daemon's configured recipient when provided.
   bytes recipient = 2;
 
-  // Target spend / expected-value request in wei, big-endian bytes,
-  // for the quote-free sender/payee flow. The receiver may return a
-  // larger TicketParams.face_value when redemption economics require
-  // a redeemable winning ticket, paired with a lower win probability
-  // so expected spend stays aligned with this request.
+  // Target spend / expected-value request in wei, big-endian bytes. The
+  // historical field name is NOT an instruction to use this as face value.
+  // For the quote-free sender/payee flow, the receiver may return a larger
+  // TicketParams.face_value when redemption economics require a redeemable
+  // winning ticket, paired with the probability that makes credited EV equal
+  // this request exactly.
   bytes face_value = 3;
 
   // Optional capability / offering metadata for logging and future

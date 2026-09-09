@@ -39,7 +39,7 @@ func (s *Server) initSessionEngine() error {
 			}
 			return s.specForRecord(rec)
 		},
-		Callback:      sessionengine.CallbackConfig{BaseURL: s.cfg.ExternalBaseURL},
+		Callback:      sessionengine.CallbackConfig{BaseURL: s.cfg.CallbackBaseURL()},
 		AllocDebitSeq: s.allocDebitSeq,
 		OnWinddown:    s.onSessionWinddown,
 	})

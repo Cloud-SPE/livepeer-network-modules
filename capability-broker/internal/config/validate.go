@@ -48,6 +48,15 @@ func (c *Config) Validate() error {
 	if c.Listen.Metrics == "" {
 		c.Listen.Metrics = ":9090"
 	}
+	if c.RunnerCallbackBaseURL != "" {
+		u, err := url.Parse(c.RunnerCallbackBaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("runner_callback_base_url must be an absolute http(s) origin without userinfo, query, or fragment")
+		}
+		if u.Path != "" && u.Path != "/" {
+			return fmt.Errorf("runner_callback_base_url must not contain a path")
+		}
+	}
 	switch c.AdminAuth.Method {
 	case "", "none":
 	case "bearer":

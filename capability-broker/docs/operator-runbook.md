@@ -19,12 +19,13 @@ the modes.
 The admin surface (`/admin/v1/*`) rides the paid listener but must be
 protected by `admin_auth` and network policy — see §1.1.
 
-`external_base_url` in host-config is the externally-reachable base of the
-paid listener. It is the **only** source for runner callback URLs and
-session control URLs — the broker never derives them from inbound request
-headers. If it is wrong, runners post events into the void and sessions die
-by heartbeat loss: check it first when sessions open and then wind down
-with `heartbeat_lost`.
+`external_base_url` in host-config is the gateway-reachable route identity of
+the paid listener and remains the origin bound into spend authorizations and
+session control URLs. `runner_callback_base_url` may name a distinct trusted
+origin for runner events and certification callbacks (for example, a private
+service name); it defaults to `external_base_url`. Neither value is derived
+from inbound request headers. If the callback origin is wrong, runners post
+events into the void and sessions die by heartbeat loss.
 
 ## 1.0 Settlement signing key
 

@@ -248,7 +248,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		// A session runner under certification reports usage to a
 		// callback under this base, the same way it reports to a paid
 		// session's callback.
-		CallbackBaseURL: cfg.ExternalBaseURL,
+		CallbackBaseURL: cfg.CallbackBaseURL(),
 	})
 	s.certEngine = certEngine
 	offersEngine, err := offers.New(cfg, s.runners, cfg.OffersStatePath, certEngine)

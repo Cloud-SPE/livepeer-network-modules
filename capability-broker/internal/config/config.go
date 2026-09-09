@@ -13,16 +13,17 @@ import (
 // Config is the top-level host-config.yaml schema.
 type Config struct {
 	Identity Identity `yaml:"identity"`
-	// ExternalBaseURL is the broker's externally-reachable base URL
-	// (e.g. https://broker.example.com). Runner callback URLs and
-	// session control URLs are derived from it — never from inbound
-	// request headers. Required once any paid-session capability is
-	// declared.
-	ExternalBaseURL string        `yaml:"external_base_url,omitempty"`
-	Listen          Listen        `yaml:"listen,omitempty"`
-	AdminAuth       AuthConfig    `yaml:"admin_auth,omitempty"`
-	PaymentDaemon   PaymentDaemon `yaml:"payment_daemon,omitempty"`
-	SessionStore    SessionStore  `yaml:"session_store,omitempty"`
+	// ExternalBaseURL is the gateway-reachable route identity advertised
+	// by the broker and bound into spend authorizations.
+	ExternalBaseURL string `yaml:"external_base_url,omitempty"`
+	// RunnerCallbackBaseURL optionally gives runners a distinct trusted
+	// network path back to this broker. It defaults to ExternalBaseURL and
+	// is never derived from inbound request headers.
+	RunnerCallbackBaseURL string        `yaml:"runner_callback_base_url,omitempty"`
+	Listen                Listen        `yaml:"listen,omitempty"`
+	AdminAuth             AuthConfig    `yaml:"admin_auth,omitempty"`
+	PaymentDaemon         PaymentDaemon `yaml:"payment_daemon,omitempty"`
+	SessionStore          SessionStore  `yaml:"session_store,omitempty"`
 	// CredentialStore holds runner attach credentials (plan 0043 §3.3).
 	// Required once runners attach with store-issued credentials; when
 	// absent, connected workers authenticate with the legacy per-backend
@@ -43,6 +44,15 @@ type Config struct {
 	// frozen shape that vanished on restart would re-freeze from
 	// whichever runner certified first — a silent manifest change.
 	OffersStatePath string `yaml:"offers_state_path,omitempty"`
+}
+
+// CallbackBaseURL returns the operator-controlled origin used for runner
+// events and certification callbacks.
+func (c Config) CallbackBaseURL() string {
+	if strings.TrimSpace(c.RunnerCallbackBaseURL) != "" {
+		return c.RunnerCallbackBaseURL
+	}
+	return c.ExternalBaseURL
 }
 
 // CredentialStoreConfig configures the sealed runner-credential store

@@ -14,6 +14,7 @@ identity:
   orch_eth_address: "${ORCH_ETH_ADDRESS}"
   settlement_key_file: /run/secrets/settlement.key
 external_base_url: "${EXTERNAL_BASE_URL%/}"
+runner_callback_base_url: "${RUNNER_CALLBACK_BASE_URL%/}"
 listen:
   paid: "0.0.0.0:8080"
   metrics: "0.0.0.0:9090"

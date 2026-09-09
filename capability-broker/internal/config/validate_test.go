@@ -49,6 +49,27 @@ func TestValidateAdminAuth(t *testing.T) {
 	}
 }
 
+func TestRunnerCallbackBaseURL(t *testing.T) {
+	cfg := baseOfferConfig(offerWithExtra("openai:chat-completions", map[string]any{
+		"openai": map[string]any{"model": "llama-3-70b"}, "provider": "vllm",
+	}))
+	cfg.ExternalBaseURL = "https://broker.example"
+	if got := cfg.CallbackBaseURL(); got != cfg.ExternalBaseURL {
+		t.Fatalf("default callback base = %q", got)
+	}
+	cfg.RunnerCallbackBaseURL = "http://broker:8080"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.CallbackBaseURL(); got != "http://broker:8080" {
+		t.Fatalf("callback base = %q", got)
+	}
+	cfg.RunnerCallbackBaseURL = "http://broker:8080/path"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("callback origin with a path passed validation")
+	}
+}
+
 func TestValidateDefaultsPoolSnapshotPollingConfig(t *testing.T) {
 	cfg := baseOfferConfig(offerWithExtra("openai:chat-completions", map[string]any{
 		"openai":   map[string]any{"model": "llama-3-70b"},

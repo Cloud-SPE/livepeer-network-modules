@@ -96,7 +96,9 @@ The run performs:
 The probe signs the configured `EXTERNAL_BASE_URL` into each authorization even
 though its container reaches the broker at `http://broker:8080`. This matches a
 clearinghouse or provider whose internal control plane and public locked route
-use different network names.
+use different network names. The co-located runner receives callbacks through
+`RUNNER_CALLBACK_BASE_URL=http://broker:8080`, ensuring events return to this
+exact pilot broker rather than another deployment behind the public origin.
 
 To exercise a real stop/restart boundary, use the separately approval-gated
 recovery probe:

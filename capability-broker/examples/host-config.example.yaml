@@ -131,10 +131,14 @@ payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock
   # mock: true
 
-# Externally-reachable base URL of the paid listener. Runner callback
-# URLs and session control URLs derive from it, and never from inbound
-# request headers. REQUIRED once any paid-session offer is served.
+# Externally-reachable route identity of the paid listener. Session control
+# URLs derive from it and spend authorizations bind it. REQUIRED once any
+# paid-session offer is served.
 # external_base_url: "https://broker.example.com"
+# Optional runner-reachable origin for events and certification callbacks.
+# Use this when runners reach the same broker over a private network name.
+# Defaults to external_base_url; never derives from inbound request headers.
+# runner_callback_base_url: "http://broker.internal:8080"
 
 # Durable state: paid-session authority + paid-job idempotency records.
 # REQUIRED once any paid-session offer is served. The path must be a

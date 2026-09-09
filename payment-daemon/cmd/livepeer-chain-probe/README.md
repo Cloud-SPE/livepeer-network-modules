@@ -45,8 +45,49 @@ Flags worth setting deliberately:
 |---|---|
 | `--per-units` | **Keep it above 1.** At `per_units: 1` flooring and ceiling agree, so a rounding defect cannot surface — which is exactly how one shipped. |
 | `--price-wei` | Pick a price whose product with the unit count leaves a remainder. |
-| `--protocol` | `job`, `session`, `both`, `rotation`, `retry`, or `evidence`. |
+| `--protocol` | `job`, `session`, `both`, `rotation`, `retry`, `evidence`, or `wholesale`. |
 | `--payee-admin-token` | Required for `rotation`: it drives `PayeeAdmin.ResetSession`, which is closed unless the payee was started with a matching `--payee-admin-token`. |
+
+## The wholesale-account run
+
+`--protocol=wholesale` is the bounded-float economic probe. It does not run
+unless selected explicitly. The broker offer must advertise
+`extra.features.wholesale_accounts: true`, and the receiver must be upgraded
+before that bit is enabled.
+
+The probe performs two unrelated 131,072-unit authorizations against one
+stable payer-payee account:
+
+1. an in-path provider call using exact-scope bearer authorization;
+2. a delegated-caller call carrying an ephemeral caller public key and its
+   invocation proof.
+
+The first call restores the account to `--account-float-wei` (by default the
+value of the maximum authorization). After actual work settles and releases
+the unused reservation, the second mint is only the shortfall created by that
+actual debit—not another maximum-sized payment. Replaying the second call must
+not mint, reserve, execute, or debit again. The probe finishes by reconciling
+issued ticket EV against changes in credited, debited, reserved, and available
+account value.
+
+```bash
+./chain-probe \
+  --protocol=wholesale \
+  --chain-id=42161 \
+  --recipient=0x... \
+  --capability=conformance:job \
+  --offering=all \
+  --work-unit=tokens \
+  --price-wei=100 \
+  --per-units=1000 \
+  --max-authorization-units=131072
+```
+
+Set `--account-float-wei` only after calculating the intended aggregate route
+float. It must cover the largest concurrently admitted reservation, but it is
+not supposed to mirror the sum of every customer's maximum workload. The
+sender's `--max-payment-wei`, `--max-ticket-face-value-wei`, and
+`--max-authorization-wei` remain independent circuit breakers.
 
 ## The rotation run
 

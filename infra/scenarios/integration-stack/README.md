@@ -1,105 +1,111 @@
-# integration-stack — a real broker + payment pair for downstream teams
+# Arbitrum One wholesale-account pilot
 
-A running `paid-job/v1` + `paid-session/v1` stack on a real chain, for
-gateway and clearinghouse teams to integrate against.
+This scenario validates reusable wholesale payer-payee credit against the real
+Livepeer TicketBroker while keeping ticket issuance behind an explicit approval
+gate. It uses the generic conformance workload names; no retail provider is
+part of the protocol identity.
 
-It is deliberately **not** the onboarding scenario next door. That one is
-shaped like a production orchestrator deployment (containers, ingress,
-TLS). This one runs the binaries directly on one host so a failure is a
-log line rather than an ingress mystery, and so the whole thing can be
-restarted in a second while somebody is on a call about it.
+The stack is Docker-first and runs pinned images for:
 
-## What it runs
+- receiver `payment-daemon` and `capability-broker` (the payee side);
+- an attached conformance runner (the workload side);
+- sender `payment-daemon` (the payer/provider side);
+- `livepeer-chain-probe`, invoked only by `pilot.sh`.
 
-| Process | Role |
-|---|---|
-| `payment-daemon --mode=sender` | the payer: mints signed ticket envelopes |
-| `payment-daemon --mode=receiver` | the payee: validates, credits, debits, redeems |
-| `capability-broker` | the paid surface — `/v1/job`, `/v1/session/*`, `/v1/exchange/*`, `/v1/settlement/*` |
-| a stub backend | stands in for the runner that does the actual work |
+All ledgers and broker idempotency state live in named volumes. `down.sh` keeps
+them. Do not use `docker compose down -v` during a pilot or recovery drill.
 
-Both payment daemons hold **real keys against a real chain**. A winning
-ticket moves real value. The spend limits in `stack.env` are what bound
-that, and they are the only thing that does.
+## Safety and cost
 
-## Run it
+A payment is a probabilistic ticket batch. Issuing a ticket commits expected
+value and exposes its full winning face value; it does not immediately transfer
+the expected value. If a ticket wins and is redeemed, the face value is drawn
+from the payer's on-chain deposit and the payee pays redemption gas.
+“Dust” describes the expected value of this controlled run, not its tail loss.
+The example deliberately uses an artificial test price: for its
+1-trillion-wei refill, the receiver retains a 0.001 ETH redeemable winning face
+and selects roughly 1/1000 probability. The face-value limit must still be
+reviewed as carefully as the expected-value limit; the test price is not a
+production price.
+
+Three independent sender limits are required:
+
+- `MAX_PAYMENT_WEI`: expected value in one refill;
+- `MAX_TICKET_FACE_VALUE_WEI`: worst-case payout if one ticket wins;
+- `MAX_AUTHORIZATION_WEI`: maximum wholesale debit for one workload.
+
+`ACCOUNT_FLOAT_WEI` is reusable service credit held on this payer-payee route.
+Size it for the largest concurrently admitted reservation plus a small buffer,
+not the sum of customer request ceilings. Route exit can still strand up to the
+remaining bounded float because v1 does not promise withdrawal or transfer.
+
+## Prepare without spending
+
+1. Build and publish the current images. Record immutable `@sha256:` references.
+2. Copy `stack.env.example` to ignored `stack.env` and fill exact addresses,
+   key paths, external broker origin, RPCs, and limits.
+   The payer/payee keystore and password files must be readable by container
+   uid 65532; do not make them world-readable.
+3. Verify the payer deposit/reserve, payee address, and external origin with a
+   second operator.
+4. Start the stack:
+
+   ```bash
+   ./up.sh
+   ./status.sh
+   ```
+
+`up.sh` enforces migration order: receiver first, broker advertisement and
+runner attachment second, payer last. It does not run the probe or mint a
+ticket. The offer advertises `extra.features.wholesale_accounts: true` only
+after the upgraded receiver is listening.
+
+## Run the approved dust pilot
+
+Approval is intentionally invocation-scoped and must not be saved in
+`stack.env`:
 
 ```bash
-cp stack.env.example stack.env   # edit: keys, address, external URL
-./up.sh                          # starts everything, waits for health
-./status.sh                      # what is running, and on what
-./down.sh                        # stops everything and removes sockets
+PILOT_APPROVAL=ARBITRUM_ONE_DUST_APPROVED ./pilot.sh
 ```
 
-`up.sh` is idempotent: it refuses to start a second copy rather than
-racing the first for the same unix sockets.
+The run performs:
 
-## Why the scripts rather than a compose file
+1. a generic in-path provider job with a 131,072-unit authorization;
+2. actual work of only the runner-reported units, releasing unused reserve;
+3. a second 131,072-unit authorization delegated to an ephemeral caller key;
+4. a refill equal only to the account shortfall, not the workload ceiling;
+5. an identical transport retry that must not mint, execute, reserve, or debit
+   again;
+6. conservation reconciliation across credited, reserved, debited, and
+   available wholesale value.
 
-Because teardown has to be reliable. An earlier round of live testing
-left two daemons running against mainnet for six hours after they were
-believed stopped — the greps used to find them matched on a path that
-the processes did not carry. `down.sh` tracks pids in a file written at
-start, so stopping does not depend on pattern-matching a command line.
+The probe signs the configured `EXTERNAL_BASE_URL` into each authorization even
+though its container reaches the broker at `http://broker:8080`. This matches a
+clearinghouse or provider whose internal control plane and public locked route
+use different network names.
 
-## Reaching it
+## Evidence and drain
 
-`EXTERNAL_BASE_URL` is what the broker advertises to clients, so it has
-to be an address they can actually reach — not `127.0.0.1` unless the
-client is on this host.
+Capture these without private keys, passwords, admin tokens, or RPC query
+secrets:
 
-The paid surface has no transport authentication of its own. Possession
-of a session credential or a broker-minted id is the authorisation, by
-design, so that a clearinghouse can read a settlement without holding a
-gateway's credential. **Do not expose this to an untrusted network.**
+- all three resolved image digests;
+- chain ID, payer/payee addresses, limits, price, target float, and timestamps;
+- probe output and broker/daemon version lines;
+- account observations before and after, signed settlement identifiers, and
+  wholesale metrics;
+- retry/restart results and the final drain observation.
 
-## Integration guides
+To drain: stop assigning new work and stop invoking `pilot.sh`; leave admitted
+work running until it settles; keep the receiver and broker state volumes; use
+remaining available credit for intended work until it approaches the chosen
+dust threshold. Removing the route does not erase or refund account credit.
 
-Per-team, in `docs/integration/`:
-
-- `openai-gateway.md` — paid-job/v1, the funding ceiling, settlement retrieval
-- `loc-clearinghouse.md` — settlement verification, encumbrance, evidence
-- `meeting.md` — paid-session/v1, rotation, rebinding
-- `vtuber-daydream.md` — paid-session/v1, trickle-egress/v1 and
-  scope-passthrough/v1; workload identity lives in the descriptor schema
-
-## Verifying the stack with the chain probe
-
-`payment-daemon/cmd/livepeer-chain-probe` exercises both protocols
-against this stack and a real ledger. All five modes pass against it.
-
-```
-go -C payment-daemon build -o /tmp/chain-probe ./cmd/livepeer-chain-probe
-
-# paid-job — unary, and the one that checks the inline settlement headers
-/tmp/chain-probe --recipient=$ORCH_ETH_ADDRESS --protocol=job \
-  --capability=openai:chat-completions --offering=default \
-  --work-unit=tokens --price-wei=100 --per-units=1000 \
-  --payee-admin-token=$PAYEE_ADMIN_TOKEN
-
-# paid-session and rotation — need the offering pointed at the probe's
-# own runner, because the stub emits no usage events and so never meters
-MEET_RUNNER_URL=http://127.0.0.1:9501 ./up.sh
-/tmp/chain-probe --recipient=$ORCH_ETH_ADDRESS --protocol=session \
-  --capability=meet:sfu-room --offering=default \
-  --work-unit=participant-seconds --price-wei=100 --per-units=1000 \
-  --runner-bind=127.0.0.1:9501 --payee-admin-token=$PAYEE_ADMIN_TOKEN
+```bash
+./down.sh
 ```
 
-### The retry run
-
-`--protocol=retry` needs the debit to fail from outside — a probe cannot
-stop a daemon it did not start. Give the backend a stall window, then
-kill the payee inside it and restart it on the **same `--db`**:
-
-```
-BACKEND_DELAY_SECONDS=25 ./up.sh
-/tmp/chain-probe --protocol=retry ... &
-sleep 4  && kill -9 $(sed -n 2p run/pids) && rm -f /tmp/lpm-payee.sock
-sleep 22 && run/bin/payment-daemon --mode=receiver --db=run/payee.db ...
-```
-
-The same `--db` matters: the session has to survive the restart, and the
-broker has to have left it open. A closed session refuses debits, so
-closing one at end of exchange makes every retry fail no matter how
-generous the budget.
+The initial pilot does not close the rollout bead: concurrent reservation,
+receiver-restart recovery, paid-session runway, and rollback/drain evidence must
+also be captured before mainnet rollout is considered complete.

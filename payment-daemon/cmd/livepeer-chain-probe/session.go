@@ -245,6 +245,7 @@ type httpResult struct {
 	status  int
 	errCode string
 	body    string
+	headers http.Header
 	decoded map[string]any
 }
 
@@ -275,6 +276,7 @@ func postJSON(url string, headers map[string]string, body string) (*httpResult, 
 		status:  resp.StatusCode,
 		errCode: resp.Header.Get("Livepeer-Error"),
 		body:    readAll(resp.Body),
+		headers: resp.Header.Clone(),
 	}, nil
 }
 

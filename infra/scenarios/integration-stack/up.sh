@@ -1,95 +1,56 @@
 #!/usr/bin/env bash
-# Start the integration stack. Idempotent: refuses to start a second
-# copy rather than racing the first for the same unix sockets.
 set -euo pipefail
 
 cd "$(dirname "$0")"
-[ -f stack.env ] || { echo "stack.env missing — copy stack.env.example and edit it"; exit 1; }
+[ -f stack.env ] || { echo "stack.env missing — copy stack.env.example and edit it" >&2; exit 1; }
 set -a; . ./stack.env; set +a
 
-RUN_DIR="${RUN_DIR:-$PWD/run}"
-BIN_DIR="$RUN_DIR/bin"
-PID_FILE="$RUN_DIR/pids"
-REPO_ROOT="$(cd ../../.. && pwd)"
-
-if [ -f "$PID_FILE" ] && xargs -r -a "$PID_FILE" ps -p >/dev/null 2>&1; then
-  echo "already running (see $PID_FILE); ./down.sh first"
-  exit 1
+compose=(docker compose --env-file stack.env -f compose.yaml)
+mkdir -p run
+[ -f run/seal.key ] || openssl rand -hex 32 > run/seal.key
+if [ ! -f run/settlement.key ]; then
+  docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/run:/state" \
+    --entrypoint /usr/local/bin/livepeer-capability-broker \
+    "${BROKER_IMAGE:?set BROKER_IMAGE}" settlement-key generate --out /state/settlement.key
 fi
-mkdir -p "$RUN_DIR" "$BIN_DIR"
-: > "$PID_FILE"
+# Both broker secrets are bind-mounted into a uid-65532 container. Change
+# ownership without making private key material world-readable.
+docker run --rm --user 0 -v "$PWD/run:/state" --entrypoint sh \
+  "${BROKER_IMAGE:?set BROKER_IMAGE}" -c \
+  'chown 65532:65532 /state/seal.key /state/settlement.key && chmod 0400 /state/seal.key /state/settlement.key'
+./render-config.sh > run/host-config.yaml
 
-echo "building..."
-(cd "$REPO_ROOT/payment-daemon" && go build -o "$BIN_DIR/payment-daemon" ./cmd/livepeer-payment-daemon)
-(cd "$REPO_ROOT/capability-broker" && go build -o "$BIN_DIR/capability-broker" ./cmd/livepeer-capability-broker)
-
-# Sealing key for the session store, and the delegated settlement key the
-# broker signs records with. Generated once and kept: a new settlement
-# key invalidates every record a consumer already holds.
-[ -f "$RUN_DIR/seal.key" ] || head -c 32 /dev/urandom | xxd -p -c 64 > "$RUN_DIR/seal.key"
-[ -f "$RUN_DIR/settlement.key" ] || "$BIN_DIR/capability-broker" settlement-key generate --out "$RUN_DIR/settlement.key" >/dev/null
-
-start() { # name, then command
-  local name="$1"; shift
-  "$@" > "$RUN_DIR/$name.log" 2>&1 &
-  echo $! >> "$PID_FILE"
-  echo "  $name pid=$!"
-}
-
-echo "starting payment daemons..."
-start payer "$BIN_DIR/payment-daemon" --mode=sender \
-  --chain-rpc-urls="$CHAIN_RPC_URLS" \
-  --keystore-path="$PAYER_KEYSTORE" \
-  --keystore-password-file="$PAYER_KEYSTORE_PASSWORD_FILE" \
-  --socket=/tmp/lpm-payer.sock --db="$RUN_DIR/payer.db" \
-  --max-payment-wei="$MAX_PAYMENT_WEI" --max-price-per-unit="$MAX_PRICE_PER_UNIT"
-
-start payee "$BIN_DIR/payment-daemon" --mode=receiver \
-  --chain-rpc-urls="$CHAIN_RPC_URLS" \
-  --keystore-path="$PAYEE_KEYSTORE" \
-  --keystore-password-file="$PAYEE_KEYSTORE_PASSWORD_FILE" \
-  --socket=/tmp/lpm-payee.sock --db="$RUN_DIR/payee.db" \
-  --payee-admin-token="$PAYEE_ADMIN_TOKEN"
-
-echo "starting stub backend..."
-start backend python3 ./backend.py
-
-# The broker refuses to start until the payee answers Health, so the
-# daemons must be up first.
-#
-# Wait for the sockets rather than guessing a duration. This was
-# `sleep 3`, and against a real chain the payee verifies the chain id and
-# reads its wallet balance BEFORE it binds — so startup drifted past
-# three seconds and the broker dialled 62ms too early and died. A
-# guessed duration is a race with a comment on it; a socket either
-# exists or it does not.
-wait_for_socket() {
-  local path="$1" name="$2"
+wait_for_log() {
+  local service="$1" pattern="$2"
   for _ in $(seq 1 120); do
-    [ -S "$path" ] && return 0
-    sleep 0.5
+    if "${compose[@]}" logs "$service" 2>&1 | grep -q "$pattern"; then return 0; fi
+    sleep 1
   done
-  echo "$name socket $path never appeared; see $RUN_DIR/$name.log" >&2
+  echo "$service did not become ready; inspect: ${compose[*]} logs $service" >&2
   return 1
 }
-echo "waiting for payment daemon sockets..."
-wait_for_socket /tmp/lpm-payer.sock payer || exit 1
-wait_for_socket /tmp/lpm-payee.sock payee || exit 1
 
-./render-config.sh > "$RUN_DIR/host-config.yaml"
-echo "starting broker..."
-start broker "$BIN_DIR/capability-broker" --config "$RUN_DIR/host-config.yaml"
-
-echo "waiting for the paid surface..."
-for i in $(seq 1 30); do
-  if curl -sf "http://127.0.0.1:${PAID_PORT}/healthz" >/dev/null 2>&1; then
-    echo
-    echo "up. advertising ${EXTERNAL_BASE_URL}"
-    echo "  offerings   ${EXTERNAL_BASE_URL}/registry/offerings"
-    echo "  logs        $RUN_DIR/*.log"
-    exit 0
-  fi
+# Migration order is an invariant: receiver first, advertisement second,
+# payer opt-in last. No probe runs here and startup itself mints no ticket.
+"${compose[@]}" up -d payee
+wait_for_log payee "gRPC listening"
+"${compose[@]}" up -d broker
+for _ in $(seq 1 120); do
+  if curl -fsS "http://127.0.0.1:${PAID_PORT:-8411}/healthz" >/dev/null; then break; fi
   sleep 1
 done
-echo "broker did not become healthy; see $RUN_DIR/broker.log" >&2
-exit 1
+curl -fsS "http://127.0.0.1:${PAID_PORT:-8411}/healthz" >/dev/null
+"${compose[@]}" up -d runner
+registry=""
+for _ in $(seq 1 120); do
+  registry="$(curl -fsS "http://127.0.0.1:${PAID_PORT:-8411}/registry/offerings" 2>/dev/null || true)"
+  if grep -q 'conformance:job' <<<"$registry" && grep -q 'wholesale_accounts' <<<"$registry"; then break; fi
+  sleep 1
+done
+grep -q 'conformance:job' <<<"$registry" || { echo "runner did not freeze the pilot offer" >&2; exit 1; }
+grep -q 'wholesale_accounts' <<<"$registry" || { echo "pilot offer did not advertise wholesale accounts" >&2; exit 1; }
+"${compose[@]}" up -d payer
+wait_for_log payer "gRPC listening"
+
+echo "pilot stack ready; no ticket has been minted"
+echo "review ./status.sh, then run ./pilot.sh only with explicit spend approval"

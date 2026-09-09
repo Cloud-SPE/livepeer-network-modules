@@ -117,8 +117,8 @@ func prepareWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDae
 	if err != nil {
 		return fmt.Errorf("completed settlement: %w", err)
 	}
-	if settlement.payload.RequestID != completedRequestID || settlement.payload.State == "" {
-		return fmt.Errorf("completed settlement identity/state mismatch")
+	if settlement.payload.RequestID != completedRequestID || settlement.payload.Outcome == "" {
+		return fmt.Errorf("completed settlement identity/outcome mismatch")
 	}
 
 	beforeAdmission, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
@@ -178,7 +178,7 @@ func prepareWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDae
 	cp.Phase = "admitted"
 	cp.AccountAfterAdmission = *afterAdmission
 	cp.SettlementJobID = jobID
-	cp.SettlementState = settlement.payload.State
+	cp.SettlementState = settlement.payload.Outcome
 	cp.SettlementBilledWei = new(big.Int).SetBytes(settlement.payload.BilledValueWei.value()).String()
 	if err := writeRecoveryCheckpoint(cfg.checkpointFile, &cp, false); err != nil {
 		return err
@@ -250,7 +250,7 @@ func verifyWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDaem
 	if err != nil {
 		return fmt.Errorf("broker settlement after restart: %w", err)
 	}
-	if settlement.payload.RequestID != cp.SettlementRequestID || settlement.payload.State != cp.SettlementState ||
+	if settlement.payload.RequestID != cp.SettlementRequestID || settlement.payload.Outcome != cp.SettlementState ||
 		new(big.Int).SetBytes(settlement.payload.BilledValueWei.value()).String() != cp.SettlementBilledWei {
 		return fmt.Errorf("broker settlement changed across restart")
 	}
@@ -444,7 +444,7 @@ func probeWholesaleEvidence(ctx context.Context, cfg config, payee pb.PayeeDaemo
 		IssuedAcceptedEVWei: account.Credited.big().String(), SettledDebitWei: account.Debited.big().String(),
 		RemainingFloatWei: account.Available.big().String(), ReservedWei: account.Reserved.big().String(),
 		Authorization: map[string]any{"id": cp.AuthorizationID, "state": auth.GetState().String(), "actual_units": auth.GetActualUnits(), "settlement_seq": auth.GetSettlementSeq()},
-		Settlement:    map[string]string{"job_id": cp.SettlementJobID, "request_id": settlement.payload.RequestID, "state": settlement.payload.State, "billed_value_wei": new(big.Int).SetBytes(settlement.payload.BilledValueWei.value()).String()},
+		Settlement:    map[string]string{"job_id": cp.SettlementJobID, "request_id": settlement.payload.RequestID, "outcome": settlement.payload.Outcome, "billed_value_wei": new(big.Int).SetBytes(settlement.payload.BilledValueWei.value()).String()},
 	}
 	raw, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {

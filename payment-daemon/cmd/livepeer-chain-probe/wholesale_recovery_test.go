@@ -94,7 +94,7 @@ func TestVerifyWholesaleRecoveryAcrossRestart(t *testing.T) {
 			_ = jsonResponse(w, current)
 		case "/v1/settlement/job-recovery":
 			billed := base64.StdEncoding.EncodeToString(big.NewInt(10).Bytes())
-			envelope := fmt.Sprintf(`{"payload":{"job_id":"job-recovery","request_id":"request-completed","state":"terminal","billed_value_wei":{"value":%q}}}`, billed)
+			envelope := fmt.Sprintf(`{"payload":{"job_id":"job-recovery","request_id":"request-completed","outcome":"TOPPED_UP","billed_value_wei":{"value":%q}}}`, billed)
 			w.Header().Set("Livepeer-Settlement", base64.StdEncoding.EncodeToString([]byte(envelope)))
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -109,7 +109,7 @@ func TestVerifyWholesaleRecoveryAcrossRestart(t *testing.T) {
 		TargetAvailableWei: "90", ObservedAvailableWei: "30", MaxDebitWei: maxDebit.String(),
 		PaymentSHA256: hex.EncodeToString(paymentHash[:]), ExpectedValueWei: "60", TicketsCreated: 1,
 		AccountAfterAdmission: initial, SettlementJobID: "job-recovery", SettlementRequestID: "request-completed",
-		SettlementState: "terminal", SettlementBilledWei: "10",
+		SettlementState: "TOPPED_UP", SettlementBilledWei: "10",
 	}
 	checkpoint := filepath.Join(t.TempDir(), "recovery-test.json")
 	if err := writeRecoveryCheckpoint(checkpoint, cp, true); err != nil {

@@ -206,6 +206,7 @@ type settlementPayload struct {
 	SessionID          string `json:"session_id"`
 	IssuedAt           string `json:"issued_at"`
 	State              string `json:"state"`
+	Outcome            string `json:"outcome"`
 	DebitedUnits       string `json:"debited_units"`
 	RotationGeneration uint32 `json:"rotation_generation"`
 	PredecessorWorkID  string `json:"predecessor_work_id"`

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,7 +44,7 @@ import (
 // definition of what the suite expects a runner to be, and the two
 // would drift.
 func attachSuiteRunner(brokerURL string, backend *fakes.JobBackend, runner *fakes.SessionRunner,
-	jobUnit, sessUnit string, timeout time.Duration, adminToken string) (*harness.Runner, error) {
+	jobUnit, sessUnit string, timeout time.Duration, adminToken string, selectors []string) (*harness.Runner, error) {
 	if err := waitHealthy(brokerURL, timeout); err != nil {
 		return nil, fmt.Errorf("broker never became healthy: %w", err)
 	}
@@ -55,6 +57,10 @@ func attachSuiteRunner(brokerURL string, backend *fakes.JobBackend, runner *fake
 		return nil, fmt.Errorf("enrol: %w", err)
 	}
 	offerings := conformanceOfferings(backend, runner, jobUnit, sessUnit)
+	offerings, err = selectOfferings(offerings, selectors)
+	if err != nil {
+		return nil, err
+	}
 	specs := make([]harness.RunnerSpec, 0, len(offerings))
 	for _, o := range offerings {
 		specs = append(specs, o.runnerSpec())
@@ -80,10 +86,10 @@ func attachSuiteRunner(brokerURL string, backend *fakes.JobBackend, runner *fake
 // serveSuiteRunner attaches the runner and stays up, running no
 // scenarios. See the note above on when this is the wrong tool.
 func serveSuiteRunner(brokerURL string, backend *fakes.JobBackend, runner *fakes.SessionRunner,
-	jobUnit, sessUnit string, timeout time.Duration, adminToken string) int {
+	jobUnit, sessUnit string, timeout time.Duration, adminToken string, selectors []string) int {
 	fmt.Printf("fake job backend:     %s (error route: %s)\n", backend.URL(), backend.ErrorURL())
 	fmt.Printf("fake session runner:  %s (paths: /sessions, /sessions/{id})\n", runner.URL())
-	attached, err := attachSuiteRunner(brokerURL, backend, runner, jobUnit, sessUnit, timeout, adminToken)
+	attached, err := attachSuiteRunner(brokerURL, backend, runner, jobUnit, sessUnit, timeout, adminToken, selectors)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -96,4 +102,44 @@ func serveSuiteRunner(brokerURL string, backend *fakes.JobBackend, runner *fakes
 	<-sigCh
 	fmt.Fprintln(os.Stderr, "stopping")
 	return 0
+}
+
+func selectOfferings(offerings []offering, selectors []string) ([]offering, error) {
+	if len(selectors) == 0 {
+		return offerings, nil
+	}
+	wanted := make(map[string]struct{}, len(selectors))
+	for _, selector := range selectors {
+		if _, duplicate := wanted[selector]; duplicate {
+			return nil, fmt.Errorf("duplicate --serve-offerings selector %q", selector)
+		}
+		wanted[selector] = struct{}{}
+	}
+	selected := make([]offering, 0, len(wanted))
+	for _, candidate := range offerings {
+		key := candidate.capabilityID + "/" + candidate.offeringID
+		if _, ok := wanted[key]; ok {
+			selected = append(selected, candidate)
+			delete(wanted, key)
+		}
+	}
+	if len(wanted) != 0 {
+		unknown := make([]string, 0, len(wanted))
+		for selector := range wanted {
+			unknown = append(unknown, selector)
+		}
+		sort.Strings(unknown)
+		return nil, fmt.Errorf("unknown --serve-offerings selector(s): %v", unknown)
+	}
+	return selected, nil
+}
+
+func splitNonEmpty(value string) []string {
+	var values []string
+	for _, part := range strings.Split(value, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }

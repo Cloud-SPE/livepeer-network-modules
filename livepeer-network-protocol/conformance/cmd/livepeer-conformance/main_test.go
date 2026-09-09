@@ -32,3 +32,21 @@ func TestEnrollAttachCredentialRequiresAdminToken(t *testing.T) {
 		t.Fatal("enrollAttachCredential accepted an empty admin token")
 	}
 }
+
+func TestSelectOfferingsLimitsLongLivedRunner(t *testing.T) {
+	all := []offering{
+		{capabilityID: "conformance:job", offeringID: "all"},
+		{capabilityID: "conformance:job", offeringID: "slow"},
+		{capabilityID: "conformance:session", offeringID: "default"},
+	}
+	got, err := selectOfferings(all, []string{"conformance:job/all", "conformance:session/default"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].offeringID != "all" || got[1].offeringID != "default" {
+		t.Fatalf("selected offerings = %+v", got)
+	}
+	if _, err := selectOfferings(all, []string{"conformance:job/missing"}); err == nil {
+		t.Fatal("unknown selector passed validation")
+	}
+}

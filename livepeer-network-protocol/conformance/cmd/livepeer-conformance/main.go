@@ -211,6 +211,8 @@ func run() int {
 			"URL mode: wait this long after the fakes are up before running scenarios, so a broker whose health probes have been failing against them recovers")
 		serveRunner = flag.Bool("serve-runner", false,
 			"attach the suite's runner to --broker-url and stay up serving it, instead of running scenarios")
+		serveOfferings = flag.String("serve-offerings", "",
+			"serve-runner only: comma-separated capability/offering tuples to declare (empty: all conformance offerings)")
 		attachRunner = flag.Bool("attach-runner", false,
 			"URL mode: attach the suite's own runner to --broker-url before running scenarios, for a broker that has none of its own")
 		settlementSigner = flag.String("settlement-signer", "",
@@ -277,7 +279,7 @@ func run() int {
 			fmt.Fprintln(os.Stderr, "--serve-runner needs --broker-url: it attaches to a broker, it does not start one")
 			return 2
 		}
-		return serveSuiteRunner(*brokerURL, backend, runner, *jobUnit, *sessUnit, *timeout, *brokerAdminToken)
+		return serveSuiteRunner(*brokerURL, backend, runner, *jobUnit, *sessUnit, *timeout, *brokerAdminToken, splitNonEmpty(*serveOfferings))
 	}
 
 	if *brokerURL != "" {
@@ -302,7 +304,7 @@ func run() int {
 		// skipping — which is better than passing without checking.
 		ctx.SettlementSigner = *settlementSigner
 		if *attachRunner {
-			attached, err := attachSuiteRunner(*brokerURL, backend, runner, *jobUnit, *sessUnit, *timeout, *brokerAdminToken)
+			attached, err := attachSuiteRunner(*brokerURL, backend, runner, *jobUnit, *sessUnit, *timeout, *brokerAdminToken, nil)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "attach the suite's runner:", err)
 				return 2

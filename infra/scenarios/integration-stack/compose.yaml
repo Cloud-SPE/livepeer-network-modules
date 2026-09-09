@@ -46,6 +46,7 @@ services:
     command:
       - --broker-url=http://broker:8080
       - --serve-runner
+      - --serve-offerings=conformance:job/all,conformance:session/default
       - --fakes-listen=0.0.0.0
       - --fakes-advertise=runner
       - --fakes-backend-port=8091

@@ -48,7 +48,16 @@ remaining bounded float because v1 does not promise withdrawal or transfer.
    uid 65532; do not make them world-readable.
 3. Verify the payer deposit/reserve, payee address, and external origin with a
    second operator.
-4. Start the stack:
+4. Run the fail-closed preflight. It rejects legacy/incomplete configuration,
+   mutable image tags, non-Arbitrum RPCs, a payee-address/key mismatch,
+   inconsistent economic ceilings, persisted approval, and a non-TLS public
+   broker origin:
+
+   ```bash
+   ./preflight.sh startup
+   ```
+
+5. Start the stack:
 
    ```bash
    ./up.sh

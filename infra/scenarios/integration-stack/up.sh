@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+./preflight.sh startup
 [ -f stack.env ] || { echo "stack.env missing — copy stack.env.example and edit it" >&2; exit 1; }
 set -a; . ./stack.env; set +a
 

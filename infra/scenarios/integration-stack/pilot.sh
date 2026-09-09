@@ -1,14 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-
-if [ "${PILOT_APPROVAL:-}" != "ARBITRUM_ONE_DUST_APPROVED" ]; then
-  echo "refusing to mint: set PILOT_APPROVAL=ARBITRUM_ONE_DUST_APPROVED for this invocation after reviewing addresses and limits" >&2
-  exit 2
-fi
-[ -f stack.env ] || { echo "stack.env missing" >&2; exit 1; }
+./preflight.sh pilot
 set -a; . ./stack.env; set +a
-[ "${CHAIN_ID:-}" = "42161" ] || { echo "refusing: CHAIN_ID must be 42161" >&2; exit 2; }
 
 echo "approved Arbitrum One dust pilot"
 echo "  payee:                 ${ORCH_ETH_ADDRESS}"
